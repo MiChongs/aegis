@@ -15,31 +15,64 @@
 [![Coraza](https://img.shields.io/badge/Coraza-WAF-374151?style=for-the-badge)](https://coraza.io/)
 [![CI](https://img.shields.io/github/actions/workflow/status/MiChongs/aegis/go-ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/MiChongs/aegis/actions/workflows/go-ci.yml)
 
-**Aegis** is a production-oriented, multi-tenant user platform built with Go for high concurrency, strong tenant isolation, and low-coupling service design.
+**Aegis** is a production-oriented, multi-tenant user platform built with Go for high concurrency, clean service boundaries, and realtime-ready delivery.
+
+<p>
+  <a href="#platform-profile">Platform Profile</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#technology-stack">Technology Stack</a> ·
+  <a href="#capability-map">Capability Map</a> ·
+  <a href="#deployment-modes">Deployment</a> ·
+  <a href="#development-workflow">Development</a>
+</p>
 
 </div>
 
-## Overview
+## Platform Profile
 
-Aegis provides a modern backend foundation for user systems that need:
+<table>
+  <tr>
+    <td width="33%">
+      <strong>Runtime Model</strong><br/>
+      Unified Go runtime for <code>api + worker</code>, with clear bootstrap boundaries and shared infrastructure clients.
+    </td>
+    <td width="33%">
+      <strong>Tenant Isolation</strong><br/>
+      Application boundaries are enforced through <code>appid</code>, with scoped session, cache, notification, and realtime paths.
+    </td>
+    <td width="33%">
+      <strong>Operational Focus</strong><br/>
+      Built around predictable hot paths, cache-first validation, async pipelines, and public-safe edge behavior.
+    </td>
+  </tr>
+  <tr>
+    <td width="33%">
+      <strong>Primary Storage</strong><br/>
+      PostgreSQL for transactional data, Redis for session, cache, unread-count, and presence indexing.
+    </td>
+    <td width="33%">
+      <strong>Async Backbone</strong><br/>
+      NATS handles event fan-out and decoupled processing; Temporal handles workflow orchestration.
+    </td>
+    <td width="33%">
+      <strong>Realtime Layer</strong><br/>
+      Gorilla WebSocket hub with Redis presence and NATS-based cross-instance targeted delivery.
+    </td>
+  </tr>
+</table>
 
-- multi-application isolation based on `appid`
-- fast HTTP APIs with a clear service boundary
-- cache-first session and presence management
-- event-driven background processing
-- realtime delivery for user-facing events
-- modern workflow orchestration and edge security
+## Engineering Snapshot
 
-## Highlights
-
-- Unified runtime for `API + Worker`
-- Multi-tenant application model
-- JWT + Redis session architecture
-- Realtime hub with Redis presence and NATS fan-out
-- PostgreSQL as the primary transactional store
-- Temporal workflow integration
-- Coraza WAF and app-level transport encryption
-- Windows one-click deployment and Docker-based local startup
+| Dimension | Description |
+| --- | --- |
+| Positioning | Multi-tenant backend platform for user systems and application-facing services |
+| Runtime | Gin API + Worker runtime under a unified Go entrypoint |
+| Isolation | `appid`-scoped services, caches, notifications, and online presence |
+| Persistence | PostgreSQL |
+| Cache and Presence | Redis |
+| Messaging | NATS |
+| Workflow | Temporal |
+| Edge Security | Coraza WAF, transport encryption, sanitized responses |
 
 ## Architecture
 
@@ -72,7 +105,24 @@ flowchart LR
     Worker --> Temporal
 ```
 
-## Tech Stack
+### Request Strategy
+
+<table>
+  <tr>
+    <td width="25%"><strong>Authentication</strong><br/>JWT parse + Redis session validation</td>
+    <td width="25%"><strong>Public App Content</strong><br/>PostgreSQL + Redis cache</td>
+    <td width="25%"><strong>User View</strong><br/>Cache-aware aggregation</td>
+    <td width="25%"><strong>Realtime Push</strong><br/>Local hub + NATS fan-out</td>
+  </tr>
+  <tr>
+    <td width="25%"><strong>Online Presence</strong><br/>Redis TTL indexes</td>
+    <td width="25%"><strong>Background Events</strong><br/>NATS → Worker</td>
+    <td width="25%"><strong>Workflow Tasks</strong><br/>Temporal execution</td>
+    <td width="25%"><strong>Public Errors</strong><br/>Sanitized edge-safe responses</td>
+  </tr>
+</table>
+
+## Technology Stack
 
 | Layer | Technology |
 | --- | --- |
@@ -87,56 +137,46 @@ flowchart LR
 | Logging | Zap |
 | Deployment | Docker Compose, Windows scripts |
 
-## Core Modules
+## Capability Map
 
-### Identity and Access
-
-- password-based authentication
-- OAuth2 provider integration
-- JWT issuance and validation
-- session indexing and revocation
-- layered administrator model
-
-### User Platform
-
-- profile and settings management
-- sign-in status and history
-- notification center
-- session auditing
-- points and ranking services
-
-### Realtime
-
-- global WebSocket endpoint
-- user-targeted event delivery
-- Redis-backed online presence
-- NATS-based cross-instance fan-out
-- admin online statistics endpoints
-
-### Security
-
-- Coraza WAF middleware
-- application transport encryption
-- sanitized public error responses
-- cache-aware token validation path
-
-### Runtime
-
-- unified server bootstrap
-- worker event processing
-- Temporal workflow runtime
-- storage manager foundation
-- async location service path
+<table>
+  <tr>
+    <td width="33%">
+      <strong>Identity and Access</strong><br/><br/>
+      Password authentication<br/>
+      OAuth2 provider integration<br/>
+      JWT issuance and validation<br/>
+      Session indexing and revocation<br/>
+      Layered administrator model
+    </td>
+    <td width="33%">
+      <strong>User Platform</strong><br/><br/>
+      Profile and settings management<br/>
+      Sign-in status and history<br/>
+      Notification center<br/>
+      Session auditing<br/>
+      Points and ranking services
+    </td>
+    <td width="33%">
+      <strong>Realtime and Runtime</strong><br/><br/>
+      Global WebSocket gateway<br/>
+      Online presence indexing<br/>
+      NATS cross-instance fan-out<br/>
+      Worker event processing<br/>
+      Temporal workflow execution
+    </td>
+  </tr>
+</table>
 
 ## Realtime Model
 
-The realtime layer is intentionally kept independent from business services.
+The realtime layer is intentionally designed as an independent subsystem rather than a transport sidecar attached to business services.
 
 | Concern | Implementation |
 | --- | --- |
 | Connection lifecycle | in-process hub |
-| Presence | Redis TTL indexes |
-| Cross-node delivery | NATS subjects |
+| Presence storage | Redis TTL indexes |
+| Cross-node fan-out | NATS subjects |
 | Tenant scope | `appid + userId` |
 | Business integration | interface-based publisher |
 
@@ -149,45 +189,27 @@ GET /api/admin/system/online/apps/:appid
 GET /api/admin/system/online/apps/:appid/users
 ```
 
-## Quick Start
+## Deployment Modes
 
-### 1. Prepare configuration
-
-```bash
-cp .env.example .env
-```
-
-### 2. Start dependencies
-
-```bash
-docker compose -f deploy/docker/docker-compose.yml up -d
-```
-
-### 3. Run migrations
-
-```bash
-go run ./cmd/server migrate
-```
-
-### 4. Start the unified runtime
-
-```bash
-go run ./cmd/server
-```
-
-## Windows Deployment
-
-```powershell
-.\deploy\windows\one-click-deploy.cmd
-```
-
-Useful commands:
-
-```powershell
-.\deploy\windows\start-stack.cmd
-.\deploy\windows\stop-stack.cmd
-.\deploy\windows\status.cmd
-```
+<table>
+  <tr>
+    <td width="50%">
+      <strong>Local Development</strong><br/><br/>
+      <code>cp .env.example .env</code><br/>
+      <code>docker compose -f deploy/docker/docker-compose.yml up -d</code><br/>
+      <code>go run ./cmd/server migrate</code><br/>
+      <code>go run ./cmd/server</code>
+    </td>
+    <td width="50%">
+      <strong>Windows One-Click</strong><br/><br/>
+      <code>.\deploy\windows\one-click-deploy.cmd</code><br/><br/>
+      Support scripts:<br/>
+      <code>start-stack.cmd</code><br/>
+      <code>stop-stack.cmd</code><br/>
+      <code>status.cmd</code>
+    </td>
+  </tr>
+</table>
 
 ## Project Layout
 
@@ -217,9 +239,59 @@ pkg/
   tracing/            tracing integration
 ```
 
-## Development
+<details>
+  <summary><strong>Expanded API Surface</strong></summary>
 
-### Local validation
+### Authentication
+
+```text
+POST /api/auth/register/password
+POST /api/auth/login/password
+POST /api/auth/oauth2/auth-url
+GET  /api/auth/oauth2/callback
+POST /api/auth/oauth2/mobile-login
+POST /api/auth/refresh
+POST /api/auth/logout
+POST /api/auth/password/verify
+POST /api/auth/password/change
+```
+
+### User
+
+```text
+GET    /api/user/banner
+GET    /api/user/notice
+POST   /api/user/my
+GET    /api/user/profile
+PUT    /api/user/profile
+GET    /api/user/settings
+PUT    /api/user/settings
+GET    /api/user/security
+GET    /api/user/sessions
+DELETE /api/user/sessions/:tokenHash
+POST   /api/user/sessions/revoke-all
+GET    /api/user/signin/status
+GET    /api/user/signin/history
+POST   /api/user/signin
+```
+
+### Notifications
+
+```text
+GET    /api/notifications
+GET    /api/notifications/unread-count
+POST   /api/notifications/read
+POST   /api/notifications/read-batch
+POST   /api/notifications/read-all
+DELETE /api/notifications/:notificationId
+POST   /api/notifications/clear
+```
+
+</details>
+
+## Development Workflow
+
+### Local Validation
 
 ```bash
 go mod tidy
