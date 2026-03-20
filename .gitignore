@@ -1,0 +1,14 @@
+# Binaries
+bin/
+
+# IDE
+.vscode/
+.idea/
+
+# Env
+.env
+
+# Build output
+coverage.out
+*.log
+.runtime/

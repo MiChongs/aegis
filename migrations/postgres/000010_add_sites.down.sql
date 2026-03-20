@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS site_audits;
+DROP TABLE IF EXISTS sites;

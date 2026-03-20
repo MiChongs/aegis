@@ -1,0 +1,13 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "./sql/queries"
+    schema: "./migrations/postgres"
+    gen:
+      go:
+        package: "sqlcgen"
+        out: "./internal/repository/postgres/sqlcgen"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_interface: false
+        emit_empty_slices: true

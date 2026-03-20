@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS workflow_templates;
+DROP TABLE IF EXISTS workflow_logs;
+DROP TABLE IF EXISTS workflow_tasks;
+DROP TABLE IF EXISTS workflow_instances;
+DROP TABLE IF EXISTS workflows;
+DROP TABLE IF EXISTS payment_callback_logs;
+DROP TABLE IF EXISTS payment_orders;
+DROP TABLE IF EXISTS payment_configs;
+DROP TABLE IF EXISTS app_email_configs;
