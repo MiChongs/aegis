@@ -5,7 +5,7 @@
       <stop offset="0.52" stop-color="#0B1F36"/>
       <stop offset="1" stop-color="#133A57"/>
     </linearGradient>
-    <linearGradient id="beam" x1="94" y1="82" x2="1312" y2="438" gradientUnits="userSpaceOnUse">
+    <linearGradient id="beam" x1="90" y1="84" x2="1328" y2="448" gradientUnits="userSpaceOnUse">
       <stop stop-color="#47D7FF"/>
       <stop offset="0.5" stop-color="#7AF6D8"/>
       <stop offset="1" stop-color="#AFFF7F"/>
@@ -55,16 +55,19 @@
     <text x="98" y="400" fill="#B7CFDF" font-family="Segoe UI, Arial, sans-serif" font-size="24">High concurrency, strong isolation, realtime-ready architecture.</text>
   </g>
 
-  <g opacity="0.95">
-    <path d="M1068 122L1324 186L1222 312L970 250L1068 122Z" stroke="url(#beam)" stroke-width="2.2"/>
-    <path d="M1118 148L1230 176L1184 230L1073 202L1118 148Z" fill="#C9FAFF" fill-opacity="0.14"/>
-    <path d="M1232 178L1294 194L1248 248L1185 232L1232 178Z" fill="#D9FFF4" fill-opacity="0.1"/>
-    <path d="M1076 210L1184 236L1136 292L1030 266L1076 210Z" fill="#D9FFF4" fill-opacity="0.08"/>
-    <path d="M970 360H1490" stroke="url(#beam)" stroke-opacity="0.34"/>
-    <path d="M970 392H1490" stroke="white" stroke-opacity="0.1"/>
-    <path d="M970 424H1490" stroke="white" stroke-opacity="0.08"/>
-    <text x="984" y="384" fill="#E6FBFF" font-family="Consolas, 'Courier New', monospace" font-size="18">runtime: unified / api + worker</text>
-    <text x="984" y="414" fill="#D2ECF5" font-family="Consolas, 'Courier New', monospace" font-size="18">presence: redis ttl index</text>
-    <text x="984" y="444" fill="#D2ECF5" font-family="Consolas, 'Courier New', monospace" font-size="18">fanout: nats targeted subjects</text>
+  <g opacity="0.96">
+    <path d="M1034 120L1332 188L1228 314L930 246L1034 120Z" fill="#11263B" fill-opacity="0.22" stroke="url(#beam)" stroke-width="2.2"/>
+    <path d="M1034 120L1183 154L1131 217L982 183L1034 120Z" fill="#C9FAFF" fill-opacity="0.14"/>
+    <path d="M1183 154L1332 188L1280 251L1131 217L1183 154Z" fill="#D9FFF4" fill-opacity="0.1"/>
+    <path d="M982 183L1131 217L1079 280L930 246L982 183Z" fill="#0D2136" fill-opacity="0.34"/>
+    <path d="M1131 217L1280 251L1228 314L1079 280L1131 217Z" fill="#D9FFF4" fill-opacity="0.08"/>
+    <path d="M1183 154L1079 280" stroke="white" stroke-opacity="0.18"/>
+    <path d="M982 183L1280 251" stroke="white" stroke-opacity="0.14"/>
+    <path d="M930 360H1490" stroke="url(#beam)" stroke-opacity="0.34"/>
+    <path d="M930 392H1490" stroke="white" stroke-opacity="0.1"/>
+    <path d="M930 424H1490" stroke="white" stroke-opacity="0.08"/>
+    <text x="948" y="384" fill="#E6FBFF" font-family="Consolas, 'Courier New', monospace" font-size="18">runtime: unified / api + worker</text>
+    <text x="948" y="414" fill="#D2ECF5" font-family="Consolas, 'Courier New', monospace" font-size="18">presence: redis ttl index</text>
+    <text x="948" y="444" fill="#D2ECF5" font-family="Consolas, 'Courier New', monospace" font-size="18">fanout: nats targeted subjects</text>
   </g>
 </svg>
