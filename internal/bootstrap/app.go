@@ -35,6 +35,7 @@ type APIApp struct {
 	JetStream       nats.JetStreamContext
 	Temporal        client.Client
 	Realtime        *service.RealtimeService
+	Location        *service.LocationService
 	ShutdownTracing func(context.Context) error
 }
 
@@ -110,8 +111,9 @@ func NewAPIApp(ctx context.Context) (*APIApp, error) {
 		postgres.Close()
 		return nil, err
 	}
-	locationService := service.NewLocationService(log, redisClient, cfg.Redis.KeyPrefix)
+	locationService := service.NewLocationService(log, redisClient, cfg.Redis.KeyPrefix, cfg.GeoIP)
 	if err := adminService.EnsureBootstrapSuperAdmin(ctx); err != nil {
+		locationService.Close()
 		realtimeService.Close(context.Background())
 		temporalClient.Close()
 		natsConn.Close()
@@ -121,6 +123,7 @@ func NewAPIApp(ctx context.Context) (*APIApp, error) {
 	}
 	router, err := httptransport.NewRouter(authService, adminService, userService, signInService, pointsService, notificationService, appService, siteService, versionService, roleApplicationService, emailService, paymentService, workflowService, storageService, firewall, locationService, realtimeService)
 	if err != nil {
+		locationService.Close()
 		realtimeService.Close(context.Background())
 		temporalClient.Close()
 		natsConn.Close()
@@ -149,6 +152,7 @@ func NewAPIApp(ctx context.Context) (*APIApp, error) {
 		JetStream:       js,
 		Temporal:        temporalClient,
 		Realtime:        realtimeService,
+		Location:        locationService,
 		ShutdownTracing: shutdownTracing,
 	}, nil
 }
@@ -159,6 +163,9 @@ func (a *APIApp) Close(ctx context.Context) {
 	}
 	if a.Realtime != nil {
 		a.Realtime.Close(ctx)
+	}
+	if a.Location != nil {
+		a.Location.Close()
 	}
 	if a.Redis != nil {
 		_ = a.Redis.Close()

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"aegis/internal/config"
 	redislib "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -52,40 +53,57 @@ type cachedLocation struct {
 }
 
 type LocationService struct {
-	log                *zap.Logger
-	redis              *redislib.Client
-	keyPrefix          string
-	http               *http.Client
-	group              singleflight.Group
-	mu                 sync.RWMutex
-	local              map[string]cachedLocation
-	localTTL           time.Duration
-	redisTTL           time.Duration
-	failureTTL         time.Duration
-	cacheLookupTimeout time.Duration
-	cacheWriteTimeout  time.Duration
-	refreshTimeout     time.Duration
-	providerTimeout    time.Duration
+	log                 *zap.Logger
+	redis               *redislib.Client
+	keyPrefix           string
+	http                *http.Client
+	group               singleflight.Group
+	mu                  sync.RWMutex
+	local               map[string]cachedLocation
+	localTTL            time.Duration
+	redisTTL            time.Duration
+	failureTTL          time.Duration
+	cacheLookupTimeout  time.Duration
+	cacheWriteTimeout   time.Duration
+	refreshTimeout      time.Duration
+	providerTimeout     time.Duration
+	geo                 *geoDatabaseResolver
+	allowRemoteFallback bool
 }
 
-func NewLocationService(log *zap.Logger, redisClient *redislib.Client, keyPrefix string) *LocationService {
+func NewLocationService(log *zap.Logger, redisClient *redislib.Client, keyPrefix string, geoCfg config.GeoIPConfig) *LocationService {
 	if log == nil {
 		log = zap.NewNop()
 	}
-	return &LocationService{
-		log:                log,
-		redis:              redisClient,
-		keyPrefix:          strings.TrimSpace(keyPrefix),
-		http:               &http.Client{Timeout: 1500 * time.Millisecond},
-		local:              make(map[string]cachedLocation),
-		localTTL:           10 * time.Minute,
-		redisTTL:           6 * time.Hour,
-		failureTTL:         15 * time.Minute,
-		cacheLookupTimeout: 40 * time.Millisecond,
-		cacheWriteTimeout:  250 * time.Millisecond,
-		refreshTimeout:     4 * time.Second,
-		providerTimeout:    1200 * time.Millisecond,
+	service := &LocationService{
+		log:                 log,
+		redis:               redisClient,
+		keyPrefix:           strings.TrimSpace(keyPrefix),
+		http:                &http.Client{Timeout: 1500 * time.Millisecond},
+		local:               make(map[string]cachedLocation),
+		localTTL:            10 * time.Minute,
+		redisTTL:            6 * time.Hour,
+		failureTTL:          15 * time.Minute,
+		cacheLookupTimeout:  40 * time.Millisecond,
+		cacheWriteTimeout:   250 * time.Millisecond,
+		refreshTimeout:      4 * time.Second,
+		providerTimeout:     1200 * time.Millisecond,
+		allowRemoteFallback: geoCfg.AllowRemoteFallback,
 	}
+	resolver, err := newGeoDatabaseResolver(log, geoCfg)
+	if err != nil {
+		log.Warn("init geoip database resolver failed", zap.Error(err))
+	} else {
+		service.geo = resolver
+	}
+	return service
+}
+
+func (s *LocationService) Close() {
+	if s == nil || s.geo == nil {
+		return
+	}
+	s.geo.Close()
 }
 
 func (s *LocationService) CacheLookupTimeout() time.Duration {
@@ -131,31 +149,31 @@ func (s *LocationService) GetCached(ctx context.Context, ip string) (IPLocation,
 	if loc, ok := s.getLocal(ip); ok {
 		return loc, true
 	}
-	if s.redis == nil {
-		return IPLocation{}, false
-	}
-
-	raw, err := s.redis.Get(ctx, s.redisKey(ip)).Bytes()
-	if err != nil {
-		if err != redislib.Nil && ctx.Err() == nil {
+	if s.redis != nil {
+		raw, err := s.redis.Get(ctx, s.redisKey(ip)).Bytes()
+		if err == nil {
+			var loc IPLocation
+			if err := json.Unmarshal(raw, &loc); err != nil {
+				s.log.Warn("location redis decode failed", zap.String("ip", ip), zap.Error(err))
+			} else {
+				if loc.IP == "" {
+					loc.IP = ip
+				}
+				if loc.ResolvedAt.IsZero() {
+					loc.ResolvedAt = time.Now().UTC()
+				}
+				s.setLocal(ip, loc, s.localTTL)
+				return loc, true
+			}
+		} else if err != redislib.Nil && ctx.Err() == nil {
 			s.log.Debug("location redis lookup failed", zap.String("ip", ip), zap.Error(err))
 		}
-		return IPLocation{}, false
 	}
-
-	var loc IPLocation
-	if err := json.Unmarshal(raw, &loc); err != nil {
-		s.log.Warn("location redis decode failed", zap.String("ip", ip), zap.Error(err))
-		return IPLocation{}, false
+	if loc, ok := s.lookupGeoDatabase(ip); ok {
+		s.persistAsync(ip, loc, s.redisTTL)
+		return loc, true
 	}
-	if loc.IP == "" {
-		loc.IP = ip
-	}
-	if loc.ResolvedAt.IsZero() {
-		loc.ResolvedAt = time.Now().UTC()
-	}
-	s.setLocal(ip, loc, s.localTTL)
-	return loc, true
+	return IPLocation{}, false
 }
 
 func (s *LocationService) Resolve(ctx context.Context, ip string) IPLocation {
@@ -207,6 +225,12 @@ func (s *LocationService) lookup(ctx context.Context, ip string) IPLocation {
 	if isPrivateAddr(addr) {
 		return s.DefaultLocation(ip)
 	}
+	if loc, ok := s.lookupGeoDatabase(ip); ok {
+		return loc
+	}
+	if !s.allowRemoteFallback {
+		return s.DefaultLocation(ip)
+	}
 
 	providers := []struct {
 		name string
@@ -230,6 +254,21 @@ func (s *LocationService) lookup(ctx context.Context, ip string) IPLocation {
 		}
 	}
 	return s.DefaultLocation(ip)
+}
+
+func (s *LocationService) lookupGeoDatabase(ip string) (IPLocation, bool) {
+	if s == nil || s.geo == nil {
+		return IPLocation{}, false
+	}
+	loc, err := s.geo.Lookup(ip)
+	if err != nil {
+		s.log.Debug("geoip database lookup failed", zap.String("ip", ip), zap.Error(err))
+		return IPLocation{}, false
+	}
+	if !loc.isResolved() {
+		return IPLocation{}, false
+	}
+	return loc, true
 }
 
 func (s *LocationService) lookupMir6(ctx context.Context, ip string) (IPLocation, error) {
@@ -328,7 +367,7 @@ func (s *LocationService) fetchJSON(ctx context.Context, url string, target any)
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 	return json.NewDecoder(resp.Body).Decode(target)
@@ -375,6 +414,10 @@ func (s *LocationService) persist(ip string, loc IPLocation, ttl time.Duration) 
 	if err := s.redis.Set(ctx, s.redisKey(ip), raw, ttl).Err(); err != nil {
 		s.log.Debug("location redis write failed", zap.String("ip", ip), zap.Error(err))
 	}
+}
+
+func (s *LocationService) persistAsync(ip string, loc IPLocation, ttl time.Duration) {
+	go s.persist(ip, loc, ttl)
 }
 
 func (s *LocationService) redisKey(ip string) string {
@@ -526,11 +569,17 @@ func detectNetworkType(value string) string {
 
 func composeLocation(parts ...string) string {
 	values := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
-		if part != "" {
-			values = append(values, part)
+		if part == "" {
+			continue
 		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		values = append(values, part)
 	}
 	return strings.Join(values, " ")
 }

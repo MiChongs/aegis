@@ -23,6 +23,7 @@ type Config struct {
 	Postgres        PostgresConfig
 	LegacyMySQL     LegacyMySQLConfig
 	Redis           RedisConfig
+	GeoIP           GeoIPConfig
 	NATS            NATSConfig
 	Temporal        TemporalConfig
 	AutoSign        AutoSignConfig
@@ -70,6 +71,18 @@ type RedisConfig struct {
 	Password  string
 	DB        int
 	KeyPrefix string
+}
+
+type GeoIPConfig struct {
+	Enabled             bool
+	DatabaseDir         string
+	CityDBURL           string
+	ASNDBURL            string
+	UpdateInterval      time.Duration
+	DownloadTimeout     time.Duration
+	GitHubMirror        string
+	ChinaOptimized      bool
+	AllowRemoteFallback bool
 }
 
 type NATSConfig struct {
@@ -219,6 +232,17 @@ func Load() (Config, error) {
 			DB:        v.GetInt("REDIS_DB"),
 			KeyPrefix: v.GetString("REDIS_KEY_PREFIX"),
 		},
+		GeoIP: GeoIPConfig{
+			Enabled:             getBool(v, "GEOIP_ENABLED", true),
+			DatabaseDir:         v.GetString("GEOIP_DATABASE_DIR"),
+			CityDBURL:           v.GetString("GEOIP_CITY_DB_URL"),
+			ASNDBURL:            v.GetString("GEOIP_ASN_DB_URL"),
+			UpdateInterval:      v.GetDuration("GEOIP_UPDATE_INTERVAL"),
+			DownloadTimeout:     v.GetDuration("GEOIP_DOWNLOAD_TIMEOUT"),
+			GitHubMirror:        v.GetString("GEOIP_GITHUB_MIRROR"),
+			ChinaOptimized:      getBool(v, "GEOIP_CHINA_OPTIMIZED", true),
+			AllowRemoteFallback: getBool(v, "GEOIP_ALLOW_REMOTE_FALLBACK", true),
+		},
 		NATS: NATSConfig{
 			URL:        v.GetString("NATS_URL"),
 			StreamName: v.GetString("NATS_STREAM_NAME"),
@@ -361,6 +385,24 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Redis.KeyPrefix == "" {
 		cfg.Redis.KeyPrefix = "aegis"
+	}
+	if strings.TrimSpace(cfg.GeoIP.DatabaseDir) == "" {
+		cfg.GeoIP.DatabaseDir = ".runtime/geoip"
+	}
+	if strings.TrimSpace(cfg.GeoIP.CityDBURL) == "" {
+		cfg.GeoIP.CityDBURL = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-City.mmdb"
+	}
+	if strings.TrimSpace(cfg.GeoIP.ASNDBURL) == "" {
+		cfg.GeoIP.ASNDBURL = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-ASN.mmdb"
+	}
+	if cfg.GeoIP.UpdateInterval == 0 {
+		cfg.GeoIP.UpdateInterval = 24 * time.Hour
+	}
+	if cfg.GeoIP.DownloadTimeout == 0 {
+		cfg.GeoIP.DownloadTimeout = 2 * time.Minute
+	}
+	if strings.TrimSpace(cfg.GeoIP.GitHubMirror) == "" {
+		cfg.GeoIP.GitHubMirror = "https://ghfast.top/"
 	}
 	if cfg.NATS.StreamName == "" {
 		cfg.NATS.StreamName = "AEGIS_EVENTS"
