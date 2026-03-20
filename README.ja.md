@@ -22,6 +22,7 @@
   <a href="#アーキテクチャ">アーキテクチャ</a> ·
   <a href="#技術スタック">技術スタック</a> ·
   <a href="#機能マップ">機能マップ</a> ·
+  <a href="#api-リファレンス">API リファレンス</a> ·
   <a href="#デプロイ方式">デプロイ</a> ·
   <a href="#開発フロー">開発</a>
 </p>
@@ -188,6 +189,22 @@ GET /api/admin/system/online/stats
 GET /api/admin/system/online/apps/:appid
 GET /api/admin/system/online/apps/:appid/users
 ```
+
+## API リファレンス
+
+本プロジェクトには、自動生成される OpenAPI ドキュメントと、モダンな内蔵リファレンス UI が組み込まれています。
+
+| 成果物 | パス |
+| --- | --- |
+| API リファレンス | `GET /docs` |
+| OpenAPI JSON | `GET /openapi.json` |
+| 静的エクスポート | `go run ./cmd/server openapi ./docs/openapi.json` |
+
+### 採用方針
+
+- `kin-openapi` によるコード駆動の OpenAPI 生成を採用し、Swagger 注釈方式には依存しません。
+- 外部 CDN に依存しない内蔵ドキュメントページにより、デプロイ環境でも安定して参照できます。
+- ドキュメント層をサービス実装から分離し、API の進化時にも低結合を維持します。
 
 ## デプロイ方式
 

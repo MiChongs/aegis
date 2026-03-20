@@ -22,6 +22,7 @@
   <a href="#架构">架构</a> ·
   <a href="#技术栈">技术栈</a> ·
   <a href="#能力地图">能力地图</a> ·
+  <a href="#api-参考文档">API 参考文档</a> ·
   <a href="#部署方式">部署方式</a> ·
   <a href="#开发流程">开发流程</a>
 </p>
@@ -188,6 +189,22 @@ GET /api/admin/system/online/stats
 GET /api/admin/system/online/apps/:appid
 GET /api/admin/system/online/apps/:appid/users
 ```
+
+## API 参考文档
+
+项目已内置自动生成的 OpenAPI 文档能力，并提供现代化的内置文档界面。
+
+| 产物 | 路径 |
+| --- | --- |
+| API 文档界面 | `GET /docs` |
+| OpenAPI JSON | `GET /openapi.json` |
+| 静态导出命令 | `go run ./cmd/server openapi ./docs/openapi.json` |
+
+### 方案说明
+
+- 使用 `kin-openapi` 进行代码驱动的 OpenAPI 生成，不依赖 Swagger 注解体系。
+- 使用内置离线文档页，部署环境无需依赖外部 CDN。
+- 文档层与业务服务解耦，接口扩展时无需把说明逻辑耦合进控制器实现。
 
 ## 部署方式
 

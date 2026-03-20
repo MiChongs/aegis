@@ -22,6 +22,7 @@
   <a href="#architecture">Architecture</a> ·
   <a href="#technology-stack">Technology Stack</a> ·
   <a href="#capability-map">Capability Map</a> ·
+  <a href="#api-reference">API Reference</a> ·
   <a href="#deployment-modes">Deployment</a> ·
   <a href="#development-workflow">Development</a>
 </p>
@@ -188,6 +189,22 @@ GET /api/admin/system/online/stats
 GET /api/admin/system/online/apps/:appid
 GET /api/admin/system/online/apps/:appid/users
 ```
+
+## API Reference
+
+The project now ships with an auto-generated OpenAPI document and a modern built-in reference UI.
+
+| Artifact | Path |
+| --- | --- |
+| API reference | `GET /docs` |
+| OpenAPI JSON | `GET /openapi.json` |
+| Static export command | `go run ./cmd/server openapi ./docs/openapi.json` |
+
+### Why this stack
+
+- Uses `kin-openapi` for code-driven OpenAPI generation instead of Swagger-style annotation tooling.
+- Uses a built-in offline-ready reference page so deployed environments do not depend on external CDNs.
+- Keeps the documentation layer isolated from service logic so route evolution stays low-coupling.
 
 ## Deployment Modes
 
