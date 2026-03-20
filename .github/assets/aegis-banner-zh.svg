@@ -1,0 +1,61 @@
+<svg width="1600" height="560" viewBox="0 0 1600 560" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="88" y1="44" x2="1486" y2="514" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F6F0E7"/>
+      <stop offset="0.48" stop-color="#EEE5D8"/>
+      <stop offset="1" stop-color="#E5D8C5"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="150" y1="80" x2="1300" y2="460" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F5B78"/>
+      <stop offset="0.52" stop-color="#1F7A6D"/>
+      <stop offset="1" stop-color="#A46A2A"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="34"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="560" rx="28" fill="#F5EFE6"/>
+  <rect x="42" y="42" width="1516" height="476" rx="26" fill="url(#bg)" stroke="#1B2D3A" stroke-opacity="0.12"/>
+
+  <g opacity="0.22">
+    <path d="M92 110H1508" stroke="#173040" stroke-opacity="0.14"/>
+    <path d="M92 164H1508" stroke="#173040" stroke-opacity="0.08"/>
+    <path d="M92 218H1508" stroke="#173040" stroke-opacity="0.12"/>
+    <path d="M92 272H1508" stroke="#173040" stroke-opacity="0.08"/>
+    <path d="M92 326H1508" stroke="#173040" stroke-opacity="0.12"/>
+    <path d="M92 380H1508" stroke="#173040" stroke-opacity="0.08"/>
+    <path d="M92 434H1508" stroke="#173040" stroke-opacity="0.12"/>
+  </g>
+
+  <g filter="url(#soft)" opacity="0.18">
+    <ellipse cx="310" cy="180" rx="240" ry="88" fill="#1F7A6D"/>
+    <ellipse cx="1184" cy="372" rx="260" ry="104" fill="#0F5B78"/>
+  </g>
+
+  <g>
+    <rect x="96" y="88" width="170" height="34" rx="17" fill="#FFFFFF" fill-opacity="0.5" stroke="#173040" stroke-opacity="0.14"/>
+    <circle cx="118" cy="105" r="5" fill="#145F77"/>
+    <text x="136" y="111" fill="#385363" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="15" letter-spacing="2">公开工程</text>
+  </g>
+
+  <g>
+    <text x="94" y="220" fill="#162430" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="108" font-weight="700" letter-spacing="6">Aegis</text>
+    <text x="96" y="294" fill="#21485B" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="52" font-weight="700">多租户用户平台</text>
+    <text x="98" y="352" fill="#2B5568" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="30" font-weight="600">高并发 · 强隔离 · 低耦合 · 实时通信</text>
+    <text x="98" y="400" fill="#536A78" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="24">Gin · PostgreSQL · Redis · NATS · Temporal · Coraza</text>
+  </g>
+
+  <g opacity="0.94">
+    <path d="M1058 114L1336 190L1228 322L952 248L1058 114Z" stroke="url(#accent)" stroke-width="2.2"/>
+    <path d="M1110 148L1234 182L1184 240L1062 206L1110 148Z" fill="#FFFFFF" fill-opacity="0.28"/>
+    <path d="M1238 184L1304 202L1254 262L1186 244L1238 184Z" fill="#FFFFFF" fill-opacity="0.18"/>
+    <path d="M1028 356H1488" stroke="#173040" stroke-opacity="0.18"/>
+    <path d="M1028 390H1488" stroke="#173040" stroke-opacity="0.12"/>
+    <path d="M1028 424H1488" stroke="#173040" stroke-opacity="0.1"/>
+    <text x="1042" y="380" fill="#163142" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="20">统一运行时</text>
+    <text x="1208" y="380" fill="#163142" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="20">在线状态索引</text>
+    <text x="1042" y="414" fill="#355362" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="20">事件驱动后台处理</text>
+    <text x="1208" y="414" fill="#355362" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="20">跨实例实时分发</text>
+  </g>
+</svg>
