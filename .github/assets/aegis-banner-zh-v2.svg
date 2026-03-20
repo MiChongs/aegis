@@ -1,67 +1,84 @@
 <svg width="1600" height="560" viewBox="0 0 1600 560" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="88" y1="44" x2="1486" y2="514" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#F6F0E7"/>
-      <stop offset="0.48" stop-color="#EEE5D8"/>
-      <stop offset="1" stop-color="#E5D8C5"/>
+    <linearGradient id="paper" x1="56" y1="38" x2="1542" y2="522" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8F2E8"/>
+      <stop offset="0.5" stop-color="#EFE4D4"/>
+      <stop offset="1" stop-color="#E4D5C1"/>
     </linearGradient>
-    <linearGradient id="accent" x1="150" y1="80" x2="1300" y2="460" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0F5B78"/>
-      <stop offset="0.52" stop-color="#1F7A6D"/>
-      <stop offset="1" stop-color="#A46A2A"/>
+    <radialGradient id="washA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(282 182) rotate(12) scale(364 164)">
+      <stop stop-color="#5A8DA0" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#5A8DA0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="washB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1270 404) rotate(-7) scale(366 172)">
+      <stop stop-color="#7A9E84" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#7A9E84" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="970" y1="112" x2="1364" y2="334" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4F8368"/>
+      <stop offset="0.55" stop-color="#7C7A49"/>
+      <stop offset="1" stop-color="#9A6935"/>
     </linearGradient>
-    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="34"/>
+    <linearGradient id="panelLight" x1="1008" y1="128" x2="1298" y2="292" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF9F1" stop-opacity="0.78"/>
+      <stop offset="1" stop-color="#FFF9F1" stop-opacity="0.1"/>
+    </linearGradient>
+    <filter id="soft" x="-24%" y="-24%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="32"/>
+    </filter>
+    <filter id="shadow" x="-20%" y="-20%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#7D6951" flood-opacity="0.16"/>
     </filter>
   </defs>
 
-  <rect width="1600" height="560" rx="28" fill="#F5EFE6"/>
-  <rect x="42" y="42" width="1516" height="476" rx="26" fill="url(#bg)" stroke="#1B2D3A" stroke-opacity="0.12"/>
+  <rect width="1600" height="560" rx="28" fill="#EFE8DD"/>
+  <rect x="42" y="32" width="1516" height="496" rx="30" fill="url(#paper)" stroke="#CAB9A2" stroke-opacity="0.56"/>
+  <rect x="82" y="42" width="1436" height="476" rx="24" fill="#F5EEE4" fill-opacity="0.22" stroke="#96876E" stroke-opacity="0.22"/>
 
-  <g opacity="0.22">
-    <path d="M92 110H1508" stroke="#173040" stroke-opacity="0.14"/>
-    <path d="M92 164H1508" stroke="#173040" stroke-opacity="0.08"/>
-    <path d="M92 218H1508" stroke="#173040" stroke-opacity="0.12"/>
-    <path d="M92 272H1508" stroke="#173040" stroke-opacity="0.08"/>
-    <path d="M92 326H1508" stroke="#173040" stroke-opacity="0.12"/>
-    <path d="M92 380H1508" stroke="#173040" stroke-opacity="0.08"/>
-    <path d="M92 434H1508" stroke="#173040" stroke-opacity="0.12"/>
+  <g opacity="0.18">
+    <path d="M82 112H1518" stroke="#355161" stroke-opacity="0.12"/>
+    <path d="M82 176H1518" stroke="#355161" stroke-opacity="0.06"/>
+    <path d="M82 240H1518" stroke="#355161" stroke-opacity="0.08"/>
+    <path d="M82 304H1518" stroke="#355161" stroke-opacity="0.06"/>
+    <path d="M82 368H1518" stroke="#355161" stroke-opacity="0.08"/>
+    <path d="M82 432H1518" stroke="#355161" stroke-opacity="0.06"/>
   </g>
 
-  <g filter="url(#soft)" opacity="0.18">
-    <ellipse cx="310" cy="180" rx="240" ry="88" fill="#1F7A6D"/>
-    <ellipse cx="1184" cy="372" rx="260" ry="104" fill="#0F5B78"/>
-  </g>
-
-  <g>
-    <rect x="96" y="88" width="170" height="34" rx="17" fill="#FFFFFF" fill-opacity="0.5" stroke="#173040" stroke-opacity="0.14"/>
-    <circle cx="118" cy="105" r="5" fill="#145F77"/>
-    <text x="136" y="111" fill="#385363" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="15" letter-spacing="2">公开工程</text>
+  <g filter="url(#soft)">
+    <ellipse cx="282" cy="182" rx="364" ry="164" fill="url(#washA)"/>
+    <ellipse cx="1270" cy="404" rx="366" ry="172" fill="url(#washB)"/>
   </g>
 
   <g>
-    <text x="94" y="220" fill="#162430" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="108" font-weight="700" letter-spacing="6">Aegis</text>
-    <text x="96" y="294" fill="#21485B" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="52" font-weight="700">多租户用户平台</text>
-    <text x="98" y="352" fill="#2B5568" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="30" font-weight="600">高并发 · 强隔离 · 低耦合 · 实时通信</text>
-    <text x="98" y="400" fill="#536A78" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="24">Gin · PostgreSQL · Redis · NATS · Temporal · Coraza</text>
+    <rect x="96" y="86" width="170" height="36" rx="18" fill="#FFFFFF" fill-opacity="0.64" stroke="#355161" stroke-opacity="0.18"/>
+    <circle cx="120" cy="104" r="5" fill="#1B6A85"/>
+    <text x="138" y="110" fill="#3A5664" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="15" letter-spacing="2">公开工程</text>
   </g>
 
-  <g opacity="0.96">
-    <path d="M1048 114L1340 186L1236 312L944 240L1048 114Z" fill="#F2E8D8" fill-opacity="0.24" stroke="url(#accent)" stroke-width="2.2"/>
-    <path d="M1048 114L1194 150L1142 213L996 177L1048 114Z" fill="#FFFFFF" fill-opacity="0.3"/>
-    <path d="M1194 150L1340 186L1288 249L1142 213L1194 150Z" fill="#FFFFFF" fill-opacity="0.18"/>
-    <path d="M996 177L1142 213L1090 276L944 240L996 177Z" fill="#D8CCBA" fill-opacity="0.28"/>
-    <path d="M1142 213L1288 249L1236 312L1090 276L1142 213Z" fill="#FFFFFF" fill-opacity="0.12"/>
-    <path d="M1194 150L1090 276" stroke="#FFFFFF" stroke-opacity="0.2"/>
-    <path d="M996 177L1288 249" stroke="#FFFFFF" stroke-opacity="0.14"/>
+  <g>
+    <text x="96" y="226" fill="#182838" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="112" font-weight="700" letter-spacing="4">Aegis</text>
+    <text x="98" y="300" fill="#274B5E" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="54" font-weight="700">多租户用户平台</text>
+    <text x="100" y="360" fill="#315C6F" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="30" font-weight="600">高并发 · 强隔离 · 低耦合 · 实时通信</text>
+    <text x="100" y="408" fill="#5D6F79" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="24">Gin · PostgreSQL · Redis · NATS · Temporal · Coraza</text>
+  </g>
 
-    <rect x="1022" y="350" width="450" height="94" rx="14" fill="#F8F4EC" fill-opacity="0.36"/>
-    <path d="M1050 381H1444" stroke="#173040" stroke-opacity="0.14"/>
-    <path d="M1050 415H1444" stroke="#173040" stroke-opacity="0.1"/>
-    <path d="M1240 362V432" stroke="#173040" stroke-opacity="0.08"/>
-    <text x="1070" y="376" fill="#163142" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19" font-weight="600">统一运行时</text>
-    <text x="1266" y="376" fill="#163142" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19" font-weight="600">在线状态索引</text>
-    <text x="1070" y="410" fill="#355362" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19">事件驱动后台处理</text>
-    <text x="1266" y="410" fill="#355362" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19">跨实例实时分发</text>
+  <g filter="url(#shadow)">
+    <path d="M1044 110L1372 190L1252 336L924 256L1044 110Z" fill="#F0E5D4" fill-opacity="0.4" stroke="url(#accent)" stroke-width="2.4"/>
+    <path d="M1044 110L1208 150L1148 222L986 182L1044 110Z" fill="url(#panelLight)"/>
+    <path d="M1208 150L1372 190L1312 262L1148 222L1208 150Z" fill="#FFF8EF" fill-opacity="0.24"/>
+    <path d="M986 182L1148 222L1090 294L924 256L986 182Z" fill="#D7C9B5" fill-opacity="0.34"/>
+    <path d="M1148 222L1312 262L1252 336L1090 294L1148 222Z" fill="#FFF7EA" fill-opacity="0.16"/>
+    <path d="M1208 150L1090 294" stroke="#FFFFFF" stroke-opacity="0.28"/>
+    <path d="M986 182L1312 262" stroke="#FFFFFF" stroke-opacity="0.18"/>
+  </g>
+
+  <g>
+    <rect x="1016" y="352" width="454" height="98" rx="20" fill="#F8F2E9" fill-opacity="0.54" stroke="#A5977E" stroke-opacity="0.18"/>
+    <path d="M1046 386H1440" stroke="#355161" stroke-opacity="0.14"/>
+    <path d="M1046 420H1440" stroke="#355161" stroke-opacity="0.1"/>
+    <path d="M1244 370V438" stroke="#355161" stroke-opacity="0.08"/>
+    <text x="1066" y="381" fill="#193143" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19" font-weight="600">统一运行时</text>
+    <text x="1268" y="381" fill="#193143" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19" font-weight="600">在线状态索引</text>
+    <text x="1066" y="415" fill="#48606D" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19">事件驱动后台处理</text>
+    <text x="1268" y="415" fill="#48606D" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19">跨实例实时分发</text>
   </g>
 </svg>

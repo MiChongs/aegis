@@ -1,5 +1,5 @@
 <div align="center">
-  <img src=".github/assets/aegis-banner-ja.svg" alt="Aegis Japanese Banner" width="100%" />
+  <img src=".github/assets/aegis-banner-ja-v2.svg" alt="Aegis Japanese Banner" width="100%" />
 </div>
 
 <div align="center">
