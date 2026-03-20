@@ -13,6 +13,7 @@
 [![NATS](https://img.shields.io/badge/NATS-2.x-27AAE1?style=for-the-badge&logo=natsdotio)](https://nats.io/)
 [![Temporal](https://img.shields.io/badge/Temporal-Workflow-111827?style=for-the-badge&logo=temporal)](https://temporal.io/)
 [![Coraza](https://img.shields.io/badge/Coraza-WAF-374151?style=for-the-badge)](https://coraza.io/)
+[![License](https://img.shields.io/badge/License-Proprietary-EA580C?style=for-the-badge)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/MiChongs/aegis/go-ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/MiChongs/aegis/actions/workflows/go-ci.yml)
 
 **Aegis** is a production-oriented, multi-tenant user platform built with Go for high concurrency, clean service boundaries, and realtime-ready delivery.
@@ -334,4 +335,5 @@ Workflow file:
 
 ## License
 
-No open-source license is included by default.
+This project is licensed under the Apache License 2.0.
+See [LICENSE](LICENSE) for the full text.

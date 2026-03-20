@@ -13,6 +13,7 @@
 [![NATS](https://img.shields.io/badge/NATS-2.x-27AAE1?style=for-the-badge&logo=natsdotio)](https://nats.io/)
 [![Temporal](https://img.shields.io/badge/Temporal-Workflow-111827?style=for-the-badge&logo=temporal)](https://temporal.io/)
 [![Coraza](https://img.shields.io/badge/Coraza-WAF-374151?style=for-the-badge)](https://coraza.io/)
+[![许可证](https://img.shields.io/badge/License-Proprietary-EA580C?style=for-the-badge)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/MiChongs/aegis/go-ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/MiChongs/aegis/actions/workflows/go-ci.yml)
 
 **Aegis** 是一个面向生产环境的多租户用户平台，基于 Go 构建，强调高并发、强隔离、低耦合和实时能力。
@@ -334,4 +335,5 @@ GitHub Actions 当前执行：
 
 ## 许可证
 
-仓库当前默认未附带开源许可证。
+本项目采用 Apache License 2.0 许可协议。
+完整文本见 [LICENSE](LICENSE)。

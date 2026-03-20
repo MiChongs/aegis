@@ -13,6 +13,7 @@
 [![NATS](https://img.shields.io/badge/NATS-2.x-27AAE1?style=for-the-badge&logo=natsdotio)](https://nats.io/)
 [![Temporal](https://img.shields.io/badge/Temporal-Workflow-111827?style=for-the-badge&logo=temporal)](https://temporal.io/)
 [![Coraza](https://img.shields.io/badge/Coraza-WAF-374151?style=for-the-badge)](https://coraza.io/)
+[![License](https://img.shields.io/badge/License-Proprietary-EA580C?style=for-the-badge)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/MiChongs/aegis/go-ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/MiChongs/aegis/actions/workflows/go-ci.yml)
 
 **Aegis** は、高並列、強いテナント分離、低結合なサービス設計、リアルタイム対応を重視した、本番運用向けのマルチテナントユーザープラットフォームです。
@@ -334,4 +335,5 @@ GitHub Actions では以下を実行します。
 
 ## ライセンス
 
-デフォルトではオープンソースライセンスを含んでいません。
+本プロジェクトは Apache License 2.0 の下で公開されています。
+全文は [LICENSE](LICENSE) を参照してください。
