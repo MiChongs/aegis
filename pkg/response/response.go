@@ -58,11 +58,14 @@ func wantsHTML(c *gin.Context) bool {
 }
 
 func sanitizeMessage(httpStatus int, fallback string) string {
+	fallback = strings.TrimSpace(fallback)
+
 	switch httpStatus {
-	case http.StatusUnauthorized:
-		return "访问请求未获授权"
-	case http.StatusForbidden:
-		return "当前请求已被拦截"
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict, http.StatusUnprocessableEntity:
+		if fallback != "" {
+			return fallback
+		}
+		return "请求未能完成"
 	case http.StatusTooManyRequests:
 		return "请求过于频繁，请稍后再试"
 	case http.StatusNotFound:
@@ -76,7 +79,7 @@ func sanitizeMessage(httpStatus int, fallback string) string {
 	case http.StatusInternalServerError:
 		return "服务暂时不可用"
 	default:
-		if strings.TrimSpace(fallback) == "" {
+		if fallback == "" {
 			return "请求未能完成"
 		}
 		return fallback

@@ -119,7 +119,15 @@ func NewAPIApp(ctx context.Context) (*APIApp, error) {
 		postgres.Close()
 		return nil, err
 	}
-	router := httptransport.NewRouter(authService, adminService, userService, signInService, pointsService, notificationService, appService, siteService, versionService, roleApplicationService, emailService, paymentService, workflowService, storageService, firewall, locationService, realtimeService)
+	router, err := httptransport.NewRouter(authService, adminService, userService, signInService, pointsService, notificationService, appService, siteService, versionService, roleApplicationService, emailService, paymentService, workflowService, storageService, firewall, locationService, realtimeService)
+	if err != nil {
+		realtimeService.Close(context.Background())
+		temporalClient.Close()
+		natsConn.Close()
+		_ = redisClient.Close()
+		postgres.Close()
+		return nil, err
+	}
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),

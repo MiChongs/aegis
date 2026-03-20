@@ -31,6 +31,16 @@ func main() {
 				panic(err)
 			}
 			return
+		case "openapi":
+			if err := bootstrap.RunExportOpenAPI(ctx, os.Args[2:]); err != nil {
+				panic(err)
+			}
+			return
+		case "postman":
+			if err := bootstrap.RunExportPostman(ctx, os.Args[2:]); err != nil {
+				panic(err)
+			}
+			return
 		}
 	}
 

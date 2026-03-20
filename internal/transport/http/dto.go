@@ -4,13 +4,18 @@ import (
 	appdomain "aegis/internal/domain/app"
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/response"
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
+	"github.com/go-playground/validator/v10"
 )
 
 type PasswordLoginRequest struct {
@@ -607,7 +612,113 @@ type AdminSiteUserRequest struct {
 }
 
 func bind(c *gin.Context, target any) error {
-	return c.ShouldBind(target)
+	rawBody, hasRawBody := snapshotRequestBody(c)
+	if err := c.ShouldBind(target); err != nil {
+		if fallbackErr := bindRawJSONFallback(c, target, rawBody, hasRawBody); fallbackErr == nil {
+			return nil
+		}
+		return normalizeBindError(err)
+	}
+	return nil
+}
+
+func snapshotRequestBody(c *gin.Context) ([]byte, bool) {
+	if c == nil || c.Request == nil || c.Request.Body == nil || c.Request.Body == http.NoBody {
+		return nil, false
+	}
+	if strings.Contains(strings.ToLower(c.ContentType()), "multipart/form-data") {
+		return nil, false
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return nil, false
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	return body, true
+}
+
+func bindRawJSONFallback(c *gin.Context, target any, rawBody []byte, hasRawBody bool) error {
+	if !hasRawBody || len(bytes.TrimSpace(rawBody)) == 0 || !shouldFallbackToJSONBinding(c, rawBody) {
+		return errors.New("skip raw json fallback")
+	}
+	return binding.JSON.BindBody(rawBody, target)
+}
+
+func shouldFallbackToJSONBinding(c *gin.Context, rawBody []byte) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	switch c.Request.Method {
+	case http.MethodGet, http.MethodHead:
+		return false
+	}
+
+	trimmed := bytes.TrimSpace(rawBody)
+	if len(trimmed) == 0 {
+		return false
+	}
+	if trimmed[0] != '{' && trimmed[0] != '[' {
+		return false
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(c.ContentType()))
+	if contentType == "" {
+		return true
+	}
+	if strings.Contains(contentType, "json") || strings.Contains(contentType, "text/plain") {
+		return true
+	}
+	return false
+}
+
+func normalizeBindError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, io.EOF) {
+		return errors.New("请求体不能为空")
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return errors.New("请求参数格式错误")
+	}
+
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return errors.New("请求参数格式错误")
+	}
+
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		return errors.New("请求参数类型错误")
+	}
+
+	var numErr *strconv.NumError
+	if errors.As(err, &numErr) {
+		return errors.New("请求参数格式错误")
+	}
+
+	var validationErrs validator.ValidationErrors
+	if errors.As(err, &validationErrs) {
+		for _, item := range validationErrs {
+			if item.Tag() == "required" {
+				return errors.New("缺少必要的请求参数")
+			}
+		}
+		return errors.New("请求参数校验失败")
+	}
+
+	var invalidValidationErr *validator.InvalidValidationError
+	if errors.As(err, &invalidValidationErr) {
+		return errors.New("请求参数校验失败")
+	}
+
+	if strings.Contains(strings.ToLower(err.Error()), "cannot parse") {
+		return errors.New("请求参数格式错误")
+	}
+
+	return errors.New("请求参数错误")
 }
 
 func (h *Handler) writeError(c *gin.Context, err error) {

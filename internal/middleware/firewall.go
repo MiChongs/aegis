@@ -3,6 +3,7 @@ package middleware
 import (
 	"aegis/internal/config"
 	"aegis/pkg/response"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -274,18 +275,18 @@ func (f *Firewall) inspectRequest(c *gin.Context, clientIP string) (*corazatypes
 	}
 
 	if tx.IsRequestBodyAccessible() && c.Request.Body != nil && c.Request.Body != http.NoBody {
-		interrupted, _, err := tx.ReadRequestBodyFrom(c.Request.Body)
+		body, err := f.snapshotRequestBody(c.Request)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot request body: %w", err)
+		}
+		interrupted, _, err := tx.ReadRequestBodyFrom(bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("read request body: %w", err)
 		}
 		if interrupted != nil {
 			return interrupted, nil
 		}
-		reader, err := tx.RequestBodyReader()
-		if err != nil {
-			return nil, fmt.Errorf("restore request body: %w", err)
-		}
-		c.Request.Body = io.NopCloser(io.MultiReader(reader, c.Request.Body))
+		c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	}
 
 	interrupted, err := tx.ProcessRequestBody()
@@ -293,6 +294,39 @@ func (f *Firewall) inspectRequest(c *gin.Context, clientIP string) (*corazatypes
 		return nil, fmt.Errorf("process request body: %w", err)
 	}
 	return interrupted, nil
+}
+
+func (f *Firewall) snapshotRequestBody(req *http.Request) ([]byte, error) {
+	if req == nil || req.Body == nil || req.Body == http.NoBody {
+		return nil, nil
+	}
+
+	limit := int64(0)
+	if f != nil && f.cfg.RequestBodyLimit > 0 {
+		limit = int64(f.cfg.RequestBodyLimit)
+	}
+
+	var (
+		body []byte
+		err  error
+	)
+	if limit > 0 {
+		body, err = io.ReadAll(io.LimitReader(req.Body, limit+1))
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(body)) > limit {
+			return nil, fmt.Errorf("request body exceeds configured limit")
+		}
+	} else {
+		body, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	return body, nil
 }
 
 func (f *Firewall) rateLimit(c *gin.Context, ip string) (bool, int64) {

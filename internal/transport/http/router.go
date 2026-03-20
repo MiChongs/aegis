@@ -11,6 +11,7 @@ import (
 	"aegis/pkg/response"
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -41,7 +42,7 @@ func NewHandler(auth *service.AuthService, admin *service.AdminService, user *se
 	return &Handler{auth: auth, admin: admin, user: user, signin: signin, points: points, notifications: notifications, app: app, site: site, version: version, roleApp: roleApp, email: email, payment: payment, workflow: workflow, storage: storage, realtime: realtime}
 }
 
-func NewRouter(authService *service.AuthService, adminService *service.AdminService, userService *service.UserService, signInService *service.SignInService, pointsService *service.PointsService, notificationService *service.NotificationService, appService *service.AppService, siteService *service.SiteService, versionService *service.VersionService, roleApplicationService *service.RoleApplicationService, emailService *service.EmailService, paymentService *service.PaymentService, workflowService *service.WorkflowService, storageService *service.StorageService, firewall *middleware.Firewall, locationService *service.LocationService, realtimeService *service.RealtimeService) *gin.Engine {
+func NewRouter(authService *service.AuthService, adminService *service.AdminService, userService *service.UserService, signInService *service.SignInService, pointsService *service.PointsService, notificationService *service.NotificationService, appService *service.AppService, siteService *service.SiteService, versionService *service.VersionService, roleApplicationService *service.RoleApplicationService, emailService *service.EmailService, paymentService *service.PaymentService, workflowService *service.WorkflowService, storageService *service.StorageService, firewall *middleware.Firewall, locationService *service.LocationService, realtimeService *service.RealtimeService) (*gin.Engine, error) {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
 	router.Use(middleware.RequestID(), middleware.Recovery(), gin.Logger(), firewall.Handler(), middleware.AppEncryption(appService), middleware.Location(locationService))
@@ -410,7 +411,11 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		adminSystem.GET("/online/apps/:appid/users", h.AdminAppOnlineUsers)
 	}
 
-	return router
+	if err := RegisterDocsRoutes(router, DefaultDocsOptions()); err != nil {
+		return nil, fmt.Errorf("register docs routes: %w", err)
+	}
+
+	return router, nil
 }
 
 func (h *Handler) Healthz(c *gin.Context) {

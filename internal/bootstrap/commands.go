@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,7 +17,9 @@ import (
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	"aegis/internal/service"
+	httptransport "aegis/internal/transport/http"
 	pkglogger "aegis/pkg/logger"
+	"github.com/gin-gonic/gin"
 )
 
 func RunMigrations(ctx context.Context) error {
@@ -98,6 +101,81 @@ func RunSyncLegacyBatch(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("sync batch completed: requested=%d synced=%d failed=%d lastUserId=%d\n", result.Requested, result.Synced, result.Failed, result.LastUserID)
+	return nil
+}
+
+func RunExportOpenAPI(_ context.Context, args []string) error {
+	outputPath := ""
+	if len(args) > 0 {
+		outputPath = strings.TrimSpace(args[0])
+	}
+
+	gin.SetMode(gin.ReleaseMode)
+	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	spec, err := httptransport.BuildOpenAPISpec(router, httptransport.DefaultDocsOptions())
+	if err != nil {
+		return err
+	}
+	content, err := json.MarshalIndent(spec, "", "  ")
+	if err != nil {
+		return err
+	}
+	content = append(content, '\n')
+
+	if outputPath == "" {
+		_, err = os.Stdout.Write(content)
+		return err
+	}
+	if err := os.WriteFile(outputPath, content, 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("exported openapi spec: %s\n", outputPath)
+	return nil
+}
+
+func RunExportPostman(_ context.Context, args []string) error {
+	outputPath := "docs/postman/aegis-api-cn.postman_collection.json"
+	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
+		outputPath = strings.TrimSpace(args[0])
+	}
+
+	gin.SetMode(gin.ReleaseMode)
+	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	spec, err := httptransport.BuildOpenAPISpec(router, httptransport.DefaultDocsOptions())
+	if err != nil {
+		return err
+	}
+	collection, err := httptransport.BuildPostmanCollection(spec, httptransport.DefaultPostmanOptions())
+	if err != nil {
+		return err
+	}
+	content, err := json.MarshalIndent(collection, "", "  ")
+	if err != nil {
+		return err
+	}
+	content = append(content, '\n')
+
+	if outputPath == "" {
+		_, err = os.Stdout.Write(content)
+		return err
+	}
+	if dir := filepath.Dir(outputPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(outputPath, content, 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("exported postman collection: %s\n", outputPath)
 	return nil
 }
 
