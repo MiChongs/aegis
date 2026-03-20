@@ -46,16 +46,22 @@
     <text x="98" y="400" fill="#536A78" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="24">Gin · PostgreSQL · Redis · NATS · Temporal · Coraza</text>
   </g>
 
-  <g opacity="0.94">
-    <path d="M1058 114L1336 190L1228 322L952 248L1058 114Z" stroke="url(#accent)" stroke-width="2.2"/>
-    <path d="M1110 148L1234 182L1184 240L1062 206L1110 148Z" fill="#FFFFFF" fill-opacity="0.28"/>
-    <path d="M1238 184L1304 202L1254 262L1186 244L1238 184Z" fill="#FFFFFF" fill-opacity="0.18"/>
-    <path d="M1028 356H1488" stroke="#173040" stroke-opacity="0.18"/>
-    <path d="M1028 390H1488" stroke="#173040" stroke-opacity="0.12"/>
-    <path d="M1028 424H1488" stroke="#173040" stroke-opacity="0.1"/>
-    <text x="1042" y="380" fill="#163142" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="20">统一运行时</text>
-    <text x="1208" y="380" fill="#163142" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="20">在线状态索引</text>
-    <text x="1042" y="414" fill="#355362" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="20">事件驱动后台处理</text>
-    <text x="1208" y="414" fill="#355362" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="20">跨实例实时分发</text>
+  <g opacity="0.96">
+    <path d="M1048 114L1340 186L1236 312L944 240L1048 114Z" fill="#F2E8D8" fill-opacity="0.24" stroke="url(#accent)" stroke-width="2.2"/>
+    <path d="M1048 114L1194 150L1142 213L996 177L1048 114Z" fill="#FFFFFF" fill-opacity="0.3"/>
+    <path d="M1194 150L1340 186L1288 249L1142 213L1194 150Z" fill="#FFFFFF" fill-opacity="0.18"/>
+    <path d="M996 177L1142 213L1090 276L944 240L996 177Z" fill="#D8CCBA" fill-opacity="0.28"/>
+    <path d="M1142 213L1288 249L1236 312L1090 276L1142 213Z" fill="#FFFFFF" fill-opacity="0.12"/>
+    <path d="M1194 150L1090 276" stroke="#FFFFFF" stroke-opacity="0.2"/>
+    <path d="M996 177L1288 249" stroke="#FFFFFF" stroke-opacity="0.14"/>
+
+    <rect x="1022" y="350" width="450" height="94" rx="14" fill="#F8F4EC" fill-opacity="0.36"/>
+    <path d="M1050 381H1444" stroke="#173040" stroke-opacity="0.14"/>
+    <path d="M1050 415H1444" stroke="#173040" stroke-opacity="0.1"/>
+    <path d="M1240 362V432" stroke="#173040" stroke-opacity="0.08"/>
+    <text x="1070" y="376" fill="#163142" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19" font-weight="600">统一运行时</text>
+    <text x="1266" y="376" fill="#163142" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19" font-weight="600">在线状态索引</text>
+    <text x="1070" y="410" fill="#355362" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19">事件驱动后台处理</text>
+    <text x="1266" y="410" fill="#355362" font-family="'Microsoft YaHei UI', 'PingFang SC', sans-serif" font-size="19">跨实例实时分发</text>
   </g>
 </svg>
