@@ -14,89 +14,47 @@
 [![Temporal](https://img.shields.io/badge/Temporal-Workflow-111827?style=for-the-badge&logo=temporal)](https://temporal.io/)
 [![Coraza](https://img.shields.io/badge/Coraza-WAF-374151?style=for-the-badge)](https://coraza.io/)
 [![CI](https://img.shields.io/github/actions/workflow/status/MiChongs/aegis/go-ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/MiChongs/aegis/actions/workflows/go-ci.yml)
-[![Issues](https://img.shields.io/github/issues/MiChongs/aegis?style=for-the-badge)](https://github.com/MiChongs/aegis/issues)
-[![Stars](https://img.shields.io/github/stars/MiChongs/aegis?style=for-the-badge)](https://github.com/MiChongs/aegis/stargazers)
 
-**Aegis** is a high-performance, multi-tenant user platform rebuilt in Go for **high concurrency**, **strict isolation**, **low coupling**, and **operational clarity**.
+**Aegis** is a production-oriented, multi-tenant user platform built with Go for high concurrency, strong tenant isolation, and low-coupling service design.
 
 </div>
 
-## At A Glance
+## Overview
 
-| Dimension | Description |
-| --- | --- |
-| Positioning | Successor backend for a legacy Node.js multi-application user system |
-| Runtime Model | Unified Go entrypoint carrying `API + Worker` |
-| Isolation Model | Tenant boundary enforced by `appid` |
-| Core Datastores | PostgreSQL + Redis |
-| Event Backbone | NATS |
-| Workflow Engine | Temporal |
-| Realtime | Gorilla WebSocket + Redis presence + NATS fan-out |
-| Security | JWT, transport encryption, Coraza WAF, layered admin model |
-| Goal | Replace synchronous bottlenecks with cache-first, async, horizontally scalable flows |
+Aegis provides a modern backend foundation for user systems that need:
 
-## Contents
+- multi-application isolation based on `appid`
+- fast HTTP APIs with a clear service boundary
+- cache-first session and presence management
+- event-driven background processing
+- realtime delivery for user-facing events
+- modern workflow orchestration and edge security
 
-- [Why Aegis](#why-aegis)
-- [System Vision](#system-vision)
-- [Architecture](#architecture)
-- [Technology Stack](#technology-stack)
-- [Core Modules](#core-modules)
-- [Realtime and Presence](#realtime-and-presence)
-- [Security Model](#security-model)
-- [Deployment](#deployment)
-- [Repository Layout](#repository-layout)
-- [API Surface](#api-surface)
-- [Current Migration Status](#current-migration-status)
-- [Engineering Principles](#engineering-principles)
-- [Development](#development)
+## Highlights
 
-## Why Aegis
-
-The original system suffered from structural issues that were not going to be solved by incremental patching alone:
-
-- synchronous request chains were too long
-- sign-in related queries became hot-path bottlenecks
-- token validation paths were previously tied to database access
-- business logic and infrastructure concerns were coupled together
-- horizontal scaling was difficult for realtime and background tasks
-
-Aegis is the corrective architecture:
-
-- PostgreSQL takes over as the primary transactional datastore
-- Redis handles session, cache, unread-count and presence workloads
-- NATS removes direct coupling between producers and consumers
-- Temporal orchestrates workflow automation cleanly
-- Gin provides a lean, fast HTTP runtime
-- the realtime path is independent from business services
-
-## System Vision
-
-> Build a backend that is fast under load, predictable in failure, explicit in boundaries, and maintainable as the platform grows.
-
-The project is designed around five invariants:
-
-1. `appid` is a first-class tenant boundary.
-2. Hot paths should avoid blocking on heavyweight database work whenever a cache or event path is sufficient.
-3. Business services should depend on interfaces, not transport-specific implementations.
-4. Background and realtime concerns should be asynchronous by default.
-5. Runtime behavior should be transparent enough to diagnose without tearing the system apart.
+- Unified runtime for `API + Worker`
+- Multi-tenant application model
+- JWT + Redis session architecture
+- Realtime hub with Redis presence and NATS fan-out
+- PostgreSQL as the primary transactional store
+- Temporal workflow integration
+- Coraza WAF and app-level transport encryption
+- Windows one-click deployment and Docker-based local startup
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Client[Web App / Mobile App / Admin]
-    API[Gin HTTP API]
-    Mid[Auth / WAF / Encryption / Location Middleware]
+    Client[Web / Mobile / Admin]
+    API[Gin API]
+    Mid[Auth / WAF / Encryption / Location]
     Services[Domain Services]
     Realtime[Realtime Hub]
-    Worker[Unified Worker Runtime]
+    Worker[Worker Runtime]
     PG[(PostgreSQL)]
     Redis[(Redis)]
     NATS[(NATS)]
     Temporal[(Temporal)]
-    OSS[Storage Providers]
 
     Client --> API
     API --> Mid
@@ -105,7 +63,6 @@ flowchart LR
     Services --> Redis
     Services --> NATS
     Services --> Temporal
-    Services --> OSS
     Services --> Realtime
     Realtime --> Redis
     Realtime --> NATS
@@ -115,102 +72,75 @@ flowchart LR
     Worker --> Temporal
 ```
 
-### Request Strategy
-
-| Request Type | Strategy |
-| --- | --- |
-| Authentication | JWT parse + Redis session validation |
-| App public content | PostgreSQL + Redis cache |
-| User overview | cache-first aggregation |
-| Notification unread count | Redis short TTL cache |
-| Realtime push | local hub + NATS fan-out |
-| Online user stats | Redis TTL indexes |
-| Workflow automation | Temporal |
-| Background audits | NATS -> worker |
-
-## Technology Stack
+## Tech Stack
 
 | Layer | Technology |
 | --- | --- |
 | Language | Go 1.26 |
-| HTTP Framework | Gin |
+| HTTP | Gin |
 | Database | PostgreSQL |
 | Cache / Session / Presence | Redis |
-| Event Bus | NATS |
-| Workflow Engine | Temporal |
+| Messaging | NATS |
+| Workflow | Temporal |
 | Realtime | Gorilla WebSocket |
-| WAF | Coraza |
+| Security | JWT, Coraza WAF, transport encryption |
 | Logging | Zap |
 | Deployment | Docker Compose, Windows scripts |
 
 ## Core Modules
 
-### Platform Core
+### Identity and Access
 
-- unified bootstrap for API and worker runtime
-- PostgreSQL migration-driven schema management
-- explicit service / repository / transport separation
-- multi-app isolation model centered on `appid`
+- password-based authentication
+- OAuth2 provider integration
+- JWT issuance and validation
+- session indexing and revocation
+- layered administrator model
 
-### Authentication
+### User Platform
 
-- password registration and password login
-- OAuth2 entrypoints and provider abstraction
-- JWT issuance and Redis-backed session validation
-- multi-device session indexing and revocation
-
-### User Domain
-
-- `my` view aggregation
 - profile and settings management
-- sign-in state, sign-in execution and history export
-- login audits and session audits
+- sign-in status and history
+- notification center
+- session auditing
+- points and ranking services
 
-### Notification Center
-
-- notification list
-- unread count caching
-- mark-as-read and bulk-read
-- clear / delete operations
-- async notification state push to realtime clients
-
-### Realtime Layer
+### Realtime
 
 - global WebSocket endpoint
-- Redis presence repository
-- online user and connection indexing
-- cross-instance targeted fan-out over NATS
-- app-scoped and user-scoped delivery
+- user-targeted event delivery
+- Redis-backed online presence
+- NATS-based cross-instance fan-out
+- admin online statistics endpoints
 
-### Security and Edge Protection
+### Security
 
 - Coraza WAF middleware
-- app transport encryption middleware
-- standardized error responses
-- non-leaking error pages and blocked-request behavior
+- application transport encryption
+- sanitized public error responses
+- cache-aware token validation path
 
-### Operations and Workflow
+### Runtime
 
-- Temporal workflow runtime
+- unified server bootstrap
 - worker event processing
-- async location refresh
-- Windows one-click deployment
+- Temporal workflow runtime
+- storage manager foundation
+- async location service path
 
-## Realtime and Presence
+## Realtime Model
 
-The realtime implementation is intentionally decoupled from notification, user and admin business services.
-
-### Design
+The realtime layer is intentionally kept independent from business services.
 
 | Concern | Implementation |
 | --- | --- |
-| Local connection lifecycle | in-process realtime hub |
-| Cross-instance fan-out | NATS subjects |
-| Presence state | Redis TTL-backed indexes |
-| Tenant scoping | `appid + userId` |
-| Business integration | interface-based publisher, not direct socket dependency |
+| Connection lifecycle | in-process hub |
+| Presence | Redis TTL indexes |
+| Cross-node delivery | NATS subjects |
+| Tenant scope | `appid + userId` |
+| Business integration | interface-based publisher |
 
-### Current Endpoints
+### Realtime Endpoints
 
 ```text
 GET /api/ws
@@ -219,58 +149,39 @@ GET /api/admin/system/online/apps/:appid
 GET /api/admin/system/online/apps/:appid/users
 ```
 
-### Delivery Model
+## Quick Start
 
-- targeted event subjects are constructed per `appid` and `userId`
-- clients are managed locally per application and per user
-- cross-node delivery is fan-out only, not business-persistent messaging
-- notification mutation paths emit lightweight realtime refresh events
-
-## Security Model
-
-### Defense Layers
-
-| Layer | Purpose |
-| --- | --- |
-| JWT + Redis session | fast token validity and forced revocation |
-| Coraza WAF | inbound request filtering |
-| App transport encryption | tenant-specific secure payload transport |
-| Admin layering | super admin and scoped admin access control |
-| Sanitized response pages | no sensitive backend leakage |
-
-### Principles
-
-- no MySQL dependency in token validation path
-- no business-sensitive detail exposure in public-facing error responses
-- no direct business-to-socket coupling
-- no mandatory synchronous side effects on hot user requests when async is viable
-
-## Deployment
-
-### Local Quick Start
+### 1. Prepare configuration
 
 ```bash
 cp .env.example .env
+```
+
+### 2. Start dependencies
+
+```bash
 docker compose -f deploy/docker/docker-compose.yml up -d
+```
+
+### 3. Run migrations
+
+```bash
 go run ./cmd/server migrate
+```
+
+### 4. Start the unified runtime
+
+```bash
 go run ./cmd/server
 ```
 
-### Windows One-Click
+## Windows Deployment
 
 ```powershell
 .\deploy\windows\one-click-deploy.cmd
 ```
 
-### What the Windows deployment does
-
-- prepares environment files
-- starts PostgreSQL, Redis, NATS and Temporal
-- builds the Go service
-- runs PostgreSQL migrations
-- launches the unified Go runtime
-
-### Useful Commands
+Useful commands:
 
 ```powershell
 .\deploy\windows\start-stack.cmd
@@ -278,149 +189,46 @@ go run ./cmd/server
 .\deploy\windows\status.cmd
 ```
 
-## Repository Layout
+## Project Layout
 
 ```text
 cmd/
-  api/                standalone API entry
-  server/             unified API + worker entry
-  worker/             standalone worker entry
+  api/                API entry
+  server/             unified runtime entry
+  worker/             worker entry
 internal/
-  bootstrap/          dependency assembly and runtime boot
-  config/             environment-driven config
+  bootstrap/          application assembly
+  config/             configuration loading
   db/                 postgres / redis / nats / temporal clients
   domain/             domain contracts and types
   event/              subjects and publisher
-  middleware/         auth, waf, encryption, location, request id
+  middleware/         auth, waf, encryption, location
   repository/         postgres, redis, legacy adapters
   service/            business orchestration
   transport/http/     gin handlers and router
 deploy/
   docker/             docker runtime assets
-  windows/            local one-click deployment scripts
-migrations/postgres/  schema evolution scripts
+  windows/            deployment scripts
+migrations/postgres/  schema migrations
 pkg/
   errors/             typed application errors
-  logger/             structured logger bootstrap
-  response/           unified response envelope
+  logger/             logger bootstrap
+  response/           response envelope
   tracing/            tracing integration
-sql/
-  queries/            sqlc-oriented query definitions
 ```
-
-## API Surface
-
-### Authentication
-
-```text
-POST /api/auth/register/password
-POST /api/auth/login/password
-POST /api/auth/oauth2/auth-url
-GET  /api/auth/oauth2/callback
-POST /api/auth/oauth2/mobile-login
-POST /api/auth/refresh
-POST /api/auth/logout
-POST /api/auth/password/verify
-POST /api/auth/password/change
-```
-
-### User
-
-```text
-GET    /api/user/banner
-GET    /api/user/notice
-POST   /api/user/my
-GET    /api/user/profile
-PUT    /api/user/profile
-GET    /api/user/settings
-PUT    /api/user/settings
-GET    /api/user/security
-GET    /api/user/sessions
-DELETE /api/user/sessions/:tokenHash
-POST   /api/user/sessions/revoke-all
-GET    /api/user/signin/status
-GET    /api/user/signin/history
-POST   /api/user/signin
-```
-
-### Notifications
-
-```text
-GET    /api/notifications
-GET    /api/notifications/unread-count
-POST   /api/notifications/read
-POST   /api/notifications/read-batch
-POST   /api/notifications/read-all
-DELETE /api/notifications/:notificationId
-POST   /api/notifications/clear
-```
-
-### Admin
-
-```text
-GET  /api/admin/apps
-GET  /api/admin/apps/:appid
-GET  /api/admin/apps/:appid/stats
-GET  /api/admin/apps/:appid/users
-POST /api/admin/apps/:appid/notifications/bulk
-GET  /api/admin/system/roles
-GET  /api/admin/system/admins
-POST /api/admin/system/admins
-PUT  /api/admin/system/admins/:adminId/status
-PUT  /api/admin/system/admins/:adminId/access
-```
-
-## Current Migration Status
-
-### Already Re-Architected
-
-- core authentication flow
-- app public configuration
-- banner and notice content
-- user overview, profile and settings
-- sign-in status and sign-in history
-- points overview and ranking logic
-- notification center
-- global WebSocket and online user management
-- firewall and app encryption middleware
-- storage manager foundation
-- Temporal workflow foundation
-
-### Migration Character
-
-This repository is an active migration target, not a line-by-line rewrite of the Node project.
-The goal is architectural replacement, not legacy preservation for its own sake.
-
-## Engineering Principles
-
-- low coupling over convenience coupling
-- asynchronous execution over hot-path blocking
-- cache-first where correctness permits
-- explicit tenant boundaries
-- interface-first integration points
-- horizontally scalable realtime behavior
-- operational observability over hidden magic
 
 ## Development
 
-### Local Validation
+### Local validation
 
 ```bash
 go mod tidy
 go test ./...
 ```
 
-### Recommended Flow
-
-```bash
-git checkout -b feature/your-topic
-go test ./...
-git commit -m "feat: your change"
-```
-
 ### CI
 
-GitHub Actions currently runs:
+GitHub Actions runs:
 
 - dependency resolution
 - `go test ./...`
@@ -429,11 +237,11 @@ Workflow file:
 
 - [`.github/workflows/go-ci.yml`](.github/workflows/go-ci.yml)
 
-## Notes
+## Security Notes
 
-- `.env` is intentionally excluded from version control
-- production secrets must stay in environment variables or secret stores
-- if this repository will accept public contribution, add an explicit license first
+- Do not commit `.env` or production secrets.
+- Keep sensitive configuration in environment variables or secret stores.
+- Public-facing responses should not expose internal runtime details.
 
 ## License
 
