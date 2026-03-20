@@ -335,5 +335,6 @@ Workflow file:
 
 ## License
 
-This project is licensed under the Apache License 2.0.
+This project is released under a proprietary license.
+Commercial use and redistribution are prohibited without prior written permission.
 See [LICENSE](LICENSE) for the full text.

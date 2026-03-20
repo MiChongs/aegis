@@ -335,5 +335,6 @@ GitHub Actions 当前执行：
 
 ## 许可证
 
-本项目采用 Apache License 2.0 许可协议。
+本项目采用专有许可证授权。
+未经书面许可，禁止商用和二次分发。
 完整文本见 [LICENSE](LICENSE)。
