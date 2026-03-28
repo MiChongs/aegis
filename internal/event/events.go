@@ -13,7 +13,18 @@ const (
 	SubjectUserProfileRefresh      = "user.profile.cache.refresh.requested"
 	SubjectUserSignedIn            = "user.signin.completed"
 	SubjectUserAutoSignSync        = "user.autosign.sync.requested"
+	SubjectFirewallBlocked         = "firewall.blocked"
 	SubjectRealtimeUserPrefix      = "realtime.user"
+
+	// 系统公告事件
+	SubjectSystemAnnouncement = "system.announcement"
+
+	// 抽奖系统事件
+	SubjectLotteryDrawCompleted    = "lottery.draw.completed"
+	SubjectLotterySeedCommitted    = "lottery.seed.committed"
+	SubjectLotterySeedRevealed     = "lottery.seed.revealed"
+	SubjectLotteryActivityCreated  = "lottery.activity.created"
+	SubjectLotteryActivityUpdated  = "lottery.activity.updated"
 )
 
 func SubjectRealtimeUser(appID int64, userID int64) string {

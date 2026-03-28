@@ -11,29 +11,62 @@ import (
 	"aegis/internal/config"
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
+	plugindomain "aegis/internal/domain/plugin"
+	securitydomain "aegis/internal/domain/security"
 	userdomain "aegis/internal/domain/user"
 	"aegis/internal/event"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/sync/singleflight"
 )
 
 type AuthService struct {
-	cfg       config.Config
-	log       *zap.Logger
-	pg        *pgrepo.Repository
-	sessions  *redisrepo.SessionRepository
-	publisher *event.Publisher
-	app       *AppService
-	providers map[string]*OAuthProvider
-	http      *http.Client
+	cfg            config.Config
+	log            *zap.Logger
+	pg             *pgrepo.Repository
+	sessions       *redisrepo.SessionRepository
+	publisher      *event.Publisher
+	app            *AppService
+	security       *SecurityService
+	providers      map[string]*OAuthProvider
+	http           *http.Client
+	plugin         *PluginService
+	risk           *RiskService
+	search         *AdminUserSearchService
+	registerFlight singleflight.Group
 }
 
-func NewAuthService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, publisher *event.Publisher, app *AppService) *AuthService {
+type PasswordRegisterInput struct {
+	AppID     int64
+	Account   string
+	Password  string
+	Nickname  string
+	DeviceID  string
+	IP        string
+	UserAgent string
+}
+
+// SetPluginService 注入插件服务
+func (s *AuthService) SetPluginService(plugin *PluginService) {
+	s.plugin = plugin
+}
+
+// SetRiskService 注入风控服务
+func (s *AuthService) SetRiskService(risk *RiskService) {
+	s.risk = risk
+}
+
+func (s *AuthService) SetAdminUserSearchService(search *AdminUserSearchService) {
+	s.search = search
+}
+
+func NewAuthService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, publisher *event.Publisher, app *AppService, security *SecurityService) *AuthService {
 	providers := map[string]*OAuthProvider{}
 	for name, providerCfg := range cfg.OAuth {
 		providers[name] = NewOAuthProvider(providerCfg)
@@ -45,6 +78,7 @@ func NewAuthService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, s
 		sessions:  sessions,
 		publisher: publisher,
 		app:       app,
+		security:  security,
 		providers: providers,
 		http:      &http.Client{Timeout: 8 * time.Second},
 	}
@@ -52,6 +86,32 @@ func NewAuthService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, s
 
 func (s *AuthService) PasswordLogin(ctx context.Context, appID int64, account, password, deviceID, ip, userAgent string) (*authdomain.LoginResult, error) {
 	account = normalizeAccount(account)
+
+	// 风控评估：登录场景
+	if s.risk != nil {
+		riskResult, _ := s.risk.EvaluateRisk(ctx, securitydomain.RiskEvalRequest{
+			Scene: "login", AppID: &appID, IP: ip, DeviceID: deviceID, UserAgent: userAgent,
+			Extra: map[string]any{"account": account},
+		})
+		if riskResult != nil && (riskResult.Action == "block" || riskResult.Action == "ban") {
+			return nil, apperrors.New(40398, http.StatusForbidden, "当前请求被风控拦截，请稍后重试")
+		}
+	}
+
+	// 插件钩子：登录前检查
+	if s.plugin != nil {
+		hookResult := s.plugin.ExecuteHook(ctx, HookAuthPreLogin, map[string]any{
+			"account": account, "appId": appID, "ip": ip, "deviceId": deviceID,
+		}, plugindomain.HookMetadata{IP: ip, UserAgent: userAgent, AppID: &appID})
+		if !hookResult.Allow {
+			msg := hookResult.Message
+			if msg == "" {
+				msg = "插件拒绝了此登录请求"
+			}
+			return nil, apperrors.New(40399, http.StatusForbidden, msg)
+		}
+	}
+
 	if s.app != nil {
 		app, err := s.app.EnsureLoginAllowed(ctx, appID)
 		if err != nil {
@@ -68,51 +128,72 @@ func (s *AuthService) PasswordLogin(ctx context.Context, appID int64, account, p
 	if user == nil {
 		return nil, apperrors.New(40101, http.StatusUnauthorized, "账号或密码错误")
 	}
-	if !user.Enabled {
-		return nil, apperrors.New(40301, http.StatusForbidden, "用户账户已被禁用")
-	}
-	if user.DisabledEndTime != nil && user.DisabledEndTime.After(time.Now()) {
-		return nil, apperrors.New(40302, http.StatusForbidden, "用户账户暂时被冻结")
+	if err := s.ensureUserLoginState(ctx, user); err != nil {
+		return nil, err
 	}
 	if !verifyPassword(user.PasswordHash, password) {
 		_ = s.pg.InsertLoginAudit(ctx, appID, user.ID, "password", "", "", ip, deviceID, userAgent, "failed", map[string]any{"reason": "invalid_password", "account": account})
+		if s.plugin != nil {
+			go s.plugin.ExecuteHook(context.Background(), HookAuthLoginFailed, map[string]any{"account": account, "appId": appID, "ip": ip}, plugindomain.HookMetadata{IP: ip, AppID: &appID})
+		}
 		return nil, apperrors.New(40101, http.StatusUnauthorized, "账号或密码错误")
 	}
-	return s.issueSession(ctx, user, "password", "password", deviceID, ip, userAgent)
+	result, err := s.completeLogin(ctx, user, "password", "password", deviceID, ip, userAgent)
+	if err == nil && s.plugin != nil {
+		uid := user.ID
+		go s.plugin.ExecuteHook(context.Background(), HookAuthSessionIssued, map[string]any{"userId": user.ID, "account": account, "appId": appID}, plugindomain.HookMetadata{IP: ip, AppID: &appID, UserID: &uid})
+	}
+	return result, err
 }
 
-func (s *AuthService) RegisterWithPassword(ctx context.Context, appID int64, account, password, nickname, deviceID, ip, userAgent string) (*authdomain.LoginResult, error) {
-	account = normalizeAccount(account)
-	if err := validateAccount(account); err != nil {
+func (s *AuthService) RegisterWithPassword(ctx context.Context, input PasswordRegisterInput) (*authdomain.LoginResult, error) {
+	input.Account = normalizeAccount(input.Account)
+	if err := validateAccount(input.Account); err != nil {
 		return nil, err
 	}
-	if err := s.validatePasswordPolicy(ctx, appID, password); err != nil {
+	if err := s.validatePasswordPolicy(ctx, input.AppID, input.Password); err != nil {
 		return nil, err
+	}
+	// 风控评估：注册场景
+	if s.risk != nil {
+		riskResult, _ := s.risk.EvaluateRisk(ctx, securitydomain.RiskEvalRequest{
+			Scene: "register", AppID: &input.AppID, IP: input.IP, DeviceID: input.DeviceID, UserAgent: input.UserAgent,
+			Extra: map[string]any{"account": input.Account},
+		})
+		if riskResult != nil && (riskResult.Action == "block" || riskResult.Action == "ban") {
+			return nil, apperrors.New(40398, http.StatusForbidden, "注册请求被风控拦截")
+		}
 	}
 	if s.app != nil {
-		app, err := s.app.EnsureRegisterAllowed(ctx, appID)
+		app, err := s.app.EnsureRegisterAllowed(ctx, input.AppID)
 		if err != nil {
 			return nil, err
 		}
-		if err := s.validateRegisterPolicy(ctx, app, ip); err != nil {
+		if err := s.validateRegisterPolicy(ctx, app, input.IP); err != nil {
 			return nil, err
 		}
 	}
 
-	existing, err := s.pg.GetUserByAppAndAccount(ctx, appID, account)
+	result, err, _ := s.registerFlight.Do(registerFlightKey(input.AppID, input.Account), func() (any, error) {
+		return s.registerWithPasswordOnce(ctx, input)
+	})
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil {
-		return nil, apperrors.New(40901, http.StatusConflict, "账号已存在")
+	loginResult, _ := result.(*authdomain.LoginResult)
+	if loginResult == nil {
+		return nil, fmt.Errorf("register result is nil")
 	}
+	return loginResult, nil
+}
 
-	passwordAnalysis := AnalyzePasswordStrength(password)
-	passwordHash, err := hashPassword(password)
+func (s *AuthService) registerWithPasswordOnce(ctx context.Context, input PasswordRegisterInput) (*authdomain.LoginResult, error) {
+	passwordAnalysis := AnalyzePasswordStrength(input.Password)
+	passwordHash, err := hashPassword(input.Password)
 	if err != nil {
 		return nil, err
 	}
-	user, err := s.pg.CreateUser(ctx, appID, account, passwordHash)
+	user, err := s.pg.CreateUser(ctx, input.AppID, input.Account, passwordHash)
 	if err != nil {
 		if err == pgrepo.ErrAccountAlreadyExists {
 			return nil, apperrors.New(40901, http.StatusConflict, "账号已存在")
@@ -122,17 +203,22 @@ func (s *AuthService) RegisterWithPassword(ctx context.Context, appID int64, acc
 
 	_ = s.pg.UpsertUserProfile(ctx, userdomain.Profile{
 		UserID:   user.ID,
-		Nickname: strings.TrimSpace(nickname),
+		Nickname: strings.TrimSpace(input.Nickname),
 		Extra: map[string]any{
-			"register_ip":              ip,
-			"register_user_agent":      userAgent,
+			"register_ip":              input.IP,
+			"register_user_agent":      input.UserAgent,
 			"password_changed_at":      time.Now().UTC().Format(time.RFC3339),
 			"password_strength_score":  passwordAnalysis.Score,
 			"password_change_required": false,
 		},
 	})
-	_ = s.pg.InsertLoginAudit(ctx, appID, user.ID, "register", "password", "", ip, deviceID, userAgent, "success", map[string]any{"account": account})
-	return s.issueSession(ctx, user, "password", "password", deviceID, ip, userAgent)
+	_ = s.pg.InsertLoginAudit(ctx, input.AppID, user.ID, "register", "password", "", input.IP, input.DeviceID, input.UserAgent, "success", map[string]any{"account": input.Account})
+	if s.plugin != nil {
+		uid := user.ID
+		go s.plugin.ExecuteHook(context.Background(), HookUserRegistered, map[string]any{"userId": user.ID, "account": input.Account, "appId": input.AppID}, plugindomain.HookMetadata{IP: input.IP, AppID: &input.AppID, UserID: &uid})
+	}
+	s.syncAdminUserSearch(input.AppID, user.ID)
+	return s.completeLogin(ctx, user, "password", "password", input.DeviceID, input.IP, input.UserAgent)
 }
 
 func (s *AuthService) BuildOAuthAuthURL(ctx context.Context, provider string, appID int64, deviceID string) (string, error) {
@@ -372,7 +458,114 @@ func (s *AuthService) loginWithOAuthProfile(ctx context.Context, appID int64, pr
 	if err := s.pg.UpsertOAuthBinding(ctx, appID, user.ID, profile); err != nil {
 		return nil, err
 	}
-	return s.issueSession(ctx, user, profile.Provider, loginType, deviceID, ip, userAgent)
+	if err := s.ensureUserLoginState(ctx, user); err != nil {
+		return nil, err
+	}
+	s.syncAdminUserSearch(appID, user.ID)
+	return s.completeLogin(ctx, user, profile.Provider, loginType, deviceID, ip, userAgent)
+}
+
+func (s *AuthService) syncAdminUserSearch(appID int64, userID int64) {
+	if s.search == nil || appID <= 0 || userID <= 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.search.IndexUser(ctx, appID, userID); err != nil {
+			s.log.Warn("sync admin user search failed", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.Error(err))
+		}
+	}()
+}
+
+func (s *AuthService) completeLogin(ctx context.Context, user *userdomain.User, provider, loginType, deviceID, ip, userAgent string) (*authdomain.LoginResult, error) {
+	if err := s.ensureUserLoginState(ctx, user); err != nil {
+		return nil, err
+	}
+	if s.security != nil {
+		challenge, err := s.security.MaybeCreateSecondFactorChallenge(ctx, user, provider, loginType, deviceID, ip, userAgent)
+		if err != nil {
+			return nil, err
+		}
+		if challenge != nil {
+			if s.plugin != nil {
+				uid := user.ID
+				go s.plugin.ExecuteHook(context.Background(), HookAuthMFACreated, map[string]any{"userId": user.ID, "account": user.Account}, plugindomain.HookMetadata{IP: ip, UserID: &uid})
+			}
+			return challenge, nil
+		}
+	}
+	return s.issueSession(ctx, user, provider, loginType, deviceID, ip, userAgent)
+}
+
+func (s *AuthService) VerifySecondFactor(ctx context.Context, challengeID string, code string, recoveryCode string) (*authdomain.LoginResult, error) {
+	if s.security == nil {
+		return nil, apperrors.New(50321, http.StatusServiceUnavailable, "双因子认证模块未启用")
+	}
+	user, challenge, err := s.security.VerifySecondFactorChallenge(ctx, challengeID, code, recoveryCode)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureUserLoginState(ctx, user); err != nil {
+		return nil, err
+	}
+	result, err := s.issueSession(ctx, user, challenge.Provider, challenge.LoginType, challenge.DeviceID, challenge.IP, challenge.UserAgent)
+	if err == nil && s.plugin != nil {
+		uid := user.ID
+		go s.plugin.ExecuteHook(context.Background(), HookAuthMFAVerified, map[string]any{"userId": user.ID, "account": user.Account}, plugindomain.HookMetadata{IP: challenge.IP, UserID: &uid})
+	}
+	return result, err
+}
+
+func (s *AuthService) BeginPasskeyLogin(ctx context.Context, appID int64, deviceID string) (*securitydomain.PasskeyLoginSession, *protocol.CredentialAssertion, error) {
+	if s.security == nil {
+		return nil, nil, apperrors.New(50321, http.StatusServiceUnavailable, "Passkey 模块未启用")
+	}
+	if s.app != nil {
+		app, err := s.app.EnsureLoginAllowed(ctx, appID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := s.validateLoginPolicy(app, deviceID); err != nil {
+			return nil, nil, err
+		}
+	}
+	return s.security.BeginPasskeyLogin(ctx, appID)
+}
+
+func (s *AuthService) VerifyPasskeyLogin(ctx context.Context, appID int64, challengeID string, payload []byte, deviceID, ip, userAgent string) (*authdomain.LoginResult, error) {
+	if s.security == nil {
+		return nil, apperrors.New(50321, http.StatusServiceUnavailable, "Passkey 模块未启用")
+	}
+	user, err := s.security.VerifyPasskeyLogin(ctx, appID, challengeID, payload)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureUserLoginState(ctx, user); err != nil {
+		return nil, err
+	}
+	return s.issueSession(ctx, user, "passkey", "passkey", deviceID, ip, userAgent)
+}
+
+func (s *AuthService) ensureUserLoginState(ctx context.Context, user *userdomain.User) error {
+	if user == nil {
+		return apperrors.New(40103, http.StatusUnauthorized, "会话用户不存在")
+	}
+	if ban, err := s.pg.RefreshUserAccountBanState(ctx, user.AppID, user.ID); err != nil {
+		s.log.Warn("refresh user account ban state failed", zap.Int64("appid", user.AppID), zap.Int64("userId", user.ID), zap.Error(err))
+	} else if ban != nil {
+		if ban.BanType == userdomain.AccountBanTypePermanent {
+			return apperrors.New(40301, http.StatusForbidden, BanMessageFromRecord(ban))
+		}
+		return apperrors.New(40302, http.StatusForbidden, BanMessageFromRecord(ban))
+	}
+	if !user.Enabled {
+		return apperrors.New(40301, http.StatusForbidden, "用户账户已被禁用")
+	}
+	if user.DisabledEndTime != nil && user.DisabledEndTime.After(time.Now()) {
+		return apperrors.New(40302, http.StatusForbidden, "用户账户暂时被冻结")
+	}
+	return nil
 }
 
 func (s *AuthService) issueSession(ctx context.Context, user *userdomain.User, provider, loginType, deviceID, ip, userAgent string) (*authdomain.LoginResult, error) {
@@ -549,6 +742,10 @@ func hashPassword(password string) (string, error) {
 
 func normalizeAccount(account string) string {
 	return strings.TrimSpace(account)
+}
+
+func registerFlightKey(appID int64, account string) string {
+	return fmt.Sprintf("%d:%s", appID, account)
 }
 
 func validateAccount(account string) error {

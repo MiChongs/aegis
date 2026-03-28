@@ -11,6 +11,7 @@ import (
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	"aegis/internal/service"
+	"aegis/pkg/crashlog"
 	pkglogger "aegis/pkg/logger"
 	"aegis/pkg/tracing"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,6 +25,7 @@ import (
 type WorkerApp struct {
 	Config          config.Config
 	Logger          *zap.Logger
+	CrashLog        *crashlog.Logger
 	Postgres        *pgxpool.Pool
 	Redis           *redislib.Client
 	NATSConn        *nats.Conn
@@ -32,19 +34,23 @@ type WorkerApp struct {
 	TemporalWorker  temporalworker.Worker
 	AutoSign        *service.AutoSignService
 	Events          *service.WorkerEventService
+	FirewallLogs    *service.FirewallLogService
+	Location        *service.LocationService
+	IPBan           *service.IPBanService
 	ShutdownTracing func(context.Context) error
 }
 
 const (
-	workerQueueAuthLoginAudit   = "aegis-worker-auth-login-audit"
-	workerQueueSessionAudit     = "aegis-worker-session-audit"
-	workerQueueUserMyAccessed   = "aegis-worker-user-my-accessed"
-	workerQueueUserProfileCache = "aegis-worker-user-profile-cache"
-	workerQueueUserSignedIn     = "aegis-worker-user-signed-in"
-	workerQueueAutoSignSync     = "aegis-worker-auto-sign-sync"
+	workerQueueAuthLoginAudit    = "aegis-worker-auth-login-audit"
+	workerQueueSessionAudit      = "aegis-worker-session-audit"
+	workerQueueUserMyAccessed    = "aegis-worker-user-my-accessed"
+	workerQueueUserProfileCache  = "aegis-worker-user-profile-cache"
+	workerQueueUserSignedIn      = "aegis-worker-user-signed-in"
+	workerQueueAutoSignSync      = "aegis-worker-auto-sign-sync"
+	workerQueueFirewallBlocked   = "aegis-worker-firewall-blocked"
 )
 
-func NewWorkerApp(ctx context.Context) (*WorkerApp, error) {
+func NewWorkerApp(ctx context.Context, cl *crashlog.Logger) (*WorkerApp, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, err
@@ -83,11 +89,16 @@ func NewWorkerApp(ctx context.Context) (*WorkerApp, error) {
 	signInService := service.NewSignInService(log, pg, sessions, publisher)
 	autoSignService := service.NewAutoSignService(cfg.AutoSign, log, pg, schedules, signInService)
 	eventService := service.NewWorkerEventService(log, pg, sessions)
+	locationService := service.NewLocationService(log, redisClient, cfg.Redis.KeyPrefix, cfg.GeoIP)
+	ipBanRepo := redisrepo.NewIPBanRepository(redisClient, cfg.Redis.KeyPrefix)
+	ipBanService := service.NewIPBanService(log, pg, ipBanRepo, locationService)
+	firewallLogService := service.NewFirewallLogService(log, pg, locationService, ipBanService)
 	tw := temporalworker.New(temporalClient, cfg.Temporal.TaskQueue, temporalworker.Options{})
 	service.RegisterTemporalWorkflowEngine(tw, log, pg)
 	return &WorkerApp{
 		Config:          cfg,
 		Logger:          log,
+		CrashLog:        cl,
 		Postgres:        postgres,
 		Redis:           redisClient,
 		NATSConn:        natsConn,
@@ -96,6 +107,9 @@ func NewWorkerApp(ctx context.Context) (*WorkerApp, error) {
 		TemporalWorker:  tw,
 		AutoSign:        autoSignService,
 		Events:          eventService,
+		FirewallLogs:    firewallLogService,
+		Location:        locationService,
+		IPBan:           ipBanService,
 		ShutdownTracing: shutdownTracing,
 	}, nil
 }
@@ -154,6 +168,23 @@ func (w *WorkerApp) Run(ctx context.Context) error {
 		return err
 	}
 
+	_, err = w.JetStream.QueueSubscribe(event.SubjectFirewallBlocked, workerQueueFirewallBlocked, func(msg *nats.Msg) {
+		w.handleJSONMessage(msg, w.FirewallLogs.HandleFirewallBlocked)
+	}, nats.ManualAck())
+	if err != nil {
+		return err
+	}
+
+	// 同步 IP 封禁到 Redis 并启动定时清理
+	if w.IPBan != nil {
+		if err := w.IPBan.SyncBansToRedis(ctx); err != nil {
+			w.Logger.Warn("worker sync ip bans to redis failed", zap.Error(err))
+		}
+		SafeGo(w.Logger, w.CrashLog, "worker.ip_ban_cleanup", true, func() {
+			w.runIPBanCleanupLoop(ctx)
+		})
+	}
+
 	if w.Config.AutoSign.Enabled && w.AutoSign != nil {
 		if scheduled, rebuildErr := w.AutoSign.RebuildSchedule(ctx); rebuildErr != nil {
 			w.Logger.Warn("auto sign schedule rebuild failed", zap.Error(rebuildErr))
@@ -161,7 +192,9 @@ func (w *WorkerApp) Run(ctx context.Context) error {
 			w.Logger.Info("auto sign schedule rebuilt", zap.Int("scheduled", scheduled))
 		}
 
-		go w.runAutoSignLoop(ctx)
+		SafeGo(w.Logger, w.CrashLog, "worker.auto_sign", true, func() {
+			w.runAutoSignLoop(ctx)
+		})
 	}
 	<-ctx.Done()
 	return nil
@@ -189,6 +222,9 @@ func (w *WorkerApp) handleJSONMessage(msg *nats.Msg, handler func(context.Contex
 }
 
 func (w *WorkerApp) Close(ctx context.Context) {
+	if w.Location != nil {
+		w.Location.Close()
+	}
 	if w.Postgres != nil {
 		w.Postgres.Close()
 	}
@@ -239,6 +275,25 @@ func (w *WorkerApp) runAutoSignLoop(ctx context.Context) {
 				continue
 			}
 			w.Logger.Info("auto sign periodic rebuild completed", zap.Int("scheduled", scheduled))
+		}
+	}
+}
+
+func (w *WorkerApp) runIPBanCleanupLoop(ctx context.Context) {
+	tick := time.NewTicker(5 * time.Minute)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			expired, err := w.IPBan.CleanupExpired(ctx)
+			if err != nil {
+				w.Logger.Warn("ip ban cleanup failed", zap.Error(err))
+			} else if expired > 0 {
+				w.Logger.Info("ip ban cleanup completed", zap.Int64("expired", expired))
+			}
 		}
 	}
 }

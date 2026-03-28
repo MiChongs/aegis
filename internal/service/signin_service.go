@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"net/http"
 	"time"
@@ -13,6 +14,7 @@ import (
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 type SignInService struct {
@@ -21,6 +23,7 @@ type SignInService struct {
 	sessions  *redisrepo.SessionRepository
 	publisher *event.Publisher
 	location  *time.Location
+	inFlight  singleflight.Group
 }
 
 func NewSignInService(log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, publisher *event.Publisher) *SignInService {
@@ -155,12 +158,26 @@ func (s *SignInService) signInInternal(ctx context.Context, userID int64, appID 
 	now := time.Now().In(s.location)
 	today := now.Format("2006-01-02")
 
+	result, err, _ := s.inFlight.Do(signInFlightKey(session.UserID, session.AppID, today), func() (any, error) {
+		return s.signInOnce(context.WithoutCancel(ctx), session, user, now, today, source, deviceInfo, ipAddress, location)
+	})
+	if err != nil {
+		return nil, err
+	}
+	signInResult, _ := result.(*userdomain.SignInResult)
+	if signInResult == nil {
+		return nil, fmt.Errorf("sign in result is nil")
+	}
+	return signInResult, nil
+}
+
+func (s *SignInService) signInOnce(ctx context.Context, session *authdomain.Session, user *userdomain.User, now time.Time, today string, source, deviceInfo, ipAddress, location string) (*userdomain.SignInResult, error) {
 	stats, err := s.pg.GetSignStats(ctx, session.UserID, session.AppID)
 	if err != nil {
 		return nil, err
 	}
 	if stats != nil && stats.LastSignDate == today {
-		return nil, apperrors.New(40902, http.StatusConflict, "今日已签到")
+		return s.loadExistingSignInResult(ctx, session.UserID, session.AppID, today, stats)
 	}
 
 	totalSignIns := int64(0)
@@ -184,7 +201,7 @@ func (s *SignInService) signInInternal(ctx context.Context, userID int64, appID 
 	if err != nil {
 		switch err {
 		case pgrepo.ErrAlreadySigned:
-			return nil, apperrors.New(40902, http.StatusConflict, "今日已签到")
+			return s.loadExistingSignInResult(ctx, session.UserID, session.AppID, today, nil)
 		case pgrepo.ErrUserNotFound:
 			return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
 		default:
@@ -212,6 +229,44 @@ func (s *SignInService) signInInternal(ctx context.Context, userID int64, appID 
 		zap.Int64("experience_reward", result.Record.ExperienceReward),
 	)
 	return result, nil
+}
+
+func (s *SignInService) loadExistingSignInResult(ctx context.Context, userID int64, appID int64, signDate string, stats *userdomain.SignStats) (*userdomain.SignInResult, error) {
+	record, err := s.pg.GetDailySignByDate(ctx, userID, appID, signDate)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		return nil, apperrors.New(40902, http.StatusConflict, "今日已签到")
+	}
+	if stats == nil {
+		stats, err = s.pg.GetSignStats(ctx, userID, appID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	totalSignIns := int64(1)
+	if stats != nil && stats.TotalSignDays > 0 {
+		totalSignIns = stats.TotalSignDays
+	}
+
+	return &userdomain.SignInResult{
+		Record: *record,
+		Reward: userdomain.SignInReward{
+			IntegralReward:   record.IntegralReward,
+			ExperienceReward: record.ExperienceReward,
+			RewardMultiplier: record.RewardMultiplier,
+			BonusType:        record.BonusType,
+			BonusDescription: record.BonusDescription,
+		},
+		TotalSignIns:  totalSignIns,
+		AlreadySigned: true,
+	}, nil
+}
+
+func signInFlightKey(userID int64, appID int64, signDate string) string {
+	return fmt.Sprintf("signin:%d:%d:%s", appID, userID, signDate)
 }
 
 func (s *SignInService) requireActiveUser(ctx context.Context, session *authdomain.Session) (*userdomain.User, error) {

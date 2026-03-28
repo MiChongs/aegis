@@ -104,6 +104,53 @@ func (r *Repository) GetPaymentOrderByOrderNo(ctx context.Context, orderNo strin
 	return scanPaymentOrder(r.pool.QueryRow(ctx, query, orderNo))
 }
 
+func (r *Repository) GetPaymentOrderByOrderNoForUser(ctx context.Context, appID int64, userID int64, orderNo string) (*paymentdomain.Order, error) {
+	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), paid_at, expire_at, created_at, updated_at FROM payment_orders WHERE appid = $1 AND user_id = $2 AND order_no = $3 LIMIT 1`
+	return scanPaymentOrder(r.pool.QueryRow(ctx, query, appID, userID, orderNo))
+}
+
+func (r *Repository) ListPaymentOrdersByUser(ctx context.Context, appID int64, userID int64, status string, page int, limit int) ([]paymentdomain.Order, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	offset := (page - 1) * limit
+
+	args := []any{appID, userID}
+	countQuery := `SELECT COUNT(*) FROM payment_orders WHERE appid = $1 AND user_id = $2`
+	listQuery := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), paid_at, expire_at, created_at, updated_at FROM payment_orders WHERE appid = $1 AND user_id = $2`
+	if status = strings.TrimSpace(status); status != "" {
+		args = append(args, status)
+		countQuery += fmt.Sprintf(" AND status = $%d", len(args))
+		listQuery += fmt.Sprintf(" AND status = $%d", len(args))
+	}
+
+	var total int64
+	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, limit, offset)
+	listQuery += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
+	rows, err := r.pool.Query(ctx, listQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]paymentdomain.Order, 0, limit)
+	for rows.Next() {
+		item, err := scanPaymentOrder(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, *item)
+	}
+	return items, total, rows.Err()
+}
+
 func (r *Repository) MarkPaymentOrderPaid(ctx context.Context, orderID int64, providerOrderNo string, tradeStatus string, rawCallback map[string]any) error {
 	raw, _ := json.Marshal(rawCallback)
 	_, err := r.pool.Exec(ctx, `UPDATE payment_orders SET provider_order_no = $2, status = 'paid', notify_status = $3, raw_callback = $4, paid_at = COALESCE(paid_at, NOW()), updated_at = NOW() WHERE id = $1`, orderID, nullableString(providerOrderNo), tradeStatus, raw)

@@ -181,6 +181,7 @@ func (h *Handler) StorageUpload(c *gin.Context) {
 	if raw := strings.TrimSpace(c.PostForm("metadata")); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &metadata)
 	}
+	uid := session.UserID
 	result, err := h.storage.Upload(c.Request.Context(), session, storagedomain.UploadInput{
 		ConfigName:    strings.TrimSpace(c.PostForm("config_name")),
 		ObjectKey:     strings.TrimSpace(c.PostForm("object_key")),
@@ -190,6 +191,8 @@ func (h *Handler) StorageUpload(c *gin.Context) {
 		ContentLength: file.Size,
 		Metadata:      metadata,
 		Content:       opened,
+		UploadedBy:    &uid,
+		UploaderType:  "user",
 	})
 	if err != nil {
 		h.writeError(c, err)

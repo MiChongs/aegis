@@ -83,6 +83,11 @@ func (r *Repository) GetAppByID(ctx context.Context, appID int64) (*appdomain.Ap
 	return scanApp(r.pool.QueryRow(ctx, query, appID))
 }
 
+func (r *Repository) GetAppByKey(ctx context.Context, appKey string) (*appdomain.App, error) {
+	query := `SELECT id, name, COALESCE(app_key, ''), status, COALESCE(disabled_reason, ''), register_status, COALESCE(disabled_register_reason, ''), login_status, COALESCE(disabled_login_reason, ''), COALESCE(settings, '{}'::jsonb), created_at, updated_at FROM apps WHERE app_key = $1 LIMIT 1`
+	return scanApp(r.pool.QueryRow(ctx, query, appKey))
+}
+
 func (r *Repository) ListApps(ctx context.Context) ([]appdomain.App, error) {
 	query := `SELECT id, name, COALESCE(app_key, ''), status, COALESCE(disabled_reason, ''), register_status, COALESCE(disabled_register_reason, ''), login_status, COALESCE(disabled_login_reason, ''), COALESCE(settings, '{}'::jsonb), created_at, updated_at FROM apps ORDER BY id ASC`
 	rows, err := r.pool.Query(ctx, query)
@@ -103,41 +108,71 @@ func (r *Repository) ListApps(ctx context.Context) ([]appdomain.App, error) {
 }
 
 func (r *Repository) UpsertApp(ctx context.Context, item appdomain.App) (*appdomain.App, error) {
-	query := `INSERT INTO apps (id, name, app_key, status, disabled_reason, register_status, disabled_register_reason, login_status, disabled_login_reason, settings, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-ON CONFLICT (id) DO UPDATE SET
-	name = EXCLUDED.name,
-	app_key = EXCLUDED.app_key,
-	status = EXCLUDED.status,
-	disabled_reason = EXCLUDED.disabled_reason,
-	register_status = EXCLUDED.register_status,
-	disabled_register_reason = EXCLUDED.disabled_register_reason,
-	login_status = EXCLUDED.login_status,
-	disabled_login_reason = EXCLUDED.disabled_login_reason,
-	settings = EXCLUDED.settings,
-	updated_at = NOW()
-RETURNING id, name, COALESCE(app_key, ''), status, COALESCE(disabled_reason, ''), register_status, COALESCE(disabled_register_reason, ''), login_status, COALESCE(disabled_login_reason, ''), COALESCE(settings, '{}'::jsonb), created_at, updated_at`
+	const returnCols = `id, name, COALESCE(app_key, ''), status, COALESCE(disabled_reason, ''), register_status, COALESCE(disabled_register_reason, ''), login_status, COALESCE(disabled_login_reason, ''), COALESCE(settings, '{}'::jsonb), created_at, updated_at`
 	settingsJSON, _ := json.Marshal(item.Settings)
-	return scanApp(r.pool.QueryRow(ctx, query, item.ID, item.Name, nullableString(item.AppKey), item.Status, nullableString(item.DisabledReason), item.RegisterStatus, nullableString(item.DisabledRegisterReason), item.LoginStatus, nullableString(item.DisabledLoginReason), settingsJSON))
+
+	if item.ID == 0 {
+		// 新建：不传 id（BIGSERIAL 自动生成），不传 app_key（DEFAULT gen_random_uuid()）
+		return scanApp(r.pool.QueryRow(ctx,
+			`INSERT INTO apps (name, status, disabled_reason, register_status, disabled_register_reason, login_status, disabled_login_reason, settings, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+			 RETURNING `+returnCols,
+			item.Name, item.Status, nullableString(item.DisabledReason), item.RegisterStatus, nullableString(item.DisabledRegisterReason), item.LoginStatus, nullableString(item.DisabledLoginReason), settingsJSON))
+	}
+
+	// 更新：按 id 更新，不修改 app_key（不可更改）
+	return scanApp(r.pool.QueryRow(ctx,
+		`UPDATE apps SET
+			name = $2, status = $3, disabled_reason = $4,
+			register_status = $5, disabled_register_reason = $6,
+			login_status = $7, disabled_login_reason = $8,
+			settings = $9, updated_at = NOW()
+		 WHERE id = $1
+		 RETURNING `+returnCols,
+		item.ID, item.Name, item.Status, nullableString(item.DisabledReason), item.RegisterStatus, nullableString(item.DisabledRegisterReason), item.LoginStatus, nullableString(item.DisabledLoginReason), settingsJSON))
+}
+
+// UpdateAppSettings 仅更新应用的 settings JSONB 字段
+func (r *Repository) UpdateAppSettings(ctx context.Context, appID int64, settings map[string]any) (*appdomain.App, error) {
+	settingsJSON, _ := json.Marshal(settings)
+	return scanApp(r.pool.QueryRow(ctx,
+		`UPDATE apps SET settings = $2, updated_at = NOW()
+		 WHERE id = $1
+		 RETURNING id, name, COALESCE(app_key, ''), status, COALESCE(disabled_reason, ''), register_status, COALESCE(disabled_register_reason, ''), login_status, COALESCE(disabled_login_reason, ''), COALESCE(settings, '{}'::jsonb), created_at, updated_at`,
+		appID, settingsJSON))
 }
 
 func (r *Repository) GetAppStats(ctx context.Context, appID int64) (*appdomain.Stats, error) {
-	query := `SELECT
-	$1 AS appid,
-	(SELECT COUNT(*) FROM users WHERE appid = $1) AS total_users,
-	(SELECT COUNT(*) FROM users WHERE appid = $1 AND enabled = true) AS enabled_users,
-	(SELECT COUNT(*) FROM users WHERE appid = $1 AND enabled = false) AS disabled_users,
-	(SELECT COUNT(*) FROM banners WHERE appid = $1) AS banner_count,
-	(SELECT COUNT(*) FROM notices WHERE appid = $1) AS notice_count,
-	(SELECT COUNT(*) FROM oauth_bindings WHERE appid = $1) AS oauth_bind_count,
-	(SELECT COUNT(*) FROM users WHERE appid = $1 AND created_at >= date_trunc('day', NOW())) AS new_users_today,
-	(SELECT COUNT(*) FROM users WHERE appid = $1 AND created_at >= date_trunc('day', NOW()) - INTERVAL '6 day') AS new_users_last_7_days,
-	(SELECT COUNT(*) FROM users WHERE appid = $1 AND created_at >= date_trunc('day', NOW()) - INTERVAL '29 day') AS new_users_last_30_days,
-	(SELECT COUNT(*) FROM login_audit_logs WHERE appid = $1 AND status = 'success' AND created_at >= date_trunc('day', NOW())) AS login_success_today,
-	(SELECT COUNT(*) FROM login_audit_logs WHERE appid = $1 AND status <> 'success' AND created_at >= date_trunc('day', NOW())) AS login_failure_today`
-	var item appdomain.Stats
+	today := "date_trunc('day', NOW())"
+	query := fmt.Sprintf(`
+WITH
+  user_stats AS (
+    SELECT
+      COUNT(*) AS total,
+      COUNT(*) FILTER (WHERE enabled = true) AS enabled,
+      COUNT(*) FILTER (WHERE enabled = false) AS disabled,
+      COUNT(*) FILTER (WHERE created_at >= %s) AS new_today,
+      COUNT(*) FILTER (WHERE created_at >= %s - INTERVAL '6 day') AS new_7d,
+      COUNT(*) FILTER (WHERE created_at >= %s - INTERVAL '29 day') AS new_30d
+    FROM users WHERE appid = $1
+  ),
+  login_stats AS (
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'success') AS ok,
+      COUNT(*) FILTER (WHERE status <> 'success') AS fail
+    FROM login_audit_logs WHERE appid = $1 AND created_at >= %s
+  )
+SELECT
+  u.total, u.enabled, u.disabled,
+  (SELECT COUNT(*) FROM banners WHERE appid = $1),
+  (SELECT COUNT(*) FROM notices WHERE appid = $1),
+  (SELECT COUNT(*) FROM oauth_bindings WHERE appid = $1),
+  u.new_today, u.new_7d, u.new_30d,
+  l.ok, l.fail
+FROM user_stats u, login_stats l`, today, today, today, today)
+
+	item := appdomain.Stats{AppID: appID}
 	if err := r.pool.QueryRow(ctx, query, appID).Scan(
-		&item.AppID,
 		&item.TotalUsers,
 		&item.EnabledUsers,
 		&item.DisabledUsers,
@@ -225,6 +260,50 @@ func (r *Repository) GetAppRegionStats(ctx context.Context, appID int64, query a
 		Items: make([]appdomain.RegionStatItem, 0, limit),
 	}
 
+	if regionType == "country" {
+		sql := `SELECT
+	COALESCE(
+		NULLIF(BTRIM(p.extra->>'register_country'), ''),
+		NULLIF(BTRIM(p.extra->>'country'), ''),
+		CASE
+			WHEN NULLIF(BTRIM(p.extra->>'register_province'), '') IS NOT NULL THEN '中国'
+			ELSE '未知'
+		END
+	) AS country,
+	COALESCE(
+		NULLIF(UPPER(BTRIM(p.extra->>'register_country_code')), ''),
+		NULLIF(UPPER(BTRIM(p.extra->>'countryCode')), ''),
+		CASE
+			WHEN NULLIF(BTRIM(p.extra->>'register_province'), '') IS NOT NULL THEN 'CN'
+			ELSE ''
+		END
+	) AS country_code,
+	COUNT(*) AS count
+FROM users u
+JOIN user_profiles p ON p.user_id = u.id
+WHERE u.appid = $1
+GROUP BY country, country_code
+ORDER BY count DESC, country ASC
+LIMIT $2`
+		rows, err := r.pool.Query(ctx, sql, appID, limit)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var item appdomain.RegionStatItem
+			if err := rows.Scan(&item.Region, &item.Code, &item.Count); err != nil {
+				return nil, err
+			}
+			result.Total += item.Count
+			result.Items = append(result.Items, item)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+
 	if regionType == "city" {
 		sql := `SELECT
 	COALESCE(NULLIF(BTRIM(p.extra->>'register_province'), ''), '未知') AS province,
@@ -246,6 +325,46 @@ LIMIT $2`
 			if err := rows.Scan(&item.Parent, &item.Region, &item.Count); err != nil {
 				return nil, err
 			}
+			item.ParentPath = item.Parent
+			result.Total += item.Count
+			result.Items = append(result.Items, item)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+
+	if regionType == "district" || regionType == "county" {
+		sql := `SELECT
+	COALESCE(NULLIF(BTRIM(p.extra->>'register_province'), ''), NULLIF(BTRIM(p.extra->>'province'), ''), '未知') AS province,
+	COALESCE(NULLIF(BTRIM(p.extra->>'register_city'), ''), NULLIF(BTRIM(p.extra->>'city'), ''), '未知') AS city,
+	COALESCE(
+		NULLIF(BTRIM(p.extra->>'register_district'), ''),
+		NULLIF(BTRIM(p.extra->>'district'), ''),
+		NULLIF(BTRIM(p.extra->>'register_county'), ''),
+		NULLIF(BTRIM(p.extra->>'county'), ''),
+		'未知'
+	) AS district,
+	COUNT(*) AS count
+FROM users u
+JOIN user_profiles p ON p.user_id = u.id
+WHERE u.appid = $1
+GROUP BY province, city, district
+ORDER BY count DESC, province ASC, city ASC, district ASC
+LIMIT $2`
+		rows, err := r.pool.Query(ctx, sql, appID, limit)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var province string
+			var item appdomain.RegionStatItem
+			if err := rows.Scan(&province, &item.Parent, &item.Region, &item.Count); err != nil {
+				return nil, err
+			}
+			item.ParentPath = province + "/" + item.Parent
 			result.Total += item.Count
 			result.Items = append(result.Items, item)
 		}
@@ -285,12 +404,12 @@ LIMIT $2`
 
 func (r *Repository) GetAppAuthSourceStats(ctx context.Context, appID int64) (*appdomain.AuthSourceStats, error) {
 	query := `SELECT
-	$1 AS appid,
 	(SELECT COUNT(*) FROM users WHERE appid = $1) AS total_users,
 	(SELECT COUNT(*) FROM users WHERE appid = $1 AND COALESCE(password_hash, '') <> '') AS password_users,
 	(SELECT COUNT(DISTINCT user_id) FROM oauth_bindings WHERE appid = $1) AS oauth_bound_users`
 	var result appdomain.AuthSourceStats
-	if err := r.pool.QueryRow(ctx, query, appID).Scan(&result.AppID, &result.TotalUsers, &result.PasswordUsers, &result.OAuthBoundUsers); err != nil {
+	result.AppID = appID
+	if err := r.pool.QueryRow(ctx, query, appID).Scan(&result.TotalUsers, &result.PasswordUsers, &result.OAuthBoundUsers); err != nil {
 		return nil, err
 	}
 
@@ -878,17 +997,27 @@ func (r *Repository) GetUserByID(ctx context.Context, userID int64) (*userdomain
 }
 
 func (r *Repository) GetUserProfileByUserID(ctx context.Context, userID int64) (*userdomain.Profile, error) {
-	query := `SELECT user_id, COALESCE(nickname, ''), COALESCE(avatar, ''), COALESCE(email, ''), COALESCE(extra, '{}'::jsonb), updated_at FROM user_profiles WHERE user_id = $1 LIMIT 1`
+	query := `SELECT user_id, COALESCE(nickname, ''), COALESCE(avatar, ''), COALESCE(email, ''), COALESCE(phone, ''), birthday, COALESCE(bio, ''), COALESCE(contacts, '[]'::jsonb), COALESCE(extra, '{}'::jsonb), updated_at FROM user_profiles WHERE user_id = $1 LIMIT 1`
 	var profile userdomain.Profile
-	var extraBytes []byte
-	if err := r.pool.QueryRow(ctx, query, userID).Scan(&profile.UserID, &profile.Nickname, &profile.Avatar, &profile.Email, &extraBytes, &profile.UpdatedAt); err != nil {
+	var contactsBytes, extraBytes []byte
+	if err := r.pool.QueryRow(ctx, query, userID).Scan(&profile.UserID, &profile.Nickname, &profile.Avatar, &profile.Email, &profile.Phone, &profile.Birthday, &profile.Bio, &contactsBytes, &extraBytes, &profile.UpdatedAt); err != nil {
 		return nil, normalizeNotFound(err)
 	}
+	_ = json.Unmarshal(contactsBytes, &profile.Contacts)
 	_ = json.Unmarshal(extraBytes, &profile.Extra)
 	return &profile, nil
 }
 
 func (r *Repository) ListAdminUsersByApp(ctx context.Context, appID int64, keyword string, enabled *bool, page int, limit int) ([]userdomain.AdminUserView, int64, error) {
+	return r.ListAdminUsersByAppQuery(ctx, appID, userdomain.AdminUserQuery{
+		Keyword: keyword,
+		Enabled: enabled,
+		Page:    page,
+		Limit:   limit,
+	}, page, limit)
+}
+
+func (r *Repository) ListAdminUsersByAppQuery(ctx context.Context, appID int64, adminQuery userdomain.AdminUserQuery, page int, limit int) ([]userdomain.AdminUserView, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -896,29 +1025,13 @@ func (r *Repository) ListAdminUsersByApp(ctx context.Context, appID int64, keywo
 		limit = 20
 	}
 	offset := (page - 1) * limit
-	keyword = strings.TrimSpace(keyword)
+	adminQuery.Keyword = strings.TrimSpace(adminQuery.Keyword)
 
-	baseQuery := ` FROM users u
-LEFT JOIN user_profiles p ON p.user_id = u.id
-WHERE u.appid = $1`
-	args := []any{appID}
+	if isAdminUserFastPath(adminQuery) {
+		return r.listAdminUsersByAppFast(ctx, appID, adminQuery.Enabled, page, limit, offset)
+	}
 
-	if keyword != "" {
-		placeholder := len(args) + 1
-		like := "%" + keyword + "%"
-		baseQuery += fmt.Sprintf(`
-  AND (
-    u.account ILIKE $%d
-    OR COALESCE(p.nickname, '') ILIKE $%d
-    OR COALESCE(p.email, '') ILIKE $%d
-    OR CAST(u.id AS TEXT) ILIKE $%d
-  )`, placeholder, placeholder, placeholder, placeholder)
-		args = append(args, like)
-	}
-	if enabled != nil {
-		baseQuery += fmt.Sprintf(" AND u.enabled = $%d", len(args)+1)
-		args = append(args, *enabled)
-	}
+	baseQuery, args := buildAdminUserListBaseQuery(appID, adminQuery)
 
 	var total int64
 	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+baseQuery, args...).Scan(&total); err != nil {
@@ -939,10 +1052,75 @@ WHERE u.appid = $1`
 	COALESCE(p.nickname, ''),
 	COALESCE(p.avatar, ''),
 	COALESCE(p.email, ''),
+	COALESCE(p.phone, ''),
 	COALESCE(p.extra, '{}'::jsonb)` + baseQuery +
 		fmt.Sprintf(`
 ORDER BY u.created_at DESC, u.id DESC
 LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
+	args = append(args, limit, offset)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]userdomain.AdminUserView, 0, limit)
+	for rows.Next() {
+		item, err := scanAdminUser(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, *item)
+	}
+	return items, total, rows.Err()
+}
+
+func (r *Repository) listAdminUsersByAppFast(ctx context.Context, appID int64, enabled *bool, page int, limit int, offset int) ([]userdomain.AdminUserView, int64, error) {
+	countQuery := `SELECT COUNT(*) FROM users WHERE appid = $1`
+	countArgs := []any{appID}
+	if enabled != nil {
+		countQuery += " AND enabled = $2"
+		countArgs = append(countArgs, *enabled)
+	}
+
+	var total int64
+	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := `WITH page_users AS (
+    SELECT id, appid, account, integral, experience, enabled, disabled_end_time, vip_expire_at, created_at, updated_at
+    FROM users
+    WHERE appid = $1`
+	args := []any{appID}
+	if enabled != nil {
+		query += fmt.Sprintf(" AND enabled = $%d", len(args)+1)
+		args = append(args, *enabled)
+	}
+	query += fmt.Sprintf(`
+    ORDER BY created_at DESC, id DESC
+    LIMIT $%d OFFSET $%d
+)
+SELECT
+    u.id,
+    u.appid,
+    u.account,
+    u.integral,
+    u.experience,
+    u.enabled,
+    u.disabled_end_time,
+    u.vip_expire_at,
+    u.created_at,
+    u.updated_at,
+    COALESCE(p.nickname, ''),
+    COALESCE(p.avatar, ''),
+    COALESCE(p.email, ''),
+    COALESCE(p.phone, ''),
+    COALESCE(p.extra, '{}'::jsonb)
+FROM page_users u
+LEFT JOIN user_profiles p ON p.user_id = u.id
+ORDER BY u.created_at DESC, u.id DESC`, len(args)+1, len(args)+2)
 	args = append(args, limit, offset)
 
 	rows, err := r.pool.Query(ctx, query, args...)
@@ -977,6 +1155,7 @@ func (r *Repository) GetAdminUserByApp(ctx context.Context, appID int64, userID 
 	COALESCE(p.nickname, ''),
 	COALESCE(p.avatar, ''),
 	COALESCE(p.email, ''),
+	COALESCE(p.phone, ''),
 	COALESCE(p.extra, '{}'::jsonb)
 FROM users u
 LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -986,30 +1165,18 @@ LIMIT 1`
 }
 
 func (r *Repository) ListAdminUsersForExport(ctx context.Context, appID int64, keyword string, enabled *bool, limit int) ([]userdomain.AdminUserView, error) {
+	return r.ListAdminUsersForExportQuery(ctx, appID, userdomain.AdminUserQuery{
+		Keyword: keyword,
+		Enabled: enabled,
+		Limit:   limit,
+	}, limit)
+}
+
+func (r *Repository) ListAdminUsersForExportQuery(ctx context.Context, appID int64, adminQuery userdomain.AdminUserQuery, limit int) ([]userdomain.AdminUserView, error) {
 	if limit <= 0 {
 		limit = 5000
 	}
-	keyword = strings.TrimSpace(keyword)
-	baseQuery := ` FROM users u
-LEFT JOIN user_profiles p ON p.user_id = u.id
-WHERE u.appid = $1`
-	args := []any{appID}
-	if keyword != "" {
-		placeholder := len(args) + 1
-		like := "%" + keyword + "%"
-		baseQuery += fmt.Sprintf(`
-  AND (
-    u.account ILIKE $%d
-    OR COALESCE(p.nickname, '') ILIKE $%d
-    OR COALESCE(p.email, '') ILIKE $%d
-    OR CAST(u.id AS TEXT) ILIKE $%d
-  )`, placeholder, placeholder, placeholder, placeholder)
-		args = append(args, like)
-	}
-	if enabled != nil {
-		baseQuery += fmt.Sprintf(" AND u.enabled = $%d", len(args)+1)
-		args = append(args, *enabled)
-	}
+	baseQuery, args := buildAdminUserListBaseQuery(appID, adminQuery)
 	query := `SELECT
 	u.id,
 	u.appid,
@@ -1024,6 +1191,7 @@ WHERE u.appid = $1`
 	COALESCE(p.nickname, ''),
 	COALESCE(p.avatar, ''),
 	COALESCE(p.email, ''),
+	COALESCE(p.phone, ''),
 	COALESCE(p.extra, '{}'::jsonb)` + baseQuery +
 		fmt.Sprintf(`
 ORDER BY u.created_at DESC, u.id DESC
@@ -1043,6 +1211,167 @@ LIMIT $%d`, len(args)+1)
 		items = append(items, *item)
 	}
 	return items, rows.Err()
+}
+
+func (r *Repository) ListAdminUsersByIDs(ctx context.Context, appID int64, userIDs []int64) ([]userdomain.AdminUserView, error) {
+	if len(userIDs) == 0 {
+		return []userdomain.AdminUserView{}, nil
+	}
+	rows, err := r.pool.Query(ctx, `SELECT
+	u.id,
+	u.appid,
+	u.account,
+	u.integral,
+	u.experience,
+	u.enabled,
+	u.disabled_end_time,
+	u.vip_expire_at,
+	u.created_at,
+	u.updated_at,
+	COALESCE(p.nickname, ''),
+	COALESCE(p.avatar, ''),
+	COALESCE(p.email, ''),
+	COALESCE(p.phone, ''),
+	COALESCE(p.extra, '{}'::jsonb)
+FROM users u
+LEFT JOIN user_profiles p ON p.user_id = u.id
+WHERE u.appid = $1 AND u.id = ANY($2)
+ORDER BY array_position($2::bigint[], u.id)`, appID, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]userdomain.AdminUserView, 0, len(userIDs))
+	for rows.Next() {
+		item, err := scanAdminUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) ListAdminUserSearchSourcesByApp(ctx context.Context, appID int64, afterUpdatedAt time.Time, afterUserID int64, limit int) ([]userdomain.AdminUserSearchSource, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows, err := r.pool.Query(ctx, `SELECT
+    u.id,
+    u.appid,
+    u.account,
+    COALESCE(p.nickname, ''),
+    COALESCE(p.email, ''),
+    COALESCE(p.phone, ''),
+    COALESCE(p.extra->>'register_ip', ''),
+    u.enabled,
+    u.created_at,
+    GREATEST(
+      u.updated_at,
+      COALESCE(p.updated_at, u.updated_at),
+      u.created_at
+    ) AS source_updated_at
+FROM users u
+LEFT JOIN user_profiles p ON p.user_id = u.id
+WHERE u.appid = $1
+  AND (
+    GREATEST(
+      u.updated_at,
+      COALESCE(p.updated_at, u.updated_at),
+      u.created_at
+    ) > $2
+    OR (
+      GREATEST(
+        u.updated_at,
+        COALESCE(p.updated_at, u.updated_at),
+        u.created_at
+      ) = $2
+      AND u.id > $3
+    )
+  )
+ORDER BY source_updated_at ASC, u.id ASC
+LIMIT $4`, appID, afterUpdatedAt.UTC(), afterUserID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]userdomain.AdminUserSearchSource, 0, limit)
+	for rows.Next() {
+		var item userdomain.AdminUserSearchSource
+		if err := rows.Scan(&item.UserID, &item.AppID, &item.Account, &item.Nickname, &item.Email, &item.Phone, &item.RegisterIP, &item.Enabled, &item.CreatedAt, &item.SourceUpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func isAdminUserFastPath(adminQuery userdomain.AdminUserQuery) bool {
+	return strings.TrimSpace(adminQuery.Keyword) == "" &&
+		strings.TrimSpace(adminQuery.Account) == "" &&
+		strings.TrimSpace(adminQuery.Nickname) == "" &&
+		strings.TrimSpace(adminQuery.Email) == "" &&
+		strings.TrimSpace(adminQuery.Phone) == "" &&
+		strings.TrimSpace(adminQuery.RegisterIP) == "" &&
+		adminQuery.UserID == nil &&
+		adminQuery.CreatedFrom == nil &&
+		adminQuery.CreatedTo == nil
+}
+
+func buildAdminUserListBaseQuery(appID int64, adminQuery userdomain.AdminUserQuery) (string, []any) {
+	baseQuery := ` FROM users u
+LEFT JOIN user_profiles p ON p.user_id = u.id
+WHERE u.appid = $1`
+	args := []any{appID}
+
+	appendLike := func(expression string, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		baseQuery += fmt.Sprintf(" AND %s ILIKE $%d", expression, len(args)+1)
+		args = append(args, "%"+value+"%")
+	}
+
+	keyword := strings.TrimSpace(adminQuery.Keyword)
+	if keyword != "" {
+		baseQuery += fmt.Sprintf(`
+  AND (
+    u.account ILIKE $%d
+    OR COALESCE(p.nickname, '') ILIKE $%d
+    OR COALESCE(p.email, '') ILIKE $%d
+    OR COALESCE(p.phone, '') ILIKE $%d
+    OR COALESCE(p.extra->>'register_ip', '') ILIKE $%d
+    OR CAST(u.id AS TEXT) ILIKE $%d
+  )`, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1)
+		args = append(args, "%"+keyword+"%")
+	}
+
+	appendLike("u.account", adminQuery.Account)
+	appendLike("COALESCE(p.nickname, '')", adminQuery.Nickname)
+	appendLike("COALESCE(p.email, '')", adminQuery.Email)
+	appendLike("COALESCE(p.phone, '')", adminQuery.Phone)
+	appendLike("COALESCE(p.extra->>'register_ip', '')", adminQuery.RegisterIP)
+
+	if adminQuery.UserID != nil && *adminQuery.UserID > 0 {
+		baseQuery += fmt.Sprintf(" AND u.id = $%d", len(args)+1)
+		args = append(args, *adminQuery.UserID)
+	}
+	if adminQuery.Enabled != nil {
+		baseQuery += fmt.Sprintf(" AND u.enabled = $%d", len(args)+1)
+		args = append(args, *adminQuery.Enabled)
+	}
+	if adminQuery.CreatedFrom != nil {
+		baseQuery += fmt.Sprintf(" AND u.created_at >= $%d", len(args)+1)
+		args = append(args, *adminQuery.CreatedFrom)
+	}
+	if adminQuery.CreatedTo != nil {
+		baseQuery += fmt.Sprintf(" AND u.created_at <= $%d", len(args)+1)
+		args = append(args, *adminQuery.CreatedTo)
+	}
+	return baseQuery, args
 }
 
 func (r *Repository) FilterExistingUserIDsByApp(ctx context.Context, appID int64, userIDs []int64) ([]int64, error) {
@@ -1187,6 +1516,39 @@ ON CONFLICT (user_id) DO UPDATE SET
 	}
 	tx = nil
 	return result.RowsAffected(), nil
+}
+
+// DeleteUsersByApp 删除指定应用下的所有用户
+func (r *Repository) DeleteUsersByApp(ctx context.Context, appID int64) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM users WHERE appid = $1`, appID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeleteApp 删除应用（关联的 banners/notices/sites 等通过 CASCADE 自动清理）
+func (r *Repository) DeleteApp(ctx context.Context, appID int64) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM apps WHERE id = $1`, appID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("应用不存在")
+	}
+	return nil
+}
+
+// DeleteUserByApp 硬删除指定应用下的用户（CASCADE 会清理关联表）
+func (r *Repository) DeleteUserByApp(ctx context.Context, appID int64, userID int64) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM users WHERE id = $1 AND appid = $2`, userID, appID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("用户不存在或已删除")
+	}
+	return nil
 }
 
 func (r *Repository) HasAnyUserRegisteredFromIP(ctx context.Context, ip string) (bool, error) {
@@ -1448,8 +1810,9 @@ ON CONFLICT (user_id) DO UPDATE SET
 
 func (r *Repository) UpsertUserProfile(ctx context.Context, profile userdomain.Profile) error {
 	extraJSON, _ := json.Marshal(profile.Extra)
-	query := `INSERT INTO user_profiles (user_id, nickname, avatar, email, extra, updated_at) VALUES ($1, $2, $3, $4, $5, NOW()) ON CONFLICT (user_id) DO UPDATE SET nickname = EXCLUDED.nickname, avatar = EXCLUDED.avatar, email = EXCLUDED.email, extra = EXCLUDED.extra, updated_at = NOW()`
-	_, err := r.pool.Exec(ctx, query, profile.UserID, nullableString(profile.Nickname), nullableString(profile.Avatar), nullableString(profile.Email), extraJSON)
+	contactsJSON, _ := json.Marshal(profile.Contacts)
+	query := `INSERT INTO user_profiles (user_id, nickname, avatar, email, phone, birthday, bio, contacts, extra, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()) ON CONFLICT (user_id) DO UPDATE SET nickname = EXCLUDED.nickname, avatar = EXCLUDED.avatar, email = EXCLUDED.email, phone = EXCLUDED.phone, birthday = EXCLUDED.birthday, bio = EXCLUDED.bio, contacts = EXCLUDED.contacts, extra = EXCLUDED.extra, updated_at = NOW()`
+	_, err := r.pool.Exec(ctx, query, profile.UserID, nullableString(profile.Nickname), nullableString(profile.Avatar), nullableString(profile.Email), profile.Phone, profile.Birthday, profile.Bio, contactsJSON, extraJSON)
 	return err
 }
 
@@ -1525,6 +1888,9 @@ ON CONFLICT (id) DO UPDATE SET
     created_at = EXCLUDED.created_at,
     updated_at = EXCLUDED.updated_at`
 	_, err := r.pool.Exec(ctx, query, user.ID, user.AppID, user.Account, nullableString(user.PasswordHash), user.Integral, user.Experience, user.Enabled, user.DisabledEndTime, user.VIPExpireAt, user.CreatedAt, user.UpdatedAt)
+	if isUniqueViolation(err) {
+		return ErrAccountAlreadyExists
+	}
 	return err
 }
 
@@ -1789,6 +2155,11 @@ func (r *Repository) resolveLevelState(levels []pointdomain.LevelConfig, experie
 func (r *Repository) GetLatestDailySign(ctx context.Context, userID int64, appID int64) (*userdomain.DailySignIn, error) {
 	query := `SELECT id, user_id, appid, signed_at, sign_date, integral_reward, experience_reward, integral_before, integral_after, experience_before, experience_after, consecutive_days, reward_multiplier, COALESCE(bonus_type, ''), COALESCE(bonus_description, ''), sign_in_source, COALESCE(device_info, ''), COALESCE(ip_address, ''), COALESCE(location, ''), created_at FROM daily_signins WHERE user_id = $1 AND appid = $2 ORDER BY sign_date DESC, id DESC LIMIT 1`
 	return scanDailySign(r.pool.QueryRow(ctx, query, userID, appID))
+}
+
+func (r *Repository) GetDailySignByDate(ctx context.Context, userID int64, appID int64, signDate string) (*userdomain.DailySignIn, error) {
+	query := `SELECT id, user_id, appid, signed_at, sign_date, integral_reward, experience_reward, integral_before, integral_after, experience_before, experience_after, consecutive_days, reward_multiplier, COALESCE(bonus_type, ''), COALESCE(bonus_description, ''), sign_in_source, COALESCE(device_info, ''), COALESCE(ip_address, ''), COALESCE(location, ''), created_at FROM daily_signins WHERE user_id = $1 AND appid = $2 AND sign_date = $3 LIMIT 1`
+	return scanDailySign(r.pool.QueryRow(ctx, query, userID, appID, signDate))
 }
 
 func (r *Repository) ListDailySigns(ctx context.Context, userID int64, appID int64, page int, limit int) ([]userdomain.DailySignIn, int64, error) {
@@ -3551,6 +3922,7 @@ func scanAdminUser(row interface{ Scan(dest ...any) error }) (*userdomain.AdminU
 		&item.Nickname,
 		&item.Avatar,
 		&item.Email,
+		&item.Phone,
 		&extraBytes,
 	); err != nil {
 		return nil, normalizeNotFound(err)
@@ -4008,3 +4380,67 @@ func LegacyOAuthAccount(provider string, providerUserID string) string {
 var ErrAccountAlreadyExists = errors.New("account already exists")
 var ErrAlreadySigned = errors.New("already signed today")
 var ErrUserNotFound = errors.New("user not found")
+
+// ── 工作台聚合查询 ──
+
+func (r *Repository) CountPendingRoleApplications(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM role_applications WHERE status = 'pending'`).Scan(&count)
+	return count, err
+}
+
+type DashboardAuditLog struct {
+	Action    string
+	Detail    string
+	IP        string
+	CreatedAt time.Time
+}
+
+func (r *Repository) ListRecentAuditLogs(ctx context.Context, adminID int64, limit int) ([]DashboardAuditLog, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT action, COALESCE(detail,''), COALESCE(ip,''), created_at FROM admin_audit_logs WHERE admin_id = $1 ORDER BY created_at DESC LIMIT $2`,
+		adminID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DashboardAuditLog
+	for rows.Next() {
+		var l DashboardAuditLog
+		if err := rows.Scan(&l.Action, &l.Detail, &l.IP, &l.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, l)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) CountRecentFirewallBlocks(ctx context.Context, dur time.Duration) (int64, error) {
+	var count int64
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM firewall_logs WHERE created_at > $1`, time.Now().Add(-dur)).Scan(&count)
+	return count, err
+}
+
+func (r *Repository) CountRecentLoginFailures(ctx context.Context, dur time.Duration) (int64, error) {
+	var count int64
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_audit_logs WHERE action = 'admin.login_failed' AND created_at > $1`, time.Now().Add(-dur)).Scan(&count)
+	return count, err
+}
+
+func (r *Repository) CountApps(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM apps`).Scan(&count)
+	return count, err
+}
+
+func (r *Repository) CountUsers(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&count)
+	return count, err
+}
+
+func (r *Repository) CountTodayLogins(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_audit_logs WHERE action = 'admin.login' AND created_at > $1`, time.Now().Truncate(24*time.Hour)).Scan(&count)
+	return count, err
+}

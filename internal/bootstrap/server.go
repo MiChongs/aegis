@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"aegis/pkg/crashlog"
 )
 
 type UnifiedApp struct {
@@ -12,13 +14,13 @@ type UnifiedApp struct {
 	Worker *WorkerApp
 }
 
-func NewUnifiedApp(ctx context.Context) (*UnifiedApp, error) {
-	api, err := NewAPIApp(ctx)
+func NewUnifiedApp(ctx context.Context, cl *crashlog.Logger) (*UnifiedApp, error) {
+	api, err := NewAPIApp(ctx, cl)
 	if err != nil {
 		return nil, err
 	}
 
-	worker, err := NewWorkerApp(ctx)
+	worker, err := NewWorkerApp(ctx, cl)
 	if err != nil {
 		api.Close(context.Background())
 		return nil, err

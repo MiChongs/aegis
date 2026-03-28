@@ -49,6 +49,32 @@ type TransportEncryptionPolicy struct {
 	Secret             string `json:"-"`
 }
 
+// TransportEncryptionView 加密配置视图（不含私钥）
+type TransportEncryptionView struct {
+	Enabled            bool     `json:"enabled"`
+	Strict             bool     `json:"strict"`
+	ResponseEncryption bool     `json:"responseEncryption"`
+	HasSecret          bool     `json:"hasSecret"`
+	SecretHint         string   `json:"secretHint,omitempty"`
+	AllowedAlgorithms  []string `json:"allowedAlgorithms"`
+	SupportedAlgorithms []string `json:"supportedAlgorithms"`
+	HasRSAKey          bool     `json:"hasRSAKey"`
+	RSAPublicKey       string   `json:"rsaPublicKey,omitempty"`
+	HasECDHKey         bool     `json:"hasECDHKey"`
+	ECDHPublicKey      string   `json:"ecdhPublicKey,omitempty"`
+}
+
+// TransportEncryptionUpdate 加密配置更新
+type TransportEncryptionUpdate struct {
+	Enabled            *bool    `json:"enabled"`
+	Strict             *bool    `json:"strict"`
+	ResponseEncryption *bool    `json:"responseEncryption"`
+	Secret             *string  `json:"secret"`
+	AllowedAlgorithms  []string `json:"allowedAlgorithms,omitempty"`
+	GenerateRSAKey     bool     `json:"generateRSAKey,omitempty"`
+	GenerateECDHKey    bool     `json:"generateECDHKey,omitempty"`
+}
+
 type Stats struct {
 	AppID              int64 `json:"appid"`
 	TotalUsers         int64 `json:"totalUsers"`
@@ -153,9 +179,11 @@ type RegionStatsQuery struct {
 }
 
 type RegionStatItem struct {
-	Region string `json:"region"`
-	Parent string `json:"parent,omitempty"`
-	Count  int64  `json:"count"`
+	Region     string `json:"region"`
+	Code       string `json:"code,omitempty"`
+	Parent     string `json:"parent,omitempty"`
+	ParentPath string `json:"parentPath,omitempty"`
+	Count      int64  `json:"count"`
 }
 
 type RegionStatsResult struct {
@@ -432,10 +460,25 @@ type AppVersionChannel struct {
 	Description    string         `json:"description,omitempty"`
 	IsDefault      bool           `json:"is_default"`
 	Status         bool           `json:"status"`
+	Priority       int            `json:"priority"`
+	Color          string         `json:"color,omitempty"`
+	Level          string         `json:"level"`
+	RolloutPct     int            `json:"rollout_pct"`
+	Platforms      []string       `json:"platforms,omitempty"`
+	MinVersionCode int64          `json:"min_version_code"`
+	MaxVersionCode int64          `json:"max_version_code"`
+	Rules          []ChannelRule  `json:"rules,omitempty"`
 	TargetAudience map[string]any `json:"targetAudience,omitempty"`
 	UserCount      int64          `json:"userCount,omitempty"`
 	CreatedAt      time.Time      `json:"createdAt"`
 	UpdatedAt      time.Time      `json:"updatedAt"`
+}
+
+// ChannelRule 灰度分发条件规则
+type ChannelRule struct {
+	Field string `json:"field"` // 匹配字段：platform / os_version / user_id / region / tag 等
+	Op    string `json:"op"`    // 操作符：eq / neq / in / not_in / gt / lt / gte / lte / regex / contains
+	Value any    `json:"value"` // 匹配值（字符串 / 数字 / 数组）
 }
 
 type AppVersionChannelMutation struct {
@@ -446,6 +489,14 @@ type AppVersionChannelMutation struct {
 	Description    *string
 	IsDefault      *bool
 	Status         *bool
+	Priority       *int
+	Color          *string
+	Level          *string
+	RolloutPct     *int
+	Platforms      []string
+	MinVersionCode *int64
+	MaxVersionCode *int64
+	Rules          []ChannelRule
 	TargetAudience map[string]any
 }
 

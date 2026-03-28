@@ -8,6 +8,7 @@ import (
 
 	authdomain "aegis/internal/domain/auth"
 	notificationdomain "aegis/internal/domain/notification"
+	plugindomain "aegis/internal/domain/plugin"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
@@ -19,6 +20,12 @@ type NotificationService struct {
 	pg       *pgrepo.Repository
 	sessions *redisrepo.SessionRepository
 	realtime UserEventPublisher
+	plugin   *PluginService
+}
+
+// SetPluginService 注入插件服务
+func (s *NotificationService) SetPluginService(p *PluginService) {
+	s.plugin = p
 }
 
 func NewNotificationService(log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, realtime UserEventPublisher) *NotificationService {
@@ -174,6 +181,13 @@ func (s *NotificationService) SendUserNotification(ctx context.Context, session 
 	}
 	s.invalidateCaches(ctx, session.AppID, session.UserID)
 	s.publishNotificationStateAsync(session.AppID, session.UserID, "created")
+	if s.plugin != nil {
+		appID := session.AppID
+		userID := session.UserID
+		go s.plugin.ExecuteHook(context.Background(), HookNotificationCreated, map[string]any{
+			"appId": appID, "userId": userID, "type": notificationType, "title": title,
+		}, plugindomain.HookMetadata{AppID: &appID, UserID: &userID})
+	}
 	return nil
 }
 
@@ -247,6 +261,11 @@ func (s *NotificationService) AdminBulkSend(ctx context.Context, appID int64, cm
 		delivered++
 	}
 
+	if s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookNotificationSent, map[string]any{
+			"appId": appID, "delivered": delivered, "type": cmd.Type, "title": cmd.Title,
+		}, plugindomain.HookMetadata{AppID: &appID})
+	}
 	return &notificationdomain.AdminBulkSendResult{
 		AppID:        appID,
 		Requested:    len(targets),

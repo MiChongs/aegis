@@ -1,13 +1,17 @@
 package httptransport
 
 import (
+	"aegis/internal/config"
+	admindomain "aegis/internal/domain/admin"
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
 	notificationdomain "aegis/internal/domain/notification"
 	pointdomain "aegis/internal/domain/points"
 	userdomain "aegis/internal/domain/user"
 	"aegis/internal/middleware"
+	redisrepo "aegis/internal/repository/redis"
 	"aegis/internal/service"
+	"aegis/pkg/crashlog"
 	"aegis/pkg/response"
 	"encoding/csv"
 	"encoding/json"
@@ -18,34 +22,55 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 type Handler struct {
-	auth          *service.AuthService
-	admin         *service.AdminService
-	user          *service.UserService
-	signin        *service.SignInService
-	points        *service.PointsService
-	notifications *service.NotificationService
-	app           *service.AppService
-	site          *service.SiteService
-	version       *service.VersionService
-	roleApp       *service.RoleApplicationService
-	email         *service.EmailService
-	payment       *service.PaymentService
-	workflow      *service.WorkflowService
-	storage       *service.StorageService
-	realtime      *service.RealtimeService
+	auth            *service.AuthService
+	admin           *service.AdminService
+	user            *service.UserService
+	signin          *service.SignInService
+	points          *service.PointsService
+	notifications   *service.NotificationService
+	app             *service.AppService
+	site            *service.SiteService
+	version         *service.VersionService
+	roleApp         *service.RoleApplicationService
+	email           *service.EmailService
+	payment         *service.PaymentService
+	workflow        *service.WorkflowService
+	storage         *service.StorageService
+	avatar          *service.AvatarService
+	monitor         *service.MonitorService
+	realtime        *service.RealtimeService
+	system          *service.PlatformSettingsService
+	security        *service.SecurityService
+	captcha         *service.CaptchaService
+	firewallLog     *service.FirewallLogService
+	ipBan           *service.IPBanService
+	location        *service.LocationService
+	lottery         *service.LotteryService
+	announcement    *service.AnnouncementService
+	ldapSvc         *service.LDAPService
+	oidcSvc         *service.OIDCService
+	sessions        *redisrepo.SessionRepository
+	org             *service.OrganizationService
+	tmpl            *service.TemplateService
+	audit           *service.AuditService
+	plugin          *service.PluginService
+	dashboard       *service.DashboardService
+	approval        *service.ApprovalService
+	sessionMgmt     *service.SessionMgmtService
+	storageResource *service.StorageResourceService
+	userMaster      *service.UserMasterService
+	report          *service.ReportService
+	risk            *service.RiskService
 }
 
-func NewHandler(auth *service.AuthService, admin *service.AdminService, user *service.UserService, signin *service.SignInService, points *service.PointsService, notifications *service.NotificationService, app *service.AppService, site *service.SiteService, version *service.VersionService, roleApp *service.RoleApplicationService, email *service.EmailService, payment *service.PaymentService, workflow *service.WorkflowService, storage *service.StorageService, realtime *service.RealtimeService) *Handler {
-	return &Handler{auth: auth, admin: admin, user: user, signin: signin, points: points, notifications: notifications, app: app, site: site, version: version, roleApp: roleApp, email: email, payment: payment, workflow: workflow, storage: storage, realtime: realtime}
-}
-
-func NewRouter(authService *service.AuthService, adminService *service.AdminService, userService *service.UserService, signInService *service.SignInService, pointsService *service.PointsService, notificationService *service.NotificationService, appService *service.AppService, siteService *service.SiteService, versionService *service.VersionService, roleApplicationService *service.RoleApplicationService, emailService *service.EmailService, paymentService *service.PaymentService, workflowService *service.WorkflowService, storageService *service.StorageService, firewall *middleware.Firewall, locationService *service.LocationService, realtimeService *service.RealtimeService) (*gin.Engine, error) {
+func NewRouter(authService *service.AuthService, adminService *service.AdminService, userService *service.UserService, signInService *service.SignInService, pointsService *service.PointsService, notificationService *service.NotificationService, appService *service.AppService, siteService *service.SiteService, versionService *service.VersionService, roleApplicationService *service.RoleApplicationService, emailService *service.EmailService, paymentService *service.PaymentService, workflowService *service.WorkflowService, storageService *service.StorageService, avatarService *service.AvatarService, monitorService *service.MonitorService, firewall *middleware.Firewall, replayGuard *middleware.ReplayGuard, locationService *service.LocationService, realtimeService *service.RealtimeService, systemService *service.PlatformSettingsService, securityService *service.SecurityService, captchaService *service.CaptchaService, firewallLogService *service.FirewallLogService, ipBanService *service.IPBanService, lotteryService *service.LotteryService, announcementService *service.AnnouncementService, ldapService *service.LDAPService, oidcService *service.OIDCService, sessionRepo *redisrepo.SessionRepository, orgService *service.OrganizationService, templateService *service.TemplateService, auditService *service.AuditService, pluginService *service.PluginService, dashboardService *service.DashboardService, approvalService *service.ApprovalService, sessionMgmtService *service.SessionMgmtService, storageResourceService *service.StorageResourceService, userMasterService *service.UserMasterService, reportService *service.ReportService, riskService *service.RiskService, memoryManager *service.MemoryManager, cl *crashlog.Logger, log *zap.Logger, corsConfig config.CORSConfig) (*gin.Engine, error) {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
-	router.Use(middleware.RequestID(), middleware.Recovery(), gin.Logger(), firewall.Handler(), middleware.AppEncryption(appService), middleware.Location(locationService))
+	router.Use(middleware.RequestID(), middleware.CrashRecovery(log, cl), middleware.CORS(corsConfig), gin.Logger(), firewall.Handler(), replayGuard.Handler(), middleware.AppEncryption(appService), middleware.Location(locationService))
 	router.NoRoute(func(c *gin.Context) {
 		response.Error(c, http.StatusNotFound, 40400, "请求的页面不存在")
 	})
@@ -53,21 +78,85 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		response.Error(c, http.StatusNotImplemented, 50100, "服务能力暂未开放")
 	})
 
-	h := NewHandler(authService, adminService, userService, signInService, pointsService, notificationService, appService, siteService, versionService, roleApplicationService, emailService, paymentService, workflowService, storageService, realtimeService)
+	h := &Handler{auth: authService, admin: adminService, user: userService, signin: signInService, points: pointsService, notifications: notificationService, app: appService, site: siteService, version: versionService, roleApp: roleApplicationService, email: emailService, payment: paymentService, workflow: workflowService, storage: storageService, avatar: avatarService, monitor: monitorService, realtime: realtimeService, system: systemService, security: securityService, captcha: captchaService, firewallLog: firewallLogService, ipBan: ipBanService, location: locationService, lottery: lotteryService, announcement: announcementService, ldapSvc: ldapService, oidcSvc: oidcService, sessions: sessionRepo, org: orgService, tmpl: templateService, audit: auditService, plugin: pluginService, dashboard: dashboardService, approval: approvalService, sessionMgmt: sessionMgmtService, storageResource: storageResourceService, userMaster: userMasterService, report: reportService, risk: riskService}
 	router.GET("/healthz", h.Healthz)
 	router.GET("/readyz", h.Readyz)
+	router.GET("/api/system/announcements/active", h.ActiveAnnouncements)
+	router.GET("/api/public/branding", h.AdminGetPublicBranding)
+	router.GET("/api/system/monitor", h.SystemMonitor)
+	router.GET("/api/system/monitor/apps", h.SystemMonitorApps)
+	router.GET("/api/system/monitor/components", h.SystemMonitorComponents)
+	router.GET("/api/system/monitor/history", h.SystemMonitorHistory)
+	router.GET("/api/system/monitor/apps/:appkey/components", h.AppMonitorComponents)
+	router.GET("/api/system/monitor/apps/:appkey/history", h.AppMonitorHistory)
+	router.GET("/api/system/monitor/apps/:appkey", h.AppMonitor)
 	router.GET("/api/app/public", h.AppPublic)
+	router.GET("/api/avatar/:hash", h.AvatarRedirect)
 	router.GET("/api/ws", h.WebSocket)
+
+	// 验证码路由（公开，无需认证）
+	captchaGroup := router.Group("/api/captcha")
+	{
+		captchaGroup.POST("/generate", h.GenerateCaptcha)
+		captchaGroup.POST("/verify", h.VerifyCaptcha)
+		captchaGroup.POST("/sms/send", h.SendSMSCode)
+		captchaGroup.POST("/sms/verify", h.VerifySMSCode)
+		captchaGroup.POST("/verify-click", h.VerifyCaptchaClick)
+	}
+
+	// 管理员验证码路由（公开，用于管理员登录前获取验证码）
+	adminCaptcha := router.Group("/api/admin/captcha")
+	{
+		adminCaptcha.POST("/generate", h.AdminGenerateCaptcha)
+		adminCaptcha.POST("/verify", h.AdminVerifyCaptcha)
+		adminCaptcha.GET("/config", h.AdminCaptchaPublicConfig)
+	}
 
 	adminAuth := router.Group("/api/admin/auth")
 	{
 		adminAuth.POST("/login", h.AdminLogin)
+		adminAuth.POST("/verify-mfa", h.AdminVerifyMFA)
+		adminAuth.POST("/register", h.AdminRegister)
+		adminAuth.GET("/ldap/config", h.AdminLDAPPublicConfig)
+		adminAuth.GET("/oidc/config", h.AdminOIDCPublicConfig)
+		adminAuth.GET("/oidc/authorize", h.AdminOIDCAuthorize)
+		adminAuth.GET("/oidc/callback", h.AdminOIDCCallback)
+		adminAuth.POST("/oidc/exchange", h.AdminOIDCExchange)
 		adminAuth.GET("/me", middleware.AdminAuth(adminService), h.AdminMe)
 		adminAuth.POST("/logout", middleware.AdminAuth(adminService), h.AdminLogout)
 	}
 
+	adminProfile := router.Group("/api/admin/profile")
+	adminProfile.Use(middleware.AdminAuth(adminService))
+	{
+		adminProfile.GET("", h.AdminProfile)
+		adminProfile.PUT("", h.UpdateAdminProfile)
+		adminProfile.POST("/avatar", h.UploadAdminAvatar)
+		adminProfile.POST("/upload-avatar", h.UploadAdminAvatar)
+		adminProfile.GET("/security", h.AdminSecurity)
+		adminProfile.POST("/two-factor/enroll", h.BeginAdminTOTPEnrollment)
+		adminProfile.POST("/two-factor/enable", h.EnableAdminTOTP)
+		adminProfile.POST("/two-factor/disable", h.DisableAdminTOTP)
+		adminProfile.GET("/two-factor/recovery-codes", h.ListAdminRecoveryCodes)
+		adminProfile.POST("/two-factor/recovery-codes", h.GenerateAdminRecoveryCodes)
+		adminProfile.POST("/two-factor/recovery-codes/regenerate", h.RegenerateAdminRecoveryCodes)
+		adminProfile.GET("/passkey", h.ListAdminPasskeys)
+		adminProfile.POST("/passkey/register/options", h.BeginAdminPasskeyRegistration)
+		adminProfile.POST("/passkey/register", h.FinishAdminPasskeyRegistration)
+		adminProfile.DELETE("/passkey/:credentialId", h.DeleteAdminPasskey)
+		adminProfile.GET("/roles", h.AdminRoleCatalog)
+		adminProfile.GET("/roles/permissions", h.AdminRolePermissionTree)
+	}
+
+	adminAvatarCompat := router.Group("/api/admin/avatar")
+	adminAvatarCompat.Use(middleware.AdminAuth(adminService))
+	{
+		adminAvatarCompat.POST("", h.UploadAdminAvatar)
+		adminAvatarCompat.POST("/upload", h.UploadAdminAvatar)
+	}
+
 	appCompat := router.Group("/api/app/password-policy")
-	appCompat.Use(middleware.AdminAccess(adminService))
+	appCompat.Use(middleware.AdminAccess(adminService, appService))
 	{
 		appCompat.POST("/get", h.GetAppPasswordPolicy)
 		appCompat.POST("/set", h.SetAppPasswordPolicy)
@@ -77,7 +166,7 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	}
 
 	appCompatPoints := router.Group("/api/app/points")
-	appCompatPoints.Use(middleware.AdminAccess(adminService))
+	appCompatPoints.Use(middleware.AdminAccess(adminService, appService))
 	{
 		appCompatPoints.POST("/stats", h.AppPointsStats)
 		appCompatPoints.POST("/adjust-integral", h.AppAdjustIntegral)
@@ -86,7 +175,7 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	}
 
 	appCompatVersion := router.Group("/api/admin/app/version")
-	appCompatVersion.Use(middleware.AdminAccess(adminService))
+	appCompatVersion.Use(middleware.AdminAccess(adminService, appService))
 	{
 		appCompatVersion.POST("/list", h.AdminVersionListCompat)
 		appCompatVersion.POST("/detail", h.AdminVersionDetailCompat)
@@ -106,7 +195,7 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	}
 
 	appCompatSite := router.Group("/api/admin/app/site")
-	appCompatSite.Use(middleware.AdminAccess(adminService))
+	appCompatSite.Use(middleware.AdminAccess(adminService, appService))
 	{
 		appCompatSite.POST("/audit-list", h.AdminSiteAuditListCompat)
 		appCompatSite.POST("/audit", h.AdminSiteAuditCompat)
@@ -121,7 +210,7 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	}
 
 	appCompatRole := router.Group("/api/admin/app/role-application")
-	appCompatRole.Use(middleware.AdminAccess(adminService))
+	appCompatRole.Use(middleware.AdminAccess(adminService, appService))
 	{
 		appCompatRole.POST("/list", h.AdminRoleApplicationsCompat)
 		appCompatRole.POST("/detail", h.AdminRoleApplicationDetailCompat)
@@ -137,62 +226,153 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		auth.POST("/oauth2/auth-url", h.OAuthAuthURL)
 		auth.GET("/oauth2/callback", h.OAuthCallback)
 		auth.POST("/oauth2/mobile-login", h.OAuthMobileLogin)
+		auth.POST("/2fa/verify", h.VerifySecondFactor)
+		auth.POST("/passkey/options", h.PasskeyAuthOptions)
+		auth.POST("/passkey/auth-options", h.PasskeyAuthOptions)
+		auth.POST("/passkey/verify", h.PasskeyLogin)
+		auth.POST("/passkey/login", h.PasskeyLogin)
 		auth.POST("/refresh", h.Refresh)
 		auth.POST("/logout", middleware.Auth(authService), h.Logout)
 		auth.POST("/password/verify", middleware.Auth(authService), h.VerifyPassword)
 		auth.POST("/password/change", middleware.Auth(authService), h.ChangePassword)
 	}
 
-	admin := router.Group("/api/admin")
-	admin.Use(middleware.AdminAccess(adminService))
+	// 应用列表和创建：仅需登录，不检查权限（注册用户可创建应用）
+	adminAppEntry := router.Group("/api/admin")
+	adminAppEntry.Use(middleware.AdminAuth(adminService))
 	{
-		admin.GET("/apps", h.AdminApps)
-		admin.GET("/apps/:appid", h.AdminApp)
-		admin.GET("/apps/:appid/policy", h.AdminAppPolicy)
-		admin.PUT("/apps/:appid/policy", h.UpdateAdminAppPolicy)
-		admin.GET("/apps/:appid/password-policy", h.AdminAppPasswordPolicy)
-		admin.PUT("/apps/:appid/password-policy", h.UpdateAdminAppPasswordPolicy)
-		admin.POST("/apps/:appid/password-policy/test", h.TestAdminAppPasswordPolicy)
-		admin.POST("/apps/:appid/password-policy/reset", h.ResetAdminAppPasswordPolicy)
+		adminAppEntry.GET("/apps", h.AdminApps)
+		adminAppEntry.POST("/apps", h.CreateAdminApp)
+	}
+
+	admin := router.Group("/api/admin")
+	admin.Use(middleware.AdminAccess(adminService, appService))
+	admin.Use(middleware.AuditMiddleware(auditService))
+	admin.GET("/dashboard", h.AdminDashboard)
+	{
+		admin.GET("/apps/:appkey", h.AdminApp)
+		admin.GET("/apps/:appkey/policy", h.AdminAppPolicy)
+		admin.PUT("/apps/:appkey/policy", h.UpdateAdminAppPolicy)
+		admin.GET("/apps/:appkey/password-policy", h.AdminAppPasswordPolicy)
+		admin.PUT("/apps/:appkey/password-policy", h.UpdateAdminAppPasswordPolicy)
+		admin.POST("/apps/:appkey/password-policy/test", h.TestAdminAppPasswordPolicy)
+		admin.POST("/apps/:appkey/password-policy/reset", h.ResetAdminAppPasswordPolicy)
 		admin.GET("/apps/password-policy/templates", h.PasswordPolicyTemplates)
-		admin.GET("/apps/:appid/stats", h.AdminAppStats)
-		admin.GET("/apps/:appid/stats/user-trend", h.AdminAppUserTrend)
-		admin.GET("/apps/:appid/stats/regions", h.AdminAppRegionStats)
-		admin.GET("/apps/:appid/stats/auth-sources", h.AdminAppAuthSources)
-		admin.GET("/apps/:appid/audits/login", h.AdminAppLoginAudits)
-		admin.GET("/apps/:appid/audits/login/export", h.ExportAdminAppLoginAudits)
-		admin.GET("/apps/:appid/audits/sessions", h.AdminAppSessionAudits)
-		admin.GET("/apps/:appid/audits/sessions/export", h.ExportAdminAppSessionAudits)
-		admin.GET("/apps/:appid/notifications", h.AdminAppNotifications)
-		admin.GET("/apps/:appid/notifications/export", h.ExportAdminAppNotifications)
-		admin.DELETE("/apps/:appid/notifications", h.DeleteAdminAppNotifications)
-		admin.POST("/apps/:appid/notifications/delete-by-filter", h.DeleteAdminAppNotificationsByFilter)
-		admin.POST("/apps/:appid/notifications/bulk", h.AdminBulkNotifyUsers)
-		admin.GET("/apps/:appid/users", h.AdminAppUsers)
-		admin.GET("/apps/:appid/users/export", h.ExportAdminAppUsers)
-		admin.PUT("/apps/:appid/users/status/batch", h.BatchUpdateAdminAppUserStatus)
-		admin.GET("/apps/:appid/users/:userId", h.AdminAppUser)
-		admin.PUT("/apps/:appid/users/:userId/status", h.UpdateAdminAppUserStatus)
-		admin.POST("/apps", h.CreateAdminApp)
-		admin.PUT("/apps/:appid", h.UpdateAdminApp)
-		admin.GET("/apps/:appid/banners", h.AdminBanners)
-		admin.GET("/apps/:appid/banners/export", h.ExportAdminBanners)
-		admin.POST("/apps/:appid/banners", h.CreateAdminBanner)
-		admin.DELETE("/apps/:appid/banners", h.DeleteAdminBanners)
-		admin.PUT("/apps/:appid/banners/:bannerId", h.UpdateAdminBanner)
-		admin.DELETE("/apps/:appid/banners/:bannerId", h.DeleteAdminBanner)
-		admin.GET("/apps/:appid/notices", h.AdminNotices)
-		admin.GET("/apps/:appid/notices/export", h.ExportAdminNotices)
-		admin.POST("/apps/:appid/notices", h.CreateAdminNotice)
-		admin.DELETE("/apps/:appid/notices", h.DeleteAdminNotices)
-		admin.PUT("/apps/:appid/notices/:noticeId", h.UpdateAdminNotice)
-		admin.DELETE("/apps/:appid/notices/:noticeId", h.DeleteAdminNotice)
+		admin.GET("/apps/:appkey/stats", h.AdminAppStats)
+		admin.GET("/apps/:appkey/stats/user-trend", h.AdminAppUserTrend)
+		admin.GET("/apps/:appkey/stats/regions", h.AdminAppRegionStats)
+		admin.GET("/apps/:appkey/stats/auth-sources", h.AdminAppAuthSources)
+		admin.GET("/apps/:appkey/audits/login", h.AdminAppLoginAudits)
+		admin.GET("/apps/:appkey/audits/login/export", h.ExportAdminAppLoginAudits)
+		admin.GET("/apps/:appkey/audits/sessions", h.AdminAppSessionAudits)
+		admin.GET("/apps/:appkey/audits/sessions/export", h.ExportAdminAppSessionAudits)
+		admin.GET("/apps/:appkey/notifications", h.AdminAppNotifications)
+		admin.GET("/apps/:appkey/notifications/export", h.ExportAdminAppNotifications)
+		admin.DELETE("/apps/:appkey/notifications", h.DeleteAdminAppNotifications)
+		admin.POST("/apps/:appkey/notifications/delete-by-filter", h.DeleteAdminAppNotificationsByFilter)
+		admin.POST("/apps/:appkey/notifications/bulk", h.AdminBulkNotifyUsers)
+		admin.GET("/apps/:appkey/users", h.AdminAppUsers)
+		admin.GET("/apps/:appkey/users/export", h.ExportAdminAppUsers)
+		admin.POST("/apps/:appkey/users/bans/batch", h.BatchCreateAdminAppUserBan)
+		admin.PUT("/apps/:appkey/users/status/batch", h.BatchUpdateAdminAppUserStatus)
+		admin.GET("/apps/:appkey/users/:userId", h.AdminAppUser)
+		admin.GET("/apps/:appkey/users/:userId/bans", h.AdminAppUserBans)
+		admin.GET("/apps/:appkey/users/:userId/bans/active", h.AdminAppUserActiveBan)
+		admin.POST("/apps/:appkey/users/:userId/bans", h.CreateAdminAppUserBan)
+		admin.POST("/apps/:appkey/users/:userId/bans/:banId/revoke", h.RevokeAdminAppUserBan)
+		admin.PUT("/apps/:appkey/users/:userId/status", h.UpdateAdminAppUserStatus)
+		admin.PUT("/apps/:appkey/users/:userId/profile", h.AdminUpdateUserProfile)
+		admin.POST("/apps/:appkey/users/:userId/reset-password", h.AdminResetUserPassword)
+		admin.GET("/apps/:appkey/users/:userId/sessions", h.AdminListUserSessions)
+		admin.DELETE("/apps/:appkey/users/:userId/sessions/:tokenHash", h.AdminRevokeUserSession)
+		admin.POST("/apps/:appkey/users/:userId/sessions/revoke-batch", h.AdminRevokeUserSessionsBatch)
+		admin.POST("/apps/:appkey/users/:userId/revoke-sessions", h.AdminRevokeUserSessions)
+		admin.DELETE("/apps/:appkey/users/:userId", h.AdminDeleteUser)
+		admin.PUT("/apps/:appkey", h.UpdateAdminApp)
+		admin.DELETE("/apps/:appkey", h.AdminDeleteApp)
+		admin.GET("/apps/:appkey/captcha-config", h.AdminGetCaptchaConfig)
+		admin.PUT("/apps/:appkey/captcha-config", h.AdminUpdateCaptchaConfig)
+		admin.GET("/apps/:appkey/encryption", h.AdminAppEncryption)
+		admin.PUT("/apps/:appkey/encryption", h.UpdateAdminAppEncryption)
+		admin.GET("/apps/:appkey/banners", h.AdminBanners)
+		admin.GET("/apps/:appkey/banners/export", h.ExportAdminBanners)
+		admin.POST("/apps/:appkey/banners", h.CreateAdminBanner)
+		admin.DELETE("/apps/:appkey/banners", h.DeleteAdminBanners)
+		admin.PUT("/apps/:appkey/banners/:bannerId", h.UpdateAdminBanner)
+		admin.DELETE("/apps/:appkey/banners/:bannerId", h.DeleteAdminBanner)
+		admin.GET("/apps/:appkey/notices", h.AdminNotices)
+		admin.GET("/apps/:appkey/notices/export", h.ExportAdminNotices)
+		admin.POST("/apps/:appkey/notices", h.CreateAdminNotice)
+		admin.DELETE("/apps/:appkey/notices", h.DeleteAdminNotices)
+		admin.PUT("/apps/:appkey/notices/:noticeId", h.UpdateAdminNotice)
+		admin.DELETE("/apps/:appkey/notices/:noticeId", h.DeleteAdminNotice)
 		admin.GET("/user-settings/stats", h.AdminUserSettingsStats)
 		admin.GET("/user-settings/user", h.AdminUserSettings)
 		admin.POST("/user-settings/batch-initialize", h.AdminBatchInitializeUserSettings)
 		admin.POST("/user-settings/initialize-user", h.AdminInitializeUserSettings)
 		admin.GET("/user-settings/check-integrity", h.AdminCheckUserSettingsIntegrity)
 		admin.DELETE("/user-settings/cleanup", h.AdminCleanupUserSettings)
+
+		// 抽奖系统管理路由
+		admin.GET("/apps/:appkey/lottery/activities", h.AdminListLotteryActivities)
+		admin.POST("/apps/:appkey/lottery/activities", h.AdminCreateLotteryActivity)
+		admin.GET("/apps/:appkey/lottery/activities/:id", h.AdminGetLotteryActivity)
+		admin.PUT("/apps/:appkey/lottery/activities/:id", h.AdminUpdateLotteryActivity)
+		admin.DELETE("/apps/:appkey/lottery/activities/:id", h.AdminDeleteLotteryActivity)
+		admin.GET("/apps/:appkey/lottery/activities/:id/prizes", h.AdminListLotteryPrizes)
+		admin.POST("/apps/:appkey/lottery/activities/:id/prizes", h.AdminCreateLotteryPrize)
+		admin.PUT("/apps/:appkey/lottery/prizes/:id", h.AdminUpdateLotteryPrize)
+		admin.DELETE("/apps/:appkey/lottery/prizes/:id", h.AdminDeleteLotteryPrize)
+		admin.GET("/apps/:appkey/lottery/activities/:id/stats", h.AdminLotteryActivityStats)
+		admin.POST("/apps/:appkey/lottery/activities/:id/seed/commit", h.AdminLotteryCommitSeed)
+		admin.POST("/apps/:appkey/lottery/activities/:id/seed/reveal", h.AdminLotteryRevealSeed)
+		admin.GET("/apps/:appkey/lottery/draws", h.AdminListLotteryDraws)
+
+		// 版本发布管理 RESTful 路由
+		admin.GET("/apps/:appkey/versions", h.AdminListVersions)
+		admin.POST("/apps/:appkey/versions", h.AdminCreateVersion)
+		admin.GET("/apps/:appkey/versions/stats", h.AdminVersionStats)
+		admin.GET("/apps/:appkey/versions/:vid", h.AdminGetVersion)
+		admin.PUT("/apps/:appkey/versions/:vid", h.AdminUpdateVersion)
+		admin.DELETE("/apps/:appkey/versions/:vid", h.AdminDeleteVersion)
+		admin.POST("/apps/:appkey/versions/:vid/publish", h.AdminPublishVersion)
+		admin.POST("/apps/:appkey/versions/:vid/revoke", h.AdminRevokeVersion)
+		admin.GET("/apps/:appkey/channels", h.AdminListVersionChannels)
+		admin.POST("/apps/:appkey/channels", h.AdminCreateVersionChannel)
+		admin.GET("/apps/:appkey/channels/:cid", h.AdminGetVersionChannel)
+		admin.PUT("/apps/:appkey/channels/:cid", h.AdminUpdateVersionChannel)
+		admin.DELETE("/apps/:appkey/channels/:cid", h.AdminDeleteVersionChannel)
+		admin.GET("/apps/:appkey/channels/:cid/users", h.AdminListVersionChannelUsers)
+		admin.POST("/apps/:appkey/channels/:cid/users", h.AdminAddVersionChannelUsers)
+		admin.DELETE("/apps/:appkey/channels/:cid/users", h.AdminRemoveVersionChannelUsers)
+
+		// 报表分析中心
+		admin.GET("/apps/:appkey/reports/registration", h.ReportRegistration)
+		admin.GET("/apps/:appkey/reports/login", h.ReportLogin)
+		admin.GET("/apps/:appkey/reports/retention", h.ReportRetention)
+		admin.GET("/apps/:appkey/reports/active", h.ReportActive)
+		admin.GET("/apps/:appkey/reports/device", h.ReportDevice)
+		admin.GET("/apps/:appkey/reports/region", h.ReportRegion)
+		admin.GET("/apps/:appkey/reports/channel", h.ReportChannel)
+		admin.GET("/apps/:appkey/reports/payment", h.ReportPayment)
+		admin.GET("/apps/:appkey/reports/notification", h.ReportNotification)
+		admin.GET("/apps/:appkey/reports/risk", h.ReportRisk)
+		admin.GET("/apps/:appkey/reports/activity", h.ReportActivity)
+		admin.GET("/apps/:appkey/reports/funnel", h.ReportFunnel)
+		admin.GET("/apps/:appkey/reports/export", h.ReportExport)
+	}
+
+	// 用户抽奖路由
+	lotteryUser := router.Group("/api/lottery")
+	lotteryUser.Use(middleware.Auth(authService))
+	{
+		lotteryUser.GET("/activities", h.UserLotteryActivities)
+		lotteryUser.GET("/activities/:id", h.UserLotteryActivityDetail)
+		lotteryUser.GET("/activities/:id/prizes", h.UserLotteryActivityPrizes)
+		lotteryUser.GET("/activities/:id/verify", h.UserLotteryVerify)
+		lotteryUser.POST("/join", h.UserLotteryJoin)
+		lotteryUser.POST("/draw", h.UserLotteryDraw)
+		lotteryUser.GET("/draws", h.UserLotteryDrawHistory)
 	}
 
 	userPublic := router.Group("/api/user")
@@ -235,6 +415,8 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		user.POST("/role/applications/:applicationId/resubmit", h.ResubmitRoleApplication)
 		user.GET("/profile", h.Profile)
 		user.PUT("/profile", h.UpdateProfile)
+		user.POST("/profile/avatar", h.UploadUserAvatar)
+		user.POST("/profile/upload-avatar", h.UploadUserAvatar)
 		user.GET("/settings", h.Settings)
 		user.PUT("/settings", h.UpdateSettings)
 		user.POST("/level/info", h.LegacyMyLevel)
@@ -243,6 +425,16 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		user.POST("/integralRank", h.LegacyIntegralRank)
 		user.POST("/settings/reset", h.LegacyResetUserSettings)
 		user.GET("/security", h.Security)
+		user.POST("/two-factor/enroll", h.BeginTOTPEnrollment)
+		user.POST("/two-factor/enable", h.EnableTOTP)
+		user.POST("/two-factor/disable", h.DisableTOTP)
+		user.GET("/two-factor/recovery-codes", h.ListRecoveryCodes)
+		user.POST("/two-factor/recovery-codes", h.GenerateRecoveryCodes)
+		user.POST("/two-factor/recovery-codes/regenerate", h.RegenerateRecoveryCodes)
+		user.GET("/passkey", h.ListPasskeys)
+		user.POST("/passkey/register/options", h.BeginPasskeyRegistration)
+		user.POST("/passkey/register", h.FinishPasskeyRegistration)
+		user.DELETE("/passkey/:credentialId", h.DeletePasskey)
 		user.GET("/auto-sign/status", h.LegacyAutoSignStatus)
 		user.POST("/auto-sign/test-notification", h.LegacyAutoSignTestNotification)
 		user.GET("/audits/login", h.UserLoginAudits)
@@ -290,7 +482,7 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	}
 
 	emailAdmin := router.Group("/api/admin/app/email-config")
-	emailAdmin.Use(middleware.AdminAccess(adminService))
+	emailAdmin.Use(middleware.AdminAccess(adminService, appService))
 	{
 		emailAdmin.POST("/list", h.AdminEmailConfigList)
 		emailAdmin.POST("/detail", h.AdminEmailConfigDetail)
@@ -301,7 +493,7 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	}
 
 	payCompat := router.Group("/api/admin/app/payment-config")
-	payCompat.Use(middleware.AdminAccess(adminService))
+	payCompat.Use(middleware.AdminAccess(adminService, appService))
 	{
 		payCompat.POST("/list", h.AdminPaymentConfigList)
 		payCompat.POST("/detail", h.AdminPaymentConfigDetail)
@@ -310,10 +502,11 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		payCompat.POST("/delete", h.AdminPaymentConfigDelete)
 		payCompat.POST("/test", h.AdminPaymentConfigTest)
 		payCompat.POST("/epay/init", h.AdminPaymentEpayInit)
+		payCompat.POST("/methods", h.PaymentMethods)
 	}
 
 	appStorageAdmin := router.Group("/api/admin/app/storage-config")
-	appStorageAdmin.Use(middleware.AdminAccess(adminService))
+	appStorageAdmin.Use(middleware.AdminAccess(adminService, appService))
 	{
 		appStorageAdmin.POST("/list", h.AdminAppStorageConfigList)
 		appStorageAdmin.POST("/detail", h.AdminAppStorageConfigDetail)
@@ -324,7 +517,7 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	}
 
 	globalStorageAdmin := router.Group("/api/admin/platform/storage-config")
-	globalStorageAdmin.Use(middleware.AdminAccess(adminService))
+	globalStorageAdmin.Use(middleware.AdminAccess(adminService, appService))
 	{
 		globalStorageAdmin.POST("/list", h.AdminGlobalStorageConfigList)
 		globalStorageAdmin.POST("/detail", h.AdminGlobalStorageConfigDetail)
@@ -337,8 +530,12 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	pay := router.Group("/api/pay")
 	pay.Use(middleware.Auth(authService))
 	{
+		pay.GET("/orders", h.PaymentOrders)
 		pay.POST("/orders/create", h.CreatePaymentOrder)
 		pay.GET("/orders/:orderNo", h.PaymentOrderDetail)
+		pay.GET("/orders/:orderNo/bill", h.ExportPaymentBill)
+		pay.POST("/orders/:orderNo/bill", h.ExportPaymentBill)
+		pay.GET("/bills/:billId/download", h.DownloadPaymentBill)
 		pay.GET("/epay/query/:orderNo", h.QueryEpayOrder)
 	}
 
@@ -353,6 +550,8 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	{
 		publicPay.POST("/epay", h.EpayCallback)
 		publicPay.GET("/epay", h.EpayCallback)
+		publicPay.POST("/callback/:method", h.PaymentCallback)
+		publicPay.GET("/callback/:method", h.PaymentCallback)
 	}
 
 	publicStorage := router.Group("/api/storage")
@@ -361,7 +560,7 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	}
 
 	workflowCompat := router.Group("/api/app/workflow")
-	workflowCompat.Use(middleware.AdminAccess(adminService))
+	workflowCompat.Use(middleware.AdminAccess(adminService, appService))
 	{
 		workflowCompat.POST("/list", h.WorkflowList)
 		workflowCompat.POST("/create", h.WorkflowCreate)
@@ -399,16 +598,234 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	}
 
 	adminSystem := router.Group("/api/admin/system")
-	adminSystem.Use(middleware.AdminAccess(adminService))
+	adminSystem.Use(middleware.AdminAccess(adminService, appService))
 	{
 		adminSystem.GET("/roles", h.AdminRoleCatalog)
+		adminSystem.GET("/roles/permissions", h.AdminRolePermissionTree)
 		adminSystem.GET("/admins", h.AdminListAccounts)
 		adminSystem.POST("/admins", h.AdminCreateAccount)
+		// 会话管理（注意：/admins/online 必须在 /admins/:adminId 之前注册）
+		adminSystem.GET("/admins/online", h.ListOnlineAdmins)
 		adminSystem.PUT("/admins/:adminId/status", h.AdminUpdateAccountStatus)
 		adminSystem.PUT("/admins/:adminId/access", h.AdminUpdateAccountAccess)
+		adminSystem.GET("/admins/:adminId/sessions", h.ListAdminSessions)
+		adminSystem.POST("/admins/:adminId/force-logout", h.ForceLogoutAdmin)
+		adminSystem.GET("/sessions", h.ListAllSessions)
+		adminSystem.POST("/sessions/:sessionId/revoke", h.RevokeSession)
+		adminSystem.GET("/temp-permissions", h.ListTempPermissions)
+		adminSystem.POST("/temp-permissions", h.GrantTempPermission)
+		adminSystem.POST("/temp-permissions/:permId/revoke", h.RevokeTempPermission)
+		adminSystem.GET("/delegations", h.ListDelegations)
+		adminSystem.POST("/delegations", h.CreateDelegation)
+		adminSystem.POST("/delegations/:delegationId/revoke", h.RevokeDelegation)
+		adminSystem.GET("/runtime", h.AdminSystemRuntime)
+		adminSystem.GET("/settings", h.AdminGetSystemSettings)
+		adminSystem.PUT("/settings", h.AdminUpdateSystemSettings)
+		adminSystem.POST("/ldap/test", h.AdminLDAPTest)
+		adminSystem.POST("/oidc/test", h.AdminOIDCTest)
+		// 插件系统
+		adminSystem.GET("/plugins", h.AdminListPlugins)
+		adminSystem.POST("/plugins", h.AdminCreatePlugin)
+		adminSystem.GET("/plugins/registry", h.AdminGetHookRegistry)
+		adminSystem.GET("/plugins/executions", h.AdminListHookExecutions)
+		adminSystem.GET("/plugins/:id", h.AdminGetPlugin)
+		adminSystem.PUT("/plugins/:id", h.AdminUpdatePlugin)
+		adminSystem.DELETE("/plugins/:id", h.AdminDeletePlugin)
+		adminSystem.POST("/plugins/:id/enable", h.AdminEnablePlugin)
+		adminSystem.POST("/plugins/:id/disable", h.AdminDisablePlugin)
+		adminSystem.POST("/roles", h.AdminCreateCustomRole)
+		adminSystem.PUT("/roles/:roleKey", h.AdminUpdateCustomRole)
+		adminSystem.DELETE("/roles/:roleKey", h.AdminDeleteCustomRole)
+		adminSystem.GET("/roles/matrix", h.AdminGetRoleMatrix)
+		adminSystem.GET("/roles/graph", h.AdminGetRoleGraph)
+		adminSystem.GET("/roles/:roleKey/impact", h.AdminGetRoleImpactPreview)
+		adminSystem.GET("/organizations", h.ListOrganizations)
+		adminSystem.POST("/organizations", h.CreateOrganization)
+		adminSystem.PUT("/organizations/:orgId", h.UpdateOrganization)
+		adminSystem.DELETE("/organizations/:orgId", h.DeleteOrganization)
+		adminSystem.GET("/organizations/:orgId/departments", h.GetDepartmentTree)
+		adminSystem.POST("/organizations/:orgId/departments", h.CreateDepartment)
+		adminSystem.PUT("/departments/:deptId", h.UpdateDepartment)
+		adminSystem.DELETE("/departments/:deptId", h.DeleteDepartment)
+		adminSystem.PUT("/departments/:deptId/move", h.MoveDepartment)
+		adminSystem.GET("/departments/:deptId/members", h.ListDepartmentMembers)
+		adminSystem.POST("/departments/:deptId/members", h.AddDepartmentMember)
+		adminSystem.DELETE("/departments/:deptId/members/:adminId", h.RemoveDepartmentMember)
+		adminSystem.GET("/admins/:adminId/departments", h.ListAdminDepartments)
+		// 邀请
+		adminSystem.POST("/departments/:deptId/invite", h.InviteDeptMember)
+		adminSystem.GET("/invitations", h.ListMyInvitations)
+		adminSystem.GET("/invitations/count", h.CountPendingInvitations)
+		adminSystem.POST("/invitations/:id/accept", h.AcceptInvitation)
+		adminSystem.POST("/invitations/:id/reject", h.RejectInvitation)
+		adminSystem.POST("/invitations/:id/cancel", h.CancelInvitation)
+		// 岗位
+		adminSystem.GET("/organizations/:orgId/positions", h.ListPositions)
+		adminSystem.POST("/organizations/:orgId/positions", h.CreatePosition)
+		adminSystem.PUT("/positions/:posId", h.UpdatePosition)
+		adminSystem.DELETE("/positions/:posId", h.DeletePosition)
+		// 成员增强
+		adminSystem.PUT("/departments/:deptId/members/:adminId/position", h.UpdateMemberPosition)
+		adminSystem.PUT("/departments/:deptId/members/:adminId/reporting", h.SetMemberReporting)
+		adminSystem.PUT("/departments/:deptId/members/:adminId/delegate", h.SetMemberDelegate)
+		adminSystem.GET("/departments/:deptId/members/:adminId/reporting-chain", h.GetReportingChain)
+		adminSystem.POST("/departments/:deptId/batch-invite", h.BatchInviteMembers)
+		// 审批链
+		adminSystem.GET("/organizations/:orgId/approval-chains", h.ListApprovalChains)
+		adminSystem.POST("/organizations/:orgId/approval-chains", h.CreateApprovalChain)
+		adminSystem.PUT("/approval-chains/:chainId", h.UpdateApprovalChain)
+		adminSystem.DELETE("/approval-chains/:chainId", h.DeleteApprovalChain)
+		// 审批实例
+		adminSystem.GET("/organizations/:orgId/approvals", h.ListApprovalInstances)
+		adminSystem.GET("/approvals/pending", h.ListMyPendingApprovals)
+		adminSystem.GET("/approvals/:instanceId", h.GetApprovalInstance)
+		adminSystem.POST("/approvals/:instanceId/approve", h.ApproveInstance)
+		adminSystem.POST("/approvals/:instanceId/reject", h.RejectInstance)
+		// 权限模板
+		adminSystem.GET("/organizations/:orgId/perm-templates", h.ListOrgPermTemplates)
+		adminSystem.POST("/organizations/:orgId/perm-templates", h.CreateOrgPermTemplate)
+		adminSystem.DELETE("/perm-templates/:templateId", h.DeleteOrgPermTemplate)
+		adminSystem.POST("/perm-templates/:templateId/apply", h.ApplyPermTemplate)
+		// 资源绑定
+		adminSystem.GET("/organizations/:orgId/apps", h.ListOrgApps)
+		adminSystem.POST("/organizations/:orgId/apps", h.BindOrgApp)
+		adminSystem.DELETE("/organizations/:orgId/apps/:appId", h.UnbindOrgApp)
+		// 协作组
+		adminSystem.GET("/organizations/:orgId/collab-groups", h.ListCollabGroups)
+		adminSystem.POST("/organizations/:orgId/collab-groups", h.CreateCollabGroup)
+		adminSystem.PUT("/collab-groups/:groupId", h.UpdateCollabGroup)
+		adminSystem.DELETE("/collab-groups/:groupId", h.DeleteCollabGroup)
+		// 成员导入导出
+		adminSystem.POST("/departments/:deptId/import-members", h.ImportDeptMembers)
+		adminSystem.GET("/organizations/:orgId/export-members", h.ExportOrgMembers)
+		adminSystem.GET("/templates", h.ListTemplates)
+		adminSystem.GET("/templates/:code", h.GetTemplate)
+		adminSystem.POST("/templates", h.CreateTemplate)
+		adminSystem.PUT("/templates/:code", h.UpdateTemplate)
+		adminSystem.DELETE("/templates/:code", h.DeleteTemplate)
+		adminSystem.POST("/templates/:code/preview", h.PreviewTemplate)
+		adminSystem.GET("/audit-logs", h.ListAuditLogs)
+		adminSystem.GET("/audit-logs/stats", h.GetAuditStats)
+		adminSystem.GET("/audit-logs/export", h.ExportAuditLogs)
+		adminSystem.GET("/audit-logs/:id", h.GetAuditLog)
 		adminSystem.GET("/online/stats", h.AdminOnlineStats)
-		adminSystem.GET("/online/apps/:appid", h.AdminAppOnlineStats)
-		adminSystem.GET("/online/apps/:appid/users", h.AdminAppOnlineUsers)
+		adminSystem.GET("/online/apps/:appkey", h.AdminAppOnlineStats)
+		adminSystem.GET("/online/apps/:appkey/users", h.AdminAppOnlineUsers)
+		adminSystem.GET("/firewall/logs", h.AdminFirewallLogs)
+		adminSystem.GET("/firewall/logs/:logId", h.AdminFirewallLogDetail)
+		adminSystem.GET("/firewall/stats", h.AdminFirewallStats)
+		adminSystem.DELETE("/firewall/logs", h.AdminFirewallLogsCleanup)
+		adminSystem.GET("/firewall/bans", h.AdminListIPBans)
+		adminSystem.POST("/firewall/bans", h.AdminBanIP)
+		adminSystem.DELETE("/firewall/bans/:banId", h.AdminUnbanIP)
+
+		// 系统公告管理
+		adminSystem.GET("/announcements", h.AdminListAnnouncements)
+		adminSystem.POST("/announcements", h.AdminCreateAnnouncement)
+		adminSystem.GET("/announcements/:id", h.AdminGetAnnouncement)
+		adminSystem.PUT("/announcements/:id", h.AdminUpdateAnnouncement)
+		adminSystem.DELETE("/announcements/:id", h.AdminDeleteAnnouncement)
+		adminSystem.POST("/announcements/:id/publish", h.AdminPublishAnnouncement)
+		adminSystem.POST("/announcements/:id/archive", h.AdminArchiveAnnouncement)
+
+		// 崩溃日志管理（仅超级管理员）
+		clh := &crashLogHandlers{cl: cl}
+		adminSystem.GET("/crashlogs", clh.ListCrashLogs)
+		adminSystem.GET("/crashlogs/:filename", clh.GetCrashLog)
+		adminSystem.DELETE("/crashlogs/:filename", clh.DeleteCrashLog)
+
+		// 内存管理（仅超级管理员）
+		mh := &memoryHandlers{mm: memoryManager}
+		adminSystem.GET("/memory/snapshot", mh.AdminMemorySnapshot)
+		adminSystem.POST("/memory/gc", mh.AdminMemoryForceGC)
+		adminSystem.PUT("/memory/gogc", mh.AdminMemorySetGOGC)
+		adminSystem.GET("/memory/history", mh.AdminMemoryHistory)
+		adminSystem.GET("/memory/pools", mh.AdminMemoryPoolStats)
+		adminSystem.GET("/memory/cache", mh.AdminMemoryCacheStats)
+		adminSystem.DELETE("/memory/cache", mh.AdminMemoryFlushCaches)
+		adminSystem.GET("/memory/leak", mh.AdminMemoryLeakReport)
+
+		// 存储资源中心
+		adminSystem.GET("/storage/objects", h.ListStorageObjects)
+		adminSystem.GET("/storage/objects/:objectId", h.GetStorageObjectDetail)
+		adminSystem.DELETE("/storage/objects/:objectId", h.SoftDeleteStorageObject)
+		adminSystem.POST("/storage/objects/:objectId/restore", h.RestoreStorageObject)
+		adminSystem.DELETE("/storage/objects/:objectId/permanent", h.PermanentDeleteStorageObject)
+		adminSystem.GET("/storage/trash", h.ListTrashObjects)
+		adminSystem.POST("/storage/trash/cleanup", h.CleanupTrash)
+		adminSystem.GET("/storage/rules", h.ListStorageRules)
+		adminSystem.POST("/storage/rules", h.CreateStorageRule)
+		adminSystem.PUT("/storage/rules/:ruleId", h.UpdateStorageRule)
+		adminSystem.DELETE("/storage/rules/:ruleId", h.DeleteStorageRule)
+		adminSystem.GET("/storage/cdn/:configId", h.GetCDNConfig)
+		adminSystem.PUT("/storage/cdn/:configId", h.UpsertCDNConfig)
+		adminSystem.DELETE("/storage/cdn/:configId", h.DeleteCDNConfig)
+		adminSystem.GET("/storage/image-rules", h.ListImageRules)
+		adminSystem.POST("/storage/image-rules", h.CreateImageRule)
+		adminSystem.DELETE("/storage/image-rules/:ruleId", h.DeleteImageRule)
+		adminSystem.GET("/storage/usage", h.GetStorageUsage)
+		adminSystem.GET("/storage/usage/history", h.GetStorageUsageHistory)
+
+		// 用户主数据中心
+		adminSystem.GET("/user-master/identities", h.AdminListIdentities)
+		adminSystem.POST("/user-master/identities", h.AdminCreateIdentity)
+		adminSystem.GET("/user-master/identities/:id", h.AdminGetIdentity)
+		adminSystem.PUT("/user-master/identities/:id/status", h.AdminUpdateIdentityStatus)
+		adminSystem.PUT("/user-master/identities/:id/lifecycle", h.AdminUpdateIdentityLifecycle)
+		adminSystem.PUT("/user-master/identities/:id/risk", h.AdminUpdateIdentityRisk)
+		adminSystem.GET("/user-master/identities/:id/mappings", h.AdminListMappingsByIdentity)
+		adminSystem.GET("/user-master/identities/:id/tags", h.AdminListIdentityTags)
+		adminSystem.POST("/user-master/mappings", h.AdminCreateMapping)
+		adminSystem.DELETE("/user-master/mappings/:id", h.AdminDeleteMapping)
+		adminSystem.GET("/user-master/tags", h.AdminListUserTags)
+		adminSystem.POST("/user-master/tags", h.AdminCreateUserTag)
+		adminSystem.DELETE("/user-master/tags/:id", h.AdminDeleteUserTag)
+		adminSystem.POST("/user-master/tags/assign", h.AdminAssignTag)
+		adminSystem.POST("/user-master/tags/remove", h.AdminRemoveTag)
+		adminSystem.GET("/user-master/segments", h.AdminListSegments)
+		adminSystem.POST("/user-master/segments", h.AdminCreateSegment)
+		adminSystem.PUT("/user-master/segments/:id", h.AdminUpdateSegment)
+		adminSystem.DELETE("/user-master/segments/:id", h.AdminDeleteSegment)
+		adminSystem.GET("/user-master/segments/:id/members", h.AdminListSegmentMembers)
+		adminSystem.POST("/user-master/segments/:id/members", h.AdminAddSegmentMember)
+		adminSystem.DELETE("/user-master/segments/:id/members/:identityId", h.AdminRemoveSegmentMember)
+		adminSystem.GET("/user-master/lists", h.AdminListUserListEntries)
+		adminSystem.POST("/user-master/lists", h.AdminCreateUserListEntry)
+		adminSystem.DELETE("/user-master/lists/:id", h.AdminDeleteUserListEntry)
+		adminSystem.POST("/user-master/lists/check", h.AdminCheckBlacklist)
+		adminSystem.POST("/user-master/merges", h.AdminMergeIdentity)
+		adminSystem.GET("/user-master/merges", h.AdminListMerges)
+		adminSystem.GET("/user-master/appeals", h.AdminListAppeals)
+		adminSystem.POST("/user-master/appeals", h.AdminCreateAppeal)
+		adminSystem.PUT("/user-master/appeals/:id", h.AdminReviewAppeal)
+		adminSystem.GET("/user-master/deactivations", h.AdminListDeactivations)
+		adminSystem.POST("/user-master/deactivations", h.AdminCreateDeactivation)
+		adminSystem.POST("/user-master/deactivations/:id/cancel", h.AdminCancelDeactivation)
+		adminSystem.POST("/user-master/sync", h.AdminSyncIdentity)
+		adminSystem.POST("/user-master/sync/batch", h.AdminBatchSyncIdentities)
+
+		// 风控中心
+		adminSystem.GET("/risk/dashboard", h.AdminRiskDashboard)
+		adminSystem.POST("/risk/evaluate", h.AdminEvaluateRisk)
+		adminSystem.GET("/risk/rules", h.AdminListRiskRules)
+		adminSystem.POST("/risk/rules", h.AdminCreateRiskRule)
+		adminSystem.PUT("/risk/rules/:id", h.AdminUpdateRiskRule)
+		adminSystem.DELETE("/risk/rules/:id", h.AdminDeleteRiskRule)
+		adminSystem.POST("/risk/rules/:id/simulate", h.AdminSimulateRisk)
+		adminSystem.GET("/risk/assessments", h.AdminListRiskAssessments)
+		adminSystem.GET("/risk/assessments/:id", h.AdminGetRiskAssessment)
+		adminSystem.POST("/risk/assessments/:id/review", h.AdminReviewRiskAssessment)
+		adminSystem.GET("/risk/reviews/pending", h.AdminListPendingReviews)
+		adminSystem.GET("/risk/devices/suspicious", h.AdminListSuspiciousDevices)
+		adminSystem.GET("/risk/devices/:deviceId", h.AdminGetDeviceFingerprint)
+		adminSystem.PUT("/risk/devices/:id/tag", h.AdminUpdateDeviceRiskTag)
+		adminSystem.GET("/risk/ips", h.AdminListHighRiskIPs)
+		adminSystem.GET("/risk/ips/:ip", h.AdminGetIPRisk)
+		adminSystem.PUT("/risk/ips/:id/tag", h.AdminUpdateIPRiskTag)
+		adminSystem.GET("/risk/actions", h.AdminListRiskActions)
+		adminSystem.POST("/risk/actions", h.AdminCreateRiskAction)
+		adminSystem.PUT("/risk/actions/:id", h.AdminUpdateRiskAction)
+		adminSystem.DELETE("/risk/actions/:id", h.AdminDeleteRiskAction)
 	}
 
 	if err := RegisterDocsRoutes(router, DefaultDocsOptions()); err != nil {
@@ -419,11 +836,29 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 }
 
 func (h *Handler) Healthz(c *gin.Context) {
-	response.Success(c, 200, "ok", gin.H{"status": "healthy"})
+	if h.monitor == nil {
+		response.Error(c, http.StatusServiceUnavailable, 50310, "系统监测服务暂不可用")
+		return
+	}
+	response.Success(c, 200, "ok", h.monitor.LivenessReport())
 }
 
 func (h *Handler) Readyz(c *gin.Context) {
-	response.Success(c, 200, "ok", gin.H{"status": "ready"})
+	if h.monitor == nil {
+		response.Error(c, http.StatusServiceUnavailable, 50310, "系统监测服务暂不可用")
+		return
+	}
+	report, ready := h.monitor.ReadinessReport(c.Request.Context())
+	statusCode := http.StatusOK
+	code := 200
+	message := "ok"
+	if !ready {
+		statusCode = http.StatusServiceUnavailable
+		code = 50312
+		message = "服务未就绪"
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(statusCode, response.Envelope{Code: code, Message: message, Data: report, RequestID: c.GetString("request_id")})
 }
 
 func (h *Handler) PasswordLogin(c *gin.Context) {
@@ -437,7 +872,7 @@ func (h *Handler) PasswordLogin(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	response.Success(c, 200, "登录成功", result)
+	response.Success(c, 200, authResultMessage(result, "登录成功"), result)
 }
 
 func (h *Handler) PasswordRegister(c *gin.Context) {
@@ -446,12 +881,20 @@ func (h *Handler) PasswordRegister(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	result, err := h.auth.RegisterWithPassword(c.Request.Context(), req.AppID, req.Account, req.Password, req.Nickname, req.MarkCode, c.ClientIP(), c.Request.UserAgent())
+	result, err := h.auth.RegisterWithPassword(c.Request.Context(), service.PasswordRegisterInput{
+		AppID:     req.AppID,
+		Account:   req.Account,
+		Password:  req.Password,
+		Nickname:  req.Nickname,
+		DeviceID:  req.MarkCode,
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	})
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
-	response.Success(c, 200, "注册成功", result)
+	response.Success(c, 200, authResultMessage(result, "注册成功"), result)
 }
 
 func (h *Handler) OAuthAuthURL(c *gin.Context) {
@@ -477,7 +920,7 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	response.Success(c, 200, "OAuth2 登录成功", result)
+	response.Success(c, 200, authResultMessage(result, "OAuth2 登录成功"), result)
 }
 
 func (h *Handler) OAuthMobileLogin(c *gin.Context) {
@@ -504,7 +947,7 @@ func (h *Handler) OAuthMobileLogin(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	response.Success(c, 200, "OAuth2 登录成功", result)
+	response.Success(c, 200, authResultMessage(result, "OAuth2 登录成功"), result)
 }
 
 func (h *Handler) Refresh(c *gin.Context) {
@@ -579,6 +1022,7 @@ func (h *Handler) My(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	h.attachMyAvatar(c, session, view)
 	response.Success(c, 200, "获取成功", view)
 }
 
@@ -986,13 +1430,42 @@ func (h *Handler) AdminApps(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	// 非超管：按角色分配过滤可见应用
+	session, ok := adminAccessSession(c)
+	if ok && session != nil && !session.IsSuperAdmin {
+		items = filterAppsByAssignments(items, session.Assignments)
+	}
 	response.Success(c, 200, "获取成功", items)
 }
 
+// filterAppsByAssignments 按管理员角色分配过滤应用列表
+// 全局角色（appID == nil）可见所有应用，应用级角色只可见绑定的应用
+func filterAppsByAssignments(apps []appdomain.App, assignments []admindomain.Assignment) []appdomain.App {
+	// 如果有任何全局角色，返回全部应用
+	for _, a := range assignments {
+		if a.AppID == nil {
+			return apps
+		}
+	}
+	// 收集有权限的 appID
+	allowed := make(map[int64]struct{}, len(assignments))
+	for _, a := range assignments {
+		if a.AppID != nil {
+			allowed[*a.AppID] = struct{}{}
+		}
+	}
+	filtered := make([]appdomain.App, 0, len(allowed))
+	for _, app := range apps {
+		if _, ok := allowed[app.ID]; ok {
+			filtered = append(filtered, app)
+		}
+	}
+	return filtered
+}
+
 func (h *Handler) AdminApp(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	item, err := h.app.GetApp(c.Request.Context(), appID)
@@ -1004,9 +1477,8 @@ func (h *Handler) AdminApp(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppPolicy(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	item, err := h.app.GetPolicy(c.Request.Context(), appID)
@@ -1018,9 +1490,8 @@ func (h *Handler) AdminAppPolicy(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppStats(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	item, err := h.app.GetStats(c.Request.Context(), appID)
@@ -1032,9 +1503,8 @@ func (h *Handler) AdminAppStats(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppUserTrend(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var query AdminAppTrendQuery
@@ -1048,9 +1518,8 @@ func (h *Handler) AdminAppUserTrend(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppRegionStats(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var query AdminRegionStatsQuery
@@ -1067,9 +1536,8 @@ func (h *Handler) AdminAppRegionStats(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppAuthSources(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	item, err := h.app.GetAuthSourceStats(c.Request.Context(), appID)
@@ -1081,9 +1549,8 @@ func (h *Handler) AdminAppAuthSources(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppLoginAudits(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var query AdminLoginAuditQuery
@@ -1102,9 +1569,8 @@ func (h *Handler) AdminAppLoginAudits(c *gin.Context) {
 }
 
 func (h *Handler) ExportAdminAppLoginAudits(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var query AdminLoginAuditQuery
@@ -1157,9 +1623,8 @@ func (h *Handler) ExportAdminAppLoginAudits(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppSessionAudits(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var query AdminSessionAuditQuery
@@ -1178,9 +1643,8 @@ func (h *Handler) AdminAppSessionAudits(c *gin.Context) {
 }
 
 func (h *Handler) ExportAdminAppSessionAudits(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var query AdminSessionAuditQuery
@@ -1228,9 +1692,8 @@ func (h *Handler) ExportAdminAppSessionAudits(c *gin.Context) {
 }
 
 func (h *Handler) AdminBulkNotifyUsers(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	if _, err := h.app.GetApp(c.Request.Context(), appID); err != nil {
@@ -1261,9 +1724,8 @@ func (h *Handler) AdminBulkNotifyUsers(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppNotifications(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	if _, err := h.app.GetApp(c.Request.Context(), appID); err != nil {
@@ -1287,9 +1749,8 @@ func (h *Handler) AdminAppNotifications(c *gin.Context) {
 }
 
 func (h *Handler) DeleteAdminAppNotifications(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	if _, err := h.app.GetApp(c.Request.Context(), appID); err != nil {
@@ -1310,9 +1771,8 @@ func (h *Handler) DeleteAdminAppNotifications(c *gin.Context) {
 }
 
 func (h *Handler) DeleteAdminAppNotificationsByFilter(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	if _, err := h.app.GetApp(c.Request.Context(), appID); err != nil {
@@ -1338,9 +1798,8 @@ func (h *Handler) DeleteAdminAppNotificationsByFilter(c *gin.Context) {
 }
 
 func (h *Handler) ExportAdminAppNotifications(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	if _, err := h.app.GetApp(c.Request.Context(), appID); err != nil {
@@ -1402,9 +1861,8 @@ func (h *Handler) ExportAdminAppNotifications(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppUsers(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	if _, err := h.app.GetApp(c.Request.Context(), appID); err != nil {
@@ -1413,11 +1871,33 @@ func (h *Handler) AdminAppUsers(c *gin.Context) {
 	}
 	var query AdminUserListQuery
 	_ = bind(c, &query)
+	createdFrom, err := parseOptionalDateTime(query.CreatedFrom)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "createdFrom 格式错误")
+		return
+	}
+	createdTo, err := parseOptionalDateTime(query.CreatedTo)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "createdTo 格式错误")
+		return
+	}
+	if createdTo != nil && len(strings.TrimSpace(query.CreatedTo)) == len("2006-01-02") {
+		adjusted := createdTo.Add(24*time.Hour - time.Nanosecond)
+		createdTo = &adjusted
+	}
 	items, err := h.user.ListAdminUsers(c.Request.Context(), appID, userdomain.AdminUserQuery{
-		Keyword: query.Keyword,
-		Enabled: query.Enabled,
-		Page:    query.Page,
-		Limit:   query.Limit,
+		Keyword:     query.Keyword,
+		Account:     query.Account,
+		Nickname:    query.Nickname,
+		Email:       query.Email,
+		Phone:       query.Phone,
+		RegisterIP:  query.RegisterIP,
+		UserID:      query.UserID,
+		Enabled:     query.Enabled,
+		CreatedFrom: createdFrom,
+		CreatedTo:   createdTo,
+		Page:        query.Page,
+		Limit:       query.Limit,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -1427,9 +1907,8 @@ func (h *Handler) AdminAppUsers(c *gin.Context) {
 }
 
 func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	if _, err := h.app.GetApp(c.Request.Context(), appID); err != nil {
@@ -1438,10 +1917,32 @@ func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
 	}
 	var query AdminUserListQuery
 	_ = bind(c, &query)
+	createdFrom, err := parseOptionalDateTime(query.CreatedFrom)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "createdFrom 格式错误")
+		return
+	}
+	createdTo, err := parseOptionalDateTime(query.CreatedTo)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "createdTo 格式错误")
+		return
+	}
+	if createdTo != nil && len(strings.TrimSpace(query.CreatedTo)) == len("2006-01-02") {
+		adjusted := createdTo.Add(24*time.Hour - time.Nanosecond)
+		createdTo = &adjusted
+	}
 	items, err := h.user.ExportAdminUsers(c.Request.Context(), appID, userdomain.AdminUserQuery{
-		Keyword: query.Keyword,
-		Enabled: query.Enabled,
-		Limit:   query.Limit,
+		Keyword:     query.Keyword,
+		Account:     query.Account,
+		Nickname:    query.Nickname,
+		Email:       query.Email,
+		Phone:       query.Phone,
+		RegisterIP:  query.RegisterIP,
+		UserID:      query.UserID,
+		Enabled:     query.Enabled,
+		CreatedFrom: createdFrom,
+		CreatedTo:   createdTo,
+		Limit:       query.Limit,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -1454,7 +1955,7 @@ func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
 	writer := csv.NewWriter(c.Writer)
 	defer writer.Flush()
 
-	_ = writer.Write([]string{"id", "appid", "account", "nickname", "email", "enabled", "integral", "experience", "register_ip", "register_time", "register_province", "register_city", "vip_expire_at"})
+	_ = writer.Write([]string{"id", "appid", "account", "nickname", "email", "phone", "enabled", "integral", "experience", "register_ip", "register_time", "register_province", "register_city", "vip_expire_at"})
 	for _, item := range items {
 		registerTime := ""
 		if item.RegisterTime != nil {
@@ -1470,6 +1971,7 @@ func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
 			item.Account,
 			item.Nickname,
 			item.Email,
+			item.Phone,
 			strconv.FormatBool(item.Enabled),
 			strconv.FormatInt(item.Integral, 10),
 			strconv.FormatInt(item.Experience, 10),
@@ -1483,9 +1985,8 @@ func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppUser(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	userID, err := pathInt64(c, "userId")
@@ -1506,9 +2007,8 @@ func (h *Handler) AdminAppUser(c *gin.Context) {
 }
 
 func (h *Handler) BatchUpdateAdminAppUserStatus(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	if _, err := h.app.GetApp(c.Request.Context(), appID); err != nil {
@@ -1520,6 +2020,7 @@ func (h *Handler) BatchUpdateAdminAppUserStatus(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
+	adminID, adminName := adminActor(c)
 	item, err := h.user.BatchUpdateAdminUserStatus(c.Request.Context(), appID, userdomain.AdminUserBatchStatusMutation{
 		UserIDs: req.UserIDs,
 		AdminUserStatusMutation: userdomain.AdminUserStatusMutation{
@@ -1528,7 +2029,7 @@ func (h *Handler) BatchUpdateAdminAppUserStatus(c *gin.Context) {
 			ClearDisabledEndTime: req.ClearDisabledEndTime,
 			DisabledReason:       req.DisabledReason,
 		},
-	})
+	}, userdomain.BanOperator{AdminID: adminID, AdminName: adminName})
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -1537,9 +2038,8 @@ func (h *Handler) BatchUpdateAdminAppUserStatus(c *gin.Context) {
 }
 
 func (h *Handler) UpdateAdminAppUserStatus(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	userID, err := pathInt64(c, "userId")
@@ -1556,12 +2056,13 @@ func (h *Handler) UpdateAdminAppUserStatus(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
+	adminID, adminName := adminActor(c)
 	item, err := h.user.UpdateAdminUserStatus(c.Request.Context(), appID, userID, userdomain.AdminUserStatusMutation{
 		Enabled:              req.Enabled,
 		DisabledEndTime:      req.DisabledEndTime,
 		ClearDisabledEndTime: req.ClearDisabledEndTime,
 		DisabledReason:       req.DisabledReason,
-	})
+	}, userdomain.BanOperator{AdminID: adminID, AdminName: adminName})
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -1569,22 +2070,191 @@ func (h *Handler) UpdateAdminAppUserStatus(c *gin.Context) {
 	response.Success(c, 200, "更新成功", item)
 }
 
-func (h *Handler) CreateAdminApp(c *gin.Context) {
+func (h *Handler) AdminUpdateUserProfile(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	userID, err := pathInt64(c, "userId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的用户标识")
+		return
+	}
+	var req AdminUpdateUserProfileRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	if err := h.user.AdminUpdateUserProfile(c.Request.Context(), appID, userID, req.Nickname, req.Email); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "用户资料已更新", nil)
+}
+
+func (h *Handler) AdminResetUserPassword(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	userID, err := pathInt64(c, "userId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的用户标识")
+		return
+	}
+	var req AdminResetUserPasswordRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	if err := h.user.AdminResetUserPassword(c.Request.Context(), appID, userID, req.NewPassword); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "用户密码已重置", nil)
+}
+
+func (h *Handler) AdminRevokeUserSessions(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	userID, err := pathInt64(c, "userId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的用户标识")
+		return
+	}
+	if err := h.user.AdminRevokeUserSessions(c.Request.Context(), appID, userID); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "用户会话已全部踢出", nil)
+}
+
+func (h *Handler) AdminListUserSessions(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	userID, err := pathInt64(c, "userId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的用户标识")
+		return
+	}
+	sessions, err := h.user.AdminListUserSessions(c.Request.Context(), appID, userID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	// GeoIP 位置解析
+	if h.location != nil {
+		for i := range sessions {
+			if sessions[i].IP != "" {
+				loc := h.location.Resolve(c.Request.Context(), sessions[i].IP)
+				sessions[i].Country = loc.Country
+				sessions[i].CountryCode = loc.CountryCode
+				sessions[i].Region = loc.Region
+				sessions[i].City = loc.City
+				sessions[i].ISP = loc.ISP
+				sessions[i].Location = loc.Location
+			}
+		}
+	}
+	response.Success(c, 200, "获取成功", gin.H{"items": sessions, "total": len(sessions)})
+}
+
+func (h *Handler) AdminRevokeUserSession(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	userID, err := pathInt64(c, "userId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的用户标识")
+		return
+	}
+	tokenHash := c.Param("tokenHash")
+	if err := h.user.AdminRevokeUserSession(c.Request.Context(), appID, userID, tokenHash); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "会话已撤销", gin.H{"revoked": 1})
+}
+
+func (h *Handler) AdminRevokeUserSessionsBatch(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	userID, err := pathInt64(c, "userId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的用户标识")
+		return
+	}
 	var req struct {
-		AppID int64 `json:"appid" binding:"required"`
-		AdminAppUpsertRequest
+		TokenHashes []string `json:"tokenHashes" binding:"required"`
 	}
 	if err := bind(c, &req); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	h.saveAdminApp(c, req.AppID, req.AdminAppUpsertRequest)
+	revoked, err := h.user.AdminRevokeUserSessionsBatch(c.Request.Context(), appID, userID, req.TokenHashes)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "批量撤销完成", gin.H{"revoked": revoked})
+}
+
+func (h *Handler) AdminDeleteUser(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	userID, err := pathInt64(c, "userId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的用户标识")
+		return
+	}
+	if err := h.user.AdminDeleteUser(c.Request.Context(), appID, userID); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "用户已删除", nil)
+}
+
+func (h *Handler) CreateAdminApp(c *gin.Context) {
+	var req AdminAppCreateRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	item, err := h.app.SaveApp(c.Request.Context(), appdomain.AppMutation{
+		ID:                     0,
+		Name:                   req.Name,
+		Status:                 req.Status,
+		DisabledReason:         req.DisabledReason,
+		RegisterStatus:         req.RegisterStatus,
+		DisabledRegisterReason: req.DisabledRegisterReason,
+		LoginStatus:            req.LoginStatus,
+		DisabledLoginReason:    req.DisabledLoginReason,
+		Settings:               req.Settings,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	// 创建应用后自动为创建者分配 app_admin 角色
+	session, ok := adminAccessSession(c)
+	if ok && session != nil && session.AdminID > 0 && !session.IsSuperAdmin {
+		_ = h.admin.AutoAssignAppRole(c.Request.Context(), session.AdminID, item.ID, "app_admin")
+	}
+	response.Success(c, 200, "保存成功", item)
 }
 
 func (h *Handler) UpdateAdminApp(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var req AdminAppUpsertRequest
@@ -1595,10 +2265,56 @@ func (h *Handler) UpdateAdminApp(c *gin.Context) {
 	h.saveAdminApp(c, appID, req)
 }
 
-func (h *Handler) UpdateAdminAppPolicy(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
+func (h *Handler) AdminDeleteApp(c *gin.Context) {
+	if _, ok := requireSuperAdminSession(c); !ok {
+		response.Error(c, http.StatusForbidden, 40313, "仅超级管理员可删除应用")
+		return
+	}
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	if err := h.app.DeleteApp(c.Request.Context(), appID); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "应用已删除", nil)
+}
+
+func (h *Handler) AdminAppEncryption(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	item, err := h.app.GetTransportEncryption(c.Request.Context(), appID)
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "获取成功", item)
+}
+
+func (h *Handler) UpdateAdminAppEncryption(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	var req appdomain.TransportEncryptionUpdate
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	item, err := h.app.UpdateTransportEncryption(c.Request.Context(), appID, req)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "加密配置已更新", item)
+}
+
+func (h *Handler) UpdateAdminAppPolicy(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var req AdminAppPolicyRequest
@@ -1625,9 +2341,8 @@ func (h *Handler) UpdateAdminAppPolicy(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppPasswordPolicy(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	item, err := h.app.GetPasswordPolicy(c.Request.Context(), appID)
@@ -1639,9 +2354,8 @@ func (h *Handler) AdminAppPasswordPolicy(c *gin.Context) {
 }
 
 func (h *Handler) UpdateAdminAppPasswordPolicy(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -1660,9 +2374,8 @@ func (h *Handler) UpdateAdminAppPasswordPolicy(c *gin.Context) {
 }
 
 func (h *Handler) TestAdminAppPasswordPolicy(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -1681,9 +2394,8 @@ func (h *Handler) TestAdminAppPasswordPolicy(c *gin.Context) {
 }
 
 func (h *Handler) ResetAdminAppPasswordPolicy(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	item, err := h.app.ResetPasswordPolicy(c.Request.Context(), appID)
@@ -1766,7 +2478,6 @@ func (h *Handler) saveAdminApp(c *gin.Context, appID int64, req AdminAppUpsertRe
 	item, err := h.app.SaveApp(c.Request.Context(), appdomain.AppMutation{
 		ID:                     appID,
 		Name:                   req.Name,
-		AppKey:                 req.AppKey,
 		Status:                 req.Status,
 		DisabledReason:         req.DisabledReason,
 		RegisterStatus:         req.RegisterStatus,
@@ -1783,9 +2494,8 @@ func (h *Handler) saveAdminApp(c *gin.Context, appID int64, req AdminAppUpsertRe
 }
 
 func (h *Handler) AdminBanners(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	items, err := h.app.ListBannersForAdmin(c.Request.Context(), appID)
@@ -1797,9 +2507,8 @@ func (h *Handler) AdminBanners(c *gin.Context) {
 }
 
 func (h *Handler) ExportAdminBanners(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	items, err := h.app.ListBannersForAdmin(c.Request.Context(), appID)
@@ -1844,9 +2553,8 @@ func (h *Handler) ExportAdminBanners(c *gin.Context) {
 }
 
 func (h *Handler) CreateAdminBanner(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var req AdminBannerUpsertRequest
@@ -1858,9 +2566,8 @@ func (h *Handler) CreateAdminBanner(c *gin.Context) {
 }
 
 func (h *Handler) UpdateAdminBanner(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	bannerID, err := pathInt64(c, "bannerId")
@@ -1897,9 +2604,8 @@ func (h *Handler) saveAdminBanner(c *gin.Context, appID int64, bannerID int64, r
 }
 
 func (h *Handler) DeleteAdminBanner(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	bannerID, err := pathInt64(c, "bannerId")
@@ -1915,9 +2621,8 @@ func (h *Handler) DeleteAdminBanner(c *gin.Context) {
 }
 
 func (h *Handler) DeleteAdminBanners(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var req AdminBatchIDsRequest
@@ -1934,9 +2639,8 @@ func (h *Handler) DeleteAdminBanners(c *gin.Context) {
 }
 
 func (h *Handler) AdminNotices(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	items, err := h.app.ListNoticesForAdmin(c.Request.Context(), appID)
@@ -1948,9 +2652,8 @@ func (h *Handler) AdminNotices(c *gin.Context) {
 }
 
 func (h *Handler) ExportAdminNotices(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	items, err := h.app.ListNoticesForAdmin(c.Request.Context(), appID)
@@ -1978,9 +2681,8 @@ func (h *Handler) ExportAdminNotices(c *gin.Context) {
 }
 
 func (h *Handler) CreateAdminNotice(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var req AdminNoticeUpsertRequest
@@ -1992,9 +2694,8 @@ func (h *Handler) CreateAdminNotice(c *gin.Context) {
 }
 
 func (h *Handler) UpdateAdminNotice(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	noticeID, err := pathInt64(c, "noticeId")
@@ -2024,9 +2725,8 @@ func (h *Handler) saveAdminNotice(c *gin.Context, appID int64, noticeID int64, r
 }
 
 func (h *Handler) DeleteAdminNotice(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	noticeID, err := pathInt64(c, "noticeId")
@@ -2042,9 +2742,8 @@ func (h *Handler) DeleteAdminNotice(c *gin.Context) {
 }
 
 func (h *Handler) DeleteAdminNotices(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	var req AdminBatchIDsRequest
@@ -2159,6 +2858,7 @@ func (h *Handler) Profile(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	h.attachUserProfileAvatar(c, session, profile)
 	response.Success(c, 200, "获取成功", profile)
 }
 
@@ -2178,6 +2878,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	h.attachUserProfileAvatar(c, session, profile)
 	response.Success(c, 200, "更新成功", profile)
 }
 
@@ -2994,6 +3695,14 @@ func (h *Handler) adminVersionChannelSaveCompat(c *gin.Context, createFlag int64
 		Description:    maybeString(req.Description),
 		IsDefault:      req.IsDefault,
 		Status:         req.Status,
+		Priority:       req.Priority,
+		Color:          maybeString(req.Color),
+		Level:          maybeString(req.Level),
+		RolloutPct:     req.RolloutPct,
+		Platforms:      req.Platforms,
+		MinVersionCode: req.MinVersionCode,
+		MaxVersionCode: req.MaxVersionCode,
+		Rules:          req.Rules,
 		TargetAudience: req.TargetAudience,
 	})
 	if err != nil {

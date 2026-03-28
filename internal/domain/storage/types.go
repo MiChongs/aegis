@@ -21,6 +21,7 @@ const (
 	ProviderDropbox     = "dropbox"
 	ProviderGoogleDrive = "google_drive"
 	ProviderAzureBlob   = "azure_blob"
+	ProviderLocal       = "local"
 )
 
 type Config struct {
@@ -88,6 +89,8 @@ type UploadInput struct {
 	ContentLength int64
 	Metadata      map[string]string
 	Content       io.Reader
+	UploadedBy    *int64 // 上传者 ID（管理员或用户）
+	UploaderType  string // "user" / "admin"
 }
 
 type StoredObject struct {
@@ -217,4 +220,8 @@ type AzureBlobConfig struct {
 	AccountName      string `json:"account_name,omitempty"`
 	AccountKey       string `json:"account_key,omitempty"`
 	Container        string `json:"container"`
+}
+
+type LocalConfig struct {
+	RootDir string `json:"root_dir"` // 本地存储根目录
 }

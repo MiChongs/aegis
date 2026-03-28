@@ -20,7 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/qiniu/go-sdk/v7/auth/qbox"
 	qiniustorage "github.com/qiniu/go-sdk/v7/storage"
@@ -56,14 +56,15 @@ func (p *s3StorageProvider) Upload(ctx context.Context, cfg *storagedomain.Confi
 	if err != nil {
 		return nil, err
 	}
-	uploader := manager.NewUploader(client)
-	result, err := uploader.Upload(ctx, &awss3.PutObjectInput{
-		Bucket:       &raw.Bucket,
-		Key:          &input.ObjectKey,
-		Body:         input.Content,
-		ContentType:  nullableStringForAWS(input.ContentType),
-		CacheControl: nullableStringForAWS(input.CacheControl),
-		Metadata:     input.Metadata,
+	uploader := transfermanager.New(client)
+	result, err := uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
+		Bucket:        &raw.Bucket,
+		Key:           &input.ObjectKey,
+		Body:          input.Content,
+		ContentLength: nullableInt64ForAWS(input.ContentLength),
+		ContentType:   nullableStringForAWS(input.ContentType),
+		CacheControl:  nullableStringForAWS(input.CacheControl),
+		Metadata:      input.Metadata,
 	})
 	if err != nil {
 		return nil, err
@@ -75,7 +76,7 @@ func (p *s3StorageProvider) Upload(ctx context.Context, cfg *storagedomain.Confi
 		Size:        input.ContentLength,
 		ContentType: input.ContentType,
 		ETag:        strings.Trim(stringValue(result.ETag), "\""),
-		URL:         result.Location,
+		URL:         stringValue(result.Location),
 	}, nil
 }
 
@@ -919,6 +920,13 @@ func int64Value(value *int64) int64 {
 		return 0
 	}
 	return *value
+}
+
+func nullableInt64ForAWS(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
 }
 
 func encodeObjectPath(objectKey string) string {

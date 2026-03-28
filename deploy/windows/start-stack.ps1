@@ -38,6 +38,12 @@ if (-not (Test-Path -LiteralPath $serverBinary)) {
     throw ("Server binary not found: {0}. Run deploy.ps1 first or use -Rebuild." -f $serverBinary)
 }
 
-Start-ManagedProcess -Name "server" -FilePath $serverBinary | Out-Null
+Write-Step "Starting server with watchdog (auto-restart on crash)"
+Start-WatchedProcess -Name "server" -FilePath $serverBinary `
+    -MaxRestarts 10 `
+    -RestartWindowSeconds 300 `
+    -InitialBackoffMs 1000 `
+    -MaxBackoffMs 30000 `
+    -StableSeconds 60
 
-Write-Step "Unified runtime is up. Use status.ps1 to inspect processes."
+Write-Step "Watchdog exited. Use status.ps1 to inspect processes."

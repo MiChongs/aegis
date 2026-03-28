@@ -2,26 +2,23 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"aegis/internal/config"
 	authdomain "aegis/internal/domain/auth"
 	userdomain "aegis/internal/domain/user"
-	"aegis/internal/event"
 	legacyrepo "aegis/internal/repository/legacymysql"
 	pgrepo "aegis/internal/repository/postgres"
-	redisrepo "aegis/internal/repository/redis"
 	"go.uber.org/zap"
 )
 
 type MigrationService struct {
-	cfg       config.Config
-	log       *zap.Logger
-	legacy    *legacyrepo.Repository
-	pg        *pgrepo.Repository
-	sessions  *redisrepo.SessionRepository
-	publisher *event.Publisher
+	cfg    config.Config
+	log    *zap.Logger
+	legacy *legacyrepo.Repository
+	pg     *pgrepo.Repository
 }
 
 type SyncResult struct {
@@ -32,8 +29,10 @@ type SyncResult struct {
 	LastUserID int64 `json:"lastUserId"`
 }
 
-func NewMigrationService(cfg config.Config, log *zap.Logger, legacy *legacyrepo.Repository, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, publisher *event.Publisher) *MigrationService {
-	return &MigrationService{cfg: cfg, log: log, legacy: legacy, pg: pg, sessions: sessions, publisher: publisher}
+var errLegacyUserSkipped = errors.New("legacy user skipped")
+
+func NewMigrationService(cfg config.Config, log *zap.Logger, legacy *legacyrepo.Repository, pg *pgrepo.Repository) *MigrationService {
+	return &MigrationService{cfg: cfg, log: log, legacy: legacy, pg: pg}
 }
 
 func (s *MigrationService) SyncLegacyUserByID(ctx context.Context, userID int64) error {
@@ -59,6 +58,16 @@ func (s *MigrationService) SyncLegacyUsersBatch(ctx context.Context, lastID int6
 	for _, legacyUser := range users {
 		result.LastUserID = legacyUser.ID
 		if err := s.syncLegacyUser(ctx, legacyUser); err != nil {
+			if errors.Is(err, errLegacyUserSkipped) {
+				result.Skipped++
+				s.log.Info("sync legacy user skipped",
+					zap.Int64("user_id", legacyUser.ID),
+					zap.Int64("appid", legacyUser.AppID),
+					zap.String("account", legacyUser.Account),
+					zap.Error(err),
+				)
+				continue
+			}
 			result.Failed++
 			s.log.Error("sync legacy user failed", zap.Int64("user_id", legacyUser.ID), zap.Error(err))
 			continue
@@ -68,10 +77,11 @@ func (s *MigrationService) SyncLegacyUsersBatch(ctx context.Context, lastID int6
 	if len(users) == 0 {
 		result.Skipped = 0
 	}
-	if err := s.pg.ResetUserIDSequence(ctx); err != nil {
-		return result, err
-	}
 	return result, nil
+}
+
+func (s *MigrationService) FinalizeLegacySync(ctx context.Context) error {
+	return s.pg.ResetUserIDSequence(ctx)
 }
 
 func (s *MigrationService) syncLegacyUser(ctx context.Context, legacyUser legacyrepo.LegacyUser) error {
@@ -93,6 +103,9 @@ func (s *MigrationService) syncLegacyUser(ctx context.Context, legacyUser legacy
 		UpdatedAt:       zeroOrNow(legacyUser.UpdatedAt),
 	}
 	if err := s.pg.UpsertImportedUser(ctx, user); err != nil {
+		if errors.Is(err, pgrepo.ErrAccountAlreadyExists) {
+			return fmt.Errorf("%w: appid=%d account=%s", errLegacyUserSkipped, user.AppID, user.Account)
+		}
 		return err
 	}
 
@@ -134,23 +147,6 @@ func (s *MigrationService) syncLegacyUser(ctx context.Context, legacyUser legacy
 		return err
 	}
 
-	settings, err := s.legacy.GetUserSettings(ctx, legacyUser.ID, legacyUser.AppID)
-	if err != nil {
-		return err
-	}
-	for _, item := range settings {
-		if err := s.pg.UpsertUserSettings(ctx, userdomain.Settings{
-			UserID:    legacyUser.ID,
-			Category:  item.Category,
-			Settings:  item.Settings,
-			Version:   item.Version,
-			IsActive:  item.IsActive,
-			UpdatedAt: derefTime(item.LastModified),
-		}); err != nil {
-			return err
-		}
-	}
-
 	if legacyUser.OpenQQ != "" {
 		if err := s.pg.UpsertOAuthBinding(ctx, legacyUser.AppID, legacyUser.ID, authdomain.ProviderProfile{
 			Provider:       "qq",
@@ -170,13 +166,6 @@ func (s *MigrationService) syncLegacyUser(ctx context.Context, legacyUser legacy
 		}
 	}
 
-	_ = s.sessions.DeleteMyView(ctx, legacyUser.AppID, legacyUser.ID)
-	_ = s.sessions.DeleteUserProfile(ctx, legacyUser.AppID, legacyUser.ID)
-	_ = s.sessions.DeleteSecurityStatus(ctx, legacyUser.AppID, legacyUser.ID)
-	for _, category := range []string{"general", "autoSign", "notifications", "privacy", "ui", "security"} {
-		_ = s.sessions.DeleteUserSettings(ctx, legacyUser.AppID, legacyUser.ID, category)
-	}
-	_ = s.publisher.PublishJSON(ctx, event.SubjectUserProfileRefresh, map[string]any{"user_id": legacyUser.ID, "appid": legacyUser.AppID, "source": "legacy_mysql_sync"})
 	return nil
 }
 

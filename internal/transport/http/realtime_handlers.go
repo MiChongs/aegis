@@ -23,11 +23,12 @@ func (h *Handler) WebSocket(c *gin.Context) {
 			response.Error(c, appErr.HTTPStatus, appErr.Code, appErr.Message)
 			return
 		}
-		response.Error(c, http.StatusUnauthorized, 40100, "访问请求未获授权")
+		// 透传真实错误信息（非 AppError 需要暴露原始错误用于排查）
+		response.Error(c, http.StatusUnauthorized, 40100, err.Error())
 		return
 	}
 	if err := h.realtime.Upgrade(c.Writer, c.Request, session, c.ClientIP(), c.Request.UserAgent()); err != nil {
-		h.writeError(c, err)
+		c.Error(err) //nolint:errcheck // gorilla 可能已写入 HTTP 响应
 		return
 	}
 }
@@ -42,9 +43,8 @@ func (h *Handler) AdminOnlineStats(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppOnlineStats(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	stats, err := h.realtime.AppOnlineStats(c.Request.Context(), appID)
@@ -56,9 +56,8 @@ func (h *Handler) AdminAppOnlineStats(c *gin.Context) {
 }
 
 func (h *Handler) AdminAppOnlineUsers(c *gin.Context) {
-	appID, err := pathInt64(c, "appid")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的应用标识")
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
 		return
 	}
 	page := parsePositiveInt(c.Query("page"), 1)

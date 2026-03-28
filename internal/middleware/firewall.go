@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"aegis/internal/config"
+	firewalldomain "aegis/internal/domain/firewall"
+	"aegis/internal/event"
 	"aegis/pkg/response"
 	"bytes"
 	"context"
@@ -15,6 +17,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
@@ -27,9 +30,8 @@ import (
 	"go.uber.org/zap"
 )
 
-type Firewall struct {
+type firewallState struct {
 	cfg               config.FirewallConfig
-	log               *zap.Logger
 	waf               coraza.WAF
 	globalLimiter     *limiter.Limiter
 	authLimiter       *limiter.Limiter
@@ -41,80 +43,43 @@ type Firewall struct {
 	blockedFragments  []string
 }
 
-func NewFirewall(cfg config.FirewallConfig, log *zap.Logger, redisClient *redislib.Client, keyPrefix string) (*Firewall, error) {
+type FirewallSnapshot struct {
+	Config         config.FirewallConfig
+	ReloadVersion  uint64
+	ReloadedAt     time.Time
+	RuntimeEnabled bool
+}
+
+// BanChecker 动态 IP 封禁检查接口
+type BanChecker interface {
+	IsBanned(ctx context.Context, ip string) (bool, error)
+}
+
+type Firewall struct {
+	log         *zap.Logger
+	redisClient *redislib.Client
+	keyPrefix   string
+	publisher   *event.Publisher
+	banChecker  BanChecker
+	mu          sync.RWMutex
+	state       firewallState
+	reloadedAt  time.Time
+	version     uint64
+}
+
+func NewFirewall(cfg config.FirewallConfig, log *zap.Logger, redisClient *redislib.Client, keyPrefix string, publisher *event.Publisher, banChecker BanChecker) (*Firewall, error) {
 	if log == nil {
 		log = zap.NewNop()
 	}
 
 	firewall := &Firewall{
-		cfg:               cfg,
-		log:               log,
-		blockedUserAgents: normalizeEntries(cfg.BlockedUserAgents),
-		blockedPathPrefix: normalizeEntries(cfg.BlockedPathPrefix),
-		blockedFragments: []string{
-			"../",
-			"%2e%2e",
-			"<script",
-			"%3cscript",
-			"union select",
-			"union%20select",
-			"${jndi:",
-			"sleep(",
-			"benchmark(",
-			"load_file(",
-			"into outfile",
-			"/etc/passwd",
-		},
+		log:         log,
+		redisClient: redisClient,
+		keyPrefix:   keyPrefix,
+		publisher:   publisher,
+		banChecker:  banChecker,
 	}
-
-	var err error
-	firewall.allowedCIDRs, err = parseCIDRs(cfg.AllowedCIDRs)
-	if err != nil {
-		return nil, err
-	}
-	firewall.blockedCIDRs, err = parseCIDRs(cfg.BlockedCIDRs)
-	if err != nil {
-		return nil, err
-	}
-
-	if !cfg.Enabled {
-		return firewall, nil
-	}
-	if redisClient == nil {
-		return nil, net.InvalidAddrError("firewall requires redis client")
-	}
-
-	if cfg.CorazaEnabled {
-		firewall.waf, err = newCorazaWAF(cfg, log)
-		if err != nil {
-			return nil, fmt.Errorf("init coraza waf: %w", err)
-		}
-	}
-
-	globalRate, err := limiter.NewRateFromFormatted(cfg.GlobalRate)
-	if err != nil {
-		return nil, err
-	}
-	authRate, err := limiter.NewRateFromFormatted(cfg.AuthRate)
-	if err != nil {
-		return nil, err
-	}
-	adminRate, err := limiter.NewRateFromFormatted(cfg.AdminRate)
-	if err != nil {
-		return nil, err
-	}
-
-	prefix := strings.TrimSpace(keyPrefix)
-	firewall.globalLimiter, err = newLimiter(redisClient, prefix+":fw:global", globalRate)
-	if err != nil {
-		return nil, err
-	}
-	firewall.authLimiter, err = newLimiter(redisClient, prefix+":fw:auth", authRate)
-	if err != nil {
-		return nil, err
-	}
-	firewall.adminLimiter, err = newLimiter(redisClient, prefix+":fw:admin", adminRate)
-	if err != nil {
+	if err := firewall.Reload(cfg); err != nil {
 		return nil, err
 	}
 	return firewall, nil
@@ -122,13 +87,18 @@ func NewFirewall(cfg config.FirewallConfig, log *zap.Logger, redisClient *redisl
 
 func (f *Firewall) Handler() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if f == nil || !f.cfg.Enabled {
+		if f == nil {
+			c.Next()
+			return
+		}
+		state := f.snapshotState()
+		if !state.cfg.Enabled {
 			c.Next()
 			return
 		}
 
 		path := strings.TrimSpace(c.Request.URL.Path)
-		if path == "/healthz" || path == "/readyz" {
+		if path == "/healthz" || path == "/readyz" || path == "/api/ws" {
 			c.Next()
 			return
 		}
@@ -139,39 +109,45 @@ func (f *Firewall) Handler() gin.HandlerFunc {
 			return
 		}
 
-		if blocked, reason := f.blockByCIDR(ip); blocked {
+		if blocked, reason := blockByCIDR(state, ip); blocked {
 			f.block(c, http.StatusForbidden, 40391, reason, "当前请求已被安全策略拦截")
 			return
+		}
+		if f.banChecker != nil {
+			if banned, _ := f.banChecker.IsBanned(c.Request.Context(), ip); banned {
+				f.block(c, http.StatusForbidden, 40397, "banned_ip", "当前请求已被安全策略拦截")
+				return
+			}
 		}
 		if blockedMethod(c.Request.Method) {
 			f.block(c, http.StatusNotImplemented, 50190, "blocked_method", "服务能力暂未开放")
 			return
 		}
-		if f.cfg.MaxPathLength > 0 && len(path) > f.cfg.MaxPathLength {
+		if state.cfg.MaxPathLength > 0 && len(path) > state.cfg.MaxPathLength {
 			f.block(c, http.StatusForbidden, 40392, "path_too_long", "当前请求已被安全策略拦截")
 			return
 		}
 		rawQuery := c.Request.URL.RawQuery
-		if f.cfg.MaxQueryLength > 0 && len(rawQuery) > f.cfg.MaxQueryLength {
+		if state.cfg.MaxQueryLength > 0 && len(rawQuery) > state.cfg.MaxQueryLength {
 			f.block(c, http.StatusForbidden, 40393, "query_too_long", "当前请求已被安全策略拦截")
 			return
 		}
-		if blocked, reason := f.blockByUserAgent(c.GetHeader("User-Agent")); blocked {
+		if blocked, reason := blockByUserAgent(state, c.GetHeader("User-Agent")); blocked {
 			f.block(c, http.StatusForbidden, 40394, reason, "当前请求已被安全策略拦截")
 			return
 		}
-		if blocked, reason := f.blockByPathOrQuery(path, rawQuery); blocked {
+		if blocked, reason := blockByPathOrQuery(state, path, rawQuery); blocked {
 			f.block(c, http.StatusForbidden, 40395, reason, "当前请求已被安全策略拦截")
 			return
 		}
-		if limited, resetAt := f.rateLimit(c, ip); limited {
+		if limited, resetAt := f.rateLimit(state, c, ip); limited {
 			retryAfter := maxInt64(1, resetAt-time.Now().Unix())
 			c.Header("Retry-After", strconv.FormatInt(retryAfter, 10))
 			f.block(c, http.StatusTooManyRequests, 42900, "rate_limited", "请求过于频繁，请稍后再试")
 			return
 		}
-		if f.waf != nil {
-			if interrupted, err := f.inspectRequest(c, ip); err != nil {
+		if state.waf != nil {
+			if interrupted, err := f.inspectRequest(state, c, ip); err != nil {
 				f.log.Error("firewall coraza inspect failed",
 					zap.Error(err),
 					zap.String("method", c.Request.Method),
@@ -191,6 +167,154 @@ func (f *Firewall) Handler() gin.HandlerFunc {
 	}
 }
 
+func (f *Firewall) ValidateConfig(cfg config.FirewallConfig) error {
+	_, err := f.buildState(cfg)
+	return err
+}
+
+func (f *Firewall) Reload(cfg config.FirewallConfig) error {
+	state, err := f.buildState(cfg)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.state = state
+	f.version++
+	f.reloadedAt = time.Now().UTC()
+	version := f.version
+	reloadedAt := f.reloadedAt
+	enabled := state.cfg.Enabled
+	corazaEnabled := state.cfg.CorazaEnabled && state.waf != nil
+	f.mu.Unlock()
+
+	f.log.Info("firewall settings reloaded",
+		zap.Uint64("version", version),
+		zap.Time("reloaded_at", reloadedAt),
+		zap.Bool("enabled", enabled),
+		zap.Bool("coraza_enabled", corazaEnabled),
+	)
+	return nil
+}
+
+func (f *Firewall) Snapshot() FirewallSnapshot {
+	if f == nil {
+		return FirewallSnapshot{}
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return FirewallSnapshot{
+		Config:         f.state.cfg,
+		ReloadVersion:  f.version,
+		ReloadedAt:     f.reloadedAt,
+		RuntimeEnabled: f.state.cfg.Enabled,
+	}
+}
+
+func (f *Firewall) CurrentConfig() config.FirewallConfig {
+	return f.Snapshot().Config
+}
+
+func (f *Firewall) ReloadMeta() (uint64, time.Time) {
+	snapshot := f.Snapshot()
+	return snapshot.ReloadVersion, snapshot.ReloadedAt
+}
+
+func (f *Firewall) snapshotState() firewallState {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.state
+}
+
+func (f *Firewall) buildState(cfg config.FirewallConfig) (firewallState, error) {
+	cfg = config.NormalizeFirewallConfig(cfg)
+	state := firewallState{
+		cfg:               cfg,
+		blockedUserAgents: normalizeEntries(cfg.BlockedUserAgents),
+		blockedPathPrefix: normalizeEntries(cfg.BlockedPathPrefix),
+		blockedFragments: []string{
+			// 路径遍历
+			"../",
+			"..\\",
+			"%2e%2e",
+			// 敏感路径探测
+			"/.git/",
+			"/.env",
+			"/vendor/phpunit",
+			"/etc/passwd",
+			"/proc/self/environ",
+			// XSS
+			"<script",
+			"%3cscript",
+			"javascript:",
+			"onerror=",
+			"onload=",
+			// SQL 注入
+			"union+select",
+			"union%20select",
+			"sleep(",
+			"benchmark(",
+			"load_file(",
+			"information_schema",
+			// 命令注入
+			";cat+",
+			"|cat+",
+			"$(curl",
+			"$(wget",
+			"`curl",
+			"`wget",
+		},
+	}
+
+	var err error
+	state.allowedCIDRs, err = parseCIDRs(cfg.AllowedCIDRs)
+	if err != nil {
+		return firewallState{}, err
+	}
+	state.blockedCIDRs, err = parseCIDRs(cfg.BlockedCIDRs)
+	if err != nil {
+		return firewallState{}, err
+	}
+	if !cfg.Enabled {
+		return state, nil
+	}
+	if f.redisClient == nil {
+		return firewallState{}, net.InvalidAddrError("firewall requires redis client")
+	}
+	if cfg.CorazaEnabled {
+		state.waf, err = newCorazaWAF(cfg, f.log)
+		if err != nil {
+			return firewallState{}, fmt.Errorf("init coraza waf: %w", err)
+		}
+	}
+	globalRate, err := limiter.NewRateFromFormatted(cfg.GlobalRate)
+	if err != nil {
+		return firewallState{}, err
+	}
+	authRate, err := limiter.NewRateFromFormatted(cfg.AuthRate)
+	if err != nil {
+		return firewallState{}, err
+	}
+	adminRate, err := limiter.NewRateFromFormatted(cfg.AdminRate)
+	if err != nil {
+		return firewallState{}, err
+	}
+
+	prefix := strings.TrimSpace(f.keyPrefix)
+	state.globalLimiter, err = newLimiter(f.redisClient, prefix+":fw:global", globalRate)
+	if err != nil {
+		return firewallState{}, err
+	}
+	state.authLimiter, err = newLimiter(f.redisClient, prefix+":fw:auth", authRate)
+	if err != nil {
+		return firewallState{}, err
+	}
+	state.adminLimiter, err = newLimiter(f.redisClient, prefix+":fw:admin", adminRate)
+	if err != nil {
+		return firewallState{}, err
+	}
+	return state, nil
+}
+
 func newLimiter(redisClient *redislib.Client, prefix string, rate limiter.Rate) (*limiter.Limiter, error) {
 	store, err := redisstore.NewStoreWithOptions(redisClient, limiter.StoreOptions{Prefix: prefix})
 	if err != nil {
@@ -200,23 +324,9 @@ func newLimiter(redisClient *redislib.Client, prefix string, rate limiter.Rate) 
 }
 
 func newCorazaWAF(cfg config.FirewallConfig, log *zap.Logger) (coraza.WAF, error) {
-	tempDir := strings.ReplaceAll(os.TempDir(), "\\", "/")
-	paranoia := cfg.CorazaParanoia
-
-	directives := fmt.Sprintf(`
-Include @coraza.conf-recommended
-Include @crs-setup.conf.example
-SecRuleEngine On
-SecRequestBodyAccess On
-SecResponseBodyAccess Off
-SecDataDir "%s"
-SecAction "id:1000001,phase:1,pass,nolog,setvar:tx.blocking_paranoia_level=%d,setvar:tx.detection_paranoia_level=%d,setvar:tx.inbound_anomaly_score_threshold=5,setvar:tx.outbound_anomaly_score_threshold=4"
-Include @owasp_crs/*.conf
-`, tempDir, paranoia, paranoia)
-
 	wafConfig := coraza.NewWAFConfig().
 		WithRootFS(newSlashFS(coreruleset.FS)).
-		WithDirectives(directives).
+		WithDirectives(buildCorazaDirectives(cfg)).
 		WithRequestBodyAccess().
 		WithRequestBodyLimit(cfg.RequestBodyLimit).
 		WithRequestBodyInMemoryLimit(cfg.RequestBodyMemory).
@@ -241,8 +351,25 @@ Include @owasp_crs/*.conf
 	return coraza.NewWAF(wafConfig)
 }
 
-func (f *Firewall) inspectRequest(c *gin.Context, clientIP string) (*corazatypes.Interruption, error) {
-	tx := f.waf.NewTransaction()
+func buildCorazaDirectives(cfg config.FirewallConfig) string {
+	tempDir := strings.ReplaceAll(os.TempDir(), "\\", "/")
+	paranoia := cfg.CorazaParanoia
+
+	return fmt.Sprintf(`
+Include @coraza.conf-recommended
+Include @crs-setup.conf.example
+SecRuleEngine On
+SecRequestBodyAccess On
+SecResponseBodyAccess Off
+SecDataDir "%s"
+SecAction "id:1000001,phase:1,pass,nolog,setvar:tx.blocking_paranoia_level=%d,setvar:tx.detection_paranoia_level=%d,setvar:tx.inbound_anomaly_score_threshold=25,setvar:tx.outbound_anomaly_score_threshold=10"
+SecRule REQUEST_HEADERS:Content-Type "@rx ^application/(?:json|[a-z0-9.+-]+\\+json)" "id:1000003,phase:1,pass,nolog,ctl:ruleRemoveByTag=attack-sqli,ctl:ruleRemoveByTag=attack-xss,ctl:ruleRemoveByTag=attack-rce,ctl:ruleRemoveByTag=attack-protocol"
+Include @owasp_crs/*.conf
+`, tempDir, paranoia, paranoia)
+}
+
+func (f *Firewall) inspectRequest(state firewallState, c *gin.Context, clientIP string) (*corazatypes.Interruption, error) {
+	tx := state.waf.NewTransaction()
 	defer func() {
 		tx.ProcessLogging()
 		if err := tx.Close(); err != nil {
@@ -302,8 +429,11 @@ func (f *Firewall) snapshotRequestBody(req *http.Request) ([]byte, error) {
 	}
 
 	limit := int64(0)
-	if f != nil && f.cfg.RequestBodyLimit > 0 {
-		limit = int64(f.cfg.RequestBodyLimit)
+	if f != nil {
+		snapshot := f.Snapshot()
+		if snapshot.Config.RequestBodyLimit > 0 {
+			limit = int64(snapshot.Config.RequestBodyLimit)
+		}
 	}
 
 	var (
@@ -329,20 +459,20 @@ func (f *Firewall) snapshotRequestBody(req *http.Request) ([]byte, error) {
 	return body, nil
 }
 
-func (f *Firewall) rateLimit(c *gin.Context, ip string) (bool, int64) {
+func (f *Firewall) rateLimit(state firewallState, c *gin.Context, ip string) (bool, int64) {
 	requestPath := strings.ToLower(strings.TrimSpace(c.Request.URL.Path))
 	checks := []struct {
 		limiter *limiter.Limiter
 		key     string
 	}{
-		{limiter: f.globalLimiter, key: "global:" + ip},
+		{limiter: state.globalLimiter, key: "global:" + ip},
 	}
 
 	if strings.HasPrefix(requestPath, "/api/auth/") || strings.HasPrefix(requestPath, "/api/email/send-") {
 		checks = append(checks, struct {
 			limiter *limiter.Limiter
 			key     string
-		}{limiter: f.authLimiter, key: "auth:" + ip})
+		}{limiter: state.authLimiter, key: "auth:" + ip})
 	}
 	if strings.HasPrefix(requestPath, "/api/admin/") ||
 		strings.HasPrefix(requestPath, "/api/app/password-policy") ||
@@ -351,7 +481,7 @@ func (f *Firewall) rateLimit(c *gin.Context, ip string) (bool, int64) {
 		checks = append(checks, struct {
 			limiter *limiter.Limiter
 			key     string
-		}{limiter: f.adminLimiter, key: "admin:" + ip})
+		}{limiter: state.adminLimiter, key: "admin:" + ip})
 	}
 
 	for _, item := range checks {
@@ -375,14 +505,14 @@ func (f *Firewall) rateLimit(c *gin.Context, ip string) (bool, int64) {
 	return false, 0
 }
 
-func (f *Firewall) blockByCIDR(ip string) (bool, string) {
+func blockByCIDR(state firewallState, ip string) (bool, string) {
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
 		return true, "invalid_ip"
 	}
-	if len(f.allowedCIDRs) > 0 {
+	if len(state.allowedCIDRs) > 0 {
 		allowed := false
-		for _, prefix := range f.allowedCIDRs {
+		for _, prefix := range state.allowedCIDRs {
 			if prefix.Contains(addr) {
 				allowed = true
 				break
@@ -392,7 +522,7 @@ func (f *Firewall) blockByCIDR(ip string) (bool, string) {
 			return true, "not_in_allowlist"
 		}
 	}
-	for _, prefix := range f.blockedCIDRs {
+	for _, prefix := range state.blockedCIDRs {
 		if prefix.Contains(addr) {
 			return true, "blocked_cidr"
 		}
@@ -400,12 +530,12 @@ func (f *Firewall) blockByCIDR(ip string) (bool, string) {
 	return false, ""
 }
 
-func (f *Firewall) blockByUserAgent(userAgent string) (bool, string) {
+func blockByUserAgent(state firewallState, userAgent string) (bool, string) {
 	userAgent = strings.ToLower(strings.TrimSpace(userAgent))
 	if userAgent == "" {
 		return false, ""
 	}
-	for _, fragment := range f.blockedUserAgents {
+	for _, fragment := range state.blockedUserAgents {
 		if strings.Contains(userAgent, fragment) {
 			return true, "blocked_user_agent"
 		}
@@ -413,10 +543,10 @@ func (f *Firewall) blockByUserAgent(userAgent string) (bool, string) {
 	return false, ""
 }
 
-func (f *Firewall) blockByPathOrQuery(path, rawQuery string) (bool, string) {
+func blockByPathOrQuery(state firewallState, path, rawQuery string) (bool, string) {
 	target := strings.ToLower(strings.TrimSpace(path))
 	query := strings.ToLower(strings.TrimSpace(rawQuery))
-	for _, prefix := range f.blockedPathPrefix {
+	for _, prefix := range state.blockedPathPrefix {
 		if strings.HasPrefix(target, prefix) {
 			return true, "blocked_path"
 		}
@@ -425,7 +555,7 @@ func (f *Firewall) blockByPathOrQuery(path, rawQuery string) (bool, string) {
 	if query != "" {
 		combined += "?" + query
 	}
-	for _, fragment := range f.blockedFragments {
+	for _, fragment := range state.blockedFragments {
 		if strings.Contains(combined, fragment) {
 			return true, "blocked_signature"
 		}
@@ -445,6 +575,8 @@ func (f *Firewall) blockCoraza(c *gin.Context, interrupted *corazatypes.Interrup
 	)
 	response.Error(c, http.StatusForbidden, 40396, "当前请求已被安全策略拦截")
 	c.Abort()
+	ruleID := interrupted.RuleID
+	f.emitBlockEvent(c, "waf_blocked", http.StatusForbidden, 40396, &ruleID, interrupted.Action, interrupted.Data)
 }
 
 func (f *Firewall) block(c *gin.Context, httpStatus int, code int, reason string, message string) {
@@ -457,6 +589,40 @@ func (f *Firewall) block(c *gin.Context, httpStatus int, code int, reason string
 	)
 	response.Error(c, httpStatus, code, message)
 	c.Abort()
+	f.emitBlockEvent(c, reason, httpStatus, code, nil, "", "")
+}
+
+// emitBlockEvent 异步发射防火墙拦截事件到 NATS
+func (f *Firewall) emitBlockEvent(c *gin.Context, reason string, httpStatus int, responseCode int, wafRuleID *int, wafAction string, wafData string) {
+	if f.publisher == nil {
+		return
+	}
+	headers := make(map[string]string)
+	for _, key := range []string{"Referer", "Origin", "Accept-Language", "Content-Type", "X-Forwarded-For"} {
+		if v := c.GetHeader(key); v != "" {
+			headers[key] = v
+		}
+	}
+	evt := firewalldomain.BlockEvent{
+		RequestID:    requestID(c),
+		IP:           sanitizeIP(c.ClientIP()),
+		Method:       c.Request.Method,
+		Path:         c.Request.URL.Path,
+		QueryString:  c.Request.URL.RawQuery,
+		UserAgent:    c.GetHeader("User-Agent"),
+		Headers:      headers,
+		Reason:       reason,
+		HTTPStatus:   httpStatus,
+		ResponseCode: responseCode,
+		WAFRuleID:    wafRuleID,
+		WAFAction:    wafAction,
+		WAFData:      wafData,
+		Severity:     firewalldomain.ReasonSeverity(reason),
+		BlockedAt:    time.Now().UTC(),
+	}
+	if err := f.publisher.PublishJSON(context.Background(), event.SubjectFirewallBlocked, evt); err != nil {
+		f.log.Warn("firewall emit block event failed", zap.Error(err))
+	}
 }
 
 func parseCIDRs(values []string) ([]netip.Prefix, error) {

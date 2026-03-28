@@ -12,18 +12,18 @@ func (r *Repository) EnsureDefaultVersionChannel(ctx context.Context, appID int6
 	query := `INSERT INTO app_version_channels (appid, name, code, description, is_default, status, target_audience, created_at, updated_at)
 VALUES ($1, '默认渠道', 'default', '系统默认渠道', true, true, '{}'::jsonb, NOW(), NOW())
 ON CONFLICT (appid, code) DO UPDATE SET is_default = true, status = true, updated_at = NOW()
-RETURNING id, appid, name, code, description, is_default, status, COALESCE(target_audience, '{}'::jsonb), created_at, updated_at`
+RETURNING id, appid, name, code, description, is_default, status, priority, color, level, rollout_pct, platforms, min_version_code, max_version_code, COALESCE(rules,'[]'::jsonb), COALESCE(target_audience, '{}'::jsonb), created_at, updated_at`
 	return scanVersionChannel(r.pool.QueryRow(ctx, query, appID))
 }
 
 func (r *Repository) ListVersionChannels(ctx context.Context, appID int64) ([]appdomain.AppVersionChannel, error) {
-	rows, err := r.pool.Query(ctx, `SELECT c.id, c.appid, c.name, c.code, c.description, c.is_default, c.status, COALESCE(c.target_audience, '{}'::jsonb), c.created_at, c.updated_at,
+	rows, err := r.pool.Query(ctx, `SELECT c.id, c.appid, c.name, c.code, c.description, c.is_default, c.status, c.priority, c.color, c.level, c.rollout_pct, c.platforms, c.min_version_code, c.max_version_code, COALESCE(c.rules,'[]'::jsonb), COALESCE(c.target_audience, '{}'::jsonb), c.created_at, c.updated_at,
 COUNT(cu.user_id) AS user_count
 FROM app_version_channels c
 LEFT JOIN app_version_channel_users cu ON cu.channel_id = c.id
 WHERE c.appid = $1
 GROUP BY c.id
-ORDER BY c.is_default DESC, c.id ASC`, appID)
+ORDER BY c.priority DESC, c.is_default DESC, c.id ASC`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -40,17 +40,21 @@ ORDER BY c.is_default DESC, c.id ASC`, appID)
 }
 
 func (r *Repository) GetVersionChannelByID(ctx context.Context, channelID int64, appID int64) (*appdomain.AppVersionChannel, error) {
-	query := `SELECT id, appid, name, code, description, is_default, status, COALESCE(target_audience, '{}'::jsonb), created_at, updated_at FROM app_version_channels WHERE id = $1 AND appid = $2 LIMIT 1`
+	query := `SELECT id, appid, name, code, description, is_default, status, priority, color, level, rollout_pct, platforms, min_version_code, max_version_code, COALESCE(rules,'[]'::jsonb), COALESCE(target_audience, '{}'::jsonb), created_at, updated_at FROM app_version_channels WHERE id = $1 AND appid = $2 LIMIT 1`
 	return scanVersionChannel(r.pool.QueryRow(ctx, query, channelID, appID))
 }
 
 func (r *Repository) UpsertVersionChannel(ctx context.Context, mutation appdomain.AppVersionChannelMutation) (*appdomain.AppVersionChannel, error) {
 	targetJSON, _ := json.Marshal(mutation.TargetAudience)
+	rulesJSON, _ := json.Marshal(mutation.Rules)
 	if mutation.ID == 0 {
-		query := `INSERT INTO app_version_channels (appid, name, code, description, is_default, status, target_audience, created_at, updated_at)
-VALUES ($1, $2, $3, $4, COALESCE($5, false), COALESCE($6, true), COALESCE($7, '{}'::jsonb), NOW(), NOW())
-RETURNING id, appid, name, code, description, is_default, status, COALESCE(target_audience, '{}'::jsonb), created_at, updated_at`
-		return scanVersionChannel(r.pool.QueryRow(ctx, query, mutation.AppID, valueOrEmpty(mutation.Name), valueOrEmpty(mutation.Code), valueOrEmpty(mutation.Description), mutation.IsDefault, mutation.Status, targetJSON))
+		query := `INSERT INTO app_version_channels (appid, name, code, description, is_default, status, priority, color, level, rollout_pct, platforms, min_version_code, max_version_code, rules, target_audience, created_at, updated_at)
+VALUES ($1, $2, $3, $4, COALESCE($5, false), COALESCE($6, true), COALESCE($7, 0), COALESCE($8, ''), COALESCE($9, 'stable'), COALESCE($10, 100), COALESCE($11, '{}'), COALESCE($12, 0), COALESCE($13, 0), COALESCE($14, '[]'::jsonb), COALESCE($15, '{}'::jsonb), NOW(), NOW())
+RETURNING id, appid, name, code, description, is_default, status, priority, color, level, rollout_pct, platforms, min_version_code, max_version_code, COALESCE(rules,'[]'::jsonb), COALESCE(target_audience, '{}'::jsonb), created_at, updated_at`
+		return scanVersionChannel(r.pool.QueryRow(ctx, query,
+			mutation.AppID, valueOrEmpty(mutation.Name), valueOrEmpty(mutation.Code), valueOrEmpty(mutation.Description),
+			mutation.IsDefault, mutation.Status, mutation.Priority, mutation.Color, mutation.Level, mutation.RolloutPct,
+			mutation.Platforms, mutation.MinVersionCode, mutation.MaxVersionCode, rulesJSON, targetJSON))
 	}
 	query := `UPDATE app_version_channels SET
 name = COALESCE($1, name),
@@ -58,11 +62,24 @@ code = COALESCE($2, code),
 description = COALESCE($3, description),
 is_default = COALESCE($4, is_default),
 status = COALESCE($5, status),
-target_audience = CASE WHEN $6::jsonb IS NULL THEN target_audience ELSE $6 END,
+priority = COALESCE($6, priority),
+color = COALESCE($7, color),
+level = COALESCE($8, level),
+rollout_pct = COALESCE($9, rollout_pct),
+platforms = CASE WHEN $10::text[] IS NULL THEN platforms ELSE $10 END,
+min_version_code = COALESCE($11, min_version_code),
+max_version_code = COALESCE($12, max_version_code),
+rules = CASE WHEN $13::jsonb IS NULL THEN rules ELSE $13 END,
+target_audience = CASE WHEN $14::jsonb IS NULL THEN target_audience ELSE $14 END,
 updated_at = NOW()
-WHERE id = $7 AND appid = $8
-RETURNING id, appid, name, code, description, is_default, status, COALESCE(target_audience, '{}'::jsonb), created_at, updated_at`
-	return scanVersionChannel(r.pool.QueryRow(ctx, query, nullableString(valueOrEmpty(mutation.Name)), nullableString(valueOrEmpty(mutation.Code)), nullableString(valueOrEmpty(mutation.Description)), mutation.IsDefault, mutation.Status, nullableJSON(mutation.TargetAudience, targetJSON), mutation.ID, mutation.AppID))
+WHERE id = $15 AND appid = $16
+RETURNING id, appid, name, code, description, is_default, status, priority, color, level, rollout_pct, platforms, min_version_code, max_version_code, COALESCE(rules,'[]'::jsonb), COALESCE(target_audience, '{}'::jsonb), created_at, updated_at`
+	return scanVersionChannel(r.pool.QueryRow(ctx, query,
+		nullableString(valueOrEmpty(mutation.Name)), nullableString(valueOrEmpty(mutation.Code)), nullableString(valueOrEmpty(mutation.Description)),
+		mutation.IsDefault, mutation.Status, mutation.Priority, mutation.Color, mutation.Level, mutation.RolloutPct,
+		nullableStringSlice(mutation.Platforms), mutation.MinVersionCode, mutation.MaxVersionCode,
+		nullableJSONSlice(mutation.Rules, rulesJSON), nullableJSON(mutation.TargetAudience, targetJSON),
+		mutation.ID, mutation.AppID))
 }
 
 func (r *Repository) DeleteVersionChannel(ctx context.Context, channelID int64, appID int64) (int64, error) {
@@ -227,11 +244,11 @@ LIMIT $3 OFFSET $4`, channelID, appID, limit, offset)
 }
 
 func (r *Repository) ResolveVersionChannelForUser(ctx context.Context, appID int64, userID int64) (*appdomain.AppVersionChannel, error) {
-	query := `SELECT c.id, c.appid, c.name, c.code, c.description, c.is_default, c.status, COALESCE(c.target_audience, '{}'::jsonb), c.created_at, c.updated_at
+	query := `SELECT c.id, c.appid, c.name, c.code, c.description, c.is_default, c.status, c.priority, c.color, c.level, c.rollout_pct, c.platforms, c.min_version_code, c.max_version_code, COALESCE(c.rules,'[]'::jsonb), COALESCE(c.target_audience, '{}'::jsonb), c.created_at, c.updated_at
 FROM app_version_channels c
 JOIN app_version_channel_users cu ON cu.channel_id = c.id
 WHERE cu.appid = $1 AND cu.user_id = $2
-ORDER BY c.is_default DESC, c.id ASC
+ORDER BY c.priority DESC, c.is_default DESC, c.id ASC
 LIMIT 1`
 	channel, err := scanVersionChannel(r.pool.QueryRow(ctx, query, appID, userID))
 	if err != nil {
@@ -240,7 +257,7 @@ LIMIT 1`
 	if channel != nil {
 		return channel, nil
 	}
-	return scanVersionChannel(r.pool.QueryRow(ctx, `SELECT id, appid, name, code, description, is_default, status, COALESCE(target_audience, '{}'::jsonb), created_at, updated_at FROM app_version_channels WHERE appid = $1 AND is_default = true ORDER BY id ASC LIMIT 1`, appID))
+	return scanVersionChannel(r.pool.QueryRow(ctx, `SELECT id, appid, name, code, description, is_default, status, priority, color, level, rollout_pct, platforms, min_version_code, max_version_code, COALESCE(rules,'[]'::jsonb), COALESCE(target_audience, '{}'::jsonb), created_at, updated_at FROM app_version_channels WHERE appid = $1 AND is_default = true ORDER BY id ASC LIMIT 1`, appID))
 }
 
 func (r *Repository) FindLatestVersionForUpdate(ctx context.Context, appID int64, channelID *int64, versionCode int64, platform string) (*appdomain.AppVersion, error) {
@@ -284,21 +301,29 @@ func (r *Repository) GetAppVersionStats(ctx context.Context, appID int64) (*appd
 
 func scanVersionChannel(row interface{ Scan(dest ...any) error }) (*appdomain.AppVersionChannel, error) {
 	var item appdomain.AppVersionChannel
-	var raw []byte
-	if err := row.Scan(&item.ID, &item.AppID, &item.Name, &item.Code, &item.Description, &item.IsDefault, &item.Status, &raw, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	var rulesRaw, targetRaw []byte
+	if err := row.Scan(&item.ID, &item.AppID, &item.Name, &item.Code, &item.Description, &item.IsDefault, &item.Status,
+		&item.Priority, &item.Color, &item.Level, &item.RolloutPct, &item.Platforms,
+		&item.MinVersionCode, &item.MaxVersionCode, &rulesRaw, &targetRaw,
+		&item.CreatedAt, &item.UpdatedAt); err != nil {
 		return nil, normalizeNotFound(err)
 	}
-	_ = json.Unmarshal(raw, &item.TargetAudience)
+	_ = json.Unmarshal(rulesRaw, &item.Rules)
+	_ = json.Unmarshal(targetRaw, &item.TargetAudience)
 	return &item, nil
 }
 
 func scanVersionChannelWithCount(row interface{ Scan(dest ...any) error }) (*appdomain.AppVersionChannel, error) {
 	var item appdomain.AppVersionChannel
-	var raw []byte
-	if err := row.Scan(&item.ID, &item.AppID, &item.Name, &item.Code, &item.Description, &item.IsDefault, &item.Status, &raw, &item.CreatedAt, &item.UpdatedAt, &item.UserCount); err != nil {
+	var rulesRaw, targetRaw []byte
+	if err := row.Scan(&item.ID, &item.AppID, &item.Name, &item.Code, &item.Description, &item.IsDefault, &item.Status,
+		&item.Priority, &item.Color, &item.Level, &item.RolloutPct, &item.Platforms,
+		&item.MinVersionCode, &item.MaxVersionCode, &rulesRaw, &targetRaw,
+		&item.CreatedAt, &item.UpdatedAt, &item.UserCount); err != nil {
 		return nil, normalizeNotFound(err)
 	}
-	_ = json.Unmarshal(raw, &item.TargetAudience)
+	_ = json.Unmarshal(rulesRaw, &item.Rules)
+	_ = json.Unmarshal(targetRaw, &item.TargetAudience)
 	return &item, nil
 }
 
@@ -313,6 +338,20 @@ func scanAppVersion(row interface{ Scan(dest ...any) error }) (*appdomain.AppVer
 }
 
 func nullableJSON(src map[string]any, raw []byte) any {
+	if src == nil {
+		return nil
+	}
+	return raw
+}
+
+func nullableStringSlice(src []string) any {
+	if src == nil {
+		return nil
+	}
+	return src
+}
+
+func nullableJSONSlice(src any, raw []byte) any {
 	if src == nil {
 		return nil
 	}

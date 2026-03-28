@@ -18,11 +18,15 @@ func NewNATS(_ context.Context, cfg config.NATSConfig) (*nats.Conn, nats.JetStre
 		conn.Close()
 		return nil, nil, err
 	}
-	_, _ = js.AddStream(&nats.StreamConfig{
+	streamCfg := &nats.StreamConfig{
 		Name:      cfg.StreamName,
-		Subjects:  []string{"auth.>", "user.>"},
+		Subjects:  []string{"auth.>", "user.>", "firewall.>"},
 		Retention: nats.LimitsPolicy,
 		Storage:   nats.FileStorage,
-	})
+	}
+	if _, err := js.AddStream(streamCfg); err != nil {
+		// stream 已存在时尝试更新 subjects
+		_, _ = js.UpdateStream(streamCfg)
+	}
 	return conn, js, nil
 }

@@ -8,9 +8,12 @@ import (
 	"time"
 
 	appdomain "aegis/internal/domain/app"
+	captchadomain "aegis/internal/domain/captcha"
+	plugindomain "aegis/internal/domain/plugin"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	gojson "github.com/goccy/go-json"
 	"go.uber.org/zap"
 )
 
@@ -19,7 +22,10 @@ type AppService struct {
 	pg       *pgrepo.Repository
 	sessions *redisrepo.SessionRepository
 	location *time.Location
+	plugin   *PluginService
 }
+
+func (s *AppService) SetPluginService(p *PluginService) { s.plugin = p }
 
 func NewAppService(log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository) *AppService {
 	location, err := time.LoadLocation("Asia/Shanghai")
@@ -111,6 +117,120 @@ func (s *AppService) ResolveTransportEncryption(app *appdomain.App) appdomain.Tr
 		policy.Secret = strings.TrimSpace(app.AppKey)
 	}
 	return policy
+}
+
+// GetTransportEncryption 获取应用传输加密配置（不含私钥）
+func (s *AppService) GetTransportEncryption(ctx context.Context, appID int64) (*appdomain.TransportEncryptionView, error) {
+	app, err := s.GetApp(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	if app == nil {
+		return nil, apperrors.New(40410, http.StatusNotFound, "应用不存在")
+	}
+	policy := s.ResolveTransportEncryption(app)
+	secretHint := ""
+	if len(policy.Secret) > 0 {
+		if len(policy.Secret) > 8 {
+			secretHint = policy.Secret[:4] + "****" + policy.Secret[len(policy.Secret)-4:]
+		} else {
+			secretHint = "****"
+		}
+	}
+
+	// 读取允许的算法列表
+	rawConfig := lookupMap(app.Settings, "transportEncryption")
+	var allowedAlgorithms []string
+	if rawAllowed, ok := rawConfig["allowedAlgorithms"]; ok {
+		if list, ok := rawAllowed.([]any); ok {
+			for _, item := range list {
+				if s, ok := item.(string); ok {
+					allowedAlgorithms = append(allowedAlgorithms, s)
+				}
+			}
+		}
+	}
+	if len(allowedAlgorithms) == 0 {
+		allowedAlgorithms = []string{"XChaCha20Poly1305", "AES-256-GCM"}
+	}
+
+	// 读取密钥对状态
+	rsaPub, _ := rawConfig["rsaPublicKey"].(string)
+	rsaPriv, _ := rawConfig["rsaPrivateKey"].(string)
+	ecdhPub, _ := rawConfig["ecdhPublicKey"].(string)
+	ecdhPriv, _ := rawConfig["ecdhPrivateKey"].(string)
+
+	return &appdomain.TransportEncryptionView{
+		Enabled:             policy.Enabled,
+		Strict:              policy.Strict,
+		ResponseEncryption:  policy.ResponseEncryption,
+		HasSecret:           len(policy.Secret) > 0,
+		SecretHint:          secretHint,
+		AllowedAlgorithms:   allowedAlgorithms,
+		SupportedAlgorithms: []string{"XChaCha20Poly1305", "AES-256-GCM", "hybrid-rsa-xchacha20", "hybrid-rsa-aes256gcm", "hybrid-ecdh-xchacha20", "hybrid-ecdh-aes256gcm"},
+		HasRSAKey:           len(rsaPub) > 0 && len(rsaPriv) > 0,
+		RSAPublicKey:        rsaPub,
+		HasECDHKey:          len(ecdhPub) > 0 && len(ecdhPriv) > 0,
+		ECDHPublicKey:       ecdhPub,
+	}, nil
+}
+
+// UpdateTransportEncryption 更新应用传输加密配置（支持密钥对生成）
+func (s *AppService) UpdateTransportEncryption(ctx context.Context, appID int64, update appdomain.TransportEncryptionUpdate) (*appdomain.TransportEncryptionView, error) {
+	app, err := s.GetApp(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	if app == nil {
+		return nil, apperrors.New(40410, http.StatusNotFound, "应用不存在")
+	}
+	settings := cloneSettingsMap(app.Settings)
+	transport := lookupMap(settings, "transportEncryption")
+	if transport == nil {
+		transport = map[string]any{}
+	}
+	if update.Enabled != nil {
+		transport["enabled"] = *update.Enabled
+	}
+	if update.Strict != nil {
+		transport["strict"] = *update.Strict
+	}
+	if update.ResponseEncryption != nil {
+		transport["responseEncryption"] = *update.ResponseEncryption
+	}
+	if update.Secret != nil {
+		transport["secret"] = strings.TrimSpace(*update.Secret)
+	}
+	if len(update.AllowedAlgorithms) > 0 {
+		transport["allowedAlgorithms"] = update.AllowedAlgorithms
+	}
+
+	// 生成 RSA 密钥对
+	if update.GenerateRSAKey {
+		pubPEM, privPEM, err := generateRSAKeyPair()
+		if err != nil {
+			return nil, fmt.Errorf("生成 RSA 密钥对失败: %w", err)
+		}
+		transport["rsaPublicKey"] = pubPEM
+		transport["rsaPrivateKey"] = privPEM
+	}
+
+	// 生成 ECDH 密钥对
+	if update.GenerateECDHKey {
+		pubPEM, privPEM, err := generateECDHKeyPair()
+		if err != nil {
+			return nil, fmt.Errorf("生成 ECDH 密钥对失败: %w", err)
+		}
+		transport["ecdhPublicKey"] = pubPEM
+		transport["ecdhPrivateKey"] = privPEM
+	}
+
+	settings["transportEncryption"] = transport
+	mutation := appdomain.AppMutation{ID: appID, Settings: settings}
+	if _, err := s.SaveApp(ctx, mutation); err != nil {
+		return nil, err
+	}
+	return s.GetTransportEncryption(ctx, appID)
 }
 
 func (s *AppService) PublicSettings(app *appdomain.App) map[string]any {
@@ -262,8 +382,8 @@ func (s *AppService) GetRegionStats(ctx context.Context, appID int64, query appd
 	if query.Limit <= 0 {
 		query.Limit = 20
 	}
-	if query.Limit > 100 {
-		query.Limit = 100
+	if query.Limit > 256 {
+		query.Limit = 256
 	}
 	if strings.TrimSpace(query.Type) == "" {
 		query.Type = "province"
@@ -381,25 +501,28 @@ func (s *AppService) ExportSessionAudits(ctx context.Context, appID int64, query
 }
 
 func (s *AppService) SaveApp(ctx context.Context, mutation appdomain.AppMutation) (*appdomain.App, error) {
-	if mutation.ID <= 0 {
-		return nil, apperrors.New(40020, http.StatusBadRequest, "应用标识不能为空")
-	}
-	current, err := s.pg.GetAppByID(ctx, mutation.ID)
-	if err != nil {
-		return nil, err
-	}
+	var item appdomain.App
 
-	item := appdomain.App{
-		ID:             mutation.ID,
-		Status:         true,
-		RegisterStatus: true,
-		LoginStatus:    true,
-		Settings:       map[string]any{},
-	}
-	if current != nil {
+	if mutation.ID > 0 {
+		// 更新已有应用
+		current, err := s.pg.GetAppByID(ctx, mutation.ID)
+		if err != nil {
+			return nil, err
+		}
+		if current == nil {
+			return nil, apperrors.New(40404, http.StatusNotFound, "应用不存在")
+		}
 		item = *current
 		if item.Settings == nil {
 			item.Settings = map[string]any{}
+		}
+	} else {
+		// 新建：id 和 appKey 由数据库自动生成
+		item = appdomain.App{
+			Status:         true,
+			RegisterStatus: true,
+			LoginStatus:    true,
+			Settings:       map[string]any{},
 		}
 	}
 
@@ -409,9 +532,7 @@ func (s *AppService) SaveApp(ctx context.Context, mutation appdomain.AppMutation
 	if strings.TrimSpace(item.Name) == "" {
 		return nil, apperrors.New(40021, http.StatusBadRequest, "应用名称不能为空")
 	}
-	if mutation.AppKey != nil {
-		item.AppKey = strings.TrimSpace(*mutation.AppKey)
-	}
+	// AppKey 不可更改，创建时由数据库自动生成
 	if mutation.Status != nil {
 		item.Status = *mutation.Status
 	}
@@ -439,7 +560,51 @@ func (s *AppService) SaveApp(ctx context.Context, mutation appdomain.AppMutation
 		return nil, err
 	}
 	s.invalidateAppCache(ctx, saved.ID)
+	if s.plugin != nil {
+		if mutation.ID == 0 {
+			go s.plugin.ExecuteHook(context.Background(), HookAppCreated, map[string]any{
+				"appId": saved.ID,
+				"name":  saved.Name,
+			}, plugindomain.HookMetadata{AppID: &saved.ID})
+		} else {
+			go s.plugin.ExecuteHook(context.Background(), HookAppUpdated, map[string]any{
+				"appId": saved.ID,
+			}, plugindomain.HookMetadata{AppID: &saved.ID})
+		}
+	}
 	return saved, nil
+}
+
+// GetAppByKey 通过 appKey 查询应用
+func (s *AppService) GetAppByKey(ctx context.Context, appKey string) (*appdomain.App, error) {
+	return s.pg.GetAppByKey(ctx, appKey)
+}
+
+// DeleteApp 删除应用及其所有关联数据
+func (s *AppService) DeleteApp(ctx context.Context, appID int64) error {
+	app, err := s.GetApp(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if app == nil {
+		return apperrors.New(40410, http.StatusNotFound, "应用不存在")
+	}
+	// 先删除该应用下的所有用户（users 表无 CASCADE）
+	if _, err := s.pg.DeleteUsersByApp(ctx, appID); err != nil {
+		return fmt.Errorf("删除应用用户失败: %w", err)
+	}
+	// 删除应用（banners/notices/sites 等通过 CASCADE 自动清理）
+	if err := s.pg.DeleteApp(ctx, appID); err != nil {
+		return fmt.Errorf("删除应用失败: %w", err)
+	}
+	s.invalidateAppCache(ctx, appID)
+	s.log.Warn("应用已删除", zap.Int64("appid", appID), zap.String("name", app.Name))
+	if s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookAppDeleted, map[string]any{
+			"appId": appID,
+		}, plugindomain.HookMetadata{AppID: &appID})
+	}
+	return nil
 }
 
 func (s *AppService) UpdatePolicy(ctx context.Context, appID int64, policy appdomain.Policy) (*appdomain.Policy, error) {
@@ -765,6 +930,57 @@ func appSettingsDeepCloneValue(value any) any {
 	default:
 		return typed
 	}
+}
+
+// ── 应用级验证码配置 ──
+
+// GetCaptchaConfig 获取应用验证码配置
+func (s *AppService) GetCaptchaConfig(ctx context.Context, appID int64) (*captchadomain.CaptchaAppConfig, error) {
+	app, err := s.GetApp(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	if app == nil {
+		return nil, apperrors.New(40410, http.StatusNotFound, "应用不存在")
+	}
+	cfg := captchadomain.DefaultCaptchaAppConfig()
+	raw := lookupMap(app.Settings, "captcha")
+	if raw != nil {
+		// 用 JSON 序列化/反序列化来合并配置
+		jsonBytes, _ := gojson.Marshal(raw)
+		_ = gojson.Unmarshal(jsonBytes, &cfg)
+	}
+	return &cfg, nil
+}
+
+// UpdateCaptchaConfig 更新应用验证码配置
+func (s *AppService) UpdateCaptchaConfig(ctx context.Context, appID int64, cfg captchadomain.CaptchaAppConfig) (*captchadomain.CaptchaAppConfig, error) {
+	app, err := s.GetApp(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	if app == nil {
+		return nil, apperrors.New(40410, http.StatusNotFound, "应用不存在")
+	}
+	if app.Settings == nil {
+		app.Settings = map[string]any{}
+	}
+	// 序列化配置到 map[string]any
+	jsonBytes, err := gojson.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	var cfgMap map[string]any
+	if err := gojson.Unmarshal(jsonBytes, &cfgMap); err != nil {
+		return nil, err
+	}
+	app.Settings["captcha"] = cfgMap
+	// 通过 SaveApp 持久化
+	_, err = s.pg.UpdateAppSettings(ctx, appID, app.Settings)
+	if err != nil {
+		return nil, err
+	}
+	return &cfg, nil
 }
 
 func lookupMap(settings map[string]any, key string) map[string]any {

@@ -1,0 +1,2 @@
+ALTER TABLE admin_accounts
+    ADD COLUMN IF NOT EXISTS avatar TEXT NOT NULL DEFAULT '';

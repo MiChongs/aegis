@@ -111,37 +111,32 @@ func (r *Repository) UpsertStorageConfig(ctx context.Context, item storagedomain
 	}
 
 	raw, _ := json.Marshal(item.ConfigData)
-	saved, err := scanStorageConfig(tx.QueryRow(ctx, `INSERT INTO storage_configs (id, scope, appid, provider, config_name, access_mode, enabled, is_default, proxy_download, base_url, root_path, description, config_data, created_at, updated_at)
-VALUES (NULLIF($1, 0), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
-ON CONFLICT (id) DO UPDATE SET
-	scope = EXCLUDED.scope,
-	appid = EXCLUDED.appid,
-	provider = EXCLUDED.provider,
-	config_name = EXCLUDED.config_name,
-	access_mode = EXCLUDED.access_mode,
-	enabled = EXCLUDED.enabled,
-	is_default = EXCLUDED.is_default,
-	proxy_download = EXCLUDED.proxy_download,
-	base_url = EXCLUDED.base_url,
-	root_path = EXCLUDED.root_path,
-	description = EXCLUDED.description,
-	config_data = EXCLUDED.config_data,
-	updated_at = NOW()
-RETURNING id, scope, appid, provider, config_name, access_mode, enabled, is_default, proxy_download, COALESCE(base_url, ''), COALESCE(root_path, ''), COALESCE(description, ''), COALESCE(config_data, '{}'::jsonb), created_at, updated_at`,
-		item.ID,
-		item.Scope,
-		item.AppID,
-		item.Provider,
-		item.ConfigName,
-		item.AccessMode,
-		item.Enabled,
-		item.IsDefault,
-		item.ProxyDownload,
-		nullableString(item.BaseURL),
-		nullableString(item.RootPath),
-		nullableString(item.Description),
-		raw,
-	))
+
+	const returningCols = `id, scope, appid, provider, config_name, access_mode, enabled, is_default, proxy_download, COALESCE(base_url, ''), COALESCE(root_path, ''), COALESCE(description, ''), COALESCE(config_data, '{}'::jsonb), created_at, updated_at`
+
+	var saved *storagedomain.Config
+	if item.ID > 0 {
+		// 已有记录：按 id 更新
+		saved, err = scanStorageConfig(tx.QueryRow(ctx, `UPDATE storage_configs SET
+	scope = $2, appid = $3, provider = $4, config_name = $5, access_mode = $6,
+	enabled = $7, is_default = $8, proxy_download = $9, base_url = $10, root_path = $11,
+	description = $12, config_data = $13, updated_at = NOW()
+WHERE id = $1
+RETURNING `+returningCols,
+			item.ID, item.Scope, item.AppID, item.Provider, item.ConfigName, item.AccessMode,
+			item.Enabled, item.IsDefault, item.ProxyDownload,
+			nullableString(item.BaseURL), nullableString(item.RootPath), nullableString(item.Description), raw,
+		))
+	} else {
+		// 新记录：不传 id，由 BIGSERIAL 自动生成
+		saved, err = scanStorageConfig(tx.QueryRow(ctx, `INSERT INTO storage_configs (scope, appid, provider, config_name, access_mode, enabled, is_default, proxy_download, base_url, root_path, description, config_data, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+RETURNING `+returningCols,
+			item.Scope, item.AppID, item.Provider, item.ConfigName, item.AccessMode,
+			item.Enabled, item.IsDefault, item.ProxyDownload,
+			nullableString(item.BaseURL), nullableString(item.RootPath), nullableString(item.Description), raw,
+		))
+	}
 	if err != nil {
 		return nil, err
 	}

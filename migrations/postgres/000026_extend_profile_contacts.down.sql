@@ -1,0 +1,11 @@
+ALTER TABLE admin_accounts
+  DROP COLUMN IF EXISTS phone,
+  DROP COLUMN IF EXISTS birthday,
+  DROP COLUMN IF EXISTS bio,
+  DROP COLUMN IF EXISTS contacts;
+
+ALTER TABLE user_profiles
+  DROP COLUMN IF EXISTS phone,
+  DROP COLUMN IF EXISTS birthday,
+  DROP COLUMN IF EXISTS bio,
+  DROP COLUMN IF EXISTS contacts;

@@ -108,6 +108,16 @@ type CreatePaymentOrderRequest struct {
 	Metadata   map[string]any `json:"metadata"`
 }
 
+type UserPaymentOrdersQuery struct {
+	Status string `json:"status" form:"status"`
+	Page   int    `json:"page" form:"page"`
+	Limit  int    `json:"limit" form:"limit"`
+}
+
+type PaymentBillExportRequest struct {
+	ExpireMinutes int `json:"expireMinutes" form:"expireMinutes"`
+}
+
 type WorkflowListRequest struct {
 	AppID    int64  `json:"appid" form:"appid" binding:"required"`
 	Status   string `json:"status" form:"status"`

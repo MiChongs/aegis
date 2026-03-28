@@ -7,6 +7,7 @@ import (
 	"aegis/pkg/response"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -319,8 +320,33 @@ func (h *Handler) CreatePaymentOrder(c *gin.Context) {
 	response.Success(c, 200, "创建成功", gin.H{"payment": payload, "order": order})
 }
 
+func (h *Handler) PaymentOrders(c *gin.Context) {
+	session, ok := authSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
+		return
+	}
+	var query UserPaymentOrdersQuery
+	_ = bind(c, &query)
+	result, err := h.payment.ListUserOrders(c.Request.Context(), session, paymentdomain.OrderListQuery{
+		Status: query.Status,
+		Page:   query.Page,
+		Limit:  query.Limit,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "获取成功", result)
+}
+
 func (h *Handler) PaymentOrderDetail(c *gin.Context) {
-	order, err := h.payment.QueryOrder(c.Request.Context(), c.Param("orderNo"))
+	session, ok := authSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
+		return
+	}
+	order, err := h.payment.GetUserOrder(c.Request.Context(), session, c.Param("orderNo"))
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -328,7 +354,49 @@ func (h *Handler) PaymentOrderDetail(c *gin.Context) {
 	response.Success(c, 200, "获取成功", order)
 }
 
+func (h *Handler) ExportPaymentBill(c *gin.Context) {
+	session, ok := authSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
+		return
+	}
+	var req PaymentBillExportRequest
+	_ = bind(c, &req)
+	export, err := h.payment.CreateUserOrderBillExport(c.Request.Context(), session, c.Param("orderNo"), time.Duration(req.ExpireMinutes)*time.Minute)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "创建成功", export)
+}
+
+func (h *Handler) DownloadPaymentBill(c *gin.Context) {
+	session, ok := authSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
+		return
+	}
+	data, filename, err := h.payment.DownloadUserOrderBillExport(c.Request.Context(), session, c.Param("billId"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.Header("Content-Type", "application/pdf")
+	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+	c.Header("Cache-Control", "no-store")
+	c.Data(http.StatusOK, "application/pdf", data)
+}
+
 func (h *Handler) QueryEpayOrder(c *gin.Context) {
+	session, ok := authSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
+		return
+	}
+	if _, err := h.payment.GetUserOrder(c.Request.Context(), session, c.Param("orderNo")); err != nil {
+		h.writeError(c, err)
+		return
+	}
 	result, err := h.payment.QueryEpayRemoteOrder(c.Request.Context(), c.Param("orderNo"))
 	if err != nil {
 		h.writeError(c, err)
@@ -355,6 +423,32 @@ func (h *Handler) EpayCallback(c *gin.Context) {
 		return
 	}
 	c.String(http.StatusOK, "fail")
+}
+
+func (h *Handler) PaymentCallback(c *gin.Context) {
+	method := c.Param("method")
+	_ = c.Request.ParseForm()
+	data := map[string]string{}
+	for key, values := range c.Request.Form {
+		if len(values) > 0 {
+			data[key] = values[0]
+		}
+	}
+	result, err := h.payment.HandleCallback(c.Request.Context(), method, data, c.Request.Method, c.ClientIP())
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	if result.Paid {
+		c.String(http.StatusOK, "success")
+		return
+	}
+	c.String(http.StatusOK, "fail")
+}
+
+func (h *Handler) PaymentMethods(c *gin.Context) {
+	methods := h.payment.AvailableMethods()
+	response.Success(c, 200, "获取成功", methods)
 }
 
 func (h *Handler) WorkflowList(c *gin.Context) {

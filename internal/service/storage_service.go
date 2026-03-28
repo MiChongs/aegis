@@ -10,11 +10,13 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"time"
 
 	authdomain "aegis/internal/domain/auth"
+	plugindomain "aegis/internal/domain/plugin"
 	storagedomain "aegis/internal/domain/storage"
 	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
@@ -36,6 +38,12 @@ type StorageService struct {
 	redis      *redislib.Client
 	keyPrefix  string
 	httpClient *http.Client
+	plugin     *PluginService
+}
+
+// SetPluginService 注入插件服务
+func (s *StorageService) SetPluginService(p *PluginService) {
+	s.plugin = p
 }
 
 func NewStorageService(log *zap.Logger, pg *pgrepo.Repository, redis *redislib.Client, keyPrefix string) *StorageService {
@@ -48,6 +56,46 @@ func NewStorageService(log *zap.Logger, pg *pgrepo.Repository, redis *redislib.C
 			Timeout: 60 * time.Second,
 		},
 	}
+}
+
+// EnsureDefaultLocalConfig 确保存在至少一个可用的全局存储配置，如果没有则自动创建本地存储
+func (s *StorageService) EnsureDefaultLocalConfig(ctx context.Context, baseURL string) error {
+	// 检查是否已有全局默认配置
+	existing, err := s.pg.ResolveStorageConfig(ctx, 0, "", "")
+	if err == nil && existing != nil {
+		return nil // 已有可用配置，无需创建
+	}
+
+	rootDir := "data/storage"
+	if err := os.MkdirAll(rootDir, 0o755); err != nil {
+		return fmt.Errorf("创建本地存储目录失败: %w", err)
+	}
+
+	storageBaseURL := strings.TrimRight(baseURL, "/") + "/api/storage/proxy"
+
+	item := storagedomain.Config{
+		Scope:         storagedomain.ScopeGlobal,
+		Provider:      storagedomain.ProviderLocal,
+		ConfigName:    "local-default",
+		AccessMode:    storagedomain.AccessPrivate,
+		Enabled:       true,
+		IsDefault:     true,
+		ProxyDownload: true,
+		BaseURL:       storageBaseURL,
+		Description:   "系统自动创建的本地存储（启动时无可用存储配置时生成）",
+		ConfigData:    map[string]any{"root_dir": rootDir},
+	}
+
+	_, err = s.pg.UpsertStorageConfig(ctx, item)
+	if err != nil {
+		return fmt.Errorf("创建默认本地存储配置失败: %w", err)
+	}
+
+	s.log.Info("已自动创建默认本地存储配置",
+		zap.String("root_dir", rootDir),
+		zap.String("config_name", "local-default"),
+	)
+	return nil
 }
 
 func (s *StorageService) ListConfigs(ctx context.Context, scope string, appID *int64, provider string) ([]storagedomain.Config, error) {
@@ -193,6 +241,11 @@ func (s *StorageService) Delete(ctx context.Context, scope string, appID *int64,
 		return apperrors.New(40480, http.StatusNotFound, "存储配置不存在")
 	}
 	s.invalidateResolvedCache(ctx, item)
+	if s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookFileDeleted, map[string]any{
+			"configId": id, "scope": scope, "provider": item.Provider,
+		}, plugindomain.HookMetadata{})
+	}
 	return nil
 }
 
@@ -223,15 +276,49 @@ func (s *StorageService) Upload(ctx context.Context, session *authdomain.Session
 	if session == nil {
 		return nil, apperrors.New(40180, http.StatusUnauthorized, "未认证")
 	}
-	cfg, err := s.resolveConfig(ctx, storagedomain.ResolveOptions{AppID: session.AppID, ConfigName: input.ConfigName})
+	return s.UploadForApp(ctx, session.AppID, input)
+}
+
+func (s *StorageService) UploadForApp(ctx context.Context, appID int64, input storagedomain.UploadInput) (*storagedomain.StoredObject, error) {
+	cfg, err := s.resolveConfig(ctx, storagedomain.ResolveOptions{AppID: appID, ConfigName: input.ConfigName})
 	if err != nil {
 		return nil, err
 	}
+	return s.uploadWithConfig(ctx, appID, cfg, input)
+}
+
+func (s *StorageService) CreateObjectLink(ctx context.Context, session *authdomain.Session, req storagedomain.LinkRequest) (*storagedomain.LinkResult, string, error) {
+	if session == nil {
+		return nil, "", apperrors.New(40180, http.StatusUnauthorized, "未认证")
+	}
+	return s.CreateObjectLinkForApp(ctx, session.AppID, req)
+}
+
+func (s *StorageService) CreateObjectLinkForApp(ctx context.Context, appID int64, req storagedomain.LinkRequest) (*storagedomain.LinkResult, string, error) {
+	cfg, err := s.resolveConfig(ctx, storagedomain.ResolveOptions{AppID: appID, ConfigName: req.ConfigName})
+	if err != nil {
+		return nil, "", err
+	}
+	return s.createObjectLinkWithConfig(ctx, appID, cfg, req)
+}
+
+func (s *StorageService) CreateObjectLinkByConfigID(ctx context.Context, appID int64, configID int64, req storagedomain.LinkRequest) (*storagedomain.LinkResult, string, error) {
+	cfg, err := s.pg.GetStorageConfigByID(ctx, configID)
+	if err != nil {
+		return nil, "", err
+	}
+	if cfg == nil || !cfg.Enabled {
+		return nil, "", apperrors.New(40482, http.StatusNotFound, "未配置可用存储服务")
+	}
+	return s.createObjectLinkWithConfig(ctx, appID, cfg, req)
+}
+
+func (s *StorageService) uploadWithConfig(ctx context.Context, appID int64, cfg *storagedomain.Config, input storagedomain.UploadInput) (*storagedomain.StoredObject, error) {
 	provider, err := s.buildProvider(cfg)
 	if err != nil {
 		return nil, err
 	}
-	input.AppID = session.AppID
+	input.AppID = appID
 	input.ObjectKey = strings.TrimSpace(input.ObjectKey)
 	if input.ObjectKey == "" {
 		input.ObjectKey = buildUploadedObjectKey(input.FileName)
@@ -242,24 +329,46 @@ func (s *StorageService) Upload(ctx context.Context, session *authdomain.Session
 	}
 	item, err := provider.Upload(ctx, cfg, input)
 	if err != nil {
-		s.log.Warn("storage upload failed", zap.Int64("appid", session.AppID), zap.Int64("config_id", cfg.ID), zap.String("provider", cfg.Provider), zap.Error(err))
+		s.log.Warn("storage upload failed", zap.Int64("appid", appID), zap.Int64("config_id", cfg.ID), zap.String("provider", cfg.Provider), zap.Error(err))
 		return nil, apperrors.New(50081, http.StatusBadGateway, "文件上传失败")
 	}
 	item.ConfigID = cfg.ID
 	item.Provider = cfg.Provider
 	item.AccessMode = cfg.AccessMode
 	item.ProxyRequired = cfg.AccessMode == storagedomain.AccessPrivate || cfg.ProxyDownload
+
+	// 写入文件索引表（storage_objects），用于文件管理、用量统计
+	meta := make(map[string]any, len(input.Metadata))
+	for k, v := range input.Metadata {
+		meta[k] = v
+	}
+	uploaderType := input.UploaderType
+	if uploaderType == "" {
+		uploaderType = "user"
+	}
+	_, _ = s.pg.IndexStorageObject(ctx, storagedomain.StorageObject{
+		ConfigID:     cfg.ID,
+		AppID:        &appID,
+		ObjectKey:    item.Key,
+		FileName:     item.FileName,
+		ContentType:  item.ContentType,
+		Size:         item.Size,
+		ETag:         item.ETag,
+		UploadedBy:   input.UploadedBy,
+		UploaderType: uploaderType,
+		Status:       "active",
+		Metadata:     meta,
+	})
+
+	if s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookFileUploaded, map[string]any{
+			"appId": appID, "objectKey": item.Key, "configId": cfg.ID, "provider": cfg.Provider,
+		}, plugindomain.HookMetadata{AppID: &appID})
+	}
 	return item, nil
 }
 
-func (s *StorageService) CreateObjectLink(ctx context.Context, session *authdomain.Session, req storagedomain.LinkRequest) (*storagedomain.LinkResult, string, error) {
-	if session == nil {
-		return nil, "", apperrors.New(40180, http.StatusUnauthorized, "未认证")
-	}
-	cfg, err := s.resolveConfig(ctx, storagedomain.ResolveOptions{AppID: session.AppID, ConfigName: req.ConfigName})
-	if err != nil {
-		return nil, "", err
-	}
+func (s *StorageService) createObjectLinkWithConfig(ctx context.Context, appID int64, cfg *storagedomain.Config, req storagedomain.LinkRequest) (*storagedomain.LinkResult, string, error) {
 	objectKey := normalizeObjectKey(cfg.RootPath, req.ObjectKey)
 	if objectKey == "" {
 		return nil, "", apperrors.New(40083, http.StatusBadRequest, "对象路径不能为空")
@@ -295,7 +404,7 @@ func (s *StorageService) CreateObjectLink(ctx context.Context, session *authdoma
 	}
 
 	ticketID, err := s.issueProxyTicket(ctx, storagedomain.ProxyTicket{
-		AppID:      session.AppID,
+		AppID:      appID,
 		ConfigID:   cfg.ID,
 		ObjectKey:  objectKey,
 		Download:   req.Download,
@@ -413,6 +522,11 @@ func (s *StorageService) buildProvider(cfg *storagedomain.Config) (storageProvid
 			return nil, err
 		}
 		return newAzureBlobProvider(), nil
+	case storagedomain.ProviderLocal:
+		if _, err := decodeLocalConfig(cfg.ConfigData); err != nil {
+			return nil, err
+		}
+		return newLocalStorageProvider(), nil
 	default:
 		return nil, apperrors.New(40081, http.StatusBadRequest, "存储提供商不受支持")
 	}
@@ -574,7 +688,7 @@ func randomHex(size int) (string, error) {
 
 func isSupportedStorageProvider(value string) bool {
 	switch strings.TrimSpace(value) {
-	case storagedomain.ProviderS3, storagedomain.ProviderAliyunOSS, storagedomain.ProviderTencentCOS, storagedomain.ProviderQiniuKodo, storagedomain.ProviderWebDAV, storagedomain.ProviderOneDrive, storagedomain.ProviderDropbox, storagedomain.ProviderGoogleDrive, storagedomain.ProviderAzureBlob:
+	case storagedomain.ProviderS3, storagedomain.ProviderAliyunOSS, storagedomain.ProviderTencentCOS, storagedomain.ProviderQiniuKodo, storagedomain.ProviderWebDAV, storagedomain.ProviderOneDrive, storagedomain.ProviderDropbox, storagedomain.ProviderGoogleDrive, storagedomain.ProviderAzureBlob, storagedomain.ProviderLocal:
 		return true
 	default:
 		return false

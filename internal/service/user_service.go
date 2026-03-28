@@ -10,23 +10,47 @@ import (
 
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
+	plugindomain "aegis/internal/domain/plugin"
 	userdomain "aegis/internal/domain/user"
 	"aegis/internal/event"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 )
+
+func hashUserPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
+}
 
 type UserService struct {
 	log       *zap.Logger
 	pg        *pgrepo.Repository
 	sessions  *redisrepo.SessionRepository
 	publisher *event.Publisher
+	security  *SecurityService
+	plugin    *PluginService
+	search    *AdminUserSearchService
+	ban       *AccountBanService
 }
 
-func NewUserService(log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, publisher *event.Publisher) *UserService {
-	return &UserService{log: log, pg: pg, sessions: sessions, publisher: publisher}
+func (s *UserService) SetPluginService(p *PluginService) { s.plugin = p }
+
+func (s *UserService) SetAdminUserSearchService(search *AdminUserSearchService) {
+	s.search = search
+}
+
+func (s *UserService) SetAccountBanService(ban *AccountBanService) {
+	s.ban = ban
+}
+
+func NewUserService(log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, publisher *event.Publisher, security *SecurityService) *UserService {
+	return &UserService{log: log, pg: pg, sessions: sessions, publisher: publisher, security: security}
 }
 
 func (s *UserService) GetMy(ctx context.Context, session *authdomain.Session) (*userdomain.MyView, error) {
@@ -126,9 +150,29 @@ func (s *UserService) UpdateProfile(ctx context.Context, session *authdomain.Ses
 		profile = &userdomain.Profile{UserID: user.ID, Extra: map[string]any{}}
 		profile.UserID = user.ID
 	}
-	profile.Nickname = strings.TrimSpace(input.Nickname)
-	profile.Avatar = strings.TrimSpace(input.Avatar)
-	profile.Email = strings.TrimSpace(input.Email)
+	if v := strings.TrimSpace(input.Nickname); v != "" {
+		profile.Nickname = v
+	}
+	if v := strings.TrimSpace(input.Avatar); v != "" {
+		profile.Avatar = v
+	}
+	if v := strings.TrimSpace(input.Email); v != "" {
+		profile.Email = v
+	}
+	if v := strings.TrimSpace(input.Phone); v != "" {
+		profile.Phone = v
+	}
+	if v := strings.TrimSpace(input.Birthday); v != "" {
+		if t, err := time.Parse("2006-01-02", v); err == nil {
+			profile.Birthday = &t
+		}
+	}
+	if v := strings.TrimSpace(input.Bio); v != "" {
+		profile.Bio = v
+	}
+	if input.Contacts != nil {
+		profile.Contacts = input.Contacts
+	}
 	if profile.Extra == nil {
 		profile.Extra = map[string]any{}
 	}
@@ -139,6 +183,13 @@ func (s *UserService) UpdateProfile(ctx context.Context, session *authdomain.Ses
 	_ = s.sessions.DeleteUserProfile(ctx, session.AppID, session.UserID)
 	_ = s.publisher.PublishJSON(ctx, event.SubjectUserProfileRefresh, map[string]any{"user_id": session.UserID, "appid": session.AppID})
 	profile.UpdatedAt = time.Now().UTC()
+	if s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookUserProfileUpdated, map[string]any{
+			"userId": user.ID,
+			"appId":  session.AppID,
+		}, plugindomain.HookMetadata{UserID: &user.ID, AppID: &session.AppID})
+	}
+	s.syncAdminUserSearch(session.AppID, user.ID)
 	return profile, nil
 }
 
@@ -154,8 +205,28 @@ func (s *UserService) ListAdminUsers(ctx context.Context, appID int64, query use
 	if limit > 100 {
 		limit = 100
 	}
+	query.Page = page
+	query.Limit = limit
 
-	items, total, err := s.pg.ListAdminUsersByApp(ctx, appID, query.Keyword, query.Enabled, page, limit)
+	if shouldUseAdminUserSearch(query) && s.search != nil {
+		ids, total, err := s.search.SearchUsers(ctx, appID, query)
+		if err == nil {
+			items, err := s.pg.ListAdminUsersByIDs(ctx, appID, ids)
+			if err != nil {
+				return nil, err
+			}
+			return &userdomain.AdminUserListResult{
+				Items:      items,
+				Page:       page,
+				Limit:      limit,
+				Total:      total,
+				TotalPages: calcPages(total, limit),
+			}, nil
+		}
+		s.log.Warn("admin user search fallback to postgres", zap.Int64("appid", appID), zap.Error(err))
+	}
+
+	items, total, err := s.pg.ListAdminUsersByAppQuery(ctx, appID, query, page, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -187,12 +258,37 @@ func (s *UserService) ExportAdminUsers(ctx context.Context, appID int64, query u
 	if limit > 20000 {
 		limit = 20000
 	}
-	return s.pg.ListAdminUsersForExport(ctx, appID, query.Keyword, query.Enabled, limit)
+	query.Page = 1
+	query.Limit = limit
+	if shouldUseAdminUserSearch(query) && s.search != nil {
+		ids, _, err := s.search.SearchUsers(ctx, appID, query)
+		if err == nil {
+			return s.pg.ListAdminUsersByIDs(ctx, appID, ids)
+		}
+		s.log.Warn("admin user export search fallback to postgres", zap.Int64("appid", appID), zap.Error(err))
+	}
+	return s.pg.ListAdminUsersForExportQuery(ctx, appID, query, limit)
 }
 
-func (s *UserService) UpdateAdminUserStatus(ctx context.Context, appID int64, userID int64, mutation userdomain.AdminUserStatusMutation) (*userdomain.AdminUserView, error) {
+func (s *UserService) UpdateAdminUserStatus(ctx context.Context, appID int64, userID int64, mutation userdomain.AdminUserStatusMutation, operator userdomain.BanOperator) (*userdomain.AdminUserView, error) {
 	if mutation.Enabled == nil && mutation.DisabledEndTime == nil && !mutation.ClearDisabledEndTime && mutation.DisabledReason == nil {
 		return nil, apperrors.New(40024, http.StatusBadRequest, "缺少可更新的状态字段")
+	}
+	if s.ban != nil {
+		if changed, err := s.applyStatusMutationToBan(ctx, appID, userID, mutation, operator); err != nil {
+			return nil, err
+		} else if changed {
+			s.invalidateAdminUserCaches(ctx, appID, userID)
+			s.syncAdminUserSearch(appID, userID)
+			item, err := s.pg.GetAdminUserByApp(ctx, appID, userID)
+			if err != nil {
+				return nil, err
+			}
+			if item == nil {
+				return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
+			}
+			return item, nil
+		}
 	}
 	item, err := s.pg.UpdateAdminUserStatus(ctx, appID, userID, mutation)
 	if err != nil {
@@ -203,6 +299,7 @@ func (s *UserService) UpdateAdminUserStatus(ctx context.Context, appID int64, us
 	}
 
 	s.invalidateAdminUserCaches(ctx, appID, userID)
+	s.syncAdminUserSearch(appID, userID)
 
 	shouldRevoke := !item.Enabled
 	if item.DisabledEndTime != nil && item.DisabledEndTime.After(time.Now()) {
@@ -221,10 +318,17 @@ func (s *UserService) UpdateAdminUserStatus(ctx context.Context, appID int64, us
 		}
 	}
 
+	if shouldRevoke && s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookUserBanned, map[string]any{
+			"userId": userID,
+			"status": item.Enabled,
+		}, plugindomain.HookMetadata{UserID: &userID, AppID: &appID})
+	}
+
 	return item, nil
 }
 
-func (s *UserService) BatchUpdateAdminUserStatus(ctx context.Context, appID int64, mutation userdomain.AdminUserBatchStatusMutation) (*userdomain.AdminUserBatchStatusResult, error) {
+func (s *UserService) BatchUpdateAdminUserStatus(ctx context.Context, appID int64, mutation userdomain.AdminUserBatchStatusMutation, operator userdomain.BanOperator) (*userdomain.AdminUserBatchStatusResult, error) {
 	if len(mutation.UserIDs) == 0 {
 		return nil, apperrors.New(40024, http.StatusBadRequest, "用户标识不能为空")
 	}
@@ -246,6 +350,22 @@ func (s *UserService) BatchUpdateAdminUserStatus(ctx context.Context, appID int6
 	}
 	if len(deduped) == 0 {
 		return nil, apperrors.New(40024, http.StatusBadRequest, "用户标识不能为空")
+	}
+	if s.ban != nil {
+		if changed, updated, err := s.applyBatchStatusMutationToBan(ctx, appID, deduped, mutation.AdminUserStatusMutation, operator); err != nil {
+			return nil, err
+		} else if changed {
+			for _, userID := range deduped {
+				s.invalidateAdminUserCaches(ctx, appID, userID)
+				s.syncAdminUserSearch(appID, userID)
+			}
+			return &userdomain.AdminUserBatchStatusResult{
+				AppID:            appID,
+				Requested:        len(mutation.UserIDs),
+				Updated:          updated,
+				ProcessedUserIDs: deduped,
+			}, nil
+		}
 	}
 
 	updated, err := s.pg.BatchUpdateAdminUserStatus(ctx, appID, deduped, mutation.AdminUserStatusMutation)
@@ -280,6 +400,61 @@ func (s *UserService) BatchUpdateAdminUserStatus(ctx context.Context, appID int6
 		Updated:          updated,
 		ProcessedUserIDs: deduped,
 	}, nil
+}
+
+func (s *UserService) CreateAdminUserBan(ctx context.Context, appID int64, userID int64, input userdomain.AccountBanCreateInput) (*userdomain.AccountBan, error) {
+	if s.ban == nil {
+		return nil, apperrors.New(50321, http.StatusServiceUnavailable, "账户封禁模块未启用")
+	}
+	item, err := s.ban.BanUser(ctx, appID, userID, input)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidateAdminUserCaches(ctx, appID, userID)
+	s.syncAdminUserSearch(appID, userID)
+	return item, nil
+}
+
+func (s *UserService) BatchCreateAdminUserBan(ctx context.Context, appID int64, input userdomain.AccountBanBatchCreateInput) (*userdomain.AccountBanBatchCreateResult, error) {
+	if s.ban == nil {
+		return nil, apperrors.New(50321, http.StatusServiceUnavailable, "账户封禁模块未启用")
+	}
+	item, err := s.ban.BatchBanUsers(ctx, appID, input)
+	if err != nil {
+		return nil, err
+	}
+	for _, userID := range item.ProcessedUserIDs {
+		s.invalidateAdminUserCaches(ctx, appID, userID)
+		s.syncAdminUserSearch(appID, userID)
+	}
+	return item, nil
+}
+
+func (s *UserService) ListAdminUserBans(ctx context.Context, appID int64, userID int64, query userdomain.AccountBanQuery) (*userdomain.AccountBanListResult, error) {
+	if s.ban == nil {
+		return nil, apperrors.New(50321, http.StatusServiceUnavailable, "账户封禁模块未启用")
+	}
+	return s.ban.ListBans(ctx, appID, userID, query)
+}
+
+func (s *UserService) GetAdminUserActiveBan(ctx context.Context, appID int64, userID int64) (*userdomain.AccountBan, error) {
+	if s.ban == nil {
+		return nil, apperrors.New(50321, http.StatusServiceUnavailable, "账户封禁模块未启用")
+	}
+	return s.ban.GetActiveBan(ctx, appID, userID)
+}
+
+func (s *UserService) RevokeAdminUserBan(ctx context.Context, appID int64, userID int64, banID int64, input userdomain.AccountBanRevokeInput) (*userdomain.AccountBan, error) {
+	if s.ban == nil {
+		return nil, apperrors.New(50321, http.StatusServiceUnavailable, "账户封禁模块未启用")
+	}
+	item, err := s.ban.RevokeBan(ctx, appID, userID, banID, input)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidateAdminUserCaches(ctx, appID, userID)
+	s.syncAdminUserSearch(appID, userID)
+	return item, nil
 }
 
 func (s *UserService) GetSettings(ctx context.Context, session *authdomain.Session, category string) (*userdomain.Settings, error) {
@@ -365,6 +540,10 @@ func (s *UserService) UpdateSettings(ctx context.Context, session *authdomain.Se
 }
 
 func (s *UserService) GetSecurityStatus(ctx context.Context, session *authdomain.Session) (*userdomain.SecurityStatus, error) {
+	if s.security != nil {
+		return s.security.GetSecurityStatus(ctx, session)
+	}
+
 	cached, err := s.sessions.GetSecurityStatus(ctx, session.AppID, session.UserID)
 	if err != nil {
 		s.log.Warn("load security cache failed", zap.Error(err))
@@ -398,7 +577,6 @@ func (s *UserService) GetSecurityStatus(ctx context.Context, session *authdomain
 	}
 	return &status, nil
 }
-
 func (s *UserService) ListSessions(ctx context.Context, session *authdomain.Session) (*userdomain.SessionListResult, error) {
 	if s.sessions == nil {
 		return nil, apperrors.New(50301, http.StatusServiceUnavailable, "会话管理未启用")
@@ -621,6 +799,14 @@ func (s *UserService) loadActiveUser(ctx context.Context, session *authdomain.Se
 	if user == nil || user.AppID != session.AppID {
 		return nil, nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
 	}
+	if ban, err := s.pg.RefreshUserAccountBanState(ctx, user.AppID, user.ID); err != nil {
+		s.log.Warn("refresh user account ban state failed", zap.Int64("appid", user.AppID), zap.Int64("userId", user.ID), zap.Error(err))
+	} else if ban != nil {
+		if ban.BanType == userdomain.AccountBanTypePermanent {
+			return nil, nil, apperrors.New(40301, http.StatusForbidden, BanMessageFromRecord(ban))
+		}
+		return nil, nil, apperrors.New(40302, http.StatusForbidden, BanMessageFromRecord(ban))
+	}
 	if !user.Enabled {
 		return nil, nil, apperrors.New(40301, http.StatusForbidden, "用户账户已被禁用")
 	}
@@ -632,6 +818,119 @@ func (s *UserService) loadActiveUser(ctx context.Context, session *authdomain.Se
 		return nil, nil, err
 	}
 	return user, profile, nil
+}
+
+func (s *UserService) applyStatusMutationToBan(ctx context.Context, appID int64, userID int64, mutation userdomain.AdminUserStatusMutation, operator userdomain.BanOperator) (bool, error) {
+	action, createInput, revokeInput, reasonOnly := deriveBanActionFromStatusMutation(mutation, operator)
+	switch action {
+	case "create":
+		_, err := s.ban.BanUser(ctx, appID, userID, createInput)
+		return true, err
+	case "revoke":
+		active, err := s.ban.GetActiveBan(ctx, appID, userID)
+		if err != nil {
+			return false, err
+		}
+		if active == nil {
+			return false, nil
+		}
+		_, err = s.ban.RevokeBan(ctx, appID, userID, active.ID, revokeInput)
+		return true, err
+	case "reason":
+		if reasonOnly == nil {
+			return false, nil
+		}
+		active, err := s.ban.UpdateActiveBanReason(ctx, appID, userID, *reasonOnly)
+		if err != nil {
+			return false, err
+		}
+		return active != nil, nil
+	default:
+		return false, nil
+	}
+}
+
+func (s *UserService) applyBatchStatusMutationToBan(ctx context.Context, appID int64, userIDs []int64, mutation userdomain.AdminUserStatusMutation, operator userdomain.BanOperator) (bool, int64, error) {
+	action, createInput, revokeInput, reasonOnly := deriveBanActionFromStatusMutation(mutation, operator)
+	switch action {
+	case "create":
+		result, err := s.ban.BatchBanUsers(ctx, appID, userdomain.AccountBanBatchCreateInput{
+			UserIDs:               userIDs,
+			AccountBanCreateInput: createInput,
+		})
+		if err != nil {
+			return false, 0, err
+		}
+		return true, result.Created, nil
+	case "revoke":
+		var updated int64
+		for _, userID := range userIDs {
+			active, err := s.ban.GetActiveBan(ctx, appID, userID)
+			if err != nil {
+				return false, updated, err
+			}
+			if active == nil {
+				continue
+			}
+			if _, err := s.ban.RevokeBan(ctx, appID, userID, active.ID, revokeInput); err != nil {
+				return false, updated, err
+			}
+			updated++
+		}
+		return true, updated, nil
+	case "reason":
+		var updated int64
+		for _, userID := range userIDs {
+			active, err := s.ban.UpdateActiveBanReason(ctx, appID, userID, *reasonOnly)
+			if err != nil {
+				return false, updated, err
+			}
+			if active != nil {
+				updated++
+			}
+		}
+		return updated > 0, updated, nil
+	default:
+		return false, 0, nil
+	}
+}
+
+func deriveBanActionFromStatusMutation(mutation userdomain.AdminUserStatusMutation, operator userdomain.BanOperator) (string, userdomain.AccountBanCreateInput, userdomain.AccountBanRevokeInput, *string) {
+	now := time.Now()
+	if mutation.DisabledEndTime != nil && mutation.DisabledEndTime.After(now) {
+		return "create", userdomain.AccountBanCreateInput{
+			BanType:  userdomain.AccountBanTypeTemporary,
+			BanScope: userdomain.AccountBanScopeLogin,
+			Reason:   statusStringValue(mutation.DisabledReason),
+			EndAt:    mutation.DisabledEndTime,
+			Operator: operator,
+		}, userdomain.AccountBanRevokeInput{}, nil
+	}
+	if mutation.Enabled != nil && !*mutation.Enabled {
+		return "create", userdomain.AccountBanCreateInput{
+			BanType:  userdomain.AccountBanTypePermanent,
+			BanScope: userdomain.AccountBanScopeLogin,
+			Reason:   statusStringValue(mutation.DisabledReason),
+			Operator: operator,
+		}, userdomain.AccountBanRevokeInput{}, nil
+	}
+	if mutation.ClearDisabledEndTime || (mutation.Enabled != nil && *mutation.Enabled) || (mutation.DisabledEndTime != nil && !mutation.DisabledEndTime.After(now)) {
+		return "revoke", userdomain.AccountBanCreateInput{}, userdomain.AccountBanRevokeInput{
+			Reason:   statusStringValue(mutation.DisabledReason),
+			Operator: operator,
+		}, nil
+	}
+	if mutation.DisabledReason != nil {
+		return "reason", userdomain.AccountBanCreateInput{}, userdomain.AccountBanRevokeInput{}, mutation.DisabledReason
+	}
+	return "", userdomain.AccountBanCreateInput{}, userdomain.AccountBanRevokeInput{}, nil
+}
+
+func statusStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func normalizeSettingsCategory(category string) string {
@@ -821,6 +1120,203 @@ func mapSessionAuditItems(items []appdomain.SessionAuditItem) []userdomain.Sessi
 	return result
 }
 
+// ──────────────────────────────────────
+// 管理员用户控制
+// ──────────────────────────────────────
+
+// AdminUpdateUserProfile 管理员编辑用户资料（昵称、邮箱）
+func (s *UserService) AdminUpdateUserProfile(ctx context.Context, appID int64, userID int64, nickname string, email string) error {
+	user, err := s.pg.GetAdminUserByApp(ctx, appID, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return apperrors.New(40401, http.StatusNotFound, "用户不存在")
+	}
+	if err := s.pg.UpsertUserProfile(ctx, userdomain.Profile{
+		UserID:   userID,
+		Nickname: strings.TrimSpace(nickname),
+		Email:    strings.TrimSpace(email),
+	}); err != nil {
+		return fmt.Errorf("更新用户资料失败: %w", err)
+	}
+	s.invalidateAdminUserCaches(ctx, appID, userID)
+	s.syncAdminUserSearch(appID, userID)
+	s.log.Info("管理员更新用户资料", zap.Int64("appid", appID), zap.Int64("userId", userID))
+	return nil
+}
+
+// AdminResetUserPassword 管理员重置用户密码
+func (s *UserService) AdminResetUserPassword(ctx context.Context, appID int64, userID int64, newPassword string) error {
+	newPassword = strings.TrimSpace(newPassword)
+	if len(newPassword) < 6 {
+		return apperrors.New(40025, http.StatusBadRequest, "密码长度不能少于 6 位")
+	}
+	user, err := s.pg.GetAdminUserByApp(ctx, appID, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return apperrors.New(40401, http.StatusNotFound, "用户不存在")
+	}
+	hash, err := hashUserPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("密码哈希失败: %w", err)
+	}
+	if err := s.pg.UpdateUserPassword(ctx, userID, hash, time.Now().UTC()); err != nil {
+		return fmt.Errorf("更新密码失败: %w", err)
+	}
+	// 吊销所有会话，强制用户重新登录
+	s.revokeAllUserSessions(ctx, appID, userID)
+	s.invalidateAdminUserCaches(ctx, appID, userID)
+	s.log.Info("管理员重置用户密码", zap.Int64("appid", appID), zap.Int64("userId", userID))
+	return nil
+}
+
+// AdminDeleteUser 管理员删除用户（硬删除）
+func (s *UserService) AdminDeleteUser(ctx context.Context, appID int64, userID int64) error {
+	user, err := s.pg.GetAdminUserByApp(ctx, appID, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return apperrors.New(40401, http.StatusNotFound, "用户不存在")
+	}
+	// 先吊销会话
+	s.revokeAllUserSessions(ctx, appID, userID)
+	// 清理安全凭证
+	if s.security != nil {
+		_ = s.pg.DeleteUserTOTPSecret(ctx, appID, userID)
+		_ = s.pg.DeleteUserRecoveryCodes(ctx, appID, userID)
+	}
+	// 删除用户（CASCADE 会清理 user_profiles、user_settings 等）
+	if err := s.pg.DeleteUserByApp(ctx, appID, userID); err != nil {
+		return fmt.Errorf("删除用户失败: %w", err)
+	}
+	s.invalidateAdminUserCaches(ctx, appID, userID)
+	s.deleteAdminUserSearch(appID, userID)
+	s.log.Warn("管理员删除用户", zap.Int64("appid", appID), zap.Int64("userId", userID))
+	if s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookUserDeleted, map[string]any{
+			"userId": userID,
+		}, plugindomain.HookMetadata{UserID: &userID, AppID: &appID})
+	}
+	return nil
+}
+
+// AdminRevokeUserSessions 管理员踢出用户所有会话
+func (s *UserService) AdminRevokeUserSessions(ctx context.Context, appID int64, userID int64) error {
+	user, err := s.pg.GetAdminUserByApp(ctx, appID, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return apperrors.New(40401, http.StatusNotFound, "用户不存在")
+	}
+	s.revokeAllUserSessions(ctx, appID, userID)
+	s.log.Info("管理员踢出用户会话", zap.Int64("appid", appID), zap.Int64("userId", userID))
+	return nil
+}
+
+// AdminListUserSessions 管理员查看用户所有活跃会话（不含位置，位置由 Handler 层解析）
+func (s *UserService) AdminListUserSessions(ctx context.Context, appID int64, userID int64) ([]userdomain.SessionDetailView, error) {
+	if s.sessions == nil {
+		return nil, apperrors.New(50301, http.StatusServiceUnavailable, "会话管理未启用")
+	}
+	user, err := s.pg.GetAdminUserByApp(ctx, appID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
+	}
+	items, err := s.sessions.ListUserSessions(ctx, appID, userID)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]userdomain.SessionDetailView, 0, len(items))
+	for _, item := range items {
+		views = append(views, userdomain.SessionDetailView{
+			TokenHash: item.TokenHash,
+			TokenID:   item.Session.TokenID,
+			Account:   item.Session.Account,
+			DeviceID:  item.Session.DeviceID,
+			IP:        item.Session.IP,
+			UserAgent: item.Session.UserAgent,
+			Provider:  item.Session.Provider,
+			IssuedAt:  item.Session.IssuedAt,
+			ExpiresAt: item.Session.ExpiresAt,
+		})
+	}
+	sort.Slice(views, func(i, j int) bool { return views[i].IssuedAt.After(views[j].IssuedAt) })
+	return views, nil
+}
+
+// AdminRevokeUserSession 管理员撤销用户单个会话
+func (s *UserService) AdminRevokeUserSession(ctx context.Context, appID int64, userID int64, tokenHash string) error {
+	if s.sessions == nil {
+		return apperrors.New(50301, http.StatusServiceUnavailable, "会话管理未启用")
+	}
+	tokenHash = strings.TrimSpace(tokenHash)
+	if tokenHash == "" {
+		return apperrors.New(40026, http.StatusBadRequest, "会话标识不能为空")
+	}
+	items, err := s.sessions.ListUserSessions(ctx, appID, userID)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.TokenHash == tokenHash {
+			return s.revokeIndexedSession(ctx, appID, userID, item, "revoked_by_admin")
+		}
+	}
+	return apperrors.New(40413, http.StatusNotFound, "会话不存在")
+}
+
+// AdminRevokeUserSessionsBatch 管理员批量撤销指定会话
+func (s *UserService) AdminRevokeUserSessionsBatch(ctx context.Context, appID int64, userID int64, tokenHashes []string) (int, error) {
+	if s.sessions == nil {
+		return 0, apperrors.New(50301, http.StatusServiceUnavailable, "会话管理未启用")
+	}
+	hashSet := make(map[string]struct{}, len(tokenHashes))
+	for _, h := range tokenHashes {
+		h = strings.TrimSpace(h)
+		if h != "" {
+			hashSet[h] = struct{}{}
+		}
+	}
+	if len(hashSet) == 0 {
+		return 0, apperrors.New(40026, http.StatusBadRequest, "会话标识不能为空")
+	}
+	items, err := s.sessions.ListUserSessions(ctx, appID, userID)
+	if err != nil {
+		return 0, err
+	}
+	revoked := 0
+	for _, item := range items {
+		if _, ok := hashSet[item.TokenHash]; ok {
+			if err := s.revokeIndexedSession(ctx, appID, userID, item, "revoked_by_admin"); err == nil {
+				revoked++
+			}
+		}
+	}
+	return revoked, nil
+}
+
+func (s *UserService) revokeAllUserSessions(ctx context.Context, appID int64, userID int64) {
+	if s.sessions == nil {
+		return
+	}
+	sessions, err := s.sessions.ListUserSessions(ctx, appID, userID)
+	if err != nil {
+		s.log.Warn("list user sessions failed", zap.Error(err))
+		return
+	}
+	for _, session := range sessions {
+		_ = s.sessions.DeleteSessionByHash(ctx, appID, userID, session.TokenHash)
+	}
+}
+
 func (s *UserService) invalidateAdminUserCaches(ctx context.Context, appID int64, userID int64) {
 	if s.sessions == nil {
 		return
@@ -832,4 +1328,39 @@ func (s *UserService) invalidateAdminUserCaches(ctx context.Context, appID int64
 	for _, category := range []string{"general", "autoSign", "notifications", "privacy", "ui", "security"} {
 		_ = s.sessions.DeleteUserSettings(ctx, appID, userID, category)
 	}
+}
+
+func (s *UserService) syncAdminUserSearch(appID int64, userID int64) {
+	if s.search == nil || appID <= 0 || userID <= 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.search.IndexUser(ctx, appID, userID); err != nil {
+			s.log.Warn("sync admin user search failed", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.Error(err))
+		}
+	}()
+}
+
+func (s *UserService) deleteAdminUserSearch(appID int64, userID int64) {
+	if s.search == nil || appID <= 0 || userID <= 0 {
+		return
+	}
+	if err := s.search.DeleteUser(appID, userID); err != nil {
+		s.log.Warn("delete admin user search doc failed", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.Error(err))
+	}
+}
+
+func shouldUseAdminUserSearch(query userdomain.AdminUserQuery) bool {
+	return strings.TrimSpace(query.Keyword) != "" ||
+		strings.TrimSpace(query.Account) != "" ||
+		strings.TrimSpace(query.Nickname) != "" ||
+		strings.TrimSpace(query.Email) != "" ||
+		strings.TrimSpace(query.Phone) != "" ||
+		strings.TrimSpace(query.RegisterIP) != "" ||
+		query.UserID != nil ||
+		query.Enabled != nil ||
+		query.CreatedFrom != nil ||
+		query.CreatedTo != nil
 }

@@ -136,3 +136,37 @@ func (s *VersionService) ListChannelUsers(ctx context.Context, appID int64, chan
 func (s *VersionService) Stats(ctx context.Context, appID int64) (*appdomain.AppVersionStats, error) {
 	return s.pg.GetAppVersionStats(ctx, appID)
 }
+
+// Publish 将版本状态设为 published
+func (s *VersionService) Publish(ctx context.Context, appID int64, versionID int64) (*appdomain.AppVersion, error) {
+	item, err := s.pg.GetAppVersionByID(ctx, versionID, appID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, apperrors.New(40430, http.StatusNotFound, "版本不存在")
+	}
+	status := "published"
+	return s.pg.UpsertAppVersion(ctx, appdomain.AppVersionMutation{
+		ID:     versionID,
+		AppID:  appID,
+		Status: &status,
+	})
+}
+
+// Revoke 将版本状态设为 revoked（撤回）
+func (s *VersionService) Revoke(ctx context.Context, appID int64, versionID int64) (*appdomain.AppVersion, error) {
+	item, err := s.pg.GetAppVersionByID(ctx, versionID, appID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, apperrors.New(40430, http.StatusNotFound, "版本不存在")
+	}
+	status := "revoked"
+	return s.pg.UpsertAppVersion(ctx, appdomain.AppVersionMutation{
+		ID:     versionID,
+		AppID:  appID,
+		Status: &status,
+	})
+}

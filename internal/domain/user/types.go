@@ -1,6 +1,9 @@
 package user
 
-import "time"
+import (
+	securitydomain "aegis/internal/domain/security"
+	"time"
+)
 
 type User struct {
 	ID              int64      `json:"id"`
@@ -16,11 +19,22 @@ type User struct {
 	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
+// ContactInfo 多平台联系方式
+type ContactInfo struct {
+	Platform string `json:"platform"`
+	Value    string `json:"value"`
+	Label    string `json:"label,omitempty"`
+}
+
 type Profile struct {
 	UserID    int64          `json:"userId"`
 	Nickname  string         `json:"nickname,omitempty"`
 	Avatar    string         `json:"avatar,omitempty"`
 	Email     string         `json:"email,omitempty"`
+	Phone     string         `json:"phone,omitempty"`
+	Birthday  *time.Time     `json:"birthday,omitempty"`
+	Bio       string         `json:"bio,omitempty"`
+	Contacts  []ContactInfo  `json:"contacts,omitempty"`
 	Extra     map[string]any `json:"extra,omitempty"`
 	UpdatedAt time.Time      `json:"updatedAt"`
 }
@@ -144,16 +158,20 @@ type SettingsCleanupResult struct {
 }
 
 type SecurityStatus struct {
-	HasPassword            bool       `json:"hasPassword"`
-	TwoFactorEnabled       bool       `json:"twoFactorEnabled"`
-	TwoFactorMethod        string     `json:"twoFactorMethod,omitempty"`
-	PasskeyEnabled         bool       `json:"passkeyEnabled"`
-	PasswordStrengthScore  int        `json:"passwordStrengthScore"`
-	PasswordChangeRequired bool       `json:"passwordChangeRequired"`
-	PasswordChangedAt      *time.Time `json:"passwordChangedAt,omitempty"`
-	PasswordExpiresAt      *time.Time `json:"passwordExpiresAt,omitempty"`
-	OAuth2Bindings         int        `json:"oauth2Bindings"`
-	OAuth2Providers        []string   `json:"oauth2Providers,omitempty"`
+	HasPassword            bool                               `json:"hasPassword"`
+	TwoFactorEnabled       bool                               `json:"twoFactorEnabled"`
+	TwoFactorMethod        string                             `json:"twoFactorMethod,omitempty"`
+	PasskeyEnabled         bool                               `json:"passkeyEnabled"`
+	PasswordStrengthScore  int                                `json:"passwordStrengthScore"`
+	PasswordChangeRequired bool                               `json:"passwordChangeRequired"`
+	PasswordChangedAt      *time.Time                         `json:"passwordChangedAt,omitempty"`
+	PasswordExpiresAt      *time.Time                         `json:"passwordExpiresAt,omitempty"`
+	OAuth2Bindings         int                                `json:"oauth2Bindings"`
+	OAuth2Providers        []string                           `json:"oauth2Providers,omitempty"`
+	TwoFactor              securitydomain.TOTPStatus          `json:"twoFactor"`
+	RecoveryCodes          securitydomain.RecoveryCodeSummary `json:"recoveryCodes"`
+	Passkeys               securitydomain.PasskeySummary      `json:"passkeys"`
+	Modules                []securitydomain.ModuleStatus      `json:"modules,omitempty"`
 }
 
 type SessionView struct {
@@ -172,6 +190,25 @@ type SessionView struct {
 type SessionListResult struct {
 	Items []SessionView `json:"items"`
 	Total int           `json:"total"`
+}
+
+// SessionDetailView 管理员查看的会话详情（含位置信息）
+type SessionDetailView struct {
+	TokenHash   string    `json:"tokenHash"`
+	TokenID     string    `json:"tokenId"`
+	Account     string    `json:"account"`
+	DeviceID    string    `json:"deviceId,omitempty"`
+	IP          string    `json:"ip"`
+	UserAgent   string    `json:"userAgent"`
+	Provider    string    `json:"provider,omitempty"`
+	IssuedAt    time.Time `json:"issuedAt"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+	Country     string    `json:"country,omitempty"`
+	CountryCode string    `json:"countryCode,omitempty"`
+	Region      string    `json:"region,omitempty"`
+	City        string    `json:"city,omitempty"`
+	ISP         string    `json:"isp,omitempty"`
+	Location    string    `json:"location,omitempty"`
 }
 
 type SessionRevokeResult struct {
@@ -311,16 +348,28 @@ type RoleApplicationStatistics struct {
 }
 
 type ProfileUpdate struct {
-	Nickname string `json:"nickname"`
-	Avatar   string `json:"avatar"`
-	Email    string `json:"email"`
+	Nickname string        `json:"nickname"`
+	Avatar   string        `json:"avatar"`
+	Email    string        `json:"email"`
+	Phone    string        `json:"phone"`
+	Birthday string        `json:"birthday"` // "2000-01-15" 或 ""
+	Bio      string        `json:"bio"`
+	Contacts []ContactInfo `json:"contacts"`
 }
 
 type AdminUserQuery struct {
-	Keyword string `json:"keyword"`
-	Enabled *bool  `json:"enabled,omitempty"`
-	Page    int    `json:"page"`
-	Limit   int    `json:"limit"`
+	Keyword     string     `json:"keyword"`
+	Account     string     `json:"account"`
+	Nickname    string     `json:"nickname"`
+	Email       string     `json:"email"`
+	Phone       string     `json:"phone"`
+	RegisterIP  string     `json:"registerIp"`
+	UserID      *int64     `json:"userId,omitempty"`
+	Enabled     *bool      `json:"enabled,omitempty"`
+	CreatedFrom *time.Time `json:"createdFrom,omitempty"`
+	CreatedTo   *time.Time `json:"createdTo,omitempty"`
+	Page        int        `json:"page"`
+	Limit       int        `json:"limit"`
 }
 
 type AdminUserStatusMutation struct {
@@ -349,6 +398,7 @@ type AdminUserView struct {
 	Nickname         string         `json:"nickname,omitempty"`
 	Avatar           string         `json:"avatar,omitempty"`
 	Email            string         `json:"email,omitempty"`
+	Phone            string         `json:"phone,omitempty"`
 	Integral         int64          `json:"integral"`
 	Experience       int64          `json:"experience"`
 	Enabled          bool           `json:"enabled"`
@@ -372,6 +422,19 @@ type AdminUserListResult struct {
 	Limit      int             `json:"limit"`
 	Total      int64           `json:"total"`
 	TotalPages int             `json:"totalPages"`
+}
+
+type AdminUserSearchSource struct {
+	UserID          int64     `json:"userId"`
+	AppID           int64     `json:"appid"`
+	Account         string    `json:"account"`
+	Nickname        string    `json:"nickname"`
+	Email           string    `json:"email"`
+	Phone           string    `json:"phone"`
+	RegisterIP      string    `json:"registerIp"`
+	Enabled         bool      `json:"enabled"`
+	CreatedAt       time.Time `json:"createdAt"`
+	SourceUpdatedAt time.Time `json:"sourceUpdatedAt"`
 }
 
 type AutoSignCandidate struct {
@@ -464,9 +527,10 @@ type SignStats struct {
 }
 
 type SignInResult struct {
-	Record       DailySignIn  `json:"record"`
-	Reward       SignInReward `json:"reward"`
-	TotalSignIns int64        `json:"totalSignIns"`
+	Record        DailySignIn  `json:"record"`
+	Reward        SignInReward `json:"reward"`
+	TotalSignIns  int64        `json:"totalSignIns"`
+	AlreadySigned bool         `json:"alreadySigned,omitempty"`
 }
 
 type SignHistoryResult struct {

@@ -40,11 +40,21 @@ type ProviderProfile struct {
 	Tokens         map[string]string `json:"tokens,omitempty"`
 }
 
-type LoginResult struct {
-	AccessToken string    `json:"accessToken"`
+type SecondFactorChallenge struct {
+	ChallengeID string    `json:"challengeId"`
+	State       string    `json:"state"`
+	Methods     []string  `json:"methods"`
 	ExpiresAt   time.Time `json:"expiresAt"`
-	TokenType   string    `json:"tokenType"`
-	UserID      int64     `json:"userId"`
-	Account     string    `json:"account"`
-	Provider    string    `json:"provider,omitempty"`
+}
+
+type LoginResult struct {
+	AccessToken          string                 `json:"accessToken,omitempty"`
+	ExpiresAt            time.Time              `json:"expiresAt,omitempty"`
+	TokenType            string                 `json:"tokenType,omitempty"`
+	UserID               int64                  `json:"userId"`
+	Account              string                 `json:"account"`
+	Provider             string                 `json:"provider,omitempty"`
+	RequiresSecondFactor bool                   `json:"requiresSecondFactor,omitempty"`
+	AuthenticationState  string                 `json:"authenticationState,omitempty"`
+	Challenge            *SecondFactorChallenge `json:"challenge,omitempty"`
 }

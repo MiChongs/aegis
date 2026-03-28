@@ -2,6 +2,8 @@ package httptransport
 
 import (
 	appdomain "aegis/internal/domain/app"
+	userdomain "aegis/internal/domain/user"
+	"aegis/internal/service"
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/response"
 	"bytes"
@@ -154,9 +156,13 @@ type AppIDQuery struct {
 }
 
 type UpdateProfileRequest struct {
-	Nickname string `json:"nickname" form:"nickname"`
-	Avatar   string `json:"avatar" form:"avatar"`
-	Email    string `json:"email" form:"email"`
+	Nickname string                   `json:"nickname" form:"nickname"`
+	Avatar   string                   `json:"avatar" form:"avatar"`
+	Email    string                   `json:"email" form:"email"`
+	Phone    string                   `json:"phone" form:"phone"`
+	Birthday string                   `json:"birthday" form:"birthday"`
+	Bio      string                   `json:"bio" form:"bio"`
+	Contacts []userdomain.ContactInfo `json:"contacts"`
 }
 
 type UpdateSettingsRequest struct {
@@ -186,7 +192,6 @@ type UserSessionAuditQuery struct {
 
 type AdminAppUpsertRequest struct {
 	Name                   *string        `json:"name"`
-	AppKey                 *string        `json:"appKey"`
 	Status                 *bool          `json:"status"`
 	DisabledReason         *string        `json:"disabledReason"`
 	RegisterStatus         *bool          `json:"registerStatus"`
@@ -194,6 +199,11 @@ type AdminAppUpsertRequest struct {
 	LoginStatus            *bool          `json:"loginStatus"`
 	DisabledLoginReason    *string        `json:"disabledLoginReason"`
 	Settings               map[string]any `json:"settings"`
+}
+
+type AdminAppCreateRequest struct {
+	Name *string `json:"name" binding:"required"`
+	AdminAppUpsertRequest
 }
 
 type LegacyAppCreateRequest struct {
@@ -262,11 +272,19 @@ type AdminBatchIDsRequest struct {
 }
 
 type AdminUserListQuery struct {
-	AppID   int64  `json:"appid" form:"appid"`
-	Keyword string `form:"keyword"`
-	Enabled *bool  `form:"enabled"`
-	Page    int    `form:"page"`
-	Limit   int    `form:"limit"`
+	AppID       int64  `json:"appid" form:"appid"`
+	Keyword     string `form:"keyword"`
+	Account     string `form:"account"`
+	Nickname    string `form:"nickname"`
+	Email       string `form:"email"`
+	Phone       string `form:"phone"`
+	RegisterIP  string `form:"registerIp"`
+	UserID      *int64 `form:"userId"`
+	Enabled     *bool  `form:"enabled"`
+	CreatedFrom string `form:"createdFrom"`
+	CreatedTo   string `form:"createdTo"`
+	Page        int    `form:"page"`
+	Limit       int    `form:"limit"`
 }
 
 type AdminUserStatusRequest struct {
@@ -279,6 +297,15 @@ type AdminUserStatusRequest struct {
 type AdminUserBatchStatusRequest struct {
 	UserIDs []int64 `json:"userIds" binding:"required"`
 	AdminUserStatusRequest
+}
+
+type AdminUpdateUserProfileRequest struct {
+	Nickname string `json:"nickname"`
+	Email    string `json:"email"`
+}
+
+type AdminResetUserPasswordRequest struct {
+	NewPassword string `json:"newPassword" binding:"required"`
 }
 
 type AdminAppTrendQuery struct {
@@ -538,14 +565,22 @@ type AdminVersionChannelDetailRequest struct {
 }
 
 type AdminVersionChannelSaveRequest struct {
-	AppID          int64          `json:"appid" form:"appid" binding:"required"`
-	ChannelID      int64          `json:"channel_id" form:"channel_id"`
-	Name           string         `json:"name" form:"name"`
-	Code           string         `json:"code" form:"code"`
-	Description    string         `json:"description" form:"description"`
-	IsDefault      *bool          `json:"is_default"`
-	Status         *bool          `json:"status"`
-	TargetAudience map[string]any `json:"targetAudience"`
+	AppID          int64                   `json:"appid" form:"appid" binding:"required"`
+	ChannelID      int64                   `json:"channel_id" form:"channel_id"`
+	Name           string                  `json:"name" form:"name"`
+	Code           string                  `json:"code" form:"code"`
+	Description    string                  `json:"description" form:"description"`
+	IsDefault      *bool                   `json:"is_default"`
+	Status         *bool                   `json:"status"`
+	Priority       *int                    `json:"priority"`
+	Color          string                  `json:"color" form:"color"`
+	Level          string                  `json:"level" form:"level"`
+	RolloutPct     *int                    `json:"rollout_pct"`
+	Platforms      []string                `json:"platforms"`
+	MinVersionCode *int64                  `json:"min_version_code"`
+	MaxVersionCode *int64                  `json:"max_version_code"`
+	Rules          []appdomain.ChannelRule `json:"rules"`
+	TargetAudience map[string]any          `json:"targetAudience"`
 }
 
 type AdminVersionChannelUsersRequest struct {
@@ -726,7 +761,18 @@ func (h *Handler) writeError(c *gin.Context, err error) {
 		response.Error(c, appErr.HTTPStatus, appErr.Code, appErr.Message)
 		return
 	}
-	response.Error(c, http.StatusInternalServerError, 50000, err.Error())
+	// 记录真实错误到 gin logger（控制台可见）
+	_ = c.Error(err)
+	// 直接输出摘要信息（绕过 sanitizeMessage 对 500 的脱敏）
+	summary := err.Error()
+	if len(summary) > 200 {
+		summary = summary[:200]
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusInternalServerError, map[string]any{
+		"code":    50000,
+		"message": summary,
+	})
 }
 
 func middlewareBearer(header string) string {
@@ -739,4 +785,32 @@ func middlewareBearer(header string) string {
 
 func pathInt64(c *gin.Context, name string) (int64, error) {
 	return strconv.ParseInt(strings.TrimSpace(c.Param(name)), 10, 64)
+}
+
+func parseOptionalDateTime(value string) (*time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return &parsed, nil
+		}
+	}
+	return nil, errors.New("invalid datetime")
+}
+
+// resolveAppID 从路径参数 :appkey 解析 appkey，查库获取 appid
+func resolveAppID(c *gin.Context, appService *service.AppService) (int64, bool) {
+	appKey := strings.TrimSpace(c.Param("appkey"))
+	if appKey == "" {
+		response.Error(c, http.StatusBadRequest, 40000, "应用标识不能为空")
+		return 0, false
+	}
+	app, err := appService.GetAppByKey(c.Request.Context(), appKey)
+	if err != nil || app == nil {
+		response.Error(c, http.StatusNotFound, 40404, "应用不存在")
+		return 0, false
+	}
+	return app.ID, true
 }

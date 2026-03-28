@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -14,15 +15,23 @@ import (
 )
 
 func (r *Repository) GetAdminAuthByAccount(ctx context.Context, account string) (*admindomain.AuthRecord, error) {
-	query := `SELECT id, account, display_name, email, status, is_super_admin, last_login_at, created_at, updated_at, password_hash
+	query := `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at, password_hash
 FROM admin_accounts
 WHERE account = $1
 LIMIT 1`
 	return scanAdminAuthRecord(r.pool.QueryRow(ctx, query, strings.TrimSpace(account)))
 }
 
+func (r *Repository) GetAdminAuthByID(ctx context.Context, adminID int64) (*admindomain.AuthRecord, error) {
+	query := `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at, password_hash
+FROM admin_accounts
+WHERE id = $1
+LIMIT 1`
+	return scanAdminAuthRecord(r.pool.QueryRow(ctx, query, adminID))
+}
+
 func (r *Repository) GetAdminAccessByID(ctx context.Context, adminID int64) (*admindomain.Profile, error) {
-	query := `SELECT id, account, display_name, email, status, is_super_admin, last_login_at, created_at, updated_at
+	query := `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at
 FROM admin_accounts
 WHERE id = $1
 LIMIT 1`
@@ -49,7 +58,7 @@ func (r *Repository) CreateAdminAccount(ctx context.Context, input admindomain.C
 
 	query := `INSERT INTO admin_accounts (account, password_hash, display_name, email, status, is_super_admin, created_at, updated_at)
 VALUES ($1, $2, $3, $4, 'active', $5, NOW(), NOW())
-RETURNING id, account, display_name, email, status, is_super_admin, last_login_at, created_at, updated_at`
+RETURNING id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at`
 	account, err := scanAdminAccount(tx.QueryRow(ctx, query, strings.TrimSpace(input.Account), passwordHash, strings.TrimSpace(input.DisplayName), strings.TrimSpace(input.Email), input.IsSuperAdmin))
 	if err != nil {
 		if isDuplicateKeyError(err) {
@@ -106,9 +115,55 @@ func (r *Repository) UpdateAdminLastLogin(ctx context.Context, adminID int64, at
 	return err
 }
 
+func (r *Repository) UpdateAdminProfile(ctx context.Context, adminID int64, input admindomain.ProfileUpdate) (*admindomain.Profile, error) {
+	contactsJSON, _ := json.Marshal(input.Contacts)
+	// birthday: 空串 → nil，否则解析日期
+	var birthday any
+	if b := strings.TrimSpace(input.Birthday); b != "" {
+		if t, err := time.Parse("2006-01-02", b); err == nil {
+			birthday = t
+		}
+	}
+	tag, err := r.pool.Exec(ctx, `UPDATE admin_accounts
+SET display_name = COALESCE(NULLIF($2, ''), display_name),
+    email       = COALESCE(NULLIF($3, ''), email),
+    avatar      = COALESCE(NULLIF($4, ''), avatar),
+    phone       = COALESCE(NULLIF($5, ''), phone),
+    birthday    = COALESCE($6, birthday),
+    bio         = COALESCE(NULLIF($7, ''), bio),
+    contacts    = CASE WHEN $8::jsonb IS NULL THEN contacts ELSE $8 END,
+    updated_at  = NOW()
+WHERE id = $1`,
+		adminID,
+		strings.TrimSpace(input.DisplayName),
+		strings.TrimSpace(input.Email),
+		strings.TrimSpace(input.Avatar),
+		strings.TrimSpace(input.Phone),
+		birthday,
+		strings.TrimSpace(input.Bio),
+		contactsJSON,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, apperrors.New(40450, http.StatusNotFound, "管理员不存在")
+	}
+	return r.GetAdminAccessByID(ctx, adminID)
+}
+
 func (r *Repository) CountAdminAccounts(ctx context.Context) (int64, error) {
 	var count int64
 	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_accounts`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// CountActiveSuperAdmins 统计状态为 active 的超级管理员数量
+func (r *Repository) CountActiveSuperAdmins(ctx context.Context) (int64, error) {
+	var count int64
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_accounts WHERE is_super_admin = TRUE AND status = 'active'`).Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil
@@ -122,22 +177,19 @@ func (r *Repository) UpsertBootstrapAdmin(ctx context.Context, input admindomain
 	if existing == nil {
 		return r.CreateAdminAccount(ctx, input, passwordHash)
 	}
-	update := admindomain.UpdateAccessInput{
-		IsSuperAdmin: true,
-		Assignments:  nil,
-	}
-	if err := r.UpdateAdminAccess(ctx, existing.Account.ID, update); err != nil {
-		return nil, err
-	}
-	if _, err := r.pool.Exec(ctx, `UPDATE admin_accounts SET password_hash = $2, display_name = $3, email = $4, status = 'active', is_super_admin = TRUE, updated_at = NOW() WHERE id = $1`,
-		existing.Account.ID, passwordHash, strings.TrimSpace(input.DisplayName), strings.TrimSpace(input.Email)); err != nil {
-		return nil, err
+	// 超级管理员已存在：仅确保 is_super_admin 标志为 TRUE，不覆盖密码、显示名、邮箱等已有数据
+	if !existing.Account.IsSuperAdmin {
+		if _, err := r.pool.Exec(ctx,
+			`UPDATE admin_accounts SET is_super_admin = TRUE, updated_at = NOW() WHERE id = $1`,
+			existing.Account.ID); err != nil {
+			return nil, err
+		}
 	}
 	return r.GetAdminAccessByID(ctx, existing.Account.ID)
 }
 
 func (r *Repository) ListAdminAccounts(ctx context.Context) ([]admindomain.Profile, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id, account, display_name, email, status, is_super_admin, last_login_at, created_at, updated_at FROM admin_accounts ORDER BY id ASC`)
+	rows, err := r.pool.Query(ctx, `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at FROM admin_accounts ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +235,16 @@ ORDER BY aa.role_key ASC, aa.appid ASC NULLS FIRST`
 	return items, rows.Err()
 }
 
+// AddAdminAssignment 为管理员追加单个角色分配（不删除已有角色）
+func (r *Repository) AddAdminAssignment(ctx context.Context, adminID int64, roleKey string, appID *int64) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO admin_assignments (admin_id, role_key, appid, created_at, updated_at)
+		 VALUES ($1, $2, $3, NOW(), NOW())
+		 ON CONFLICT (admin_id, role_key, COALESCE(appid, 0)) DO NOTHING`,
+		adminID, roleKey, nullableInt64Value(appID))
+	return err
+}
+
 func (r *Repository) replaceAdminAssignments(ctx context.Context, tx pgx.Tx, adminID int64, assignments []admindomain.AssignmentMutation) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM admin_assignments WHERE admin_id = $1`, adminID); err != nil {
 		return err
@@ -202,12 +264,19 @@ func (r *Repository) replaceAdminAssignments(ctx context.Context, tx pgx.Tx, adm
 
 func scanAdminAccount(row pgx.Row) (*admindomain.Account, error) {
 	var item admindomain.Account
+	var contactsRaw []byte
 	if err := row.Scan(
 		&item.ID,
 		&item.Account,
 		&item.DisplayName,
 		&item.Email,
+		&item.Avatar,
+		&item.Phone,
+		&item.Birthday,
+		&item.Bio,
+		&contactsRaw,
 		&item.Status,
+		&item.AuthSource,
 		&item.IsSuperAdmin,
 		&item.LastLoginAt,
 		&item.CreatedAt,
@@ -218,17 +287,25 @@ func scanAdminAccount(row pgx.Row) (*admindomain.Account, error) {
 		}
 		return nil, err
 	}
+	_ = json.Unmarshal(contactsRaw, &item.Contacts)
 	return &item, nil
 }
 
 func scanAdminAuthRecord(row pgx.Row) (*admindomain.AuthRecord, error) {
 	var item admindomain.AuthRecord
+	var contactsRaw []byte
 	if err := row.Scan(
 		&item.Account.ID,
 		&item.Account.Account,
 		&item.Account.DisplayName,
 		&item.Account.Email,
+		&item.Account.Avatar,
+		&item.Account.Phone,
+		&item.Account.Birthday,
+		&item.Account.Bio,
+		&contactsRaw,
 		&item.Account.Status,
+		&item.Account.AuthSource,
 		&item.Account.IsSuperAdmin,
 		&item.Account.LastLoginAt,
 		&item.Account.CreatedAt,
@@ -240,6 +317,7 @@ func scanAdminAuthRecord(row pgx.Row) (*admindomain.AuthRecord, error) {
 		}
 		return nil, err
 	}
+	_ = json.Unmarshal(contactsRaw, &item.Account.Contacts)
 	return &item, nil
 }
 
@@ -253,4 +331,38 @@ func nullableInt64Value(value *int64) any {
 func isDuplicateKeyError(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// CreateExternalAdminAccount 为外部认证用户创建本地管理员（无密码，非超管）
+func (r *Repository) CreateExternalAdminAccount(ctx context.Context, account, displayName, email, phone, authSource string) (*admindomain.Profile, error) {
+	query := `INSERT INTO admin_accounts (account, password_hash, display_name, email, phone, auth_source, status, is_super_admin, created_at, updated_at)
+VALUES ($1, '', $2, $3, $4, $5, 'active', false, NOW(), NOW())
+RETURNING id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at`
+	acct, err := scanAdminAccount(r.pool.QueryRow(ctx, query,
+		strings.TrimSpace(account),
+		strings.TrimSpace(displayName),
+		strings.TrimSpace(email),
+		strings.TrimSpace(phone),
+		authSource,
+	))
+	if err != nil {
+		if isDuplicateKeyError(err) {
+			// 并发创建，回退到查询
+			return r.GetAdminAccessByID(ctx, 0)
+		}
+		return nil, err
+	}
+	return &admindomain.Profile{Account: *acct}, nil
+}
+
+// UpdateAdminExternalSync 从外部认证源同步管理员资料（仅更新本地为空的字段 + 更新 auth_source）
+func (r *Repository) UpdateAdminExternalSync(ctx context.Context, adminID int64, displayName, email, phone, authSource string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE admin_accounts SET
+		display_name = CASE WHEN COALESCE(display_name,'') = '' AND $2 != '' THEN $2 ELSE display_name END,
+		email = CASE WHEN COALESCE(email,'') = '' AND $3 != '' THEN $3 ELSE email END,
+		phone = CASE WHEN COALESCE(phone,'') = '' AND $4 != '' THEN $4 ELSE phone END,
+		auth_source = $5,
+		updated_at = NOW()
+	WHERE id = $1`, adminID, strings.TrimSpace(displayName), strings.TrimSpace(email), strings.TrimSpace(phone), authSource)
+	return err
 }

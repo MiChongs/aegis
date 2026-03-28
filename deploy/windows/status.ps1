@@ -42,3 +42,4 @@ Show-PortStatus -DisplayName "PostgreSQL" -Port 5432
 Show-PortStatus -DisplayName "Redis" -Port 6379
 Show-PortStatus -DisplayName "NATS" -Port 4222
 Show-PortStatus -DisplayName "Temporal" -Port 7233
+Show-PortStatus -DisplayName "RDKit Captcha" -Port 5050

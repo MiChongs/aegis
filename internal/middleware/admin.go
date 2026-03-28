@@ -35,7 +35,7 @@ func AdminAuth(adminService *service.AdminService) gin.HandlerFunc {
 	}
 }
 
-func AdminAccess(adminService *service.AdminService) gin.HandlerFunc {
+func AdminAccess(adminService *service.AdminService, appService *service.AppService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := adminBearerToken(c)
 		if token == "" {
@@ -57,14 +57,14 @@ func AdminAccess(adminService *service.AdminService) gin.HandlerFunc {
 		}
 		var appID *int64
 		if appScoped {
-			appID, err = extractAdminAppID(c)
+			appID, err = extractAdminAppID(c, appService)
 			if err != nil {
 				response.Error(c, http.StatusBadRequest, 40058, "缺少有效的应用标识")
 				c.Abort()
 				return
 			}
 		}
-		if err := adminService.Authorize(access, permission, appID); err != nil {
+		if err := adminService.Authorize(c.Request.Context(), access, permission, appID); err != nil {
 			writeAdminError(c, err)
 			c.Abort()
 			return
@@ -123,6 +123,44 @@ func resolveAdminPermission(c *gin.Context) (string, bool, error) {
 	method := c.Request.Method
 
 	switch {
+	case fullPath == "/api/admin/dashboard":
+		return "", false, nil
+	// 组织 — GET 所有管理员可读，写操作需权限
+	case strings.HasPrefix(fullPath, "/api/admin/system/organizations"):
+		if method == http.MethodGet {
+			return "", false, nil
+		}
+		if method == http.MethodPost {
+			return "org:create", false, nil
+		}
+		return "org:write", false, nil
+	// 部门 — GET 所有管理员可读，写操作需权限
+	case strings.HasPrefix(fullPath, "/api/admin/system/departments"):
+		if method == http.MethodGet {
+			return "", false, nil
+		}
+		if strings.Contains(fullPath, "/invite") || strings.Contains(fullPath, "/batch-invite") {
+			return "org:member:invite", false, nil
+		}
+		if strings.Contains(fullPath, "/members") {
+			if method == http.MethodGet {
+				return "", false, nil
+			}
+			return "org:member:write", false, nil
+		}
+		return "org:dept:write", false, nil
+	// 邀请 — 查看/接受/拒绝自己的邀请对所有管理员开放
+	case strings.HasPrefix(fullPath, "/api/admin/system/invitations"):
+		return "", false, nil
+	// 岗位
+	case strings.HasPrefix(fullPath, "/api/admin/system/positions"):
+		if method == http.MethodGet {
+			return "org:dept:read", false, nil
+		}
+		return "org:write", false, nil
+	// 管理员部门查询
+	case strings.Contains(fullPath, "/departments") && strings.HasPrefix(fullPath, "/api/admin/system/admins/"):
+		return "org:dept:read", false, nil
 	case strings.HasPrefix(fullPath, "/api/admin/system/"):
 		return "system:admin:manage", false, nil
 	case fullPath == "/api/admin/user-settings/stats" || fullPath == "/api/admin/user-settings/user" || fullPath == "/api/admin/user-settings/check-integrity":
@@ -186,28 +224,38 @@ func resolveAdminPermission(c *gin.Context) (string, bool, error) {
 		return "workflow:write", true, nil
 	case fullPath == "/api/admin/apps":
 		if method == http.MethodGet {
-			return "platform:app:read", false, nil
+			return "app:read", false, nil
 		}
-		return "platform:app:write", false, nil
-	case strings.HasPrefix(fullPath, "/api/admin/apps/:appid"):
+		return "app:write", false, nil
+	case strings.HasPrefix(fullPath, "/api/admin/apps/:appkey"):
 		switch {
-		case strings.Contains(fullPath, "/stats"), strings.Contains(fullPath, "/audits/"):
-			return "audit:read", true, nil
+		case strings.Contains(fullPath, "/stats"):
+			return "app:read", true, nil
+		case strings.Contains(fullPath, "/audits/"):
+			if strings.Contains(fullPath, "/login") {
+				return "audit:login:read", true, nil
+			}
+			return "audit:session:read", true, nil
 		case strings.Contains(fullPath, "/users"):
 			if method == http.MethodGet {
-				return "user:read", true, nil
+				return "app:user:read", true, nil
 			}
-			return "user:write", true, nil
+			return "app:user:write", true, nil
 		case strings.Contains(fullPath, "/notifications"):
 			if method == http.MethodGet {
-				return "content:read", true, nil
+				return "app:notification:read", true, nil
 			}
-			return "content:write", true, nil
-		case strings.Contains(fullPath, "/banners"), strings.Contains(fullPath, "/notices"):
+			return "app:notification:write", true, nil
+		case strings.Contains(fullPath, "/banners"):
 			if method == http.MethodGet {
-				return "content:read", true, nil
+				return "content:banner:read", true, nil
 			}
-			return "content:write", true, nil
+			return "content:banner:write", true, nil
+		case strings.Contains(fullPath, "/notices"):
+			if method == http.MethodGet {
+				return "content:notice:read", true, nil
+			}
+			return "content:notice:write", true, nil
 		case strings.Contains(fullPath, "/policy"), strings.Contains(fullPath, "/password-policy"):
 			if method == http.MethodGet {
 				return "app:read", true, nil
@@ -224,8 +272,20 @@ func resolveAdminPermission(c *gin.Context) (string, bool, error) {
 	}
 }
 
-func extractAdminAppID(c *gin.Context) (*int64, error) {
-	for _, value := range []string{c.Param("appid"), c.Query("appid"), c.PostForm("appid"), c.PostForm("appId")} {
+func extractAdminAppID(c *gin.Context, appService *service.AppService) (*int64, error) {
+	// 1) 优先从路径参数 :appkey 解析
+	if appKey := strings.TrimSpace(c.Param("appkey")); appKey != "" {
+		if appService != nil {
+			app, err := appService.GetAppByKey(c.Request.Context(), appKey)
+			if err != nil || app == nil {
+				return nil, io.EOF
+			}
+			return &app.ID, nil
+		}
+	}
+
+	// 2) 兼容 query/form/body 中的数字 appid（遗留 API）
+	for _, value := range []string{c.Query("appid"), c.PostForm("appid"), c.PostForm("appId")} {
 		if appID, ok := parseOptionalInt64(value); ok {
 			return &appID, nil
 		}

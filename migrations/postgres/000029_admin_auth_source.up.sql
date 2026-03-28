@@ -1,0 +1,1 @@
+ALTER TABLE admin_accounts ADD COLUMN IF NOT EXISTS auth_source VARCHAR(32) NOT NULL DEFAULT 'password';

@@ -65,10 +65,18 @@ type AdminNotificationFilterQuery struct {
 }
 
 type AdminAppUserFilterQuery struct {
-	Keyword string `form:"keyword"`
-	Enabled *bool  `form:"enabled"`
-	Page    int    `form:"page"`
-	Limit   int    `form:"limit"`
+	Keyword     string `form:"keyword"`
+	Account     string `form:"account"`
+	Nickname    string `form:"nickname"`
+	Email       string `form:"email"`
+	Phone       string `form:"phone"`
+	RegisterIP  string `form:"registerIp"`
+	UserID      *int64 `form:"userId"`
+	Enabled     *bool  `form:"enabled"`
+	CreatedFrom string `form:"createdFrom"`
+	CreatedTo   string `form:"createdTo"`
+	Page        int    `form:"page"`
+	Limit       int    `form:"limit"`
 }
 
 type WebSocketQuery struct {
@@ -275,6 +283,23 @@ func manualRouteDocs(generator *openapi3gen.Generator, spec *openapi3.T) map[str
 			Description: "Revokes the current administrator session.",
 			Tags:        []string{"Admin Auth"},
 		},
+		routeKey(http.MethodGet, "/api/admin/profile"): {
+			Summary:     "Get Admin Profile",
+			Description: "Returns the current administrator profile and assignment information.",
+			Tags:        []string{"Admin Auth"},
+		},
+		routeKey(http.MethodPut, "/api/admin/profile"): {
+			Summary:      "Update Admin Profile",
+			Description:  "Updates the current administrator profile fields.",
+			RequestModel: AdminProfileUpdateRequest{},
+			Tags:         []string{"Admin Auth"},
+		},
+		routeKey(http.MethodPost, "/api/admin/profile/avatar"): {
+			Summary:     "Upload Admin Avatar",
+			Description: "Uploads the current administrator avatar using multipart form data.",
+			RequestBody: multipartUploadRequestBody(),
+			Tags:        []string{"Admin Auth"},
+		},
 		routeKey(http.MethodPost, "/api/user/my"): {
 			Summary:     "My Dashboard",
 			Description: "Returns the aggregated current-user dashboard payload.",
@@ -290,6 +315,12 @@ func manualRouteDocs(generator *openapi3gen.Generator, spec *openapi3.T) map[str
 			Description:  "Updates the current user's profile fields.",
 			RequestModel: UpdateProfileRequest{},
 			Tags:         []string{"User"},
+		},
+		routeKey(http.MethodPost, "/api/user/profile/avatar"): {
+			Summary:     "Upload User Avatar",
+			Description: "Uploads the current user's avatar using multipart form data.",
+			RequestBody: multipartUploadRequestBody(),
+			Tags:        []string{"User"},
 		},
 		routeKey(http.MethodGet, "/api/user/settings"): {
 			Summary:      "Get Settings",
@@ -427,6 +458,18 @@ func manualRouteDocs(generator *openapi3gen.Generator, spec *openapi3.T) map[str
 			Description: "Returns the application catalog visible to the current administrator.",
 			Tags:        []string{"Admin"},
 		},
+		routeKey(http.MethodPost, "/api/admin/apps"): {
+			Summary:      "Create Application",
+			Description:  "Creates or initializes an application visible to the current administrator.",
+			RequestModel: AdminAppCreateRequest{},
+			Tags:         []string{"Admin"},
+		},
+		routeKey(http.MethodPut, "/api/admin/apps/{appid}"): {
+			Summary:      "Update Application",
+			Description:  "Updates the application profile and switch configuration.",
+			RequestModel: AdminAppUpsertRequest{},
+			Tags:         []string{"Admin"},
+		},
 		routeKey(http.MethodGet, "/api/admin/apps/{appid}/stats/user-trend"): {
 			Summary:      "Get Application User Trend",
 			Description:  "Returns the user growth trend for the specified application.",
@@ -515,6 +558,17 @@ func manualRouteDocs(generator *openapi3gen.Generator, spec *openapi3.T) map[str
 			Summary:     "Get Online Overview",
 			Description: "Returns the aggregated online status overview across applications.",
 			Tags:        []string{"Admin System"},
+		},
+		routeKey(http.MethodGet, "/api/admin/system/settings"): {
+			Summary:     "Get System Settings",
+			Description: "Returns the current platform-level system settings snapshot.",
+			Tags:        []string{"Admin System"},
+		},
+		routeKey(http.MethodPut, "/api/admin/system/settings"): {
+			Summary:      "Update System Settings",
+			Description:  "Updates platform-level system settings and applies them through hot reload.",
+			RequestModel: AdminSystemSettingsUpdateRequest{},
+			Tags:         []string{"Admin System"},
 		},
 		routeKey(http.MethodGet, "/api/admin/system/online/apps/{appid}"): {
 			Summary:     "Get Application Online Stats",

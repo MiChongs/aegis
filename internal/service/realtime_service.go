@@ -27,6 +27,7 @@ type UserEventPublisher interface {
 type RealtimeService struct {
 	log         *zap.Logger
 	auth        *AuthService
+	admin       *AdminService
 	repository  *redisrepo.RealtimeRepository
 	natsConn    *nats.Conn
 	serverID    string
@@ -86,6 +87,11 @@ func NewRealtimeService(log *zap.Logger, auth *AuthService, repository *redisrep
 	return service, nil
 }
 
+// SetAdminService 延迟注入 AdminService（避免循环依赖）
+func (s *RealtimeService) SetAdminService(admin *AdminService) {
+	s.admin = admin
+}
+
 func (s *RealtimeService) AuthenticateRequest(ctx context.Context, req *http.Request) (*authdomain.Session, string, error) {
 	if s == nil || s.auth == nil {
 		return nil, "", apperrors.New(50300, http.StatusServiceUnavailable, "实时服务暂不可用")
@@ -94,11 +100,22 @@ func (s *RealtimeService) AuthenticateRequest(ctx context.Context, req *http.Req
 	if token == "" {
 		return nil, "", apperrors.New(40100, http.StatusUnauthorized, "访问请求未获授权")
 	}
+	// 优先尝试用户 token
 	session, err := s.auth.ValidateAccessToken(ctx, token)
-	if err != nil {
-		return nil, "", err
+	if err == nil && session != nil {
+		return session, token, nil
 	}
-	return session, token, nil
+	// 用户 token 失败 → 尝试管理员 token（appID=0, userID=adminID）
+	if s.admin != nil {
+		access, adminErr := s.admin.ValidateAccessToken(ctx, token)
+		if adminErr == nil && access != nil {
+			return &authdomain.Session{
+				AppID:  0, // 管理员连接标识
+				UserID: access.AdminID,
+			}, token, nil
+		}
+	}
+	return nil, "", apperrors.New(40100, http.StatusUnauthorized, "访问请求未获授权")
 }
 
 func (s *RealtimeService) PublishUserEvent(ctx context.Context, appID int64, userID int64, eventType string, data map[string]any) error {
@@ -174,6 +191,7 @@ func (s *RealtimeService) subscribe() error {
 	if s.natsConn == nil {
 		return nil
 	}
+	// 订阅用户级事件
 	sub, err := s.natsConn.Subscribe(event.SubjectRealtimeUserPrefix+".*.*", func(msg *nats.Msg) {
 		appID, userID, ok := event.MatchRealtimeUserSubject(msg.Subject)
 		if !ok {
@@ -185,7 +203,32 @@ func (s *RealtimeService) subscribe() error {
 		return err
 	}
 	s.sub = sub
-	return nil
+
+	// 订阅全局广播事件（系统公告等），转发给所有已连接客户端
+	_, err = s.natsConn.Subscribe(event.SubjectSystemAnnouncement, func(msg *nats.Msg) {
+		s.broadcastAll(msg.Data)
+	})
+	return err
+}
+
+// broadcastAll 向所有已连接的 WebSocket 客户端广播消息
+func (s *RealtimeService) broadcastAll(payload []byte) {
+	s.mu.RLock()
+	var targets []*realtimeClient
+	for _, appClients := range s.clients {
+		for _, userClients := range appClients {
+			for _, c := range userClients {
+				targets = append(targets, c)
+			}
+		}
+	}
+	s.mu.RUnlock()
+	for _, c := range targets {
+		select {
+		case c.send <- append([]byte(nil), payload...):
+		default:
+		}
+	}
 }
 
 func (s *RealtimeService) Upgrade(w http.ResponseWriter, req *http.Request, session *authdomain.Session, ip string, userAgent string) error {
@@ -228,6 +271,10 @@ func (s *RealtimeService) Upgrade(w http.ResponseWriter, req *http.Request, sess
 
 func (s *RealtimeService) touchPresence(ctx context.Context, client *realtimeClient, lastSeen time.Time) error {
 	if s.repository == nil {
+		return nil
+	}
+	// 管理员连接（AppID=0）不记录在线状态
+	if client.session.AppID == 0 {
 		return nil
 	}
 	conn := realtimedomain.PresenceConnection{

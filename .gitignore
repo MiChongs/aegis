@@ -12,3 +12,10 @@ bin/
 coverage.out
 *.log
 .runtime/
+
+# Frontend
+node_modules/
+.next/
+out/
+.turbo/
+

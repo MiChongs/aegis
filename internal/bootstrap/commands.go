@@ -12,15 +12,38 @@ import (
 
 	"aegis/internal/config"
 	"aegis/internal/db"
-	"aegis/internal/event"
 	legacyrepo "aegis/internal/repository/legacymysql"
 	pgrepo "aegis/internal/repository/postgres"
-	redisrepo "aegis/internal/repository/redis"
 	"aegis/internal/service"
 	httptransport "aegis/internal/transport/http"
 	pkglogger "aegis/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/zap"
 )
+
+// autoMigrate 启动时自动执行所有 SQL 迁移（幂等，失败不阻塞启动）
+func autoMigrate(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) error {
+	files, err := migrationFiles()
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		sql := strings.TrimSpace(string(content))
+		if sql == "" {
+			continue
+		}
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			log.Warn("迁移跳过（可能已应用）", zap.String("file", filepath.Base(file)), zap.Error(err))
+		}
+	}
+	log.Info("数据库迁移检查完成", zap.Int("files", len(files)))
+	return nil
+}
 
 func RunMigrations(ctx context.Context) error {
 	cfg, err := config.Load()
@@ -33,11 +56,10 @@ func RunMigrations(ctx context.Context) error {
 	}
 	defer pool.Close()
 
-	files, err := filepath.Glob("migrations/postgres/*.up.sql")
+	files, err := migrationFiles()
 	if err != nil {
 		return err
 	}
-	sort.Strings(files)
 	for _, file := range files {
 		content, err := os.ReadFile(file)
 		if err != nil {
@@ -55,6 +77,71 @@ func RunMigrations(ctx context.Context) error {
 	return nil
 }
 
+func migrationFiles() ([]string, error) {
+	dir, err := resolveProjectPath(filepath.Join("migrations", "postgres"))
+	if err != nil {
+		return nil, err
+	}
+
+	files, err := filepath.Glob(filepath.Join(dir, "*.up.sql"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(files)
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no migration files found in %s", dir)
+	}
+	return files, nil
+}
+
+func resolveProjectPath(relativePath string) (string, error) {
+	searchRoots := make([]string, 0, 2)
+	if wd, err := os.Getwd(); err == nil {
+		searchRoots = append(searchRoots, wd)
+	}
+	if exePath, err := os.Executable(); err == nil {
+		searchRoots = append(searchRoots, filepath.Dir(exePath))
+	}
+
+	seen := make(map[string]struct{}, len(searchRoots)*4)
+	for _, root := range searchRoots {
+		for _, dir := range parentDirs(root) {
+			candidate := filepath.Join(dir, relativePath)
+			if _, ok := seen[candidate]; ok {
+				continue
+			}
+			seen[candidate] = struct{}{}
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				return candidate, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("cannot resolve project path %q from current working directory or executable path", relativePath)
+}
+
+func parentDirs(start string) []string {
+	if strings.TrimSpace(start) == "" {
+		return nil
+	}
+	absStart, err := filepath.Abs(start)
+	if err != nil {
+		absStart = start
+	}
+
+	dirs := make([]string, 0, 8)
+	current := filepath.Clean(absStart)
+	for {
+		dirs = append(dirs, current)
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return dirs
+}
+
 func RunSyncLegacyUser(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: go run ./cmd/server sync-legacy-user <user_id>")
@@ -69,6 +156,9 @@ func RunSyncLegacyUser(ctx context.Context, args []string) error {
 	}
 	defer cleanup()
 	if err := migrator.SyncLegacyUserByID(ctx, userID); err != nil {
+		return err
+	}
+	if err := migrator.FinalizeLegacySync(ctx); err != nil {
 		return err
 	}
 	fmt.Printf("synced legacy user %d\n", userID)
@@ -96,11 +186,44 @@ func RunSyncLegacyBatch(ctx context.Context, args []string) error {
 		return err
 	}
 	defer cleanup()
-	result, err := migrator.SyncLegacyUsersBatch(ctx, lastID, limit)
-	if err != nil {
-		return err
+
+	totalRequested := 0
+	totalSynced := 0
+	totalSkipped := 0
+	totalFailed := 0
+	batchCount := 0
+	currentLastID := lastID
+
+	for {
+		result, err := migrator.SyncLegacyUsersBatch(ctx, currentLastID, limit)
+		if err != nil {
+			return err
+		}
+
+		batchCount++
+		totalRequested += result.Requested
+		totalSynced += result.Synced
+		totalSkipped += result.Skipped
+		totalFailed += result.Failed
+
+		fmt.Printf("sync batch %d completed: requested=%d synced=%d skipped=%d failed=%d lastUserId=%d\n", batchCount, result.Requested, result.Synced, result.Skipped, result.Failed, result.LastUserID)
+
+		if result.Requested == 0 {
+			break
+		}
+		if result.LastUserID <= currentLastID {
+			return fmt.Errorf("sync batch stalled: currentLastID=%d nextLastUserID=%d", currentLastID, result.LastUserID)
+		}
+		currentLastID = result.LastUserID
 	}
-	fmt.Printf("sync batch completed: requested=%d synced=%d failed=%d lastUserId=%d\n", result.Requested, result.Synced, result.Failed, result.LastUserID)
+
+	if totalRequested > 0 {
+		if err := migrator.FinalizeLegacySync(ctx); err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("sync all batches completed: batches=%d requested=%d synced=%d skipped=%d failed=%d lastUserId=%d\n", batchCount, totalRequested, totalSynced, totalSkipped, totalFailed, currentLastID)
 	return nil
 }
 
@@ -111,7 +234,7 @@ func RunExportOpenAPI(_ context.Context, args []string) error {
 	}
 
 	gin.SetMode(gin.ReleaseMode)
-	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, config.CORSConfig{})
 	if err != nil {
 		return err
 	}
@@ -144,7 +267,7 @@ func RunExportPostman(_ context.Context, args []string) error {
 	}
 
 	gin.SetMode(gin.ReleaseMode)
-	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, config.CORSConfig{})
 	if err != nil {
 		return err
 	}
@@ -196,35 +319,17 @@ func newMigrationService(ctx context.Context) (*service.MigrationService, func()
 	if err != nil {
 		return nil, nil, err
 	}
-	redisClient := db.NewRedis(ctx, cfg.Redis)
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		postgres.Close()
-		return nil, nil, err
-	}
 	legacyDB, err := db.NewLegacyMySQL(ctx, cfg.LegacyMySQL)
 	if err != nil {
 		postgres.Close()
-		_ = redisClient.Close()
-		return nil, nil, err
-	}
-	natsConn, js, err := db.NewNATS(ctx, cfg.NATS)
-	if err != nil {
-		postgres.Close()
-		_ = redisClient.Close()
-		_ = legacyDB.Close()
 		return nil, nil, err
 	}
 
 	pg := pgrepo.New(postgres)
 	legacy := legacyrepo.New(legacyDB)
-	sessions := redisrepo.NewSessionRepository(redisClient, cfg.Redis.KeyPrefix)
-	publisher := event.NewPublisher(js)
-	migrator := service.NewMigrationService(cfg, log, legacy, pg, sessions, publisher)
+	migrator := service.NewMigrationService(cfg, log, legacy, pg)
 	cleanup := func() {
-		natsConn.Drain()
-		natsConn.Close()
 		_ = legacyDB.Close()
-		_ = redisClient.Close()
 		postgres.Close()
 		_ = log.Sync()
 	}

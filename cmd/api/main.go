@@ -7,10 +7,21 @@ import (
 	"syscall"
 
 	"aegis/internal/bootstrap"
+	"aegis/internal/config"
+	"aegis/pkg/crashlog"
 	"go.uber.org/zap"
 )
 
 func main() {
+	cfg, _ := config.Load()
+	cl := crashlog.New(cfg.CrashLog.Dir, cfg.CrashLog.MaxFiles, cfg.CrashLog.MaxSize)
+	defer func() {
+		if r := recover(); r != nil {
+			cl.Write("main.fatal", r, false)
+			os.Exit(1)
+		}
+	}()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -34,7 +45,7 @@ func main() {
 		}
 	}
 
-	app, err := bootstrap.NewAPIApp(ctx)
+	app, err := bootstrap.NewAPIApp(ctx, cl)
 	if err != nil {
 		panic(err)
 	}

@@ -3,14 +3,19 @@ package service
 import (
 	"context"
 	"crypto/subtle"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"aegis/internal/config"
 	admindomain "aegis/internal/domain/admin"
+	plugindomain "aegis/internal/domain/plugin"
+	securitydomain "aegis/internal/domain/security"
+	systemdomain "aegis/internal/domain/system"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
@@ -23,12 +28,24 @@ import (
 )
 
 type AdminService struct {
-	cfg      config.Config
-	log      *zap.Logger
-	pg       *pgrepo.Repository
-	sessions *redisrepo.SessionRepository
-	enforcer *casbin.Enforcer
-	roles    map[string]admindomain.RoleDefinition
+	cfg         config.Config
+	log         *zap.Logger
+	pg          *pgrepo.Repository
+	sessions    *redisrepo.SessionRepository
+	enforcer    *casbin.Enforcer
+	enforcerMu  sync.RWMutex
+	roles       map[string]admindomain.RoleDefinition
+	customRoles map[string]admindomain.RoleDefinition
+	security    *SecurityService // 用于 MFA 验证（通过 SetSecurityService 注入，避免循环初始化）
+	ldap        *LDAPService     // LDAP 认证（通过 SetLDAPService 注入）
+	oidc        *OIDCService     // OIDC 认证（通过 SetOIDCService 注入）
+	plugin      *PluginService   // 插件系统（通过 SetPluginService 注入）
+	risk        *RiskService     // 风控服务（通过 SetRiskService 注入）
+}
+
+// SetRiskService 注入风控服务
+func (s *AdminService) SetRiskService(risk *RiskService) {
+	s.risk = risk
 }
 
 func NewAdminService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository) (*AdminService, error) {
@@ -49,11 +66,28 @@ func NewAdminService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, 
 	}, nil
 }
 
+// SetSecurityService 注入 SecurityService（在 bootstrap 中调用，避免循环初始化）
+func (s *AdminService) SetSecurityService(sec *SecurityService) {
+	s.security = sec
+}
+
+// SetLDAPService 注入 LDAPService（在 bootstrap 中调用）
+func (s *AdminService) SetLDAPService(ldap *LDAPService) {
+	s.ldap = ldap
+}
+
+// SetOIDCService 注入 OIDCService（在 bootstrap 中调用）
+func (s *AdminService) SetOIDCService(oidc *OIDCService) {
+	s.oidc = oidc
+}
+
+// SetPluginService 注入 PluginService（在 bootstrap 中调用）
+func (s *AdminService) SetPluginService(plugin *PluginService) {
+	s.plugin = plugin
+}
+
 func (s *AdminService) EnsureBootstrapSuperAdmin(ctx context.Context) error {
 	password := strings.TrimSpace(s.cfg.AdminBootstrap.Password)
-	if password == "" {
-		password = strings.TrimSpace(s.cfg.AdminAPIToken)
-	}
 	if password == "" {
 		return nil
 	}
@@ -76,38 +110,247 @@ func (s *AdminService) EnsureBootstrapSuperAdmin(ctx context.Context) error {
 		s.log.Info("bootstrap super admin ensured",
 			zap.Int64("admin_id", profile.Account.ID),
 			zap.String("account", profile.Account.Account),
-			zap.Bool("fallback_admin_api_token", strings.TrimSpace(s.cfg.AdminBootstrap.Password) == "" && strings.TrimSpace(s.cfg.AdminAPIToken) != ""),
 		)
 	}
 	return nil
 }
 
-func (s *AdminService) Login(ctx context.Context, account, password string) (*admindomain.LoginResult, error) {
-	record, err := s.pg.GetAdminAuthByAccount(ctx, strings.TrimSpace(account))
+func (s *AdminService) Login(ctx context.Context, account, password, ip, userAgent string) (*admindomain.LoginResult, error) {
+	account = strings.TrimSpace(account)
+
+	// ── 风控评估：管理员登录 ──
+	if s.risk != nil {
+		riskResult, _ := s.risk.EvaluateRisk(ctx, securitydomain.RiskEvalRequest{
+			Scene: "login", IP: ip, UserAgent: userAgent,
+			Extra: map[string]any{"account": account},
+		})
+		if riskResult != nil && (riskResult.Action == "block" || riskResult.Action == "ban") {
+			return nil, apperrors.New(40398, http.StatusForbidden, "当前请求被风控拦截")
+		}
+	}
+
+	// ── 插件钩子：登录前检查 ──
+	if s.plugin != nil {
+		hookResult := s.plugin.ExecuteHook(ctx, HookAuthPreLogin, map[string]any{
+			"account": account,
+		}, plugindomain.HookMetadata{})
+		if !hookResult.Allow {
+			msg := hookResult.Message
+			if msg == "" {
+				msg = "插件拒绝了此登录请求"
+			}
+			return nil, apperrors.New(40399, http.StatusForbidden, msg)
+		}
+	}
+
+	// ── LDAP 认证分支 ──
+	if s.ldap != nil && s.ldap.IsReady() {
+		ldapResult, ldapErr := s.tryLDAPAuth(ctx, account, password, ip, userAgent)
+		if ldapResult != nil {
+			return ldapResult, nil
+		}
+		if ldapErr != nil {
+			if _, ok := ldapErr.(*apperrors.AppError); ok {
+				return nil, ldapErr
+			}
+			s.log.Warn("LDAP 认证异常，尝试本地回退", zap.String("account", account), zap.Error(ldapErr))
+			if !s.ldap.CurrentConfig().FallbackToLocal {
+				return nil, apperrors.New(50192, http.StatusServiceUnavailable, "LDAP 服务不可用")
+			}
+		}
+	}
+
+	// ── 本地认证 ──
+	record, err := s.pg.GetAdminAuthByAccount(ctx, account)
 	if err != nil {
 		return nil, err
 	}
 	if record == nil || !adminVerifyPassword(record.PasswordHash, password) {
+		if s.plugin != nil {
+			go s.plugin.ExecuteHook(context.Background(), HookAuthLoginFailed, map[string]any{"account": account}, plugindomain.HookMetadata{})
+		}
 		return nil, apperrors.New(40110, http.StatusUnauthorized, "管理员账号或密码错误")
 	}
 	if record.Account.Status != "active" {
 		return nil, apperrors.New(40310, http.StatusForbidden, "管理员账户不可用")
 	}
-	profile, err := s.pg.GetAdminAccessByID(ctx, record.Account.ID)
+
+	return s.continueLoginWithMFA(ctx, record.Account.ID, record.Account.Account, ip, userAgent)
+}
+
+// continueLoginWithMFA 检查 MFA 后颁发会话（LDAP 和本地登录共用）
+func (s *AdminService) continueLoginWithMFA(ctx context.Context, adminID int64, account, ip, userAgent string) (*admindomain.LoginResult, error) {
+	totpRecord, _ := s.pg.GetAdminTOTPSecret(ctx, adminID)
+	if totpRecord != nil && totpRecord.Enabled {
+		challengeID := fmt.Sprintf("admin-mfa-%d-%d", adminID, time.Now().UnixNano())
+		methods := []string{"totp", "recovery_code"}
+		challenge := securitydomain.LoginChallenge{
+			ChallengeID: challengeID,
+			UserID:      adminID,
+			Account:     account,
+			Methods:     methods,
+			ExpiresAt:   time.Now().UTC().Add(5 * time.Minute),
+			CreatedAt:   time.Now().UTC(),
+		}
+		if err := s.sessions.SetTwoFactorChallenge(ctx, challenge, 5*time.Minute); err != nil {
+			return nil, err
+		}
+		return &admindomain.LoginResult{
+			RequiresSecondFactor: true,
+			Challenge: &admindomain.MFAChallenge{
+				ChallengeID: challengeID,
+				Methods:     methods,
+				ExpiresAt:   challenge.ExpiresAt,
+			},
+		}, nil
+	}
+
+	profile, err := s.pg.GetAdminAccessByID(ctx, adminID)
 	if err != nil {
 		return nil, err
 	}
 	if profile == nil {
 		return nil, apperrors.New(40450, http.StatusNotFound, "管理员不存在")
 	}
-	return s.issueSession(ctx, profile)
+	result, err := s.issueSession(ctx, profile, ip, userAgent)
+	if err == nil && s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookAuthSessionIssued, map[string]any{
+			"adminId": adminID, "account": account,
+		}, plugindomain.HookMetadata{AdminID: &adminID})
+	}
+	return result, err
+}
+
+// tryLDAPAuth LDAP 认证尝试
+func (s *AdminService) tryLDAPAuth(ctx context.Context, account, password, ip, userAgent string) (*admindomain.LoginResult, error) {
+	ldapUser, err := s.ldap.Authenticate(ctx, account, password)
+	if err != nil {
+		return nil, err
+	}
+	if ldapUser == nil {
+		return nil, nil
+	}
+
+	// LDAP 认证成功 → 同步本地管理员
+	localAccount, err := s.syncLDAPAdmin(ctx, ldapUser)
+	if err != nil {
+		return nil, err
+	}
+	if localAccount.Status != "active" {
+		return nil, apperrors.New(40310, http.StatusForbidden, "管理员账户已被停用")
+	}
+
+	return s.continueLoginWithMFA(ctx, localAccount.ID, localAccount.Account, ip, userAgent)
+}
+
+// GetOIDCAuthURL 生成 OIDC 授权 URL 并缓存 state
+func (s *AdminService) GetOIDCAuthURL(ctx context.Context) (string, string, error) {
+	if s.oidc == nil || !s.oidc.IsEnabled() {
+		return "", "", apperrors.New(40190, http.StatusBadRequest, "OIDC 认证未启用")
+	}
+	state := uuid.NewString()
+	if err := s.sessions.SetOIDCState(ctx, state, 5*time.Minute); err != nil {
+		return "", "", err
+	}
+	url, err := s.oidc.AuthURL(ctx, state)
+	if err != nil {
+		return "", "", err
+	}
+	return url, state, nil
+}
+
+// HandleOIDCCallback 处理 OIDC IdP 回调
+func (s *AdminService) HandleOIDCCallback(ctx context.Context, code, state, ip, userAgent string) (*admindomain.LoginResult, error) {
+	ok, err := s.sessions.GetAndDeleteOIDCState(ctx, state)
+	if err != nil || !ok {
+		return nil, apperrors.New(40195, http.StatusUnauthorized, "OIDC state 无效或已过期")
+	}
+	oidcUser, err := s.oidc.ExchangeAndVerify(ctx, code)
+	if err != nil {
+		if _, ok := err.(*apperrors.AppError); ok {
+			return nil, err
+		}
+		s.log.Error("OIDC exchange/verify 失败", zap.Error(err))
+		return nil, apperrors.New(40196, http.StatusUnauthorized, "OIDC 认证失败")
+	}
+	localAccount, err := s.syncExternalAdmin(ctx, oidcUser.Account, oidcUser.DisplayName, oidcUser.Email, oidcUser.Phone, "oidc")
+	if err != nil {
+		return nil, err
+	}
+	if localAccount.Status != "active" {
+		return nil, apperrors.New(40310, http.StatusForbidden, "管理员账户已被停用")
+	}
+	return s.continueLoginWithMFA(ctx, localAccount.ID, localAccount.Account, ip, userAgent)
+}
+
+// syncExternalAdmin 同步外部认证用户到本地（LDAP/OIDC 共用）
+func (s *AdminService) syncExternalAdmin(ctx context.Context, account, displayName, email, phone, authSource string) (*admindomain.Account, error) {
+	record, err := s.pg.GetAdminAuthByAccount(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	if record != nil {
+		_ = s.pg.UpdateAdminExternalSync(ctx, record.Account.ID, displayName, email, phone, authSource)
+		record.Account.AuthSource = authSource
+		return &record.Account, nil
+	}
+	profile, err := s.pg.CreateExternalAdminAccount(ctx, account, displayName, email, phone, authSource)
+	if err != nil {
+		return nil, err
+	}
+	s.log.Info("外部认证管理员自动创建", zap.String("account", account), zap.String("authSource", authSource), zap.Int64("id", profile.Account.ID))
+	return &profile.Account, nil
+}
+
+// syncLDAPAdmin 同步 LDAP 用户到本地 admin_accounts
+func (s *AdminService) syncLDAPAdmin(ctx context.Context, ldapUser *systemdomain.LDAPUser) (*admindomain.Account, error) {
+	return s.syncExternalAdmin(ctx, ldapUser.Account, ldapUser.DisplayName, ldapUser.Email, ldapUser.Phone, "ldap")
+}
+
+// VerifyMFA 验证管理员 MFA 挑战（TOTP 或恢复码），成功后颁发会话 Token
+func (s *AdminService) VerifyMFA(ctx context.Context, challengeID, code, recoveryCode, ip, userAgent string) (*admindomain.LoginResult, error) {
+	challenge, err := s.sessions.GetTwoFactorChallenge(ctx, challengeID)
+	if err != nil || challenge == nil {
+		return nil, apperrors.New(40111, http.StatusUnauthorized, "MFA 挑战已过期或不存在")
+	}
+	if time.Now().UTC().After(challenge.ExpiresAt) {
+		_ = s.sessions.DeleteTwoFactorChallenge(ctx, challengeID)
+		return nil, apperrors.New(40112, http.StatusUnauthorized, "MFA 挑战已过期")
+	}
+
+	adminID := challenge.UserID
+
+	// 委托给 SecurityService 验证（复用已有的 TOTP/恢复码验证逻辑）
+	if s.security == nil {
+		return nil, apperrors.New(50002, http.StatusInternalServerError, "安全服务未初始化")
+	}
+	if err := s.security.verifyAdminSecondFactor(ctx, adminID, strings.TrimSpace(code), strings.TrimSpace(recoveryCode)); err != nil {
+		// 确保返回给前端的是可读的业务错误，而非内部堆栈
+		if _, ok := err.(*apperrors.AppError); ok {
+			return nil, err
+		}
+		return nil, apperrors.New(40114, http.StatusUnauthorized, "验证码或恢复码无效")
+	}
+
+	// 验证通过，删除挑战，颁发会话
+	_ = s.sessions.DeleteTwoFactorChallenge(ctx, challengeID)
+
+	profile, err := s.pg.GetAdminAccessByID(ctx, adminID)
+	if err != nil {
+		return nil, err
+	}
+	if profile == nil {
+		return nil, apperrors.New(40450, http.StatusNotFound, "管理员不存在")
+	}
+	result, err := s.issueSession(ctx, profile, ip, userAgent)
+	if err == nil && s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookAuthMFAVerified, map[string]any{"adminId": adminID, "account": profile.Account.Account}, plugindomain.HookMetadata{AdminID: &adminID})
+	}
+	return result, err
 }
 
 func (s *AdminService) ValidateAccessToken(ctx context.Context, token string) (*admindomain.AccessContext, error) {
-	if access := s.fallbackAccess(token); access != nil {
-		return access, nil
-	}
-
+	// 静态令牌不再作为 API 访问令牌（仅用于 /api/admin/auth/emergency-login 端点）
 	claims := jwt.MapClaims{}
 	parsed, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
 		return []byte(s.cfg.JWT.Secret), nil
@@ -125,6 +368,11 @@ func (s *AdminService) ValidateAccessToken(ctx context.Context, token string) (*
 	}
 	if blacklisted {
 		return nil, apperrors.New(40111, http.StatusUnauthorized, "管理员令牌已失效")
+	}
+	// 检查会话是否被管理端撤销
+	revoked, _ := s.pg.IsSessionRevoked(ctx, tokenID)
+	if revoked {
+		return nil, apperrors.New(40115, http.StatusUnauthorized, "会话已被撤销")
 	}
 	session, err := s.sessions.GetAdminSession(ctx, token)
 	if err != nil {
@@ -145,14 +393,13 @@ func (s *AdminService) ValidateAccessToken(ctx context.Context, token string) (*
 	}
 	return &admindomain.AccessContext{
 		Session: admindomain.Session{
-			AdminID:       profile.Account.ID,
-			Account:       profile.Account.Account,
-			DisplayName:   profile.Account.DisplayName,
-			TokenID:       session.TokenID,
-			IssuedAt:      session.IssuedAt,
-			ExpiresAt:     session.ExpiresAt,
-			IsSuperAdmin:  profile.Account.IsSuperAdmin,
-			FallbackToken: false,
+			AdminID:      profile.Account.ID,
+			Account:      profile.Account.Account,
+			DisplayName:  profile.Account.DisplayName,
+			TokenID:      session.TokenID,
+			IssuedAt:     session.IssuedAt,
+			ExpiresAt:    session.ExpiresAt,
+			IsSuperAdmin: profile.Account.IsSuperAdmin,
 		},
 		Assignments: profile.Assignments,
 	}, nil
@@ -163,23 +410,25 @@ func (s *AdminService) Logout(ctx context.Context, token string) error {
 	if err != nil {
 		return err
 	}
-	if access.FallbackToken {
-		return nil
-	}
 	_ = s.sessions.DeleteAdminSession(ctx, token)
+	// 标记会话记录为已撤销 + 清除在线状态
+	_ = s.pg.RevokeAdminSession(ctx, access.TokenID, access.AdminID)
+	_ = s.sessions.RemoveAdminOnline(ctx, access.AdminID, access.TokenID)
 	return s.sessions.BlacklistToken(ctx, access.TokenID, time.Until(access.ExpiresAt))
 }
 
-func (s *AdminService) Authorize(access *admindomain.AccessContext, permission string, appID *int64) error {
+func (s *AdminService) Authorize(ctx context.Context, access *admindomain.AccessContext, permission string, appID *int64) error {
 	if access == nil {
 		return apperrors.New(40110, http.StatusUnauthorized, "管理员未认证")
 	}
-	if access.IsSuperAdmin || access.FallbackToken {
+	if access.IsSuperAdmin {
 		return nil
 	}
 	if permission == "" {
 		return nil
 	}
+	s.enforcerMu.RLock()
+	defer s.enforcerMu.RUnlock()
 	for _, assignment := range access.Assignments {
 		if !scopeMatches(assignment.AppID, appID) {
 			continue
@@ -192,11 +441,36 @@ func (s *AdminService) Authorize(access *admindomain.AccessContext, permission s
 			return nil
 		}
 	}
+	// Casbin 拒绝后，检查临时权限
+	tempPerms, _ := s.pg.GetActiveTempPermissions(ctx, access.AdminID)
+	for _, tp := range tempPerms {
+		if tp == permission {
+			return nil
+		}
+	}
 	return apperrors.New(40311, http.StatusForbidden, "当前管理员无权执行此操作")
 }
 
 func (s *AdminService) ListAdmins(ctx context.Context) ([]admindomain.Profile, error) {
 	return s.pg.ListAdminAccounts(ctx)
+}
+
+func (s *AdminService) GetProfile(ctx context.Context, adminID int64) (*admindomain.Profile, error) {
+	profile, err := s.pg.GetAdminAccessByID(ctx, adminID)
+	if err != nil {
+		return nil, err
+	}
+	if profile == nil {
+		return nil, apperrors.New(40450, http.StatusNotFound, "管理员不存在")
+	}
+	return profile, nil
+}
+
+func (s *AdminService) UpdateProfile(ctx context.Context, adminID int64, input admindomain.ProfileUpdate) (*admindomain.Profile, error) {
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	input.Email = strings.TrimSpace(input.Email)
+	input.Avatar = strings.TrimSpace(input.Avatar)
+	return s.pg.UpdateAdminProfile(ctx, adminID, input)
 }
 
 func (s *AdminService) CreateAdmin(ctx context.Context, input admindomain.CreateInput) (*admindomain.Profile, error) {
@@ -214,15 +488,79 @@ func (s *AdminService) CreateAdmin(ctx context.Context, input admindomain.Create
 	if err != nil {
 		return nil, err
 	}
+	profile, err := s.pg.CreateAdminAccount(ctx, input, hash)
+	if err == nil && profile != nil && s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookAdminCreated, map[string]any{"adminId": profile.Account.ID, "account": input.Account}, plugindomain.HookMetadata{AdminID: &profile.Account.ID})
+	}
+	return profile, err
+}
+
+// RegisterAdmin 管理员自助注册（公开接口，无需认证）
+// 注册后无角色分配，创建应用时自动获得 app_admin 权限
+func (s *AdminService) RegisterAdmin(ctx context.Context, account, password, displayName, email string) (*admindomain.Profile, error) {
+	input := admindomain.CreateInput{
+		Account:      strings.TrimSpace(account),
+		Password:     password,
+		DisplayName:  strings.TrimSpace(displayName),
+		Email:        strings.TrimSpace(email),
+		IsSuperAdmin: false,
+		Assignments:  nil,
+	}
+	if err := s.validateCreateInput(input); err != nil {
+		return nil, err
+	}
+	hash, err := adminHashPassword(input.Password)
+	if err != nil {
+		return nil, err
+	}
 	return s.pg.CreateAdminAccount(ctx, input, hash)
 }
 
-func (s *AdminService) UpdateAdminStatus(ctx context.Context, adminID int64, status string) error {
+// AutoAssignAppRole 自动为管理员分配应用角色（创建应用时调用）
+func (s *AdminService) AutoAssignAppRole(ctx context.Context, adminID, appID int64, roleKey string) error {
+	return s.pg.AddAdminAssignment(ctx, adminID, roleKey, &appID)
+}
+
+func (s *AdminService) UpdateAdminStatus(ctx context.Context, actorID int64, adminID int64, status string) error {
 	status = strings.TrimSpace(strings.ToLower(status))
 	if status != "active" && status != "disabled" {
 		return apperrors.New(40050, http.StatusBadRequest, "无效的管理员状态")
 	}
-	return s.pg.UpdateAdminStatus(ctx, adminID, status)
+
+	// 停用操作需要安全检查
+	if status == "disabled" {
+		// 禁止停用自身
+		if actorID == adminID {
+			return apperrors.New(40392, http.StatusForbidden, "无法停用自身账户")
+		}
+
+		target, err := s.pg.GetAdminAccessByID(ctx, adminID)
+		if err != nil {
+			return err
+		}
+		if target == nil {
+			return apperrors.New(40450, http.StatusNotFound, "管理员不存在")
+		}
+
+		// 超级管理员停用保护：确保系统中至少保留一个活跃超级管理员
+		if target.Account.IsSuperAdmin {
+			activeSuperCount, err := s.pg.CountActiveSuperAdmins(ctx)
+			if err != nil {
+				return err
+			}
+			if activeSuperCount <= 1 {
+				return apperrors.New(40391, http.StatusForbidden, "无法停用最后一个超级管理员，系统需要至少一个活跃的超级管理员")
+			}
+		}
+	}
+
+	if err := s.pg.UpdateAdminStatus(ctx, adminID, status); err != nil {
+		return err
+	}
+	if s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookAdminStatusChanged, map[string]any{"adminId": adminID, "status": status}, plugindomain.HookMetadata{AdminID: &adminID})
+	}
+	return nil
 }
 
 func (s *AdminService) UpdateAdminAccess(ctx context.Context, adminID int64, input admindomain.UpdateAccessInput) error {
@@ -231,14 +569,25 @@ func (s *AdminService) UpdateAdminAccess(ctx context.Context, adminID int64, inp
 		return err
 	}
 	input.Assignments = assignments
-	return s.pg.UpdateAdminAccess(ctx, adminID, input)
+	if err := s.pg.UpdateAdminAccess(ctx, adminID, input); err != nil {
+		return err
+	}
+	if s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookAdminAccessUpdated, map[string]any{"adminId": adminID}, plugindomain.HookMetadata{AdminID: &adminID})
+	}
+	return nil
 }
 
 func (s *AdminService) ListRoles() []admindomain.RoleDefinition {
-	items := make([]admindomain.RoleDefinition, 0, len(s.roles))
+	items := make([]admindomain.RoleDefinition, 0, len(s.roles)+len(s.customRoles))
 	for _, item := range s.roles {
 		items = append(items, item)
 	}
+	s.enforcerMu.RLock()
+	for _, item := range s.customRoles {
+		items = append(items, item)
+	}
+	s.enforcerMu.RUnlock()
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Level == items[j].Level {
 			return items[i].Key < items[j].Key
@@ -246,6 +595,114 @@ func (s *AdminService) ListRoles() []admindomain.RoleDefinition {
 		return items[i].Level > items[j].Level
 	})
 	return items
+}
+
+// ListRolesWithPermissionTree 返回所有角色及其权限树
+func (s *AdminService) ListRolesWithPermissionTree() []admindomain.RoleWithPermissions {
+	roles := s.ListRoles()
+	allGroups := allPermissionGroups()
+	result := make([]admindomain.RoleWithPermissions, 0, len(roles))
+	for _, role := range roles {
+		granted := make(map[string]bool, len(role.Permissions))
+		for _, p := range role.Permissions {
+			granted[p] = true
+		}
+		// 超级管理员拥有全部权限
+		isSuperAdmin := role.Key == "super_admin"
+
+		groups := make([]admindomain.PermissionGroup, 0, len(allGroups))
+		for _, g := range allGroups {
+			perms := make([]admindomain.Permission, len(g.Permissions))
+			copy(perms, g.Permissions)
+			groups = append(groups, admindomain.PermissionGroup{
+				Key: g.Key, Name: g.Name, Permissions: perms,
+			})
+			// 标记哪些权限是授权的（通过 Description 字段传递，前端读取）
+			for i := range groups[len(groups)-1].Permissions {
+				if isSuperAdmin || granted[groups[len(groups)-1].Permissions[i].Code] {
+					groups[len(groups)-1].Permissions[i].Description = "granted"
+				}
+			}
+		}
+		result = append(result, admindomain.RoleWithPermissions{
+			RoleDefinition:   role,
+			PermissionGroups: groups,
+		})
+	}
+	return result
+}
+
+// allPermissionGroups 返回所有权限分组定义
+func allPermissionGroups() []admindomain.PermissionGroup {
+	return []admindomain.PermissionGroup{
+		{Key: "system", Name: "系统管理", Permissions: []admindomain.Permission{
+			{Code: "system:admin:manage", Name: "管理员管理"},
+			{Code: "system:settings:read", Name: "系统设置查看"},
+			{Code: "system:settings:write", Name: "系统设置修改"},
+			{Code: "system:user_setting:read", Name: "用户设置查看"},
+			{Code: "system:user_setting:write", Name: "用户设置修改"},
+		}},
+		{Key: "app", Name: "应用管理", Permissions: []admindomain.Permission{
+			{Code: "app:read", Name: "应用信息查看"},
+			{Code: "app:write", Name: "应用信息修改"},
+			{Code: "app:user:read", Name: "应用用户查看"},
+			{Code: "app:user:write", Name: "应用用户管理"},
+			{Code: "app:notification:read", Name: "通知查看"},
+			{Code: "app:notification:write", Name: "通知管理"},
+		}},
+		{Key: "content", Name: "内容管理", Permissions: []admindomain.Permission{
+			{Code: "content:banner:read", Name: "Banner 查看"},
+			{Code: "content:banner:write", Name: "Banner 管理"},
+			{Code: "content:notice:read", Name: "公告查看"},
+			{Code: "content:notice:write", Name: "公告管理"},
+		}},
+		{Key: "audit", Name: "审计日志", Permissions: []admindomain.Permission{
+			{Code: "audit:login:read", Name: "登录审计查看"},
+			{Code: "audit:session:read", Name: "会话审计查看"},
+		}},
+		{Key: "storage", Name: "存储管理", Permissions: []admindomain.Permission{
+			{Code: "storage:read", Name: "存储配置查看"},
+			{Code: "storage:write", Name: "存储配置修改"},
+		}},
+		{Key: "workflow", Name: "工作流", Permissions: []admindomain.Permission{
+			{Code: "workflow:read", Name: "工作流查看"},
+			{Code: "workflow:write", Name: "工作流管理"},
+		}},
+		{Key: "version", Name: "版本管理", Permissions: []admindomain.Permission{
+			{Code: "version:read", Name: "版本查看"},
+			{Code: "version:write", Name: "版本管理"},
+		}},
+		{Key: "site", Name: "站点管理", Permissions: []admindomain.Permission{
+			{Code: "site:read", Name: "站点查看"},
+			{Code: "site:write", Name: "站点管理"},
+			{Code: "site:audit", Name: "站点审核"},
+		}},
+		{Key: "role_application", Name: "角色申请", Permissions: []admindomain.Permission{
+			{Code: "role_application:read", Name: "申请查看"},
+			{Code: "role_application:review", Name: "申请审批"},
+		}},
+		{Key: "points", Name: "积分管理", Permissions: []admindomain.Permission{
+			{Code: "points:read", Name: "积分查看"},
+			{Code: "points:write", Name: "积分调整"},
+		}},
+		{Key: "email", Name: "邮件服务", Permissions: []admindomain.Permission{
+			{Code: "email:read", Name: "邮件配置查看"},
+			{Code: "email:write", Name: "邮件配置修改"},
+		}},
+		{Key: "payment", Name: "支付管理", Permissions: []admindomain.Permission{
+			{Code: "payment:read", Name: "支付配置查看"},
+			{Code: "payment:write", Name: "支付配置修改"},
+		}},
+		{Key: "org", Name: "组织架构", Permissions: []admindomain.Permission{
+			{Code: "org:create", Name: "创建组织"},
+			{Code: "org:write", Name: "修改/删除组织"},
+			{Code: "org:dept:read", Name: "查看部门"},
+			{Code: "org:dept:write", Name: "管理部门"},
+			{Code: "org:member:read", Name: "查看成员"},
+			{Code: "org:member:write", Name: "管理成员"},
+			{Code: "org:member:invite", Name: "邀请成员"},
+		}},
+	}
 }
 
 func (s *AdminService) validateCreateInput(input admindomain.CreateInput) error {
@@ -296,7 +753,7 @@ func (s *AdminService) normalizeAssignments(assignments []admindomain.Assignment
 	return items, nil
 }
 
-func (s *AdminService) issueSession(ctx context.Context, profile *admindomain.Profile) (*admindomain.LoginResult, error) {
+func (s *AdminService) issueSession(ctx context.Context, profile *admindomain.Profile, ip, userAgent string) (*admindomain.LoginResult, error) {
 	now := time.Now().UTC()
 	expiresAt := now.Add(s.cfg.AdminSessionTTL)
 	tokenID := uuid.NewString()
@@ -328,6 +785,14 @@ func (s *AdminService) issueSession(ctx context.Context, profile *admindomain.Pr
 		return nil, err
 	}
 	_ = s.pg.UpdateAdminLastLogin(ctx, profile.Account.ID, now)
+	// 写入会话持久化记录
+	_ = s.pg.CreateAdminSessionRecord(ctx, admindomain.AdminSessionRecord{
+		ID: tokenID, AdminID: profile.Account.ID,
+		IP: ip, UserAgent: userAgent,
+		IssuedAt: now, ExpiresAt: expiresAt,
+	})
+	// 标记在线状态
+	_ = s.sessions.SetAdminOnline(ctx, profile.Account.ID, tokenID)
 	return &admindomain.LoginResult{
 		AccessToken: signed,
 		ExpiresAt:   expiresAt,
@@ -335,30 +800,6 @@ func (s *AdminService) issueSession(ctx context.Context, profile *admindomain.Pr
 		Admin:       profile.Account,
 		Assignments: profile.Assignments,
 	}, nil
-}
-
-func (s *AdminService) fallbackAccess(token string) *admindomain.AccessContext {
-	expected := strings.TrimSpace(s.cfg.AdminAPIToken)
-	token = strings.TrimSpace(token)
-	if expected == "" || token == "" {
-		return nil
-	}
-	if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
-		return nil
-	}
-	now := time.Now().UTC()
-	return &admindomain.AccessContext{
-		Session: admindomain.Session{
-			AdminID:       0,
-			Account:       "static-token",
-			DisplayName:   "Emergency Admin Token",
-			TokenID:       "static-admin-token",
-			IssuedAt:      now,
-			ExpiresAt:     now.Add(24 * time.Hour),
-			IsSuperAdmin:  true,
-			FallbackToken: true,
-		},
-	}
 }
 
 func newAdminEnforcer() (*casbin.Enforcer, error) {
@@ -411,15 +852,43 @@ func builtInAdminRoles() map[string]admindomain.RoleDefinition {
 			Description: "全局平台与运维配置管理",
 			Level:       90,
 			Scope:       "global",
-			Permissions: []string{"platform:app:read", "platform:app:write", "platform:storage:read", "platform:storage:write", "system:user_setting:read", "system:user_setting:write", "email:read", "email:write", "payment:read", "payment:write", "workflow:read", "workflow:write", "version:read", "version:write", "site:read", "site:write", "site:audit", "role_application:read", "role_application:review", "points:read", "points:write", "content:read", "content:write", "user:read", "user:write", "audit:read", "app:read", "app:write", "storage:read", "storage:write"},
+			Permissions: []string{
+				"system:settings:read", "system:settings:write", "system:user_setting:read", "system:user_setting:write",
+				"app:read", "app:write", "app:user:read", "app:user:write", "app:notification:read", "app:notification:write",
+				"content:banner:read", "content:banner:write", "content:notice:read", "content:notice:write",
+				"audit:login:read", "audit:session:read",
+				"storage:read", "storage:write",
+				"workflow:read", "workflow:write",
+				"version:read", "version:write",
+				"site:read", "site:write", "site:audit",
+				"role_application:read", "role_application:review",
+				"points:read", "points:write",
+				"email:read", "email:write",
+				"payment:read", "payment:write",
+				"org:create", "org:write", "org:dept:read", "org:dept:write", "org:member:read", "org:member:write", "org:member:invite",
+			},
 		},
 		"app_admin": {
 			Key:         "app_admin",
 			Name:        "应用管理员",
-			Description: "单应用全量管理权限",
+			Description: "单应用全量管理权限（与平台管理员同级，仅限绑定应用）",
 			Level:       70,
 			Scope:       "app",
-			Permissions: []string{"app:read", "app:write", "content:read", "content:write", "user:read", "user:write", "audit:read", "points:read", "points:write", "version:read", "version:write", "site:read", "site:write", "site:audit", "workflow:read", "workflow:write", "email:read", "email:write", "payment:read", "payment:write", "role_application:read", "role_application:review", "storage:read", "storage:write"},
+			Permissions: []string{
+				"system:settings:read", "system:user_setting:read", "system:user_setting:write",
+				"app:read", "app:write", "app:user:read", "app:user:write", "app:notification:read", "app:notification:write",
+				"content:banner:read", "content:banner:write", "content:notice:read", "content:notice:write",
+				"audit:login:read", "audit:session:read",
+				"storage:read", "storage:write",
+				"workflow:read", "workflow:write",
+				"version:read", "version:write",
+				"site:read", "site:write", "site:audit",
+				"role_application:read", "role_application:review",
+				"points:read", "points:write",
+				"email:read", "email:write",
+				"payment:read", "payment:write",
+				"org:dept:read", "org:member:read", "org:member:invite",
+			},
 		},
 		"app_operator": {
 			Key:         "app_operator",
@@ -427,7 +896,20 @@ func builtInAdminRoles() map[string]admindomain.RoleDefinition {
 			Description: "运营、内容、用户与版本维护",
 			Level:       60,
 			Scope:       "app",
-			Permissions: []string{"app:read", "content:read", "content:write", "user:read", "user:write", "audit:read", "points:read", "points:write", "version:read", "version:write", "site:read", "site:write", "workflow:read", "workflow:write", "email:read", "payment:read", "role_application:read", "storage:read", "storage:write"},
+			Permissions: []string{
+				"app:read", "app:user:read", "app:user:write", "app:notification:read", "app:notification:write",
+				"content:banner:read", "content:banner:write", "content:notice:read", "content:notice:write",
+				"audit:login:read", "audit:session:read",
+				"points:read", "points:write",
+				"version:read", "version:write",
+				"site:read", "site:write",
+				"workflow:read",
+				"email:read",
+				"payment:read",
+				"role_application:read",
+				"storage:read",
+				"org:dept:read", "org:member:read",
+			},
 		},
 		"app_auditor": {
 			Key:         "app_auditor",
@@ -435,7 +917,20 @@ func builtInAdminRoles() map[string]admindomain.RoleDefinition {
 			Description: "审计、审核与只读分析权限",
 			Level:       40,
 			Scope:       "app",
-			Permissions: []string{"app:read", "content:read", "user:read", "audit:read", "points:read", "version:read", "site:read", "site:audit", "workflow:read", "email:read", "payment:read", "role_application:read", "role_application:review", "storage:read"},
+			Permissions: []string{
+				"app:read", "app:user:read", "app:notification:read",
+				"content:banner:read", "content:notice:read",
+				"audit:login:read", "audit:session:read",
+				"points:read",
+				"version:read",
+				"site:read", "site:audit",
+				"workflow:read",
+				"email:read",
+				"payment:read",
+				"role_application:read", "role_application:review",
+				"storage:read",
+				"org:dept:read", "org:member:read",
+			},
 		},
 		"app_viewer": {
 			Key:         "app_viewer",
@@ -443,7 +938,20 @@ func builtInAdminRoles() map[string]admindomain.RoleDefinition {
 			Description: "只读查看权限",
 			Level:       20,
 			Scope:       "app",
-			Permissions: []string{"app:read", "content:read", "user:read", "audit:read", "points:read", "version:read", "site:read", "workflow:read", "email:read", "payment:read", "role_application:read", "storage:read"},
+			Permissions: []string{
+				"app:read", "app:user:read", "app:notification:read",
+				"content:banner:read", "content:notice:read",
+				"audit:login:read", "audit:session:read",
+				"points:read",
+				"version:read",
+				"site:read",
+				"workflow:read",
+				"email:read",
+				"payment:read",
+				"role_application:read",
+				"storage:read",
+				"org:dept:read", "org:member:read",
+			},
 		},
 	}
 }
@@ -489,4 +997,225 @@ func validateAdminPassword(password string) error {
 
 func strconvInt64(value int64) string {
 	return strconv.FormatInt(value, 10)
+}
+
+// ── 自定义角色 CRUD ──
+
+// LoadCustomRoles 启动时从数据库加载自定义角色到 Enforcer
+func (s *AdminService) LoadCustomRoles(ctx context.Context) error {
+	return s.reloadEnforcer(ctx)
+}
+
+func (s *AdminService) reloadEnforcer(ctx context.Context) error {
+	customRoles, err := s.pg.ListCustomRoles(ctx)
+	if err != nil {
+		return err
+	}
+
+	s.enforcerMu.Lock()
+	defer s.enforcerMu.Unlock()
+
+	e, err := newAdminEnforcer()
+	if err != nil {
+		return err
+	}
+
+	customMap := make(map[string]admindomain.RoleDefinition, len(customRoles))
+	for _, cr := range customRoles {
+		for _, perm := range cr.Permissions {
+			_, _ = e.AddPermissionForUser(cr.RoleKey, perm)
+		}
+		customMap[cr.RoleKey] = admindomain.RoleDefinition{
+			Key: cr.RoleKey, Name: cr.Name, Description: cr.Description,
+			Level: cr.Level, Scope: cr.Scope, Permissions: cr.Permissions,
+			IsCustom: true, BaseRole: cr.BaseRole, CreatedBy: cr.CreatedBy,
+		}
+	}
+
+	s.enforcer = e
+	s.customRoles = customMap
+	s.log.Info("Casbin Enforcer 已重载", zap.Int("customRoles", len(customMap)))
+	return nil
+}
+
+func (s *AdminService) CreateCustomRole(ctx context.Context, input admindomain.CreateCustomRoleInput, createdBy int64) (*admindomain.CustomRole, error) {
+	if !strings.HasPrefix(input.RoleKey, "custom_") {
+		return nil, apperrors.New(40058, http.StatusBadRequest, "自定义角色标识必须以 custom_ 开头")
+	}
+	if input.Level < 1 || input.Level >= 20 {
+		return nil, apperrors.New(40059, http.StatusBadRequest, "自定义角色级别必须在 1-19 之间")
+	}
+	if _, ok := s.roles[input.RoleKey]; ok {
+		return nil, apperrors.New(40960, http.StatusConflict, "角色标识与内置角色冲突")
+	}
+	allPerms := s.allPermissionCodes()
+	for _, p := range input.Permissions {
+		if _, ok := allPerms[p]; !ok {
+			return nil, apperrors.New(40060, http.StatusBadRequest, fmt.Sprintf("权限代码不存在: %s", p))
+		}
+	}
+
+	cr, err := s.pg.CreateCustomRole(ctx, input, createdBy)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.reloadEnforcer(ctx); err != nil {
+		s.log.Error("创建自定义角色后 Enforcer 重载失败", zap.Error(err))
+	}
+	return cr, nil
+}
+
+func (s *AdminService) UpdateCustomRole(ctx context.Context, roleKey string, input admindomain.UpdateCustomRoleInput) (*admindomain.CustomRole, error) {
+	if !strings.HasPrefix(roleKey, "custom_") {
+		return nil, apperrors.New(40061, http.StatusBadRequest, "仅可编辑自定义角色")
+	}
+	if input.Level < 1 || input.Level >= 20 {
+		return nil, apperrors.New(40059, http.StatusBadRequest, "自定义角色级别必须在 1-19 之间")
+	}
+	allPerms := s.allPermissionCodes()
+	for _, p := range input.Permissions {
+		if _, ok := allPerms[p]; !ok {
+			return nil, apperrors.New(40060, http.StatusBadRequest, fmt.Sprintf("权限代码不存在: %s", p))
+		}
+	}
+
+	cr, err := s.pg.UpdateCustomRole(ctx, roleKey, input)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.reloadEnforcer(ctx); err != nil {
+		s.log.Error("更新自定义角色后 Enforcer 重载失败", zap.Error(err))
+	}
+	return cr, nil
+}
+
+func (s *AdminService) DeleteCustomRole(ctx context.Context, roleKey string, force bool) error {
+	if !strings.HasPrefix(roleKey, "custom_") {
+		return apperrors.New(40061, http.StatusBadRequest, "仅可删除自定义角色")
+	}
+	count, err := s.pg.CountAdminsByRoleKey(ctx, roleKey)
+	if err != nil {
+		return err
+	}
+	if count > 0 && !force {
+		return apperrors.New(40962, http.StatusConflict, fmt.Sprintf("该角色正在被 %d 位管理员使用，请先移除分配或使用强制删除", count))
+	}
+	if err := s.pg.DeleteCustomRole(ctx, roleKey); err != nil {
+		return err
+	}
+	if err := s.reloadEnforcer(ctx); err != nil {
+		s.log.Error("删除自定义角色后 Enforcer 重载失败", zap.Error(err))
+	}
+	return nil
+}
+
+func (s *AdminService) GetRoleImpactPreview(ctx context.Context, roleKey string) (*admindomain.ImpactPreview, error) {
+	admins, err := s.pg.ListAdminsByRoleKey(ctx, roleKey)
+	if err != nil {
+		return nil, err
+	}
+	return &admindomain.ImpactPreview{AffectedAdmins: admins, TotalAffected: len(admins)}, nil
+}
+
+// ── 权限矩阵 + 角色关系图 ──
+
+func (s *AdminService) GetRoleMatrix() admindomain.RoleMatrix {
+	roles := s.ListRoles()
+	groups := allPermissionGroups()
+	permSets := make(map[string]map[string]bool, len(roles))
+	for _, r := range roles {
+		m := make(map[string]bool, len(r.Permissions))
+		for _, p := range r.Permissions {
+			m[p] = true
+		}
+		permSets[r.Key] = m
+	}
+
+	var rows []admindomain.RoleMatrixRow
+	for _, g := range groups {
+		for _, p := range g.Permissions {
+			grants := make(map[string]bool, len(roles))
+			for _, r := range roles {
+				grants[r.Key] = permSets[r.Key][p.Code]
+			}
+			rows = append(rows, admindomain.RoleMatrixRow{
+				PermissionCode: p.Code, PermissionName: p.Name,
+				GroupKey: g.Key, GroupName: g.Name, Grants: grants,
+			})
+		}
+	}
+	return admindomain.RoleMatrix{Roles: roles, Groups: groups, Rows: rows}
+}
+
+func (s *AdminService) GetRoleGraph() admindomain.RoleGraph {
+	roles := s.ListRoles()
+	permSets := make(map[string]map[string]bool, len(roles))
+	for _, r := range roles {
+		m := make(map[string]bool, len(r.Permissions))
+		for _, p := range r.Permissions {
+			m[p] = true
+		}
+		permSets[r.Key] = m
+	}
+
+	var nodes []admindomain.RoleGraphNode
+	for _, r := range roles {
+		nodes = append(nodes, admindomain.RoleGraphNode{
+			Key: r.Key, Name: r.Name, Level: r.Level,
+			Scope: r.Scope, IsCustom: r.IsCustom, PermCount: len(r.Permissions),
+		})
+	}
+
+	var edges []admindomain.RoleGraphEdge
+	// BaseRole 继承边
+	for _, r := range roles {
+		if r.BaseRole != "" {
+			edges = append(edges, admindomain.RoleGraphEdge{Source: r.BaseRole, Target: r.Key, Relation: "inherits"})
+		}
+	}
+	// 权限包含关系边（A 是 B 的超集且 A.level > B.level）
+	for i, a := range roles {
+		for j, b := range roles {
+			if i == j || a.Level <= b.Level {
+				continue
+			}
+			if isSuperset(permSets[a.Key], permSets[b.Key]) && len(permSets[a.Key]) > len(permSets[b.Key]) {
+				// 只保留直接包含（排除传递关系）
+				direct := true
+				for k, c := range roles {
+					if k == i || k == j || c.Level <= b.Level || c.Level >= a.Level {
+						continue
+					}
+					if isSuperset(permSets[a.Key], permSets[c.Key]) && isSuperset(permSets[c.Key], permSets[b.Key]) {
+						direct = false
+						break
+					}
+				}
+				if direct {
+					edges = append(edges, admindomain.RoleGraphEdge{Source: a.Key, Target: b.Key, Relation: "includes"})
+				}
+			}
+		}
+	}
+	return admindomain.RoleGraph{Nodes: nodes, Edges: edges}
+}
+
+func isSuperset(a, b map[string]bool) bool {
+	for k := range b {
+		if !a[k] {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *AdminService) allPermissionCodes() map[string]bool {
+	groups := allPermissionGroups()
+	result := make(map[string]bool)
+	for _, g := range groups {
+		for _, p := range g.Permissions {
+			result[p.Code] = true
+		}
+	}
+	return result
 }

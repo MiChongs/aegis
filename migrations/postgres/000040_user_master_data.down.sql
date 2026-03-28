@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS deactivation_requests;
+DROP TABLE IF EXISTS user_appeals;
+DROP TABLE IF EXISTS identity_merges;
+DROP TABLE IF EXISTS user_lists;
+DROP TABLE IF EXISTS user_segment_members;
+DROP TABLE IF EXISTS user_segments;
+DROP TABLE IF EXISTS user_tag_assignments;
+DROP TABLE IF EXISTS user_tags;
+DROP TABLE IF EXISTS identity_user_mappings;
+DROP TABLE IF EXISTS global_identities;

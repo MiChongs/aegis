@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -79,7 +80,7 @@ SELECT id, appid, COALESCE(account, ''), COALESCE(password, ''), COALESCE(name, 
        COALESCE(two_factor_enabled, FALSE), COALESCE(two_factor_method, ''), two_factor_enabled_at, two_factor_disabled_at,
        COALESCE(passkey_enabled, FALSE), passkey_enabled_at, password_changed_at, password_expires_at,
        COALESCE(password_change_required, FALSE), COALESCE(password_strength_score, 0), created_at, updated_at
-FROM Users WHERE id = ? LIMIT 1`
+FROM ` + "`user`" + ` WHERE id = ? LIMIT 1`
 	row := r.db.QueryRowContext(ctx, query, userID)
 	return scanLegacyUser(row)
 }
@@ -95,7 +96,7 @@ SELECT id, appid, COALESCE(account, ''), COALESCE(password, ''), COALESCE(name, 
        COALESCE(two_factor_enabled, FALSE), COALESCE(two_factor_method, ''), two_factor_enabled_at, two_factor_disabled_at,
        COALESCE(passkey_enabled, FALSE), passkey_enabled_at, password_changed_at, password_expires_at,
        COALESCE(password_change_required, FALSE), COALESCE(password_strength_score, 0), created_at, updated_at
-FROM Users WHERE id > ? ORDER BY id ASC LIMIT ?`
+FROM ` + "`user`" + ` WHERE id > ? ORDER BY id ASC LIMIT ?`
 	rows, err := r.db.QueryContext(ctx, query, lastID, limit)
 	if err != nil {
 		return nil, err
@@ -253,9 +254,22 @@ func decodeJSONBytes(data []byte) (map[string]any, error) {
 	if len(data) == 0 {
 		return map[string]any{}, nil
 	}
-	result := map[string]any{}
+	var result any
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	switch value := result.(type) {
+	case nil:
+		return map[string]any{}, nil
+	case map[string]any:
+		return value, nil
+	case string:
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return map[string]any{}, nil
+		}
+		return decodeJSONBytes([]byte(value))
+	default:
+		return nil, fmt.Errorf("expected JSON object, got %T", value)
+	}
 }

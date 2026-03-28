@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg17
     container_name: aegis-postgres
     environment:
       POSTGRES_DB: aegis
@@ -10,12 +10,22 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegis -d aegis"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
 
   redis:
     image: redis:8-alpine
     container_name: aegis-redis
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
 
   nats:
     image: nats:2.11-alpine
@@ -26,14 +36,21 @@ services:
       - "8222:8222"
 
   temporal-postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: aegis-temporal-postgres
     environment:
       POSTGRES_DB: temporal
       POSTGRES_USER: temporal
       POSTGRES_PASSWORD: temporal
+    ports:
+      - "5433:5432"
     volumes:
       - temporal_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
 
   temporal:
     image: temporalio/auto-setup:latest
@@ -48,7 +65,22 @@ services:
     ports:
       - "7233:7233"
     depends_on:
-      - temporal-postgres
+      temporal-postgres:
+        condition: service_healthy
+
+  rdkit-captcha:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/rdkit-captcha/Dockerfile
+    container_name: aegis-rdkit-captcha
+    ports:
+      - "5050:5000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   server:
     build:
@@ -57,12 +89,20 @@ services:
     container_name: aegis-server
     env_file:
       - ../../.env.example
+    environment:
+      RDKIT_CAPTCHA_URL: http://rdkit-captcha:5000
     command: ["/usr/local/bin/aegis-server"]
     depends_on:
-      - postgres
-      - redis
-      - nats
-      - temporal
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      temporal:
+        condition: service_started
+      rdkit-captcha:
+        condition: service_started
     ports:
       - "8088:8088"
 

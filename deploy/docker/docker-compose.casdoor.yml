@@ -1,0 +1,35 @@
+services:
+  casdoor-db:
+    image: mysql:8.0
+    container_name: aegis-casdoor-db
+    environment:
+      MYSQL_ROOT_PASSWORD: casdoor123
+      MYSQL_DATABASE: casdoor
+      MYSQL_USER: casdoor
+      MYSQL_PASSWORD: casdoor123
+    ports:
+      - "3307:3306"
+    volumes:
+      - casdoor_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pcasdoor123"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  casdoor:
+    image: casbin/casdoor:latest
+    container_name: aegis-casdoor
+    environment:
+      RUNNING_IN_DOCKER: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      casdoor-db:
+        condition: service_healthy
+    volumes:
+      - ./casdoor/app.conf:/conf/app.conf
+    restart: unless-stopped
+
+volumes:
+  casdoor_db_data:

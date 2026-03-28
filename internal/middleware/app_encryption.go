@@ -21,7 +21,6 @@ import (
 	"aegis/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/secure-io/sio-go"
 )
 
 const (
@@ -65,23 +64,38 @@ func AppEncryption(appService appEncryptionAppService) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		if strings.TrimSpace(policy.Secret) == "" {
-			rejectPlaintextRequest(c)
-			return
-		}
 		if !isEncryptedRequest(c.Request) {
 			rejectPlaintextRequest(c)
 			return
 		}
 
-		cryptoContext, err := newAppEncryptionContext(policy.Secret, appID, c.Request.Method, c.Request.URL.Path)
+		runtimeConfig := loadAppEncryptionRuntimeConfig(appItem)
+		algorithm := normalizeAppEncryptionAlgorithm(c.GetHeader(appEncryptionHeaderAlgorithm))
+		if !IsSupportedAlgorithm(algorithm) {
+			rejectEncryptedRequest(c, 40062, "不支持的加密算法")
+			return
+		}
+		if !runtimeConfig.allowsAlgorithm(algorithm) {
+			rejectEncryptedRequest(c, 40063, "当前应用不允许使用该加密算法")
+			return
+		}
+
+		cryptoContext, err := newAppEncryptionContext(
+			policy.Secret,
+			runtimeConfig,
+			appID,
+			c.Request.Method,
+			c.Request.URL.Path,
+			algorithm,
+			c.GetHeader(appEncryptionHeaderKey),
+		)
 		if err != nil {
-			rejectPlaintextRequest(c)
+			rejectEncryptedRequest(c, 40064, "加密请求无效")
 			return
 		}
 
 		if err := decryptIncomingRequest(c, cryptoContext); err != nil {
-			rejectPlaintextRequest(c)
+			rejectEncryptedRequest(c, 40064, "加密请求无效")
 			return
 		}
 
@@ -221,29 +235,154 @@ func isEncryptedRequest(req *http.Request) bool {
 }
 
 type appEncryptionContext struct {
-	stream *sio.Stream
-	appID  int64
-	method string
-	path   string
+	stream    CryptoStream
+	appID     int64
+	method    string
+	path      string
+	algorithm string
 }
 
-func newAppEncryptionContext(secret string, appID int64, method string, path string) (*appEncryptionContext, error) {
-	key := deriveAppEncryptionKey(secret, appID)
-	stream, err := sio.XChaCha20Poly1305.Stream(key)
+type appEncryptionRuntimeConfig struct {
+	allowedAlgorithms []string
+	rsaPrivateKey     string
+	ecdhPrivateKey    string
+}
+
+func loadAppEncryptionRuntimeConfig(app *appdomain.App) appEncryptionRuntimeConfig {
+	config := appEncryptionRuntimeConfig{
+		allowedAlgorithms: []string{AlgoXChaCha20, AlgoAES256GCM},
+	}
+	if app == nil || app.Settings == nil {
+		return config
+	}
+
+	rawConfig, _ := app.Settings["transportEncryption"].(map[string]any)
+	if rawConfig == nil {
+		return config
+	}
+
+	if rawAllowed, ok := rawConfig["allowedAlgorithms"].([]any); ok {
+		allowed := make([]string, 0, len(rawAllowed))
+		for _, item := range rawAllowed {
+			value, ok := item.(string)
+			if !ok {
+				continue
+			}
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			allowed = append(allowed, value)
+		}
+		if len(allowed) > 0 {
+			config.allowedAlgorithms = allowed
+		}
+	}
+	if value, ok := rawConfig["rsaPrivateKey"].(string); ok {
+		config.rsaPrivateKey = strings.TrimSpace(value)
+	}
+	if value, ok := rawConfig["ecdhPrivateKey"].(string); ok {
+		config.ecdhPrivateKey = strings.TrimSpace(value)
+	}
+	return config
+}
+
+func (c appEncryptionRuntimeConfig) allowsAlgorithm(algorithm string) bool {
+	algorithm = normalizeAppEncryptionAlgorithm(algorithm)
+	for _, item := range c.allowedAlgorithms {
+		if strings.TrimSpace(item) == algorithm {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeAppEncryptionAlgorithm(algorithm string) string {
+	algorithm = strings.TrimSpace(algorithm)
+	if algorithm == "" {
+		return appEncryptionAlgorithm
+	}
+	return algorithm
+}
+
+func newAppEncryptionContext(secret string, runtimeConfig appEncryptionRuntimeConfig, appID int64, method string, path string, algorithm string, keyMaterial string) (*appEncryptionContext, error) {
+	algorithm = normalizeAppEncryptionAlgorithm(algorithm)
+	key, err := resolveAppEncryptionKey(secret, runtimeConfig, appID, algorithm, keyMaterial)
+	if err != nil {
+		return nil, err
+	}
+
+	symAlgo := algorithm
+	if IsHybridAlgorithm(algorithm) {
+		symAlgo = HybridSymmetricAlgorithm(algorithm)
+	}
+	stream, err := NewCryptoStream(symAlgo, key)
 	if err != nil {
 		return nil, err
 	}
 	return &appEncryptionContext{
-		stream: stream,
-		appID:  appID,
-		method: strings.ToUpper(method),
-		path:   path,
+		stream:    stream,
+		appID:     appID,
+		method:    strings.ToUpper(method),
+		path:      path,
+		algorithm: algorithm,
 	}, nil
+}
+
+func resolveAppEncryptionKey(secret string, runtimeConfig appEncryptionRuntimeConfig, appID int64, algorithm string, keyMaterial string) ([]byte, error) {
+	if !IsHybridAlgorithm(algorithm) {
+		if strings.TrimSpace(secret) == "" {
+			return nil, fmt.Errorf("missing shared secret")
+		}
+		return deriveAppEncryptionKey(secret, appID), nil
+	}
+
+	encodedKey := strings.TrimSpace(keyMaterial)
+	if encodedKey == "" {
+		return nil, fmt.Errorf("missing key material")
+	}
+	keyPayload, err := decodeTransportKeyMaterial(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var sessionKey []byte
+	switch algorithm {
+	case AlgoHybridRSAXChaCha, AlgoHybridRSAAES256:
+		if runtimeConfig.rsaPrivateKey == "" {
+			return nil, fmt.Errorf("missing rsa private key")
+		}
+		sessionKey, err = RSADecryptSessionKey(runtimeConfig.rsaPrivateKey, keyPayload)
+	case AlgoHybridECDHXChaCha, AlgoHybridECDHAES256:
+		if runtimeConfig.ecdhPrivateKey == "" {
+			return nil, fmt.Errorf("missing ecdh private key")
+		}
+		sessionKey, err = ECDHDeriveSessionKey(runtimeConfig.ecdhPrivateKey, keyPayload)
+	default:
+		return nil, fmt.Errorf("unsupported hybrid algorithm")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(sessionKey) == 0 {
+		return nil, fmt.Errorf("empty session key")
+	}
+	return normalizeAppEncryptionKey(sessionKey), nil
 }
 
 func deriveAppEncryptionKey(secret string, appID int64) []byte {
 	material := decodeSecretMaterial(secret)
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%x", appID, material)))
+	return sum[:]
+}
+
+func normalizeAppEncryptionKey(key []byte) []byte {
+	if len(key) == sha256.Size {
+		result := make([]byte, len(key))
+		copy(result, key)
+		return result
+	}
+	sum := sha256.Sum256(key)
 	return sum[:]
 }
 
@@ -267,6 +406,28 @@ func decodeSecretMaterial(secret string) []byte {
 		return decoded
 	}
 	return []byte(trimmed)
+}
+
+func decodeTransportKeyMaterial(value string) ([]byte, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, fmt.Errorf("empty key material")
+	}
+	decoders := []*base64.Encoding{
+		base64.RawURLEncoding,
+		base64.URLEncoding,
+		base64.RawStdEncoding,
+		base64.StdEncoding,
+	}
+	for _, decoder := range decoders {
+		if decoded, err := decoder.DecodeString(trimmed); err == nil && len(decoded) > 0 {
+			return decoded, nil
+		}
+	}
+	if decoded, err := hex.DecodeString(trimmed); err == nil && len(decoded) > 0 {
+		return decoded, nil
+	}
+	return nil, fmt.Errorf("invalid key material")
 }
 
 func decryptIncomingRequest(c *gin.Context, cryptoContext *appEncryptionContext) error {
@@ -361,7 +522,7 @@ func decodeNonce(value string, expectedSize int) ([]byte, error) {
 	return nonce, nil
 }
 
-func decryptBytes(stream *sio.Stream, ciphertext []byte, nonce []byte, associatedData []byte) ([]byte, error) {
+func decryptBytes(stream CryptoStream, ciphertext []byte, nonce []byte, associatedData []byte) ([]byte, error) {
 	var plaintext bytes.Buffer
 	writer := stream.DecryptWriter(&plaintext, nonce, associatedData)
 	if _, err := writer.Write(ciphertext); err != nil {
@@ -374,7 +535,7 @@ func decryptBytes(stream *sio.Stream, ciphertext []byte, nonce []byte, associate
 	return plaintext.Bytes(), nil
 }
 
-func encryptBytes(stream *sio.Stream, plaintext []byte, nonce []byte, associatedData []byte) ([]byte, error) {
+func encryptBytes(stream CryptoStream, plaintext []byte, nonce []byte, associatedData []byte) ([]byte, error) {
 	var ciphertext bytes.Buffer
 	writer := stream.EncryptWriter(&ciphertext, nonce, associatedData)
 	if _, err := writer.Write(plaintext); err != nil {
@@ -483,7 +644,7 @@ func (w *appEncryptionResponseWriter) FlushEncrypted(cryptoContext *appEncryptio
 	}
 	underlying.Header().Set("Content-Type", "application/octet-stream")
 	underlying.Header().Set(appEncryptionHeaderEnabled, "1")
-	underlying.Header().Set(appEncryptionHeaderAlgorithm, appEncryptionAlgorithm)
+	underlying.Header().Set(appEncryptionHeaderAlgorithm, cryptoContext.algorithm)
 	underlying.Header().Set(appEncryptionHeaderNonce, base64.RawURLEncoding.EncodeToString(nonce))
 	underlying.Header().Set("Cache-Control", "no-store")
 	underlying.WriteHeader(w.status)
@@ -507,6 +668,11 @@ func resetHeaders(header http.Header) {
 
 func rejectPlaintextRequest(c *gin.Context) {
 	response.Error(c, http.StatusBadRequest, 40061, appEncryptionPlaintextMessage)
+	c.Abort()
+}
+
+func rejectEncryptedRequest(c *gin.Context, code int, message string) {
+	response.Error(c, http.StatusBadRequest, code, message)
 	c.Abort()
 }
 
