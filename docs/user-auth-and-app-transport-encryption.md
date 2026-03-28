@@ -1314,6 +1314,747 @@ func main() {
 }
 ```
 
+## 7.13.3 Android 依赖库
+
+下面给的是能直接跑通本文示例的最小依赖组合。
+
+- 只接 `AES-256-GCM`、`hybrid-rsa-aes256gcm`、`hybrid-ecdh-aes256gcm`：只需要 Android/JCA，`OkHttp` 只是本文发送请求示例使用
+- 需要 `XChaCha20Poly1305`、`hybrid-rsa-xchacha20`、`hybrid-ecdh-xchacha20`：增加 `lazysodium-android` 和 `jna`
+
+Gradle 示例：
+
+```kotlin
+dependencies {
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.goterl:lazysodium-android:5.2.0@aar")
+    implementation("net.java.dev.jna:jna:5.17.0@aar")
+}
+```
+
+说明：
+
+- `lazysodium-android` 官方 README 当前要求同时引入 `jna`
+- `lazysodium-android` 官方 README 当前注明最低 `minSdk` 为 `24`
+- `lazysodium-android` 当前 Maven Central 版本是 `5.2.0`
+- `jna` 官方当前最新版本是 `5.18.1`，但 `lazysodium-android` README 仍明确示例 `5.17.0@aar`，本文先跟随上游示例，避免 Android 打包兼容性偏差
+- 如果你的 App 不需要 `XChaCha20Poly1305`，可以删掉 `lazysodium-android` 与 `jna`
+- 如果项目已统一使用其他 `OkHttp` 版本，继续沿用现有版本即可
+
+## 7.13.4 Android Kotlin 共享密钥示例
+
+Android 原生标准库直接接 `AES-256-GCM` 最稳妥。
+
+```kotlin
+import android.util.Base64
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+
+object AegisAndroidCrypto {
+    private fun tryDecode(secret: String, flags: Int): ByteArray? {
+        return try {
+            Base64.decode(secret, flags).takeIf { it.isNotEmpty() }
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }
+
+    private fun decodeSecret(secret: String): ByteArray {
+        return tryDecode(secret, Base64.URL_SAFE or Base64.NO_WRAP) ?:
+            tryDecode(secret, Base64.NO_WRAP) ?:
+            try {
+                hexToBytes(secret).takeIf { it.isNotEmpty() }
+            } catch (_: IllegalArgumentException) {
+                null
+            } ?:
+            secret.toByteArray(StandardCharsets.UTF_8)
+    }
+
+    private fun hexToBytes(hex: String): ByteArray {
+        require(hex.length % 2 == 0) { "invalid hex" }
+        return ByteArray(hex.length / 2) { i ->
+            hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        }
+    }
+
+    private fun bytesToHex(bytes: ByteArray): String =
+        bytes.joinToString("") { "%02x".format(it) }
+
+    fun deriveKey(appId: Long, secret: String): ByteArray {
+        val material = decodeSecret(secret)
+        val source = "$appId:${bytesToHex(material)}".toByteArray(StandardCharsets.UTF_8)
+        return MessageDigest.getInstance("SHA-256").digest(source)
+    }
+
+    fun aad(appId: Long, method: String, path: String, scope: String): ByteArray =
+        "appid=$appId|method=${method.uppercase()}|path=$path|scope=$scope"
+            .toByteArray(StandardCharsets.UTF_8)
+
+    data class EncryptedRequest(
+        val body: ByteArray,
+        val nonceBase64Url: String,
+        val headers: Map<String, String>
+    )
+
+    fun encryptJsonBody(appId: Long, secret: String, method: String, path: String, json: String): EncryptedRequest {
+        val key = deriveKey(appId, secret)
+        val nonce = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
+        cipher.updateAAD(aad(appId, method, path, "request-body"))
+        val ciphertext = cipher.doFinal(json.toByteArray(StandardCharsets.UTF_8))
+
+        return EncryptedRequest(
+            body = ciphertext,
+            nonceBase64Url = Base64.encodeToString(nonce, Base64.URL_SAFE or Base64.NO_WRAP),
+            headers = mapOf(
+                "Content-Type" to "application/octet-stream",
+                "X-Aegis-Encrypted" to "1",
+                "X-Aegis-Appid" to appId.toString(),
+                "X-Aegis-Algorithm" to "AES-256-GCM",
+                "X-Aegis-Nonce" to Base64.encodeToString(nonce, Base64.URL_SAFE or Base64.NO_WRAP),
+                "X-Aegis-Plain-Content-Type" to "application/json"
+            )
+        )
+    }
+}
+
+// 使用示例
+val request = AegisAndroidCrypto.encryptJsonBody(
+    appId = 10000,
+    secret = "transport-secret",
+    method = "POST",
+    path = "/api/auth/login/password",
+    json = """{"appid":10000,"account":"demo","password":"P@ssw0rd!"}"""
+)
+```
+
+如果你用 `OkHttp` 发送，可直接把 `request.body` 作为二进制请求体，`request.headers` 原样写入请求头。
+
+## 7.13.5 Android Java 共享密钥示例
+
+```java
+import android.util.Base64;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
+public final class AegisAndroidCryptoJava {
+    public static final class EncryptedRequest {
+        public final byte[] body;
+        public final String nonceBase64Url;
+        public final Map<String, String> headers;
+
+        public EncryptedRequest(byte[] body, String nonceBase64Url, Map<String, String> headers) {
+            this.body = body;
+            this.nonceBase64Url = nonceBase64Url;
+            this.headers = headers;
+        }
+    }
+
+    private static byte[] tryBase64Decode(String secret, int flags) {
+        try {
+            byte[] decoded = Base64.decode(secret, flags);
+            return decoded.length > 0 ? decoded : null;
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    public static byte[] decodeSecret(String secret) {
+        byte[] decoded = tryBase64Decode(secret, Base64.URL_SAFE | Base64.NO_WRAP);
+        if (decoded != null) return decoded;
+
+        decoded = tryBase64Decode(secret, Base64.NO_WRAP);
+        if (decoded != null) return decoded;
+
+        try {
+            return hexToBytes(secret);
+        } catch (IllegalArgumentException ignore) {
+            return secret.getBytes(StandardCharsets.UTF_8);
+        }
+    }
+
+    public static byte[] deriveKey(long appId, String secret) throws Exception {
+        byte[] material = decodeSecret(secret);
+        String source = appId + ":" + bytesToHex(material);
+        return MessageDigest.getInstance("SHA-256")
+            .digest(source.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static byte[] aad(long appId, String method, String path, String scope) {
+        String value = "appid=" + appId
+            + "|method=" + method.toUpperCase()
+            + "|path=" + path
+            + "|scope=" + scope;
+        return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    public static EncryptedRequest encryptJsonBody(long appId, String secret, String method, String path, String json) throws Exception {
+        byte[] key = deriveKey(appId, secret);
+        byte[] nonce = new byte[12];
+        new SecureRandom().nextBytes(nonce);
+
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, nonce));
+        cipher.updateAAD(aad(appId, method, path, "request-body"));
+        byte[] ciphertext = cipher.doFinal(json.getBytes(StandardCharsets.UTF_8));
+
+        String nonceBase64Url = Base64.encodeToString(nonce, Base64.URL_SAFE | Base64.NO_WRAP);
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Content-Type", "application/octet-stream");
+        headers.put("X-Aegis-Encrypted", "1");
+        headers.put("X-Aegis-Appid", String.valueOf(appId));
+        headers.put("X-Aegis-Algorithm", "AES-256-GCM");
+        headers.put("X-Aegis-Nonce", nonceBase64Url);
+        headers.put("X-Aegis-Plain-Content-Type", "application/json");
+
+        return new EncryptedRequest(ciphertext, nonceBase64Url, headers);
+    }
+
+    private static String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
+    private static byte[] hexToBytes(String hex) {
+        if (hex.length() % 2 != 0) {
+            throw new IllegalArgumentException("invalid hex");
+        }
+        byte[] result = new byte[hex.length() / 2];
+        for (int i = 0; i < result.length; i++) {
+            int index = i * 2;
+            result[i] = (byte) Integer.parseInt(hex.substring(index, index + 2), 16);
+        }
+        return result;
+    }
+}
+
+// 使用示例
+// EncryptedRequest req = AegisAndroidCryptoJava.encryptJsonBody(
+//     10000L,
+//     "transport-secret",
+//     "POST",
+//     "/api/auth/login/password",
+//     "{\"appid\":10000,\"account\":\"demo\",\"password\":\"P@ssw0rd!\"}"
+// );
+```
+
+Android 端解密响应时，规则与请求侧一致：
+
+- 使用同一个 `appid`
+- 使用真实 HTTP 方法和路径
+- AAD 中的 `scope` 改为 `response-body`
+- 非 hybrid 模式继续使用 `deriveKey(appId, secret)` 的结果
+- hybrid 模式则改用本次请求缓存下来的会话密钥
+
+## 7.13.6 Android Kotlin 混合加密完整示例
+
+下面示例补齐 Android 端混合加密闭环：
+
+- `hybrid-rsa-xchacha20`
+- `hybrid-ecdh-aes256gcm`
+
+其中：
+
+- RSA/ECDH 密钥协商走 Android/JCA
+- `XChaCha20Poly1305` 走 `Lazysodium Android`
+- `P-256` 对应 Go 服务端的 `ecdh.P256()`
+- 响应解密继续复用本次请求生成出来的 `sessionKey`
+
+```kotlin
+import android.util.Base64
+import com.goterl.lazysodium.LazySodiumAndroid
+import com.goterl.lazysodium.SodiumAndroid
+import java.nio.charset.StandardCharsets
+import java.security.KeyFactory
+import java.security.KeyPairGenerator
+import java.security.MessageDigest
+import java.security.PublicKey
+import java.security.SecureRandom
+import java.security.spec.ECGenParameterSpec
+import java.security.spec.X509EncodedKeySpec
+import javax.crypto.Cipher
+import javax.crypto.KeyAgreement
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+
+object AegisAndroidHybridKotlin {
+    private val lazySodium by lazy { LazySodiumAndroid(SodiumAndroid()) }
+
+    data class HybridRequest(
+        val body: ByteArray,
+        val sessionKey: ByteArray,
+        val headers: Map<String, String>
+    )
+
+    private fun aad(appId: Long, method: String, path: String, scope: String): ByteArray =
+        "appid=$appId|method=${method.uppercase()}|path=$path|scope=$scope"
+            .toByteArray(StandardCharsets.UTF_8)
+
+    private fun rsaPublicKeyFromPem(pem: String): PublicKey {
+        val clean = pem
+            .replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "")
+            .replace("\\s".toRegex(), "")
+        val der = Base64.decode(clean, Base64.DEFAULT)
+        return KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(der))
+    }
+
+    private fun ecdhPublicKeyFromPem(pem: String): PublicKey {
+        val clean = pem
+            .replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "")
+            .replace("\\s".toRegex(), "")
+        val der = Base64.decode(clean, Base64.DEFAULT)
+        return KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(der))
+    }
+
+    private fun encryptAesGcm(key: ByteArray, nonce: ByteArray, aad: ByteArray, plaintext: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
+        cipher.updateAAD(aad)
+        return cipher.doFinal(plaintext)
+    }
+
+    private fun decryptAesGcm(key: ByteArray, nonce: ByteArray, aad: ByteArray, ciphertext: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
+        cipher.updateAAD(aad)
+        return cipher.doFinal(ciphertext)
+    }
+
+    private fun encryptXChaCha20(key: ByteArray, nonce: ByteArray, aad: ByteArray, plaintext: ByteArray): ByteArray {
+        val cipher = ByteArray(plaintext.size + 16)
+        val cipherLen = longArrayOf(0L)
+        val ok = lazySodium.cryptoAeadXChaCha20Poly1305IetfEncrypt(
+            cipher,
+            cipherLen,
+            plaintext,
+            plaintext.size.toLong(),
+            aad,
+            aad.size.toLong(),
+            null,
+            nonce,
+            key
+        )
+        require(ok) { "xchacha20 encrypt failed" }
+        return cipher.copyOf(cipherLen[0].toInt())
+    }
+
+    private fun decryptXChaCha20(key: ByteArray, nonce: ByteArray, aad: ByteArray, ciphertext: ByteArray): ByteArray {
+        val plain = ByteArray(ciphertext.size)
+        val plainLen = longArrayOf(0L)
+        val ok = lazySodium.cryptoAeadXChaCha20Poly1305IetfDecrypt(
+            plain,
+            plainLen,
+            null,
+            ciphertext,
+            ciphertext.size.toLong(),
+            aad,
+            aad.size.toLong(),
+            nonce,
+            key
+        )
+        require(ok) { "xchacha20 decrypt failed" }
+        return plain.copyOf(plainLen[0].toInt())
+    }
+
+    fun encryptHybridRsaXChaCha20(
+        appId: Long,
+        method: String,
+        path: String,
+        payloadJson: String,
+        rsaPublicKeyPem: String
+    ): HybridRequest {
+        val sessionKey = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val nonce = ByteArray(24).also { SecureRandom().nextBytes(it) }
+        val encryptedBody = encryptXChaCha20(
+            key = sessionKey,
+            nonce = nonce,
+            aad = aad(appId, method, path, "request-body"),
+            plaintext = payloadJson.toByteArray(StandardCharsets.UTF_8)
+        )
+
+        val wrappedKey = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding").run {
+            init(Cipher.ENCRYPT_MODE, rsaPublicKeyFromPem(rsaPublicKeyPem))
+            doFinal(sessionKey)
+        }
+
+        return HybridRequest(
+            body = encryptedBody,
+            sessionKey = sessionKey,
+            headers = mapOf(
+                "Content-Type" to "application/octet-stream",
+                "X-Aegis-Encrypted" to "1",
+                "X-Aegis-Appid" to appId.toString(),
+                "X-Aegis-Algorithm" to "hybrid-rsa-xchacha20",
+                "X-Aegis-Nonce" to Base64.encodeToString(nonce, Base64.URL_SAFE or Base64.NO_WRAP),
+                "X-Aegis-Key" to Base64.encodeToString(wrappedKey, Base64.URL_SAFE or Base64.NO_WRAP),
+                "X-Aegis-Plain-Content-Type" to "application/json"
+            )
+        )
+    }
+
+    fun encryptHybridEcdhAes256Gcm(
+        appId: Long,
+        method: String,
+        path: String,
+        payloadJson: String,
+        serverEcdhPublicKeyPem: String
+    ): HybridRequest {
+        val keyPair = KeyPairGenerator.getInstance("EC").apply {
+            initialize(ECGenParameterSpec("secp256r1"))
+        }.generateKeyPair()
+
+        val agreement = KeyAgreement.getInstance("ECDH")
+        agreement.init(keyPair.private)
+        agreement.doPhase(ecdhPublicKeyFromPem(serverEcdhPublicKeyPem), true)
+        val shared = agreement.generateSecret()
+        val sessionKey = MessageDigest.getInstance("SHA-256").digest(shared)
+
+        val nonce = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val encryptedBody = encryptAesGcm(
+            key = sessionKey,
+            nonce = nonce,
+            aad = aad(appId, method, path, "request-body"),
+            plaintext = payloadJson.toByteArray(StandardCharsets.UTF_8)
+        )
+
+        return HybridRequest(
+            body = encryptedBody,
+            sessionKey = sessionKey,
+            headers = mapOf(
+                "Content-Type" to "application/octet-stream",
+                "X-Aegis-Encrypted" to "1",
+                "X-Aegis-Appid" to appId.toString(),
+                "X-Aegis-Algorithm" to "hybrid-ecdh-aes256gcm",
+                "X-Aegis-Nonce" to Base64.encodeToString(nonce, Base64.URL_SAFE or Base64.NO_WRAP),
+                "X-Aegis-Key" to Base64.encodeToString(keyPair.public.encoded, Base64.URL_SAFE or Base64.NO_WRAP),
+                "X-Aegis-Plain-Content-Type" to "application/json"
+            )
+        )
+    }
+
+    fun decryptHybridResponseXChaCha20(
+        appId: Long,
+        method: String,
+        path: String,
+        sessionKey: ByteArray,
+        nonceBase64Url: String,
+        ciphertext: ByteArray
+    ): String {
+        val nonce = Base64.decode(nonceBase64Url, Base64.URL_SAFE or Base64.NO_WRAP)
+        val plaintext = decryptXChaCha20(
+            key = sessionKey,
+            nonce = nonce,
+            aad = aad(appId, method, path, "response-body"),
+            ciphertext = ciphertext
+        )
+        return String(plaintext, StandardCharsets.UTF_8)
+    }
+
+    fun decryptHybridResponseAes256Gcm(
+        appId: Long,
+        method: String,
+        path: String,
+        sessionKey: ByteArray,
+        nonceBase64Url: String,
+        ciphertext: ByteArray
+    ): String {
+        val nonce = Base64.decode(nonceBase64Url, Base64.URL_SAFE or Base64.NO_WRAP)
+        val plaintext = decryptAesGcm(
+            key = sessionKey,
+            nonce = nonce,
+            aad = aad(appId, method, path, "response-body"),
+            ciphertext = ciphertext
+        )
+        return String(plaintext, StandardCharsets.UTF_8)
+    }
+}
+```
+
+调用示例：
+
+```kotlin
+val rsaReq = AegisAndroidHybridKotlin.encryptHybridRsaXChaCha20(
+    appId = 10000,
+    method = "POST",
+    path = "/api/auth/login/password",
+    payloadJson = """{"appid":10000,"account":"demo","password":"P@ssw0rd!"}""",
+    rsaPublicKeyPem = serverRsaPublicKeyPem
+)
+
+val ecdhReq = AegisAndroidHybridKotlin.encryptHybridEcdhAes256Gcm(
+    appId = 10000,
+    method = "POST",
+    path = "/api/user/profile",
+    payloadJson = """{"nickname":"new-name"}""",
+    serverEcdhPublicKeyPem = serverEcdhPublicKeyPem
+)
+
+val decryptedProfile = AegisAndroidHybridKotlin.decryptHybridResponseAes256Gcm(
+    appId = 10000,
+    method = "POST",
+    path = "/api/user/profile",
+    sessionKey = ecdhReq.sessionKey,
+    nonceBase64Url = profileResponse.header("X-Aegis-Nonce").orEmpty(),
+    ciphertext = profileResponse.body!!.bytes()
+)
+
+val decryptedLogin = AegisAndroidHybridKotlin.decryptHybridResponseXChaCha20(
+    appId = 10000,
+    method = "POST",
+    path = "/api/auth/login/password",
+    sessionKey = rsaReq.sessionKey,
+    nonceBase64Url = loginResponse.header("X-Aegis-Nonce").orEmpty(),
+    ciphertext = loginResponse.body!!.bytes()
+)
+```
+
+## 7.13.7 Android Java 混合加密完整示例
+
+```java
+import android.util.Base64;
+
+import com.goterl.lazysodium.LazySodiumAndroid;
+import com.goterl.lazysodium.SodiumAndroid;
+
+import java.nio.charset.StandardCharsets;
+import java.security.KeyFactory;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.MessageDigest;
+import java.security.PublicKey;
+import java.security.SecureRandom;
+import java.security.spec.ECGenParameterSpec;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyAgreement;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
+public final class AegisAndroidHybridJava {
+    private static final LazySodiumAndroid LAZY_SODIUM = new LazySodiumAndroid(new SodiumAndroid());
+
+    public static final class HybridRequest {
+        public final byte[] body;
+        public final byte[] sessionKey;
+        public final Map<String, String> headers;
+
+        public HybridRequest(byte[] body, byte[] sessionKey, Map<String, String> headers) {
+            this.body = body;
+            this.sessionKey = sessionKey;
+            this.headers = headers;
+        }
+    }
+
+    private static byte[] aad(long appId, String method, String path, String scope) {
+        String value = "appid=" + appId
+            + "|method=" + method.toUpperCase()
+            + "|path=" + path
+            + "|scope=" + scope;
+        return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static PublicKey readRsaPublicKey(String pem) throws Exception {
+        String clean = pem
+            .replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "")
+            .replaceAll("\\s", "");
+        byte[] der = Base64.decode(clean, Base64.DEFAULT);
+        return KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(der));
+    }
+
+    private static PublicKey readEcPublicKey(String pem) throws Exception {
+        String clean = pem
+            .replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "")
+            .replaceAll("\\s", "");
+        byte[] der = Base64.decode(clean, Base64.DEFAULT);
+        return KeyFactory.getInstance("EC").generatePublic(new X509EncodedKeySpec(der));
+    }
+
+    private static byte[] encryptAesGcm(byte[] key, byte[] nonce, byte[] aad, byte[] plain) throws Exception {
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, nonce));
+        cipher.updateAAD(aad);
+        return cipher.doFinal(plain);
+    }
+
+    private static byte[] decryptAesGcm(byte[] key, byte[] nonce, byte[] aad, byte[] cipherBytes) throws Exception {
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, nonce));
+        cipher.updateAAD(aad);
+        return cipher.doFinal(cipherBytes);
+    }
+
+    private static byte[] encryptXChaCha20(byte[] key, byte[] nonce, byte[] aad, byte[] plain) {
+        byte[] out = new byte[plain.length + 16];
+        long[] outLen = new long[1];
+        boolean ok = LAZY_SODIUM.cryptoAeadXChaCha20Poly1305IetfEncrypt(
+            out,
+            outLen,
+            plain,
+            (long) plain.length,
+            aad,
+            (long) aad.length,
+            null,
+            nonce,
+            key
+        );
+        if (!ok) {
+            throw new IllegalStateException("xchacha20 encrypt failed");
+        }
+        return Arrays.copyOf(out, (int) outLen[0]);
+    }
+
+    private static byte[] decryptXChaCha20(byte[] key, byte[] nonce, byte[] aad, byte[] cipherBytes) {
+        byte[] out = new byte[cipherBytes.length];
+        long[] outLen = new long[1];
+        boolean ok = LAZY_SODIUM.cryptoAeadXChaCha20Poly1305IetfDecrypt(
+            out,
+            outLen,
+            null,
+            cipherBytes,
+            (long) cipherBytes.length,
+            aad,
+            (long) aad.length,
+            nonce,
+            key
+        );
+        if (!ok) {
+            throw new IllegalStateException("xchacha20 decrypt failed");
+        }
+        return Arrays.copyOf(out, (int) outLen[0]);
+    }
+
+    public static HybridRequest encryptHybridRsaXChaCha20(long appId, String method, String path, String payloadJson, String rsaPublicKeyPem) throws Exception {
+        byte[] sessionKey = new byte[32];
+        byte[] nonce = new byte[24];
+        new SecureRandom().nextBytes(sessionKey);
+        new SecureRandom().nextBytes(nonce);
+
+        byte[] body = encryptXChaCha20(
+            sessionKey,
+            nonce,
+            aad(appId, method, path, "request-body"),
+            payloadJson.getBytes(StandardCharsets.UTF_8)
+        );
+
+        Cipher wrapCipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
+        wrapCipher.init(Cipher.ENCRYPT_MODE, readRsaPublicKey(rsaPublicKeyPem));
+        byte[] wrappedKey = wrapCipher.doFinal(sessionKey);
+
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Content-Type", "application/octet-stream");
+        headers.put("X-Aegis-Encrypted", "1");
+        headers.put("X-Aegis-Appid", String.valueOf(appId));
+        headers.put("X-Aegis-Algorithm", "hybrid-rsa-xchacha20");
+        headers.put("X-Aegis-Nonce", Base64.encodeToString(nonce, Base64.URL_SAFE | Base64.NO_WRAP));
+        headers.put("X-Aegis-Key", Base64.encodeToString(wrappedKey, Base64.URL_SAFE | Base64.NO_WRAP));
+        headers.put("X-Aegis-Plain-Content-Type", "application/json");
+        return new HybridRequest(body, sessionKey, headers);
+    }
+
+    public static HybridRequest encryptHybridEcdhAes256Gcm(long appId, String method, String path, String payloadJson, String serverEcdhPublicKeyPem) throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
+        generator.initialize(new ECGenParameterSpec("secp256r1"));
+        KeyPair clientKeyPair = generator.generateKeyPair();
+
+        KeyAgreement agreement = KeyAgreement.getInstance("ECDH");
+        agreement.init(clientKeyPair.getPrivate());
+        agreement.doPhase(readEcPublicKey(serverEcdhPublicKeyPem), true);
+        byte[] shared = agreement.generateSecret();
+        byte[] sessionKey = MessageDigest.getInstance("SHA-256").digest(shared);
+
+        byte[] nonce = new byte[12];
+        new SecureRandom().nextBytes(nonce);
+        byte[] body = encryptAesGcm(
+            sessionKey,
+            nonce,
+            aad(appId, method, path, "request-body"),
+            payloadJson.getBytes(StandardCharsets.UTF_8)
+        );
+
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Content-Type", "application/octet-stream");
+        headers.put("X-Aegis-Encrypted", "1");
+        headers.put("X-Aegis-Appid", String.valueOf(appId));
+        headers.put("X-Aegis-Algorithm", "hybrid-ecdh-aes256gcm");
+        headers.put("X-Aegis-Nonce", Base64.encodeToString(nonce, Base64.URL_SAFE | Base64.NO_WRAP));
+        headers.put("X-Aegis-Key", Base64.encodeToString(clientKeyPair.getPublic().getEncoded(), Base64.URL_SAFE | Base64.NO_WRAP));
+        headers.put("X-Aegis-Plain-Content-Type", "application/json");
+        return new HybridRequest(body, sessionKey, headers);
+    }
+
+    public static String decryptHybridResponseXChaCha20(long appId, String method, String path, byte[] sessionKey, String nonceBase64Url, byte[] ciphertext) {
+        byte[] nonce = Base64.decode(nonceBase64Url, Base64.URL_SAFE | Base64.NO_WRAP);
+        byte[] plain = decryptXChaCha20(
+            sessionKey,
+            nonce,
+            aad(appId, method, path, "response-body"),
+            ciphertext
+        );
+        return new String(plain, StandardCharsets.UTF_8);
+    }
+
+    public static String decryptHybridResponseAes256Gcm(long appId, String method, String path, byte[] sessionKey, String nonceBase64Url, byte[] ciphertext) throws Exception {
+        byte[] nonce = Base64.decode(nonceBase64Url, Base64.URL_SAFE | Base64.NO_WRAP);
+        byte[] plain = decryptAesGcm(
+            sessionKey,
+            nonce,
+            aad(appId, method, path, "response-body"),
+            ciphertext
+        );
+        return new String(plain, StandardCharsets.UTF_8);
+    }
+}
+```
+
+Java 调用示例：
+
+```java
+HybridRequest rsaReq = AegisAndroidHybridJava.encryptHybridRsaXChaCha20(
+    10000L,
+    "POST",
+    "/api/auth/login/password",
+    "{\"appid\":10000,\"account\":\"demo\",\"password\":\"P@ssw0rd!\"}",
+    serverRsaPublicKeyPem
+);
+
+String decryptedLogin = AegisAndroidHybridJava.decryptHybridResponseXChaCha20(
+    10000L,
+    "POST",
+    "/api/auth/login/password",
+    rsaReq.sessionKey,
+    loginResponse.header("X-Aegis-Nonce"),
+    loginResponse.body().bytes()
+);
+```
+
+如果你要切换到 `hybrid-rsa-aes256gcm` 或 `hybrid-ecdh-xchacha20`，只需要替换两处：
+
+- 会话密钥包装方式仍然分别是 RSA-OAEP / ECDH，不变
+- 业务密文算法从 `encryptAesGcm/decryptAesGcm` 与 `encryptXChaCha20/decryptXChaCha20` 之间切换，同时把 nonce 长度改成对应算法要求的 `12` 或 `24`
+
 ## 7.14 前端接入建议
 
 推荐前端 SDK 固化以下规则：
