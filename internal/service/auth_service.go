@@ -309,27 +309,43 @@ func (s *AuthService) MobileOAuthLogin(ctx context.Context, appID int64, provide
 }
 
 func (s *AuthService) Refresh(ctx context.Context, token, deviceID, ip, userAgent string) (*authdomain.LoginResult, error) {
-	session, err := s.ValidateAccessToken(ctx, token)
+	refreshSession, err := s.validateRefreshToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	user, err := s.pg.GetUserByID(ctx, session.UserID)
+	if deviceID == "" {
+		deviceID = refreshSession.DeviceID
+	}
+	if refreshSession.DeviceID != "" && deviceID != "" && refreshSession.DeviceID != deviceID {
+		s.handleRefreshReuse(ctx, refreshSession)
+		return nil, apperrors.New(40104, http.StatusUnauthorized, "刷新令牌设备绑定校验失败")
+	}
+	if refreshSession.UsedAt != nil || strings.TrimSpace(refreshSession.ReplacedByToken) != "" {
+		s.handleRefreshReuse(ctx, refreshSession)
+		return nil, apperrors.New(40104, http.StatusUnauthorized, "刷新令牌已失效")
+	}
+	user, err := s.pg.GetUserByID(ctx, refreshSession.UserID)
 	if err != nil {
 		return nil, err
 	}
 	if user == nil {
 		return nil, apperrors.New(40103, http.StatusUnauthorized, "会话用户不存在")
 	}
-	if deviceID == "" {
-		deviceID = session.DeviceID
+	if err := s.ensureUserLoginState(ctx, user); err != nil {
+		return nil, err
 	}
-	if err := s.sessions.DeleteSession(ctx, token); err != nil {
-		s.log.Warn("delete previous session failed", zap.Error(err))
+	bundle, err := s.issueSessionBundle(ctx, user, refreshSession.Provider, "refresh", deviceID, ip, userAgent, refreshSession.FamilyID)
+	if err != nil {
+		return nil, err
 	}
-	if err := s.sessions.BlacklistToken(ctx, session.TokenID, time.Until(session.ExpiresAt)); err != nil {
-		s.log.Warn("blacklist previous token failed", zap.Error(err))
+	now := time.Now().UTC()
+	refreshSession.UsedAt = &now
+	refreshSession.RotatedAt = &now
+	refreshSession.ReplacedByToken = bundle.RefreshSession.TokenID
+	if err := s.sessions.UpdateRefreshSession(ctx, token, *refreshSession, time.Until(refreshSession.ExpiresAt)); err != nil {
+		s.log.Warn("mark refresh token rotated failed", zap.Error(err))
 	}
-	return s.issueSession(ctx, user, session.Provider, "refresh", deviceID, ip, userAgent)
+	return bundle.Result, nil
 }
 
 func (s *AuthService) Logout(ctx context.Context, token string) error {
@@ -338,6 +354,10 @@ func (s *AuthService) Logout(ctx context.Context, token string) error {
 		return err
 	}
 	_ = s.sessions.DeleteSession(ctx, token)
+	if session.RefreshFamilyID != "" {
+		_ = s.sessions.RevokeRefreshFamily(ctx, session.AppID, session.UserID, session.RefreshFamilyID, s.cfg.JWT.RefreshTTL)
+		_ = s.revokeRefreshFamilySessions(ctx, session.AppID, session.UserID, session.RefreshFamilyID)
+	}
 	return s.sessions.BlacklistToken(ctx, session.TokenID, time.Until(session.ExpiresAt))
 }
 
@@ -402,12 +422,9 @@ func (s *AuthService) ChangePassword(ctx context.Context, session *authdomain.Se
 }
 
 func (s *AuthService) ValidateAccessToken(ctx context.Context, token string) (*authdomain.Session, error) {
-	claims := jwt.MapClaims{}
-	parsed, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
-		return []byte(s.cfg.JWT.Secret), nil
-	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer(s.cfg.JWT.Issuer))
-	if err != nil || !parsed.Valid {
-		return nil, apperrors.New(40102, http.StatusUnauthorized, "Token 无效")
+	claims, err := s.parseTokenClaims(token, "access")
+	if err != nil {
+		return nil, err
 	}
 	tokenID, _ := claims["jti"].(string)
 	blacklisted, err := s.sessions.IsBlacklisted(ctx, tokenID)
@@ -425,6 +442,57 @@ func (s *AuthService) ValidateAccessToken(ctx context.Context, token string) (*a
 		return nil, apperrors.New(40105, http.StatusUnauthorized, "会话不存在或已过期")
 	}
 	return session, nil
+}
+
+func (s *AuthService) validateRefreshToken(ctx context.Context, token string) (*authdomain.RefreshSession, error) {
+	claims, err := s.parseTokenClaims(token, "refresh")
+	if err != nil {
+		return nil, err
+	}
+	tokenID, _ := claims["jti"].(string)
+	blacklisted, err := s.sessions.IsBlacklisted(ctx, tokenID)
+	if err != nil {
+		return nil, err
+	}
+	if blacklisted {
+		return nil, apperrors.New(40104, http.StatusUnauthorized, "刷新令牌已失效")
+	}
+	session, err := s.sessions.GetRefreshSession(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil {
+		return nil, apperrors.New(40105, http.StatusUnauthorized, "刷新会话不存在或已过期")
+	}
+	if session.TokenID != tokenID {
+		return nil, apperrors.New(40102, http.StatusUnauthorized, "刷新令牌无效")
+	}
+	revoked, err := s.sessions.IsRefreshFamilyRevoked(ctx, session.AppID, session.UserID, session.FamilyID)
+	if err != nil {
+		return nil, err
+	}
+	if revoked {
+		return nil, apperrors.New(40104, http.StatusUnauthorized, "刷新令牌族已失效")
+	}
+	return session, nil
+}
+
+func (s *AuthService) parseTokenClaims(token string, expectedType string) (jwt.MapClaims, error) {
+	claims := jwt.MapClaims{}
+	parsed, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
+		return []byte(s.cfg.JWT.Secret), nil
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer(s.cfg.JWT.Issuer))
+	if err != nil || !parsed.Valid {
+		return nil, apperrors.New(40102, http.StatusUnauthorized, "Token 无效")
+	}
+	tokenType, _ := claims["typ"].(string)
+	if expectedType == "access" && tokenType == "" {
+		return claims, nil
+	}
+	if tokenType != expectedType {
+		return nil, apperrors.New(40102, http.StatusUnauthorized, "Token 类型不匹配")
+	}
+	return claims, nil
 }
 
 func (s *AuthService) loginWithOAuthProfile(ctx context.Context, appID int64, profile authdomain.ProviderProfile, deviceID, ip, userAgent, loginType string) (*authdomain.LoginResult, error) {
@@ -569,6 +637,20 @@ func (s *AuthService) ensureUserLoginState(ctx context.Context, user *userdomain
 }
 
 func (s *AuthService) issueSession(ctx context.Context, user *userdomain.User, provider, loginType, deviceID, ip, userAgent string) (*authdomain.LoginResult, error) {
+	bundle, err := s.issueSessionBundle(ctx, user, provider, loginType, deviceID, ip, userAgent, "")
+	if err != nil {
+		return nil, err
+	}
+	return bundle.Result, nil
+}
+
+type issuedSessionBundle struct {
+	Result         *authdomain.LoginResult
+	AccessSession  authdomain.Session
+	RefreshSession authdomain.RefreshSession
+}
+
+func (s *AuthService) issueSessionBundle(ctx context.Context, user *userdomain.User, provider, loginType, deviceID, ip, userAgent, refreshFamilyID string) (*issuedSessionBundle, error) {
 	if s.app != nil {
 		app, err := s.app.GetApp(ctx, user.AppID)
 		if err != nil {
@@ -579,40 +661,84 @@ func (s *AuthService) issueSession(ctx context.Context, user *userdomain.User, p
 		}
 	}
 	now := time.Now().UTC()
-	expiresAt := now.Add(s.cfg.JWT.TTL)
-	tokenID := uuid.NewString()
-	claims := jwt.MapClaims{
+	accessExpiresAt := now.Add(s.cfg.JWT.TTL)
+	refreshExpiresAt := now.Add(s.cfg.JWT.RefreshTTL)
+	accessTokenID := uuid.NewString()
+	refreshTokenID := uuid.NewString()
+	refreshFamilyID = strings.TrimSpace(refreshFamilyID)
+	if refreshFamilyID == "" {
+		refreshFamilyID = uuid.NewString()
+	}
+	accessClaims := jwt.MapClaims{
 		"uid":     user.ID,
 		"appid":   user.AppID,
 		"account": user.Account,
 		"sv":      1,
-		"jti":     tokenID,
+		"jti":     accessTokenID,
+		"typ":     "access",
+		"family":  refreshFamilyID,
 		"iss":     s.cfg.JWT.Issuer,
 		"iat":     now.Unix(),
-		"exp":     expiresAt.Unix(),
+		"exp":     accessExpiresAt.Unix(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString([]byte(s.cfg.JWT.Secret))
+	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
+	signedAccess, err := accessToken.SignedString([]byte(s.cfg.JWT.Secret))
+	if err != nil {
+		return nil, err
+	}
+	refreshClaims := jwt.MapClaims{
+		"uid":     user.ID,
+		"appid":   user.AppID,
+		"account": user.Account,
+		"sv":      1,
+		"jti":     refreshTokenID,
+		"typ":     "refresh",
+		"family":  refreshFamilyID,
+		"iss":     s.cfg.JWT.Issuer,
+		"iat":     now.Unix(),
+		"exp":     refreshExpiresAt.Unix(),
+	}
+	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims)
+	signedRefresh, err := refreshToken.SignedString([]byte(s.cfg.JWT.Secret))
 	if err != nil {
 		return nil, err
 	}
 	session := authdomain.Session{
+		UserID:          user.ID,
+		AppID:           user.AppID,
+		Account:         user.Account,
+		TokenID:         accessTokenID,
+		RefreshFamilyID: refreshFamilyID,
+		SessionVersion:  1,
+		DeviceID:        deviceID,
+		IP:              ip,
+		UserAgent:       userAgent,
+		ExpiresAt:       accessExpiresAt,
+		IssuedAt:        now,
+		Provider:        provider,
+	}
+	refreshSession := authdomain.RefreshSession{
 		UserID:         user.ID,
 		AppID:          user.AppID,
 		Account:        user.Account,
-		TokenID:        tokenID,
+		TokenID:        refreshTokenID,
+		FamilyID:       refreshFamilyID,
 		SessionVersion: 1,
 		DeviceID:       deviceID,
 		IP:             ip,
 		UserAgent:      userAgent,
-		ExpiresAt:      expiresAt,
-		IssuedAt:       now,
 		Provider:       provider,
+		ExpiresAt:      refreshExpiresAt,
+		IssuedAt:       now,
 	}
-	if err := s.sessions.SetSession(ctx, signed, session, time.Until(expiresAt)); err != nil {
+	if err := s.sessions.SetSession(ctx, signedAccess, session, time.Until(accessExpiresAt)); err != nil {
 		return nil, err
 	}
-	if err := s.enforceSessionPolicy(ctx, user.AppID, user.ID, tokenID); err != nil {
+	if err := s.sessions.SetRefreshSession(ctx, signedRefresh, refreshSession, time.Until(refreshExpiresAt)); err != nil {
+		_ = s.sessions.DeleteSession(ctx, signedAccess)
+		return nil, err
+	}
+	if err := s.enforceSessionPolicy(ctx, user.AppID, user.ID, accessTokenID, refreshFamilyID); err != nil {
 		return nil, err
 	}
 	_ = s.publisher.PublishJSON(ctx, event.SubjectAuthLoginAuditRequested, map[string]any{
@@ -620,7 +746,7 @@ func (s *AuthService) issueSession(ctx context.Context, user *userdomain.User, p
 		"appid":      user.AppID,
 		"login_type": loginType,
 		"provider":   provider,
-		"token_jti":  tokenID,
+		"token_jti":  accessTokenID,
 		"ip":         ip,
 		"device_id":  deviceID,
 		"user_agent": userAgent,
@@ -628,7 +754,7 @@ func (s *AuthService) issueSession(ctx context.Context, user *userdomain.User, p
 	_ = s.publisher.PublishJSON(ctx, event.SubjectSessionAuditRequested, map[string]any{
 		"user_id":    user.ID,
 		"appid":      user.AppID,
-		"token_jti":  tokenID,
+		"token_jti":  accessTokenID,
 		"event_type": "issued",
 		"provider":   provider,
 		"login_type": loginType,
@@ -636,13 +762,19 @@ func (s *AuthService) issueSession(ctx context.Context, user *userdomain.User, p
 		"device_id":  deviceID,
 		"user_agent": userAgent,
 	})
-	return &authdomain.LoginResult{
-		AccessToken: signed,
-		ExpiresAt:   expiresAt,
-		TokenType:   "Bearer",
-		UserID:      user.ID,
-		Account:     user.Account,
-		Provider:    provider,
+	return &issuedSessionBundle{
+		Result: &authdomain.LoginResult{
+			AccessToken:      signedAccess,
+			RefreshToken:     signedRefresh,
+			ExpiresAt:        accessExpiresAt,
+			RefreshExpiresAt: refreshExpiresAt,
+			TokenType:        "Bearer",
+			UserID:           user.ID,
+			Account:          user.Account,
+			Provider:         provider,
+		},
+		AccessSession:  session,
+		RefreshSession: refreshSession,
 	}, nil
 }
 
@@ -677,7 +809,7 @@ func (s *AuthService) validateRegisterPolicy(ctx context.Context, app *appdomain
 	return nil
 }
 
-func (s *AuthService) enforceSessionPolicy(ctx context.Context, appID int64, userID int64, currentTokenID string) error {
+func (s *AuthService) enforceSessionPolicy(ctx context.Context, appID int64, userID int64, currentTokenID string, currentFamilyID string) error {
 	if s.app == nil || s.sessions == nil {
 		return nil
 	}
@@ -717,7 +849,80 @@ func (s *AuthService) enforceSessionPolicy(ctx context.Context, appID int64, use
 				return err
 			}
 		}
+		if item.Session.RefreshFamilyID != "" && item.Session.RefreshFamilyID != currentFamilyID {
+			if err := s.sessions.RevokeRefreshFamily(ctx, appID, userID, item.Session.RefreshFamilyID, s.cfg.JWT.RefreshTTL); err != nil {
+				return err
+			}
+			if err := s.revokeRefreshFamilySessions(ctx, appID, userID, item.Session.RefreshFamilyID); err != nil {
+				return err
+			}
+		}
 		excess--
+	}
+	return nil
+}
+
+func (s *AuthService) handleRefreshReuse(ctx context.Context, session *authdomain.RefreshSession) {
+	if session == nil {
+		return
+	}
+	if err := s.sessions.RevokeRefreshFamily(ctx, session.AppID, session.UserID, session.FamilyID, s.cfg.JWT.RefreshTTL); err != nil {
+		s.log.Warn("revoke refresh family failed", zap.Int64("appid", session.AppID), zap.Int64("userId", session.UserID), zap.Error(err))
+	}
+	if err := s.revokeRefreshFamilySessions(ctx, session.AppID, session.UserID, session.FamilyID); err != nil {
+		s.log.Warn("cleanup refresh sessions failed", zap.Int64("appid", session.AppID), zap.Int64("userId", session.UserID), zap.Error(err))
+	}
+	if err := s.revokeAccessSessionsByFamily(ctx, session.AppID, session.UserID, session.FamilyID); err != nil {
+		s.log.Warn("cleanup access sessions failed", zap.Int64("appid", session.AppID), zap.Int64("userId", session.UserID), zap.Error(err))
+	}
+}
+
+func (s *AuthService) revokeRefreshFamilySessions(ctx context.Context, appID int64, userID int64, familyID string) error {
+	if familyID == "" {
+		return nil
+	}
+	items, err := s.sessions.ListIndexedRefreshSessions(ctx, appID, userID)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.Session.FamilyID != familyID {
+			continue
+		}
+		if err := s.sessions.DeleteRefreshSessionByHash(ctx, appID, userID, item.TokenHash); err != nil {
+			return err
+		}
+		ttl := time.Until(item.Session.ExpiresAt)
+		if ttl > 0 {
+			if err := s.sessions.BlacklistToken(ctx, item.Session.TokenID, ttl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *AuthService) revokeAccessSessionsByFamily(ctx context.Context, appID int64, userID int64, familyID string) error {
+	if familyID == "" {
+		return nil
+	}
+	items, err := s.sessions.ListUserSessions(ctx, appID, userID)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.Session.RefreshFamilyID != familyID {
+			continue
+		}
+		if err := s.sessions.DeleteSessionByHash(ctx, appID, userID, item.TokenHash); err != nil {
+			return err
+		}
+		ttl := time.Until(item.Session.ExpiresAt)
+		if ttl > 0 {
+			if err := s.sessions.BlacklistToken(ctx, item.Session.TokenID, ttl); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

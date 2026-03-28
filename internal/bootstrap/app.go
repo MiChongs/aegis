@@ -141,6 +141,7 @@ func NewAPIApp(ctx context.Context, cl *crashlog.Logger) (*APIApp, error) {
 	avatarService := service.NewAvatarService(log, storageService, userService, adminService)
 	captchaRepo := redisrepo.NewCaptchaRepository(redisClient, cfg.Redis.KeyPrefix)
 	captchaService := service.NewCaptchaService(cfg, log, captchaRepo)
+	userService.SetVerificationServices(emailService, captchaService)
 	// 注册短信服务商（启动时注册，运行时可动态扩展）
 	captchaService.RegisterSMSProvider("aliyun", service.NewAliyunSMSProvider())
 	captchaService.RegisterSMSProvider("tencent", service.NewTencentSMSProvider())

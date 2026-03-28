@@ -26,6 +26,12 @@ type SignInService struct {
 	inFlight  singleflight.Group
 }
 
+const (
+	signInLockTTL      = 20 * time.Second
+	signInWaitRetries  = 8
+	signInWaitInterval = 250 * time.Millisecond
+)
+
 func NewSignInService(log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, publisher *event.Publisher) *SignInService {
 	location, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
@@ -159,7 +165,7 @@ func (s *SignInService) signInInternal(ctx context.Context, userID int64, appID 
 	today := now.Format("2006-01-02")
 
 	result, err, _ := s.inFlight.Do(signInFlightKey(session.UserID, session.AppID, today), func() (any, error) {
-		return s.signInOnce(context.WithoutCancel(ctx), session, user, now, today, source, deviceInfo, ipAddress, location)
+		return s.signInWithDistributedLock(context.WithoutCancel(ctx), session, user, now, today, source, deviceInfo, ipAddress, location)
 	})
 	if err != nil {
 		return nil, err
@@ -169,6 +175,22 @@ func (s *SignInService) signInInternal(ctx context.Context, userID int64, appID 
 		return nil, fmt.Errorf("sign in result is nil")
 	}
 	return signInResult, nil
+}
+
+func (s *SignInService) signInWithDistributedLock(ctx context.Context, session *authdomain.Session, user *userdomain.User, now time.Time, today string, source, deviceInfo, ipAddress, location string) (*userdomain.SignInResult, error) {
+	acquired, err := s.sessions.AcquireSignInLock(ctx, session.AppID, session.UserID, today, signInLockTTL)
+	if err != nil {
+		return nil, err
+	}
+	if !acquired {
+		return s.waitForExistingSignInResult(ctx, session.UserID, session.AppID, today)
+	}
+	defer func() {
+		if err := s.sessions.ReleaseSignInLock(ctx, session.AppID, session.UserID, today); err != nil {
+			s.log.Warn("release sign-in lock failed", zap.Int64("appid", session.AppID), zap.Int64("userId", session.UserID), zap.String("signDate", today), zap.Error(err))
+		}
+	}()
+	return s.signInOnce(ctx, session, user, now, today, source, deviceInfo, ipAddress, location)
 }
 
 func (s *SignInService) signInOnce(ctx context.Context, session *authdomain.Session, user *userdomain.User, now time.Time, today string, source, deviceInfo, ipAddress, location string) (*userdomain.SignInResult, error) {
@@ -231,6 +253,24 @@ func (s *SignInService) signInOnce(ctx context.Context, session *authdomain.Sess
 	return result, nil
 }
 
+func (s *SignInService) waitForExistingSignInResult(ctx context.Context, userID int64, appID int64, signDate string) (*userdomain.SignInResult, error) {
+	for i := 0; i < signInWaitRetries; i++ {
+		result, err := s.loadExistingSignInResult(ctx, userID, appID, signDate, nil)
+		if err == nil {
+			return result, nil
+		}
+		if !isPendingSignInResult(err) {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(signInWaitInterval):
+		}
+	}
+	return nil, apperrors.New(40903, http.StatusConflict, "签到请求处理中，请稍后刷新结果")
+}
+
 func (s *SignInService) loadExistingSignInResult(ctx context.Context, userID int64, appID int64, signDate string, stats *userdomain.SignStats) (*userdomain.SignInResult, error) {
 	record, err := s.pg.GetDailySignByDate(ctx, userID, appID, signDate)
 	if err != nil {
@@ -267,6 +307,16 @@ func (s *SignInService) loadExistingSignInResult(ctx context.Context, userID int
 
 func signInFlightKey(userID int64, appID int64, signDate string) string {
 	return fmt.Sprintf("signin:%d:%d:%s", appID, userID, signDate)
+}
+
+func isPendingSignInResult(err error) bool {
+	if err == nil {
+		return false
+	}
+	if appErr, ok := err.(*apperrors.AppError); ok {
+		return appErr.Code == 40902
+	}
+	return false
 }
 
 func (s *SignInService) requireActiveUser(ctx context.Context, session *authdomain.Session) (*userdomain.User, error) {

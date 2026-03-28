@@ -10,6 +10,7 @@ import (
 
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
+	captchadomain "aegis/internal/domain/captcha"
 	plugindomain "aegis/internal/domain/plugin"
 	userdomain "aegis/internal/domain/user"
 	"aegis/internal/event"
@@ -34,12 +35,27 @@ type UserService struct {
 	sessions  *redisrepo.SessionRepository
 	publisher *event.Publisher
 	security  *SecurityService
+	email     *EmailService
+	captcha   *CaptchaService
 	plugin    *PluginService
 	search    *AdminUserSearchService
 	ban       *AccountBanService
 }
 
+const (
+	profileChangeTTL          = 15 * time.Minute
+	profileChangeFieldEmail   = "email"
+	profileChangeFieldPhone   = "phone"
+	profileChangeEmailPurpose = "profile_email_change"
+	profileChangePhonePurpose = "profile_phone_change"
+)
+
 func (s *UserService) SetPluginService(p *PluginService) { s.plugin = p }
+
+func (s *UserService) SetVerificationServices(email *EmailService, captcha *CaptchaService) {
+	s.email = email
+	s.captcha = captcha
+}
 
 func (s *UserService) SetAdminUserSearchService(search *AdminUserSearchService) {
 	s.search = search
@@ -141,7 +157,7 @@ func (s *UserService) GetProfile(ctx context.Context, session *authdomain.Sessio
 	return profile, nil
 }
 
-func (s *UserService) UpdateProfile(ctx context.Context, session *authdomain.Session, input userdomain.ProfileUpdate) (*userdomain.Profile, error) {
+func (s *UserService) UpdateProfile(ctx context.Context, session *authdomain.Session, input userdomain.ProfileUpdate) (*userdomain.ProfileUpdateResult, error) {
 	user, profile, err := s.loadActiveUser(ctx, session)
 	if err != nil {
 		return nil, err
@@ -150,34 +166,196 @@ func (s *UserService) UpdateProfile(ctx context.Context, session *authdomain.Ses
 		profile = &userdomain.Profile{UserID: user.ID, Extra: map[string]any{}}
 		profile.UserID = user.ID
 	}
+	profileChanged := false
 	if v := strings.TrimSpace(input.Nickname); v != "" {
 		profile.Nickname = v
+		profileChanged = true
 	}
 	if v := strings.TrimSpace(input.Avatar); v != "" {
 		profile.Avatar = v
-	}
-	if v := strings.TrimSpace(input.Email); v != "" {
-		profile.Email = v
-	}
-	if v := strings.TrimSpace(input.Phone); v != "" {
-		profile.Phone = v
+		profileChanged = true
 	}
 	if v := strings.TrimSpace(input.Birthday); v != "" {
 		if t, err := time.Parse("2006-01-02", v); err == nil {
 			profile.Birthday = &t
+			profileChanged = true
 		}
 	}
 	if v := strings.TrimSpace(input.Bio); v != "" {
 		profile.Bio = v
+		profileChanged = true
 	}
 	if input.Contacts != nil {
 		profile.Contacts = input.Contacts
+		profileChanged = true
 	}
 	if profile.Extra == nil {
 		profile.Extra = map[string]any{}
 	}
-	if err := s.pg.UpsertUserProfile(ctx, *profile); err != nil {
+	if v := strings.TrimSpace(input.Email); v != "" && !strings.EqualFold(v, strings.TrimSpace(profile.Email)) {
+		if err := s.queueSensitiveProfileChange(ctx, session, profileChangeFieldEmail, v); err != nil {
+			return nil, err
+		}
+	}
+	if v := strings.TrimSpace(input.Phone); v != "" && v != strings.TrimSpace(profile.Phone) {
+		if err := s.queueSensitiveProfileChange(ctx, session, profileChangeFieldPhone, v); err != nil {
+			return nil, err
+		}
+	}
+	if profileChanged {
+		if err := s.persistProfileUpdate(ctx, session, user.ID, profile); err != nil {
+			return nil, err
+		}
+	}
+	pendingChanges, err := s.loadPendingProfileChanges(ctx, session.AppID, session.UserID)
+	if err != nil {
 		return nil, err
+	}
+	return &userdomain.ProfileUpdateResult{
+		Profile:        profile,
+		PendingChanges: pendingChanges,
+	}, nil
+}
+
+func (s *UserService) ConfirmSensitiveProfileChange(ctx context.Context, session *authdomain.Session, field string, code string) (*userdomain.ProfileUpdateResult, error) {
+	field = strings.TrimSpace(strings.ToLower(field))
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "验证码不能为空")
+	}
+	user, profile, err := s.loadActiveUser(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	if profile == nil {
+		profile = &userdomain.Profile{UserID: user.ID, Extra: map[string]any{}}
+	}
+	change, err := s.sessions.GetPendingProfileChange(ctx, session.AppID, session.UserID, field)
+	if err != nil {
+		return nil, err
+	}
+	if change == nil {
+		return nil, apperrors.New(40401, http.StatusNotFound, "待确认资料变更不存在或已过期")
+	}
+	switch field {
+	case profileChangeFieldEmail:
+		if s.email == nil {
+			return nil, apperrors.New(50310, http.StatusServiceUnavailable, "邮箱验证服务暂不可用")
+		}
+		valid, err := s.email.VerifyCode(ctx, session.AppID, change.Value, code, change.Purpose)
+		if err != nil {
+			return nil, err
+		}
+		if !valid {
+			return nil, apperrors.New(40021, http.StatusBadRequest, "邮箱验证码错误或已失效")
+		}
+		ownerID, err := s.pg.FindUserIDByProfileEmail(ctx, session.AppID, change.Value)
+		if err != nil {
+			return nil, err
+		}
+		if ownerID > 0 && ownerID != session.UserID {
+			return nil, apperrors.New(40901, http.StatusConflict, "邮箱已被其他账号占用")
+		}
+		profile.Email = change.Value
+	case profileChangeFieldPhone:
+		if s.captcha == nil {
+			return nil, apperrors.New(50310, http.StatusServiceUnavailable, "短信验证服务暂不可用")
+		}
+		valid, err := s.captcha.VerifySMSCode(ctx, captchadomain.SMSVerifyRequest{
+			AppID:   session.AppID,
+			Phone:   change.Value,
+			Code:    code,
+			Purpose: captchadomain.Purpose(change.Purpose),
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !valid {
+			return nil, apperrors.New(40021, http.StatusBadRequest, "短信验证码错误或已失效")
+		}
+		ownerID, err := s.pg.FindUserIDByProfilePhone(ctx, session.AppID, change.Value)
+		if err != nil {
+			return nil, err
+		}
+		if ownerID > 0 && ownerID != session.UserID {
+			return nil, apperrors.New(40901, http.StatusConflict, "手机号已被其他账号占用")
+		}
+		profile.Phone = change.Value
+	default:
+		return nil, apperrors.New(40000, http.StatusBadRequest, "不支持的资料变更字段")
+	}
+	if err := s.persistProfileUpdate(ctx, session, user.ID, profile); err != nil {
+		return nil, err
+	}
+	if err := s.sessions.DeletePendingProfileChange(ctx, session.AppID, session.UserID, field); err != nil {
+		s.log.Warn("delete pending profile change failed", zap.Int64("appid", session.AppID), zap.Int64("userId", session.UserID), zap.String("field", field), zap.Error(err))
+	}
+	pendingChanges, err := s.loadPendingProfileChanges(ctx, session.AppID, session.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return &userdomain.ProfileUpdateResult{
+		Profile:        profile,
+		PendingChanges: pendingChanges,
+	}, nil
+}
+
+func (s *UserService) queueSensitiveProfileChange(ctx context.Context, session *authdomain.Session, field string, value string) error {
+	value = strings.TrimSpace(value)
+	now := time.Now().UTC()
+	change := userdomain.PendingProfileChange{
+		Field:       field,
+		Value:       value,
+		ExpiresAt:   now.Add(profileChangeTTL),
+		RequestedAt: now,
+	}
+	switch field {
+	case profileChangeFieldEmail:
+		if s.email == nil {
+			return apperrors.New(50310, http.StatusServiceUnavailable, "邮箱验证服务暂不可用")
+		}
+		ownerID, err := s.pg.FindUserIDByProfileEmail(ctx, session.AppID, value)
+		if err != nil {
+			return err
+		}
+		if ownerID > 0 && ownerID != session.UserID {
+			return apperrors.New(40901, http.StatusConflict, "邮箱已被其他账号占用")
+		}
+		change.Purpose = profileChangeEmailPurpose
+		change.MaskedValue = maskEmail(value)
+	case profileChangeFieldPhone:
+		if s.captcha == nil {
+			return apperrors.New(50310, http.StatusServiceUnavailable, "短信验证服务暂不可用")
+		}
+		ownerID, err := s.pg.FindUserIDByProfilePhone(ctx, session.AppID, value)
+		if err != nil {
+			return err
+		}
+		if ownerID > 0 && ownerID != session.UserID {
+			return apperrors.New(40901, http.StatusConflict, "手机号已被其他账号占用")
+		}
+		change.Purpose = profileChangePhonePurpose
+		change.MaskedValue = maskPhoneValue(value)
+	default:
+		return apperrors.New(40000, http.StatusBadRequest, "不支持的资料变更字段")
+	}
+	return s.sessions.SetPendingProfileChange(ctx, session.AppID, session.UserID, change, profileChangeTTL)
+}
+
+func (s *UserService) loadPendingProfileChanges(ctx context.Context, appID int64, userID int64) ([]userdomain.PendingProfileChange, error) {
+	items, err := s.sessions.ListPendingProfileChanges(ctx, appID, userID)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].RequestedAt.Before(items[j].RequestedAt)
+	})
+	return items, nil
+}
+
+func (s *UserService) persistProfileUpdate(ctx context.Context, session *authdomain.Session, userID int64, profile *userdomain.Profile) error {
+	if err := s.pg.UpsertUserProfile(ctx, *profile); err != nil {
+		return err
 	}
 	_ = s.sessions.DeleteMyView(ctx, session.AppID, session.UserID)
 	_ = s.sessions.DeleteUserProfile(ctx, session.AppID, session.UserID)
@@ -185,12 +363,35 @@ func (s *UserService) UpdateProfile(ctx context.Context, session *authdomain.Ses
 	profile.UpdatedAt = time.Now().UTC()
 	if s.plugin != nil {
 		go s.plugin.ExecuteHook(context.Background(), HookUserProfileUpdated, map[string]any{
-			"userId": user.ID,
+			"userId": userID,
 			"appId":  session.AppID,
-		}, plugindomain.HookMetadata{UserID: &user.ID, AppID: &session.AppID})
+		}, plugindomain.HookMetadata{UserID: &userID, AppID: &session.AppID})
 	}
-	s.syncAdminUserSearch(session.AppID, user.ID)
-	return profile, nil
+	s.syncAdminUserSearch(session.AppID, userID)
+	return nil
+}
+
+func maskEmail(value string) string {
+	parts := strings.Split(strings.TrimSpace(value), "@")
+	if len(parts) != 2 {
+		return value
+	}
+	local := parts[0]
+	if len(local) == 0 {
+		return "***@" + parts[1]
+	}
+	if len(local) <= 2 {
+		return local[:1] + "***@" + parts[1]
+	}
+	return local[:1] + "***" + local[len(local)-1:] + "@" + parts[1]
+}
+
+func maskPhoneValue(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 7 {
+		return "***"
+	}
+	return value[:3] + "****" + value[len(value)-4:]
 }
 
 func (s *UserService) ListAdminUsers(ctx context.Context, appID int64, query userdomain.AdminUserQuery) (*userdomain.AdminUserListResult, error) {

@@ -78,7 +78,9 @@ Authorization: Bearer <accessToken>
 ```json
 {
   "accessToken": "<jwt>",
+  "refreshToken": "<refresh-jwt>",
   "expiresAt": "2026-04-27T10:00:00Z",
+  "refreshExpiresAt": "2026-05-27T10:00:00Z",
   "tokenType": "Bearer",
   "userId": 123,
   "account": "demo",
@@ -94,10 +96,10 @@ Authorization: Bearer <accessToken>
   "account": "demo",
   "provider": "password",
   "requiresSecondFactor": true,
-  "authenticationState": "pending_second_factor",
+  "authenticationState": "second_factor_required",
   "challenge": {
     "challengeId": "9f7c...",
-    "state": "pending_second_factor",
+    "state": "pending",
     "methods": ["totp", "recovery_code"],
     "expiresAt": "2026-03-28T12:00:00Z"
   }
@@ -349,28 +351,34 @@ Authorization: Bearer <accessToken>
 
 - 方法：`POST`
 - 路径：`/api/auth/refresh`
-- 鉴权：无需登录，但必须提供旧 Token
+- 鉴权：无需登录，但必须提供 refresh token
 
 请求体：
 
 ```json
 {
-  "token": "<old-access-token>",
+  "refreshToken": "<refresh-token>",
   "markcode": "device-001"
 }
 ```
 
-也可通过请求头传旧 Token：
+兼容字段：
+
+- `refreshToken`: 推荐字段
+- `token`: 兼容旧客户端字段，语义已切换为 refresh token
+
+也可通过请求头传 refresh token：
 
 ```http
-Authorization: Bearer <old-access-token>
+Authorization: Bearer <refresh-token>
 ```
 
 实现说明：
 
-- 当前实现刷新使用的仍然是原访问令牌，不是独立的 refresh token
-- 刷新成功后，旧会话会删除并加入黑名单
-- 若请求体未传 `markcode`，会沿用旧会话的 `deviceId`
+- 当前实现为独立 refresh token 模式，刷新成功会同时返回新的 access token 和新的 refresh token
+- refresh token 为单次轮换模式，旧 refresh token 一旦成功使用，会被标记为已轮换
+- refresh token 默认绑定原设备；请求体未传 `markcode` 时，服务端会沿用 refresh 会话中的 `deviceId`
+- 若旧 refresh token 被重复使用，或设备绑定校验失败，服务端会吊销整条 refresh family，并清理该 family 关联的 access 会话
 
 ### 4.10 登出
 
@@ -664,25 +672,124 @@ Authorization: Bearer <accessToken>
 }
 ```
 
+### 5.15 更新个人资料
+
+- 方法：`PUT`
+- 路径：`/api/user/profile`
+- 鉴权：需要登录
+
+请求体：
+
+```json
+{
+  "nickname": "新昵称",
+  "avatar": "storage://avatars/u-123.png",
+  "email": "new@example.com",
+  "phone": "13800138000",
+  "birthday": "2000-01-15",
+  "bio": "hello",
+  "contacts": [
+    {
+      "platform": "wechat",
+      "value": "demo-wechat"
+    }
+  ]
+}
+```
+
+返回体：
+
+```json
+{
+  "profile": {
+    "userId": 123,
+    "nickname": "新昵称",
+    "avatar": "https://cdn.example.com/avatars/u-123.png",
+    "email": "old@example.com",
+    "phone": "13900001111"
+  },
+  "pendingChanges": [
+    {
+      "field": "email",
+      "value": "new@example.com",
+      "maskedValue": "n***w@example.com",
+      "purpose": "profile_email_change",
+      "expiresAt": "2026-03-28T12:15:00Z",
+      "requestedAt": "2026-03-28T12:00:00Z"
+    }
+  ]
+}
+```
+
+实现说明：
+
+- 普通字段会立即生效：`nickname`、`avatar`、`birthday`、`bio`、`contacts`
+- 敏感字段不会直接生效：`email`、`phone`
+- 敏感字段会先进入待确认状态，返回在 `pendingChanges` 中
+- 同一 `appid` 下，邮箱和手机号会做占用校验，已被其他账号使用时会拒绝
+
+### 5.16 确认敏感资料变更
+
+- 方法：`POST`
+- 路径：`/api/user/profile/changes/confirm`
+- 鉴权：需要登录
+
+请求体：
+
+```json
+{
+  "field": "email",
+  "code": "123456"
+}
+```
+
+字段说明：
+
+- `field`: 当前支持 `email`、`phone`
+- `code`: 发往新邮箱或新手机号的验证码
+
+实现说明：
+
+- `email` 会校验邮件验证码，验证码用途为 `profile_email_change`
+- `phone` 会校验短信验证码，验证码用途为 `profile_phone_change`
+- 校验通过后，资料才会真正落库并清除 pending 状态
+
+### 5.17 用户签到幂等
+
+- 方法：`POST`
+- 路径：`/api/user/signin`
+- 鉴权：需要登录
+
+实现说明：
+
+- 服务端除了数据库唯一约束和进程内 `singleflight` 外，还增加了 Redis 分布式幂等锁
+- 弱网重复点击、连点器、多实例同时到达时，只有一个请求会实际执行签到写入
+- 其他并发请求会等待首个请求结果，成功时直接复用已签到结果；长时间未完成时返回处理中冲突错误
+
 ## 6. JWT 与会话行为
 
 ### 6.1 Token 类型
 
-当前用户侧只签发一个访问令牌，类型为 `Bearer`。
+当前用户侧签发两类令牌：
+
+- `access token`: 用于访问业务接口，类型为 `Bearer`
+- `refresh token`: 用于刷新访问令牌，不用于访问业务接口
 
 ### 6.2 默认有效期
 
 如果未通过环境变量覆盖：
 
 - `JWT_TTL`: 默认 `30d`
-- `JWT_REFRESH_TTL`: 配置项存在，但当前用户刷新接口并未发放独立 refresh token
+- `JWT_REFRESH_TTL`: 默认 `7d`
 
 ### 6.3 服务端会话校验
 
-除了 JWT 签名外，服务端还会校验 Redis 中的会话与黑名单状态，因此：
+除了 JWT 签名外，服务端还会校验 Redis 中的 access/refresh 会话与黑名单状态，因此：
 
 - JWT 未过期但 Redis 会话不存在，仍会判定为失效
-- 登出或刷新后，旧 Token 会进入黑名单
+- access token 登出后会进入黑名单
+- refresh token 刷新后，旧 refresh token 会被标记为已轮换，不能再次使用
+- 一旦检测到 refresh token 重放，服务端会吊销整个 refresh family
 
 ## 7. 应用加密传输
 

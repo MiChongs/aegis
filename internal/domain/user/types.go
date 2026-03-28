@@ -357,6 +357,20 @@ type ProfileUpdate struct {
 	Contacts []ContactInfo `json:"contacts"`
 }
 
+type PendingProfileChange struct {
+	Field       string    `json:"field"`
+	Value       string    `json:"value"`
+	MaskedValue string    `json:"maskedValue,omitempty"`
+	Purpose     string    `json:"purpose"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+	RequestedAt time.Time `json:"requestedAt"`
+}
+
+type ProfileUpdateResult struct {
+	Profile        *Profile               `json:"profile"`
+	PendingChanges []PendingProfileChange `json:"pendingChanges,omitempty"`
+}
+
 type AdminUserQuery struct {
 	Keyword     string     `json:"keyword"`
 	Account     string     `json:"account"`

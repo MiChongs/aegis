@@ -56,8 +56,9 @@ type OAuthMobileLoginRequest struct {
 }
 
 type RefreshRequest struct {
-	Token    string `json:"token" form:"token"`
-	MarkCode string `json:"markcode" form:"markcode"`
+	Token        string `json:"token" form:"token"`
+	RefreshToken string `json:"refreshToken" form:"refreshToken"`
+	MarkCode     string `json:"markcode" form:"markcode"`
 }
 
 type VerifyPasswordRequest struct {
@@ -163,6 +164,11 @@ type UpdateProfileRequest struct {
 	Birthday string                   `json:"birthday" form:"birthday"`
 	Bio      string                   `json:"bio" form:"bio"`
 	Contacts []userdomain.ContactInfo `json:"contacts"`
+}
+
+type ConfirmProfileChangeRequest struct {
+	Field string `json:"field" form:"field" binding:"required"`
+	Code  string `json:"code" form:"code" binding:"required"`
 }
 
 type UpdateSettingsRequest struct {

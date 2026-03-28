@@ -1008,6 +1008,38 @@ func (r *Repository) GetUserProfileByUserID(ctx context.Context, userID int64) (
 	return &profile, nil
 }
 
+func (r *Repository) FindUserIDByProfileEmail(ctx context.Context, appID int64, email string) (int64, error) {
+	query := `SELECT u.id
+FROM users u
+JOIN user_profiles p ON p.user_id = u.id
+WHERE u.appid = $1 AND LOWER(COALESCE(p.email, '')) = LOWER($2)
+LIMIT 1`
+	var userID int64
+	if err := r.pool.QueryRow(ctx, query, appID, strings.TrimSpace(email)).Scan(&userID); err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return userID, nil
+}
+
+func (r *Repository) FindUserIDByProfilePhone(ctx context.Context, appID int64, phone string) (int64, error) {
+	query := `SELECT u.id
+FROM users u
+JOIN user_profiles p ON p.user_id = u.id
+WHERE u.appid = $1 AND COALESCE(p.phone, '') = $2
+LIMIT 1`
+	var userID int64
+	if err := r.pool.QueryRow(ctx, query, appID, strings.TrimSpace(phone)).Scan(&userID); err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return userID, nil
+}
+
 func (r *Repository) ListAdminUsersByApp(ctx context.Context, appID int64, keyword string, enabled *bool, page int, limit int) ([]userdomain.AdminUserView, int64, error) {
 	return r.ListAdminUsersByAppQuery(ctx, appID, userdomain.AdminUserQuery{
 		Keyword: keyword,

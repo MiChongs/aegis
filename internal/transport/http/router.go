@@ -415,6 +415,7 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		user.POST("/role/applications/:applicationId/resubmit", h.ResubmitRoleApplication)
 		user.GET("/profile", h.Profile)
 		user.PUT("/profile", h.UpdateProfile)
+		user.POST("/profile/changes/confirm", h.ConfirmProfileChange)
 		user.POST("/profile/avatar", h.UploadUserAvatar)
 		user.POST("/profile/upload-avatar", h.UploadUserAvatar)
 		user.GET("/settings", h.Settings)
@@ -953,7 +954,10 @@ func (h *Handler) OAuthMobileLogin(c *gin.Context) {
 func (h *Handler) Refresh(c *gin.Context) {
 	var req RefreshRequest
 	_ = bind(c, &req)
-	token := req.Token
+	token := req.RefreshToken
+	if token == "" {
+		token = req.Token
+	}
 	if token == "" {
 		token = middlewareBearer(c.GetHeader("Authorization"))
 	}
@@ -2873,13 +2877,37 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	profile, err := h.user.UpdateProfile(c.Request.Context(), session, userdomain.ProfileUpdate(req))
+	result, err := h.user.UpdateProfile(c.Request.Context(), session, userdomain.ProfileUpdate(req))
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
-	h.attachUserProfileAvatar(c, session, profile)
-	response.Success(c, 200, "更新成功", profile)
+	if result != nil && result.Profile != nil {
+		h.attachUserProfileAvatar(c, session, result.Profile)
+	}
+	response.Success(c, 200, "更新成功", result)
+}
+
+func (h *Handler) ConfirmProfileChange(c *gin.Context) {
+	session, ok := authSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
+		return
+	}
+	var req ConfirmProfileChangeRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	result, err := h.user.ConfirmSensitiveProfileChange(c.Request.Context(), session, req.Field, req.Code)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	if result != nil && result.Profile != nil {
+		h.attachUserProfileAvatar(c, session, result.Profile)
+	}
+	response.Success(c, 200, "资料变更已生效", result)
 }
 
 func (h *Handler) Settings(c *gin.Context) {

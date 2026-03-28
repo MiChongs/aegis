@@ -103,9 +103,13 @@ func (s *AvatarService) UploadUserAvatar(ctx context.Context, baseURL string, se
 	if err != nil {
 		return nil, nil, err
 	}
-	resolved := s.ResolveUserAvatar(ctx, baseURL, session.AppID, updated.Avatar, updated.Email, session.Account)
-	updated.Avatar = resolved
-	return updated, &AvatarUploadResult{AvatarURL: resolved, Reference: ref, Storage: stored}, nil
+	profile := updated.Profile
+	if profile == nil {
+		return nil, nil, apperrors.New(50000, http.StatusInternalServerError, "用户头像更新结果为空")
+	}
+	resolved := s.ResolveUserAvatar(ctx, baseURL, session.AppID, profile.Avatar, profile.Email, session.Account)
+	profile.Avatar = resolved
+	return profile, &AvatarUploadResult{AvatarURL: resolved, Reference: ref, Storage: stored}, nil
 }
 
 func (s *AvatarService) UploadAdminAvatar(ctx context.Context, baseURL string, access *admindomain.AccessContext, input AvatarUploadInput) (*admindomain.Profile, *AvatarUploadResult, error) {
