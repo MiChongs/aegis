@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -27,6 +28,7 @@ import (
 
 type APIApp struct {
 	Config          config.Config
+	ConfigManager   *config.Manager
 	Logger          *zap.Logger
 	CrashLog        *crashlog.Logger
 	Router          *gin.Engine
@@ -38,6 +40,8 @@ type APIApp struct {
 	Temporal        client.Client
 	Realtime        *service.RealtimeService
 	Payment         *service.PaymentService
+	AutoSign        *service.AutoSignService
+	SessionMgmt     *service.SessionMgmtService
 	AdminUserSearch *service.AdminUserSearchService
 	AccountBan      *service.AccountBanService
 	Location        *service.LocationService
@@ -47,10 +51,22 @@ type APIApp struct {
 }
 
 func NewAPIApp(ctx context.Context, cl *crashlog.Logger) (*APIApp, error) {
-	cfg, err := config.Load()
+	manager, err := config.NewManager()
 	if err != nil {
 		return nil, err
 	}
+	return NewAPIAppWithConfigManager(ctx, cl, manager)
+}
+
+func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manager *config.Manager) (*APIApp, error) {
+	if manager == nil {
+		var err error
+		manager, err = config.NewManager()
+		if err != nil {
+			return nil, err
+		}
+	}
+	cfg := manager.Current()
 	initGinMode(cfg.AppEnv)
 	log, err := pkglogger.New(cfg.AppEnv)
 	if err != nil {
@@ -91,6 +107,7 @@ func NewAPIApp(ctx context.Context, cl *crashlog.Logger) (*APIApp, error) {
 		return nil, err
 	}
 	sessions := redisrepo.NewSessionRepository(redisClient, cfg.Redis.KeyPrefix)
+	schedules := redisrepo.NewAutoSignRepository(redisClient, cfg.Redis.KeyPrefix)
 	realtimeRepo := redisrepo.NewRealtimeRepository(redisClient, cfg.Redis.KeyPrefix)
 	publisher := event.NewPublisher(js)
 	publisher.SetConn(natsConn)
@@ -120,6 +137,7 @@ func NewAPIApp(ctx context.Context, cl *crashlog.Logger) (*APIApp, error) {
 	authService.SetAdminUserSearchService(adminUserSearch)
 	adminUserSearch.StartWarmup(ctx)
 	signInService := service.NewSignInService(log, pg, sessions, publisher)
+	autoSignService := service.NewAutoSignService(cfg.AutoSign, log, pg, schedules, signInService)
 	pointsService := service.NewPointsService(log, pg, sessions)
 	realtimeService, err := service.NewRealtimeService(log, authService, realtimeRepo, natsConn)
 	if err != nil {
@@ -148,6 +166,7 @@ func NewAPIApp(ctx context.Context, cl *crashlog.Logger) (*APIApp, error) {
 	monitorService := service.NewMonitorService(cfg, log, postgres, redisClient, natsConn, temporalClient, authService, adminService, userService, signInService, pointsService, notificationService, appService, siteService, versionService, roleApplicationService, emailService, paymentService, workflowService, storageService, avatarService, realtimeService, nil, nil, nil)
 	ipBanRepo := redisrepo.NewIPBanRepository(redisClient, cfg.Redis.KeyPrefix)
 	locationService := service.NewLocationService(log, redisClient, cfg.Redis.KeyPrefix, cfg.GeoIP)
+	userService.SetLocationService(locationService)
 	ipBanService := service.NewIPBanService(log, pg, ipBanRepo, locationService)
 	firewall, err := middleware.NewFirewall(cfg.Firewall, log, redisClient, cfg.Redis.KeyPrefix, publisher, ipBanService)
 	if err != nil {
@@ -163,7 +182,9 @@ func NewAPIApp(ctx context.Context, cl *crashlog.Logger) (*APIApp, error) {
 	adminService.SetLDAPService(ldapService)
 	oidcService := service.NewOIDCService(log, cfg.JWT.Secret)
 	adminService.SetOIDCService(oidcService)
-	systemService := service.NewPlatformSettingsService(cfg, log, pg, firewall, securityService, ldapService, oidcService)
+	samlService := service.NewSAMLService(log, cfg.JWT.Secret)
+	adminService.SetSAMLService(samlService)
+	systemService := service.NewPlatformSettingsService(cfg, log, pg, firewall, securityService, ldapService, oidcService, samlService)
 	if err := adminService.LoadCustomRoles(ctx); err != nil {
 		log.Warn("加载自定义角色失败", zap.Error(err))
 	}
@@ -229,7 +250,29 @@ func NewAPIApp(ctx context.Context, cl *crashlog.Logger) (*APIApp, error) {
 	authService.SetRiskService(riskService)
 	adminService.SetRiskService(riskService)
 	accountBanService.Start()
-	router, err := httptransport.NewRouter(authService, adminService, userService, signInService, pointsService, notificationService, appService, siteService, versionService, roleApplicationService, emailService, paymentService, workflowService, storageService, avatarService, monitorService, firewall, replayGuard, locationService, realtimeService, systemService, securityService, captchaService, firewallLogService, ipBanService, lotteryService, announcementService, ldapService, oidcService, sessions, orgService, templateService, auditService, pluginService, dashboardService, approvalService, sessionMgmtService, storageResourceService, userMasterService, reportService, riskService, memoryManager, cl, log, cfg.CORS)
+	_, err = js.QueueSubscribe(event.SubjectUserAutoSignSync, workerQueueAutoSignSync, func(msg *nats.Msg) {
+		payload := map[string]any{}
+		_ = json.Unmarshal(msg.Data, &payload)
+		userID := int64FromPayload(payload["user_id"])
+		appID := int64FromPayload(payload["appid"])
+		if userID > 0 && appID > 0 {
+			if syncErr := autoSignService.SyncUserSchedule(context.Background(), userID, appID); syncErr != nil {
+				log.Warn("api auto sign sync failed", zap.Int64("user_id", userID), zap.Int64("appid", appID), zap.Error(syncErr))
+			}
+		}
+		_ = msg.Ack()
+	}, nats.ManualAck())
+	if err != nil {
+		_ = accountBanService.Close(context.Background())
+		locationService.Close()
+		realtimeService.Close(context.Background())
+		temporalClient.Close()
+		natsConn.Close()
+		_ = redisClient.Close()
+		postgres.Close()
+		return nil, err
+	}
+	router, err := httptransport.NewRouter(authService, adminService, userService, signInService, pointsService, notificationService, appService, siteService, versionService, roleApplicationService, emailService, paymentService, workflowService, storageService, avatarService, monitorService, firewall, replayGuard, locationService, realtimeService, systemService, securityService, captchaService, firewallLogService, ipBanService, lotteryService, announcementService, ldapService, oidcService, samlService, sessions, orgService, templateService, auditService, pluginService, dashboardService, approvalService, sessionMgmtService, storageResourceService, userMasterService, reportService, riskService, memoryManager, cl, log, cfg.CORS)
 	if err != nil {
 		_ = accountBanService.Close(context.Background())
 		locationService.Close()
@@ -256,8 +299,34 @@ func NewAPIApp(ctx context.Context, cl *crashlog.Logger) (*APIApp, error) {
 	// 启动内存管理系统
 	memoryManager.Start(ctx)
 
-	return &APIApp{
+	SafeGo(log, cl, "api.admin_session_cleanup", true, func() {
+		app := &APIApp{
+			Config:      cfg,
+			Logger:      log,
+			CrashLog:    cl,
+			SessionMgmt: sessionMgmtService,
+		}
+		app.runAdminSessionCleanupLoop(ctx)
+	})
+
+	if scheduled, processed, catchUpErr := autoSignService.CatchUpOnStartup(ctx); catchUpErr != nil {
+		log.Warn("api auto sign startup catch-up failed", zap.Error(catchUpErr))
+	} else {
+		log.Info("api auto sign startup catch-up completed", zap.Int("scheduled", scheduled), zap.Int("processed", processed))
+	}
+	SafeGo(log, cl, "api.auto_sign", true, func() {
+		app := &APIApp{
+			Config:   cfg,
+			Logger:   log,
+			CrashLog: cl,
+			AutoSign: autoSignService,
+		}
+		app.runAutoSignLoop(ctx)
+	})
+
+	app := &APIApp{
 		Config:          cfg,
+		ConfigManager:   manager,
 		Logger:          log,
 		CrashLog:        cl,
 		Router:          router,
@@ -269,13 +338,17 @@ func NewAPIApp(ctx context.Context, cl *crashlog.Logger) (*APIApp, error) {
 		Temporal:        temporalClient,
 		Realtime:        realtimeService,
 		Payment:         paymentService,
+		AutoSign:        autoSignService,
+		SessionMgmt:     sessionMgmtService,
 		AdminUserSearch: adminUserSearch,
 		AccountBan:      accountBanService,
 		Location:        locationService,
 		Monitor:         monitorService,
 		Memory:          memoryManager,
 		ShutdownTracing: shutdownTracing,
-	}, nil
+	}
+	registerAPIConfigHotReload(manager, log, firewall, securityService, autoSignService, accountBanService, riskService)
+	return app, nil
 }
 
 func (a *APIApp) Close(ctx context.Context) {
@@ -321,6 +394,84 @@ func (a *APIApp) Close(ctx context.Context) {
 	}
 	if a.Logger != nil {
 		_ = a.Logger.Sync()
+	}
+}
+
+func (a *APIApp) runAutoSignLoop(ctx context.Context) {
+	if a.AutoSign == nil {
+		return
+	}
+
+	tick := time.NewTimer(a.autoSignTickInterval())
+	defer tick.Stop()
+	rebuild := time.NewTimer(a.autoSignRebuildInterval())
+	defer rebuild.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			processed, err := a.AutoSign.RunDue(ctx)
+			if err != nil {
+				a.Logger.Warn("api auto sign due run failed", zap.Error(err))
+			} else if processed > 0 {
+				a.Logger.Info("api auto sign due processed", zap.Int("processed", processed), zap.Int64("scheduled_count", a.AutoSign.ScheduledCount(ctx)))
+			}
+			tick.Reset(a.autoSignTickInterval())
+		case <-rebuild.C:
+			scheduled, err := a.AutoSign.RebuildSchedule(ctx)
+			if err != nil {
+				a.Logger.Warn("api auto sign periodic rebuild failed", zap.Error(err))
+			} else {
+				a.Logger.Info("api auto sign periodic rebuild completed", zap.Int("scheduled", scheduled))
+			}
+			rebuild.Reset(a.autoSignRebuildInterval())
+		}
+	}
+}
+
+func (a *APIApp) autoSignTickInterval() time.Duration {
+	if a.AutoSign != nil {
+		if interval := a.AutoSign.CurrentConfig().TickInterval; interval > 0 {
+			return interval
+		}
+	}
+	return time.Minute
+}
+
+func (a *APIApp) autoSignRebuildInterval() time.Duration {
+	if a.AutoSign != nil {
+		if interval := a.AutoSign.CurrentConfig().RebuildInterval; interval > 0 {
+			return interval
+		}
+	}
+	return 15 * time.Minute
+}
+
+func (a *APIApp) runAdminSessionCleanupLoop(ctx context.Context) {
+	if a.SessionMgmt == nil {
+		return
+	}
+
+	runCleanup := func() {
+		cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		a.SessionMgmt.Cleanup(cleanupCtx)
+	}
+
+	runCleanup()
+
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runCleanup()
+		}
 	}
 }
 

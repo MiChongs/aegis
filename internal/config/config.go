@@ -1,6 +1,7 @@
 package config
 
 import (
+	"aegis/pkg/timeutil"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +17,7 @@ type Config struct {
 	AppEnv            string
 	HTTPPort          int
 	AdminSessionTTL   time.Duration
+	DefaultTimezone   string
 	AdminBootstrap    AdminBootstrapConfig
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
@@ -135,6 +137,7 @@ func NormalizeFirewallConfig(cfg FirewallConfig) FirewallConfig {
 
 type PostgresConfig struct {
 	DSN             string
+	SessionTimezone string
 	MaxConns        int32
 	MinConns        int32
 	MaxConnLifetime time.Duration
@@ -319,19 +322,32 @@ var oauthDefaults = map[string]struct {
 }
 
 func Load() (Config, error) {
+	v, _, err := newConfiguredViper()
+	if err != nil {
+		return Config{}, err
+	}
+	return loadWithViper(v)
+}
+
+func newConfiguredViper() (*viper.Viper, string, error) {
 	v := viper.New()
 	v.SetConfigType("env")
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	if err := loadEnvFile(v); err != nil {
-		return Config{}, err
+	configFile, err := loadEnvFile(v)
+	if err != nil {
+		return nil, "", err
 	}
+	return v, configFile, nil
+}
 
+func loadWithViper(v *viper.Viper) (Config, error) {
 	cfg := Config{
 		AppName:         v.GetString("APP_NAME"),
 		AppEnv:          v.GetString("APP_ENV"),
 		HTTPPort:        v.GetInt("HTTP_PORT"),
 		AdminSessionTTL: v.GetDuration("ADMIN_SESSION_TTL"),
+		DefaultTimezone: v.GetString("APP_DEFAULT_IANA_TIMEZONE"),
 		AdminBootstrap: AdminBootstrapConfig{
 			Account:     v.GetString("ADMIN_BOOTSTRAP_ACCOUNT"),
 			Password:    v.GetString("ADMIN_BOOTSTRAP_PASSWORD"),
@@ -375,6 +391,7 @@ func Load() (Config, error) {
 		},
 		Postgres: PostgresConfig{
 			DSN:             v.GetString("POSTGRES_DSN"),
+			SessionTimezone: v.GetString("POSTGRES_SESSION_TIMEZONE"),
 			MaxConns:        int32(v.GetInt("POSTGRES_MAX_CONNS")),
 			MinConns:        int32(v.GetInt("POSTGRES_MIN_CONNS")),
 			MaxConnLifetime: v.GetDuration("POSTGRES_MAX_CONN_LIFETIME"),
@@ -589,6 +606,18 @@ func Load() (Config, error) {
 	if cfg.Redis.Addr == "" {
 		return Config{}, fmt.Errorf("REDIS_ADDR is required")
 	}
+	if _, err := timeutil.LoadLocation(cfg.DefaultTimezone); err != nil {
+		return Config{}, err
+	}
+	if _, err := timeutil.LoadLocation(cfg.Postgres.SessionTimezone); err != nil {
+		return Config{}, err
+	}
+	if _, err := timeutil.LoadLocation(cfg.AutoSign.Timezone); err != nil {
+		return Config{}, err
+	}
+	if err := timeutil.Init(cfg.DefaultTimezone); err != nil {
+		return Config{}, err
+	}
 	if cfg.NATS.URL == "" {
 		return Config{}, fmt.Errorf("NATS_URL is required")
 	}
@@ -596,23 +625,23 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-func loadEnvFile(v *viper.Viper) error {
+func loadEnvFile(v *viper.Viper) (string, error) {
 	configFile, err := resolveEnvFilePath()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if configFile == "" {
-		return nil
+		return "", nil
 	}
 	v.SetConfigFile(configFile)
 	if err := v.ReadInConfig(); err != nil {
 		var notFound viper.ConfigFileNotFoundError
 		if errors.As(err, &notFound) {
-			return nil
+			return "", nil
 		}
-		return fmt.Errorf("read env config %q: %w", configFile, err)
+		return "", fmt.Errorf("read env config %q: %w", configFile, err)
 	}
-	return nil
+	return configFile, nil
 }
 
 func resolveEnvFilePath() (string, error) {
@@ -766,6 +795,9 @@ func setDefaults(cfg *Config) {
 	if cfg.Postgres.MaxConnLifetime == 0 {
 		cfg.Postgres.MaxConnLifetime = 30 * time.Minute
 	}
+	if strings.TrimSpace(cfg.Postgres.SessionTimezone) == "" {
+		cfg.Postgres.SessionTimezone = "UTC"
+	}
 	if cfg.LegacyMySQL.BatchSize == 0 {
 		cfg.LegacyMySQL.BatchSize = 500
 	}
@@ -859,11 +891,14 @@ func setDefaults(cfg *Config) {
 	if cfg.Temporal.ActivityTimeout == 0 {
 		cfg.Temporal.ActivityTimeout = 30 * time.Second
 	}
+	if strings.TrimSpace(cfg.DefaultTimezone) == "" {
+		cfg.DefaultTimezone = "Asia/Shanghai"
+	}
 	if !cfg.AutoSign.Enabled {
 		cfg.AutoSign.Enabled = true
 	}
 	if cfg.AutoSign.Timezone == "" {
-		cfg.AutoSign.Timezone = "Asia/Shanghai"
+		cfg.AutoSign.Timezone = cfg.DefaultTimezone
 	}
 	if cfg.AutoSign.TickInterval == 0 {
 		cfg.AutoSign.TickInterval = time.Minute

@@ -24,6 +24,7 @@ import (
 
 type WorkerApp struct {
 	Config          config.Config
+	ConfigManager   *config.Manager
 	Logger          *zap.Logger
 	CrashLog        *crashlog.Logger
 	Postgres        *pgxpool.Pool
@@ -41,20 +42,32 @@ type WorkerApp struct {
 }
 
 const (
-	workerQueueAuthLoginAudit    = "aegis-worker-auth-login-audit"
-	workerQueueSessionAudit      = "aegis-worker-session-audit"
-	workerQueueUserMyAccessed    = "aegis-worker-user-my-accessed"
-	workerQueueUserProfileCache  = "aegis-worker-user-profile-cache"
-	workerQueueUserSignedIn      = "aegis-worker-user-signed-in"
-	workerQueueAutoSignSync      = "aegis-worker-auto-sign-sync"
-	workerQueueFirewallBlocked   = "aegis-worker-firewall-blocked"
+	workerQueueAuthLoginAudit   = "aegis-worker-auth-login-audit"
+	workerQueueSessionAudit     = "aegis-worker-session-audit"
+	workerQueueUserMyAccessed   = "aegis-worker-user-my-accessed"
+	workerQueueUserProfileCache = "aegis-worker-user-profile-cache"
+	workerQueueUserSignedIn     = "aegis-worker-user-signed-in"
+	workerQueueAutoSignSync     = "aegis-worker-auto-sign-sync"
+	workerQueueFirewallBlocked  = "aegis-worker-firewall-blocked"
 )
 
 func NewWorkerApp(ctx context.Context, cl *crashlog.Logger) (*WorkerApp, error) {
-	cfg, err := config.Load()
+	manager, err := config.NewManager()
 	if err != nil {
 		return nil, err
 	}
+	return NewWorkerAppWithConfigManager(ctx, cl, manager)
+}
+
+func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manager *config.Manager) (*WorkerApp, error) {
+	if manager == nil {
+		var err error
+		manager, err = config.NewManager()
+		if err != nil {
+			return nil, err
+		}
+	}
+	cfg := manager.Current()
 	log, err := pkglogger.New(cfg.AppEnv)
 	if err != nil {
 		return nil, err
@@ -97,6 +110,7 @@ func NewWorkerApp(ctx context.Context, cl *crashlog.Logger) (*WorkerApp, error) 
 	service.RegisterTemporalWorkflowEngine(tw, log, pg)
 	return &WorkerApp{
 		Config:          cfg,
+		ConfigManager:   manager,
 		Logger:          log,
 		CrashLog:        cl,
 		Postgres:        postgres,
@@ -115,6 +129,7 @@ func NewWorkerApp(ctx context.Context, cl *crashlog.Logger) (*WorkerApp, error) 
 }
 
 func (w *WorkerApp) Run(ctx context.Context) error {
+	registerWorkerConfigHotReload(w.ConfigManager, w.Logger, w.AutoSign)
 	if w.TemporalWorker != nil {
 		if err := w.TemporalWorker.Start(); err != nil {
 			return err
@@ -185,11 +200,11 @@ func (w *WorkerApp) Run(ctx context.Context) error {
 		})
 	}
 
-	if w.Config.AutoSign.Enabled && w.AutoSign != nil {
-		if scheduled, rebuildErr := w.AutoSign.RebuildSchedule(ctx); rebuildErr != nil {
-			w.Logger.Warn("auto sign schedule rebuild failed", zap.Error(rebuildErr))
+	if w.AutoSign != nil {
+		if scheduled, processed, catchUpErr := w.AutoSign.CatchUpOnStartup(ctx); catchUpErr != nil {
+			w.Logger.Warn("auto sign startup catch-up failed", zap.Error(catchUpErr))
 		} else {
-			w.Logger.Info("auto sign schedule rebuilt", zap.Int("scheduled", scheduled))
+			w.Logger.Info("auto sign startup catch-up completed", zap.Int("scheduled", scheduled), zap.Int("processed", processed))
 		}
 
 		SafeGo(w.Logger, w.CrashLog, "worker.auto_sign", true, func() {
@@ -250,9 +265,9 @@ func (w *WorkerApp) Close(ctx context.Context) {
 }
 
 func (w *WorkerApp) runAutoSignLoop(ctx context.Context) {
-	tick := time.NewTicker(w.Config.AutoSign.TickInterval)
+	tick := time.NewTimer(w.autoSignTickInterval())
 	defer tick.Stop()
-	rebuild := time.NewTicker(w.Config.AutoSign.RebuildInterval)
+	rebuild := time.NewTimer(w.autoSignRebuildInterval())
 	defer rebuild.Stop()
 
 	for {
@@ -263,20 +278,38 @@ func (w *WorkerApp) runAutoSignLoop(ctx context.Context) {
 			processed, err := w.AutoSign.RunDue(ctx)
 			if err != nil {
 				w.Logger.Warn("auto sign due run failed", zap.Error(err))
-				continue
-			}
-			if processed > 0 {
+			} else if processed > 0 {
 				w.Logger.Info("auto sign due processed", zap.Int("processed", processed), zap.Int64("scheduled_count", w.AutoSign.ScheduledCount(ctx)))
 			}
+			tick.Reset(w.autoSignTickInterval())
 		case <-rebuild.C:
 			scheduled, err := w.AutoSign.RebuildSchedule(ctx)
 			if err != nil {
 				w.Logger.Warn("auto sign periodic rebuild failed", zap.Error(err))
-				continue
+			} else {
+				w.Logger.Info("auto sign periodic rebuild completed", zap.Int("scheduled", scheduled))
 			}
-			w.Logger.Info("auto sign periodic rebuild completed", zap.Int("scheduled", scheduled))
+			rebuild.Reset(w.autoSignRebuildInterval())
 		}
 	}
+}
+
+func (w *WorkerApp) autoSignTickInterval() time.Duration {
+	if w.AutoSign != nil {
+		if interval := w.AutoSign.CurrentConfig().TickInterval; interval > 0 {
+			return interval
+		}
+	}
+	return time.Minute
+}
+
+func (w *WorkerApp) autoSignRebuildInterval() time.Duration {
+	if w.AutoSign != nil {
+		if interval := w.AutoSign.CurrentConfig().RebuildInterval; interval > 0 {
+			return interval
+		}
+	}
+	return 15 * time.Minute
 }
 
 func (w *WorkerApp) runIPBanCleanupLoop(ctx context.Context) {

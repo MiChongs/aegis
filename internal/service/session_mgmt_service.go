@@ -7,6 +7,7 @@ import (
 	admindomain "aegis/internal/domain/admin"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
+	"aegis/pkg/timeutil"
 
 	"go.uber.org/zap"
 )
@@ -41,12 +42,23 @@ func (s *SessionMgmtService) ListAdminSessions(ctx context.Context, adminID int6
 
 // ForceLogout 强制踢出单个会话
 func (s *SessionMgmtService) ForceLogout(ctx context.Context, sessionID string, operatorID int64) error {
-	// 1. 标记 DB 记录为已撤销
+	record, err := s.pg.GetAdminSessionByID(ctx, sessionID)
+	if err != nil {
+		return err
+	}
 	if err := s.pg.RevokeAdminSession(ctx, sessionID, operatorID); err != nil {
 		return err
 	}
-	// 2. 加入 Redis 黑名单（使用较长 TTL 确保覆盖会话有效期）
-	_ = s.sessions.BlacklistToken(ctx, sessionID, 24*time.Hour)
+	if s.sessions != nil {
+		ttl := 24 * time.Hour
+		if record != nil {
+			if remaining := timeutil.Until(record.ExpiresAt); remaining > 0 {
+				ttl = remaining
+			}
+			_ = s.sessions.RemoveAdminOnline(ctx, record.AdminID, sessionID)
+		}
+		_ = s.sessions.BlacklistToken(ctx, sessionID, ttl)
+	}
 	s.log.Info("管理员会话被强制撤销", zap.String("sessionId", sessionID), zap.Int64("operatorId", operatorID))
 	return nil
 }
@@ -84,16 +96,24 @@ func (s *SessionMgmtService) ListOnlineAdmins(ctx context.Context) ([]admindomai
 	}
 	items := make([]admindomain.OnlineAdmin, 0, len(ids))
 	for _, id := range ids {
+		activeSessions, err := s.pg.ListAdminSessions(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if len(activeSessions) == 0 {
+			_ = s.sessions.ClearAdminOnline(ctx, id)
+			continue
+		}
 		profile, err := s.pg.GetAdminAccessByID(ctx, id)
 		if err != nil || profile == nil {
 			continue
 		}
-		sessionCount, _ := s.sessions.GetOnlineSessionCount(ctx, id)
 		items = append(items, admindomain.OnlineAdmin{
 			AdminID:      id,
 			Account:      profile.Account.Account,
 			DisplayName:  profile.Account.DisplayName,
-			SessionCount: sessionCount,
+			SessionCount: int64(len(activeSessions)),
+			LastActiveAt: latestAdminSessionActivity(activeSessions),
 		})
 	}
 	return items, nil
@@ -158,13 +178,97 @@ func (s *SessionMgmtService) RevokeDelegation(ctx context.Context, delegationID 
 
 // Cleanup 清理过期的会话、临时权限和代理授权
 func (s *SessionMgmtService) Cleanup(ctx context.Context) {
-	if n, err := s.pg.CleanupExpiredSessions(ctx); err == nil && n > 0 {
+	cutoff := timeutil.NowUTC()
+	if n, err := s.pg.CleanupExpiredSessions(ctx, cutoff); err == nil && n > 0 {
 		s.log.Info("清理过期会话记录", zap.Int64("count", n))
+	} else if err != nil {
+		s.log.Warn("cleanup expired admin sessions failed", zap.Error(err))
 	}
-	if n, err := s.pg.CleanupExpiredTempPermissions(ctx); err == nil && n > 0 {
+	if n, err := s.pg.CleanupExpiredTempPermissions(ctx, cutoff); err == nil && n > 0 {
 		s.log.Info("清理过期临时权限", zap.Int64("count", n))
+	} else if err != nil {
+		s.log.Warn("cleanup expired temp permissions failed", zap.Error(err))
 	}
-	if n, err := s.pg.CleanupExpiredDelegations(ctx); err == nil && n > 0 {
+	if n, err := s.pg.CleanupExpiredDelegations(ctx, cutoff); err == nil && n > 0 {
 		s.log.Info("清理过期代理授权", zap.Int64("count", n))
+	} else if err != nil {
+		s.log.Warn("cleanup expired delegations failed", zap.Error(err))
 	}
+	if n, err := s.cleanupAdminOnlineState(ctx); err == nil && n > 0 {
+		s.log.Info("清理管理员在线残留", zap.Int64("count", n))
+	} else if err != nil {
+		s.log.Warn("cleanup stale admin online state failed", zap.Error(err))
+	}
+}
+
+func (s *SessionMgmtService) cleanupAdminOnlineState(ctx context.Context) (int64, error) {
+	if s.sessions == nil {
+		return 0, nil
+	}
+	ids, err := s.sessions.ListOnlineAdminIDs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var removed int64
+	for _, adminID := range ids {
+		activeSessions, err := s.pg.ListAdminSessions(ctx, adminID)
+		if err != nil {
+			return removed, err
+		}
+		if len(activeSessions) == 0 {
+			if err := s.sessions.ClearAdminOnline(ctx, adminID); err != nil {
+				return removed, err
+			}
+			removed++
+			continue
+		}
+		onlineSessionIDs, err := s.sessions.ListAdminOnlineSessionIDs(ctx, adminID)
+		if err != nil {
+			return removed, err
+		}
+		for _, sessionID := range staleAdminSessionIDs(onlineSessionIDs, activeSessions) {
+			if err := s.sessions.RemoveAdminOnline(ctx, adminID, sessionID); err != nil {
+				return removed, err
+			}
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+func staleAdminSessionIDs(current []string, active []admindomain.AdminSessionRecord) []string {
+	if len(current) == 0 {
+		return nil
+	}
+	activeSet := make(map[string]struct{}, len(active))
+	for _, item := range active {
+		if item.ID != "" {
+			activeSet[item.ID] = struct{}{}
+		}
+	}
+	stale := make([]string, 0, len(current))
+	seen := make(map[string]struct{}, len(current))
+	for _, sessionID := range current {
+		if sessionID == "" {
+			continue
+		}
+		if _, duplicated := seen[sessionID]; duplicated {
+			continue
+		}
+		seen[sessionID] = struct{}{}
+		if _, ok := activeSet[sessionID]; !ok {
+			stale = append(stale, sessionID)
+		}
+	}
+	return stale
+}
+
+func latestAdminSessionActivity(items []admindomain.AdminSessionRecord) time.Time {
+	var latest time.Time
+	for _, item := range items {
+		if item.LastActiveAt.After(latest) {
+			latest = item.LastActiveAt
+		}
+	}
+	return latest
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	admindomain "aegis/internal/domain/admin"
+	"aegis/pkg/timeutil"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -25,13 +26,34 @@ func (r *Repository) ListAdminSessions(ctx context.Context, adminID int64) ([]ad
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, admin_id, ip, user_agent, device, issued_at, expires_at, last_active_at, is_revoked, revoked_by, revoked_at
 FROM admin_sessions
-WHERE admin_id = $1 AND NOT is_revoked
+WHERE admin_id = $1 AND NOT is_revoked AND expires_at > NOW()
 ORDER BY issued_at DESC`, adminID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanAdminSessionRows(rows)
+}
+
+// GetAdminSessionByID 获取指定管理员会话记录
+func (r *Repository) GetAdminSessionByID(ctx context.Context, sessionID string) (*admindomain.AdminSessionRecord, error) {
+	var item admindomain.AdminSessionRecord
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, admin_id, ip, user_agent, device, issued_at, expires_at, last_active_at, is_revoked, revoked_by, revoked_at
+FROM admin_sessions
+WHERE id = $1`, sessionID,
+	).Scan(
+		&item.ID, &item.AdminID, &item.IP, &item.UserAgent, &item.Device,
+		&item.IssuedAt, &item.ExpiresAt, &item.LastActiveAt,
+		&item.IsRevoked, &item.RevokedBy, &item.RevokedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &item, nil
 }
 
 // ListAllActiveSessions 分页列出所有活跃会话（LEFT JOIN 填充管理员信息）
@@ -118,8 +140,8 @@ func (r *Repository) UpdateSessionLastActive(ctx context.Context, sessionID stri
 }
 
 // CleanupExpiredSessions 清理已过期的会话记录
-func (r *Repository) CleanupExpiredSessions(ctx context.Context) (int64, error) {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM admin_sessions WHERE expires_at < NOW()`)
+func (r *Repository) CleanupExpiredSessions(ctx context.Context, cutoff time.Time) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM admin_sessions WHERE expires_at < $1`, timeutil.NormalizeUTC(cutoff))
 	if err != nil {
 		return 0, err
 	}
@@ -203,8 +225,8 @@ func (r *Repository) GetActiveTempPermissions(ctx context.Context, adminID int64
 }
 
 // CleanupExpiredTempPermissions 标记过期的临时权限为已撤销
-func (r *Repository) CleanupExpiredTempPermissions(ctx context.Context) (int64, error) {
-	tag, err := r.pool.Exec(ctx, `UPDATE admin_temp_permissions SET is_revoked = TRUE WHERE expires_at < NOW() AND NOT is_revoked`)
+func (r *Repository) CleanupExpiredTempPermissions(ctx context.Context, cutoff time.Time) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `UPDATE admin_temp_permissions SET is_revoked = TRUE WHERE expires_at < $1 AND NOT is_revoked`, timeutil.NormalizeUTC(cutoff))
 	if err != nil {
 		return 0, err
 	}
@@ -277,8 +299,8 @@ ORDER BY d.created_at DESC`, delegateID)
 }
 
 // CleanupExpiredDelegations 标记过期的代理授权为已撤销
-func (r *Repository) CleanupExpiredDelegations(ctx context.Context) (int64, error) {
-	tag, err := r.pool.Exec(ctx, `UPDATE admin_delegations SET is_revoked = TRUE WHERE expires_at < NOW() AND NOT is_revoked`)
+func (r *Repository) CleanupExpiredDelegations(ctx context.Context, cutoff time.Time) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `UPDATE admin_delegations SET is_revoked = TRUE WHERE expires_at < $1 AND NOT is_revoked`, timeutil.NormalizeUTC(cutoff))
 	if err != nil {
 		return 0, err
 	}

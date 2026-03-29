@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"aegis/internal/config"
 	securitydomain "aegis/internal/domain/security"
 	pgrepo "aegis/internal/repository/postgres"
+	"aegis/pkg/timeutil"
 
 	"github.com/expr-lang/expr"
 	redisrate "github.com/go-redis/redis_rate/v10"
@@ -23,6 +25,7 @@ import (
 
 // RiskService 风控中心业务服务
 type RiskService struct {
+	mu             sync.RWMutex
 	log            *zap.Logger
 	pg             *pgrepo.Repository
 	redis          *redislib.Client
@@ -45,19 +48,43 @@ func NewRiskService(cfg config.RiskConfig, log *zap.Logger, pg *pgrepo.Repositor
 	if redis != nil {
 		service.rateLimiter = redisrate.NewLimiter(redis)
 	}
-	switch strings.ToLower(strings.TrimSpace(cfg.IPReputation.Provider)) {
+	service.applyConfig(cfg)
+	return service
+}
+
+func (s *RiskService) Reload(cfg config.RiskConfig) {
+	s.applyConfig(cfg)
+}
+
+func (s *RiskService) applyConfig(cfg config.RiskConfig) {
+	provider := buildIPReputationProvider(cfg.IPReputation, s.log)
+	s.mu.Lock()
+	s.cfg = cfg
+	s.ipProvider = provider
+	s.mu.Unlock()
+}
+
+func (s *RiskService) runtime() (config.RiskConfig, IPReputationProvider) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg, s.ipProvider
+}
+
+func buildIPReputationProvider(cfg config.RiskIPReputationConfig, log *zap.Logger) IPReputationProvider {
+	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
 	case "", "none":
 	case "ipqualityscore":
-		service.ipProvider = NewIPQualityScoreProvider(cfg.IPReputation)
-		if service.ipProvider == nil && log != nil {
+		provider := NewIPQualityScoreProvider(cfg)
+		if provider == nil && log != nil {
 			log.Warn("IP reputation provider enabled but api key is empty", zap.String("provider", "ipqualityscore"))
 		}
+		return provider
 	default:
 		if log != nil {
-			log.Warn("unknown IP reputation provider, fallback to local records only", zap.String("provider", cfg.IPReputation.Provider))
+			log.Warn("unknown IP reputation provider, fallback to local records only", zap.String("provider", cfg.Provider))
 		}
 	}
-	return service
+	return nil
 }
 
 // ════════════════════════════════════════════════════════════
@@ -185,7 +212,7 @@ func (s *RiskService) buildEvalEnv(ctx context.Context, req securitydomain.RiskE
 	env["device_age_hours"] = float64(0)
 	if req.DeviceID != "" {
 		if fp, err := s.pg.GetDeviceFingerprint(ctx, req.DeviceID); fp != nil && err == nil {
-			hours := time.Since(fp.FirstSeenAt).Hours()
+			hours := timeutil.Since(fp.FirstSeenAt).Hours()
 			env["device_age_hours"] = hours
 		}
 	}
@@ -341,6 +368,7 @@ func toFloat64(v any, def float64) float64 {
 }
 
 func (s *RiskService) populateRateLimitEnv(ctx context.Context, req securitydomain.RiskEvalRequest, env map[string]any) {
+	cfg, _ := s.runtime()
 	env["ip_request_count"] = int64(0)
 	env["account_request_count"] = int64(0)
 	env["device_request_count"] = int64(0)
@@ -354,7 +382,7 @@ func (s *RiskService) populateRateLimitEnv(ctx context.Context, req securitydoma
 		return
 	}
 
-	if s.rateLimiter == nil || !s.cfg.RateLimit.Enabled {
+	if s.rateLimiter == nil || !cfg.RateLimit.Enabled {
 		ipReqKey := fmt.Sprintf("%s:risk:ip:%s:%s", s.keyPrefix, req.Scene, req.IP)
 		count, err := s.redis.Incr(ctx, ipReqKey).Result()
 		if err == nil && count == 1 {
@@ -373,19 +401,19 @@ func (s *RiskService) populateRateLimitEnv(ctx context.Context, req securitydoma
 	scene := normalizeRiskDimension(req.Scene)
 	ip := normalizeRiskDimension(req.IP)
 
-	if count, limited, ok := s.takeRateSample(ctx, "ip", s.cfg.RateLimit.IPPerMinute, scene, appID, ip); ok {
+	if count, limited, ok := s.takeRateSample(ctx, "ip", cfg.RateLimit.IPPerMinute, scene, appID, ip); ok {
 		env["ip_request_count"] = count
 		env["ip_rate_limited"] = limited
 	}
-	if count, limited, ok := s.takeRateSample(ctx, "account", s.cfg.RateLimit.AccountPerMinute, scene, appID, account); ok {
+	if count, limited, ok := s.takeRateSample(ctx, "account", cfg.RateLimit.AccountPerMinute, scene, appID, account); ok {
 		env["account_request_count"] = count
 		env["account_rate_limited"] = limited
 	}
-	if count, limited, ok := s.takeRateSample(ctx, "device", s.cfg.RateLimit.DevicePerMinute, scene, appID, deviceID); ok {
+	if count, limited, ok := s.takeRateSample(ctx, "device", cfg.RateLimit.DevicePerMinute, scene, appID, deviceID); ok {
 		env["device_request_count"] = count
 		env["device_rate_limited"] = limited
 	}
-	if count, limited, ok := s.takeRateSample(ctx, "account_device", s.cfg.RateLimit.AccountDevicePerMinute, scene, appID, account, deviceID); ok {
+	if count, limited, ok := s.takeRateSample(ctx, "account_device", cfg.RateLimit.AccountDevicePerMinute, scene, appID, account, deviceID); ok {
 		env["account_device_request_count"] = count
 		env["account_device_rate_limited"] = limited
 	}
@@ -424,6 +452,7 @@ func (s *RiskService) riskRateLimitKey(scope string, parts ...string) string {
 }
 
 func (s *RiskService) resolveIPRisk(ctx context.Context, ip string) *securitydomain.IPRiskRecord {
+	cfg, provider := s.runtime()
 	ip = strings.TrimSpace(ip)
 	if ip == "" {
 		return nil
@@ -438,17 +467,17 @@ func (s *RiskService) resolveIPRisk(ctx context.Context, ip string) *securitydom
 		if err != nil && s.log != nil {
 			s.log.Warn("load local ip risk failed", zap.String("ip", ip), zap.Error(err))
 		}
-		if local != nil && time.Since(local.LastSeenAt) <= s.cfg.IPReputation.CacheTTL {
+		if local != nil && timeutil.Since(local.LastSeenAt) <= cfg.IPReputation.CacheTTL {
 			s.writeIPRiskCache(ctx, local)
 			return local, nil
 		}
-		if s.ipProvider == nil {
+		if provider == nil {
 			return local, nil
 		}
 
-		record, err := s.ipProvider.Lookup(ctx, ip)
+		record, err := provider.Lookup(ctx, ip)
 		if err != nil {
-			if local != nil && s.cfg.IPReputation.AllowStale {
+			if local != nil && cfg.IPReputation.AllowStale {
 				return local, nil
 			}
 			return nil, err
@@ -460,7 +489,7 @@ func (s *RiskService) resolveIPRisk(ctx context.Context, ip string) *securitydom
 		stored, upsertErr := s.pg.UpsertIPRisk(ctx, *record)
 		if upsertErr != nil {
 			if s.log != nil {
-				s.log.Warn("persist ip reputation failed", zap.String("ip", ip), zap.String("provider", s.ipProvider.Name()), zap.Error(upsertErr))
+				s.log.Warn("persist ip reputation failed", zap.String("ip", ip), zap.String("provider", provider.Name()), zap.Error(upsertErr))
 			}
 			s.writeIPRiskCache(ctx, record)
 			return record, nil
@@ -479,7 +508,8 @@ func (s *RiskService) resolveIPRisk(ctx context.Context, ip string) *securitydom
 }
 
 func (s *RiskService) readIPRiskCache(ctx context.Context, ip string) *securitydomain.IPRiskRecord {
-	if s.redis == nil || s.cfg.IPReputation.CacheTTL <= 0 {
+	cfg, _ := s.runtime()
+	if s.redis == nil || cfg.IPReputation.CacheTTL <= 0 {
 		return nil
 	}
 	raw, err := s.redis.Get(ctx, s.ipRiskCacheKey(ip)).Bytes()
@@ -494,14 +524,15 @@ func (s *RiskService) readIPRiskCache(ctx context.Context, ip string) *securityd
 }
 
 func (s *RiskService) writeIPRiskCache(ctx context.Context, record *securitydomain.IPRiskRecord) {
-	if s.redis == nil || record == nil || s.cfg.IPReputation.CacheTTL <= 0 {
+	cfg, _ := s.runtime()
+	if s.redis == nil || record == nil || cfg.IPReputation.CacheTTL <= 0 {
 		return
 	}
 	payload, err := json.Marshal(record)
 	if err != nil {
 		return
 	}
-	if err := s.redis.Set(ctx, s.ipRiskCacheKey(record.IP), payload, s.cfg.IPReputation.CacheTTL).Err(); err != nil && s.log != nil {
+	if err := s.redis.Set(ctx, s.ipRiskCacheKey(record.IP), payload, cfg.IPReputation.CacheTTL).Err(); err != nil && s.log != nil {
 		s.log.Warn("write ip risk cache failed", zap.String("ip", record.IP), zap.Error(err))
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"aegis/internal/config"
 	"aegis/pkg/crashlog"
 )
 
@@ -15,12 +16,17 @@ type UnifiedApp struct {
 }
 
 func NewUnifiedApp(ctx context.Context, cl *crashlog.Logger) (*UnifiedApp, error) {
-	api, err := NewAPIApp(ctx, cl)
+	manager, err := config.NewManager()
 	if err != nil {
 		return nil, err
 	}
 
-	worker, err := NewWorkerApp(ctx, cl)
+	api, err := NewAPIAppWithConfigManager(ctx, cl, manager)
+	if err != nil {
+		return nil, err
+	}
+
+	worker, err := NewWorkerAppWithConfigManager(ctx, cl, manager)
 	if err != nil {
 		api.Close(context.Background())
 		return nil, err

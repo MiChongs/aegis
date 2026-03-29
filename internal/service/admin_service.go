@@ -19,6 +19,7 @@ import (
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	"aegis/pkg/timeutil"
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
 	"github.com/golang-jwt/jwt/v5"
@@ -39,6 +40,7 @@ type AdminService struct {
 	security    *SecurityService // 用于 MFA 验证（通过 SetSecurityService 注入，避免循环初始化）
 	ldap        *LDAPService     // LDAP 认证（通过 SetLDAPService 注入）
 	oidc        *OIDCService     // OIDC 认证（通过 SetOIDCService 注入）
+	saml        *SAMLService     // SAML 认证（通过 SetSAMLService 注入）
 	plugin      *PluginService   // 插件系统（通过 SetPluginService 注入）
 	risk        *RiskService     // 风控服务（通过 SetRiskService 注入）
 }
@@ -79,6 +81,11 @@ func (s *AdminService) SetLDAPService(ldap *LDAPService) {
 // SetOIDCService 注入 OIDCService（在 bootstrap 中调用）
 func (s *AdminService) SetOIDCService(oidc *OIDCService) {
 	s.oidc = oidc
+}
+
+// SetSAMLService 注入 SAMLService（在 bootstrap 中调用）
+func (s *AdminService) SetSAMLService(saml *SAMLService) {
+	s.saml = saml
 }
 
 // SetPluginService 注入 PluginService（在 bootstrap 中调用）
@@ -182,15 +189,15 @@ func (s *AdminService) Login(ctx context.Context, account, password, ip, userAge
 func (s *AdminService) continueLoginWithMFA(ctx context.Context, adminID int64, account, ip, userAgent string) (*admindomain.LoginResult, error) {
 	totpRecord, _ := s.pg.GetAdminTOTPSecret(ctx, adminID)
 	if totpRecord != nil && totpRecord.Enabled {
-		challengeID := fmt.Sprintf("admin-mfa-%d-%d", adminID, time.Now().UnixNano())
+		challengeID := fmt.Sprintf("admin-mfa-%d-%d", adminID, timeutil.Now().UnixNano())
 		methods := []string{"totp", "recovery_code"}
 		challenge := securitydomain.LoginChallenge{
 			ChallengeID: challengeID,
 			UserID:      adminID,
 			Account:     account,
 			Methods:     methods,
-			ExpiresAt:   time.Now().UTC().Add(5 * time.Minute),
-			CreatedAt:   time.Now().UTC(),
+			ExpiresAt:   timeutil.NowUTC().Add(5 * time.Minute),
+			CreatedAt:   timeutil.NowUTC(),
 		}
 		if err := s.sessions.SetTwoFactorChallenge(ctx, challenge, 5*time.Minute); err != nil {
 			return nil, err
@@ -283,6 +290,55 @@ func (s *AdminService) HandleOIDCCallback(ctx context.Context, code, state, ip, 
 	return s.continueLoginWithMFA(ctx, localAccount.ID, localAccount.Account, ip, userAgent)
 }
 
+// GetSAMLAuthURL 生成 SAML AuthnRequest 重定向 URL。
+func (s *AdminService) GetSAMLAuthURL(ctx context.Context) (string, string, error) {
+	if s.saml == nil || !s.saml.IsEnabled() {
+		return "", "", apperrors.New(40197, http.StatusBadRequest, "SAML 认证未启用")
+	}
+	relayState := uuid.NewString()
+	url, requestID, err := s.saml.BuildAuthRedirect(ctx, relayState)
+	if err != nil {
+		return "", "", err
+	}
+	if err := s.sessions.SetSAMLState(ctx, relayState, requestID, 5*time.Minute); err != nil {
+		return "", "", err
+	}
+	return url, relayState, nil
+}
+
+// HandleSAMLCallback 处理 SAML ACS 回调。
+func (s *AdminService) HandleSAMLCallback(ctx context.Context, req *http.Request, ip, userAgent string) (*admindomain.LoginResult, error) {
+	if s.saml == nil || !s.saml.IsEnabled() {
+		return nil, apperrors.New(40197, http.StatusBadRequest, "SAML 认证未启用")
+	}
+	if err := req.ParseForm(); err != nil {
+		return nil, apperrors.New(40097, http.StatusBadRequest, "SAML 回调参数解析失败")
+	}
+	relayState := strings.TrimSpace(req.FormValue("RelayState"))
+	possibleRequestIDs := []string(nil)
+	if relayState != "" {
+		requestID, err := s.sessions.GetAndDeleteSAMLState(ctx, relayState)
+		if err != nil {
+			return nil, err
+		}
+		if requestID != "" {
+			possibleRequestIDs = append(possibleRequestIDs, requestID)
+		}
+	}
+	user, err := s.saml.ParseAndVerifyResponse(ctx, req, possibleRequestIDs)
+	if err != nil {
+		return nil, apperrors.New(40198, http.StatusUnauthorized, "SAML 认证失败")
+	}
+	localAccount, err := s.syncExternalAdmin(ctx, user.Account, user.DisplayName, user.Email, user.Phone, "saml")
+	if err != nil {
+		return nil, err
+	}
+	if localAccount.Status != "active" {
+		return nil, apperrors.New(40310, http.StatusForbidden, "管理员账户已被停用")
+	}
+	return s.continueLoginWithMFA(ctx, localAccount.ID, localAccount.Account, ip, userAgent)
+}
+
 // syncExternalAdmin 同步外部认证用户到本地（LDAP/OIDC 共用）
 func (s *AdminService) syncExternalAdmin(ctx context.Context, account, displayName, email, phone, authSource string) (*admindomain.Account, error) {
 	record, err := s.pg.GetAdminAuthByAccount(ctx, account)
@@ -313,7 +369,7 @@ func (s *AdminService) VerifyMFA(ctx context.Context, challengeID, code, recover
 	if err != nil || challenge == nil {
 		return nil, apperrors.New(40111, http.StatusUnauthorized, "MFA 挑战已过期或不存在")
 	}
-	if time.Now().UTC().After(challenge.ExpiresAt) {
+	if timeutil.NowUTC().After(challenge.ExpiresAt) {
 		_ = s.sessions.DeleteTwoFactorChallenge(ctx, challengeID)
 		return nil, apperrors.New(40112, http.StatusUnauthorized, "MFA 挑战已过期")
 	}
@@ -367,11 +423,13 @@ func (s *AdminService) ValidateAccessToken(ctx context.Context, token string) (*
 		return nil, err
 	}
 	if blacklisted {
+		s.cleanupAdminSessionStateAsync(token, adminIDFromClaims(claims), tokenID)
 		return nil, apperrors.New(40111, http.StatusUnauthorized, "管理员令牌已失效")
 	}
 	// 检查会话是否被管理端撤销
 	revoked, _ := s.pg.IsSessionRevoked(ctx, tokenID)
 	if revoked {
+		s.cleanupAdminSessionStateAsync(token, adminIDFromClaims(claims), tokenID)
 		return nil, apperrors.New(40115, http.StatusUnauthorized, "会话已被撤销")
 	}
 	session, err := s.sessions.GetAdminSession(ctx, token)
@@ -379,6 +437,7 @@ func (s *AdminService) ValidateAccessToken(ctx context.Context, token string) (*
 		return nil, err
 	}
 	if session == nil {
+		s.cleanupAdminSessionStateAsync(token, adminIDFromClaims(claims), tokenID)
 		return nil, apperrors.New(40112, http.StatusUnauthorized, "管理员会话不存在或已过期")
 	}
 	profile, err := s.pg.GetAdminAccessByID(ctx, session.AdminID)
@@ -389,8 +448,10 @@ func (s *AdminService) ValidateAccessToken(ctx context.Context, token string) (*
 		return nil, apperrors.New(40450, http.StatusNotFound, "管理员不存在")
 	}
 	if profile.Account.Status != "active" {
+		s.cleanupAdminSessionStateAsync(token, session.AdminID, session.TokenID)
 		return nil, apperrors.New(40310, http.StatusForbidden, "管理员账户不可用")
 	}
+	s.touchAdminSessionAsync(session.AdminID, session.TokenID)
 	return &admindomain.AccessContext{
 		Session: admindomain.Session{
 			AdminID:      profile.Account.ID,
@@ -414,7 +475,52 @@ func (s *AdminService) Logout(ctx context.Context, token string) error {
 	// 标记会话记录为已撤销 + 清除在线状态
 	_ = s.pg.RevokeAdminSession(ctx, access.TokenID, access.AdminID)
 	_ = s.sessions.RemoveAdminOnline(ctx, access.AdminID, access.TokenID)
-	return s.sessions.BlacklistToken(ctx, access.TokenID, time.Until(access.ExpiresAt))
+	return s.sessions.BlacklistToken(ctx, access.TokenID, timeutil.Until(access.ExpiresAt))
+}
+func (s *AdminService) touchAdminSessionAsync(adminID int64, tokenID string) {
+	if adminID <= 0 || strings.TrimSpace(tokenID) == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = s.pg.UpdateSessionLastActive(ctx, tokenID)
+		if s.sessions != nil {
+			_ = s.sessions.SetAdminOnline(ctx, adminID, tokenID)
+		}
+	}()
+}
+
+func (s *AdminService) cleanupAdminSessionStateAsync(token string, adminID int64, tokenID string) {
+	if strings.TrimSpace(token) == "" && strings.TrimSpace(tokenID) == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if s.sessions != nil && strings.TrimSpace(token) != "" {
+			_ = s.sessions.DeleteAdminSession(ctx, token)
+		}
+		if s.sessions != nil && adminID > 0 && strings.TrimSpace(tokenID) != "" {
+			_ = s.sessions.RemoveAdminOnline(ctx, adminID, tokenID)
+		}
+	}()
+}
+
+func adminIDFromClaims(claims jwt.MapClaims) int64 {
+	switch value := claims["aid"].(type) {
+	case float64:
+		return int64(value)
+	case int64:
+		return value
+	case int:
+		return int64(value)
+	case string:
+		id, _ := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		return id
+	default:
+		return 0
+	}
 }
 
 func (s *AdminService) Authorize(ctx context.Context, access *admindomain.AccessContext, permission string, appID *int64) error {
@@ -754,7 +860,7 @@ func (s *AdminService) normalizeAssignments(assignments []admindomain.Assignment
 }
 
 func (s *AdminService) issueSession(ctx context.Context, profile *admindomain.Profile, ip, userAgent string) (*admindomain.LoginResult, error) {
-	now := time.Now().UTC()
+	now := timeutil.NowUTC()
 	expiresAt := now.Add(s.cfg.AdminSessionTTL)
 	tokenID := uuid.NewString()
 	claims := jwt.MapClaims{
@@ -781,7 +887,7 @@ func (s *AdminService) issueSession(ctx context.Context, profile *admindomain.Pr
 		ExpiresAt:    expiresAt,
 		IsSuperAdmin: profile.Account.IsSuperAdmin,
 	}
-	if err := s.sessions.SetAdminSession(ctx, signed, session, time.Until(expiresAt)); err != nil {
+	if err := s.sessions.SetAdminSession(ctx, signed, session, timeutil.Until(expiresAt)); err != nil {
 		return nil, err
 	}
 	_ = s.pg.UpdateAdminLastLogin(ctx, profile.Account.ID, now)

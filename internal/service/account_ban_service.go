@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"aegis/internal/config"
@@ -13,17 +14,20 @@ import (
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	"aegis/pkg/timeutil"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
 
 type AccountBanService struct {
+	mu               sync.Mutex
 	log              *zap.Logger
 	pg               *pgrepo.Repository
 	sessions         *redisrepo.SessionRepository
 	plugin           *PluginService
 	cron             *cron.Cron
 	cleanupBatchSize int
+	started          bool
 }
 
 func NewAccountBanService(cfg config.AccountBanConfig, log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository) (*AccountBanService, error) {
@@ -31,20 +35,13 @@ func NewAccountBanService(cfg config.AccountBanConfig, log *zap.Logger, pg *pgre
 		log = zap.NewNop()
 	}
 	service := &AccountBanService{
-		log:              log,
-		pg:               pg,
-		sessions:         sessions,
-		cleanupBatchSize: cfg.CleanupBatchSize,
+		log:      log,
+		pg:       pg,
+		sessions: sessions,
 	}
-	if !cfg.CleanupEnabled {
-		return service, nil
-	}
-
-	scheduler := cron.New(cron.WithLocation(time.UTC))
-	if _, err := scheduler.AddFunc(cfg.CleanupSpec, service.runCleanupJob); err != nil {
+	if err := service.Reload(cfg); err != nil {
 		return nil, err
 	}
-	service.cron = scheduler
 	return service, nil
 }
 
@@ -53,22 +50,57 @@ func (s *AccountBanService) SetPluginService(plugin *PluginService) {
 }
 
 func (s *AccountBanService) Start() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.started = true
 	if s.cron != nil {
 		s.cron.Start()
 	}
 }
 
 func (s *AccountBanService) Close(ctx context.Context) error {
-	if s.cron == nil {
+	s.mu.Lock()
+	cronScheduler := s.cron
+	s.started = false
+	s.mu.Unlock()
+	if cronScheduler == nil {
 		return nil
 	}
-	stopCtx := s.cron.Stop()
+	stopCtx := cronScheduler.Stop()
 	select {
 	case <-stopCtx.Done():
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (s *AccountBanService) Reload(cfg config.AccountBanConfig) error {
+	if cfg.CleanupBatchSize <= 0 {
+		cfg.CleanupBatchSize = 200
+	}
+	var scheduler *cron.Cron
+	if cfg.CleanupEnabled {
+		scheduler = cron.New(cron.WithLocation(timeutil.DefaultLocation()))
+		if _, err := scheduler.AddFunc(cfg.CleanupSpec, s.runCleanupJob); err != nil {
+			return err
+		}
+	}
+
+	s.mu.Lock()
+	oldScheduler := s.cron
+	started := s.started
+	s.cleanupBatchSize = cfg.CleanupBatchSize
+	s.cron = scheduler
+	s.mu.Unlock()
+
+	if oldScheduler != nil {
+		<-oldScheduler.Stop().Done()
+	}
+	if started && scheduler != nil {
+		scheduler.Start()
+	}
+	return nil
 }
 
 func (s *AccountBanService) BanUser(ctx context.Context, appID int64, userID int64, input userdomain.AccountBanCreateInput) (*userdomain.AccountBan, error) {
@@ -183,8 +215,14 @@ func (s *AccountBanService) runCleanupJob() {
 		return
 	}
 	for {
+		s.mu.Lock()
+		batchSize := s.cleanupBatchSize
+		s.mu.Unlock()
+		if batchSize <= 0 {
+			batchSize = 200
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		expired, err := s.pg.ExpireOverdueUserAccountBans(ctx, s.cleanupBatchSize)
+		expired, err := s.pg.ExpireOverdueUserAccountBans(ctx, batchSize)
 		cancel()
 		if err != nil {
 			s.log.Warn("expire overdue account bans failed", zap.Error(err))
@@ -193,7 +231,7 @@ func (s *AccountBanService) runCleanupJob() {
 		if expired > 0 {
 			s.log.Info("expired overdue account bans", zap.Int64("expired", expired))
 		}
-		if expired == 0 || expired < int64(s.cleanupBatchSize) {
+		if expired == 0 || expired < int64(batchSize) {
 			return
 		}
 	}
@@ -255,7 +293,7 @@ func normalizeAccountBanCreateInput(input userdomain.AccountBanCreateInput) (use
 		return output, apperrors.New(40000, http.StatusBadRequest, "不支持的封禁范围")
 	}
 
-	now := time.Now().UTC()
+	now := timeutil.NowUTC()
 	if output.StartAt == nil {
 		output.StartAt = &now
 	} else {
