@@ -18,6 +18,17 @@ func decodeS3StorageConfig(data map[string]any) (*storagedomain.S3Config, error)
 	return &cfg, nil
 }
 
+func decodeMinIOConfig(data map[string]any) (*storagedomain.MinIOConfig, error) {
+	var cfg storagedomain.MinIOConfig
+	if err := decodeStorageConfigData(data, &cfg); err != nil {
+		return nil, apperrors.New(40113, http.StatusBadRequest, "MinIO 配置解析失败")
+	}
+	if strings.TrimSpace(cfg.Endpoint) == "" || strings.TrimSpace(cfg.Bucket) == "" || strings.TrimSpace(cfg.AccessKeyID) == "" || strings.TrimSpace(cfg.SecretAccessKey) == "" {
+		return nil, apperrors.New(40114, http.StatusBadRequest, "MinIO 配置不完整")
+	}
+	return &cfg, nil
+}
+
 func decodeAliyunOSSConfig(data map[string]any) (*storagedomain.AliyunOSSConfig, error) {
 	var cfg storagedomain.AliyunOSSConfig
 	if err := decodeStorageConfigData(data, &cfg); err != nil {
@@ -61,6 +72,9 @@ func decodeWebDAVConfig(data map[string]any) (*storagedomain.WebDAVConfig, error
 	}
 	if strings.TrimSpace(cfg.Endpoint) == "" {
 		return nil, apperrors.New(40097, http.StatusBadRequest, "WebDAV Endpoint 不能为空")
+	}
+	if err := validateStorageEndpoint(cfg.Endpoint); err != nil {
+		return nil, apperrors.New(40097, http.StatusBadRequest, err.Error())
 	}
 	return &cfg, nil
 }

@@ -127,3 +127,39 @@ func (r *SessionRepository) oidcStateKey(state string) string {
 func (r *SessionRepository) oidcTicketKey(ticket string) string {
 	return fmt.Sprintf("%s:oidc:ticket:%s", r.keyPrefix, ticket)
 }
+
+// ── SAML relay state / ticket ──
+
+func (r *SessionRepository) SetSAMLState(ctx context.Context, relayState string, requestID string, ttl time.Duration) error {
+	return r.client.Set(ctx, r.samlStateKey(relayState), requestID, ttl).Err()
+}
+
+func (r *SessionRepository) GetAndDeleteSAMLState(ctx context.Context, relayState string) (string, error) {
+	key := r.samlStateKey(relayState)
+	result, err := r.client.GetDel(ctx, key).Result()
+	if err != nil {
+		return "", nil
+	}
+	return result, nil
+}
+
+func (r *SessionRepository) SetSAMLTicket(ctx context.Context, ticket string, payload []byte, ttl time.Duration) error {
+	return r.client.Set(ctx, r.samlTicketKey(ticket), payload, ttl).Err()
+}
+
+func (r *SessionRepository) GetAndDeleteSAMLTicket(ctx context.Context, ticket string) ([]byte, error) {
+	key := r.samlTicketKey(ticket)
+	result, err := r.client.GetDel(ctx, key).Bytes()
+	if err != nil {
+		return nil, nil
+	}
+	return result, nil
+}
+
+func (r *SessionRepository) samlStateKey(relayState string) string {
+	return fmt.Sprintf("%s:saml:state:%s", r.keyPrefix, relayState)
+}
+
+func (r *SessionRepository) samlTicketKey(ticket string) string {
+	return fmt.Sprintf("%s:saml:ticket:%s", r.keyPrefix, ticket)
+}

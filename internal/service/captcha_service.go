@@ -1,6 +1,7 @@
 package service
 
 import (
+	"aegis/pkg/egress"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -16,6 +17,7 @@ import (
 	"aegis/internal/config"
 	captchadomain "aegis/internal/domain/captcha"
 	redisrepo "aegis/internal/repository/redis"
+	"aegis/pkg/circuitbreaker"
 	apperrors "aegis/pkg/errors"
 
 	dchestcaptcha "github.com/dchest/captcha"
@@ -330,7 +332,7 @@ func (s *CaptchaService) callAudioService(ctx context.Context, length int, lang 
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := egress.NewClient(egress.Profile{Name: "captcha.audio"}).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -364,22 +366,33 @@ func digitsToString(digits []byte) string {
 // Generate 统一生成入口，根据类型分发
 func (s *CaptchaService) Generate(ctx context.Context, captchaType captchadomain.CaptchaType, req captchadomain.GenerateRequest) (*captchadomain.GenerateResult, error) {
 	req.Type = captchaType
+	var (
+		result *captchadomain.GenerateResult
+		err    error
+	)
 	switch captchaType {
 	case captchadomain.TypeImage:
-		return s.GenerateImageCaptcha(ctx, req)
+		result, err = s.GenerateImageCaptcha(ctx, req)
 	case captchadomain.TypeMath:
-		return s.GenerateMathCaptcha(ctx, req)
+		result, err = s.GenerateMathCaptcha(ctx, req)
 	case captchadomain.TypeDigit:
-		return s.GenerateDigitCaptcha(ctx, req)
+		result, err = s.GenerateDigitCaptcha(ctx, req)
 	case captchadomain.TypeDynamic:
-		return s.GenerateDynamicCaptcha(ctx, req)
+		result, err = s.GenerateDynamicCaptcha(ctx, req)
 	case captchadomain.TypeAudio:
-		return s.GenerateAudioCaptcha(ctx, req)
+		result, err = s.GenerateAudioCaptcha(ctx, req)
 	case captchadomain.TypeChiral:
-		return s.GenerateChiralCaptcha(ctx, req)
+		result, err = s.GenerateChiralCaptcha(ctx, req)
 	default:
 		return nil, apperrors.New(40001, http.StatusBadRequest, fmt.Sprintf("不支持的验证码类型: %s", captchaType))
 	}
+	if err != nil {
+		return nil, err
+	}
+	if result != nil {
+		result.Type = captchaType // 回填实际类型，前端据此渲染（手性碳点选 vs 普通输入）
+	}
+	return result, nil
 }
 
 // ────────────────────── 图形验证码校验 ──────────────────────
@@ -397,6 +410,11 @@ func (s *CaptchaService) Verify(ctx context.Context, req captchadomain.VerifyReq
 	}
 	if record == nil {
 		return false, apperrors.New(40020, http.StatusBadRequest, "验证码不存在或已过期")
+	}
+	// 验证码必须绑定生成时的租户、用途和用户/管理员作用域。
+	// 不匹配时不增加 attempts，避免攻击者用跨域探测消耗受害者的验证码。
+	if !captchaRecordMatchesRequest(record, req) {
+		return false, nil
 	}
 
 	// 防暴力破解：最多尝试 5 次
@@ -428,6 +446,15 @@ func (s *CaptchaService) Verify(ctx context.Context, req captchadomain.VerifyReq
 	return true, nil
 }
 
+func captchaRecordMatchesRequest(record *captchadomain.CaptchaRecord, req captchadomain.VerifyRequest) bool {
+	if record == nil {
+		return false
+	}
+	return (req.ExpectedAppID <= 0 || record.AppID == req.ExpectedAppID) &&
+		(req.ExpectedPurpose == "" || record.Purpose == req.ExpectedPurpose) &&
+		(req.ExpectedScope == "" || record.Scope == req.ExpectedScope)
+}
+
 // ────────────────────── 短信验证码 ──────────────────────
 
 // SendSMSCode 发送短信验证码
@@ -441,6 +468,32 @@ func (s *CaptchaService) Verify(ctx context.Context, req captchadomain.VerifyReq
 //  6. 同一手机号日限额（per-AppID）
 //  7. 同一手机号全局日限额（跨 AppID，防轮换攻击）
 func (s *CaptchaService) SendSMSCode(ctx context.Context, req captchadomain.SMSSendRequest, providerCfg *captchadomain.SMSProviderConfig) (*captchadomain.SMSSendResult, error) {
+	return s.sendSMSCode(ctx, req, providerCfg, false)
+}
+
+// RequiresPreCaptchaForSMS 发短信验证码前是否必须先过图形验证码。
+//
+// 这是**平台级**开关（防轰炸），与具体应用无关，因此应用管理员在控制台里
+// 找不到它。/config 必须把它下发出去：否则客户端只能靠一次失败的 40023
+// 才知道该先取验证码，而那时用户已经点过"获取验证码"了。
+//
+// 判据与 sendSMSCode 的前置校验保持一致：短信整体没启用时这一项没有意义，
+// 那种情况下客户端调 /auth/sms/code 拿到的是 40314，与验证码无关。
+func (s *CaptchaService) RequiresPreCaptchaForSMS() bool {
+	if s == nil {
+		return false
+	}
+	return s.cfg.Captcha.Enabled &&
+		s.cfg.Captcha.SMS.Enabled &&
+		s.cfg.Captcha.SMS.RequireCaptcha
+}
+
+// SendTrustedSMSCode 发送受信任链路短信验证码（跳过图形验证码前置校验）
+func (s *CaptchaService) SendTrustedSMSCode(ctx context.Context, req captchadomain.SMSSendRequest, providerCfg *captchadomain.SMSProviderConfig) (*captchadomain.SMSSendResult, error) {
+	return s.sendSMSCode(ctx, req, providerCfg, true)
+}
+
+func (s *CaptchaService) sendSMSCode(ctx context.Context, req captchadomain.SMSSendRequest, providerCfg *captchadomain.SMSProviderConfig, skipCaptchaCheck bool) (*captchadomain.SMSSendResult, error) {
 	if !s.cfg.Captcha.Enabled || !s.cfg.Captcha.SMS.Enabled {
 		return nil, apperrors.New(40314, http.StatusForbidden, "短信验证码未启用")
 	}
@@ -454,14 +507,19 @@ func (s *CaptchaService) SendSMSCode(ctx context.Context, req captchadomain.SMSS
 	}
 
 	// ── 2. 图形验证码前置校验（核心防轰炸手段） ──
-	if smsCfg.RequireCaptcha {
+	// 判据走 RequiresPreCaptchaForSMS —— /config 下发给客户端的就是它的返回值。
+	// 在这里另写一遍条件，就会出现「config 说不用先取验证码、这里却拒」。
+	if s.RequiresPreCaptchaForSMS() && !skipCaptchaCheck {
 		if strings.TrimSpace(req.CaptchaID) == "" || strings.TrimSpace(req.CaptchaAnswer) == "" {
 			return nil, apperrors.New(40023, http.StatusBadRequest, "发送短信验证码需要先完成图形验证码校验")
 		}
 		valid, err := s.Verify(ctx, captchadomain.VerifyRequest{
-			CaptchaID: req.CaptchaID,
-			Answer:    req.CaptchaAnswer,
-			Clear:     true, // 一次性消费，防重放
+			CaptchaID:       req.CaptchaID,
+			Answer:          req.CaptchaAnswer,
+			Clear:           true, // 一次性消费，防重放
+			ExpectedAppID:   req.AppID,
+			ExpectedPurpose: req.Purpose,
+			ExpectedScope:   captchadomain.ScopeUser,
 		})
 		if err != nil {
 			return nil, err
@@ -554,6 +612,9 @@ func (s *CaptchaService) SendSMSCode(ctx context.Context, req captchadomain.SMSS
 			zap.String("provider", string(providerCfg.Provider)),
 			zap.Error(err),
 		)
+		if circuitbreaker.IsOpenError(err) {
+			return nil, apperrors.New(50310, http.StatusServiceUnavailable, "短信服务暂不可用，请稍后再试")
+		}
 		return nil, apperrors.New(50014, http.StatusInternalServerError, "短信发送失败")
 	}
 

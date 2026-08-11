@@ -27,16 +27,36 @@ type ContactInfo struct {
 }
 
 type Profile struct {
-	UserID    int64          `json:"userId"`
-	Nickname  string         `json:"nickname,omitempty"`
-	Avatar    string         `json:"avatar,omitempty"`
-	Email     string         `json:"email,omitempty"`
-	Phone     string         `json:"phone,omitempty"`
-	Birthday  *time.Time     `json:"birthday,omitempty"`
-	Bio       string         `json:"bio,omitempty"`
-	Contacts  []ContactInfo  `json:"contacts,omitempty"`
-	Extra     map[string]any `json:"extra,omitempty"`
-	UpdatedAt time.Time      `json:"updatedAt"`
+	UserID              int64          `json:"userId"`
+	Nickname            string         `json:"nickname,omitempty"`
+	Avatar              string         `json:"avatar,omitempty"`
+	Email               string         `json:"email,omitempty"`
+	Phone               string         `json:"phone,omitempty"`
+	Birthday            *time.Time     `json:"birthday,omitempty"`
+	Bio                 string         `json:"bio,omitempty"`
+	Role                string         `json:"role,omitempty"`
+	MarkCode            string         `json:"markcode,omitempty"`
+	CustomID            string         `json:"customId,omitempty"`
+	CustomIDCount       *int           `json:"customIdCount,omitempty"`
+	InviteCode          string         `json:"inviteCode,omitempty"`
+	ParentInviteAccount string         `json:"parentInviteAccount,omitempty"`
+	RegisterIP          string         `json:"registerIp,omitempty"`
+	RegisterISP         string         `json:"registerIsp,omitempty"`
+	RegisterProvince    string         `json:"registerProvince,omitempty"`
+	RegisterCity        string         `json:"registerCity,omitempty"`
+	RegisterTime        *time.Time     `json:"registerTime,omitempty"`
+	DisabledReason      string         `json:"disabledReason,omitempty"`
+	Contacts            []ContactInfo  `json:"contacts,omitempty"`
+	Extra               map[string]any `json:"extra,omitempty"`
+	UpdatedAt           time.Time      `json:"updatedAt"`
+}
+
+type ProfileSecurityState struct {
+	UserID                 int64
+	PasswordChangedAt      *time.Time
+	PasswordExpiresAt      *time.Time
+	PasswordStrengthScore  *int
+	PasswordChangeRequired *bool
 }
 
 type Settings struct {
@@ -377,13 +397,20 @@ type AdminUserQuery struct {
 	Nickname    string     `json:"nickname"`
 	Email       string     `json:"email"`
 	Phone       string     `json:"phone"`
+	InviteCode  string     `json:"inviteCode"`
 	RegisterIP  string     `json:"registerIp"`
 	UserID      *int64     `json:"userId,omitempty"`
 	Enabled     *bool      `json:"enabled,omitempty"`
 	CreatedFrom *time.Time `json:"createdFrom,omitempty"`
 	CreatedTo   *time.Time `json:"createdTo,omitempty"`
-	Page        int        `json:"page"`
-	Limit       int        `json:"limit"`
+	// Sort 排序字段（外部名，如 createdAt / integral）。空 = createdAt。
+	// 取值由仓储层白名单校验，非法值回落到默认排序而不是报错 ——
+	// 一个拼错的排序参数不该让整个列表打不开。
+	Sort string `json:"sort"`
+	// Order asc / desc，空 = desc。
+	Order string `json:"order"`
+	Page  int    `json:"page"`
+	Limit int    `json:"limit"`
 }
 
 type AdminUserStatusMutation struct {
@@ -413,6 +440,7 @@ type AdminUserView struct {
 	Avatar           string         `json:"avatar,omitempty"`
 	Email            string         `json:"email,omitempty"`
 	Phone            string         `json:"phone,omitempty"`
+	InviteCode       string         `json:"inviteCode,omitempty"`
 	Integral         int64          `json:"integral"`
 	Experience       int64          `json:"experience"`
 	Enabled          bool           `json:"enabled"`
@@ -430,6 +458,13 @@ type AdminUserView struct {
 	Extra            map[string]any `json:"extra,omitempty"`
 }
 
+type AdminUserDetail struct {
+	AdminUserView
+	Profile  *Profile               `json:"profile,omitempty"`
+	Settings *AdminUserSettingsView `json:"settings,omitempty"`
+	Security *SecurityStatus        `json:"security,omitempty"`
+}
+
 type AdminUserListResult struct {
 	Items      []AdminUserView `json:"items"`
 	Page       int             `json:"page"`
@@ -445,6 +480,7 @@ type AdminUserSearchSource struct {
 	Nickname        string    `json:"nickname"`
 	Email           string    `json:"email"`
 	Phone           string    `json:"phone"`
+	InviteCode      string    `json:"inviteCode"`
 	RegisterIP      string    `json:"registerIp"`
 	Enabled         bool      `json:"enabled"`
 	CreatedAt       time.Time `json:"createdAt"`

@@ -93,6 +93,30 @@ func Until(t time.Time) time.Duration {
 	return clock.Until(t)
 }
 
+func Seconds(value int) time.Duration {
+	return time.Duration(value) * time.Second
+}
+
+func Milliseconds(value int) time.Duration {
+	return time.Duration(value) * time.Millisecond
+}
+
+func Minutes(value int) time.Duration {
+	return time.Duration(value) * time.Minute
+}
+
+func Hours(value int) time.Duration {
+	return time.Duration(value) * time.Hour
+}
+
+func Unix(seconds int64, nanos int64) time.Time {
+	return time.Unix(seconds, nanos).UTC()
+}
+
+func NewTimer(d time.Duration) *time.Timer {
+	return time.NewTimer(d)
+}
+
 func NormalizeUTC(t time.Time) time.Time {
 	if t.IsZero() {
 		return t

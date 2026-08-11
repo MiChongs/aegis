@@ -1,21 +1,53 @@
-# Binaries
+# Binaries and test artifacts
 bin/
+*.exe
+*.test
+*.prof
+coverage.*
 
-# IDE
+# IDE and OS metadata
 .vscode/
 .idea/
+*.iml
+.DS_Store
+Thumbs.db
+Desktop.ini
 
-# Env
+# Local environment files
 .env
+.env.*
+!**/.env.example
+!**/.env.*.example
 
-# Build output
-coverage.out
-*.log
+# Runtime data and generated state
+data/
 .runtime/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.pid
+*.tmp
+*.log
 
-# Frontend
+# Local development tools
+.claude/worktrees/
+.codebase-memory/
+.playwright-mcp/
+.serena/cache/
+.serena/memories/
+.serena/project.local.yml
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Frontend dependencies and build output
 node_modules/
 .next/
 out/
 .turbo/
 
+# Local archives
+*.7z

@@ -361,9 +361,7 @@ func (h *Handler) AdminAddVersionChannelUsers(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, "渠道 ID 无效")
 		return
 	}
-	var body struct {
-		UserIDs []int64 `json:"user_ids" binding:"required"`
-	}
+	var body VersionChannelUsersRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
@@ -389,9 +387,7 @@ func (h *Handler) AdminRemoveVersionChannelUsers(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, "渠道 ID 无效")
 		return
 	}
-	var body struct {
-		UserIDs []int64 `json:"user_ids" binding:"required"`
-	}
+	var body VersionChannelUsersRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return

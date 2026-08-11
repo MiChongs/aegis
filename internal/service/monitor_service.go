@@ -55,11 +55,11 @@ type MonitorRuntime struct {
 	Timezone      string    `json:"timezone"`
 
 	// Go 运行时
-	GoVersion     string `json:"goVersion"`
-	GoOS          string `json:"goOS"`
-	GoArch        string `json:"goArch"`
-	Goroutines    int    `json:"goroutines"`
-	CGOCalls      int64  `json:"cgoCalls"`
+	GoVersion  string `json:"goVersion"`
+	GoOS       string `json:"goOS"`
+	GoArch     string `json:"goArch"`
+	Goroutines int    `json:"goroutines"`
+	CGOCalls   int64  `json:"cgoCalls"`
 
 	// Go 堆内存
 	MemAlloc      uint64 `json:"memAlloc"`
@@ -69,34 +69,34 @@ type MonitorRuntime struct {
 	LastGCTime    int64  `json:"lastGCTime"`
 
 	// 系统信息
-	Hostname      string  `json:"hostname"`
-	OS            string  `json:"os"`
-	Platform      string  `json:"platform"`
-	PlatformVer   string  `json:"platformVersion"`
-	KernelArch    string  `json:"kernelArch"`
-	KernelVer     string  `json:"kernelVersion"`
+	Hostname    string `json:"hostname"`
+	OS          string `json:"os"`
+	Platform    string `json:"platform"`
+	PlatformVer string `json:"platformVersion"`
+	KernelArch  string `json:"kernelArch"`
+	KernelVer   string `json:"kernelVersion"`
 
 	// CPU
-	CPUModel      string  `json:"cpuModel"`
-	CPUCores      int     `json:"cpuCores"`
-	CPUThreads    int     `json:"cpuThreads"`
-	CPUUsage      float64 `json:"cpuUsage"`
+	CPUModel   string  `json:"cpuModel"`
+	CPUCores   int     `json:"cpuCores"`
+	CPUThreads int     `json:"cpuThreads"`
+	CPUUsage   float64 `json:"cpuUsage"`
 
 	// 系统内存
-	MemTotal      uint64  `json:"memTotal"`
-	MemUsed       uint64  `json:"memUsed"`
-	MemFree       uint64  `json:"memFree"`
-	MemUsedPct    float64 `json:"memUsedPercent"`
+	MemTotal   uint64  `json:"memTotal"`
+	MemUsed    uint64  `json:"memUsed"`
+	MemFree    uint64  `json:"memFree"`
+	MemUsedPct float64 `json:"memUsedPercent"`
 
 	// 磁盘
-	DiskTotal     uint64  `json:"diskTotal"`
-	DiskUsed      uint64  `json:"diskUsed"`
-	DiskFree      uint64  `json:"diskFree"`
-	DiskUsedPct   float64 `json:"diskUsedPercent"`
+	DiskTotal   uint64  `json:"diskTotal"`
+	DiskUsed    uint64  `json:"diskUsed"`
+	DiskFree    uint64  `json:"diskFree"`
+	DiskUsedPct float64 `json:"diskUsedPercent"`
 
 	// 进程
-	PID           int    `json:"pid"`
-	ProcessMem    uint64 `json:"processMemory"`
+	PID        int    `json:"pid"`
+	ProcessMem uint64 `json:"processMemory"`
 }
 
 type MonitorEndpoint struct {
@@ -188,9 +188,11 @@ type MonitorService struct {
 	system        *PlatformSettingsService
 	location      *LocationService
 	monitorRepo   *redisrepo.MonitorRepository
-	crashLog      interface{ Write(component string, r interface{}, recovered bool) }
-	stopCollect   chan struct{}
-	startedAt     time.Time
+	crashLog      interface {
+		Write(component string, r interface{}, recovered bool)
+	}
+	stopCollect chan struct{}
+	startedAt   time.Time
 }
 
 func NewMonitorService(
@@ -971,10 +973,3 @@ func countEnabledStorageConfigs(items []storagedomain.Config) int {
 	}
 	return count
 }
-
-
-
-
-
-
-

@@ -3,7 +3,10 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 func TestResolveEnvFilePathSearchesParentDirectories(t *testing.T) {
@@ -63,5 +66,52 @@ func TestResolveEnvFilePathHonorsAEGISENVFILE(t *testing.T) {
 	}
 	if path != envPath {
 		t.Fatalf("expected %q, got %q", envPath, path)
+	}
+}
+
+func TestSetDefaultsPostgresSessionTimezoneFollowsDefaultTimezone(t *testing.T) {
+	cfg := Config{}
+	setDefaults(&cfg)
+
+	if cfg.DefaultTimezone != "Asia/Shanghai" {
+		t.Fatalf("expected default timezone Asia/Shanghai, got %q", cfg.DefaultTimezone)
+	}
+	if cfg.Postgres.SessionTimezone != cfg.DefaultTimezone {
+		t.Fatalf("expected postgres session timezone to follow default timezone %q, got %q", cfg.DefaultTimezone, cfg.Postgres.SessionTimezone)
+	}
+}
+
+func TestLoadWithViperKeepsExplicitPostgresSessionTimezone(t *testing.T) {
+	v := viper.New()
+	v.Set("JWT_SECRET", "test-secret")
+	v.Set("POSTGRES_DSN", "postgres://aegis:aegis@localhost:5432/aegis?sslmode=disable")
+	v.Set("REDIS_ADDR", "127.0.0.1:6379")
+	v.Set("NATS_URL", "nats://127.0.0.1:4222")
+	v.Set("APP_DEFAULT_IANA_TIMEZONE", "Asia/Shanghai")
+	v.Set("POSTGRES_SESSION_TIMEZONE", "UTC")
+
+	cfg, err := loadWithViper(v)
+	if err != nil {
+		t.Fatalf("loadWithViper: %v", err)
+	}
+	if cfg.Postgres.SessionTimezone != "UTC" {
+		t.Fatalf("expected explicit postgres session timezone UTC, got %q", cfg.Postgres.SessionTimezone)
+	}
+}
+
+func TestLoadWithViperParsesTrustedProxies(t *testing.T) {
+	v := viper.New()
+	v.Set("JWT_SECRET", "test-secret")
+	v.Set("POSTGRES_DSN", "postgres://aegis:aegis@localhost:5432/aegis?sslmode=disable")
+	v.Set("REDIS_ADDR", "127.0.0.1:6379")
+	v.Set("NATS_URL", "nats://127.0.0.1:4222")
+	v.Set("TRUSTED_PROXIES", "127.0.0.1/32, 10.0.0.0/8")
+
+	cfg, err := loadWithViper(v)
+	if err != nil {
+		t.Fatalf("loadWithViper() error = %v", err)
+	}
+	if got, want := strings.Join(cfg.TrustedProxies, ","), "127.0.0.1/32,10.0.0.0/8"; got != want {
+		t.Fatalf("TrustedProxies = %q, want %q", got, want)
 	}
 }

@@ -1,0 +1,137 @@
+{
+  "$meta": {
+    "name": "Simplified Chinese",
+    "nativeName": "简体中文",
+    "direction": "ltr",
+    "script": "han"
+  },
+  "$format": {
+    "group": ",",
+    "decimal": ".",
+    "groupSizes": [3],
+    "currency": "{symbol}{value}",
+    "currencyNegative": "-{symbol}{value}",
+    "date": "2006年1月2日",
+    "dateTime": "2006年1月2日 15:04 MST",
+    "time": "15:04",
+    "symbols": {
+      "CNY": "¥"
+    }
+  },
+
+  "doc.type.receipt": "收据",
+  "doc.type.invoice": "账单",
+  "doc.type.credit_note": "退款凭证",
+
+  "status.paid": "已支付",
+  "status.pending": "待支付",
+  "status.refunded": "已退款",
+  "status.partially_refunded": "部分退款",
+  "status.expired": "已过期",
+  "status.failed": "支付失败",
+  "status.cancelled": "已取消",
+
+  "header.number": "编号 {number}",
+  "header.issuedAt": "开具时间 {time}",
+  "header.continued": "{title} {number}（续）",
+
+  "party.issuer": "收款方",
+  "party.customer": "付款方",
+  "party.merchant": "商户",
+  "party.guest": "访客",
+
+  "table.description": "项目",
+  "table.quantity": "数量",
+  "table.unitPrice": "单价",
+  "table.amount": "金额",
+
+  "totals.subtotal": "小计",
+  "totals.discount": "优惠",
+  "totals.tax": "税额",
+  "totals.taxWithRate": "税额（{rate}%）",
+  "totals.total": "合计",
+  "totals.refunded": "已退款",
+  "totals.netPaid": "实收净额",
+
+  "payment.section": "支付信息",
+  "payment.method": "支付方式",
+  "payment.orderNo": "订单号",
+  "payment.transactionId": "交易流水号",
+  "payment.channel": "支付通道",
+  "payment.clientIp": "下单 IP",
+  "payment.paidAt": "支付时间",
+
+  "refunds.section": "退款记录",
+  "refunds.number": "退款单号",
+  "refunds.status": "状态",
+  "refunds.at": "日期",
+  "refunds.amount": "金额",
+  "refunds.reasonLine": "原因：{reason}",
+  "refunds.summaryOnly": "本订单已累计退款 {amount}。",
+
+  "refund.status.pending": "待处理",
+  "refund.status.processing": "处理中",
+  "refund.status.success": "已退款",
+  "refund.status.failed": "退款失败",
+  "refund.status.closed": "已关闭",
+
+  "metadata.section": "附加信息",
+  "notes.section": "备注",
+
+  "email.subject": "{brand} · {title} {number}",
+  "email.title": "您的{title}已生成",
+  "email.lead": "对应订单 {orderNo}",
+  "email.greeting": "{name}，您好：",
+  "email.attached": "PDF 文件已作为附件随本邮件发出。",
+  "email.linkLead": "可通过下方按钮下载，链接将于 {expiry} 过期。",
+  "email.button": "下载{title}",
+  "email.summary": "交易摘要",
+  "email.footer": "请妥善保存本凭证。本邮件由系统自动发出，请勿直接回复。",
+
+  "meta.purpose": "订单用途",
+  "meta.appId": "应用编号",
+  "meta.userId": "用户编号",
+  "meta.createdAt": "下单时间",
+  "meta.expireAt": "支付截止",
+  "meta.plan": "套餐",
+  "meta.duration": "有效期",
+  "meta.bonusPoints": "赠送积分",
+  "meta.points": "发放积分",
+  "meta.days": {
+    "other": "{count} 天"
+  },
+  "meta.pointsValue": {
+    "other": "{count} 积分"
+  },
+
+  "purpose.wallet_recharge": "余额充值",
+  "purpose.vip_purchase": "会员开通",
+  "purpose.integral_purchase": "积分购买",
+
+  "notes.unpaid": "本单据不作为付款凭证：该订单尚未完成支付。",
+  "notes.refunded": "该订单已全额退款，实收净额为零。",
+  "notes.partiallyRefunded": "该订单已部分退款，明细见退款记录。",
+
+  "footer.page": "第 {page} 页 / 共 {total} 页",
+  "footer.disclaimer": "本凭证由系统电子生成，无需签章即有效。",
+  "footer.generated": "由 {producer} 于 {time} 生成。",
+  "footer.scanToVerify": "扫码核验",
+  "footer.verify": "可前往 {url} 核验本凭证",
+
+  "method.epay": "易支付",
+  "method.rainbow_epay": "彩虹易支付",
+  "method.xunhupay": "虎皮椒",
+  "method.payjs": "PAYJS",
+  "method.qrpay": "码支付",
+  "method.vmqpay": "V免签",
+  "method.alipay_native": "支付宝",
+  "method.wechat_native": "微信支付",
+  "method.stripe": "Stripe",
+  "method.paypal": "PayPal",
+  "method.balance": "账户余额",
+  "method.paddle": "Paddle",
+  "method.lemonsqueezy": "Lemon Squeezy",
+  "method.razorpay": "Razorpay",
+  "method.coinbase": "Coinbase Commerce",
+  "method.square": "Square"
+}

@@ -16,12 +16,12 @@ func (r *Repository) InsertIPBan(ctx context.Context, ban firewalldomain.IPBan) 
 	var id int64
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO ip_bans (
-			ip, reason, source, trigger_rule, severity, duration, expires_at, status,
+			ip, reason, source, mode, trigger_rule, severity, duration, expires_at, status,
 			country, country_code, region, city, isp, trigger_count
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		ON CONFLICT (ip) WHERE status = 'active' DO NOTHING
 		RETURNING id`,
-		ban.IP, ban.Reason, ban.Source, ban.TriggerRule, ban.Severity,
+		ban.IP, ban.Reason, ban.Source, ban.Mode, ban.TriggerRule, ban.Severity,
 		ban.Duration, ban.ExpiresAt, "active",
 		ban.Country, ban.CountryCode, ban.Region, ban.City, ban.ISP,
 		ban.TriggerCount,
@@ -39,7 +39,7 @@ func (r *Repository) InsertIPBan(ctx context.Context, ban firewalldomain.IPBan) 
 // GetActiveIPBan 获取指定 IP 的活跃封禁记录
 func (r *Repository) GetActiveIPBan(ctx context.Context, ip string) (*firewalldomain.IPBan, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, ip, reason, source, trigger_rule, severity, duration, expires_at,
+		SELECT id, ip, reason, source, mode, trigger_rule, severity, duration, expires_at,
 			status, revoked_by, revoked_at,
 			country, country_code, region, city, isp,
 			trigger_count, created_at, updated_at
@@ -51,7 +51,7 @@ func (r *Repository) GetActiveIPBan(ctx context.Context, ip string) (*firewalldo
 // GetIPBan 获取单条封禁记录（含已过期/已解封）
 func (r *Repository) GetIPBan(ctx context.Context, id int64) (*firewalldomain.IPBan, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, ip, reason, source, trigger_rule, severity, duration, expires_at,
+		SELECT id, ip, reason, source, mode, trigger_rule, severity, duration, expires_at,
 			status, revoked_by, revoked_at,
 			country, country_code, region, city, isp,
 			trigger_count, created_at, updated_at
@@ -84,7 +84,7 @@ func (r *Repository) ListIPBans(ctx context.Context, filter firewalldomain.IPBan
 	offset := (page - 1) * pageSize
 	args = append(args, pageSize, offset)
 	listSQL := fmt.Sprintf(`
-		SELECT id, ip, reason, source, trigger_rule, severity, duration, expires_at,
+		SELECT id, ip, reason, source, mode, trigger_rule, severity, duration, expires_at,
 			status, revoked_by, revoked_at,
 			country, country_code, region, city, isp,
 			trigger_count, created_at, updated_at
@@ -164,10 +164,24 @@ func (r *Repository) CountRecentBlocksBySeverity(ctx context.Context, ip string,
 	return count, err
 }
 
+// CountRecentBlocksByReason 统计某 IP 在指定时间窗口内、指定拦截原因的次数
+// （自动封禁规则的 ReasonFilter 使用，如仅统计 rate_limited）
+func (r *Repository) CountRecentBlocksByReason(ctx context.Context, ip string, since time.Time, reasons []string) (int, error) {
+	if len(reasons) == 0 {
+		return r.CountRecentBlocks(ctx, ip, since)
+	}
+	var count int
+	err := r.pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM firewall_logs WHERE ip=$1 AND blocked_at >= $2 AND reason = ANY($3)",
+		ip, since, reasons,
+	).Scan(&count)
+	return count, err
+}
+
 // ListActiveIPBanIPs 获取所有活跃封禁的 IP 列表（用于同步到 Redis）
 func (r *Repository) ListActiveIPBanIPs(ctx context.Context) ([]firewalldomain.IPBan, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, ip, reason, source, trigger_rule, severity, duration, expires_at,
+		SELECT id, ip, reason, source, mode, trigger_rule, severity, duration, expires_at,
 			status, revoked_by, revoked_at,
 			country, country_code, region, city, isp,
 			trigger_count, created_at, updated_at
@@ -220,7 +234,7 @@ func buildIPBanWhere(f firewalldomain.IPBanFilter) (string, []any) {
 func scanIPBan(row pgx.Row) (*firewalldomain.IPBan, error) {
 	var b firewalldomain.IPBan
 	err := row.Scan(
-		&b.ID, &b.IP, &b.Reason, &b.Source, &b.TriggerRule, &b.Severity,
+		&b.ID, &b.IP, &b.Reason, &b.Source, &b.Mode, &b.TriggerRule, &b.Severity,
 		&b.Duration, &b.ExpiresAt, &b.Status, &b.RevokedBy, &b.RevokedAt,
 		&b.Country, &b.CountryCode, &b.Region, &b.City, &b.ISP,
 		&b.TriggerCount, &b.CreatedAt, &b.UpdatedAt,
@@ -234,7 +248,7 @@ func scanIPBan(row pgx.Row) (*firewalldomain.IPBan, error) {
 func scanIPBanFromRows(rows pgx.Rows) (*firewalldomain.IPBan, error) {
 	var b firewalldomain.IPBan
 	err := rows.Scan(
-		&b.ID, &b.IP, &b.Reason, &b.Source, &b.TriggerRule, &b.Severity,
+		&b.ID, &b.IP, &b.Reason, &b.Source, &b.Mode, &b.TriggerRule, &b.Severity,
 		&b.Duration, &b.ExpiresAt, &b.Status, &b.RevokedBy, &b.RevokedAt,
 		&b.Country, &b.CountryCode, &b.Region, &b.City, &b.ISP,
 		&b.TriggerCount, &b.CreatedAt, &b.UpdatedAt,

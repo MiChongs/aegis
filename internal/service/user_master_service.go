@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	userdomain "aegis/internal/domain/user"
-	apperrors "aegis/pkg/errors"
 	pgrepo "aegis/internal/repository/postgres"
+	apperrors "aegis/pkg/errors"
+	"aegis/pkg/taskpool"
 
 	"go.uber.org/zap"
 )
@@ -348,14 +350,24 @@ func (s *UserMasterService) BatchSyncIdentities(ctx context.Context, appID int64
 		return 0, fmt.Errorf("查询应用用户列表失败: %w", err)
 	}
 
-	var synced int64
-	for _, u := range users {
-		if err := s.SyncIdentityFromUser(ctx, appID, u.UserID); err != nil {
-			s.log.Warn("同步用户身份失败", zap.Int64("appID", appID), zap.Int64("userID", u.UserID), zap.Error(err))
-			continue
-		}
-		synced++
+	concurrency := len(users)
+	if concurrency > 16 {
+		concurrency = 16
 	}
-	s.log.Info("批量同步身份完成", zap.Int64("appID", appID), zap.Int64("total", int64(len(users))), zap.Int64("synced", synced))
-	return synced, nil
+	userIDs := make([]int64, 0, len(users))
+	for _, u := range users {
+		userIDs = append(userIDs, u.UserID)
+	}
+	var synced atomic.Int64
+	if err := taskpool.Dispatch(ctx, concurrency, userIDs, func(taskCtx context.Context, userID int64) {
+		if err := s.SyncIdentityFromUser(taskCtx, appID, userID); err != nil {
+			s.log.Warn("同步用户身份失败", zap.Int64("appID", appID), zap.Int64("userID", userID), zap.Error(err))
+			return
+		}
+		synced.Add(1)
+	}); err != nil {
+		return synced.Load(), err
+	}
+	s.log.Info("批量同步身份完成", zap.Int64("appID", appID), zap.Int64("total", int64(len(users))), zap.Int64("synced", synced.Load()))
+	return synced.Load(), nil
 }

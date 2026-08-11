@@ -2,10 +2,14 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	storagedomain "aegis/internal/domain/storage"
 	pgrepo "aegis/internal/repository/postgres"
+	apperrors "aegis/pkg/errors"
 
 	"go.uber.org/zap"
 )
@@ -30,7 +34,110 @@ func (s *StorageResourceService) IndexStorageObject(ctx context.Context, obj sto
 }
 
 func (s *StorageResourceService) ListStorageObjects(ctx context.Context, query storagedomain.ObjectListQuery) ([]storagedomain.StorageObject, int64, error) {
-	return s.pg.ListStorageObjects(ctx, query)
+	return s.pg.ListStorageObjects(ctx, normalizeObjectListQuery(query))
+}
+
+// BrowseStorageObjects 目录浏览：一次返回文件、子目录与筛选汇总。
+// 三者共用同一组筛选条件，分三个接口取会出现「文件已翻到第 3 页、
+// 目录树还停在上一次筛选」这种自相矛盾的画面。
+func (s *StorageResourceService) BrowseStorageObjects(ctx context.Context, query storagedomain.ObjectListQuery) (*storagedomain.ObjectListResult, error) {
+	query = normalizeObjectListQuery(query)
+
+	items, total, err := s.pg.ListStorageObjects(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	summary, err := s.pg.SummarizeStorageObjects(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	result := &storagedomain.ObjectListResult{
+		Items:   items,
+		Folders: []storagedomain.ObjectFolder{},
+		Total:   total,
+		Page:    query.Page,
+		Limit:   query.Limit,
+		Summary: *summary,
+	}
+	// 只有目录浏览模式才需要子目录；平铺检索（关键字 / 全局筛选）下
+	// 目录聚合既没有意义，还要多扫一次全表。
+	if query.FolderView {
+		folders, err := s.pg.ListObjectFolders(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		if folders != nil {
+			result.Folders = folders
+		}
+	}
+	return result, nil
+}
+
+// BatchMutateObjects 批量软删 / 恢复 / 永久删除。
+// 逐条调用单条接口是重构前控制台的做法：批量删 20 个文件打 20 个请求，
+// 中途失败留下一半状态，且 toast 报的是"已删除 20 个"。
+func (s *StorageResourceService) BatchMutateObjects(ctx context.Context, action string, ids []int64) (*storagedomain.BatchObjectResult, error) {
+	ids = dedupeInt64(ids)
+	result := &storagedomain.BatchObjectResult{Action: action, Requested: len(ids)}
+	if len(ids) == 0 {
+		return result, nil
+	}
+	if len(ids) > batchObjectLimit {
+		return nil, apperrors.New(40087, http.StatusBadRequest, fmt.Sprintf("单次批量操作最多 %d 个对象", batchObjectLimit))
+	}
+
+	var affected int64
+	var err error
+	switch action {
+	case storagedomain.BatchActionDelete:
+		affected, err = s.pg.BatchSetObjectStatus(ctx, ids, "deleted")
+	case storagedomain.BatchActionRestore:
+		affected, err = s.pg.BatchSetObjectStatus(ctx, ids, "active")
+	case storagedomain.BatchActionPurge:
+		affected, err = s.pg.BatchPermanentDeleteObjects(ctx, ids)
+	default:
+		return nil, apperrors.New(40088, http.StatusBadRequest, "不支持的批量操作")
+	}
+	if err != nil {
+		return nil, err
+	}
+	result.Affected = affected
+	result.Skipped = int64(len(ids)) - affected
+	if result.Skipped < 0 {
+		result.Skipped = 0
+	}
+	return result, nil
+}
+
+const batchObjectLimit = 500
+
+// normalizeObjectListQuery 归一化查询参数。
+// 分页与排序的兜底放在服务层而不是 handler：管理端、后台任务、
+// 未来的批量导出都会调到这里，兜底放在入口处才只写一遍。
+func normalizeObjectListQuery(query storagedomain.ObjectListQuery) storagedomain.ObjectListQuery {
+	if query.Page < 1 {
+		query.Page = 1
+	}
+	if query.Limit < 1 || query.Limit > 200 {
+		query.Limit = 20
+	}
+	switch query.Sort {
+	case storagedomain.ObjectSortSize, storagedomain.ObjectSortFileName,
+		storagedomain.ObjectSortObjectKey, storagedomain.ObjectSortDeletedAt:
+		// 白名单内，原样保留
+	default:
+		query.Sort = storagedomain.ObjectSortCreatedAt
+	}
+	if !strings.EqualFold(query.Order, "asc") {
+		query.Order = "desc"
+	} else {
+		query.Order = "asc"
+	}
+	query.Folder = strings.Trim(strings.TrimSpace(strings.ReplaceAll(query.Folder, "\\", "/")), "/")
+	query.Keyword = strings.TrimSpace(query.Keyword)
+	query.Prefix = strings.TrimSpace(query.Prefix)
+	query.ContentType = strings.TrimSpace(query.ContentType)
+	return query
 }
 
 func (s *StorageResourceService) GetStorageObject(ctx context.Context, id int64) (*storagedomain.StorageObject, error) {

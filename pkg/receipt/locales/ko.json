@@ -1,0 +1,134 @@
+{
+  "$meta": {
+    "name": "Korean",
+    "nativeName": "한국어",
+    "direction": "ltr",
+    "script": "hangul"
+  },
+  "$format": {
+    "group": ",",
+    "decimal": ".",
+    "groupSizes": [3],
+    "currency": "{symbol}{value}",
+    "currencyNegative": "-{symbol}{value}",
+    "date": "2006년 1월 2일",
+    "dateTime": "2006년 1월 2일 15:04 MST",
+    "time": "15:04"
+  },
+
+  "doc.type.receipt": "영수증",
+  "doc.type.invoice": "청구서",
+  "doc.type.credit_note": "환불 명세서",
+
+  "status.paid": "결제 완료",
+  "status.pending": "미결제",
+  "status.refunded": "환불 완료",
+  "status.partially_refunded": "부분 환불",
+  "status.expired": "기한 만료",
+  "status.failed": "결제 실패",
+  "status.cancelled": "취소됨",
+
+  "header.number": "번호 {number}",
+  "header.issuedAt": "발행일 {time}",
+  "header.continued": "{title} {number}(계속)",
+
+  "party.issuer": "공급자",
+  "party.customer": "공급받는 자",
+  "party.merchant": "가맹점",
+  "party.guest": "게스트",
+
+  "table.description": "품목",
+  "table.quantity": "수량",
+  "table.unitPrice": "단가",
+  "table.amount": "금액",
+
+  "totals.subtotal": "소계",
+  "totals.discount": "할인",
+  "totals.tax": "세액",
+  "totals.taxWithRate": "세액({rate}%)",
+  "totals.total": "합계",
+  "totals.refunded": "환불액",
+  "totals.netPaid": "실수령액",
+
+  "payment.section": "결제 정보",
+  "payment.method": "결제 수단",
+  "payment.orderNo": "주문 번호",
+  "payment.transactionId": "거래 ID",
+  "payment.channel": "결제 채널",
+  "payment.clientIp": "주문 IP",
+  "payment.paidAt": "결제 일시",
+
+  "refunds.section": "환불 내역",
+  "refunds.number": "환불 번호",
+  "refunds.status": "상태",
+  "refunds.at": "날짜",
+  "refunds.amount": "금액",
+  "refunds.reasonLine": "사유: {reason}",
+  "refunds.summaryOnly": "이 주문에 대해 총 {amount}이(가) 환불되었습니다.",
+
+  "refund.status.pending": "대기 중",
+  "refund.status.processing": "처리 중",
+  "refund.status.success": "환불 완료",
+  "refund.status.failed": "환불 실패",
+  "refund.status.closed": "종료됨",
+
+  "metadata.section": "추가 정보",
+  "notes.section": "비고",
+
+  "email.subject": "{brand} · {title} {number}",
+  "email.title": "{title}이(가) 준비되었습니다",
+  "email.lead": "주문 {orderNo}",
+  "email.greeting": "{name}님, 안녕하세요.",
+  "email.attached": "PDF 파일을 이 메일에 첨부했습니다.",
+  "email.linkLead": "아래 버튼으로 내려받을 수 있습니다. 링크는 {expiry}에 만료됩니다.",
+  "email.button": "{title} 내려받기",
+  "email.summary": "거래 요약",
+  "email.footer": "본 문서를 보관해 주세요. 이 메일은 자동 발송되었으며 회신할 수 없습니다.",
+
+  "meta.purpose": "주문 용도",
+  "meta.appId": "애플리케이션 ID",
+  "meta.userId": "고객 ID",
+  "meta.createdAt": "주문 일시",
+  "meta.expireAt": "결제 기한",
+  "meta.plan": "요금제",
+  "meta.duration": "이용 기간",
+  "meta.bonusPoints": "보너스 포인트",
+  "meta.points": "지급 포인트",
+  "meta.days": {
+    "other": "{count}일"
+  },
+  "meta.pointsValue": {
+    "other": "{count}포인트"
+  },
+
+  "purpose.wallet_recharge": "잔액 충전",
+  "purpose.vip_purchase": "멤버십 구매",
+  "purpose.integral_purchase": "포인트 구매",
+
+  "notes.unpaid": "본 문서는 결제 증빙이 아닙니다: 해당 주문은 아직 결제되지 않았습니다.",
+  "notes.refunded": "이 주문은 전액 환불되었으며 실수령액은 0입니다.",
+  "notes.partiallyRefunded": "이 주문은 일부 환불되었습니다. 자세한 내용은 환불 내역을 확인하세요.",
+
+  "footer.page": "{page} / {total} 페이지",
+  "footer.disclaimer": "본 문서는 전자적으로 발행되었으며 서명 없이도 유효합니다.",
+  "footer.generated": "{producer}에서 {time}에 생성되었습니다.",
+  "footer.scanToVerify": "스캔하여 확인",
+  "footer.verify": "{url} 에서 본 문서를 확인할 수 있습니다",
+
+  "method.epay": "E-Pay 통합 결제",
+  "method.rainbow_epay": "Rainbow E-Pay",
+  "method.xunhupay": "Xunhupay",
+  "method.payjs": "PAYJS",
+  "method.qrpay": "QRPay",
+  "method.vmqpay": "VMQPay",
+  "method.alipay_native": "Alipay",
+  "method.wechat_native": "WeChat Pay",
+  "method.stripe": "Stripe",
+  "method.paypal": "PayPal",
+  "method.balance": "계정 잔액",
+  "method.paddle": "Paddle",
+  "method.lemonsqueezy": "Lemon Squeezy",
+  "method.razorpay": "Razorpay",
+  "method.coinbase": "Coinbase Commerce",
+  "method.square": "Square"
+}

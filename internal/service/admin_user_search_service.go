@@ -16,6 +16,7 @@ import (
 	"aegis/internal/config"
 	userdomain "aegis/internal/domain/user"
 	pgrepo "aegis/internal/repository/postgres"
+	"aegis/pkg/taskpool"
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search/query"
@@ -26,7 +27,7 @@ import (
 
 const (
 	adminUserSearchBatchSize     = 2000
-	adminUserSearchIndexVersion  = 2
+	adminUserSearchIndexVersion  = 3
 	adminUserSearchMaxPinyinPath = 16
 )
 
@@ -43,6 +44,8 @@ type AdminUserSearchService struct {
 	indexedApps       sync.Map
 	buildFlight       singleflight.Group
 	warmupOnce        sync.Once
+	closeOnce         sync.Once
+	closeErr          error
 }
 
 type adminUserSearchCheckpoint struct {
@@ -74,6 +77,8 @@ type adminUserSearchDocument struct {
 	EmailKeyword          string    `json:"email_keyword"`
 	Phone                 string    `json:"phone"`
 	PhoneKeyword          string    `json:"phone_keyword"`
+	InviteCode            string    `json:"invite_code"`
+	InviteCodeKeyword     string    `json:"invite_code_keyword"`
 	RegisterIP            string    `json:"register_ip"`
 	RegisterIPKeyword     string    `json:"register_ip_keyword"`
 	Searchable            string    `json:"searchable"`
@@ -152,8 +157,11 @@ func (s *AdminUserSearchService) Close() error {
 	if s == nil || s.index == nil {
 		return nil
 	}
-	s.log.Info("closing admin user bleve search", zap.String("indexPath", s.indexPath))
-	return s.index.Close()
+	s.closeOnce.Do(func() {
+		s.log.Info("closing admin user bleve search", zap.String("indexPath", s.indexPath))
+		s.closeErr = s.index.Close()
+	})
+	return s.closeErr
 }
 
 func (s *AdminUserSearchService) StartWarmup(ctx context.Context) {
@@ -178,8 +186,8 @@ func (s *AdminUserSearchService) SearchUsers(ctx context.Context, appID int64, a
 	if adminQuery.Limit <= 0 {
 		adminQuery.Limit = 20
 	}
-	if adminQuery.Limit > 100 {
-		adminQuery.Limit = 100
+	if adminQuery.Limit > adminUserListMaxLimit {
+		adminQuery.Limit = adminUserListMaxLimit
 	}
 	if !hasAdminUserSearchConditions(adminQuery) {
 		return nil, 0, nil
@@ -221,6 +229,7 @@ func (s *AdminUserSearchService) SearchUsers(ctx context.Context, appID int64, a
 		zap.String("nickname", strings.TrimSpace(adminQuery.Nickname)),
 		zap.String("email", strings.TrimSpace(adminQuery.Email)),
 		zap.String("phone", strings.TrimSpace(adminQuery.Phone)),
+		zap.String("inviteCode", strings.TrimSpace(adminQuery.InviteCode)),
 		zap.String("registerIp", strings.TrimSpace(adminQuery.RegisterIP)),
 		zap.Bool("hasUserId", adminQuery.UserID != nil),
 		zap.Bool("hasEnabled", adminQuery.Enabled != nil),
@@ -269,6 +278,7 @@ func (s *AdminUserSearchService) IndexUser(ctx context.Context, appID int64, use
 		Nickname:   item.Nickname,
 		Email:      item.Email,
 		Phone:      item.Phone,
+		InviteCode: item.InviteCode,
 		RegisterIP: item.RegisterIP,
 		Enabled:    item.Enabled,
 		CreatedAt:  item.CreatedAt,
@@ -416,35 +426,29 @@ func (s *AdminUserSearchService) warmupApps(ctx context.Context) {
 		zap.Int("concurrency", s.warmupConcurrency),
 	)
 	startedAt := time.Now()
-	sem := make(chan struct{}, s.warmupConcurrency)
-	var wg sync.WaitGroup
+	workItems := make([]int64, 0, len(apps))
 	for _, app := range apps {
-		appID := app.ID
-		if appID <= 0 {
-			continue
+		if app.ID > 0 {
+			workItems = append(workItems, app.ID)
 		}
-		select {
-		case <-ctx.Done():
-			s.log.Warn("admin user search warmup canceled", zap.Error(ctx.Err()))
-			wg.Wait()
-			return
-		default:
-		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			warmupCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-			defer cancel()
-			if err := s.ensureAppIndexed(warmupCtx, appID); err != nil {
-				s.log.Warn("admin user search warmup app failed", zap.Int64("appid", appID), zap.Error(err))
-			}
-		}()
 	}
-	wg.Wait()
+	if err := taskpool.DispatchWithError(ctx, s.warmupConcurrency, workItems, func(taskCtx context.Context, appID int64) error {
+		warmupCtx, cancel := context.WithTimeout(taskCtx, 30*time.Minute)
+		defer cancel()
+		if err := s.ensureAppIndexed(warmupCtx, appID); err != nil {
+			s.log.Warn("admin user search warmup app failed", zap.Int64("appid", appID), zap.Error(err))
+			return err
+		}
+		return nil
+	}); err != nil {
+		if errors.Is(err, context.Canceled) {
+			s.log.Warn("admin user search warmup canceled", zap.Error(err))
+			return
+		}
+		s.log.Warn("admin user search warmup stopped", zap.Error(err))
+	}
 	s.log.Info("admin user search warmup completed",
-		zap.Int("apps", len(apps)),
+		zap.Int("apps", len(workItems)),
 		zap.Duration("elapsed", time.Since(startedAt)),
 	)
 }
@@ -500,6 +504,7 @@ func newAdminUserSearchMapping() mapping.IndexMapping {
 		"nickname_initials",
 		"email_keyword",
 		"phone_keyword",
+		"invite_code_keyword",
 		"register_ip_keyword",
 	} {
 		addKeywordField(doc, field)
@@ -510,6 +515,7 @@ func newAdminUserSearchMapping() mapping.IndexMapping {
 		"nickname",
 		"email",
 		"phone",
+		"invite_code",
 		"register_ip",
 		"searchable",
 		"pinyin_searchable",
@@ -531,6 +537,7 @@ func buildAdminUserSearchDocument(item userdomain.AdminUserSearchSource) adminUs
 	nickname := strings.TrimSpace(item.Nickname)
 	email := strings.TrimSpace(item.Email)
 	phone := normalizeSearchKeyword(item.Phone)
+	inviteCode := normalizeSearchKeyword(item.InviteCode)
 	registerIP := normalizeSearchKeyword(item.RegisterIP)
 
 	accountPinyin := buildPinyinSearchValue(account)
@@ -541,6 +548,7 @@ func buildAdminUserSearchDocument(item userdomain.AdminUserSearchSource) adminUs
 		nickname,
 		email,
 		item.Phone,
+		item.InviteCode,
 		item.RegisterIP,
 		strconv.FormatInt(item.UserID, 10),
 	)
@@ -568,6 +576,8 @@ func buildAdminUserSearchDocument(item userdomain.AdminUserSearchSource) adminUs
 		EmailKeyword:          normalizeSearchKeyword(email),
 		Phone:                 item.Phone,
 		PhoneKeyword:          phone,
+		InviteCode:            item.InviteCode,
+		InviteCodeKeyword:     inviteCode,
 		RegisterIP:            item.RegisterIP,
 		RegisterIPKeyword:     registerIP,
 		Searchable:            searchable,
@@ -632,6 +642,10 @@ func buildAdminUserSearchQueries(appID int64, adminQuery userdomain.AdminUserQue
 		TextField:        "phone",
 		NormalizedFields: []string{"phone_keyword"},
 	})
+	addSpecificFieldQuery(&queries, adminQuery.InviteCode, adminUserFieldQueryOptions{
+		TextField:        "invite_code",
+		NormalizedFields: []string{"invite_code_keyword"},
+	})
 	addSpecificFieldQuery(&queries, adminQuery.RegisterIP, adminUserFieldQueryOptions{
 		TextField:        "register_ip",
 		NormalizedFields: []string{"register_ip_keyword"},
@@ -658,6 +672,7 @@ func buildKeywordSearchQuery(keyword string) query.Query {
 			"nickname_keyword",
 			"email_keyword",
 			"phone_keyword",
+			"invite_code_keyword",
 			"register_ip_keyword",
 			"user_id_text",
 			"account_pinyin",
@@ -814,6 +829,7 @@ func hasAdminUserSearchConditions(adminQuery userdomain.AdminUserQuery) bool {
 		strings.TrimSpace(adminQuery.Nickname) != "" ||
 		strings.TrimSpace(adminQuery.Email) != "" ||
 		strings.TrimSpace(adminQuery.Phone) != "" ||
+		strings.TrimSpace(adminQuery.InviteCode) != "" ||
 		strings.TrimSpace(adminQuery.RegisterIP) != "" ||
 		adminQuery.UserID != nil ||
 		adminQuery.Enabled != nil ||

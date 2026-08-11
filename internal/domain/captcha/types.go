@@ -21,13 +21,13 @@ const (
 type Purpose string
 
 const (
-	PurposeLogin         Purpose = "login"          // 登录
-	PurposeRegister      Purpose = "register"       // 注册
-	PurposeResetPassword Purpose = "reset_password"  // 重置密码
-	PurposeBindPhone     Purpose = "bind_phone"      // 绑定手机
+	PurposeLogin          Purpose = "login"           // 登录
+	PurposeRegister       Purpose = "register"        // 注册
+	PurposeResetPassword  Purpose = "reset_password"  // 重置密码
+	PurposeBindPhone      Purpose = "bind_phone"      // 绑定手机
 	PurposeVerifyIdentity Purpose = "verify_identity" // 身份验证
-	PurposeAdminLogin    Purpose = "admin_login"     // 管理员登录
-	PurposeCustom        Purpose = "custom"          // 自定义
+	PurposeAdminLogin     Purpose = "admin_login"     // 管理员登录
+	PurposeCustom         Purpose = "custom"          // 自定义
 )
 
 // Scope 验证码作用域（区分用户/管理员）
@@ -50,23 +50,27 @@ type GenerateRequest struct {
 
 // GenerateResult 验证码生成结果
 type GenerateResult struct {
-	CaptchaID     string `json:"captchaId"`                // 验证码唯一 ID
-	ImageData     string `json:"imageData,omitempty"`      // Base64 图片（PNG/GIF）
-	AudioData     string `json:"audioData,omitempty"`      // Base64 音频（WAV）
-	MimeType      string `json:"mimeType,omitempty"`       // image/png / image/gif / audio/wav
-	ClickRequired bool   `json:"clickRequired,omitempty"`  // 是否需要点击坐标验证
-	ImageWidth    int    `json:"imageWidth,omitempty"`      // 图片宽度（前端定位用）
-	ImageHeight   int    `json:"imageHeight,omitempty"`     // 图片高度
-	Hint          string `json:"hint,omitempty"`            // 提示文字
-	ChiralCount   string `json:"chiralCount,omitempty"`    // 手性碳数量（加密，前端解密使用）
-	ExpiresAt     int64  `json:"expiresAt"`                // 过期时间（Unix 秒）
+	CaptchaID     string      `json:"captchaId"`               // 验证码唯一 ID
+	Type          CaptchaType `json:"type,omitempty"`          // 服务端实际下发的验证码类型（前端据此渲染 UI）
+	ImageData     string      `json:"imageData,omitempty"`     // Base64 图片（PNG/GIF）
+	AudioData     string      `json:"audioData,omitempty"`     // Base64 音频（WAV）
+	MimeType      string      `json:"mimeType,omitempty"`      // image/png / image/gif / audio/wav
+	ClickRequired bool        `json:"clickRequired,omitempty"` // 是否需要点击坐标验证
+	ImageWidth    int         `json:"imageWidth,omitempty"`    // 图片宽度（前端定位用）
+	ImageHeight   int         `json:"imageHeight,omitempty"`   // 图片高度
+	Hint          string      `json:"hint,omitempty"`          // 提示文字
+	ChiralCount   string      `json:"chiralCount,omitempty"`   // 手性碳数量（加密，前端解密使用）
+	ExpiresAt     int64       `json:"expiresAt"`               // 过期时间（Unix 秒）
 }
 
 // VerifyRequest 验证码校验请求
 type VerifyRequest struct {
-	CaptchaID string // 验证码 ID
-	Answer    string // 用户输入的答案
-	Clear     bool   // 验证后是否清除（默认 true）
+	CaptchaID       string  // 验证码 ID
+	Answer          string  // 用户输入的答案
+	Clear           bool    // 验证后是否清除（默认 true）
+	ExpectedAppID   int64   // 非零时必须与生成验证码的 App 一致
+	ExpectedPurpose Purpose // 非空时必须与生成用途一致
+	ExpectedScope   Scope   // 非空时必须与用户/管理员作用域一致
 }
 
 // ────────────────────── 短信验证码 ──────────────────────
@@ -102,39 +106,41 @@ type SMSProviderType string
 
 const (
 	SMSProviderAliyun  SMSProviderType = "aliyun"  // 阿里云
-	SMSProviderTencent SMSProviderType = "tencent"  // 腾讯云
+	SMSProviderTencent SMSProviderType = "tencent" // 腾讯云
 )
 
 // SMSProviderConfig 短信服务商配置（持久化至数据库）
 type SMSProviderConfig struct {
-	ID         int64           `json:"id"`
-	AppID      int64           `json:"appId"`
-	Provider   SMSProviderType `json:"provider"`
-	Enabled    bool            `json:"enabled"`
-	IsDefault  bool            `json:"isDefault"`
-	AccessKey  string          `json:"accessKey,omitempty"`
-	SecretKey  string          `json:"secretKey,omitempty"`
-	Region     string          `json:"region,omitempty"`
-	SignName   string          `json:"signName"`           // 短信签名
-	TemplateID string          `json:"templateId"`          // 短信模板 ID
-	SDKAppID   string          `json:"sdkAppId,omitempty"` // 腾讯云 SDKAppID
-	CreatedAt  time.Time       `json:"createdAt"`
-	UpdatedAt  time.Time       `json:"updatedAt"`
+	ID           int64           `json:"id"`
+	AppID        int64           `json:"appId"`
+	Provider     SMSProviderType `json:"provider"`
+	Enabled      bool            `json:"enabled"`
+	IsDefault    bool            `json:"isDefault"`
+	AccessKey    string          `json:"accessKey,omitempty"`
+	SecretKey    string          `json:"secretKey,omitempty"`
+	Region       string          `json:"region,omitempty"`
+	SignName     string          `json:"signName"`   // 短信签名
+	TemplateID   string          `json:"templateId"` // 短信模板 ID
+	CodeParamKey string          `json:"codeParamKey,omitempty"`
+	SDKAppID     string          `json:"sdkAppId,omitempty"` // 腾讯云 SDKAppID
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
 }
 
 // SMSProviderConfigMutation 短信配置变更
 type SMSProviderConfigMutation struct {
-	ID         int64
-	AppID      int64
-	Provider   *SMSProviderType
-	Enabled    *bool
-	IsDefault  *bool
-	AccessKey  *string
-	SecretKey  *string
-	Region     *string
-	SignName   *string
-	TemplateID *string
-	SDKAppID   *string
+	ID           int64
+	AppID        int64
+	Provider     *SMSProviderType
+	Enabled      *bool
+	IsDefault    *bool
+	AccessKey    *string
+	SecretKey    *string
+	Region       *string
+	SignName     *string
+	TemplateID   *string
+	CodeParamKey *string
+	SDKAppID     *string
 }
 
 // ────────────────────── 应用级验证码配置 ──────────────────────
@@ -150,39 +156,59 @@ type CaptchaAppConfig struct {
 	SMSEnabled     bool   `json:"smsEnabled"`
 	DefaultType    string `json:"defaultType"` // image / math / digit / dynamic / audio
 
+	// 场景级开关：分别控制"登录"和"注册"是否要求图形验证码
+	// 老数据中若这些字段缺失（历史 JSON 没有），JSON Unmarshal 保持 default 值 true，
+	// 与旧行为（任一类型启用即要求验证码）对齐；新 App / 管理员可显式关闭
+	RequireForLogin    bool `json:"requireForLogin"`
+	RequireForRegister bool `json:"requireForRegister"`
+
 	SMS       CaptchaSMSConfig       `json:"sms"`
 	AntiFlood CaptchaAntiFloodConfig `json:"antiFlood"`
 }
 
 // CaptchaSMSConfig 短信服务商配置（嵌入 CaptchaAppConfig）
 type CaptchaSMSConfig struct {
-	Provider   string `json:"provider"`             // aliyun / tencent
-	AccessKey  string `json:"accessKey,omitempty"`
-	SecretKey  string `json:"secretKey,omitempty"`
-	Region     string `json:"region,omitempty"`
-	SignName   string `json:"signName"`
-	TemplateID string `json:"templateId"`
-	SDKAppID   string `json:"sdkAppId,omitempty"` // 腾讯云专用
+	Provider     string                     `json:"provider"` // aliyun / tencent
+	AccessKey    string                     `json:"accessKey,omitempty"`
+	SecretKey    string                     `json:"secretKey,omitempty"`
+	Region       string                     `json:"region,omitempty"`
+	SignName     string                     `json:"signName"`
+	TemplateID   string                     `json:"templateId"`
+	CodeParamKey string                     `json:"codeParamKey,omitempty"`
+	SDKAppID     string                     `json:"sdkAppId,omitempty"` // 腾讯云专用
+	Templates    []CaptchaSMSTemplateConfig `json:"templates,omitempty"`
+}
+
+type CaptchaSMSTemplateConfig struct {
+	Purpose      string `json:"purpose"`
+	Name         string `json:"name,omitempty"`
+	Enabled      bool   `json:"enabled"`
+	SignName     string `json:"signName,omitempty"`
+	TemplateID   string `json:"templateId"`
+	CodeParamKey string `json:"codeParamKey,omitempty"`
 }
 
 // CaptchaAntiFloodConfig 防轰炸规则配置
 type CaptchaAntiFloodConfig struct {
-	RequireCaptcha       bool `json:"requireCaptcha"`       // 发送前需图形验证码
-	IPHourlyLimit        int  `json:"ipHourlyLimit"`        // 同 IP 小时限额
-	IPDailyLimit         int  `json:"ipDailyLimit"`         // 同 IP 日限额
-	PhoneDailyLimit      int  `json:"phoneDailyLimit"`      // 同号码日限额
-	GlobalPhoneDailyLimit int `json:"globalPhoneDailyLimit"` // 全局号码日限额
-	SendIntervalSeconds  int  `json:"sendIntervalSeconds"`  // 发送间隔秒数
+	RequireCaptcha        bool `json:"requireCaptcha"`        // 发送前需图形验证码
+	IPHourlyLimit         int  `json:"ipHourlyLimit"`         // 同 IP 小时限额
+	IPDailyLimit          int  `json:"ipDailyLimit"`          // 同 IP 日限额
+	PhoneDailyLimit       int  `json:"phoneDailyLimit"`       // 同号码日限额
+	GlobalPhoneDailyLimit int  `json:"globalPhoneDailyLimit"` // 全局号码日限额
+	SendIntervalSeconds   int  `json:"sendIntervalSeconds"`   // 发送间隔秒数
 }
 
 // DefaultCaptchaAppConfig 默认应用验证码配置
+// RequireForLogin / RequireForRegister 默认 true —— 与旧行为兼容（启用任一类型即要求）
 func DefaultCaptchaAppConfig() CaptchaAppConfig {
 	return CaptchaAppConfig{
-		ImageEnabled: true,
-		MathEnabled:  true,
-		DigitEnabled: false,
-		SMSEnabled:   false,
-		DefaultType:  "image",
+		ImageEnabled:       true,
+		MathEnabled:        true,
+		DigitEnabled:       false,
+		SMSEnabled:         false,
+		DefaultType:        "image",
+		RequireForLogin:    true,
+		RequireForRegister: true,
 		AntiFlood: CaptchaAntiFloodConfig{
 			RequireCaptcha:        true,
 			IPHourlyLimit:         5,

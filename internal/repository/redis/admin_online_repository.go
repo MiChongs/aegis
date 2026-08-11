@@ -54,6 +54,11 @@ func (r *SessionRepository) ListOnlineAdminIDs(ctx context.Context) ([]int64, er
 	return ids, nil
 }
 
+// ListAdminOnlineSessionIDs 列出管理员当前记录的在线会话 ID（JTI）
+func (r *SessionRepository) ListAdminOnlineSessionIDs(ctx context.Context, adminID int64) ([]string, error) {
+	return r.client.SMembers(ctx, r.adminOnlineSessionsKey(adminID)).Result()
+}
+
 // GetOnlineSessionCount 获取管理员的在线会话数量
 func (r *SessionRepository) GetOnlineSessionCount(ctx context.Context, adminID int64) (int64, error) {
 	return r.client.SCard(ctx, r.adminOnlineSessionsKey(adminID)).Result()

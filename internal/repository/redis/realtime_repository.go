@@ -245,6 +245,16 @@ func (r *RealtimeRepository) buildAppOnlineUser(ctx context.Context, appID int64
 		if item.LastSeenAt.Before(conn.LastSeenAt) {
 			item.LastSeenAt = conn.LastSeenAt
 		}
+		// 最早的一条连接才是"在线起始时间"；取最新的会让一次断线重连
+		// 把在线时长清零。
+		if item.ConnectedAt.IsZero() || conn.ConnectedAt.Before(item.ConnectedAt) {
+			item.ConnectedAt = conn.ConnectedAt
+		}
+		// IP 取第一条有值的：同一用户的多条连接可能来自不同网络，
+		// 表格只显示一个，取哪条都行，但不能因为某条没记到就留空。
+		if item.IP == "" {
+			item.IP = conn.IP
+		}
 		item.ConnectionSamples = append(item.ConnectionSamples, *conn)
 	}
 	if len(item.ConnectionSamples) > 0 {

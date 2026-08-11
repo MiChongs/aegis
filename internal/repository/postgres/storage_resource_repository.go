@@ -31,8 +31,8 @@ RETURNING id, config_id, app_id, object_key, file_name, content_type, size, etag
 
 // ListStorageObjects 分页查询存储对象，支持多条件过滤
 func (r *Repository) ListStorageObjects(ctx context.Context, query storagedomain.ObjectListQuery) ([]storagedomain.StorageObject, int64, error) {
-	args := make([]any, 0, 8)
-	where := buildObjectWhere(query, &args)
+	args := make([]any, 0, 16)
+	where := buildObjectWhere(query, &args, objectWhereOptions{IncludeStatus: true, DirectChildrenOnly: query.FolderView})
 
 	// 计数
 	var total int64
@@ -40,18 +40,12 @@ func (r *Repository) ListStorageObjects(ctx context.Context, query storagedomain
 		return nil, 0, err
 	}
 
-	page, limit := query.Page, query.Limit
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 200 {
-		limit = 20
-	}
+	page, limit := normalizeObjectPaging(query.Page, query.Limit)
 	offset := (page - 1) * limit
 	args = append(args, limit, offset)
 
 	sql := fmt.Sprintf(`SELECT id, config_id, app_id, object_key, file_name, content_type, size, etag, uploaded_by, uploader_type, status, COALESCE(metadata,'{}'::jsonb), created_at, deleted_at
-FROM storage_objects WHERE %s ORDER BY id DESC LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args))
+FROM storage_objects WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`, where, objectOrderBy(query.Sort, query.Order), len(args)-1, len(args))
 
 	rows, err := r.pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -70,10 +64,147 @@ FROM storage_objects WHERE %s ORDER BY id DESC LIMIT $%d OFFSET $%d`, where, len
 	return items, total, rows.Err()
 }
 
+// ListObjectFolders 聚合当前目录下的**直接**子目录。
+// 存储服务没有目录实体，这里是按 object_key 的斜杠分段现算的视图：
+// 取当前目录之后的剩余串，凡是还含 `/` 的就属于某个子目录，按第一段归并。
+func (r *Repository) ListObjectFolders(ctx context.Context, query storagedomain.ObjectListQuery) ([]storagedomain.ObjectFolder, error) {
+	args := make([]any, 0, 16)
+	// 子目录本身不是直接子文件，因此这里用递归口径的 where（不加"不含更多斜杠"的限制）
+	where := buildObjectWhere(query, &args, objectWhereOptions{IncludeStatus: true, DirectChildrenOnly: false})
+
+	folder := normalizeFolderPath(query.Folder)
+	offsetExpr := "1"
+	if folder != "" {
+		args = append(args, folder)
+		offsetExpr = fmt.Sprintf("length($%d) + 2", len(args))
+	}
+
+	sql := fmt.Sprintf(`SELECT part, COUNT(*)::bigint, COALESCE(SUM(size), 0)::bigint
+FROM (
+	SELECT split_part(rest, '/', 1) AS part, size
+	FROM (SELECT substr(object_key, %s) AS rest, size FROM storage_objects WHERE %s) AS scoped
+	WHERE strpos(rest, '/') > 0
+) AS parts
+WHERE part <> ''
+GROUP BY part
+ORDER BY part
+LIMIT 500`, offsetExpr, where)
+
+	rows, err := r.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]storagedomain.ObjectFolder, 0, 16)
+	for rows.Next() {
+		var f storagedomain.ObjectFolder
+		if err := rows.Scan(&f.Name, &f.FileCount, &f.TotalSize); err != nil {
+			return nil, err
+		}
+		if folder == "" {
+			f.Path = f.Name
+		} else {
+			f.Path = folder + "/" + f.Name
+		}
+		items = append(items, f)
+	}
+	return items, rows.Err()
+}
+
+// SummarizeStorageObjects 统计当前筛选下的文件数与容量。
+// 刻意忽略 status 条件：这一栏要同时说出「活跃多少 / 回收站多少」，
+// 带上 status 会让其中一档恒为 0。
+func (r *Repository) SummarizeStorageObjects(ctx context.Context, query storagedomain.ObjectListQuery) (*storagedomain.ObjectListSummary, error) {
+	args := make([]any, 0, 16)
+	where := buildObjectWhere(query, &args, objectWhereOptions{IncludeStatus: false, DirectChildrenOnly: query.FolderView})
+
+	var s storagedomain.ObjectListSummary
+	err := r.pool.QueryRow(ctx, `SELECT
+	COUNT(*)::bigint,
+	COALESCE(SUM(size), 0)::bigint,
+	COUNT(*) FILTER (WHERE status = 'active')::bigint,
+	COALESCE(SUM(size) FILTER (WHERE status = 'active'), 0)::bigint,
+	COUNT(*) FILTER (WHERE status = 'deleted')::bigint,
+	COALESCE(SUM(size) FILTER (WHERE status = 'deleted'), 0)::bigint
+FROM storage_objects WHERE `+where, args...).
+		Scan(&s.TotalFiles, &s.TotalSize, &s.ActiveFiles, &s.ActiveSize, &s.DeletedFiles, &s.DeletedSize)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// BatchSetObjectStatus 批量软删 / 恢复。
+// 一次 UPDATE 而不是循环 N 次单条：批量删 200 个文件走前者是一个事务，
+// 走后者是 200 个事务且中途失败会留下一半已删一半没删的状态。
+func (r *Repository) BatchSetObjectStatus(ctx context.Context, ids []int64, toStatus string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	var sql string
+	switch toStatus {
+	case "deleted":
+		sql = `UPDATE storage_objects SET status = 'deleted', deleted_at = NOW() WHERE id = ANY($1) AND status <> 'deleted'`
+	case "active":
+		sql = `UPDATE storage_objects SET status = 'active', deleted_at = NULL WHERE id = ANY($1) AND status = 'deleted'`
+	default:
+		return 0, fmt.Errorf("不支持的目标状态: %s", toStatus)
+	}
+	tag, err := r.pool.Exec(ctx, sql, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// BatchPermanentDeleteObjects 批量永久删除索引记录
+func (r *Repository) BatchPermanentDeleteObjects(ctx context.Context, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	tag, err := r.pool.Exec(ctx, `DELETE FROM storage_objects WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ListStorageObjectsByIDs 按 ID 批量取对象（批量操作前的存在性与归属核对）
+func (r *Repository) ListStorageObjectsByIDs(ctx context.Context, ids []int64) ([]storagedomain.StorageObject, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx, `SELECT id, config_id, app_id, object_key, file_name, content_type, size, etag, uploaded_by, uploader_type, status, COALESCE(metadata,'{}'::jsonb), created_at, deleted_at
+FROM storage_objects WHERE id = ANY($1) ORDER BY id`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]storagedomain.StorageObject, 0, len(ids))
+	for rows.Next() {
+		obj, err := scanStorageObject(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *obj)
+	}
+	return items, rows.Err()
+}
+
 // GetStorageObject 根据 ID 获取存储对象
 func (r *Repository) GetStorageObject(ctx context.Context, id int64) (*storagedomain.StorageObject, error) {
 	return scanStorageObject(r.pool.QueryRow(ctx, `SELECT id, config_id, app_id, object_key, file_name, content_type, size, etag, uploaded_by, uploader_type, status, COALESCE(metadata,'{}'::jsonb), created_at, deleted_at
 FROM storage_objects WHERE id = $1`, id))
+}
+
+// GetStorageObjectByKey 按配置与应用归属查找活动对象，防止跨应用猜测对象键。
+func (r *Repository) GetStorageObjectByKey(ctx context.Context, configID int64, appID int64, objectKey string) (*storagedomain.StorageObject, error) {
+	return scanStorageObject(r.pool.QueryRow(ctx, `SELECT id, config_id, app_id, object_key, file_name, content_type, size, etag, uploaded_by, uploader_type, status, COALESCE(metadata,'{}'::jsonb), created_at, deleted_at
+FROM storage_objects
+WHERE config_id = $1 AND app_id = $2 AND object_key = $3 AND status = 'active'
+ORDER BY id DESC
+LIMIT 1`, configID, appID, objectKey))
 }
 
 // SoftDeleteStorageObject 软删除存储对象
@@ -493,29 +624,141 @@ func (r *Repository) GetObjectTypeStats(ctx context.Context, configID *int64) ([
 //  内部辅助
 // ════════════════════════════════════════════════════════════
 
-func buildObjectWhere(query storagedomain.ObjectListQuery, args *[]any) string {
+type objectWhereOptions struct {
+	// IncludeStatus 为 false 时忽略状态条件（汇总用，见 SummarizeStorageObjects）
+	IncludeStatus bool
+	// DirectChildrenOnly 只保留当前目录下的直接子文件（目录浏览模式）
+	DirectChildrenOnly bool
+}
+
+func buildObjectWhere(query storagedomain.ObjectListQuery, args *[]any, opts objectWhereOptions) string {
 	parts := []string{"1=1"}
+	add := func(format string, value any) {
+		*args = append(*args, value)
+		parts = append(parts, fmt.Sprintf(format, len(*args)))
+	}
+
 	if query.ConfigID != nil {
-		*args = append(*args, *query.ConfigID)
-		parts = append(parts, fmt.Sprintf("config_id = $%d", len(*args)))
+		add("config_id = $%d", *query.ConfigID)
 	}
 	if query.AppID != nil {
-		*args = append(*args, *query.AppID)
-		parts = append(parts, fmt.Sprintf("app_id = $%d", len(*args)))
+		add("app_id = $%d", *query.AppID)
 	}
 	if p := strings.TrimSpace(query.Prefix); p != "" {
-		*args = append(*args, p+"%")
-		parts = append(parts, fmt.Sprintf("object_key LIKE $%d", len(*args)))
+		add(`object_key LIKE $%d`, escapeLikePattern(p)+"%")
 	}
+
+	// 目录定位：先把范围收敛到该目录之下，再按是否递归决定要不要排除子目录里的文件。
+	if folder := normalizeFolderPath(query.Folder); folder != "" {
+		add(`object_key LIKE $%d`, escapeLikePattern(folder)+"/%")
+		if opts.DirectChildrenOnly {
+			add(`strpos(substr(object_key, length($%d) + 2), '/') = 0`, folder)
+		}
+	} else if opts.DirectChildrenOnly {
+		parts = append(parts, `strpos(object_key, '/') = 0`)
+	}
+
+	if kw := strings.TrimSpace(query.Keyword); kw != "" {
+		*args = append(*args, "%"+escapeLikePattern(kw)+"%")
+		parts = append(parts, fmt.Sprintf("(file_name ILIKE $%d OR object_key ILIKE $%d)", len(*args), len(*args)))
+	}
+
+	// contentType 支持两种写法：`image/` 这样以斜杠结尾的是大类，按前缀匹配；
+	// 其余按完整类型精确匹配。控制台的类型下拉发的正是前者 ——
+	// 重构前这里只有精确匹配，于是「筛选图片」永远是空列表。
 	if ct := strings.TrimSpace(query.ContentType); ct != "" {
-		*args = append(*args, ct)
-		parts = append(parts, fmt.Sprintf("content_type = $%d", len(*args)))
+		if strings.HasSuffix(ct, "/") {
+			add("content_type LIKE $%d", escapeLikePattern(ct)+"%")
+		} else {
+			// 实际存储的类型可能带参数（text/plain; charset=utf-8），
+			// 因此精确匹配也要放过参数部分
+			add("split_part(content_type, ';', 1) = $%d", ct)
+		}
 	}
-	if s := strings.TrimSpace(query.Status); s != "" {
-		*args = append(*args, s)
-		parts = append(parts, fmt.Sprintf("status = $%d", len(*args)))
+
+	if opts.IncludeStatus {
+		statuses := make([]string, 0, len(query.Statuses)+1)
+		for _, s := range query.Statuses {
+			if s = strings.TrimSpace(s); s != "" {
+				statuses = append(statuses, s)
+			}
+		}
+		if s := strings.TrimSpace(query.Status); s != "" {
+			statuses = append(statuses, s)
+		}
+		if len(statuses) == 1 {
+			add("status = $%d", statuses[0])
+		} else if len(statuses) > 1 {
+			add("status = ANY($%d)", statuses)
+		}
+	}
+
+	if ut := strings.TrimSpace(query.UploaderType); ut != "" {
+		add("uploader_type = $%d", ut)
+	}
+	if query.UploadedBy != nil {
+		add("uploaded_by = $%d", *query.UploadedBy)
+	}
+	if query.MinSize != nil {
+		add("size >= $%d", *query.MinSize)
+	}
+	if query.MaxSize != nil {
+		add("size <= $%d", *query.MaxSize)
+	}
+	if query.CreatedFrom != nil {
+		add("created_at >= $%d", *query.CreatedFrom)
+	}
+	if query.CreatedTo != nil {
+		add("created_at <= $%d", *query.CreatedTo)
 	}
 	return strings.Join(parts, " AND ")
+}
+
+// objectOrderBy 把前端的排序键映射成列名。
+// 白名单式映射而不是拼接调用方给的字符串 —— 后者等于把 ORDER BY 开放给外部。
+// 末尾恒补 id：排序列有重复值时（size、created_at 都会），没有 tie-breaker
+// 的分页会在翻页时重复或漏掉记录。
+func objectOrderBy(sort string, order string) string {
+	column := "created_at"
+	switch strings.TrimSpace(sort) {
+	case storagedomain.ObjectSortSize:
+		column = "size"
+	case storagedomain.ObjectSortFileName:
+		column = "file_name"
+	case storagedomain.ObjectSortObjectKey:
+		column = "object_key"
+	case storagedomain.ObjectSortDeletedAt:
+		column = "deleted_at"
+	}
+	direction := "DESC"
+	if strings.EqualFold(strings.TrimSpace(order), "asc") {
+		direction = "ASC"
+	}
+	return fmt.Sprintf("%s %s NULLS LAST, id %s", column, direction, direction)
+}
+
+func normalizeObjectPaging(page, limit int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 20
+	}
+	return page, limit
+}
+
+// normalizeFolderPath 归一化目录路径：去掉首尾斜杠与多余空白，根目录为空串
+func normalizeFolderPath(folder string) string {
+	folder = strings.TrimSpace(strings.ReplaceAll(folder, "\\", "/"))
+	return strings.Trim(folder, "/")
+}
+
+// escapeLikePattern 转义 LIKE 通配符。
+// 不转义的话，对象键里一个 `%` 就会让前缀匹配变成全表匹配 ——
+// 目录浏览时点进 `2026%` 会列出所有文件。Postgres 的 LIKE 默认转义符即反斜杠。
+func escapeLikePattern(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(value)
 }
 
 func scanStorageObject(row interface{ Scan(dest ...any) error }) (*storagedomain.StorageObject, error) {

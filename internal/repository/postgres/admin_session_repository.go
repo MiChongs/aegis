@@ -206,20 +206,20 @@ func (r *Repository) RevokeTempPermission(ctx context.Context, permID int64) err
 }
 
 // GetActiveTempPermissions 获取管理员当前活跃的临时权限代码列表
-func (r *Repository) GetActiveTempPermissions(ctx context.Context, adminID int64) ([]string, error) {
+func (r *Repository) GetActiveTempPermissions(ctx context.Context, adminID int64) ([]admindomain.TempPermission, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT permission FROM admin_temp_permissions WHERE admin_id = $1 AND NOT is_revoked AND expires_at > NOW()`, adminID)
+		`SELECT permission, app_id FROM admin_temp_permissions WHERE admin_id = $1 AND NOT is_revoked AND expires_at > NOW()`, adminID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []admindomain.TempPermission
 	for rows.Next() {
-		var perm string
-		if err := rows.Scan(&perm); err != nil {
+		var item admindomain.TempPermission
+		if err := rows.Scan(&item.Permission, &item.AppID); err != nil {
 			return nil, err
 		}
-		items = append(items, perm)
+		items = append(items, item)
 	}
 	return items, rows.Err()
 }

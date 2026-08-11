@@ -8,12 +8,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
-	"time"
 
 	captchadomain "aegis/internal/domain/captcha"
+	"aegis/pkg/circuitbreaker"
+	"aegis/pkg/resilience"
+	"aegis/pkg/timeutil"
 
+	openapiutil "github.com/alibabacloud-go/darabonba-openapi/v2/utils"
+	dysmsclient "github.com/alibabacloud-go/dysmsapi-20170525/v5/client"
+	"github.com/alibabacloud-go/tea/dara"
+	"github.com/alibabacloud-go/tea/tea"
+	credential "github.com/aliyun/credentials-go/credentials"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -33,87 +39,51 @@ type AliyunSMSProvider struct {
 // NewAliyunSMSProvider 创建阿里云短信提供商
 func NewAliyunSMSProvider() *AliyunSMSProvider {
 	return &AliyunSMSProvider{
-		httpClient: resty.New().SetTimeout(10 * time.Second),
+		httpClient: resty.New().SetTimeout(timeutil.Seconds(10)).SetRetryCount(0),
 	}
 }
 
 // Send 通过阿里云 SMS API 发送短信
 func (p *AliyunSMSProvider) Send(ctx context.Context, phone string, code string, cfg *captchadomain.SMSProviderConfig) (string, error) {
-	// 阿里云 SMS API 公共参数
-	params := map[string]string{
-		"AccessKeyId":      cfg.AccessKey,
-		"Action":           "SendSms",
-		"Format":           "JSON",
-		"PhoneNumbers":     phone,
-		"RegionId":         normalizeRegion(cfg.Region, "cn-hangzhou"),
-		"SignName":         cfg.SignName,
-		"SignatureMethod":  "HMAC-SHA1",
-		"SignatureNonce":   fmt.Sprintf("%d", time.Now().UnixNano()),
-		"SignatureVersion": "1.0",
-		"TemplateCode":     cfg.TemplateID,
-		"TemplateParam":    fmt.Sprintf(`{"code":"%s"}`, code),
-		"Timestamp":        time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		"Version":          "2017-05-25",
+	client, err := createAliyunSMSClient(cfg)
+	if err != nil {
+		return "", fmt.Errorf("阿里云短信客户端初始化失败: %w", err)
+	}
+	templateParam, err := json.Marshal(map[string]string{
+		resolveSMSCodeParamKey(cfg.CodeParamKey): code,
+	})
+	if err != nil {
+		return "", fmt.Errorf("阿里云短信模板参数序列化失败: %w", err)
 	}
 
-	// 签名计算
-	signature := aliyunSignature(params, cfg.SecretKey)
-	params["Signature"] = signature
-
-	resp, err := p.httpClient.R().
-		SetContext(ctx).
-		SetQueryParams(params).
-		Get("https://dysmsapi.aliyuncs.com/")
+	request := &dysmsclient.SendSmsRequest{
+		PhoneNumbers:  tea.String(phone),
+		SignName:      tea.String(cfg.SignName),
+		TemplateCode:  tea.String(cfg.TemplateID),
+		TemplateParam: tea.String(string(templateParam)),
+	}
+	runtime := &dara.RuntimeOptions{}
+	breakerName := circuitbreaker.Name("sms", string(cfg.Provider), fmt.Sprintf("app-%d", cfg.AppID), fmt.Sprintf("config-%d", cfg.ID))
+	resp, err := resilience.Execute(ctx, breakerName, resilience.Options{
+		Timeout:     timeutil.Seconds(10),
+		MaxRetries:  2,
+		BaseBackoff: timeutil.Milliseconds(200),
+		MaxBackoff:  timeutil.Seconds(1),
+		RatePerSec:  10,
+		Burst:       20,
+	}, func(callCtx context.Context) (*dysmsclient.SendSmsResponse, error) {
+		return client.SendSmsWithOptions(request, runtime)
+	})
 	if err != nil {
 		return "", fmt.Errorf("阿里云短信请求失败: %w", err)
 	}
-
-	var result struct {
-		Code      string `json:"Code"`
-		Message   string `json:"Message"`
-		RequestID string `json:"RequestId"`
+	if resp == nil || resp.Body == nil {
+		return "", fmt.Errorf("阿里云短信响应为空")
 	}
-	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		return "", fmt.Errorf("阿里云短信响应解析失败: %w", err)
+	if tea.StringValue(resp.Body.Code) != "OK" {
+		return "", fmt.Errorf("阿里云短信发送失败: %s - %s", tea.StringValue(resp.Body.Code), tea.StringValue(resp.Body.Message))
 	}
-	if result.Code != "OK" {
-		return "", fmt.Errorf("阿里云短信发送失败: %s - %s", result.Code, result.Message)
-	}
-
-	return result.RequestID, nil
-}
-
-// aliyunSignature 计算阿里云 API 签名（HMAC-SHA1）
-func aliyunSignature(params map[string]string, secretKey string) string {
-	// 按 key 排序
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	// 构造待签名字符串
-	var pairs []string
-	for _, k := range keys {
-		pairs = append(pairs, fmt.Sprintf("%s=%s", specialURLEncode(k), specialURLEncode(params[k])))
-	}
-	query := strings.Join(pairs, "&")
-	stringToSign := "GET&%2F&" + specialURLEncode(query)
-
-	// HMAC-SHA1
-	mac := hmac.New(sha256.New, []byte(secretKey+"&"))
-	mac.Write([]byte(stringToSign))
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-// specialURLEncode 阿里云特殊 URL 编码
-func specialURLEncode(value string) string {
-	encoded := strings.NewReplacer(
-		"+", "%20",
-		"*", "%2A",
-		"%7E", "~",
-	).Replace(value)
-	return encoded
+	return tea.StringValue(resp.Body.RequestId), nil
 }
 
 // ────────────────────── 腾讯云短信 ──────────────────────
@@ -126,14 +96,14 @@ type TencentSMSProvider struct {
 // NewTencentSMSProvider 创建腾讯云短信提供商
 func NewTencentSMSProvider() *TencentSMSProvider {
 	return &TencentSMSProvider{
-		httpClient: resty.New().SetTimeout(10 * time.Second),
+		httpClient: resty.New().SetTimeout(timeutil.Seconds(10)).SetRetryCount(0),
 	}
 }
 
 // Send 通过腾讯云 SMS API 发送短信
 func (p *TencentSMSProvider) Send(ctx context.Context, phone string, code string, cfg *captchadomain.SMSProviderConfig) (string, error) {
 	// 腾讯云 SMS TC3-HMAC-SHA256 签名
-	timestamp := time.Now().Unix()
+	timestamp := timeutil.NowUTC().Unix()
 	region := normalizeRegion(cfg.Region, "ap-guangzhou")
 
 	// 请求体
@@ -151,24 +121,34 @@ func (p *TencentSMSProvider) Send(ctx context.Context, phone string, code string
 	// 计算签名
 	authorization := tencentSign(cfg.AccessKey, cfg.SecretKey, region, string(bodyBytes), timestamp)
 
-	resp, err := p.httpClient.R().
-		SetContext(ctx).
-		SetHeader("Content-Type", "application/json").
-		SetHeader("Authorization", authorization).
-		SetHeader("Host", "sms.tencentcloudapi.com").
-		SetHeader("X-TC-Action", "SendSms").
-		SetHeader("X-TC-Timestamp", fmt.Sprintf("%d", timestamp)).
-		SetHeader("X-TC-Version", "2021-01-11").
-		SetHeader("X-TC-Region", region).
-		SetBody(bodyBytes).
-		Post("https://sms.tencentcloudapi.com/")
+	breakerName := circuitbreaker.Name("sms", string(cfg.Provider), fmt.Sprintf("app-%d", cfg.AppID), fmt.Sprintf("config-%d", cfg.ID))
+	resp, err := resilience.Execute(ctx, breakerName, resilience.Options{
+		Timeout:     timeutil.Seconds(10),
+		MaxRetries:  2,
+		BaseBackoff: timeutil.Milliseconds(200),
+		MaxBackoff:  timeutil.Seconds(1),
+		RatePerSec:  10,
+		Burst:       20,
+	}, func(callCtx context.Context) (*resty.Response, error) {
+		return p.httpClient.R().
+			SetContext(callCtx).
+			SetHeader("Content-Type", "application/json").
+			SetHeader("Authorization", authorization).
+			SetHeader("Host", "sms.tencentcloudapi.com").
+			SetHeader("X-TC-Action", "SendSms").
+			SetHeader("X-TC-Timestamp", fmt.Sprintf("%d", timestamp)).
+			SetHeader("X-TC-Version", "2021-01-11").
+			SetHeader("X-TC-Region", region).
+			SetBody(bodyBytes).
+			Post("https://sms.tencentcloudapi.com/")
+	})
 	if err != nil {
 		return "", fmt.Errorf("腾讯云短信请求失败: %w", err)
 	}
 
 	var result struct {
 		Response struct {
-			RequestID string `json:"RequestId"`
+			RequestID     string `json:"RequestId"`
 			SendStatusSet []struct {
 				Code    string `json:"Code"`
 				Message string `json:"Message"`
@@ -194,7 +174,7 @@ func (p *TencentSMSProvider) Send(ctx context.Context, phone string, code string
 
 // tencentSign 计算腾讯云 TC3-HMAC-SHA256 签名
 func tencentSign(secretID, secretKey, region, body string, timestamp int64) string {
-	date := time.Unix(timestamp, 0).UTC().Format("2006-01-02")
+	date := timeutil.Unix(timestamp, 0).Format("2006-01-02")
 	service := "sms"
 
 	// 拼接规范请求串
@@ -236,6 +216,32 @@ func normalizeRegion(input, fallback string) string {
 	return input
 }
 
+func createAliyunSMSClient(cfg *captchadomain.SMSProviderConfig) (*dysmsclient.Client, error) {
+	config := &openapiutil.Config{
+		Endpoint: tea.String("dysmsapi.aliyuncs.com"),
+		RegionId: tea.String(normalizeRegion(cfg.Region, "cn-hangzhou")),
+	}
+	if strings.TrimSpace(cfg.AccessKey) != "" && strings.TrimSpace(cfg.SecretKey) != "" {
+		config.AccessKeyId = tea.String(strings.TrimSpace(cfg.AccessKey))
+		config.AccessKeySecret = tea.String(strings.TrimSpace(cfg.SecretKey))
+	} else {
+		cred, err := credential.NewCredential(nil)
+		if err != nil {
+			return nil, err
+		}
+		config.Credential = cred
+	}
+	return dysmsclient.NewClient(config)
+}
+
+func resolveSMSCodeParamKey(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "code"
+	}
+	return value
+}
+
 // AvailableSMSProviders 返回当前已注册的短信服务商列表
 func (s *CaptchaService) AvailableSMSProviders() []string {
 	names := make([]string, 0, len(s.smsProviders))
@@ -252,15 +258,15 @@ func (s *CaptchaService) Stats() map[string]any {
 	cfg := s.cfg.Captcha
 	providers := s.AvailableSMSProviders()
 	return map[string]any{
-		"enabled":       cfg.Enabled,
-		"imageEnabled":  cfg.Image.Enabled,
-		"mathEnabled":   cfg.Math.Enabled,
-		"digitEnabled":  cfg.Digit.Enabled,
-		"smsEnabled":    cfg.SMS.Enabled,
-		"ttlSeconds":    int(cfg.TTL.Seconds()),
-		"smsProviders":  providers,
-		"status":        statusText(cfg.Enabled),
-		"httpStatus":    http.StatusOK,
+		"enabled":      cfg.Enabled,
+		"imageEnabled": cfg.Image.Enabled,
+		"mathEnabled":  cfg.Math.Enabled,
+		"digitEnabled": cfg.Digit.Enabled,
+		"smsEnabled":   cfg.SMS.Enabled,
+		"ttlSeconds":   int(cfg.TTL.Seconds()),
+		"smsProviders": providers,
+		"status":       statusText(cfg.Enabled),
+		"httpStatus":   http.StatusOK,
 	}
 }
 

@@ -1,15 +1,6 @@
 package bootstrap
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
-
 	"aegis/internal/config"
 	"aegis/internal/db"
 	legacyrepo "aegis/internal/repository/legacymysql"
@@ -17,6 +8,17 @@ import (
 	"aegis/internal/service"
 	httptransport "aegis/internal/transport/http"
 	pkglogger "aegis/pkg/logger"
+	"aegis/pkg/progressutil"
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -60,6 +62,8 @@ func RunMigrations(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	bar := progressutil.New(int64(len(files)), "执行 PostgreSQL 迁移")
+	defer bar.Finish()
 	for _, file := range files {
 		content, err := os.ReadFile(file)
 		if err != nil {
@@ -72,8 +76,11 @@ func RunMigrations(ctx context.Context) error {
 		if _, err := pool.Exec(ctx, sql); err != nil {
 			return fmt.Errorf("apply migration %s failed: %w", file, err)
 		}
+		bar.Add(1)
+		bar.SetDescription("执行 PostgreSQL 迁移 file=%s", filepath.Base(file))
 		fmt.Println("applied migration:", file)
 	}
+	bar.Finish()
 	return nil
 }
 
@@ -186,6 +193,12 @@ func RunSyncLegacyBatch(ctx context.Context, args []string) error {
 		return err
 	}
 	defer cleanup()
+	totalRemaining, err := migrator.CountLegacyUsersAfterID(ctx, lastID)
+	if err != nil {
+		return err
+	}
+	bar := progressutil.New(totalRemaining, fmt.Sprintf("同步旧版用户 lastID>%d", lastID))
+	defer bar.Finish()
 
 	totalRequested := 0
 	totalSynced := 0
@@ -205,6 +218,8 @@ func RunSyncLegacyBatch(ctx context.Context, args []string) error {
 		totalSynced += result.Synced
 		totalSkipped += result.Skipped
 		totalFailed += result.Failed
+		bar.Add(int64(result.Requested))
+		bar.SetDescription("同步旧版用户 batch=%d synced=%d skipped=%d failed=%d lastUserId=%d", batchCount, totalSynced, totalSkipped, totalFailed, result.LastUserID)
 
 		fmt.Printf("sync batch %d completed: requested=%d synced=%d skipped=%d failed=%d lastUserId=%d\n", batchCount, result.Requested, result.Synced, result.Skipped, result.Failed, result.LastUserID)
 
@@ -223,6 +238,7 @@ func RunSyncLegacyBatch(ctx context.Context, args []string) error {
 		}
 	}
 
+	bar.Finish()
 	fmt.Printf("sync all batches completed: batches=%d requested=%d synced=%d skipped=%d failed=%d lastUserId=%d\n", batchCount, totalRequested, totalSynced, totalSkipped, totalFailed, currentLastID)
 	return nil
 }
@@ -234,7 +250,7 @@ func RunExportOpenAPI(_ context.Context, args []string) error {
 	}
 
 	gin.SetMode(gin.ReleaseMode)
-	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, config.CORSConfig{})
+	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, config.CORSConfig{}, nil, "")
 	if err != nil {
 		return err
 	}
@@ -267,7 +283,7 @@ func RunExportPostman(_ context.Context, args []string) error {
 	}
 
 	gin.SetMode(gin.ReleaseMode)
-	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, config.CORSConfig{})
+	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, config.CORSConfig{}, nil, "")
 	if err != nil {
 		return err
 	}
@@ -334,4 +350,110 @@ func newMigrationService(ctx context.Context) (*service.MigrationService, func()
 		_ = log.Sync()
 	}
 	return migrator, cleanup, nil
+}
+
+// RunImportDump 从旧用户系统（Node.js + MySQL）的 mysqldump 文件导入用户。
+//
+// 用法：
+//
+//	go run ./cmd/server import-dump <dump.sql> --appid <目标应用ID> --password <统一密码> [选项]
+//
+// 选项：
+//
+//	--table=user                  dump 中的用户表名
+//	--source-appid=0              仅导入 dump 中该 appid 的行（0 = 全部）
+//	--require-password-change     强制首次登录改密（默认 true）
+//	--dry-run                     只解析统计，不写库
+//	--limit=0                     最多导入条数（0 = 不限）
+//	--concurrency=4               写库并发
+//
+// 行为约定：
+//   - 用户 ID 重新分配，旧 id/appid 记入 profile.extra（importSource=nodejs_mysqldump）
+//   - 旧密码哈希不兼容，统一替换为 --password 的 bcrypt 哈希
+//   - 同应用账号已存在 → 跳过（幂等，可重复执行）
+//   - QQ / 微信 openid 绑定保留
+func RunImportDump(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("import-dump", flag.ContinueOnError)
+	appID := fs.Int64("appid", 0, "目标应用 ID（必填）")
+	password := fs.String("password", "", "统一密码（必填）")
+	table := fs.String("table", "user", "dump 中的用户表名")
+	sourceAppID := fs.Int64("source-appid", 0, "仅导入 dump 中该 appid 的行（0 = 全部）")
+	requireChange := fs.Bool("require-password-change", true, "强制首次登录修改密码")
+	dryRun := fs.Bool("dry-run", false, "只解析统计，不写库")
+	limit := fs.Int("limit", 0, "最多导入条数（0 = 不限）")
+	concurrency := fs.Int("concurrency", 4, "写库并发")
+
+	// 允许位置参数（文件路径）在前或在后
+	var positional []string
+	var flagArgs []string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			flagArgs = append(flagArgs, arg)
+		} else if len(flagArgs) > 0 && !strings.Contains(flagArgs[len(flagArgs)-1], "=") && isFlagExpectingValue(flagArgs[len(flagArgs)-1]) {
+			flagArgs = append(flagArgs, arg)
+		} else {
+			positional = append(positional, arg)
+		}
+	}
+	if err := fs.Parse(flagArgs); err != nil {
+		return err
+	}
+	if len(positional) == 0 {
+		return fmt.Errorf("usage: go run ./cmd/server import-dump <dump.sql> --appid <id> --password <统一密码>")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	log, err := pkglogger.New(cfg.AppEnv)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = log.Sync() }()
+	postgres, err := db.NewPostgres(ctx, cfg.Postgres)
+	if err != nil {
+		return err
+	}
+	defer postgres.Close()
+
+	importer := service.NewDumpImportService(log, pgrepo.New(postgres))
+	result, err := importer.ImportDump(ctx, service.DumpImportOptions{
+		FilePath:              positional[0],
+		TargetAppID:           *appID,
+		UnifiedPassword:       *password,
+		Table:                 *table,
+		SourceAppID:           *sourceAppID,
+		RequirePasswordChange: *requireChange,
+		DryRun:                *dryRun,
+		Limit:                 *limit,
+		Concurrency:           *concurrency,
+	})
+	if result != nil {
+		mode := "导入完成"
+		if *dryRun {
+			mode = "试运行（未写库）"
+		}
+		fmt.Printf("%s：解析 %d 行，过滤 %d，导入 %d，跳过 %d（账号已存在），失败 %d\n",
+			mode, result.Parsed, result.Filtered, result.Imported, result.Skipped, result.Failed)
+		if len(result.SkippedAccounts) > 0 {
+			preview := result.SkippedAccounts
+			if len(preview) > 50 {
+				preview = preview[:50]
+			}
+			fmt.Printf("跳过的账号（前 %d 个）：%s\n", len(preview), strings.Join(preview, ", "))
+		}
+	}
+	return err
+}
+
+// isFlagExpectingValue 判断 "--flag" 形式（无 =）是否需要吃掉下一个参数作为值
+func isFlagExpectingValue(arg string) bool {
+	name := strings.TrimLeft(arg, "-")
+	switch name {
+	case "appid", "password", "table", "source-appid", "limit", "concurrency":
+		return true
+	default:
+		return false
+	}
 }

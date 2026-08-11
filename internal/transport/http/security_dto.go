@@ -32,7 +32,9 @@ type PasskeyRegistrationFinishRequest struct {
 
 type PasskeyLoginBeginRequest struct {
 	AppID    int64  `json:"appid" form:"appid" binding:"required"`
-	MarkCode string `json:"markcode" form:"markcode"`
+	DeviceID string `json:"deviceId" form:"deviceId"`
+	Device   string `json:"device" form:"device"`
+	MarkCode string `json:"markcode" form:"markcode"` // Deprecated
 }
 
 type PasskeyLoginVerifyRequest struct {
@@ -40,5 +42,7 @@ type PasskeyLoginVerifyRequest struct {
 	ChallengeID string          `json:"challengeId" form:"challengeId" binding:"required"`
 	Credential  json.RawMessage `json:"credential"`
 	Payload     json.RawMessage `json:"payload"`
-	MarkCode    string          `json:"markcode" form:"markcode"`
+	DeviceID    string          `json:"deviceId" form:"deviceId"`
+	Device      string          `json:"device" form:"device"`
+	MarkCode    string          `json:"markcode" form:"markcode"` // Deprecated
 }

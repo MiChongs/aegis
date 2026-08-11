@@ -24,24 +24,21 @@ func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 		MaxAge:                    cfg.MaxAge,
 		AllowWildcard:             true,
 		AllowWebSockets:           true,
-		AllowBrowserExtensions:    true,
-		AllowFiles:                true,
-		AllowPrivateNetwork:       true,
+		AllowBrowserExtensions:    false,
+		AllowFiles:                false,
+		AllowPrivateNetwork:       false,
 		OptionsResponseStatusCode: http.StatusNoContent,
 	}
 
 	allowOrigins := normalizeCORSValues(cfg.AllowOrigins)
 	switch {
-	case cfg.AllowAllOrigins && cfg.AllowCredentials:
-		corsConfig.AllowOriginFunc = func(origin string) bool {
-			return strings.TrimSpace(origin) != ""
-		}
-	case cfg.AllowAllOrigins:
+	case cfg.AllowAllOrigins && !cfg.AllowCredentials:
 		corsConfig.AllowAllOrigins = true
 	case len(allowOrigins) > 0:
 		corsConfig.AllowOrigins = allowOrigins
 	default:
-		corsConfig.AllowAllOrigins = true
+		// 未显式配置来源时拒绝所有跨域请求；同源请求没有 Origin 头，不受影响。
+		corsConfig.AllowOriginFunc = func(string) bool { return false }
 	}
 
 	return corslib.New(corsConfig)

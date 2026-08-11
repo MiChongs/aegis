@@ -1,16 +1,19 @@
 package service
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"time"
-
 	"aegis/internal/config"
 	authdomain "aegis/internal/domain/auth"
 	userdomain "aegis/internal/domain/user"
 	legacyrepo "aegis/internal/repository/legacymysql"
 	pgrepo "aegis/internal/repository/postgres"
+	"aegis/pkg/taskpool"
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
 	"go.uber.org/zap"
 )
 
@@ -55,9 +58,14 @@ func (s *MigrationService) SyncLegacyUsersBatch(ctx context.Context, lastID int6
 		return nil, err
 	}
 	result := &SyncResult{Requested: len(users)}
-	for _, legacyUser := range users {
-		result.LastUserID = legacyUser.ID
-		if err := s.syncLegacyUser(ctx, legacyUser); err != nil {
+	if len(users) > 0 {
+		result.LastUserID = users[len(users)-1].ID
+	}
+	var mu sync.Mutex
+	if err := taskpool.Dispatch(ctx, s.cfg.LegacyMySQL.Concurrency, users, func(taskCtx context.Context, legacyUser legacyrepo.LegacyUser) {
+		if err := s.syncLegacyUser(taskCtx, legacyUser); err != nil {
+			mu.Lock()
+			defer mu.Unlock()
 			if errors.Is(err, errLegacyUserSkipped) {
 				result.Skipped++
 				s.log.Info("sync legacy user skipped",
@@ -66,13 +74,17 @@ func (s *MigrationService) SyncLegacyUsersBatch(ctx context.Context, lastID int6
 					zap.String("account", legacyUser.Account),
 					zap.Error(err),
 				)
-				continue
+				return
 			}
 			result.Failed++
 			s.log.Error("sync legacy user failed", zap.Int64("user_id", legacyUser.ID), zap.Error(err))
-			continue
+			return
 		}
+		mu.Lock()
 		result.Synced++
+		mu.Unlock()
+	}); err != nil {
+		return nil, err
 	}
 	if len(users) == 0 {
 		result.Skipped = 0
@@ -82,6 +94,10 @@ func (s *MigrationService) SyncLegacyUsersBatch(ctx context.Context, lastID int6
 
 func (s *MigrationService) FinalizeLegacySync(ctx context.Context) error {
 	return s.pg.ResetUserIDSequence(ctx)
+}
+
+func (s *MigrationService) CountLegacyUsersAfterID(ctx context.Context, lastID int64) (int64, error) {
+	return s.legacy.CountUsersAfterID(ctx, lastID)
 }
 
 func (s *MigrationService) syncLegacyUser(ctx context.Context, legacyUser legacyrepo.LegacyUser) error {
@@ -110,40 +126,39 @@ func (s *MigrationService) syncLegacyUser(ctx context.Context, legacyUser legacy
 	}
 
 	profile := userdomain.Profile{
-		UserID:   legacyUser.ID,
-		Nickname: legacyUser.Name,
-		Avatar:   legacyUser.Avatar,
-		Email:    legacyUser.Email,
-		Extra: map[string]any{
-			"phone":                    legacyUser.Phone,
-			"role":                     legacyUser.Role,
-			"markcode":                 legacyUser.MarkCode,
-			"integral":                 legacyUser.Integral,
-			"experience":               legacyUser.Experience,
-			"register_ip":              legacyUser.RegisterIP,
-			"register_time":            formatTime(legacyUser.RegisterTime),
-			"register_province":        legacyUser.RegisterProvince,
-			"register_city":            legacyUser.RegisterCity,
-			"register_isp":             legacyUser.RegisterISP,
-			"disabled_reason":          legacyUser.Reason,
-			"parent_invite_account":    legacyUser.ParentInviteAccount,
-			"invite_code":              legacyUser.InviteCode,
-			"custom_id":                legacyUser.CustomID,
-			"custom_id_count":          legacyUser.CustomIDCount,
-			"two_factor_enabled":       legacyUser.TwoFactorEnabled,
-			"two_factor_method":        legacyUser.TwoFactorMethod,
-			"two_factor_enabled_at":    formatTime(legacyUser.TwoFactorEnabledAt),
-			"two_factor_disabled_at":   formatTime(legacyUser.TwoFactorDisabledAt),
-			"passkey_enabled":          legacyUser.PasskeyEnabled,
-			"passkey_enabled_at":       formatTime(legacyUser.PasskeyEnabledAt),
-			"password_changed_at":      formatTime(legacyUser.PasswordChangedAt),
-			"password_expires_at":      formatTime(legacyUser.PasswordExpiresAt),
-			"password_change_required": legacyUser.PasswordChangeRequired,
-			"password_strength_score":  legacyUser.PasswordStrengthScore,
-			"legacy_vip_time":          legacyUser.VIPTime,
-		},
+		UserID:              legacyUser.ID,
+		Nickname:            legacyUser.Name,
+		Avatar:              legacyUser.Avatar,
+		Email:               legacyUser.Email,
+		Phone:               legacyUser.Phone,
+		Role:                legacyUser.Role,
+		MarkCode:            legacyUser.MarkCode,
+		CustomID:            legacyUser.CustomID,
+		CustomIDCount:       int64ToIntPtr(legacyUser.CustomIDCount),
+		ParentInviteAccount: legacyUser.ParentInviteAccount,
+		RegisterIP:          legacyUser.RegisterIP,
+		RegisterISP:         legacyUser.RegisterISP,
+		RegisterProvince:    legacyUser.RegisterProvince,
+		RegisterCity:        legacyUser.RegisterCity,
+		RegisterTime:        legacyUser.RegisterTime,
+		DisabledReason:      legacyUser.Reason,
+		Extra:               map[string]any{},
 	}
-	if err := s.pg.UpsertUserProfile(ctx, profile); err != nil {
+	inviteCode, err := s.resolveLegacyInviteCode(ctx, legacyUser.ID, legacyUser.InviteCode)
+	if err != nil {
+		return err
+	}
+	profile.InviteCode = inviteCode
+	if err := s.upsertLegacyProfileWithInviteCode(ctx, profile); err != nil {
+		return err
+	}
+	if err := s.pg.UpsertUserSecurityState(ctx, userdomain.ProfileSecurityState{
+		UserID:                 legacyUser.ID,
+		PasswordChangedAt:      legacyUser.PasswordChangedAt,
+		PasswordExpiresAt:      legacyUser.PasswordExpiresAt,
+		PasswordStrengthScore:  int64ToIntPtr(legacyUser.PasswordStrengthScore),
+		PasswordChangeRequired: new(legacyUser.PasswordChangeRequired),
+	}); err != nil {
 		return err
 	}
 
@@ -174,8 +189,7 @@ func normalizeLegacyVIPTime(value int64) *time.Time {
 		return nil
 	}
 	if value == 999999999 {
-		permanent := time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC)
-		return &permanent
+		return new(time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC))
 	}
 	parsed := time.Unix(value, 0).UTC()
 	if parsed.Year() < 2000 || parsed.Year() > 2100 {
@@ -191,16 +205,62 @@ func zeroOrNow(value time.Time) time.Time {
 	return value.UTC()
 }
 
-func formatTime(value *time.Time) string {
-	if value == nil || value.IsZero() {
-		return ""
-	}
-	return value.UTC().Format(time.RFC3339)
+func boolPtr(value bool) *bool {
+	return &value
 }
 
-func derefTime(value *time.Time) time.Time {
-	if value == nil {
-		return time.Time{}
+func int64ToIntPtr(value int64) *int {
+	return new(int(value))
+}
+
+func (s *MigrationService) resolveLegacyInviteCode(ctx context.Context, userID int64, preferred string) (string, error) {
+	preferred = strings.TrimSpace(preferred)
+	if preferred != "" {
+		existingProfile, err := s.pg.GetUserProfileByUserID(ctx, userID)
+		if err != nil {
+			return "", err
+		}
+		if existingProfile != nil && strings.EqualFold(strings.TrimSpace(existingProfile.InviteCode), preferred) {
+			return preferred, nil
+		}
+		exists, err := s.pg.HasInviteCode(ctx, preferred)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return preferred, nil
+		}
 	}
-	return value.UTC()
+	for attempt := 0; attempt < inviteCodeMaxAttempts; attempt++ {
+		inviteCode, err := randomInviteCode(inviteCodeLength)
+		if err != nil {
+			return "", err
+		}
+		exists, err := s.pg.HasInviteCode(ctx, inviteCode)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return inviteCode, nil
+		}
+	}
+	return "", fmt.Errorf("generate invite code exceeded max retries")
+}
+
+func (s *MigrationService) upsertLegacyProfileWithInviteCode(ctx context.Context, profile userdomain.Profile) error {
+	for attempt := 0; attempt < inviteCodeMaxAttempts; attempt++ {
+		if err := s.pg.UpsertUserProfile(ctx, profile); err != nil {
+			if pgrepo.IsUniqueViolation(err) {
+				inviteCode, retryErr := s.resolveLegacyInviteCode(ctx, profile.UserID, "")
+				if retryErr != nil {
+					return retryErr
+				}
+				profile.InviteCode = inviteCode
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+	return fmt.Errorf("upsert legacy profile invite code exceeded max retries")
 }

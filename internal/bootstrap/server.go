@@ -39,6 +39,12 @@ func NewUnifiedApp(ctx context.Context, cl *crashlog.Logger) (*UnifiedApp, error
 }
 
 func (u *UnifiedApp) Run(ctx context.Context) error {
+	if u.API != nil {
+		if err := u.API.Start(ctx); err != nil {
+			return err
+		}
+	}
+
 	errCh := make(chan error, 2)
 
 	go func() {

@@ -1,0 +1,1 @@
+ALTER TABLE ip_bans DROP COLUMN IF EXISTS mode;

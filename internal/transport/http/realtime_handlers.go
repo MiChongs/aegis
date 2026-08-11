@@ -67,6 +67,16 @@ func (h *Handler) AdminAppOnlineUsers(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	// presence 只认 userId，账号名要回 Postgres 取 —— 这一步不做，管理端的
+	// 「用户」列就只能显示一串数字或者空白。
+	//
+	// 补名失败不影响列表返回：连接数与 IP 本身就是有用的信息，
+	// 为了一个名字把整张表变成错误页并不划算。
+	if h.realtime != nil && len(items.Items) > 0 {
+		if err := h.realtime.FillOnlineUserIdentities(c.Request.Context(), appID, items.Items); err != nil {
+			_ = c.Error(err)
+		}
+	}
 	response.Success(c, 200, "获取成功", items)
 }
 

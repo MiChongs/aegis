@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	admindomain "aegis/internal/domain/admin"
 	captchadomain "aegis/internal/domain/captcha"
+	systemdomain "aegis/internal/domain/system"
 	"aegis/pkg/response"
 	"github.com/gin-gonic/gin"
 )
@@ -53,17 +55,41 @@ func (h *Handler) AdminLogin(c *gin.Context) {
 	}
 	result, err := h.admin.Login(c.Request.Context(), req.Account, req.Password, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
-		h.recordAuditWithAdmin(c, 0, req.Account, "admin.login_failed", "admin", "", "管理员 "+req.Account+" 登录失败", "failed")
+		// 失败侧：尚未确认 provider，先以 "password" 记；UI 能看到账号 + 失败原因
+		h.recordAuditAuth(c, AuthAuditParams{
+			AdminName: req.Account,
+			Provider:  "password",
+			Event:     "login",
+			Status:    "failed",
+			Reason:    err.Error(),
+		})
 		h.writeError(c, err)
 		return
 	}
 	if result.RequiresSecondFactor {
 		response.Success(c, 200, "需要双因子验证", result)
+		// 登录到达凭证正确但待 MFA 的状态，也算一次审计事件（便于排查 MFA 超时）
+		h.recordAuditAuth(c, AuthAuditParams{
+			AdminID:     result.Admin.ID,
+			AdminName:   result.Admin.Account,
+			DisplayName: result.Admin.DisplayName,
+			Provider:    authProviderFromAccount(result.Admin.AuthSource),
+			Event:       "login",
+			Status:      systemdomain.AuditStatusSuccess,
+			MFARequired: true,
+		})
 		return
 	}
 	h.attachAdminAccountAvatar(c, &result.Admin)
 	response.Success(c, 200, "登录成功", result)
-	h.recordAuditWithAdmin(c, result.Admin.ID, result.Admin.Account, "admin.login", "admin", strconv.FormatInt(result.Admin.ID, 10), "管理员 "+result.Admin.Account+" 登录", "success")
+	h.recordAuditAuth(c, AuthAuditParams{
+		AdminID:     result.Admin.ID,
+		AdminName:   result.Admin.Account,
+		DisplayName: result.Admin.DisplayName,
+		Provider:    authProviderFromAccount(result.Admin.AuthSource),
+		Event:       "login",
+		Status:      systemdomain.AuditStatusSuccess,
+	})
 }
 
 func (h *Handler) AdminVerifyMFA(c *gin.Context) {
@@ -74,13 +100,25 @@ func (h *Handler) AdminVerifyMFA(c *gin.Context) {
 	}
 	result, err := h.admin.VerifyMFA(c.Request.Context(), req.ChallengeID, req.Code, req.RecoveryCode, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
-		h.recordAuditFailed(c, "admin.mfa_failed", "admin", "", "MFA 验证失败")
+		h.recordAuditAuth(c, AuthAuditParams{
+			Provider: "mfa",
+			Event:    "verify",
+			Status:   "failed",
+			Reason:   err.Error(),
+		})
 		h.writeError(c, err)
 		return
 	}
 	h.attachAdminAccountAvatar(c, &result.Admin)
 	response.Success(c, 200, "验证成功", result)
-	h.recordAuditWithAdmin(c, result.Admin.ID, result.Admin.Account, "admin.login", "admin", strconv.FormatInt(result.Admin.ID, 10), "管理员 "+result.Admin.Account+" MFA 验证登录", "success")
+	h.recordAuditAuth(c, AuthAuditParams{
+		AdminID:     result.Admin.ID,
+		AdminName:   result.Admin.Account,
+		DisplayName: result.Admin.DisplayName,
+		Provider:    "mfa",
+		Event:       "verify",
+		Status:      systemdomain.AuditStatusSuccess,
+	})
 }
 
 func (h *Handler) AdminLogout(c *gin.Context) {
@@ -92,12 +130,20 @@ func (h *Handler) AdminLogout(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, 40110, "管理员令牌无效")
 		return
 	}
+	// 读取会话以在审计中留下身份（登出后 context 仍保留 session）
+	sess, _ := adminAccessSession(c)
 	if err := h.admin.Logout(c.Request.Context(), token); err != nil {
 		h.writeError(c, err)
 		return
 	}
 	response.Success(c, 200, "退出成功", gin.H{"logout": true})
-	h.recordAudit(c, "admin.logout", "admin", "", "管理员登出")
+	p := AuthAuditParams{Event: "logout", Status: systemdomain.AuditStatusSuccess, Provider: "password"}
+	if sess != nil {
+		p.AdminID = sess.AdminID
+		p.AdminName = sess.Account
+		p.DisplayName = sess.DisplayName
+	}
+	h.recordAuditAuth(c, p)
 }
 
 func (h *Handler) AdminRegister(c *gin.Context) {
@@ -117,6 +163,14 @@ func (h *Handler) AdminRegister(c *gin.Context) {
 	}
 	profile, err := h.admin.RegisterAdmin(c.Request.Context(), req.Account, req.Password, req.DisplayName, req.Email)
 	if err != nil {
+		h.recordAuditAuth(c, AuthAuditParams{
+			AdminName:   req.Account,
+			DisplayName: req.DisplayName,
+			Provider:    "password",
+			Event:       "register",
+			Status:      "failed",
+			Reason:      err.Error(),
+		})
 		h.writeError(c, err)
 		return
 	}
@@ -125,10 +179,46 @@ func (h *Handler) AdminRegister(c *gin.Context) {
 	if loginErr != nil {
 		// 注册成功但登录失败，仍返回 profile
 		response.Success(c, 201, "注册成功", profile)
+		h.recordAuditAuth(c, AuthAuditParams{
+			AdminID:     profile.Account.ID,
+			AdminName:   profile.Account.Account,
+			DisplayName: profile.Account.DisplayName,
+			Provider:    "password",
+			Event:       "register",
+			Status:      systemdomain.AuditStatusSuccess,
+		})
 		return
 	}
 	h.attachAdminAccountAvatar(c, &result.Admin)
 	response.Success(c, 201, "注册成功", result)
+	h.recordAuditAuth(c, AuthAuditParams{
+		AdminID:     result.Admin.ID,
+		AdminName:   result.Admin.Account,
+		DisplayName: result.Admin.DisplayName,
+		Provider:    "password",
+		Event:       "register",
+		Status:      systemdomain.AuditStatusSuccess,
+	})
+	// 注册后自动登录，再记一条 login 事件，清晰表达 "注册 → 登录" 双事件
+	h.recordAuditAuth(c, AuthAuditParams{
+		AdminID:     result.Admin.ID,
+		AdminName:   result.Admin.Account,
+		DisplayName: result.Admin.DisplayName,
+		Provider:    authProviderFromAccount(result.Admin.AuthSource),
+		Event:       "login",
+		Status:      systemdomain.AuditStatusSuccess,
+	})
+}
+
+// authProviderFromAccount 把 Account.AuthSource 规范化为审计 provider 字段
+//
+//	"" / "local" → password；其余小写透传
+func authProviderFromAccount(source string) string {
+	s := strings.ToLower(strings.TrimSpace(source))
+	if s == "" || s == "local" {
+		return "password"
+	}
+	return s
 }
 
 func (h *Handler) AdminMe(c *gin.Context) {
@@ -149,7 +239,35 @@ func (h *Handler) AdminListAccounts(c *gin.Context) {
 	for i := range items {
 		h.attachAdminProfileAvatar(c, &items[i])
 	}
-	response.Success(c, 200, "获取成功", items)
+
+	// 附加第三方认证源的 loginAvailability 字段 —— 仅超管可见
+	//   - 非超管：直接返回原始列表，避免暴露 LDAP/OIDC/SAML 的健康信息
+	//   - 超管：调用一次 AuthProviderHealthService.Snapshot（30s TTL 缓存 + 单飞），
+	//     N 个管理员只触发 ≤1 次实际外呼探测
+	session, ok := adminAccessSession(c)
+	if !ok || session == nil || !session.IsSuperAdmin || h.authProviderHealth == nil {
+		response.Success(c, 200, "获取成功", items)
+		return
+	}
+
+	// Snapshot() 纯内存读，不阻塞请求；实际探测由后台 30s 定时循环完成
+	snapshot := h.authProviderHealth.Snapshot()
+	enriched := make([]AdminListItem, 0, len(items))
+	for _, p := range items {
+		item := AdminListItem{Profile: p}
+		src := strings.ToLower(strings.TrimSpace(p.Account.AuthSource))
+		if src != "" && src != "password" {
+			status := snapshot.ForSource(src)
+			item.LoginAvailability = &AdminLoginAvailability{
+				Source:    src,
+				Available: status.Available,
+				Reason:    status.Reason,
+				CheckedAt: status.CheckedAt,
+			}
+		}
+		enriched = append(enriched, item)
+	}
+	response.Success(c, 200, "获取成功", enriched)
 }
 
 func (h *Handler) AdminCreateAccount(c *gin.Context) {
@@ -266,7 +384,10 @@ func (h *Handler) verifyAdminCaptcha(c *gin.Context, captchaID, answer string) e
 		c.Abort()
 		return http.ErrAbortHandler
 	}
-	ok, err := h.captcha.Verify(c.Request.Context(), captchadomain.VerifyRequest{CaptchaID: captchaID, Answer: answer, Clear: true})
+	ok, err := h.captcha.Verify(c.Request.Context(), captchadomain.VerifyRequest{
+		CaptchaID: captchaID, Answer: answer, Clear: true,
+		ExpectedPurpose: captchadomain.PurposeAdminLogin, ExpectedScope: captchadomain.ScopeAdmin,
+	})
 	if err != nil {
 		h.writeError(c, err)
 		c.Abort()

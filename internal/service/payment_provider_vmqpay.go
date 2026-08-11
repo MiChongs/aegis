@@ -25,8 +25,37 @@ func newVMQPayProvider(client *resty.Client) *vmqpayProvider {
 	return &vmqpayProvider{client: client}
 }
 
-func (p *vmqpayProvider) Name() string  { return paymentdomain.MethodVMQPay }
-func (p *vmqpayProvider) Label() string { return "V免签 (VMQ)" }
+func (p *vmqpayProvider) Name() string { return paymentdomain.MethodVMQPay }
+func (p *vmqpayProvider) Describe() paymentdomain.ProviderMeta {
+	return finalizeMeta(paymentdomain.ProviderMeta{
+		Method:       paymentdomain.MethodVMQPay,
+		Name:         "V免签 (VMQ)",
+		Description:  "自建免签支付服务，由挂机端 App 监听到账通知后回调确认，全链路自持。",
+		Category:     paymentdomain.CategoryAggregate,
+		Icon:         "alipay",
+		BrandColor:   "#1677FF",
+		DocURL:       "https://github.com/szvone/vmqApache",
+		CallbackPath: "/api/public/pay/callback/" + paymentdomain.MethodVMQPay,
+		CallbackNote: "回调为表单 POST，按参数字典序 + 通信密钥做 MD5 验签。",
+		Regions:      []string{"中国大陆"},
+		Currencies:   []string{"CNY"},
+		Capabilities: paymentdomain.ProviderCapabilities{
+			QRCode: true, Webhook: true, WebhookSignature: true, RemoteQuery: true,
+		},
+		PayTypes: []paymentdomain.PayTypeOption{
+			payType("alipay", "支付宝", ""),
+			payType("wxpay", "微信支付", ""),
+		},
+		Fields: fields(
+			inGroup(paymentdomain.GroupCredential,
+				fURL("apiUrl", "服务地址", "https://vmq.example.com", "自建 V免签 服务端地址"),
+				fSecret("key", "通信密钥", "Key", "V免签后台的通信密钥，用于签名与验签", true),
+			),
+			callbackFields("V免签服务端异步通知地址", "用户支付完成后跳转的前端页面"),
+			limitFields("0.01", "50000"),
+		),
+	})
+}
 
 func (p *vmqpayProvider) ValidateConfig(data map[string]any) error {
 	cfg, err := decodeProviderConfig[paymentdomain.VMQPayConfig](data)
@@ -153,10 +182,6 @@ func (p *vmqpayProvider) HandleCallback(ctx context.Context, data map[string]any
 		PaymentMethod:   payType,
 		RawData:         mapStringAny(callbackData),
 	}, nil
-}
-
-func (p *vmqpayProvider) SupportedPayTypes() []string {
-	return []string{"alipay", "wxpay"}
 }
 
 func vmqpayType(providerType string) string {

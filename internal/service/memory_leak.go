@@ -8,23 +8,23 @@ import (
 
 // LeakIndicator 泄漏指标类型
 type LeakIndicator struct {
-	Name           string    `json:"name"`
-	Trending       string    `json:"trending"`       // rising / stable / declining
-	Samples        int       `json:"samples"`         // 当前采样点数
-	ConsecutiveUp  int       `json:"consecutiveUp"`   // 连续上升次数
-	LatestValue    float64   `json:"latestValue"`
-	DeltaPercent   float64   `json:"deltaPercent"`    // 首尾变化率（%）
-	SuspectedLeak  bool      `json:"suspectedLeak"`
-	AlertMessage   string    `json:"alertMessage,omitempty"`
-	LastCheckedAt  time.Time `json:"lastCheckedAt"`
+	Name          string    `json:"name"`
+	Trending      string    `json:"trending"`      // rising / stable / declining
+	Samples       int       `json:"samples"`       // 当前采样点数
+	ConsecutiveUp int       `json:"consecutiveUp"` // 连续上升次数
+	LatestValue   float64   `json:"latestValue"`
+	DeltaPercent  float64   `json:"deltaPercent"` // 首尾变化率（%）
+	SuspectedLeak bool      `json:"suspectedLeak"`
+	AlertMessage  string    `json:"alertMessage,omitempty"`
+	LastCheckedAt time.Time `json:"lastCheckedAt"`
 }
 
 // LeakReport 泄漏检测完整报告
 type LeakReport struct {
-	CheckedAt   time.Time       `json:"checkedAt"`
-	Suspicious  bool            `json:"suspicious"`  // 是否存在可疑泄漏
-	Indicators  []LeakIndicator `json:"indicators"`
-	Summary     string          `json:"summary"`
+	CheckedAt  time.Time       `json:"checkedAt"`
+	Suspicious bool            `json:"suspicious"` // 是否存在可疑泄漏
+	Indicators []LeakIndicator `json:"indicators"`
+	Summary    string          `json:"summary"`
 }
 
 // LeakDetector 通过分析指标趋势检测潜在内存泄漏

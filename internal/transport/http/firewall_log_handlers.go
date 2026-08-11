@@ -1,11 +1,14 @@
 package httptransport
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	firewalldomain "aegis/internal/domain/firewall"
+	systemdomain "aegis/internal/domain/system"
+	auditmiddleware "aegis/internal/middleware"
 	"aegis/pkg/response"
 
 	"github.com/gin-gonic/gin"
@@ -137,9 +140,16 @@ func (h *Handler) AdminFirewallLogsCleanup(c *gin.Context) {
 	}
 	deleted, err := h.firewallLog.CleanupLogs(c.Request.Context(), before)
 	if err != nil {
+		auditmiddleware.SetAuditResource(c, "firewall.log", "")
+		auditmiddleware.SetAuditSummary(c, fmt.Sprintf("清理防火墙日志失败（before=%s）", before.UTC().Format(time.RFC3339)))
+		auditmiddleware.SetAuditFailure(c, err)
 		h.writeError(c, err)
 		return
 	}
+	auditmiddleware.SetAuditResource(c, "firewall.log", "")
+	auditmiddleware.SetAuditSummary(c, fmt.Sprintf("清理防火墙日志 (删除 %d 条，before=%s)", deleted, before.UTC().Format(time.RFC3339)))
+	auditmiddleware.SetAuditDetail(c, fmt.Sprintf("deleted=%d before=%s", deleted, before.UTC().Format(time.RFC3339)))
+	auditmiddleware.SetAuditSeverity(c, systemdomain.AuditSeverityHigh)
 	response.Success(c, 200, "清理完成", map[string]any{
 		"deleted": deleted,
 		"before":  before,

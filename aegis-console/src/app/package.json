@@ -1,0 +1,11 @@
+{
+  "name": "@aegis/console-app-entry",
+  "private": true,
+  "scripts": {
+    "dev": "node ../../scripts/run-next-from-root.mjs dev",
+    "build": "node ../../scripts/run-next-from-root.mjs build",
+    "start": "node ../../scripts/run-next-from-root.mjs start",
+    "lint": "eslint ../..",
+    "typecheck": "tsc --project ../../tsconfig.json --noEmit"
+  }
+}

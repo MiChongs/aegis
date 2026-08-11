@@ -92,10 +92,10 @@ func TestBlockByPathOrQueryAvoidsAggressiveKeywordBlocking(t *testing.T) {
 func TestBuildCorazaDirectivesUsesRelaxedAPIBaseline(t *testing.T) {
 	directives := buildCorazaDirectives(config.FirewallConfig{CorazaParanoia: 1})
 
-	if !strings.Contains(directives, "tx.inbound_anomaly_score_threshold=25") {
+	if !strings.Contains(directives, "tx.inbound_anomaly_score_threshold=40") {
 		t.Fatalf("expected relaxed inbound anomaly threshold, got: %s", directives)
 	}
-	if !strings.Contains(directives, "tx.outbound_anomaly_score_threshold=10") {
+	if !strings.Contains(directives, "tx.outbound_anomaly_score_threshold=20") {
 		t.Fatalf("expected relaxed outbound anomaly threshold, got: %s", directives)
 	}
 	// JSON Content-Type 请求仍应排除 SQLi/XSS（JSON body 中 < > 等字符合法）
@@ -104,5 +104,45 @@ func TestBuildCorazaDirectivesUsesRelaxedAPIBaseline(t *testing.T) {
 	}
 	if !strings.Contains(directives, "ctl:ruleRemoveByTag=attack-xss") {
 		t.Fatalf("expected JSON body XSS exclusion, got: %s", directives)
+	}
+}
+
+func TestBuildCorazaDirectivesDetectionOnly(t *testing.T) {
+	directives := buildCorazaDirectives(config.FirewallConfig{CorazaDetectionOnly: true})
+	if !strings.Contains(directives, "SecRuleEngine DetectionOnly") {
+		t.Fatalf("expected DetectionOnly engine, got: %s", directives)
+	}
+
+	directives = buildCorazaDirectives(config.FirewallConfig{})
+	if !strings.Contains(directives, "SecRuleEngine On") {
+		t.Fatalf("expected blocking engine by default, got: %s", directives)
+	}
+}
+
+func TestBuildCorazaDirectivesRemovedRules(t *testing.T) {
+	directives := buildCorazaDirectives(config.FirewallConfig{})
+	if !strings.Contains(directives, "SecRuleRemoveById 920350") {
+		t.Fatalf("expected default removed rule 920350, got: %s", directives)
+	}
+
+	directives = buildCorazaDirectives(config.FirewallConfig{CorazaRemovedRules: []string{"941100"}})
+	if !strings.Contains(directives, "SecRuleRemoveById 941100") {
+		t.Fatalf("expected custom removed rule 941100, got: %s", directives)
+	}
+	if strings.Contains(directives, "SecRuleRemoveById 920350") {
+		t.Fatalf("custom list should override defaults, got: %s", directives)
+	}
+
+	directives = buildCorazaDirectives(config.FirewallConfig{CorazaRemovedRules: []string{"none"}})
+	if strings.Contains(directives, "SecRuleRemoveById") {
+		t.Fatalf("'none' should keep full CRS, got: %s", directives)
+	}
+}
+
+
+func TestBuildCorazaDirectivesAnomalyThreshold(t *testing.T) {
+	directives := buildCorazaDirectives(config.FirewallConfig{CorazaAnomalyThreshold: 25})
+	if !strings.Contains(directives, "tx.inbound_anomaly_score_threshold=25") {
+		t.Fatalf("expected custom anomaly threshold 25, got: %s", directives)
 	}
 }

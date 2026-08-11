@@ -13,14 +13,14 @@ import (
 
 // MemorySnapshot 完整的内存管理快照
 type MemorySnapshot struct {
-	Timestamp  time.Time         `json:"timestamp"`
-	GCTuner    *GCTunerSnapshot  `json:"gcTuner,omitempty"`
-	Metrics    *MemoryMetrics    `json:"metrics,omitempty"`
-	Pools      []PoolStats       `json:"pools"`
-	Cache      CacheStats        `json:"cache"`
-	LeakReport *LeakReport       `json:"leakReport,omitempty"`
-	Alerts     []MemoryAlert     `json:"alerts"`
-	Config     MemoryConfigView  `json:"config"`
+	Timestamp  time.Time        `json:"timestamp"`
+	GCTuner    *GCTunerSnapshot `json:"gcTuner,omitempty"`
+	Metrics    *MemoryMetrics   `json:"metrics,omitempty"`
+	Pools      []PoolStats      `json:"pools"`
+	Cache      CacheStats       `json:"cache"`
+	LeakReport *LeakReport      `json:"leakReport,omitempty"`
+	Alerts     []MemoryAlert    `json:"alerts"`
+	Config     MemoryConfigView `json:"config"`
 }
 
 // MemoryConfigView 配置视图（不含敏感信息）
@@ -66,6 +66,10 @@ func NewMemoryManager(cfg config.MemoryConfig, log *zap.Logger, redis *redislib.
 
 	// 内存监控
 	mm.monitor = NewMemoryMonitor(log, redis, keyPrefix, cfg.MonitorInterval, cfg.HistoryRetain)
+	// 监控指标里带上 GOGC / SoftMemoryLimit 上下文；tuner 可能为 nil（GCAutoTune=false）
+	if mm.tuner != nil {
+		mm.monitor.SetTuner(mm.tuner)
+	}
 
 	// 泄漏检测（可选）
 	if cfg.LeakDetection {

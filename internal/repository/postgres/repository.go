@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -435,13 +436,15 @@ func (r *Repository) GetPasswordPolicyStats(ctx context.Context, appID int64, mi
 	(SELECT COUNT(*) FROM users WHERE appid = $1 AND COALESCE(password_hash, '') <> '') AS password_users,
 	(SELECT COUNT(*) FROM users u
 	 LEFT JOIN user_profiles p ON p.user_id = u.id
+	 LEFT JOIN user_password_security_states s ON s.user_id = u.id
 	 WHERE u.appid = $1
 	   AND COALESCE(u.password_hash, '') <> ''
-	   AND COALESCE((p.extra->>'password_strength_score')::int, 0) >= $2) AS compliant_users,
+	   AND COALESCE(s.password_strength_score, (p.extra->>'password_strength_score')::int, 0) >= $2) AS compliant_users,
 	(SELECT COUNT(*) FROM users u
 	 LEFT JOIN user_profiles p ON p.user_id = u.id
+	 LEFT JOIN user_password_security_states s ON s.user_id = u.id
 	 WHERE u.appid = $1
-	   AND COALESCE((p.extra->>'password_change_required')::boolean, false) = true) AS need_change_users`
+	   AND COALESCE(s.password_change_required, (p.extra->>'password_change_required')::boolean, false) = true) AS need_change_users`
 	var stats appdomain.PasswordPolicyStats
 	if err := r.pool.QueryRow(ctx, query, appID, minScore).Scan(
 		&stats.TotalUsers,
@@ -997,15 +1000,95 @@ func (r *Repository) GetUserByID(ctx context.Context, userID int64) (*userdomain
 }
 
 func (r *Repository) GetUserProfileByUserID(ctx context.Context, userID int64) (*userdomain.Profile, error) {
-	query := `SELECT user_id, COALESCE(nickname, ''), COALESCE(avatar, ''), COALESCE(email, ''), COALESCE(phone, ''), birthday, COALESCE(bio, ''), COALESCE(contacts, '[]'::jsonb), COALESCE(extra, '{}'::jsonb), updated_at FROM user_profiles WHERE user_id = $1 LIMIT 1`
+	query := `SELECT
+    user_id,
+    COALESCE(nickname, ''),
+    COALESCE(avatar, ''),
+    COALESCE(email, ''),
+    COALESCE(phone, ''),
+    birthday,
+    COALESCE(bio, ''),
+    COALESCE(role, ''),
+    COALESCE(mark_code, ''),
+    COALESCE(custom_id, ''),
+    custom_id_count,
+    COALESCE(invite_code, ''),
+    COALESCE(parent_invite_account, ''),
+    COALESCE(register_ip, ''),
+    COALESCE(register_isp, ''),
+    COALESCE(register_province, ''),
+    COALESCE(register_city, ''),
+    register_time,
+    COALESCE(disabled_reason, ''),
+    COALESCE(contacts, '[]'::jsonb),
+    COALESCE(extra, '{}'::jsonb),
+    updated_at
+FROM user_profiles
+WHERE user_id = $1
+LIMIT 1`
 	var profile userdomain.Profile
 	var contactsBytes, extraBytes []byte
-	if err := r.pool.QueryRow(ctx, query, userID).Scan(&profile.UserID, &profile.Nickname, &profile.Avatar, &profile.Email, &profile.Phone, &profile.Birthday, &profile.Bio, &contactsBytes, &extraBytes, &profile.UpdatedAt); err != nil {
+	if err := r.pool.QueryRow(ctx, query, userID).Scan(
+		&profile.UserID,
+		&profile.Nickname,
+		&profile.Avatar,
+		&profile.Email,
+		&profile.Phone,
+		&profile.Birthday,
+		&profile.Bio,
+		&profile.Role,
+		&profile.MarkCode,
+		&profile.CustomID,
+		&profile.CustomIDCount,
+		&profile.InviteCode,
+		&profile.ParentInviteAccount,
+		&profile.RegisterIP,
+		&profile.RegisterISP,
+		&profile.RegisterProvince,
+		&profile.RegisterCity,
+		&profile.RegisterTime,
+		&profile.DisabledReason,
+		&contactsBytes,
+		&extraBytes,
+		&profile.UpdatedAt,
+	); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	_ = json.Unmarshal(contactsBytes, &profile.Contacts)
 	_ = json.Unmarshal(extraBytes, &profile.Extra)
+	hydrateUserProfileLegacyFields(&profile)
 	return &profile, nil
+}
+
+func (r *Repository) GetUserSecurityStateByUserID(ctx context.Context, userID int64) (*userdomain.ProfileSecurityState, error) {
+	query := `SELECT
+    COALESCE(s.user_id, p.user_id),
+    s.password_changed_at,
+    s.password_expires_at,
+    s.password_strength_score,
+    s.password_change_required,
+    COALESCE(p.extra, '{}'::jsonb)
+FROM user_profiles p
+FULL OUTER JOIN user_password_security_states s ON s.user_id = p.user_id
+WHERE COALESCE(s.user_id, p.user_id) = $1
+LIMIT 1`
+	var state userdomain.ProfileSecurityState
+	var extraBytes []byte
+	if err := r.pool.QueryRow(ctx, query, userID).Scan(
+		&state.UserID,
+		&state.PasswordChangedAt,
+		&state.PasswordExpiresAt,
+		&state.PasswordStrengthScore,
+		&state.PasswordChangeRequired,
+		&extraBytes,
+	); err != nil {
+		return nil, normalizeNotFound(err)
+	}
+
+	var extra map[string]any
+	_ = json.Unmarshal(extraBytes, &extra)
+	hydrateUserSecurityStateFromExtra(&state, extra)
+	return &state, nil
 }
 
 func (r *Repository) FindUserIDByProfileEmail(ctx context.Context, appID int64, email string) (int64, error) {
@@ -1040,6 +1123,23 @@ LIMIT 1`
 	return userID, nil
 }
 
+func (r *Repository) HasInviteCode(ctx context.Context, inviteCode string) (bool, error) {
+	inviteCode = strings.TrimSpace(inviteCode)
+	if inviteCode == "" {
+		return false, nil
+	}
+	var exists bool
+	if err := r.pool.QueryRow(ctx, `SELECT EXISTS(
+SELECT 1
+FROM user_profiles
+WHERE UPPER(COALESCE(invite_code, '')) = UPPER($1)
+LIMIT 1
+)`, inviteCode).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 func (r *Repository) ListAdminUsersByApp(ctx context.Context, appID int64, keyword string, enabled *bool, page int, limit int) ([]userdomain.AdminUserView, int64, error) {
 	return r.ListAdminUsersByAppQuery(ctx, appID, userdomain.AdminUserQuery{
 		Keyword: keyword,
@@ -1060,7 +1160,7 @@ func (r *Repository) ListAdminUsersByAppQuery(ctx context.Context, appID int64, 
 	adminQuery.Keyword = strings.TrimSpace(adminQuery.Keyword)
 
 	if isAdminUserFastPath(adminQuery) {
-		return r.listAdminUsersByAppFast(ctx, appID, adminQuery.Enabled, page, limit, offset)
+		return r.listAdminUsersByAppFast(ctx, appID, adminQuery.Enabled, adminQuery.Sort, adminQuery.Order, page, limit, offset)
 	}
 
 	baseQuery, args := buildAdminUserListBaseQuery(appID, adminQuery)
@@ -1085,10 +1185,20 @@ func (r *Repository) ListAdminUsersByAppQuery(ctx context.Context, appID int64, 
 	COALESCE(p.avatar, ''),
 	COALESCE(p.email, ''),
 	COALESCE(p.phone, ''),
+	COALESCE(p.invite_code, COALESCE(p.extra->>'invite_code', '')),
+	COALESCE(p.register_ip, ''),
+	p.register_time,
+	COALESCE(p.register_province, ''),
+	COALESCE(p.register_city, ''),
+	COALESCE(p.register_isp, ''),
+	COALESCE(p.disabled_reason, ''),
+	COALESCE(p.mark_code, ''),
 	COALESCE(p.extra, '{}'::jsonb)` + baseQuery +
 		fmt.Sprintf(`
-ORDER BY u.created_at DESC, u.id DESC
-LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
+ORDER BY %s
+LIMIT $%d OFFSET $%d`,
+			buildAdminUserOrderBy(adminQuery.Sort, adminQuery.Order, adminUserSortColumns, "", "u.id"),
+			len(args)+1, len(args)+2)
 	args = append(args, limit, offset)
 
 	rows, err := r.pool.Query(ctx, query, args...)
@@ -1108,7 +1218,7 @@ LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
 	return items, total, rows.Err()
 }
 
-func (r *Repository) listAdminUsersByAppFast(ctx context.Context, appID int64, enabled *bool, page int, limit int, offset int) ([]userdomain.AdminUserView, int64, error) {
+func (r *Repository) listAdminUsersByAppFast(ctx context.Context, appID int64, enabled *bool, sort string, order string, page int, limit int, offset int) ([]userdomain.AdminUserView, int64, error) {
 	countQuery := `SELECT COUNT(*) FROM users WHERE appid = $1`
 	countArgs := []any{appID}
 	if enabled != nil {
@@ -1130,10 +1240,15 @@ func (r *Repository) listAdminUsersByAppFast(ctx context.Context, appID int64, e
 		query += fmt.Sprintf(" AND enabled = $%d", len(args)+1)
 		args = append(args, *enabled)
 	}
+	// CTE 内按裸列排序（那里没有表别名），外层再按同一顺序排一次 ——
+	// LEFT JOIN 之后行序不保证，只在 CTE 里排会让最终结果乱序。
 	query += fmt.Sprintf(`
-    ORDER BY created_at DESC, id DESC
+    ORDER BY %s
     LIMIT $%d OFFSET $%d
-)
+)`,
+		buildAdminUserOrderBy(sort, order, adminUserFastSortColumns, "", "id"),
+		len(args)+1, len(args)+2)
+	query += `
 SELECT
     u.id,
     u.appid,
@@ -1149,10 +1264,18 @@ SELECT
     COALESCE(p.avatar, ''),
     COALESCE(p.email, ''),
     COALESCE(p.phone, ''),
+    COALESCE(p.invite_code, COALESCE(p.extra->>'invite_code', '')),
+    COALESCE(p.register_ip, ''),
+    p.register_time,
+    COALESCE(p.register_province, ''),
+    COALESCE(p.register_city, ''),
+    COALESCE(p.register_isp, ''),
+    COALESCE(p.disabled_reason, ''),
+    COALESCE(p.mark_code, ''),
     COALESCE(p.extra, '{}'::jsonb)
 FROM page_users u
 LEFT JOIN user_profiles p ON p.user_id = u.id
-ORDER BY u.created_at DESC, u.id DESC`, len(args)+1, len(args)+2)
+ORDER BY ` + buildAdminUserOrderBy(sort, order, adminUserFastSortColumns, "u.", "u.id")
 	args = append(args, limit, offset)
 
 	rows, err := r.pool.Query(ctx, query, args...)
@@ -1188,6 +1311,14 @@ func (r *Repository) GetAdminUserByApp(ctx context.Context, appID int64, userID 
 	COALESCE(p.avatar, ''),
 	COALESCE(p.email, ''),
 	COALESCE(p.phone, ''),
+	COALESCE(p.invite_code, COALESCE(p.extra->>'invite_code', '')),
+	COALESCE(p.register_ip, ''),
+	p.register_time,
+	COALESCE(p.register_province, ''),
+	COALESCE(p.register_city, ''),
+	COALESCE(p.register_isp, ''),
+	COALESCE(p.disabled_reason, ''),
+	COALESCE(p.mark_code, ''),
 	COALESCE(p.extra, '{}'::jsonb)
 FROM users u
 LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -1224,6 +1355,14 @@ func (r *Repository) ListAdminUsersForExportQuery(ctx context.Context, appID int
 	COALESCE(p.avatar, ''),
 	COALESCE(p.email, ''),
 	COALESCE(p.phone, ''),
+	COALESCE(p.invite_code, COALESCE(p.extra->>'invite_code', '')),
+	COALESCE(p.register_ip, ''),
+	p.register_time,
+	COALESCE(p.register_province, ''),
+	COALESCE(p.register_city, ''),
+	COALESCE(p.register_isp, ''),
+	COALESCE(p.disabled_reason, ''),
+	COALESCE(p.mark_code, ''),
 	COALESCE(p.extra, '{}'::jsonb)` + baseQuery +
 		fmt.Sprintf(`
 ORDER BY u.created_at DESC, u.id DESC
@@ -1264,6 +1403,14 @@ func (r *Repository) ListAdminUsersByIDs(ctx context.Context, appID int64, userI
 	COALESCE(p.avatar, ''),
 	COALESCE(p.email, ''),
 	COALESCE(p.phone, ''),
+	COALESCE(p.invite_code, COALESCE(p.extra->>'invite_code', '')),
+	COALESCE(p.register_ip, ''),
+	p.register_time,
+	COALESCE(p.register_province, ''),
+	COALESCE(p.register_city, ''),
+	COALESCE(p.register_isp, ''),
+	COALESCE(p.disabled_reason, ''),
+	COALESCE(p.mark_code, ''),
 	COALESCE(p.extra, '{}'::jsonb)
 FROM users u
 LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -1296,7 +1443,8 @@ func (r *Repository) ListAdminUserSearchSourcesByApp(ctx context.Context, appID 
     COALESCE(p.nickname, ''),
     COALESCE(p.email, ''),
     COALESCE(p.phone, ''),
-    COALESCE(p.extra->>'register_ip', ''),
+    COALESCE(p.invite_code, COALESCE(p.extra->>'invite_code', '')),
+    COALESCE(p.register_ip, COALESCE(p.extra->>'register_ip', '')),
     u.enabled,
     u.created_at,
     GREATEST(
@@ -1332,7 +1480,7 @@ LIMIT $4`, appID, afterUpdatedAt.UTC(), afterUserID, limit)
 	items := make([]userdomain.AdminUserSearchSource, 0, limit)
 	for rows.Next() {
 		var item userdomain.AdminUserSearchSource
-		if err := rows.Scan(&item.UserID, &item.AppID, &item.Account, &item.Nickname, &item.Email, &item.Phone, &item.RegisterIP, &item.Enabled, &item.CreatedAt, &item.SourceUpdatedAt); err != nil {
+		if err := rows.Scan(&item.UserID, &item.AppID, &item.Account, &item.Nickname, &item.Email, &item.Phone, &item.InviteCode, &item.RegisterIP, &item.Enabled, &item.CreatedAt, &item.SourceUpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -1340,12 +1488,73 @@ LIMIT $4`, appID, afterUpdatedAt.UTC(), afterUserID, limit)
 	return items, rows.Err()
 }
 
+// adminUserSortColumns 排序字段白名单：对外名 → SQL 表达式。
+//
+// 白名单不是可选项 —— 排序字段最终要拼进 SQL 文本（占位符只能替值不能替标识符），
+// 放开等于开一个注入口。非法值一律回落默认排序，不报错：
+// 一个拼错的 sort 参数不该让整个用户列表打不开。
+var adminUserSortColumns = map[string]string{
+	"createdAt":    "u.created_at",
+	"updatedAt":    "u.updated_at",
+	"id":           "u.id",
+	"account":      "u.account",
+	"integral":     "u.integral",
+	"experience":   "u.experience",
+	"vipExpireAt":  "u.vip_expire_at",
+	"registerTime": "p.register_time",
+	"nickname":     "p.nickname",
+	"email":        "p.email",
+}
+
+// adminUserFastSortColumns 快路径可用的排序字段。
+//
+// 快路径的 CTE 只扫 users 不 JOIN user_profiles，因此落在 user_profiles 上的
+// 字段（昵称 / 邮箱 / 注册时间）按它排序时必须退回普通路径，否则 ORDER BY 引用不到列。
+var adminUserFastSortColumns = map[string]string{
+	"createdAt":   "created_at",
+	"updatedAt":   "updated_at",
+	"id":          "id",
+	"account":     "account",
+	"integral":    "integral",
+	"experience":  "experience",
+	"vipExpireAt": "vip_expire_at",
+}
+
+// buildAdminUserOrderBy 生成 ORDER BY 子句（不含 "ORDER BY" 关键字）。
+//
+// 两条必须保证的性质：
+//
+//   - **NULLS LAST**：vip_expire_at / register_time / nickname 可为空，
+//     不指定时 Postgres 对 DESC 默认 NULLS FIRST，一屏全是空值毫无意义。
+//   - **末位 id 兜底**：按非唯一列（如 integral，绝大多数用户都是 0）排序时，
+//     没有确定性 tiebreaker 会让分页在页与页之间重复或漏掉行 ——
+//     这不是排序不好看，是数据错了。
+// prefix 用于给未限定的列名补表别名（快路径外层查询按 `page_users u` 取列）；
+// 列名本就限定过的（普通路径）传空串。
+func buildAdminUserOrderBy(sort string, order string, columns map[string]string, prefix string, idColumn string) string {
+	column, ok := columns[strings.TrimSpace(sort)]
+	if !ok {
+		column = columns["createdAt"]
+	}
+	direction := "DESC"
+	if strings.EqualFold(strings.TrimSpace(order), "asc") {
+		direction = "ASC"
+	}
+	return fmt.Sprintf("%s%s %s NULLS LAST, %s %s", prefix, column, direction, idColumn, direction)
+}
+
 func isAdminUserFastPath(adminQuery userdomain.AdminUserQuery) bool {
+	if sort := strings.TrimSpace(adminQuery.Sort); sort != "" {
+		if _, ok := adminUserFastSortColumns[sort]; !ok {
+			return false
+		}
+	}
 	return strings.TrimSpace(adminQuery.Keyword) == "" &&
 		strings.TrimSpace(adminQuery.Account) == "" &&
 		strings.TrimSpace(adminQuery.Nickname) == "" &&
 		strings.TrimSpace(adminQuery.Email) == "" &&
 		strings.TrimSpace(adminQuery.Phone) == "" &&
+		strings.TrimSpace(adminQuery.InviteCode) == "" &&
 		strings.TrimSpace(adminQuery.RegisterIP) == "" &&
 		adminQuery.UserID == nil &&
 		adminQuery.CreatedFrom == nil &&
@@ -1375,9 +1584,10 @@ WHERE u.appid = $1`
     OR COALESCE(p.nickname, '') ILIKE $%d
     OR COALESCE(p.email, '') ILIKE $%d
     OR COALESCE(p.phone, '') ILIKE $%d
-    OR COALESCE(p.extra->>'register_ip', '') ILIKE $%d
+    OR COALESCE(p.invite_code, COALESCE(p.extra->>'invite_code', '')) ILIKE $%d
+    OR COALESCE(p.register_ip, COALESCE(p.extra->>'register_ip', '')) ILIKE $%d
     OR CAST(u.id AS TEXT) ILIKE $%d
-  )`, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1)
+  )`, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1)
 		args = append(args, "%"+keyword+"%")
 	}
 
@@ -1385,7 +1595,8 @@ WHERE u.appid = $1`
 	appendLike("COALESCE(p.nickname, '')", adminQuery.Nickname)
 	appendLike("COALESCE(p.email, '')", adminQuery.Email)
 	appendLike("COALESCE(p.phone, '')", adminQuery.Phone)
-	appendLike("COALESCE(p.extra->>'register_ip', '')", adminQuery.RegisterIP)
+	appendLike("COALESCE(p.invite_code, COALESCE(p.extra->>'invite_code', ''))", adminQuery.InviteCode)
+	appendLike("COALESCE(p.register_ip, COALESCE(p.extra->>'register_ip', ''))", adminQuery.RegisterIP)
 
 	if adminQuery.UserID != nil && *adminQuery.UserID > 0 {
 		baseQuery += fmt.Sprintf(" AND u.id = $%d", len(args)+1)
@@ -1470,11 +1681,12 @@ func (r *Repository) UpdateAdminUserStatus(ctx context.Context, appID int64, use
 			extra["disabled_reason"] = reason
 		}
 		extraJSON, _ := json.Marshal(extra)
-		if _, err := tx.Exec(ctx, `INSERT INTO user_profiles (user_id, extra, updated_at)
-VALUES ($1, $2, NOW())
+		if _, err := tx.Exec(ctx, `INSERT INTO user_profiles (user_id, disabled_reason, extra, updated_at)
+VALUES ($1, NULLIF($2, ''), $3, NOW())
 ON CONFLICT (user_id) DO UPDATE SET
+    disabled_reason = EXCLUDED.disabled_reason,
     extra = COALESCE(user_profiles.extra, '{}'::jsonb) || EXCLUDED.extra,
-    updated_at = NOW()`, userID, extraJSON); err != nil {
+    updated_at = NOW()`, userID, reason, extraJSON); err != nil {
 			return nil, err
 		}
 	}
@@ -1533,11 +1745,12 @@ WHERE appid = $1 AND id = ANY($2)`
 		}
 		extraJSON, _ := json.Marshal(extra)
 		for _, userID := range userIDs {
-			if _, err := tx.Exec(ctx, `INSERT INTO user_profiles (user_id, extra, updated_at)
-VALUES ($1, $2, NOW())
+			if _, err := tx.Exec(ctx, `INSERT INTO user_profiles (user_id, disabled_reason, extra, updated_at)
+VALUES ($1, NULLIF($2, ''), $3, NOW())
 ON CONFLICT (user_id) DO UPDATE SET
+    disabled_reason = EXCLUDED.disabled_reason,
     extra = COALESCE(user_profiles.extra, '{}'::jsonb) || EXCLUDED.extra,
-    updated_at = NOW()`, userID, extraJSON); err != nil {
+    updated_at = NOW()`, userID, reason, extraJSON); err != nil {
 				return 0, err
 			}
 		}
@@ -1588,7 +1801,7 @@ func (r *Repository) HasAnyUserRegisteredFromIP(ctx context.Context, ip string) 
 SELECT 1
 FROM user_profiles p
 JOIN users u ON u.id = p.user_id
-WHERE COALESCE(p.extra->>'register_ip', '') = $1
+WHERE COALESCE(p.register_ip, COALESCE(p.extra->>'register_ip', '')) = $1
 LIMIT 1
 )`
 	var exists bool
@@ -1812,50 +2025,283 @@ LIMIT $3`
 }
 
 func (r *Repository) CreateUser(ctx context.Context, appID int64, account string, passwordHash string) (*userdomain.User, error) {
+	return createUserExec(ctx, r.pool, appID, account, passwordHash)
+}
+
+// createUserExec 在指定执行器（连接池或事务）上插入用户。
+func createUserExec(ctx context.Context, q queryExecutor, appID int64, account string, passwordHash string) (*userdomain.User, error) {
 	query := `INSERT INTO users (appid, account, password_hash, enabled) VALUES ($1, $2, $3, TRUE) RETURNING id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, created_at, updated_at`
-	user, err := scanUser(r.pool.QueryRow(ctx, query, appID, account, nullableString(passwordHash)))
+	user, err := scanUser(q.QueryRow(ctx, query, appID, account, nullableString(passwordHash)))
 	if isUniqueViolation(err) {
 		return nil, ErrAccountAlreadyExists
 	}
 	return user, err
 }
 
-func (r *Repository) UpdateUserPassword(ctx context.Context, userID int64, passwordHash string, changedAt time.Time) error {
+// CreateUserWithProfile 注册专用：用户 + 档案 + 密码安全状态在单个事务中原子创建。
+// 任一步失败整体回滚，杜绝「用户已建但档案缺失」的孤儿状态（遵循复杂写操作必须显式事务的项目规范）。
+// 错误语义：
+//   - 账号唯一冲突 → ErrAccountAlreadyExists
+//   - 其他唯一冲突（如邀请码撞码）→ 原样返回，调用方可用 IsUniqueViolation 判定后换码重试
+func (r *Repository) CreateUserWithProfile(ctx context.Context, appID int64, account string, passwordHash string, profile userdomain.Profile, security userdomain.ProfileSecurityState) (*userdomain.User, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	user, err := createUserExec(ctx, tx, appID, account, passwordHash)
+	if err != nil {
+		return nil, err
+	}
+	profile.UserID = user.ID
+	security.UserID = user.ID
+	if err := upsertUserProfileExec(ctx, tx, profile); err != nil {
+		return nil, err
+	}
+	if err := upsertUserSecurityStateExec(ctx, tx, security); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	tx = nil
+	return user, nil
+}
+
+// UpdateUserPassword 写入新密码并同步密码安全状态。
+// expiresAt 为 nil 表示「永不过期」，此处**不能用 COALESCE 兜底**：
+// 把 maxAge 从 90 天改成 0（不过期）后，旧的过期时间必须被真正清掉。
+func (r *Repository) UpdateUserPassword(ctx context.Context, userID int64, passwordHash string, changedAt time.Time, expiresAt *time.Time) error {
 	query := `UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1`
 	_, err := r.pool.Exec(ctx, query, userID, nullableString(passwordHash))
 	if err != nil {
 		return err
 	}
 
-	extra := map[string]any{
-		"password_changed_at": changedAt.UTC().Format(time.RFC3339),
-	}
-	query = `INSERT INTO user_profiles (user_id, extra, updated_at)
-VALUES ($1, $2, NOW())
+	query = `INSERT INTO user_password_security_states (user_id, password_changed_at, password_expires_at, updated_at)
+VALUES ($1, $2, $3, NOW())
 ON CONFLICT (user_id) DO UPDATE SET
-    extra = COALESCE(user_profiles.extra, '{}'::jsonb) || EXCLUDED.extra,
+    password_changed_at = COALESCE(EXCLUDED.password_changed_at, user_password_security_states.password_changed_at),
+    password_expires_at = EXCLUDED.password_expires_at,
     updated_at = NOW()`
-	extraJSON, _ := json.Marshal(extra)
-	_, err = r.pool.Exec(ctx, query, userID, extraJSON)
+	_, err = r.pool.Exec(ctx, query, userID, changedAt.UTC(), nullableTimePtr(expiresAt))
+	return err
+}
+
+// ListRecentPasswordHashes 取某用户最近 limit 条历史密码哈希（含当前密码之前的）。
+// bcrypt 自带 salt，判重只能逐条比较，因此 limit 由策略上限约束。
+func (r *Repository) ListRecentPasswordHashes(ctx context.Context, userID int64, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT password_hash FROM user_password_history
+		 WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	hashes := make([]string, 0, limit)
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, err
+		}
+		hashes = append(hashes, hash)
+	}
+	return hashes, rows.Err()
+}
+
+// AppendPasswordHistory 追加一条历史密码并把该用户的历史裁剪到 keep 条。
+// keep <= 0 表示应用未开启防重用，此时不留任何历史 —— 关掉策略就该停止收集。
+func (r *Repository) AppendPasswordHistory(ctx context.Context, userID int64, passwordHash string, keep int) error {
+	if strings.TrimSpace(passwordHash) == "" {
+		return nil
+	}
+	if keep <= 0 {
+		_, err := r.pool.Exec(ctx, `DELETE FROM user_password_history WHERE user_id = $1`, userID)
+		return err
+	}
+	if _, err := r.pool.Exec(ctx,
+		`INSERT INTO user_password_history (user_id, password_hash) VALUES ($1, $2)`,
+		userID, passwordHash); err != nil {
+		return err
+	}
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM user_password_history
+		 WHERE user_id = $1 AND id NOT IN (
+		   SELECT id FROM user_password_history
+		   WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2
+		 )`, userID, keep)
 	return err
 }
 
 func (r *Repository) UpsertUserProfile(ctx context.Context, profile userdomain.Profile) error {
-	extraJSON, _ := json.Marshal(profile.Extra)
+	return upsertUserProfileExec(ctx, r.pool, profile)
+}
+
+// upsertUserProfileExec 在指定执行器（连接池或事务）上写入用户档案。
+func upsertUserProfileExec(ctx context.Context, q queryExecutor, profile userdomain.Profile) error {
+	extraJSON, _ := json.Marshal(sanitizeUserProfileExtra(profile.Extra))
 	contactsJSON, _ := json.Marshal(profile.Contacts)
-	query := `INSERT INTO user_profiles (user_id, nickname, avatar, email, phone, birthday, bio, contacts, extra, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()) ON CONFLICT (user_id) DO UPDATE SET nickname = EXCLUDED.nickname, avatar = EXCLUDED.avatar, email = EXCLUDED.email, phone = EXCLUDED.phone, birthday = EXCLUDED.birthday, bio = EXCLUDED.bio, contacts = EXCLUDED.contacts, extra = EXCLUDED.extra, updated_at = NOW()`
-	_, err := r.pool.Exec(ctx, query, profile.UserID, nullableString(profile.Nickname), nullableString(profile.Avatar), nullableString(profile.Email), profile.Phone, profile.Birthday, profile.Bio, contactsJSON, extraJSON)
+	query := `INSERT INTO user_profiles (
+    user_id, nickname, avatar, email, phone, birthday, bio,
+    role, mark_code, custom_id, custom_id_count, invite_code, parent_invite_account,
+    register_ip, register_isp, register_province, register_city, register_time,
+    disabled_reason, contacts, extra, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7,
+    $8, $9, $10, $11, $12, $13,
+    $14, $15, $16, $17, $18,
+    $19, $20, $21, NOW()
+)
+ON CONFLICT (user_id) DO UPDATE SET
+    nickname = EXCLUDED.nickname,
+    avatar = EXCLUDED.avatar,
+    email = EXCLUDED.email,
+    phone = EXCLUDED.phone,
+    birthday = EXCLUDED.birthday,
+    bio = EXCLUDED.bio,
+    role = COALESCE(EXCLUDED.role, user_profiles.role),
+    mark_code = COALESCE(EXCLUDED.mark_code, user_profiles.mark_code),
+    custom_id = COALESCE(EXCLUDED.custom_id, user_profiles.custom_id),
+    custom_id_count = COALESCE(EXCLUDED.custom_id_count, user_profiles.custom_id_count),
+    invite_code = COALESCE(EXCLUDED.invite_code, user_profiles.invite_code),
+    parent_invite_account = COALESCE(EXCLUDED.parent_invite_account, user_profiles.parent_invite_account),
+    register_ip = COALESCE(EXCLUDED.register_ip, user_profiles.register_ip),
+    register_isp = COALESCE(EXCLUDED.register_isp, user_profiles.register_isp),
+    register_province = COALESCE(EXCLUDED.register_province, user_profiles.register_province),
+    register_city = COALESCE(EXCLUDED.register_city, user_profiles.register_city),
+    register_time = COALESCE(EXCLUDED.register_time, user_profiles.register_time),
+    disabled_reason = COALESCE(EXCLUDED.disabled_reason, user_profiles.disabled_reason),
+    contacts = EXCLUDED.contacts,
+    extra = EXCLUDED.extra,
+    updated_at = NOW()`
+	_, err := q.Exec(ctx, query,
+		profile.UserID,
+		nullableString(profile.Nickname),
+		nullableString(profile.Avatar),
+		nullableString(profile.Email),
+		profile.Phone,
+		profile.Birthday,
+		profile.Bio,
+		profileStringValue(profile.Role, profile.Extra, "role"),
+		profileStringValue(profile.MarkCode, profile.Extra, "markcode"),
+		profileStringValue(profile.CustomID, profile.Extra, "custom_id"),
+		profileIntValue(profile.CustomIDCount, profile.Extra, "custom_id_count"),
+		profileStringValue(profile.InviteCode, profile.Extra, "invite_code"),
+		profileStringValue(profile.ParentInviteAccount, profile.Extra, "parent_invite_account"),
+		profileStringValue(profile.RegisterIP, profile.Extra, "register_ip"),
+		profileStringValue(profile.RegisterISP, profile.Extra, "register_isp"),
+		profileStringValue(profile.RegisterProvince, profile.Extra, "register_province"),
+		profileStringValue(profile.RegisterCity, profile.Extra, "register_city"),
+		profileTimeValue(profile.RegisterTime, profile.Extra, "register_time"),
+		profileStringValue(profile.DisabledReason, profile.Extra, "disabled_reason"),
+		contactsJSON,
+		extraJSON,
+	)
 	return err
 }
 
 func (r *Repository) PatchUserProfileExtra(ctx context.Context, userID int64, extra map[string]any) error {
-	extraJSON, _ := json.Marshal(extra)
-	query := `INSERT INTO user_profiles (user_id, extra, updated_at)
-VALUES ($1, $2, NOW())
+	extraJSON, _ := json.Marshal(sanitizeUserProfileExtra(extra))
+	query := `INSERT INTO user_profiles (
+    user_id, role, mark_code, custom_id, custom_id_count, invite_code, parent_invite_account,
+    register_ip, register_isp, register_province, register_city, register_time, disabled_reason,
+    extra, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7,
+    $8, $9, $10, $11, $12, $13,
+    $14, NOW()
+)
 ON CONFLICT (user_id) DO UPDATE SET
+    role = COALESCE(EXCLUDED.role, user_profiles.role),
+    mark_code = COALESCE(EXCLUDED.mark_code, user_profiles.mark_code),
+    custom_id = COALESCE(EXCLUDED.custom_id, user_profiles.custom_id),
+    custom_id_count = COALESCE(EXCLUDED.custom_id_count, user_profiles.custom_id_count),
+    invite_code = COALESCE(EXCLUDED.invite_code, user_profiles.invite_code),
+    parent_invite_account = COALESCE(EXCLUDED.parent_invite_account, user_profiles.parent_invite_account),
+    register_ip = COALESCE(EXCLUDED.register_ip, user_profiles.register_ip),
+    register_isp = COALESCE(EXCLUDED.register_isp, user_profiles.register_isp),
+    register_province = COALESCE(EXCLUDED.register_province, user_profiles.register_province),
+    register_city = COALESCE(EXCLUDED.register_city, user_profiles.register_city),
+    register_time = COALESCE(EXCLUDED.register_time, user_profiles.register_time),
+    disabled_reason = COALESCE(EXCLUDED.disabled_reason, user_profiles.disabled_reason),
     extra = COALESCE(user_profiles.extra, '{}'::jsonb) || EXCLUDED.extra,
     updated_at = NOW()`
-	_, err := r.pool.Exec(ctx, query, userID, extraJSON)
+	_, err := r.pool.Exec(ctx, query,
+		userID,
+		profileStringValue("", extra, "role"),
+		profileStringValue("", extra, "markcode"),
+		profileStringValue("", extra, "custom_id"),
+		intValueFromMap(extra, "custom_id_count"),
+		profileStringValue("", extra, "invite_code"),
+		profileStringValue("", extra, "parent_invite_account"),
+		profileStringValue("", extra, "register_ip"),
+		profileStringValue("", extra, "register_isp"),
+		profileStringValue("", extra, "register_province"),
+		profileStringValue("", extra, "register_city"),
+		profileTimeValue(nil, extra, "register_time"),
+		profileStringValue("", extra, "disabled_reason"),
+		extraJSON,
+	)
+	return err
+}
+
+func (r *Repository) UpsertUserSecurityState(ctx context.Context, state userdomain.ProfileSecurityState) error {
+	return upsertUserSecurityStateExec(ctx, r.pool, state)
+}
+
+// upsertUserSecurityStateExec 在指定执行器（连接池或事务）上写入密码安全状态。
+func upsertUserSecurityStateExec(ctx context.Context, q queryExecutor, state userdomain.ProfileSecurityState) error {
+	query := `INSERT INTO user_password_security_states (
+    user_id, password_changed_at, password_expires_at,
+    password_strength_score, password_change_required, created_at, updated_at
+) VALUES (
+    $1, $2, $3,
+    $4, $5, NOW(), NOW()
+)
+ON CONFLICT (user_id) DO UPDATE SET
+    password_changed_at = COALESCE(EXCLUDED.password_changed_at, user_password_security_states.password_changed_at),
+    password_expires_at = COALESCE(EXCLUDED.password_expires_at, user_password_security_states.password_expires_at),
+    password_strength_score = COALESCE(EXCLUDED.password_strength_score, user_password_security_states.password_strength_score),
+    password_change_required = COALESCE(EXCLUDED.password_change_required, user_password_security_states.password_change_required),
+    updated_at = NOW()`
+	_, err := q.Exec(ctx, query,
+		state.UserID,
+		nullableTimePtr(state.PasswordChangedAt),
+		nullableTimePtr(state.PasswordExpiresAt),
+		nullableIntPtr(state.PasswordStrengthScore),
+		nullableBoolPtr(state.PasswordChangeRequired),
+	)
+	return err
+}
+
+func (r *Repository) PatchUserSecurityState(ctx context.Context, userID int64, state map[string]any) error {
+	query := `INSERT INTO user_password_security_states (
+    user_id, password_changed_at, password_expires_at,
+    password_strength_score, password_change_required, created_at, updated_at
+) VALUES (
+    $1, $2, $3,
+    $4, $5, NOW(), NOW()
+)
+ON CONFLICT (user_id) DO UPDATE SET
+    password_changed_at = COALESCE(EXCLUDED.password_changed_at, user_password_security_states.password_changed_at),
+    password_expires_at = COALESCE(EXCLUDED.password_expires_at, user_password_security_states.password_expires_at),
+    password_strength_score = COALESCE(EXCLUDED.password_strength_score, user_password_security_states.password_strength_score),
+    password_change_required = COALESCE(EXCLUDED.password_change_required, user_password_security_states.password_change_required),
+    updated_at = NOW()`
+	_, err := r.pool.Exec(ctx, query,
+		userID,
+		profileTimeValue(nil, state, "password_changed_at"),
+		profileTimeValue(nil, state, "password_expires_at"),
+		intValueFromMap(state, "password_strength_score"),
+		boolValueFromMap(state, "password_change_required"),
+	)
 	return err
 }
 
@@ -2257,6 +2703,173 @@ LIMIT $3`
 	return items, rows.Err()
 }
 
+func (r *Repository) GetAppSignInStats(ctx context.Context, appID int64, today time.Time, startDate time.Time, endDate time.Time) (*appdomain.AppSignInStats, error) {
+	item := &appdomain.AppSignInStats{
+		AppID: appID,
+		Days:  int(endDate.Sub(startDate).Hours()/24) + 1,
+		Trend: make([]appdomain.AppSignInTrendPoint, 0),
+	}
+
+	if err := r.pool.QueryRow(ctx, `SELECT
+    COUNT(*) AS total_sign_records,
+    COUNT(DISTINCT ds.user_id) AS unique_signed_users,
+    COALESCE(SUM(ds.integral_reward), 0) AS total_integral_reward,
+    COALESCE(SUM(ds.experience_reward), 0) AS total_experience_reward,
+    COALESCE(AVG(ds.consecutive_days)::float8, 0) AS avg_consecutive_days,
+    COALESCE(MAX(ds.consecutive_days), 0) AS max_consecutive_days,
+    COUNT(*) FILTER (WHERE ds.sign_date = $2::date) AS today_sign_count
+FROM daily_signins ds
+WHERE ds.appid = $1`, appID, today.Format("2006-01-02")).Scan(
+		&item.TotalSignRecords,
+		&item.UniqueSignedUsers,
+		&item.TotalIntegralReward,
+		&item.TotalExperienceReward,
+		&item.AvgConsecutiveDays,
+		&item.MaxConsecutiveDays,
+		&item.TodaySignCount,
+	); err != nil {
+		return nil, err
+	}
+
+	rows, err := r.pool.Query(ctx, `SELECT sign_date, COUNT(*)
+FROM daily_signins
+WHERE appid = $1
+  AND sign_date BETWEEN $2::date AND $3::date
+GROUP BY sign_date
+ORDER BY sign_date ASC`, appID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	trendMap := make(map[string]int64, item.Days)
+	for rows.Next() {
+		var signDate time.Time
+		var count int64
+		if err := rows.Scan(&signDate, &count); err != nil {
+			return nil, err
+		}
+		trendMap[signDate.Format("2006-01-02")] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for cursor := startDate; !cursor.After(endDate); cursor = cursor.AddDate(0, 0, 1) {
+		day := cursor.Format("2006-01-02")
+		item.Trend = append(item.Trend, appdomain.AppSignInTrendPoint{
+			Date:  day,
+			Count: trendMap[day],
+		})
+	}
+
+	sourceRows, err := r.pool.Query(ctx, `SELECT
+    COALESCE(NULLIF(sign_in_source, ''), 'manual') AS source,
+    COUNT(*) AS total
+FROM daily_signins
+WHERE appid = $1
+GROUP BY COALESCE(NULLIF(sign_in_source, ''), 'manual')
+ORDER BY total DESC, source ASC`, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer sourceRows.Close()
+
+	item.Sources = make([]appdomain.AppSignInSourceStat, 0, 8)
+	for sourceRows.Next() {
+		var stat appdomain.AppSignInSourceStat
+		if err := sourceRows.Scan(&stat.Source, &stat.Count); err != nil {
+			return nil, err
+		}
+		item.Sources = append(item.Sources, stat)
+	}
+	return item, sourceRows.Err()
+}
+
+func (r *Repository) ListAppSignInRecords(ctx context.Context, appID int64, query appdomain.AppSignInRecordQuery) ([]appdomain.AppSignInRecordItem, int64, error) {
+	if query.Page < 1 {
+		query.Page = 1
+	}
+	if query.Limit <= 0 {
+		query.Limit = 20
+	}
+	offset := (query.Page - 1) * query.Limit
+
+	baseQuery := ` FROM daily_signins ds
+JOIN users u ON u.id = ds.user_id AND u.appid = ds.appid
+LEFT JOIN user_profiles p ON p.user_id = u.id
+WHERE ds.appid = $1`
+	args := []any{appID}
+
+	if keyword := strings.TrimSpace(query.Keyword); keyword != "" {
+		baseQuery += fmt.Sprintf(`
+  AND (
+    u.account ILIKE $%d
+    OR COALESCE(p.nickname, '') ILIKE $%d
+    OR COALESCE(p.email, '') ILIKE $%d
+    OR COALESCE(p.phone, '') ILIKE $%d
+    OR COALESCE(ds.ip_address, '') ILIKE $%d
+    OR CAST(u.id AS TEXT) ILIKE $%d
+  )`, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1)
+		args = append(args, "%"+keyword+"%")
+	}
+	if source := strings.TrimSpace(query.Source); source != "" && source != "all" {
+		baseQuery += fmt.Sprintf(" AND COALESCE(NULLIF(ds.sign_in_source, ''), 'manual') = $%d", len(args)+1)
+		args = append(args, source)
+	}
+	if query.DateFrom != nil {
+		baseQuery += fmt.Sprintf(" AND ds.sign_date >= $%d::date", len(args)+1)
+		args = append(args, query.DateFrom.Format("2006-01-02"))
+	}
+	if query.DateTo != nil {
+		baseQuery += fmt.Sprintf(" AND ds.sign_date <= $%d::date", len(args)+1)
+		args = append(args, query.DateTo.Format("2006-01-02"))
+	}
+
+	var total int64
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+baseQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := r.pool.Query(ctx, `SELECT
+    ds.id,
+    ds.user_id,
+    ds.appid,
+    u.account,
+    COALESCE(p.nickname, ''),
+    COALESCE(p.avatar, ''),
+    COALESCE(p.email, ''),
+    COALESCE(p.phone, ''),
+    ds.sign_date,
+    ds.signed_at,
+    ds.integral_reward,
+    ds.experience_reward,
+    ds.consecutive_days,
+    ds.reward_multiplier,
+    COALESCE(ds.bonus_type, ''),
+    COALESCE(ds.bonus_description, ''),
+    COALESCE(NULLIF(ds.sign_in_source, ''), 'manual'),
+    COALESCE(ds.device_info, ''),
+    COALESCE(ds.ip_address, ''),
+    COALESCE(ds.location, ''),
+    ds.created_at`+baseQuery+fmt.Sprintf(`
+ORDER BY ds.sign_date DESC, ds.id DESC
+LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2), append(args, query.Limit, offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]appdomain.AppSignInRecordItem, 0, query.Limit)
+	for rows.Next() {
+		item, err := scanAppSignInRecord(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, *item)
+	}
+	return items, total, rows.Err()
+}
+
 func (r *Repository) GetSignStats(ctx context.Context, userID int64, appID int64) (*userdomain.SignStats, error) {
 	query := `SELECT user_id, appid, last_sign_date, last_sign_at, consecutive_days, total_sign_days, total_integral_reward, total_experience_reward, updated_at FROM sign_stats WHERE user_id = $1 AND appid = $2 LIMIT 1`
 	return scanSignStats(r.pool.QueryRow(ctx, query, userID, appID))
@@ -2318,17 +2931,17 @@ func (r *Repository) CreateDailySign(ctx context.Context, userID int64, appID in
 		return nil, err
 	}
 	if stats != nil && stats.LastSignDate != "" {
-		latestDate, parseErr := time.Parse("2006-01-02", stats.LastSignDate)
-		if parseErr == nil {
-			diff := int(signDate.Sub(latestDate).Hours() / 24)
-			switch diff {
-			case 0:
-				return nil, ErrAlreadySigned
-			case 1:
-				consecutiveDays = stats.ConsecutiveDays + 1
-			default:
-				consecutiveDays = 1
-			}
+		dayDelta, parseErr := signDateDelta(stats.LastSignDate, signDate)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		switch dayDelta {
+		case 0:
+			return nil, ErrAlreadySigned
+		case 1:
+			consecutiveDays = stats.ConsecutiveDays + 1
+		default:
+			consecutiveDays = 1
 		}
 	}
 
@@ -3311,6 +3924,21 @@ LIMIT $3 OFFSET $4`
 	return response, nil
 }
 
+// GetMyIntegralRank 公开：查询当前用户的积分排名（供 service 层单独刷新 myRank 使用，不走排行榜列表缓存）
+func (r *Repository) GetMyIntegralRank(ctx context.Context, appID int64, userID int64) (*pointdomain.RankingItem, error) {
+	return r.getMyMetricRank(ctx, appID, userID, "integral")
+}
+
+// GetMyExperienceRank 公开：查询当前用户的经验排名
+func (r *Repository) GetMyExperienceRank(ctx context.Context, appID int64, userID int64) (*pointdomain.RankingItem, error) {
+	return r.getMyMetricRank(ctx, appID, userID, "experience")
+}
+
+// GetMyLevelRank 公开：查询当前用户的等级排名
+func (r *Repository) GetMyLevelRank(ctx context.Context, appID int64, userID int64) (*pointdomain.RankingItem, error) {
+	return r.getMyLevelRank(ctx, appID, userID)
+}
+
 func (r *Repository) getUserMetricRankings(ctx context.Context, appID int64, page int, limit int, currentUserID int64, metric string) (*pointdomain.RankingResponse, error) {
 	if page < 1 {
 		page = 1
@@ -3955,23 +4583,92 @@ func scanAdminUser(row interface{ Scan(dest ...any) error }) (*userdomain.AdminU
 		&item.Avatar,
 		&item.Email,
 		&item.Phone,
+		&item.InviteCode,
+		&item.RegisterIP,
+		&item.RegisterTime,
+		&item.RegisterProvince,
+		&item.RegisterCity,
+		&item.RegisterISP,
+		&item.DisabledReason,
+		&item.MarkCode,
 		&extraBytes,
 	); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	_ = json.Unmarshal(extraBytes, &item.Extra)
-	item.RegisterIP = stringFromMap(item.Extra, "register_ip")
-	item.RegisterProvince = stringFromMap(item.Extra, "register_province")
-	item.RegisterCity = stringFromMap(item.Extra, "register_city")
-	item.RegisterISP = stringFromMap(item.Extra, "register_isp")
-	item.DisabledReason = stringFromMap(item.Extra, "disabled_reason")
-	item.MarkCode = stringFromMap(item.Extra, "markcode")
-	item.RegisterTime = timeFromMap(item.Extra, "register_time")
+	hydrateAdminUserLegacyFields(&item)
+	return &item, nil
+}
+
+func hydrateAdminUserLegacyFields(item *userdomain.AdminUserView) {
+	if item == nil {
+		return
+	}
+	item.RegisterIP = firstNonEmpty(item.RegisterIP, stringFromMap(item.Extra, "register_ip"))
+	item.InviteCode = firstNonEmpty(item.InviteCode, stringFromMap(item.Extra, "invite_code"))
+	item.RegisterProvince = firstNonEmpty(item.RegisterProvince, stringFromMap(item.Extra, "register_province"))
+	item.RegisterCity = firstNonEmpty(item.RegisterCity, stringFromMap(item.Extra, "register_city"))
+	item.RegisterISP = firstNonEmpty(item.RegisterISP, stringFromMap(item.Extra, "register_isp"))
+	item.DisabledReason = firstNonEmpty(item.DisabledReason, stringFromMap(item.Extra, "disabled_reason"))
+	item.MarkCode = firstNonEmpty(item.MarkCode, stringFromMap(item.Extra, "markcode"))
+
 	if item.RegisterTime == nil {
-		createdAt := item.CreatedAt
+		item.RegisterTime = timeFromMap(item.Extra, "register_time")
+	}
+	if item.RegisterTime == nil {
+		createdAt := item.CreatedAt.UTC()
 		item.RegisterTime = &createdAt
 	}
-	return &item, nil
+	if item.VIPExpireAt == nil {
+		item.VIPExpireAt = timeFromMap(item.Extra, "legacy_vip_time")
+	}
+	if item.VIPExpireAt == nil {
+		item.VIPExpireAt = timeFromMap(item.Extra, "vip_expire_at")
+	}
+}
+
+func hydrateUserProfileLegacyFields(profile *userdomain.Profile) {
+	if profile == nil {
+		return
+	}
+	if profile.Extra == nil {
+		profile.Extra = map[string]any{}
+	}
+	profile.Phone = firstNonEmpty(profile.Phone, stringFromMap(profile.Extra, "phone"))
+	profile.Role = firstNonEmpty(profile.Role, stringFromMap(profile.Extra, "role"))
+	profile.MarkCode = firstNonEmpty(profile.MarkCode, stringFromMap(profile.Extra, "markcode"))
+	profile.CustomID = firstNonEmpty(profile.CustomID, stringFromMap(profile.Extra, "custom_id"))
+	if profile.CustomIDCount == nil {
+		profile.CustomIDCount = intPtrFromMap(profile.Extra, "custom_id_count")
+	}
+	profile.InviteCode = firstNonEmpty(profile.InviteCode, stringFromMap(profile.Extra, "invite_code"))
+	profile.ParentInviteAccount = firstNonEmpty(profile.ParentInviteAccount, stringFromMap(profile.Extra, "parent_invite_account"))
+	profile.RegisterIP = firstNonEmpty(profile.RegisterIP, stringFromMap(profile.Extra, "register_ip"))
+	profile.RegisterISP = firstNonEmpty(profile.RegisterISP, stringFromMap(profile.Extra, "register_isp"))
+	profile.RegisterProvince = firstNonEmpty(profile.RegisterProvince, stringFromMap(profile.Extra, "register_province"))
+	profile.RegisterCity = firstNonEmpty(profile.RegisterCity, stringFromMap(profile.Extra, "register_city"))
+	profile.DisabledReason = firstNonEmpty(profile.DisabledReason, stringFromMap(profile.Extra, "disabled_reason"))
+	if profile.RegisterTime == nil {
+		profile.RegisterTime = timeFromMap(profile.Extra, "register_time")
+	}
+}
+
+func hydrateUserSecurityStateFromExtra(state *userdomain.ProfileSecurityState, extra map[string]any) {
+	if state == nil || len(extra) == 0 {
+		return
+	}
+	if state.PasswordChangedAt == nil {
+		state.PasswordChangedAt = timeFromMap(extra, "password_changed_at")
+	}
+	if state.PasswordExpiresAt == nil {
+		state.PasswordExpiresAt = timeFromMap(extra, "password_expires_at")
+	}
+	if state.PasswordStrengthScore == nil {
+		state.PasswordStrengthScore = intPtrFromMap(extra, "password_strength_score")
+	}
+	if state.PasswordChangeRequired == nil {
+		state.PasswordChangeRequired = boolPtrFromMap(extra, "password_change_required")
+	}
 }
 
 func scanApp(row interface{ Scan(dest ...any) error }) (*appdomain.App, error) {
@@ -4008,6 +4705,38 @@ func scanDailySign(row interface{ Scan(dest ...any) error }) (*userdomain.DailyS
 	}
 	sign.SignDate = signDate.Format("2006-01-02")
 	return &sign, nil
+}
+
+func scanAppSignInRecord(row interface{ Scan(dest ...any) error }) (*appdomain.AppSignInRecordItem, error) {
+	var item appdomain.AppSignInRecordItem
+	var signDate time.Time
+	if err := row.Scan(
+		&item.ID,
+		&item.UserID,
+		&item.AppID,
+		&item.Account,
+		&item.Nickname,
+		&item.Avatar,
+		&item.Email,
+		&item.Phone,
+		&signDate,
+		&item.SignedAt,
+		&item.IntegralReward,
+		&item.ExperienceReward,
+		&item.ConsecutiveDays,
+		&item.RewardMultiplier,
+		&item.BonusType,
+		&item.BonusDescription,
+		&item.SignInSource,
+		&item.DeviceInfo,
+		&item.IPAddress,
+		&item.Location,
+		&item.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	item.SignDate = signDate.Format("2006-01-02")
+	return &item, nil
 }
 
 func scanSignStats(row interface{ Scan(dest ...any) error }) (*userdomain.SignStats, error) {
@@ -4298,6 +5027,10 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+func IsUniqueViolation(err error) bool {
+	return isUniqueViolation(err)
+}
+
 func nullableString(value string) any {
 	if value == "" {
 		return nil
@@ -4319,6 +5052,41 @@ func nullableTime(value time.Time) any {
 	return value
 }
 
+func nullableTimePtr(value *time.Time) any {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+	return value.UTC()
+}
+
+func nullableBoolPtr(value *bool) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableIntPtr(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func signDateDelta(lastSignDate string, signDate time.Time) (int, error) {
+	location := signDate.Location()
+	if location == nil {
+		location = time.UTC
+	}
+	lastDate, err := time.ParseInLocation("2006-01-02", lastSignDate, location)
+	if err != nil {
+		return 0, err
+	}
+	currentDate := time.Date(signDate.Year(), signDate.Month(), signDate.Day(), 0, 0, 0, 0, location)
+	lastDate = time.Date(lastDate.Year(), lastDate.Month(), lastDate.Day(), 0, 0, 0, 0, location)
+	return int(currentDate.Sub(lastDate) / (24 * time.Hour)), nil
+}
+
 func stringFromMap(data map[string]any, key string) string {
 	if data == nil {
 		return ""
@@ -4328,6 +5096,185 @@ func stringFromMap(data map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprintf("%v", value))
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+var migratedUserProfileExtraKeys = []string{
+	"phone",
+	"role",
+	"markcode",
+	"integral",
+	"experience",
+	"register_ip",
+	"register_time",
+	"register_province",
+	"register_city",
+	"register_isp",
+	"disabled_reason",
+	"parent_invite_account",
+	"invite_code",
+	"custom_id",
+	"custom_id_count",
+	"two_factor_enabled",
+	"two_factor_method",
+	"two_factor_enabled_at",
+	"two_factor_disabled_at",
+	"passkey_enabled",
+	"passkey_enabled_at",
+	"password_changed_at",
+	"password_expires_at",
+	"password_change_required",
+	"password_strength_score",
+	"legacy_vip_time",
+}
+
+func sanitizeUserProfileExtra(extra map[string]any) map[string]any {
+	if len(extra) == 0 {
+		return map[string]any{}
+	}
+	result := make(map[string]any, len(extra))
+	for key, value := range extra {
+		result[key] = value
+	}
+	for _, key := range migratedUserProfileExtraKeys {
+		delete(result, key)
+	}
+	return result
+}
+
+func profileStringValue(explicit string, extra map[string]any, key string) any {
+	if trimmed := strings.TrimSpace(explicit); trimmed != "" {
+		return trimmed
+	}
+	if extra == nil {
+		return nil
+	}
+	value, ok := extra[key]
+	if !ok || value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(fmt.Sprintf("%v", value))
+	if trimmed == "" {
+		return nil
+	}
+	return trimmed
+}
+
+func profileBoolValue(explicit *bool, extra map[string]any, key string) any {
+	if explicit != nil {
+		return *explicit
+	}
+	return boolValueFromMap(extra, key)
+}
+
+func profileIntValue(explicit *int, extra map[string]any, key string) any {
+	if explicit != nil {
+		return *explicit
+	}
+	return intValueFromMap(extra, key)
+}
+
+func profileTimeValue(explicit *time.Time, extra map[string]any, key string) any {
+	if explicit != nil {
+		value := explicit.UTC()
+		return value
+	}
+	parsed := timeFromMap(extra, key)
+	if parsed == nil {
+		return nil
+	}
+	return *parsed
+}
+
+func boolValueFromMap(data map[string]any, key string) any {
+	if data == nil {
+		return nil
+	}
+	value, ok := data[key]
+	if !ok || value == nil {
+		return nil
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return nil
+		}
+		return strings.EqualFold(trimmed, "true") || trimmed == "1"
+	case float64:
+		return typed != 0
+	case int:
+		return typed != 0
+	case int64:
+		return typed != 0
+	default:
+		return nil
+	}
+}
+
+func boolPtrFromMap(data map[string]any, key string) *bool {
+	value := boolValueFromMap(data, key)
+	if value == nil {
+		return nil
+	}
+	typed, ok := value.(bool)
+	if !ok {
+		return nil
+	}
+	result := typed
+	return &result
+}
+
+func intValueFromMap(data map[string]any, key string) any {
+	if data == nil {
+		return nil
+	}
+	value, ok := data[key]
+	if !ok || value == nil {
+		return nil
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case int32:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return nil
+		}
+		if parsed, err := strconv.Atoi(trimmed); err == nil {
+			return parsed
+		}
+	}
+	return nil
+}
+
+func intPtrFromMap(data map[string]any, key string) *int {
+	value := intValueFromMap(data, key)
+	if value == nil {
+		return nil
+	}
+	typed, ok := value.(int)
+	if !ok {
+		return nil
+	}
+	result := typed
+	return &result
 }
 
 func timeFromMap(data map[string]any, key string) *time.Time {
@@ -4343,15 +5290,80 @@ func timeFromMap(data map[string]any, key string) *time.Time {
 		v := typed.UTC()
 		return &v
 	case string:
-		for _, layout := range []string{time.RFC3339, time.RFC3339Nano, "2006-01-02 15:04:05"} {
-			parsed, err := time.Parse(layout, strings.TrimSpace(typed))
-			if err == nil {
-				v := parsed.UTC()
-				return &v
-			}
+		return parseFlexibleTime(strings.TrimSpace(typed))
+	case float64:
+		return unixTimeFromFloat64(typed)
+	case float32:
+		return unixTimeFromFloat64(float64(typed))
+	case int64:
+		return unixTimeFromInt64(typed)
+	case int32:
+		return unixTimeFromInt64(int64(typed))
+	case int:
+		return unixTimeFromInt64(int64(typed))
+	case json.Number:
+		if intValue, err := typed.Int64(); err == nil {
+			return unixTimeFromInt64(intValue)
+		}
+		if floatValue, err := typed.Float64(); err == nil {
+			return unixTimeFromFloat64(floatValue)
 		}
 	}
 	return nil
+}
+
+func parseFlexibleTime(value string) *time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if intValue, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return unixTimeFromInt64(intValue)
+	}
+	if floatValue, err := strconv.ParseFloat(value, 64); err == nil && !math.IsNaN(floatValue) && !math.IsInf(floatValue, 0) {
+		return unixTimeFromFloat64(floatValue)
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006-01-02",
+	} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			v := parsed.UTC()
+			return &v
+		}
+	}
+	return nil
+}
+
+func unixTimeFromFloat64(value float64) *time.Time {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil
+	}
+	seconds := math.Round(value)
+	if math.Abs(value-seconds) > 1e-9 {
+		return nil
+	}
+	return unixTimeFromInt64(int64(seconds))
+}
+
+func unixTimeFromInt64(value int64) *time.Time {
+	if value <= 0 {
+		return nil
+	}
+	switch {
+	case value >= 1_000_000_000_000_000_000:
+		value = value / 1_000_000_000
+	case value >= 1_000_000_000_000_000:
+		value = value / 1_000_000
+	case value >= 1_000_000_000_000:
+		value = value / 1_000
+	}
+	tm := time.Unix(value, 0).UTC()
+	return &tm
 }
 
 func generateTransactionNo(prefix string) string {

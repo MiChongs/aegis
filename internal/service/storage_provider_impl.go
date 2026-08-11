@@ -332,9 +332,15 @@ func (p *tencentCOSProvider) client(cfg *storagedomain.Config) (*cos.Client, *st
 	if err != nil {
 		return nil, nil, err
 	}
+	// 鉴权 transport 包在出海 transport 之外：签名要基于最终请求算，
+	// 而实际连接由网关按域名后缀决定走直连还是代理。
 	client := cos.NewClient(&cos.BaseURL{BucketURL: parsed}, &http.Client{
-		Transport: &cos.AuthorizationTransport{SecretID: raw.SecretID, SecretKey: raw.SecretKey},
-		Timeout:   60 * time.Second,
+		Transport: &cos.AuthorizationTransport{
+			SecretID:  raw.SecretID,
+			SecretKey: raw.SecretKey,
+			Transport: newStorageOutboundTransport(),
+		},
+		Timeout: storageOutboundTimeout,
 	})
 	return client, raw, nil
 }
@@ -507,6 +513,7 @@ func (p *webDAVProvider) client(cfg *storagedomain.Config) (*gowebdav.Client, *s
 		return nil, nil, err
 	}
 	client := gowebdav.NewClient(raw.Endpoint, raw.Username, raw.Password)
+	client.SetTransport(newStorageOutboundTransport())
 	return client, raw, nil
 }
 

@@ -21,6 +21,7 @@ const securitySettingKey = "security.authentication"
 const adminCaptchaSettingKey = "admin.captcha"
 const ldapSettingKey = "admin.ldap"
 const oidcSettingKey = "admin.oidc"
+const samlSettingKey = "admin.saml"
 const brandingSettingKey = "platform.branding"
 
 type PlatformSettingsService struct {
@@ -31,6 +32,7 @@ type PlatformSettingsService struct {
 	security securityRuntime
 	ldap     *LDAPService
 	oidc     *OIDCService
+	saml     *SAMLService
 	plugin   *PluginService
 }
 
@@ -54,7 +56,7 @@ type securityRuntime interface {
 	Modules() []securitydomain.ModuleStatus
 }
 
-func NewPlatformSettingsService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, firewall firewallRuntime, security securityRuntime, ldap *LDAPService, oidc *OIDCService) *PlatformSettingsService {
+func NewPlatformSettingsService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, firewall firewallRuntime, security securityRuntime, ldap *LDAPService, oidc *OIDCService, saml *SAMLService) *PlatformSettingsService {
 	if log == nil {
 		log = zap.NewNop()
 	}
@@ -66,6 +68,7 @@ func NewPlatformSettingsService(cfg config.Config, log *zap.Logger, pg *pgrepo.R
 		security: security,
 		ldap:     ldap,
 		oidc:     oidc,
+		saml:     saml,
 	}
 }
 
@@ -135,6 +138,23 @@ func (s *PlatformSettingsService) Initialize(ctx context.Context) error {
 			}
 		}
 	}
+	if s.saml != nil {
+		record, err := s.pg.GetPlatformSetting(ctx, samlSettingKey)
+		if err != nil {
+			return err
+		}
+		if record != nil && len(record.Value) > 0 {
+			var cfg systemdomain.SAMLConfig
+			if err := json.Unmarshal(record.Value, &cfg); err != nil {
+				s.log.Error("decode persisted SAML settings failed", zap.Error(err))
+			} else {
+				cfg = systemdomain.NormalizeSAMLConfig(cfg)
+				if err := s.saml.Reload(cfg); err != nil {
+					s.log.Error("reload persisted SAML settings failed", zap.Error(err))
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -153,6 +173,7 @@ func (s *PlatformSettingsService) GetSettings(ctx context.Context) (*systemdomai
 	}
 	ldapRecord, _ := s.pg.GetPlatformSetting(ctx, ldapSettingKey)
 	oidcRecord, _ := s.pg.GetPlatformSetting(ctx, oidcSettingKey)
+	samlRecord, _ := s.pg.GetPlatformSetting(ctx, samlSettingKey)
 	brandingRecord, _ := s.pg.GetPlatformSetting(ctx, brandingSettingKey)
 	return &systemdomain.SettingsView{
 		Firewall:     s.buildFirewallView(firewallRecord),
@@ -160,6 +181,7 @@ func (s *PlatformSettingsService) GetSettings(ctx context.Context) (*systemdomai
 		AdminCaptcha: s.buildAdminCaptchaView(captchaRecord),
 		LDAP:         s.buildLDAPView(ldapRecord),
 		OIDC:         s.buildOIDCView(oidcRecord),
+		SAML:         s.buildSAMLView(samlRecord),
 		Branding:     buildBrandingView(brandingRecord),
 	}, nil
 }
@@ -255,6 +277,32 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 		}
 	}
 
+	// SAML 配置
+	var samlRecord *systemdomain.SettingRecord
+	if s.saml != nil {
+		current := s.saml.CurrentConfig()
+		next := applySAMLPatch(current, patch.SAML, s.saml)
+		next = systemdomain.NormalizeSAMLConfig(next)
+		if next.Enabled {
+			var err error
+			next, err = s.saml.EnsureCredentials(next)
+			if err != nil {
+				return nil, apperrors.New(40099, http.StatusBadRequest, "SAML SP 凭证生成失败")
+			}
+		}
+		payload, err := json.Marshal(next)
+		if err != nil {
+			return nil, err
+		}
+		samlRecord, err = s.pg.UpsertPlatformSetting(ctx, systemdomain.SettingRecord{Key: samlSettingKey, Value: payload, UpdatedBy: adminID})
+		if err != nil {
+			return nil, err
+		}
+		if err := s.saml.Reload(next); err != nil {
+			return nil, apperrors.New(50095, http.StatusInternalServerError, "SAML 配置热重载失败")
+		}
+	}
+
 	if firewallRecord == nil {
 		firewallRecord, _ = s.pg.GetPlatformSetting(ctx, firewallSettingKey)
 	}
@@ -266,6 +314,9 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 	}
 	if oidcRecord == nil {
 		oidcRecord, _ = s.pg.GetPlatformSetting(ctx, oidcSettingKey)
+	}
+	if samlRecord == nil {
+		samlRecord, _ = s.pg.GetPlatformSetting(ctx, samlSettingKey)
 	}
 
 	// 品牌配置
@@ -293,6 +344,7 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 		AdminCaptcha: s.buildAdminCaptchaView(captchaRecord),
 		LDAP:         s.buildLDAPView(ldapRecord),
 		OIDC:         s.buildOIDCView(oidcRecord),
+		SAML:         s.buildSAMLView(samlRecord),
 		Branding:     buildBrandingView(brandingRecord),
 	}, nil
 }
@@ -318,6 +370,8 @@ func (s *PlatformSettingsService) buildFirewallView(record *systemdomain.Setting
 		BlockedPathPrefix: cloneStrings(current.BlockedPathPrefix),
 		MaxPathLength:     current.MaxPathLength,
 		MaxQueryLength:    current.MaxQueryLength,
+		DefaultBanMode:    current.DefaultBanMode,
+		TarpitDelayMs:     current.TarpitDelayMs,
 		Source:            "environment",
 		ReloadVersion:     reloadVersion,
 		ReloadedAt:        reloadedAt,
@@ -442,6 +496,12 @@ func applyFirewallPatch(current config.FirewallConfig, patch systemdomain.Firewa
 	}
 	if patch.MaxQueryLength != nil {
 		current.MaxQueryLength = *patch.MaxQueryLength
+	}
+	if patch.DefaultBanMode != nil {
+		current.DefaultBanMode = strings.TrimSpace(*patch.DefaultBanMode)
+	}
+	if patch.TarpitDelayMs != nil {
+		current.TarpitDelayMs = *patch.TarpitDelayMs
 	}
 	return current
 }
@@ -725,16 +785,16 @@ func (s *PlatformSettingsService) buildOIDCView(record *systemdomain.SettingReco
 	}
 	cfg := s.oidc.CurrentConfig()
 	view := systemdomain.OIDCSettingsView{
-		Enabled:         cfg.Enabled,
-		IssuerURL:       cfg.IssuerURL,
-		ClientID:        cfg.ClientID,
-		HasClientSecret: cfg.ClientSecret != "",
-		RedirectURL:     cfg.RedirectURL,
-		Scopes:          cloneStrings(cfg.Scopes),
-		AllowedDomains:  cloneStrings(cfg.AllowedDomains),
-		AdminGroupClaim: cfg.AdminGroupClaim,
-		AdminGroupValue: cfg.AdminGroupValue,
-		AttrMapping:     cfg.AttrMapping,
+		Enabled:             cfg.Enabled,
+		IssuerURL:           cfg.IssuerURL,
+		ClientID:            cfg.ClientID,
+		HasClientSecret:     cfg.ClientSecret != "",
+		RedirectURL:         cfg.RedirectURL,
+		Scopes:              cloneStrings(cfg.Scopes),
+		AllowedDomains:      cloneStrings(cfg.AllowedDomains),
+		AdminGroupClaim:     cfg.AdminGroupClaim,
+		AdminGroupValue:     cfg.AdminGroupValue,
+		AttrMapping:         cfg.AttrMapping,
 		FallbackToLocal:     cfg.FallbackToLocal,
 		FrontendCallbackURL: cfg.FrontendCallbackURL,
 		Source:              "unconfigured",
@@ -789,6 +849,114 @@ func applyOIDCPatch(current systemdomain.OIDCConfig, patch systemdomain.OIDCSett
 		}
 		if patch.AttrMapping.Phone != nil {
 			current.AttrMapping.Phone = strings.TrimSpace(*patch.AttrMapping.Phone)
+		}
+	}
+	if patch.FallbackToLocal != nil {
+		current.FallbackToLocal = *patch.FallbackToLocal
+	}
+	if patch.FrontendCallbackURL != nil {
+		current.FrontendCallbackURL = strings.TrimSpace(*patch.FrontendCallbackURL)
+	}
+	return current
+}
+
+func (s *PlatformSettingsService) buildSAMLView(record *systemdomain.SettingRecord) systemdomain.SAMLSettingsView {
+	if s.saml == nil {
+		return systemdomain.SAMLSettingsView{Source: "unavailable"}
+	}
+	cfg := s.saml.CurrentConfig()
+	view := systemdomain.SAMLSettingsView{
+		Enabled:             cfg.Enabled,
+		IDPMetadataURL:      cfg.IDPMetadataURL,
+		HasIDPMetadataXML:   cfg.IDPMetadataXML != "",
+		EntityID:            cfg.EntityID,
+		MetadataURL:         cfg.MetadataURL,
+		ACSURL:              cfg.ACSURL,
+		SPCertificate:       cfg.SPCertificate,
+		HasSPPrivateKey:     cfg.SPPrivateKey != "",
+		NameIDFormat:        cfg.NameIDFormat,
+		SignAuthnRequests:   cfg.SignAuthnRequests,
+		ForceAuthn:          cfg.ForceAuthn,
+		AllowIDPInitiated:   cfg.AllowIDPInitiated,
+		AllowedDomains:      cloneStrings(cfg.AllowedDomains),
+		AdminGroupAttribute: cfg.AdminGroupAttribute,
+		AdminGroupValue:     cfg.AdminGroupValue,
+		AttrMapping:         cfg.AttrMapping,
+		FallbackToLocal:     cfg.FallbackToLocal,
+		FrontendCallbackURL: cfg.FrontendCallbackURL,
+		Source:              "unconfigured",
+	}
+	if record != nil {
+		view.Source = "database"
+		view.UpdatedBy = record.UpdatedBy
+		view.UpdatedAt = &record.UpdatedAt
+	}
+	return view
+}
+
+func applySAMLPatch(current systemdomain.SAMLConfig, patch systemdomain.SAMLSettingsPatch, samlSvc *SAMLService) systemdomain.SAMLConfig {
+	if patch.Enabled != nil {
+		current.Enabled = *patch.Enabled
+	}
+	if patch.IDPMetadataURL != nil {
+		current.IDPMetadataURL = strings.TrimSpace(*patch.IDPMetadataURL)
+	}
+	if patch.IDPMetadataXML != nil {
+		current.IDPMetadataXML = strings.TrimSpace(*patch.IDPMetadataXML)
+	}
+	if patch.EntityID != nil {
+		current.EntityID = strings.TrimSpace(*patch.EntityID)
+	}
+	if patch.MetadataURL != nil {
+		current.MetadataURL = strings.TrimSpace(*patch.MetadataURL)
+	}
+	if patch.ACSURL != nil {
+		current.ACSURL = strings.TrimSpace(*patch.ACSURL)
+	}
+	if patch.SPCertificate != nil {
+		current.SPCertificate = strings.TrimSpace(*patch.SPCertificate)
+	}
+	if patch.SPPrivateKey != nil && strings.TrimSpace(*patch.SPPrivateKey) != "" {
+		if encrypted, err := samlSvc.EncryptPrivateKey(strings.TrimSpace(*patch.SPPrivateKey)); err == nil {
+			current.SPPrivateKey = encrypted
+		}
+	}
+	if patch.NameIDFormat != nil {
+		current.NameIDFormat = strings.TrimSpace(*patch.NameIDFormat)
+	}
+	if patch.SignAuthnRequests != nil {
+		current.SignAuthnRequests = *patch.SignAuthnRequests
+	}
+	if patch.ForceAuthn != nil {
+		current.ForceAuthn = *patch.ForceAuthn
+	}
+	if patch.AllowIDPInitiated != nil {
+		current.AllowIDPInitiated = *patch.AllowIDPInitiated
+	}
+	if patch.AllowedDomains != nil {
+		current.AllowedDomains = compactStrings(*patch.AllowedDomains)
+	}
+	if patch.AdminGroupAttribute != nil {
+		current.AdminGroupAttribute = strings.TrimSpace(*patch.AdminGroupAttribute)
+	}
+	if patch.AdminGroupValue != nil {
+		current.AdminGroupValue = strings.TrimSpace(*patch.AdminGroupValue)
+	}
+	if patch.AttrMapping != nil {
+		if patch.AttrMapping.Account != nil {
+			current.AttrMapping.Account = strings.TrimSpace(*patch.AttrMapping.Account)
+		}
+		if patch.AttrMapping.DisplayName != nil {
+			current.AttrMapping.DisplayName = strings.TrimSpace(*patch.AttrMapping.DisplayName)
+		}
+		if patch.AttrMapping.Email != nil {
+			current.AttrMapping.Email = strings.TrimSpace(*patch.AttrMapping.Email)
+		}
+		if patch.AttrMapping.Phone != nil {
+			current.AttrMapping.Phone = strings.TrimSpace(*patch.AttrMapping.Phone)
+		}
+		if patch.AttrMapping.Groups != nil {
+			current.AttrMapping.Groups = strings.TrimSpace(*patch.AttrMapping.Groups)
 		}
 	}
 	if patch.FallbackToLocal != nil {

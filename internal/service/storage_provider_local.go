@@ -49,15 +49,16 @@ func (p *localStorageProvider) Upload(_ context.Context, cfg *storagedomain.Conf
 		return nil, err
 	}
 
-	// 构建完整路径
-	rootPath := strings.TrimSpace(cfg.RootPath)
-	objectKey := input.ObjectKey
-	fullKey := objectKey
-	if rootPath != "" {
-		fullKey = strings.TrimRight(rootPath, "/") + "/" + strings.TrimLeft(objectKey, "/")
-	}
+	// RootPath 已由 StorageService 统一合并，provider 不再重复拼接。
+	fullKey := input.ObjectKey
 
-	absPath := filepath.Join(localCfg.RootDir, filepath.FromSlash(fullKey))
+	if err := os.MkdirAll(localCfg.RootDir, 0o755); err != nil {
+		return nil, fmt.Errorf("创建存储根目录失败: %w", err)
+	}
+	absPath, err := secureLocalStoragePath(localCfg.RootDir, fullKey)
+	if err != nil {
+		return nil, err
+	}
 
 	// 确保目录存在
 	dir := filepath.Dir(absPath)
@@ -103,13 +104,9 @@ func (p *localStorageProvider) Open(_ context.Context, cfg *storagedomain.Config
 		return nil, err
 	}
 
-	absPath := filepath.Join(localCfg.RootDir, filepath.FromSlash(objectKey))
-
-	// 安全检查：防止路径遍历
-	absRoot, _ := filepath.Abs(localCfg.RootDir)
-	absTarget, _ := filepath.Abs(absPath)
-	if !strings.HasPrefix(absTarget, absRoot) {
-		return nil, apperrors.New(40300, http.StatusForbidden, "非法的文件路径")
+	absPath, err := secureLocalStoragePath(localCfg.RootDir, objectKey)
+	if err != nil {
+		return nil, err
 	}
 
 	f, err := os.Open(absPath)
@@ -163,4 +160,51 @@ func decodeLocalConfig(data map[string]any) (*storagedomain.LocalConfig, error) 
 		cfg.RootDir = "data/storage"
 	}
 	return &cfg, nil
+}
+
+// secureLocalStoragePath 对本地存储路径做词法与符号链接双重约束。
+// 返回值一定处于 rootDir 内部；不存在的末级目录会以最近存在的父目录做符号链接校验。
+func secureLocalStoragePath(rootDir string, objectKey string) (string, error) {
+	if err := validateStorageObjectKey(objectKey); err != nil {
+		return "", err
+	}
+	absRoot, err := filepath.Abs(strings.TrimSpace(rootDir))
+	if err != nil {
+		return "", apperrors.New(50083, http.StatusInternalServerError, "本地存储根目录无效")
+	}
+	absTarget, err := filepath.Abs(filepath.Join(absRoot, filepath.FromSlash(objectKey)))
+	if err != nil || !pathWithinRoot(absRoot, absTarget) {
+		return "", apperrors.New(40300, http.StatusForbidden, "非法的文件路径")
+	}
+
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return "", apperrors.New(50083, http.StatusInternalServerError, "本地存储根目录不可访问")
+	}
+	existing := absTarget
+	for {
+		if _, statErr := os.Lstat(existing); statErr == nil {
+			break
+		} else if !os.IsNotExist(statErr) {
+			return "", apperrors.New(40300, http.StatusForbidden, "非法的文件路径")
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return "", apperrors.New(40300, http.StatusForbidden, "非法的文件路径")
+		}
+		existing = parent
+	}
+	resolvedExisting, err := filepath.EvalSymlinks(existing)
+	if err != nil || !pathWithinRoot(resolvedRoot, resolvedExisting) {
+		return "", apperrors.New(40300, http.StatusForbidden, "非法的文件路径")
+	}
+	return absTarget, nil
+}
+
+func pathWithinRoot(root string, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil || filepath.IsAbs(rel) {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

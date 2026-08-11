@@ -1,0 +1,136 @@
+{
+  "$meta": {
+    "name": "French",
+    "nativeName": "Français",
+    "direction": "ltr",
+    "script": "latin"
+  },
+  "$format": {
+    "group": " ",
+    "decimal": ",",
+    "groupSizes": [3],
+    "currency": "{value} {symbol}",
+    "currencyNegative": "-{value} {symbol}",
+    "date": "02/01/2006",
+    "dateTime": "02/01/2006 15:04 MST",
+    "time": "15:04"
+  },
+
+  "doc.type.receipt": "Reçu",
+  "doc.type.invoice": "Facture",
+  "doc.type.credit_note": "Avoir",
+
+  "status.paid": "Payé",
+  "status.pending": "Impayé",
+  "status.refunded": "Remboursé",
+  "status.partially_refunded": "Partiellement remboursé",
+  "status.expired": "Expiré",
+  "status.failed": "Échec",
+  "status.cancelled": "Annulé",
+
+  "header.number": "N° {number}",
+  "header.issuedAt": "Émis le {time}",
+  "header.continued": "{title} {number} (suite)",
+
+  "party.issuer": "De",
+  "party.customer": "Facturé à",
+  "party.merchant": "Marchand",
+  "party.guest": "Invité",
+
+  "table.description": "Description",
+  "table.quantity": "Qté",
+  "table.unitPrice": "Prix unitaire",
+  "table.amount": "Montant",
+
+  "totals.subtotal": "Sous-total",
+  "totals.discount": "Remise",
+  "totals.tax": "Taxe",
+  "totals.taxWithRate": "Taxe ({rate} %)",
+  "totals.total": "Total",
+  "totals.refunded": "Remboursé",
+  "totals.netPaid": "Net payé",
+
+  "payment.section": "Détails du paiement",
+  "payment.method": "Moyen de paiement",
+  "payment.orderNo": "Numéro de commande",
+  "payment.transactionId": "Identifiant de transaction",
+  "payment.channel": "Canal",
+  "payment.clientIp": "IP du client",
+  "payment.paidAt": "Payé le",
+
+  "refunds.section": "Remboursements",
+  "refunds.number": "Numéro de remboursement",
+  "refunds.status": "Statut",
+  "refunds.at": "Date",
+  "refunds.amount": "Montant",
+  "refunds.reasonLine": "Motif : {reason}",
+  "refunds.summaryOnly": "Un total de {amount} a été remboursé pour cette commande.",
+
+  "refund.status.pending": "En attente",
+  "refund.status.processing": "En cours",
+  "refund.status.success": "Remboursé",
+  "refund.status.failed": "Échec",
+  "refund.status.closed": "Clôturé",
+
+  "metadata.section": "Informations complémentaires",
+  "notes.section": "Remarques",
+
+  "email.subject": "{title} {number} · {brand}",
+  "email.title": "Votre document « {title} » est prêt",
+  "email.lead": "Pour la commande {orderNo}",
+  "email.greeting": "Bonjour {name},",
+  "email.attached": "Le PDF est joint à ce message.",
+  "email.linkLead": "Téléchargez-le via le bouton ci-dessous. Le lien expire le {expiry}.",
+  "email.button": "Télécharger",
+  "email.summary": "Récapitulatif",
+  "email.footer": "Conservez ce document. Ce message est automatique, merci de ne pas y répondre.",
+
+  "meta.purpose": "Objet",
+  "meta.appId": "Identifiant de l'application",
+  "meta.userId": "Identifiant client",
+  "meta.createdAt": "Commande passée le",
+  "meta.expireAt": "À régler avant le",
+  "meta.plan": "Formule",
+  "meta.duration": "Durée",
+  "meta.bonusPoints": "Points bonus",
+  "meta.points": "Points crédités",
+  "meta.days": {
+    "one": "{count} jour",
+    "other": "{count} jours"
+  },
+  "meta.pointsValue": {
+    "one": "{count} point",
+    "other": "{count} points"
+  },
+
+  "purpose.wallet_recharge": "Rechargement du solde",
+  "purpose.vip_purchase": "Achat d'abonnement",
+  "purpose.integral_purchase": "Achat de points",
+
+  "notes.unpaid": "Ce document ne constitue pas une preuve de paiement : la commande n'a pas encore été réglée.",
+  "notes.refunded": "Cette commande a été intégralement remboursée. Le net payé est nul.",
+  "notes.partiallyRefunded": "Cette commande a été partiellement remboursée. Voir la section Remboursements.",
+
+  "footer.page": "Page {page} sur {total}",
+  "footer.disclaimer": "Ce document est généré électroniquement et valable sans signature.",
+  "footer.generated": "Généré par {producer} le {time}.",
+  "footer.scanToVerify": "Scanner pour vérifier",
+  "footer.verify": "Vérifiez ce document sur {url}",
+
+  "method.epay": "Agrégateur E-Pay",
+  "method.rainbow_epay": "Rainbow E-Pay",
+  "method.xunhupay": "Xunhupay",
+  "method.payjs": "PAYJS",
+  "method.qrpay": "QRPay",
+  "method.vmqpay": "VMQPay",
+  "method.alipay_native": "Alipay",
+  "method.wechat_native": "WeChat Pay",
+  "method.stripe": "Stripe",
+  "method.paypal": "PayPal",
+  "method.balance": "Solde du compte",
+  "method.paddle": "Paddle",
+  "method.lemonsqueezy": "Lemon Squeezy",
+  "method.razorpay": "Razorpay",
+  "method.coinbase": "Coinbase Commerce",
+  "method.square": "Square"
+}

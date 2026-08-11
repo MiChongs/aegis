@@ -7,15 +7,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
 	authdomain "aegis/internal/domain/auth"
+	platformdomain "aegis/internal/domain/platform"
 	plugindomain "aegis/internal/domain/plugin"
 	storagedomain "aegis/internal/domain/storage"
 	pgrepo "aegis/internal/repository/postgres"
@@ -39,7 +40,12 @@ type StorageService struct {
 	keyPrefix  string
 	httpClient *http.Client
 	plugin     *PluginService
+	// governance 平台治理判定：只挡写入，读取与下载始终放行
+	governance *PlatformGovernanceService
 }
+
+// SetGovernanceService 注入平台治理服务（bootstrap 中调用）。
+func (s *StorageService) SetGovernanceService(g *PlatformGovernanceService) { s.governance = g }
 
 // SetPluginService 注入插件服务
 func (s *StorageService) SetPluginService(p *PluginService) {
@@ -53,7 +59,8 @@ func NewStorageService(log *zap.Logger, pg *pgrepo.Repository, redis *redislib.C
 		redis:     redis,
 		keyPrefix: keyPrefix,
 		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout:   storageOutboundTimeout,
+			Transport: newStorageOutboundTransport(),
 		},
 	}
 }
@@ -280,6 +287,13 @@ func (s *StorageService) Upload(ctx context.Context, session *authdomain.Session
 }
 
 func (s *StorageService) UploadForApp(ctx context.Context, appID int64, input storagedomain.UploadInput) (*storagedomain.StoredObject, error) {
+	// 治理判定放在 UploadForApp 而不是 Upload：所有上传入口（用户上传 / 头像 /
+	// 管理端代传）最终都收口到这里，挂在这里才不会漏。
+	if s.governance != nil {
+		if err := s.governance.EnsureCapability(appID, platformdomain.CapabilityStorage); err != nil {
+			return nil, err
+		}
+	}
 	cfg, err := s.resolveConfig(ctx, storagedomain.ResolveOptions{AppID: appID, ConfigName: input.ConfigName})
 	if err != nil {
 		return nil, err
@@ -298,6 +312,17 @@ func (s *StorageService) CreateObjectLinkForApp(ctx context.Context, appID int64
 	cfg, err := s.resolveConfig(ctx, storagedomain.ResolveOptions{AppID: appID, ConfigName: req.ConfigName})
 	if err != nil {
 		return nil, "", err
+	}
+	objectKey := normalizeObjectKey(cfg.RootPath, req.ObjectKey)
+	if err := validateStorageObjectKey(objectKey); err != nil {
+		return nil, "", err
+	}
+	indexed, err := s.pg.GetStorageObjectByKey(ctx, cfg.ID, appID, objectKey)
+	if err != nil {
+		return nil, "", err
+	}
+	if indexed == nil || indexed.Status != "active" {
+		return nil, "", apperrors.New(40482, http.StatusNotFound, "存储对象不存在")
 	}
 	return s.createObjectLinkWithConfig(ctx, appID, cfg, req)
 }
@@ -324,9 +349,21 @@ func (s *StorageService) uploadWithConfig(ctx context.Context, appID int64, cfg 
 		input.ObjectKey = buildUploadedObjectKey(input.FileName)
 	}
 	input.ObjectKey = normalizeObjectKey(cfg.RootPath, input.ObjectKey)
-	if input.ContentType == "" && input.FileName != "" {
-		input.ContentType = mime.TypeByExtension(strings.ToLower(path.Ext(input.FileName)))
+	if err := validateStorageObjectKey(input.ObjectKey); err != nil {
+		return nil, err
 	}
+	// 类型以魔数为准。声明值只在识别不出来时兜底 —— content_type 这一列
+	// 被筛选、图标、缩略图与代理下载的 Content-Type 一起消费，
+	// 信调用方等于让上传方决定这些行为。
+	var masqueradedAs string
+	input.Content, input.ContentType, masqueradedAs = resolveUploadContentType(input.Content, input.ContentType, input.FileName)
+	if masqueradedAs != "" {
+		s.log.Warn("上传内容的真实类型与声明不符，以魔数为准",
+			zap.Int64("appid", appID), zap.Int64("config_id", cfg.ID),
+			zap.String("declared", masqueradedAs), zap.String("detected", input.ContentType),
+			zap.String("file_name", input.FileName))
+	}
+
 	item, err := provider.Upload(ctx, cfg, input)
 	if err != nil {
 		s.log.Warn("storage upload failed", zap.Int64("appid", appID), zap.Int64("config_id", cfg.ID), zap.String("provider", cfg.Provider), zap.Error(err))
@@ -338,9 +375,14 @@ func (s *StorageService) uploadWithConfig(ctx context.Context, appID int64, cfg 
 	item.ProxyRequired = cfg.AccessMode == storagedomain.AccessPrivate || cfg.ProxyDownload
 
 	// 写入文件索引表（storage_objects），用于文件管理、用量统计
-	meta := make(map[string]any, len(input.Metadata))
+	meta := make(map[string]any, len(input.Metadata)+1)
 	for k, v := range input.Metadata {
 		meta[k] = v
+	}
+	if masqueradedAs != "" {
+		// 留证而不只是打日志：控制台的文件详情会把它显示成一条告警。
+		// 只记日志的话，事后没法回答「哪些文件谎报过类型」。
+		meta["aegis:declaredContentType"] = masqueradedAs
 	}
 	uploaderType := input.UploaderType
 	if uploaderType == "" {
@@ -368,12 +410,34 @@ func (s *StorageService) uploadWithConfig(ctx context.Context, appID int64, cfg 
 	return item, nil
 }
 
+// CreateIndexedObjectLink 为索引表（storage_objects）里的对象签发访问链接。
+//
+// 与 CreateObjectLinkForApp 的区别只有一点，但很关键：那条链路收的是**相对**
+// 对象键，要先拼上配置的 root_path；这里收的是索引表里存的键，**已经含**
+// root_path。再走一次 normalizeObjectKey 会把前缀重复一遍，签出来的地址必然 404。
+func (s *StorageService) CreateIndexedObjectLink(ctx context.Context, appID int64, configID int64, objectKey string, download bool, fileName string, expiresIn time.Duration) (*storagedomain.LinkResult, string, error) {
+	cfg, err := s.pg.GetStorageConfigByID(ctx, configID)
+	if err != nil {
+		return nil, "", err
+	}
+	if cfg == nil || !cfg.Enabled {
+		return nil, "", apperrors.New(40482, http.StatusNotFound, "未配置可用存储服务")
+	}
+	return s.signObjectLink(ctx, appID, cfg, objectKey, download, fileName, expiresIn)
+}
+
 func (s *StorageService) createObjectLinkWithConfig(ctx context.Context, appID int64, cfg *storagedomain.Config, req storagedomain.LinkRequest) (*storagedomain.LinkResult, string, error) {
-	objectKey := normalizeObjectKey(cfg.RootPath, req.ObjectKey)
+	return s.signObjectLink(ctx, appID, cfg, normalizeObjectKey(cfg.RootPath, req.ObjectKey), req.Download, strings.TrimSpace(req.FileName), req.ExpiresIn)
+}
+
+// signObjectLink 为**已归一化**的对象键签发访问链接（公开直链或代理票据）
+func (s *StorageService) signObjectLink(ctx context.Context, appID int64, cfg *storagedomain.Config, objectKey string, download bool, fileName string, expiresIn time.Duration) (*storagedomain.LinkResult, string, error) {
 	if objectKey == "" {
 		return nil, "", apperrors.New(40083, http.StatusBadRequest, "对象路径不能为空")
 	}
-	expiresIn := req.ExpiresIn
+	if err := validateStorageObjectKey(objectKey); err != nil {
+		return nil, "", err
+	}
 	if expiresIn <= 0 {
 		expiresIn = 10 * time.Minute
 	}
@@ -407,8 +471,8 @@ func (s *StorageService) createObjectLinkWithConfig(ctx context.Context, appID i
 		AppID:      appID,
 		ConfigID:   cfg.ID,
 		ObjectKey:  objectKey,
-		Download:   req.Download,
-		FileName:   strings.TrimSpace(req.FileName),
+		Download:   download,
+		FileName:   fileName,
 		ExpiresAt:  result.ExpiresAt,
 		IssuedAt:   time.Now(),
 		Provider:   cfg.Provider,
@@ -476,60 +540,70 @@ func (s *StorageService) resolveConfig(ctx context.Context, opts storagedomain.R
 }
 
 func (s *StorageService) buildProvider(cfg *storagedomain.Config) (storageProvider, error) {
+	var provider storageProvider
 	switch cfg.Provider {
 	case storagedomain.ProviderS3:
 		if _, err := decodeS3StorageConfig(cfg.ConfigData); err != nil {
 			return nil, err
 		}
-		return newS3StorageProvider(s.httpClient), nil
+		provider = newS3StorageProvider(s.httpClient)
+	case storagedomain.ProviderMinIO:
+		if _, err := decodeMinIOConfig(cfg.ConfigData); err != nil {
+			return nil, err
+		}
+		provider = newMinIOProvider(s.httpClient)
 	case storagedomain.ProviderAliyunOSS:
 		if _, err := decodeAliyunOSSConfig(cfg.ConfigData); err != nil {
 			return nil, err
 		}
-		return newAliyunOSSProvider(s.httpClient), nil
+		provider = newAliyunOSSProvider(s.httpClient)
 	case storagedomain.ProviderTencentCOS:
 		if _, err := decodeTencentCOSConfig(cfg.ConfigData); err != nil {
 			return nil, err
 		}
-		return newTencentCOSProvider(s.httpClient), nil
+		provider = newTencentCOSProvider(s.httpClient)
 	case storagedomain.ProviderQiniuKodo:
 		if _, err := decodeQiniuKodoConfig(cfg.ConfigData); err != nil {
 			return nil, err
 		}
-		return newQiniuKodoProvider(s.httpClient), nil
+		provider = newQiniuKodoProvider(s.httpClient)
 	case storagedomain.ProviderWebDAV:
 		if _, err := decodeWebDAVConfig(cfg.ConfigData); err != nil {
 			return nil, err
 		}
-		return newWebDAVProvider(), nil
+		provider = newWebDAVProvider()
 	case storagedomain.ProviderOneDrive:
 		if _, err := decodeOneDriveConfig(cfg.ConfigData); err != nil {
 			return nil, err
 		}
-		return newOneDriveProvider(s.httpClient, s.redis, s.keyPrefix), nil
+		provider = newOneDriveProvider(s.httpClient, s.redis, s.keyPrefix)
 	case storagedomain.ProviderDropbox:
 		if _, err := decodeDropboxConfig(cfg.ConfigData); err != nil {
 			return nil, err
 		}
-		return newDropboxProvider(s.httpClient, s.redis, s.keyPrefix), nil
+		provider = newDropboxProvider(s.httpClient, s.redis, s.keyPrefix)
 	case storagedomain.ProviderGoogleDrive:
 		if _, err := decodeGoogleDriveConfig(cfg.ConfigData); err != nil {
 			return nil, err
 		}
-		return newGoogleDriveProvider(s.redis, s.keyPrefix), nil
+		provider = newGoogleDriveProvider(s.redis, s.keyPrefix)
 	case storagedomain.ProviderAzureBlob:
 		if _, err := decodeAzureBlobConfig(cfg.ConfigData); err != nil {
 			return nil, err
 		}
-		return newAzureBlobProvider(), nil
+		provider = newAzureBlobProvider()
 	case storagedomain.ProviderLocal:
+		if cfg.Scope != storagedomain.ScopeGlobal {
+			return nil, apperrors.New(40382, http.StatusForbidden, "本地文件系统存储仅允许配置为平台级存储")
+		}
 		if _, err := decodeLocalConfig(cfg.ConfigData); err != nil {
 			return nil, err
 		}
-		return newLocalStorageProvider(), nil
+		provider = newLocalStorageProvider()
 	default:
 		return nil, apperrors.New(40081, http.StatusBadRequest, "存储提供商不受支持")
 	}
+	return wrapStorageProvider(cfg, provider), nil
 }
 
 func (s *StorageService) requireApp(ctx context.Context, appID int64) (appNameHolder, error) {
@@ -651,6 +725,22 @@ func normalizeObjectKey(rootPath string, objectKey string) string {
 		return rootPath
 	}
 	return rootPath + "/" + objectKey
+}
+
+// validateStorageObjectKey 保证对象键始终是相对路径，禁止借由对象键逃逸存储根目录。
+func validateStorageObjectKey(objectKey string) error {
+	objectKey = strings.TrimSpace(strings.ReplaceAll(objectKey, "\\", "/"))
+	if objectKey == "" || strings.ContainsRune(objectKey, '\x00') {
+		return apperrors.New(40083, http.StatusBadRequest, "对象路径无效")
+	}
+	if path.IsAbs(objectKey) || filepath.VolumeName(filepath.FromSlash(objectKey)) != "" {
+		return apperrors.New(40083, http.StatusBadRequest, "对象路径必须是相对路径")
+	}
+	cleaned := path.Clean(objectKey)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return apperrors.New(40083, http.StatusBadRequest, "对象路径包含非法目录跳转")
+	}
+	return nil
 }
 
 func buildUploadedObjectKey(fileName string) string {

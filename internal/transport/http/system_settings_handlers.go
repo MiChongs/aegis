@@ -5,6 +5,7 @@ import (
 
 	admindomain "aegis/internal/domain/admin"
 	systemdomain "aegis/internal/domain/system"
+	auditmiddleware "aegis/internal/middleware"
 	"aegis/pkg/response"
 	"github.com/gin-gonic/gin"
 )
@@ -38,6 +39,8 @@ func (h *Handler) AdminUpdateSystemSettings(c *gin.Context) {
 	if adminID > 0 {
 		actorID = &adminID
 	}
+	// 更新前读取原配置，用于审计日志 diff（重点关注防火墙段）
+	beforeSettings, _ := h.system.GetSettings(c.Request.Context())
 	item, err := h.system.UpdateSettings(c.Request.Context(), actorID, systemdomain.SettingsUpdate{
 		Firewall: systemdomain.FirewallSettingsPatch{
 			Enabled:           req.Firewall.Enabled,
@@ -93,14 +96,20 @@ func (h *Handler) AdminUpdateSystemSettings(c *gin.Context) {
 		},
 		LDAP:     mapLDAPPatch(req.LDAP),
 		OIDC:     mapOIDCPatch(req.OIDC),
+		SAML:     mapSAMLPatch(req.SAML),
 		Branding: mapBrandingPatch(req.Branding),
 	})
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
+	// 将修改前后的平台设置作为 diff 记录进审计日志（防火墙、安全、验证码、品牌、LDAP/OIDC/SAML 均在其中）
+	if beforeSettings != nil && item != nil {
+		auditmiddleware.SetAuditDiff(c, beforeSettings, item)
+	}
+	auditmiddleware.SetAuditSeverity(c, systemdomain.AuditSeverityHigh)
 	response.Success(c, 200, "更新成功", item)
-	h.recordAudit(c, "settings.update", "settings", "", "修改平台设置")
+	h.recordAudit(c, "settings.update", "settings", "", "修改平台设置（含防火墙/安全/品牌/SSO）")
 }
 
 func (h *Handler) AdminLDAPTest(c *gin.Context) {
@@ -124,6 +133,28 @@ func (h *Handler) AdminLDAPTest(c *gin.Context) {
 	h.recordAudit(c, "security.ldap_test", "security", "", "测试 LDAP 连接")
 }
 
+func (h *Handler) AdminSAMLTest(c *gin.Context) {
+	if _, ok := requireSuperAdminSession(c); !ok {
+		response.Error(c, http.StatusForbidden, 40313, "仅超级管理员可测试 SAML 连接")
+		return
+	}
+	var req AdminSAMLTestRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	if h.samlSvc == nil {
+		response.Error(c, http.StatusBadRequest, 40098, "SAML 服务未初始化")
+		return
+	}
+	result := h.samlSvc.TestMetadata(c.Request.Context(), systemdomain.SAMLTestRequest{
+		IDPMetadataURL: req.IDPMetadataURL,
+		IDPMetadataXML: req.IDPMetadataXML,
+	})
+	response.Success(c, 200, "SAML metadata 测试完成", result)
+	h.recordAudit(c, "security.saml_test", "security", "", "测试 SAML metadata")
+}
+
 func mapLDAPPatch(req AdminLDAPSettingsUpdateRequest) systemdomain.LDAPSettingsPatch {
 	patch := systemdomain.LDAPSettingsPatch{
 		Enabled: req.Enabled, Server: req.Server, Port: req.Port,
@@ -133,7 +164,7 @@ func mapLDAPPatch(req AdminLDAPSettingsUpdateRequest) systemdomain.LDAPSettingsP
 		GroupBaseDN: req.GroupBaseDN, GroupFilter: req.GroupFilter,
 		GroupAttribute: req.GroupAttribute, AdminGroupDN: req.AdminGroupDN,
 		ConnectionTimeoutSeconds: req.ConnectionTimeoutSeconds,
-		SearchTimeoutSeconds: req.SearchTimeoutSeconds, FallbackToLocal: req.FallbackToLocal,
+		SearchTimeoutSeconds:     req.SearchTimeoutSeconds, FallbackToLocal: req.FallbackToLocal,
 	}
 	if req.AttrMapping != nil {
 		patch.AttrMapping = &systemdomain.LDAPAttributeMappingPatch{
@@ -152,6 +183,38 @@ func mapBrandingPatch(req AdminBrandingSettingsUpdateRequest) systemdomain.Brand
 		LoginBgURL: req.LoginBgURL, LoginBgColor: req.LoginBgColor,
 		FooterText: req.FooterText, CustomCSS: req.CustomCSS,
 	}
+}
+
+func mapSAMLPatch(req AdminSAMLSettingsUpdateRequest) systemdomain.SAMLSettingsPatch {
+	patch := systemdomain.SAMLSettingsPatch{
+		Enabled:             req.Enabled,
+		IDPMetadataURL:      req.IDPMetadataURL,
+		IDPMetadataXML:      req.IDPMetadataXML,
+		EntityID:            req.EntityID,
+		MetadataURL:         req.MetadataURL,
+		ACSURL:              req.ACSURL,
+		SPCertificate:       req.SPCertificate,
+		SPPrivateKey:        req.SPPrivateKey,
+		NameIDFormat:        req.NameIDFormat,
+		SignAuthnRequests:   req.SignAuthnRequests,
+		ForceAuthn:          req.ForceAuthn,
+		AllowIDPInitiated:   req.AllowIDPInitiated,
+		AllowedDomains:      req.AllowedDomains,
+		AdminGroupAttribute: req.AdminGroupAttribute,
+		AdminGroupValue:     req.AdminGroupValue,
+		FallbackToLocal:     req.FallbackToLocal,
+		FrontendCallbackURL: req.FrontendCallbackURL,
+	}
+	if req.AttrMapping != nil {
+		patch.AttrMapping = &systemdomain.SAMLAttributeMappingPatch{
+			Account:     req.AttrMapping.Account,
+			DisplayName: req.AttrMapping.DisplayName,
+			Email:       req.AttrMapping.Email,
+			Phone:       req.AttrMapping.Phone,
+			Groups:      req.AttrMapping.Groups,
+		}
+	}
+	return patch
 }
 
 // AdminGetPublicBranding 公开品牌信息（无需登录）

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"aegis/pkg/egress"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -79,7 +80,7 @@ func NewLocationService(log *zap.Logger, redisClient *redislib.Client, keyPrefix
 		log:                 log,
 		redis:               redisClient,
 		keyPrefix:           strings.TrimSpace(keyPrefix),
-		http:                &http.Client{Timeout: 1500 * time.Millisecond},
+		http:                egress.NewClient(egress.Profile{Name: "location.lookup", Timeout: 1500 * time.Millisecond}),
 		local:               make(map[string]cachedLocation),
 		localTTL:            10 * time.Minute,
 		redisTTL:            6 * time.Hour,
@@ -181,12 +182,12 @@ func (s *LocationService) Resolve(ctx context.Context, ip string) IPLocation {
 	if ip == "" {
 		return s.DefaultLocation(ip)
 	}
-	if loc, ok := s.GetCached(ctx, ip); ok {
+	if loc, ok := s.GetCached(ctx, ip); ok && !requiresAdministrativeEnrichment(loc, s.allowRemoteFallback) {
 		return loc
 	}
 
 	value, _, _ := s.group.Do(ip, func() (any, error) {
-		if loc, ok := s.GetCached(ctx, ip); ok {
+		if loc, ok := s.GetCached(ctx, ip); ok && !requiresAdministrativeEnrichment(loc, s.allowRemoteFallback) {
 			return loc, nil
 		}
 		loc := s.lookup(ctx, ip)
@@ -225,11 +226,24 @@ func (s *LocationService) lookup(ctx context.Context, ip string) IPLocation {
 	if isPrivateAddr(addr) {
 		return s.DefaultLocation(ip)
 	}
-	if loc, ok := s.lookupGeoDatabase(ip); ok {
-		return loc
+	if local, ok := s.lookupGeoDatabase(ip); ok {
+		if !requiresAdministrativeEnrichment(local, s.allowRemoteFallback) {
+			return local
+		}
+		if remote, ok := s.lookupRemoteProviders(ctx, ip); ok {
+			return mergeIPLocation(local, remote)
+		}
+		return local
 	}
+	if remote, ok := s.lookupRemoteProviders(ctx, ip); ok {
+		return remote
+	}
+	return s.DefaultLocation(ip)
+}
+
+func (s *LocationService) lookupRemoteProviders(ctx context.Context, ip string) (IPLocation, bool) {
 	if !s.allowRemoteFallback {
-		return s.DefaultLocation(ip)
+		return IPLocation{}, false
 	}
 
 	providers := []struct {
@@ -247,13 +261,13 @@ func (s *LocationService) lookup(ctx context.Context, ip string) IPLocation {
 		loc, err := provider.fn(providerCtx, ip)
 		cancel()
 		if err == nil && loc.isResolved() {
-			return loc
+			return loc, true
 		}
 		if err != nil && ctx.Err() == nil {
 			s.log.Debug("location provider failed", zap.String("provider", provider.name), zap.String("ip", ip), zap.Error(err))
 		}
 	}
-	return s.DefaultLocation(ip)
+	return IPLocation{}, false
 }
 
 func (s *LocationService) lookupGeoDatabase(ip string) (IPLocation, bool) {
@@ -458,6 +472,92 @@ func (l IPLocation) isResolved() bool {
 		strings.TrimSpace(l.Region) != "" ||
 		strings.TrimSpace(l.City) != "" ||
 		strings.TrimSpace(l.ISP) != ""
+}
+
+const minAdministrativeLocationQuality = 3
+
+func (l IPLocation) administrativeQuality() int {
+	quality := 0
+	if strings.TrimSpace(l.ISP) != "" {
+		quality++
+	}
+	if strings.TrimSpace(l.Region) != "" {
+		quality += 2
+	}
+	if strings.TrimSpace(l.City) != "" {
+		quality++
+	}
+	return quality
+}
+
+func requiresAdministrativeEnrichment(loc IPLocation, allowRemoteFallback bool) bool {
+	if !allowRemoteFallback || loc.IsPrivate || !loc.isResolved() {
+		return false
+	}
+	return loc.administrativeQuality() < minAdministrativeLocationQuality
+}
+
+func mergeIPLocation(primary, secondary IPLocation) IPLocation {
+	if !primary.isResolved() {
+		return secondary
+	}
+	if !secondary.isResolved() {
+		return primary
+	}
+	merged := IPLocation{
+		IP:          locationFirstNonEmpty(primary.IP, secondary.IP),
+		Country:     locationFirstNonEmpty(primary.Country, secondary.Country),
+		CountryCode: locationFirstNonEmpty(primary.CountryCode, secondary.CountryCode),
+		Region:      locationFirstNonEmpty(primary.Region, secondary.Region),
+		City:        locationFirstNonEmpty(primary.City, secondary.City),
+		District:    locationFirstNonEmpty(primary.District, secondary.District),
+		Timezone:    locationFirstNonEmpty(primary.Timezone, secondary.Timezone),
+		ISP:         locationFirstNonEmpty(primary.ISP, secondary.ISP),
+		Coordinates: primary.Coordinates,
+		Network: NetworkInfo{
+			Type:         locationFirstNonEmpty(primary.Network.Type, secondary.Network.Type),
+			Organization: locationFirstNonEmpty(primary.Network.Organization, secondary.Network.Organization),
+			ASN:          locationFirstNonEmpty(primary.Network.ASN, secondary.Network.ASN),
+		},
+		Source:     mergeLocationSource(primary.Source, secondary.Source),
+		ResolvedAt: primary.ResolvedAt,
+		IsPrivate:  primary.IsPrivate || secondary.IsPrivate,
+	}
+	if merged.Coordinates == nil {
+		merged.Coordinates = secondary.Coordinates
+	}
+	if merged.ResolvedAt.IsZero() || (!secondary.ResolvedAt.IsZero() && secondary.ResolvedAt.After(merged.ResolvedAt)) {
+		merged.ResolvedAt = secondary.ResolvedAt
+	}
+	merged.Location = composeLocation(merged.Country, merged.Region, merged.City, merged.District)
+	if strings.TrimSpace(merged.Timezone) == "" {
+		merged.Timezone = normalizeTimezone(merged.Country, "")
+	}
+	if strings.TrimSpace(merged.Network.Type) == "" {
+		merged.Network.Type = detectNetworkType(locationFirstNonEmpty(merged.Network.Organization, merged.ISP))
+	}
+	return merged
+}
+
+func mergeLocationSource(primary, secondary string) string {
+	primary = strings.TrimSpace(primary)
+	secondary = strings.TrimSpace(secondary)
+	if primary == "" {
+		return secondary
+	}
+	if secondary == "" || strings.EqualFold(primary, secondary) {
+		return primary
+	}
+	return primary + "+" + secondary
+}
+
+func locationFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func sanitizeIP(raw string) string {

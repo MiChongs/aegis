@@ -1,6 +1,7 @@
 package service
 
 import (
+	"aegis/pkg/egress"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -67,6 +68,18 @@ func (s *OIDCService) DecryptClientSecret(ciphertext string) (string, error) {
 	return decryptSecret(s.encryptionKey, ciphertext)
 }
 
+// oidcEgressContext 把出海客户端塞进 ctx。
+//
+// go-oidc 的 Discovery / JWKS 拉取与 oauth2 的令牌交换都从 context 里取
+// http.Client（同一个 oauth2.HTTPClient 键），因此在入口包一次即可让
+// 整条 OIDC 链路走出海网关——境外 IdP（Auth0 / Okta / Entra ID）常见得很。
+func oidcEgressContext(ctx context.Context) context.Context {
+	return oidc.ClientContext(ctx, egress.NewClient(egress.Profile{
+		Name:    "auth.oidc",
+		Timeout: 15 * time.Second,
+	}))
+}
+
 // ensureProvider 惰性初始化 OIDC Provider（Discovery 缓存）
 func (s *OIDCService) ensureProvider(ctx context.Context) (*oidc.Provider, *oauth2.Config, error) {
 	s.mu.Lock()
@@ -78,7 +91,7 @@ func (s *OIDCService) ensureProvider(ctx context.Context) (*oidc.Provider, *oaut
 	}
 
 	if s.provider == nil || s.providerURL != cfg.IssuerURL {
-		provider, err := oidc.NewProvider(ctx, cfg.IssuerURL)
+		provider, err := oidc.NewProvider(oidcEgressContext(ctx), cfg.IssuerURL)
 		if err != nil {
 			return nil, nil, fmt.Errorf("oidc discovery: %w", err)
 		}
@@ -117,7 +130,7 @@ func (s *OIDCService) ExchangeAndVerify(ctx context.Context, code string) (*syst
 		return nil, err
 	}
 
-	token, err := oauth2Cfg.Exchange(ctx, code)
+	token, err := oauth2Cfg.Exchange(oidcEgressContext(ctx), code)
 	if err != nil {
 		return nil, fmt.Errorf("oidc code exchange: %w", err)
 	}
@@ -178,7 +191,7 @@ func (s *OIDCService) TestDiscovery(ctx context.Context, issuerURL string) *syst
 	start := time.Now()
 	result := &systemdomain.OIDCTestResult{}
 
-	provider, err := oidc.NewProvider(ctx, issuerURL)
+	provider, err := oidc.NewProvider(oidcEgressContext(ctx), issuerURL)
 	if err != nil {
 		result.Error = err.Error()
 		result.LatencyMs = time.Since(start).Milliseconds()

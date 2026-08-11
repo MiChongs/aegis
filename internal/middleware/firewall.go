@@ -114,8 +114,18 @@ func (f *Firewall) Handler() gin.HandlerFunc {
 			return
 		}
 		if f.banChecker != nil {
-			if banned, _ := f.banChecker.IsBanned(c.Request.Context(), ip); banned {
-				f.block(c, http.StatusForbidden, 40397, "banned_ip", "当前请求已被安全策略拦截")
+			if ext, ok := f.banChecker.(ExtendedBanChecker); ok {
+				if dec, _ := ext.CheckBan(c.Request.Context(), ip); dec.Banned {
+					f.applyBanMode(c, ip, dec, state)
+					return
+				}
+			} else if banned, _ := f.banChecker.IsBanned(c.Request.Context(), ip); banned {
+				// 回退：未实现 ExtendedBanChecker，按默认模式处理
+				f.applyBanMode(c, ip, firewalldomain.BanDecision{
+					Banned: true,
+					Mode:   state.cfg.DefaultBanMode,
+					Reason: "banned_ip",
+				}, state)
 				return
 			}
 		}
@@ -335,37 +345,132 @@ func newCorazaWAF(cfg config.FirewallConfig, log *zap.Logger) (coraza.WAF, error
 				return
 			}
 			meta := rule.Rule()
-			log.Warn("firewall coraza rule matched",
-				zap.Int("rule_id", meta.ID()),
-				zap.String("file", meta.File()),
-				zap.Int("line", meta.Line()),
-				zap.String("message", rule.Message()),
-				zap.String("data", rule.Data()),
-				zap.String("uri", rule.URI()),
-				zap.Bool("disruptive", rule.Disruptive()),
-				zap.String("client_ip", rule.ClientIPAddress()),
-				zap.String("tx_id", rule.TransactionID()),
+			// 单行摘要 + 精简结构字段，避免长串 stack-like 输出刷屏
+			//   示例：WAF BLOCK #932235 [RCE] Unix Command Injection (command without evasion)
+			//       uri: /api/system/monitor/history?keys=postgres%2Credis%2C...
+			//       matched: time,location,http_api,monitor,docs,cors,firewall
+			// 这个回调按「每条命中的规则」触发，此时请求的最终裁决还没产生，
+			// 因此这里不能宣称拦截。CRS v4 是异常计分模式：911100 之类带 block
+			// 动作的规则经 SecDefaultAction 解析成 pass，只累加异常分，真正的
+			// 阻断由 phase 2 的 949110 在越过 inbound 阈值时做出。
+			// Disruptive() 只说明规则**声明**了 block，写成 "BLOCK" 会让每条放行
+			// 请求都在日志里显示成被拦，排查时直接指错方向。
+			// 真正的拦截由 blockCoraza 另打一条 "firewall coraza blocked request"。
+			verdict := "HIT"
+			if cfg.CorazaDetectionOnly {
+				verdict = "observe"
+			}
+			category := corazaRuleCategory(meta.File())
+			message := truncateWAFText(rule.Message(), 96)
+			uri := truncateWAFText(rule.URI(), 160)
+			matched := truncateWAFText(rule.Data(), 140)
+			log.Warn(
+				fmt.Sprintf("WAF %s #%d [%s] %s", verdict, meta.ID(), category, message),
+				zap.String("uri", uri),
+				zap.String("matched", matched),
+				zap.String("ip", rule.ClientIPAddress()),
 			)
 		})
 
 	return coraza.NewWAF(wafConfig)
 }
 
+// corazaRuleCategory 从规则文件名提取简短分类：
+//
+//	REQUEST-932-APPLICATION-ATTACK-RCE.conf  → RCE
+//	REQUEST-942-APPLICATION-ATTACK-SQLI.conf → SQLI
+//	REQUEST-941-APPLICATION-ATTACK-XSS.conf  → XSS
+//	REQUEST-920-PROTOCOL-ENFORCEMENT.conf    → PROTOCOL
+func corazaRuleCategory(file string) string {
+	base := path.Base(strings.ReplaceAll(file, "\\", "/"))
+	base = strings.TrimSuffix(base, path.Ext(base))
+	segs := strings.Split(base, "-")
+	if len(segs) == 0 {
+		return "WAF"
+	}
+	return strings.ToUpper(segs[len(segs)-1])
+}
+
+func truncateWAFText(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+// CorazaAllowedMethods CRS 911100（METHOD-ENFORCEMENT）的放行方法集。
+//
+// CRS 的默认值是 `GET HEAD POST OPTIONS`（REQUEST-901-INITIALIZATION.conf 里
+// 用 `&TX:allowed_methods "@eq 0"` 守着，只在变量未设置时才写入），
+// 而本平台是 REST 风格：路由表里 PUT 70 条、DELETE 75 条、PATCH 3 条。
+//
+// 不覆盖这个变量并不会当场拦掉写请求 —— CRS v4 是异常计分模式，911100 只加
+// 5 分（critical_anomaly_score），而本项目的 inbound 阈值放宽到了 40。
+// 真正的代价是每个写请求都白吃 12.5% 的异常分预算：它本身不越线，却让同一请求
+// 里任何一个轻微命中更容易把总分顶过 949110 的阻断线，于是表现为
+// "大部分时候好用，偶尔 403"。此外每个写请求都会刷一条 911100 告警日志。
+// 阈值若被调到 CRS 原生的 5，则每个 PUT/PATCH/DELETE 当场 403。
+//
+// 这里刻意选择"设置放行集"而不是 SecRuleRemoveById 911100：后者会连
+// TRACE / TRACK / CONNECT 一起放行（TRACE 是 XST 向量），而方法白名单
+// 恰恰是这条规则唯一的价值所在。
+//
+// 这份清单必须跟随路由表：新增一种 HTTP 方法而忘了加进来，该方法的所有接口
+// 会在开了 WAF 的环境里持续掉分。因此导出给 transport 层的
+// TestRegisteredRouteMethodsAreAllowedByWAF 反向核对真实路由表。
+const CorazaAllowedMethods = "GET HEAD POST PUT PATCH DELETE OPTIONS"
+
 func buildCorazaDirectives(cfg config.FirewallConfig) string {
+	// 防御式规范化：保证默认阈值 / 排除清单即使被裸 struct 调用也成立
+	cfg = config.NormalizeFirewallConfig(cfg)
 	tempDir := strings.ReplaceAll(os.TempDir(), "\\", "/")
 	paranoia := cfg.CorazaParanoia
 
+	// CRS 常见误报（自托管 / 内网 / API 网关 / 后台 SaaS 场景）在此统一放行：
+	//   920350 — Host 头为数字 IP：内网、docker compose、局域网直连 IP 都会命中
+	//   920300 — Accept 头缺失：healthz / readyz / 自动化脚本 / SDK 默认不带
+	//   920420 — Content-Type 不在白名单：前端 FormData、SSE、OAuth callback 等会被误伤
+	//   920230 — 多重 URL 编码：部分浏览器 / 代理会二次编码
+	//   920440 — URL 后缀命中静态扩展：Next.js 打包产物 (.map/.wasm) 会被拦
+	//   913100 — UA 命中扫描器关键字：误伤正常健康检查 (httpclient)，由我方黑名单兜底
+	//   921110 — HTTP Request Smuggling：在反代层（Nginx/Caddy）已拦截，gin 侧重复拦截易误伤
+	//   932200 — RCE via Unix 命令：中文姓名、路径等极易触发
+	//   932230 — Unix shell metacharacters：反斜杠/管道符在 JSON / Markdown 中常见
+	//   932235 — Unix command (no evasion)：query 参数如 keys=time,location,docs 命中命令名黑名单（本次 #9 报错）
+	//   932236 — Unix command with evasion：类似 932235，变体模式
+	//   932240 — Unix command execution via @：username/邮箱等含 @ 的参数会命中
+	//   932250 — Unix command execution via $：模板字符串、正则中 $ 常见
+	//   942100 — SQLi libinjection：Next.js / 表单中的正则、emoji 会误伤
+	//   942430/942440 — SQL 关键字 + 注释符号：Markdown 内容会误伤
+	//   941100 — XSS 过滤器：富文本 / Markdown 场景会误伤（应用层已做 sanitize）
+	//
+	// 排除清单默认取 config.DefaultCorazaRemovedRules，可经
+	// FIREWALL_CORAZA_REMOVED_RULES 覆盖（"none" = 不排除任何规则）。
+	// 剩余的 900-series 协议校验 / 949/959/980 score 合计依然生效，不会裸奔。
+	engine := "On"
+	if cfg.CorazaDetectionOnly {
+		// 观察模式：规则全量评估、命中走 ErrorCallback 记录 zap 日志（verdict=observe），
+		// 但不产生拦截/入库 —— 用于灰度验证 paranoia / 阈值调整的误报面。
+		engine = "DetectionOnly"
+	}
+	var removed strings.Builder
+	for _, id := range cfg.CorazaRemovedRules {
+		removed.WriteString("SecRuleRemoveById ")
+		removed.WriteString(id)
+		removed.WriteString("\n")
+	}
 	return fmt.Sprintf(`
 Include @coraza.conf-recommended
 Include @crs-setup.conf.example
-SecRuleEngine On
+SecRuleEngine %s
 SecRequestBodyAccess On
 SecResponseBodyAccess Off
 SecDataDir "%s"
-SecAction "id:1000001,phase:1,pass,nolog,setvar:tx.blocking_paranoia_level=%d,setvar:tx.detection_paranoia_level=%d,setvar:tx.inbound_anomaly_score_threshold=25,setvar:tx.outbound_anomaly_score_threshold=10"
+SecAction "id:1000001,phase:1,pass,nolog,setvar:tx.blocking_paranoia_level=%d,setvar:tx.detection_paranoia_level=%d,setvar:tx.inbound_anomaly_score_threshold=%d,setvar:tx.outbound_anomaly_score_threshold=20"
+SecAction "id:1000002,phase:1,pass,nolog,setvar:tx.allowed_methods=%s"
 SecRule REQUEST_HEADERS:Content-Type "@rx ^application/(?:json|[a-z0-9.+-]+\\+json)" "id:1000003,phase:1,pass,nolog,ctl:ruleRemoveByTag=attack-sqli,ctl:ruleRemoveByTag=attack-xss,ctl:ruleRemoveByTag=attack-rce,ctl:ruleRemoveByTag=attack-protocol"
 Include @owasp_crs/*.conf
-`, tempDir, paranoia, paranoia)
+%s`, engine, tempDir, paranoia, paranoia, cfg.CorazaAnomalyThreshold, CorazaAllowedMethods, removed.String())
 }
 
 func (f *Firewall) inspectRequest(state firewallState, c *gin.Context, clientIP string) (*corazatypes.Interruption, error) {

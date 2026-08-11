@@ -38,10 +38,23 @@ type AppOnlineStats struct {
 	RefreshedAt       time.Time `json:"refreshedAt"`
 }
 
+// AppOnlineUser 一个在线用户在某应用下的连接概况。
+//
+// Account / Nickname / IP / ConnectedAt 是给管理端表格直接用的：
+// presence 存在 Redis 里，那里只有 userId，账号名要回 Postgres 查；
+// IP 与建立时间躺在 SampleConnection 里，嵌一层就得让每个调用方自己去挖。
+// 之前这四项都没有，管理端的在线用户表于是只有时间列有值，
+// 用户与 IP 两列一直是空的。
 type AppOnlineUser struct {
-	AppID             int64                `json:"appid"`
-	UserID            int64                `json:"userId"`
-	Connections       int64                `json:"connections"`
+	AppID       int64  `json:"appid"`
+	UserID      int64  `json:"userId"`
+	Account     string `json:"account,omitempty"`
+	Nickname    string `json:"nickname,omitempty"`
+	IP          string `json:"ip,omitempty"`
+	Connections int64  `json:"connections"`
+	// ConnectedAt 取最早的一条连接：用户关心的是"从什么时候开始在线"，
+	// 而不是最近一次重连的时刻。
+	ConnectedAt       time.Time            `json:"connectedAt,omitzero"`
 	LastSeenAt        time.Time            `json:"lastSeenAt"`
 	SampleConnection  *PresenceConnection  `json:"sampleConnection,omitempty"`
 	ConnectionSamples []PresenceConnection `json:"connectionSamples,omitempty"`

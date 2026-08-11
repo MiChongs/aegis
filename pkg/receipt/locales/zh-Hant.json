@@ -1,0 +1,134 @@
+{
+  "$meta": {
+    "name": "Traditional Chinese",
+    "nativeName": "繁體中文",
+    "direction": "ltr",
+    "script": "han"
+  },
+  "$format": {
+    "group": ",",
+    "decimal": ".",
+    "groupSizes": [3],
+    "currency": "{symbol}{value}",
+    "currencyNegative": "-{symbol}{value}",
+    "date": "2006年1月2日",
+    "dateTime": "2006年1月2日 15:04 MST",
+    "time": "15:04"
+  },
+
+  "doc.type.receipt": "收據",
+  "doc.type.invoice": "帳單",
+  "doc.type.credit_note": "退款憑證",
+
+  "status.paid": "已付款",
+  "status.pending": "待付款",
+  "status.refunded": "已退款",
+  "status.partially_refunded": "部分退款",
+  "status.expired": "已逾期",
+  "status.failed": "付款失敗",
+  "status.cancelled": "已取消",
+
+  "header.number": "編號 {number}",
+  "header.issuedAt": "開立時間 {time}",
+  "header.continued": "{title} {number}（續）",
+
+  "party.issuer": "收款方",
+  "party.customer": "付款方",
+  "party.merchant": "商戶",
+  "party.guest": "訪客",
+
+  "table.description": "項目",
+  "table.quantity": "數量",
+  "table.unitPrice": "單價",
+  "table.amount": "金額",
+
+  "totals.subtotal": "小計",
+  "totals.discount": "折扣",
+  "totals.tax": "稅額",
+  "totals.taxWithRate": "稅額（{rate}%）",
+  "totals.total": "合計",
+  "totals.refunded": "已退款",
+  "totals.netPaid": "實收淨額",
+
+  "payment.section": "付款資訊",
+  "payment.method": "付款方式",
+  "payment.orderNo": "訂單編號",
+  "payment.transactionId": "交易流水號",
+  "payment.channel": "付款通道",
+  "payment.clientIp": "下單 IP",
+  "payment.paidAt": "付款時間",
+
+  "refunds.section": "退款紀錄",
+  "refunds.number": "退款單號",
+  "refunds.status": "狀態",
+  "refunds.at": "日期",
+  "refunds.amount": "金額",
+  "refunds.reasonLine": "原因：{reason}",
+  "refunds.summaryOnly": "本訂單已累計退款 {amount}。",
+
+  "refund.status.pending": "待處理",
+  "refund.status.processing": "處理中",
+  "refund.status.success": "已退款",
+  "refund.status.failed": "退款失敗",
+  "refund.status.closed": "已關閉",
+
+  "metadata.section": "附加資訊",
+  "notes.section": "備註",
+
+  "email.subject": "{brand} · {title} {number}",
+  "email.title": "您的{title}已產生",
+  "email.lead": "對應訂單 {orderNo}",
+  "email.greeting": "{name} 您好：",
+  "email.attached": "PDF 檔案已作為附件隨本郵件寄出。",
+  "email.linkLead": "可透過下方按鈕下載，連結將於 {expiry} 失效。",
+  "email.button": "下載{title}",
+  "email.summary": "交易摘要",
+  "email.footer": "請妥善保存本憑證。本郵件由系統自動寄出，請勿直接回覆。",
+
+  "meta.purpose": "訂單用途",
+  "meta.appId": "應用編號",
+  "meta.userId": "使用者編號",
+  "meta.createdAt": "下單時間",
+  "meta.expireAt": "付款期限",
+  "meta.plan": "方案",
+  "meta.duration": "有效期",
+  "meta.bonusPoints": "贈送點數",
+  "meta.points": "發放點數",
+  "meta.days": {
+    "other": "{count} 天"
+  },
+  "meta.pointsValue": {
+    "other": "{count} 點"
+  },
+
+  "purpose.wallet_recharge": "餘額儲值",
+  "purpose.vip_purchase": "會員開通",
+  "purpose.integral_purchase": "點數購買",
+
+  "notes.unpaid": "本單據不作為付款憑證：該訂單尚未完成付款。",
+  "notes.refunded": "該訂單已全額退款，實收淨額為零。",
+  "notes.partiallyRefunded": "該訂單已部分退款，明細見退款紀錄。",
+
+  "footer.page": "第 {page} 頁 / 共 {total} 頁",
+  "footer.disclaimer": "本憑證由系統電子產生，無需簽章即有效。",
+  "footer.generated": "由 {producer} 於 {time} 產生。",
+  "footer.scanToVerify": "掃碼核驗",
+  "footer.verify": "可前往 {url} 核驗本憑證",
+
+  "method.epay": "易支付",
+  "method.rainbow_epay": "彩虹易支付",
+  "method.xunhupay": "虎皮椒",
+  "method.payjs": "PAYJS",
+  "method.qrpay": "碼支付",
+  "method.vmqpay": "V免簽",
+  "method.alipay_native": "支付寶",
+  "method.wechat_native": "微信支付",
+  "method.stripe": "Stripe",
+  "method.paypal": "PayPal",
+  "method.balance": "帳戶餘額",
+  "method.paddle": "Paddle",
+  "method.lemonsqueezy": "Lemon Squeezy",
+  "method.razorpay": "Razorpay",
+  "method.coinbase": "Coinbase Commerce",
+  "method.square": "Square"
+}

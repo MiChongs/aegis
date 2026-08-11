@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sort"
 	"strings"
@@ -20,11 +21,18 @@ type DocsOptions struct {
 	Description string
 	Version     string
 	ServerURL   string
+	// PortalURL 是开发者门户（aegis-console 的 /developers）的地址。
+	// /docs 与 /docs/tags/:slug 一律 302 到这里，后端不再自行渲染文档页面。
+	PortalURL string
 }
 
 type docOperation struct {
-	Summary      string
-	Description  string
+	Summary     string
+	Description string
+	// OperationID 直接决定生成式客户端里的方法名。
+	// 留空时回落到从路径拼出来的 `post__api__v1__apps__by_appkey__auth__login`，
+	// 那串东西在 Kotlin / Java 客户端里没法看，因此网关接口一律显式指定。
+	OperationID  string
 	RequestModel any
 	RequestBody  *openapi3.RequestBodyRef
 	Responses    *openapi3.Responses
@@ -89,8 +97,13 @@ func DefaultDocsOptions() DocsOptions {
 		Description: "A modern OpenAPI reference generated from the Gin router and designed for high-concurrency service evolution.",
 		Version:     "1.0.0",
 		ServerURL:   "/",
+		PortalURL:   DefaultDocsPortalURL,
 	}
 }
+
+// DefaultDocsPortalURL 指向与后端同源部署时的门户路径。
+// 前后端分域时通过 DOCS_PORTAL_URL 配置绝对地址。
+const DefaultDocsPortalURL = "/developers"
 
 func RegisterDocsRoutes(router *gin.Engine, opts DocsOptions) error {
 	spec, err := BuildOpenAPISpec(router, opts)
@@ -107,9 +120,23 @@ func RegisterDocsRoutes(router *gin.Engine, opts DocsOptions) error {
 		c.Header("Cache-Control", "no-store")
 		c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
 	})
+	// 文档页面由 aegis-console 的 /developers 门户承载（快速接入 + 接口浏览），
+	// 后端只保留机器可读的 /openapi.json，避免维护两套互相漂移的文档。
+	portal := strings.TrimRight(strings.TrimSpace(opts.PortalURL), "/")
+	if portal == "" {
+		portal = DefaultDocsPortalURL
+	}
 	router.GET("/docs", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store")
-		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(renderScalarHTML(opts)))
+		c.Redirect(http.StatusFound, portal)
+	})
+	router.GET("/docs/tags/:slug", func(c *gin.Context) {
+		// 旧的分组页链接保持可用：带上 tag 查询参数，门户会直接定位到该分组
+		slug := strings.TrimSpace(c.Param("slug"))
+		target := portal + "/api"
+		if slug != "" {
+			target += "?tag=" + url.QueryEscape(slug)
+		}
+		c.Redirect(http.StatusFound, target)
 	})
 	return nil
 }
@@ -140,7 +167,28 @@ func BuildOpenAPISpec(router *gin.Engine, opts DocsOptions) (*openapi3.T, error)
 
 	generator := openapi3gen.NewGenerator(openapi3gen.UseAllExportedFields())
 
-	routeDocs := manualRouteDocs(generator, spec)
+	// 三层叠加，后者覆盖前者：
+	//   1. 从路由表推导出的请求模型（docs_route_models.go，机器生成，覆盖面最大）
+	//   2. 手工登记的元数据（摘要、响应示例，只覆盖少数重点接口）
+	//   3. 网关命名空间（由接入目录生成，多平台客户端就是从这一段产出的）
+	routeDocs := map[string]docOperation{}
+	for key, model := range generatedRouteModels() {
+		routeDocs[key] = docOperation{RequestModel: model}
+	}
+	for key, doc := range manualRouteDocs(generator, spec) {
+		if doc.RequestModel == nil {
+			// 手工条目通常只写摘要与响应，别把推导出来的请求模型顶掉。
+			if existing, ok := routeDocs[key]; ok {
+				doc.RequestModel = existing.RequestModel
+			}
+		}
+		routeDocs[key] = doc
+	}
+	// 网关目录本身已被 TestGatewayCatalogMatchesRegisteredRoutes 钉在路由上，
+	// 因此这一层不会漂移。
+	for key, doc := range gatewayRouteDocs() {
+		routeDocs[key] = doc
+	}
 	tagSet := map[string]struct{}{}
 
 	for _, route := range router.Routes() {
@@ -157,7 +205,7 @@ func BuildOpenAPISpec(router *gin.Engine, opts DocsOptions) (*openapi3.T, error)
 		}
 
 		op := openapi3.NewOperation()
-		op.OperationID = buildOperationID(method, openAPIPath)
+		op.OperationID = firstNonEmpty(meta.OperationID, buildOperationID(method, openAPIPath))
 		op.Summary = firstNonEmpty(meta.Summary, humanizeRoute(method, openAPIPath))
 		op.Description = firstNonEmpty(meta.Description, defaultOperationDescription(method, openAPIPath))
 		op.Tags = firstStringSlice(meta.Tags, deriveTags(openAPIPath))
@@ -470,6 +518,45 @@ func manualRouteDocs(generator *openapi3gen.Generator, spec *openapi3.T) map[str
 			RequestModel: AdminAppUpsertRequest{},
 			Tags:         []string{"Admin"},
 		},
+		routeKey(http.MethodGet, "/api/admin/apps/{appid}/signin-reward"): {
+			Summary:     "Get Application Sign-in Reward Policy",
+			Description: "Returns the app-level sign-in reward policy used by the daily sign-in service.",
+			Tags:        []string{"Admin"},
+		},
+		routeKey(http.MethodGet, "/api/admin/apps/{appid}/signin/stats"): {
+			Summary:      "Get Application Sign-in Stats",
+			Description:  "Returns management-side sign-in statistics, recent trend, and source distribution for the specified application.",
+			RequestModel: AdminAppSignInStatsQuery{},
+			Tags:         []string{"Admin"},
+		},
+		routeKey(http.MethodGet, "/api/admin/apps/{appid}/signin/records"): {
+			Summary:      "List Application Sign-in Records",
+			Description:  "Lists daily sign-in detail records for the specified application with filters and pagination.",
+			RequestModel: AdminAppSignInRecordQuery{},
+			Tags:         []string{"Admin"},
+		},
+		routeKey(http.MethodPut, "/api/admin/apps/{appid}/signin-reward"): {
+			Summary:      "Update Application Sign-in Reward Policy",
+			Description:  "Updates the app-level sign-in reward policy, including expression rules and milestone bonuses.",
+			RequestModel: AdminSignInRewardPolicyUpdateRequest{},
+			Tags:         []string{"Admin"},
+		},
+		routeKey(http.MethodPost, "/api/admin/apps/{appid}/signin-reward/test"): {
+			Summary:      "Test Application Sign-in Reward Policy",
+			Description:  "Simulates sign-in reward calculation for the specified application without creating a sign-in record.",
+			RequestModel: AdminSignInRewardTestRequest{},
+			Tags:         []string{"Admin"},
+		},
+		routeKey(http.MethodPost, "/api/admin/apps/{appid}/signin-reward/reset"): {
+			Summary:     "Reset Application Sign-in Reward Policy",
+			Description: "Resets the application sign-in reward policy back to the built-in default template.",
+			Tags:        []string{"Admin"},
+		},
+		routeKey(http.MethodGet, "/api/admin/apps/signin-reward/templates"): {
+			Summary:     "List Sign-in Reward Templates",
+			Description: "Returns built-in sign-in reward templates for management-side initialization.",
+			Tags:        []string{"Admin"},
+		},
 		routeKey(http.MethodGet, "/api/admin/apps/{appid}/stats/user-trend"): {
 			Summary:      "Get Application User Trend",
 			Description:  "Returns the user growth trend for the specified application.",
@@ -522,6 +609,21 @@ func manualRouteDocs(generator *openapi3gen.Generator, spec *openapi3.T) map[str
 			Summary:      "List Application Users",
 			Description:  "Lists users under the specified application with filters and pagination.",
 			RequestModel: AdminAppUserFilterQuery{},
+			Tags:         []string{"Admin Users"},
+		},
+		// 注意路径参数写 {appkey}：routeKey 是纯字符串拼接，不做任何归一化，
+		// 键与 BuildOpenAPISpec 生成的路径必须**逐字节相同**才会命中。
+		// 本文件里另有 21 条 {appid} 开头的条目，路由早已改名为 :appkey，那些键全部不匹配。
+		routeKey(http.MethodGet, "/api/admin/apps/{appkey}/users/{userId}/audits/login"): {
+			Summary:      "List User Login Audits",
+			Description:  "Lists login audit records for a single application user.",
+			RequestModel: AdminUserLoginAuditQuery{},
+			Tags:         []string{"Admin Users"},
+		},
+		routeKey(http.MethodGet, "/api/admin/apps/{appkey}/users/{userId}/audits/sessions"): {
+			Summary:      "List User Session Audits",
+			Description:  "Lists session event audit records for a single application user.",
+			RequestModel: AdminUserSessionAuditQuery{},
 			Tags:         []string{"Admin Users"},
 		},
 		routeKey(http.MethodGet, "/api/admin/apps/{appid}/users/export"): {
@@ -660,6 +762,7 @@ func securityForRoute(path string) openapi3.SecurityRequirements {
 		strings.HasPrefix(path, "/api/email/verify-code"),
 		strings.HasPrefix(path, "/api/email/send-password-reset"),
 		strings.HasPrefix(path, "/api/email/verify-reset-token"),
+		strings.HasPrefix(path, "/api/email/webhook/"),
 		path == "/api/user/banner",
 		path == "/api/user/notice",
 		path == "/api/user/level/config",
@@ -1050,595 +1153,6 @@ func allowsQueryModel(method string) bool {
 		return false
 	}
 }
-
-func renderScalarHTML(opts DocsOptions) string {
-	title := firstNonEmpty(strings.TrimSpace(opts.Title), DefaultDocsOptions().Title)
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>%s</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg-a: #020617;
-      --bg-b: #0f172a;
-      --line: rgba(56, 189, 248, 0.18);
-      --panel: rgba(15, 23, 42, 0.78);
-      --panel-strong: rgba(15, 23, 42, 0.92);
-      --text: #e2e8f0;
-      --muted: #94a3b8;
-      --accent: #38bdf8;
-      --success: #34d399;
-      --warn: #f59e0b;
-      --danger: #fb7185;
-    }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; min-height: 100%%; background: linear-gradient(160deg, var(--bg-a), var(--bg-b)); }
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background:
-        linear-gradient(rgba(148,163,184,0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(148,163,184,0.05) 1px, transparent 1px);
-      background-size: 28px 28px;
-      mask-image: linear-gradient(to bottom, rgba(0,0,0,0.35), transparent 95%%);
-    }
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 2;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 16px 22px;
-      border-bottom: 1px solid var(--line);
-      backdrop-filter: blur(14px);
-      background: rgba(2, 6, 23, 0.7);
-    }
-    .brand {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .eyebrow {
-      color: #38bdf8;
-      font: 700 11px/1.2 "JetBrains Mono", "Cascadia Code", monospace;
-      letter-spacing: 0.24em;
-      text-transform: uppercase;
-    }
-    .title {
-      color: #f8fafc;
-      font: 700 18px/1.2 "Segoe UI", "Microsoft YaHei UI", sans-serif;
-    }
-    .link {
-      color: #cbd5e1;
-      text-decoration: none;
-      font: 500 13px/1.2 "Segoe UI", sans-serif;
-      border: 1px solid rgba(148, 163, 184, 0.22);
-      padding: 9px 12px;
-      border-radius: 999px;
-      background: rgba(15, 23, 42, 0.5);
-    }
-    main {
-      min-height: calc(100vh - 66px);
-      display: grid;
-      grid-template-columns: 320px minmax(0, 1fr);
-    }
-    aside {
-      border-right: 1px solid var(--line);
-      background: rgba(2, 6, 23, 0.38);
-      backdrop-filter: blur(10px);
-      padding: 18px;
-      overflow: auto;
-      height: calc(100vh - 66px);
-      position: sticky;
-      top: 66px;
-    }
-    .sidebar-card,
-    .content-card {
-      border: 1px solid rgba(148, 163, 184, 0.12);
-      background: var(--panel);
-      border-radius: 18px;
-      box-shadow: 0 18px 50px rgba(2, 6, 23, 0.22);
-    }
-    .sidebar-card {
-      padding: 16px;
-      margin-bottom: 16px;
-    }
-    .sidebar-title {
-      margin: 0 0 6px;
-      color: #f8fafc;
-      font: 700 16px/1.25 "Segoe UI", "Microsoft YaHei UI", sans-serif;
-    }
-    .sidebar-subtitle {
-      margin: 0;
-      color: var(--muted);
-      font: 500 12px/1.55 "Segoe UI", sans-serif;
-    }
-    .tag-list {
-      display: grid;
-      gap: 10px;
-    }
-    .tag-item {
-      display: block;
-      width: 100%%;
-      border: 1px solid rgba(148, 163, 184, 0.12);
-      background: rgba(15, 23, 42, 0.58);
-      border-radius: 14px;
-      padding: 12px 14px;
-      color: inherit;
-      text-decoration: none;
-      cursor: pointer;
-      transition: border-color .18s ease, transform .18s ease, background .18s ease;
-    }
-    .tag-item:hover,
-    .tag-item.active {
-      border-color: rgba(56, 189, 248, 0.42);
-      background: rgba(14, 165, 233, 0.12);
-      transform: translateY(-1px);
-    }
-    .tag-name {
-      display: block;
-      color: #f8fafc;
-      font: 700 13px/1.2 "Segoe UI", sans-serif;
-    }
-    .tag-meta {
-      display: block;
-      margin-top: 6px;
-      color: var(--muted);
-      font: 500 12px/1.2 "Segoe UI", sans-serif;
-    }
-    section {
-      padding: 24px;
-    }
-    .hero {
-      padding: 22px 24px;
-      margin-bottom: 20px;
-    }
-    .hero h1 {
-      margin: 0;
-      color: #f8fafc;
-      font: 700 28px/1.15 "Segoe UI", "Microsoft YaHei UI", sans-serif;
-    }
-    .hero p {
-      margin: 12px 0 0;
-      color: var(--muted);
-      font: 500 14px/1.7 "Segoe UI", sans-serif;
-      max-width: 920px;
-    }
-    .hero-meta {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-top: 16px;
-    }
-    .pill {
-      border: 1px solid rgba(148, 163, 184, 0.12);
-      background: rgba(30, 41, 59, 0.65);
-      color: #cbd5e1;
-      border-radius: 999px;
-      padding: 8px 12px;
-      font: 600 12px/1 "Segoe UI", sans-serif;
-    }
-    .content {
-      display: grid;
-      gap: 18px;
-    }
-    .content-card {
-      overflow: hidden;
-    }
-    .card-head {
-      padding: 18px 20px 14px;
-      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-      background: linear-gradient(180deg, rgba(30, 41, 59, 0.55), rgba(15, 23, 42, 0.2));
-    }
-    .op-top {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    .method {
-      min-width: 74px;
-      text-align: center;
-      border-radius: 999px;
-      padding: 7px 10px;
-      font: 800 11px/1 "JetBrains Mono", "Cascadia Code", monospace;
-      letter-spacing: 0.08em;
-    }
-    .method.get { background: rgba(52, 211, 153, 0.18); color: var(--success); }
-    .method.post { background: rgba(56, 189, 248, 0.18); color: var(--accent); }
-    .method.put, .method.patch { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
-    .method.delete { background: rgba(251, 113, 133, 0.18); color: var(--danger); }
-    .method.other { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
-    .path {
-      color: #f8fafc;
-      font: 700 15px/1.45 "JetBrains Mono", "Cascadia Code", monospace;
-      word-break: break-all;
-    }
-    .summary {
-      margin-top: 10px;
-      color: var(--text);
-      font: 700 16px/1.45 "Segoe UI", sans-serif;
-    }
-    .description {
-      margin-top: 8px;
-      color: var(--muted);
-      font: 500 13px/1.7 "Segoe UI", sans-serif;
-      white-space: pre-wrap;
-    }
-    .card-body {
-      display: grid;
-      gap: 16px;
-      padding: 18px 20px 20px;
-    }
-    .meta-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 14px;
-    }
-    .meta-box {
-      border: 1px solid rgba(148, 163, 184, 0.1);
-      background: rgba(2, 6, 23, 0.35);
-      border-radius: 14px;
-      padding: 14px;
-    }
-    .meta-box h3 {
-      margin: 0 0 10px;
-      color: #f8fafc;
-      font: 700 13px/1.2 "Segoe UI", sans-serif;
-    }
-    .meta-box p, .meta-box li {
-      color: var(--muted);
-      font: 500 12px/1.7 "Segoe UI", sans-serif;
-    }
-    .meta-box ul {
-      margin: 0;
-      padding-left: 16px;
-    }
-    .kv {
-      display: grid;
-      gap: 8px;
-    }
-    .kv-row {
-      display: grid;
-      gap: 4px;
-      padding: 9px 10px;
-      border-radius: 12px;
-      background: rgba(15, 23, 42, 0.48);
-    }
-    .kv-key {
-      color: #f8fafc;
-      font: 700 12px/1.2 "JetBrains Mono", monospace;
-    }
-    .kv-val {
-      color: var(--muted);
-      font: 500 12px/1.55 "Segoe UI", sans-serif;
-    }
-    pre {
-      margin: 0;
-      padding: 14px;
-      overflow: auto;
-      border-radius: 14px;
-      border: 1px solid rgba(148, 163, 184, 0.1);
-      background: var(--panel-strong);
-      color: #dbeafe;
-      font: 500 12px/1.6 "JetBrains Mono", "Cascadia Code", monospace;
-    }
-    .empty,
-    .state {
-      padding: 36px 24px;
-      text-align: center;
-      color: var(--muted);
-      font: 500 14px/1.7 "Segoe UI", sans-serif;
-    }
-    .error {
-      color: #fecdd3;
-    }
-    @media (max-width: 1080px) {
-      main { grid-template-columns: 1fr; }
-      aside {
-        height: auto;
-        position: static;
-        top: auto;
-        border-right: 0;
-        border-bottom: 1px solid var(--line);
-      }
-      .meta-grid {
-        grid-template-columns: 1fr;
-      }
-    }
-    @media (max-width: 640px) {
-      header {
-        padding: 14px 16px;
-      }
-      section {
-        padding: 16px;
-      }
-      aside {
-        padding: 16px;
-      }
-      .hero {
-        padding: 18px;
-      }
-      .hero h1 {
-        font-size: 22px;
-      }
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <div class="brand">
-      <span class="eyebrow">API REFERENCE</span>
-      <span class="title">%s</span>
-    </div>
-    <a class="link" href="/openapi.json">OpenAPI JSON</a>
-  </header>
-  <main>
-    <aside>
-      <div class="sidebar-card">
-        <h2 class="sidebar-title">Reference Index</h2>
-        <p class="sidebar-subtitle">Offline-ready API documentation rendered directly by the service runtime.</p>
-      </div>
-      <div id="tag-list" class="tag-list">
-        <div class="sidebar-card state">Loading API catalog...</div>
-      </div>
-    </aside>
-    <section>
-      <div class="hero content-card">
-        <h1>%s</h1>
-        <p id="hero-description">Loading API metadata...</p>
-        <div class="hero-meta">
-          <span class="pill" id="hero-version">Version</span>
-          <span class="pill" id="hero-server">Server</span>
-          <span class="pill" id="hero-count">Operations</span>
-        </div>
-      </div>
-      <div id="content" class="content">
-        <div class="content-card state">Loading endpoints...</div>
-      </div>
-    </section>
-  </main>
-  <script>
-    (function () {
-      var tagListEl = document.getElementById('tag-list');
-      var contentEl = document.getElementById('content');
-      var heroDescriptionEl = document.getElementById('hero-description');
-      var heroVersionEl = document.getElementById('hero-version');
-      var heroServerEl = document.getElementById('hero-server');
-      var heroCountEl = document.getElementById('hero-count');
-      var activeTag = 'all';
-
-      function escapeHtml(value) {
-        return String(value || '')
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#39;');
-      }
-
-      function methodClass(method) {
-        var value = String(method || '').toLowerCase();
-        if (value === 'get' || value === 'post' || value === 'put' || value === 'patch' || value === 'delete') {
-          return value;
-        }
-        return 'other';
-      }
-
-      function summarizeSchema(schemaRef) {
-        if (!schemaRef || !schemaRef.value) {
-          return 'Schema not specified';
-        }
-        var schema = schemaRef.value;
-        if (schema.type === 'object' && schema.properties) {
-          return 'object: ' + Object.keys(schema.properties).join(', ');
-        }
-        if (schema.type === 'array' && schema.items && schema.items.value && schema.items.value.type) {
-          return 'array<' + schema.items.value.type + '>';
-        }
-        if (schema.type) {
-          return schema.type;
-        }
-        if (schema.enum && schema.enum.length) {
-          return 'enum: ' + schema.enum.join(', ');
-        }
-        return 'structured payload';
-      }
-
-      function renderKVRows(items) {
-        if (!items || !items.length) {
-          return '<p>No data</p>';
-        }
-        return '<div class="kv">' + items.map(function (item) {
-          return '<div class="kv-row"><div class="kv-key">' + escapeHtml(item.key) + '</div><div class="kv-val">' + escapeHtml(item.value) + '</div></div>';
-        }).join('') + '</div>';
-      }
-
-      function collectOperations(spec) {
-        var operations = [];
-        var paths = spec.paths || {};
-        Object.keys(paths).sort().forEach(function (path) {
-          var pathItem = paths[path] || {};
-          ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].forEach(function (method) {
-            if (!pathItem[method]) {
-              return;
-            }
-            var op = pathItem[method];
-            var tags = Array.isArray(op.tags) && op.tags.length ? op.tags : ['General'];
-            operations.push({
-              method: method.toUpperCase(),
-              path: path,
-              summary: op.summary || path,
-              description: op.description || '',
-              tags: tags,
-              operationId: op.operationId || '',
-              security: Array.isArray(op.security) ? op.security : [],
-              parameters: Array.isArray(op.parameters) ? op.parameters : [],
-              requestBody: op.requestBody || null,
-              responses: op.responses || {}
-            });
-          });
-        });
-        return operations;
-      }
-
-      function buildTagMap(operations) {
-        var map = { all: [] };
-        operations.forEach(function (op) {
-          map.all.push(op);
-          op.tags.forEach(function (tag) {
-            if (!map[tag]) {
-              map[tag] = [];
-            }
-            map[tag].push(op);
-          });
-        });
-        return map;
-      }
-
-      function renderSidebar(tagMap) {
-        var tags = Object.keys(tagMap).sort(function (a, b) {
-          if (a === 'all') return -1;
-          if (b === 'all') return 1;
-          return a.localeCompare(b);
-        });
-        tagListEl.innerHTML = tags.map(function (tag) {
-          var isActive = tag === activeTag;
-          var label = tag === 'all' ? 'All Endpoints' : tag;
-          return '<button class="tag-item' + (isActive ? ' active' : '') + '" data-tag="' + escapeHtml(tag) + '">' +
-            '<span class="tag-name">' + escapeHtml(label) + '</span>' +
-            '<span class="tag-meta">' + tagMap[tag].length + ' operations</span>' +
-            '</button>';
-        }).join('');
-
-        Array.prototype.forEach.call(tagListEl.querySelectorAll('[data-tag]'), function (node) {
-          node.addEventListener('click', function () {
-            activeTag = node.getAttribute('data-tag') || 'all';
-            renderSidebar(tagMap);
-            renderOperations(tagMap[activeTag] || []);
-          });
-        });
-      }
-
-      function renderOperations(operations) {
-        if (!operations.length) {
-          contentEl.innerHTML = '<div class="content-card empty">No endpoints available for the selected tag.</div>';
-          return;
-        }
-
-        contentEl.innerHTML = operations.map(function (op) {
-          var pathParams = op.parameters.filter(function (parameter) { return parameter.in === 'path'; }).map(function (parameter) {
-            return {
-              key: parameter.name + ' (' + parameter.in + ')',
-              value: parameter.description || 'required parameter'
-            };
-          });
-          var queryParams = op.parameters.filter(function (parameter) { return parameter.in === 'query'; }).map(function (parameter) {
-            return {
-              key: parameter.name + ' (' + parameter.in + ')',
-              value: parameter.description || 'optional query parameter'
-            };
-          });
-
-          var requestBodyRows = [];
-          if (op.requestBody && op.requestBody.content) {
-            Object.keys(op.requestBody.content).forEach(function (contentType) {
-              var media = op.requestBody.content[contentType] || {};
-              requestBodyRows.push({
-                key: contentType,
-                value: summarizeSchema(media.schema)
-              });
-            });
-          }
-
-          var responseRows = Object.keys(op.responses).sort().map(function (status) {
-            var response = op.responses[status] || {};
-            var description = response.description || 'response';
-            if (response.content) {
-              var firstType = Object.keys(response.content)[0];
-              if (firstType) {
-                description += ' | ' + firstType;
-              }
-            }
-            return {
-              key: status,
-              value: description
-            };
-          });
-
-          var securityRows = op.security.map(function (rule, index) {
-            return {
-              key: 'Rule ' + (index + 1),
-              value: Object.keys(rule || {}).join(', ') || 'anonymous'
-            };
-          });
-
-          return '<article class="content-card">' +
-            '<div class="card-head">' +
-              '<div class="op-top">' +
-                '<span class="method ' + methodClass(op.method) + '">' + escapeHtml(op.method) + '</span>' +
-                '<span class="path">' + escapeHtml(op.path) + '</span>' +
-              '</div>' +
-              '<div class="summary">' + escapeHtml(op.summary) + '</div>' +
-              '<div class="description">' + escapeHtml(op.description || 'No description provided.') + '</div>' +
-            '</div>' +
-            '<div class="card-body">' +
-              '<div class="meta-grid">' +
-                '<div class="meta-box"><h3>Identity</h3>' + renderKVRows([
-                  { key: 'Tag', value: op.tags.join(', ') },
-                  { key: 'Operation ID', value: op.operationId || 'not specified' }
-                ]) + '</div>' +
-                '<div class="meta-box"><h3>Security</h3>' + renderKVRows(securityRows.length ? securityRows : [{ key: 'Access', value: 'Public endpoint' }]) + '</div>' +
-                '<div class="meta-box"><h3>Path Parameters</h3>' + renderKVRows(pathParams) + '</div>' +
-                '<div class="meta-box"><h3>Query Parameters</h3>' + renderKVRows(queryParams) + '</div>' +
-                '<div class="meta-box"><h3>Request Body</h3>' + renderKVRows(requestBodyRows.length ? requestBodyRows : [{ key: 'Body', value: 'No request body' }]) + '</div>' +
-                '<div class="meta-box"><h3>Responses</h3>' + renderKVRows(responseRows) + '</div>' +
-              '</div>' +
-            '</div>' +
-          '</article>';
-        }).join('');
-      }
-
-      function renderSpec(spec) {
-        var operations = collectOperations(spec);
-        var tagMap = buildTagMap(operations);
-        heroDescriptionEl.textContent = spec.info && spec.info.description ? spec.info.description : 'Generated API reference.';
-        heroVersionEl.textContent = 'Version: ' + ((spec.info && spec.info.version) || 'n/a');
-        heroServerEl.textContent = 'Server: ' + (((spec.servers || [])[0] || {}).url || '/');
-        heroCountEl.textContent = 'Operations: ' + operations.length;
-        renderSidebar(tagMap);
-        renderOperations(tagMap[activeTag] || []);
-      }
-
-      fetch('/openapi.json', { cache: 'no-store' })
-        .then(function (response) {
-          if (!response.ok) {
-            throw new Error('failed to fetch openapi');
-          }
-          return response.json();
-        })
-        .then(renderSpec)
-        .catch(function () {
-          tagListEl.innerHTML = '<div class="sidebar-card state error">Failed to load API catalog.</div>';
-          contentEl.innerHTML = '<div class="content-card state error">Documentation is temporarily unavailable. Please retry later or open /openapi.json directly.</div>';
-          heroDescriptionEl.textContent = 'Documentation failed to load.';
-          heroVersionEl.textContent = 'Version: unavailable';
-          heroServerEl.textContent = 'Server: unavailable';
-          heroCountEl.textContent = 'Operations: unavailable';
-        });
-    })();
-  </script>
-</body>
-</html>`, title, title, title)
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {

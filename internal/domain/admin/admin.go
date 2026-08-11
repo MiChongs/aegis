@@ -4,7 +4,7 @@ import "time"
 
 // ContactInfo 多平台联系方式
 type ContactInfo struct {
-	Platform string `json:"platform"`         // wechat / qq / telegram / discord / twitter / github / phone / email / other
+	Platform string `json:"platform"` // wechat / qq / telegram / discord / twitter / github / phone / email / other
 	Value    string `json:"value"`
 	Label    string `json:"label,omitempty"`
 }
@@ -20,7 +20,7 @@ type Account struct {
 	Bio          string        `json:"bio"`
 	Contacts     []ContactInfo `json:"contacts,omitempty"`
 	Status       string        `json:"status"`
-	AuthSource   string        `json:"authSource"`   // password / ldap / oidc
+	AuthSource   string        `json:"authSource"` // password / ldap / oidc / saml
 	IsSuperAdmin bool          `json:"isSuperAdmin"`
 	LastLoginAt  *time.Time    `json:"lastLoginAt,omitempty"`
 	CreatedAt    time.Time     `json:"createdAt"`
@@ -44,13 +44,13 @@ type AuthRecord struct {
 }
 
 type Session struct {
-	AdminID       int64     `json:"adminId"`
-	Account       string    `json:"account"`
-	DisplayName   string    `json:"displayName"`
-	TokenID       string    `json:"tokenId"`
-	IssuedAt      time.Time `json:"issuedAt"`
-	ExpiresAt     time.Time `json:"expiresAt"`
-	IsSuperAdmin  bool      `json:"isSuperAdmin"`
+	AdminID      int64     `json:"adminId"`
+	Account      string    `json:"account"`
+	DisplayName  string    `json:"displayName"`
+	TokenID      string    `json:"tokenId"`
+	IssuedAt     time.Time `json:"issuedAt"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	IsSuperAdmin bool      `json:"isSuperAdmin"`
 }
 
 type AccessContext struct {
@@ -59,18 +59,18 @@ type AccessContext struct {
 }
 
 type LoginResult struct {
-	AccessToken          string                `json:"accessToken,omitempty"`
-	ExpiresAt            time.Time             `json:"expiresAt,omitempty"`
-	TokenType            string                `json:"tokenType,omitempty"`
-	Admin                Account               `json:"admin,omitempty"`
-	Assignments          []Assignment          `json:"assignments,omitempty"`
-	RequiresSecondFactor bool                  `json:"requiresSecondFactor,omitempty"`
-	Challenge            *MFAChallenge         `json:"challenge,omitempty"`
+	AccessToken          string        `json:"accessToken,omitempty"`
+	ExpiresAt            time.Time     `json:"expiresAt,omitempty"`
+	TokenType            string        `json:"tokenType,omitempty"`
+	Admin                Account       `json:"admin,omitempty"`
+	Assignments          []Assignment  `json:"assignments,omitempty"`
+	RequiresSecondFactor bool          `json:"requiresSecondFactor,omitempty"`
+	Challenge            *MFAChallenge `json:"challenge,omitempty"`
 }
 
 type MFAChallenge struct {
-	ChallengeID string   `json:"challengeId"`
-	Methods     []string `json:"methods"`     // totp, recovery_code
+	ChallengeID string    `json:"challengeId"`
+	Methods     []string  `json:"methods"` // totp, recovery_code
 	ExpiresAt   time.Time `json:"expiresAt"`
 }
 

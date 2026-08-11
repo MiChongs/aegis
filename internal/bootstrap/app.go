@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"aegis/internal/config"
@@ -16,6 +17,7 @@ import (
 	"aegis/internal/service"
 	httptransport "aegis/internal/transport/http"
 	"aegis/pkg/crashlog"
+	"aegis/pkg/egress"
 	pkglogger "aegis/pkg/logger"
 	"aegis/pkg/tracing"
 	"github.com/gin-gonic/gin"
@@ -47,6 +49,20 @@ type APIApp struct {
 	Location        *service.LocationService
 	Monitor         *service.MonitorService
 	Memory          *service.MemoryManager
+	Database        *service.DatabaseManager
+	PostgresHandle  *db.Postgres
+	Firewall        *middleware.Firewall
+	Security        *service.SecurityService
+	Risk            *service.RiskService
+	// Governance 平台治理：后台循环负责到期解冻与跨实例快照收敛，退出时必须 Stop
+	Governance *service.PlatformGovernanceService
+	// AuthProviderHealth 后台 30s 轮询 LDAP/OIDC/SAML 可用性；进程退出时必须 Close() 避免 goroutine 泄漏
+	AuthProviderHealth *service.AuthProviderHealthService
+	// Egress 出海代理网关管理面；EgressGateway 是进程级单例，
+	// OwnsEgress 标记本实例是否负责它的启停（Unified 模式下只有 API 侧负责）
+	Egress          *service.EgressService
+	EgressGateway   *egress.Gateway
+	OwnsEgress      bool
 	ShutdownTracing func(context.Context) error
 }
 
@@ -72,11 +88,49 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	if err != nil {
 		return nil, err
 	}
-	shutdownTracing := tracing.Init()
-	postgres, err := db.NewPostgres(ctx, cfg.Postgres)
+	tracingShutdown, err := tracing.Init(ctx, tracing.Config{
+		Enabled:        cfg.Tracing.Enabled,
+		ServiceName:    cfg.Tracing.ServiceName,
+		ServiceVersion: cfg.Tracing.ServiceVersion,
+		Environment:    cfg.Tracing.Environment,
+		Exporter:       cfg.Tracing.Exporter,
+		Endpoint:       cfg.Tracing.Endpoint,
+		Insecure:       cfg.Tracing.Insecure,
+		Headers:        cfg.Tracing.Headers,
+		Sampler:        cfg.Tracing.Sampler,
+		SampleRatio:    cfg.Tracing.SampleRatio,
+		BatchTimeout:   cfg.Tracing.BatchTimeout,
+		ExportTimeout:  cfg.Tracing.ExportTimeout,
+	})
+	if err != nil {
+		log.Warn("tracing 初始化失败，降级为空 exporter", zap.Error(err))
+	}
+	log.Info("tracing 已启用",
+		zap.Bool("enabled", cfg.Tracing.Enabled),
+		zap.String("exporter", cfg.Tracing.Exporter),
+		zap.String("sampler", cfg.Tracing.Sampler),
+		zap.String("endpoint", cfg.Tracing.Endpoint),
+		zap.String("service", cfg.Tracing.ServiceName),
+	)
+	shutdownTracing := func(ctx context.Context) error { return tracingShutdown(ctx) }
+	// 出海代理网关：进程内唯一的出站路由表，必须在任何服务构造之前装配成全局默认，
+	// 这样服务里用 egress.NewClient 建的客户端第一次请求就已经按规则走了。
+	egressGateway, ownsEgress, err := ensureEgressGateway(cfg.Egress, log)
+	if err != nil {
+		return nil, fmt.Errorf("出海网关初始化失败: %w", err)
+	}
+	log.Info("出海网关已装配",
+		zap.Bool("enabled", cfg.Egress.Enabled),
+		zap.Int("endpoints", len(cfg.Egress.Endpoints)),
+		zap.Int("rules", len(cfg.Egress.Rules)),
+		zap.Bool("owner", ownsEgress),
+	)
+	pgHandle, err := db.NewPostgresWithLifecycle(ctx, cfg.Postgres, cfg.Database, log)
 	if err != nil {
 		return nil, err
 	}
+	// 其余代码继续按 *pgxpool.Pool 使用；生命周期治理由 pgHandle 承担
+	postgres := pgHandle.Pool
 	// 自动执行数据库迁移
 	if err := autoMigrate(ctx, postgres, log); err != nil {
 		log.Warn("自动迁移失败", zap.Error(err))
@@ -89,18 +143,25 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	if err != nil {
 		return nil, err
 	}
+	// Temporal 为可选依赖：不可达时仅告警并降级（WorkflowService 已做 nil-guard，
+	// 管理后台访问 Workflow 功能会返回 503，但 API / 用户认证 / 应用管理等核心链路继续运行）。
 	temporalClient, err := db.NewTemporal(cfg.Temporal, log)
 	if err != nil {
-		natsConn.Close()
-		_ = redisClient.Close()
-		postgres.Close()
-		return nil, err
+		log.Warn("temporal 不可达，Workflow 功能降级；启动继续", zap.String("hostPort", cfg.Temporal.HostPort), zap.Error(err))
+		temporalClient = nil
+		err = nil
+	}
+	// 统一 close：nil 安全（temporalClient.Close 直调以避免递归）
+	closeTemporal := func() {
+		if temporalClient != nil {
+			temporalClient.Close()
+		}
 	}
 
 	pg := pgrepo.New(postgres)
 	adminUserSearch, err := service.NewAdminUserSearchService(log, pg, cfg.AdminUserSearch)
 	if err != nil {
-		temporalClient.Close()
+		closeTemporal()
 		natsConn.Close()
 		_ = redisClient.Close()
 		postgres.Close()
@@ -113,7 +174,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	publisher.SetConn(natsConn)
 	accountBanService, err := service.NewAccountBanService(cfg.AccountBan, log, pg, sessions)
 	if err != nil {
-		temporalClient.Close()
+		closeTemporal()
 		natsConn.Close()
 		_ = redisClient.Close()
 		postgres.Close()
@@ -122,9 +183,14 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	appService := service.NewAppService(log, pg, sessions)
 	securityService := service.NewSecurityService(cfg, log, pg, sessions, appService)
 	authService := service.NewAuthService(cfg, log, pg, sessions, publisher, appService, securityService)
+	// 应用级第三方登录渠道：注入后 OAuth 链路按「应用级配置 → 平台级 .env」解析
+	appOAuthService := service.NewAppOAuthService(log, pg, cfg)
+	authService.SetAppOAuthService(appOAuthService)
+	loginGuardRepo := redisrepo.NewLoginGuardRepository(redisClient, cfg.Redis.KeyPrefix)
+	authService.SetLoginGuard(service.NewLoginGuardService(cfg.LoginGuard, log, loginGuardRepo, pg))
 	adminService, err := service.NewAdminService(cfg, log, pg, sessions)
 	if err != nil {
-		temporalClient.Close()
+		closeTemporal()
 		natsConn.Close()
 		_ = redisClient.Close()
 		postgres.Close()
@@ -134,26 +200,32 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	userService := service.NewUserService(log, pg, sessions, publisher, securityService)
 	userService.SetAdminUserSearchService(adminUserSearch)
 	userService.SetAccountBanService(accountBanService)
+	// 管理员重置密码需按应用密码策略写过期时间与历史留存
+	userService.SetAppService(appService)
 	authService.SetAdminUserSearchService(adminUserSearch)
 	adminUserSearch.StartWarmup(ctx)
 	signInService := service.NewSignInService(log, pg, sessions, publisher)
 	autoSignService := service.NewAutoSignService(cfg.AutoSign, log, pg, schedules, signInService)
 	pointsService := service.NewPointsService(log, pg, sessions)
-	realtimeService, err := service.NewRealtimeService(log, authService, realtimeRepo, natsConn)
+	realtimeService, err := service.NewRealtimeService(log, authService, realtimeRepo, natsConn, cfg.CORS.AllowOrigins)
 	if err != nil {
-		temporalClient.Close()
+		closeTemporal()
 		natsConn.Close()
 		_ = redisClient.Close()
 		postgres.Close()
 		return nil, err
 	}
 	realtimeService.SetAdminService(adminService)
+	// 管理端在线用户表要把 userId 翻成账号名，presence 本身不碰数据库。
+	realtimeService.SetIdentityRepository(pg)
 	notificationService := service.NewNotificationService(log, pg, sessions, realtimeService)
 	siteService := service.NewSiteService(pg)
 	versionService := service.NewVersionService(pg)
 	roleApplicationService := service.NewRoleApplicationService(pg)
-	emailService := service.NewEmailService(log, pg, redisClient, cfg.Redis.KeyPrefix)
-	paymentService := service.NewPaymentService(log, pg, cfg.PaymentBillExport)
+	emailService := service.NewEmailService(log, pg, redisClient, cfg.Redis.KeyPrefix, cfg.Security.MasterKey)
+	paymentService := service.NewPaymentService(log, pg, cfg.PaymentReceipt)
+	walletService := service.NewWalletService(log, pg)
+	vipService := service.NewVipService(log, pg)
 	workflowService := service.NewWorkflowService(log, pg, temporalClient, cfg.Temporal)
 	storageService := service.NewStorageService(log, pg, redisClient, cfg.Redis.KeyPrefix)
 	avatarService := service.NewAvatarService(log, storageService, userService, adminService)
@@ -167,12 +239,36 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	ipBanRepo := redisrepo.NewIPBanRepository(redisClient, cfg.Redis.KeyPrefix)
 	locationService := service.NewLocationService(log, redisClient, cfg.Redis.KeyPrefix, cfg.GeoIP)
 	userService.SetLocationService(locationService)
+	// 登录一致性校验（设备绑定 / 登录 IP / 登录属地）——
+	// 依赖 LocationService 解析属地，因此在其构造之后注入
+	loginConsistencyService := service.NewLoginConsistencyService(
+		log, redisrepo.NewLoginBaselineRepository(redisClient, cfg.Redis.KeyPrefix), locationService)
+	authService.SetLoginConsistency(loginConsistencyService)
 	ipBanService := service.NewIPBanService(log, pg, ipBanRepo, locationService)
+	ipBanService.SetDefaultModeReader(func() string {
+		return manager.Current().Firewall.DefaultBanMode
+	})
+	if rules, err := service.ParseAutoBanRules(cfg.Firewall.AutoBanRules); err != nil {
+		log.Warn("FIREWALL_AUTO_BAN_RULES 解析失败，沿用内置默认规则", zap.Error(err))
+	} else if len(rules) > 0 {
+		ipBanService.SetAutoBanRules(rules)
+	}
+	geoBanService := service.NewGeoBanService(log, pg, locationService)
+	if err := geoBanService.Initialize(ctx); err != nil {
+		log.Warn("geo_bans 初始化失败", zap.Error(err))
+	}
+	ipBanService.SetGeoBanService(geoBanService)
+	geoFenceService := service.NewGeoFenceService(log, pg, locationService)
+	if err := geoFenceService.Initialize(ctx); err != nil {
+		log.Warn("geo_fences 初始化失败（围栏判定将为空集）", zap.Error(err))
+	}
+	ipBanService.SetGeoFenceService(geoFenceService)
+	geoAnalyticsService := service.NewGeoAnalyticsService(log, cfg.GeoRisk, pg)
 	firewall, err := middleware.NewFirewall(cfg.Firewall, log, redisClient, cfg.Redis.KeyPrefix, publisher, ipBanService)
 	if err != nil {
 		locationService.Close()
 		realtimeService.Close(context.Background())
-		temporalClient.Close()
+		closeTemporal()
 		natsConn.Close()
 		_ = redisClient.Close()
 		postgres.Close()
@@ -184,7 +280,12 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	adminService.SetOIDCService(oidcService)
 	samlService := service.NewSAMLService(log, cfg.JWT.Secret)
 	adminService.SetSAMLService(samlService)
+	// 第三方认证源健康探测服务（单例，30s TTL 缓存 + 单飞）
+	// 供 /api/admin/system/admins 超管视图标注"账号可能无法登录"，N 账号共享一次探测
+	authProviderHealthService := service.NewAuthProviderHealthService(log, ldapService, oidcService, samlService)
 	systemService := service.NewPlatformSettingsService(cfg, log, pg, firewall, securityService, ldapService, oidcService, samlService)
+	// 出海网关管理面：数据库里的配置覆盖 .env 基线
+	egressService := service.NewEgressService(log, pg, egressGateway, cfg.Security.MasterKey, cfg.Egress)
 	if err := adminService.LoadCustomRoles(ctx); err != nil {
 		log.Warn("加载自定义角色失败", zap.Error(err))
 	}
@@ -196,21 +297,28 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	if err := adminService.EnsureBootstrapSuperAdmin(ctx); err != nil {
 		locationService.Close()
 		realtimeService.Close(context.Background())
-		temporalClient.Close()
+		closeTemporal()
 		natsConn.Close()
 		_ = redisClient.Close()
 		postgres.Close()
 		return nil, err
+	}
+	if err := egressService.Initialize(ctx); err != nil {
+		log.Warn("加载持久化的出海网关配置失败，沿用 .env 配置", zap.Error(err))
 	}
 	if err := systemService.Initialize(ctx); err != nil {
 		locationService.Close()
 		realtimeService.Close(context.Background())
-		temporalClient.Close()
+		closeTemporal()
 		natsConn.Close()
 		_ = redisClient.Close()
 		postgres.Close()
 		return nil, err
 	}
+	// 平台设置 Initialize 完成后，LDAP/OIDC/SAML 的真实配置才通过 Reload 写入对应服务；
+	// 构造时 NewAuthProviderHealthService 的初始探测只看到空配置，此处立即重新探测一次，
+	// 确保首次 Snapshot() 命中即是真实健康数据（而不是等 30s 的下一轮 tick）。
+	authProviderHealthService.Refresh(ctx)
 	if err := ipBanService.SyncBansToRedis(ctx); err != nil {
 		log.Warn("启动时同步 IP 封禁到 Redis 失败", zap.Error(err))
 	}
@@ -219,17 +327,34 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	}
 	replayRepo := redisrepo.NewReplayRepository(redisClient, cfg.Redis.KeyPrefix)
 	replayGuard := middleware.NewReplayGuard(cfg.ReplayProtection, cfg.JWT.Secret, replayRepo, log)
+	authProtocolService := service.NewAuthProtocolService(log, pg, replayRepo, cfg.Security.MasterKey)
 	chainCommitter := service.NewChainCommitter(cfg.Lottery.ChainRPCURL, cfg.Lottery.ChainPrivateKey, cfg.Lottery.ChainID, log)
 	lotteryService := service.NewLotteryService(log, pg, pointsService, chainCommitter)
 	memoryManager := service.NewMemoryManager(cfg.Memory, log, redisClient, cfg.Redis.KeyPrefix)
+	// 数据库生命周期与泄漏监控：与 MemoryManager 同构（构造即可用，Start 拉起后台采集）
+	databaseManager := service.NewDatabaseManager(log, cfg.Database, cfg.Postgres, pgHandle, redisClient, cfg.Redis.KeyPrefix, service.DatabaseRolePrimary)
 	announcementService := service.NewAnnouncementService(log, pg, publisher)
-	orgService := service.NewOrganizationService(log, pg)
+	// 组织域权限：Casbin 带 domain 的 enforcer，组织自定义角色策略在启动时装载
+	orgAccessControl, err := service.NewOrgAccessControl(log, pg, adminService)
+	if err != nil {
+		return nil, fmt.Errorf("初始化组织权限判定失败: %w", err)
+	}
+	if err := orgAccessControl.Reload(ctx); err != nil {
+		log.Warn("装载组织角色策略失败，自定义角色暂不生效", zap.Error(err))
+	}
+	orgService := service.NewOrganizationService(log, pg, orgAccessControl)
 	orgService.SetRealtimeService(realtimeService)
-	approvalService := service.NewApprovalService(log, pg, realtimeService, orgService)
+	approvalService := service.NewOrgApprovalService(log, pg, orgAccessControl, orgService)
+	approvalService.SetRealtimeService(realtimeService)
+	orgService.SetApprovalService(approvalService)
 	templateService := service.NewTemplateService(log, pg)
 	auditService := service.NewAuditService(log, pg)
 	dashboardService := service.NewDashboardService(log, pg)
 	pluginService := service.NewPluginService(log, pg)
+	appFunctionService := service.NewAppFunctionService(log, pg, cfg.JWT.Secret)
+	// script 运行时的 SDK 依赖：脚本通过它们读写平台数据，
+	// 未装配时 script 函数会直接拒绝执行（wasm/http 不受影响）。
+	appFunctionService.SetScriptDeps(pointsService, vipService, notificationService, auditService)
 	if err := pluginService.Initialize(ctx); err != nil {
 		log.Warn("插件系统初始化失败（非致命）", zap.Error(err))
 	}
@@ -242,14 +367,68 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	notificationService.SetPluginService(pluginService)
 	storageService.SetPluginService(pluginService)
 	systemService.SetPluginService(pluginService)
+	// 凭证：抬头的品牌名来自平台设置，寄送走邮件出口，是否自动寄送读应用级交易设置
+	paymentService.SetPlatformSettingsService(systemService)
+	paymentService.SetEmailService(emailService)
+	paymentService.SetAppService(appService)
 	sessionMgmtService := service.NewSessionMgmtService(log, pg, sessions, realtimeService)
 	storageResourceService := service.NewStorageResourceService(log, pg)
 	userMasterService := service.NewUserMasterService(log, pg)
 	reportService := service.NewReportService(log, pg)
 	riskService := service.NewRiskService(cfg.Risk, log, pg, redisClient, cfg.Redis.KeyPrefix)
+	// 归属地走本地 mmdb：未采购外部 IP 情报源时，geo_* 系列变量若恒为空，
+	// 「归属地异常」这类规则配了也永不命中 —— 那是最典型的"看起来防住了"。
+	riskService.SetLocationService(locationService)
 	authService.SetRiskService(riskService)
 	adminService.SetRiskService(riskService)
-	accountBanService.Start()
+
+	// 设备营销名称字典：启动时幂等种子（表空则解析嵌入的 kt 源并批量写入）
+	deviceMarketingService := service.NewDeviceMarketingService(log, pg)
+
+	// 平台级 Banner（超级管理员专属 CRUD；Overview 对所有管理员展示；上传经 StorageService）
+	platformBannerService := service.NewPlatformBannerService(log, pg, sessions, storageService)
+
+	// 管理员站内收件箱：与用户站内信分表（admin_accounts vs users 主键空间不同），
+	// 写入成功后经 RealtimeService 推 admin.notification.created 驱动控制台角标
+	adminInboxService := service.NewAdminInboxService(log, pg, realtimeService)
+	orgService.SetAdminInbox(adminInboxService)
+	approvalService.SetAdminInbox(adminInboxService)
+
+	// ── 平台治理 ──
+	// 超级管理员 / 平台管理员对全站应用的强制管控（冻结 / 限制 / 封禁 / 归档）。
+	// 判定走内存快照，因此必须在任何执行点被调用之前 Initialize；
+	// 加载失败时快照为空 = 全部放行（fail-open），与防火墙的取向一致 ——
+	// 治理表读不出来时把整个平台锁死，代价远大于漏放一会儿。
+	governanceService := service.NewPlatformGovernanceService(log, pg, sessions)
+	governanceService.SetAdminInbox(adminInboxService)
+	governanceService.SetPluginService(pluginService)
+	if err := governanceService.Initialize(ctx); err != nil {
+		log.Warn("平台治理状态加载失败，本轮判定按无治理放行", zap.Error(err))
+	}
+	// 执行点注入：每一处都对应 platformdomain 里的一项限制，
+	// 少接一处就等于那一项开关只落库不生效。
+	appService.SetGovernanceService(governanceService)             // blockLogin / blockRegister
+	authService.SetGovernanceService(governanceService)            // blockApi
+	paymentService.SetGovernanceService(governanceService)         // blockPayment
+	storageService.SetGovernanceService(governanceService)         // blockStorage
+	notificationService.SetGovernanceService(governanceService)    // blockNotification（站内信）
+	emailService.SetGovernanceService(governanceService)           // blockNotification（邮件）
+
+	// 统一通知出口：所有业务事件（工单、SLA 告警…）只发到这里，
+	// 由订阅表决定投给飞书 / 钉钉 / 企微 / Slack / Webhook / 邮件 / 站内信 / 实时推送
+	notifyHub := service.NewNotifyHub(log, pg, cfg, emailService, notificationService, adminInboxService, realtimeService)
+	if base := strings.TrimSpace(cfg.ConsoleBaseURL); base != "" {
+		notifyHub.SetConsoleBaseURL(base)
+	}
+	// 工单系统：权限判定依赖 AdminService（Casbin），通知统一走 NotifyHub
+	ticketService := service.NewTicketService(log, pg, adminService, notifyHub, storageService)
+	go func() {
+		seedCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := deviceMarketingService.SeedIfEmpty(seedCtx); err != nil {
+			log.Warn("seed device marketing names failed", zap.Error(err))
+		}
+	}()
 	_, err = js.QueueSubscribe(event.SubjectUserAutoSignSync, workerQueueAutoSignSync, func(msg *nats.Msg) {
 		payload := map[string]any{}
 		_ = json.Unmarshal(msg.Data, &payload)
@@ -266,18 +445,18 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		_ = accountBanService.Close(context.Background())
 		locationService.Close()
 		realtimeService.Close(context.Background())
-		temporalClient.Close()
+		closeTemporal()
 		natsConn.Close()
 		_ = redisClient.Close()
 		postgres.Close()
 		return nil, err
 	}
-	router, err := httptransport.NewRouter(authService, adminService, userService, signInService, pointsService, notificationService, appService, siteService, versionService, roleApplicationService, emailService, paymentService, workflowService, storageService, avatarService, monitorService, firewall, replayGuard, locationService, realtimeService, systemService, securityService, captchaService, firewallLogService, ipBanService, lotteryService, announcementService, ldapService, oidcService, samlService, sessions, orgService, templateService, auditService, pluginService, dashboardService, approvalService, sessionMgmtService, storageResourceService, userMasterService, reportService, riskService, memoryManager, cl, log, cfg.CORS)
+	router, err := httptransport.NewRouter(authService, adminService, userService, signInService, pointsService, notificationService, appService, siteService, versionService, roleApplicationService, emailService, paymentService, walletService, vipService, workflowService, storageService, avatarService, monitorService, firewall, replayGuard, locationService, realtimeService, systemService, securityService, captchaService, firewallLogService, ipBanService, geoBanService, geoFenceService, geoAnalyticsService, lotteryService, announcementService, ldapService, oidcService, samlService, sessions, orgService, templateService, auditService, pluginService, appFunctionService, authProtocolService, dashboardService, approvalService, sessionMgmtService, storageResourceService, userMasterService, reportService, riskService, deviceMarketingService, platformBannerService, ticketService, notifyHub, adminInboxService, appOAuthService, authProviderHealthService, memoryManager, databaseManager, egressService, governanceService, cl, log, cfg.CORS, cfg.TrustedProxies, cfg.DocsPortalURL)
 	if err != nil {
 		_ = accountBanService.Close(context.Background())
 		locationService.Close()
 		realtimeService.Close(context.Background())
-		temporalClient.Close()
+		closeTemporal()
 		natsConn.Close()
 		_ = redisClient.Close()
 		postgres.Close()
@@ -293,65 +472,87 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		IdleTimeout:       60 * time.Second,
 	}
 
-	// 启动监控后台采集器
-	monitorService.StartCollector(ctx, 15*time.Second)
-
-	// 启动内存管理系统
-	memoryManager.Start(ctx)
-
-	SafeGo(log, cl, "api.admin_session_cleanup", true, func() {
-		app := &APIApp{
-			Config:      cfg,
-			Logger:      log,
-			CrashLog:    cl,
-			SessionMgmt: sessionMgmtService,
-		}
-		app.runAdminSessionCleanupLoop(ctx)
-	})
-
-	if scheduled, processed, catchUpErr := autoSignService.CatchUpOnStartup(ctx); catchUpErr != nil {
-		log.Warn("api auto sign startup catch-up failed", zap.Error(catchUpErr))
-	} else {
-		log.Info("api auto sign startup catch-up completed", zap.Int("scheduled", scheduled), zap.Int("processed", processed))
-	}
-	SafeGo(log, cl, "api.auto_sign", true, func() {
-		app := &APIApp{
-			Config:   cfg,
-			Logger:   log,
-			CrashLog: cl,
-			AutoSign: autoSignService,
-		}
-		app.runAutoSignLoop(ctx)
-	})
-
 	app := &APIApp{
-		Config:          cfg,
-		ConfigManager:   manager,
-		Logger:          log,
-		CrashLog:        cl,
-		Router:          router,
-		Server:          server,
-		Postgres:        postgres,
-		Redis:           redisClient,
-		NATSConn:        natsConn,
-		JetStream:       js,
-		Temporal:        temporalClient,
-		Realtime:        realtimeService,
-		Payment:         paymentService,
-		AutoSign:        autoSignService,
-		SessionMgmt:     sessionMgmtService,
-		AdminUserSearch: adminUserSearch,
-		AccountBan:      accountBanService,
-		Location:        locationService,
-		Monitor:         monitorService,
-		Memory:          memoryManager,
-		ShutdownTracing: shutdownTracing,
+		Config:             cfg,
+		ConfigManager:      manager,
+		Logger:             log,
+		CrashLog:           cl,
+		Router:             router,
+		Server:             server,
+		Postgres:           postgres,
+		Redis:              redisClient,
+		NATSConn:           natsConn,
+		JetStream:          js,
+		Temporal:           temporalClient,
+		Realtime:           realtimeService,
+		Payment:            paymentService,
+		AutoSign:           autoSignService,
+		SessionMgmt:        sessionMgmtService,
+		AdminUserSearch:    adminUserSearch,
+		AccountBan:         accountBanService,
+		Location:           locationService,
+		Monitor:            monitorService,
+		Memory:             memoryManager,
+		Firewall:           firewall,
+		Security:           securityService,
+		Risk:               riskService,
+		Governance:         governanceService,
+		AuthProviderHealth: authProviderHealthService,
+		Egress:             egressService,
+		EgressGateway:      egressGateway,
+		OwnsEgress:         ownsEgress,
+		Database:           databaseManager,
+		PostgresHandle:     pgHandle,
+		ShutdownTracing:    shutdownTracing,
 	}
-	registerAPIConfigHotReload(manager, log, firewall, securityService, autoSignService, accountBanService, riskService)
 	return app, nil
 }
 
+func (a *APIApp) Start(ctx context.Context) error {
+	if a.AccountBan != nil {
+		a.AccountBan.Start()
+	}
+	if a.Monitor != nil {
+		a.Monitor.StartCollector(ctx, 15*time.Second)
+	}
+	if a.Memory != nil {
+		a.Memory.Start(ctx)
+	}
+	if a.Database != nil {
+		a.Database.Start(ctx)
+	}
+	if a.Governance != nil {
+		a.Governance.Start(ctx)
+	}
+	if a.OwnsEgress && a.EgressGateway != nil {
+		a.EgressGateway.Start(ctx)
+	}
+	registerAPIConfigHotReload(a.ConfigManager, a.Logger, a.Firewall, a.Security, a.AutoSign, a.AccountBan, a.Risk, a.Egress)
+
+	SafeGo(a.Logger, a.CrashLog, "api.admin_session_cleanup", true, func() {
+		a.runAdminSessionCleanupLoop(ctx)
+	})
+
+	if a.AutoSign != nil {
+		if scheduled, processed, err := a.AutoSign.CatchUpOnStartup(ctx); err != nil {
+			a.Logger.Warn("api auto sign startup catch-up failed", zap.Error(err))
+		} else {
+			a.Logger.Info("api auto sign startup catch-up completed", zap.Int("scheduled", scheduled), zap.Int("processed", processed))
+		}
+		SafeGo(a.Logger, a.CrashLog, "api.auto_sign", true, func() {
+			a.runAutoSignLoop(ctx)
+		})
+	}
+	return nil
+}
+
 func (a *APIApp) Close(ctx context.Context) {
+	if a.Governance != nil {
+		a.Governance.Stop()
+	}
+	if a.Database != nil {
+		a.Database.Stop()
+	}
 	if a.Memory != nil {
 		a.Memory.Stop()
 	}
@@ -376,6 +577,14 @@ func (a *APIApp) Close(ctx context.Context) {
 	if a.Location != nil {
 		a.Location.Close()
 	}
+	// 停止第三方认证源后台探测循环
+	if a.AuthProviderHealth != nil {
+		a.AuthProviderHealth.Close()
+	}
+	// 出海网关持有 SSH 长连接与健康探测协程，必须显式释放
+	if a.OwnsEgress {
+		releaseEgressGateway(a.EgressGateway)
+	}
 	if a.Redis != nil {
 		_ = a.Redis.Close()
 	}
@@ -386,7 +595,10 @@ func (a *APIApp) Close(ctx context.Context) {
 	if a.Temporal != nil {
 		a.Temporal.Close()
 	}
-	if a.Postgres != nil {
+	// 连接池最后关闭，且先排空在途查询再断开
+	if a.PostgresHandle != nil {
+		a.PostgresHandle.Close(ctx)
+	} else if a.Postgres != nil {
 		a.Postgres.Close()
 	}
 	if a.ShutdownTracing != nil {

@@ -31,7 +31,9 @@ func (s *MonitorService) SetMonitorRepo(repo *redisrepo.MonitorRepository) {
 }
 
 // SetCrashLog 设置崩溃日志管理器（在 bootstrap 中调用）
-func (s *MonitorService) SetCrashLog(cl interface{ Write(component string, r interface{}, recovered bool) }) {
+func (s *MonitorService) SetCrashLog(cl interface {
+	Write(component string, r interface{}, recovered bool)
+}) {
 	s.crashLog = cl
 }
 
@@ -200,8 +202,8 @@ func (s *MonitorService) aggregateHourly(parentCtx context.Context) {
 
 	// 聚合上一个完整小时
 	now := time.Now().UTC()
-	hourEnd := now.Truncate(time.Hour)              // 本小时开始 = 上小时结束
-	hourStart := hourEnd.Add(-1 * time.Hour)         // 上小时开始
+	hourEnd := now.Truncate(time.Hour)       // 本小时开始 = 上小时结束
+	hourStart := hourEnd.Add(-1 * time.Hour) // 上小时开始
 	startMs := hourStart.UnixMilli()
 	endMs := hourEnd.UnixMilli() - 1
 

@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,11 +37,13 @@ type UserService struct {
 	sessions  *redisrepo.SessionRepository
 	publisher *event.Publisher
 	security  *SecurityService
+	location  *LocationService
 	email     *EmailService
 	captcha   *CaptchaService
 	plugin    *PluginService
 	search    *AdminUserSearchService
 	ban       *AccountBanService
+	app       *AppService
 }
 
 const (
@@ -57,12 +61,22 @@ func (s *UserService) SetVerificationServices(email *EmailService, captcha *Capt
 	s.captcha = captcha
 }
 
+func (s *UserService) SetLocationService(location *LocationService) {
+	s.location = location
+}
+
 func (s *UserService) SetAdminUserSearchService(search *AdminUserSearchService) {
 	s.search = search
 }
 
 func (s *UserService) SetAccountBanService(ban *AccountBanService) {
 	s.ban = ban
+}
+
+// SetAppService 注入应用服务，用于按应用密码策略推导密码生命周期
+// （过期时间 / 历史留存条数）。未注入时管理员重置密码不写过期与历史。
+func (s *UserService) SetAppService(app *AppService) {
+	s.app = app
 }
 
 func NewUserService(log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, publisher *event.Publisher, security *SecurityService) *UserService {
@@ -192,15 +206,20 @@ func (s *UserService) UpdateProfile(ctx context.Context, session *authdomain.Ses
 	if profile.Extra == nil {
 		profile.Extra = map[string]any{}
 	}
+	queuedSensitiveFields := make([]string, 0, 2)
 	if v := strings.TrimSpace(input.Email); v != "" && !strings.EqualFold(v, strings.TrimSpace(profile.Email)) {
 		if err := s.queueSensitiveProfileChange(ctx, session, profileChangeFieldEmail, v); err != nil {
+			s.rollbackPendingProfileChanges(ctx, session, queuedSensitiveFields)
 			return nil, err
 		}
+		queuedSensitiveFields = append(queuedSensitiveFields, profileChangeFieldEmail)
 	}
 	if v := strings.TrimSpace(input.Phone); v != "" && v != strings.TrimSpace(profile.Phone) {
 		if err := s.queueSensitiveProfileChange(ctx, session, profileChangeFieldPhone, v); err != nil {
+			s.rollbackPendingProfileChanges(ctx, session, queuedSensitiveFields)
 			return nil, err
 		}
+		queuedSensitiveFields = append(queuedSensitiveFields, profileChangeFieldPhone)
 	}
 	if profileChanged {
 		if err := s.persistProfileUpdate(ctx, session, user.ID, profile); err != nil {
@@ -230,6 +249,12 @@ func (s *UserService) ConfirmSensitiveProfileChange(ctx context.Context, session
 	if profile == nil {
 		profile = &userdomain.Profile{UserID: user.ID, Extra: map[string]any{}}
 	}
+	var (
+		notificationEmail    string
+		notificationOldValue string
+		notificationNewValue string
+		secondaryEmail       string
+	)
 	change, err := s.sessions.GetPendingProfileChange(ctx, session.AppID, session.UserID, field)
 	if err != nil {
 		return nil, err
@@ -256,6 +281,10 @@ func (s *UserService) ConfirmSensitiveProfileChange(ctx context.Context, session
 		if ownerID > 0 && ownerID != session.UserID {
 			return nil, apperrors.New(40901, http.StatusConflict, "邮箱已被其他账号占用")
 		}
+		notificationOldValue = profile.Email
+		notificationNewValue = change.Value
+		notificationEmail = change.Value
+		secondaryEmail = strings.TrimSpace(profile.Email)
 		profile.Email = change.Value
 	case profileChangeFieldPhone:
 		if s.captcha == nil {
@@ -280,6 +309,9 @@ func (s *UserService) ConfirmSensitiveProfileChange(ctx context.Context, session
 		if ownerID > 0 && ownerID != session.UserID {
 			return nil, apperrors.New(40901, http.StatusConflict, "手机号已被其他账号占用")
 		}
+		notificationOldValue = profile.Phone
+		notificationNewValue = change.Value
+		notificationEmail = strings.TrimSpace(profile.Email)
 		profile.Phone = change.Value
 	default:
 		return nil, apperrors.New(40000, http.StatusBadRequest, "不支持的资料变更字段")
@@ -290,6 +322,7 @@ func (s *UserService) ConfirmSensitiveProfileChange(ctx context.Context, session
 	if err := s.sessions.DeletePendingProfileChange(ctx, session.AppID, session.UserID, field); err != nil {
 		s.log.Warn("delete pending profile change failed", zap.Int64("appid", session.AppID), zap.Int64("userId", session.UserID), zap.String("field", field), zap.Error(err))
 	}
+	s.notifyProfileChangeCompleted(session.AppID, session.UserID, field, notificationEmail, notificationOldValue, notificationNewValue, secondaryEmail)
 	pendingChanges, err := s.loadPendingProfileChanges(ctx, session.AppID, session.UserID)
 	if err != nil {
 		return nil, err
@@ -339,7 +372,16 @@ func (s *UserService) queueSensitiveProfileChange(ctx context.Context, session *
 	default:
 		return apperrors.New(40000, http.StatusBadRequest, "不支持的资料变更字段")
 	}
-	return s.sessions.SetPendingProfileChange(ctx, session.AppID, session.UserID, change, profileChangeTTL)
+	if err := s.sessions.SetPendingProfileChange(ctx, session.AppID, session.UserID, change, profileChangeTTL); err != nil {
+		return err
+	}
+	if err := s.dispatchSensitiveProfileChangeCode(ctx, session, change); err != nil {
+		if deleteErr := s.sessions.DeletePendingProfileChange(ctx, session.AppID, session.UserID, field); deleteErr != nil {
+			s.log.Warn("rollback pending profile change failed", zap.Int64("appid", session.AppID), zap.Int64("userId", session.UserID), zap.String("field", field), zap.Error(deleteErr))
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *UserService) loadPendingProfileChanges(ctx context.Context, appID int64, userID int64) ([]userdomain.PendingProfileChange, error) {
@@ -351,6 +393,114 @@ func (s *UserService) loadPendingProfileChanges(ctx context.Context, appID int64
 		return items[i].RequestedAt.Before(items[j].RequestedAt)
 	})
 	return items, nil
+}
+
+func (s *UserService) dispatchSensitiveProfileChangeCode(ctx context.Context, session *authdomain.Session, change userdomain.PendingProfileChange) error {
+	switch change.Field {
+	case profileChangeFieldEmail:
+		if s.email == nil {
+			return apperrors.New(50310, http.StatusServiceUnavailable, "邮箱验证服务暂不可用")
+		}
+		_, err := s.email.SendVerificationCode(ctx, session.AppID, change.Value, change.Purpose, int(profileChangeTTL/time.Minute), "")
+		return err
+	case profileChangeFieldPhone:
+		if s.captcha == nil {
+			return apperrors.New(50310, http.StatusServiceUnavailable, "短信验证服务暂不可用")
+		}
+		providerCfg, err := s.resolveProfileChangeSMSProviderConfig(ctx, session.AppID, captchadomain.Purpose(change.Purpose))
+		if err != nil {
+			return err
+		}
+		_, err = s.captcha.SendTrustedSMSCode(ctx, captchadomain.SMSSendRequest{
+			AppID:    session.AppID,
+			Phone:    change.Value,
+			Purpose:  captchadomain.Purpose(change.Purpose),
+			ClientIP: strings.TrimSpace(session.IP),
+		}, providerCfg)
+		return err
+	default:
+		return apperrors.New(40000, http.StatusBadRequest, "不支持的资料变更字段")
+	}
+}
+
+func (s *UserService) resolveProfileChangeSMSProviderConfig(ctx context.Context, appID int64, purpose captchadomain.Purpose) (*captchadomain.SMSProviderConfig, error) {
+	app, err := s.pg.GetAppByID(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	if app == nil {
+		return nil, apperrors.New(40410, http.StatusNotFound, "无法找到该应用")
+	}
+
+	cfg := captchadomain.DefaultCaptchaAppConfig()
+	if raw, ok := app.Settings["captcha"]; ok && raw != nil {
+		payload, err := json.Marshal(raw)
+		if err != nil {
+			return nil, apperrors.New(50000, http.StatusInternalServerError, "短信验证配置解析失败")
+		}
+		if err := json.Unmarshal(payload, &cfg); err != nil {
+			return nil, apperrors.New(50000, http.StatusInternalServerError, "短信验证配置解析失败")
+		}
+	}
+
+	if !cfg.SMSEnabled {
+		return nil, apperrors.New(50310, http.StatusServiceUnavailable, "短信验证服务暂不可用")
+	}
+	providerCfg, err := BuildSMSProviderConfig(appID, purpose, cfg.SMS)
+	if err != nil {
+		return nil, apperrors.New(50310, http.StatusServiceUnavailable, "短信验证服务尚未配置完整")
+	}
+	return providerCfg, nil
+}
+
+func (s *UserService) rollbackPendingProfileChanges(ctx context.Context, session *authdomain.Session, fields []string) {
+	for _, field := range fields {
+		if err := s.sessions.DeletePendingProfileChange(ctx, session.AppID, session.UserID, field); err != nil {
+			s.log.Warn("rollback pending profile change failed", zap.Int64("appid", session.AppID), zap.Int64("userId", session.UserID), zap.String("field", field), zap.Error(err))
+		}
+	}
+}
+
+func (s *UserService) notifyProfileChangeCompleted(appID int64, userID int64, field string, primaryEmail string, oldValue string, newValue string, secondaryEmail string) {
+	if s.email == nil {
+		return
+	}
+
+	recipients := make([]string, 0, 2)
+	if email := strings.TrimSpace(primaryEmail); email != "" {
+		recipients = append(recipients, email)
+	}
+	if email := strings.TrimSpace(secondaryEmail); email != "" {
+		duplicate := false
+		for _, item := range recipients {
+			if strings.EqualFold(item, email) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			recipients = append(recipients, email)
+		}
+	}
+	if len(recipients) == 0 {
+		return
+	}
+
+	go func(recipients []string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		for _, recipient := range recipients {
+			if err := s.email.SendProfileChangeCompletedEmail(ctx, appID, recipient, field, oldValue, newValue, ""); err != nil {
+				s.log.Warn("send profile change completed email failed",
+					zap.Int64("appid", appID),
+					zap.Int64("userId", userID),
+					zap.String("field", field),
+					zap.String("recipient", recipient),
+					zap.Error(err),
+				)
+			}
+		}
+	}(append([]string(nil), recipients...))
 }
 
 func (s *UserService) persistProfileUpdate(ctx context.Context, session *authdomain.Session, userID int64, profile *userdomain.Profile) error {
@@ -394,6 +544,9 @@ func maskPhoneValue(value string) string {
 	return value[:3] + "****" + value[len(value)-4:]
 }
 
+// adminUserListMaxLimit 管理端用户列表单页上限。
+const adminUserListMaxLimit = 500
+
 func (s *UserService) ListAdminUsers(ctx context.Context, appID int64, query userdomain.AdminUserQuery) (*userdomain.AdminUserListResult, error) {
 	page := query.Page
 	if page < 1 {
@@ -403,8 +556,10 @@ func (s *UserService) ListAdminUsers(ctx context.Context, appID int64, query use
 	if limit <= 0 {
 		limit = 20
 	}
-	if limit > 100 {
-		limit = 100
+	// 上限 500：控制台列表用虚拟滚动承载大页，200/500 是真实档位。
+	// 再高就该用导出而不是列表了（导出另有 20000 的上限）。
+	if limit > adminUserListMaxLimit {
+		limit = adminUserListMaxLimit
 	}
 	query.Page = page
 	query.Limit = limit
@@ -449,6 +604,387 @@ func (s *UserService) GetAdminUser(ctx context.Context, appID int64, userID int6
 		return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
 	}
 	return item, nil
+}
+
+func (s *UserService) GetAdminUserDetail(ctx context.Context, appID int64, userID int64) (*userdomain.AdminUserDetail, error) {
+	item, err := s.GetAdminUser(ctx, appID, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	profile, err := s.pg.GetUserProfileByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if profile == nil {
+		profile = &userdomain.Profile{
+			UserID: userID,
+			Extra:  map[string]any{},
+		}
+	} else if profile.Extra == nil {
+		profile.Extra = map[string]any{}
+	}
+	if item.Extra == nil {
+		item.Extra = map[string]any{}
+	}
+	mergeAdminUserProfileFields(item, profile)
+	s.enrichProfileRegisterLocationAsync(appID, userID, profile)
+
+	settings, err := s.GetAdminUserSettings(ctx, appID, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	security, err := s.GetSecurityStatus(ctx, &authdomain.Session{
+		AppID:  appID,
+		UserID: userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &userdomain.AdminUserDetail{
+		AdminUserView: *item,
+		Profile:       profile,
+		Settings:      settings,
+		Security:      security,
+	}, nil
+}
+
+func (s *UserService) backfillProfileRegisterIPAsync(appID int64, userID int64, profile *userdomain.Profile, requestIP string) *userdomain.Profile {
+	profile, registerIP, shouldPersist := applyRegisterIPFallback(userID, profile, requestIP)
+	if !shouldPersist || s.pg == nil {
+		return profile
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.pg.PatchUserProfileExtra(ctx, userID, map[string]any{"register_ip": registerIP}); err != nil {
+			s.log.Warn("async backfill register ip failed",
+				zap.Int64("appid", appID),
+				zap.Int64("userId", userID),
+				zap.String("registerIp", registerIP),
+				zap.Error(err),
+			)
+			return
+		}
+		if s.sessions != nil {
+			_ = s.sessions.DeleteMyView(ctx, appID, userID)
+			_ = s.sessions.DeleteUserProfile(ctx, appID, userID)
+		}
+		s.log.Debug("async backfilled register ip",
+			zap.Int64("appid", appID),
+			zap.Int64("userId", userID),
+			zap.String("registerIp", registerIP),
+		)
+	}()
+	return profile
+}
+
+func applyRegisterIPFallback(userID int64, profile *userdomain.Profile, requestIP string) (*userdomain.Profile, string, bool) {
+	requestIP = sanitizeIP(requestIP)
+	if profile == nil {
+		if requestIP == "" {
+			return nil, "", false
+		}
+		profile = &userdomain.Profile{UserID: userID, Extra: map[string]any{}}
+	}
+	if profile.Extra == nil {
+		profile.Extra = map[string]any{}
+	}
+	if registerIP := sanitizeIP(profile.RegisterIP); registerIP != "" {
+		profile.RegisterIP = registerIP
+		if _, exists := profile.Extra["register_ip"]; !exists {
+			profile.Extra["register_ip"] = registerIP
+		}
+		return profile, "", false
+	}
+	if value, ok := profile.Extra["register_ip"].(string); ok {
+		if registerIP := sanitizeIP(value); registerIP != "" {
+			profile.RegisterIP = registerIP
+			profile.Extra["register_ip"] = registerIP
+			return profile, "", false
+		}
+	}
+	if requestIP == "" {
+		return profile, "", false
+	}
+	profile.RegisterIP = requestIP
+	profile.Extra["register_ip"] = requestIP
+	return profile, requestIP, true
+}
+
+func (s *UserService) enrichProfileRegisterLocationAsync(appID int64, userID int64, profile *userdomain.Profile) {
+	ip, shouldEnrich := shouldEnrichProfileRegisterLocation(profile)
+	if !shouldEnrich || s.location == nil || s.pg == nil {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		loc := s.location.Resolve(ctx, ip)
+		patch := buildRegisterLocationPatch(ip, loc)
+		if len(patch) == 0 {
+			return
+		}
+		if err := s.pg.PatchUserProfileExtra(ctx, userID, patch); err != nil {
+			s.log.Warn("async enrich register location failed",
+				zap.Int64("appid", appID),
+				zap.Int64("userId", userID),
+				zap.String("registerIp", ip),
+				zap.Error(err),
+			)
+			return
+		}
+		if s.sessions != nil {
+			_ = s.sessions.DeleteMyView(ctx, appID, userID)
+			_ = s.sessions.DeleteUserProfile(ctx, appID, userID)
+		}
+		s.log.Debug("async enriched register location",
+			zap.Int64("appid", appID),
+			zap.Int64("userId", userID),
+			zap.String("registerIp", ip),
+			zap.String("province", strings.TrimSpace(loc.Region)),
+			zap.String("city", strings.TrimSpace(loc.City)),
+			zap.String("isp", strings.TrimSpace(loc.ISP)),
+		)
+	}()
+}
+
+func shouldEnrichProfileRegisterLocation(profile *userdomain.Profile) (string, bool) {
+	if profile == nil {
+		return "", false
+	}
+	ip := strings.TrimSpace(profile.RegisterIP)
+	if ip == "" && profile.Extra != nil {
+		if value, ok := profile.Extra["register_ip"].(string); ok {
+			ip = strings.TrimSpace(value)
+		}
+	}
+	if ip == "" {
+		return "", false
+	}
+	if strings.TrimSpace(profile.RegisterProvince) != "" &&
+		strings.TrimSpace(profile.RegisterCity) != "" &&
+		strings.TrimSpace(profile.RegisterISP) != "" {
+		return "", false
+	}
+	return ip, true
+}
+
+func buildRegisterLocationPatch(ip string, loc IPLocation) map[string]any {
+	ip = strings.TrimSpace(ip)
+	if ip == "" || loc.IsPrivate {
+		return nil
+	}
+
+	patch := map[string]any{
+		"register_ip": ip,
+	}
+	if value := strings.TrimSpace(loc.Region); value != "" {
+		patch["register_province"] = value
+	}
+	if value := strings.TrimSpace(loc.City); value != "" {
+		patch["register_city"] = value
+	}
+	if value := strings.TrimSpace(loc.ISP); value != "" {
+		patch["register_isp"] = value
+	}
+	if len(patch) == 1 {
+		return nil
+	}
+	return patch
+}
+
+func mergeAdminUserProfileFields(item *userdomain.AdminUserView, profile *userdomain.Profile) {
+	if item == nil || profile == nil {
+		return
+	}
+	if item.Extra == nil {
+		item.Extra = map[string]any{}
+	}
+	if profile.Extra == nil {
+		profile.Extra = map[string]any{}
+	}
+	for key, value := range item.Extra {
+		if _, exists := profile.Extra[key]; !exists {
+			profile.Extra[key] = value
+		}
+	}
+	for key, value := range profile.Extra {
+		if _, exists := item.Extra[key]; !exists {
+			item.Extra[key] = value
+		}
+	}
+	if strings.TrimSpace(item.Nickname) == "" {
+		item.Nickname = profile.Nickname
+	}
+	if strings.TrimSpace(item.Avatar) == "" {
+		item.Avatar = profile.Avatar
+	}
+	if strings.TrimSpace(item.Email) == "" {
+		item.Email = profile.Email
+	}
+	if strings.TrimSpace(item.Phone) == "" {
+		item.Phone = profile.Phone
+	}
+	if strings.TrimSpace(item.InviteCode) == "" {
+		item.InviteCode = profile.InviteCode
+	}
+	if strings.TrimSpace(item.RegisterIP) == "" {
+		item.RegisterIP = profile.RegisterIP
+	}
+	if strings.TrimSpace(item.RegisterIP) == "" {
+		if value, ok := profile.Extra["register_ip"].(string); ok {
+			item.RegisterIP = strings.TrimSpace(value)
+		}
+	}
+	if item.RegisterTime == nil {
+		item.RegisterTime = profile.RegisterTime
+	}
+	if item.RegisterTime == nil {
+		item.RegisterTime = timeFromAny(profile.Extra["register_time"])
+	}
+	if strings.TrimSpace(item.RegisterProvince) == "" {
+		item.RegisterProvince = profile.RegisterProvince
+	}
+	if strings.TrimSpace(item.RegisterProvince) == "" {
+		if value, ok := profile.Extra["register_province"].(string); ok {
+			item.RegisterProvince = strings.TrimSpace(value)
+		}
+	}
+	if strings.TrimSpace(item.RegisterCity) == "" {
+		item.RegisterCity = profile.RegisterCity
+	}
+	if strings.TrimSpace(item.RegisterCity) == "" {
+		if value, ok := profile.Extra["register_city"].(string); ok {
+			item.RegisterCity = strings.TrimSpace(value)
+		}
+	}
+	if strings.TrimSpace(item.RegisterISP) == "" {
+		item.RegisterISP = profile.RegisterISP
+	}
+	if strings.TrimSpace(item.RegisterISP) == "" {
+		if value, ok := profile.Extra["register_isp"].(string); ok {
+			item.RegisterISP = strings.TrimSpace(value)
+		}
+	}
+	if strings.TrimSpace(item.DisabledReason) == "" {
+		item.DisabledReason = profile.DisabledReason
+	}
+	if strings.TrimSpace(item.MarkCode) == "" {
+		item.MarkCode = profile.MarkCode
+	}
+	if strings.TrimSpace(profile.Nickname) == "" {
+		profile.Nickname = item.Nickname
+	}
+	if strings.TrimSpace(profile.Avatar) == "" {
+		profile.Avatar = item.Avatar
+	}
+	if strings.TrimSpace(profile.Email) == "" {
+		profile.Email = item.Email
+	}
+	if strings.TrimSpace(profile.Phone) == "" {
+		profile.Phone = item.Phone
+	}
+	if strings.TrimSpace(profile.InviteCode) == "" {
+		profile.InviteCode = item.InviteCode
+	}
+	if strings.TrimSpace(profile.RegisterIP) == "" {
+		profile.RegisterIP = item.RegisterIP
+	}
+	if strings.TrimSpace(profile.RegisterIP) == "" {
+		if value, ok := item.Extra["register_ip"].(string); ok {
+			profile.RegisterIP = strings.TrimSpace(value)
+		}
+	}
+	if profile.RegisterTime == nil {
+		profile.RegisterTime = item.RegisterTime
+	}
+	if profile.RegisterTime == nil {
+		profile.RegisterTime = timeFromAny(item.Extra["register_time"])
+	}
+	if strings.TrimSpace(profile.RegisterProvince) == "" {
+		profile.RegisterProvince = item.RegisterProvince
+	}
+	if strings.TrimSpace(profile.RegisterProvince) == "" {
+		if value, ok := item.Extra["register_province"].(string); ok {
+			profile.RegisterProvince = strings.TrimSpace(value)
+		}
+	}
+	if strings.TrimSpace(profile.RegisterCity) == "" {
+		profile.RegisterCity = item.RegisterCity
+	}
+	if strings.TrimSpace(profile.RegisterCity) == "" {
+		if value, ok := item.Extra["register_city"].(string); ok {
+			profile.RegisterCity = strings.TrimSpace(value)
+		}
+	}
+	if strings.TrimSpace(profile.RegisterISP) == "" {
+		profile.RegisterISP = item.RegisterISP
+	}
+	if strings.TrimSpace(profile.RegisterISP) == "" {
+		if value, ok := item.Extra["register_isp"].(string); ok {
+			profile.RegisterISP = strings.TrimSpace(value)
+		}
+	}
+	if strings.TrimSpace(profile.DisabledReason) == "" {
+		profile.DisabledReason = item.DisabledReason
+	}
+	if strings.TrimSpace(profile.MarkCode) == "" {
+		profile.MarkCode = item.MarkCode
+	}
+}
+
+func timeFromAny(raw any) *time.Time {
+	switch value := raw.(type) {
+	case nil:
+		return nil
+	case time.Time:
+		v := value.UTC()
+		return &v
+	case *time.Time:
+		if value == nil {
+			return nil
+		}
+		v := value.UTC()
+		return &v
+	case string:
+		text := strings.TrimSpace(value)
+		if text == "" {
+			return nil
+		}
+		if parsed, err := time.Parse(time.RFC3339, text); err == nil {
+			v := parsed.UTC()
+			return &v
+		}
+		if unix, err := strconv.ParseInt(text, 10, 64); err == nil {
+			if unix > 1_000_000_000_000 {
+				t := time.UnixMilli(unix).UTC()
+				return &t
+			}
+			t := time.Unix(unix, 0).UTC()
+			return &t
+		}
+	case int64:
+		t := time.Unix(value, 0).UTC()
+		return &t
+	case int:
+		t := time.Unix(int64(value), 0).UTC()
+		return &t
+	case float64:
+		unix := int64(value)
+		if unix > 1_000_000_000_000 {
+			t := time.UnixMilli(unix).UTC()
+			return &t
+		}
+		t := time.Unix(unix, 0).UTC()
+		return &t
+	}
+	return nil
 }
 
 func (s *UserService) ExportAdminUsers(ctx context.Context, appID int64, query userdomain.AdminUserQuery) ([]userdomain.AdminUserView, error) {
@@ -753,7 +1289,11 @@ func (s *UserService) GetSecurityStatus(ctx context.Context, session *authdomain
 		return cached, nil
 	}
 
-	user, profile, err := s.loadActiveUser(ctx, session)
+	user, _, err := s.loadActiveUser(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	securityState, err := s.pg.GetUserSecurityStateByUserID(ctx, session.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -761,15 +1301,28 @@ func (s *UserService) GetSecurityStatus(ctx context.Context, session *authdomain
 	if err != nil {
 		return nil, err
 	}
+	totpRecord, err := s.pg.GetUserTOTPSecret(ctx, session.AppID, session.UserID)
+	if err != nil {
+		return nil, err
+	}
+	passkeyItems, err := s.pg.ListUserPasskeys(ctx, session.AppID, session.UserID)
+	if err != nil {
+		return nil, err
+	}
+	twoFactorEnabled := totpRecord != nil && totpRecord.Enabled
+	twoFactorMethod := ""
+	if twoFactorEnabled {
+		twoFactorMethod = "totp"
+	}
 	status := userdomain.SecurityStatus{
 		HasPassword:            user.PasswordHash != "",
-		TwoFactorEnabled:       boolFromExtra(profile, "two_factor_enabled"),
-		TwoFactorMethod:        stringFromExtra(profile, "two_factor_method"),
-		PasskeyEnabled:         boolFromExtra(profile, "passkey_enabled"),
-		PasswordStrengthScore:  intFromExtra(profile, "password_strength_score"),
-		PasswordChangeRequired: boolFromExtra(profile, "password_change_required"),
-		PasswordChangedAt:      timeFromExtra(profile, "password_changed_at"),
-		PasswordExpiresAt:      timeFromExtra(profile, "password_expires_at"),
+		TwoFactorEnabled:       twoFactorEnabled,
+		TwoFactorMethod:        twoFactorMethod,
+		PasskeyEnabled:         len(passkeyItems) > 0,
+		PasswordStrengthScore:  securityIntValue(securityState, "password_strength_score"),
+		PasswordChangeRequired: securityBoolValue(securityState, "password_change_required"),
+		PasswordChangedAt:      securityTimeValue(securityState, "password_changed_at"),
+		PasswordExpiresAt:      securityTimeValue(securityState, "password_expires_at"),
 		OAuth2Bindings:         len(providers),
 		OAuth2Providers:        providers,
 	}
@@ -918,6 +1471,64 @@ func (s *UserService) ListLoginAudits(ctx context.Context, session *authdomain.S
 	}, nil
 }
 
+// AdminListUserLoginAudits 管理端：某个用户的登录审计。
+//
+//	与 AppService.ListLoginAudits（应用级、按 keyword 模糊搜）的区别是
+//	这里按 user_id 精确过滤。控制台的用户详情页需要「这一个人的登录历史」，
+//	用应用级接口 + keyword=账号 拼出来的结果既会混进他人记录
+//	（keyword 同时匹配 UA / IP / deviceId），分页总数也是错的。
+func (s *UserService) AdminListUserLoginAudits(ctx context.Context, appID int64, userID int64, query userdomain.LoginAuditQuery) (*userdomain.LoginAuditListResult, error) {
+	page, limit := normalizeAuditPaging(query.Page, query.Limit)
+	items, total, err := s.pg.ListLoginAuditsByUser(ctx, appID, userID, userdomain.LoginAuditQuery{
+		Status: query.Status,
+		Page:   page,
+		Limit:  limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &userdomain.LoginAuditListResult{
+		Items:      mapLoginAuditItems(items),
+		Page:       page,
+		Limit:      limit,
+		Total:      total,
+		TotalPages: calcPages(total, limit),
+	}, nil
+}
+
+// AdminListUserSessionAudits 管理端：某个用户的会话事件审计。
+func (s *UserService) AdminListUserSessionAudits(ctx context.Context, appID int64, userID int64, query userdomain.SessionAuditQuery) (*userdomain.SessionAuditListResult, error) {
+	page, limit := normalizeAuditPaging(query.Page, query.Limit)
+	items, total, err := s.pg.ListSessionAuditsByUser(ctx, appID, userID, userdomain.SessionAuditQuery{
+		EventType: query.EventType,
+		Page:      page,
+		Limit:     limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &userdomain.SessionAuditListResult{
+		Items:      mapSessionAuditItems(items),
+		Page:       page,
+		Limit:      limit,
+		Total:      total,
+		TotalPages: calcPages(total, limit),
+	}, nil
+}
+
+func normalizeAuditPaging(page int, limit int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return page, limit
+}
+
 func (s *UserService) ExportLoginAudits(ctx context.Context, session *authdomain.Session, query userdomain.LoginAuditExportQuery) ([]userdomain.LoginAuditItem, error) {
 	if _, _, err := s.loadActiveUser(ctx, session); err != nil {
 		return nil, err
@@ -1018,6 +1629,8 @@ func (s *UserService) loadActiveUser(ctx context.Context, session *authdomain.Se
 	if err != nil {
 		return nil, nil, err
 	}
+	profile = s.backfillProfileRegisterIPAsync(user.AppID, user.ID, profile, session.IP)
+	s.enrichProfileRegisterLocationAsync(user.AppID, user.ID, profile)
 	return user, profile, nil
 }
 
@@ -1172,87 +1785,6 @@ func cloneMap(value map[string]any) map[string]any {
 	return result
 }
 
-func boolFromExtra(profile *userdomain.Profile, key string) bool {
-	if profile == nil || profile.Extra == nil {
-		return false
-	}
-	value, ok := profile.Extra[key]
-	if !ok {
-		return false
-	}
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return typed == "true" || typed == "1"
-	case float64:
-		return typed != 0
-	case int:
-		return typed != 0
-	default:
-		return false
-	}
-}
-
-func stringFromExtra(profile *userdomain.Profile, key string) string {
-	if profile == nil || profile.Extra == nil {
-		return ""
-	}
-	value, ok := profile.Extra[key]
-	if !ok || value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprintf("%v", value))
-}
-
-func intFromExtra(profile *userdomain.Profile, key string) int {
-	if profile == nil || profile.Extra == nil {
-		return 0
-	}
-	value, ok := profile.Extra[key]
-	if !ok || value == nil {
-		return 0
-	}
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int64:
-		return int(typed)
-	case float64:
-		return int(typed)
-	case string:
-		var parsed int
-		_, _ = fmt.Sscanf(strings.TrimSpace(typed), "%d", &parsed)
-		return parsed
-	default:
-		return 0
-	}
-}
-
-func timeFromExtra(profile *userdomain.Profile, key string) *time.Time {
-	if profile == nil || profile.Extra == nil {
-		return nil
-	}
-	value, ok := profile.Extra[key]
-	if !ok || value == nil {
-		return nil
-	}
-	switch typed := value.(type) {
-	case time.Time:
-		v := typed.UTC()
-		return &v
-	case string:
-		for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", time.RFC3339Nano} {
-			parsed, err := time.Parse(layout, strings.TrimSpace(typed))
-			if err == nil {
-				v := parsed.UTC()
-				return &v
-			}
-		}
-	}
-	return nil
-}
-
 func calcPages(total int64, limit int) int {
 	if limit <= 0 {
 		return 1
@@ -1364,8 +1896,23 @@ func (s *UserService) AdminResetUserPassword(ctx context.Context, appID int64, u
 	if err != nil {
 		return fmt.Errorf("密码哈希失败: %w", err)
 	}
-	if err := s.pg.UpdateUserPassword(ctx, userID, hash, time.Now().UTC()); err != nil {
+	changedAt := time.Now().UTC()
+	// 管理员重置同样受应用密码策略的生命周期约束（过期时间 / 历史留存），
+	// 否则「管理员帮用户改一次密码」就绕过了整套策略。
+	var lifecycle PasswordLifecycle
+	if s.app != nil {
+		lifecycle = s.app.ResolvePasswordLifecycle(ctx, appID, changedAt)
+	}
+	// 旧哈希要在覆盖之前取出来，否则记进历史的是新密码
+	previousHash := ""
+	if current, err := s.pg.GetUserByID(ctx, userID); err == nil && current != nil {
+		previousHash = current.PasswordHash
+	}
+	if err := s.pg.UpdateUserPassword(ctx, userID, hash, changedAt, lifecycle.ExpiresAt); err != nil {
 		return fmt.Errorf("更新密码失败: %w", err)
+	}
+	if err := s.pg.AppendPasswordHistory(ctx, userID, previousHash, lifecycle.HistoryKeep); err != nil {
+		s.log.Warn("密码历史写入失败", zap.Int64("userId", userID), zap.Error(err))
 	}
 	// 吊销所有会话，强制用户重新登录
 	s.revokeAllUserSessions(ctx, appID, userID)
@@ -1554,6 +2101,16 @@ func (s *UserService) deleteAdminUserSearch(appID int64, userID int64) {
 }
 
 func shouldUseAdminUserSearch(query userdomain.AdminUserQuery) bool {
+	// 显式指定排序时一律走 Postgres。
+	//
+	// Bleve 索引里只有 user_id / created_at / enabled 三个可排序字段
+	//（integral / experience / updated_at / vip_expire_at 根本没进索引），
+	// 且 SearchUsers 把排序写死成 `-_score, -created_at, -user_id`。
+	// 让排序请求经过它，结果是**参数被静默丢弃**：界面上箭头切了、列表没动。
+	// 这比不支持排序糟得多 —— 宁可放弃这一次的搜索加速，也不能让控件说谎。
+	if strings.TrimSpace(query.Sort) != "" {
+		return false
+	}
 	return strings.TrimSpace(query.Keyword) != "" ||
 		strings.TrimSpace(query.Account) != "" ||
 		strings.TrimSpace(query.Nickname) != "" ||

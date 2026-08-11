@@ -1,6 +1,9 @@
 package main
 
 import (
+	"aegis/internal/bootstrap"
+	"aegis/internal/config"
+	"aegis/pkg/crashlog"
 	"context"
 	"os"
 	"os/signal"
@@ -8,17 +11,19 @@ import (
 	"syscall"
 	"time"
 
-	"fmt"
-
-	"aegis/internal/bootstrap"
-	"aegis/internal/config"
-	"aegis/pkg/crashlog"
 	"go.uber.org/zap"
 )
 
 func main() {
+	started := time.Now()
+
 	// 最早初始化崩溃日志管理器（独立于 zap，确保 panic 时可写入）
-	cfg, _ := config.Load()
+	cfg, cfgErr := config.Load()
+	if cfgErr != nil {
+		// 配置没读起来时横幅配置也是零值（Enabled=false）。
+		// 这种时候恰恰更需要横幅先证明进程活着，随后的装配错误再解释为什么起不来。
+		cfg.Banner = config.DefaultBannerConfig()
+	}
 	cl := crashlog.New(cfg.CrashLog.Dir, cfg.CrashLog.MaxFiles, cfg.CrashLog.MaxSize)
 	defer func() {
 		if r := recover(); r != nil {
@@ -47,6 +52,11 @@ func main() {
 				panic(err)
 			}
 			return
+		case "import-dump":
+			if err := bootstrap.RunImportDump(ctx, os.Args[2:]); err != nil {
+				panic(err)
+			}
+			return
 		case "openapi":
 			if err := bootstrap.RunExportOpenAPI(ctx, os.Args[2:]); err != nil {
 				panic(err)
@@ -65,7 +75,7 @@ func main() {
 		}
 	}
 
-	printBanner()
+	bootstrap.PrintBootBanner(cfg, bootstrap.RoleUnified)
 
 	app, err := bootstrap.NewUnifiedApp(ctx, cl)
 	if err != nil {
@@ -77,6 +87,7 @@ func main() {
 		zap.Int("port", app.API.Config.HTTPPort),
 		zap.String("mode", "api+worker"),
 	)
+	bootstrap.PrintReadyBanner(ctx, app.API.BannerRuntimeOf(bootstrap.RoleUnified, time.Since(started)))
 
 	// 监听停止信号文件（Windows 无法优雅发送 SIGINT 给后台进程）
 	go watchStopFile(stop, ".runtime/run/server.stop")
@@ -112,15 +123,4 @@ func watchStopFile(cancel context.CancelFunc, path string) {
 			return
 		}
 	}
-}
-
-func printBanner() {
-	const banner = `
-    ___    _____ ______________
-   /   |  / ____/ ____/  _/ ___/
-  / /| | / __/ / / __ / /  \__ \
- / ___ |/ /___/ /_/ // /_ ___/ /
-/_/  |_/_____/\____/___//____/
-`
-	fmt.Print(banner)
 }

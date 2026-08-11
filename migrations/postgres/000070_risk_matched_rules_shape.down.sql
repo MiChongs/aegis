@@ -1,0 +1,2 @@
+ALTER TABLE risk_assessments DROP CONSTRAINT IF EXISTS chk_risk_assessments_eval_context_object;
+ALTER TABLE risk_assessments DROP CONSTRAINT IF EXISTS chk_risk_assessments_matched_rules_array;

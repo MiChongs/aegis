@@ -10,6 +10,7 @@ import (
 
 	appdomain "aegis/internal/domain/app"
 	"aegis/internal/domain/auth"
+	systemdomain "aegis/internal/domain/system"
 	"aegis/internal/domain/user"
 	redislib "github.com/redis/go-redis/v9"
 )
@@ -224,6 +225,25 @@ func (r *SessionRepository) DeleteBanners(ctx context.Context, appID int64) erro
 	return r.client.Del(ctx, r.bannerKey(appID)).Err()
 }
 
+// ── 平台级 Banner 缓存（全局单键，不带 appID） ──
+
+func (r *SessionRepository) GetPlatformBanners(ctx context.Context) ([]systemdomain.PlatformBanner, error) {
+	var items []systemdomain.PlatformBanner
+	found, err := r.getJSON(ctx, r.platformBannerKey(), &items)
+	if err != nil || !found {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *SessionRepository) SetPlatformBanners(ctx context.Context, items []systemdomain.PlatformBanner, ttl time.Duration) error {
+	return r.setJSON(ctx, r.platformBannerKey(), items, ttl)
+}
+
+func (r *SessionRepository) DeletePlatformBanners(ctx context.Context) error {
+	return r.client.Del(ctx, r.platformBannerKey()).Err()
+}
+
 func (r *SessionRepository) GetNotices(ctx context.Context, appID int64) ([]appdomain.Notice, error) {
 	var items []appdomain.Notice
 	found, err := r.getJSON(ctx, r.noticeKey(appID), &items)
@@ -379,6 +399,10 @@ func (r *SessionRepository) bannerKey(appID int64) string {
 	return fmt.Sprintf("%s:app:banner:%d", r.keyPrefix, appID)
 }
 
+func (r *SessionRepository) platformBannerKey() string {
+	return fmt.Sprintf("%s:platform:banner:active", r.keyPrefix)
+}
+
 func (r *SessionRepository) noticeKey(appID int64) string {
 	return fmt.Sprintf("%s:app:notice:%d", r.keyPrefix, appID)
 }
@@ -397,6 +421,34 @@ func (r *SessionRepository) settingsKey(appID int64, userID int64, category stri
 
 func (r *SessionRepository) securityKey(appID int64, userID int64) string {
 	return fmt.Sprintf("%s:user:security:%d:%d", r.keyPrefix, appID, userID)
+}
+
+// firstDeviceKey 首次设备记录 key（账号首次登录/注册的设备，永久保留）
+func (r *SessionRepository) firstDeviceKey(appID int64, userID int64) string {
+	return fmt.Sprintf("%s:user:first_device:%d:%d", r.keyPrefix, appID, userID)
+}
+
+// GetFirstDevice 读取首次设备；未记录返回 (nil, false, nil)
+func (r *SessionRepository) GetFirstDevice(ctx context.Context, appID int64, userID int64) (*auth.FirstDevice, bool, error) {
+	var record auth.FirstDevice
+	found, err := r.getJSON(ctx, r.firstDeviceKey(appID, userID), &record)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	return &record, true, nil
+}
+
+// EnsureFirstDevice 若当前用户尚未记录首次设备则写入；已存在则不覆盖
+// 返回 true 表示本次确实写入（判定为首次），false 表示已有记录
+func (r *SessionRepository) EnsureFirstDevice(ctx context.Context, record auth.FirstDevice) (bool, error) {
+	key := r.firstDeviceKey(record.AppID, record.UserID)
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return false, err
+	}
+	// SET NX 语义：不存在才写入，且无 TTL（永久，除非人工清理）
+	ok, err := r.client.SetNX(ctx, key, payload, 0).Result()
+	return ok, err
 }
 
 func (r *SessionRepository) rankingKey(namespace string, appID int64, rankingType string, scope string, page int, limit int) string {

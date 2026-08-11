@@ -1,0 +1,137 @@
+{
+  "$meta": {
+    "name": "Japanese",
+    "nativeName": "日本語",
+    "direction": "ltr",
+    "script": "kana"
+  },
+  "$format": {
+    "group": ",",
+    "decimal": ".",
+    "groupSizes": [3],
+    "currency": "{symbol}{value}",
+    "currencyNegative": "-{symbol}{value}",
+    "date": "2006年1月2日",
+    "dateTime": "2006年1月2日 15:04 MST",
+    "time": "15:04",
+    "symbols": {
+      "JPY": "¥"
+    }
+  },
+
+  "doc.type.receipt": "領収書",
+  "doc.type.invoice": "請求書",
+  "doc.type.credit_note": "返金明細書",
+
+  "status.paid": "支払済み",
+  "status.pending": "未払い",
+  "status.refunded": "返金済み",
+  "status.partially_refunded": "一部返金",
+  "status.expired": "期限切れ",
+  "status.failed": "決済失敗",
+  "status.cancelled": "キャンセル",
+
+  "header.number": "番号 {number}",
+  "header.issuedAt": "発行日 {time}",
+  "header.continued": "{title} {number}（続き）",
+
+  "party.issuer": "発行者",
+  "party.customer": "請求先",
+  "party.merchant": "加盟店",
+  "party.guest": "ゲスト",
+
+  "table.description": "内容",
+  "table.quantity": "数量",
+  "table.unitPrice": "単価",
+  "table.amount": "金額",
+
+  "totals.subtotal": "小計",
+  "totals.discount": "割引",
+  "totals.tax": "消費税",
+  "totals.taxWithRate": "消費税（{rate}%）",
+  "totals.total": "合計",
+  "totals.refunded": "返金額",
+  "totals.netPaid": "差引受領額",
+
+  "payment.section": "決済情報",
+  "payment.method": "支払方法",
+  "payment.orderNo": "注文番号",
+  "payment.transactionId": "取引 ID",
+  "payment.channel": "決済チャネル",
+  "payment.clientIp": "注文時 IP",
+  "payment.paidAt": "支払日時",
+
+  "refunds.section": "返金履歴",
+  "refunds.number": "返金番号",
+  "refunds.status": "状態",
+  "refunds.at": "日付",
+  "refunds.amount": "金額",
+  "refunds.reasonLine": "理由：{reason}",
+  "refunds.summaryOnly": "この注文には合計 {amount} の返金があります。",
+
+  "refund.status.pending": "処理待ち",
+  "refund.status.processing": "処理中",
+  "refund.status.success": "返金済み",
+  "refund.status.failed": "返金失敗",
+  "refund.status.closed": "終了",
+
+  "metadata.section": "補足情報",
+  "notes.section": "備考",
+
+  "email.subject": "{brand}・{title} {number}",
+  "email.title": "{title}のご用意ができました",
+  "email.lead": "注文 {orderNo}",
+  "email.greeting": "{name} 様",
+  "email.attached": "PDF を本メールに添付しています。",
+  "email.linkLead": "下のボタンからダウンロードできます。リンクは {expiry} に失効します。",
+  "email.button": "{title}をダウンロード",
+  "email.summary": "取引概要",
+  "email.footer": "本書は大切に保管してください。このメールは自動送信です。返信はご遠慮ください。",
+
+  "meta.purpose": "利用目的",
+  "meta.appId": "アプリ ID",
+  "meta.userId": "顧客 ID",
+  "meta.createdAt": "注文日時",
+  "meta.expireAt": "支払期限",
+  "meta.plan": "プラン",
+  "meta.duration": "有効期間",
+  "meta.bonusPoints": "ボーナスポイント",
+  "meta.points": "付与ポイント",
+  "meta.days": {
+    "other": "{count} 日間"
+  },
+  "meta.pointsValue": {
+    "other": "{count} ポイント"
+  },
+
+  "purpose.wallet_recharge": "残高チャージ",
+  "purpose.vip_purchase": "会員登録",
+  "purpose.integral_purchase": "ポイント購入",
+
+  "notes.unpaid": "本書は支払の証明にはなりません：この注文はまだ決済されていません。",
+  "notes.refunded": "この注文は全額返金されました。差引受領額はゼロです。",
+  "notes.partiallyRefunded": "この注文は一部返金されました。詳細は返金履歴をご覧ください。",
+
+  "footer.page": "{page} / {total} ページ",
+  "footer.disclaimer": "本書はシステムにより電子的に発行されたもので、押印がなくても有効です。",
+  "footer.generated": "{producer} により {time} に生成されました。",
+  "footer.scanToVerify": "スキャンして確認",
+  "footer.verify": "{url} で本書を検証できます",
+
+  "method.epay": "E-Pay アグリゲーター",
+  "method.rainbow_epay": "Rainbow E-Pay",
+  "method.xunhupay": "Xunhupay",
+  "method.payjs": "PAYJS",
+  "method.qrpay": "QRPay",
+  "method.vmqpay": "VMQPay",
+  "method.alipay_native": "Alipay",
+  "method.wechat_native": "WeChat Pay",
+  "method.stripe": "Stripe",
+  "method.paypal": "PayPal",
+  "method.balance": "アカウント残高",
+  "method.paddle": "Paddle",
+  "method.lemonsqueezy": "Lemon Squeezy",
+  "method.razorpay": "Razorpay",
+  "method.coinbase": "Coinbase Commerce",
+  "method.square": "Square"
+}

@@ -1,0 +1,1397 @@
+/* ─────────────────────────────────────────────────────────────────
+ * Tailwind v4 标准入口（CSS-first 配置）
+ * 顺序要求：`@import "tailwindcss"` 必须在最前，其后才是 `@plugin`
+ * / `@custom-variant` / `@source` / `@theme` 等 at-rule；外部第三方
+ * 样式（xyflow 等）随后导入，避免覆盖 Tailwind 基础层。
+ * ───────────────────────────────────────────────────────────────── */
+@import "tailwindcss";
+
+/* 第三方样式，放在 Tailwind 之后保证 utility 优先级可覆盖 */
+@import "@xyflow/react/dist/style.css";
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+/* Tailwind v4 JIT 源码扫描：显式声明两处扫描根，
+   避免在 workspace root 外运行 Next 时自动探测遗漏文件。 */
+@source "../../src/**/*.{ts,tsx,js,jsx,mdx,html}";
+@source "../../src/app/**/*.{ts,tsx,mdx,html}";
+
+/* shadcn/ui 动画插件（兼容 v4） */
+@plugin "tailwindcss-animate";
+
+/* class-based 深色模式：next-themes `attribute="class"` 会在 <html>
+   上加 .dark 类；这里把 Tailwind 默认基于 prefers-color-scheme 的
+   dark 变体替换为 class 匹配，让所有 `dark:xxx` 跟随 next-themes 切换。 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── 全局滚动条 ── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: var(--color-border) transparent;
+}
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+  transition: background 0.2s;
+}
+*:hover > ::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+}
+::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--color-foreground) 22%, transparent);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@keyframes dropdown-spring-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.4, 0.2);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.03, 1.04);
+  }
+  75% {
+    transform: scale(0.985, 0.99);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes dropdown-spring-out {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.4, 0.2);
+  }
+}
+
+@keyframes indeterminate-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+/* 平台横幅图片加载 shimmer —— 一道柔光从左扫到右，
+   覆盖在中性暗色占位上，感知上是"加载中"而不是"这就是最终画面"。
+   只在 img 尚未 loaded 时挂载；加载完成会被真实图片完全盖住。 */
+@keyframes banner-img-shimmer {
+  0% {
+    transform: translateX(-40%);
+  }
+  100% {
+    transform: translateX(140%);
+  }
+}
+
+/* 登录页流动渐变背景 —— 三团极大模糊色块各自循环位移 / 缩放，
+   肉眼看到的是一片柔和的液态流动。transform 全 GPU，零重排。 */
+@keyframes login-blob-a {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(12%, -8%, 0) scale(1.12);
+  }
+  66% {
+    transform: translate3d(-8%, 10%, 0) scale(0.94);
+  }
+}
+@keyframes login-blob-b {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(-14%, 10%, 0) scale(1.08);
+  }
+  66% {
+    transform: translate3d(8%, -10%, 0) scale(0.9);
+  }
+}
+@keyframes login-blob-c {
+  0%,
+  100% {
+    transform: translate3d(-50%, -50%, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-42%, -55%, 0) scale(1.2);
+  }
+}
+
+/* 登录页磨砂颗粒漂移（film grain drift）——
+   用 steps() 分段而不是连续，贴近胶片真实的"每帧颗粒重抽样"质感 */
+@keyframes login-grain-drift {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  10% {
+    transform: translate3d(-5%, -3%, 0);
+  }
+  20% {
+    transform: translate3d(-8%, 4%, 0);
+  }
+  30% {
+    transform: translate3d(4%, -6%, 0);
+  }
+  40% {
+    transform: translate3d(-4%, 9%, 0);
+  }
+  50% {
+    transform: translate3d(-8%, 3%, 0);
+  }
+  60% {
+    transform: translate3d(9%, 0, 0);
+  }
+  70% {
+    transform: translate3d(0, 6%, 0);
+  }
+  80% {
+    transform: translate3d(-9%, 0, 0);
+  }
+  90% {
+    transform: translate3d(6%, 3%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* 登录页 · 无限斜线滚动
+   ------------------------------------------------------------------
+   条纹本体是「竖向」的 repeating-linear-gradient，倾斜交给外层容器 rotate，
+   于是滚动就退化成沿 X 轴平移一个完整周期 —— 位移量正好等于 pattern 周期时
+   首尾像素完全重合，循环无缝。全程只动 transform，走合成层，零重排零重绘。 */
+@keyframes login-stripe-scroll {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(var(--stripe-period), 0, 0);
+  }
+}
+
+/* 会话校验屏 · 雷达回波
+   ------------------------------------------------------------------
+   两圈涟漪从徽标向外扩散，第二圈延迟半个周期，视觉上首尾相接成连续脉冲。
+   末段 70%→100% 保持全透明，让每次回波之间留出一段安静的间隔，
+   否则连成一片就成了"闪烁"而不是"扫描"。 */
+@keyframes auth-gate-halo {
+  0% {
+    transform: scale(0.78);
+    opacity: 0.5;
+  }
+  70% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+
+/* 会话校验屏 · 环形扫描
+   一段 conic 扇形整圈旋转，再被 radial mask 削成 1.5px 的细环，
+   于是看到的是一道沿圆环跑动的高光，而不是一整块转动的色扇。 */
+@keyframes auth-gate-sweep {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes accordion-down {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+    opacity: 1;
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+@theme inline {
+  --animate-accordion-down: accordion-down 0.25s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+  --animate-dropdown-spring-in: dropdown-spring-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  --animate-dropdown-spring-out: dropdown-spring-out 0.18s ease-out;
+  --animate-indeterminate-progress: indeterminate-progress 1.5s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  --font-sans: "IBM Plex Sans", "Segoe UI Variable Text", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  --font-mono: "Maple Mono NF CN", "Cascadia Code", "SFMono-Regular", monospace;
+  --font-data: "IBM Plex Mono", "Maple Mono NF CN", "JetBrains Mono", "Bahnschrift", "Cascadia Mono", "SFMono-Regular", monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 6px);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Light — flat, crisp, no shadows                                   */
+/* ------------------------------------------------------------------ */
+:root {
+  --background: #f4f4f5;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #18181b;
+
+  --sidebar: #fafafa;
+  --sidebar-foreground: #18181b;
+  --sidebar-accent: #f4f4f5;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: #e4e4e7;
+  --sidebar-ring: #18181b;
+
+  --radius: 1rem;
+
+  /* extended surface tokens */
+  --body-background: #f4f4f5;
+  --surface-panel: #ffffff;
+  --surface-panel-strong: #ffffff;
+  --surface-muted: #f4f4f5;
+  --surface-soft: #fafafa;
+  --surface-canvas: #fafafa;
+  --fullscreen-background: #f8f9fb;
+  --shadow-soft: none;
+  --shadow-medium: none;
+  --shadow-strong: none;
+
+  /* workflow canvas */
+  --canvas-grid-color: #e5e7eb;
+  --canvas-mask-color: rgba(0, 0, 0, 0.06);
+  --edge-path-color: #94a3b8;
+  --edge-text-background: #ffffff;
+  --edge-text-color: #374151;
+
+  /* 登录页右侧品牌文案 —— 给文字一层微halo，抗磨砂颗粒的视觉噪声干扰
+     浅色模式：白底 grain 柔和，加极轻白 halo + 暗色描边感即可 */
+  --login-brand-shadow: 0 0 8px rgba(255, 255, 255, 0.55), 0 1px 2px rgba(0, 0, 0, 0.08);
+  --login-brand-mark-shadow: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.18));
+  --login-brand-divider: rgba(24, 24, 27, 0.35);
+
+  /* 登录页 · 极光绸面 + 磨砂多彩颗粒（浅色模式）
+     浅色背景下颗粒太强会脏，需要收敛强度但保留"杂色"多层结构 */
+  --login-bg-base: #eef2f7;
+  --aurora-base-a: #e0eaf6;
+  --aurora-base-b: #cfdcec;
+  --aurora-base-c: #b9d1e6;
+  --aurora-bright: #38bdf8;
+  --aurora-mid:    #22d3ee;
+  --aurora-grain-opacity:        0.55;   /* 主彩色颗粒 overlay */
+  --aurora-grain-opacity-cyan:   0.45;   /* 青蓝偏色颗粒 soft-light */
+  --aurora-grain-opacity-bright: 0.22;   /* 亮白高光点 screen */
+  --login-blob-a: #7dd3fc;
+  --login-blob-b: #67e8f9;
+  --login-blob-c: #c7d2fe;
+  --login-grain-opacity: 0.14;
+
+  /* 登录页 · 斜线背景（浅色：冷灰底 + 淡深色线；
+     注意光带不能用白色 —— 白底上等于没画，改用淡青才看得见层次） */
+  --login-stripe-wash-a: #f1f5f9;
+  --login-stripe-wash-b: #d4e1ef;
+  --login-stripe-fine: rgba(24, 24, 27, 0.06);
+  --login-stripe-mid: rgba(24, 24, 27, 0.1);
+  --login-stripe-bold: rgba(2, 132, 199, 0.2);
+  --login-stripe-sheen: rgba(56, 189, 248, 0.26);
+  --login-stripe-vignette: rgba(24, 24, 27, 0.16);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Dark — deep, layered, atmospheric                                 */
+/* ------------------------------------------------------------------ */
+.dark {
+  --background: #09090b;
+  --foreground: #f4f4f5;
+  --card: #18181b;
+  --card-foreground: #f4f4f5;
+  --popover: #18181b;
+  --popover-foreground: #f4f4f5;
+  --primary: #fafafa;
+  --primary-foreground: #18181b;
+  --secondary: #27272a;
+  --secondary-foreground: #f4f4f5;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --accent-foreground: #f4f4f5;
+  --destructive: #ef4444;
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #d4d4d8;
+
+  --sidebar: #09090b;
+  --sidebar-foreground: #f4f4f5;
+  --sidebar-accent: #1c1c1f;
+  --sidebar-accent-foreground: #f4f4f5;
+  --sidebar-border: #27272a;
+  --sidebar-ring: #d4d4d8;
+
+  /* extended surface tokens */
+  --body-background: #09090b;
+  --surface-panel: #18181b;
+  --surface-panel-strong: #1c1c1f;
+  --surface-muted: #1c1c1f;
+  --surface-soft: #141416;
+  --surface-canvas: #0f0f11;
+  --fullscreen-background: #09090b;
+  --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-medium: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-strong: 0 16px 48px rgba(0, 0, 0, 0.5);
+
+  /* workflow canvas */
+  --canvas-grid-color: #27272a;
+  --canvas-mask-color: rgba(0, 0, 0, 0.5);
+  --edge-path-color: #52525b;
+  --edge-text-background: #18181b;
+  --edge-text-color: #d4d4d8;
+
+  /* 登录页右侧品牌文案 · 深色模式
+     颗粒 + 高饱和蓝底下，单靠 muted-foreground 会被磨砂吞掉；
+     给所有文字叠一层深色 halo（先 0 0 14px rgba(0,0,0,0.65) 压背景，再 0 1px 2px rgba(0,0,0,0.9) 立锐边），
+     相当于在文字周围做 2px 防噪声光晕，绸面 / 颗粒再密都不会糊字。 */
+  --login-brand-shadow: 0 0 14px rgba(0, 0, 0, 0.65), 0 1px 2px rgba(0, 0, 0, 0.9);
+  --login-brand-mark-shadow: drop-shadow(0 0 10px rgba(0, 0, 0, 0.6)) drop-shadow(0 1px 0 rgba(0, 0, 0, 0.9));
+  --login-brand-divider: rgba(244, 244, 245, 0.45);
+
+  /* 登录页 · 极光绸面 + 磨砂多彩颗粒（深色模式）—— 复刻参考图
+     关键调整：基底色整体压暗到接近纯黑，亮光只在右上/左下两个小点集中涌出，
+     配合中央压暗层，整体画面 70% 深色、30% 光带，对比度贴近参考图 */
+  --login-bg-base: #020510;
+  --aurora-base-a: #010308;    /* 左上极深近黑 */
+  --aurora-base-b: #051222;    /* 中段海军蓝（仍偏暗） */
+  --aurora-base-c: #010308;    /* 右下极深 */
+  --aurora-bright: #22d3ee;    /* cyan-400，亮光带色 */
+  --aurora-mid:    #06b6d4;    /* cyan-500，副光源 */
+  --aurora-grain-opacity:        1;     /* 彩色 RGB 主颗粒 overlay —— 深色下必须满强度 */
+  --aurora-grain-opacity-cyan:   0.9;   /* 青蓝偏色 soft-light */
+  --aurora-grain-opacity-bright: 0.55;  /* 亮白星点 screen */
+  --login-blob-a: #0c4a6e;
+  --login-blob-b: #155e75;
+  --login-blob-c: #1e3a8a;
+  --login-grain-opacity: 0.22;
+
+  /* 登录页 · 斜线背景（深色：近黑底 + 亮线，重线带一点青作为品牌色锚点） */
+  --login-stripe-wash-a: #05080f;
+  --login-stripe-wash-b: #0a1626;
+  --login-stripe-fine: rgba(244, 244, 245, 0.045);
+  --login-stripe-mid: rgba(244, 244, 245, 0.075);
+  --login-stripe-bold: rgba(34, 211, 238, 0.16);
+  --login-stripe-sheen: rgba(56, 189, 248, 0.1);
+  --login-stripe-vignette: rgba(0, 0, 0, 0.55);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html[data-scroll-behavior="smooth"] {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+  }
+
+  a {
+    @apply text-inherit no-underline;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+}
+
+@layer utilities {
+  /* ─────────────────────────────────────────────────────────────
+   * HTTP Method 芯片 —— 独立 CSS，不走 Tailwind `dark:` 变体。
+   * 原因：审计页上大量 `dark:bg-emerald-500/10` 类 Tailwind v4 JIT
+   * 偶发不重编，且 emerald-950/amber-950 深号在纯黑底上渲染过亮，
+   * 与项目暗色"扁平、克制"风格不符。此处用 `.dark &` 级联，彻底绕开
+   * 变体编译路径，保证浅/深两色一致收敛。
+   * ───────────────────────────────────────────────────────────── */
+  .chip-method {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.375rem;
+    border: 1px solid transparent;
+    font-size: 0.625rem; /* 10px */
+    line-height: 1;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .chip-method--post    { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
+  .chip-method--put     { color: #b45309; background: #fffbeb; border-color: #fde68a; }
+  .chip-method--delete  { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
+  .chip-method--get     { color: #0369a1; background: #f0f9ff; border-color: #bae6fd; }
+  .chip-method--other   { color: var(--color-muted-foreground); background: color-mix(in srgb, var(--color-muted) 55%, transparent); border-color: var(--color-border); }
+
+  .dark .chip-method--post   { color: #6ee7b7; background: color-mix(in srgb, #10b981 10%, transparent); border-color: color-mix(in srgb, #10b981 28%, transparent); }
+  .dark .chip-method--put    { color: #fcd34d; background: color-mix(in srgb, #f59e0b 10%, transparent); border-color: color-mix(in srgb, #f59e0b 28%, transparent); }
+  .dark .chip-method--delete { color: #fca5a5; background: color-mix(in srgb, #ef4444 10%, transparent); border-color: color-mix(in srgb, #ef4444 28%, transparent); }
+  .dark .chip-method--get    { color: #7dd3fc; background: color-mix(in srgb, #0ea5e9 10%, transparent); border-color: color-mix(in srgb, #0ea5e9 28%, transparent); }
+  .dark .chip-method--other  { color: var(--color-muted-foreground); background: color-mix(in srgb, var(--color-muted) 40%, transparent); border-color: var(--color-border); }
+
+  /* 状态码文字色（独立 CSS，同样避免 dark: 变体偶发失效） */
+  .status-code-success { color: #059669; }
+  .status-code-3xx     { color: #0284c7; }
+  .status-code-4xx     { color: #d97706; }
+  .status-code-5xx     { color: #dc2626; }
+  .status-code-idle    { color: var(--color-muted-foreground); }
+  .dark .status-code-success { color: #4ade80; }
+  .dark .status-code-3xx     { color: #7dd3fc; }
+  .dark .status-code-4xx     { color: #fbbf24; }
+  .dark .status-code-5xx     { color: #f87171; }
+
+  .brand-status-page__dashboard .monitor-page-shell {
+    border-color: rgba(255, 255, 255, 0.12);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
+      linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+      rgba(8, 11, 16, 0.58);
+    background-size: auto, 28px 28px, 28px 28px, auto;
+    backdrop-filter: blur(18px);
+    box-shadow: var(--shadow-strong);
+  }
+
+  .page-stack {
+    @apply flex flex-col gap-5 pt-1;
+  }
+
+  .page-grid-2 {
+    @apply grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)];
+  }
+
+  .page-grid-3 {
+    @apply grid gap-6 xl:grid-cols-3;
+  }
+
+  .metrics-grid {
+    @apply grid gap-4 sm:grid-cols-2 2xl:grid-cols-4;
+  }
+
+  .panel-muted {
+    @apply rounded-2xl border border-border;
+    background: var(--surface-muted);
+  }
+
+  .kv-pair {
+    @apply rounded-xl border border-border p-4;
+    background: var(--surface-soft);
+  }
+
+  .kv-pair-label {
+    @apply mb-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground;
+  }
+
+  .kv-pair-value {
+    @apply text-sm font-semibold text-foreground;
+  }
+
+  .mono-panel {
+    @apply overflow-x-auto rounded-2xl border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs leading-6 text-zinc-100;
+  }
+
+  .table-shell {
+    @apply overflow-hidden rounded-2xl border border-border;
+    background: var(--surface-panel);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .detail-grid {
+    @apply grid gap-4 md:grid-cols-2 xl:grid-cols-3;
+  }
+
+  .section-stack {
+    @apply space-y-5;
+  }
+
+  .workflow-canvas-shell {
+    @apply h-[420px] overflow-hidden rounded-[24px] border border-border;
+    background: var(--surface-canvas);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .monitor-page-shell {
+    @apply relative overflow-hidden rounded-[32px] border border-border p-5 md:p-6;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.01), rgba(255, 255, 255, 0)),
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px),
+      #0b0b0d;
+    background-size: auto, 28px 28px, 28px 28px, auto;
+    background-position: 0 0, 0 0, 0 0, 0 0;
+  }
+
+  .light .monitor-page-shell,
+  :root .monitor-page-shell {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.92)),
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px),
+      #f8f8fa;
+    background-size: auto, 28px 28px, 28px 28px, auto;
+  }
+
+  .dark .monitor-page-shell {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
+      linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+      #0a0a0b;
+    background-size: auto, 28px 28px, 28px 28px, auto;
+  }
+
+
+  .workflow-canvas-shell--fullscreen {
+    height: calc(100dvh - 18rem);
+    min-height: 720px;
+  }
+
+  .workflow-designer-stage {
+    @apply relative;
+  }
+
+  .workflow-designer-stage--fullscreen {
+    @apply fixed inset-3 z-50;
+  }
+
+  .workflow-designer-stage:fullscreen {
+    background: var(--fullscreen-background);
+    padding: 0.75rem;
+  }
+
+  .workflow-designer-stage:fullscreen .workflow-canvas-shell--fullscreen {
+    height: calc(100dvh - 16rem);
+    min-height: 780px;
+  }
+
+  .react-flow__panel {
+    @apply !shadow-none;
+  }
+
+  .react-flow__controls-button {
+    @apply !border-border !bg-background !text-foreground;
+  }
+
+  .react-flow__edge-path {
+    stroke: var(--edge-path-color);
+    stroke-width: 2;
+  }
+
+  .react-flow__edge-textbg {
+    fill: var(--edge-text-background);
+  }
+
+  .react-flow__edge-text {
+    fill: var(--edge-text-color);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  /* ── 登录页 · 无限斜线滚动背景 ─────────────────────────────────
+     结构：底色 wash → 3 条不同周期/速度的斜线带（视差）→ 光带扫过 → 暗角
+     只用 CSS，无 canvas / WebGL，登录页因此不再加载 three.js。 */
+  .login-stripes {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background:
+      radial-gradient(120% 90% at 78% 8%, var(--login-stripe-wash-b) 0%, transparent 62%),
+      var(--login-stripe-wash-a);
+  }
+
+  /* 倾斜容器：超出视口一圈，rotate 后四角仍被填满 */
+  .login-stripes__tilt {
+    position: absolute;
+    inset: -60%;
+    transform: rotate(var(--login-stripe-angle, -45deg));
+    transform-origin: center;
+  }
+
+  /* 单条斜线带：竖向重复渐变 + 沿 X 平移一个周期 */
+  .login-stripes__band {
+    position: absolute;
+    inset: 0;
+    will-change: transform;
+    animation: login-stripe-scroll var(--stripe-duration) linear infinite;
+    background-image: repeating-linear-gradient(
+      90deg,
+      var(--stripe-color) 0,
+      var(--stripe-color) var(--stripe-width),
+      transparent var(--stripe-width),
+      transparent var(--stripe-period)
+    );
+  }
+
+  .login-stripes__band--fine {
+    --stripe-period: 26px;
+    --stripe-width: 1px;
+    --stripe-duration: 34s;
+    --stripe-color: var(--login-stripe-fine);
+  }
+
+  .login-stripes__band--mid {
+    --stripe-period: 92px;
+    --stripe-width: 1px;
+    --stripe-duration: 19s;
+    --stripe-color: var(--login-stripe-mid);
+  }
+
+  .login-stripes__band--bold {
+    --stripe-period: 228px;
+    --stripe-width: 2px;
+    --stripe-duration: 11s;
+    --stripe-color: var(--login-stripe-bold);
+  }
+
+  /* 光带：同角度、超长周期的柔和渐变，缓慢扫过制造呼吸感 */
+  .login-stripes__sheen {
+    position: absolute;
+    inset: 0;
+    --stripe-period: 900px;
+    --stripe-duration: 26s;
+    will-change: transform;
+    animation: login-stripe-scroll var(--stripe-duration) linear infinite;
+    background-image: repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      var(--login-stripe-sheen) 180px,
+      transparent 420px,
+      transparent var(--stripe-period)
+    );
+    filter: blur(42px);
+    opacity: 0.55;
+  }
+
+  /* 暗角：把视线压回中间的表单与品牌文案 */
+  .login-stripes__vignette {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(105% 80% at 50% 50%, transparent 38%, var(--login-stripe-vignette) 100%);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .login-stripes__band,
+    .login-stripes__sheen {
+      animation: none;
+    }
+  }
+
+  /* ── 会话校验屏（AuthGate）─────────────────────────────────────
+     控制台入口的"握手"画面：网格底纹 → 中心辉光 → 雷达徽标 → 校验清单。
+
+     强调色只有一个入口：`.auth-gate` 上的 `--auth-gate-accent`，
+     由 `data-tone` 切换（默认走 zinc 单色，超时转琥珀，失败转 destructive）。
+     卡片里每个着色元素都继承它，不再各写各的 amber-500 / red-500 ——
+     换一档语义色只改这一行，不会漏掉某个角落。 */
+  .auth-gate {
+    --auth-gate-accent: var(--foreground);
+  }
+
+  .auth-gate[data-tone="warning"] {
+    --auth-gate-accent: #f59e0b;
+  }
+
+  .auth-gate[data-tone="danger"] {
+    --auth-gate-accent: var(--destructive);
+  }
+
+  /* 底纹：44px 网格，用径向 mask 只保留中央一片，边缘自然溶解 */
+  .auth-gate__grid {
+    background-image:
+      linear-gradient(to right, color-mix(in srgb, var(--foreground) 7%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in srgb, var(--foreground) 7%, transparent) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(ellipse 62% 52% at 50% 46%, #000 0%, transparent 78%);
+    mask-image: radial-gradient(ellipse 62% 52% at 50% 46%, #000 0%, transparent 78%);
+  }
+
+  /* 中心辉光：跟随 tone，给卡片背后垫一层纵深 */
+  .auth-gate__glow {
+    background: radial-gradient(
+      ellipse 46% 38% at 50% 44%,
+      color-mix(in srgb, var(--auth-gate-accent) 12%, transparent) 0%,
+      transparent 72%
+    );
+  }
+
+  .auth-gate__halo {
+    border: 1px solid color-mix(in srgb, var(--auth-gate-accent) 32%, transparent);
+    animation: auth-gate-halo 3.4s ease-out infinite;
+  }
+
+  .auth-gate__halo--lag {
+    animation-delay: 1.7s;
+  }
+
+  .auth-gate__sweep {
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      color-mix(in srgb, var(--auth-gate-accent) 55%, transparent) 52deg,
+      transparent 96deg
+    );
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px));
+    animation: auth-gate-sweep 2.8s linear infinite;
+  }
+
+  /* 进度：卡片上沿的 2px 流光。不确定进度条本来就说不出"还剩多久"，
+     与其占掉正文一行高度，不如退回边框上，把版面留给校验清单。 */
+  .auth-gate__beam {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--auth-gate-accent) 78%, transparent) 50%,
+      transparent 100%
+    );
+  }
+
+  .auth-gate__accent {
+    color: var(--auth-gate-accent);
+  }
+
+  /* 步骤标记：done 实心底、active 只描边、pending 保持静默 */
+  .auth-gate__marker[data-state="done"] {
+    border-color: color-mix(in srgb, var(--auth-gate-accent) 34%, transparent);
+    background: color-mix(in srgb, var(--auth-gate-accent) 12%, transparent);
+    color: var(--auth-gate-accent);
+  }
+
+  .auth-gate__marker[data-state="active"] {
+    border-color: color-mix(in srgb, var(--auth-gate-accent) 45%, transparent);
+    color: var(--auth-gate-accent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .auth-gate__halo,
+    .auth-gate__sweep {
+      animation: none;
+    }
+
+    .auth-gate__halo {
+      opacity: 0.3;
+    }
+  }
+}
+
+
+/* ================================================================== */
+/*  Yet Another React Lightbox — Radix UI / shadcn/ui 设计对齐          */
+/* ================================================================== */
+
+/* ── 设计 Token 映射 ── */
+:root {
+  /* 背景 — 匹配 Dialog overlay（bg-black/40 + 毛玻璃）*/
+  --yarl__container_background_color: rgba(0, 0, 0, 0.40);
+  /* 按钮颜色 — ghost 风格 */
+  --yarl__color_button: var(--muted-foreground);
+  --yarl__color_button_active: var(--foreground);
+  --yarl__color_button_disabled: color-mix(in srgb, var(--muted-foreground) 40%, transparent);
+  /* 按钮底板 — 不设独立底板，由工具栏统一承载 */
+  --yarl__button_background_color: transparent;
+  --yarl__button_border: none;
+  --yarl__button_filter: none;
+  --yarl__button_padding: 0.5rem;
+  /* 工具栏 — 由自定义规则接管 */
+  --yarl__toolbar_padding: 0;
+  /* 图标 */
+  --yarl__icon_size: 1rem;
+  /* 加载 / 描述 */
+  --yarl__slide_icon_loading_color: var(--muted-foreground);
+  --yarl__slide_captions_container_background: transparent;
+}
+
+.dark {
+  --yarl__container_background_color: rgba(0, 0, 0, 0.60);
+}
+
+/* ── 容器 — 毛玻璃背景 ── */
+.yarl__container {
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+}
+
+/* ── 工具栏 — 浮岛式 frosted pill ── */
+.yarl__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.25rem;
+  margin: 0.75rem;
+  border-radius: calc(var(--radius) - 2px);
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  background: color-mix(in srgb, var(--background) 72%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.dark .yarl__toolbar {
+  background: color-mix(in srgb, var(--card) 60%, transparent);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+}
+
+/* ── 按钮 — 工具栏内 ghost + 统一圆角/聚焦环 ── */
+.yarl__button {
+  border-radius: calc(var(--radius) - 4px);
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.1s ease;
+}
+
+.yarl__button:hover {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.yarl__button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 30%, transparent);
+}
+
+.yarl__button:active {
+  transform: scale(0.94);
+}
+
+/* ── 图片 — 圆角卡片式呈现 ── */
+.yarl__slide_image {
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: var(--radius-xl);
+  background: var(--card);
+}
+
+/* 深色模式：阴影增强层次 */
+.dark .yarl__slide_image {
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+}
+
+/* ── 导航按钮 — 独立 frosted outline 风格 ── */
+.yarl__navigation_prev,
+.yarl__navigation_next {
+  padding-inline: 0.5rem;
+}
+
+.yarl__navigation_prev .yarl__button,
+.yarl__navigation_next .yarl__button {
+  background: color-mix(in srgb, var(--background) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.dark .yarl__navigation_prev .yarl__button,
+.dark .yarl__navigation_next .yarl__button {
+  background: color-mix(in srgb, var(--card) 60%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* ── 描述文字 ── */
+.yarl__slide_description {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+  text-align: center;
+  padding: 0.75rem 1rem 0;
+}
+
+/* ── 幻灯片计数器 ── */
+.yarl__counter {
+  font-family: var(--font-data);
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+/* ================================================================== */
+/*  Sonner Toast - Aegis Console                                       */
+/*  适配深浅模式，交还动画控制给 sonner 内置引擎                       */
+/* ================================================================== */
+
+[data-sonner-toaster][data-sonner-toaster] {
+  --width: 360px;
+  --border-radius: 12px;
+  --gap: 8px;
+  font-family: inherit;
+}
+
+/* 主卡片：仅控制视觉样式，width/height 交给 sonner 计算堆叠用 */
+[data-sonner-toaster] .aegis-toast[data-styled="true"] {
+  position: absolute !important;
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 10px !important;
+  width: var(--width) !important;
+  box-sizing: border-box !important;
+  padding: 10px 36px 10px 12px !important;
+  border-radius: 12px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  font-size: 13.5px !important;
+  line-height: 1.4 !important;
+  letter-spacing: -0.003em !important;
+  box-shadow:
+    0 6px 20px -6px rgba(0, 0, 0, 0.14),
+    0 2px 6px -2px rgba(0, 0, 0, 0.06) !important;
+}
+
+.dark [data-sonner-toaster] .aegis-toast[data-styled="true"] {
+  background: var(--popover) !important;
+  box-shadow:
+    0 10px 28px -8px rgba(0, 0, 0, 0.6),
+    0 2px 8px -2px rgba(0, 0, 0, 0.35) !important;
+}
+
+/* 图标容器：归零 sonner 默认 margin */
+[data-sonner-toaster] .aegis-toast [data-icon] {
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 20px !important;
+  height: 20px !important;
+  flex: 0 0 20px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+/* 文本容器 */
+[data-sonner-toaster] .aegis-toast [data-content] {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+}
+
+/* 标题 */
+[data-sonner-toaster] .aegis-toast [data-title] {
+  font-size: 13.5px !important;
+  font-weight: 500 !important;
+  line-height: 1.45 !important;
+  letter-spacing: -0.005em !important;
+  color: var(--foreground) !important;
+  word-break: break-word;
+}
+
+/* 描述 */
+[data-sonner-toaster] .aegis-toast [data-description] {
+  font-size: 12.5px !important;
+  font-weight: 400 !important;
+  line-height: 1.55 !important;
+  color: var(--muted-foreground) !important;
+  word-break: break-word;
+}
+
+/* 操作按钮 */
+[data-sonner-toaster] .aegis-toast [data-button][data-action="true"] {
+  height: 28px !important;
+  padding: 0 10px !important;
+  border-radius: 8px !important;
+  background: var(--foreground) !important;
+  color: var(--background) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  transition: filter 160ms ease, transform 120ms ease !important;
+}
+[data-sonner-toaster] .aegis-toast [data-button][data-action="true"]:hover {
+  filter: brightness(0.9);
+}
+[data-sonner-toaster] .aegis-toast [data-button][data-action="true"]:active {
+  transform: scale(0.97);
+}
+
+[data-sonner-toaster] .aegis-toast [data-button][data-cancel="true"] {
+  height: 28px !important;
+  padding: 0 10px !important;
+  border-radius: 8px !important;
+  background: var(--muted) !important;
+  color: var(--foreground) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+}
+[data-sonner-toaster] .aegis-toast [data-button][data-cancel="true"]:hover {
+  background: color-mix(in srgb, var(--muted-foreground) 22%, var(--muted)) !important;
+}
+
+/* 关闭按钮：右上角，始终可见 */
+[data-sonner-toaster] .aegis-toast [data-close-button] {
+  position: absolute !important;
+  top: 7px !important;
+  right: 7px !important;
+  left: auto !important;
+  transform: none !important;
+  width: 20px !important;
+  height: 20px !important;
+  border-radius: 6px !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  opacity: 0.6;
+  transition:
+    opacity 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+[data-sonner-toaster] .aegis-toast [data-close-button] svg {
+  width: 13px !important;
+  height: 13px !important;
+}
+[data-sonner-toaster] .aegis-toast [data-close-button]:hover {
+  opacity: 1;
+  background: var(--muted) !important;
+  color: var(--foreground) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * NextTopLoader（nextjs-toploader）视觉覆盖 — Zinc 单色调 · Radix 风
+ *
+ * 设计目标：
+ *   1. 颜色：只用项目主题自己的 Zinc 色阶（var(--foreground) + var(--muted-foreground)），
+ *      自动跟随 next-themes 切换，绝不引入外来 indigo/violet 等色
+ *   2. 动画：同色阶双段渐变 + background-position 右→左滑移，形成"色调脉冲"
+ *      —— 单调性的动态美，符合 Radix 克制审美
+ *   3. 层级：z-index 2147483000 + !important，压过 Tooltip(9999)/IntroOverlay(950)/
+ *      Dialog portal 等所有上层浮层；显式 position: fixed 规避 transform 栈破坏
+ *   4. 扁平规范：浅色模式完全无阴影；深色模式才叠加柔光
+ * ─────────────────────────────────────────────────────────────── */
+#nprogress {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  pointer-events: none;
+  z-index: 2147483000 !important;
+}
+#nprogress .bar {
+  height: 2px !important;
+  background: linear-gradient(
+    90deg,
+    var(--foreground) 0%,
+    var(--muted-foreground) 35%,
+    var(--foreground) 65%,
+    var(--muted-foreground) 100%
+  ) !important;
+  background-size: 300% 100% !important;
+  background-repeat: no-repeat !important;
+  border-radius: 0 2px 2px 0;
+  animation: aegis-toploader-sweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.dark #nprogress .bar {
+  /* 深色模式：0.5px 内辉光，让高亮段更像"流光"而非纯色线 */
+  box-shadow: 0 0 10px color-mix(in srgb, var(--foreground) 28%, transparent);
+}
+#nprogress .peg {
+  /* 去掉默认的斜切 peg —— 动画已经承担视觉节奏 */
+  box-shadow: none !important;
+  opacity: 0;
+  transform: none !important;
+}
+@keyframes aegis-toploader-sweep {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -20% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #nprogress .bar {
+    animation: none;
+    background: var(--foreground) !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * MapLibre GL 主题适配（地理风控：热力图 / 围栏编辑 / 轨迹回放）
+ * 控件与弹层贴合控制台 zinc 体系；颜色全部走 CSS 变量以跟随深浅主题。
+ * ───────────────────────────────────────────────────────────────── */
+.aegis-map .maplibregl-canvas {
+  outline: none;
+}
+
+/* 缩放控件：扁平卡片风 */
+.aegis-map .maplibregl-ctrl-group {
+  overflow: hidden;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: none;
+}
+.aegis-map .maplibregl-ctrl-group button {
+  width: 30px;
+  height: 30px;
+  background-color: transparent;
+}
+.aegis-map .maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--border);
+}
+.aegis-map .maplibregl-ctrl-group button:hover {
+  background-color: var(--muted);
+}
+.aegis-map .maplibregl-ctrl button .maplibregl-ctrl-icon {
+  filter: none;
+}
+.dark .aegis-map .maplibregl-ctrl button .maplibregl-ctrl-icon {
+  /* 官方图标是深色位图，深色主题下整体反相提亮 */
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* Popup：与 shadcn popover 一致 */
+.aegis-map .maplibregl-popup-content {
+  border-radius: 0.65rem;
+  border: 1px solid var(--border);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  padding: 0;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+.aegis-map .maplibregl-popup-close-button {
+  display: none;
+}
+.aegis-map .maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: var(--popover);
+}
+.aegis-map .maplibregl-popup-anchor-top .maplibregl-popup-tip {
+  border-bottom-color: var(--popover);
+}
+.aegis-map .maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--popover);
+}
+.aegis-map .maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--popover);
+}
+
+/* 绘制中：十字光标 */
+.aegis-map[data-draw-cursor="true"] .maplibregl-canvas-container {
+  cursor: crosshair !important;
+}
+.aegis-map[data-grab-cursor="true"] .maplibregl-canvas-container {
+  cursor: grabbing !important;
+}
+
+/* 轨迹回放当前位置标记：双层呼吸点 */
+.aegis-trail-marker {
+  position: relative;
+  width: 18px;
+  height: 18px;
+}
+.aegis-trail-marker::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: color-mix(in srgb, #6366f1 35%, transparent);
+  animation: aegis-trail-pulse 1.8s ease-out infinite;
+}
+.aegis-trail-marker::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 9999px;
+  border: 2px solid var(--background);
+  background: #6366f1;
+}
+@keyframes aegis-trail-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aegis-trail-marker::before {
+    animation: none;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   代码高亮（highlight.js token → 主题变量）
+
+   刻意不引 highlight.js 自带的主题 CSS：那些主题把颜色写死成十六进制，
+   深浅色切换时不会跟随。这里只定义 token 的语义色，两套主题各给一份，
+   与控制台其余配色同源。
+   ───────────────────────────────────────────────────────────────── */
+:root {
+  --hljs-keyword: #8250df;
+  --hljs-string: #0a7c42;
+  --hljs-number: #0550ae;
+  --hljs-comment: #6e7781;
+  --hljs-function: #6639ba;
+  --hljs-variable: #953800;
+  --hljs-type: #0550ae;
+  --hljs-punctuation: #57606a;
+}
+
+.dark {
+  --hljs-keyword: #ff7b72;
+  --hljs-string: #7ee787;
+  --hljs-number: #79c0ff;
+  --hljs-comment: #8b949e;
+  --hljs-function: #d2a8ff;
+  --hljs-variable: #ffa657;
+  --hljs-type: #79c0ff;
+  --hljs-punctuation: #a1a1aa;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--hljs-comment);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag,
+.hljs-formula {
+  color: var(--hljs-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attribute,
+.hljs-meta .hljs-string {
+  color: var(--hljs-string);
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: var(--hljs-number);
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-section,
+.hljs-name {
+  color: var(--hljs-function);
+}
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-attr,
+.hljs-selector-class,
+.hljs-selector-id,
+.hljs-property {
+  color: var(--hljs-variable);
+}
+
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-title.class_,
+.hljs-built_in,
+.hljs-params {
+  color: var(--hljs-type);
+}
+
+.hljs-meta,
+.hljs-punctuation,
+.hljs-operator {
+  color: var(--hljs-punctuation);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}
+
+.hljs-deletion {
+  color: var(--destructive);
+}

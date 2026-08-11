@@ -2,42 +2,44 @@ package service
 
 import plugindomain "aegis/internal/domain/plugin"
 
-// 钩子点常量（26 个，6 领域）
+// 钩子点常量（27 个，6 领域）
 const (
 	// 认证 (6)
-	HookAuthPreLogin          = "auth.onPreLogin"
-	HookAuthPasswordVerified  = "auth.onPasswordVerified"
-	HookAuthMFACreated        = "auth.onMFACreated"
-	HookAuthMFAVerified       = "auth.onMFAVerified"
-	HookAuthSessionIssued     = "auth.onSessionIssued"
-	HookAuthLoginFailed       = "auth.onLoginFailed"
+	HookAuthPreLogin         = "auth.onPreLogin"
+	HookAuthPasswordVerified = "auth.onPasswordVerified"
+	HookAuthMFACreated       = "auth.onMFACreated"
+	HookAuthMFAVerified      = "auth.onMFAVerified"
+	HookAuthSessionIssued    = "auth.onSessionIssued"
+	HookAuthLoginFailed      = "auth.onLoginFailed"
 	// 用户 (5)
-	HookUserRegistered        = "user.onRegistered"
-	HookUserProfileUpdated    = "user.onProfileUpdated"
-	HookUserDeleted           = "user.onDeleted"
-	HookUserRoleChanged       = "user.onRoleChanged"
-	HookUserBanned            = "user.onBanned"
-	// 应用 (3)
-	HookAppCreated            = "app.onCreated"
-	HookAppUpdated            = "app.onUpdated"
-	HookAppDeleted            = "app.onDeleted"
+	HookUserRegistered     = "user.onRegistered"
+	HookUserProfileUpdated = "user.onProfileUpdated"
+	HookUserDeleted        = "user.onDeleted"
+	HookUserRoleChanged    = "user.onRoleChanged"
+	HookUserBanned         = "user.onBanned"
+	// 应用 (4)
+	HookAppCreated = "app.onCreated"
+	HookAppUpdated = "app.onUpdated"
+	HookAppDeleted = "app.onDeleted"
+	// HookAppGovernanceChanged 平台治理状态变更（冻结 / 封禁 / 解除…）
+	HookAppGovernanceChanged = "app.onGovernanceChanged"
 	// 管理员 (3)
-	HookAdminCreated          = "admin.onCreated"
-	HookAdminStatusChanged    = "admin.onStatusChanged"
-	HookAdminAccessUpdated    = "admin.onAccessUpdated"
+	HookAdminCreated       = "admin.onCreated"
+	HookAdminStatusChanged = "admin.onStatusChanged"
+	HookAdminAccessUpdated = "admin.onAccessUpdated"
 	// 支付 (3)
-	HookPaymentCreated        = "payment.onCreated"
-	HookPaymentCompleted      = "payment.onCompleted"
-	HookPaymentRefunded       = "payment.onRefunded"
+	HookPaymentCreated   = "payment.onCreated"
+	HookPaymentCompleted = "payment.onCompleted"
+	HookPaymentRefunded  = "payment.onRefunded"
 	// 通知 (2)
-	HookNotificationCreated   = "notification.onCreated"
-	HookNotificationSent      = "notification.onSent"
+	HookNotificationCreated = "notification.onCreated"
+	HookNotificationSent    = "notification.onSent"
 	// 存储 (2)
-	HookFileUploaded          = "storage.onFileUploaded"
-	HookFileDeleted           = "storage.onFileDeleted"
+	HookFileUploaded = "storage.onFileUploaded"
+	HookFileDeleted  = "storage.onFileDeleted"
 	// 系统 (2)
-	HookSettingsUpdated       = "system.onSettingsUpdated"
-	HookSystemStartup         = "system.onStartup"
+	HookSettingsUpdated = "system.onSettingsUpdated"
+	HookSystemStartup   = "system.onStartup"
 )
 
 // allHookDefinitions 所有钩子点元数据
@@ -58,6 +60,7 @@ var allHookDefinitions = []plugindomain.HookDefinition{
 	{Name: HookAppCreated, Domain: "app", Phase: "after", Description: "应用创建后"},
 	{Name: HookAppUpdated, Domain: "app", Phase: "after", Description: "应用更新后"},
 	{Name: HookAppDeleted, Domain: "app", Phase: "after", Description: "应用删除后"},
+	{Name: HookAppGovernanceChanged, Domain: "app", Phase: "after", Description: "平台治理状态变更后（冻结 / 封禁 / 解除）"},
 
 	{Name: HookAdminCreated, Domain: "admin", Phase: "after", Description: "管理员创建后"},
 	{Name: HookAdminStatusChanged, Domain: "admin", Phase: "after", Description: "管理员状态变更后"},

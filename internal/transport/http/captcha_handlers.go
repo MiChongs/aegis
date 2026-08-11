@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"net/http"
+	"strings"
 
 	captchadomain "aegis/internal/domain/captcha"
 	"aegis/internal/service"
@@ -12,8 +13,14 @@ import (
 
 // ────────────────────── 图形验证码 Handler ──────────────────────
 
-// GenerateCaptcha 生成图形/算术/数字验证码
+// GenerateCaptcha 生成图形/算术/数字/手性碳等验证码
+//
+// 安全原则：验证码类型由服务端根据目标 App 的 CaptchaAppConfig 决定。
+// 客户端请求中的 Type 字段一律忽略（即便传入也无效）。
+//
 // POST /api/captcha/generate
+// 请求体：{ "appid": 10000, "purpose": "login" }
+// 响应：{ "captchaId": "...", "type": "chiral|image|...", "imageData": "...", "clickRequired": true/false, ... }
 func (h *Handler) GenerateCaptcha(c *gin.Context) {
 	var req CaptchaGenerateRequest
 	if err := bind(c, &req); err != nil {
@@ -21,12 +28,14 @@ func (h *Handler) GenerateCaptcha(c *gin.Context) {
 		return
 	}
 
-	captchaType := captchadomain.CaptchaType(req.Type)
-	switch captchaType {
-	case captchadomain.TypeImage, captchadomain.TypeMath, captchadomain.TypeDigit, captchadomain.TypeDynamic, captchadomain.TypeAudio, captchadomain.TypeChiral:
-		// 合法类型
-	default:
-		response.Error(c, http.StatusBadRequest, 40001, "不支持的验证码类型，可选: image, math, digit, dynamic, audio, chiral")
+	// 服务端决策验证码类型：读取 App 配置 → 按优先级选择实际类型
+	captchaType, perr := h.resolveUserCaptchaType(c, req.AppID)
+	if perr != nil {
+		h.writeError(c, perr)
+		return
+	}
+	if captchaType == "" {
+		response.Error(c, http.StatusForbidden, 40310, "当前应用未启用图形验证码")
 		return
 	}
 
@@ -47,6 +56,109 @@ func (h *Handler) GenerateCaptcha(c *gin.Context) {
 	response.Success(c, http.StatusOK, "验证码生成成功", result)
 }
 
+// UserCaptchaPublicConfig 返回 App 的验证码公开配置（无敏感字段）
+//
+// GET /api/captcha/public-config?appid=10000
+// GET /api/captcha/public-config?appid=10000&scene=login
+// GET /api/captcha/public-config?appid=10000&scene=register
+//
+// 用途：
+//   - 登录 / 注册 / 重置密码等入口在渲染表单前查询
+//   - 前端据此判断**当前场景**是否展示验证码 UI（Login.Required / Register.Required）
+//   - 返回服务端决策的类型，前端据此决定是否走点选 (chiral) vs 输入
+//
+// 公开端点（无需登录），但需提供有效 appid
+func (h *Handler) UserCaptchaPublicConfig(c *gin.Context) {
+	var req struct {
+		AppID int64  `form:"appid"`
+		Scene string `form:"scene"`
+	}
+	_ = c.ShouldBindQuery(&req)
+	if req.AppID <= 0 {
+		_ = c.ShouldBind(&req)
+	}
+	if req.AppID <= 0 {
+		response.Error(c, http.StatusBadRequest, 40000, "appid 必填")
+		return
+	}
+	if h.app == nil {
+		response.Error(c, http.StatusServiceUnavailable, 50310, "应用服务不可用")
+		return
+	}
+	cfg, err := h.app.GetCaptchaConfig(c.Request.Context(), req.AppID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	if cfg == nil {
+		response.Error(c, http.StatusNotFound, 40410, "应用不存在")
+		return
+	}
+
+	// 收集启用的图形类型（按服务端优先级排序，与 ResolveCaptchaType 一致）
+	available := make([]string, 0, 6)
+	ordered := []struct {
+		enabled bool
+		name    string
+	}{
+		{cfg.ChiralEnabled, "chiral"},
+		{cfg.DynamicEnabled, "dynamic"},
+		{cfg.AudioEnabled, "audio"},
+		{cfg.ImageEnabled, "image"},
+		{cfg.MathEnabled, "math"},
+		{cfg.DigitEnabled, "digit"},
+	}
+	for _, it := range ordered {
+		if it.enabled {
+			available = append(available, it.name)
+		}
+	}
+
+	resolved := service.ResolveCaptchaType(cfg)
+	resolvedStr := string(resolved)
+	anyEnabled := len(available) > 0
+
+	// 分场景要求：与 service.IsCaptchaRequiredForScene 语义对齐
+	loginRequired := anyEnabled && cfg.RequireForLogin
+	registerRequired := anyEnabled && cfg.RequireForRegister
+
+	resp := CaptchaPublicConfigResponse{
+		AppID:         req.AppID,
+		Required:      anyEnabled,
+		Type:          resolvedStr,
+		ClickRequired: resolvedStr == string(captchadomain.TypeChiral),
+		Available:     available,
+		SMSEnabled:    cfg.SMSEnabled,
+		Login:         CaptchaSceneRequirement{Required: loginRequired},
+		Register:      CaptchaSceneRequirement{Required: registerRequired},
+	}
+	// 客户端带 scene 查询参数时，顶层 Required 直接反映该场景，方便精简判断
+	switch strings.ToLower(strings.TrimSpace(req.Scene)) {
+	case "login":
+		resp.Scene = "login"
+		resp.Required = loginRequired
+	case "register":
+		resp.Scene = "register"
+		resp.Required = registerRequired
+	}
+
+	response.Success(c, http.StatusOK, "ok", resp)
+}
+
+// resolveUserCaptchaType 根据 App 配置决定实际下发的验证码类型
+// 返回空 CaptchaType 表示该 App 未启用任何图形验证码
+func (h *Handler) resolveUserCaptchaType(c *gin.Context, appID int64) (captchadomain.CaptchaType, error) {
+	if h.app == nil {
+		// AppService 未接入时回退到 image（保持服务可用）
+		return captchadomain.TypeImage, nil
+	}
+	cfg, err := h.app.GetCaptchaConfig(c.Request.Context(), appID)
+	if err != nil {
+		return "", err
+	}
+	return service.ResolveCaptchaType(cfg), nil
+}
+
 // VerifyCaptcha 校验图形/算术/数字验证码
 // POST /api/captcha/verify
 func (h *Handler) VerifyCaptcha(c *gin.Context) {
@@ -57,9 +169,10 @@ func (h *Handler) VerifyCaptcha(c *gin.Context) {
 	}
 
 	verifyReq := captchadomain.VerifyRequest{
-		CaptchaID: req.CaptchaID,
-		Answer:    req.Answer,
-		Clear:     true,
+		CaptchaID:     req.CaptchaID,
+		Answer:        req.Answer,
+		Clear:         true,
+		ExpectedScope: captchadomain.ScopeUser,
 	}
 
 	valid, err := h.captcha.Verify(c.Request.Context(), verifyReq)
@@ -135,19 +248,25 @@ func (h *Handler) AdminUpdateCaptchaConfig(c *gin.Context) {
 		return
 	}
 	cfg := captchadomain.CaptchaAppConfig{
-		ImageEnabled: req.ImageEnabled,
-		MathEnabled:  req.MathEnabled,
-		DigitEnabled: req.DigitEnabled,
-		SMSEnabled:   req.SMSEnabled,
-		DefaultType:  req.DefaultType,
+		ImageEnabled:       req.ImageEnabled,
+		MathEnabled:        req.MathEnabled,
+		DigitEnabled:       req.DigitEnabled,
+		DynamicEnabled:     req.DynamicEnabled,
+		AudioEnabled:       req.AudioEnabled,
+		ChiralEnabled:      req.ChiralEnabled,
+		SMSEnabled:         req.SMSEnabled,
+		DefaultType:        req.DefaultType,
+		RequireForLogin:    req.RequireForLogin,
+		RequireForRegister: req.RequireForRegister,
 		SMS: captchadomain.CaptchaSMSConfig{
-			Provider:   req.SMS.Provider,
-			AccessKey:  req.SMS.AccessKey,
-			SecretKey:  req.SMS.SecretKey,
-			Region:     req.SMS.Region,
-			SignName:   req.SMS.SignName,
-			TemplateID: req.SMS.TemplateID,
-			SDKAppID:   req.SMS.SDKAppID,
+			Provider:     req.SMS.Provider,
+			AccessKey:    req.SMS.AccessKey,
+			SecretKey:    req.SMS.SecretKey,
+			Region:       req.SMS.Region,
+			SignName:     req.SMS.SignName,
+			TemplateID:   req.SMS.TemplateID,
+			CodeParamKey: req.SMS.CodeParamKey,
+			SDKAppID:     req.SMS.SDKAppID,
 		},
 		AntiFlood: captchadomain.CaptchaAntiFloodConfig{
 			RequireCaptcha:        req.AntiFlood.RequireCaptcha,
@@ -158,12 +277,64 @@ func (h *Handler) AdminUpdateCaptchaConfig(c *gin.Context) {
 			SendIntervalSeconds:   req.AntiFlood.SendIntervalSeconds,
 		},
 	}
+	for _, item := range req.SMS.Templates {
+		cfg.SMS.Templates = append(cfg.SMS.Templates, captchadomain.CaptchaSMSTemplateConfig{
+			Purpose:      item.Purpose,
+			Name:         item.Name,
+			Enabled:      item.Enabled,
+			SignName:     item.SignName,
+			TemplateID:   item.TemplateID,
+			CodeParamKey: item.CodeParamKey,
+		})
+	}
 	result, err := h.app.UpdateCaptchaConfig(c.Request.Context(), appID, cfg)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
 	response.Success(c, 200, "更新成功", result)
+}
+
+func (h *Handler) AdminTestSMS(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	var req AdminTestSMSRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	purpose := strings.TrimSpace(req.Purpose)
+	if purpose == "" {
+		purpose = "test"
+	}
+	appCfg, err := h.app.GetCaptchaConfig(c.Request.Context(), appID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	providerCfg, err := service.BuildSMSProviderConfig(appID, captchadomain.Purpose(purpose), appCfg.SMS)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	result, err := h.captcha.SendTrustedSMSCode(c.Request.Context(), captchadomain.SMSSendRequest{
+		AppID:    appID,
+		Phone:    req.Phone,
+		Purpose:  captchadomain.Purpose(purpose),
+		ClientIP: c.ClientIP(),
+	}, providerCfg)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "测试短信已发送", gin.H{
+		"purpose":    purpose,
+		"templateId": providerCfg.TemplateID,
+		"signName":   providerCfg.SignName,
+		"result":     result,
+	})
 }
 
 // AdminVerifyCaptcha 管理员验证码校验
@@ -176,9 +347,11 @@ func (h *Handler) AdminVerifyCaptcha(c *gin.Context) {
 	}
 
 	verifyReq := captchadomain.VerifyRequest{
-		CaptchaID: req.CaptchaID,
-		Answer:    req.Answer,
-		Clear:     true,
+		CaptchaID:       req.CaptchaID,
+		Answer:          req.Answer,
+		Clear:           true,
+		ExpectedPurpose: captchadomain.PurposeAdminLogin,
+		ExpectedScope:   captchadomain.ScopeAdmin,
 	}
 
 	valid, err := h.captcha.Verify(c.Request.Context(), verifyReq)
@@ -214,10 +387,17 @@ func (h *Handler) SendSMSCode(c *gin.Context) {
 		CaptchaID:     req.CaptchaID,
 		CaptchaAnswer: req.CaptchaAnswer,
 	}
-
-	// TODO: 从数据库加载 App 对应的 SMSProviderConfig
-	// providerCfg, err := h.app.GetSMSProviderConfig(c.Request.Context(), req.AppID)
-	result, err := h.captcha.SendSMSCode(c.Request.Context(), smsReq, nil)
+	appCfg, err := h.app.GetCaptchaConfig(c.Request.Context(), req.AppID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	providerCfg, err := service.BuildSMSProviderConfig(req.AppID, captchadomain.Purpose(req.Purpose), appCfg.SMS)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	result, err := h.captcha.SendSMSCode(c.Request.Context(), smsReq, providerCfg)
 	if err != nil {
 		h.writeError(c, err)
 		return

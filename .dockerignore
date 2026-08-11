@@ -1,0 +1,53 @@
+# 版本控制与本地工具状态
+.git
+.github
+.idea
+.vscode
+.claude
+.codebase-memory
+.playwright-mcp
+.runtime
+.serena
+.spec-workflow
+
+# 密钥和本地配置绝不能进入镜像构建上下文
+.env
+.env.*
+
+# 前端由独立构建流程处理，后端镜像不需要携带
+aegis-console
+node_modules
+**/node_modules
+.next
+**/.next
+out
+**/out
+.turbo
+**/.turbo
+
+# 运行时数据与本地产物
+data
+bin
+coverage
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.exe
+*.test
+*.prof
+*.log
+*.pid
+*.tmp
+
+# 后端生产镜像不需要的资料和开发辅助文件
+docs
+scripts
+sql
+test
+*.md
+LICENSE
+AGENTS.md
+CLAUDE.md
+DESIGN.md

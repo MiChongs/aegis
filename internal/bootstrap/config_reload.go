@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func registerAPIConfigHotReload(manager *config.Manager, log *zap.Logger, firewall *middleware.Firewall, security *service.SecurityService, autoSign *service.AutoSignService, accountBan *service.AccountBanService, risk *service.RiskService) {
+func registerAPIConfigHotReload(manager *config.Manager, log *zap.Logger, firewall *middleware.Firewall, security *service.SecurityService, autoSign *service.AutoSignService, accountBan *service.AccountBanService, risk *service.RiskService, egressSvc *service.EgressService) {
 	if manager == nil {
 		return
 	}
@@ -39,14 +39,19 @@ func registerAPIConfigHotReload(manager *config.Manager, log *zap.Logger, firewa
 		if risk != nil {
 			risk.Reload(event.Current.Risk)
 		}
-		logConfigReloadSummary(log, "api", event.Previous, event.Current, []string{"default_timezone", "firewall", "security", "auto_sign", "account_ban", "risk"})
+		// 数据库里已有覆盖时 ApplyEnvConfig 只更新基线不改运行时，
+		// 否则控制台里配好的出海路由会被一次 .env 保存悄悄冲掉。
+		if egressSvc != nil {
+			egressSvc.ApplyEnvConfig(event.Current.Egress)
+		}
+		logConfigReloadSummary(log, "api", event.Previous, event.Current, []string{"default_timezone", "firewall", "security", "auto_sign", "account_ban", "risk", "egress"})
 	})
 	if manager.Start() {
 		log.Info("config hot reload watcher started", zap.String("runtime", "api"), zap.String("configFile", manager.ConfigFile()))
 	}
 }
 
-func registerWorkerConfigHotReload(manager *config.Manager, log *zap.Logger, autoSign *service.AutoSignService) {
+func registerWorkerConfigHotReload(manager *config.Manager, log *zap.Logger, autoSign *service.AutoSignService, egressSvc *service.EgressService) {
 	if manager == nil {
 		return
 	}
@@ -58,7 +63,10 @@ func registerWorkerConfigHotReload(manager *config.Manager, log *zap.Logger, aut
 		if autoSign != nil {
 			autoSign.Reload(event.Current.AutoSign)
 		}
-		logConfigReloadSummary(log, "worker", event.Previous, event.Current, []string{"default_timezone", "auto_sign"})
+		if egressSvc != nil {
+			egressSvc.ApplyEnvConfig(event.Current.Egress)
+		}
+		logConfigReloadSummary(log, "worker", event.Previous, event.Current, []string{"default_timezone", "auto_sign", "egress"})
 	})
 	if manager.Start() {
 		log.Info("config hot reload watcher started", zap.String("runtime", "worker"), zap.String("configFile", manager.ConfigFile()))
@@ -114,8 +122,8 @@ func immutableConfigSections(previous, current config.Config) []string {
 	if !reflect.DeepEqual(previous.GeoIP, current.GeoIP) {
 		changed = append(changed, "geoip")
 	}
-	if !reflect.DeepEqual(previous.PaymentBillExport, current.PaymentBillExport) {
-		changed = append(changed, "payment_bill_export")
+	if !reflect.DeepEqual(previous.PaymentReceipt, current.PaymentReceipt) {
+		changed = append(changed, "payment_receipt")
 	}
 	if !reflect.DeepEqual(previous.AdminUserSearch, current.AdminUserSearch) {
 		changed = append(changed, "admin_user_search")

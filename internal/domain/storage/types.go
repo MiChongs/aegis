@@ -13,6 +13,7 @@ const (
 	AccessPrivate = "private"
 
 	ProviderS3          = "s3"
+	ProviderMinIO       = "minio"
 	ProviderAliyunOSS   = "aliyun_oss"
 	ProviderTencentCOS  = "tencent_cos"
 	ProviderQiniuKodo   = "qiniu_kodo"
@@ -158,6 +159,17 @@ type S3Config struct {
 	SessionToken    string `json:"session_token,omitempty"`
 	UseSSL          bool   `json:"use_ssl"`
 	ForcePathStyle  bool   `json:"force_path_style"`
+}
+
+type MinIOConfig struct {
+	Endpoint         string `json:"endpoint"`
+	Bucket           string `json:"bucket"`
+	AccessKeyID      string `json:"access_key_id"`
+	SecretAccessKey  string `json:"secret_access_key"`
+	SessionToken     string `json:"session_token,omitempty"`
+	Region           string `json:"region,omitempty"`
+	UseSSL           bool   `json:"use_ssl"`
+	AutoCreateBucket bool   `json:"auto_create_bucket"`
 }
 
 type AliyunOSSConfig struct {

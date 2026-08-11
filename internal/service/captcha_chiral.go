@@ -1,6 +1,7 @@
 package service
 
 import (
+	"aegis/pkg/egress"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -669,7 +670,7 @@ func (s *CaptchaService) callRDKitService(ctx context.Context, width, height int
 		return nil, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := egress.NewClient(egress.Profile{Name: "captcha.chiral"}).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("rdkit service request failed: %w", err)
 	}

@@ -1,13 +1,19 @@
 package httptransport
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
 	emaildomain "aegis/internal/domain/email"
 	paymentdomain "aegis/internal/domain/payment"
 	workflowdomain "aegis/internal/domain/workflow"
+	"aegis/internal/service"
 	"aegis/pkg/response"
-	"encoding/json"
-	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -90,6 +96,7 @@ func (h *Handler) adminEmailConfigSaveWithReq(c *gin.Context, req AdminEmailConf
 		IsDefault:   req.IsDefault,
 		Description: maybeString(req.Description),
 		SMTP:        smtp,
+		Zeabur:      buildZeaburMutation(req),
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -100,6 +107,86 @@ func (h *Handler) adminEmailConfigSaveWithReq(c *gin.Context, req AdminEmailConf
 		message = "更新成功"
 	}
 	response.Success(c, 200, message, item)
+}
+
+// buildZeaburMutation 只在请求确实涉及 Zeabur 时才返回非 nil。
+// 保存一个纯 SMTP 配置时不该顺手把 Zeabur 段清成空值，那会在切换服务商后丢配置。
+func buildZeaburMutation(req AdminEmailConfigSaveRequest) *emaildomain.ZeaburConfig {
+	if req.Zeabur != nil {
+		return req.Zeabur
+	}
+	touched := strings.TrimSpace(req.ZeaburAPIKey) != "" ||
+		strings.TrimSpace(req.ZeaburBaseURL) != "" ||
+		strings.TrimSpace(req.ZeaburFrom) != "" ||
+		strings.TrimSpace(req.ZeaburFromName) != "" ||
+		strings.TrimSpace(req.ZeaburReplyTo) != "" ||
+		strings.TrimSpace(req.ZeaburWebhookSecret) != "" ||
+		len(req.ZeaburTags) > 0
+	if !touched && !strings.EqualFold(strings.TrimSpace(req.Provider), emaildomain.ProviderZeabur) {
+		return nil
+	}
+	return &emaildomain.ZeaburConfig{
+		APIKey:        req.ZeaburAPIKey,
+		BaseURL:       req.ZeaburBaseURL,
+		FromAddress:   req.ZeaburFrom,
+		FromName:      req.ZeaburFromName,
+		ReplyTo:       req.ZeaburReplyTo,
+		WebhookSecret: req.ZeaburWebhookSecret,
+		Tags:          req.ZeaburTags,
+	}
+}
+
+func (h *Handler) AdminEmailDeliveryList(c *gin.Context) {
+	var req AdminEmailDeliveryListRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	page, err := h.email.ListDeliveries(c.Request.Context(), emaildomain.DeliveryQuery{
+		AppID:    req.AppID,
+		ConfigID: req.ConfigID,
+		Status:   req.Status,
+		Provider: req.Provider,
+		Keyword:  req.Keyword,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "获取成功", page)
+}
+
+// ZeaburEmailWebhook 接收 Zeabur Email 的投递回执。
+//
+// 该路由是公开的（Zeabur 侧不可能携带管理员令牌），真正的准入是 HMAC 签名校验，
+// 由 EmailService 用该应用配置里的 Webhook 密钥完成。
+func (h *Handler) ZeaburEmailWebhook(c *gin.Context) {
+	appID, err := strconv.ParseInt(strings.TrimSpace(c.Param("appid")), 10, 64)
+	if err != nil || appID <= 0 {
+		response.Error(c, http.StatusBadRequest, 40000, "应用标识非法")
+		return
+	}
+	// 必须拿原始字节：签名覆盖的是原文，任何重新序列化都会让验签失败。
+	body, err := c.GetRawData()
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "读取回调报文失败")
+		return
+	}
+	result, err := h.email.HandleZeaburWebhook(c.Request.Context(), service.ZeaburWebhookRequest{
+		AppID:      appID,
+		ConfigName: strings.TrimSpace(c.Param("config")),
+		Event:      c.GetHeader(service.ZeaburWebhookEventHeader),
+		Timestamp:  c.GetHeader(service.ZeaburWebhookTimestampHeader),
+		Signature:  c.GetHeader(service.ZeaburWebhookSignatureHeader),
+		Body:       body,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "接收成功", result)
 }
 
 func (h *Handler) AdminEmailConfigDelete(c *gin.Context) {
@@ -183,6 +270,93 @@ func (h *Handler) VerifyResetToken(c *gin.Context) {
 		return
 	}
 	response.Success(c, 200, "验证完成", gin.H{"valid": valid})
+}
+
+// AdminPaymentOrderListRequest 管理端订单列表请求
+type AdminPaymentOrderListRequest struct {
+	AppID   int64  `json:"appid" form:"appid" binding:"required"`
+	Status  string `json:"status" form:"status"`
+	Method  string `json:"payment_method" form:"payment_method"`
+	Keyword string `json:"keyword" form:"keyword"`
+	UserID  int64  `json:"user_id" form:"user_id"`
+	Page    int    `json:"page" form:"page"`
+	Limit   int    `json:"limit" form:"limit"`
+}
+
+// AdminPaymentOrderDetailRequest 管理端订单详情请求
+type AdminPaymentOrderDetailRequest struct {
+	AppID   int64  `json:"appid" form:"appid" binding:"required"`
+	OrderNo string `json:"order_no" form:"order_no" binding:"required"`
+}
+
+func (h *Handler) AdminPaymentOrderList(c *gin.Context) {
+	var req AdminPaymentOrderListRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	result, err := h.payment.AdminListOrders(c.Request.Context(), req.AppID, service.AdminOrderQuery{
+		Status:  req.Status,
+		Method:  req.Method,
+		Keyword: req.Keyword,
+		UserID:  req.UserID,
+		Page:    req.Page,
+		Limit:   req.Limit,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "获取成功", result)
+}
+
+func (h *Handler) AdminPaymentOrderDetail(c *gin.Context) {
+	var req AdminPaymentOrderDetailRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	detail, err := h.payment.AdminOrderDetail(c.Request.Context(), req.AppID, req.OrderNo)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "获取成功", detail)
+}
+
+// AdminPaymentReceiptRequest 管理端凭证导出请求
+type AdminPaymentReceiptRequest struct {
+	AppID   int64  `json:"appid" form:"appid" binding:"required"`
+	OrderNo string `json:"order_no" form:"order_no" binding:"required"`
+	// Locale 期望语言（BCP 47）；留空用平台默认（en）
+	Locale string `json:"locale" form:"locale"`
+	// DocumentType receipt / invoice / credit_note；留空按订单状态推导
+	DocumentType string `json:"documentType" form:"documentType"`
+	// Timezone IANA 时区名；留空为 UTC
+	Timezone string `json:"timezone" form:"timezone"`
+}
+
+// AdminPaymentOrderReceipt 管理端导出任意订单的凭证（客服代开、对账留档）。
+//
+// 与用户侧不同，这里不落盘：管理端是一次性下载，没有「把链接发给别人」的场景，
+// 落盘只会在磁盘上多留一份含交易明细的文件。
+func (h *Handler) AdminPaymentOrderReceipt(c *gin.Context) {
+	var req AdminPaymentReceiptRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	data, filename, err := h.payment.RenderAppOrderReceipt(c.Request.Context(), req.AppID, req.OrderNo, paymentdomain.ReceiptOptions{
+		Locale:         strings.TrimSpace(req.Locale),
+		AcceptLanguage: c.GetHeader("Accept-Language"),
+		DocumentType:   strings.TrimSpace(req.DocumentType),
+		Timezone:       strings.TrimSpace(req.Timezone),
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writePDF(c, filename, data)
 }
 
 func (h *Handler) AdminPaymentConfigList(c *gin.Context) {
@@ -320,6 +494,9 @@ func (h *Handler) CreatePaymentOrder(c *gin.Context) {
 	response.Success(c, 200, "创建成功", gin.H{"payment": payload, "order": order})
 }
 
+// PaymentOrders 用户订单分页。每条订单都带上 receipt 区块 ——
+// 「这单能不能开票、开出来是收据还是账单、能不能寄到邮箱」由服务端算好，
+// 各端自己判断会很快各写一套且互不一致。
 func (h *Handler) PaymentOrders(c *gin.Context) {
 	session, ok := authSession(c)
 	if !ok {
@@ -328,11 +505,11 @@ func (h *Handler) PaymentOrders(c *gin.Context) {
 	}
 	var query UserPaymentOrdersQuery
 	_ = bind(c, &query)
-	result, err := h.payment.ListUserOrders(c.Request.Context(), session, paymentdomain.OrderListQuery{
+	result, err := h.payment.ListUserOrderViews(c.Request.Context(), session, paymentdomain.OrderListQuery{
 		Status: query.Status,
 		Page:   query.Page,
 		Limit:  query.Limit,
-	})
+	}, receiptOptions(c, PaymentBillExportRequest{}))
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -346,7 +523,7 @@ func (h *Handler) PaymentOrderDetail(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
 		return
 	}
-	order, err := h.payment.GetUserOrder(c.Request.Context(), session, c.Param("orderNo"))
+	order, err := h.payment.GetUserOrderView(c.Request.Context(), session, c.Param("orderNo"), receiptOptions(c, PaymentBillExportRequest{}))
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -354,6 +531,7 @@ func (h *Handler) PaymentOrderDetail(c *gin.Context) {
 	response.Success(c, 200, "获取成功", order)
 }
 
+// ExportPaymentBill 生成支付凭证并返回一次性下载凭据。
 func (h *Handler) ExportPaymentBill(c *gin.Context) {
 	session, ok := authSession(c)
 	if !ok {
@@ -362,7 +540,7 @@ func (h *Handler) ExportPaymentBill(c *gin.Context) {
 	}
 	var req PaymentBillExportRequest
 	_ = bind(c, &req)
-	export, err := h.payment.CreateUserOrderBillExport(c.Request.Context(), session, c.Param("orderNo"), time.Duration(req.ExpireMinutes)*time.Minute)
+	export, err := h.payment.CreateUserOrderReceipt(c.Request.Context(), session, c.Param("orderNo"), receiptOptions(c, req))
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -370,17 +548,131 @@ func (h *Handler) ExportPaymentBill(c *gin.Context) {
 	response.Success(c, 200, "创建成功", export)
 }
 
+// DownloadPaymentBill 取回之前导出的凭证文件。
 func (h *Handler) DownloadPaymentBill(c *gin.Context) {
 	session, ok := authSession(c)
 	if !ok {
 		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
 		return
 	}
-	data, filename, err := h.payment.DownloadUserOrderBillExport(c.Request.Context(), session, c.Param("billId"))
+	data, filename, err := h.payment.DownloadUserOrderReceipt(c.Request.Context(), session, c.Param("billId"))
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
+	writePDF(c, filename, data)
+}
+
+// DownloadPaymentReceipt 直接返回凭证 PDF，省掉「先创建再下载」两步。
+// 只想拿一份文件的客户端走这条；需要可分享链接的走 ExportPaymentBill。
+func (h *Handler) DownloadPaymentReceipt(c *gin.Context) {
+	session, ok := authSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
+		return
+	}
+	var req PaymentBillExportRequest
+	_ = bind(c, &req)
+	data, filename, err := h.payment.RenderUserOrderReceipt(c.Request.Context(), session, c.Param("orderNo"), receiptOptions(c, req))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writePDF(c, filename, data)
+}
+
+// EmailPaymentReceipt 把凭证寄到账号绑定的邮箱。
+//
+// 收件地址**不接受请求指定**：允许任意填写等于把平台变成一个能带 PDF 附件的
+// 转发器。要寄给别人，用户自己转发即可。
+func (h *Handler) EmailPaymentReceipt(c *gin.Context) {
+	session, ok := authSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
+		return
+	}
+	var req PaymentBillExportRequest
+	_ = bind(c, &req)
+	result, err := h.payment.EmailUserOrderReceipt(c.Request.Context(), session, c.Param("orderNo"), receiptOptions(c, req))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "发送成功", result)
+}
+
+// DownloadSignedPaymentReceipt 凭邮件里的签名链接下载凭证，**无需登录**。
+//
+// 这条路由刻意放在鉴权组之外：邮件客户端里没有会话，需要登录的链接等于打不开。
+// 授权来自「128 位随机凭证标识 + 服务端签名 + 有限有效期」，与密码重置链接同一套模型。
+func (h *Handler) DownloadSignedPaymentReceipt(c *gin.Context) {
+	appID, err := strconv.ParseInt(strings.TrimSpace(c.Param("appid")), 10, 64)
+	if err != nil || appID <= 0 {
+		response.Error(c, http.StatusNotFound, 40475, "账单不存在")
+		return
+	}
+	expires, _ := strconv.ParseInt(strings.TrimSpace(c.Query("expires")), 10, 64)
+	data, filename, err := h.payment.DownloadSignedReceipt(c.Request.Context(), appID,
+		c.Param("billId"), expires, c.Query("token"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writePDF(c, filename, data)
+}
+
+// AdminPaymentOrderReceiptEmail 管理端把凭证寄到指定邮箱（客服代发 / 补发到财务）。
+func (h *Handler) AdminPaymentOrderReceiptEmail(c *gin.Context) {
+	var req AdminPaymentReceiptEmailRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	result, err := h.payment.EmailAppOrderReceipt(c.Request.Context(), req.AppID, req.OrderNo, req.Email, paymentdomain.ReceiptOptions{
+		Locale:         strings.TrimSpace(req.Locale),
+		AcceptLanguage: c.GetHeader("Accept-Language"),
+		DocumentType:   strings.TrimSpace(req.DocumentType),
+		Timezone:       strings.TrimSpace(req.Timezone),
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "发送成功", result)
+}
+
+// AdminPaymentReceiptEmailRequest 管理端凭证寄送请求
+type AdminPaymentReceiptEmailRequest struct {
+	AppID   int64  `json:"appid" form:"appid" binding:"required"`
+	OrderNo string `json:"order_no" form:"order_no" binding:"required"`
+	// Email 收件地址。管理端可指定任意地址，因此这条路径必须经过审计中间件。
+	Email        string `json:"email" form:"email" binding:"required"`
+	Locale       string `json:"locale" form:"locale"`
+	DocumentType string `json:"documentType" form:"documentType"`
+	Timezone     string `json:"timezone" form:"timezone"`
+}
+
+// PaymentReceiptOptions 下发凭证可选语言与当前环境的字体能力。
+// 客户端据此渲染语言选择器，并在缺中日韩字体时提前提示，而不是等下载到一份英文的。
+func (h *Handler) PaymentReceiptOptions(c *gin.Context) {
+	response.Success(c, 200, "获取成功", h.payment.ReceiptCapability())
+}
+
+// receiptOptions 组装凭证选项。语言的次选来源是 Accept-Language ——
+// 请求头在这里读，服务层只负责按优先级挑，不必认识 HTTP。
+func receiptOptions(c *gin.Context, req PaymentBillExportRequest) paymentdomain.ReceiptOptions {
+	return paymentdomain.ReceiptOptions{
+		Locale:         strings.TrimSpace(req.Locale),
+		AcceptLanguage: c.GetHeader("Accept-Language"),
+		DocumentType:   strings.TrimSpace(req.DocumentType),
+		Timezone:       strings.TrimSpace(req.Timezone),
+		TTL:            time.Duration(req.ExpireMinutes) * time.Minute,
+	}
+}
+
+// writePDF 输出 PDF。文件名恒为 ASCII（见 service.receiptFileName），
+// 因此不需要 RFC 5987 的 filename* 扩展。
+func writePDF(c *gin.Context, filename string, data []byte) {
 	c.Header("Content-Type", "application/pdf")
 	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
 	c.Header("Cache-Control", "no-store")
@@ -427,12 +719,30 @@ func (h *Handler) EpayCallback(c *gin.Context) {
 
 func (h *Handler) PaymentCallback(c *gin.Context) {
 	method := c.Param("method")
+	// 先完整读取原始报文（JSON Webhook 验签必须基于逐字节原文），再恢复 Body 供表单解析
+	rawBody, _ := io.ReadAll(io.LimitReader(c.Request.Body, 4<<20))
+	c.Request.Body = io.NopCloser(bytes.NewReader(rawBody))
 	_ = c.Request.ParseForm()
 	data := map[string]string{}
 	for key, values := range c.Request.Form {
 		if len(values) > 0 {
 			data[key] = values[0]
 		}
+	}
+	// 仅对非表单回调（Stripe / 微信 / PayPal 的 JSON Webhook）注入保留键，
+	// 避免污染易支付系表单验签的参数集合
+	contentType := strings.ToLower(c.GetHeader("Content-Type"))
+	if len(rawBody) > 0 && !strings.Contains(contentType, "form") {
+		data[service.CallbackRawBodyKey] = string(rawBody)
+		for _, headerKey := range service.CallbackSignatureHeaders {
+			if v := c.GetHeader(headerKey); v != "" {
+				data[service.CallbackHeaderPrefix+strings.ToLower(headerKey)] = v
+			}
+		}
+	}
+	// 路径段应用标识（微信等通知地址禁带查询参数的渠道）：/callback/:method/:appid
+	if appID := strings.TrimSpace(c.Param("appid")); appID != "" {
+		data["__app_id"] = appID
 	}
 	result, err := h.payment.HandleCallback(c.Request.Context(), method, data, c.Request.Method, c.ClientIP())
 	if err != nil {

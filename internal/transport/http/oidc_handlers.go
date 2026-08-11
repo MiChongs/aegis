@@ -41,13 +41,24 @@ func (h *Handler) AdminOIDCCallback(c *gin.Context) {
 		if errMsg == "" {
 			errMsg = "缺少 code 或 state 参数"
 		}
+		h.recordAuditAuth(c, AuthAuditParams{
+			Provider: "oidc",
+			Event:    "login",
+			Status:   systemdomain.AuditStatusFailed,
+			Reason:   errMsg,
+		})
 		h.oidcRedirectError(c, errMsg)
 		return
 	}
 
 	result, err := h.admin.HandleOIDCCallback(c.Request.Context(), code, state, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
-		h.recordAuditFailed(c, "admin.oidc_login_failed", "admin", "", "OIDC 登录失败: "+err.Error())
+		h.recordAuditAuth(c, AuthAuditParams{
+			Provider: "oidc",
+			Event:    "login",
+			Status:   systemdomain.AuditStatusFailed,
+			Reason:   err.Error(),
+		})
 		h.oidcRedirectError(c, err.Error())
 		return
 	}
@@ -56,6 +67,14 @@ func (h *Handler) AdminOIDCCallback(c *gin.Context) {
 	ticket := uuid.NewString()
 	payload, _ := json.Marshal(result)
 	if err := h.sessions.SetOIDCTicket(c.Request.Context(), ticket, payload, 30*time.Second); err != nil {
+		h.recordAuditAuth(c, AuthAuditParams{
+			AdminID:   result.Admin.ID,
+			AdminName: result.Admin.Account,
+			Provider:  "oidc",
+			Event:     "login",
+			Status:    systemdomain.AuditStatusFailed,
+			Reason:    "ticket 存储失败",
+		})
 		h.oidcRedirectError(c, "内部错误")
 		return
 	}
@@ -66,6 +85,18 @@ func (h *Handler) AdminOIDCCallback(c *gin.Context) {
 		redirectURL += "&mfa=true"
 	}
 	c.Redirect(http.StatusFound, redirectURL)
+
+	// 在实际登录完成的位置记录成功审计 —— 不等前端 exchange ticket 才审计，
+	// 因为 exchange 只是取回 LoginResult，真正的认证判定在此处
+	h.recordAuditAuth(c, AuthAuditParams{
+		AdminID:     result.Admin.ID,
+		AdminName:   result.Admin.Account,
+		DisplayName: result.Admin.DisplayName,
+		Provider:    "oidc",
+		Event:       "login",
+		Status:      systemdomain.AuditStatusSuccess,
+		MFARequired: result.RequiresSecondFactor,
+	})
 }
 
 // AdminOIDCExchange 用一次性 ticket 换取 LoginResult

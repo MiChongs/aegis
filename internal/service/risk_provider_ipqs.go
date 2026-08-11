@@ -1,15 +1,16 @@
 package service
 
 import (
+	"aegis/pkg/egress"
 	"context"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"aegis/internal/config"
 	securitydomain "aegis/internal/domain/security"
+	"aegis/pkg/timeutil"
 
 	"github.com/go-resty/resty/v2"
 )
@@ -47,8 +48,9 @@ func NewIPQualityScoreProvider(cfg config.RiskIPReputationConfig) *IPQualityScor
 	}
 	client := resty.New().
 		SetTimeout(cfg.Timeout).
-		SetRetryCount(1).
-		SetHeader("Accept", "application/json")
+		SetRetryCount(0).
+		SetHeader("Accept", "application/json").
+		SetTransport(egress.NewTransport(egress.Profile{Name: "risk.ipqs"}))
 	return &IPQualityScoreProvider{
 		baseURL: strings.TrimRight(cfg.IPQS.BaseURL, "/"),
 		apiKey:  apiKey,
@@ -98,7 +100,7 @@ func (p *IPQualityScoreProvider) Lookup(ctx context.Context, ip string) (*securi
 		IsVPN:        resp.VPN || resp.ActiveVPN,
 		IsTor:        resp.Tor || resp.ActiveTor,
 		IsDatacenter: resp.Host,
-		LastSeenAt:   time.Now().UTC(),
+		LastSeenAt:   timeutil.NowUTC(),
 	}
 	if resp.BotStatus || resp.IsCrawler || resp.RecentAbuse {
 		if record.RiskScore < 75 {

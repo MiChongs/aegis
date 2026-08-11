@@ -1,0 +1,140 @@
+{
+  "$meta": {
+    "name": "Russian",
+    "nativeName": "Русский",
+    "direction": "ltr",
+    "script": "cyrillic"
+  },
+  "$format": {
+    "group": " ",
+    "decimal": ",",
+    "groupSizes": [3],
+    "currency": "{value} {symbol}",
+    "currencyNegative": "-{value} {symbol}",
+    "date": "02.01.2006",
+    "dateTime": "02.01.2006 15:04 MST",
+    "time": "15:04"
+  },
+
+  "doc.type.receipt": "Квитанция",
+  "doc.type.invoice": "Счёт",
+  "doc.type.credit_note": "Кредит-нота",
+
+  "status.paid": "Оплачено",
+  "status.pending": "Не оплачено",
+  "status.refunded": "Возвращено",
+  "status.partially_refunded": "Частичный возврат",
+  "status.expired": "Просрочено",
+  "status.failed": "Ошибка оплаты",
+  "status.cancelled": "Отменено",
+
+  "header.number": "№ {number}",
+  "header.issuedAt": "Выдано {time}",
+  "header.continued": "{title} {number} (продолжение)",
+
+  "party.issuer": "От кого",
+  "party.customer": "Кому",
+  "party.merchant": "Продавец",
+  "party.guest": "Гость",
+
+  "table.description": "Наименование",
+  "table.quantity": "Кол-во",
+  "table.unitPrice": "Цена",
+  "table.amount": "Сумма",
+
+  "totals.subtotal": "Промежуточный итог",
+  "totals.discount": "Скидка",
+  "totals.tax": "Налог",
+  "totals.taxWithRate": "Налог ({rate} %)",
+  "totals.total": "Итого",
+  "totals.refunded": "Возвращено",
+  "totals.netPaid": "Итого к оплате",
+
+  "payment.section": "Сведения об оплате",
+  "payment.method": "Способ оплаты",
+  "payment.orderNo": "Номер заказа",
+  "payment.transactionId": "Идентификатор операции",
+  "payment.channel": "Канал",
+  "payment.clientIp": "IP клиента",
+  "payment.paidAt": "Оплачено",
+
+  "refunds.section": "Возвраты",
+  "refunds.number": "Номер возврата",
+  "refunds.status": "Статус",
+  "refunds.at": "Дата",
+  "refunds.amount": "Сумма",
+  "refunds.reasonLine": "Причина: {reason}",
+  "refunds.summaryOnly": "По этому заказу возвращено всего {amount}.",
+
+  "refund.status.pending": "Ожидает",
+  "refund.status.processing": "В обработке",
+  "refund.status.success": "Возвращено",
+  "refund.status.failed": "Ошибка",
+  "refund.status.closed": "Закрыт",
+
+  "metadata.section": "Дополнительные сведения",
+  "notes.section": "Примечания",
+
+  "email.subject": "{title} {number} · {brand}",
+  "email.title": "Ваш документ «{title}» готов",
+  "email.lead": "По заказу {orderNo}",
+  "email.greeting": "Здравствуйте, {name}!",
+  "email.attached": "PDF-файл вложен в это письмо.",
+  "email.linkLead": "Скачайте его по кнопке ниже. Ссылка действует до {expiry}.",
+  "email.button": "Скачать",
+  "email.summary": "Сводка",
+  "email.footer": "Сохраните этот документ. Письмо сформировано автоматически, отвечать на него не нужно.",
+
+  "meta.purpose": "Назначение",
+  "meta.appId": "Идентификатор приложения",
+  "meta.userId": "Идентификатор клиента",
+  "meta.createdAt": "Заказ создан",
+  "meta.expireAt": "Оплатить до",
+  "meta.plan": "Тариф",
+  "meta.duration": "Срок",
+  "meta.bonusPoints": "Бонусные баллы",
+  "meta.points": "Начислено баллов",
+  "meta.days": {
+    "one": "{count} день",
+    "few": "{count} дня",
+    "many": "{count} дней",
+    "other": "{count} дня"
+  },
+  "meta.pointsValue": {
+    "one": "{count} балл",
+    "few": "{count} балла",
+    "many": "{count} баллов",
+    "other": "{count} балла"
+  },
+
+  "purpose.wallet_recharge": "Пополнение баланса",
+  "purpose.vip_purchase": "Покупка подписки",
+  "purpose.integral_purchase": "Покупка баллов",
+
+  "notes.unpaid": "Этот документ не является подтверждением оплаты: заказ ещё не оплачен.",
+  "notes.refunded": "Заказ возвращён полностью. Итоговая сумма к оплате — ноль.",
+  "notes.partiallyRefunded": "По заказу выполнен частичный возврат. Подробности — в разделе «Возвраты».",
+
+  "footer.page": "Страница {page} из {total}",
+  "footer.disclaimer": "Документ сформирован электронно и действителен без подписи.",
+  "footer.generated": "Сформировано {producer} {time}.",
+  "footer.scanToVerify": "Сканируйте для проверки",
+  "footer.verify": "Проверить документ: {url}",
+
+  "method.epay": "Агрегатор E-Pay",
+  "method.rainbow_epay": "Rainbow E-Pay",
+  "method.xunhupay": "Xunhupay",
+  "method.payjs": "PAYJS",
+  "method.qrpay": "QRPay",
+  "method.vmqpay": "VMQPay",
+  "method.alipay_native": "Alipay",
+  "method.wechat_native": "WeChat Pay",
+  "method.stripe": "Stripe",
+  "method.paypal": "PayPal",
+  "method.balance": "Баланс счёта",
+  "method.paddle": "Paddle",
+  "method.lemonsqueezy": "Lemon Squeezy",
+  "method.razorpay": "Razorpay",
+  "method.coinbase": "Coinbase Commerce",
+  "method.square": "Square"
+}

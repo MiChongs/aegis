@@ -1,0 +1,508 @@
+# internal/service — 业务逻辑层
+
+> 面包屑：[Aegis](../../CLAUDE.md) › internal/service
+
+## 职责
+
+所有业务逻辑的实现层，是 Handler 和 Repository 之间的唯一桥梁。
+
+## 服务清单
+
+| 文件 | 服务 | 核心功能 |
+|---|---|---|
+| `admin_service.go` | `AdminService` | 管理员认证、Casbin RBAC、超级管理员引导 |
+| `app_oauth_service.go` | `AppOAuthService` | 应用级第三方登录渠道配置（CRUD/密钥加密/自检/解析） |
+| `app_oauth_catalog.go` | — | 内置渠道模板目录（微信/QQ/微博/Gitee/GitHub/Google/… 13 个） |
+| `app_service.go` | `AppService` | 多租户 App 管理、App 加密密钥 |
+| `auth_service.go` | `AuthService` | 用户 JWT 认证、Token 刷新、OAuth2 |
+| `auth_sms.go` | — | 短信验证码登录/自动建号 + `MobileOAuthLoginScoped`（叠加应用级开关） |
+| `auth_protocol_service.go` | `AuthProtocolService` | 接入协议：策略、安全等级、应用密钥签名、Transport v2 |
+| `auth_protocol_selftest.go` | — | 接入自检；同时是三档协议的**参考客户端实现** |
+| `auto_sign_service.go` | `AutoSignService` | 自动签到调度（Redis Sorted Set） |
+| `avatar_service.go` | `AvatarService` | 头像上传、存储路由 |
+| `db_manager.go` | `DatabaseManager` | 数据库生命周期与泄漏监控总入口（采集/告警/历史/会话治理） |
+| `db_leak.go` | — | 六类泄漏判定（连接/事务/快照/WAL/两阶段事务/存储）+ 指标趋势检测 |
+| `db_sessions.go` | — | pg_stat_activity / 复制槽 / 两阶段事务 / 死元组视图与会话终止 |
+| `email_service.go` | `EmailService` | 邮件出口总入口：挑 provider、模板渲染、投递留痕、密钥加解密 |
+| `email_sender.go` | — | `emailSender` provider 抽象与分派 + HTML→纯文本 |
+| `email_provider_smtp.go` | — | SMTP 直连发送器（go-mail）与错误分类 |
+| `email_provider_zeabur.go` | — | Zeabur Email REST 发送器（错误映射 / 429 不重试 / 独立熔断） |
+| `email_webhook.go` | — | Zeabur 投递回执：HMAC 验签、防重放、状态推进 |
+| `egress_service.go` | `EgressService` | 出海代理网关管理面：配置持久化 / 密钥加解密 / 数据库覆盖 .env / 自测与路由解释 |
+| `geo_analytics_service.go` | `GeoAnalyticsService` | 地理分析：小时聚合 / DBSCAN 攻击聚类 / 用户轨迹 / 分区与画像维护 |
+| `geo_ban_service.go` | `GeoBanService` | 地域/ASN/ISP 封禁（DB 存储 + 内存匹配 + 热重载） |
+| `geo_fence_service.go` | `GeoFenceService` | 地理围栏（PostGIS 真实来源 + 内存几何判定 + 回测） |
+| `geo_math.go` | — | 纯内存几何计算（haversine / GeoJSON 解析 / 射线法） |
+| `geo_risk_service.go` | `GeoRiskService` | 登录地理风控（不可能旅行/新国家/远离常驻地，Redis 画像缓存） |
+| `risk_service.go` | `RiskService` | **风控中心**：规则评估 / 处置策略 / 设备与 IP 档案 / 大盘 / 模拟与重放（详见下节） |
+| `risk_env.go` | — | `RiskEvalEnv` —— 引擎看到的全部事实，同时是 expr 的类型化环境（`expr` 标签即变量名） |
+| `risk_expr.go` | — | expr 编译缓存、领域函数（`in_cidr`/`any_cidr`/`contains_any`/`in_time_window`）、表达式校验 |
+| `risk_provider.go` / `risk_provider_ipqs.go` | — | 外部 IP 情报源抽象与 IPQualityScore 适配（带熔断与限速） |
+| `location_geoip.go` | — | GeoIP2 mmdb 加载 & 自动更新实现 |
+| `location_service.go` | `LocationService` | IP 地理位置查询（city + ASN），Redis 缓存 |
+| `migration_service.go` | `MigrationService` | 遗留 MySQL 用户迁移 |
+| `monitor_service.go` | `MonitorService` | 系统监控数据聚合（所有服务汇总） |
+| `notification_service.go` | `NotificationService` | **应用用户**站内信（notifications 表，外键 users） |
+| `admin_inbox_service.go` | `AdminInboxService` | **管理员**收件箱（admin_notifications 表，外键 admin_accounts）+ 角标实时推送 |
+| `realtime_publisher.go` | — | 仅发布的 NATS 实时事件发布器，供 Worker 把事件送达连在 API 实例上的客户端 |
+| `notify_hub.go` | `NotifyHub` | **统一通知出口**：订阅匹配 → 模板渲染 → 多渠道投递 → 留痕重试 |
+| `notify_provider_feishu.go` | — | 飞书群机器人（加签）+ 企业自建应用（tenant_access_token）、交互式卡片 |
+| `notify_provider_im.go` | — | 钉钉 / 企业微信 / Slack 群机器人 |
+| `notify_provider_local.go` | — | 通用 Webhook（HMAC 签名）+ 邮件 / 站内信 / 实时推送 |
+| `notify_admin.go` | — | 渠道 / 订阅 / 模板 / 投递记录的管理面 + 测试发送 |
+| `ticket_service.go` | `TicketService` | 工单建单、回复、指派、状态流转、附件、评价 |
+| `ticket_access.go` | — | 工单权限：`Scope` 可见范围推导 + `ActionSet` 动作集判定 |
+| `ticket_sla.go` | — | SLA 计时（支持工作时间窗口）与巡检告警 |
+| `ticket_notify.go` | — | 工单 → NotifyHub 的唯一桥梁（事件构造与收件人解析） |
+| `ticket_config_service.go` | — | 分类 / 处理组 / SLA 策略 / 快捷回复配置 |
+| `oauth_provider.go` | — | OAuth2 协议适配器（按 kind 分流：generic/qq/wechat/weibo/github/microsoft） |
+| `login_consistency_service.go` | `LoginConsistencyService` | 登录一致性：设备绑定 / 换绑冷却 / 登录 IP / 登录属地（Redis 基线 + 管理端重置） |
+| `organization_service.go` | `OrganizationService` | 组织 / 部门 / 应用绑定 / 概览；权限判定下沉在此层（`orgContext`） |
+| `org_member_service.go` | — | 组织成员 / 邀请 / 岗位 / 组织角色（挂在 `OrganizationService` 上，共用同一套权限解析） |
+| `org_approval_service.go` | `OrgApprovalService` | 审批链与实例、权限模板、跨部门协作组 |
+| `org_access_control.go` | `OrgAccessControl` | Casbin 组织域（带 domain）判定，下发展开后的权限集给前端 |
+| `org_import_export.go` | — | 组织架构 Excel 导入导出（excelize），导入两段式：先预检再落库 |
+| `password_policy_service.go` | — | 密码策略规则、模板、校验、生命周期（过期时间 / 防重用） |
+| `password_strength.go` | — | 强度评估引擎：PRECIS 归一化 + zxcvbn 猜测次数估算 + 0~100 映射 + 模式中文化 |
+| `password_dictionary_zh.go` | — | 中文语境与通用弱口令补充词表（zxcvbn 内置词表零覆盖中文） |
+| `payment_service.go` | `PaymentService` | 支付网关：渠道注册表、订单创建/查询/回调、统一限额、履约 |
+| `payment_receipt.go` | — | 支付凭证：订单 → 凭证文档装配、语言/时区/币种解析、导出落盘与清理、订单上的凭证入口 |
+| `payment_receipt_email.go` | — | 凭证邮件：签名下载链接、与 PDF 同语言的正文、频次限制、支付成功自动寄送 |
+| `payment_provider.go` | — | `paymentProvider` 接口 + 回调保留键与签名头白名单 |
+| `payment_provider_schema.go` | — | 渠道自描述构造器（字段 schema / 分区 / 能力矩阵） |
+| `payment_provider_*.go` | — | 16 个渠道适配器，各自实现 `Describe()` 自描述 |
+| `platform_governance_service.go` | `PlatformGovernanceService` | **平台治理**：全站应用的限制/冻结/停运/封禁/归档 + 到期结算 + 申诉（内存快照判定） |
+| `platform_settings_service.go` | `PlatformSettingsService` | 平台设置读写、防火墙动态配置 |
+| `points_service.go` | `PointsService` | 积分 & 经验值调整、统计 |
+| `realtime_service.go` | `RealtimeService` | WebSocket 连接管理、NATS 实时推送 |
+| `role_application_service.go` | `RoleApplicationService` | 角色申请审批流程 |
+| `signin_service.go` | `SignInService` | 用户签到逻辑、积分结算 |
+| `site_service.go` | `SiteService` | 站点信息管理 |
+| `storage_provider_*.go` | — | 多云存储驱动（Azure/OSS/S3/COS/Qiniu/WebDAV）|
+| `storage_service.go` | `StorageService` | 存储桶管理、文件上传/下载/配额 |
+| `user_service.go` | `UserService` | 用户 CRUD、状态管理 |
+| `user_settings_admin_service.go` | — | 管理员侧用户设置管理 |
+| `version_service.go` | `VersionService` | App 版本发布管理 |
+| `worker_event_service.go` | `WorkerEventService` | NATS 事件消费处理（登录审计等） |
+| `workflow_runtime_temporal.go` | — | Temporal 工作流活动注册 |
+| `workflow_service.go` | `WorkflowService` | 工作流定义 CRUD、Temporal 触发 |
+
+## 依赖关系约束
+
+```
+Handler → Service → Repository + Domain Types
+Service 可以调用其他 Service（如 AvatarService 调用 StorageService + UserService）
+Service 不可 import transport/http
+```
+
+## 构造函数模式
+
+所有服务均遵循：
+```go
+func NewXxxService(log *zap.Logger, pg *pgrepo.Queries, ...) *XxxService
+```
+参数通过 `internal/bootstrap/app.go` 集中注入，服务间不自行初始化依赖。
+
+## 关键服务说明
+
+### AdminService
+- 初始化时加载 Casbin enforcer（策略存储在 PostgreSQL）
+- `EnsureBootstrapSuperAdmin`：首次启动自动创建超级管理员
+- 会话存储在 Redis，带 TTL（默认 12h）
+
+### AuthService
+- JWT HS256，声明包含用户 ID、App ID、Token ID
+- 支持 Token 刷新（RefreshTTL 内）
+- OAuth2 回调通过 `oauth_provider.go` 适配各平台差异
+- OAuth 渠道由 `AppOAuthService.Resolve` 解析：**应用级配置 → 平台级 .env 兜底**
+- **`finalizeLogin` 是全部登录方式的唯一收口**：密码 / OAuth / 短信走 `completeLogin` 进来，
+  Passkey（`VerifyPasskeyLogin`）与 MFA 二次验证（`VerifySecondFactor`）**绕过 `completeLogin`**
+  直接进本函数。任何「每次登录都要做一次」的检查都必须挂在 `finalizeLogin`，
+  挂在 `completeLogin` 会漏掉后两条链路。登录一致性校验即挂在此处。
+
+### 应用级认证策略的执行点
+
+`appdomain.Policy` 的每一项都必须有明确执行点。**只落库不生效的开关比没有这个开关更危险** ——
+管理员会以为已经防住了。重构前有 5 项属于这种状态（`loginCheckUser`、`loginCheckIp`、
+`loginCheckDeviceTimeOut` 全代码库无读取点，`registerCaptcha` / `registerCaptchaTimeOut`
+被验证码配置的 `requireForRegister` 取代），现已全部落地或删除。
+
+| 策略字段 | 执行点 | 语义 |
+|---|---|---|
+| `loginCheckDevice` | `validateLoginPolicy` + `enforceDevicePolicy` + `LoginConsistencyService` | 必须显式携带设备标识，且与已绑定设备一致 |
+| `loginCheckDeviceTimeOut` | `LoginConsistencyService` | **设备换绑冷却秒数**（旧字段原义即「登录换绑机器码间隔」），从上次换绑起算 |
+| `loginCheckIp` | `LoginConsistencyService` | 与上次成功登录不在同一网段（IPv4 /24、IPv6 /48）即拦截 |
+| `loginCheckUser` | `LoginConsistencyService` | 登录属地（国家 + 省/州）与上次不一致即拦截 |
+| `multiDeviceLogin` / `multiDeviceLimit` | `enforceSessionPolicy` | 同时在线设备上限，超出踢最旧会话 |
+| `registerCheckIp` | `validateRegisterPolicy` | 同一 IP 不允许重复注册 |
+
+三项强绑定策略（device / ip / user）**全关时不产生任何 Redis I/O**，绝大多数应用走这条路径。
+开启后唯一的解绑出口是 `ResetLoginBaseline`（控制台「登录绑定 → 重置」）——
+没有这个出口，用户换宽带就等于账号报废。基线读写失败一律 fail-open，与 `LoginGuardService` 同取向。
+
+### RiskService —— 风控中心
+
+打分制引擎：**规则各自加分 → 总分映射等级 → 处置策略按分数区间决定动作**。
+挂在登录 / 注册主链路上（`AuthService` / `AdminService` 的 `EvaluateRisk`），
+只有 `block` / `ban` 会拦下请求。
+
+```
+请求 ──► buildEvalEnv（UA 解析 / Redis 计数与基数 / 设备档案 / IP 情报 / 归属地）
+     ──► evaluateRules（逐条判定，返回**全部**规则的轨迹与人类可读判据）
+     ──► ScoreToLevel + resolveAction
+     ──► persistAsync（评估留痕 + 设备档案 + IP 计数 + 规则命中计数）
+```
+
+结构性约束：
+
+- **判定同步、留痕异步**。调用方只等「命中了什么、该怎么处置」；
+  评估记录等四件事在 `context.WithoutCancel` 的后台 goroutine 里落库。
+  留痕失败绝不反噬业务 —— 让一次写库抖动把用户的登录挡在门外是本末倒置。
+- **表达式在保存时编译校验**。`RiskEvalEnv` 用具名 struct 做 `expr.Env`，
+  写错的变量名当场是编译错误。用 `map[string]any` 做环境时它只会在运行期
+  静默判假 —— 那条规则从此永不命中，而列表上一直显示「已启用」。
+  编译产物按表达式文本缓存，热路径上不再重复编译。
+- **每条判定都返回判据**（`MatchedRule.Reason`）。「命中 IP 高频」与
+  「命中 IP 高频：312 次 > 阈值 100」是两种可运维性，复核台上只有后者能用。
+- **情报缺失一律判「不命中」**。归属地查不到就把请求算成异常，那不是风控是拒绝服务。
+- **人工结论优先于情报源**：`ip_risk_records.source = manual` 的行不会被情报刷新覆盖，
+  且 `trusted` 标签在代理 / 信誉分两类条件里直接短路。
+- **条件类型目录是单一事实源**（`internal/domain/security/risk_catalog.go`）。
+  它同时驱动后端校验与控制台的参数表单，新增一种条件类型前端零改动。
+  `TestRiskConditionCatalogHasEvaluator` 与 `TestRiskEnvMatchesVariableCatalog`
+  双向钉死「目录 ↔ 判定分支」「目录 ↔ 环境字段」。
+
+重构前修掉的四个「看起来在防、其实没防」：
+
+| 问题 | 后果 |
+|---|---|
+| `device_fingerprints` 只读不写 | `device_age_hours` 恒为 0，「新设备」规则对**每个**请求都命中 |
+| `UpsertIPRisk` 无条件整体覆盖 | 复核拒绝时把国家 / 运营商 / 计数全清零 —— 复核动作本身在销毁证据 |
+| `total_requests` / `total_blocks` 从不累加 | 「高风险 IP」列表那两列恒为 0 |
+| 表达式每次评估重新编译 | 登录热路径上每个请求做一遍词法/语法/类型检查 |
+
+### PlatformGovernanceService —— 平台强制管控
+
+与 `apps.status` 那三个开关的分工是「谁说了算」：那是应用自治的营业开关，
+这是平台强制的结论，**分表存放正是为了让应用管理员改不动它**。两者是与的关系，治理先判。
+
+七项限制的执行点索引（写在服务的文档注释里，同时经 `/catalog` 下发给控制台展示 ——
+「这个开关到底管不管用」应该能被直接核对，而不是翻代码）：
+
+| 限制项 | 执行点 |
+|---|---|
+| `blockLogin` / `blockRegister` | `AppService.EnsureLoginAllowed` / `EnsureRegisterAllowed` |
+| `blockApi` | `AuthService.ValidateAccessToken` + `Refresh`（已签发的会话当场失效） |
+| `blockPayment` | `PaymentService.CreateOrder`（**只挡新订单，退款不挡**） |
+| `blockStorage` | `StorageService.UploadForApp`（所有上传入口的收口处） |
+| `blockNotification` | `NotificationService` 三条写入路径 + `EmailService.sendMail` |
+| `blockAdminWrite` | `middleware.AdminAccess`（应用作用域的非 GET 请求） |
+
+其余结构性约束：
+
+- **判定走内存快照**（只装非 active 的行），本实例写后立即刷新，跨实例 15s 收敛；
+  读库失败时快照为空 = 全部放行（fail-open），与防火墙同取向。
+- **状态与流水同事务**：只写状态会失去追责依据，只写流水会让判定读到旧结论。
+- **副作用在事务之后且失败不回滚**：结论已生效，回滚会造成「库里没封、判定已封」。
+  会话数事后回写（Redis 与 Postgres 不共享事务）。
+- **到期结算只有 API 侧跑**，Worker 用 `StartReadOnly` 只收敛快照，否则流水里会出现两条到期恢复。
+- **冻结档刻意不锁管理端**：被冻结的应用，管理员还要能排查配置与提交申诉。
+- **申诉路径豁免只读闸门**（在中间件里放行），否则停运的应用连喊冤都喊不了。
+
+完整说明见 [docs/platform-governance.md](../../docs/platform-governance.md)。
+
+### 密码强度评估 —— zxcvbn，不是字符类规则
+
+强度判定的唯一入口是 `AnalyzePasswordStrengthWithContext`。它**不再**数大小写数字符号，
+而是用 zxcvbn（Dropbox 提出的口令强度估算算法）把口令拆成字典词 / 键盘串 / 重复 /
+递增序列 / 日期 / 年份 / l33t 替换 / 倒序 的最优组合，输出**攻击者需要的猜测次数**。
+
+替换掉的旧实现有两个结构性缺陷，不是补几个词能修的：
+
+- **香农熵度量的是字符分布，不是可猜测性。** `abcabcabc` 的每字符熵比 `Xy9$Kw` 还高，
+  但前者一秒即破。用它当依据等于奖励"字符种类多"而非"难猜"。
+- **弱口令靠 substring 匹配。** 名单里有 `password` 就只挡得住 `password`，
+  挡不住 `Pa55word` / `drowssap` / `p@ssw0rd123` —— 而攻击者的字典早就覆盖了这些。
+
+实测对照（默认策略门槛 40 分）：
+
+| 口令 | 旧实现 | 现在 |
+|---|---:|---:|
+| `password123` | 45（**通过**） | 19 |
+| `P@ssw0rd` | 高分 | 8 |
+| `woaini1314` | 高分 | 10 |
+| `Xy9$Kwe2` | 70 | 55 |
+| `7xKq2mVzP4wR` | 80 | 80 |
+
+其余结构性约束：
+
+- **0~100 的刻度不能换。** 它已经落在每个应用的 `passwordPolicy.minScore`、
+  `user_password_security_states.password_strength_score` 列和控制台滑块上。
+  映射锚点（`passwordScoreAnchors`）压在 zxcvbn 自己的档位边界上，
+  改动它会**静默改变所有应用的实际密码要求**，有测试钉住。
+- **不能照搬"命中模式即违规"那条旧规则。** zxcvbn 会把任意口令都拆成模式序列，
+  强口令里同样有字典片段，照搬会导致几乎没有口令能通过。模式的代价已经计入猜测次数、
+  也就是已经反映在分数里，再扣一次是重复计价。只额外拦一种分数说明不了的情况 ——
+  **单个模式覆盖整条口令**（`fatalPasswordPattern`），这样 `minScore=0`
+  的应用也挡得住「密码 = 123456」「密码 = 账号」。
+- **用户上下文必须喂进去**（`PasswordContext`：账号 / 昵称 / 邮箱 / 手机 / 应用名）。
+  zxcvbn 把它们当临时字典，于是「账号 zhangsan、密码 Zhangsan2024」会被识别成字典命中。
+  注册与改密两条链路都已接上；**改密刻意把取用户提前到校验之前**就是为了这个。
+- **中文语境要自己补词表**（`password_dictionary_zh.go`）。zxcvbn 自带的六张表
+  （泄露口令榜 / 英文维基 / 英美人名姓氏 / 影视台词）没有一张覆盖中文，
+  `woaini1314`、`zhangwei`、`5201314` 在纯 zxcvbn 下会被当成随机串给高分。
+  词表**顺序即权重**（rank 按下标定），是数据不是算法。
+- **只把前 72 字节交给 zxcvbn。** 这不是近似 —— bcrypt 只哈希前 72 字节，
+  后面的内容对攻击者不存在。同时它是必要的 DoS 闸门：zxcvbn 匹配是超线性的，
+  256 字符要跑 0.5 秒以上，而口令长度由请求方指定（`MaxLength` 最大可配到 256）。
+  截断后最坏约 8ms，远低于 bcrypt 自身开销。
+- **PRECIS（RFC 8265 OpaqueString）负责归一化与合法性**（`golang.org/x/text/secure/precis`）：
+  统一 Unicode 空格、NFC 规范化、拒绝控制字符与未分配码点。
+  **归一化结果只用于评估，不用于哈希** —— 存量哈希是按原始字节算的，
+  改哈希输入会让所有老用户登不上去，那种迁移要配合双写，不在此列。
+- **长度按字符数判定、另加 72 字节硬闸**。按字节算会让 3 个汉字冒充 9 位密码；
+  而 `MaxLength` 上限 256 > bcrypt 的 72 字节，不单独把关就会出现
+  「前 72 字节相同的两个口令可以互相登录」。
+- **模式明细不回传口令片段**，只给位置区间与来源。这个结构会经
+  `/password-policy/test` 出网并进审计日志，回显子串等于把被测口令泄露出去。
+
+> **升级影响**：`password_strength_score` 是**落库**的（注册 / 改密时算一次），
+> 存量行仍是旧模型下偏高的分数，`/apps` 的密码合规看板会因此偏乐观，
+> 直到用户各自轮换密码后收敛。这是一次性的，不需要迁移脚本。
+
+### 密码策略生命周期
+
+`maxAge` 与 `preventReuse` 此前同样只落库不生效。现在：
+
+- **`maxAge`**：写密码时算出 `password_expires_at`（0 = 永不过期，此时**清空**该列而非 COALESCE 保留旧值）；
+  过期判定在 `issueSession` 里现算并置 `passwordChangeRequired`，不依赖定时任务 ——
+  定时任务漏跑会让过期密码继续可用。
+- **`preventReuse`**：新表 `user_password_history` 只存哈希。bcrypt 自带 salt，判重只能逐条
+  `CompareHashAndPassword`，因此策略上限锁在 20 条。设为 0 会清空该用户已积累的历史。
+- 三条写密码链路（注册 / 用户改密 / 管理员重置）**都**走 `ResolvePasswordLifecycle`，
+  否则「管理员帮用户改一次密码」就绕过了整套策略。
+- `maxAge` / `preventReuse` 用 `lookupInt`（区分「键不存在」与「显式为 0」）而不是 `intSetting`：
+  这两个字段的 0 是有效取值，用后者会让「关掉过期」被静默改回默认 365 天。
+
+### DatabaseManager
+- 与 `MemoryManager` 同构：构造即可用，`Start` 拉后台采集，`Snapshot()` 纯内存读不打库
+- 连接生命周期钩子挂在 `internal/db`（BeforeAcquire/AfterRelease + pgx Tracer），
+  借出连接时抓调用栈，因此**连接泄漏能定位到代码行**
+- 会话级 `statement_timeout` / `idle_in_transaction_session_timeout` / `lock_timeout`
+  随连接下发，是「一条慢 SQL 拖垮整池」的结构性防线
+- Unified 模式下 API 与 Worker 各有一个池：只有 `role=api` 的实例写历史时序、跑清道夫
+
+### NotifyHub —— 统一通知出口
+
+平台**唯一**的对外通知出口。业务侧只做一件事：构造 `notifydomain.Event` 并调用
+`DispatchAsync`，绝不直接调飞书 / 邮件 / Webhook。
+
+```
+业务事件 ──► 订阅匹配（事件 key / 应用 / 优先级下限 / 分类白名单 / 静默窗口）
+         ──► 模板渲染（订阅指定 → 事件+渠道类型 → 事件通用 → 内置默认）
+         ──► Provider 投递（9 种渠道，并发上限 8）
+         ──► notify_deliveries 留痕 + 指数退避重试 3 次
+```
+
+- 新增一种 IM 只需实现 `notifyProvider` 接口并注册到 `NotifyHub.providers`，业务代码零改动
+- 渠道密钥 AES-GCM 落库，密钥派生自 `SECURITY_MASTER_KEY`（`aegis.notify.master` 用途盐）
+- `DedupeKey` 走 `notify_deliveries.dedupe_key` 唯一索引，同一事件对同一渠道只投一次
+- `critical` 级别事件**穿透静默窗口**（SLA 超时不该被"免打扰"挡掉）
+
+#### 受众模型（站内信 / 实时推送必读）
+
+平台里有**两套互不相通的收件人主键空间**：
+
+| 受众 | 表 | 外键 | 实时命名空间 |
+|---|---|---|---|
+| 应用用户 | `notifications` | `users(id)` | `realtime.user.{appid}.{userId}` |
+| 管理员 | `admin_notifications` | `admin_accounts(id)` | `realtime.user.0.{adminId}` ← **appid 恒为 0** |
+
+把 `adminID` 写进 `notifications` 要么违反外键，要么静默命中一个同号的应用用户
+（跨租户串消息）。因此 `Event.Recipients` 的 `UserIDs` 与 `AdminIDs` 必须分别投递，
+`inapp` / `realtime` 两个 provider 都会做双路分发。
+
+事件同时携带两套视角，由 provider 按收件人类型各取所需：
+
+| 字段 | 受众 | 内容 |
+|---|---|---|
+| `Link` / `Title` / `Summary` | 处理侧 | 控制台深链，含受理人 / 处理组等内部信息 |
+| `UserLink` / `UserTitle` / `UserSummary` | 提单人 | 应用内路径，不含任何内部归属 |
+
+**绝不能把 `Link` 下发给应用用户** —— 既点不开，也泄露内部路由结构。
+`notify_provider_local_test.go` 里有一条用例专门守这件事。
+
+另外：`ticketRecipients` 会剔除操作者本人（`ticketActor`），
+否则谁点「已解决」谁就先收到一条"工单已解决"。
+
+### TicketService —— 工单权限三层模型
+
+可见与可处理的判定分三层叠加，任一层通过即可：
+
+| 层 | 依据 | 典型角色 |
+|---|---|---|
+| 全局 | 全局作用域的 `ticket:read` | 超管 / 平台管理员 |
+| 应用 | 应用作用域角色的 `ticket:read` | 应用管理员 / 运营 |
+| 人员 | 受理人 / 提单人 / 关注人 / 所在处理组 | 工单处理专员、被拉进处理组的任何人 |
+
+第三层是"特定人员处理工单"的落点：把某人加进 `ticket_groups` 即可处理组内工单，
+**但绝不会因此看到组外任何工单**。范围在 SQL 层收敛（`ticketScopeClause`），
+不是查完再过滤；详情响应里的 `permissions`（`ActionSet`）是后端算好的动作集，
+前端据此控制按钮显隐，不会出现"点了才 403"。
+
+### AppOAuthService
+- 渠道配置存 `app_oauth_providers`（每 App 独立，最多 32 个）
+- `client_secret` 以 AES-GCM 落库，密钥派生自 `SECURITY_MASTER_KEY`，出网只给 `clientSecretSet`
+- 每个渠道独立控制「允许登录 / 允许自动注册 / 允许绑定」，并可自定义端点、scope、
+  token 凭据方式（auto/params/basic）、用户信息字段映射（支持点号路径）
+- 同一回调地址承载登录与绑定两条链路，由 state 中的 `purpose` 区分
+
+### 支付网关
+
+16 个渠道共用一套适配器接口（`payment_provider.go` 的 `paymentProvider`）：
+`Name` / `Describe` / `ValidateConfig` / `TestConnection` / `CreateOrder` / `QueryRemoteOrder` / `HandleCallback`。
+
+**渠道自描述是这套设计的核心。** `Describe()` 返回的 `ProviderMeta` 同时承载展示信息、
+能力矩阵、子支付类型与**配置字段 schema**，由 `POST /api/admin/app/payment-config/methods`
+下发给控制台，驱动「渠道市场卡片 + 动态配置表单 + 回调地址提示」三处 UI。
+因此**新增渠道只需在 Go 侧加一个 `payment_provider_*.go`，前端零改动即自动出现**。
+`payment_provider_schema.go` 提供 `fText`/`fSecret`/`inGroup`/`advanced` 等构造器，
+`finalizeMeta` 统一补齐分组中文名与兼容用的扁平子类型列表。
+
+图标走 Simple Icons slug（`ProviderMeta.Icon`），与第三方登录渠道同一套约定，
+前端 `components/payment/payment-brand-icon.tsx` 按 slug 查表，未收录的渠道用中性 mark 兜底。
+
+其余结构性约束：
+
+- **限额在网关层统一执行**（`enforceAmountLimits`）。此前仅易支付与虎皮椒在各自
+  `CreateOrder` 内自检，其余渠道配了 `minAmount`/`maxAmount` 也不生效；现已上移到
+  `CreateOrder` 主链路，任何渠道（含后续新增的）自动获得限额保护。
+- **展示顺序由 `methodOrder` 固定**，不能直接遍历 `providers` map —— 迭代顺序随机会让
+  控制台渠道列表每次刷新都跳动。测试会断言新增渠道已登记进该列表。
+- **回调订单定位有三条链路**：表单字段 `out_trade_no`（易支付系/支付宝）→
+  `callbackOrderExtractor.ExtractOrderNo` 从原始报文预提取（Stripe/PayPal/Paddle/
+  Lemon Squeezy/Razorpay/Coinbase/Square，其回调地址为平台级配置无法带参数）→
+  路径段 `/callback/:method/:appid` 提供应用标识后 config-first 解密（微信 v3）。
+  预提取**只用于路由定位**，验签一律在 `HandleCallback` 内基于配置完成。
+- **签名头必须登记进 `CallbackSignatureHeaders`**，否则传输层不会透传，验签必然失败。
+- 验签通过后服务层仍会交叉校验回调订单号与金额，防「用 A 单的合法回调骗 B 单发货」。
+
+#### 退款（payment_refund_service.go）
+
+12/16 个渠道支持接口退款（不支持的：Coinbase Commerce / 码支付 / V免签 / 虎皮椒）。
+链路与支付相反，但同样要求「钱与账一致」：
+
+```
+校验可退 → 预占额度（落退款单 pending）→ 提交上游 → 结算回写
+                                          ├─ success：额度保持占用 + 履约冲正
+                                          ├─ failed ：释放额度，可修正后重试
+                                          └─ processing：额度保持占用，等补偿轮询
+```
+
+- **预占先于上游调用**是并发安全的关键：`payment_orders.refunded_amount` 记的是
+  「已占用额度」而非「已成功退款额」。两个并发退款请求在订单行锁上串行化，
+  第二个看到的是已被抬高的额度，超额即拒 —— 「同一笔钱退两次」在数据库层面即不可能。
+  DB 侧还有 `CHECK (refunded_amount BETWEEN 0 AND amount)` 兜底。
+- **能力矩阵与接口实现由测试强制对齐**：`Capabilities.Refund` 为 true 必须实现
+  `paymentRefunder`，反之亦然；否则控制台会显示点了才报错的退款按钮。
+  `PartialRefund=false` 的渠道（PAYJS 只能整单退）在发起前就被网关拦下。
+- **履约冲正**（`reversal_status`）：退款成功后回收已发放权益。
+  余额充值按退款额等额扣回；**积分与会员时长只在全额退款时回收**，部分退款记 skipped
+  交人工处理（按比例回收既难解释又易因已消费而失败）。
+  冲正失败**不回滚事务** —— 上游的钱已经退出去了，让退款单结算失败会造成更严重的错位，
+  因此如实记 `reversal_status=failed` + 原因，控制台以红色徽标提示人工介入。
+- **余额通道**走 `RefundPaymentOrderToWallet`：打款也在本地事务内，
+  退款单结算 + 钱包入账 + 冲正一次成型，不存在中间态。
+- **未结算退款单每 2 分钟补偿轮询**（`syncPendingRefunds`）：微信/支付宝/Paddle 可能
+  返回「受理中」，或结算写入时进程崩溃，靠轮询向上游核对收敛到终态。
+  微信 `ABNORMAL` 归入 processing 而非 failed —— 资金可能在途，判失败会错误释放额度。
+- 本地退款单号即上游 `out_refund_no`，天然幂等键；字符集守微信最严约束（数字/字母/`_-|*@`）。
+
+#### 支付凭证（payment_receipt.go）
+
+用户与管理员都能为一笔订单导出 A4 凭证 PDF，**默认英文**，共 10 种语言。
+本文件只负责「订单 + 用户 + 应用 + 退款单 → 一份与业务无关的 `receipt.Document`」，
+排版与字体交给 `pkg/receipt` —— 换行、缺字、分页这些问题与支付业务毫无关系，
+混在一起会让两边都难改。
+
+- **凭证类型按订单状态推导**：已支付出收据、未支付出账单、全额退款出退款凭证。
+  给一笔还没收到的钱开「收据」就是在伪造凭证。
+- **凭证编号是 `RCP-<订单号>`**，同一订单反复导出得到同一个编号 ——
+  编号是给人对账用的，每次下载都换一个号会让对账无从下手。
+- **币种在下单时固化**（`payment_orders.currency`，迁移 000068），
+  取值走渠道 `Describe().Currencies` **自述**而不是在这里另建一张 method → 货币的表。
+  开凭证时回读 `payment_configs` 是错的：配置会变，已发生的交易不会。
+- **「已退款」只统计退款单里已成功的部分**，不是订单上的 `refunded_amount`
+  （那是已占用额度，含在途退款）—— 印一笔还没到账的退款会直接引发客诉。
+- **语言优先级**：请求参数 → 用户设置 → `Accept-Language` → 平台默认。
+  用户设置排在请求头前面：那是一次明确表达，不该被浏览器偏好覆盖。
+- **缺中日韩字体时降级而不是报错**：语言退回英文并在 `localeFallback` / `degradedGlyphs`
+  里如实上报。拉丁字形内嵌在二进制里，因此「凭证出不来」在任何环境下都不会发生。
+- **下载校验同时核对 appid 与 userId**，billId 必须是纯十六进制（挡路径穿越）；
+  管理端代开不落盘 —— 一次性下载没有分享场景，落盘只会多留一份交易明细在磁盘上。
+- **订单查询自带 `receipt` 区块**（`ListUserOrderViews` / `GetUserOrderView`）：
+  凭证类型、推荐语言、能否寄送都由服务端算好。放到客户端会各端各写一套且很快不一致。
+
+#### 凭证邮件（payment_receipt_email.go）
+
+- **附件能力如实声明**（`emailSender.SupportsAttachments`），调用方**先问能力再写正文**。
+  顺序反过来，正文已经写着「收据见附件」了才发现带不了。SMTP 支持；
+  Zeabur 的 REST 接口没有公开附件字段，即便它的请求体与 Resend 同构也不赌 ——
+  未知字段被忽略的表现是「邮件送达、附件不翼而飞」，谁也发现不了。
+- **通道带不了附件时当场报错**，绝不静默丢掉附件再把信发出去（`sendMail` 里挡住）。
+- **签名下载链接恒附带**，即使已有附件：邮件会被转发、附件会被网关剥离。
+  签名覆盖 (应用, 凭证标识, 失效时刻) 三者，少签一项就能改出另一条合法链接。
+  这条路由**必须在鉴权组之外** —— 邮件客户端里没有登录态。
+- **邮件正文与 PDF 同语言**：共用 `pkg/receipt` 的同一份译文与同一次协商结果。
+  中文邮件配英文 PDF 是最难向用户解释的错位。
+- **用户自助不接受指定收件地址**，恒为账号绑定邮箱：允许任意填写等于把平台
+  变成一个能带 PDF 附件的转发器。补发频次上限走 `email_deliveries` 留痕统计，不另建计数表。
+- **自动寄送只挂首次确认支付**，异步且失败不反噬支付链路。
+
+完整说明见 [docs/payment-receipt.md](../../docs/payment-receipt.md)。
+
+### 邮件出口 —— 两档 provider
+
+`EmailService.sendMail` 是平台**唯一**的邮件出口，验证码 / 密码重置 / 欢迎信 /
+资料变更通知 / NotifyHub 的 `email` 渠道全部经过它。传输方式由配置的 provider 决定：
+
+| provider | 传输 | 何时用 |
+|---|---|---|
+| `smtp`（默认） | 直连 SMTP | 自有服务器 / 不封出站端口的环境 |
+| `zeabur` | Zeabur Email REST API | **Zeabur 部署的唯一选项** —— 平台底层封禁出站 SMTP 端口，直连必然超时 |
+
+新增服务商只需实现 `emailSender` 接口并注册进 `EmailService.senders`，业务代码零改动。
+`resolveSender` 对未知 provider **直接报错而不静默回落到 SMTP** ——
+回落会让「配了 A 却在用 B」这种故障以超时的形式出现在几层之外。
+
+其余结构性约束：
+
+- **密钥 AES-GCM 落库**（用途盐 `aegis.email.master`），管理接口出网一律抹除，
+  只保留 `apiKeySet` / `webhookSecretSet` 布尔位。所有密钥字段**留空即不修改**
+  —— 前端编辑态从不回显密钥，直接覆盖会让改个发件人名就把密码清空。
+- **投递留痕失败绝不反噬发信**（`recordDelivery` 只记 warn）：信已经交出去了，
+  此时报错只会让调用方重发一封。留痕用 `context.WithoutCancel`，
+  避免请求结束把事后账一起取消掉。
+- **webhook 状态单向推进**（判定写在 SQL 里）：终态不被后到的 `delivery` 覆盖，
+  `open`/`click` 只累加计数不动主状态。webhook 到达顺序没有保证，
+  乱序会把已退信的邮件显示成投递成功。
+- **429 不重试**：Zeabur 日配额按 UTC 00:00 重置，重试只会拖长请求并加深熔断。
+  两档 provider 各有独立熔断器，互不牵连。
+- SMTP 超时的错误文案**点名 Zeabur** —— 出站被封时表现就是纯超时，
+  只说「检查网络」会让排查一路走偏到邮箱服务商那边。
+
+完整接入说明见 [docs/zeabur-email.md](../../docs/zeabur-email.md)。
+
+### RealtimeService
+- 每个 WebSocket 连接对应一个 NATS Subject（`realtime.user.{appid}.{userid}`）
+- 支持多设备同时在线（同一用户多连接）
+- 连接状态同步写入 Redis
+
+### LocationService
+- 首次查询写入 Redis 缓存（TTL 24h）
+- GeoIP2 mmdb 文件自动从 GitHub 下载并定时更新
+- 可选 `ChinaOptimized` 模式和远程 HTTP fallback
+
+### PlatformSettingsService
+- 支持动态更新 Firewall 配置（CIDR 黑白名单、限流规则）
+- 启动时调用 `Initialize` 从数据库加载持久化设置

@@ -231,7 +231,11 @@ func (s *SecurityService) GetSecurityStatus(ctx context.Context, session *authdo
 		}
 	}
 
-	user, profile, err := s.loadUserProfile(ctx, session.AppID, session.UserID)
+	user, _, err := s.loadUserProfile(ctx, session.AppID, session.UserID)
+	if err != nil {
+		return nil, err
+	}
+	securityState, err := s.pg.GetUserSecurityStateByUserID(ctx, session.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -268,12 +272,12 @@ func (s *SecurityService) GetSecurityStatus(ctx context.Context, session *authdo
 	status := &userdomain.SecurityStatus{
 		HasPassword:            user.PasswordHash != "",
 		TwoFactorEnabled:       twoFactor.Enabled,
-		TwoFactorMethod:        twoFactor.Method,
+		TwoFactorMethod:        strings.TrimSpace(twoFactor.Method),
 		PasskeyEnabled:         passkeySummary.Count > 0,
-		PasswordStrengthScore:  extraInt(profile, "password_strength_score"),
-		PasswordChangeRequired: extraBool(profile, "password_change_required"),
-		PasswordChangedAt:      extraTime(profile, "password_changed_at"),
-		PasswordExpiresAt:      extraTime(profile, "password_expires_at"),
+		PasswordStrengthScore:  securityIntValue(securityState, "password_strength_score"),
+		PasswordChangeRequired: securityBoolValue(securityState, "password_change_required"),
+		PasswordChangedAt:      securityTimeValue(securityState, "password_changed_at"),
+		PasswordExpiresAt:      securityTimeValue(securityState, "password_expires_at"),
 		OAuth2Bindings:         len(providers),
 		OAuth2Providers:        providers,
 		TwoFactor:              twoFactor,
@@ -386,13 +390,6 @@ func (s *SecurityService) EnableTOTP(ctx context.Context, session *authdomain.Se
 	}
 	_ = s.sessions.DeleteTOTPEnrollmentState(ctx, state.EnrollmentID)
 
-	if err := s.patchSecurityFlags(ctx, session.UserID, map[string]any{
-		"two_factor_enabled": true,
-		"two_factor_method":  "totp",
-	}); err != nil {
-		return nil, nil, err
-	}
-
 	recoveryResult, err := s.issueRecoveryCodes(ctx, session.AppID, session.UserID)
 	if err != nil {
 		return nil, nil, err
@@ -426,12 +423,6 @@ func (s *SecurityService) DisableTOTP(ctx context.Context, session *authdomain.S
 		return nil, err
 	}
 	if err := s.pg.DeleteUserRecoveryCodes(ctx, session.AppID, session.UserID); err != nil {
-		return nil, err
-	}
-	if err := s.patchSecurityFlags(ctx, session.UserID, map[string]any{
-		"two_factor_enabled": false,
-		"two_factor_method":  "",
-	}); err != nil {
 		return nil, err
 	}
 	s.invalidateSecurityCaches(ctx, session.AppID, session.UserID)
@@ -916,15 +907,26 @@ func (s *SecurityService) resolveTOTPAccountName(user *userdomain.User, profile 
 }
 
 func (s *SecurityService) patchSecurityFlags(ctx context.Context, userID int64, extra map[string]any) error {
-	return s.pg.PatchUserProfileExtra(ctx, userID, extra)
+	passwordState := map[string]any{}
+	for _, key := range []string{
+		"password_changed_at",
+		"password_expires_at",
+		"password_strength_score",
+		"password_change_required",
+	} {
+		if value, ok := extra[key]; ok {
+			passwordState[key] = value
+		}
+	}
+	if len(passwordState) == 0 {
+		return nil
+	}
+	return s.pg.PatchUserSecurityState(ctx, userID, passwordState)
 }
 
 func (s *SecurityService) syncPasskeyFlag(ctx context.Context, appID int64, userID int64) error {
-	items, err := s.pg.ListUserPasskeys(ctx, appID, userID)
-	if err != nil {
-		return err
-	}
-	return s.patchSecurityFlags(ctx, userID, map[string]any{"passkey_enabled": len(items) > 0})
+	_, _ = appID, userID
+	return nil
 }
 
 func (s *SecurityService) invalidateSecurityCaches(ctx context.Context, appID int64, userID int64) {
@@ -1059,74 +1061,6 @@ func (s *SecurityService) notifySecurityEvent(ctx context.Context, appID int64, 
 	}
 	if err := s.pg.CreateUserNotification(ctx, appID, userID, notificationType, title, content, level, map[string]any{"module": "security"}); err != nil {
 		s.log.Warn("create security notification failed", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.Error(err))
-	}
-}
-
-func extraBool(profile *userdomain.Profile, key string) bool {
-	if profile == nil || profile.Extra == nil {
-		return false
-	}
-	value, ok := profile.Extra[key]
-	if !ok {
-		return false
-	}
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), "true") || strings.TrimSpace(typed) == "1"
-	case float64:
-		return typed != 0
-	default:
-		return false
-	}
-}
-
-func extraInt(profile *userdomain.Profile, key string) int {
-	if profile == nil || profile.Extra == nil {
-		return 0
-	}
-	value, ok := profile.Extra[key]
-	if !ok {
-		return 0
-	}
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int64:
-		return int(typed)
-	case float64:
-		return int(typed)
-	case string:
-		var result int
-		_, _ = fmt.Sscanf(strings.TrimSpace(typed), "%d", &result)
-		return result
-	default:
-		return 0
-	}
-}
-
-func extraTime(profile *userdomain.Profile, key string) *time.Time {
-	if profile == nil || profile.Extra == nil {
-		return nil
-	}
-	value, ok := profile.Extra[key]
-	if !ok {
-		return nil
-	}
-	switch typed := value.(type) {
-	case time.Time:
-		parsed := typed.UTC()
-		return &parsed
-	case string:
-		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(typed))
-		if err != nil {
-			return nil
-		}
-		parsed = parsed.UTC()
-		return &parsed
-	default:
-		return nil
 	}
 }
 

@@ -3,10 +3,13 @@ package httptransport
 import (
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	storagedomain "aegis/internal/domain/storage"
+	"aegis/internal/service"
 	"aegis/pkg/response"
 
 	"github.com/gin-gonic/gin"
@@ -16,28 +19,207 @@ import (
 //  文件管理
 // ════════════════════════════════════════════════════════════
 
-// ListStorageObjects 查询存储对象列表
+// ListStorageObjects 查询存储对象列表（同时返回子目录与筛选汇总）
 // GET /api/admin/system/storage/objects
 func (h *Handler) ListStorageObjects(c *gin.Context) {
-	var q ListObjectsQuery
-	if err := c.ShouldBindQuery(&q); err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+	query, ok := bindObjectListQuery(c)
+	if !ok {
 		return
 	}
-	items, total, err := h.storageResource.ListStorageObjects(c.Request.Context(), storagedomain.ObjectListQuery{
-		ConfigID:    q.ConfigID,
-		AppID:       q.AppID,
-		Prefix:      q.Prefix,
-		ContentType: q.ContentType,
-		Status:      q.Status,
-		Page:        q.Page,
-		Limit:       q.Limit,
-	})
+	result, err := h.storageResource.BrowseStorageObjects(c.Request.Context(), query)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
-	response.Success(c, 200, "ok", gin.H{"items": items, "total": total})
+	response.Success(c, 200, "ok", result)
+}
+
+// bindObjectListQuery 把查询串解析成领域查询对象。
+// 时间字段单独在这里解析：交给 gin 的 time_format 绑定只支持一种固定格式，
+// 而控制台的日期选择器发 RFC3339、手工调接口的人常发 `2026-08-12`。
+func bindObjectListQuery(c *gin.Context) (storagedomain.ObjectListQuery, bool) {
+	var q ListObjectsQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return storagedomain.ObjectListQuery{}, false
+	}
+	createdFrom, err := parseFlexibleTime(q.CreatedFrom, false)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "createdFrom 时间格式无效")
+		return storagedomain.ObjectListQuery{}, false
+	}
+	createdTo, err := parseFlexibleTime(q.CreatedTo, true)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "createdTo 时间格式无效")
+		return storagedomain.ObjectListQuery{}, false
+	}
+	return storagedomain.ObjectListQuery{
+		ConfigID:     q.ConfigID,
+		AppID:        q.AppID,
+		Prefix:       q.Prefix,
+		Folder:       q.Folder,
+		FolderView:   q.FolderView,
+		Keyword:      q.Keyword,
+		ContentType:  q.ContentType,
+		Status:       q.Status,
+		Statuses:     q.Statuses,
+		UploaderType: q.UploaderType,
+		UploadedBy:   q.UploadedBy,
+		MinSize:      q.MinSize,
+		MaxSize:      q.MaxSize,
+		CreatedFrom:  createdFrom,
+		CreatedTo:    createdTo,
+		Sort:         q.Sort,
+		Order:        q.Order,
+		Page:         q.Page,
+		Limit:        q.Limit,
+	}, true
+}
+
+// parseFlexibleTime 解析 RFC3339 或纯日期。
+// endOfDay 为真时把纯日期补成当天 23:59:59 —— 否则「截止到 8 月 12 日」
+// 会解析成 8 月 12 日 00:00:00，把那一整天的文件全部排除在外。
+func parseFlexibleTime(value string, endOfDay bool) (*time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return &parsed, nil
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", value, time.Local)
+	if err != nil {
+		return nil, err
+	}
+	if endOfDay {
+		parsed = parsed.Add(24*time.Hour - time.Nanosecond)
+	}
+	return &parsed, nil
+}
+
+// BatchMutateStorageObjects 批量移入回收站 / 恢复 / 永久删除
+// POST /api/admin/system/storage/objects/batch
+func (h *Handler) BatchMutateStorageObjects(c *gin.Context) {
+	var req BatchObjectsRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	// 永久删除与单条接口保持同一道闸：批量入口如果宽松一格，
+	// 那道闸就等于不存在。
+	if req.Action == storagedomain.BatchActionPurge {
+		if _, ok := requireSuperAdminSession(c); !ok {
+			return
+		}
+	}
+	result, err := h.storageResource.BatchMutateObjects(c.Request.Context(), req.Action, req.IDs)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	messages := map[string]string{
+		storagedomain.BatchActionDelete:  "已移入回收站",
+		storagedomain.BatchActionRestore: "已恢复",
+		storagedomain.BatchActionPurge:   "已永久删除",
+	}
+	response.Success(c, 200, messages[req.Action], result)
+	h.recordAudit(c, "storage.object.batch_"+req.Action, "storage_object", "",
+		fmt.Sprintf("批量%s存储对象：请求 %d 个，实际影响 %d 个", messages[req.Action], result.Requested, result.Affected))
+}
+
+// CreateStorageObjectLink 为已索引对象签发访问链接（预览 / 下载）
+// POST /api/admin/system/storage/objects/:objectId/link
+func (h *Handler) CreateStorageObjectLink(c *gin.Context) {
+	obj, ok := h.requireStorageObject(c)
+	if !ok {
+		return
+	}
+	var req ObjectAccessLinkRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	appID := int64(0)
+	if obj.AppID != nil {
+		appID = *obj.AppID
+	}
+	fileName := obj.FileName
+	if fileName == "" {
+		fileName = path.Base(obj.ObjectKey)
+	}
+	result, ticketID, err := h.storage.CreateIndexedObjectLink(c.Request.Context(), appID, obj.ConfigID,
+		obj.ObjectKey, req.Download, fileName, time.Duration(req.ExpiresIn)*time.Second)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	url := result.URL
+	if ticketID != "" {
+		url = proxyURLFromRequest(c.Request, ticketID)
+	}
+	response.Success(c, 200, "ok", storagedomain.ObjectAccessLink{
+		ObjectID:    obj.ID,
+		ConfigID:    obj.ConfigID,
+		Provider:    result.Provider,
+		ObjectKey:   obj.ObjectKey,
+		URL:         url,
+		Download:    req.Download,
+		ContentType: obj.ContentType,
+		ExpiresAt:   result.ExpiresAt,
+	})
+	if req.Download {
+		// 只有下载留痕。预览会随列表滚动大量触发，全记会把审计日志淹掉，
+		// 那时真正需要追责的下载记录反而找不出来。
+		h.recordAudit(c, "storage.object.download", "storage_object", strconv.FormatInt(obj.ID, 10),
+			"下载存储对象 "+obj.ObjectKey)
+	}
+}
+
+// GetStorageObjectThumbnail 输出存储对象的缩略图
+// GET /api/admin/system/storage/objects/:objectId/thumbnail
+func (h *Handler) GetStorageObjectThumbnail(c *gin.Context) {
+	obj, ok := h.requireStorageObject(c)
+	if !ok {
+		return
+	}
+	if !service.CanRenderThumbnail(obj) {
+		response.Error(c, http.StatusUnsupportedMediaType, 41580, "该对象不支持生成缩略图")
+		return
+	}
+	width, _ := strconv.Atoi(c.DefaultQuery("w", "192"))
+	thumb, err := h.storage.RenderThumbnail(c.Request.Context(), obj.ConfigID, obj.ObjectKey, obj.ETag, width)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	// 缩略图由 (对象内容, 宽度) 唯一决定，ETag 命中就不必再传一遍字节
+	if match := strings.TrimSpace(c.GetHeader("If-None-Match")); match != "" && match == thumb.ETag {
+		c.Status(http.StatusNotModified)
+		return
+	}
+	c.Header("ETag", thumb.ETag)
+	c.Header("Cache-Control", "private, max-age=3600")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Data(http.StatusOK, thumb.ContentType, thumb.Data)
+}
+
+// requireStorageObject 取出路径上的对象，不存在即 404
+func (h *Handler) requireStorageObject(c *gin.Context) (*storagedomain.StorageObject, bool) {
+	id, err := pathInt64(c, "objectId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的对象 ID")
+		return nil, false
+	}
+	obj, err := h.storageResource.GetStorageObject(c.Request.Context(), id)
+	if err != nil {
+		h.writeError(c, err)
+		return nil, false
+	}
+	if obj == nil {
+		response.Error(c, http.StatusNotFound, 40400, "对象不存在")
+		return nil, false
+	}
+	return obj, true
 }
 
 // GetStorageObjectDetail 获取存储对象详情

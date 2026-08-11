@@ -5,11 +5,13 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	userdomain "aegis/internal/domain/user"
 	"aegis/internal/event"
 	apperrors "aegis/pkg/errors"
+	"aegis/pkg/taskpool"
 )
 
 func (s *UserService) GetAdminSettingsStats(ctx context.Context, appID int64) (*userdomain.AdminSettingsStatsResult, error) {
@@ -159,15 +161,25 @@ func (s *UserService) BatchInitializeSettingsAdmin(ctx context.Context, appID in
 		UserIDs:    make([]int64, 0, len(users)),
 		Categories: normalized,
 	}
-	for _, item := range users {
-		initialized, skipped, err := s.ensureUserSettings(ctx, appID, item.ID, normalized)
+	concurrency := batchSize
+	if concurrency > 8 {
+		concurrency = 8
+	}
+	var mu sync.Mutex
+	if err := taskpool.DispatchWithError(ctx, concurrency, users, func(taskCtx context.Context, item userdomain.AdminUserView) error {
+		initialized, skipped, err := s.ensureUserSettings(taskCtx, appID, item.ID, normalized)
 		if err != nil {
-			return nil, err
+			return err
 		}
+		mu.Lock()
 		result.ProcessedUsers++
 		result.UserIDs = append(result.UserIDs, item.ID)
 		result.InitializedCategories += initialized
 		result.SkippedExisting += skipped
+		mu.Unlock()
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

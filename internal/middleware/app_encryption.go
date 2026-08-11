@@ -64,6 +64,10 @@ func AppEncryption(appService appEncryptionAppService) gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		if strings.TrimSpace(policy.Secret) == "" {
+			response.Error(c, http.StatusServiceUnavailable, 50364, "应用传输加密配置不完整")
+			return
+		}
 		if !isEncryptedRequest(c.Request) {
 			rejectPlaintextRequest(c)
 			return
@@ -125,6 +129,8 @@ func shouldApplyAppEncryption(path string) bool {
 	case path == "/healthz", path == "/readyz":
 		return false
 	case strings.HasPrefix(path, "/api/admin"):
+		return false
+	case strings.HasPrefix(path, "/api/v2/"):
 		return false
 	case strings.HasPrefix(path, "/api/public/pay"):
 		return false

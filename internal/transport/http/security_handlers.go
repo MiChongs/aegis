@@ -268,7 +268,11 @@ func (h *Handler) PasskeyAuthOptions(c *gin.Context) {
 		return
 	}
 
-	loginSession, options, err := h.auth.BeginPasskeyLogin(c.Request.Context(), req.AppID, req.MarkCode)
+	if !h.enforceDevicePolicyIDOnly(c, req.AppID, req.DeviceID, req.MarkCode) {
+		return
+	}
+	deviceID, _ := resolveDeviceInfo(c, req.DeviceID, req.Device, req.MarkCode)
+	loginSession, options, err := h.auth.BeginPasskeyLogin(c.Request.Context(), req.AppID, deviceID)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -295,7 +299,17 @@ func (h *Handler) PasskeyLogin(c *gin.Context) {
 		return
 	}
 
-	result, err := h.auth.VerifyPasskeyLogin(c.Request.Context(), req.AppID, req.ChallengeID, payload, req.MarkCode, c.ClientIP(), c.Request.UserAgent())
+	// Passkey verify 是签发 session 的最终入口，device 名称能在此刻一并提交，做严格校验
+	if !h.enforceDevicePolicy(c, req.AppID, req.DeviceID, req.Device, req.MarkCode, "login") {
+		return
+	}
+	deviceID, clientDevice := resolveClientDevice(c, req.DeviceID, req.Device, req.MarkCode)
+	device := h.enrichDeviceFromDict(c, deviceID, clientDevice)
+	if device == "" {
+		device = guessDeviceFromUA(c.Request.UserAgent())
+	}
+	_ = device // Passkey 现阶段未把 device 传进 service，但保留 enrichment 语义便于未来扩展
+	result, err := h.auth.VerifyPasskeyLogin(c.Request.Context(), req.AppID, req.ChallengeID, payload, deviceID, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
 		h.writeError(c, err)
 		return

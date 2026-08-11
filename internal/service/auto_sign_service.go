@@ -6,11 +6,13 @@ import (
 	"aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	"aegis/pkg/taskpool"
 	"aegis/pkg/timeutil"
 	"context"
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -92,17 +94,22 @@ func (s *AutoSignService) RebuildSchedule(ctx context.Context) (int, error) {
 		if len(items) == 0 {
 			return scheduled, nil
 		}
-		for _, item := range items {
-			lastUserID = item.UserID
+		lastUserID = items[len(items)-1].UserID
+		reference := timeutil.Now().In(location)
+		var batchScheduled atomic.Int64
+		if err := taskpool.DispatchWithError(ctx, cfg.Concurrency, items, func(taskCtx context.Context, item userdomain.AutoSignCandidate) error {
 			if !s.isEligible(item) {
-				_ = s.schedules.Remove(ctx, item.AppID, item.UserID)
-				continue
+				return s.schedules.Remove(taskCtx, item.AppID, item.UserID)
 			}
-			if err := s.schedules.Schedule(ctx, item.AppID, item.UserID, s.initialDue(timeutil.Now().In(location), item.Time, location)); err != nil {
-				return scheduled, err
+			if err := s.schedules.Schedule(taskCtx, item.AppID, item.UserID, s.initialDue(reference, item.Time, location)); err != nil {
+				return err
 			}
-			scheduled++
+			batchScheduled.Add(1)
+			return nil
+		}); err != nil {
+			return scheduled, err
 		}
+		scheduled += int(batchScheduled.Load())
 	}
 }
 
@@ -130,15 +137,17 @@ func (s *AutoSignService) RunDue(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	processed := 0
-	for _, entry := range entries {
-		if err := s.processEntry(ctx, entry); err != nil {
+	var processed atomic.Int64
+	if err := taskpool.Dispatch(ctx, cfg.Concurrency, entries, func(taskCtx context.Context, entry redisrepo.AutoSignEntry) {
+		if err := s.processEntry(taskCtx, entry); err != nil {
 			s.log.Warn("auto sign process failed", zap.Int64("user_id", entry.UserID), zap.Int64("appid", entry.AppID), zap.Error(err))
-			continue
+			return
 		}
-		processed++
+		processed.Add(1)
+	}); err != nil {
+		return int(processed.Load()), err
 	}
-	return processed, nil
+	return int(processed.Load()), nil
 }
 
 func (s *AutoSignService) ScheduledCount(ctx context.Context) int64 {

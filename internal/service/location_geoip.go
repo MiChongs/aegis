@@ -1,6 +1,7 @@
 package service
 
 import (
+	"aegis/pkg/egress"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -57,9 +58,10 @@ func newGeoDatabaseResolver(log *zap.Logger, cfg config.GeoIPConfig) (*geoDataba
 	}
 
 	resolver := &geoDatabaseResolver{
-		log:      log,
-		cfg:      cfg,
-		http:     &http.Client{Timeout: cfg.DownloadTimeout},
+		log: log,
+		cfg: cfg,
+		// mmdb 从 GitHub 下载，是最典型的出海场景
+		http:     egress.NewClient(egress.Profile{Name: "geoip.download", Timeout: cfg.DownloadTimeout}),
 		baseDir:  baseDir,
 		cityPath: filepath.Join(baseDir, "GeoLite2-City.mmdb"),
 		asnPath:  filepath.Join(baseDir, "GeoLite2-ASN.mmdb"),

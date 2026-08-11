@@ -17,7 +17,8 @@ type Session struct {
 	TokenID         string    `json:"token_id"`
 	RefreshFamilyID string    `json:"refresh_family_id,omitempty"`
 	SessionVersion  int64     `json:"session_version"`
-	DeviceID        string    `json:"device_id,omitempty"`
+	DeviceID        string    `json:"device_id,omitempty"` // 设备唯一识别码（UUID/指纹）
+	Device          string    `json:"device,omitempty"`    // 设备可读名称（Chrome on Windows 等）
 	IP              string    `json:"ip,omitempty"`
 	UserAgent       string    `json:"user_agent,omitempty"`
 	ExpiresAt       time.Time `json:"expires_at"`
@@ -54,6 +55,7 @@ type RefreshSession struct {
 	FamilyID        string     `json:"family_id"`
 	SessionVersion  int64      `json:"session_version"`
 	DeviceID        string     `json:"device_id,omitempty"`
+	Device          string     `json:"device,omitempty"`
 	IP              string     `json:"ip,omitempty"`
 	UserAgent       string     `json:"user_agent,omitempty"`
 	Provider        string     `json:"provider,omitempty"`
@@ -62,6 +64,20 @@ type RefreshSession struct {
 	UsedAt          *time.Time `json:"used_at,omitempty"`
 	RotatedAt       *time.Time `json:"rotated_at,omitempty"`
 	ReplacedByToken string     `json:"replaced_by_token,omitempty"`
+}
+
+// FirstDevice 用户首次登录/注册使用的设备记录
+// 用于风控比对、账号异常登录告警等场景；生命周期通常等同账号存在
+type FirstDevice struct {
+	UserID      int64     `json:"userId"`
+	AppID       int64     `json:"appid"`
+	DeviceID    string    `json:"deviceId"`
+	Device      string    `json:"device"`
+	IP          string    `json:"ip"`
+	UserAgent   string    `json:"userAgent"`
+	Provider    string    `json:"provider,omitempty"` // password / oauth / passkey
+	Scene       string    `json:"scene"`              // register / login
+	FirstSeenAt time.Time `json:"firstSeenAt"`
 }
 
 type SecondFactorChallenge struct {
@@ -83,4 +99,7 @@ type LoginResult struct {
 	RequiresSecondFactor bool                   `json:"requiresSecondFactor,omitempty"`
 	AuthenticationState  string                 `json:"authenticationState,omitempty"`
 	Challenge            *SecondFactorChallenge `json:"challenge,omitempty"`
+	// PasswordChangeRequired 该账号被标记为必须修改密码（如批量导入后设置统一密码），
+	// 客户端应在登录成功后立即引导强制改密
+	PasswordChangeRequired bool `json:"passwordChangeRequired,omitempty"`
 }

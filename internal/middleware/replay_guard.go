@@ -24,11 +24,15 @@ import (
 
 const (
 	headerTimestamp = "X-Timestamp"
-	headerNonce    = "X-Nonce"
+	headerNonce     = "X-Nonce"
 	headerSignature = "X-Signature"
 
 	// 指纹计算时 body 最大读取量
 	fingerprintBodyLimit = 2048
+
+	// snapshotBody 的通用 JSON/form body 上限：8 MB
+	// 对非文件型请求做去重/签名足够；多出的部分对 replay 无意义
+	replayGuardBodyLimit = 8 << 20
 )
 
 // ReplayGuard 防重放中间件（三层：指纹 + Nonce + HMAC 签名）
@@ -81,6 +85,16 @@ func (g *ReplayGuard) Handler() gin.HandlerFunc {
 		// 跳过健康检查
 		path := c.Request.URL.Path
 		if path == "/healthz" || path == "/readyz" {
+			c.Next()
+			return
+		}
+		// 应用接入网关自己负责防重放，这里整段让开：
+		//   signed / sealed —— 网关有强制时间窗、一次性 Nonce 与 HMAC/AEAD 完整性，
+		//     严格强于本中间件；且 sealed 的 octet-stream 密文会让 snapshotBody 返回 nil，
+		//     指纹退化成 method+path+ip，同一 IP 的第二个请求就会被误杀。
+		//   standard —— 应用明确选择了"不加任何包装"，此时用 body 哈希去重会把
+		//     合法重试和两次相同的登录尝试判成"重复请求"，正是本次重构要消灭的意外。
+		if strings.HasPrefix(path, gatewayPathPrefix) {
 			c.Next()
 			return
 		}
@@ -190,11 +204,23 @@ func (g *ReplayGuard) Handler() gin.HandlerFunc {
 }
 
 // snapshotBody 读取请求体并恢复，供后续 handler 使用
+//
+// 关键边界处理：
+//   - multipart/form-data 与 application/octet-stream 不读取 body，直接返回 nil
+//     原因：文件上传 body 往往数 MB，一旦用 LimitReader 截断，multipart 边界会在
+//     下游 handler 解析时丢失，表现为"上传 >1MB 文件请求被截断"的 bug。
+//     这两类请求有 AdminAuth/AdminAccess 的会话验证兜底，replay 层无需再读 body。
+//   - 其它请求最多读 replayGuardBodyLimit（8MB），超过部分对 replay 指纹无意义。
 func (g *ReplayGuard) snapshotBody(req *http.Request) ([]byte, error) {
 	if req.Body == nil || req.Body == http.NoBody {
 		return nil, nil
 	}
-	body, err := io.ReadAll(io.LimitReader(req.Body, 1<<20)) // 最大 1MB
+	contentType := strings.ToLower(req.Header.Get("Content-Type"))
+	if strings.HasPrefix(contentType, "multipart/form-data") ||
+		strings.HasPrefix(contentType, "application/octet-stream") {
+		return nil, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(req.Body, replayGuardBodyLimit))
 	if err != nil {
 		return nil, err
 	}

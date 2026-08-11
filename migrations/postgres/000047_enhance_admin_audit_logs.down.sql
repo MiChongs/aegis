@@ -1,0 +1,29 @@
+DROP INDEX IF EXISTS idx_admin_audit_country;
+DROP INDEX IF EXISTS idx_admin_audit_status_code;
+DROP INDEX IF EXISTS idx_admin_audit_session;
+DROP INDEX IF EXISTS idx_admin_audit_request;
+DROP INDEX IF EXISTS idx_admin_audit_severity;
+DROP INDEX IF EXISTS idx_admin_audit_category;
+
+ALTER TABLE admin_audit_logs
+    DROP COLUMN IF EXISTS summary,
+    DROP COLUMN IF EXISTS error_message,
+    DROP COLUMN IF EXISTS error_code,
+    DROP COLUMN IF EXISTS severity,
+    DROP COLUMN IF EXISTS category,
+    DROP COLUMN IF EXISTS admin_role,
+    DROP COLUMN IF EXISTS isp,
+    DROP COLUMN IF EXISTS city,
+    DROP COLUMN IF EXISTS region,
+    DROP COLUMN IF EXISTS country,
+    DROP COLUMN IF EXISTS response_snippet,
+    DROP COLUMN IF EXISTS response_size,
+    DROP COLUMN IF EXISTS request_size,
+    DROP COLUMN IF EXISTS latency_ms,
+    DROP COLUMN IF EXISTS status_code,
+    DROP COLUMN IF EXISTS route,
+    DROP COLUMN IF EXISTS path,
+    DROP COLUMN IF EXISTS method,
+    DROP COLUMN IF EXISTS trace_id,
+    DROP COLUMN IF EXISTS request_id,
+    DROP COLUMN IF EXISTS session_id;

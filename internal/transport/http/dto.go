@@ -3,10 +3,12 @@ package httptransport
 import (
 	appdomain "aegis/internal/domain/app"
 	userdomain "aegis/internal/domain/user"
-	"aegis/internal/service"
+	auditmiddleware "aegis/internal/middleware"
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/response"
+	"aegis/pkg/timeutil"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,25 +22,48 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
+type appIDResolver interface {
+	GetApp(ctx context.Context, appID int64) (*appdomain.App, error)
+	GetAppByKey(ctx context.Context, appKey string) (*appdomain.App, error)
+}
+
+// PasswordLoginRequest 登录请求
+//
+// 设备信息字段：
+//   - DeviceID（json: deviceId）：设备唯一识别码，推荐由客户端生成 UUID/指纹
+//   - Device（json: device）：设备可读名称，如 "iPhone 15 Pro" / "Chrome on Windows"
+//   - MarkCode（json: markcode）：向后兼容字段，仅作 DeviceID 回落使用，新代码请直接用 deviceId
+//
+// 服务端还支持从 HTTP Header `X-Device-Id` / `X-Device-Name` 读取。
 type PasswordLoginRequest struct {
-	AppID    int64  `json:"appid" form:"appid" binding:"required"`
-	Account  string `json:"account" form:"account" binding:"required"`
-	Password string `json:"password" form:"password" binding:"required"`
-	MarkCode string `json:"markcode" form:"markcode"`
+	AppID         int64  `json:"appid" form:"appid" binding:"required"`
+	Account       string `json:"account" form:"account" binding:"required"`
+	Password      string `json:"password" form:"password" binding:"required"`
+	DeviceID      string `json:"deviceId" form:"deviceId"`
+	Device        string `json:"device" form:"device"`
+	MarkCode      string `json:"markcode" form:"markcode"` // Deprecated: 使用 DeviceID
+	CaptchaID     string `json:"captchaId" form:"captchaId"`
+	CaptchaAnswer string `json:"captchaAnswer" form:"captchaAnswer"`
 }
 
 type PasswordRegisterRequest struct {
-	AppID    int64  `json:"appid" form:"appid" binding:"required"`
-	Account  string `json:"account" form:"account" binding:"required"`
-	Password string `json:"password" form:"password" binding:"required"`
-	Nickname string `json:"nickname" form:"nickname"`
-	MarkCode string `json:"markcode" form:"markcode"`
+	AppID         int64  `json:"appid" form:"appid" binding:"required"`
+	Account       string `json:"account" form:"account" binding:"required"`
+	Password      string `json:"password" form:"password" binding:"required"`
+	Nickname      string `json:"nickname" form:"nickname"`
+	DeviceID      string `json:"deviceId" form:"deviceId"`
+	Device        string `json:"device" form:"device"`
+	MarkCode      string `json:"markcode" form:"markcode"` // Deprecated
+	CaptchaID     string `json:"captchaId" form:"captchaId"`
+	CaptchaAnswer string `json:"captchaAnswer" form:"captchaAnswer"`
 }
 
 type OAuthAuthURLRequest struct {
 	AppID    int64  `json:"appid" form:"appid" binding:"required"`
 	Provider string `json:"provider" form:"provider" binding:"required"`
-	MarkCode string `json:"markcode" form:"markcode"`
+	DeviceID string `json:"deviceId" form:"deviceId"`
+	Device   string `json:"device" form:"device"`
+	MarkCode string `json:"markcode" form:"markcode"` // Deprecated
 }
 
 type OAuthMobileLoginRequest struct {
@@ -51,14 +76,18 @@ type OAuthMobileLoginRequest struct {
 	Email          string         `json:"email" form:"email"`
 	AccessToken    string         `json:"accessToken" form:"accessToken"`
 	RefreshToken   string         `json:"refreshToken" form:"refreshToken"`
-	MarkCode       string         `json:"markcode" form:"markcode"`
+	DeviceID       string         `json:"deviceId" form:"deviceId"`
+	Device         string         `json:"device" form:"device"`
+	MarkCode       string         `json:"markcode" form:"markcode"` // Deprecated
 	RawProfile     map[string]any `json:"rawProfile"`
 }
 
 type RefreshRequest struct {
 	Token        string `json:"token" form:"token"`
 	RefreshToken string `json:"refreshToken" form:"refreshToken"`
-	MarkCode     string `json:"markcode" form:"markcode"`
+	DeviceID     string `json:"deviceId" form:"deviceId"`
+	Device       string `json:"device" form:"device"`
+	MarkCode     string `json:"markcode" form:"markcode"` // Deprecated
 }
 
 type VerifyPasswordRequest struct {
@@ -212,48 +241,14 @@ type AdminAppCreateRequest struct {
 	AdminAppUpsertRequest
 }
 
-type LegacyAppCreateRequest struct {
-	ID   int64  `json:"id" form:"id" binding:"required"`
-	Name string `json:"name" form:"name" binding:"required"`
-	Key  string `json:"key" form:"key"`
-}
-
-type LegacyAppConfigRequest struct {
-	AppID int64 `json:"appid" form:"appid" binding:"required"`
-}
-
-type LegacyAppUpdateConfigRequest struct {
-	AppID                   int64          `json:"appid" form:"appid" binding:"required"`
-	Name                    string         `json:"name" form:"name"`
-	Key                     string         `json:"key" form:"key"`
-	Status                  *bool          `json:"status"`
-	DisabledReason          string         `json:"disabledReason" form:"disabledReason"`
-	RegisterStatus          *bool          `json:"registerStatus"`
-	DisabledRegisterReason  string         `json:"disabledRegisterReason" form:"disabledRegisterReason"`
-	LoginStatus             *bool          `json:"loginStatus"`
-	DisableLoginReason      string         `json:"disableLoginReason" form:"disableLoginReason"`
-	LoginCheckDevice        *bool          `json:"loginCheckDevice"`
-	LoginCheckUser          *bool          `json:"loginCheckUser"`
-	LoginCheckIP            *bool          `json:"loginCheckIp"`
-	LoginCheckDeviceTimeOut *int           `json:"loginCheckDeviceTimeOut"`
-	MultiDeviceLogin        *bool          `json:"multiDeviceLogin"`
-	MultiDeviceLoginNum     *int           `json:"multiDeviceLoginNum"`
-	RegisterCaptcha         *bool          `json:"registerCaptcha"`
-	RegisterCaptchaTimeOut  *int           `json:"registerCaptchaTimeOut"`
-	RegisterCheckIP         *bool          `json:"registerCheckIp"`
-	Settings                map[string]any `json:"settings"`
-}
-
 type AdminAppPolicyRequest struct {
-	LoginCheckDevice        bool `json:"loginCheckDevice"`
-	LoginCheckUser          bool `json:"loginCheckUser"`
-	LoginCheckIP            bool `json:"loginCheckIp"`
-	LoginCheckDeviceTimeout int  `json:"loginCheckDeviceTimeOut"`
-	MultiDeviceLogin        bool `json:"multiDeviceLogin"`
-	MultiDeviceLimit        int  `json:"multiDeviceLimit"`
-	RegisterCaptcha         bool `json:"registerCaptcha"`
-	RegisterCaptchaTimeout  int  `json:"registerCaptchaTimeOut"`
-	RegisterCheckIP         bool `json:"registerCheckIp"`
+	LoginCheckDevice     bool `json:"loginCheckDevice"`
+	LoginCheckUser       bool `json:"loginCheckUser"`
+	LoginCheckIP         bool `json:"loginCheckIp"`
+	DeviceRebindInterval int  `json:"loginCheckDeviceTimeOut"`
+	MultiDeviceLogin     bool `json:"multiDeviceLogin"`
+	MultiDeviceLimit     int  `json:"multiDeviceLimit"`
+	RegisterCheckIP      bool `json:"registerCheckIp"`
 }
 
 type AdminBannerUpsertRequest struct {
@@ -284,13 +279,20 @@ type AdminUserListQuery struct {
 	Nickname    string `form:"nickname"`
 	Email       string `form:"email"`
 	Phone       string `form:"phone"`
+	InviteCode  string `form:"inviteCode"`
 	RegisterIP  string `form:"registerIp"`
 	UserID      *int64 `form:"userId"`
 	Enabled     *bool  `form:"enabled"`
 	CreatedFrom string `form:"createdFrom"`
 	CreatedTo   string `form:"createdTo"`
-	Page        int    `form:"page"`
-	Limit       int    `form:"limit"`
+	// Sort 排序字段：createdAt(默认) / updatedAt / id / account / integral /
+	// experience / vipExpireAt / registerTime / nickname / email。
+	// 非白名单值静默回落到 createdAt，不报错。
+	Sort string `form:"sort"`
+	// Order asc / desc（默认 desc）
+	Order string `form:"order"`
+	Page  int    `form:"page"`
+	Limit int    `form:"limit"`
 }
 
 type AdminUserStatusRequest struct {
@@ -316,6 +318,19 @@ type AdminResetUserPasswordRequest struct {
 
 type AdminAppTrendQuery struct {
 	Days int `form:"days"`
+}
+
+type AdminAppSignInStatsQuery struct {
+	Days int `form:"days"`
+}
+
+type AdminAppSignInRecordQuery struct {
+	Keyword  string `form:"keyword"`
+	Source   string `form:"source"`
+	DateFrom string `form:"dateFrom"`
+	DateTo   string `form:"dateTo"`
+	Page     int    `form:"page"`
+	Limit    int    `form:"limit"`
 }
 
 type AdminLoginAuditQuery struct {
@@ -763,6 +778,8 @@ func normalizeBindError(err error) error {
 }
 
 func (h *Handler) writeError(c *gin.Context, err error) {
+	auditmiddleware.SetAuditFailure(c, err)
+
 	if appErr, ok := errors.AsType[*apperrors.AppError](err); ok {
 		response.Error(c, appErr.HTTPStatus, appErr.Code, appErr.Message)
 		return
@@ -798,25 +815,48 @@ func parseOptionalDateTime(value string) (*time.Time, error) {
 	if value == "" {
 		return nil, nil
 	}
-	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
-		if parsed, err := time.Parse(layout, value); err == nil {
-			return &parsed, nil
-		}
+	parsed, err := timeutil.ParseRFC3339Strict(value)
+	if err != nil {
+		return nil, errors.New("invalid datetime")
 	}
-	return nil, errors.New("invalid datetime")
+	return &parsed, nil
 }
 
-// resolveAppID 从路径参数 :appkey 解析 appkey，查库获取 appid
-func resolveAppID(c *gin.Context, appService *service.AppService) (int64, bool) {
+func parseOptionalDateInLocation(value string, location *time.Location) (*time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	if location == nil {
+		location = timeutil.DefaultLocation()
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", value, location)
+	if err != nil {
+		return nil, errors.New("invalid date")
+	}
+	return &parsed, nil
+}
+
+// resolveAppID 从路径参数 :appkey 解析 appkey，兼容 appKey 或纯数字 appID
+func resolveAppID(c *gin.Context, appService appIDResolver) (int64, bool) {
 	appKey := strings.TrimSpace(c.Param("appkey"))
 	if appKey == "" {
 		response.Error(c, http.StatusBadRequest, 40000, "应用标识不能为空")
 		return 0, false
 	}
-	app, err := appService.GetAppByKey(c.Request.Context(), appKey)
-	if err != nil || app == nil {
-		response.Error(c, http.StatusNotFound, 40404, "应用不存在")
-		return 0, false
+
+	if appService != nil {
+		app, err := appService.GetAppByKey(c.Request.Context(), appKey)
+		if err == nil && app != nil {
+			return app.ID, true
+		}
+		if appID, err := strconv.ParseInt(appKey, 10, 64); err == nil && appID > 0 {
+			app, getErr := appService.GetApp(c.Request.Context(), appID)
+			if getErr == nil && app != nil {
+				return app.ID, true
+			}
+		}
 	}
-	return app.ID, true
+	response.Error(c, http.StatusNotFound, 40404, "应用不存在")
+	return 0, false
 }

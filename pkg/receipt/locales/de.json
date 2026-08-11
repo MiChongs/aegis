@@ -1,0 +1,136 @@
+{
+  "$meta": {
+    "name": "German",
+    "nativeName": "Deutsch",
+    "direction": "ltr",
+    "script": "latin"
+  },
+  "$format": {
+    "group": ".",
+    "decimal": ",",
+    "groupSizes": [3],
+    "currency": "{value} {symbol}",
+    "currencyNegative": "-{value} {symbol}",
+    "date": "02.01.2006",
+    "dateTime": "02.01.2006 15:04 MST",
+    "time": "15:04"
+  },
+
+  "doc.type.receipt": "Beleg",
+  "doc.type.invoice": "Rechnung",
+  "doc.type.credit_note": "Gutschrift",
+
+  "status.paid": "Bezahlt",
+  "status.pending": "Offen",
+  "status.refunded": "Erstattet",
+  "status.partially_refunded": "Teilweise erstattet",
+  "status.expired": "Abgelaufen",
+  "status.failed": "Fehlgeschlagen",
+  "status.cancelled": "Storniert",
+
+  "header.number": "Nr. {number}",
+  "header.issuedAt": "Ausgestellt am {time}",
+  "header.continued": "{title} {number} (Fortsetzung)",
+
+  "party.issuer": "Von",
+  "party.customer": "Rechnung an",
+  "party.merchant": "Händler",
+  "party.guest": "Gast",
+
+  "table.description": "Beschreibung",
+  "table.quantity": "Menge",
+  "table.unitPrice": "Einzelpreis",
+  "table.amount": "Betrag",
+
+  "totals.subtotal": "Zwischensumme",
+  "totals.discount": "Rabatt",
+  "totals.tax": "Steuer",
+  "totals.taxWithRate": "Steuer ({rate} %)",
+  "totals.total": "Gesamt",
+  "totals.refunded": "Erstattet",
+  "totals.netPaid": "Netto gezahlt",
+
+  "payment.section": "Zahlungsdetails",
+  "payment.method": "Zahlungsart",
+  "payment.orderNo": "Bestellnummer",
+  "payment.transactionId": "Transaktions-ID",
+  "payment.channel": "Kanal",
+  "payment.clientIp": "Client-IP",
+  "payment.paidAt": "Bezahlt am",
+
+  "refunds.section": "Erstattungen",
+  "refunds.number": "Erstattungsnummer",
+  "refunds.status": "Status",
+  "refunds.at": "Datum",
+  "refunds.amount": "Betrag",
+  "refunds.reasonLine": "Grund: {reason}",
+  "refunds.summaryOnly": "Für diese Bestellung wurden insgesamt {amount} erstattet.",
+
+  "refund.status.pending": "Ausstehend",
+  "refund.status.processing": "In Bearbeitung",
+  "refund.status.success": "Erstattet",
+  "refund.status.failed": "Fehlgeschlagen",
+  "refund.status.closed": "Abgeschlossen",
+
+  "metadata.section": "Weitere Angaben",
+  "notes.section": "Hinweise",
+
+  "email.subject": "{title} {number} · {brand}",
+  "email.title": "Ihr Dokument „{title}“ ist bereit",
+  "email.lead": "Zur Bestellung {orderNo}",
+  "email.greeting": "Hallo {name},",
+  "email.attached": "Das PDF ist dieser E-Mail beigefügt.",
+  "email.linkLead": "Laden Sie es über die Schaltfläche unten herunter. Der Link läuft am {expiry} ab.",
+  "email.button": "Herunterladen",
+  "email.summary": "Übersicht",
+  "email.footer": "Bewahren Sie dieses Dokument auf. Diese Nachricht wurde automatisch erstellt — bitte antworten Sie nicht darauf.",
+
+  "meta.purpose": "Verwendungszweck",
+  "meta.appId": "Anwendungs-ID",
+  "meta.userId": "Kundennummer",
+  "meta.createdAt": "Bestellt am",
+  "meta.expireAt": "Zahlbar bis",
+  "meta.plan": "Tarif",
+  "meta.duration": "Laufzeit",
+  "meta.bonusPoints": "Bonuspunkte",
+  "meta.points": "Gutgeschriebene Punkte",
+  "meta.days": {
+    "one": "{count} Tag",
+    "other": "{count} Tage"
+  },
+  "meta.pointsValue": {
+    "one": "{count} Punkt",
+    "other": "{count} Punkte"
+  },
+
+  "purpose.wallet_recharge": "Guthabenaufladung",
+  "purpose.vip_purchase": "Mitgliedschaft",
+  "purpose.integral_purchase": "Punktekauf",
+
+  "notes.unpaid": "Dieses Dokument ist kein Zahlungsnachweis: Die Bestellung wurde noch nicht bezahlt.",
+  "notes.refunded": "Diese Bestellung wurde vollständig erstattet. Der Nettobetrag beträgt null.",
+  "notes.partiallyRefunded": "Diese Bestellung wurde teilweise erstattet. Einzelheiten siehe Erstattungen.",
+
+  "footer.page": "Seite {page} von {total}",
+  "footer.disclaimer": "Dieses Dokument wurde elektronisch erstellt und ist ohne Unterschrift gültig.",
+  "footer.generated": "Erstellt von {producer} am {time}.",
+  "footer.scanToVerify": "Zum Prüfen scannen",
+  "footer.verify": "Dokument prüfen unter {url}",
+
+  "method.epay": "E-Pay-Aggregator",
+  "method.rainbow_epay": "Rainbow E-Pay",
+  "method.xunhupay": "Xunhupay",
+  "method.payjs": "PAYJS",
+  "method.qrpay": "QRPay",
+  "method.vmqpay": "VMQPay",
+  "method.alipay_native": "Alipay",
+  "method.wechat_native": "WeChat Pay",
+  "method.stripe": "Stripe",
+  "method.paypal": "PayPal",
+  "method.balance": "Kontoguthaben",
+  "method.paddle": "Paddle",
+  "method.lemonsqueezy": "Lemon Squeezy",
+  "method.razorpay": "Razorpay",
+  "method.coinbase": "Coinbase Commerce",
+  "method.square": "Square"
+}

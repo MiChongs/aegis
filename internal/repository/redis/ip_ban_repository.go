@@ -14,9 +14,11 @@ const permanentBanTTL = 10 * 365 * 24 * time.Hour
 
 // BanMeta 存储在 Redis 中的封禁元信息
 type BanMeta struct {
-	BanID   int64  `json:"banId"`
-	Reason  string `json:"reason"`
-	Source  string `json:"source"`
+	BanID    int64  `json:"banId"`
+	Reason   string `json:"reason"`
+	Source   string `json:"source"`
+	Mode     string `json:"mode,omitempty"`    // 空时由防火墙按 Firewall.DefaultBanMode 决定
+	DelayMs  int    `json:"delayMs,omitempty"` // tarpit 模式的延迟毫秒
 	BannedAt string `json:"bannedAt"`
 }
 

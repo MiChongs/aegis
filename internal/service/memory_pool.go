@@ -8,22 +8,22 @@ import (
 
 // PoolStats 对象池统计
 type PoolStats struct {
-	Name     string `json:"name"`
-	Gets     int64  `json:"gets"`     // 总获取次数
-	Puts     int64  `json:"puts"`     // 总归还次数
-	Hits     int64  `json:"hits"`     // 从池中命中次数（非新建）
-	Misses   int64  `json:"misses"`   // 未命中次数（新建）
-	HitRate  float64 `json:"hitRate"` // 命中率
+	Name    string  `json:"name"`
+	Gets    int64   `json:"gets"`    // 总获取次数
+	Puts    int64   `json:"puts"`    // 总归还次数
+	Hits    int64   `json:"hits"`    // 从池中命中次数（非新建）
+	Misses  int64   `json:"misses"`  // 未命中次数（新建）
+	HitRate float64 `json:"hitRate"` // 命中率
 }
 
 // TrackedPool 带统计的 sync.Pool 封装
 type TrackedPool struct {
-	name    string
-	pool    sync.Pool
-	gets    atomic.Int64
-	puts    atomic.Int64
-	hits    atomic.Int64
-	misses  atomic.Int64
+	name   string
+	pool   sync.Pool
+	gets   atomic.Int64
+	puts   atomic.Int64
+	hits   atomic.Int64
+	misses atomic.Int64
 }
 
 func newTrackedPool(name string, newFunc func() any) *TrackedPool {

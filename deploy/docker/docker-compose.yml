@@ -1,49 +1,129 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  Aegis 容器编排
+# ══════════════════════════════════════════════════════════════════════════
+#
+#  三档启动方式（profiles 分层）：
+#
+#  ① 核心基础设施（默认，本机 go run 开发时使用）
+#       docker compose -f deploy/docker/docker-compose.yml up -d
+#     → postgres + redis + nats
+#
+#  ② 完整基础设施（含工作流引擎与管理界面）
+#       docker compose -f deploy/docker/docker-compose.yml --profile full up -d
+#     → 核心 + temporal(+库) + temporal-ui + nats-ui + rdkit-captcha
+#
+#  ③ 容器化全栈（含 Aegis 后端，自动执行数据库迁移）
+#       docker compose --env-file .env -f deploy/docker/docker-compose.yml --profile app up -d
+#     → 完整基础设施 + migrate（一次性迁移）+ server
+#
+#  推荐直接使用一键脚本（自动生成强随机凭据并完成上述全部步骤）：
+#       Linux/macOS:  ./deploy/docker/quickstart.sh
+#       Windows:      .\deploy\docker\quickstart.ps1
+#
+#  凭据与端口均可通过环境变量覆盖（一键脚本会写入仓库根目录 .env，
+#  使用 --env-file 指向它即可让下方 ${VAR:-默认值} 全部生效）。
+# ══════════════════════════════════════════════════════════════════════════
+
+# 统一日志限额：防止长期运行的容器日志撑爆磁盘
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
 services:
+  # ── 主数据库：PostgreSQL 17 + PostGIS（地理风控/分析依赖） ──
   postgres:
-    image: pgvector/pgvector:pg17
+    build:
+      context: ./postgres
+    image: aegis-postgres:pg17-postgis
     container_name: aegis-postgres
+    restart: unless-stopped
+    logging: *default-logging
     environment:
-      POSTGRES_DB: aegis
-      POSTGRES_USER: aegis
-      POSTGRES_PASSWORD: aegis
+      POSTGRES_DB: ${AEGIS_DB_NAME:-aegis}
+      POSTGRES_USER: ${AEGIS_DB_USER:-aegis}
+      POSTGRES_PASSWORD: ${AEGIS_DB_PASSWORD:-aegis}
     ports:
-      - "5432:5432"
+      # 宿主机 15432 → 容器 5432：避开本机原生 PostgreSQL 占用的 5432
+      - "${AEGIS_DB_PORT:-15432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aegis -d aegis"]
+      test: ["CMD-SHELL", "pg_isready -U ${AEGIS_DB_USER:-aegis} -d ${AEGIS_DB_NAME:-aegis}"]
       interval: 3s
       timeout: 3s
       retries: 15
 
+  # ── 缓存 / 会话存储 ──
   redis:
     image: redis:8-alpine
     container_name: aegis-redis
+    restart: unless-stopped
+    logging: *default-logging
+    # 启用 AOF 持久化：容器重建后会话/防爆破计数等不丢失
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "${AEGIS_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
       timeout: 3s
       retries: 10
 
+  # ── 消息队列：NATS JetStream ──
   nats:
     image: nats:2.11-alpine
     container_name: aegis-nats
-    command: ["-js"]
+    restart: unless-stopped
+    logging: *default-logging
+    # -js 启用 JetStream；-sd 指定持久化目录（配合数据卷）
+    command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "${AEGIS_NATS_PORT:-4222}:4222"
+      - "${AEGIS_NATS_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
+  # ── NATS 管理界面（可选） ──
+  nats-ui:
+    image: ghcr.io/nats-nui/nui:latest
+    container_name: aegis-nats-ui
+    profiles: ["full", "ui"]
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "${NATS_UI_PORT:-31311}:31311"
+    volumes:
+      - nats_ui_data:/db
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  # ── Temporal 专用数据库 ──
   temporal-postgres:
     image: postgres:17-alpine
     container_name: aegis-temporal-postgres
+    profiles: ["full", "app"]
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      default:
+        aliases:
+          - temporalpostgres
     environment:
       POSTGRES_DB: temporal
       POSTGRES_USER: temporal
-      POSTGRES_PASSWORD: temporal
+      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:-temporal}
     ports:
-      - "5433:5432"
+      - "${TEMPORAL_DB_PORT:-5433}:5432"
     volumes:
       - temporal_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -52,60 +132,153 @@ services:
       timeout: 3s
       retries: 15
 
+  # ── 工作流引擎：Temporal ──
   temporal:
     image: temporalio/auto-setup:latest
     container_name: aegis-temporal
+    profiles: ["full", "app"]
+    restart: unless-stopped
+    logging: *default-logging
     environment:
       DB: postgres12
       DB_PORT: 5432
       POSTGRES_USER: temporal
-      POSTGRES_PWD: temporal
-      POSTGRES_SEEDS: temporal-postgres
+      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:-temporal}
+      POSTGRES_SEEDS: temporalpostgres
+      BIND_ON_IP: 0.0.0.0
+      TEMPORAL_ADDRESS: 127.0.0.1:7233
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/docker.yaml
     ports:
-      - "7233:7233"
+      - "${TEMPORAL_PORT:-7233}:7233"
     depends_on:
       temporal-postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "tctl --address 127.0.0.1:7233 cluster health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
+  # ── Temporal 管理界面（可选） ──
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: aegis-temporal-ui
+    profiles: ["full", "ui"]
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      TEMPORAL_ADDRESS: ${TEMPORAL_UI_BACKEND_ADDRESS:-temporal:7233}
+      TEMPORAL_CORS_ORIGINS: ${TEMPORAL_UI_CORS_ORIGINS:-http://localhost:3000,http://localhost:8088}
+      TEMPORAL_UI_PORT: 8080
+      TEMPORAL_UI_PUBLIC_PATH: ${TEMPORAL_UI_PUBLIC_PATH:-}
+      TEMPORAL_AUTH_ENABLED: ${TEMPORAL_AUTH_ENABLED:-false}
+      TEMPORAL_AUTH_PROVIDER_URL: ${TEMPORAL_AUTH_PROVIDER_URL:-}
+      TEMPORAL_AUTH_CLIENT_ID: ${TEMPORAL_AUTH_CLIENT_ID:-}
+      TEMPORAL_AUTH_CLIENT_SECRET: ${TEMPORAL_AUTH_CLIENT_SECRET:-}
+      TEMPORAL_AUTH_CALLBACK_URL: ${TEMPORAL_AUTH_CALLBACK_URL:-}
+      TEMPORAL_AUTH_SCOPES: ${TEMPORAL_AUTH_SCOPES:-openid,profile,email}
+      TEMPORAL_CSRF_COOKIE_INSECURE: ${TEMPORAL_CSRF_COOKIE_INSECURE:-true}
+      TEMPORAL_UI_DEFAULT_LANGUAGE: ${TEMPORAL_UI_DEFAULT_LANGUAGE:-zh}
+      TEMPORAL_DEFAULT_LANGUAGE: ${TEMPORAL_UI_DEFAULT_LANGUAGE:-zh}
+    ports:
+      - "${TEMPORAL_UI_PORT:-8233}:8080"
+    depends_on:
+      temporal:
+        condition: service_started
+
+  # ── 化学结构验证码服务（可选组件） ──
   rdkit-captcha:
     build:
       context: ../..
       dockerfile: deploy/docker/rdkit-captcha/Dockerfile
     container_name: aegis-rdkit-captcha
-    ports:
-      - "5050:5000"
+    profiles: ["full", "app"]
     restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "${RDKIT_CAPTCHA_PORT:-5050}:5000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 5s
       retries: 3
 
+  # ── 数据库迁移（一次性任务，server 启动前自动执行） ──
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: aegis-server:latest
+    container_name: aegis-migrate
+    profiles: ["app"]
+    restart: "no"
+    logging: *default-logging
+    env_file:
+      # required:false —— 仅启基础设施（无 .env）时不报解析错误
+      - path: ../../.env
+        required: false
+    environment:
+      # 容器内必须使用服务名访问数据库（覆盖 .env 中可能的 localhost 配置）
+      POSTGRES_DSN: postgres://${AEGIS_DB_USER:-aegis}:${AEGIS_DB_PASSWORD:-aegis}@postgres:5432/${AEGIS_DB_NAME:-aegis}?sslmode=disable
+    command: ["/usr/local/bin/aegis-server", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Aegis 后端（Unified 模式：API + Worker） ──
   server:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
+    image: aegis-server:latest
     container_name: aegis-server
+    profiles: ["app"]
+    restart: unless-stopped
+    logging: *default-logging
     env_file:
-      - ../../.env.example
+      # 真实配置来自仓库根目录 .env（由一键脚本生成，或参照 .env.example 手工创建）
+      - path: ../../.env
+        required: false
     environment:
+      # 容器内服务发现：覆盖宿主机视角的连接串
+      POSTGRES_DSN: postgres://${AEGIS_DB_USER:-aegis}:${AEGIS_DB_PASSWORD:-aegis}@postgres:5432/${AEGIS_DB_NAME:-aegis}?sslmode=disable
+      REDIS_ADDR: redis:6379
+      NATS_URL: nats://nats:4222
+      # passthrough:/// 前缀不可省略：Temporal SDK 底层的 grpc-go NewClient 默认使用 dns
+      # scheme，其自带 DNS resolver 在 Docker 内置 DNS（127.0.0.11）下解析超时，导致
+      # Workflow 功能静默降级；passthrough 改由 Go 标准库解析，可正常连通。
+      TEMPORAL_HOST_PORT: passthrough:///temporal:7233
       RDKIT_CAPTCHA_URL: http://rdkit-captcha:5000
     command: ["/usr/local/bin/aegis-server"]
+    ports:
+      - "${HTTP_PORT:-8088}:8088"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       nats:
-        condition: service_started
+        condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
       rdkit-captcha:
         condition: service_started
-    ports:
-      - "8088:8088"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8088/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
 volumes:
   postgres_data:
+  redis_data:
+  nats_data:
+  nats_ui_data:
+  # 保留 external 命名：兼容既有部署中已存在的 Temporal 数据卷，避免升级丢数据
   temporal_postgres_data:
+    external: true
+    name: docker_temporal_postgres_data

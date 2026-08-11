@@ -1,12 +1,13 @@
 package httptransport
 
 type AdminSystemSettingsUpdateRequest struct {
-	Firewall     AdminFirewallSettingsUpdateRequest     `json:"firewall"`
-	Security     AdminSecuritySettingsUpdateRequest     `json:"security"`
-	AdminCaptcha AdminCaptchaSettingsUpdateRequest      `json:"adminCaptcha"`
-	LDAP         AdminLDAPSettingsUpdateRequest         `json:"ldap"`
-	OIDC         AdminOIDCSettingsUpdateRequest         `json:"oidc"`
-	Branding     AdminBrandingSettingsUpdateRequest     `json:"branding"`
+	Firewall     AdminFirewallSettingsUpdateRequest `json:"firewall"`
+	Security     AdminSecuritySettingsUpdateRequest `json:"security"`
+	AdminCaptcha AdminCaptchaSettingsUpdateRequest  `json:"adminCaptcha"`
+	LDAP         AdminLDAPSettingsUpdateRequest     `json:"ldap"`
+	OIDC         AdminOIDCSettingsUpdateRequest     `json:"oidc"`
+	SAML         AdminSAMLSettingsUpdateRequest     `json:"saml"`
+	Branding     AdminBrandingSettingsUpdateRequest `json:"branding"`
 }
 
 type AdminBrandingSettingsUpdateRequest struct {

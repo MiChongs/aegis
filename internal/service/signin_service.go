@@ -3,16 +3,17 @@ package service
 import (
 	"context"
 	"fmt"
-	"math"
 	"net/http"
 	"time"
 
+	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
 	userdomain "aegis/internal/domain/user"
 	"aegis/internal/event"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	"aegis/pkg/timeutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
@@ -33,16 +34,12 @@ const (
 )
 
 func NewSignInService(log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, publisher *event.Publisher) *SignInService {
-	location, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil {
-		location = time.FixedZone("CST", 8*3600)
-	}
 	return &SignInService{
 		log:       log,
 		pg:        pg,
 		sessions:  sessions,
 		publisher: publisher,
-		location:  location,
+		location:  timeutil.DefaultLocation(),
 	}
 }
 
@@ -199,7 +196,18 @@ func (s *SignInService) signInOnce(ctx context.Context, session *authdomain.Sess
 		return nil, err
 	}
 	if stats != nil && stats.LastSignDate == today {
-		return s.loadExistingSignInResult(ctx, session.UserID, session.AppID, today, stats)
+		record, recordErr := s.pg.GetDailySignByDate(ctx, session.UserID, session.AppID, today)
+		if recordErr != nil {
+			return nil, recordErr
+		}
+		if record != nil {
+			return s.loadExistingSignInResult(ctx, session.UserID, session.AppID, today, stats)
+		}
+		s.log.Warn("sign stats out of sync with daily sign record, recreating sign-in",
+			zap.Int64("user_id", session.UserID),
+			zap.Int64("appid", session.AppID),
+			zap.String("sign_date", today),
+		)
 	}
 
 	totalSignIns := int64(0)
@@ -337,100 +345,24 @@ func (s *SignInService) requireActiveUser(ctx context.Context, session *authdoma
 }
 
 func (s *SignInService) calculateReward(ctx context.Context, now time.Time, user *userdomain.User, consecutiveDays int, totalSignIns int64) (userdomain.SignInReward, error) {
-	baseIntegral := int64(10)
-	multiplier := 1.0
-	bonusType := "normal"
-	bonusDescription := "普通签到奖励"
-
-	switch {
-	case consecutiveDays >= 30:
-		multiplier = 3
-		bonusType = "monthly_master"
-		bonusDescription = "月度签到达人，奖励翻3倍"
-	case consecutiveDays >= 14:
-		multiplier = 2.5
-		bonusType = "half_month"
-		bonusDescription = "半月坚持奖励，奖励2.5倍"
-	case consecutiveDays >= 7:
-		multiplier = 2
-		bonusType = "weekly"
-		bonusDescription = "一周连签奖励，奖励翻倍"
-	case consecutiveDays >= 3:
-		multiplier = 1.5
-		bonusType = "streak"
-		bonusDescription = "连续签到奖励，奖励1.5倍"
-	}
-
-	if weekday := now.Weekday(); weekday == time.Saturday || weekday == time.Sunday {
-		multiplier += 0.5
-		bonusDescription += " + 周末奖励"
-	}
-	if now.Day() <= 3 {
-		multiplier += 0.3
-		bonusDescription += " + 月初奖励"
-	}
-	if now.Day() == 15 {
-		multiplier += 0.5
-		bonusDescription += " + 月中特殊奖励"
-	}
-
-	integralReward := int64(math.Floor(float64(baseIntegral) * multiplier))
-	if integralReward < 1 {
-		integralReward = 1
-	}
-
-	experienceReward := int64(20)
-	if totalSignIns == 0 {
-		experienceReward += 100
-	}
-	if consecutiveDays > 1 {
-		bonus := int64((consecutiveDays - 1) * 2)
-		if bonus > 80 {
-			bonus = 80
-		}
-		experienceReward += bonus
-	}
-	if milestone := milestoneReward(consecutiveDays); milestone > 0 {
-		experienceReward += milestone
-	}
-	if weekday := now.Weekday(); weekday == time.Saturday || weekday == time.Sunday {
-		experienceReward += 15
-	}
-
-	levelMultiplier, err := s.pg.GetExperienceMultiplier(ctx, user.Experience)
+	app, err := s.pg.GetAppByID(ctx, user.AppID)
 	if err != nil {
 		return userdomain.SignInReward{}, err
 	}
-	experienceReward = int64(math.Floor(float64(experienceReward) * levelMultiplier))
-	if experienceReward < 1 {
-		experienceReward = 1
+	policy := defaultSignInRewardPolicy()
+	if app != nil {
+		policy = resolveSignInRewardPolicy(&appdomain.App{
+			ID:       app.ID,
+			Name:     app.Name,
+			AppKey:   app.AppKey,
+			Settings: app.Settings,
+		})
 	}
-
-	return userdomain.SignInReward{
-		BaseIntegral:     baseIntegral,
-		IntegralReward:   integralReward,
-		ExperienceReward: experienceReward,
-		RewardMultiplier: multiplier,
-		BonusType:        bonusType,
-		BonusDescription: bonusDescription,
-	}, nil
-}
-
-func milestoneReward(consecutiveDays int) int64 {
-	switch consecutiveDays {
-	case 7:
-		return 100
-	case 14:
-		return 250
-	case 30:
-		return 600
-	case 90:
-		return 2000
-	case 365:
-		return 10000
-	default:
-		return 0
+	resolved, _, _, err := calculateSignInRewardWithPolicy(ctx, s.pg, policy, now, user.Experience, consecutiveDays, totalSignIns)
+	if err != nil {
+		return userdomain.SignInReward{}, err
 	}
+	return toUserSignInReward(resolved), nil
 }
 
 func calcSignHistoryPages(total int64, limit int) int {

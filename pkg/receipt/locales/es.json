@@ -1,0 +1,136 @@
+{
+  "$meta": {
+    "name": "Spanish",
+    "nativeName": "Español",
+    "direction": "ltr",
+    "script": "latin"
+  },
+  "$format": {
+    "group": ".",
+    "decimal": ",",
+    "groupSizes": [3],
+    "currency": "{value} {symbol}",
+    "currencyNegative": "-{value} {symbol}",
+    "date": "02/01/2006",
+    "dateTime": "02/01/2006 15:04 MST",
+    "time": "15:04"
+  },
+
+  "doc.type.receipt": "Recibo",
+  "doc.type.invoice": "Factura",
+  "doc.type.credit_note": "Nota de crédito",
+
+  "status.paid": "Pagado",
+  "status.pending": "Pendiente de pago",
+  "status.refunded": "Reembolsado",
+  "status.partially_refunded": "Reembolsado parcialmente",
+  "status.expired": "Caducado",
+  "status.failed": "Fallido",
+  "status.cancelled": "Cancelado",
+
+  "header.number": "N.º {number}",
+  "header.issuedAt": "Emitido el {time}",
+  "header.continued": "{title} {number} (continuación)",
+
+  "party.issuer": "De",
+  "party.customer": "Facturado a",
+  "party.merchant": "Comercio",
+  "party.guest": "Invitado",
+
+  "table.description": "Descripción",
+  "table.quantity": "Cant.",
+  "table.unitPrice": "Precio unitario",
+  "table.amount": "Importe",
+
+  "totals.subtotal": "Subtotal",
+  "totals.discount": "Descuento",
+  "totals.tax": "Impuesto",
+  "totals.taxWithRate": "Impuesto ({rate} %)",
+  "totals.total": "Total",
+  "totals.refunded": "Reembolsado",
+  "totals.netPaid": "Neto pagado",
+
+  "payment.section": "Detalles del pago",
+  "payment.method": "Método de pago",
+  "payment.orderNo": "Número de pedido",
+  "payment.transactionId": "ID de transacción",
+  "payment.channel": "Canal",
+  "payment.clientIp": "IP del cliente",
+  "payment.paidAt": "Pagado el",
+
+  "refunds.section": "Reembolsos",
+  "refunds.number": "Número de reembolso",
+  "refunds.status": "Estado",
+  "refunds.at": "Fecha",
+  "refunds.amount": "Importe",
+  "refunds.reasonLine": "Motivo: {reason}",
+  "refunds.summaryOnly": "Se ha reembolsado un total de {amount} de este pedido.",
+
+  "refund.status.pending": "Pendiente",
+  "refund.status.processing": "En proceso",
+  "refund.status.success": "Reembolsado",
+  "refund.status.failed": "Fallido",
+  "refund.status.closed": "Cerrado",
+
+  "metadata.section": "Información adicional",
+  "notes.section": "Notas",
+
+  "email.subject": "{title} {number} · {brand}",
+  "email.title": "Su documento «{title}» está listo",
+  "email.lead": "Del pedido {orderNo}",
+  "email.greeting": "Hola {name}:",
+  "email.attached": "El PDF se adjunta a este correo.",
+  "email.linkLead": "Descárguelo con el botón de abajo. El enlace caduca el {expiry}.",
+  "email.button": "Descargar",
+  "email.summary": "Resumen",
+  "email.footer": "Conserve este documento. Este es un mensaje automático; por favor, no responda.",
+
+  "meta.purpose": "Concepto",
+  "meta.appId": "ID de aplicación",
+  "meta.userId": "ID de cliente",
+  "meta.createdAt": "Pedido realizado",
+  "meta.expireAt": "Pagar antes del",
+  "meta.plan": "Plan",
+  "meta.duration": "Duración",
+  "meta.bonusPoints": "Puntos de bonificación",
+  "meta.points": "Puntos otorgados",
+  "meta.days": {
+    "one": "{count} día",
+    "other": "{count} días"
+  },
+  "meta.pointsValue": {
+    "one": "{count} punto",
+    "other": "{count} puntos"
+  },
+
+  "purpose.wallet_recharge": "Recarga de saldo",
+  "purpose.vip_purchase": "Compra de membresía",
+  "purpose.integral_purchase": "Compra de puntos",
+
+  "notes.unpaid": "Este documento no es comprobante de pago: el pedido aún no se ha abonado.",
+  "notes.refunded": "Este pedido se ha reembolsado en su totalidad. El neto pagado es cero.",
+  "notes.partiallyRefunded": "Este pedido se ha reembolsado parcialmente. Consulte la sección de reembolsos.",
+
+  "footer.page": "Página {page} de {total}",
+  "footer.disclaimer": "Este documento se genera electrónicamente y es válido sin firma.",
+  "footer.generated": "Generado por {producer} el {time}.",
+  "footer.scanToVerify": "Escanear para verificar",
+  "footer.verify": "Verifique este documento en {url}",
+
+  "method.epay": "Agregador E-Pay",
+  "method.rainbow_epay": "Rainbow E-Pay",
+  "method.xunhupay": "Xunhupay",
+  "method.payjs": "PAYJS",
+  "method.qrpay": "QRPay",
+  "method.vmqpay": "VMQPay",
+  "method.alipay_native": "Alipay",
+  "method.wechat_native": "WeChat Pay",
+  "method.stripe": "Stripe",
+  "method.paypal": "PayPal",
+  "method.balance": "Saldo de la cuenta",
+  "method.paddle": "Paddle",
+  "method.lemonsqueezy": "Lemon Squeezy",
+  "method.razorpay": "Razorpay",
+  "method.coinbase": "Coinbase Commerce",
+  "method.square": "Square"
+}

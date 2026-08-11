@@ -1,6 +1,9 @@
 package httptransport
 
-import "aegis/internal/domain/email"
+import (
+	appdomain "aegis/internal/domain/app"
+	"aegis/internal/domain/email"
+)
 
 type AdminEmailConfigListRequest struct {
 	AppID int64 `json:"appid" form:"appid" binding:"required"`
@@ -29,12 +32,32 @@ type AdminEmailConfigSaveRequest struct {
 	SMTPTLS      *bool             `json:"smtp_tls"`
 	SMTPInsecure *bool             `json:"smtp_insecure_skip_verify"`
 	SMTP         *email.SMTPConfig `json:"smtp"`
+
+	// Zeabur Email（provider=zeabur）。API Key 与 Webhook 密钥留空表示「不修改」。
+	ZeaburAPIKey        string              `json:"zeabur_api_key" form:"zeabur_api_key"`
+	ZeaburBaseURL       string              `json:"zeabur_base_url" form:"zeabur_base_url"`
+	ZeaburFrom          string              `json:"zeabur_from" form:"zeabur_from"`
+	ZeaburFromName      string              `json:"zeabur_from_name" form:"zeabur_from_name"`
+	ZeaburReplyTo       string              `json:"zeabur_reply_to" form:"zeabur_reply_to"`
+	ZeaburWebhookSecret string              `json:"zeabur_webhook_secret" form:"zeabur_webhook_secret"`
+	ZeaburTags          map[string]string   `json:"zeabur_tags"`
+	Zeabur              *email.ZeaburConfig `json:"zeabur"`
 }
 
 type AdminEmailConfigTestRequest struct {
 	AppID     int64  `json:"appid" form:"appid" binding:"required"`
 	ConfigID  int64  `json:"config_id" form:"config_id" binding:"required"`
 	TestEmail string `json:"test_email" form:"test_email" binding:"required"`
+}
+
+type AdminEmailDeliveryListRequest struct {
+	AppID    int64  `json:"appid" form:"appid" binding:"required"`
+	ConfigID int64  `json:"config_id" form:"config_id"`
+	Status   string `json:"status" form:"status"`
+	Provider string `json:"provider" form:"provider"`
+	Keyword  string `json:"keyword" form:"keyword"`
+	Page     int    `json:"page" form:"page"`
+	PageSize int    `json:"pageSize" form:"pageSize"`
 }
 
 type EmailCodeRequest struct {
@@ -114,8 +137,18 @@ type UserPaymentOrdersQuery struct {
 	Limit  int    `json:"limit" form:"limit"`
 }
 
+// PaymentBillExportRequest 凭证导出请求。
+//
+// locale 留空时按「用户设置的语言 → Accept-Language → 平台默认（en）」依次决定，
+// 因此绝大多数客户端不必传这个字段。
 type PaymentBillExportRequest struct {
 	ExpireMinutes int `json:"expireMinutes" form:"expireMinutes"`
+	// Locale 期望语言（BCP 47，如 zh-Hans / ja / pt-BR）
+	Locale string `json:"locale" form:"locale"`
+	// DocumentType 凭证类型：receipt / invoice / credit_note；留空按订单状态推导
+	DocumentType string `json:"documentType" form:"documentType"`
+	// Timezone IANA 时区名（如 Asia/Shanghai）；留空按用户设置，再空则 UTC
+	Timezone string `json:"timezone" form:"timezone"`
 }
 
 type WorkflowListRequest struct {
@@ -231,4 +264,37 @@ type WorkflowLogsRequest struct {
 	WorkflowID int64 `json:"workflow_id" form:"workflow_id"`
 	InstanceID int64 `json:"instance_id" form:"instance_id"`
 	Limit      int   `json:"limit" form:"limit"`
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 由匿名请求体提升出来的具名类型
+//
+// 写成 `var req struct{...}` 的请求体在 OpenAPI 里只能是一个空对象，
+// 生成式客户端（Java/Kotlin/Swift/Dart）拿到的就是没有参数的方法。
+// 提成具名类型是让它们进 schema 的唯一办法，行为完全不变。
+// ─────────────────────────────────────────────────────────────────────
+
+// VersionChannelUsersRequest 版本渠道的用户名单增删。
+type VersionChannelUsersRequest struct {
+	UserIDs []int64 `json:"user_ids" binding:"required"`
+}
+
+// AdminSessionRevokeBatchRequest 按会话指纹批量踢出。
+type AdminSessionRevokeBatchRequest struct {
+	TokenHashes []string `json:"tokenHashes" binding:"required"`
+}
+
+// AdminPasswordPolicyUpdateRequest 更新应用密码策略。
+type AdminPasswordPolicyUpdateRequest struct {
+	Policy appdomain.PasswordPolicy `json:"policy" binding:"required"`
+}
+
+// AdminPasswordPolicyTestRequest 用一个候选密码试跑当前策略。
+type AdminPasswordPolicyTestRequest struct {
+	Password string `json:"password" binding:"required"`
+}
+
+// AppIntegrationSelfTestRequest 接入自检的目标地址；留空时回落到本次请求的 scheme+host。
+type AppIntegrationSelfTestRequest struct {
+	BaseURL string `json:"baseUrl"`
 }

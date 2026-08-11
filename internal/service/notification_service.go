@@ -4,14 +4,17 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	authdomain "aegis/internal/domain/auth"
 	notificationdomain "aegis/internal/domain/notification"
+	platformdomain "aegis/internal/domain/platform"
 	plugindomain "aegis/internal/domain/plugin"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	"aegis/pkg/taskpool"
 	"go.uber.org/zap"
 )
 
@@ -21,6 +24,22 @@ type NotificationService struct {
 	sessions *redisrepo.SessionRepository
 	realtime UserEventPublisher
 	plugin   *PluginService
+	// governance 平台治理判定：被治理应用不得再对外发消息
+	governance *PlatformGovernanceService
+}
+
+// SetGovernanceService 注入平台治理服务（bootstrap 中调用）。
+func (s *NotificationService) SetGovernanceService(g *PlatformGovernanceService) { s.governance = g }
+
+// ensureNotificationAllowed 站内信写入的统一治理闸门。
+//
+// 只挡"新产生的消息"，已投递的站内信仍可读可删 —— 冻结一个应用不该顺手删掉
+// 用户已经收到的通知。
+func (s *NotificationService) ensureNotificationAllowed(appID int64) error {
+	if s.governance == nil {
+		return nil
+	}
+	return s.governance.EnsureCapability(appID, platformdomain.CapabilityNotification)
 }
 
 // SetPluginService 注入插件服务
@@ -176,6 +195,9 @@ func (s *NotificationService) SendUserNotification(ctx context.Context, session 
 	if level == "" {
 		level = "info"
 	}
+	if err := s.ensureNotificationAllowed(session.AppID); err != nil {
+		return err
+	}
 	if err := s.pg.CreateUserNotification(ctx, session.AppID, session.UserID, notificationType, title, content, level, metadata); err != nil {
 		return err
 	}
@@ -188,6 +210,40 @@ func (s *NotificationService) SendUserNotification(ctx context.Context, session 
 			"appId": appID, "userId": userID, "type": notificationType, "title": title,
 		}, plugindomain.HookMetadata{AppID: &appID, UserID: &userID})
 	}
+	return nil
+}
+
+// NotifyUser 按 appID + userID 直接投递站内信，无需用户会话。
+// 供 NotifyHub 的 inapp 渠道以及其它服务端触发场景使用（SendUserNotification 是其会话版本）。
+func (s *NotificationService) NotifyUser(ctx context.Context, appID int64, userID int64,
+	notificationType string, title string, content string, level string, metadata map[string]any) error {
+	notificationType = strings.TrimSpace(notificationType)
+	title = strings.TrimSpace(title)
+	level = strings.TrimSpace(strings.ToLower(level))
+	if appID <= 0 || userID <= 0 {
+		return apperrors.New(40010, http.StatusBadRequest, "通知目标无效")
+	}
+	if err := s.ensureNotificationAllowed(appID); err != nil {
+		return err
+	}
+	if notificationType == "" {
+		notificationType = "system"
+	}
+	if title == "" {
+		return apperrors.New(40010, http.StatusBadRequest, "通知标题不能为空")
+	}
+	if strings.TrimSpace(content) == "" {
+		// 正文可以为空（如纯状态提醒），用标题兜底以免前端展示空白
+		content = title
+	}
+	if level == "" {
+		level = "info"
+	}
+	if err := s.pg.CreateUserNotification(ctx, appID, userID, notificationType, title, content, level, metadata); err != nil {
+		return err
+	}
+	s.invalidateCaches(ctx, appID, userID)
+	s.publishNotificationStateAsync(appID, userID, "created")
 	return nil
 }
 
@@ -242,6 +298,9 @@ func (s *NotificationService) AdminBulkSend(ctx context.Context, appID int64, cm
 	if cmd.Limit > 2000 {
 		cmd.Limit = 2000
 	}
+	if err := s.ensureNotificationAllowed(appID); err != nil {
+		return nil, err
+	}
 
 	targets, err := s.resolveRecipients(ctx, appID, cmd)
 	if err != nil {
@@ -251,25 +310,32 @@ func (s *NotificationService) AdminBulkSend(ctx context.Context, appID int64, cm
 		return nil, apperrors.New(40401, http.StatusNotFound, "未找到可发送的目标用户")
 	}
 
-	delivered := 0
-	for _, userID := range targets {
-		if err := s.pg.CreateUserNotification(ctx, appID, userID, cmd.Type, cmd.Title, cmd.Content, cmd.Level, cmd.Metadata); err != nil {
-			return nil, err
+	concurrency := len(targets)
+	if concurrency > 16 {
+		concurrency = 16
+	}
+	var delivered atomic.Int64
+	if err := taskpool.DispatchWithError(ctx, concurrency, targets, func(taskCtx context.Context, userID int64) error {
+		if err := s.pg.CreateUserNotification(taskCtx, appID, userID, cmd.Type, cmd.Title, cmd.Content, cmd.Level, cmd.Metadata); err != nil {
+			return err
 		}
-		s.invalidateCaches(ctx, appID, userID)
+		s.invalidateCaches(taskCtx, appID, userID)
 		s.publishNotificationStateAsync(appID, userID, "admin_bulk_send")
-		delivered++
+		delivered.Add(1)
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	if s.plugin != nil {
 		go s.plugin.ExecuteHook(context.Background(), HookNotificationSent, map[string]any{
-			"appId": appID, "delivered": delivered, "type": cmd.Type, "title": cmd.Title,
+			"appId": appID, "delivered": delivered.Load(), "type": cmd.Type, "title": cmd.Title,
 		}, plugindomain.HookMetadata{AppID: &appID})
 	}
 	return &notificationdomain.AdminBulkSendResult{
 		AppID:        appID,
 		Requested:    len(targets),
-		Delivered:    delivered,
+		Delivered:    int(delivered.Load()),
 		RecipientIDs: targets,
 	}, nil
 }

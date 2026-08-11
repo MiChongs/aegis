@@ -114,6 +114,15 @@ FROM ` + "`user`" + ` WHERE id > ? ORDER BY id ASC LIMIT ?`
 	return users, rows.Err()
 }
 
+func (r *Repository) CountUsersAfterID(ctx context.Context, lastID int64) (int64, error) {
+	query := `SELECT COUNT(1) FROM ` + "`user`" + ` WHERE id > ?`
+	var count int64
+	if err := r.db.QueryRowContext(ctx, query, lastID).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (r *Repository) GetUserSettings(ctx context.Context, userID int64, appID int64) ([]LegacyUserSettings, error) {
 	query := `SELECT userId, appid, COALESCE(category, 'general'), settings, COALESCE(version, 1), lastModified, COALESCE(isActive, TRUE) FROM UserSettings WHERE userId = ? AND appid = ? ORDER BY id ASC`
 	rows, err := r.db.QueryContext(ctx, query, userID, appID)

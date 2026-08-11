@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	authdomain "aegis/internal/domain/auth"
 	realtimedomain "aegis/internal/domain/realtime"
 	"aegis/internal/event"
+	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
 	"github.com/google/uuid"
@@ -24,11 +26,23 @@ type UserEventPublisher interface {
 	PublishUserEvent(ctx context.Context, appID int64, userID int64, eventType string, data map[string]any) error
 }
 
+// RealtimeSubprotocol 是服务端唯一会协商并回显的 WebSocket 子协议。
+//
+// 客户端握手时须提供两个子协议：
+//
+//	["aegis", "aegis.jwt.<accessToken>"]
+//
+// 前者用于协商回显（浏览器强制要求响应带 Sec-WebSocket-Protocol），
+// 后者用于携带令牌（浏览器 WebSocket API 无法自定义请求头）。
+// 服务端只回显前者，令牌永不进入响应头。
+const RealtimeSubprotocol = "aegis"
+
 type RealtimeService struct {
 	log         *zap.Logger
 	auth        *AuthService
 	admin       *AdminService
 	repository  *redisrepo.RealtimeRepository
+	identities  *pgrepo.Repository
 	natsConn    *nats.Conn
 	serverID    string
 	upgrader    websocket.Upgrader
@@ -55,7 +69,7 @@ type realtimeClient struct {
 	send         chan []byte
 }
 
-func NewRealtimeService(log *zap.Logger, auth *AuthService, repository *redisrepo.RealtimeRepository, natsConn *nats.Conn) (*RealtimeService, error) {
+func NewRealtimeService(log *zap.Logger, auth *AuthService, repository *redisrepo.RealtimeRepository, natsConn *nats.Conn, allowedOrigins []string) (*RealtimeService, error) {
 	if log == nil {
 		log = zap.NewNop()
 	}
@@ -68,9 +82,16 @@ func NewRealtimeService(log *zap.Logger, auth *AuthService, repository *redisrep
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  2048,
 			WriteBufferSize: 2048,
-			CheckOrigin: func(_ *http.Request) bool {
-				return true
-			},
+			CheckOrigin:     websocketOriginChecker(allowedOrigins),
+			// 必须声明并回显子协议，否则浏览器会直接判握手失败：
+			// Chromium 的要求是「客户端请求了子协议，响应就必须带 Sec-WebSocket-Protocol」，
+			// 缺这个头会以 close code 1006 断开，且不产生任何服务端错误日志 —— 极难排查。
+			// （curl 不做这项校验，所以命令行测试一直是 101 成功，掩盖了问题。）
+			//
+			// 这里只声明 "aegis"：客户端第二个子协议是 `aegis.jwt.<token>`（浏览器无法自定义
+			// 请求头，只能借子协议携带令牌），**绝不能把它回显**，否则 JWT 会进到响应头，
+			// 进而落入反代 / 网关的访问日志。
+			Subprotocols: []string{RealtimeSubprotocol},
 		},
 		presenceTTL: 90 * time.Second,
 		pingPeriod:  25 * time.Second,
@@ -152,6 +173,25 @@ func (s *RealtimeService) AppOnlineStats(ctx context.Context, appID int64) (*rea
 		return nil, apperrors.New(50300, http.StatusServiceUnavailable, "实时服务暂不可用")
 	}
 	return s.repository.AppOnlineStats(ctx, appID)
+}
+
+// SetIdentityRepository 注入用于回查账号名的 Postgres 仓储。
+//
+// 走 setter 而不是构造参数：presence 本身完全不依赖数据库，只有管理端那张表
+// 需要把 userId 翻成人名。没注入时列表照常返回，只是没有账号名。
+func (s *RealtimeService) SetIdentityRepository(pg *pgrepo.Repository) {
+	if s == nil {
+		return
+	}
+	s.identities = pg
+}
+
+// FillOnlineUserIdentities 给在线用户补上账号与昵称，原地修改。
+func (s *RealtimeService) FillOnlineUserIdentities(ctx context.Context, appID int64, items []realtimedomain.AppOnlineUser) error {
+	if s == nil || s.identities == nil || len(items) == 0 {
+		return nil
+	}
+	return s.identities.FillOnlineUserIdentities(ctx, appID, items)
 }
 
 func (s *RealtimeService) ListAppOnlineUsers(ctx context.Context, appID int64, page int, limit int) (*realtimedomain.AppOnlineUserList, error) {
@@ -492,12 +532,48 @@ func extractRealtimeToken(req *http.Request) string {
 	if token := bearerToken(req.Header.Get("Authorization")); token != "" {
 		return token
 	}
-	for _, key := range []string{"token", "access_token"} {
-		if token := strings.TrimSpace(req.URL.Query().Get(key)); token != "" {
-			return token
+	for _, protocol := range websocket.Subprotocols(req) {
+		const prefix = "aegis.jwt."
+		if strings.HasPrefix(protocol, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(protocol, prefix))
 		}
 	}
 	return ""
+}
+
+func websocketOriginChecker(allowedOrigins []string) func(*http.Request) bool {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, raw := range allowedOrigins {
+		if normalized := normalizeWebSocketOrigin(raw); normalized != "" {
+			allowed[normalized] = struct{}{}
+		}
+	}
+	return func(req *http.Request) bool {
+		if req == nil {
+			return false
+		}
+		rawOrigin := strings.TrimSpace(req.Header.Get("Origin"))
+		if rawOrigin == "" {
+			return true
+		}
+		origin, err := url.Parse(rawOrigin)
+		if err != nil || origin.Host == "" {
+			return false
+		}
+		if strings.EqualFold(origin.Host, req.Host) {
+			return true
+		}
+		_, ok := allowed[normalizeWebSocketOrigin(rawOrigin)]
+		return ok
+	}
+}
+
+func normalizeWebSocketOrigin(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return strings.ToLower(parsed.Scheme + "://" + parsed.Host)
 }
 
 func bearerToken(header string) string {

@@ -1,19 +1,26 @@
 package main
 
 import (
+	"aegis/internal/bootstrap"
+	"aegis/internal/config"
+	"aegis/pkg/crashlog"
 	"context"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"aegis/internal/bootstrap"
-	"aegis/internal/config"
-	"aegis/pkg/crashlog"
 	"go.uber.org/zap"
 )
 
 func main() {
-	cfg, _ := config.Load()
+	started := time.Now()
+
+	cfg, cfgErr := config.Load()
+	if cfgErr != nil {
+		// 配置读不起来时横幅配置也是零值，用默认值兜底，见 config.DefaultBannerConfig
+		cfg.Banner = config.DefaultBannerConfig()
+	}
 	cl := crashlog.New(cfg.CrashLog.Dir, cfg.CrashLog.MaxFiles, cfg.CrashLog.MaxSize)
 	defer func() {
 		if r := recover(); r != nil {
@@ -45,18 +52,21 @@ func main() {
 		}
 	}
 
-	app, err := bootstrap.NewAPIApp(ctx, cl)
+	bootstrap.PrintBootBanner(cfg, bootstrap.RoleAPI)
+
+	system, err := bootstrap.NewAPISystem(ctx, cl)
 	if err != nil {
 		panic(err)
 	}
-	defer app.Close(context.Background())
-
-	app.Logger.Info("aegis api starting", zap.Int("port", app.Config.HTTPPort))
-	go func() {
-		<-ctx.Done()
-		app.Close(context.Background())
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = system.Stop(stopCtx)
 	}()
-	if err := app.Server.ListenAndServe(); err != nil && err.Error() != "http: Server closed" {
+
+	system.API.Logger.Info("aegis api starting", zap.Int("port", system.API.Config.HTTPPort))
+	bootstrap.PrintReadyBanner(ctx, system.API.BannerRuntimeOf(bootstrap.RoleAPI, time.Since(started)))
+	if err := system.Run(ctx); err != nil {
 		panic(err)
 	}
 }

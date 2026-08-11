@@ -548,9 +548,12 @@ func (s *AdminService) Authorize(ctx context.Context, access *admindomain.Access
 		}
 	}
 	// Casbin 拒绝后，检查临时权限
-	tempPerms, _ := s.pg.GetActiveTempPermissions(ctx, access.AdminID)
+	tempPerms, err := s.pg.GetActiveTempPermissions(ctx, access.AdminID)
+	if err != nil {
+		return err
+	}
 	for _, tp := range tempPerms {
-		if tp == permission {
+		if scopeMatches(tp.AppID, appID) && tp.Permission == permission {
 			return nil
 		}
 	}
@@ -738,9 +741,37 @@ func (s *AdminService) ListRolesWithPermissionTree() []admindomain.RoleWithPermi
 	return result
 }
 
+// 平台级权限点常量。
+//
+// 与应用级权限点的区别是**判定作用域**：这些权限点只在全局作用域（AppID 为 nil）下有意义 ——
+// 一个只管着自己那个应用的管理员即便被授了 platform:app:govern，也只能"治理自己"，
+// 那等于自己给自己解封。因此凡是读它们的地方一律传 appID = nil。
+const (
+	// PermissionPlatformAppRead 全站应用总览与治理详情
+	PermissionPlatformAppRead = "platform:app:read"
+	// PermissionPlatformAppGovern 执行限制 / 冻结 / 停运 / 解除
+	PermissionPlatformAppGovern = "platform:app:govern"
+	// PermissionPlatformAppDanger 危险操作：封禁 / 归档 / 强制下线 / 删除被治理应用
+	PermissionPlatformAppDanger = "platform:app:danger"
+	// PermissionPlatformAppealReview 治理申诉审批
+	PermissionPlatformAppealReview = "platform:appeal:review"
+	// PermissionPlatformStorageRead 平台级存储配置查看
+	PermissionPlatformStorageRead = "platform:storage:read"
+	// PermissionPlatformStorageWrite 平台级存储配置修改
+	PermissionPlatformStorageWrite = "platform:storage:write"
+)
+
 // allPermissionGroups 返回所有权限分组定义
 func allPermissionGroups() []admindomain.PermissionGroup {
 	return []admindomain.PermissionGroup{
+		{Key: "platform", Name: "平台治理", Permissions: []admindomain.Permission{
+			{Code: PermissionPlatformAppRead, Name: "全站应用总览", Description: "跨应用查看治理状态与用量指标"},
+			{Code: PermissionPlatformAppGovern, Name: "应用治理", Description: "限制 / 冻结 / 停运 / 解除，应用管理员无法自行撤销"},
+			{Code: PermissionPlatformAppDanger, Name: "危险治理操作", Description: "封禁 / 归档 / 强制下线全站会话 / 删除被治理应用"},
+			{Code: PermissionPlatformAppealReview, Name: "治理申诉审批"},
+			{Code: PermissionPlatformStorageRead, Name: "平台存储配置查看"},
+			{Code: PermissionPlatformStorageWrite, Name: "平台存储配置修改"},
+		}},
 		{Key: "system", Name: "系统管理", Permissions: []admindomain.Permission{
 			{Code: "system:admin:manage", Name: "管理员管理"},
 			{Code: "system:settings:read", Name: "系统设置查看"},
@@ -798,6 +829,23 @@ func allPermissionGroups() []admindomain.PermissionGroup {
 		{Key: "payment", Name: "支付管理", Permissions: []admindomain.Permission{
 			{Code: "payment:read", Name: "支付配置查看"},
 			{Code: "payment:write", Name: "支付配置修改"},
+		}},
+		{Key: "ticket", Name: "工单系统", Permissions: []admindomain.Permission{
+			{Code: "ticket:read", Name: "工单查看", Description: "决定可见范围：全局作用域=全部工单，应用作用域=该应用工单"},
+			{Code: "ticket:write", Name: "工单编辑", Description: "建单、改标题/分类/优先级/标签"},
+			{Code: "ticket:reply", Name: "工单回复", Description: "对提单人可见的回复"},
+			{Code: "ticket:internal", Name: "内部备注", Description: "查看并发表仅内部可见的备注"},
+			{Code: "ticket:assign", Name: "工单指派", Description: "指派受理人 / 转派处理组 / 管理关注人"},
+			{Code: "ticket:close", Name: "工单结单", Description: "解决、关闭、重开"},
+			{Code: "ticket:delete", Name: "工单删除"},
+			{Code: "ticket:manage", Name: "工单配置", Description: "分类、SLA、处理组、快捷回复"},
+			{Code: "ticket:export", Name: "工单导出"},
+		}},
+		{Key: "notify", Name: "通知出口", Permissions: []admindomain.Permission{
+			{Code: "notify:channel:read", Name: "通知渠道查看"},
+			{Code: "notify:channel:write", Name: "通知渠道管理", Description: "飞书/钉钉/企微/Webhook 等渠道与订阅配置"},
+			{Code: "notify:delivery:read", Name: "投递记录查看"},
+			{Code: "notify:test", Name: "测试发送"},
 		}},
 		{Key: "org", Name: "组织架构", Permissions: []admindomain.Permission{
 			{Code: "org:create", Name: "创建组织"},
@@ -959,6 +1007,10 @@ func builtInAdminRoles() map[string]admindomain.RoleDefinition {
 			Level:       90,
 			Scope:       "global",
 			Permissions: []string{
+				// 平台治理：可冻结 / 限制 / 解除，但**不含**封禁与归档 ——
+				// 那两档是不可逆感极强的动作，留给超管或显式授权的自定义角色。
+				PermissionPlatformAppRead, PermissionPlatformAppGovern, PermissionPlatformAppealReview,
+				PermissionPlatformStorageRead, PermissionPlatformStorageWrite,
 				"system:settings:read", "system:settings:write", "system:user_setting:read", "system:user_setting:write",
 				"app:read", "app:write", "app:user:read", "app:user:write", "app:notification:read", "app:notification:write",
 				"content:banner:read", "content:banner:write", "content:notice:read", "content:notice:write",
@@ -971,6 +1023,8 @@ func builtInAdminRoles() map[string]admindomain.RoleDefinition {
 				"points:read", "points:write",
 				"email:read", "email:write",
 				"payment:read", "payment:write",
+				"ticket:read", "ticket:write", "ticket:reply", "ticket:internal", "ticket:assign", "ticket:close", "ticket:delete", "ticket:manage", "ticket:export",
+				"notify:channel:read", "notify:delivery:read",
 				"org:create", "org:write", "org:dept:read", "org:dept:write", "org:member:read", "org:member:write", "org:member:invite",
 			},
 		},
@@ -993,6 +1047,8 @@ func builtInAdminRoles() map[string]admindomain.RoleDefinition {
 				"points:read", "points:write",
 				"email:read", "email:write",
 				"payment:read", "payment:write",
+				"ticket:read", "ticket:write", "ticket:reply", "ticket:internal", "ticket:assign", "ticket:close", "ticket:manage", "ticket:export",
+				"notify:channel:read", "notify:delivery:read",
 				"org:dept:read", "org:member:read", "org:member:invite",
 			},
 		},
@@ -1014,6 +1070,7 @@ func builtInAdminRoles() map[string]admindomain.RoleDefinition {
 				"payment:read",
 				"role_application:read",
 				"storage:read",
+				"ticket:read", "ticket:write", "ticket:reply", "ticket:internal", "ticket:assign", "ticket:close", "ticket:export",
 				"org:dept:read", "org:member:read",
 			},
 		},
@@ -1035,7 +1092,21 @@ func builtInAdminRoles() map[string]admindomain.RoleDefinition {
 				"payment:read",
 				"role_application:read", "role_application:review",
 				"storage:read",
+				"ticket:read", "ticket:reply", "ticket:internal", "ticket:export",
 				"org:dept:read", "org:member:read",
+			},
+		},
+		// 工单处理专员：只给工单能力，不碰用户/内容/配置。
+		// 用于把"特定人员"精确授权成客服角色；再把他们加进对应处理组即可限定受理范围。
+		"ticket_agent": {
+			Key:         "ticket_agent",
+			Name:        "工单处理专员",
+			Description: "仅工单处理权限，可结合处理组限定受理范围",
+			Level:       30,
+			Scope:       "app",
+			Permissions: []string{
+				"ticket:read", "ticket:write", "ticket:reply", "ticket:internal", "ticket:assign", "ticket:close", "ticket:export",
+				"app:read", "app:user:read",
 			},
 		},
 		"app_viewer": {
@@ -1056,6 +1127,7 @@ func builtInAdminRoles() map[string]admindomain.RoleDefinition {
 				"payment:read",
 				"role_application:read",
 				"storage:read",
+				"ticket:read",
 				"org:dept:read", "org:member:read",
 			},
 		},

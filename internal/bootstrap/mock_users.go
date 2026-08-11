@@ -12,6 +12,8 @@ import (
 	"aegis/internal/config"
 	"aegis/internal/db"
 	pgrepo "aegis/internal/repository/postgres"
+	"aegis/pkg/progressutil"
+	"aegis/pkg/timeutil"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
@@ -126,10 +128,16 @@ func RunGenerateMockUsers(ctx context.Context, args []string) error {
 
 	rng := rand.New(rand.NewSource(opts.Seed))
 	records := buildMockUserRecords(appID, opts.CountPerCity, rng)
-	inserted, skipped, err := insertMockUserRecords(ctx, pool, appID, string(passwordHash), opts.BatchSize, records)
+	bar := progressutil.New(int64(len(records)), fmt.Sprintf("生成模拟用户 app=%d", appID))
+	defer bar.Finish()
+	inserted, skipped, err := insertMockUserRecords(ctx, pool, appID, string(passwordHash), opts.BatchSize, records, func(processed int, totalProcessed int) {
+		bar.Add(int64(processed))
+		bar.SetDescription("生成模拟用户 app=%d processed=%d/%d", appID, totalProcessed, len(records))
+	})
 	if err != nil {
 		return err
 	}
+	bar.Finish()
 
 	fmt.Printf("mock users generated: appid=%d app=%s provinces=%d cities=%d requested=%d inserted=%d skipped=%d password=%s seed=%d\n",
 		appID,
@@ -150,7 +158,7 @@ func parseMockUserSeedOptions(args []string) (mockUserSeedOptions, error) {
 		CountPerCity: 24,
 		BatchSize:    500,
 		Password:     "Aegis@123456",
-		Seed:         time.Now().UnixNano(),
+		Seed:         timeutil.Now().UnixNano(),
 	}
 
 	fs := flag.NewFlagSet("mock-users", flag.ContinueOnError)
@@ -190,7 +198,7 @@ func parseMockUserSeedOptions(args []string) (mockUserSeedOptions, error) {
 func buildMockUserRecords(appID int64, countPerCity int, rng *rand.Rand) []mockUserRecord {
 	total := countMockCities() * countPerCity
 	records := make([]mockUserRecord, 0, total)
-	now := time.Now().UTC()
+	now := timeutil.NowUTC()
 
 	provinceIndex := 0
 	for _, province := range chinaMockUserCatalog {
@@ -199,16 +207,16 @@ func buildMockUserRecords(appID int64, countPerCity int, rng *rand.Rand) []mockU
 			for i := 0; i < countPerCity; i++ {
 				index := i + 1
 				account := fmt.Sprintf("mock%d%02d%02d%03d", appID, provinceIndex+1, cityIndex+1, index)
-				createdAt := now.Add(-time.Duration(rng.Intn(24*540)) * time.Hour)
-				updatedAt := createdAt.Add(time.Duration(rng.Intn(24*90)) * time.Hour)
+				createdAt := now.Add(-timeutil.Hours(rng.Intn(24 * 540)))
+				updatedAt := createdAt.Add(timeutil.Hours(rng.Intn(24 * 90)))
 				if updatedAt.After(now) {
-					updatedAt = now.Add(-time.Duration(rng.Intn(48)) * time.Hour)
+					updatedAt = now.Add(-timeutil.Hours(rng.Intn(48)))
 				}
 				experience := int64(50 + rng.Intn(18000))
 				integral := int64(20 + rng.Intn(6000))
 				var vipExpireAt *time.Time
 				if rng.Intn(100) < 18 {
-					value := now.Add(time.Duration(24*(30+rng.Intn(540))) * time.Hour)
+					value := now.Add(timeutil.Hours(24 * (30 + rng.Intn(540))))
 					vipExpireAt = &value
 				}
 
@@ -260,9 +268,10 @@ func countMockCities() int {
 	return total
 }
 
-func insertMockUserRecords(ctx context.Context, pool *pgxpool.Pool, appID int64, passwordHash string, batchSize int, records []mockUserRecord) (int, int, error) {
+func insertMockUserRecords(ctx context.Context, pool *pgxpool.Pool, appID int64, passwordHash string, batchSize int, records []mockUserRecord, onProgress func(processed int, totalProcessed int)) (int, int, error) {
 	insertedTotal := 0
 	skippedTotal := 0
+	totalProcessed := 0
 
 	for start := 0; start < len(records); start += batchSize {
 		end := start + batchSize
@@ -286,6 +295,10 @@ func insertMockUserRecords(ctx context.Context, pool *pgxpool.Pool, appID int64,
 
 		insertedTotal += len(insertedIDs)
 		skippedTotal += skipped
+		totalProcessed += end - start
+		if onProgress != nil {
+			onProgress(end-start, totalProcessed)
+		}
 	}
 
 	return insertedTotal, skippedTotal, nil

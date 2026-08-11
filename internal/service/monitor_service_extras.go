@@ -74,7 +74,7 @@ func (s *MonitorService) runtimeSnapshot(checkedAt time.Time) MonitorRuntime {
 	// CPU
 	if cpus, err := cpu.Info(); err == nil && len(cpus) > 0 {
 		rt.CPUModel = cpus[0].ModelName
-		rt.CPUCores, _ = cpu.Counts(false) // 物理核心
+		rt.CPUCores, _ = cpu.Counts(false)  // 物理核心
 		rt.CPUThreads, _ = cpu.Counts(true) // 逻辑线程
 	}
 	if pcts, err := cpu.Percent(0, false); err == nil && len(pcts) > 0 {

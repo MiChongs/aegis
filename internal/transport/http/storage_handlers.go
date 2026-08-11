@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	storagedomain "aegis/internal/domain/storage"
+	"aegis/internal/service"
 	"aegis/pkg/response"
 	"encoding/json"
 	"io"
@@ -245,8 +246,23 @@ func (h *Handler) StorageProxyDownload(c *gin.Context) {
 		contentType = "application/octet-stream"
 	}
 	c.Header("Content-Type", contentType)
+	// 存储桶里的内容是**上传方**决定的，这条路由却在平台自己的域上。
+	// nosniff 挡住浏览器把 text/plain 猜成 HTML；对本身就会被当脚本上下文
+	// 解析的类型（HTML / SVG / XML）再叠一层 sandbox，让它落进独立的
+	// opaque 源里 —— 这样既不影响 SVG 正常显示，脚本也碰不到平台的 Cookie。
+	c.Header("X-Content-Type-Options", "nosniff")
+	if service.IsScriptableContentType(contentType) {
+		c.Header("Content-Security-Policy", "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'")
+		c.Header("X-Frame-Options", "DENY")
+	}
 	if reader.CacheControl != "" {
 		c.Header("Cache-Control", reader.CacheControl)
+	} else if strings.HasPrefix(contentType, "image/") {
+		// 图片默认给 5 分钟的浏览器 + 中间代理缓存：
+		//   与前端 `useActivePlatformBannersQuery` 的 staleTime（5m）对齐，
+		//   跨页再回到总览 / 刷新页面时命中 HTTP 缓存即刻呈现，杜绝"冷启动渐变"。
+		//   ticket 本身 30 分钟有效，5 分钟缓存在 TTL 之内，不会出现缓存指向已过期 ticket。
+		c.Header("Cache-Control", "public, max-age=300, stale-while-revalidate=60")
 	}
 	if reader.ETag != "" {
 		c.Header("ETag", reader.ETag)

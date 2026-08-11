@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -12,7 +13,9 @@ import (
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	"aegis/pkg/timeutil"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 type PointsService struct {
@@ -20,14 +23,12 @@ type PointsService struct {
 	pg       *pgrepo.Repository
 	sessions *redisrepo.SessionRepository
 	location *time.Location
+	// 排行榜并发合并：多个用户同时请求同一榜单页时只打一次 DB
+	rankingFlight singleflight.Group
 }
 
 func NewPointsService(log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository) *PointsService {
-	location, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil {
-		location = time.FixedZone("CST", 8*3600)
-	}
-	return &PointsService{log: log, pg: pg, sessions: sessions, location: location}
+	return &PointsService{log: log, pg: pg, sessions: sessions, location: timeutil.DefaultLocation()}
 }
 
 func (s *PointsService) GetOverview(ctx context.Context, session *authdomain.Session) (*pointdomain.Overview, error) {
@@ -67,11 +68,11 @@ func (s *PointsService) GetMyLevel(ctx context.Context, session *authdomain.Sess
 func (s *PointsService) GetRankings(ctx context.Context, session *authdomain.Session, rankingType string, page int, limit int) (*pointdomain.RankingResponse, error) {
 	switch rankingType {
 	case "", "integral":
-		return s.pg.GetIntegralRankings(ctx, session.AppID, page, limit, session.UserID)
+		return s.getCachedPointsRanking(ctx, session, "integral", page, limit)
 	case "experience":
-		return s.pg.GetExperienceRankings(ctx, session.AppID, page, limit, session.UserID)
+		return s.getCachedPointsRanking(ctx, session, "experience", page, limit)
 	case "level":
-		return s.pg.GetLevelRankings(ctx, session.AppID, page, limit, session.UserID)
+		return s.getCachedPointsRanking(ctx, session, "level", page, limit)
 	case "sign_today":
 		return s.getCachedSignRanking(ctx, session, rankingType, page, limit)
 	case "sign_consecutive":
@@ -80,6 +81,96 @@ func (s *PointsService) GetRankings(ctx context.Context, session *authdomain.Ses
 		return s.getCachedSignRanking(ctx, session, rankingType, page, limit)
 	default:
 		return nil, apperrors.New(40009, http.StatusBadRequest, "不支持的排行类型")
+	}
+}
+
+// getCachedPointsRanking 为 integral / experience / level 提供 Redis 缓存 + singleflight 防击穿
+func (s *PointsService) getCachedPointsRanking(ctx context.Context, session *authdomain.Session, rankingType string, page int, limit int) (*pointdomain.RankingResponse, error) {
+	// 读 Redis
+	scope, ttl := s.pointsRankingScope(rankingType)
+	var cached pointdomain.RankingResponse
+	if s.sessions != nil {
+		found, err := s.sessions.GetRankingCache(ctx, "points", session.AppID, rankingType, scope, page, limit, &cached)
+		if err != nil {
+			s.log.Warn("read points ranking cache failed", zap.Error(err), zap.String("type", rankingType), zap.Int64("appid", session.AppID))
+		} else if found {
+			// 单独查"我的排名"，不能用缓存（每个用户不同）
+			if session.UserID > 0 {
+				my, err := s.loadMyPointsRank(ctx, rankingType, session)
+				if err == nil {
+					cached.MyRank = my
+				}
+			}
+			return &cached, nil
+		}
+	}
+
+	// singleflight：同一 appID+type+page+limit 合并并发
+	flightKey := fmt.Sprintf("points:%d:%s:%d:%d", session.AppID, rankingType, page, limit)
+	result, err, _ := s.rankingFlight.Do(flightKey, func() (any, error) {
+		return s.loadPointsRanking(ctx, rankingType, session, page, limit)
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp, ok := result.(*pointdomain.RankingResponse)
+	if !ok || resp == nil {
+		return nil, apperrors.New(50001, http.StatusInternalServerError, "排行榜加载失败")
+	}
+
+	// 写缓存（不含 myRank）
+	if s.sessions != nil {
+		payload := *resp
+		payload.MyRank = nil
+		if err := s.sessions.SetRankingCache(ctx, "points", session.AppID, rankingType, scope, page, limit, payload, ttl); err != nil {
+			s.log.Warn("write points ranking cache failed", zap.Error(err), zap.String("type", rankingType), zap.Int64("appid", session.AppID))
+		}
+	}
+	return resp, nil
+}
+
+// loadPointsRanking 加载积分/经验/等级排行（不走缓存）
+func (s *PointsService) loadPointsRanking(ctx context.Context, rankingType string, session *authdomain.Session, page int, limit int) (*pointdomain.RankingResponse, error) {
+	switch rankingType {
+	case "integral":
+		return s.pg.GetIntegralRankings(ctx, session.AppID, page, limit, session.UserID)
+	case "experience":
+		return s.pg.GetExperienceRankings(ctx, session.AppID, page, limit, session.UserID)
+	case "level":
+		return s.pg.GetLevelRankings(ctx, session.AppID, page, limit, session.UserID)
+	default:
+		return nil, apperrors.New(40009, http.StatusBadRequest, "不支持的排行类型")
+	}
+}
+
+// loadMyPointsRank 单查"我自己的"排名（每用户独立，不缓存）
+func (s *PointsService) loadMyPointsRank(ctx context.Context, rankingType string, session *authdomain.Session) (*pointdomain.RankingItem, error) {
+	if session.UserID <= 0 {
+		return nil, nil
+	}
+	switch rankingType {
+	case "integral":
+		return s.pg.GetMyIntegralRank(ctx, session.AppID, session.UserID)
+	case "experience":
+		return s.pg.GetMyExperienceRank(ctx, session.AppID, session.UserID)
+	case "level":
+		return s.pg.GetMyLevelRank(ctx, session.AppID, session.UserID)
+	default:
+		return nil, nil
+	}
+}
+
+// pointsRankingScope 按类型返回缓存 scope + TTL（积分数据变化相对慢，TTL 可略长）
+func (s *PointsService) pointsRankingScope(rankingType string) (string, time.Duration) {
+	switch rankingType {
+	case "integral":
+		return "global", 60 * time.Second
+	case "experience":
+		return "global", 90 * time.Second
+	case "level":
+		return "global", 90 * time.Second
+	default:
+		return "global", 60 * time.Second
 	}
 }
 
@@ -196,30 +287,23 @@ func (s *PointsService) BatchAdjustUserIntegral(ctx context.Context, userIDs []i
 		signedAmount = -amount
 	}
 
-	result := &pointdomain.BatchIntegralAdjustResult{
+	// 集合化批量调整：单事务单语句完成全部用户的锁定/更新/记账。
+	// 原实现按用户逐个开事务（1000 用户 = 1000 事务、数千次网络往返），
+	// 现为 1 次往返；逐用户成败明细由 SQL 直接返回
+	results, failures, err := s.pg.BatchAdjustUserIntegralByAdmin(ctx, userIDs, appID, signedAmount, reason, options)
+	if err != nil {
+		return nil, err
+	}
+	return &pointdomain.BatchIntegralAdjustResult{
 		AppID:          appID,
 		OperationType:  op,
 		Amount:         amount,
 		RequestedCount: len(userIDs),
-		Results:        make([]pointdomain.IntegralAdjustResult, 0, len(userIDs)),
-		Failures:       make([]pointdomain.BatchAdjustFailure, 0),
-	}
-
-	for _, userID := range userIDs {
-		item, err := s.AdjustUserIntegral(ctx, userID, appID, signedAmount, reason, options)
-		if err != nil {
-			result.FailedCount++
-			result.Failures = append(result.Failures, pointdomain.BatchAdjustFailure{
-				UserID: userID,
-				Error:  err.Error(),
-			})
-			continue
-		}
-		result.SuccessCount++
-		result.Results = append(result.Results, *item)
-	}
-
-	return result, nil
+		SuccessCount:   len(results),
+		FailedCount:    len(failures),
+		Results:        results,
+		Failures:       failures,
+	}, nil
 }
 
 func (s *PointsService) getCachedSignRanking(ctx context.Context, session *authdomain.Session, rankingType string, page int, limit int) (*pointdomain.RankingResponse, error) {

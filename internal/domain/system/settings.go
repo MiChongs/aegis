@@ -21,6 +21,7 @@ type SettingsView struct {
 	AdminCaptcha AdminCaptchaSettingsView `json:"adminCaptcha"`
 	LDAP         LDAPSettingsView         `json:"ldap"`
 	OIDC         OIDCSettingsView         `json:"oidc"`
+	SAML         SAMLSettingsView         `json:"saml"`
 	Branding     BrandingSettingsView     `json:"branding"`
 }
 
@@ -39,6 +40,9 @@ type FirewallSettingsView struct {
 	BlockedPathPrefix []string   `json:"blockedPathPrefix"`
 	MaxPathLength     int        `json:"maxPathLength"`
 	MaxQueryLength    int        `json:"maxQueryLength"`
+	// IP 封禁响应模式（数据库驱动，平台级全局）
+	DefaultBanMode    string     `json:"defaultBanMode"`
+	TarpitDelayMs     int        `json:"tarpitDelayMs"`
 	Source            string     `json:"source"`
 	ReloadVersion     uint64     `json:"reloadVersion"`
 	ReloadedAt        time.Time  `json:"reloadedAt"`
@@ -114,6 +118,7 @@ type SettingsUpdate struct {
 	AdminCaptcha AdminCaptchaSettingsPatch `json:"adminCaptcha"`
 	LDAP         LDAPSettingsPatch         `json:"ldap"`
 	OIDC         OIDCSettingsPatch         `json:"oidc"`
+	SAML         SAMLSettingsPatch         `json:"saml"`
 	Branding     BrandingSettingsPatch     `json:"branding"`
 }
 
@@ -132,6 +137,8 @@ type FirewallSettingsPatch struct {
 	BlockedPathPrefix *[]string `json:"blockedPathPrefix,omitempty"`
 	MaxPathLength     *int      `json:"maxPathLength,omitempty"`
 	MaxQueryLength    *int      `json:"maxQueryLength,omitempty"`
+	DefaultBanMode    *string   `json:"defaultBanMode,omitempty"`
+	TarpitDelayMs     *int      `json:"tarpitDelayMs,omitempty"`
 }
 
 type SecuritySettingsPatch struct {

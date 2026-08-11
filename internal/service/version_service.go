@@ -1,13 +1,12 @@
 package service
 
 import (
-	"context"
-	"net/http"
-
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
 	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
+	"context"
+	"net/http"
 )
 
 type VersionService struct {
@@ -146,11 +145,10 @@ func (s *VersionService) Publish(ctx context.Context, appID int64, versionID int
 	if item == nil {
 		return nil, apperrors.New(40430, http.StatusNotFound, "版本不存在")
 	}
-	status := "published"
 	return s.pg.UpsertAppVersion(ctx, appdomain.AppVersionMutation{
 		ID:     versionID,
 		AppID:  appID,
-		Status: &status,
+		Status: new("published"),
 	})
 }
 
@@ -163,10 +161,9 @@ func (s *VersionService) Revoke(ctx context.Context, appID int64, versionID int6
 	if item == nil {
 		return nil, apperrors.New(40430, http.StatusNotFound, "版本不存在")
 	}
-	status := "revoked"
 	return s.pg.UpsertAppVersion(ctx, appdomain.AppVersionMutation{
 		ID:     versionID,
 		AppID:  appID,
-		Status: &status,
+		Status: new("revoked"),
 	})
 }

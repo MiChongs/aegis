@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"aegis/internal/event"
 	systemdomain "aegis/internal/domain/system"
+	"aegis/internal/event"
 	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
 	"go.uber.org/zap"
@@ -68,13 +68,13 @@ func (s *AnnouncementService) Publish(ctx context.Context, id int64) (*systemdom
 	// 广播到 NATS：所有管理员 WebSocket 客户端会收到
 	if s.publisher != nil {
 		if pubErr := s.publisher.PublishFire(ctx, event.SubjectSystemAnnouncement, map[string]any{
-			"type":           "system.announcement",
-			"action":         "published",
-			"announcementId": item.ID,
+			"type":             "system.announcement",
+			"action":           "published",
+			"announcementId":   item.ID,
 			"announcementType": item.Type,
-			"title":          item.Title,
-			"level":          item.Level,
-			"pinned":         item.Pinned,
+			"title":            item.Title,
+			"level":            item.Level,
+			"pinned":           item.Pinned,
 		}); pubErr != nil {
 			s.log.Warn("广播系统公告失败", zap.Error(pubErr))
 		}

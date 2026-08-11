@@ -26,8 +26,38 @@ func newQRPayProvider(client *resty.Client) *qrpayProvider {
 	return &qrpayProvider{client: client}
 }
 
-func (p *qrpayProvider) Name() string  { return paymentdomain.MethodQRPay }
-func (p *qrpayProvider) Label() string { return "码支付 (QRPay)" }
+func (p *qrpayProvider) Name() string { return paymentdomain.MethodQRPay }
+func (p *qrpayProvider) Describe() paymentdomain.ProviderMeta {
+	return finalizeMeta(paymentdomain.ProviderMeta{
+		Method:       paymentdomain.MethodQRPay,
+		Name:         "码支付 (QRPay)",
+		Description:  "个人收款码轮询方案，配合监控端自动确认到账，无需商户资质。",
+		Category:     paymentdomain.CategoryAggregate,
+		Icon:         "alipay",
+		BrandColor:   "#1677FF",
+		CallbackPath: "/api/public/pay/callback/" + paymentdomain.MethodQRPay,
+		CallbackNote: "回调为表单 POST，按参数字典序 + Token 做 MD5 验签。",
+		Regions:      []string{"中国大陆"},
+		Currencies:   []string{"CNY"},
+		Capabilities: paymentdomain.ProviderCapabilities{
+			QRCode: true, Redirect: true, Webhook: true, WebhookSignature: true, RemoteQuery: true,
+		},
+		PayTypes: []paymentdomain.PayTypeOption{
+			payType("alipay", "支付宝", ""),
+			payType("wxpay", "微信支付", ""),
+			payType("qqpay", "QQ 钱包", ""),
+		},
+		Fields: fields(
+			inGroup(paymentdomain.GroupCredential,
+				fText("uid", "用户 UID", "码支付 UID", "码支付后台的用户标识", true),
+				fSecret("token", "通信密钥", "Token", "用于请求签名与回调验签", true),
+				fURL("apiUrl", "网关地址", "https://pay.example.com", "自建码支付站点地址"),
+			),
+			callbackFields("码支付服务端异步通知地址", "用户支付完成后跳转的前端页面"),
+			limitFields("0.01", "50000"),
+		),
+	})
+}
 
 func (p *qrpayProvider) ValidateConfig(data map[string]any) error {
 	cfg, err := decodeProviderConfig[paymentdomain.QRPayConfig](data)
@@ -156,10 +186,6 @@ func (p *qrpayProvider) HandleCallback(ctx context.Context, data map[string]any,
 		PaymentMethod:   payType,
 		RawData:         mapStringAny(callbackData),
 	}, nil
-}
-
-func (p *qrpayProvider) SupportedPayTypes() []string {
-	return []string{"alipay", "wxpay", "qqpay"}
 }
 
 func qrpayType(providerType string) string {

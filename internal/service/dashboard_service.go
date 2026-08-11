@@ -103,7 +103,7 @@ func (s *DashboardService) collectAlerts(ctx context.Context) []DashboardAlert {
 		alerts = append(alerts, DashboardAlert{
 			Type: "firewall_block", Title: "防火墙拦截",
 			Detail: formatCount(count) + " 次拦截（近24小时）",
-			Time: time.Now(),
+			Time:   time.Now(),
 		})
 	}
 
@@ -112,7 +112,7 @@ func (s *DashboardService) collectAlerts(ctx context.Context) []DashboardAlert {
 		alerts = append(alerts, DashboardAlert{
 			Type: "login_failed", Title: "登录失败激增",
 			Detail: formatCount(count) + " 次失败（近24小时）",
-			Time: time.Now(),
+			Time:   time.Now(),
 		})
 	}
 

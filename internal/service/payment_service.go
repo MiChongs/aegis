@@ -1,15 +1,14 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,46 +16,81 @@ import (
 	"aegis/internal/config"
 	authdomain "aegis/internal/domain/auth"
 	paymentdomain "aegis/internal/domain/payment"
+	platformdomain "aegis/internal/domain/platform"
 	plugindomain "aegis/internal/domain/plugin"
-	userdomain "aegis/internal/domain/user"
 	pgrepo "aegis/internal/repository/postgres"
+	"aegis/pkg/egress"
 	apperrors "aegis/pkg/errors"
+	"aegis/pkg/receipt"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/shopspring/decimal"
-	"github.com/signintech/gopdf"
 	"go.uber.org/zap"
 )
 
 type PaymentService struct {
-	log           *zap.Logger
-	pg            *pgrepo.Repository
-	client        *resty.Client
-	providers     map[string]paymentProvider
-	plugin        *PluginService
-	billExportCfg config.PaymentBillExportConfig
-	closeCh       chan struct{}
-	closeOnce     sync.Once
-	closed        chan struct{}
+	log        *zap.Logger
+	pg         *pgrepo.Repository
+	client     *resty.Client
+	providers  map[string]paymentProvider
+	plugin     *PluginService
+	receiptCfg config.PaymentReceiptConfig
+	// receipts 凭证渲染器。字体在构造时解析一次（可能读十几兆的字体文件），
+	// 之后每份凭证只是把内存里的字节交给 PDF 引擎。
+	receipts  *receipt.Renderer
+	closeCh   chan struct{}
+	closeOnce sync.Once
+	closed    chan struct{}
+	// governance 平台治理判定：应用被冻结时不允许再产生新的资金流水
+	governance *PlatformGovernanceService
+	// platform 平台设置，凭证抬头取品牌名用
+	platform *PlatformSettingsService
+	// email 凭证邮件出口；nil 表示未接入，凭证只能下载不能寄送
+	email *EmailService
+	// apps 应用级交易设置（是否支付成功自动寄送凭证）
+	apps *AppService
 }
 
 func (s *PaymentService) SetPluginService(p *PluginService) { s.plugin = p }
 
-func NewPaymentService(log *zap.Logger, pg *pgrepo.Repository, billExportCfg config.PaymentBillExportConfig) *PaymentService {
+// SetGovernanceService 注入平台治理服务（bootstrap 中调用）。
+func (s *PaymentService) SetGovernanceService(g *PlatformGovernanceService) { s.governance = g }
+
+// SetPlatformSettingsService 注入平台设置服务，凭证抬头用它取品牌名。
+func (s *PaymentService) SetPlatformSettingsService(p *PlatformSettingsService) { s.platform = p }
+
+// SetEmailService 注入邮件出口，用于寄送凭证。
+func (s *PaymentService) SetEmailService(e *EmailService) { s.email = e }
+
+// SetAppService 注入应用服务，用于读取应用级交易设置。
+func (s *PaymentService) SetAppService(a *AppService) { s.apps = a }
+
+func NewPaymentService(log *zap.Logger, pg *pgrepo.Repository, receiptCfg config.PaymentReceiptConfig) *PaymentService {
+	// 所有 REST 渠道共用这一个 resty 客户端：把它的 transport 换成出海网关，
+	// Stripe / Paddle / Lemon Squeezy / Square / Razorpay / Coinbase 一并生效。
 	client := resty.New().
 		SetRetryCount(2).
-		SetTimeout(10 * time.Second)
+		SetTimeout(10 * time.Second).
+		SetTransport(egress.NewTransport(egress.Profile{Name: "payment.gateway"}))
 	s := &PaymentService{
-		log:           log,
-		pg:            pg,
-		client:        client,
-		providers:     make(map[string]paymentProvider),
-		billExportCfg: billExportCfg,
-		closeCh:       make(chan struct{}),
-		closed:        make(chan struct{}),
+		log:        log,
+		pg:         pg,
+		client:     client,
+		providers:  make(map[string]paymentProvider),
+		receiptCfg: receiptCfg,
+		closeCh:    make(chan struct{}),
+		closed:     make(chan struct{}),
 	}
 
-	// 注册所有支付提供商
+	s.registerBuiltinProviders(client)
+	s.initReceiptRenderer()
+	s.startReceiptCleaner()
+	return s
+}
+
+// registerBuiltinProviders 注册全部内置支付渠道。
+// 单独成函数以便测试复用同一份清单，避免测试与生产注册列表漂移。
+func (s *PaymentService) registerBuiltinProviders(client *resty.Client) {
 	s.registerProvider(newEpayProvider(client))
 	s.registerProvider(newRainbowEpayProvider(client))
 	s.registerProvider(newXunhupayProvider(client))
@@ -67,9 +101,12 @@ func NewPaymentService(log *zap.Logger, pg *pgrepo.Repository, billExportCfg con
 	s.registerProvider(newWechatNativeProvider(client))
 	s.registerProvider(newStripeProvider(client))
 	s.registerProvider(newPaypalProvider(client))
-
-	s.startBillExportCleaner()
-	return s
+	s.registerProvider(newPaddleProvider(client))
+	s.registerProvider(newLemonSqueezyProvider(client))
+	s.registerProvider(newRazorpayProvider(client))
+	s.registerProvider(newCoinbaseProvider(client))
+	s.registerProvider(newSquareProvider(client))
+	s.registerProvider(newBalanceProvider())
 }
 
 func (s *PaymentService) Close(context.Context) {
@@ -91,17 +128,76 @@ func (s *PaymentService) resolveProvider(method string) (paymentProvider, error)
 	return p, nil
 }
 
-// AvailableMethods 返回所有已注册支付方式列表
+// methodOrder 渠道市场的稳定展示顺序：内部通道 → 国内直连 → 聚合 → 国际 → 加密货币。
+// map 迭代顺序随机，若直接返回会导致控制台渠道列表每次刷新都跳动。
+var methodOrder = []string{
+	paymentdomain.MethodBalance,
+	paymentdomain.MethodAlipayNative,
+	paymentdomain.MethodWechatNative,
+	paymentdomain.MethodEpay,
+	paymentdomain.MethodRainbowEpay,
+	paymentdomain.MethodXunhupay,
+	paymentdomain.MethodPayjs,
+	paymentdomain.MethodQRPay,
+	paymentdomain.MethodVMQPay,
+	paymentdomain.MethodStripe,
+	paymentdomain.MethodPaypal,
+	paymentdomain.MethodPaddle,
+	paymentdomain.MethodLemonSqueezy,
+	paymentdomain.MethodSquare,
+	paymentdomain.MethodRazorpay,
+	paymentdomain.MethodCoinbase,
+}
+
+// AvailableMethods 返回所有已注册支付方式的完整描述（含配置字段 schema），
+// 顺序稳定。控制台的渠道市场与动态配置表单完全由该结果驱动。
 func (s *PaymentService) AvailableMethods() []paymentdomain.ProviderMeta {
 	items := make([]paymentdomain.ProviderMeta, 0, len(s.providers))
-	for _, p := range s.providers {
-		items = append(items, paymentdomain.ProviderMeta{
-			Method:         p.Name(),
-			Name:           p.Label(),
-			SupportedTypes: p.SupportedPayTypes(),
-		})
+	seen := make(map[string]bool, len(s.providers))
+	for _, method := range methodOrder {
+		if p, ok := s.providers[method]; ok {
+			items = append(items, p.Describe())
+			seen[method] = true
+		}
+	}
+	// 兜底：methodOrder 未覆盖的渠道按标识排序追加，避免新增后遗漏
+	rest := make([]string, 0)
+	for method := range s.providers {
+		if !seen[method] {
+			rest = append(rest, method)
+		}
+	}
+	sort.Strings(rest)
+	for _, method := range rest {
+		items = append(items, s.providers[method].Describe())
 	}
 	return items
+}
+
+// MethodMeta 返回单个渠道的描述信息
+func (s *PaymentService) MethodMeta(method string) (paymentdomain.ProviderMeta, error) {
+	p, err := s.resolveProvider(method)
+	if err != nil {
+		return paymentdomain.ProviderMeta{}, err
+	}
+	return p.Describe(), nil
+}
+
+// enforceAmountLimits 网关层统一的单笔限额校验。
+//
+// 限额字段（minAmount / maxAmount）是所有渠道的通用约定，此前仅易支付与虎皮椒在各自
+// CreateOrder 内自行校验，其余 9 个渠道配置了限额也不会生效。这里在下单主链路上统一拦截，
+// 任何渠道（含后续新增的）都自动获得限额保护。
+func enforceAmountLimits(p paymentProvider, config *paymentdomain.Config, amount decimal.Decimal) error {
+	if config == nil {
+		return nil
+	}
+	min := configFloat(config.ConfigData, "minAmount")
+	max := configFloat(config.ConfigData, "maxAmount")
+	if min <= 0 && max <= 0 {
+		return nil
+	}
+	return checkAmountRange(amount, min, max, providerLabel(p))
 }
 
 // ── 配置管理 ──
@@ -242,6 +338,13 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 	if session == nil {
 		return nil, nil, apperrors.New(40170, http.StatusUnauthorized, "未认证")
 	}
+	// 平台治理：冻结中的应用不能再收钱。放在最前面判 ——
+	// 一旦订单落库就会牵扯履约与退款，事后清理的代价远高于当场拒绝。
+	if s.governance != nil {
+		if err := s.governance.EnsureCapability(session.AppID, platformdomain.CapabilityPayment); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	// 查找配置（优先按 configName 精确匹配，否则取默认）
 	config, err := s.pg.GetPaymentConfig(ctx, session.AppID, "", configName)
@@ -264,18 +367,37 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 	if strings.TrimSpace(subject) == "" {
 		return nil, nil, apperrors.New(40079, http.StatusBadRequest, "商品名称不能为空")
 	}
+	// 网关层统一限额校验：覆盖全部渠道（含余额支付），下单前拦截超限金额
+	if err := enforceAmountLimits(provider, config, parsedAmount); err != nil {
+		return nil, nil, err
+	}
+
+	// 履约 purpose 处理：校验参数合法性并把套餐/积分快照固化进订单 metadata，
+	// 价格以服务端配置为准（防客户端改价），支付成功后按快照自动履约
+	metadata, err = s.prepareFulfillmentMetadata(ctx, session.AppID, parsedAmount, metadata)
+	if err != nil {
+		return nil, nil, err
+	}
+	// 余额支付约束：余额充值订单不允许用余额支付（自我抵消且会造成累计值虚增）
+	if config.PaymentMethod == paymentdomain.MethodBalance &&
+		metaString(metadata, paymentdomain.MetaKeyPurpose) == paymentdomain.PurposeWalletRecharge {
+		return nil, nil, apperrors.New(40092, http.StatusBadRequest, "余额充值订单不能使用余额支付")
+	}
 
 	orderNo := fmt.Sprintf("P%d%s%s", session.AppID, time.Now().UTC().Format("20060102150405"), randomDigits(6))
 	expireAt := time.Now().Add(30 * time.Minute)
 
 	order, err := s.pg.CreatePaymentOrder(ctx, paymentdomain.OrderMutation{
-		AppID:         session.AppID,
-		UserID:        &session.UserID,
-		ConfigID:      config.ID,
-		OrderNo:       orderNo,
-		Subject:       strings.TrimSpace(subject),
-		Body:          strings.TrimSpace(body),
-		Amount:        parsedAmount,
+		AppID:    session.AppID,
+		UserID:   &session.UserID,
+		ConfigID: config.ID,
+		OrderNo:  orderNo,
+		Subject:  strings.TrimSpace(subject),
+		Body:     strings.TrimSpace(body),
+		Amount:   parsedAmount,
+		// 币种在此固化。商户随时可能改渠道的计价货币，配置改了不该让
+		// 已经收过的那笔钱在凭证上变成另一种货币。
+		Currency:      s.resolveConfigCurrency(config.PaymentMethod, config.ConfigData),
 		PaymentMethod: config.PaymentMethod,
 		ProviderType:  strings.TrimSpace(providerType),
 		ClientIP:      clientIP,
@@ -288,7 +410,25 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 		return nil, nil, err
 	}
 
+	// 余额支付：内部通道，无需外部下单——同事务完成扣款、支付确认与履约后直接返回
+	if config.PaymentMethod == paymentdomain.MethodBalance {
+		payload, payErr := s.payOrderWithBalance(ctx, order)
+		if payErr != nil {
+			return nil, nil, payErr
+		}
+		// 余额支付在同一个事务里就完成了扣款与确认，此处即是「首次确认」
+		go s.autoEmailReceipt(session.AppID, order.OrderNo)
+		if s.plugin != nil {
+			appID := session.AppID
+			uid := session.UserID
+			go s.plugin.ExecuteHook(context.Background(), HookPaymentCreated, map[string]any{"orderId": order.ID}, plugindomain.HookMetadata{AppID: &appID, UserID: &uid})
+			go s.plugin.ExecuteHook(context.Background(), HookPaymentCompleted, map[string]any{"orderId": order.ID}, plugindomain.HookMetadata{AppID: &appID, UserID: &uid})
+		}
+		return payload, order, nil
+	}
+
 	payload, err := provider.CreateOrder(ctx, config.ConfigData, PaymentOrderRequest{
+		AppID:        session.AppID,
 		OrderNo:      orderNo,
 		Subject:      order.Subject,
 		Body:         order.Body,
@@ -312,6 +452,44 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 	return payload, order, nil
 }
 
+// payOrderWithBalance 余额支付：解析履约指令后交由仓储层单事务执行
+func (s *PaymentService) payOrderWithBalance(ctx context.Context, order *paymentdomain.Order) (*paymentdomain.PaymentPayload, error) {
+	instr, hasInstr, err := s.buildFulfillmentInstruction(order)
+	if err != nil {
+		return nil, apperrors.New(40093, http.StatusBadRequest, "订单履约参数无效："+err.Error())
+	}
+	var instrPtr *paymentdomain.FulfillmentInstruction
+	if hasInstr {
+		instrPtr = &instr
+	}
+	walletTxn, err := s.pg.PayPaymentOrderWithWallet(ctx, order, instrPtr)
+	if err != nil {
+		switch {
+		case errors.Is(err, pgrepo.ErrInsufficientBalance):
+			return nil, apperrors.New(40083, http.StatusBadRequest, "余额不足，请先充值")
+		case errors.Is(err, pgrepo.ErrOrderNotPayable):
+			return nil, apperrors.New(40094, http.StatusConflict, "订单不可支付（已支付或已过期）")
+		case errors.Is(err, pgrepo.ErrUserNotFound):
+			return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
+		default:
+			return nil, err
+		}
+	}
+	s.log.Info("payment order paid with balance",
+		zap.String("orderNo", order.OrderNo), zap.String("walletTxn", walletTxn.TransactionNo))
+	return &paymentdomain.PaymentPayload{
+		Success:      true,
+		OrderNo:      order.OrderNo,
+		Message:      "余额支付成功",
+		ProviderType: paymentdomain.MethodBalance,
+		FormData: map[string]any{
+			"paid":                true,
+			"walletTransactionNo": walletTxn.TransactionNo,
+			"balanceAfter":        walletTxn.BalanceAfter,
+		},
+	}, nil
+}
+
 func (s *PaymentService) QueryOrder(ctx context.Context, orderNo string) (*paymentdomain.Order, error) {
 	order, err := s.pg.GetPaymentOrderByOrderNo(ctx, orderNo)
 	if err != nil {
@@ -333,6 +511,13 @@ func (s *PaymentService) GetUserOrder(ctx context.Context, session *authdomain.S
 	}
 	if order == nil {
 		return nil, apperrors.New(40472, http.StatusNotFound, "订单不存在")
+	}
+	// 查单兜底：已支付订单若因回调期故障尚未履约，在用户查单时补偿执行（幂等）
+	if order.Status == "paid" {
+		if err := s.ensureOrderFulfilled(ctx, order); err != nil {
+			s.log.Warn("lazy fulfillment on user query failed",
+				zap.String("orderNo", order.OrderNo), zap.Error(err))
+		}
 	}
 	return order, nil
 }
@@ -363,59 +548,6 @@ func (s *PaymentService) ListUserOrders(ctx context.Context, session *authdomain
 		Total:      total,
 		TotalPages: calcPaymentTotalPages(total, limit),
 	}, nil
-}
-
-func (s *PaymentService) CreateUserOrderBillExport(ctx context.Context, session *authdomain.Session, orderNo string, ttlOverride time.Duration) (*paymentdomain.BillExport, error) {
-	doc, err := s.loadPaymentBillDocument(ctx, session, orderNo)
-	if err != nil {
-		return nil, err
-	}
-	pdfBytes, err := renderPaymentBillPDF(doc)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now().UTC()
-	ttl := s.resolveBillExportTTL(ttlOverride)
-	export := paymentdomain.BillExport{
-		BillID:    randomBillExportID(16),
-		OrderNo:   doc.Order.OrderNo,
-		FileName:  fmt.Sprintf("payment_bill_%s.pdf", doc.Order.OrderNo),
-		CreatedAt: now,
-		ExpiresAt: now.Add(ttl),
-	}
-	export.DownloadURL = fmt.Sprintf("/api/pay/bills/%s/download", export.BillID)
-	if err := s.persistBillExport(session.AppID, session.UserID, export, pdfBytes); err != nil {
-		return nil, err
-	}
-	return &export, nil
-}
-
-func (s *PaymentService) DownloadUserOrderBillExport(ctx context.Context, session *authdomain.Session, billID string) ([]byte, string, error) {
-	_ = ctx
-	if session == nil {
-		return nil, "", apperrors.New(40170, http.StatusUnauthorized, "未认证")
-	}
-	meta, metaPath, err := s.loadBillExportMeta(session.AppID, billID)
-	if err != nil {
-		return nil, "", err
-	}
-	if meta.UserID != session.UserID {
-		return nil, "", apperrors.New(40475, http.StatusNotFound, "账单不存在")
-	}
-	if time.Now().UTC().After(meta.ExpiresAt) {
-		s.deleteBillExport(meta, metaPath)
-		return nil, "", apperrors.New(41075, http.StatusGone, "账单文件已过期")
-	}
-	pdfBytes, err := os.ReadFile(meta.FilePath)
-	if err != nil {
-		s.log.Warn("read bill export file failed", zap.String("bill_id", meta.BillID), zap.String("file_path", meta.FilePath), zap.Error(err))
-		if os.IsNotExist(err) {
-			_ = os.Remove(metaPath)
-			return nil, "", apperrors.New(40476, http.StatusNotFound, "账单文件不存在")
-		}
-		return nil, "", apperrors.New(50075, http.StatusInternalServerError, "读取账单文件失败")
-	}
-	return pdfBytes, meta.FileName, nil
 }
 
 func (s *PaymentService) QueryEpayRemoteOrder(ctx context.Context, orderNo string) (map[string]any, error) {
@@ -449,7 +581,50 @@ func (s *PaymentService) HandleEpayCallback(ctx context.Context, callbackData ma
 
 // HandleCallback 处理通用支付回调
 func (s *PaymentService) HandleCallback(ctx context.Context, method string, callbackData map[string]string, callbackMethod string, clientIP string) (*paymentdomain.CallbackResult, error) {
+	// 订单定位链：表单字段 out_trade_no（易支付系/支付宝）
+	// → 提供商从原始 Webhook 报文自提（Stripe / PayPal，其回调地址为平台级配置无法携带参数）
 	orderNo := strings.TrimSpace(callbackData["out_trade_no"])
+	if orderNo == "" {
+		if p, ok := s.providers[strings.TrimSpace(method)]; ok {
+			if extractor, ok := p.(callbackOrderExtractor); ok {
+				orderNo = strings.TrimSpace(extractor.ExtractOrderNo(callbackData))
+			}
+		}
+	}
+
+	// config-first 流程（微信支付等加密通知）：报文本身无法预读订单号，
+	// 由回调路径段 /callback/:method/:appid 提供应用标识 → 取该应用的方法默认配置
+	// → 先验签解密得到订单号，再定位订单做交叉校验
+	var preResult *paymentdomain.CallbackResult
+	var config *paymentdomain.Config
+	if orderNo == "" {
+		appIDRaw := strings.TrimSpace(callbackData["__app_id"])
+		if appIDRaw == "" {
+			return nil, apperrors.New(40074, http.StatusBadRequest, "缺少订单号")
+		}
+		appID, err := parseInt64(appIDRaw)
+		if err != nil || appID <= 0 {
+			return nil, apperrors.New(40074, http.StatusBadRequest, "回调应用标识无效")
+		}
+		config, err = s.pg.GetPaymentConfig(ctx, appID, strings.TrimSpace(method), "")
+		if err != nil {
+			return nil, err
+		}
+		if config == nil {
+			return nil, apperrors.New(40473, http.StatusNotFound, "支付配置不存在")
+		}
+		p, perr := s.resolveProvider(config.PaymentMethod)
+		if perr != nil {
+			return nil, perr
+		}
+		res, herr := p.HandleCallback(ctx, config.ConfigData, callbackData, clientIP)
+		if herr != nil {
+			_ = s.pg.CreatePaymentCallbackLog(ctx, appID, nil, method, callbackMethod, clientIP, mapStringAny(callbackData), "verify_failed", herr.Error())
+			return nil, herr
+		}
+		preResult = res
+		orderNo = strings.TrimSpace(res.OrderNo)
+	}
 	if orderNo == "" {
 		return nil, apperrors.New(40074, http.StatusBadRequest, "缺少订单号")
 	}
@@ -460,12 +635,19 @@ func (s *PaymentService) HandleCallback(ctx context.Context, method string, call
 	if order == nil {
 		return nil, apperrors.New(40472, http.StatusNotFound, "订单不存在")
 	}
-	config, err := s.pg.GetPaymentConfigByID(ctx, order.AppID, order.ConfigID)
-	if err != nil {
-		return nil, err
+	// config-first 流程的归属校验：订单必须属于路径段声明的应用
+	if config != nil && order.AppID != config.AppID {
+		_ = s.pg.CreatePaymentCallbackLog(ctx, config.AppID, &order.ID, method, callbackMethod, clientIP, mapStringAny(callbackData), "app_mismatch", "回调应用与订单归属不一致")
+		return nil, apperrors.New(40095, http.StatusBadRequest, "回调应用与订单归属不一致")
 	}
 	if config == nil {
-		return nil, apperrors.New(40473, http.StatusNotFound, "支付配置不存在")
+		config, err = s.pg.GetPaymentConfigByID(ctx, order.AppID, order.ConfigID)
+		if err != nil {
+			return nil, err
+		}
+		if config == nil {
+			return nil, apperrors.New(40473, http.StatusNotFound, "支付配置不存在")
+		}
 	}
 	provider, err := s.resolveProvider(config.PaymentMethod)
 	if err != nil {
@@ -473,22 +655,53 @@ func (s *PaymentService) HandleCallback(ctx context.Context, method string, call
 		return nil, err
 	}
 
-	result, err := provider.HandleCallback(ctx, config.ConfigData, callbackData, clientIP)
-	if err != nil {
-		_ = s.pg.CreatePaymentCallbackLog(ctx, order.AppID, &order.ID, method, callbackMethod, clientIP, mapStringAny(callbackData), "verify_failed", err.Error())
-		return nil, err
+	// config-first 流程已完成验签则复用结果，否则此处执行验签
+	result := preResult
+	if result == nil {
+		result, err = provider.HandleCallback(ctx, config.ConfigData, callbackData, clientIP)
+		if err != nil {
+			_ = s.pg.CreatePaymentCallbackLog(ctx, order.AppID, &order.ID, method, callbackMethod, clientIP, mapStringAny(callbackData), "verify_failed", err.Error())
+			return nil, err
+		}
+	}
+
+	// 验签通过后的交叉校验：回调中的订单号 / 金额必须与本地订单一致，
+	// 防止「用 A 订单的合法回调骗 B 订单发货」与小额支付大额订单
+	if result.OrderNo != "" && result.OrderNo != order.OrderNo {
+		_ = s.pg.CreatePaymentCallbackLog(ctx, order.AppID, &order.ID, method, callbackMethod, clientIP, result.RawData, "order_mismatch", "回调订单号与本地订单不一致")
+		return nil, apperrors.New(40095, http.StatusBadRequest, "回调订单号不一致")
+	}
+	if result.Paid && result.Amount.IsPositive() && !result.Amount.Equal(order.Amount) {
+		_ = s.pg.CreatePaymentCallbackLog(ctx, order.AppID, &order.ID, method, callbackMethod, clientIP, result.RawData, "amount_mismatch",
+			fmt.Sprintf("回调金额 %s 与订单金额 %s 不一致", result.Amount.StringFixed(2), order.Amount.StringFixed(2)))
+		return nil, apperrors.New(40096, http.StatusBadRequest, "回调金额与订单不一致")
 	}
 
 	// 更新订单状态
 	if result.Paid {
-		if err := s.pg.MarkPaymentOrderPaid(ctx, order.ID, result.ProviderOrderNo, result.TradeStatus, result.RawData); err != nil {
+		// 幂等确认支付：仅首次回调真正翻转状态，重复回调直接跳过写入
+		firstTime, err := s.pg.MarkPaymentOrderPaid(ctx, order.ID, result.ProviderOrderNo, result.TradeStatus, result.RawData)
+		if err != nil {
 			return nil, err
 		}
-		if s.plugin != nil {
-			appID := order.AppID
-			go s.plugin.ExecuteHook(context.Background(), HookPaymentCompleted, map[string]any{
-				"orderId": order.ID,
-			}, plugindomain.HookMetadata{AppID: &appID})
+		// 履约与「首次确认」解耦：每次已支付回调都尝试履约，
+		// 仓储层条件抢占保证恰好执行一次；若上次履约失败回滚，本次回调即是重试
+		if err := s.ensureOrderFulfilled(ctx, order); err != nil {
+			s.log.Error("payment order fulfillment failed",
+				zap.String("orderNo", order.OrderNo), zap.Int64("orderId", order.ID), zap.Error(err))
+			// 返回错误让支付平台按其重试策略再次通知，直至履约成功
+			return nil, apperrors.New(50080, http.StatusInternalServerError, "订单履约处理失败，请稍后重试")
+		}
+		if firstTime {
+			// 凭证寄送与插件钩子都挂在「首次确认」上：回调会重复到达，
+			// 挂在每次回调上会让用户每收到一次重放就多一封收据。
+			go s.autoEmailReceipt(order.AppID, order.OrderNo)
+			if s.plugin != nil {
+				appID := order.AppID
+				go s.plugin.ExecuteHook(context.Background(), HookPaymentCompleted, map[string]any{
+					"orderId": order.ID,
+				}, plugindomain.HookMetadata{AppID: &appID})
+			}
 		}
 	} else {
 		if err := s.pg.MarkPaymentOrderCallbackFailed(ctx, order.ID, result.TradeStatus, result.RawData); err != nil {
@@ -500,6 +713,221 @@ func (s *PaymentService) HandleCallback(ctx context.Context, method string, call
 	result.Amount = order.Amount
 	_ = s.pg.CreatePaymentCallbackLog(ctx, order.AppID, &order.ID, method, callbackMethod, clientIP, result.RawData, result.TradeStatus, "ok")
 	return result, nil
+}
+
+// ── 履约（purpose）──
+
+// prepareFulfillmentMetadata 下单阶段处理履约意图：
+//   - 无 purpose：普通商品订单，原样放行（不参与自动履约）
+//   - wallet_recharge：支付金额即入账金额，无需附加参数
+//   - vip_purchase：校验套餐存在且在售、金额与服务端价格一致，并把套餐快照固化进 metadata
+//   - integral_purchase：按应用配置兑换率（settings.integralPerCurrency，默认 100/单位金额）
+//     由服务端计算并固化发放数量，客户端无法指定
+func (s *PaymentService) prepareFulfillmentMetadata(ctx context.Context, appID int64, amount decimal.Decimal, metadata map[string]any) (map[string]any, error) {
+	purpose := metaString(metadata, paymentdomain.MetaKeyPurpose)
+	if purpose == "" {
+		return metadata, nil
+	}
+	out := make(map[string]any, len(metadata)+4)
+	for k, v := range metadata {
+		out[k] = v
+	}
+	switch purpose {
+	case paymentdomain.PurposeWalletRecharge:
+		// 金额 1:1 入账，无附加快照
+	case paymentdomain.PurposeVipPurchase:
+		planID := metaInt64(metadata, paymentdomain.MetaKeyVipPlanID)
+		if planID <= 0 {
+			return nil, apperrors.New(40084, http.StatusBadRequest, "VIP 直购订单必须携带 vipPlanId")
+		}
+		plan, err := s.pg.GetVipPlan(ctx, appID, planID)
+		if err != nil {
+			return nil, err
+		}
+		if plan == nil || !plan.IsActive {
+			return nil, apperrors.New(40480, http.StatusNotFound, "套餐不存在或已下架")
+		}
+		if !plan.Price.Equal(amount) {
+			return nil, apperrors.New(40089, http.StatusBadRequest, "支付金额与套餐价格不一致")
+		}
+		out[paymentdomain.MetaKeyVipPlanID] = plan.ID
+		out[paymentdomain.MetaKeyVipPlanName] = plan.Name
+		out[paymentdomain.MetaKeyVipDays] = plan.DurationDays
+		out[paymentdomain.MetaKeyVipBonus] = plan.BonusIntegral
+	case paymentdomain.PurposeIntegralPurchase:
+		app, err := s.pg.GetAppByID(ctx, appID)
+		if err != nil {
+			return nil, err
+		}
+		if app == nil {
+			return nil, apperrors.New(40410, http.StatusNotFound, "无法找到该应用")
+		}
+		rate := int64(resolveCommerceSettings(app).IntegralPerCurrency)
+		integralAmount := amount.Mul(decimal.NewFromInt(rate)).IntPart()
+		if integralAmount <= 0 {
+			return nil, apperrors.New(40090, http.StatusBadRequest, "支付金额过小，无法兑换积分")
+		}
+		out[paymentdomain.MetaKeyIntegralAmount] = integralAmount
+	default:
+		return nil, apperrors.New(40091, http.StatusBadRequest, "不支持的订单用途: "+purpose)
+	}
+	return out, nil
+}
+
+// buildFulfillmentInstruction 从订单 metadata 快照解析履约指令。
+// 返回 (指令, 是否需要履约, 错误)；无 purpose 的普通商品订单返回 hasInstr=false。
+func (s *PaymentService) buildFulfillmentInstruction(order *paymentdomain.Order) (paymentdomain.FulfillmentInstruction, bool, error) {
+	var instr paymentdomain.FulfillmentInstruction
+	if order == nil {
+		return instr, false, nil
+	}
+	purpose := metaString(order.Metadata, paymentdomain.MetaKeyPurpose)
+	if purpose == "" {
+		return instr, false, nil
+	}
+	if order.UserID == nil || *order.UserID <= 0 {
+		return instr, false, fmt.Errorf("order %s has fulfillment purpose %q but no user", order.OrderNo, purpose)
+	}
+	instr.Purpose = purpose
+	switch purpose {
+	case paymentdomain.PurposeWalletRecharge:
+		instr.WalletAmount = order.Amount
+	case paymentdomain.PurposeVipPurchase:
+		planID := metaInt64(order.Metadata, paymentdomain.MetaKeyVipPlanID)
+		instr.VipPlanID = &planID
+		instr.VipPlanName = metaString(order.Metadata, paymentdomain.MetaKeyVipPlanName)
+		instr.VipDays = int(metaInt64(order.Metadata, paymentdomain.MetaKeyVipDays))
+		instr.VipBonus = metaInt64(order.Metadata, paymentdomain.MetaKeyVipBonus)
+		if instr.VipDays <= 0 {
+			return instr, false, fmt.Errorf("order %s vip snapshot invalid: durationDays=%d", order.OrderNo, instr.VipDays)
+		}
+	case paymentdomain.PurposeIntegralPurchase:
+		instr.IntegralAmount = metaInt64(order.Metadata, paymentdomain.MetaKeyIntegralAmount)
+		if instr.IntegralAmount <= 0 {
+			return instr, false, fmt.Errorf("order %s integral snapshot invalid", order.OrderNo)
+		}
+	default:
+		return instr, false, fmt.Errorf("order %s has unknown purpose %q", order.OrderNo, purpose)
+	}
+	return instr, true, nil
+}
+
+// ensureOrderFulfilled 按订单 metadata 快照执行履约（幂等，可安全重复调用）。
+// 无 purpose 的普通订单直接返回 nil。
+func (s *PaymentService) ensureOrderFulfilled(ctx context.Context, order *paymentdomain.Order) error {
+	instr, hasInstr, err := s.buildFulfillmentInstruction(order)
+	if err != nil {
+		return err
+	}
+	if !hasInstr {
+		return nil
+	}
+	fulfilled, err := s.pg.FulfillPaymentOrder(ctx, order, instr)
+	if err != nil {
+		return err
+	}
+	if fulfilled {
+		s.log.Info("payment order fulfilled",
+			zap.String("orderNo", order.OrderNo), zap.String("purpose", instr.Purpose),
+			zap.Int64("userId", *order.UserID), zap.Int64("appid", order.AppID))
+	}
+	return nil
+}
+
+// metaString / metaInt64 从 JSON 反序列化的 metadata 中安全取值
+func metaString(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m[key].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+func metaInt64(m map[string]any, key string) int64 {
+	if m == nil {
+		return 0
+	}
+	switch v := m[key].(type) {
+	case float64:
+		return int64(v)
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return n
+	case string:
+		n, _ := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		return n
+	default:
+		return 0
+	}
+}
+
+// ── 管理端订单查询 ──
+
+// AdminOrderQuery 管理端订单筛选条件
+type AdminOrderQuery struct {
+	Status  string
+	Method  string
+	Keyword string
+	UserID  int64
+	Page    int
+	Limit   int
+}
+
+// AdminListOrders 管理端按应用分页查询订单
+func (s *PaymentService) AdminListOrders(ctx context.Context, appID int64, query AdminOrderQuery) (*paymentdomain.OrderListResult, error) {
+	if _, err := s.requireApp(ctx, appID); err != nil {
+		return nil, err
+	}
+	page := query.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	items, total, err := s.pg.ListPaymentOrdersByApp(ctx, appID, query.Status, query.Method, query.Keyword, query.UserID, page, limit)
+	if err != nil {
+		return nil, err
+	}
+	return &paymentdomain.OrderListResult{
+		Items:      items,
+		Page:       page,
+		Limit:      limit,
+		Total:      total,
+		TotalPages: calcPaymentTotalPages(total, limit),
+	}, nil
+}
+
+// AdminOrderDetail 管理端订单详情：订单 + 履约状态 + 回调日志
+func (s *PaymentService) AdminOrderDetail(ctx context.Context, appID int64, orderNo string) (map[string]any, error) {
+	order, err := s.pg.GetPaymentOrderByOrderNo(ctx, strings.TrimSpace(orderNo))
+	if err != nil {
+		return nil, err
+	}
+	if order == nil || order.AppID != appID {
+		return nil, apperrors.New(40472, http.StatusNotFound, "订单不存在")
+	}
+	detail := map[string]any{"order": order}
+	if status, fulfilledAt, err := s.pg.GetPaymentOrderFulfillment(ctx, order.ID); err == nil {
+		detail["fulfillment_status"] = status
+		detail["fulfilled_at"] = fulfilledAt
+	}
+	if logs, err := s.pg.ListPaymentCallbackLogsByOrder(ctx, appID, order.ID, 20); err == nil {
+		detail["callback_logs"] = logs
+	} else {
+		s.log.Warn("list payment callback logs failed", zap.String("orderNo", orderNo), zap.Error(err))
+	}
+	return detail, nil
 }
 
 // ── 辅助函数 ──
@@ -515,210 +943,45 @@ func (s *PaymentService) requireApp(ctx context.Context, appID int64) (appNameHo
 	return appNameHolder{Name: app.Name}, nil
 }
 
-func (s *PaymentService) loadPaymentBillDocument(ctx context.Context, session *authdomain.Session, orderNo string) (paymentBillDocument, error) {
-	if session == nil {
-		return paymentBillDocument{}, apperrors.New(40170, http.StatusUnauthorized, "未认证")
-	}
-	order, err := s.GetUserOrder(ctx, session, orderNo)
-	if err != nil {
-		return paymentBillDocument{}, err
-	}
-	user, err := s.pg.GetUserByID(ctx, session.UserID)
-	if err != nil {
-		return paymentBillDocument{}, err
-	}
-	if user == nil || user.AppID != session.AppID {
-		return paymentBillDocument{}, apperrors.New(40401, http.StatusNotFound, "用户不存在")
-	}
-	profile, err := s.pg.GetUserProfileByUserID(ctx, session.UserID)
-	if err != nil {
-		return paymentBillDocument{}, err
-	}
-	app, err := s.requireApp(ctx, session.AppID)
-	if err != nil {
-		return paymentBillDocument{}, err
-	}
-	return paymentBillDocument{
-		Order:   *order,
-		AppName: app.Name,
-		User:    user,
-		Profile: profile,
-	}, nil
-}
-
-func (s *PaymentService) resolveBillExportTTL(override time.Duration) time.Duration {
-	ttl := s.billExportCfg.TTL
-	if ttl <= 0 {
-		ttl = 30 * time.Minute
-	}
-	if override <= 0 {
-		return ttl
-	}
-	if override > ttl {
-		return ttl
-	}
-	return override
-}
-
-func (s *PaymentService) persistBillExport(appID int64, userID int64, export paymentdomain.BillExport, pdfBytes []byte) error {
-	dirPath := s.billExportAppDir(appID)
-	if err := os.MkdirAll(dirPath, 0o755); err != nil {
-		s.log.Warn("create payment bill export dir failed", zap.String("dir", dirPath), zap.Error(err))
-		return apperrors.New(50076, http.StatusInternalServerError, "创建账单导出目录失败")
-	}
-	pdfPath, metaPath := s.billExportPaths(appID, export.BillID)
-	meta := paymentBillExportMeta{
-		BillID:    export.BillID,
-		AppID:     appID,
-		UserID:    userID,
-		OrderNo:   export.OrderNo,
-		FileName:  export.FileName,
-		FilePath:  pdfPath,
-		CreatedAt: export.CreatedAt,
-		ExpiresAt: export.ExpiresAt,
-	}
-	if err := os.WriteFile(pdfPath, pdfBytes, 0o600); err != nil {
-		s.log.Warn("write payment bill export file failed", zap.String("bill_id", export.BillID), zap.String("file_path", pdfPath), zap.Error(err))
-		return apperrors.New(50077, http.StatusInternalServerError, "写入账单文件失败")
-	}
-	rawMeta, err := json.Marshal(meta)
-	if err != nil {
-		_ = os.Remove(pdfPath)
-		return apperrors.New(50078, http.StatusInternalServerError, "写入账单元数据失败")
-	}
-	if err := os.WriteFile(metaPath, rawMeta, 0o600); err != nil {
-		_ = os.Remove(pdfPath)
-		s.log.Warn("write payment bill export metadata failed", zap.String("bill_id", export.BillID), zap.String("meta_path", metaPath), zap.Error(err))
-		return apperrors.New(50078, http.StatusInternalServerError, "写入账单元数据失败")
-	}
-	return nil
-}
-
-func (s *PaymentService) loadBillExportMeta(appID int64, billID string) (paymentBillExportMeta, string, error) {
-	billID = strings.TrimSpace(billID)
-	if billID == "" {
-		return paymentBillExportMeta{}, "", apperrors.New(40075, http.StatusBadRequest, "账单标识不能为空")
-	}
-	_, metaPath := s.billExportPaths(appID, billID)
-	rawMeta, err := os.ReadFile(metaPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return paymentBillExportMeta{}, "", apperrors.New(40475, http.StatusNotFound, "账单不存在")
-		}
-		s.log.Warn("read payment bill export metadata failed", zap.String("bill_id", billID), zap.String("meta_path", metaPath), zap.Error(err))
-		return paymentBillExportMeta{}, "", apperrors.New(50079, http.StatusInternalServerError, "读取账单元数据失败")
-	}
-	var meta paymentBillExportMeta
-	if err := json.Unmarshal(rawMeta, &meta); err != nil {
-		s.log.Warn("parse payment bill export metadata failed", zap.String("bill_id", billID), zap.String("meta_path", metaPath), zap.Error(err))
-		s.deleteBillExport(paymentBillExportMeta{
-			BillID:   billID,
-			AppID:    appID,
-			FilePath: filepath.Join(s.billExportAppDir(appID), billID+".pdf"),
-		}, metaPath)
-		return paymentBillExportMeta{}, "", apperrors.New(40475, http.StatusNotFound, "账单不存在")
-	}
-	return meta, metaPath, nil
-}
-
-func (s *PaymentService) billExportAppDir(appID int64) string {
-	return filepath.Join(s.billExportCfg.RootDir, fmt.Sprintf("%d", appID))
-}
-
-func (s *PaymentService) billExportPaths(appID int64, billID string) (string, string) {
-	dirPath := s.billExportAppDir(appID)
-	return filepath.Join(dirPath, billID+".pdf"), filepath.Join(dirPath, billID+".meta.json")
-}
-
-func (s *PaymentService) startBillExportCleaner() {
+func (s *PaymentService) startReceiptCleaner() {
 	go func() {
 		defer close(s.closed)
-		s.cleanupExpiredBillExports()
-		ticker := time.NewTicker(s.billExportCleanupInterval())
+		s.cleanupExpiredReceipts()
+		s.expireOverdueOrders()
+		ticker := time.NewTicker(s.receiptCleanupInterval())
 		defer ticker.Stop()
+		// 过期订单清扫：pending 超过有效期 → expired，保证订单终态完整
+		expireTicker := time.NewTicker(time.Minute)
+		defer expireTicker.Stop()
+		// 未结算退款单补偿：上游返回「受理中」或结算写入中断时，靠轮询收敛到终态
+		refundTicker := time.NewTicker(2 * time.Minute)
+		defer refundTicker.Stop()
 		for {
 			select {
 			case <-s.closeCh:
 				return
 			case <-ticker.C:
-				s.cleanupExpiredBillExports()
+				s.cleanupExpiredReceipts()
+			case <-expireTicker.C:
+				s.expireOverdueOrders()
+			case <-refundTicker.C:
+				s.syncPendingRefunds()
 			}
 		}
 	}()
 }
 
-func (s *PaymentService) billExportCleanupInterval() time.Duration {
-	if s.billExportCfg.CleanupInterval <= 0 {
-		return 5 * time.Minute
-	}
-	return s.billExportCfg.CleanupInterval
-}
-
-func (s *PaymentService) cleanupExpiredBillExports() {
-	rootDir := strings.TrimSpace(s.billExportCfg.RootDir)
-	if rootDir == "" {
-		return
-	}
-	if err := os.MkdirAll(rootDir, 0o755); err != nil {
-		s.log.Warn("create payment bill export root failed", zap.String("root_dir", rootDir), zap.Error(err))
-		return
-	}
-	entries, err := os.ReadDir(rootDir)
+// expireOverdueOrders 批量关闭超时未支付订单
+func (s *PaymentService) expireOverdueOrders() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	count, err := s.pg.ExpirePaymentOrders(ctx)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			s.log.Warn("list payment bill export root failed", zap.String("root_dir", rootDir), zap.Error(err))
-		}
+		s.log.Warn("expire overdue payment orders failed", zap.Error(err))
 		return
 	}
-	now := time.Now().UTC()
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		metaPaths, err := filepath.Glob(filepath.Join(rootDir, entry.Name(), "*.meta.json"))
-		if err != nil {
-			s.log.Warn("glob payment bill export metadata failed", zap.String("app_dir", filepath.Join(rootDir, entry.Name())), zap.Error(err))
-			continue
-		}
-		for _, metaPath := range metaPaths {
-			meta, ok := s.readBillExportMetaFile(metaPath)
-			if !ok {
-				continue
-			}
-			if now.After(meta.ExpiresAt) {
-				s.deleteBillExport(meta, metaPath)
-			}
-		}
-	}
-}
-
-func (s *PaymentService) readBillExportMetaFile(metaPath string) (paymentBillExportMeta, bool) {
-	rawMeta, err := os.ReadFile(metaPath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			s.log.Warn("read payment bill export metadata failed", zap.String("meta_path", metaPath), zap.Error(err))
-		}
-		return paymentBillExportMeta{}, false
-	}
-	var meta paymentBillExportMeta
-	if err := json.Unmarshal(rawMeta, &meta); err != nil {
-		s.log.Warn("parse payment bill export metadata failed", zap.String("meta_path", metaPath), zap.Error(err))
-		_ = os.Remove(metaPath)
-		return paymentBillExportMeta{}, false
-	}
-	return meta, true
-}
-
-func (s *PaymentService) deleteBillExport(meta paymentBillExportMeta, metaPath string) {
-	if strings.TrimSpace(meta.FilePath) != "" {
-		if err := os.Remove(meta.FilePath); err != nil && !os.IsNotExist(err) {
-			s.log.Warn("delete payment bill export file failed", zap.String("bill_id", meta.BillID), zap.String("file_path", meta.FilePath), zap.Error(err))
-		}
-	}
-	if strings.TrimSpace(metaPath) != "" {
-		if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
-			s.log.Warn("delete payment bill export metadata failed", zap.String("bill_id", meta.BillID), zap.String("meta_path", metaPath), zap.Error(err))
-		}
+	if count > 0 {
+		s.log.Info("expired overdue payment orders", zap.Int64("count", count))
 	}
 }
 
@@ -731,14 +994,6 @@ func randomDigits(length int) string {
 		buf[i] = digits[int(b[0])%len(digits)]
 	}
 	return string(buf)
-}
-
-func randomBillExportID(byteLen int) string {
-	buf := make([]byte, byteLen)
-	if _, err := rand.Read(buf); err != nil {
-		return fmt.Sprintf("%d%s", time.Now().UTC().UnixNano(), randomDigits(6))
-	}
-	return hex.EncodeToString(buf)
 }
 
 // decodeProviderConfig 通用配置解码辅助
@@ -766,206 +1021,4 @@ func calcPaymentTotalPages(total int64, limit int) int {
 		return 1
 	}
 	return pages
-}
-
-type paymentBillDocument struct {
-	Order   paymentdomain.Order
-	AppName string
-	User    *userdomain.User
-	Profile *userdomain.Profile
-}
-
-type paymentBillExportMeta struct {
-	BillID    string    `json:"billId"`
-	AppID     int64     `json:"appid"`
-	UserID    int64     `json:"userId"`
-	OrderNo   string    `json:"orderNo"`
-	FileName  string    `json:"fileName"`
-	FilePath  string    `json:"filePath"`
-	CreatedAt time.Time `json:"createdAt"`
-	ExpiresAt time.Time `json:"expiresAt"`
-}
-
-func renderPaymentBillPDF(doc paymentBillDocument) ([]byte, error) {
-	pdf := &gopdf.GoPdf{}
-	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4})
-	pdf.AddPage()
-	fontPath, err := registerPaymentBillFont(pdf)
-	if err != nil {
-		return nil, err
-	}
-	if err := pdf.SetFont("bill", "", 20); err != nil {
-		return nil, err
-	}
-	pdf.SetTextColor(26, 38, 52)
-	pdf.SetXY(36, 40)
-	_ = pdf.Cell(nil, "Aegis Electronic Bill")
-
-	if err := pdf.SetFont("bill", "", 10); err != nil {
-		return nil, err
-	}
-	pdf.SetTextColor(102, 112, 133)
-	pdf.SetXY(36, 64)
-	_ = pdf.Cell(nil, "Generated At: "+time.Now().UTC().Format(time.RFC3339))
-	pdf.SetXY(36, 78)
-	_ = pdf.Cell(nil, "Font: "+filepath.Base(fontPath))
-
-	pdf.SetStrokeColor(223, 227, 234)
-	pdf.Line(36, 92, 559, 92)
-
-	y := 112.0
-	y = writeBillSection(pdf, y, "Bill Summary", [][2]string{
-		{"Order No", doc.Order.OrderNo},
-		{"Status", doc.Order.Status},
-		{"Amount", doc.Order.Amount.StringFixed(2)},
-		{"Payment Method", doc.Order.PaymentMethod},
-		{"Provider Type", emptyFallback(doc.Order.ProviderType, "-")},
-		{"Provider Order No", emptyFallback(doc.Order.ProviderOrderNo, "-")},
-	})
-	y = writeBillSection(pdf, y+10, "Merchant", [][2]string{
-		{"Application", emptyFallback(doc.AppName, fmt.Sprintf("App #%d", doc.Order.AppID))},
-		{"App ID", fmt.Sprintf("%d", doc.Order.AppID)},
-	})
-
-	displayName := ""
-	if doc.Profile != nil {
-		displayName = strings.TrimSpace(doc.Profile.Nickname)
-	}
-	account := ""
-	if doc.User != nil {
-		account = strings.TrimSpace(doc.User.Account)
-	}
-	y = writeBillSection(pdf, y+10, "Payer", [][2]string{
-		{"User ID", nullableInt64ToString(doc.Order.UserID)},
-		{"Account", emptyFallback(account, "-")},
-		{"Display Name", emptyFallback(displayName, "-")},
-	})
-	y = writeBillSection(pdf, y+10, "Order Details", [][2]string{
-		{"Subject", emptyFallback(doc.Order.Subject, "-")},
-		{"Description", emptyFallback(doc.Order.Body, "-")},
-		{"Created At", doc.Order.CreatedAt.Format(time.RFC3339)},
-		{"Paid At", formatOptionalTime(doc.Order.PaidAt)},
-		{"Expire At", formatOptionalTime(doc.Order.ExpireAt)},
-		{"Client IP", emptyFallback(doc.Order.ClientIP, "-")},
-	})
-
-	metadata := "{}"
-	if len(doc.Order.Metadata) > 0 {
-		raw, _ := json.MarshalIndent(doc.Order.Metadata, "", "  ")
-		metadata = string(raw)
-	}
-	y = writeBillMultilineSection(pdf, y+10, "Metadata", metadata)
-
-	pdf.SetStrokeColor(223, 227, 234)
-	pdf.Line(36, y+18, 559, y+18)
-	if err := pdf.SetFont("bill", "", 9); err != nil {
-		return nil, err
-	}
-	pdf.SetTextColor(102, 112, 133)
-	pdf.SetXY(36, y+28)
-	_ = pdf.Cell(nil, "This bill is generated by Aegis and can be used as an electronic transaction record.")
-
-	var buf bytes.Buffer
-	if _, err := pdf.WriteTo(&buf); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func writeBillSection(pdf *gopdf.GoPdf, startY float64, title string, items [][2]string) float64 {
-	_ = pdf.SetFont("bill", "", 13)
-	pdf.SetTextColor(26, 38, 52)
-	pdf.SetXY(36, startY)
-	_ = pdf.Cell(nil, title)
-
-	_ = pdf.SetFont("bill", "", 10)
-	labelX := 36.0
-	valueX := 180.0
-	y := startY + 18
-	for _, item := range items {
-		pdf.SetTextColor(102, 112, 133)
-		pdf.SetXY(labelX, y)
-		_ = pdf.Cell(nil, item[0])
-		pdf.SetTextColor(26, 38, 52)
-		pdf.SetXY(valueX, y)
-		_ = pdf.Cell(nil, item[1])
-		y += 16
-	}
-	return y
-}
-
-func writeBillMultilineSection(pdf *gopdf.GoPdf, startY float64, title string, content string) float64 {
-	_ = pdf.SetFont("bill", "", 13)
-	pdf.SetTextColor(26, 38, 52)
-	pdf.SetXY(36, startY)
-	_ = pdf.Cell(nil, title)
-
-	_ = pdf.SetFont("bill", "", 10)
-	pdf.SetTextColor(26, 38, 52)
-	pdf.SetXY(36, startY+18)
-	lines, err := pdf.SplitText(content, 523)
-	if err != nil || len(lines) == 0 {
-		lines = []string{content}
-	}
-	for _, line := range lines {
-		_ = pdf.Cell(nil, line)
-		pdf.Br(14)
-	}
-	return startY + 18 + float64(len(lines))*14
-}
-
-func registerPaymentBillFont(pdf *gopdf.GoPdf) (string, error) {
-	paths := []string{}
-	if envPath := strings.TrimSpace(os.Getenv("BILL_EXPORT_FONT_PATH")); envPath != "" {
-		paths = append(paths, envPath)
-	}
-	paths = append(paths,
-		`C:\Windows\Fonts\simhei.ttf`,
-		`C:\Windows\Fonts\msyh.ttf`,
-		`C:\Windows\Fonts\msyh.ttc`,
-		`C:\Windows\Fonts\simsun.ttc`,
-		`/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`,
-		`/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf`,
-		`/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc`,
-		`/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf`,
-		`/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc`,
-		`/usr/share/fonts/truetype/arphic/ukai.ttc`,
-		`/System/Library/Fonts/PingFang.ttc`,
-		`/System/Library/Fonts/Hiragino Sans GB.ttc`,
-	)
-	for _, path := range paths {
-		if strings.TrimSpace(path) == "" {
-			continue
-		}
-		data, err := os.ReadFile(path)
-		if err != nil || len(data) == 0 {
-			continue
-		}
-		if err := pdf.AddTTFFontData("bill", data); err == nil {
-			return path, nil
-		}
-	}
-	return "", apperrors.New(50372, http.StatusServiceUnavailable, "电子账单字体不可用，请配置 BILL_EXPORT_FONT_PATH")
-}
-
-func formatOptionalTime(value *time.Time) string {
-	if value == nil {
-		return "-"
-	}
-	return value.Format(time.RFC3339)
-}
-
-func emptyFallback(value string, fallback string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func nullableInt64ToString(value *int64) string {
-	if value == nil {
-		return "-"
-	}
-	return fmt.Sprintf("%d", *value)
 }

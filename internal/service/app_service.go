@@ -9,10 +9,13 @@ import (
 
 	appdomain "aegis/internal/domain/app"
 	captchadomain "aegis/internal/domain/captcha"
+	platformdomain "aegis/internal/domain/platform"
 	plugindomain "aegis/internal/domain/plugin"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	"aegis/pkg/receipt"
+	"aegis/pkg/timeutil"
 	gojson "github.com/goccy/go-json"
 	"go.uber.org/zap"
 )
@@ -23,16 +26,18 @@ type AppService struct {
 	sessions *redisrepo.SessionRepository
 	location *time.Location
 	plugin   *PluginService
+	// governance 平台治理判定。与 apps.status 是「与」的关系：
+	// 应用自己把开关打开也盖不过平台的冻结结论。
+	governance *PlatformGovernanceService
 }
 
 func (s *AppService) SetPluginService(p *PluginService) { s.plugin = p }
 
+// SetGovernanceService 注入平台治理服务（bootstrap 中调用，避免构造期循环依赖）。
+func (s *AppService) SetGovernanceService(g *PlatformGovernanceService) { s.governance = g }
+
 func NewAppService(log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository) *AppService {
-	location, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil {
-		location = time.FixedZone("CST", 8*3600)
-	}
-	return &AppService{log: log, pg: pg, sessions: sessions, location: location}
+	return &AppService{log: log, pg: pg, sessions: sessions, location: timeutil.DefaultLocation()}
 }
 
 func (s *AppService) GetApp(ctx context.Context, appID int64) (*appdomain.App, error) {
@@ -69,9 +74,7 @@ func (s *AppService) ResolvePolicy(app *appdomain.App) appdomain.Policy {
 	policy.LoginCheckDevice = boolSetting(app.Settings, "loginCheckDevice")
 	policy.LoginCheckUser = boolSetting(app.Settings, "loginCheckUser")
 	policy.LoginCheckIP = boolSetting(app.Settings, "loginCheckIp")
-	policy.LoginCheckDeviceTimeout = intSetting(app.Settings, "loginCheckDeviceTimeOut")
-	policy.RegisterCaptcha = boolSetting(app.Settings, "registerCaptcha")
-	policy.RegisterCaptchaTimeout = intSetting(app.Settings, "registerCaptchaTimeOut")
+	policy.DeviceRebindInterval = max(0, intSetting(app.Settings, "loginCheckDeviceTimeOut"))
 	policy.RegisterCheckIP = boolSetting(app.Settings, "registerCheckIp")
 	if value, ok := lookupBool(app.Settings, "multiDeviceLogin"); ok {
 		policy.MultiDeviceLogin = value
@@ -81,6 +84,67 @@ func (s *AppService) ResolvePolicy(app *appdomain.App) appdomain.Policy {
 		policy.MultiDeviceLimit = 1
 	}
 	return policy
+}
+
+// resolveCommerceSettings 解析应用级交易设置，未配置时回落到平台默认兑换率。
+//
+// 包级函数而非方法：PaymentService 下单时也要读同一份兑换率，但它不持有 AppService。
+// 兑换率与兜底值只在这里定义一次，避免「控制台显示 100、下单按另一个值算」。
+func resolveCommerceSettings(app *appdomain.App) appdomain.CommerceSettings {
+	settings := appdomain.CommerceSettings{IntegralPerCurrency: appdomain.DefaultIntegralPerCurrency}
+	if app == nil {
+		return settings
+	}
+	if value, ok := lookupInt(app.Settings, "integralPerCurrency"); ok && value > 0 {
+		settings.IntegralPerCurrency = value
+	}
+	if value, ok := app.Settings["receiptEmailOnPaid"].(bool); ok {
+		settings.ReceiptEmailOnPaid = value
+	}
+	if value, ok := app.Settings["receiptLocale"].(string); ok {
+		settings.ReceiptLocale = strings.TrimSpace(value)
+	}
+	return settings
+}
+
+// ResolveCommerceSettings 见 resolveCommerceSettings。
+func (s *AppService) ResolveCommerceSettings(app *appdomain.App) appdomain.CommerceSettings {
+	return resolveCommerceSettings(app)
+}
+
+// GetCommerceSettings 读取应用级交易设置。
+func (s *AppService) GetCommerceSettings(ctx context.Context, appID int64) (*appdomain.CommerceSettings, error) {
+	app, err := s.GetApp(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	settings := s.ResolveCommerceSettings(app)
+	return &settings, nil
+}
+
+// UpdateCommerceSettings 写入应用级交易设置。
+func (s *AppService) UpdateCommerceSettings(ctx context.Context, appID int64, input appdomain.CommerceSettings) (*appdomain.CommerceSettings, error) {
+	if input.IntegralPerCurrency < 1 || input.IntegralPerCurrency > 1_000_000 {
+		return nil, apperrors.New(40029, http.StatusBadRequest, "积分兑换率必须在 1-1000000 之间")
+	}
+	// 语言当场校验：存一个渲染器不认识的语言，表现是几个月后某封凭证邮件
+	// 悄悄变成了英文，那时候没人会想到是这里配错了。
+	if locale := strings.TrimSpace(input.ReceiptLocale); locale != "" && !receiptLocaleSupported(locale) {
+		return nil, apperrors.New(40030, http.StatusBadRequest, "不支持的凭证语言："+locale)
+	}
+	app, err := s.GetApp(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	settings := cloneSettingsMap(app.Settings)
+	settings["integralPerCurrency"] = input.IntegralPerCurrency
+	settings["receiptEmailOnPaid"] = input.ReceiptEmailOnPaid
+	input.ReceiptLocale = strings.TrimSpace(input.ReceiptLocale)
+	settings["receiptLocale"] = input.ReceiptLocale
+	if _, err := s.SaveApp(ctx, appdomain.AppMutation{ID: appID, Settings: settings}); err != nil {
+		return nil, err
+	}
+	return &input, nil
 }
 
 func (s *AppService) ResolveTransportEncryption(app *appdomain.App) appdomain.TransportEncryptionPolicy {
@@ -112,9 +176,6 @@ func (s *AppService) ResolveTransportEncryption(app *appdomain.App) appdomain.Tr
 		policy.Secret = secret
 	} else if secret, ok := lookupNestedString(rawConfig, "passphrase"); ok {
 		policy.Secret = secret
-	}
-	if strings.TrimSpace(policy.Secret) == "" {
-		policy.Secret = strings.TrimSpace(app.AppKey)
 	}
 	return policy
 }
@@ -255,6 +316,13 @@ func (s *AppService) EnsureLoginAllowed(ctx context.Context, appID int64) (*appd
 	if err != nil {
 		return nil, err
 	}
+	// 平台治理先判：它的结论应用管理员改不动，放在应用自治开关之前拒绝，
+	// 也避免"把 status 打开就能绕过冻结"。
+	if s.governance != nil {
+		if err := s.governance.EnsureCapability(appID, platformdomain.CapabilityLogin); err != nil {
+			return nil, err
+		}
+	}
 	if !app.Status {
 		message := app.DisabledReason
 		if message == "" {
@@ -276,6 +344,11 @@ func (s *AppService) EnsureRegisterAllowed(ctx context.Context, appID int64) (*a
 	app, err := s.GetApp(ctx, appID)
 	if err != nil {
 		return nil, err
+	}
+	if s.governance != nil {
+		if err := s.governance.EnsureCapability(appID, platformdomain.CapabilityRegister); err != nil {
+			return nil, err
+		}
 	}
 	if !app.Status {
 		message := app.DisabledReason
@@ -612,16 +685,22 @@ func (s *AppService) UpdatePolicy(ctx context.Context, appID int64, policy appdo
 	if err != nil {
 		return nil, err
 	}
+	policy.DeviceRebindInterval = max(0, policy.DeviceRebindInterval)
+	if policy.MultiDeviceLogin {
+		policy.MultiDeviceLimit = max(1, policy.MultiDeviceLimit)
+	}
 	settings := cloneSettingsMap(app.Settings)
 	settings["loginCheckDevice"] = policy.LoginCheckDevice
 	settings["loginCheckUser"] = policy.LoginCheckUser
 	settings["loginCheckIp"] = policy.LoginCheckIP
-	settings["loginCheckDeviceTimeOut"] = policy.LoginCheckDeviceTimeout
+	settings["loginCheckDeviceTimeOut"] = policy.DeviceRebindInterval
 	settings["multiDeviceLogin"] = policy.MultiDeviceLogin
 	settings["multiDeviceLoginNum"] = policy.MultiDeviceLimit
-	settings["registerCaptcha"] = policy.RegisterCaptcha
-	settings["registerCaptchaTimeOut"] = policy.RegisterCaptchaTimeout
 	settings["registerCheckIp"] = policy.RegisterCheckIP
+	// 注册验证码已归口到应用验证码配置（captcha.requireForRegister）。
+	// 残留键会被 ResolvePolicy 忽略，但留在库里会让人以为还能从这里配 —— 一并清掉。
+	delete(settings, "registerCaptcha")
+	delete(settings, "registerCaptchaTimeOut")
 
 	if _, err := s.SaveApp(ctx, appdomain.AppMutation{
 		ID:       appID,
@@ -855,26 +934,40 @@ func boolSetting(settings map[string]any, key string) bool {
 }
 
 func intSetting(settings map[string]any, key string) int {
+	value, _ := lookupInt(settings, key)
+	return value
+}
+
+// lookupInt 与 intSetting 的区别是第二个返回值区分「键不存在」与「显式为 0」。
+// 对 maxAge（0 = 永不过期）、preventReuse（0 = 不限制）这类 0 有语义的字段，
+// 必须用它才能正确区分「没配过，用默认值」和「配成了 0」。
+func lookupInt(settings map[string]any, key string) (int, bool) {
 	if settings == nil {
-		return 0
+		return 0, false
 	}
 	value, ok := settings[key]
 	if !ok || value == nil {
-		return 0
+		return 0, false
 	}
 	switch typed := value.(type) {
 	case int:
-		return typed
+		return typed, true
 	case int64:
-		return int(typed)
+		return int(typed), true
 	case float64:
-		return int(typed)
+		return int(typed), true
 	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return 0, false
+		}
 		var parsed int
-		_, _ = fmt.Sscanf(strings.TrimSpace(typed), "%d", &parsed)
-		return parsed
+		if _, err := fmt.Sscanf(trimmed, "%d", &parsed); err != nil {
+			return 0, false
+		}
+		return parsed, true
 	}
-	return 0
+	return 0, false
 }
 
 func calcPagesForService(total int64, limit int) int {
@@ -980,6 +1073,10 @@ func (s *AppService) UpdateCaptchaConfig(ctx context.Context, appID int64, cfg c
 	if err != nil {
 		return nil, err
 	}
+	// 关键：清除 Redis 中的 app 缓存。
+	// GetApp 会把 app 缓存 5 分钟，如果这里不主动失效，下次 GetCaptchaConfig 仍会
+	// 读到旧的 captcha 配置，新开关的变更会被覆盖，前端表现为"保存无效"。
+	s.invalidateAppCache(ctx, appID)
 	return &cfg, nil
 }
 
@@ -1074,4 +1171,22 @@ func normalizeUniqueIDs(ids []int64) []int64 {
 		result = append(result, id)
 	}
 	return result
+}
+
+// receiptLocaleSupported 凭证渲染器是否内置了该语言。
+// 直接问 pkg/receipt，而不是在这里再维护一份语言清单 ——
+// 新增语言时只加目录文件即可，两处各一份早晚会漂移。
+func receiptLocaleSupported(tag string) bool {
+	bundle, err := receipt.Bundle()
+	if err != nil {
+		// 目录装不起来时不拦配置：真正的问题会在渲染时以明确的错误暴露
+		return true
+	}
+	tag = strings.TrimSpace(tag)
+	for _, info := range bundle.Locales() {
+		if strings.EqualFold(info.Tag, tag) {
+			return true
+		}
+	}
+	return false
 }
