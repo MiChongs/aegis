@@ -179,12 +179,32 @@ class AegisClient private constructor(
 
     private fun buildRequest(method: String, path: String, body: Any?, query: Map<String, String>): Request {
         val builder = requestBuilder(path, query)
+        val verb = method.uppercase()
         val payload: RequestBody? = when {
-            body == null -> null
+            body == null -> emptyBodyFor(verb)
             body is RequestBody -> body
             else -> encodeBody(body)
         }
-        return builder.method(method.uppercase(), payload).build()
+        return builder.method(verb, payload).build()
+    }
+
+    /**
+     * 没有参数的 POST / PUT / PATCH 发一个空 JSON 对象，而不是什么都不发。
+     *
+     * 两边都不接受「什么都不发」：
+     *
+     *   1. OkHttp 直接拒绝构造这样的请求 ——
+     *      `IllegalArgumentException: method POST must have a request body`。
+     *      抛在构造阶段，请求根本没出设备，于是签到、退出登录、发起 TOTP 绑定、
+     *      重置恢复码这类没有入参的接口在**所有**客户端上都是不可用的。
+     *   2. 就算绕过它发一个零长度 body，服务端的 bind 会以 EOF 失败并回 40000。
+     *      参数全可选的接口（重置恢复码带不带验证码都合法）就是这么被拒的。
+     *
+     * `{}` 对两边都是合法的「没有参数」，也不会改变已经带上参数的那些调用。
+     */
+    private fun emptyBodyFor(method: String): RequestBody? = when (method) {
+        "POST", "PUT", "PATCH" -> "{}".toRequestBody(JSON_MEDIA_TYPE)
+        else -> null
     }
 
     private fun encodeBody(body: Any): RequestBody {
@@ -198,7 +218,7 @@ class AegisClient private constructor(
                 "请求体只支持 String / JsonElement / Map，或直接传 okhttp 的 RequestBody；实际 ${body::class}"
             )
         }
-        return text.toRequestBody("application/json; charset=utf-8".toMediaType())
+        return text.toRequestBody(JSON_MEDIA_TYPE)
     }
 
     private fun toJsonElement(value: Any?): JsonElement = when (value) {
@@ -306,6 +326,8 @@ class AegisClient private constructor(
     }
 
     companion object {
+        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
         @JvmStatic
         fun builder(baseUrl: String, appKey: String): Builder = Builder(baseUrl, appKey)
     }
