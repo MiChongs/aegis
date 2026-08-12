@@ -1,43 +1,46 @@
-import { LoginBackground } from "@/components/auth/login-background";
-import { LoginBrandPanel } from "@/components/auth/login-brand-panel";
-import { LoginRedirectGuard } from "@/components/auth/login-redirect-guard";
+import type { Metadata } from "next";
 import { LoginForm } from "@/components/auth/login-form";
+import { LoginMotionProvider } from "@/components/auth/login-motion";
+import { LoginRedirectGuard } from "@/components/auth/login-redirect-guard";
+import { LoginThemeToggle } from "@/components/auth/login-theme-toggle";
+
+export const metadata: Metadata = {
+  title: "登录 · Aegis Console",
+  description: "Aegis 管理控制台登录入口"
+};
 
 /**
- * 登录页
+ * 登录页 —— 单列居中，一屏之内只有登录这一件事。
  *
- * 布局参考（基于项目 Radix / shadcn 设计语言，Zinc 色阶，深浅色自适应）：
- *   - 单张全屏流动渐变背景（Sky / Cyan / Indigo 协调色 + 多层模糊色块循环位移）
- *   - 内容居中在两列网格里：**左列表单 + 右列品牌文案**
- *   - 表单卡片（`<LoginForm>`）保留现有业务逻辑不动，视觉上以 `bg-card` + 轻投影贴近参考图
- *   - 右列是大字号 Aegis 品牌 + 辅助描述，不再堆砌能力徽章
- *   - 移动端（<lg）自动堆叠为上下两段，保证表单在首屏可见
+ * ── 刻意没有的东西 ──
+ * 没有背景（此前的全屏滚动斜线已移除，组件本身保留给注册页 / 状态页 / 品牌首页）、
+ * 没有品牌大字、没有能力介绍、没有双栏。会到这个页面的人只有一个目的，
+ * 任何"顺便介绍一下"的内容都是在和输入框抢注意力。
+ * 层次全部由表面色、边框与字号级差承担，走主题变量，深浅色不需要额外补丁。
+ *
+ * ── 布局 ──
+ * `min-h-svh` 而不是 `min-h-screen`：移动端地址栏收起时 `100vh` 比可视区高一截，
+ * 登录按钮会被顶到折叠线以下 —— 这是最不该发生在登录页的事。
  */
 export default function LoginPage() {
   return (
-    <main className="relative min-h-screen w-full overflow-hidden bg-background">
-      <LoginRedirectGuard />
+    <LoginMotionProvider>
+      <main className="relative flex min-h-svh flex-col items-center justify-center px-4 py-10">
+        <LoginRedirectGuard />
 
-      {/* 流动渐变背景（全屏铺底） */}
-      <LoginBackground />
+        {/* 主题开关贴在角上：它是工具，不参与页面的视觉重心 */}
+        <div className="absolute top-4 right-4">
+          <LoginThemeToggle />
+        </div>
 
-      {/* 内容网格：lg+ 两列；移动端自然堆叠 */}
-      <div className="relative z-10 mx-auto flex min-h-screen max-w-7xl flex-col items-center justify-center gap-10 px-6 py-14 lg:grid lg:grid-cols-2 lg:items-center lg:gap-20 lg:px-12 xl:gap-28 xl:px-16">
-        {/* 左列：登录表单 */}
-        <div className="flex w-full justify-center lg:justify-end">
+        <div className="flex w-full max-w-sm flex-col gap-6">
           <LoginForm />
-        </div>
 
-        {/* 右列：品牌文案 */}
-        <div className="w-full max-w-xl lg:max-w-2xl">
-          <LoginBrandPanel />
+          <p className="text-center text-[11px] leading-5 text-muted-foreground/60">
+            &copy; {new Date().getFullYear()} Aegis Identity Fabric
+          </p>
         </div>
-      </div>
-
-      {/* 底部版权 —— 压到页面最底、不打扰主体 */}
-      <p className="pointer-events-none absolute inset-x-0 bottom-4 z-10 text-center text-[11px] text-muted-foreground/60 select-none">
-        &copy; {new Date().getFullYear()} Aegis Identity Fabric
-      </p>
-    </main>
+      </main>
+    </LoginMotionProvider>
   );
 }

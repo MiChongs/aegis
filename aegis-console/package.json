@@ -49,6 +49,7 @@
     "embla-carousel-react": "^8.6.0",
     "highlight.js": "^11.11.1",
     "i18n-iso-countries": "^7.14.0",
+    "input-otp": "^1.4.2",
     "lucide-react": "^1.31.0",
     "maplibre-gl": "^6.2.0",
     "monaco-editor": "^0.56.0",

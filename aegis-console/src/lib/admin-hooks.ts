@@ -219,7 +219,8 @@ import {
   getGeoBans,
   upsertGeoBan,
   toggleGeoBan,
-  deleteGeoBan
+  deleteGeoBan,
+  getOIDCPublicConfig
 } from "@/lib/api/system";
 import type { FirewallLogListParams, IPBanListParams } from "@/lib/api/system";
 import type { AdminAppUserListParams } from "@/lib/api/apps";
@@ -2986,6 +2987,21 @@ export function useAdminCaptchaPublicConfigQuery() {
     queryKey: ["admin-captcha-public-config"],
     queryFn: () => getAdminCaptchaPublicConfig(),
     staleTime: 60_000
+  });
+}
+
+/**
+ * 登录页的 OIDC 开关（免登录可读）。
+ *
+ * 查不到就当没开：SSO 入口只是登录方式之一，接口挂了不该让整个登录页
+ * 挂在一个错误态上 —— 密码登录本来就还能用。
+ */
+export function useOIDCPublicConfigQuery() {
+  return useQuery({
+    queryKey: ["admin-oidc-public-config"],
+    queryFn: () => getOIDCPublicConfig(),
+    staleTime: 60_000,
+    retry: false
   });
 }
 
