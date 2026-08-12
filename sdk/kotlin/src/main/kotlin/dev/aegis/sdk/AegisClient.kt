@@ -135,7 +135,14 @@ class AegisClient private constructor(
         return execute(buildRequest(method, path, body, query), requireAuth, allowRetry = true)
     }
 
-    /** 上传文件。multipart 在三档下都可用：sealed 档整个 multipart 体被加密。 */
+    /**
+     * 上传文件。multipart 在三档下都可用：sealed 档整个 multipart 体被加密。
+     *
+     * [contentType] 不传时按文件扩展名推断。此前这里对**所有**上传固定写
+     * `application/octet-stream`，而服务端的类型校验通常同时看文件名与这个头
+     * （头像那条就是「扩展名或 Content-Type 命中其一即可」），
+     * 一律写死等于把其中一条线索作废：一个丢了扩展名的临时文件因此无论如何都传不上去。
+     */
     @Throws(IOException::class)
     @JvmOverloads
     fun upload(
@@ -143,16 +150,39 @@ class AegisClient private constructor(
         file: File,
         fieldName: String = "file",
         fields: Map<String, String> = emptyMap(),
+        contentType: String? = null,
     ): JsonElement {
         val builder = MultipartBody.Builder().setType(MultipartBody.FORM)
         fields.forEach { (key, value) -> builder.addFormDataPart(key, value) }
-        builder.addFormDataPart(
-            fieldName, file.name,
-            file.asRequestBody("application/octet-stream".toMediaType()),
-        )
+        val mediaType = (contentType ?: guessContentType(file.name)).toMediaType()
+        builder.addFormDataPart(fieldName, file.name, file.asRequestBody(mediaType))
         val request = requestBuilder(path, emptyMap()).post(builder.build()).build()
         return execute(request, requireAuth = true, allowRetry = true)
     }
+
+    /**
+     * 按扩展名给出一个像样的 Content-Type。
+     *
+     * 只覆盖平台真正会收的那几类（头像、工单附件、存储上传），认不出来的一律回落到
+     * `application/octet-stream` —— 那是"不知道"的正确表达，不是猜一个像的填上去。
+     */
+    private fun guessContentType(fileName: String): String =
+        when (fileName.substringAfterLast('.', "").lowercase()) {
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "webp" -> "image/webp"
+            "bmp" -> "image/bmp"
+            "svg" -> "image/svg+xml"
+            "heic" -> "image/heic"
+            "pdf" -> "application/pdf"
+            "txt", "log" -> "text/plain"
+            "json" -> "application/json"
+            "zip" -> "application/zip"
+            "mp4" -> "video/mp4"
+            "mp3" -> "audio/mpeg"
+            else -> "application/octet-stream"
+        }
 
     /**
      * 实时通道的握手地址。

@@ -42,6 +42,37 @@ class AegisRequestBodyTest {
         }
     }
 
+    /**
+     * 上传的 Content-Type 按扩展名推断。
+     *
+     * 服务端的类型校验通常「文件名或 Content-Type 命中其一即可」，两条线索都作废时
+     * 一张真正的 JPEG 也会被拒。这里用一个临时文件走一遍真实的 [AegisClient.upload]：
+     * 请求同样只应当在网络层失败。
+     */
+    @Test
+    fun `upload builds a multipart request with a typed part`() {
+        // 上传要求认证，没有令牌时会在**构造之前**就以 AUTH 失败 ——
+        // 那样这条用例什么也验证不到，所以先放一个令牌进去。
+        val tokens = AegisTokenStore.inMemory().apply { save("access-token", "refresh-token") }
+        val client = AegisClient.builder("http://127.0.0.1:1", "demo_app")
+            .tokenStore(tokens)
+            .build()
+        val file = java.io.File.createTempFile("aegis-avatar", ".png")
+        file.writeBytes(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47))
+        try {
+            val failure = runCatching { client.upload("/me/avatar", file) }.exceptionOrNull()
+
+            assertIs<AegisException>(failure, "预期是网络异常，实际 $failure")
+            assertEquals(
+                AegisException.Kind.NETWORK,
+                failure.kind,
+                "multipart 应当被构造出来并在传输层失败",
+            )
+        } finally {
+            file.delete()
+        }
+    }
+
     /** GET / DELETE / HEAD 不能带 body，补一个空对象反而会被一部分服务端拒绝。 */
     @Test
     fun `body-less GET and DELETE stay body-less`() {
