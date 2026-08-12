@@ -11,7 +11,8 @@
     "dev": "node ./scripts/dev-with-friendly-proxy.mjs -H 0.0.0.0",
     "prebuild": "node ./scripts/clean-next.mjs && node ./scripts/sync-monaco-assets.mjs",
     "build": "next build",
-    "start": "next start",
+    "start": "node --import=./scripts/forwarded-headers-preload.mjs ./node_modules/next/dist/bin/next start",
+    "test": "node --test \"scripts/*.test.mjs\"",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "typecheck:ts6": "tsc6 --noEmit"

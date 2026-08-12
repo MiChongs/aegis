@@ -168,6 +168,62 @@ Zeabur / Kubernetes / Docker Compose / ECS 里，入口网关到业务容器这�
 
 显式选 `trusted-ranges` 则**不做任何补充**：那一档要的就是「受信集合严格等于我写的那几行」。
 
+## 控制台反代这一跳
+
+浏览器访问管理控制台时，请求并不直接打到本服务 —— `aegis-console` 用 Next.js 的
+rewrites 把 `/api/*` 同源反代过来（理由见 `aegis-console/next.config.ts`：
+局域网免切地址、不暴露后端 host、绕开 CORS 与混合内容）。于是链路上多了一跳：
+
+```
+浏览器 ──▶ 入口（Zeabur / Nginx / CDN）──▶ aegis-console (Next.js) ──▶ 本服务
+```
+
+**Next.js 内置的那个代理不追加转发头。** 它只手工塞了一个 `x-forwarded-host`，
+httpxy 的 `xfwd` 选项并没有打开（`next/dist/server/lib/router-utils/proxy-request.js`）。
+少了控制台这一跳的事实，本服务面对的是两种都不好的局面：
+
+| 拓扑 | 本服务收到的转发链 | 后果 |
+|---|---|---|
+| 前面没有入口反代（本机开发 / 自建单机） | 空 | 退回直连对端 —— 全站用户的 IP 都是控制台自己 |
+| 前面有入口反代 | 只有入口写的那一条 | 最右端没有可信方为它背书，客户端自己也能写出一模一样的链 |
+
+因此控制台在**自己的 HTTP 服务器边界**把「本进程亲眼看到的直连对端」追加到
+`X-Forwarded-For` 末尾（上游已经在用 `Forwarded` 时同样续写），语义等同于
+nginx 的 `proxy_add_x_forwarded_for`。补齐之后两种拓扑都成立：
+
+```
+X-Forwarded-For: 8.8.8.8, 203.0.113.9, 10.42.0.7
+                 ↑客户端伪造  ↑入口写的真实客户端  ↑控制台追加的入口地址
+```
+
+**控制台不判断谁可信，也没有任何受信网段配置。** 受信集合只有 `TRUSTED_PROXIES`
+这一个入口，控制台再配一份，「到底谁说了算」就没有答案了 —— 它只负责如实追加一条
+事实，判定权留在本服务。也因此控制台侧**不需要任何环境变量**。
+
+对端地址只存在于 socket 上，而 Next 的 middleware / Route Handler 拿到的都是
+Web `Request`（`NextRequest.ip` 在 Next 15 已移除），那个 `http.Server` 又由 Next
+自己创建并持有。所以实现是一个 `--import` 预载，在 Next 建服务器之前替换
+`http.createServer`：
+
+| 位置 | 职责 |
+|---|---|
+| `aegis-console/scripts/forwarded-headers.mjs` | 追加逻辑本身（含 `pnpm test` 钉住的行为约束） |
+| `aegis-console/scripts/forwarded-headers-preload.mjs` | `--import` 预载入口 |
+| `package.json` 的 `start` | 命令行 `--import`（`next start` 不 fork） |
+| `scripts/dev-with-friendly-proxy.mjs` | 塞进 `NODE_OPTIONS`（`next dev` 会 fork 出真正的服务器进程，命令行传不过去） |
+
+本机开发时还有一层与控制台无关、但看起来像「透传没生效」的现象：从局域网地址
+（`192.168.x.x`）访问控制台时，控制台如实追加的那一条**本身就落在 `infra` 里**，
+本服务按受信集合把它跳过，链走空之后退回直连对端，于是又变回 `127.0.0.1`。
+这不是漏判 —— 私网客户端与私网代理在地址上确实无法区分。开发机上想看到真实的
+局域网地址，把后端的 `TRUSTED_PROXIES` 收窄成 `loopback` 即可。
+
+> **这件事的自检线索只有一条**：控制台启动时会打
+> `▲ 客户端 IP 透传已启用…`。托管平台若绕过 `package.json` 的脚本直接跑
+> `next start`（Zeabur 的 serverless 档就会这样），预载不执行，而少一条转发链条目
+> 在功能上完全看不出来 —— **日志里没有这行，就是没生效**，此时链路退回「完全依赖
+> 入口反代写的那条 XFF」。
+
 ## 排障：判定结果自己会说话
 
 三个入口，从粗到细：
@@ -214,6 +270,7 @@ X-Aegis-Client-IP-Source: source=forwarded-chain; strategy=auto; header=X-Forwar
 | `source=peer`，`peer_trusted=false` | 直连对端不在受信网段内，转发头被整个忽略 | 见[入口反代持有公网地址时](#入口反代持有公网地址时)；服务端已就此打过 warn |
 | `source=peer`，`chain` 为空 | 反代根本没有转发 `X-Forwarded-For` | 让反代追加 XFF；只能设 `X-Real-IP` 的话配 `CLIENT_IP_HEADER=X-Real-IP` |
 | `source=peer`，`chain` 非空 | 转发链条目全在受信集合内 | 受信集合过宽，收窄它 |
+| 只有**经控制台**访问时 IP 不对，直连本服务正常 | 控制台的 IP 透传没生效 | 见[控制台反代这一跳](#控制台反代这一跳)：控制台启动日志里应有 `▲ 客户端 IP 透传已启用` |
 
 ## 实现
 
@@ -222,6 +279,7 @@ X-Aegis-Client-IP-Source: source=forwarded-chain; strategy=auto; header=X-Forwar
 | [`pkg/clientip`](../pkg/clientip) | 判定规则：受信集合、平台档案、直连对端闸门 |
 | [`internal/middleware/client_ip.go`](../internal/middleware/client_ip.go) | 中间件：判定并**改写 `RemoteAddr`** |
 | `internal/transport/http/router.go` | 挂在中间件栈首位；同时把 gin 自带的转发头解析关掉 |
+| [`aegis-console/scripts/forwarded-headers.mjs`](../aegis-console/scripts/forwarded-headers.mjs) | 控制台反代那一跳的追加逻辑，见[上一节](#控制台反代这一跳) |
 
 转发头的解析本身（XFF 与 RFC 7239 Forwarded、端口、IPv6 方括号、zone、多个同名头）
 交给 [realclientip-go](https://github.com/realclientip/realclientip-go)。

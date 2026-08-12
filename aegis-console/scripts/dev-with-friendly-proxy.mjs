@@ -17,6 +17,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 
+import { withForwardedPreload } from "./forwarded-headers.mjs";
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const consoleRoot = resolve(scriptDir, "..");
 const nextBin = join(consoleRoot, "node_modules", "next", "dist", "bin", "next");
@@ -29,9 +31,11 @@ if (!existsSync(nextBin)) {
 
 const nextArgs = ["dev", ...process.argv.slice(2)];
 
+// 客户端 IP 透传的预载走 NODE_OPTIONS：`next dev` 会再 fork 一层真正的服务器进程，
+// 而那一层的 execArgv 由它自己按 NODE_OPTIONS 重拼，命令行上的 --import 传不过去。
 const child = spawn(process.execPath, [nextBin, ...nextArgs], {
   cwd: consoleRoot,
-  env: process.env,
+  env: withForwardedPreload(process.env),
   stdio: ["inherit", "pipe", "pipe"]
 });
 

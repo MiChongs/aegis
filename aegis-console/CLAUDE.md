@@ -244,8 +244,48 @@ pnpm build        # 生产构建
 pnpm start        # 生产启动
 pnpm typecheck    # tsc --noEmit
 pnpm lint         # ESLint
+pnpm test         # node --test（目前只有 scripts/ 下的启动期脚本）
 pnpm clean        # 手动清理 .next
 ```
+
+## 同源反代与客户端 IP 透传
+
+`/api/*`、`/openapi.json`、`/healthz`、`/readyz` 由 `next.config.ts` 的 rewrites
+同源反代到 `AEGIS_API_BACKEND`。浏览器只看到相对路径，后端 host 不外露。
+
+代价是链路上多了一跳，而 **Next 内置的那个代理不追加转发头**
+（`proxy-request.js` 只手工塞了 `x-forwarded-host`，httpxy 的 `xfwd` 没开）。
+后端的限流 / 封禁 / 地理风控 / 审计全部建立在客户端 IP 上，缺了这一跳的事实，
+本机开发时全站请求都是 `127.0.0.1`，线上则完全押在入口反代写的那条 XFF 上。
+
+因此启动时会预载一段逻辑，在**自己的 HTTP 服务器边界**把「本进程看到的直连对端」
+追加到 `X-Forwarded-For` 末尾（上游用了 `Forwarded` 就一并续写）：
+
+| 文件 | 职责 |
+|---|---|
+| `scripts/forwarded-headers.mjs` | 追加逻辑 + `withForwardedPreload()`；行为由 `pnpm test` 钉住 |
+| `scripts/forwarded-headers-preload.mjs` | `--import` 预载入口，改写 `http.createServer` |
+
+四条硬约束：
+
+1. **装载点有两处，形式不同不是随手写的。** `pnpm start` 在命令行上 `--import`；
+   `pnpm dev` 必须走 `NODE_OPTIONS`（`scripts/dev-with-friendly-proxy.mjs` 里的
+   `withForwardedPreload`）—— `next dev` 会 fork 出真正的服务器进程，且那一层的
+   `execArgv` 由它自己按 `NODE_OPTIONS` 重拼，命令行上的 `--import` 传不过去。
+2. **只追加，不判断谁可信，也不加任何环境变量。** 受信网段只有后端
+   `TRUSTED_PROXIES` 一个入口；这里再配一份，「到底谁说了算」就没有答案了。
+   追加而非覆盖也是刻意的：客户端伪造的条目留在链的左边，后端从右往左走时
+   先遇到我们写的这条真事实。
+3. **不要改成中间件（`proxy.ts`）或 Route Handler。** 它们拿到的是 Web `Request`，
+   看不到 socket（`NextRequest.ip` 在 Next 15 已移除），没有对端地址可写。
+   而那个 `http.Server` 由 Next 自己创建并持有，外部拿不到实例。
+4. **`installOnServer` 钩的是 `server.emit`，不是 `prependListener('upgrade')`。**
+   给一个本来没有 upgrade 监听器的 server 装上监听器，Node 就不再自动销毁升级
+   连接了 —— 那会把「没人处理的 WebSocket 握手」从立刻断开变成一直挂着。
+
+启动时打的那行 `▲ 客户端 IP 透传已启用…` 是这件事**唯一的自检线索**：托管平台若
+绕过 `package.json` 的脚本直接跑 `next start`，预载不执行，而少一条转发链条目
+在功能上完全看不出来。完整说明见 [docs/client-ip.md](../docs/client-ip.md#控制台反代这一跳)。
 
 ## 环境变量
 
@@ -431,6 +471,8 @@ Shell 挂载 1.5s 后预热一次，面板打开时再兜底触发一次
 | `components/apps/app-row-actions.tsx` | 单应用操作菜单（列表行与详情页头部共用） |
 | `components/apps/app-detail-header.tsx` | 详情页标识条 + 带区块换应用 + 关联页面入口 |
 | `components/apps/app-section-nav.tsx` | 区块导航（宽屏竖向分组 / 窄屏横向胶囊） |
+| `components/apps/vip/` | 会员区块：套餐 / 功能标识 / 试用 / 会员查询（见下节） |
+| `lib/api/vip.ts` / `lib/vip-hooks.ts` | 会员域 API 与 React Query hooks |
 
 四条硬约束：
 
@@ -621,6 +663,36 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 切页签时反复设置同一件事。各口径的时间列不同（实收按到账、退款按退款成功、
 钱包按流水时间），这一点写在日期选择器的脚注里 —— 不写就会有人问「为什么
 订单页 30 笔、概览说 28 笔」。
+
+## 会员区块（/apps/{appKey}?tab=vip）
+
+| 文件 | 职责 |
+|---|---|
+| `components/apps/vip/app-vip-panel.tsx` | 骨架 + 四个视图的内部切换 |
+| `components/apps/vip/vip-plans-panel.tsx` | 套餐：付费与试用**分区**列出、逐条启停与删除 |
+| `components/apps/vip/vip-plan-editor.tsx` | 套餐编辑抽屉（种类 / 时长 / 价格 / 功能勾选 / 设备限制） |
+| `components/apps/vip/vip-features-panel.tsx` | 功能标识目录：建 / 停用 / 删除，并说清被哪些套餐用着 |
+| `components/apps/vip/vip-trial-panel.tsx` | 试用：汇总（累计 / 试用中 / **已转化** / 转化率）+ 领取记录 + 代领 + 恢复资格 |
+| `components/apps/vip/vip-member-panel.tsx` | 会员查询：权益全貌 + 试用历史与资格 + 授予 + 开通记录 |
+| `components/apps/vip/vip-shared.tsx` | 来源 / 状态徽标、功能标识徽标、金额与剩余时长格式化 |
+
+四条硬约束：
+
+1. **付费与试用分区展示，不混在一张表里。** 它们的入口完全不同（一个被购买、
+   一个被领取），混着列会让人以为试用也能卖 —— 而那正是后端两道闸门拦下的事。
+2. **功能标识只在目录里建，套餐上只能勾。** 允许在套餐里手打标识等于放弃了
+   「拼错有报错」这件事：`exprot` 在服务端表现为校验永远返回 false，没有任何一处说得出为什么。
+3. **删除前必须说清影响面。** 删功能标识时告知还有几个套餐挂着它（那几个套餐从此不再
+   发放这项权益，但已开通的用户不受影响 —— 他们拿的是账本快照）；删套餐时说明
+   删的是售卖入口而不是已开通的会员。
+4. **恢复试用资格只删资格，不收回时长。** 客服要的是"让他重领"，
+   顺手扣掉时长会变成用户眼里的"我的会员没了"。
+
+`UserPicker` 的触发器是 `w-full`，**塞进 `SectionCard` 的 `aside` 必须套一层定宽容器** ——
+`SectionCard` 是 `overflow-hidden`，不定宽会把旁边的按钮整个顶出卡片外（不报错，只是看不见）。
+
+会员时长与功能权益的语义（顺延、并集、快照）全部由后端决定，控制台只展示；
+判定入口在 [internal/service](../internal/service/CLAUDE.md#会员判定与试用期会员)。
 
 ## 内容中心（/content）
 
