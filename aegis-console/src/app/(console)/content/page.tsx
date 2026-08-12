@@ -2,8 +2,9 @@
 
 import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { GalleryHorizontalEnd, Megaphone, MousePointerClick, Pin, Radio, Server } from "lucide-react";
+import { GalleryHorizontalEnd, Megaphone, MousePointerClick, Pin, Radio, ScrollText, Server } from "lucide-react";
 import { AnnouncementsPanel } from "./announcements-panel";
+import { LegalAdminPanel } from "@/components/legal/legal-admin-panel";
 import { BannerPanel } from "@/components/content/banner-panel";
 import { NoticePanel } from "@/components/content/notice-panel";
 import { StatTile, clickRate, formatCount, formatDateTime } from "@/components/content/content-shared";
@@ -117,6 +118,10 @@ function ContentPageInner() {
             <Server className="size-3.5" />
             系统公告
           </TabsTrigger>
+          <TabsTrigger value="legal">
+            <ScrollText className="size-3.5" />
+            法律文本
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="banners" className="mt-4">
@@ -132,6 +137,13 @@ function ContentPageInner() {
             平台级广播，发给控制台的全体管理员，不随上方应用切换
           </p>
           <AnnouncementsPanel />
+        </TabsContent>
+
+        <TabsContent value="legal" className="mt-4 space-y-3">
+          <p className="text-xs text-muted-foreground">
+            用户协议与隐私政策。平台级，与上方应用切换无关；未自定义的语言对外发送系统内置全文
+          </p>
+          <LegalAdminPanel />
         </TabsContent>
       </Tabs>
     </div>

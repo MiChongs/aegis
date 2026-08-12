@@ -4,90 +4,69 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sort"
-	"strconv"
-	"sync"
 
+	"aegis/internal/authz"
 	admindomain "aegis/internal/domain/admin"
 	orgdomain "aegis/internal/domain/organization"
 	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
 
-	"github.com/casbin/casbin/v2"
-	"github.com/casbin/casbin/v2/model"
 	"go.uber.org/zap"
 )
 
 // OrgAccessControl 组织域权限判定。
 //
-// 与平台级 RBAC（AdminService.Authorize）的分工：
+// **不再自带 enforcer。** 这里曾经有平台里第二个 Casbin 实例、第二套模型、
+// 第二份重载逻辑，两套判定语义各自演化：平台侧不支持通配与拒绝，组织侧
+// 支持 `*` 但只有"全部/精确"两档域匹配。同一个平台里两种授权语义，
+// 排查问题时第一步永远是"先搞清楚这条路径走的是哪一套"。
 //
-//	平台级  sub = 角色key,              obj = 权限点          —— 全局 / 应用作用域
-//	组织级  sub = 角色key, dom = org:N, obj = 权限点          —— 组织作用域
+// 现在两者共用 internal/authz 的同一个引擎、同一个模型、同一张策略表，
+// 靠**域**（org:N）与**主体前缀**（orgrole:）区分：
 //
-// Casbin 里只装载「角色 → 权限」这一层策略（数量 = 角色数 × 权限数，可控），
-// 「管理员 → 角色」由 org_members / org_role_members 现查。
-// 把用户关系也灌进内存 enforcer 会随成员数线性膨胀，且每次成员变更都要同步。
+//	平台 / 应用   sub = role:<key>              dom = platform | app:N
+//	组织          sub = orgrole:<key>           dom = *        （内置角色，对所有组织通用）
+//	              sub = orgrole:<orgID>:<key>   dom = org:N    （某组织的自定义角色）
+//
+// 「管理员 → 组织角色」仍然现查（org_members / org_role_grants），不进策略表：
+// 成员关系随组织规模线性增长，且撤销必须立即生效。
 type OrgAccessControl struct {
 	log   *zap.Logger
 	pg    *pgrepo.Repository
 	admin *AdminService
-
-	mu       sync.RWMutex
-	enforcer *casbin.Enforcer
+	authz *authz.Engine
 }
 
 // NewOrgAccessControl 创建组织权限判定器
-func NewOrgAccessControl(log *zap.Logger, pg *pgrepo.Repository, admin *AdminService) (*OrgAccessControl, error) {
-	c := &OrgAccessControl{log: log, pg: pg, admin: admin}
-	enforcer, err := newOrgEnforcer()
-	if err != nil {
-		return nil, err
+func NewOrgAccessControl(log *zap.Logger, pg *pgrepo.Repository, admin *AdminService, engine *authz.Engine) (*OrgAccessControl, error) {
+	if engine == nil {
+		return nil, fmt.Errorf("授权引擎未初始化")
 	}
-	c.enforcer = enforcer
-	return c, nil
+	return &OrgAccessControl{log: log, pg: pg, admin: admin, authz: engine}, nil
 }
 
-// newOrgEnforcer 组织域 Casbin enforcer。
+// OrgBuiltinPolicies 组织内置角色的策略（对所有组织通用，域取 *）。
 //
-// dom 为 "*" 的策略对所有组织生效（内置角色）；
-// obj 为 "*" 表示该角色在此域内不受权限点约束（owner）。
-func newOrgEnforcer() (*casbin.Enforcer, error) {
-	m, err := model.NewModelFromString(`
-[request_definition]
-r = sub, dom, obj
-
-[policy_definition]
-p = sub, dom, obj
-
-[role_definition]
-g = _, _, _
-
-[policy_effect]
-e = some(where (p.eft == allow))
-
-[matchers]
-m = g(r.sub, p.sub, r.dom) && (p.dom == "*" || p.dom == r.dom) && (p.obj == "*" || p.obj == r.obj)
-`)
-	if err != nil {
-		return nil, err
-	}
-	enforcer, err := casbin.NewEnforcer(m)
-	if err != nil {
-		return nil, err
-	}
-	// 内置角色对所有组织通用
+// 与平台内置角色一样由代码给出、启动时整组重刷，因此"给 org_admin 加一个权限点"
+// 能随版本到达所有既有部署。
+func OrgBuiltinPolicies() []authz.PolicyRule {
+	rules := make([]authz.PolicyRule, 0, 64)
 	for roleKey, permissions := range orgdomain.BuiltinRolePermissions() {
+		subject := authz.OrgRoleSubject(roleKey)
 		for _, permission := range permissions {
-			if _, err := enforcer.AddPolicy(roleKey, "*", permission); err != nil {
-				return nil, err
-			}
+			rules = append(rules, authz.PolicyRule{
+				PType:  "p",
+				Values: []string{subject, authz.AnyDomain, permission, authz.EffectAllow},
+				Source: authz.SourceBuiltin,
+				Owner:  subject,
+			})
 		}
 	}
-	return enforcer, nil
+	return rules
 }
 
-// Reload 从数据库重新装载组织自定义角色策略。
+// Reload 把组织自定义角色的权限同步进策略表。
+//
 // 角色的增删改都要调用它，否则新配的权限要等到重启才生效。
 func (c *OrgAccessControl) Reload(ctx context.Context) error {
 	if c == nil || c.pg == nil {
@@ -97,23 +76,15 @@ func (c *OrgAccessControl) Reload(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	enforcer, err := newOrgEnforcer()
-	if err != nil {
-		return err
-	}
-	for _, p := range policies {
-		domain := orgDomainKey(p.OrgID)
-		subject := orgRoleSubject(p.OrgID, p.RoleKey)
-		for _, permission := range p.Permissions {
-			if _, err := enforcer.AddPolicy(subject, domain, permission); err != nil {
-				return err
-			}
+	for _, policy := range policies {
+		subject := authz.OrgCustomRoleSubject(policy.OrgID, policy.RoleKey)
+		if err := c.authz.SetRolePolicy(ctx, authz.SourceOrg, subject, authz.RolePolicy{
+			Allow:  policy.Permissions,
+			Domain: authz.OrgDomain(policy.OrgID),
+		}, nil); err != nil {
+			return err
 		}
 	}
-
-	c.mu.Lock()
-	c.enforcer = enforcer
-	c.mu.Unlock()
 	c.log.Info("组织角色策略已装载", zap.Int("roles", len(policies)))
 	return nil
 }
@@ -229,44 +200,30 @@ func (c *OrgAccessControl) Resolve(ctx context.Context, access *admindomain.Acce
 		return nil, err
 	}
 
-	subjects := make([]string, 0, len(grants)+1)
+	subjects := make([]string, 0, len(grants)+2)
+	// 管理员本人也是主体：组织域同样支持"只给这一个人"的直接授予/禁止。
+	subjects = append(subjects, authz.AdminSubject(access.AdminID))
 	if orgRole != "" {
-		subjects = append(subjects, orgRole)
+		subjects = append(subjects, authz.OrgRoleSubject(orgRole))
 	}
 	scoped := false
 	for _, g := range grants {
 		result.CustomRoles = append(result.CustomRoles, g.RoleKey)
-		subjects = append(subjects, orgRoleSubject(orgID, g.RoleKey))
+		subjects = append(subjects, authz.OrgCustomRoleSubject(orgID, g.RoleKey))
 		if g.ScopeDeptID != nil {
 			scoped = true
 		}
 	}
-	if len(subjects) == 0 {
+	if orgRole == "" && len(grants) == 0 {
 		return result, nil // 非成员：权限集为空
 	}
 
-	domain := orgDomainKey(orgID)
-	c.mu.RLock()
-	enforcer := c.enforcer
-	c.mu.RUnlock()
-
-	for _, permission := range orgdomain.AllPermissions() {
-		for _, subject := range subjects {
-			allowed, err := enforcer.Enforce(subject, domain, permission)
-			if err != nil {
-				return nil, err
-			}
-			if allowed {
-				result.permSet[permission] = true
-				break
-			}
-		}
+	// 一次展开，与真实判定同一段代码 —— 控制台按这份集合决定按钮显隐，
+	// 两段各写一遍必然漂移成"点了才 403"。
+	result.Permissions = c.authz.PermissionsFor(subjects, authz.OrgDomain(orgID), orgdomain.AllPermissions())
+	for _, p := range result.Permissions {
+		result.permSet[p] = true
 	}
-	result.Permissions = make([]string, 0, len(result.permSet))
-	for p := range result.permSet {
-		result.Permissions = append(result.Permissions, p)
-	}
-	sort.Strings(result.Permissions)
 
 	// 只有当授予记录带部门限定时才去查范围 —— 绝大多数成员不受限，不必多打一次库
 	if scoped {
@@ -331,14 +288,6 @@ func (c *OrgAccessControl) CanActOnMember(access *OrgAccess, targetRole string) 
 }
 
 // ── 内部辅助 ──
-
-func orgDomainKey(orgID int64) string {
-	return "org:" + strconv.FormatInt(orgID, 10)
-}
-
-func orgRoleSubject(orgID int64, roleKey string) string {
-	return "org:" + strconv.FormatInt(orgID, 10) + ":" + roleKey
-}
 
 func orgRoleLabel(role string) string {
 	for _, meta := range orgdomain.BuiltinRoles() {

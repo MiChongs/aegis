@@ -31,7 +31,7 @@ Config
 ├── NATS       → NATSConfig (URL, StreamName)
 ├── Temporal   → TemporalConfig (HostPort, Namespace, TaskQueue, 超时)
 ├── AutoSign   → AutoSignConfig (定时签到参数)
-├── Banner     → BannerConfig (启动横幅：开关/详略/字体/着色/宽度/主机采集)
+├── Banner     → BannerConfig (启动横幅：开关/详略/字体/着色/宽度/主机采集/路由分区)
 └── OAuth      → map[string]OAuthProviderConfig (qq/wechat/github/google/microsoft/weibo)
 ```
 

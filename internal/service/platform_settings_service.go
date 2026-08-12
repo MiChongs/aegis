@@ -23,6 +23,7 @@ const ldapSettingKey = "admin.ldap"
 const oidcSettingKey = "admin.oidc"
 const samlSettingKey = "admin.saml"
 const brandingSettingKey = "platform.branding"
+const selfServiceSettingKey = "admin.self_service"
 
 type PlatformSettingsService struct {
 	cfg      config.Config
@@ -175,6 +176,7 @@ func (s *PlatformSettingsService) GetSettings(ctx context.Context) (*systemdomai
 	oidcRecord, _ := s.pg.GetPlatformSetting(ctx, oidcSettingKey)
 	samlRecord, _ := s.pg.GetPlatformSetting(ctx, samlSettingKey)
 	brandingRecord, _ := s.pg.GetPlatformSetting(ctx, brandingSettingKey)
+	selfServiceRecord, _ := s.pg.GetPlatformSetting(ctx, selfServiceSettingKey)
 	return &systemdomain.SettingsView{
 		Firewall:     s.buildFirewallView(firewallRecord),
 		Security:     s.buildSecurityView(securityRecord),
@@ -183,6 +185,7 @@ func (s *PlatformSettingsService) GetSettings(ctx context.Context) (*systemdomai
 		OIDC:         s.buildOIDCView(oidcRecord),
 		SAML:         s.buildSAMLView(samlRecord),
 		Branding:     buildBrandingView(brandingRecord),
+		SelfService:  buildSelfServiceView(selfServiceRecord),
 	}, nil
 }
 
@@ -335,6 +338,20 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 		brandingRecord, _ = s.pg.GetPlatformSetting(ctx, brandingSettingKey)
 	}
 
+	// 自助能力配置（纯 JSON 持久化，无热重载 —— 每次判定都现读）
+	var selfServiceRecord *systemdomain.SettingRecord
+	{
+		existingRecord, _ := s.pg.GetPlatformSetting(ctx, selfServiceSettingKey)
+		next := applySelfServicePatch(decodeSelfServiceConfig(existingRecord), patch.SelfService)
+		payload, err := json.Marshal(next)
+		if err == nil {
+			selfServiceRecord, _ = s.pg.UpsertPlatformSetting(ctx, systemdomain.SettingRecord{Key: selfServiceSettingKey, Value: payload, UpdatedBy: adminID})
+		}
+	}
+	if selfServiceRecord == nil {
+		selfServiceRecord, _ = s.pg.GetPlatformSetting(ctx, selfServiceSettingKey)
+	}
+
 	if s.plugin != nil {
 		go s.plugin.ExecuteHook(context.Background(), HookSettingsUpdated, map[string]any{}, plugindomain.HookMetadata{})
 	}
@@ -346,6 +363,7 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 		OIDC:         s.buildOIDCView(oidcRecord),
 		SAML:         s.buildSAMLView(samlRecord),
 		Branding:     buildBrandingView(brandingRecord),
+		SelfService:  buildSelfServiceView(selfServiceRecord),
 	}, nil
 }
 
@@ -645,6 +663,93 @@ func (s *PlatformSettingsService) GetAdminCaptchaConfig(ctx context.Context) sys
 		return systemdomain.AdminCaptchaSettingsView{Type: "image"}
 	}
 	return s.buildAdminCaptchaView(record)
+}
+
+// BrandingPlatformName 当前生效的平台名称，读不到时返回空串。
+//
+// 给的是名称而不是整份品牌配置：调用方（法律文本的占位符替换）只需要这一个字段，
+// 返回整份配置会让「谁在读品牌配置」这件事在代码里查不清楚。
+func (s *PlatformSettingsService) BrandingPlatformName(ctx context.Context) string {
+	record, err := s.pg.GetPlatformSetting(ctx, brandingSettingKey)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(loadBrandingFromRecord(record).PlatformName)
+}
+
+// ── 自助能力配置 ──
+
+// selfServiceDefaults 是"这个键还没落过库"时生效的取值。
+//
+// 注册默认开着：这条路由在引入本配置之前就是开的，把默认值改成关等于
+// 一次静默的行为变更 —— 升级后所有部署方的注册页会突然开始报 403。
+// 自助建应用同样默认开着，它是零角色账号唯一的自举出口；真正的闸门是配额。
+var selfServiceDefaults = systemdomain.SelfServiceSettingsView{
+	AllowRegistration: true,
+	AllowAppCreation:  true,
+	MaxAppsPerAdmin:   3,
+	CreatorRoleKey:    "app_admin",
+}
+
+// selfServiceMaxAppsCeiling 配额上限。
+// 不设上限时「不限」与「填了个很大的数」在库里长得一样，
+// 而前者应该显式写 0 —— 那是唯一能在 UI 上表达清楚的写法。
+const selfServiceMaxAppsCeiling = 1000
+
+func decodeSelfServiceConfig(record *systemdomain.SettingRecord) systemdomain.SelfServiceSettingsView {
+	cfg := selfServiceDefaults
+	if record != nil && len(record.Value) > 0 {
+		_ = json.Unmarshal(record.Value, &cfg)
+	}
+	return normalizeSelfServiceConfig(cfg)
+}
+
+func normalizeSelfServiceConfig(cfg systemdomain.SelfServiceSettingsView) systemdomain.SelfServiceSettingsView {
+	if cfg.MaxAppsPerAdmin < 0 {
+		cfg.MaxAppsPerAdmin = 0
+	}
+	if cfg.MaxAppsPerAdmin > selfServiceMaxAppsCeiling {
+		cfg.MaxAppsPerAdmin = selfServiceMaxAppsCeiling
+	}
+	cfg.CreatorRoleKey = strings.TrimSpace(cfg.CreatorRoleKey)
+	if cfg.CreatorRoleKey == "" {
+		cfg.CreatorRoleKey = selfServiceDefaults.CreatorRoleKey
+	}
+	return cfg
+}
+
+func buildSelfServiceView(record *systemdomain.SettingRecord) systemdomain.SelfServiceSettingsView {
+	return decodeSelfServiceConfig(record)
+}
+
+func applySelfServicePatch(current systemdomain.SelfServiceSettingsView, patch systemdomain.SelfServiceSettingsPatch) systemdomain.SelfServiceSettingsView {
+	if patch.AllowRegistration != nil {
+		current.AllowRegistration = *patch.AllowRegistration
+	}
+	if patch.AllowAppCreation != nil {
+		current.AllowAppCreation = *patch.AllowAppCreation
+	}
+	if patch.MaxAppsPerAdmin != nil {
+		current.MaxAppsPerAdmin = *patch.MaxAppsPerAdmin
+	}
+	if patch.CreatorRoleKey != nil {
+		current.CreatorRoleKey = strings.TrimSpace(*patch.CreatorRoleKey)
+	}
+	return normalizeSelfServiceConfig(current)
+}
+
+// GetSelfServiceConfig 自助能力配置的读取入口。
+//
+// 读库失败时返回默认值而不是报错：这份配置的两个消费点（注册、建应用）
+// 都在用户面前，一次库抖动把它们变成 500 比暂时按默认放行更糟 ——
+// 而默认值恰好就是引入本配置之前的行为。
+func (s *PlatformSettingsService) GetSelfServiceConfig(ctx context.Context) systemdomain.SelfServiceSettingsView {
+	record, err := s.pg.GetPlatformSetting(ctx, selfServiceSettingKey)
+	if err != nil {
+		s.log.Warn("自助能力配置读取失败，按默认值放行", zap.Error(err))
+		return selfServiceDefaults
+	}
+	return decodeSelfServiceConfig(record)
 }
 
 func applyAdminCaptchaPatch(current adminCaptchaConfig, patch systemdomain.AdminCaptchaSettingsPatch) adminCaptchaConfig {

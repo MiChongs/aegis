@@ -3,11 +3,13 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"aegis/internal/authz"
 	admindomain "aegis/internal/domain/admin"
 	platformdomain "aegis/internal/domain/platform"
 	"aegis/internal/service"
@@ -52,7 +54,11 @@ func AdminAccess(adminService *service.AdminService, appService *service.AppServ
 		}
 		permission, appScoped, err := resolveAdminPermission(c)
 		if err != nil {
-			response.Error(c, http.StatusForbidden, 40312, "当前管理员无权执行此操作")
+			// 路由没登记在权限表里 —— 默认拒绝，但要说清是"没登记"而不是"没权限"。
+			// 混用同一句文案时，一条漏登记的新路由会伪装成一次权限配置问题，
+			// 于是排查方向从"补一行权限表"歪到"给这个人加授权"。
+			response.Error(c, http.StatusForbidden, 40315,
+				"该管理端接口尚未登记权限规则，已按默认拒绝处理（请在 resolveAdminPermission 中补登记）")
 			c.Abort()
 			return
 		}
@@ -60,7 +66,8 @@ func AdminAccess(adminService *service.AdminService, appService *service.AppServ
 		if appScoped {
 			appID, err = extractAdminAppID(c, appService)
 			if err != nil {
-				response.Error(c, http.StatusBadRequest, 40058, "缺少有效的应用标识")
+				response.Error(c, http.StatusBadRequest, 40058,
+					"缺少有效的应用标识：该接口按应用作用域鉴权，请在路径、查询串或请求体中携带 appid")
 				c.Abort()
 				return
 			}
@@ -128,7 +135,7 @@ func isPlatformGovernor(c *gin.Context, adminService *service.AdminService, acce
 	if adminService == nil {
 		return false
 	}
-	return adminService.Authorize(c.Request.Context(), access, service.PermissionPlatformAppGovern, nil) == nil
+	return adminService.Authorize(c.Request.Context(), access, authz.PermPlatformAppGovern, nil) == nil
 }
 
 // RequireSuperAdmin 必须在 AdminAuth / AdminAccess 之后挂载使用。
@@ -179,6 +186,11 @@ func adminBearerToken(c *gin.Context) string {
 	return bearerToken(c.GetHeader("Authorization"))
 }
 
+// writeAdminError 把服务层的业务错误原样交给客户端。
+//
+// 只有非 AppError（也就是没人给出业务判定的意外错误）才落到最后那句兜底 ——
+// AdminService.Authorize 的拒绝文案里带着缺失的权限点与作用域，
+// 在这里改写成一句通用文案等于把刚算出来的信息丢掉。
 func writeAdminError(c *gin.Context, err error) {
 	if appErr, ok := err.(*apperrors.AppError); ok {
 		response.Error(c, appErr.HTTPStatus, appErr.Code, appErr.Message)
@@ -198,263 +210,26 @@ func routePath(c *gin.Context) string {
 	return ""
 }
 
+// resolveAdminPermission 解析当前路由需要的权限点与作用域。
+//
+// 规则表在 internal/authz —— 与权限词汇、角色定义、判定引擎同一个包。
+// 这里曾经是 250 行嵌套 switch，用 strings.HasPrefix / strings.Contains /
+// 后缀匹配拼判定，三类问题都不会在编译期暴露：
+// 不锚定的 Contains 会误伤（任何含 "/users" 的路径都算用户接口）、
+// 后缀匹配会把以 /list 结尾的写接口判成读、分支顺序即优先级但顺序藏在嵌套里。
+//
+// 现在只剩一次查表；941 条真实路由的判定结果由
+// internal/authz/testdata/route_permissions.json 逐条钉住。
 func resolveAdminPermission(c *gin.Context) (string, bool, error) {
-	fullPath := routePath(c)
-	method := c.Request.Method
-
-	switch {
-	case fullPath == "/api/admin/dashboard":
-		return "", false, nil
-	// ── 平台治理（全站作用域，appScoped 恒为 false）──
-	//
-	// 这一组接口的语义就是"跨应用"：带上 appid 反而会让 scopeMatches 认应用级授权，
-	// 于是被治理应用自己的管理员就能解自己的封。因此**永远不按 appScoped 判定**。
-	case fullPath == "/api/admin/platform/catalog":
-		// 状态 / 能力目录是编译进二进制的静态表，且被治理方也要靠它读懂自己的处境
-		return "", false, nil
-	case strings.HasPrefix(fullPath, "/api/admin/platform/"):
-		switch {
-		case strings.HasSuffix(fullPath, "/revoke-sessions"):
-			return service.PermissionPlatformAppDanger, false, nil
-		case strings.Contains(fullPath, "/appeals/") && strings.HasSuffix(fullPath, "/review"):
-			return service.PermissionPlatformAppealReview, false, nil
-		case strings.HasPrefix(fullPath, "/api/admin/platform/storage-config"):
-			if isCompatReadPath(fullPath, []string{"/list", "/detail"}) {
-				return service.PermissionPlatformStorageRead, false, nil
-			}
-			return service.PermissionPlatformStorageWrite, false, nil
-		case method == http.MethodGet:
-			return service.PermissionPlatformAppRead, false, nil
-		default:
-			return service.PermissionPlatformAppGovern, false, nil
-		}
-	// 工单系统 —— 这里只做"能不能进模块"的粗粒度闸门，
-	// 「能不能看/改这一条工单」由 TicketService 的 Scope + ActionSet 判定，
-	// 因此不带任何权限点、但属于某处理组的管理员也必须放行进来。
-	case strings.HasPrefix(fullPath, "/api/admin/tickets"):
-		switch {
-		// 元数据与我的待办：任意已登录管理员可读，否则工单页会整页空白
-		case strings.HasSuffix(fullPath, "/metadata"), strings.HasSuffix(fullPath, "/workbench"):
-			return "", false, nil
-		// 配置类资源的写操作需要 ticket:manage
-		case strings.Contains(fullPath, "/categories"),
-			strings.Contains(fullPath, "/groups"),
-			strings.Contains(fullPath, "/sla-policies"),
-			strings.Contains(fullPath, "/quick-replies"):
-			if method == http.MethodGet {
-				return "", false, nil
-			}
-			return "ticket:manage", false, nil
-		case strings.HasSuffix(fullPath, "/export"):
-			return "ticket:export", false, nil
-		default:
-			// 列表/详情/回复/指派等：进模块即可，细粒度在 service 层
-			return "", false, nil
-		}
-	// 统一通知出口 —— 渠道内含 IM 凭据，读要权限点，写由 RequireSuperAdmin 二次把关
-	case strings.HasPrefix(fullPath, "/api/admin/notify"):
-		if fullPath == "/api/admin/notify/catalog" {
-			return "", false, nil
-		}
-		if strings.Contains(fullPath, "/deliveries") {
-			if method == http.MethodGet {
-				return "notify:delivery:read", false, nil
-			}
-			return "notify:channel:write", false, nil
-		}
-		if method == http.MethodGet {
-			return "notify:channel:read", false, nil
-		}
-		return "notify:channel:write", false, nil
-	// 组织 — GET 所有管理员可读，写操作需权限
-	case strings.HasPrefix(fullPath, "/api/admin/system/organizations"):
-		if method == http.MethodGet {
-			return "", false, nil
-		}
-		if method == http.MethodPost {
-			return "org:create", false, nil
-		}
-		return "org:write", false, nil
-	// 部门 — GET 所有管理员可读，写操作需权限
-	case strings.HasPrefix(fullPath, "/api/admin/system/departments"):
-		if method == http.MethodGet {
-			return "", false, nil
-		}
-		if strings.Contains(fullPath, "/invite") || strings.Contains(fullPath, "/batch-invite") {
-			return "org:member:invite", false, nil
-		}
-		if strings.Contains(fullPath, "/members") {
-			if method == http.MethodGet {
-				return "", false, nil
-			}
-			return "org:member:write", false, nil
-		}
-		return "org:dept:write", false, nil
-	// 邀请 — 查看/接受/拒绝自己的邀请对所有管理员开放
-	case strings.HasPrefix(fullPath, "/api/admin/system/invitations"):
-		return "", false, nil
-	// 岗位
-	case strings.HasPrefix(fullPath, "/api/admin/system/positions"):
-		if method == http.MethodGet {
-			return "org:dept:read", false, nil
-		}
-		return "org:write", false, nil
-	// 管理员部门查询
-	case strings.Contains(fullPath, "/departments") && strings.HasPrefix(fullPath, "/api/admin/system/admins/"):
-		return "org:dept:read", false, nil
-	case strings.HasPrefix(fullPath, "/api/admin/system/"):
-		return "system:admin:manage", false, nil
-	case fullPath == "/api/admin/user-settings/stats" || fullPath == "/api/admin/user-settings/user" || fullPath == "/api/admin/user-settings/check-integrity":
-		return "system:user_setting:read", false, nil
-	case strings.HasPrefix(fullPath, "/api/admin/user-settings/"):
-		return "system:user_setting:write", false, nil
-	case fullPath == "/api/app/password-policy/templates" ||
-		fullPath == "/api/admin/apps/password-policy/templates" ||
-		fullPath == "/api/admin/apps/signin-reward/templates":
-		return "platform:app:read", false, nil
-	// 第三方登录渠道模板：编译进二进制的静态目录，不含任何租户数据与凭据，
-	// 任意已登录管理员均可读取（否则配置向导会因权限点缺失而空白）
-	case fullPath == "/api/admin/oauth-providers/templates":
-		return "", false, nil
-	case strings.HasPrefix(fullPath, "/api/app/password-policy"):
-		if method == http.MethodGet || strings.Contains(fullPath, "/get") || strings.Contains(fullPath, "/templates") {
-			return "app:read", true, nil
-		}
-		return "app:write", true, nil
-	case strings.HasPrefix(fullPath, "/api/app/points"):
-		if strings.Contains(fullPath, "/stats") {
-			return "points:read", true, nil
-		}
-		return "points:write", true, nil
-	case strings.HasPrefix(fullPath, "/api/admin/app/version"):
-		if isCompatReadPath(fullPath, []string{"/list", "/detail", "/stats", "/channel/list", "/channel/detail", "/channel/users", "/channel/preview-match"}) {
-			return "version:read", true, nil
-		}
-		return "version:write", true, nil
-	case strings.HasPrefix(fullPath, "/api/admin/app/site"):
-		if isCompatReadPath(fullPath, []string{"/audit-list", "/list", "/detail", "/user-sites", "/audit-stats"}) {
-			return "site:read", true, nil
-		}
-		if strings.Contains(fullPath, "/audit") {
-			return "site:audit", true, nil
-		}
-		return "site:write", true, nil
-	case strings.HasPrefix(fullPath, "/api/admin/app/role-application"):
-		if isCompatReadPath(fullPath, []string{"/list", "/detail", "/statistics"}) {
-			return "role_application:read", true, nil
-		}
-		return "role_application:review", true, nil
-	case strings.HasPrefix(fullPath, "/api/admin/app/email-config"):
-		if isCompatReadPath(fullPath, []string{"/list", "/detail", "/deliveries"}) {
-			return "email:read", true, nil
-		}
-		return "email:write", true, nil
-	case strings.HasPrefix(fullPath, "/api/admin/app/storage-config"):
-		if isCompatReadPath(fullPath, []string{"/list", "/detail"}) {
-			return "storage:read", true, nil
-		}
-		return "storage:write", true, nil
-	case strings.HasPrefix(fullPath, "/api/admin/app/payment-config"):
-		// /methods 返回的是**平台支持哪些支付渠道**（Provider.Describe() 的静态目录：
-		// 渠道名、能力矩阵、配置字段 schema），编译进二进制，不含任何租户数据与凭据。
-		// 与第三方登录渠道模板同一性质，因此任意已登录管理员均可读取。
-		//
-		// 按 appScoped 处理会被中间件以 40058「缺少有效的应用标识」拦掉（控制台不带 appid）；
-		// 只改成 appScoped=false 也不够 —— scopeMatches 在 requestAppID 为 nil 时只认
-		// 全局作用域的授权，应用级管理员会转而拿到 403。两种写法都会让渠道市场
-		// 永远显示「平台支持 0 种支付方式」。
-		if fullPath == "/api/admin/app/payment-config/methods" {
-			return "", false, nil
-		}
-		if isCompatReadPath(fullPath, []string{
-			"/list", "/detail", "/orders/list", "/orders/detail",
-			"/refunds/list", "/refunds/order", "/refunds/refundable",
-		}) {
-			return "payment:read", true, nil
-		}
-		return "payment:write", true, nil
-	case strings.HasPrefix(fullPath, "/api/app/workflow"):
-		// 节点类型目录（静态目录）与引擎状态（Temporal 连通性）都与具体应用无关，
-		// 也不含租户数据。控制台不带 appid 调用，按 appScoped 处理会被 40058 拦掉 ——
-		// 工作流画布因此拿不到节点类型，节点面板整个是空的。
-		// 与 /methods 同理不能只改 appScoped=false（应用级管理员会转而拿到 403）。
-		if fullPath == "/api/app/workflow/node-types" || fullPath == "/api/app/workflow/engine/status" {
-			return "", false, nil
-		}
-		if isCompatReadPath(fullPath, []string{"/list", "/detail", "/info", "/instances", "/instances/list", "/instance/detail", "/instances/info", "/tasks/todo", "/task/detail", "/task/history", "/templates", "/templates/list", "/validate", "/statistics", "/logs"}) {
-			return "workflow:read", true, nil
-		}
-		return "workflow:write", true, nil
-	case fullPath == "/api/admin/apps":
-		if method == http.MethodGet {
-			return "app:read", false, nil
-		}
-		return "app:write", false, nil
-	case strings.HasPrefix(fullPath, "/api/admin/apps/:appkey"):
-		switch {
-		case strings.Contains(fullPath, "/stats"):
-			return "app:read", true, nil
-		case strings.Contains(fullPath, "/audits/"):
-			if strings.Contains(fullPath, "/login") {
-				return "audit:login:read", true, nil
-			}
-			return "audit:session:read", true, nil
-		// 绑定记录是用户数据，按用户权限点判定；渠道配置本身按应用配置权限点判定
-		case strings.Contains(fullPath, "/oauth-bindings"):
-			if method == http.MethodGet {
-				return "app:user:read", true, nil
-			}
-			return "app:user:write", true, nil
-		case strings.Contains(fullPath, "/oauth-providers"):
-			if method == http.MethodGet {
-				return "app:read", true, nil
-			}
-			return "app:write", true, nil
-		case strings.Contains(fullPath, "/users"):
-			if method == http.MethodGet {
-				return "app:user:read", true, nil
-			}
-			return "app:user:write", true, nil
-		case strings.Contains(fullPath, "/notifications"):
-			if method == http.MethodGet {
-				return "app:notification:read", true, nil
-			}
-			return "app:notification:write", true, nil
-		case strings.Contains(fullPath, "/banners"):
-			if method == http.MethodGet {
-				return "content:banner:read", true, nil
-			}
-			return "content:banner:write", true, nil
-		case strings.Contains(fullPath, "/notices"):
-			if method == http.MethodGet {
-				return "content:notice:read", true, nil
-			}
-			return "content:notice:write", true, nil
-		// 应用自己的治理视图：看自己被怎么了、以及提交申诉。
-		// 只读用 app:read、申诉用 app:write，都留在应用作用域 ——
-		// 应用管理员在这里改不了治理结论，改结论要走 /api/admin/platform/*。
-		case strings.Contains(fullPath, "/governance"):
-			if method == http.MethodGet {
-				return "app:read", true, nil
-			}
-			return "app:write", true, nil
-		case strings.Contains(fullPath, "/policy"),
-			strings.Contains(fullPath, "/password-policy"),
-			strings.Contains(fullPath, "/signin-reward"):
-			if method == http.MethodGet {
-				return "app:read", true, nil
-			}
-			return "app:write", true, nil
-		default:
-			if method == http.MethodGet {
-				return "app:read", true, nil
-			}
-			return "app:write", true, nil
-		}
-	default:
-		return "", false, io.EOF
+	decision, ok := authz.ResolveRoute(c.Request.Method, routePath(c))
+	if !ok {
+		return "", false, errRouteNotRegistered
 	}
+	return decision.Permission, decision.AppScoped(), nil
 }
+
+// errRouteNotRegistered 路由没登记在权限规则表里 —— 默认拒绝。
+var errRouteNotRegistered = errors.New("该管理端路由未登记权限规则")
 
 func extractAdminAppID(c *gin.Context, appService *service.AppService) (*int64, error) {
 	// 1) 优先从路径参数 :appkey 解析（兼容 appKey 字符串与纯数字应用 ID，
@@ -528,15 +303,6 @@ func parseOptionalInt64(value string) (int64, bool) {
 		return 0, false
 	}
 	return id, true
-}
-
-func isCompatReadPath(path string, suffixes []string) bool {
-	for _, suffix := range suffixes {
-		if strings.HasSuffix(path, suffix) {
-			return true
-		}
-	}
-	return false
 }
 
 func subtleCompare(left, right string) bool {

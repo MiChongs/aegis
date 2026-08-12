@@ -575,33 +575,8 @@ func (s *AppService) SaveApp(ctx context.Context, mutation appdomain.AppMutation
 		}
 	}
 
-	if mutation.Name != nil {
-		item.Name = strings.TrimSpace(*mutation.Name)
-	}
-	if strings.TrimSpace(item.Name) == "" {
-		return nil, apperrors.New(40021, http.StatusBadRequest, "应用名称不能为空")
-	}
-	// AppKey 不可更改，创建时由数据库自动生成
-	if mutation.Status != nil {
-		item.Status = *mutation.Status
-	}
-	if mutation.DisabledReason != nil {
-		item.DisabledReason = strings.TrimSpace(*mutation.DisabledReason)
-	}
-	if mutation.RegisterStatus != nil {
-		item.RegisterStatus = *mutation.RegisterStatus
-	}
-	if mutation.DisabledRegisterReason != nil {
-		item.DisabledRegisterReason = strings.TrimSpace(*mutation.DisabledRegisterReason)
-	}
-	if mutation.LoginStatus != nil {
-		item.LoginStatus = *mutation.LoginStatus
-	}
-	if mutation.DisabledLoginReason != nil {
-		item.DisabledLoginReason = strings.TrimSpace(*mutation.DisabledLoginReason)
-	}
-	if mutation.Settings != nil {
-		item.Settings = mutation.Settings
+	if err := applyAppMutation(&item, mutation); err != nil {
+		return nil, err
 	}
 
 	saved, err := s.pg.UpsertApp(ctx, item)
@@ -624,12 +599,93 @@ func (s *AppService) SaveApp(ctx context.Context, mutation appdomain.AppMutation
 	return saved, nil
 }
 
+// CreateApp 新建应用，并在同一事务里把创建者登记为该应用的管理员。
+//
+// 与 SaveApp 的建应用分支的区别只有一件事：**创建与授权不可分割**。
+// 分两步做时，中间失败会留下一个孤儿应用 —— 建它的人管不了它，
+// 列表里也看不见它（可见范围按授权过滤）。而调用这条链路的人
+// 常常正是那个还没有任何权限的新注册账号，他连补救都做不到。
+//
+// creatorRoleKey 为空表示不登记授权（超管建应用不需要，他本来就什么都能改）。
+func (s *AppService) CreateApp(ctx context.Context, mutation appdomain.AppMutation, creatorAdminID int64, creatorRoleKey string) (*appdomain.App, error) {
+	item := appdomain.App{
+		Status:         true,
+		RegisterStatus: true,
+		LoginStatus:    true,
+		Settings:       map[string]any{},
+	}
+	if err := applyAppMutation(&item, mutation); err != nil {
+		return nil, err
+	}
+	saved, err := s.pg.CreateAppOwnedBy(ctx, item, creatorAdminID, creatorRoleKey)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidateAppCache(ctx, saved.ID)
+	if s.plugin != nil {
+		go s.plugin.ExecuteHook(context.Background(), HookAppCreated, map[string]any{
+			"appId": saved.ID,
+			"name":  saved.Name,
+		}, plugindomain.HookMetadata{AppID: &saved.ID})
+	}
+	return saved, nil
+}
+
+// applyAppMutation 把 mutation 里非 nil 的字段落到 item 上（建与改共用）。
+// AppKey 不可更改，创建时由数据库生成，因此这里从不碰它。
+func applyAppMutation(item *appdomain.App, mutation appdomain.AppMutation) error {
+	if mutation.Name != nil {
+		item.Name = strings.TrimSpace(*mutation.Name)
+	}
+	if strings.TrimSpace(item.Name) == "" {
+		return apperrors.New(40021, http.StatusBadRequest, "应用名称不能为空")
+	}
+	if mutation.Status != nil {
+		item.Status = *mutation.Status
+	}
+	if mutation.DisabledReason != nil {
+		item.DisabledReason = strings.TrimSpace(*mutation.DisabledReason)
+	}
+	if mutation.RegisterStatus != nil {
+		item.RegisterStatus = *mutation.RegisterStatus
+	}
+	if mutation.DisabledRegisterReason != nil {
+		item.DisabledRegisterReason = strings.TrimSpace(*mutation.DisabledRegisterReason)
+	}
+	if mutation.LoginStatus != nil {
+		item.LoginStatus = *mutation.LoginStatus
+	}
+	if mutation.DisabledLoginReason != nil {
+		item.DisabledLoginReason = strings.TrimSpace(*mutation.DisabledLoginReason)
+	}
+	if mutation.Settings != nil {
+		item.Settings = mutation.Settings
+	}
+	return nil
+}
+
 // GetAppByKey 通过 appKey 查询应用
 func (s *AppService) GetAppByKey(ctx context.Context, appKey string) (*appdomain.App, error) {
 	return s.pg.GetAppByKey(ctx, appKey)
 }
 
 // DeleteApp 删除应用及其所有关联数据
+// IsAppCreator 判定某管理员是不是这个应用的创建者。
+//
+// 与「是不是这个应用的管理员」是两件事：超管授权出去的 app_admin 管着应用，
+// 但应用不是他拉起来的。删除这种不可逆的动作只认前者。
+func (s *AppService) IsAppCreator(ctx context.Context, appID, adminID int64) bool {
+	if appID <= 0 || adminID <= 0 {
+		return false
+	}
+	creator, err := s.pg.GetAppCreator(ctx, appID)
+	if err != nil {
+		s.log.Warn("应用创建者查询失败", zap.Int64("appid", appID), zap.Error(err))
+		return false
+	}
+	return creator != nil && *creator == adminID
+}
+
 func (s *AppService) DeleteApp(ctx context.Context, appID int64) error {
 	app, err := s.GetApp(ctx, appID)
 	if err != nil {

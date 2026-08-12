@@ -1,7 +1,6 @@
 package httptransport
 
 import (
-	"aegis/internal/config"
 	admindomain "aegis/internal/domain/admin"
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
@@ -12,7 +11,6 @@ import (
 	"aegis/internal/middleware"
 	redisrepo "aegis/internal/repository/redis"
 	"aegis/internal/service"
-	"aegis/pkg/crashlog"
 	"aegis/pkg/response"
 	"aegis/pkg/tracing"
 	"encoding/csv"
@@ -24,7 +22,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 )
 
 type Handler struct {
@@ -92,9 +89,41 @@ type Handler struct {
 	egress *service.EgressService
 	// governance 平台治理：全站应用的冻结 / 限制 / 封禁 / 归档与申诉
 	governance *service.PlatformGovernanceService
+	// legal 法律文本（用户协议 / 隐私政策），公开读 + 超管写
+	legal *service.LegalService
 }
 
-func NewRouter(authService *service.AuthService, adminService *service.AdminService, userService *service.UserService, signInService *service.SignInService, pointsService *service.PointsService, notificationService *service.NotificationService, appService *service.AppService, siteService *service.SiteService, versionService *service.VersionService, roleApplicationService *service.RoleApplicationService, emailService *service.EmailService, paymentService *service.PaymentService, walletService *service.WalletService, vipService *service.VipService, workflowService *service.WorkflowService, storageService *service.StorageService, avatarService *service.AvatarService, monitorService *service.MonitorService, firewall *middleware.Firewall, replayGuard *middleware.ReplayGuard, locationService *service.LocationService, realtimeService *service.RealtimeService, systemService *service.PlatformSettingsService, securityService *service.SecurityService, captchaService *service.CaptchaService, firewallLogService *service.FirewallLogService, ipBanService *service.IPBanService, geoBanService *service.GeoBanService, geoFenceService *service.GeoFenceService, geoAnalyticsService *service.GeoAnalyticsService, lotteryService *service.LotteryService, announcementService *service.AnnouncementService, ldapService *service.LDAPService, oidcService *service.OIDCService, samlService *service.SAMLService, sessionRepo *redisrepo.SessionRepository, orgService *service.OrganizationService, templateService *service.TemplateService, auditService *service.AuditService, pluginService *service.PluginService, appFunctionService *service.AppFunctionService, authProtocolService *service.AuthProtocolService, dashboardService *service.DashboardService, approvalService *service.OrgApprovalService, sessionMgmtService *service.SessionMgmtService, storageResourceService *service.StorageResourceService, userMasterService *service.UserMasterService, reportService *service.ReportService, riskService *service.RiskService, deviceMarketingService *service.DeviceMarketingService, platformBannerService *service.PlatformBannerService, ticketService *service.TicketService, notifyHub *service.NotifyHub, adminInboxService *service.AdminInboxService, appOAuthService *service.AppOAuthService, authProviderHealthService *service.AuthProviderHealthService, memoryManager *service.MemoryManager, databaseManager *service.DatabaseManager, egressService *service.EgressService, governanceService *service.PlatformGovernanceService, cl *crashlog.Logger, log *zap.Logger, corsConfig config.CORSConfig, trustedProxies []string, docsPortalURL string) (*gin.Engine, error) {
+// NewRouter 装配整张路由表。依赖以具名字段传入，理由见 RouterDeps 的注释。
+func NewRouter(deps RouterDeps) (*gin.Engine, error) {
+	// 主体里直接用到的依赖起个短名。
+	//
+	// 这不是把 66 个位置参数换成结构体之后又还原回去：具名字段的价值在**调用点**
+	// （填错位置编译不过、漏填得到 nil 而不是错位的服务），而注册代码里上千行
+	// `middleware.AdminAccess(deps.Admin, deps.App, deps.Governance)` 只是更长，
+	// 并不更安全。下面只为真正在主体里出现的那十几个起名，其余一律走 deps。
+	var (
+		authService         = deps.Auth
+		adminService        = deps.Admin
+		appService          = deps.App
+		auditService        = deps.Audit
+		governanceService   = deps.Governance
+		locationService     = deps.Location
+		authProtocolService = deps.AuthProtocol
+		memoryManager       = deps.MemoryManager
+		databaseManager     = deps.DatabaseManager
+		firewall            = deps.Firewall
+		replayGuard         = deps.ReplayGuard
+		cl                  = deps.CrashLog
+		log                 = deps.Logger
+		corsConfig          = deps.CORS
+		trustedProxies      = deps.TrustedProxies
+		docsPortalURL       = deps.DocsPortalURL
+	)
+	// 接住 gin 的路由调试回调：既灭掉 debug 档下每条路由一行的滚屏，
+	// 也顺手把中间件链深度记下来（那个数只在这个回调里出现）。
+	// 详见 route_chains.go；清单的渲染入口是 RouteInventory。
+	defer captureRouteChains()()
+
 	router := gin.New()
 	if err := router.SetTrustedProxies(trustedProxies); err != nil {
 		return nil, fmt.Errorf("配置可信代理失败: %w", err)
@@ -115,7 +144,9 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		middleware.CrashRecovery(log, cl),
 		tracing.GinMiddleware("aegis", "/healthz", "/readyz"),
 		middleware.CORS(corsConfig),
-		gin.Logger(),
+		// 访问日志走 zap 而不是 gin.Logger()：后者按自己的格式写 stdout，
+		// 与平台其余部分的结构化输出混在一起，采集端每条都解析失败。见 access_log.go。
+		middleware.AccessLog(log, middleware.AccessLogSkipPaths()...),
 		firewall.Handler(),
 		replayGuard.Handler(),
 		middleware.AppGateway(authProtocolService),
@@ -129,7 +160,7 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		response.Error(c, http.StatusNotImplemented, 50100, "服务能力暂未开放")
 	})
 
-	h := &Handler{auth: authService, admin: adminService, user: userService, signin: signInService, points: pointsService, notifications: notificationService, app: appService, site: siteService, version: versionService, roleApp: roleApplicationService, email: emailService, payment: paymentService, wallet: walletService, vip: vipService, workflow: workflowService, storage: storageService, avatar: avatarService, monitor: monitorService, realtime: realtimeService, system: systemService, security: securityService, captcha: captchaService, firewallLog: firewallLogService, ipBan: ipBanService, geoBan: geoBanService, geoFence: geoFenceService, geoAnalytics: geoAnalyticsService, location: locationService, lottery: lotteryService, announcement: announcementService, ldapSvc: ldapService, oidcSvc: oidcService, samlSvc: samlService, sessions: sessionRepo, org: orgService, tmpl: templateService, audit: auditService, plugin: pluginService, appFunction: appFunctionService, authProtocol: authProtocolService, dashboard: dashboardService, orgApproval: approvalService, sessionMgmt: sessionMgmtService, storageResource: storageResourceService, userMaster: userMasterService, report: reportService, risk: riskService, deviceMarketing: deviceMarketingService, platformBanner: platformBannerService, ticket: ticketService, notify: notifyHub, adminInbox: adminInboxService, appOAuth: appOAuthService, authProviderHealth: authProviderHealthService, egress: egressService, governance: governanceService}
+	h := deps.newHandler()
 	router.GET("/", h.Homepage)
 	router.GET("/status", h.StatusPage)
 	router.GET("/announcements", h.AnnouncementsPage)
@@ -306,6 +337,15 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		adminCaptcha.GET("/config", h.AdminCaptchaPublicConfig)
 	}
 
+	// 法律文本（免登录）。登录页与注册页在用户还没有账号时就要链到它，
+	// 要求登录才能读条款是荒谬的；放在 /api/legal 而不是 /api/admin/*，
+	// 正是为了让它不落进任何一条管理端鉴权规则里。
+	legalPublic := router.Group("/api/legal")
+	{
+		legalPublic.GET("/documents", h.PublicLegalCatalog)
+		legalPublic.GET("/documents/:docType", h.PublicLegalDocument)
+	}
+
 	adminAuth := router.Group("/api/admin/auth")
 	// 认证路由组挂 AuditMiddleware：
 	//   正常路径下 handler 通过 recordAuditAuth() + MarkAuditRecorded() 精确记录；
@@ -323,6 +363,10 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		// 是否要对外开放这个入口是部署方的选择 —— 要关就摘掉这一行，
 		// 控制台的 /register 会随之只剩一个必然失败的表单，记得一并处理。
 		adminAuth.POST("/register", h.AdminRegister)
+		// 注册入口开不开是**配置**（platform_settings 的 admin.self_service），
+		// 不再是"路由挂不挂"。登录页据此决定注册链接显不显示，
+		// 关掉之后提交会拿到 40317 而不是一个看起来像地址写错的 40400。
+		adminAuth.GET("/self-service", h.AdminSelfServiceConfig)
 		adminAuth.POST("/verify-mfa", h.AdminVerifyMFA)
 		adminAuth.GET("/ldap/config", h.AdminLDAPPublicConfig)
 		adminAuth.GET("/oidc/config", h.AdminOIDCPublicConfig)
@@ -1164,6 +1208,18 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		adminSystem.GET("/roles/matrix", h.AdminGetRoleMatrix)
 		adminSystem.GET("/roles/graph", h.AdminGetRoleGraph)
 		adminSystem.GET("/roles/:roleKey/impact", h.AdminGetRoleImpactPreview)
+		// ── 授权策略管理面 ──
+		//
+		// 「不能灵活配置」的落点。写操作一律叠加 RequireSuperAdmin：
+		// 一条 allow 策略就能给自己提权，把这个入口交给普通管理员
+		// 等于让整套 RBAC 可以被它管辖的对象自行改写。
+		adminSystem.GET("/authz/model", h.AdminAuthzModel)
+		adminSystem.GET("/authz/policies", h.AdminAuthzPolicies)
+		adminSystem.GET("/authz/policies/subject", h.AdminAuthzSubjectPolicies)
+		adminSystem.POST("/authz/explain", h.AdminAuthzExplain)
+		adminSystem.POST("/authz/roles/override", middleware.RequireSuperAdmin(), h.AdminAuthzSetRoleOverride)
+		adminSystem.PUT("/authz/admins/:adminId/grants", middleware.RequireSuperAdmin(), h.AdminAuthzSetAdminGrants)
+		adminSystem.POST("/authz/reload", middleware.RequireSuperAdmin(), h.AdminAuthzReload)
 		// ── 组织架构 ──
 		//
 		// 全部实体一律用 UUID 定位，且每条子路径都挂在 /organizations/:orgId 之下 ——
@@ -1396,6 +1452,12 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		adminSystem.GET("/user-master/user-lists", h.AdminListUserListEntries)
 		adminSystem.POST("/user-master/user-lists", h.AdminCreateUserListEntry)
 		adminSystem.DELETE("/user-master/user-lists/:id", h.AdminDeleteUserListEntry)
+		// 法律文本管理（限超管，权限在 handler 内二次校验）
+		adminSystem.GET("/legal/documents", h.AdminListLegalDocuments)
+		adminSystem.GET("/legal/documents/:docType/:locale", h.AdminGetLegalDocument)
+		adminSystem.PUT("/legal/documents/:docType/:locale", h.AdminSaveLegalDocument)
+		adminSystem.DELETE("/legal/documents/:docType/:locale", h.AdminDeleteLegalDocument)
+
 		adminSystem.GET("/user-master/segments", h.AdminListSegments)
 		adminSystem.POST("/user-master/segments", h.AdminCreateSegment)
 		adminSystem.PUT("/user-master/segments/:id", h.AdminUpdateSegment)
@@ -2965,13 +3027,34 @@ func (h *Handler) AdminDeleteUser(c *gin.Context) {
 	response.Success(c, 200, "用户已删除", nil)
 }
 
+// CreateAdminApp 新建应用。
+//
+// 中间件对这条路由**不要求权限点**（要求 app:write 会让自助注册出来的账号
+// 永远建不了第一个应用，也就永远拿不到任何权限）。闸门在这里：
+// EnsureCanCreateApp 判定「平台开没开自助创建 + 这个人的配额还剩没剩」，
+// 持有全局 app:write 的管理员则直接放行、不受配额约束。
 func (h *Handler) CreateAdminApp(c *gin.Context) {
+	session, ok := adminAccessSession(c)
+	if !ok || session == nil {
+		response.Error(c, http.StatusUnauthorized, 40110, "管理员未认证")
+		return
+	}
+	if err := h.admin.EnsureCanCreateApp(c.Request.Context(), session); err != nil {
+		h.writeError(c, err)
+		return
+	}
 	var req AdminAppCreateRequest
 	if err := bind(c, &req); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	item, err := h.app.SaveApp(c.Request.Context(), appdomain.AppMutation{
+	// 超管不需要授权行（他本来就什么都能改），其余人必须拿到应用级角色，
+	// 否则建完自己就看不见它了 —— 应用列表按授权过滤。
+	creatorRole := ""
+	if !session.IsSuperAdmin {
+		creatorRole = h.admin.SelfServiceCreatorRole(c.Request.Context())
+	}
+	item, err := h.app.CreateApp(c.Request.Context(), appdomain.AppMutation{
 		ID:                     0,
 		Name:                   req.Name,
 		Status:                 req.Status,
@@ -2981,15 +3064,10 @@ func (h *Handler) CreateAdminApp(c *gin.Context) {
 		LoginStatus:            req.LoginStatus,
 		DisabledLoginReason:    req.DisabledLoginReason,
 		Settings:               req.Settings,
-	})
+	}, session.AdminID, creatorRole)
 	if err != nil {
 		h.writeError(c, err)
 		return
-	}
-	// 创建应用后自动为创建者分配 app_admin 角色
-	session, ok := adminAccessSession(c)
-	if ok && session != nil && session.AdminID > 0 && !session.IsSuperAdmin {
-		_ = h.admin.AutoAssignAppRole(c.Request.Context(), session.AdminID, item.ID, "app_admin")
 	}
 	response.Success(c, 200, "保存成功", item)
 }
@@ -3007,13 +3085,29 @@ func (h *Handler) UpdateAdminApp(c *gin.Context) {
 	h.saveAdminApp(c, appID, req)
 }
 
+// AdminDeleteApp 删除应用。
+//
+// 两类人可以删：超级管理员，以及**自己把这个应用建起来的那个人**。
+//
+// 后者是自助路径的必要出口：自助创建有每人配额，而配额只按 apps.created_by 计数。
+// 不给创建者删除权，配额就是一条单向棘轮 —— 建满之后除了去找超管，
+// 他对自己一手建起来、可能只是拿来试手的应用什么都做不了。
+//
+// 认「创建者」而不是「应用管理员」是刻意的：超管授权出去的 app_admin 管着应用，
+// 但应用不是他拉起来的，删除这种不可逆动作不该跟着授权一起流转。
 func (h *Handler) AdminDeleteApp(c *gin.Context) {
-	if _, ok := requireSuperAdminSession(c); !ok {
-		response.Error(c, http.StatusForbidden, 40313, "仅超级管理员可删除应用")
+	session, ok := adminAccessSession(c)
+	if !ok || session == nil {
+		response.Error(c, http.StatusUnauthorized, 40110, "管理员未认证")
 		return
 	}
 	appID, ok := resolveAppID(c, h.app)
 	if !ok {
+		return
+	}
+	if !session.IsSuperAdmin && !h.app.IsAppCreator(c.Request.Context(), appID, session.AdminID) {
+		response.Error(c, http.StatusForbidden, 40313,
+			"仅超级管理员或该应用的创建者可删除应用")
 		return
 	}
 	if err := h.app.DeleteApp(c.Request.Context(), appID); err != nil {

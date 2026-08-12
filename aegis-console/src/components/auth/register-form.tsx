@@ -11,7 +11,6 @@ import { useAuthStore } from "@/lib/auth-store";
 import { useAdminCaptchaPublicConfigQuery } from "@/lib/admin-hooks";
 import { CaptchaField } from "./captcha-field";
 import { AUTH_EASE } from "./auth-motion";
-import { LegalDialog } from "@/components/legal/legal-dialog";
 import { AegisMark } from "@/components/brand/aegis-mark";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -95,7 +94,6 @@ export function RegisterForm() {
   const [captchaId, setCaptchaId] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [agreeTerms, setAgreeTerms] = useState(false);
-  const [legalDialog, setLegalDialog] = useState<"terms" | "privacy" | null>(null);
 
   const captchaConfigQuery = useAdminCaptchaPublicConfigQuery();
   const captchaConfig = captchaConfigQuery.data;
@@ -425,21 +423,23 @@ export function RegisterForm() {
                       className="text-[13px] leading-5 font-normal text-muted-foreground"
                     >
                       我已阅读并同意{" "}
-                      <button
-                        type="button"
+                      <Link
+                        href="/legal/terms"
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="text-foreground underline underline-offset-2 transition-colors hover:text-primary"
-                        onClick={() => setLegalDialog("terms")}
                       >
                         用户协议
-                      </button>{" "}
+                      </Link>{" "}
                       与{" "}
-                      <button
-                        type="button"
+                      <Link
+                        href="/legal/privacy"
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="text-foreground underline underline-offset-2 transition-colors hover:text-primary"
-                        onClick={() => setLegalDialog("privacy")}
                       >
                         隐私政策
-                      </button>
+                      </Link>
                     </Label>
                   </div>
 
@@ -464,15 +464,6 @@ export function RegisterForm() {
         </Card>
       </m.div>
 
-      {legalDialog ? (
-        <LegalDialog
-          type={legalDialog}
-          open
-          onOpenChange={(open) => {
-            if (!open) setLegalDialog(null);
-          }}
-        />
-      ) : null}
     </>
   );
 }

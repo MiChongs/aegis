@@ -11,6 +11,7 @@
 | 文件 | 中间件 | 作用 |
 |---|---|---|
 | `requestid.go` | `RequestID()` | 注入 `X-Request-Id` 响应头 |
+| `access_log.go` | `AccessLog(log, skipPaths...)` | zap 结构化访问日志，取代 `gin.Logger()` |
 | `cors.go` | `CORS(cfg)` | 跨域处理（gin-contrib/cors 封装） |
 | `firewall.go` | `Firewall.Handler()` | WAF + 限流 + IP 过滤 |
 | `auth.go` | `Auth(authSvc)` | 用户 JWT 认证，注入用户上下文 |
@@ -38,10 +39,25 @@
 ## 中间件在路由中的组装顺序
 
 ```
-RequestID → CrashRecovery → Tracing → CORS → gin.Logger → Firewall
+RequestID → RequestOrigin → CrashRecovery → Tracing → CORS → AccessLog → Firewall
   → ReplayGuard → AppGateway → AppEncryption → Location
 [路由组中追加] AdminAuth 或 Auth
 ```
+
+## AccessLog 为什么取代 gin.Logger()
+
+不是嫌它不好看，而是它与这套系统的日志出口**不是一条链路**：它按自己的格式写
+`gin.DefaultWriter` 并自带 ANSI 着色，而平台其余部分全走 zap 结构化输出。
+两者混在同一个 stdout 里，采集端按 JSON 行解析，于是每条请求日志都是一次解析失败；
+想按状态码或延迟做告警更无从下手 —— 那些值只存在于一行没有结构的文本里。
+
+字段里 `path` 与 `route` 都留：`path` 是实际请求路径（定位那一次具体请求），
+`route` 是命中的路由模板（聚合「这个接口整体的延迟与错误率」）。
+只留 `path` 的话，带 ID 的路径会把同一个接口打散成成千上万个互不相干的 key。
+
+两处刻意的取舍：4xx 记 **warn** 而不是 info（这一档混着「客户端用错了」和
+「有人在探接口」，都该在默认级别下被看到）；`/healthz` 与 `/readyz` **不记**
+（编排系统每几秒打一次且永远 200，记下来只会把真实流量冲淡）。
 
 ## AdminAccess 的权限判定：appScoped 是最容易把页面搞空的一处
 
@@ -66,6 +82,31 @@ RequestID → CrashRecovery → Tracing → CORS → gin.Logger → Firewall
 
 `internal/middleware/admin_permission_test.go` 钉住了上述两组用例（静态目录不得 appScoped、
 真正的应用资源必须 appScoped），新增路由时往表里加一行即可。
+
+### 第四类：`POST /api/admin/apps` 不要权限点
+
+建应用返回 `("", false)`。这不是漏写 —— 要求 `app:write` 会造出一个死锁：
+自助注册出来的管理员一条 assignment 都没有，而唯一能让他拿到权限的动作
+（建自己的第一个应用、成为它的 `app_admin`）本身就被 `app:write` 挡住了。
+控制台上的表现是填完表单、点提交、拿回一句「当前管理员无权执行此操作」。
+
+之所以能放行到 service 层再判，是因为这个动作不读写任何既有租户的数据，
+产物只属于发起人。真正的闸门（平台开关 + 每人配额）在
+`AdminService.EnsureCanCreateApp` —— 它要打库，而这张权限表是纯内存判定，
+放在这里既做不到配额，也会变成同一件事有两处配置入口。
+
+放开的**只有「建」这一个动作**：列表仍按 `app:read` 判定并在 handler 里按授权过滤，
+改既有应用仍要该应用的 `app:write`。`TestCreateAppNeedsNoPermissionPoint` 与
+`TestExistingAppRoutesKeepTheirGates` 成对钉住这条边界。
+
+### 没登记的路由：默认拒绝，但要说清是"没登记"
+
+`resolveAdminPermission` 返回 error 时中间件回 `40315`，文案明说是权限规则未登记。
+与「没权限」共用 `40312` 那句通用文案时，一条漏登记的新路由会伪装成一次权限配置问题，
+于是排查方向从「补一行权限表」歪到「给这个人加授权」。
+
+同理 `writeAdminError` 只对**非** `AppError` 兜底：`AdminService.Authorize` 的拒绝
+文案里带着缺失的权限点与作用域，在传输层改写成通用文案等于把刚算出来的信息丢掉。
 
 **`/api/admin/platform/*` 是第三类：恒为全局作用域。** 这不是为了页面能显示，
 而是整套平台治理的地基 —— `scopeMatches` 在 `requestAppID` 非空时会认可

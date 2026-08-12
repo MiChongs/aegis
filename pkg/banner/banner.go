@@ -167,7 +167,7 @@ func Render(b Banner, opt Options) string {
 	}
 
 	// 着色是 go-pretty 的进程级全局开关，成对设置避免污染其他使用者
-	restore := applyColors(opt.color)
+	restore := ApplyColors(opt.color)
 	defer restore()
 
 	var sb strings.Builder
@@ -199,10 +199,10 @@ func (o Options) normalize() Options {
 		o.Color = ColorAuto
 	}
 
-	tty := isTerminal(o.Writer)
+	tty := IsTerminal(o.Writer)
 
 	if o.Width <= 0 {
-		o.Width = terminalWidth(o.Writer)
+		o.Width = TerminalWidth(o.Writer)
 	}
 	if o.Width <= 0 {
 		o.Width = defaultWidth
@@ -235,7 +235,18 @@ func (o Options) normalize() Options {
 	return o
 }
 
-func applyColors(enable bool) func() {
+// ColorsAvailable 报告 go-pretty 在本进程启动时的着色判定结果，
+// 即 NO_COLOR / FORCE_COLOR / TERM=dumb 这批事实标准变量算下来是否允许着色。
+// 调用方通常还要再叠一层「输出是不是终端」，见 Options.normalize。
+func ColorsAvailable() bool { return defaultColorsEnabled }
+
+// ApplyColors 切换 go-pretty 的进程级着色开关，并返回还原函数。
+//
+// 必须成对使用（`defer restore()`）：这个开关是全局的，渲染一张不着色的表
+// 之后忘了还原，同进程里其他使用者的输出会跟着一起变成纯文本。
+// 还原目标是进程启动时的判定值，不是「上一次设成什么」——
+// 后者在嵌套渲染时会把内层的临时状态固化下来。
+func ApplyColors(enable bool) (restore func()) {
 	if enable {
 		text.EnableColors()
 	} else {

@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"aegis/internal/config"
+	httptransport "aegis/internal/transport/http"
 	"aegis/pkg/banner"
 	"aegis/pkg/egress"
 
+	"github.com/gin-gonic/gin"
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -65,6 +67,9 @@ type BannerRuntime struct {
 	Temporal   client.Client
 	Egress     *egress.Gateway
 	OwnsEgress bool
+	// Router 用来数「这个进程到底暴露了哪些接口」。
+	// Worker 角色下为 nil，那时候「路由」分区整个不出现。
+	Router *gin.Engine
 }
 
 // BannerRuntimeOf 从装配完成的 APIApp 取横幅需要的运行期事实。
@@ -82,6 +87,7 @@ func (a *APIApp) BannerRuntimeOf(role Role, elapsed time.Duration) BannerRuntime
 		Temporal:   a.Temporal,
 		Egress:     a.EgressGateway,
 		OwnsEgress: a.OwnsEgress,
+		Router:     a.Router,
 	}
 }
 
@@ -235,8 +241,46 @@ func bannerSections(rt BannerRuntime, build banner.BuildFacts, proc banner.Runti
 	)
 	if rt.Role.servesHTTP() {
 		sections = append(sections, endpointSection(rt))
+		if section, ok := routeSection(rt); ok {
+			sections = append(sections, section)
+		}
 	}
 	return sections
+}
+
+// routeSection 按顶层命名空间交代这个进程暴露了什么。
+//
+// 这里刻意只给**每个顶层域一行**，而不是把清单摊开：
+// gin 在 debug 档原本会把近千条路由逐行打出来，那正是这次要消掉的东西，
+// 在横幅里换个更漂亮的方式再打一遍毫无意义。完整清单归 `routes` 子命令。
+//
+// 分区随 BANNER_SHOW_ROUTES 开关，以及只在对外提供 HTTP 的角色下出现——
+// Worker 不监听端口，列出「暴露了哪些接口」等于指引人去访问一个不存在的服务。
+func routeSection(rt BannerRuntime) (banner.Section, bool) {
+	if !rt.Config.Banner.ShowRoutes || rt.Router == nil {
+		return banner.Section{}, false
+	}
+	inventory := httptransport.RouteInventory(rt.Router)
+	realms := inventory.Realms()
+	if len(realms) == 0 {
+		return banner.Section{}, false
+	}
+
+	fields := make([]banner.Field, 0, len(realms)+1)
+	for _, realm := range realms {
+		fields = append(fields, banner.Field{
+			Key:   realm.Realm,
+			Value: banner.Countf("%d 条 / %d 组", realm.Routes, realm.Groups),
+			Note:  banner.Join(realm.Auth...),
+		})
+	}
+	fields = append(fields, banner.Field{
+		Key:   "合计",
+		Value: banner.Countf("%d 条 / %d 组", inventory.Total(), len(inventory.Groups)),
+		State: banner.StateOK,
+		Note:  "完整清单：go run ./cmd/server routes",
+	})
+	return banner.Section{Title: "路由", Fields: fields}, true
 }
 
 func buildSection(build banner.BuildFacts) banner.Section {

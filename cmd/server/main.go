@@ -67,6 +67,11 @@ func main() {
 				panic(err)
 			}
 			return
+		case "routes":
+			if err := bootstrap.RunPrintRoutes(ctx, os.Args[2:]); err != nil {
+				panic(err)
+			}
+			return
 		case "mock-users":
 			if err := bootstrap.RunGenerateMockUsers(ctx, os.Args[2:]); err != nil {
 				panic(err)

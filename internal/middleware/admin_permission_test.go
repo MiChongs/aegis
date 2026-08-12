@@ -195,3 +195,68 @@ func TestPaymentRefundQueriesAreReads(t *testing.T) {
 		t.Errorf("发起退款应为 payment:write，得到 %q", permission)
 	}
 }
+
+// 建应用是零权限账号唯一的自举出口，中间件**不能**要求权限点。
+//
+// 改动前这里要 app:write（平台级）。那是一个死锁：自助注册出来的管理员一条
+// assignment 都没有，而唯一能让他拿到权限的动作 ——「建自己的第一个应用、
+// 成为它的 app_admin」—— 本身就被 app:write 挡在门外。控制台的表现是
+// 填完新建应用表单、点提交、拿回一句「当前管理员无权执行此操作」。
+//
+// 真正的闸门（平台开关 + 每人配额）在 AdminService.EnsureCanCreateApp，
+// 它要打库，放在这张纯内存判定表里既做不到，也会变成同一件事有两处配置入口。
+func TestCreateAppNeedsNoPermissionPoint(t *testing.T) {
+	permission, appScoped, err := resolveAdminPermission(
+		newPermissionTestContext(http.MethodPost, "/api/admin/apps"))
+	if err != nil {
+		t.Fatalf("resolveAdminPermission 返回错误：%v", err)
+	}
+	if appScoped {
+		t.Error("建应用时应用还不存在，按 appScoped 判定必然被 40058 拦掉")
+	}
+	if permission != "" {
+		t.Errorf("建应用不得要求权限点（得到 %q）：零角色账号会因此永远建不出第一个应用，"+
+			"也就永远拿不到任何权限", permission)
+	}
+}
+
+// 与上一条配对：放开的只有「建」这一个动作。
+// 列表仍按 app:read 判定并在 handler 里按授权过滤，改既有应用仍要该应用的 app:write。
+func TestExistingAppRoutesKeepTheirGates(t *testing.T) {
+	cases := []struct {
+		method    string
+		path      string
+		want      string
+		appScoped bool
+	}{
+		{http.MethodGet, "/api/admin/apps", "app:read", false},
+		{http.MethodPut, "/api/admin/apps/:appkey", "app:write", true},
+		{http.MethodDelete, "/api/admin/apps/:appkey", "app:write", true},
+		{http.MethodGet, "/api/admin/apps/:appkey", "app:read", true},
+		{http.MethodGet, "/api/admin/apps/:appkey/users", "app:user:read", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			permission, appScoped, err := resolveAdminPermission(newPermissionTestContext(tc.method, tc.path))
+			if err != nil {
+				t.Fatalf("resolveAdminPermission 返回错误：%v", err)
+			}
+			if permission != tc.want {
+				t.Errorf("权限点应为 %q，得到 %q", tc.want, permission)
+			}
+			if appScoped != tc.appScoped {
+				t.Errorf("appScoped 应为 %v，得到 %v", tc.appScoped, appScoped)
+			}
+		})
+	}
+}
+
+// 没登记在表里的管理端路由必须**默认拒绝**（返回 error），而不是静默按无权限点放行。
+// 这条守的是"新加一条路由忘了登记"这类改动：默认放行时它会以一个人人可调的
+// 管理端接口的形式上线，而没有任何地方会报错。
+func TestUnregisteredAdminRouteDefaultsToDeny(t *testing.T) {
+	if _, _, err := resolveAdminPermission(
+		newPermissionTestContext(http.MethodPost, "/api/admin/brand-new-module/do-something")); err == nil {
+		t.Fatal("未登记的管理端路由必须返回错误以触发默认拒绝")
+	}
+}

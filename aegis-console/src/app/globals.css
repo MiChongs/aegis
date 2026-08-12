@@ -1482,3 +1482,138 @@
 .theme-reveal-overlay[data-to="dark"] {
   background-color: #09090b;
 }
+
+/* ==================================================================== */
+/*  法律文本正文（.legal-prose）                                        */
+/*  正文是服务端下发的 HTML，标签由富文本编辑器与内置文本产出，          */
+/*  这里给它一套排版。没有引 @tailwindcss/typography：这一处用得到的     */
+/*  标签就这十来个，为它装一个插件并带上一整套 prose 变量不划算。        */
+/* ==================================================================== */
+.legal-prose {
+  color: var(--foreground);
+  font-size: 0.9375rem;
+  line-height: 1.85;
+}
+
+.legal-prose > * + * {
+  margin-top: 1.15em;
+}
+
+/* h2 之间的间距要明显大于段落间距 —— 一份两万字的条款全靠这个分节，
+   节与节的距离和句与句一样时，读者找不到「第几条在哪」。 */
+.legal-prose h2 {
+  margin-top: 2.4em;
+  margin-bottom: 0.9em;
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  scroll-margin-top: 5rem;
+}
+
+.legal-prose h2:first-child {
+  margin-top: 0;
+}
+
+.legal-prose h3 {
+  margin-top: 1.8em;
+  margin-bottom: 0.6em;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.legal-prose p {
+  color: color-mix(in srgb, var(--foreground) 88%, transparent);
+}
+
+.legal-prose strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.legal-prose ul,
+.legal-prose ol {
+  padding-left: 1.5em;
+  color: color-mix(in srgb, var(--foreground) 88%, transparent);
+}
+
+.legal-prose ul {
+  list-style: disc;
+}
+
+.legal-prose ol {
+  list-style: decimal;
+}
+
+.legal-prose li + li {
+  margin-top: 0.5em;
+}
+
+.legal-prose li::marker {
+  color: var(--muted-foreground);
+}
+
+.legal-prose a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.legal-prose blockquote {
+  padding-left: 1em;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+}
+
+/* 表格用来列「处理目的 / 涉及信息 / 合法性基础」这类三列对照，
+   窄屏放不下时让它自己横向滚动，而不是把整页撑出横向滚动条。 */
+.legal-prose table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.legal-prose th,
+.legal-prose td {
+  padding: 0.6em 0.9em;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.legal-prose th {
+  background: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.legal-prose hr {
+  margin: 2em 0;
+  border-color: var(--border);
+}
+
+/* 打印：法律文本是会被打印和存档的，默认样式打出来是一整页深色底 */
+@media print {
+  .legal-prose {
+    color: #000;
+    font-size: 10.5pt;
+    line-height: 1.6;
+  }
+
+  .legal-prose p,
+  .legal-prose ul,
+  .legal-prose ol {
+    color: #000;
+  }
+
+  /* 章节标题不要落在页面最后一行 */
+  .legal-prose h2,
+  .legal-prose h3 {
+    break-after: avoid;
+  }
+
+  .legal-prose table {
+    break-inside: avoid;
+  }
+}

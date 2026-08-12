@@ -9,6 +9,7 @@ import (
 	httptransport "aegis/internal/transport/http"
 	pkglogger "aegis/pkg/logger"
 	"aegis/pkg/progressutil"
+	"aegis/pkg/routetable"
 	"context"
 	"encoding/json"
 	"flag"
@@ -249,8 +250,7 @@ func RunExportOpenAPI(_ context.Context, args []string) error {
 		outputPath = strings.TrimSpace(args[0])
 	}
 
-	gin.SetMode(gin.ReleaseMode)
-	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, config.CORSConfig{}, nil, "")
+	router, err := newInspectionRouter()
 	if err != nil {
 		return err
 	}
@@ -282,8 +282,7 @@ func RunExportPostman(_ context.Context, args []string) error {
 		outputPath = strings.TrimSpace(args[0])
 	}
 
-	gin.SetMode(gin.ReleaseMode)
-	router, err := httptransport.NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, config.CORSConfig{}, nil, "")
+	router, err := newInspectionRouter()
 	if err != nil {
 		return err
 	}
@@ -456,4 +455,88 @@ func isFlagExpectingValue(arg string) bool {
 	default:
 		return false
 	}
+}
+
+// ── 路由清单 ───────────────────────────────────────────────────────────
+
+// newInspectionRouter 以全零依赖装一份路由表，只用于结构扫描。
+//
+// 三个「看路由结构」的子命令（openapi / postman / routes）共用它：
+// 它们都不连数据库，要的只是那张注册表。
+//
+// 零值 RouterDeps 就是「所有服务都是 nil」，而这正是结构扫描要的：
+// 路由注册本身不调用任何服务，各 handler 也都判 nil。
+// 换成具名字段之前这里要写六十多个 nil，加一个服务就得跟着数一遍位置。
+func newInspectionRouter() (*gin.Engine, error) {
+	// 结构扫描不需要 gin 的调试输出，也不该让它污染 CLI 的标准输出
+	gin.SetMode(gin.ReleaseMode)
+	return httptransport.NewRouter(httptransport.RouterDeps{})
+}
+
+// RunPrintRoutes 打印路由清单。
+//
+//	go run ./cmd/server routes
+//	go run ./cmd/server routes --format tree --group 管理端
+//	go run ./cmd/server routes --format json --out docs/routes.json
+//	go run ./cmd/server routes --method post,delete --path /platform
+//
+// 为什么要有这个子命令：gin 只在 debug 档打路由，生产部署（release 档）里
+// 「这个二进制到底暴露了哪些接口」原本无从查证——而那恰恰是需要盘点的场合。
+// 它不连任何数据库，因此在生产机器上也能安全地跑一次。
+func RunPrintRoutes(_ context.Context, args []string) error {
+	flags := flag.NewFlagSet("routes", flag.ContinueOnError)
+	format := flags.String("format", "table", "输出格式：table / tree / markdown / csv / html / json")
+	pathFilter := flags.String("path", "", "只保留路径含该子串的路由（大小写不敏感）")
+	methodFilter := flags.String("method", "", "只保留这些方法，逗号分隔，如 post,delete")
+	groupFilter := flags.String("group", "", "只保留分组名或顶层域含该子串的路由")
+	authFilter := flags.String("auth", "", "只保留鉴权标注含该子串的路由")
+	output := flags.String("out", "", "写入文件；缺省写标准输出")
+	width := flags.Int("width", 0, "强制列宽；0 = 自动探测终端宽度")
+	color := flags.String("color", "auto", "着色：auto / always / never")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	router, err := newInspectionRouter()
+	if err != nil {
+		return err
+	}
+
+	inventory := httptransport.RouteInventory(router).
+		Filter(routetable.Query{
+			Path:    strings.TrimSpace(*pathFilter),
+			Methods: routetable.ParseMethods(*methodFilter),
+			Group:   strings.TrimSpace(*groupFilter),
+			Auth:    strings.TrimSpace(*authFilter),
+		}).
+		Sort()
+
+	opts := routetable.Options{
+		Format: routetable.Format(strings.ToLower(strings.TrimSpace(*format))),
+		Color:  routetable.ColorMode(strings.ToLower(strings.TrimSpace(*color))),
+		Width:  *width,
+		Writer: os.Stdout,
+	}
+
+	if path := strings.TrimSpace(*output); path != "" {
+		// 写文件时强制关掉着色：ANSI 转义序列存进 .md / .csv 就是乱码。
+		// 终端能力探测也用不上——目标不是终端。
+		opts.Color = routetable.ColorNever
+		rendered, err := routetable.Render(inventory, opts)
+		if err != nil {
+			return err
+		}
+		if dir := filepath.Dir(path); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		if err := os.WriteFile(path, []byte(rendered), 0o644); err != nil {
+			return err
+		}
+		fmt.Printf("已写出路由清单：%s（%d 条 / %d 组）\n", path, inventory.Total(), len(inventory.Groups))
+		return nil
+	}
+
+	return routetable.Print(inventory, opts)
 }

@@ -147,6 +147,86 @@ func (r *Repository) UpsertApp(ctx context.Context, item appdomain.App) (*appdom
 		item.ID, item.Name, item.Status, nullableString(item.DisabledReason), item.RegisterStatus, nullableString(item.DisabledRegisterReason), item.LoginStatus, nullableString(item.DisabledLoginReason), settingsJSON))
 }
 
+// CreateAppOwnedBy 新建应用，并在**同一事务**里把创建者登记为该应用的管理员。
+//
+// 拆成两步（先建应用、再补一条授权）会在中间失败时留下一个孤儿应用：
+// 建它的人管不了它，列表里也看不见它（可见范围按授权过滤），
+// 除了超管谁也救不回来 —— 而这条链路的调用者恰恰是**还没有任何权限**的新账号。
+//
+// roleKey 为空表示不登记授权（超管建应用不需要，他本来就什么都能改），
+// 但 created_by 仍然写下 —— 那是审计线索，与授权无关。
+func (r *Repository) CreateAppOwnedBy(ctx context.Context, item appdomain.App, creatorAdminID int64, roleKey string) (*appdomain.App, error) {
+	const returnCols = `id, name, COALESCE(app_key, ''), status, COALESCE(disabled_reason, ''), register_status, COALESCE(disabled_register_reason, ''), login_status, COALESCE(disabled_login_reason, ''), COALESCE(settings, '{}'::jsonb), created_at, updated_at`
+	settingsJSON, _ := json.Marshal(item.Settings)
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	saved, err := scanApp(tx.QueryRow(ctx,
+		`INSERT INTO apps (name, status, disabled_reason, register_status, disabled_register_reason, login_status, disabled_login_reason, settings, created_by, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+		 RETURNING `+returnCols,
+		item.Name, item.Status, nullableString(item.DisabledReason), item.RegisterStatus,
+		nullableString(item.DisabledRegisterReason), item.LoginStatus, nullableString(item.DisabledLoginReason),
+		settingsJSON, nullableInt64Value(positiveInt64OrNil(creatorAdminID))))
+	if err != nil {
+		return nil, err
+	}
+
+	if creatorAdminID > 0 && strings.TrimSpace(roleKey) != "" {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO admin_assignments (admin_id, role_key, appid, created_at, updated_at)
+			 VALUES ($1, $2, $3, NOW(), NOW())
+			 ON CONFLICT (admin_id, role_key, COALESCE(appid, 0)) DO NOTHING`,
+			creatorAdminID, strings.TrimSpace(roleKey), saved.ID); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return saved, nil
+}
+
+// CountAppsCreatedBy 统计某管理员**自己创建**的应用数，用于自助配额判定。
+//
+// 刻意不数 admin_assignments 里的 app_admin：那记的是"谁在管"。
+// 被超管授权去管理 5 个既有应用的人，一个应用都没建过，配额不该被吃掉。
+func (r *Repository) CountAppsCreatedBy(ctx context.Context, adminID int64) (int, error) {
+	if adminID <= 0 {
+		return 0, nil
+	}
+	var count int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM apps WHERE created_by = $1`, adminID).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// GetAppCreator 返回应用的创建者管理员 ID；无记录（存量应用 / 创建者已注销）时返回 nil。
+func (r *Repository) GetAppCreator(ctx context.Context, appID int64) (*int64, error) {
+	var creator *int64
+	if err := r.pool.QueryRow(ctx, `SELECT created_by FROM apps WHERE id = $1`, appID).Scan(&creator); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return creator, nil
+}
+
+// positiveInt64OrNil 把非正数折成 nil，供可空外键列使用。
+func positiveInt64OrNil(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
 // UpdateAppSettings 仅更新应用的 settings JSONB 字段
 func (r *Repository) UpdateAppSettings(ctx context.Context, appID int64, settings map[string]any) (*appdomain.App, error) {
 	settingsJSON, _ := json.Marshal(settings)

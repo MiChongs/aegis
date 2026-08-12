@@ -14,7 +14,7 @@
 | `worker.go` | `WorkerApp` — Worker 装配、NATS 订阅、AutoSign 调度循环 |
 | `server.go` | `UnifiedApp` — 同时运行 API + Worker（cmd/server 使用） |
 | `egress.go` | 出海网关进程级单例（Unified 模式下 API 与 Worker 共用同一张路由表） |
-| `commands.go` | CLI 命令实现：`RunMigrations` / `RunSyncLegacyUser` / `RunSyncLegacyBatch` / `RunExportOpenAPI` / `RunExportPostman` |
+| `commands.go` | CLI 命令实现：`RunMigrations` / `RunSyncLegacyUser` / `RunSyncLegacyBatch` / `RunExportOpenAPI` / `RunExportPostman` / `RunPrintRoutes` |
 | `banner.go` | 启动横幅的业务侧组装（渲染引擎在 [pkg/banner](../../pkg/banner)） |
 
 ## 启动横幅
@@ -36,7 +36,30 @@
 （`pgconn.ParseConfig` / `mysql.ParseDSN` / `url.Parse`）只取 host/port/db/user，
 `banner_test.go` 里的 `TestReadyBannerNeverLeaksSecrets` 钉住这条。
 
+「路由」分区只按**顶层命名空间**各给一行（公开 / 接入网关 / 管理端 / 应用兼容 /
+用户端 / 系统）加一行合计。完整清单刻意不进横幅 —— gin 在 debug 档原本就会把近千条
+路由逐行打出来，那正是这次要消掉的滚屏，在横幅里换个更漂亮的方式再打一遍等于没解决。
+`TestBannerRouteSectionStaysASummary` 钉住这条（横幅里出现任何具体路径即失败）。
+
 对应配置见 `BANNER_*`（[internal/config](../config/CLAUDE.md)）。
+
+## 路由清单子命令
+
+```bash
+go run ./cmd/server routes                        # 分组表格
+go run ./cmd/server routes --format tree           # 树形（窄终端更好读）
+go run ./cmd/server routes --group 管理端 --method post,delete
+go run ./cmd/server routes --format json --out docs/routes.json
+```
+
+`--format` 支持 table / tree / markdown / csv / html / json，
+过滤支持 `--path` / `--method` / `--group` / `--auth`，
+另有 `--width` / `--color` / `--out`。渲染引擎见 [pkg/routetable](../../pkg/routetable)，
+分组规则见 [internal/transport/http](../transport/http/CLAUDE.md#路由清单与分组规则)。
+
+它和 `openapi` / `postman` 共用 `newInspectionRouter()`（全 nil 服务装一份路由表，
+不连任何数据库），因此在生产机器上也能安全地跑一次 —— 而这恰恰是它存在的理由：
+gin 只在 debug 档打路由，生产部署里「这个二进制暴露了哪些接口」原本无从查证。
 
 ## 依赖装配顺序（APIApp）
 

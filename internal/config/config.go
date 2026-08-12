@@ -21,6 +21,18 @@ type Config struct {
 	// 后端的 /docs 只做 302 跳转，文档本体由门户承载。
 	// 同源部署保持默认相对路径即可；前后端分域时填绝对地址。
 	DocsPortalURL string
+	// LegalContactEmail 是用户协议与隐私政策里「联系我们」一节公示的地址。
+	//
+	// 内置的两份法律文本引用它。**留空时服务端不生造一个地址**，而是原样印出
+	// 「本部署尚未配置联系邮箱」—— 假邮箱写在隐私政策里比明说没配更有害，
+	// 用户会照着它发信然后石沉大海。留空时控制台的法律文本页会给出提示。
+	LegalContactEmail string
+	// LegalAuthoritativeLocale 法律文本的**准据语言**（BCP 47）。
+	//
+	// 内置了十种语言的协议与隐私政策，它们是同一份条款的十个译本。
+	// 译文之间出现歧义时以哪一版为准，必须由部署方指定 —— 不指定的话
+	// 十个译本各自生效，等于十份效力不明的合同。译文页面上会明示这一点。
+	LegalAuthoritativeLocale string
 	// ConsoleBaseURL 是管理控制台（aegis-console）的对外地址。
 	// 通知出口用它拼「查看工单」等深链；留空时通知里只带相对路径，
 	// 飞书/邮件里点不开，因此分域部署务必配置绝对地址。
@@ -28,41 +40,41 @@ type Config struct {
 	// APIBaseURL 是本服务自身的对外地址（如 https://api.example.com）。
 	// 邮件里的下载链接这类**必须绝对**的地址由它拼出 —— 邮件客户端里没有「当前站点」，
 	// 相对路径点不开。留空时相关邮件会退化为不带链接（附件仍照常发）。
-	APIBaseURL      string
-	HTTPPort        int
-	AdminSessionTTL   time.Duration
-	DefaultTimezone   string
-	AdminBootstrap    AdminBootstrapConfig
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	ShutdownTimeout   time.Duration
-	TrustedProxies    []string
-	CORS              CORSConfig
-	JWT               JWTConfig
-	Firewall          FirewallConfig
-	LoginGuard        LoginGuardConfig
-	Postgres          PostgresConfig
-	Database          DatabaseConfig
-	LegacyMySQL       LegacyMySQLConfig
-	Redis             RedisConfig
-	PaymentReceipt PaymentReceiptConfig
-	AdminUserSearch   AdminUserSearchConfig
-	AccountBan        AccountBanConfig
-	Risk              RiskConfig
-	GeoIP             GeoIPConfig
-	GeoRisk           GeoRiskConfig
-	NATS              NATSConfig
-	Temporal          TemporalConfig
-	AutoSign          AutoSignConfig
-	Security          SecurityConfig
-	Captcha           CaptchaConfig
-	RDKitCaptchaURL   string // RDKit 手性碳验证码微服务地址（默认 http://localhost:5050）
-	Banner            BannerConfig
-	CrashLog          CrashLogConfig
-	ReplayProtection  ReplayProtectionConfig
-	Lottery           LotteryConfig
-	Memory            MemoryConfig
-	Tracing           TracingConfig
+	APIBaseURL       string
+	HTTPPort         int
+	AdminSessionTTL  time.Duration
+	DefaultTimezone  string
+	AdminBootstrap   AdminBootstrapConfig
+	ReadTimeout      time.Duration
+	WriteTimeout     time.Duration
+	ShutdownTimeout  time.Duration
+	TrustedProxies   []string
+	CORS             CORSConfig
+	JWT              JWTConfig
+	Firewall         FirewallConfig
+	LoginGuard       LoginGuardConfig
+	Postgres         PostgresConfig
+	Database         DatabaseConfig
+	LegacyMySQL      LegacyMySQLConfig
+	Redis            RedisConfig
+	PaymentReceipt   PaymentReceiptConfig
+	AdminUserSearch  AdminUserSearchConfig
+	AccountBan       AccountBanConfig
+	Risk             RiskConfig
+	GeoIP            GeoIPConfig
+	GeoRisk          GeoRiskConfig
+	NATS             NATSConfig
+	Temporal         TemporalConfig
+	AutoSign         AutoSignConfig
+	Security         SecurityConfig
+	Captcha          CaptchaConfig
+	RDKitCaptchaURL  string // RDKit 手性碳验证码微服务地址（默认 http://localhost:5050）
+	Banner           BannerConfig
+	CrashLog         CrashLogConfig
+	ReplayProtection ReplayProtectionConfig
+	Lottery          LotteryConfig
+	Memory           MemoryConfig
+	Tracing          TracingConfig
 	// Egress 出海代理网关：按目标域名后缀把出站流量路由到境外线路。
 	// 详见 pkg/egress 与 docs/egress-gateway.md。
 	Egress egress.Config
@@ -121,13 +133,17 @@ type TracingConfig struct {
 //	BANNER_SHOW_HOST  是否采集宿主机 CPU / 内存 / 磁盘事实，默认 true。
 //	                  采集要问 WMI（Windows）或挂载点（Linux），
 //	                  极少数环境下会慢，可以单独关掉而保留其余分区。
+//	BANNER_SHOW_ROUTES 是否显示「路由」分区（按顶层命名空间计数 + 鉴权说明），默认 true。
+//	                  完整清单不在横幅里打——近千条路由那是滚屏而不是横幅，
+//	                  要看用 `go run ./cmd/server routes`。
 type BannerConfig struct {
-	Enabled  bool   `mapstructure:"enabled"`
-	Style    string `mapstructure:"style"`
-	Font     string `mapstructure:"font"`
-	Color    string `mapstructure:"color"`
-	Width    int    `mapstructure:"width"`
-	ShowHost bool   `mapstructure:"show_host"`
+	Enabled    bool   `mapstructure:"enabled"`
+	Style      string `mapstructure:"style"`
+	Font       string `mapstructure:"font"`
+	Color      string `mapstructure:"color"`
+	Width      int    `mapstructure:"width"`
+	ShowHost   bool   `mapstructure:"show_host"`
+	ShowRoutes bool   `mapstructure:"show_routes"`
 }
 
 // DefaultBannerConfig 返回横幅的默认配置。
@@ -138,11 +154,12 @@ type BannerConfig struct {
 // 再由随后的装配错误解释为什么起不来。所以入口拿到错误时用它兜一下。
 func DefaultBannerConfig() BannerConfig {
 	return BannerConfig{
-		Enabled:  true,
-		Style:    "auto",
-		Font:     "slant",
-		Color:    "auto",
-		ShowHost: true,
+		Enabled:    true,
+		Style:      "auto",
+		Font:       "slant",
+		Color:      "auto",
+		ShowHost:   true,
+		ShowRoutes: true,
 	}
 }
 
@@ -688,15 +705,17 @@ func newConfiguredViper() (*viper.Viper, string, error) {
 
 func loadWithViper(v *viper.Viper) (Config, error) {
 	cfg := Config{
-		AppName:         v.GetString("APP_NAME"),
-		AppEnv:          v.GetString("APP_ENV"),
-		DocsPortalURL:   v.GetString("DOCS_PORTAL_URL"),
-		ConsoleBaseURL:  v.GetString("CONSOLE_BASE_URL"),
-		APIBaseURL:      v.GetString("API_BASE_URL"),
-		HTTPPort:        v.GetInt("HTTP_PORT"),
-		TrustedProxies:  csvList(v.GetString("TRUSTED_PROXIES")),
-		AdminSessionTTL: v.GetDuration("ADMIN_SESSION_TTL"),
-		DefaultTimezone: v.GetString("APP_DEFAULT_IANA_TIMEZONE"),
+		AppName:                  v.GetString("APP_NAME"),
+		AppEnv:                   v.GetString("APP_ENV"),
+		DocsPortalURL:            v.GetString("DOCS_PORTAL_URL"),
+		LegalContactEmail:        strings.TrimSpace(v.GetString("LEGAL_CONTACT_EMAIL")),
+		LegalAuthoritativeLocale: strings.TrimSpace(v.GetString("LEGAL_AUTHORITATIVE_LOCALE")),
+		ConsoleBaseURL:           v.GetString("CONSOLE_BASE_URL"),
+		APIBaseURL:               v.GetString("API_BASE_URL"),
+		HTTPPort:                 v.GetInt("HTTP_PORT"),
+		TrustedProxies:           csvList(v.GetString("TRUSTED_PROXIES")),
+		AdminSessionTTL:          v.GetDuration("ADMIN_SESSION_TTL"),
+		DefaultTimezone:          v.GetString("APP_DEFAULT_IANA_TIMEZONE"),
 		AdminBootstrap: AdminBootstrapConfig{
 			Account:     v.GetString("ADMIN_BOOTSTRAP_ACCOUNT"),
 			Password:    v.GetString("ADMIN_BOOTSTRAP_PASSWORD"),
@@ -977,12 +996,13 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 			HistoryRetain:   getDuration(v, "MEMORY_HISTORY_RETAIN", time.Hour),
 		},
 		Banner: BannerConfig{
-			Enabled:  getBool(v, "BANNER_ENABLED", true),
-			Style:    strings.ToLower(strings.TrimSpace(v.GetString("BANNER_STYLE"))),
-			Font:     strings.TrimSpace(v.GetString("BANNER_FONT")),
-			Color:    strings.ToLower(strings.TrimSpace(v.GetString("BANNER_COLOR"))),
-			Width:    v.GetInt("BANNER_WIDTH"),
-			ShowHost: getBool(v, "BANNER_SHOW_HOST", true),
+			Enabled:    getBool(v, "BANNER_ENABLED", true),
+			Style:      strings.ToLower(strings.TrimSpace(v.GetString("BANNER_STYLE"))),
+			Font:       strings.TrimSpace(v.GetString("BANNER_FONT")),
+			Color:      strings.ToLower(strings.TrimSpace(v.GetString("BANNER_COLOR"))),
+			Width:      v.GetInt("BANNER_WIDTH"),
+			ShowHost:   getBool(v, "BANNER_SHOW_HOST", true),
+			ShowRoutes: getBool(v, "BANNER_SHOW_ROUTES", true),
 		},
 		CrashLog: CrashLogConfig{
 			Dir:      v.GetString("CRASHLOG_DIR"),

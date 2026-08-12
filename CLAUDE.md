@@ -92,6 +92,7 @@ graph TD
 | **平台治理** | 全站应用的冻结 / 封禁 / 限制 / 申诉（超管与平台管理员） | [docs](docs/platform-governance.md) |
 | `pkg/egress/` | **出海代理网关**：域名后缀路由 + 多协议端点 + 健康检查 | [docs](docs/egress-gateway.md) |
 | `pkg/banner/` | **启动横幅渲染引擎**：FIGlet 艺术字 + 明细表格 + 终端能力降级 | [bootstrap](internal/bootstrap/CLAUDE.md#启动横幅) |
+| `pkg/routetable/` | **路由清单渲染**：分组表格 / 树形 / Markdown / CSV / HTML / JSON，宽度自适应 | [transport/http](internal/transport/http/CLAUDE.md#路由清单与分组规则) |
 | `pkg/receipt/` | **支付凭证 PDF**：10 语言 A4 排版 + 字体决策 + 分页 | [docs](docs/payment-receipt.md) |
 | **交易与凭证** | 订单与钱包流水**两类主体**都能出凭证；同一笔钱只出一份（挂着订单的流水由订单出具） | [docs](docs/payment-receipt.md#两类凭证主体) |
 | `pkg/i18n/` | **通用国际化**：语言协商 + CLDR 复数 + 定点金额/日期格式化 | [docs](docs/payment-receipt.md#语言协商) |
@@ -123,6 +124,12 @@ go run ./cmd/server openapi docs/openapi.json
 
 # 导出 Postman 集合
 go run ./cmd/server postman
+
+# 路由清单（不连数据库，生产机器上也能安全跑一次）
+go run ./cmd/server routes
+go run ./cmd/server routes --format tree --group 管理端
+go run ./cmd/server routes --format json --out docs/routes.json
+go run ./cmd/server routes --method post,delete --path /platform
 
 # 遗留用户迁移（需配置 LEGACY_MYSQL_DSN）
 go run ./cmd/server sync-legacy-user <user_id>
@@ -203,10 +210,23 @@ pnpm lint       # ESLint
 | 作用域 | 存储 | 管理入口 | 判据 |
 |---|---|---|---|
 | 应用级 | `apps.settings` JSONB（`policy` / `passwordPolicy` / `captcha` / `transportEncryption` / `integralPerCurrency`） | 控制台 `/apps/{appKey}`，路径里的 appKey 即作用域 | 换个应用这项会不同 |
-| 平台级 | `platform_settings` K/V（firewall / security / adminCaptcha / ldap / oidc / saml / branding） | 控制台 `/configuration`（超管，无应用选择器） | 对所有应用一视同仁 |
+| 平台级 | `platform_settings` K/V（firewall / security / adminCaptcha / ldap / oidc / saml / branding / selfService） | 控制台 `/configuration`（超管，无应用选择器） | 对所有应用一视同仁 |
 
 新增配置项先确定归属，**不要两边都放**。应用级策略的逐项执行点索引见
 [internal/service/CLAUDE.md](internal/service/CLAUDE.md#应用级认证策略的执行点)。
+
+## 零权限账号的出口（自助能力）
+
+管理端 RBAC 有一个起点问题：自助注册出来的管理员**一条角色分配都没有**。
+在这里给他发角色是不行的（注册是匿名入口，等于谁都能给自己弄一份授权），
+所以出口只能是一类**不读写任何既有租户数据、产物只属于发起人**的动作 ——
+实际上就是「建自己的第一个应用、成为它的 app_admin」。
+
+因此这个动作**不走权限点判定**（要求 `app:write` 会造出一个死锁：
+唯一能拿到权限的动作本身要求权限），闸门换成开关 + 每人配额，
+执行点只有一个 `AdminService.EnsureCanCreateApp`，配置只有一处
+`platform_settings` 的 `admin.self_service`。详见
+[internal/service/CLAUDE.md](internal/service/CLAUDE.md#自助能力零权限账号唯一的出口)。
 
 ## 应用接入协议（App Protocol v1）
 

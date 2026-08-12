@@ -2,8 +2,6 @@ package httptransport
 
 import (
 	"testing"
-
-	"aegis/internal/config"
 )
 
 // 组织路由把静态段与参数段放在了同一层（/organizations/tree 与
@@ -15,11 +13,7 @@ func TestOrgRoutesRegisterWithoutConflict(t *testing.T) {
 			t.Fatalf("路由注册冲突: %v", r)
 		}
 	}()
-	if _, err := NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		config.CORSConfig{}, nil, ""); err != nil {
+	if _, err := NewRouter(RouterDeps{}); err != nil {
 		t.Fatalf("NewRouter: %v", err)
 	}
 }

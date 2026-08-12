@@ -23,6 +23,36 @@ type SettingsView struct {
 	OIDC         OIDCSettingsView         `json:"oidc"`
 	SAML         SAMLSettingsView         `json:"saml"`
 	Branding     BrandingSettingsView     `json:"branding"`
+	SelfService  SelfServiceSettingsView  `json:"selfService"`
+}
+
+// SelfServiceSettingsView 自助能力配置（平台级，对所有应用一视同仁）。
+//
+// 管着两件事：陌生人能不能自己注册成管理员，以及一个**零角色**的管理员
+// 能不能自己拉起第一个应用。后者是整套 RBAC 唯一的自举出口 ——
+// 关掉它，自助注册出来的账号就只能干等超管授权。
+//
+// 三个字段刻意分开：只关注册（对内部部署）与只关建应用（开放注册但人工审批）
+// 是两种真实存在的运营取向，合成一个开关会逼人二选一。
+type SelfServiceSettingsView struct {
+	// AllowRegistration 是否开放 POST /api/admin/auth/register。
+	// 关闭后该路由返回明确的 403 而不是 404 —— 404 会让接入方以为地址写错了。
+	AllowRegistration bool `json:"allowRegistration"`
+	// AllowAppCreation 未被授予 app:write 的管理员能否自助创建应用。
+	AllowAppCreation bool `json:"allowAppCreation"`
+	// MaxAppsPerAdmin 每人自助创建的应用数上限，0 = 不限。
+	// 只统计 apps.created_by 命中的行：被超管授权去管理的既有应用不占配额。
+	MaxAppsPerAdmin int `json:"maxAppsPerAdmin"`
+	// CreatorRoleKey 创建者自动获得的应用级角色，必须是 scope=app 的角色。
+	CreatorRoleKey string `json:"creatorRoleKey"`
+}
+
+// SelfServiceSettingsPatch 自助能力配置补丁，nil 表示不修改。
+type SelfServiceSettingsPatch struct {
+	AllowRegistration *bool   `json:"allowRegistration,omitempty"`
+	AllowAppCreation  *bool   `json:"allowAppCreation,omitempty"`
+	MaxAppsPerAdmin   *int    `json:"maxAppsPerAdmin,omitempty"`
+	CreatorRoleKey    *string `json:"creatorRoleKey,omitempty"`
 }
 
 type FirewallSettingsView struct {
@@ -120,6 +150,7 @@ type SettingsUpdate struct {
 	OIDC         OIDCSettingsPatch         `json:"oidc"`
 	SAML         SAMLSettingsPatch         `json:"saml"`
 	Branding     BrandingSettingsPatch     `json:"branding"`
+	SelfService  SelfServiceSettingsPatch  `json:"selfService"`
 }
 
 type FirewallSettingsPatch struct {

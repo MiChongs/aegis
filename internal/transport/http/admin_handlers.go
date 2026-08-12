@@ -221,13 +221,30 @@ func authProviderFromAccount(source string) string {
 	return s
 }
 
+// AdminMe 当前会话 + 展开后的生效权限 + 自助能力。
+//
+// 回包内嵌原来的 AccessContext，字段位置全部不变，只是多了 permissions
+// 与 selfService 两块。多这两块是为了让控制台**不必自己推导权限**：
+// 光有角色 key 的话前端得维护一份"角色 → 权限"的副本，那份副本一旦与
+// builtInAdminRoles 漂移，用户看到的就是"按钮在、点了 403"；
+// 而 selfService 直接回答「新建应用这个入口现在能不能点、不能点是为什么」。
 func (h *Handler) AdminMe(c *gin.Context) {
 	session, ok := adminAccessSession(c)
 	if !ok {
 		response.Error(c, http.StatusUnauthorized, 40110, "管理员未认证")
 		return
 	}
-	response.Success(c, 200, "获取成功", session)
+	response.Success(c, 200, "获取成功", h.admin.AccessSnapshot(c.Request.Context(), session))
+}
+
+// AdminSelfServiceConfig 自助能力的公开视图（免登录）。
+//
+// 登录页要靠它决定「注册」链接显不显示。放在公开端点是刻意的：
+// 关掉注册之后，注册页还挂在那里、提交才报错，是最容易被当成故障上报的一种体验。
+func (h *Handler) AdminSelfServiceConfig(c *gin.Context) {
+	response.Success(c, 200, "ok", gin.H{
+		"registrationEnabled": h.admin.RegistrationEnabled(c.Request.Context()),
+	})
 }
 
 func (h *Handler) AdminListAccounts(c *gin.Context) {

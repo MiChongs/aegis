@@ -11,6 +11,9 @@ Gin 路由注册、HTTP Handler 实现、请求/响应 DTO、OpenAPI 规范生�
 | 文件 | 说明 |
 |---|---|
 | `router.go` | `NewRouter()` — 路由注册入口（单文件，含所有路由组） |
+| `route_groups.go` | **命名空间规则表**（单一事实源）+ `deriveTags()` + `RouteInventory()` |
+| `route_chains.go` | 接住 `gin.DebugPrintRouteFunc`：灭掉调试滚屏 + 采集中间件链深度 |
+| `testdata/routes.golden` | 全量路由黄金快照，由 `TestRouteTableMatchesGoldenSnapshot` 钉住 |
 | `dto.go` | 通用请求/响应 DTO（用户、认证、通知等） |
 | `dto_extra.go` | 扩展 DTO（角色、版本、站点等） |
 | `dto_storage.go` | 存储相关 DTO |
@@ -88,6 +91,44 @@ POST    /api/admin/profile/avatar [AdminAuth]
 # WebSocket
 GET /api/ws                      实时通信入口
 ```
+
+## 路由清单与分组规则
+
+`route_groups.go` 里那张 `routeGroups` 表是「一条路由属于哪个命名空间」的**单一事实源**，
+同时喂两个消费方，刻意不许它们各有一套：
+
+| 消费方 | 用它的哪一列 | 影响 |
+|---|---|---|
+| `deriveTags()` | `Tag`（英文） | OpenAPI 标签 → 门户分组、生成式客户端分包 |
+| `RouteInventory()` | `Realm` / `Title` / `Auth`（中文） | 启动横幅的「路由」分区、`routes` 子命令 |
+
+**匹配单位与展示单位是分开的**：一条规则一个 `Tag`（OpenAPI 标签的粒度是既定事实），
+但多条规则可以共用一个 `Title`。「公开元数据」里既有 `/api/app/public`（历史上归
+`App Compat`）也有 `/api/public/branding`（归 `API`），一组一个 Tag 就只能二选一。
+
+四条测试钉住这张表：
+
+| 测试 | 守什么 |
+|---|---|
+| `TestDeriveTagsMatchesLegacySwitch` | 逐条比对收敛前的旧 `switch`，OpenAPI 标签零漂移 |
+| `TestEveryRouteMatchesAnExplicitGroup` | 没有路由落进兜底分组（新命名空间必须显式登记） |
+| `TestRuleTableHasNoUnreachableRule` | 没有被上层规则完全遮住的死规则（`Fallback: true` 例外） |
+| `TestRuleLabelsAvoidAmbiguousWidthRunes` | 标注里不含 East Asian Ambiguous 宽度字符 |
+
+最后一条不是文案洁癖：`·`「×」「○」在中日韩控制台里被 go-runewidth 算成 2 列、
+实际渲染 1 列，会把路由表右边框顶歪，且只在特定 locale 下发作。分隔一律用 ASCII 的 ` / `。
+
+### gin 的路由调试输出为什么必须接住
+
+`gin.DebugPrintRouteFunc` 同时是两件事的唯一入口：
+
+- **灭掉滚屏**：debug 档下 gin 会把每条路由打成一行，近千条就是近千行，正好冲掉启动横幅
+- **拿到链深度**：`engine.Routes()` 返回的 `RouteInfo` 只有 Method / Path / Handler，
+  **不含中间件链**，那个 `(14 handlers)` 只在这个回调的 `nuHandlers` 形参里出现
+
+release 档 gin 根本不回调，链深度全为 0，清单里那一列由 go-pretty 的
+`SuppressEmptyColumns` 自动消失 —— 这也是 `routes` 子命令在生产机器上仍然有用的原因：
+gin 只在 debug 档打路由，而「这个部署暴露了哪些接口」恰恰是生产环境才需要盘点的事。
 
 ## Handler 结构
 

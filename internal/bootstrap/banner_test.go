@@ -2,12 +2,15 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"aegis/internal/config"
 	"aegis/pkg/egress"
+
+	"github.com/gin-gonic/gin"
 )
 
 // bannerTestSecrets 是横幅绝对不能打出来的东西。
@@ -238,5 +241,113 @@ func TestRedactURLDropsCredentials(t *testing.T) {
 	}
 	if got, want := redactURL("nats://nats.internal:4222"), "nats://nats.internal:4222"; got != want {
 		t.Errorf("redactURL = %q，期望 %q", got, want)
+	}
+}
+
+// ── 路由分区 ───────────────────────────────────────────────────────────
+
+// testRouteEngine 用结构扫描路由（全 nil 服务）当被测对象。
+// 与 openapi / postman / routes 三个子命令共用同一个装配入口，
+// 因此这里数出来的条数就是那三个命令看到的条数。
+func testRouteEngine(t *testing.T) *gin.Engine {
+	t.Helper()
+	engine, err := newInspectionRouter()
+	if err != nil {
+		t.Fatalf("装配路由失败：%v", err)
+	}
+	return engine
+}
+
+func routeBannerConfig() config.Config {
+	cfg := bannerTestConfig()
+	cfg.Banner.Width = 150
+	cfg.Banner.Color = "never"
+	cfg.Banner.ShowHost = false
+	return cfg
+}
+
+func TestBannerRouteSectionCountsByRealm(t *testing.T) {
+	engine := testRouteEngine(t)
+	out := RenderReadyBanner(context.Background(), BannerRuntime{
+		Role: RoleAPI, Config: routeBannerConfig(), Router: engine,
+	})
+
+	if !strings.Contains(out, "路由") {
+		t.Fatalf("缺少路由分区，实际输出：\n%s", out)
+	}
+	// 顶层域各占一行；分组一级（几十个）刻意不进横幅
+	for _, realm := range []string{"公开", "接入网关", "管理端", "用户端"} {
+		if !strings.Contains(out, realm) {
+			t.Errorf("路由分区缺少顶层域 %q", realm)
+		}
+	}
+	// 合计要与真实路由数一致——横幅里报个不准的数比不报更糟
+	if !strings.Contains(out, fmt.Sprintf("%d 条", len(engine.Routes()))) {
+		t.Errorf("路由分区没有报出真实总数 %d，实际输出：\n%s", len(engine.Routes()), out)
+	}
+	// 完整清单不在横幅里打（那正是这次要消掉的滚屏），要给出去哪儿看
+	if !strings.Contains(out, "cmd/server routes") {
+		t.Error("路由分区应当指明完整清单怎么看")
+	}
+}
+
+// TestBannerRouteSectionStaysASummary 横幅里绝不能出现逐条路由。
+// gin 在 debug 档原本就会把近千条路由逐行打出来，那正是要消掉的东西；
+// 在横幅里换个更漂亮的方式再打一遍，等于什么都没解决。
+func TestBannerRouteSectionStaysASummary(t *testing.T) {
+	out := RenderReadyBanner(context.Background(), BannerRuntime{
+		Role: RoleAPI, Config: routeBannerConfig(), Router: testRouteEngine(t),
+	})
+	// 刻意不拿 /healthz 当判据：「入口」分区本来就该列出健康探针地址，
+	// 那是给人点开的链接，不是路由清单。
+	for _, path := range []string{
+		"/api/v1/apps/:appkey/auth/login",
+		"/api/admin/system/organizations",
+		"/api/admin/platform/overview",
+	} {
+		if strings.Contains(out, path) {
+			t.Errorf("横幅里出现了具体路由 %q，它应该只报计数", path)
+		}
+	}
+	// 横幅整体不该因为路由分区而变成滚屏
+	if lines := strings.Count(out, "\n"); lines > 80 {
+		t.Errorf("横幅长达 %d 行，路由分区应当只占几行", lines)
+	}
+}
+
+func TestBannerRouteSectionToggle(t *testing.T) {
+	cfg := routeBannerConfig()
+	cfg.Banner.ShowRoutes = false
+
+	out := RenderReadyBanner(context.Background(), BannerRuntime{
+		Role: RoleAPI, Config: cfg, Router: testRouteEngine(t),
+	})
+	if strings.Contains(out, "cmd/server routes") {
+		t.Error("BANNER_SHOW_ROUTES=false 时不应当展示路由分区")
+	}
+	if !strings.Contains(out, "PostgreSQL") {
+		t.Error("关闭路由分区不应当影响其余分区")
+	}
+}
+
+// TestBannerRouteSectionAbsentWithoutRouter Worker 不监听端口，
+// 列出「暴露了哪些接口」等于指引人去访问一个不存在的服务。
+func TestBannerRouteSectionAbsentWithoutRouter(t *testing.T) {
+	worker := RenderReadyBanner(context.Background(), BannerRuntime{
+		Role: RoleWorker, Config: routeBannerConfig(), Router: testRouteEngine(t),
+	})
+	if strings.Contains(worker, "cmd/server routes") {
+		t.Error("Worker 角色不应当展示路由分区")
+	}
+
+	// API 角色但装配失败拿不到 router 时，少一个分区而不是 panic
+	api := RenderReadyBanner(context.Background(), BannerRuntime{
+		Role: RoleAPI, Config: routeBannerConfig(),
+	})
+	if strings.Contains(api, "cmd/server routes") {
+		t.Error("router 为 nil 时不应当展示路由分区")
+	}
+	if !strings.Contains(api, "PostgreSQL") {
+		t.Error("router 为 nil 不应当影响其余分区")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"aegis/internal/authz"
 	"aegis/internal/config"
 	admindomain "aegis/internal/domain/admin"
 	plugindomain "aegis/internal/domain/plugin"
@@ -20,8 +21,6 @@ import (
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/timeutil"
-	"github.com/casbin/casbin/v2"
-	"github.com/casbin/casbin/v2/model"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -33,9 +32,15 @@ type AdminService struct {
 	log         *zap.Logger
 	pg          *pgrepo.Repository
 	sessions    *redisrepo.SessionRepository
-	enforcer    *casbin.Enforcer
-	enforcerMu  sync.RWMutex
+	// authz 是平台唯一的授权判定引擎（策略落库 + 跨实例同步 + 可解释）。
+	// 它取代了原来挂在本结构体上的那个内存 Casbin enforcer。
+	authz *authz.Engine
+	// roles / customRoles 只是**展示用**的角色元数据（名称、层级、作用域），
+	// 判定一律走 authz。两份数据分开是有意的：判定要的是策略，
+	// 列表要的是"这个角色叫什么、排第几"，混在一起就会出现
+	// 「改了展示名顺带把权限也改了」这类事故。
 	roles       map[string]admindomain.RoleDefinition
+	rolesMu     sync.RWMutex
 	customRoles map[string]admindomain.RoleDefinition
 	security    *SecurityService // 用于 MFA 验证（通过 SetSecurityService 注入，避免循环初始化）
 	ldap        *LDAPService     // LDAP 认证（通过 SetLDAPService 注入）
@@ -43,6 +48,8 @@ type AdminService struct {
 	saml        *SAMLService     // SAML 认证（通过 SetSAMLService 注入）
 	plugin      *PluginService   // 插件系统（通过 SetPluginService 注入）
 	risk        *RiskService     // 风控服务（通过 SetRiskService 注入）
+	// settings 平台设置（通过 SetPlatformSettings 注入）：自助注册开关与建应用配额存在这里
+	settings *PlatformSettingsService
 }
 
 // SetRiskService 注入风控服务
@@ -50,23 +57,25 @@ func (s *AdminService) SetRiskService(risk *RiskService) {
 	s.risk = risk
 }
 
-func NewAdminService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository) (*AdminService, error) {
+func NewAdminService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, engine *authz.Engine) (*AdminService, error) {
 	if log == nil {
 		log = zap.NewNop()
 	}
-	enforcer, err := newAdminEnforcer()
-	if err != nil {
-		return nil, err
+	if engine == nil {
+		return nil, fmt.Errorf("授权引擎未初始化")
 	}
 	return &AdminService{
 		cfg:      cfg,
 		log:      log,
 		pg:       pg,
 		sessions: sessions,
-		enforcer: enforcer,
-		roles:    builtInAdminRoles(),
+		authz:    engine,
+		roles:    authz.BuiltinRoles(),
 	}, nil
 }
+
+// Authz 暴露授权引擎，供管理端的策略维护与自检接口使用。
+func (s *AdminService) Authz() *authz.Engine { return s.authz }
 
 // SetSecurityService 注入 SecurityService（在 bootstrap 中调用，避免循环初始化）
 func (s *AdminService) SetSecurityService(sec *SecurityService) {
@@ -523,43 +532,6 @@ func adminIDFromClaims(claims jwt.MapClaims) int64 {
 	}
 }
 
-func (s *AdminService) Authorize(ctx context.Context, access *admindomain.AccessContext, permission string, appID *int64) error {
-	if access == nil {
-		return apperrors.New(40110, http.StatusUnauthorized, "管理员未认证")
-	}
-	if access.IsSuperAdmin {
-		return nil
-	}
-	if permission == "" {
-		return nil
-	}
-	s.enforcerMu.RLock()
-	defer s.enforcerMu.RUnlock()
-	for _, assignment := range access.Assignments {
-		if !scopeMatches(assignment.AppID, appID) {
-			continue
-		}
-		allowed, err := s.enforcer.Enforce(assignment.RoleKey, permission)
-		if err != nil {
-			return err
-		}
-		if allowed {
-			return nil
-		}
-	}
-	// Casbin 拒绝后，检查临时权限
-	tempPerms, err := s.pg.GetActiveTempPermissions(ctx, access.AdminID)
-	if err != nil {
-		return err
-	}
-	for _, tp := range tempPerms {
-		if scopeMatches(tp.AppID, appID) && tp.Permission == permission {
-			return nil
-		}
-	}
-	return apperrors.New(40311, http.StatusForbidden, "当前管理员无权执行此操作")
-}
-
 func (s *AdminService) ListAdmins(ctx context.Context) ([]admindomain.Profile, error) {
 	return s.pg.ListAdminAccounts(ctx)
 }
@@ -604,9 +576,19 @@ func (s *AdminService) CreateAdmin(ctx context.Context, input admindomain.Create
 	return profile, err
 }
 
-// RegisterAdmin 管理员自助注册（公开接口，无需认证）
-// 注册后无角色分配，创建应用时自动获得 app_admin 权限
+// RegisterAdmin 管理员自助注册（公开接口，无需认证）。
+//
+// 建出来的账号**一条角色分配都没有**，这是刻意的：注册是个匿名入口，
+// 在这里发角色等于任何人都能给自己弄一份平台级授权。他能做的只有
+// 「自助能力」那一档 —— 主要就是创建属于自己的第一个应用并成为它的管理员，
+// 判定见 EnsureCanCreateApp。
 func (s *AdminService) RegisterAdmin(ctx context.Context, account, password, displayName, email string) (*admindomain.Profile, error) {
+	// 开关关闭时给一条说得清的 403。以前关掉这条路的做法是把路由摘掉，
+	// 于是前端拿到 40400「请求的页面不存在」，看起来像接口地址写错了。
+	if !s.RegistrationEnabled(ctx) {
+		return nil, apperrors.New(40317, http.StatusForbidden,
+			"平台已关闭管理员自助注册。请联系超级管理员为你开通账号。")
+	}
 	input := admindomain.CreateInput{
 		Account:      strings.TrimSpace(account),
 		Password:     password,
@@ -625,8 +607,26 @@ func (s *AdminService) RegisterAdmin(ctx context.Context, account, password, dis
 	return s.pg.CreateAdminAccount(ctx, input, hash)
 }
 
-// AutoAssignAppRole 自动为管理员分配应用角色（创建应用时调用）
+// AutoAssignAppRole 为管理员补一条应用级角色分配。
+//
+// 创建应用时的登记已经并进 AppService.CreateApp 的事务里了（见
+// Repository.CreateAppOwnedBy），这里只剩「事后补授」这一种用途，
+// 因此它会校验角色确实是应用级的 —— 传进一个全局角色会把 appID 静默丢掉，
+// 表现为一次无声的提权。
 func (s *AdminService) AutoAssignAppRole(ctx context.Context, adminID, appID int64, roleKey string) error {
+	if adminID <= 0 || appID <= 0 {
+		return apperrors.New(40058, http.StatusBadRequest, "缺少有效的管理员或应用标识")
+	}
+	roleKey = strings.TrimSpace(roleKey)
+	role, ok := s.roles[roleKey]
+	if !ok {
+		s.rolesMu.RLock()
+		role, ok = s.customRoles[roleKey]
+		s.rolesMu.RUnlock()
+	}
+	if !ok || role.Scope != "app" {
+		return apperrors.New(40053, http.StatusBadRequest, "只能分配应用级角色")
+	}
 	return s.pg.AddAdminAssignment(ctx, adminID, roleKey, &appID)
 }
 
@@ -692,11 +692,11 @@ func (s *AdminService) ListRoles() []admindomain.RoleDefinition {
 	for _, item := range s.roles {
 		items = append(items, item)
 	}
-	s.enforcerMu.RLock()
+	s.rolesMu.RLock()
 	for _, item := range s.customRoles {
 		items = append(items, item)
 	}
-	s.enforcerMu.RUnlock()
+	s.rolesMu.RUnlock()
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Level == items[j].Level {
 			return items[i].Key < items[j].Key
@@ -741,123 +741,19 @@ func (s *AdminService) ListRolesWithPermissionTree() []admindomain.RoleWithPermi
 	return result
 }
 
-// 平台级权限点常量。
-//
-// 与应用级权限点的区别是**判定作用域**：这些权限点只在全局作用域（AppID 为 nil）下有意义 ——
-// 一个只管着自己那个应用的管理员即便被授了 platform:app:govern，也只能"治理自己"，
-// 那等于自己给自己解封。因此凡是读它们的地方一律传 appID = nil。
+// 权限点常量的兼容别名。唯一事实源是 internal/authz 的权限目录 ——
+// 常量散落在业务包里正是"加一个权限点要改三个包"的成因。
 const (
-	// PermissionPlatformAppRead 全站应用总览与治理详情
-	PermissionPlatformAppRead = "platform:app:read"
-	// PermissionPlatformAppGovern 执行限制 / 冻结 / 停运 / 解除
-	PermissionPlatformAppGovern = "platform:app:govern"
-	// PermissionPlatformAppDanger 危险操作：封禁 / 归档 / 强制下线 / 删除被治理应用
-	PermissionPlatformAppDanger = "platform:app:danger"
-	// PermissionPlatformAppealReview 治理申诉审批
-	PermissionPlatformAppealReview = "platform:appeal:review"
-	// PermissionPlatformStorageRead 平台级存储配置查看
-	PermissionPlatformStorageRead = "platform:storage:read"
-	// PermissionPlatformStorageWrite 平台级存储配置修改
-	PermissionPlatformStorageWrite = "platform:storage:write"
+	PermissionPlatformAppRead      = authz.PermPlatformAppRead
+	PermissionPlatformAppGovern    = authz.PermPlatformAppGovern
+	PermissionPlatformAppDanger    = authz.PermPlatformAppDanger
+	PermissionPlatformAppealReview = authz.PermPlatformAppealReview
+	PermissionPlatformStorageRead  = authz.PermPlatformStorageRead
+	PermissionPlatformStorageWrite = authz.PermPlatformStorageWrite
 )
 
-// allPermissionGroups 返回所有权限分组定义
-func allPermissionGroups() []admindomain.PermissionGroup {
-	return []admindomain.PermissionGroup{
-		{Key: "platform", Name: "平台治理", Permissions: []admindomain.Permission{
-			{Code: PermissionPlatformAppRead, Name: "全站应用总览", Description: "跨应用查看治理状态与用量指标"},
-			{Code: PermissionPlatformAppGovern, Name: "应用治理", Description: "限制 / 冻结 / 停运 / 解除，应用管理员无法自行撤销"},
-			{Code: PermissionPlatformAppDanger, Name: "危险治理操作", Description: "封禁 / 归档 / 强制下线全站会话 / 删除被治理应用"},
-			{Code: PermissionPlatformAppealReview, Name: "治理申诉审批"},
-			{Code: PermissionPlatformStorageRead, Name: "平台存储配置查看"},
-			{Code: PermissionPlatformStorageWrite, Name: "平台存储配置修改"},
-		}},
-		{Key: "system", Name: "系统管理", Permissions: []admindomain.Permission{
-			{Code: "system:admin:manage", Name: "管理员管理"},
-			{Code: "system:settings:read", Name: "系统设置查看"},
-			{Code: "system:settings:write", Name: "系统设置修改"},
-			{Code: "system:user_setting:read", Name: "用户设置查看"},
-			{Code: "system:user_setting:write", Name: "用户设置修改"},
-		}},
-		{Key: "app", Name: "应用管理", Permissions: []admindomain.Permission{
-			{Code: "app:read", Name: "应用信息查看"},
-			{Code: "app:write", Name: "应用信息修改"},
-			{Code: "app:user:read", Name: "应用用户查看"},
-			{Code: "app:user:write", Name: "应用用户管理"},
-			{Code: "app:notification:read", Name: "通知查看"},
-			{Code: "app:notification:write", Name: "通知管理"},
-		}},
-		{Key: "content", Name: "内容管理", Permissions: []admindomain.Permission{
-			{Code: "content:banner:read", Name: "Banner 查看"},
-			{Code: "content:banner:write", Name: "Banner 管理"},
-			{Code: "content:notice:read", Name: "公告查看"},
-			{Code: "content:notice:write", Name: "公告管理"},
-		}},
-		{Key: "audit", Name: "审计日志", Permissions: []admindomain.Permission{
-			{Code: "audit:login:read", Name: "登录审计查看"},
-			{Code: "audit:session:read", Name: "会话审计查看"},
-		}},
-		{Key: "storage", Name: "存储管理", Permissions: []admindomain.Permission{
-			{Code: "storage:read", Name: "存储配置查看"},
-			{Code: "storage:write", Name: "存储配置修改"},
-		}},
-		{Key: "workflow", Name: "工作流", Permissions: []admindomain.Permission{
-			{Code: "workflow:read", Name: "工作流查看"},
-			{Code: "workflow:write", Name: "工作流管理"},
-		}},
-		{Key: "version", Name: "版本管理", Permissions: []admindomain.Permission{
-			{Code: "version:read", Name: "版本查看"},
-			{Code: "version:write", Name: "版本管理"},
-		}},
-		{Key: "site", Name: "站点管理", Permissions: []admindomain.Permission{
-			{Code: "site:read", Name: "站点查看"},
-			{Code: "site:write", Name: "站点管理"},
-			{Code: "site:audit", Name: "站点审核"},
-		}},
-		{Key: "role_application", Name: "角色申请", Permissions: []admindomain.Permission{
-			{Code: "role_application:read", Name: "申请查看"},
-			{Code: "role_application:review", Name: "申请审批"},
-		}},
-		{Key: "points", Name: "积分管理", Permissions: []admindomain.Permission{
-			{Code: "points:read", Name: "积分查看"},
-			{Code: "points:write", Name: "积分调整"},
-		}},
-		{Key: "email", Name: "邮件服务", Permissions: []admindomain.Permission{
-			{Code: "email:read", Name: "邮件配置查看"},
-			{Code: "email:write", Name: "邮件配置修改"},
-		}},
-		{Key: "payment", Name: "支付管理", Permissions: []admindomain.Permission{
-			{Code: "payment:read", Name: "支付配置查看"},
-			{Code: "payment:write", Name: "支付配置修改"},
-		}},
-		{Key: "ticket", Name: "工单系统", Permissions: []admindomain.Permission{
-			{Code: "ticket:read", Name: "工单查看", Description: "决定可见范围：全局作用域=全部工单，应用作用域=该应用工单"},
-			{Code: "ticket:write", Name: "工单编辑", Description: "建单、改标题/分类/优先级/标签"},
-			{Code: "ticket:reply", Name: "工单回复", Description: "对提单人可见的回复"},
-			{Code: "ticket:internal", Name: "内部备注", Description: "查看并发表仅内部可见的备注"},
-			{Code: "ticket:assign", Name: "工单指派", Description: "指派受理人 / 转派处理组 / 管理关注人"},
-			{Code: "ticket:close", Name: "工单结单", Description: "解决、关闭、重开"},
-			{Code: "ticket:delete", Name: "工单删除"},
-			{Code: "ticket:manage", Name: "工单配置", Description: "分类、SLA、处理组、快捷回复"},
-			{Code: "ticket:export", Name: "工单导出"},
-		}},
-		{Key: "notify", Name: "通知出口", Permissions: []admindomain.Permission{
-			{Code: "notify:channel:read", Name: "通知渠道查看"},
-			{Code: "notify:channel:write", Name: "通知渠道管理", Description: "飞书/钉钉/企微/Webhook 等渠道与订阅配置"},
-			{Code: "notify:delivery:read", Name: "投递记录查看"},
-			{Code: "notify:test", Name: "测试发送"},
-		}},
-		{Key: "org", Name: "组织架构", Permissions: []admindomain.Permission{
-			{Code: "org:create", Name: "创建组织"},
-			{Code: "org:write", Name: "修改/删除组织"},
-			{Code: "org:dept:read", Name: "查看部门"},
-			{Code: "org:dept:write", Name: "管理部门"},
-			{Code: "org:member:read", Name: "查看成员"},
-			{Code: "org:member:write", Name: "管理成员"},
-			{Code: "org:member:invite", Name: "邀请成员"},
-		}},
-	}
-}
+// allPermissionGroups 返回所有权限分组定义（唯一事实源在 internal/authz）。
+func allPermissionGroups() []admindomain.PermissionGroup { return authz.PermissionCatalog() }
 
 func (s *AdminService) validateCreateInput(input admindomain.CreateInput) error {
 	input.Account = strings.TrimSpace(input.Account)
@@ -956,183 +852,11 @@ func (s *AdminService) issueSession(ctx context.Context, profile *admindomain.Pr
 	}, nil
 }
 
-func newAdminEnforcer() (*casbin.Enforcer, error) {
-	m, err := model.NewModelFromString(`
-[request_definition]
-r = sub, obj
+// 内置角色与权限目录已迁往 internal/authz —— 权限词汇、角色定义、路由映射、
+// 判定引擎同属一个包，彼此的一致性由那个包的测试守住。此处只保留薄封装，
+// 让既有调用方不必一次性全改。
 
-[policy_definition]
-p = sub, obj
-
-[role_definition]
-g = _, _
-
-[policy_effect]
-e = some(where (p.eft == allow))
-
-[matchers]
-m = g(r.sub, p.sub) && r.obj == p.obj
-`)
-	if err != nil {
-		return nil, err
-	}
-	e, err := casbin.NewEnforcer(m)
-	if err != nil {
-		return nil, err
-	}
-	for _, role := range builtInAdminRoles() {
-		for _, permission := range role.Permissions {
-			if _, err := e.AddPermissionForUser(role.Key, permission); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return e, nil
-}
-
-func builtInAdminRoles() map[string]admindomain.RoleDefinition {
-	return map[string]admindomain.RoleDefinition{
-		"super_admin": {
-			Key:         "super_admin",
-			Name:        "超级管理员",
-			Description: "平台最高管理权限",
-			Level:       100,
-			Scope:       "global",
-			Permissions: []string{},
-		},
-		"platform_admin": {
-			Key:         "platform_admin",
-			Name:        "平台管理员",
-			Description: "全局平台与运维配置管理",
-			Level:       90,
-			Scope:       "global",
-			Permissions: []string{
-				// 平台治理：可冻结 / 限制 / 解除，但**不含**封禁与归档 ——
-				// 那两档是不可逆感极强的动作，留给超管或显式授权的自定义角色。
-				PermissionPlatformAppRead, PermissionPlatformAppGovern, PermissionPlatformAppealReview,
-				PermissionPlatformStorageRead, PermissionPlatformStorageWrite,
-				"system:settings:read", "system:settings:write", "system:user_setting:read", "system:user_setting:write",
-				"app:read", "app:write", "app:user:read", "app:user:write", "app:notification:read", "app:notification:write",
-				"content:banner:read", "content:banner:write", "content:notice:read", "content:notice:write",
-				"audit:login:read", "audit:session:read",
-				"storage:read", "storage:write",
-				"workflow:read", "workflow:write",
-				"version:read", "version:write",
-				"site:read", "site:write", "site:audit",
-				"role_application:read", "role_application:review",
-				"points:read", "points:write",
-				"email:read", "email:write",
-				"payment:read", "payment:write",
-				"ticket:read", "ticket:write", "ticket:reply", "ticket:internal", "ticket:assign", "ticket:close", "ticket:delete", "ticket:manage", "ticket:export",
-				"notify:channel:read", "notify:delivery:read",
-				"org:create", "org:write", "org:dept:read", "org:dept:write", "org:member:read", "org:member:write", "org:member:invite",
-			},
-		},
-		"app_admin": {
-			Key:         "app_admin",
-			Name:        "应用管理员",
-			Description: "单应用全量管理权限（与平台管理员同级，仅限绑定应用）",
-			Level:       70,
-			Scope:       "app",
-			Permissions: []string{
-				"system:settings:read", "system:user_setting:read", "system:user_setting:write",
-				"app:read", "app:write", "app:user:read", "app:user:write", "app:notification:read", "app:notification:write",
-				"content:banner:read", "content:banner:write", "content:notice:read", "content:notice:write",
-				"audit:login:read", "audit:session:read",
-				"storage:read", "storage:write",
-				"workflow:read", "workflow:write",
-				"version:read", "version:write",
-				"site:read", "site:write", "site:audit",
-				"role_application:read", "role_application:review",
-				"points:read", "points:write",
-				"email:read", "email:write",
-				"payment:read", "payment:write",
-				"ticket:read", "ticket:write", "ticket:reply", "ticket:internal", "ticket:assign", "ticket:close", "ticket:manage", "ticket:export",
-				"notify:channel:read", "notify:delivery:read",
-				"org:dept:read", "org:member:read", "org:member:invite",
-			},
-		},
-		"app_operator": {
-			Key:         "app_operator",
-			Name:        "应用运营管理员",
-			Description: "运营、内容、用户与版本维护",
-			Level:       60,
-			Scope:       "app",
-			Permissions: []string{
-				"app:read", "app:user:read", "app:user:write", "app:notification:read", "app:notification:write",
-				"content:banner:read", "content:banner:write", "content:notice:read", "content:notice:write",
-				"audit:login:read", "audit:session:read",
-				"points:read", "points:write",
-				"version:read", "version:write",
-				"site:read", "site:write",
-				"workflow:read",
-				"email:read",
-				"payment:read",
-				"role_application:read",
-				"storage:read",
-				"ticket:read", "ticket:write", "ticket:reply", "ticket:internal", "ticket:assign", "ticket:close", "ticket:export",
-				"org:dept:read", "org:member:read",
-			},
-		},
-		"app_auditor": {
-			Key:         "app_auditor",
-			Name:        "应用审核管理员",
-			Description: "审计、审核与只读分析权限",
-			Level:       40,
-			Scope:       "app",
-			Permissions: []string{
-				"app:read", "app:user:read", "app:notification:read",
-				"content:banner:read", "content:notice:read",
-				"audit:login:read", "audit:session:read",
-				"points:read",
-				"version:read",
-				"site:read", "site:audit",
-				"workflow:read",
-				"email:read",
-				"payment:read",
-				"role_application:read", "role_application:review",
-				"storage:read",
-				"ticket:read", "ticket:reply", "ticket:internal", "ticket:export",
-				"org:dept:read", "org:member:read",
-			},
-		},
-		// 工单处理专员：只给工单能力，不碰用户/内容/配置。
-		// 用于把"特定人员"精确授权成客服角色；再把他们加进对应处理组即可限定受理范围。
-		"ticket_agent": {
-			Key:         "ticket_agent",
-			Name:        "工单处理专员",
-			Description: "仅工单处理权限，可结合处理组限定受理范围",
-			Level:       30,
-			Scope:       "app",
-			Permissions: []string{
-				"ticket:read", "ticket:write", "ticket:reply", "ticket:internal", "ticket:assign", "ticket:close", "ticket:export",
-				"app:read", "app:user:read",
-			},
-		},
-		"app_viewer": {
-			Key:         "app_viewer",
-			Name:        "应用观察员",
-			Description: "只读查看权限",
-			Level:       20,
-			Scope:       "app",
-			Permissions: []string{
-				"app:read", "app:user:read", "app:notification:read",
-				"content:banner:read", "content:notice:read",
-				"audit:login:read", "audit:session:read",
-				"points:read",
-				"version:read",
-				"site:read",
-				"workflow:read",
-				"email:read",
-				"payment:read",
-				"role_application:read",
-				"storage:read",
-				"ticket:read",
-				"org:dept:read", "org:member:read",
-			},
-		},
-	}
-}
+func builtInAdminRoles() map[string]admindomain.RoleDefinition { return authz.BuiltinRoles() }
 
 func scopeMatches(assignmentAppID *int64, requestAppID *int64) bool {
 	if requestAppID == nil {
@@ -1179,41 +903,55 @@ func strconvInt64(value int64) string {
 
 // ── 自定义角色 CRUD ──
 
-// LoadCustomRoles 启动时从数据库加载自定义角色到 Enforcer
+// LoadCustomRoles 装载自定义角色的展示元数据，并把它们的权限同步进授权引擎。
+//
+// 名字沿用旧的（调用点在 bootstrap），但做的事变了：策略本身现在存在
+// authz_policies 表里，引擎自己会装载。这里只负责两件事 ——
+// 把角色的展示元数据缓进内存供列表用，以及把 admin_roles/admin_role_permissions
+// 这份"角色编辑器写的东西"投影成策略。
 func (s *AdminService) LoadCustomRoles(ctx context.Context) error {
-	return s.reloadEnforcer(ctx)
+	return s.syncCustomRoles(ctx, true)
 }
 
-func (s *AdminService) reloadEnforcer(ctx context.Context) error {
+// syncCustomRoles 重建自定义角色的展示缓存；syncPolicies 为真时一并回写策略。
+func (s *AdminService) syncCustomRoles(ctx context.Context, syncPolicies bool) error {
 	customRoles, err := s.pg.ListCustomRoles(ctx)
 	if err != nil {
 		return err
 	}
-
-	s.enforcerMu.Lock()
-	defer s.enforcerMu.Unlock()
-
-	e, err := newAdminEnforcer()
-	if err != nil {
-		return err
-	}
-
 	customMap := make(map[string]admindomain.RoleDefinition, len(customRoles))
 	for _, cr := range customRoles {
-		for _, perm := range cr.Permissions {
-			_, _ = e.AddPermissionForUser(cr.RoleKey, perm)
-		}
 		customMap[cr.RoleKey] = admindomain.RoleDefinition{
 			Key: cr.RoleKey, Name: cr.Name, Description: cr.Description,
 			Level: cr.Level, Scope: cr.Scope, Permissions: cr.Permissions,
 			IsCustom: true, BaseRole: cr.BaseRole, CreatedBy: cr.CreatedBy,
 		}
+		if !syncPolicies {
+			continue
+		}
+		if err := s.writeCustomRolePolicy(ctx, cr, nil); err != nil {
+			return err
+		}
 	}
-
-	s.enforcer = e
+	s.rolesMu.Lock()
 	s.customRoles = customMap
-	s.log.Info("Casbin Enforcer 已重载", zap.Int("customRoles", len(customMap)))
+	s.rolesMu.Unlock()
+	s.log.Info("自定义角色已装载", zap.Int("customRoles", len(customMap)))
 	return nil
+}
+
+// writeCustomRolePolicy 把一个自定义角色写成策略。
+//
+// base_role 终于是**执行点**而不只是一根装饰线：它落成一条角色继承边，
+// 于是父角色加一个权限点，所有继承它的自定义角色跟着有。
+// 此前这一列只被拿去画关系图，判定完全不看 —— 控制台上标着
+// 「继承自应用运营管理员」的角色，实际一个继承来的权限都没有。
+func (s *AdminService) writeCustomRolePolicy(ctx context.Context, role admindomain.CustomRole, updatedBy *int64) error {
+	policy := authz.RolePolicy{Allow: role.Permissions, Note: role.Name}
+	if base := strings.TrimSpace(role.BaseRole); base != "" && base != role.RoleKey {
+		policy.Inherits = []string{authz.RoleSubject(base)}
+	}
+	return s.authz.SetRolePolicy(ctx, authz.SourceCustom, authz.RoleSubject(role.RoleKey), policy, updatedBy)
 }
 
 func (s *AdminService) CreateCustomRole(ctx context.Context, input admindomain.CreateCustomRoleInput, createdBy int64) (*admindomain.CustomRole, error) {
@@ -1237,8 +975,14 @@ func (s *AdminService) CreateCustomRole(ctx context.Context, input admindomain.C
 	if err != nil {
 		return nil, err
 	}
-	if err := s.reloadEnforcer(ctx); err != nil {
-		s.log.Error("创建自定义角色后 Enforcer 重载失败", zap.Error(err))
+	// 策略写入失败必须**上抛**：角色已经建出来了却没有任何策略，
+	// 表现是"角色在列表里、勾了一堆权限、授给谁都不生效"。
+	// 旧实现这里只记一行 error 就返回成功，于是这种半成品状态没有任何人会发现。
+	if err := s.writeCustomRolePolicy(ctx, *cr, &createdBy); err != nil {
+		return nil, err
+	}
+	if err := s.syncCustomRoles(ctx, false); err != nil {
+		s.log.Warn("自定义角色元数据刷新失败", zap.Error(err))
 	}
 	return cr, nil
 }
@@ -1261,8 +1005,11 @@ func (s *AdminService) UpdateCustomRole(ctx context.Context, roleKey string, inp
 	if err != nil {
 		return nil, err
 	}
-	if err := s.reloadEnforcer(ctx); err != nil {
-		s.log.Error("更新自定义角色后 Enforcer 重载失败", zap.Error(err))
+	if err := s.writeCustomRolePolicy(ctx, *cr, nil); err != nil {
+		return nil, err
+	}
+	if err := s.syncCustomRoles(ctx, false); err != nil {
+		s.log.Warn("自定义角色元数据刷新失败", zap.Error(err))
 	}
 	return cr, nil
 }
@@ -1281,8 +1028,11 @@ func (s *AdminService) DeleteCustomRole(ctx context.Context, roleKey string, for
 	if err := s.pg.DeleteCustomRole(ctx, roleKey); err != nil {
 		return err
 	}
-	if err := s.reloadEnforcer(ctx); err != nil {
-		s.log.Error("删除自定义角色后 Enforcer 重载失败", zap.Error(err))
+	if err := s.authz.RemoveRolePolicy(ctx, authz.SourceCustom, authz.RoleSubject(roleKey)); err != nil {
+		return err
+	}
+	if err := s.syncCustomRoles(ctx, false); err != nil {
+		s.log.Warn("自定义角色元数据刷新失败", zap.Error(err))
 	}
 	return nil
 }

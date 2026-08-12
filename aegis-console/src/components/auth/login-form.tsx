@@ -20,7 +20,7 @@ import { useAdminCaptchaPublicConfigQuery, useOIDCPublicConfigQuery } from "@/li
 import { getOIDCAuthURL } from "@/lib/api/system";
 import { CaptchaField } from "./captcha-field";
 import { AUTH_EASE } from "./auth-motion";
-import { LegalDialog } from "@/components/legal/legal-dialog";
+import { LegalLinks } from "@/components/legal/legal-links";
 import { AegisMark } from "@/components/brand/aegis-mark";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -67,7 +67,6 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [captchaId, setCaptchaId] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [legalDialog, setLegalDialog] = useState<"terms" | "privacy" | null>(null);
   const [mfaChallenge, setMfaChallenge] = useState<{ challengeId: string; methods: string[] } | null>(null);
   const [mfaLoading, setMfaLoading] = useState(false);
 
@@ -293,24 +292,7 @@ export function LoginForm() {
                       </Link>
                     </p>
 
-                    <p className="text-center text-[11px] leading-5 text-muted-foreground/70">
-                      登录即表示同意{" "}
-                      <button
-                        type="button"
-                        className="underline underline-offset-2 transition-colors hover:text-foreground"
-                        onClick={() => setLegalDialog("terms")}
-                      >
-                        用户协议
-                      </button>{" "}
-                      与{" "}
-                      <button
-                        type="button"
-                        className="underline underline-offset-2 transition-colors hover:text-foreground"
-                        onClick={() => setLegalDialog("privacy")}
-                      >
-                        隐私政策
-                      </button>
-                    </p>
+                    <LegalLinks className="text-center" />
                   </form>
                 </m.div>
               )}
@@ -319,15 +301,6 @@ export function LoginForm() {
         </Card>
       </m.div>
 
-      {legalDialog ? (
-        <LegalDialog
-          type={legalDialog}
-          open
-          onOpenChange={(open) => {
-            if (!open) setLegalDialog(null);
-          }}
-        />
-      ) : null}
     </>
   );
 }

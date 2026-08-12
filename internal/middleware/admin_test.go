@@ -29,7 +29,16 @@ func TestResolveAdminPermissionSignInRewardTemplates(t *testing.T) {
 	}
 }
 
-func TestResolveAdminPermissionCreateAppRequiresPlatformWrite(t *testing.T) {
+// 走真实路由（因此 c.FullPath() 有值）确认建应用的判定：不要权限点、不按应用作用域。
+//
+// 这条测试原先断言的是 app:write —— 而那正是把自助注册出来的管理员锁死在
+// 零权限里的那一行：他唯一能拿到权限的动作（建自己的第一个应用、成为它的
+// app_admin）被一个只有平台管理员才有的权限点挡在门外。闸门改到了
+// AdminService.EnsureCanCreateApp（平台开关 + 每人配额），那里才打得了库。
+//
+// appScoped 必须保持 false 的理由没变：建的时候应用还不存在，
+// 按应用作用域判定会先被 40058「缺少有效的应用标识」拦掉。
+func TestResolveAdminPermissionCreateAppIsSelfService(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	router := gin.New()
@@ -38,11 +47,11 @@ func TestResolveAdminPermissionCreateAppRequiresPlatformWrite(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
-		if permission != "app:write" {
-			t.Fatalf("expected app:write, got %q", permission)
+		if permission != "" {
+			t.Fatalf("建应用不得要求权限点，得到 %q", permission)
 		}
 		if appScoped {
-			t.Fatal("创建应用必须使用平台级权限，不能复用某个应用的作用域")
+			t.Fatal("建应用时应用还不存在，不能按应用作用域判定")
 		}
 		c.Status(http.StatusNoContent)
 	})

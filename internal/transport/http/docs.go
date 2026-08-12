@@ -1102,44 +1102,7 @@ func buildOperationID(method string, path string) string {
 	return strings.ToLower(method) + "__" + replacer.Replace(trimmed)
 }
 
-func deriveTags(path string) []string {
-	switch {
-	case path == "/healthz" || path == "/readyz":
-		return []string{"System"}
-	case path == "/api/ws":
-		return []string{"Realtime"}
-	case strings.HasPrefix(path, "/api/admin/auth/"):
-		return []string{"Admin Auth"}
-	case strings.HasPrefix(path, "/api/admin/system/"):
-		return []string{"Admin System"}
-	case strings.HasPrefix(path, "/api/admin/"):
-		return []string{"Admin"}
-	case strings.HasPrefix(path, "/api/auth/"):
-		return []string{"Auth"}
-	case strings.HasPrefix(path, "/api/user-settings"):
-		return []string{"User Settings"}
-	case strings.HasPrefix(path, "/api/user/"):
-		return []string{"User"}
-	case strings.HasPrefix(path, "/api/points"):
-		return []string{"Points"}
-	case strings.HasPrefix(path, "/api/notifications"):
-		return []string{"Notifications"}
-	case strings.HasPrefix(path, "/api/email"):
-		return []string{"Email"}
-	case strings.HasPrefix(path, "/api/public/pay"):
-		return []string{"Public Payment"}
-	case strings.HasPrefix(path, "/api/pay"):
-		return []string{"Payment"}
-	case strings.HasPrefix(path, "/api/storage"):
-		return []string{"Storage"}
-	case strings.HasPrefix(path, "/api/app/workflow"):
-		return []string{"Workflow"}
-	case strings.HasPrefix(path, "/api/app/"):
-		return []string{"App Compat"}
-	default:
-		return []string{"API"}
-	}
-}
+// deriveTags 见 route_groups.go —— OpenAPI 标签与路由清单的分组读同一张规则表。
 
 func buildSpecTags(tagSet map[string]struct{}) openapi3.Tags {
 	names := make([]string, 0, len(tagSet))

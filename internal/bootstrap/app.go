@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"aegis/internal/authz"
 	"aegis/internal/config"
 	"aegis/internal/db"
 	"aegis/internal/event"
@@ -21,6 +22,7 @@ import (
 	pkglogger "aegis/pkg/logger"
 	"aegis/pkg/tracing"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	redislib "github.com/redis/go-redis/v9"
@@ -188,7 +190,26 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	authService.SetAppOAuthService(appOAuthService)
 	loginGuardRepo := redisrepo.NewLoginGuardRepository(redisClient, cfg.Redis.KeyPrefix)
 	authService.SetLoginGuard(service.NewLoginGuardService(cfg.LoginGuard, log, loginGuardRepo, pg))
-	adminService, err := service.NewAdminService(cfg, log, pg, sessions)
+	// 授权引擎：策略落库 + 内置角色重刷 + 跨实例广播。
+	// 它必须先于 AdminService 起来 —— 后者的每一次判定都要问它。
+	// 内置策略 = 平台角色 + 组织内置角色，两者共用一张策略表、一个模型。
+	builtinPolicies := append(authz.BuiltinPolicies(), service.OrgBuiltinPolicies()...)
+	authzEngine, err := authz.New(ctx, log, pg, builtinPolicies)
+	if err != nil {
+		closeTemporal()
+		natsConn.Close()
+		_ = redisClient.Close()
+		postgres.Close()
+		return nil, err
+	}
+	// 广播接上之后，任一实例改了角色/策略，其余实例立刻重载。
+	// 失败只降级（各实例仍按自己那份，重启后收敛），不该让进程起不来。
+	if watcher := authz.NewNATSWatcher(natsConn, uuid.NewString(), log); watcher != nil {
+		if err := authzEngine.SetWatcher(watcher); err != nil {
+			log.Warn("授权策略广播接入失败，多实例下策略变更将不会即时同步", zap.Error(err))
+		}
+	}
+	adminService, err := service.NewAdminService(cfg, log, pg, sessions, authzEngine)
 	if err != nil {
 		closeTemporal()
 		natsConn.Close()
@@ -284,6 +305,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 供 /api/admin/system/admins 超管视图标注"账号可能无法登录"，N 账号共享一次探测
 	authProviderHealthService := service.NewAuthProviderHealthService(log, ldapService, oidcService, samlService)
 	systemService := service.NewPlatformSettingsService(cfg, log, pg, firewall, securityService, ldapService, oidcService, samlService)
+	// 自助注册开关与自助建应用配额存在平台设置里，权限层要读它们
+	adminService.SetPlatformSettings(systemService)
 	// 出海网关管理面：数据库里的配置覆盖 .env 基线
 	egressService := service.NewEgressService(log, pg, egressGateway, cfg.Security.MasterKey, cfg.Egress)
 	if err := adminService.LoadCustomRoles(ctx); err != nil {
@@ -334,8 +357,9 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 数据库生命周期与泄漏监控：与 MemoryManager 同构（构造即可用，Start 拉起后台采集）
 	databaseManager := service.NewDatabaseManager(log, cfg.Database, cfg.Postgres, pgHandle, redisClient, cfg.Redis.KeyPrefix, service.DatabaseRolePrimary)
 	announcementService := service.NewAnnouncementService(log, pg, publisher)
+	legalService := service.NewLegalService(log, pg, systemService, cfg.AppName, cfg.LegalContactEmail, cfg.LegalAuthoritativeLocale)
 	// 组织域权限：Casbin 带 domain 的 enforcer，组织自定义角色策略在启动时装载
-	orgAccessControl, err := service.NewOrgAccessControl(log, pg, adminService)
+	orgAccessControl, err := service.NewOrgAccessControl(log, pg, adminService, authzEngine)
 	if err != nil {
 		return nil, fmt.Errorf("初始化组织权限判定失败: %w", err)
 	}
@@ -458,7 +482,81 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		postgres.Close()
 		return nil, err
 	}
-	router, err := httptransport.NewRouter(authService, adminService, userService, signInService, pointsService, notificationService, appService, siteService, versionService, roleApplicationService, emailService, paymentService, walletService, vipService, workflowService, storageService, avatarService, monitorService, firewall, replayGuard, locationService, realtimeService, systemService, securityService, captchaService, firewallLogService, ipBanService, geoBanService, geoFenceService, geoAnalyticsService, lotteryService, announcementService, ldapService, oidcService, samlService, sessions, orgService, templateService, auditService, pluginService, appFunctionService, authProtocolService, dashboardService, approvalService, sessionMgmtService, storageResourceService, userMasterService, reportService, riskService, deviceMarketingService, platformBannerService, ticketService, notifyHub, adminInboxService, appOAuthService, authProviderHealthService, memoryManager, databaseManager, egressService, governanceService, cl, log, cfg.CORS, cfg.TrustedProxies, cfg.DocsPortalURL)
+	router, err := httptransport.NewRouter(httptransport.RouterDeps{
+		Auth:               authService,
+		Admin:              adminService,
+		User:               userService,
+		UserMaster:         userMasterService,
+		Security:           securityService,
+		Captcha:            captchaService,
+		Sessions:           sessions,
+		SessionMgmt:        sessionMgmtService,
+		LDAP:               ldapService,
+		OIDC:               oidcService,
+		SAML:               samlService,
+		AuthProtocol:       authProtocolService,
+		AuthProviderHealth: authProviderHealthService,
+		AppOAuth:           appOAuthService,
+
+		App:              appService,
+		AppFunction:      appFunctionService,
+		Site:             siteService,
+		Version:          versionService,
+		PlatformSettings: systemService,
+		PlatformBanner:   platformBannerService,
+		Governance:       governanceService,
+		Legal:            legalService,
+		Plugin:           pluginService,
+		Template:         templateService,
+		Egress:           egressService,
+
+		Organization:    orgService,
+		OrgApproval:     approvalService,
+		RoleApplication: roleApplicationService,
+
+		SignIn:       signInService,
+		Points:       pointsService,
+		Lottery:      lotteryService,
+		Wallet:       walletService,
+		Vip:          vipService,
+		Payment:      paymentService,
+		Workflow:     workflowService,
+		Ticket:       ticketService,
+		Announcement: announcementService,
+
+		Notification: notificationService,
+		Notify:       notifyHub,
+		AdminInbox:   adminInboxService,
+		Email:        emailService,
+		Realtime:     realtimeService,
+
+		Storage:         storageService,
+		StorageResource: storageResourceService,
+		Avatar:          avatarService,
+
+		Risk:            riskService,
+		FirewallLog:     firewallLogService,
+		IPBan:           ipBanService,
+		GeoBan:          geoBanService,
+		GeoFence:        geoFenceService,
+		GeoAnalytics:    geoAnalyticsService,
+		Location:        locationService,
+		Audit:           auditService,
+		Monitor:         monitorService,
+		Dashboard:       dashboardService,
+		Report:          reportService,
+		DeviceMarketing: deviceMarketingService,
+		MemoryManager:   memoryManager,
+		DatabaseManager: databaseManager,
+
+		Firewall:       firewall,
+		ReplayGuard:    replayGuard,
+		CrashLog:       cl,
+		Logger:         log,
+		CORS:           cfg.CORS,
+		TrustedProxies: cfg.TrustedProxies,
+		DocsPortalURL:  cfg.DocsPortalURL,
+	})
 	if err != nil {
 		_ = accountBanService.Close(context.Background())
 		locationService.Close()

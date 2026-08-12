@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"aegis/internal/config"
 	"aegis/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -113,11 +112,8 @@ func ginPlaceholders(path string) string {
 
 func newTestRouter(t *testing.T) *gin.Engine {
 	t.Helper()
-	engine, err := NewRouter(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		config.CORSConfig{}, nil, "")
+	// 零值 RouterDeps 即「所有服务都是 nil」：这些用例只看路由结构，不调服务
+	engine, err := NewRouter(RouterDeps{})
 	if err != nil {
 		t.Fatalf("NewRouter: %v", err)
 	}

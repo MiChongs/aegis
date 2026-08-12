@@ -15,6 +15,11 @@ import (
 // TERM=dumb）由 go-pretty 的 text 包在自己的 init 里识别，本包不重复实现。
 // 任何业务开关（是否打印、用哪种字体、打印多详细）一律走 config.Config
 // 注入到 Options，不在这里读环境变量。
+//
+// 本文件的三个探测器**对外导出**，因为「终端长什么样」不是横幅独有的问题：
+// pkg/routetable 要画的路由清单同样要判 TTY、量宽度、成对开关着色。
+// 让它 import 这里，比在两个包里各留一份 isatty + x/term + EnableColors
+// 的实现可靠——那种重复迟早会在某一侧漏掉 Cygwin 伪终端或忘记还原着色状态。
 
 // terminalFile 把 io.Writer 还原成 *os.File。
 // 只有真实文件句柄才谈得上「是不是终端」和「有多宽」；
@@ -27,10 +32,10 @@ func terminalFile(w io.Writer) (*os.File, bool) {
 	return f, true
 }
 
-// isTerminal 判断输出目标是否为交互式终端。
+// IsTerminal 判断输出目标是否为交互式终端。
 // 同时覆盖原生控制台与 Cygwin/MSYS（Git Bash）伪终端——
 // 后者在 Windows 上很常见，漏判会让横幅无谓地降级成无色纯文本。
-func isTerminal(w io.Writer) bool {
+func IsTerminal(w io.Writer) bool {
 	f, ok := terminalFile(w)
 	if !ok {
 		return false
@@ -39,11 +44,11 @@ func isTerminal(w io.Writer) bool {
 	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
 }
 
-// terminalWidth 返回终端列数；非终端或探测失败返回 0，由调用方决定回退值。
+// TerminalWidth 返回终端列数；非终端或探测失败返回 0，由调用方决定回退值。
 //
 // 目标句柄探测失败时会再问一次 stdout：常见于 stderr 被重定向、
 // 但进程仍然挂在一个有尺寸的控制台上的情形。
-func terminalWidth(w io.Writer) int {
+func TerminalWidth(w io.Writer) int {
 	if f, ok := terminalFile(w); ok {
 		if width, _, err := term.GetSize(int(f.Fd())); err == nil && width > 0 {
 			return width

@@ -58,6 +58,50 @@ type AccessContext struct {
 	Assignments []Assignment `json:"assignments"`
 }
 
+// PermissionSnapshot 一次会话展开后的**生效**权限集，供控制台决定哪些入口该显示。
+//
+// 只下发角色 key 是不够的：前端得自己维护一份"角色 → 权限"的副本，
+// 而那份副本一旦与后端的 builtInAdminRoles 漂移，用户看到的就是
+// "按钮在、点了 403"。展开在服务端做，前端不需要知道角色体系长什么样。
+//
+// Apps 里的每一项是**该应用下的完整生效集**（已并入全局权限），
+// 不是"额外追加的部分" —— 让调用方自己做并集是又一处会漂移的逻辑。
+type PermissionSnapshot struct {
+	// Global 全局作用域（appid 为 nil）下生效的权限点。
+	Global []string `json:"global"`
+	// Apps 按应用 ID（十进制字符串，JSON 对象键只能是字符串）索引的完整生效集。
+	Apps map[string][]string `json:"apps"`
+	// All 为超级管理员置真：它不走权限点判定，枚举权限集没有意义。
+	All bool `json:"all"`
+}
+
+// SelfServiceState 自助能力状态。
+//
+// 自助注册出来的管理员没有任何角色分配，「创建自己的第一个应用」是唯一
+// 能把自己从零权限带出来的动作。这个结构告诉控制台：这个出口现在开不开、
+// 还剩几个名额、不开的话是为什么 —— 否则前端只能先让用户填完表单、
+// 提交、再把一句"当前管理员无权执行此操作"糊在对话框底部。
+type SelfServiceState struct {
+	// CanCreateApp 当前能否创建应用。
+	CanCreateApp bool `json:"canCreateApp"`
+	// Privileged 为真表示走的是常规授权（app:write）而非自助配额，此时配额字段无意义。
+	Privileged bool `json:"privileged"`
+	// AppQuota 自助创建的应用数上限，0 表示不限。
+	AppQuota int `json:"appQuota"`
+	// AppsCreated 该管理员已自助创建的应用数。
+	AppsCreated int `json:"appsCreated"`
+	// Reason 不能创建时的人类可读原因，能创建时为空。
+	Reason string `json:"reason,omitempty"`
+}
+
+// AccessSnapshot 是 /api/admin/auth/me 的回包：会话 + 展开后的权限 + 自助能力。
+// 内嵌 AccessContext 保证旧字段（adminId / isSuperAdmin / assignments）原位不变。
+type AccessSnapshot struct {
+	AccessContext
+	Permissions PermissionSnapshot `json:"permissions"`
+	SelfService SelfServiceState   `json:"selfService"`
+}
+
 type LoginResult struct {
 	AccessToken          string        `json:"accessToken,omitempty"`
 	ExpiresAt            time.Time     `json:"expiresAt,omitempty"`
