@@ -321,6 +321,12 @@ func manualRouteDocs(generator *openapi3gen.Generator, spec *openapi3.T) map[str
 			RequestModel: AdminLoginRequest{},
 			Tags:         []string{"Admin Auth"},
 		},
+		routeKey(http.MethodPost, "/api/admin/auth/register"): {
+			Summary:      "Admin Register",
+			Description:  "Creates an administrator account and signs it in. The account is created without super-admin status and without any role assignment.",
+			RequestModel: AdminRegisterRequest{},
+			Tags:         []string{"Admin Auth"},
+		},
 		routeKey(http.MethodGet, "/api/admin/auth/me"): {
 			Summary:     "Admin Session",
 			Description: "Returns the active administrator session context.",
@@ -745,7 +751,10 @@ func securityForRoute(path string) openapi3.SecurityRequirements {
 		return nil
 	case path == "/api/ws":
 		return derefSecurityRequirements(websocketSecurity())
-	case path == "/api/admin/auth/login":
+	case path == "/api/admin/auth/login", path == "/api/admin/auth/register":
+		// 注册和登录一样是**未登录**才会调的接口。归进下面那条
+		// `/api/admin/` 前缀规则会给它标上 adminBearerAuth，
+		// 于是文档站的调试台在没有令牌时不让发这个请求。
 		return nil
 	case strings.HasPrefix(path, "/api/admin/auth/"), strings.HasPrefix(path, "/api/admin/"), strings.HasPrefix(path, "/api/app/password-policy"), strings.HasPrefix(path, "/api/app/points"), strings.HasPrefix(path, "/api/app/workflow"):
 		return openapi3.SecurityRequirements{

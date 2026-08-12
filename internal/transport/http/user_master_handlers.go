@@ -532,7 +532,7 @@ func (h *Handler) AdminListSegmentMembers(c *gin.Context) {
 // ════════════════════════════════════════════════════════════
 
 // AdminListUserListEntries 查询名单列表
-// GET /api/admin/system/user-master/lists
+// GET /api/admin/system/user-master/user-lists
 func (h *Handler) AdminListUserListEntries(c *gin.Context) {
 	if _, ok := requireSuperAdminSession(c); !ok {
 		response.Error(c, http.StatusForbidden, 40313, "仅超级管理员可访问用户主数据")
@@ -555,7 +555,7 @@ func (h *Handler) AdminListUserListEntries(c *gin.Context) {
 }
 
 // AdminCreateUserListEntry 创建名单条目
-// POST /api/admin/system/user-master/lists
+// POST /api/admin/system/user-master/user-lists
 func (h *Handler) AdminCreateUserListEntry(c *gin.Context) {
 	session, ok := requireSuperAdminSession(c)
 	if !ok {
@@ -586,7 +586,7 @@ func (h *Handler) AdminCreateUserListEntry(c *gin.Context) {
 }
 
 // AdminDeleteUserListEntry 删除名单条目
-// DELETE /api/admin/system/user-master/lists/:id
+// DELETE /api/admin/system/user-master/user-lists/:id
 func (h *Handler) AdminDeleteUserListEntry(c *gin.Context) {
 	session, ok := requireSuperAdminSession(c)
 	if !ok {

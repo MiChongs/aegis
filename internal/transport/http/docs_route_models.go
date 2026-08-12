@@ -152,6 +152,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/wallet/receipt"):                                       AdminWalletReceiptRequest{},              // AdminAppWalletReceipt
 		routeKey("POST", "/api/admin/apps/{appkey}/wallet/receipt/email"):                                 AdminWalletReceiptEmailRequest{},         // AdminAppWalletReceiptEmail
 		routeKey("POST", "/api/admin/auth/login"):                                                         AdminLoginRequest{},                      // AdminLogin
+		routeKey("POST", "/api/admin/auth/register"):                                                      AdminRegisterRequest{},                   // AdminRegister
 		routeKey("POST", "/api/admin/auth/oidc/exchange"):                                                 AdminOIDCExchangeRequest{},               // AdminOIDCExchange
 		routeKey("POST", "/api/admin/auth/saml/exchange"):                                                 AdminSAMLExchangeRequest{},               // AdminSAMLExchange
 		routeKey("POST", "/api/admin/auth/verify-mfa"):                                                    AdminVerifyMFARequest{},                  // AdminVerifyMFA

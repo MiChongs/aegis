@@ -314,6 +314,15 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	adminAuth.Use(middleware.AuditMiddleware(auditService))
 	{
 		adminAuth.POST("/login", h.AdminLogin)
+		// 自助注册。handler 与审计早就写好了（上面那段注释里就列着「注册」），
+		// 只是这一行一直没写，于是控制台的注册页每次提交都打到 NoRoute 上
+		// 拿回一个 40400「请求的页面不存在」—— 前端看起来像是接口地址写错了。
+		//
+		// 建出来的账号 `isSuperAdmin=false` 且不带任何 assignment：能登录、
+		// 但在被授权之前什么都看不到（见 AdminService.RegisterAdmin）。
+		// 是否要对外开放这个入口是部署方的选择 —— 要关就摘掉这一行，
+		// 控制台的 /register 会随之只剩一个必然失败的表单，记得一并处理。
+		adminAuth.POST("/register", h.AdminRegister)
 		adminAuth.POST("/verify-mfa", h.AdminVerifyMFA)
 		adminAuth.GET("/ldap/config", h.AdminLDAPPublicConfig)
 		adminAuth.GET("/oidc/config", h.AdminOIDCPublicConfig)
@@ -1379,6 +1388,14 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		adminSystem.DELETE("/user-master/tags/:id", h.AdminDeleteUserTag)
 		adminSystem.POST("/user-master/tags/assign", h.AdminAssignTag)
 		adminSystem.POST("/user-master/tags/remove", h.AdminRemoveTag)
+		// 黑白名单：与 /auth/register 同一种漏注册。handler、service、DTO、审计
+		// 全都在（user_master_handlers.go 的「黑白名单」一节），只是路由没写，
+		// 于是控制台「用户主数据」页的名单区永远是空的，新增和删除也静默失败。
+		// 路径取 user-lists 而不是 handler 注释里写的 lists —— 前者是控制台
+		// 已经在调的那个，改后端一处比改前端三处加一个 query key 更小。
+		adminSystem.GET("/user-master/user-lists", h.AdminListUserListEntries)
+		adminSystem.POST("/user-master/user-lists", h.AdminCreateUserListEntry)
+		adminSystem.DELETE("/user-master/user-lists/:id", h.AdminDeleteUserListEntry)
 		adminSystem.GET("/user-master/segments", h.AdminListSegments)
 		adminSystem.POST("/user-master/segments", h.AdminCreateSegment)
 		adminSystem.PUT("/user-master/segments/:id", h.AdminUpdateSegment)
