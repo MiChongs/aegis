@@ -248,6 +248,109 @@ func TestResolvePreservesPeer(t *testing.T) {
 	}
 }
 
+// TestPublicIngressTopology 一套真实拓扑：客户端 → Cloudflare → 自己的入口反代 → 容器，
+// 而那个入口反代持有**公网**地址。
+//
+// 默认受信集合只覆盖内网网段，于是对端不受信、整条转发头被丢掉，全站客户端 IP
+// 收敛成入口反代那一个地址 —— 而且判定链路上没有任何一处会报错。
+// 这个形状在云上与 PaaS 上很常见，两条改法各自钉一次。
+func TestPublicIngressTopology(t *testing.T) {
+	const (
+		ingress = "8.221.123.21:52104"       // 入口反代，公网地址
+		client  = "2409:8a4c:7810:eb7c::ed6" // 真实客户端
+		edge    = "104.22.72.17"             // Cloudflare 边缘（104.16.0.0/13）
+		chain   = client + ", " + edge       //
+	)
+
+	t.Run("默认档取到的是入口反代自己", func(t *testing.T) {
+		resolver := mustResolver(t, Config{}, nil)
+		result := resolver.Resolve(newRequest(t, ingress, map[string]string{"X-Forwarded-For": chain}))
+		if got, want := result.IP.String(), "8.221.123.21"; got != want {
+			t.Fatalf("IP = %s, want %s（判定过程：%s）", got, want, result)
+		}
+		if result.PeerTrusted {
+			t.Fatal("公网对端不该被默认受信集合接纳")
+		}
+		// 被忽略的那条链必须留在结果里，否则中间件没东西可喊
+		if len(result.Chain) != 2 {
+			t.Fatalf("Chain = %v，应当记下被忽略的两跳", result.Chain)
+		}
+	})
+
+	t.Run("direct-peer 让对端受信后取到真实客户端", func(t *testing.T) {
+		resolver := mustResolver(t, Config{
+			TrustedProxies: []string{PresetInfra, PresetCloudflare, PresetDirectPeer},
+		}, nil)
+		result := resolver.Resolve(newRequest(t, ingress, map[string]string{"X-Forwarded-For": chain}))
+		if got := result.IP.String(); got != client {
+			t.Fatalf("IP = %s, want %s（判定过程：%s）", got, client, result)
+		}
+		if result.Source != SourceChain {
+			t.Fatalf("Source = %s, want %s", result.Source, SourceChain)
+		}
+	})
+
+	t.Run("direct-peer 仍然逐跳判定，不等于信任一切", func(t *testing.T) {
+		// 不带 cloudflare 预设时，边缘地址不受信，判定就停在它上面 ——
+		// 说明 direct-peer 只多信任了紧邻的一跳，转发链本身照旧按受信集合走。
+		resolver := mustResolver(t, Config{
+			TrustedProxies: []string{PresetInfra, PresetDirectPeer},
+		}, nil)
+		result := resolver.Resolve(newRequest(t, ingress, map[string]string{"X-Forwarded-For": chain}))
+		if got := result.IP.String(); got != edge {
+			t.Fatalf("IP = %s, want %s（判定过程：%s）", got, edge, result)
+		}
+	})
+
+	t.Run("header 档不受直连对端受信与否的影响", func(t *testing.T) {
+		// 站在 CDN 后面时最直接的改法：CDN 会覆写这个头，客户端写不进来。
+		// 它必须能在对端不受信时照常生效 —— 否则这条显式配置恰好在最需要它的
+		// 拓扑（入口反代持公网地址）上静默失效。
+		resolver := mustResolver(t, Config{
+			Strategy: string(StrategyHeader),
+			Header:   "CF-Connecting-IP",
+		}, nil)
+		result := resolver.Resolve(newRequest(t, ingress, map[string]string{
+			"CF-Connecting-IP": client,
+			"X-Forwarded-For":  chain,
+		}))
+		if got := result.IP.String(); got != client {
+			t.Fatalf("IP = %s, want %s（判定过程：%s）", got, client, result)
+		}
+		if result.Source != SourceHeader {
+			t.Fatalf("Source = %s, want %s", result.Source, SourceHeader)
+		}
+		if result.PeerTrusted {
+			t.Fatal("header 档不该顺带把对端标成受信")
+		}
+	})
+}
+
+// TestDirectPeerIsNotAliasOfStrategyPeer 「peer」在两个配置项上意思相反：
+// CLIENT_IP_STRATEGY=peer 是「转发头一概不看」，TRUSTED_PROXIES=direct-peer 是
+// 「信任对端，好去读转发头」。把 peer 收成 direct-peer 的别名，就等于让一个
+// 写错位置的配置静默生效成相反的行为，因此它必须是一个启动错误。
+func TestDirectPeerIsNotAliasOfStrategyPeer(t *testing.T) {
+	if _, err := NewWithEnv(Config{TrustedProxies: []string{"peer"}}, noEnv); err == nil {
+		t.Fatal("TRUSTED_PROXIES=peer 应当启动失败，而不是被当成 direct-peer")
+	}
+}
+
+// TestDirectPeerWarns 信任直连对端的前提是「本服务只能经由自己的入口访问」，
+// 这个前提部署方必须自己确认，因此它要在启动时被说出来。
+func TestDirectPeerWarns(t *testing.T) {
+	desc := mustResolver(t, Config{TrustedProxies: []string{PresetInfra, PresetDirectPeer}}, nil).Describe()
+	if !desc.TrustsPeer {
+		t.Fatal("Describe().TrustsPeer 应当为真")
+	}
+	if len(desc.Warnings) == 0 {
+		t.Fatal("direct-peer 应当产生告警")
+	}
+	if desc.TrustsAll {
+		t.Fatal("direct-peer 不是「信任一切」，不该被这么报")
+	}
+}
+
 // TestResolveRecordsIgnoredChain 对端不受信时转发头被整个忽略，但**忽略了什么**要留下来：
 // 只在采信时才记录的话，`source=peer` 这个结论在排障时看不出任何缘由。
 func TestResolveRecordsIgnoredChain(t *testing.T) {

@@ -62,6 +62,12 @@ X-Forwarded-For: 1.2.3.4, 203.0.113.9, 10.0.0.4
 
 `header` 档取不到那个头时退回直连对端，**不会**再去看转发链 ——「只认这个头」就该是字面意思。
 
+`header` 档也是唯一**不过直连对端那道闸**的一档：显式写下
+`CLIENT_IP_HEADER=CF-Connecting-IP` 的人，断言的正是「本服务只经由那个会写这个头的
+东西对外提供」。再要求对端落在 `TRUSTED_PROXIES` 里，会让这条配置在入口反代持有
+公网地址时静默失效，而那恰恰是它最该起作用的场景。代价是这一档的安全性完全押在
+「源站不能被直连」上 —— 与任何 CDN 回源鉴权的前提一致。
+
 ### 受信网段预设
 
 | 预设 | 内容 |
@@ -73,6 +79,7 @@ X-Forwarded-For: 1.2.3.4, 203.0.113.9, 10.0.0.4
 | `cgnat` | `100.64.0.0/10`（RFC 6598） |
 | `cloudflare` | Cloudflare 边缘出口网段（随 realclientip 库发布，不在本仓库另抄一份） |
 | `gcp-lb` | `35.191.0.0/16`、`130.211.0.0/22`（Google 外部 LB 与健康检查） |
+| `direct-peer` | **直连对端本身**，不管它是什么地址。见下节 |
 | `all` | `0.0.0.0/0` + `::/0`，**转发头因此完全可伪造**，启动时告警 |
 | `none` | 什么都不信，等价于 `peer` |
 
@@ -82,6 +89,38 @@ Zeabur / Kubernetes / Docker Compose / ECS 里，入口网关到业务容器这�
 
 预设与显式网段可以混排：`TRUSTED_PROXIES=infra,cloudflare,198.51.100.0/24`。
 **写了就是全部** —— 显式配置会替换默认值，需要保留基础设施网段就把 `infra` 也写上。
+
+### 入口反代持有公网地址时
+
+默认值只覆盖内网网段，前提是「入口到容器这一跳走内网」。这个前提在自建反代与多数
+容器平台上成立，但**并非总是成立**：云上的 LB、部分 PaaS 的入口、CDN 的回源节点，
+直连过来时都是公网地址。这时对端不在受信集合内，整条转发头被判为不可信而丢掉，
+表现是全站客户端 IP 收敛成入口那一个地址。
+
+服务端会在**第一次**遇到这种请求时按对端去重地打一条 warn，把地址、被丢掉的链
+和改法一起说出来：
+
+```json
+{"level":"warn","msg":"客户端 IP 判定：转发头被忽略，因为直连对端不在受信网段内",
+ "peer":"203.0.113.10","forwarded_ignored":["2409:8a4c::ed6","104.22.72.17"],
+ "client_ip":"203.0.113.10","consequence":"所有请求的客户端 IP 都会是这个对端地址…"}
+```
+
+两条改法，按入口地址会不会漂移选：
+
+| 情况 | 改法 |
+|---|---|
+| 地址固定 | 把它写进 `TRUSTED_PROXIES`，如 `infra,cloudflare,203.0.113.10` |
+| 地址会漂移 | `TRUSTED_PROXIES=infra,cloudflare,direct-peer` |
+
+`direct-peer` 表示信任紧邻的那一跳，**不管它是什么地址**。它比 `all` 弱得多 ——
+转发链仍然逐跳按受信集合判定，只是多信任了对端本身。前提是**本服务只能经由自己的
+入口访问**；源站若同时能被直连，直连者就成了「受信对端」，可以用一个
+`X-Forwarded-For` 伪造自己的 IP。启动时会就此告警一次。
+
+注意 `TRUSTED_PROXIES=direct-peer` 与 `CLIENT_IP_STRATEGY=peer` 意思**相反**
+（前者信任对端好去读转发头，后者压根不读转发头），所以 `peer` 刻意不是
+`direct-peer` 的别名 —— 写错位置会启动失败，而不是静默生效成相反的行为。
 
 ## 平台探测（`auto` 档）
 
@@ -159,7 +198,7 @@ X-Aegis-Client-IP-Source: source=forwarded-chain; strategy=auto; header=X-Forwar
 | 所有人的 IP 都是同一个内网地址 | 该地址不在受信网段内，转发头被整个忽略 | 把它加进 `TRUSTED_PROXIES` |
 | 所有人的 IP 都是同一小撮公网地址 | 判定停在 CDN / LB 边缘上 | 加对应预设或该 CDN 的网段 |
 | 用户能随意换 IP 绕过限流 | 受信集合过宽（`all`，或把公网段写了进去） | 收窄到实际反代网段 |
-| `source=peer`，`peer_trusted=false` | 直连对端不在受信网段内，转发头被整个忽略 | 把 `peer` 那个地址所属网段加进 `TRUSTED_PROXIES` |
+| `source=peer`，`peer_trusted=false` | 直连对端不在受信网段内，转发头被整个忽略 | 见[入口反代持有公网地址时](#入口反代持有公网地址时)；服务端已就此打过 warn |
 | `source=peer`，`chain` 为空 | 反代根本没有转发 `X-Forwarded-For` | 让反代追加 XFF；只能设 `X-Real-IP` 的话配 `CLIENT_IP_HEADER=X-Real-IP` |
 | `source=peer`，`chain` 非空 | 转发链条目全在受信集合内 | 受信集合过宽，收窄它 |
 
@@ -203,9 +242,12 @@ TRUSTED_PROXIES=loopback
 # 自建反代在内网另一台机器
 TRUSTED_PROXIES=infra
 
-# 站在 Cloudflare 后面（自建源站）
+# 站在 Cloudflare 后面（自建源站，且入口到本服务走内网）
 TRUSTED_PROXIES=infra,cloudflare
-# 或者更严格 —— 只认 Cloudflare 覆写的那个头
+
+# 站在 Cloudflare 后面，且入口反代持有公网地址（云 LB / 部分 PaaS 入口）
+TRUSTED_PROXIES=infra,cloudflare,direct-peer
+# 或者只认 Cloudflare 覆写的那个头 —— 这一档不看直连对端是谁
 CLIENT_IP_STRATEGY=header
 CLIENT_IP_HEADER=CF-Connecting-IP
 

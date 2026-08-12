@@ -130,7 +130,7 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 	router.Use(
 		// 必须是第一个：它之后的每一环（访问日志、防火墙限流与封禁、WAF、追踪、
 		// 地理定位）都要取客户端 IP，排在它前面的那些取到的会是反代地址。
-		middleware.ClientIP(clientIPResolver),
+		middleware.ClientIP(clientIPResolver, log),
 		middleware.RequestID(),
 		middleware.RequestOrigin(),
 		middleware.CrashRecovery(log, cl),

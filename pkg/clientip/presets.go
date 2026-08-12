@@ -38,6 +38,17 @@ const (
 	PresetCloudflare = "cloudflare"
 	// PresetGCPLoadBalancer Google 外部负载均衡与健康检查的固定出口段。
 	PresetGCPLoadBalancer = "gcp-lb"
+	// PresetDirectPeer 信任**直连对端本身**，不管它是什么地址。
+	//
+	// 为一类落不成网段的拓扑存在：入口反代持有公网地址，而那个地址还会变
+	// （云 LB、PaaS 入口、CDN 回源节点）。这时把 IP 写进 TRUSTED_PROXIES 只能撑到
+	// 下一次它漂移，而漂移之后的表现是全站 IP 悄悄收敛成新的那一个。
+	//
+	// 它比 PresetAll 弱得多：转发链仍然逐跳按受信集合判定，只是**多信任了
+	// 紧邻的那一跳**。前提是本服务只能经由自己的入口访问 —— 源站若同时能被直连，
+	// 直连者就成了「受信对端」，可以用一个 X-Forwarded-For 伪造自己的 IP。
+	// 启动时会告警。
+	PresetDirectPeer = "direct-peer"
 	// PresetAll 信任一切。**转发头因此完全可伪造**，只在纯内网、
 	// 且确定不会有人直连本服务时才有意义。启动时会告警。
 	PresetAll = "all"
@@ -92,6 +103,11 @@ var presetAliases = map[string]string{
 	"google-lb":   PresetGCPLoadBalancer,
 	"any":         PresetAll,
 	"*":           PresetAll,
+	"directpeer":  PresetDirectPeer,
+	"upstream":    PresetDirectPeer,
+	// 「peer」刻意**不是**别名：CLIENT_IP_STRATEGY=peer 意思是「只用直连对端、
+	// 转发头一概不看」，而这里的 direct-peer 恰好相反（信任对端，好去读转发头）。
+	// 同一个词在两个配置项上表达相反的意图，是最难自查的那种配置错误。
 }
 
 // DefaultTrustedProxies 未配置 TRUSTED_PROXIES 时的默认受信集合。
@@ -105,13 +121,33 @@ func DefaultTrustedProxies() []string {
 
 // PresetNames 全部可用预设名（排序），用于错误提示与文档。
 func PresetNames() []string {
-	names := make([]string, 0, len(presetRanges)+2)
-	names = append(names, PresetInfra, PresetCloudflare)
+	names := make([]string, 0, len(presetRanges)+3)
+	names = append(names, PresetInfra, PresetCloudflare, PresetDirectPeer)
 	for name := range presetRanges {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names
+}
+
+// extractDirectPeer 把 direct-peer 从条目里摘出来。
+// 它表达的是「不管对端是什么地址」，落不成网段，因此不能进网段解析那条路 ——
+// 留在里面只会得到一条「既不是网段也不是预设名」的启动失败。
+func extractDirectPeer(entries []string) ([]string, bool) {
+	kept := make([]string, 0, len(entries))
+	trustPeer := false
+	for _, entry := range entries {
+		key := strings.ToLower(strings.TrimSpace(entry))
+		if alias, ok := presetAliases[key]; ok {
+			key = alias
+		}
+		if key == PresetDirectPeer {
+			trustPeer = true
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept, trustPeer
 }
 
 // lookupPreset 展开一个预设名。第二个返回值说明这个名字是不是预设。

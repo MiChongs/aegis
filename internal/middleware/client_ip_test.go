@@ -8,6 +8,9 @@ import (
 
 	"aegis/pkg/clientip"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -26,7 +29,7 @@ func newClientIPEngine(t *testing.T, cfg clientip.Config) (*gin.Engine, *string)
 	if err := engine.SetTrustedProxies(nil); err != nil {
 		t.Fatalf("SetTrustedProxies(nil) error = %v", err)
 	}
-	engine.Use(ClientIP(resolver))
+	engine.Use(ClientIP(resolver, zap.NewNop()))
 
 	seen := new(string)
 	engine.GET("/probe", func(c *gin.Context) {
@@ -79,7 +82,7 @@ func TestClientIPExposesPeerAndDetail(t *testing.T) {
 	if err := engine.SetTrustedProxies(nil); err != nil {
 		t.Fatalf("SetTrustedProxies(nil) error = %v", err)
 	}
-	engine.Use(ClientIP(resolver))
+	engine.Use(ClientIP(resolver, zap.NewNop()))
 
 	var (
 		clientIP string
@@ -144,6 +147,79 @@ func TestClientIPDebugHeader(t *testing.T) {
 	}
 }
 
+// TestClientIPWarnsOnIgnoredForwarding 「全站客户端 IP 收敛成同一个地址」原本完全无声：
+// 判定退回直连对端是一条正常路径，访问日志照记，只是记的全是入口反代的地址。
+// 云上与 PaaS 的入口反代常常持有公网地址，默认受信集合覆盖不到，
+// 那正是最需要被告知的时候。
+func TestClientIPWarnsOnIgnoredForwarding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resolver, err := clientip.NewWithEnv(clientip.Config{}, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("clientip.NewWithEnv() error = %v", err)
+	}
+	log, logs := newObservedLogger()
+
+	engine := gin.New()
+	if err := engine.SetTrustedProxies(nil); err != nil {
+		t.Fatalf("SetTrustedProxies(nil) error = %v", err)
+	}
+	engine.Use(ClientIP(resolver, log))
+	engine.GET("/probe", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	call := func(peer string) {
+		req := httptest.NewRequest(http.MethodGet, "/probe", nil)
+		req.RemoteAddr = peer
+		req.Header.Set("X-Forwarded-For", "2409:8a4c:7810:eb7c::ed6, 104.22.72.17")
+		engine.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	call("8.221.123.21:52104")
+	entries := logs.FilterLevelExact(zapcore.WarnLevel).All()
+	if len(entries) != 1 {
+		t.Fatalf("应当告警一次，实际 %d 条", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if fields["peer"] != "8.221.123.21" {
+		t.Errorf("peer = %v，告警里必须带上要加进 TRUSTED_PROXIES 的那个地址", fields["peer"])
+	}
+	if ignored, ok := fields["forwarded_ignored"].([]any); !ok || len(ignored) != 2 {
+		t.Errorf("forwarded_ignored = %#v，应当列出被丢掉的那条链", fields["forwarded_ignored"])
+	}
+	for _, key := range []string{"consequence", "fix_pin", "fix_floating"} {
+		if text, _ := fields[key].(string); text == "" {
+			t.Errorf("告警缺少 %s：只说「被忽略了」而不说怎么改，等于还得再查一轮", key)
+		}
+	}
+
+	// 同一个对端不再重复喊：每个请求喊一遍只会把日志淹掉，反而没人看。
+	call("8.221.123.21:52999")
+	if n := len(logs.FilterLevelExact(zapcore.WarnLevel).All()); n != 1 {
+		t.Errorf("同一对端应当只告警一次，实际 %d 条", n)
+	}
+
+	// 换一个对端要重新喊：入口地址漂移过去，说明配置又没覆盖到新的那个。
+	call("8.221.200.7:41000")
+	if n := len(logs.FilterLevelExact(zapcore.WarnLevel).All()); n != 2 {
+		t.Errorf("新对端应当重新告警，实际 %d 条", n)
+	}
+
+	// 对端受信、判定正常时不该有任何告警 —— 否则这条告警会被当成噪音而被忽略。
+	quiet, quietLogs := newObservedLogger()
+	quietEngine := gin.New()
+	if err := quietEngine.SetTrustedProxies(nil); err != nil {
+		t.Fatalf("SetTrustedProxies(nil) error = %v", err)
+	}
+	quietEngine.Use(ClientIP(resolver, quiet))
+	quietEngine.GET("/probe", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+	req := httptest.NewRequest(http.MethodGet, "/probe", nil)
+	req.RemoteAddr = "10.42.0.7:38210"
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+	quietEngine.ServeHTTP(httptest.NewRecorder(), req)
+	if n := len(quietLogs.All()); n != 0 {
+		t.Errorf("判定正常时不该有日志，实际 %d 条", n)
+	}
+}
+
 // TestClientIPNilResolverIsPassThrough 零依赖装配（openapi / routes 子命令）走这一支。
 func TestClientIPNilResolverIsPassThrough(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -151,7 +227,7 @@ func TestClientIPNilResolverIsPassThrough(t *testing.T) {
 	if err := engine.SetTrustedProxies(nil); err != nil {
 		t.Fatalf("SetTrustedProxies(nil) error = %v", err)
 	}
-	engine.Use(ClientIP(nil))
+	engine.Use(ClientIP(nil, zap.NewNop()))
 
 	var seen string
 	engine.GET("/probe", func(c *gin.Context) {

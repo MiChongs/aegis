@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"aegis/pkg/clientip"
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -164,6 +166,98 @@ func TestAccessLogRecordsPreRewritePath(t *testing.T) {
 	fields := logs.All()[0].ContextMap()
 	if fields["query"] != "_payload=ciphertext" {
 		t.Errorf("query 应是客户端原样发来的那个，得到 %v", fields["query"])
+	}
+}
+
+// TestAccessLogExplainsClientIP 「全站 IP 都是同一个」这类问题原本在访问日志里
+// 查不下去：一行 `"ip": "8.221.123.21"` 分不出「客户端确实都从这个出口来」、
+// 「链上停在一跳公网代理上」和「转发头压根没被采信」，而三者的处置完全不同。
+func TestAccessLogExplainsClientIP(t *testing.T) {
+	cases := []struct {
+		name       string
+		cfg        clientip.Config
+		remoteAddr string
+		xff        string
+		wantIP     string
+		wantPeer   any // nil = 不该出现 peer 字段
+		wantIgnore bool
+	}{
+		{
+			// 客户端确实都从同一个出口来（代理 / VPN / 公司出口）：判定正确。
+			// peer 与 ip 相同，所以日志里不该多出 peer —— 一眼就能排除这一种。
+			name:       "对端就是客户端",
+			remoteAddr: "8.221.123.21:44321",
+			wantIP:     "8.221.123.21",
+			wantPeer:   nil,
+		},
+		{
+			// 前面有反代：ip 与 peer 不同，日志直接说明「这个地址是从转发头取的」。
+			name:       "受信反代转发",
+			remoteAddr: "10.42.0.7:38210",
+			xff:        "203.0.113.9",
+			wantIP:     "203.0.113.9",
+			wantPeer:   "10.42.0.7",
+		},
+		{
+			// 直连对端不在受信网段内，转发头整个被忽略 —— 这是「受信网段没配对」
+			// 的确切信号，也是全站 IP 收敛成同一个最常见的成因。被忽略的那条链
+			// 必须一起记下来，否则没有任何线索指向 TRUSTED_PROXIES。
+			name:       "对端不可信，转发头被忽略",
+			remoteAddr: "8.221.123.21:44321",
+			xff:        "203.0.113.9",
+			wantIP:     "8.221.123.21",
+			wantPeer:   nil,
+			wantIgnore: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver, err := clientip.NewWithEnv(tc.cfg, func(string) string { return "" })
+			if err != nil {
+				t.Fatalf("clientip.NewWithEnv() error = %v", err)
+			}
+			log, logs := newObservedLogger()
+			router := gin.New()
+			if err := router.SetTrustedProxies(nil); err != nil {
+				t.Fatalf("SetTrustedProxies(nil) error = %v", err)
+			}
+			router.Use(ClientIP(resolver, zap.NewNop()), AccessLog(log))
+			router.GET("/x", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+			req := httptest.NewRequest(http.MethodGet, "/x", nil)
+			req.RemoteAddr = tc.remoteAddr
+			if tc.xff != "" {
+				req.Header.Set("X-Forwarded-For", tc.xff)
+			}
+			router.ServeHTTP(httptest.NewRecorder(), req)
+
+			fields := logs.All()[0].ContextMap()
+			if fields["ip"] != tc.wantIP {
+				t.Errorf("ip = %v, want %v", fields["ip"], tc.wantIP)
+			}
+			if peer, exists := fields["peer"]; tc.wantPeer == nil {
+				if exists {
+					t.Errorf("peer 与 ip 相同时不该记 peer，得到 %v", peer)
+				}
+			} else if peer != tc.wantPeer {
+				t.Errorf("peer = %v, want %v", peer, tc.wantPeer)
+			}
+			if ignored, exists := fields["forwarded_ignored"]; tc.wantIgnore {
+				items, ok := ignored.([]any)
+				if !ok || len(items) == 0 {
+					t.Fatalf("缺少 forwarded_ignored，得到 %#v", ignored)
+				}
+				if items[0] != tc.xff {
+					t.Errorf("forwarded_ignored = %v, want %v", items, tc.xff)
+				}
+				if fields["peer_trusted"] != false {
+					t.Errorf("peer_trusted = %v, want false", fields["peer_trusted"])
+				}
+			} else if exists {
+				t.Errorf("不该记 forwarded_ignored，得到 %v", ignored)
+			}
+		})
 	}
 }
 

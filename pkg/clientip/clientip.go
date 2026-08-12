@@ -158,6 +158,7 @@ type Resolver struct {
 	hops        int
 	trusted     *netipx.IPSet
 	prefixes    []netip.Prefix
+	trustPeer   bool
 	chain       realclientip.Strategy
 	chainSource Source
 	platform    Platform
@@ -189,10 +190,11 @@ func NewWithEnv(cfg Config, getenv func(string) string) (*Resolver, error) {
 	}
 
 	entries := trimmedNonEmpty(cfg.TrustedProxies)
-	explicit := len(entries) > 0
-	if !explicit {
+	if len(entries) == 0 {
 		entries = DefaultTrustedProxies()
 	}
+	// direct-peer 表达的是「不管它是什么地址」，落不成网段，先摘出来单独记。
+	entries, r.trustPeer = extractDirectPeer(entries)
 
 	// auto 档才做平台探测：平台自己注入的环境变量（FLY_APP_NAME / ZEABUR_SERVICE_ID …）
 	// 是攻击者写不进来的事实，据此补上该平台的受信网段与单值头是安全的。
@@ -227,6 +229,10 @@ func NewWithEnv(cfg Config, getenv func(string) string) (*Resolver, error) {
 		(set.Contains(netip.IPv4Unspecified()) || set.Contains(netip.IPv6Unspecified())) {
 		r.warnings = append(r.warnings,
 			"受信网段覆盖了全部地址：任何客户端都能用一个 X-Forwarded-For 伪造自己的 IP，限流与封禁将随之失效")
+	}
+	if r.trustPeer {
+		r.warnings = append(r.warnings,
+			"TRUSTED_PROXIES 含 direct-peer：直连对端一律受信。仅当本服务只能经由自己的入口访问时才成立，源站若同时能被直连，客户端 IP 可被伪造")
 	}
 
 	// 单值头：只有被显式配置、或探测到的平台档案声明了才读。
@@ -334,22 +340,33 @@ func (r *Resolver) Resolve(req *http.Request) Result {
 	// 一样重要 —— 只在采信时才记的话，`source=peer` 这个结论看不出任何缘由。
 	res.Chain = forwardedChain(req.Header, r.listHeader)
 
-	res.PeerTrusted = r.trusted != nil && r.trusted.Contains(peer)
+	res.PeerTrusted = r.trustPeer || (r.trusted != nil && r.trusted.Contains(peer))
+
+	// 显式 header 档**不过直连对端这道闸**。
+	//
+	// 配了 CLIENT_IP_STRATEGY=header + CLIENT_IP_HEADER=CF-Connecting-IP 的人，
+	// 断言的正是「本服务只经由那个会写这个头的东西对外提供」。再要求对端也落在
+	// TRUSTED_PROXIES 里，会让这条显式配置在入口反代持有公网地址时**静默失效** ——
+	// 而那恰恰是它最该起作用的场景（CDN / 云 LB / PaaS 入口的地址都是公网且会变）。
+	//
+	// 代价是这一档的安全性完全押在「源站不能被直连」上，与任何 CDN 回源鉴权
+	// 的前提一致；说明写在 docs/client-ip.md 里。
+	if r.strategy == StrategyHeader {
+		if addr, header, ok := r.headerAddr(req); ok {
+			res.IP, res.Source, res.Header = addr, SourceHeader, header
+		}
+		return res
+	}
+
 	if !res.PeerTrusted {
 		// 直连对端不受信 —— 它就是客户端本人，它写的任何转发头都不作数。
 		// 这一条是整个包的安全底座：少了它，谁都能用一个 XFF 换 IP。
 		return res
 	}
 
-	for _, header := range r.singleHdrs {
-		raw := strings.TrimSpace(lastHeaderValue(req.Header, header))
-		if raw == "" {
-			continue
-		}
-		if addr, ok := parseAddr(raw); ok {
-			res.IP, res.Source, res.Header = addr, SourceHeader, header
-			return res
-		}
+	if addr, header, ok := r.headerAddr(req); ok {
+		res.IP, res.Source, res.Header = addr, SourceHeader, header
+		return res
 	}
 
 	if r.chain != nil {
@@ -364,6 +381,20 @@ func (r *Resolver) Resolve(req *http.Request) Result {
 	// 转发链没给出可用结论（没有该头、条目全在受信集合内、或全是坏值）：
 	// 保持在直连对端上。这比返回空好 —— 下游的限流与防火墙拿到空 IP 会直接拒绝请求。
 	return res
+}
+
+// headerAddr 按配置顺序取第一个能解析出地址的单值头。
+func (r *Resolver) headerAddr(req *http.Request) (netip.Addr, string, bool) {
+	for _, header := range r.singleHdrs {
+		raw := strings.TrimSpace(lastHeaderValue(req.Header, header))
+		if raw == "" {
+			continue
+		}
+		if addr, ok := parseAddr(raw); ok {
+			return addr, header, true
+		}
+	}
+	return netip.Addr{}, "", false
 }
 
 // DebugHeader 是否回显判定过程。
@@ -382,6 +413,7 @@ type Description struct {
 	Prefixes   []netip.Prefix
 	Warnings   []string
 	TrustsAll  bool
+	TrustsPeer bool
 }
 
 // Describe 汇报生效配置。判定规则藏在几个环境变量的组合里，
@@ -399,6 +431,7 @@ func (r *Resolver) Describe() Description {
 		Hops:       r.hops,
 		Prefixes:   append([]netip.Prefix(nil), r.prefixes...),
 		Warnings:   append([]string(nil), r.warnings...),
+		TrustsPeer: r.trustPeer,
 	}
 	if r.trusted != nil {
 		// 受信集合覆盖了 0.0.0.0 / :: 就等于「谁都信」，此时转发头完全可伪造。

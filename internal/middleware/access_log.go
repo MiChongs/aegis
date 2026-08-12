@@ -3,6 +3,8 @@ package middleware
 import (
 	"time"
 
+	"aegis/pkg/clientip"
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -56,6 +58,7 @@ func AccessLog(log *zap.Logger, skipPaths ...string) gin.HandlerFunc {
 			zap.String("ip", c.ClientIP()),
 			zap.Int("size", c.Writer.Size()),
 		}
+		fields = append(fields, clientIPFields(c)...)
 		if route := c.FullPath(); route != "" {
 			fields = append(fields, zap.String("route", route))
 		}
@@ -76,6 +79,38 @@ func AccessLog(log *zap.Logger, skipPaths ...string) gin.HandlerFunc {
 
 		log.Log(accessLogLevel(status), "http request", fields...)
 	}
+}
+
+// clientIPFields 让访问日志自己交代 `ip` 这个值是怎么来的。
+//
+// 起因是一条查不下去的日志：`"ip": "8.221.123.21"` 每条请求都一样，而这一行里
+// 没有任何东西能区分下面三种成因 —— 它们的处置完全不同：
+//
+//	对端就是它            客户端确实都从同一个出口来（代理 / VPN / 公司出口），判定正确
+//	对端可信、链上停在它   前面有一跳公网代理（CDN / WAF / 云 LB）不在受信网段内
+//	对端不可信、转发头被忽略 直连对端不在受信网段内，转发头整个没被采信
+//
+// 因此：`ip` 与直连对端不同就记 `peer`（第一种的 peer 与 ip 相同，一眼排除）；
+// 判定退回了直连对端、请求里却带着转发头，就把被忽略的那条链也记下来 ——
+// 那是「受信网段没配对」的确切信号，也是「全站 IP 收敛成同一个」最常见的成因。
+//
+// 平时只多一个 `peer` 字段，出问题时日志里直接有答案，不必先去改配置重启一轮。
+func clientIPFields(c *gin.Context) []zap.Field {
+	detail, ok := RequestClientIPDetail(c)
+	if !ok {
+		return nil
+	}
+	var fields []zap.Field
+	if detail.Peer.IsValid() && detail.Peer != detail.IP {
+		fields = append(fields, zap.String("peer", detail.Peer.String()))
+	}
+	if detail.Source == clientip.SourcePeer && len(detail.Chain) > 0 {
+		fields = append(fields,
+			zap.Bool("peer_trusted", detail.PeerTrusted),
+			zap.Strings("forwarded_ignored", detail.Chain),
+		)
+	}
+	return fields
 }
 
 // accessLogLevel 按状态码分级。
