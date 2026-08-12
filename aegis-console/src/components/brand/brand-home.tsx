@@ -6,6 +6,7 @@ import {
   LazyMotion,
   domAnimation,
   m,
+  useReducedMotion,
   useScroll,
   useTransform,
   type MotionValue,
@@ -42,7 +43,6 @@ import {
   SiGin,
   SiTailwindcss,
 } from "@icons-pack/react-simple-icons";
-import { LoginBackground } from "@/components/auth/login-background";
 import { PublicEntryActions } from "@/components/brand/public-entry-actions";
 import { PublicHeader } from "@/components/brand/public-header";
 import { LegalFooter } from "@/components/legal/legal-footer";
@@ -118,95 +118,16 @@ const stats = [
 /* ================================================================ */
 
 export function BrandHome() {
-  const heroRef = useRef<HTMLElement>(null);
-  const { scrollYProgress: heroProgress } = useScroll({
-    target: heroRef,
-    offset: ["start start", "end start"],
-  });
-  const heroScale = useTransform(heroProgress, [0, 1], [1, 0.88]);
-  const heroY = useTransform(heroProgress, [0, 1], [0, -80]);
-  const heroOpacity = useTransform(heroProgress, [0, 0.6, 1], [1, 1, 0]);
-
   return (
     <LazyMotion features={domAnimation}>
       <div className="relative bg-[#060a12] text-white">
 
+        <PublicHeader current="home" navLabel="主页导航" />
+
         {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            SECTION 1: HERO — sticky 视差缩放
+            SECTION 1: HERO — 一屏，一句话，两个按钮
            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
-        <section ref={heroRef} className="relative h-[130vh]">
-          <div className="sticky top-0 h-svh overflow-hidden">
-            <LoginBackground />
-            <div
-              className="pointer-events-none absolute inset-0"
-              style={{
-                background: [
-                  "radial-gradient(circle at 18% 18%, rgba(255,255,255,0.12), transparent 26%)",
-                  "radial-gradient(circle at 84% 22%, rgba(255,255,255,0.08), transparent 22%)",
-                  "linear-gradient(180deg, rgba(5,8,14,0.3), rgba(5,8,14,0.82))",
-                ].join(", "),
-              }}
-            />
-
-            <div className="relative z-20 flex h-full flex-col px-5 pt-5 md:px-8 md:pt-8 xl:px-12">
-              <PublicHeader current="home" navLabel="主页导航" />
-
-              <m.div
-                className="mx-auto flex w-full max-w-360 flex-1 flex-col justify-center gap-6 pb-16 pt-8 md:justify-end md:pb-24 md:pt-10"
-                style={{ scale: heroScale, y: heroY, opacity: heroOpacity }}
-              >
-                <m.div
-                  initial={{ opacity: 0, y: 40 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
-                  className="flex flex-col gap-3 md:gap-4"
-                >
-                  <span
-                    className="text-white"
-                    style={{
-                      fontFamily: "var(--font-data)",
-                      fontSize: "clamp(3rem, 12vw, 11rem)",
-                      fontWeight: 700,
-                      lineHeight: 0.9,
-                      letterSpacing: "0.18em",
-                      textTransform: "uppercase",
-                      textShadow: "0 18px 36px rgba(0,0,0,0.22)",
-                    }}
-                  >
-                    {appConfig.platformName.toUpperCase()}
-                  </span>
-                  <span
-                    className="text-sm font-medium md:text-xl"
-                    style={{ letterSpacing: "0.14em", color: "rgba(255,255,255,0.72)" }}
-                  >
-                    统一身份与应用控制台
-                  </span>
-                </m.div>
-
-                <m.div
-                  initial={{ opacity: 0, y: 24 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.7, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                  className="mt-4 md:mt-6"
-                >
-                  <PublicEntryActions secondaryHref="/overview" secondaryLabel="打开控制台" />
-                </m.div>
-              </m.div>
-            </div>
-
-            {/* 滚动指示 */}
-            <m.div
-              className="absolute bottom-6 left-1/2 z-10 hidden -translate-x-1/2 md:block"
-              style={{ opacity: useTransform(heroProgress, [0, 0.3], [1, 0]) }}
-            >
-              <m.div animate={{ y: [0, 8, 0] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}>
-                <div className="flex h-10 w-6 items-start justify-center rounded-full border border-white/20 pt-2">
-                  <div className="h-2 w-1 rounded-full bg-white/60" />
-                </div>
-              </m.div>
-            </m.div>
-          </div>
-        </section>
+        <HeroSection />
 
         {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             SECTION 2: STATS — 数字滚入 + 视差偏移
@@ -279,6 +200,106 @@ export function BrandHome() {
         </footer>
       </div>
     </LazyMotion>
+  );
+}
+
+/* ================================================================
+   HERO — 首屏
+
+   这一版拆掉的东西，以及为什么：
+
+   - **滚动条纹背景（LoginBackground）**：一整块持续位移的图案压在标题底下，
+     视线被它牵着走，而首屏唯一要读的是那句话和那两个按钮。
+   - **130vh + sticky 缩放视差**：为了播一段"标题缩小淡出"的动画，凭空多要了
+     30vh 的滚动距离 —— 用户以为在往下翻内容，实际什么都没翻到。
+   - **超大 AEGIS 字标**（clamp 到 11rem）：它只说明了自己叫什么，
+     而访客第一秒要知道的是这东西干什么用。品牌标识留在导航栏里就够了。
+
+   换上的是一屏之内讲完的三段：定位 → 一句主张 → 两个入口，
+   底下压一条静态的技术栈标记 —— 它是"这东西真实由什么构成"，不是装饰。
+   ================================================================ */
+
+const HERO_MARKS = [
+  { icon: SiGo, label: "Go 1.26" },
+  { icon: SiPostgresql, label: "PostgreSQL" },
+  { icon: SiRedis, label: "Redis" },
+  { icon: SiNatsdotio, label: "NATS JetStream" },
+  { icon: SiTemporal, label: "Temporal" },
+] as const;
+
+const HERO_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+
+function HeroSection() {
+  const reduced = useReducedMotion();
+
+  const rise = (delay: number) =>
+    reduced
+      ? { initial: false as const, animate: { opacity: 1, y: 0 } }
+      : {
+          initial: { opacity: 0, y: 20 },
+          animate: { opacity: 1, y: 0 },
+          transition: { duration: 0.7, ease: HERO_EASE, delay },
+        };
+
+  return (
+    <section className="relative flex min-h-[calc(100svh-4rem)] items-center overflow-hidden px-5 py-20 md:px-8 md:py-24 xl:px-12">
+      {/* 唯一一层背景：顶部一道极淡的静态辉光，把导航栏坐进画面里。
+          不动、不循环、不叠颗粒 —— 它的作用是别让整块纯色显得是渲染失败。 */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 70% 45% at 50% -10%, rgba(255,255,255,0.05), transparent 70%)",
+        }}
+      />
+
+      <div className="relative z-10 mx-auto w-full max-w-360">
+        <div className="max-w-4xl">
+          <m.div {...rise(0.05)} className="mb-7 inline-flex items-center gap-2.5 rounded-full border border-white/10 bg-white/3 py-1.5 pr-4 pl-2.5 text-xs text-white/60">
+            <span className="relative flex size-1.5">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400/70" />
+              <span className="relative inline-flex size-1.5 rounded-full bg-emerald-400" />
+            </span>
+            多租户身份底座 · {appConfig.platformName} Identity Fabric
+          </m.div>
+
+          <m.h1
+            {...rise(0.12)}
+            className="text-[clamp(2.25rem,6.2vw,4.75rem)] leading-[1.06] font-semibold tracking-tight text-balance"
+          >
+            为每一个应用，
+            <br />
+            建立可治理的身份边界。
+          </m.h1>
+
+          <m.p
+            {...rise(0.2)}
+            className="mt-6 max-w-2xl text-base leading-8 text-white/55 md:text-lg md:leading-9"
+          >
+            认证、授权、组织、资产与风控收在同一套底座里。
+            每个应用一套独立的用户库与策略，接入方只需要认识一个命名空间。
+          </m.p>
+
+          <m.div {...rise(0.28)} className="mt-10">
+            <PublicEntryActions secondaryHref="/developers" secondaryLabel="查看接入文档" />
+          </m.div>
+        </div>
+
+        {/* 技术栈标记：说清这东西真实跑在什么上面，比任何形容词都短 */}
+        <m.div
+          {...rise(0.38)}
+          className="mt-16 flex flex-wrap items-center gap-x-8 gap-y-4 border-t border-white/6 pt-8 md:mt-20 md:gap-x-12"
+        >
+          {HERO_MARKS.map((mark) => (
+            <span key={mark.label} className="flex items-center gap-2 text-xs text-white/45 md:text-[13px]">
+              <mark.icon className="size-4 shrink-0 text-white/35" />
+              {mark.label}
+            </span>
+          ))}
+        </m.div>
+      </div>
+    </section>
   );
 }
 
