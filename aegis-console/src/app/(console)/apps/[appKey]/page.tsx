@@ -23,6 +23,7 @@ import { AppPaymentPanel } from "@/components/apps/app-payment-panel";
 import { AppSignInRewardPanel } from "@/components/apps/app-signin-reward-panel";
 import { AppStatsPanel } from "@/components/apps/app-stats-panel";
 import { AppUserSettingsPanel } from "@/components/apps/app-user-settings-panel";
+import { AppVipPanel } from "@/components/apps/vip/app-vip-panel";
 import { EmailConfigPanel } from "@/components/configuration/email-config-panel";
 import { useAdminAppQuery, useAdminAppsQuery, useDeleteAdminAppMutation } from "@/lib/admin-hooks";
 import { useAppGovernanceQuery } from "@/lib/platform-governance-hooks";
@@ -160,6 +161,8 @@ function AppSectionPanel({ section, app }: { section: string; app: AppSummary })
       return <AppPaymentPanel appId={app.id} appKey={app.appKey} />;
     case "settings":
       return <AppUserSettingsPanel appId={app.id} />;
+    case "vip":
+      return <AppVipPanel appKey={app.appKey} />;
     case "signin-reward":
       return <AppSignInRewardPanel appKey={app.appKey} />;
     case "lottery":

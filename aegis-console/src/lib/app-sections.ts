@@ -1,6 +1,7 @@
 import {
   BarChart3,
   CreditCard,
+  Crown,
   Dices,
   Fingerprint,
   Gift,
@@ -80,6 +81,7 @@ export const appSectionGroups: AppSectionGroup[] = [
     key: "growth",
     title: "用户运营",
     sections: [
+      { key: "vip", title: "会员", summary: "套餐、试用与功能权益", icon: Crown },
       { key: "signin-reward", title: "签到奖励", summary: "连签规则与奖励发放", icon: Gift },
       { key: "lottery", title: "抽奖", summary: "奖池、概率与限次", icon: Dices }
     ]
