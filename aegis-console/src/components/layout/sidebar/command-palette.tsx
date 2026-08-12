@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { useTheme } from "next-themes";
+import { useThemeTransition } from "@/lib/theme-transition";
 import {
   BookOpen,
   Clock,
@@ -129,7 +129,7 @@ export function CommandPalette({
   const router = useRouter();
   const pathname = usePathname();
   const activeTab = useSearchParams().get("tab");
-  const { setTheme } = useTheme();
+  const { setTheme } = useThemeTransition();
   const [search, setSearch] = useState("");
   const pinyinReady = usePinyinReady();
   const metaKey = useMetaKeyLabel();

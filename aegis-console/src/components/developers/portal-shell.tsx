@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useTheme } from "next-themes";
 import { ExternalLink, Moon, Sun } from "lucide-react";
 import { AegisMark } from "@/components/brand/aegis-mark";
 import { appConfig } from "@/lib/env";
 import { useIsClient } from "@/lib/use-client-value";
+import { useThemeTransition } from "@/lib/theme-transition";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -15,17 +15,16 @@ const navItems = [
 ] as const;
 
 function ThemeToggle() {
-  const { resolvedTheme, setTheme } = useTheme();
+  const { isDark: dark, toggle } = useThemeTransition();
   const isClient = useIsClient();
 
   // 服务端渲染阶段主题未知，先渲染占位避免水合不一致
   if (!isClient) return <span className="size-8" aria-hidden />;
 
-  const dark = resolvedTheme === "dark";
   return (
     <button
       type="button"
-      onClick={() => setTheme(dark ? "light" : "dark")}
+      onClick={(event) => toggle(event)}
       className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       aria-label={dark ? "切换到浅色主题" : "切换到深色主题"}
     >

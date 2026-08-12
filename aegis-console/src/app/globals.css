@@ -1410,3 +1410,75 @@
 .hljs-deletion {
   color: var(--destructive);
 }
+
+/* ==================================================================== */
+/*  深浅色切换 —— 扩散动画                                              */
+/*  逻辑在 src/lib/theme-transition.tsx，这里只放它需要的样式底座。      */
+/* ==================================================================== */
+
+/* View Transitions 默认给新旧两张快照各来一次交叉淡入淡出。
+   我们要的是"新画面按圆形裁剪着放大"，所以先把默认动画关掉，
+   再让 JS 用 WAAPI 单独驱动 ::view-transition-new(root) 的 clip-path。
+   mix-blend-mode 必须显式设回 normal —— 默认的 plus-lighter 是为交叉淡入
+   调的，两张图叠加处会一起变亮，圆形扩散下表现为一圈发白的镶边。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* 旧画面留在底下不动，新画面盖在上面被裁成圆 */
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 2;
+}
+
+/* 全局颜色过渡。
+   它服务的是**没有起点**的那类切换：跟随系统时操作系统自己翻了昼夜模式，
+   用户没点任何东西，凭空炸开一个圆只会让人以为自己误触了什么。
+   手动切换时这一层被 View Transitions 的快照挡着，看不见。
+
+   选择器权重为 0，任何组件自带的 `transition-colors` 都能盖过它 ——
+   于是按钮、链接这些本来就有过渡的元素保持自己的节奏，
+   只有卡片背景、边框、页面底色这些"从来没人给它写过 transition"的地方
+   会跟着淡一下，正好是主题切换时最刺眼的大块面积。 */
+@media (prefers-reduced-motion: no-preference) {
+  *,
+  *::before,
+  *::after {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke;
+    transition-duration: 280ms;
+    transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  /* 系统自动切换（多半是入夜后设备自己转深色）再放慢一档：
+     那一刻人正盯着屏幕，280ms 仍然嫌快。由 SystemThemeWatcher 挂 900ms。 */
+  .theme-os-shift,
+  .theme-os-shift *,
+  .theme-os-shift *::before,
+  .theme-os-shift *::after {
+    transition-duration: 560ms;
+  }
+}
+
+/* 降级路径用的纯色圆（Firefox 等还没有 View Transitions 的浏览器）。
+   两个色值就是 `--background` 在两套主题下的取值 —— 它按定义取不到"另一套"
+   主题的变量，只能在这里各写一份；改调色板时这两行要跟着改。 */
+.theme-reveal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  will-change: clip-path, opacity;
+}
+
+.theme-reveal-overlay[data-to="light"] {
+  background-color: #f4f4f5;
+}
+
+.theme-reveal-overlay[data-to="dark"] {
+  background-color: #09090b;
+}

@@ -1,11 +1,11 @@
 "use client";
 
-import { useTheme } from "next-themes";
 import { Moon, Sun } from "lucide-react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsClient } from "@/lib/use-client-value";
+import { useThemeTransition } from "@/lib/theme-transition";
 
 /**
  * 登录页的深浅色切换。
@@ -17,13 +17,13 @@ import { useIsClient } from "@/lib/use-client-value";
  * 否则首帧图标会闪一次错的。
  */
 export function LoginThemeToggle() {
-  const { resolvedTheme, setTheme } = useTheme();
+  const { isDark, toggle } = useThemeTransition();
   const isClient = useIsClient();
   const reduced = useReducedMotion();
 
   if (!isClient) return <span className="size-9" aria-hidden />;
 
-  const dark = resolvedTheme === "dark";
+  const dark = isDark;
   const label = dark ? "切换到浅色主题" : "切换到深色主题";
 
   return (
@@ -36,7 +36,7 @@ export function LoginThemeToggle() {
             size="icon"
             aria-label={label}
             className="relative overflow-hidden text-muted-foreground hover:text-foreground"
-            onClick={() => setTheme(dark ? "light" : "dark")}
+            onClick={(event) => toggle(event)}
           >
             <AnimatePresence mode="wait" initial={false}>
               <m.span

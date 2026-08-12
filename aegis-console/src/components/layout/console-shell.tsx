@@ -33,7 +33,7 @@ import { preloadPinyin } from "@/lib/pinyin-search";
 import { SIDEBAR_RAIL_WIDTH, useSidebarStore } from "@/lib/sidebar-store";
 import { useBranding } from "@/lib/branding-provider";
 import { matchNavigation } from "@/lib/navigation";
-import { useTheme } from "next-themes";
+import { useThemeTransition } from "@/lib/theme-transition";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -216,7 +216,7 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
   const collapsed = useSidebarStore((s) => s.collapsed);
   const width = useSidebarStore((s) => s.width);
   const toggleSidebar = useSidebarStore((s) => s.toggle);
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme } = useThemeTransition();
   const profileQuery = useAdminProfileQuery();
 
   const operatorName = operator?.displayName || operator?.account || "管理员";
@@ -446,7 +446,7 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-32">
                     {themeOptions.map((o) => (
-                      <DropdownMenuItem key={o.value} onClick={() => setTheme(o.value)}>
+                      <DropdownMenuItem key={o.value} onClick={(event) => setTheme(o.value, event)}>
                         <o.icon className="size-3.5" />
                         <span className="text-xs">{o.label}</span>
                         {activeTheme === o.value && <Check className="ml-auto size-3" />}
