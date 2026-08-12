@@ -36,6 +36,20 @@ func New(pool *pgxpool.Pool) *Repository {
 
 const levelCacheTTL = 5 * time.Minute
 
+// daily_signins 各列的 VARCHAR 上限，与迁移里的宽度一一对应。
+//
+// 写在这里而不是散在调用点：这几列有四个直接来自请求（来源、UA、IP、位置），
+// 任何一个超长都会让整个签到事务以 22001 失败并回滚积分与连签天数。
+// 数字与 schema 必须是同一份，改宽度时两处一起改。
+const (
+	signInSourceMaxLen     = 16
+	signInDeviceInfoMaxLen = 512
+	signInIPMaxLen         = 64
+	signInLocationMaxLen   = 255
+	signInBonusTypeMaxLen  = 64
+	signInBonusDescMaxLen  = 255
+)
+
 var ErrInsufficientIntegral = errors.New("postgres: insufficient integral")
 
 type queryExecutor interface {
@@ -2954,6 +2968,10 @@ func (r *Repository) CreateDailySign(ctx context.Context, userID int64, appID in
 		return nil, err
 	}
 
+	// 这条记录里有四个字段直接来自请求（来源、UA、IP、位置），它们各自有 VARCHAR
+	// 上限。任何一个超长都会让整个签到事务以 22001 失败并回滚积分与连签天数，
+	// 而用户只看到「签到失败」—— 与 UA 长度扯不上任何关系。
+	// 这些字段是留痕用的，截断后依然可读；为了它们丢掉一次真实的签到并不划算。
 	record := userdomain.DailySignIn{
 		UserID:           userID,
 		AppID:            appID,
@@ -2967,12 +2985,12 @@ func (r *Repository) CreateDailySign(ctx context.Context, userID int64, appID in
 		ExperienceAfter:  experienceAfter,
 		ConsecutiveDays:  consecutiveDays,
 		RewardMultiplier: reward.RewardMultiplier,
-		BonusType:        reward.BonusType,
-		BonusDescription: reward.BonusDescription,
-		SignInSource:     source,
-		DeviceInfo:       deviceInfo,
-		IPAddress:        ipAddress,
-		Location:         location,
+		BonusType:        truncateColumn(reward.BonusType, signInBonusTypeMaxLen),
+		BonusDescription: truncateColumn(reward.BonusDescription, signInBonusDescMaxLen),
+		SignInSource:     truncateColumn(source, signInSourceMaxLen),
+		DeviceInfo:       truncateColumn(deviceInfo, signInDeviceInfoMaxLen),
+		IPAddress:        truncateColumn(ipAddress, signInIPMaxLen),
+		Location:         truncateColumn(location, signInLocationMaxLen),
 	}
 
 	insertQuery := `INSERT INTO daily_signins (user_id, appid, signed_at, sign_date, integral_reward, experience_reward, integral_before, integral_after, experience_before, experience_after, consecutive_days, reward_multiplier, bonus_type, bonus_description, sign_in_source, device_info, ip_address, location, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW()) RETURNING id, created_at`

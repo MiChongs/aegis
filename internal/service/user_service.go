@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
@@ -22,6 +23,76 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// user_profiles 各列的长度上限，与建表迁移里的列宽一一对应。
+//
+// 这些字段与签到留痕那一类**不能同等对待**：留痕字段截断后依然可读，而截断过的昵称
+// 不是用户填的那个，截断过的邮箱是别人的地址。所以这里的做法是当场拒绝并说清楚
+// 哪一项超了、上限是多少 —— 而不是截断，更不是留给数据库报 22001。
+//
+// 上限按**字符数**判定：Postgres 的 VARCHAR(n) 数的是码点而不是字节，
+// 按字节判会让 42 个汉字的昵称被误判为超限。
+const (
+	profileNicknameMaxLen  = 128
+	profileEmailMaxLen     = 255
+	profilePhoneMaxLen     = 32
+	profileAvatarMaxLen    = 1024
+	profileBioMaxLen       = 2000
+	profileContactMaxLen   = 128
+	profileContactMaxCount = 20
+)
+
+// validateProfileUpdate 挡下所有会撞上列宽的输入。
+//
+// avatar 与 bio 在库里是 TEXT，本来撞不到上限，但同样给一个界：这两个字段由客户端
+// 自由填写，不设界就意味着任何人都能往一行里塞进任意大小的内容。
+func validateProfileUpdate(input userdomain.ProfileUpdate) error {
+	limits := []struct {
+		label string
+		value string
+		limit int
+	}{
+		{"昵称", input.Nickname, profileNicknameMaxLen},
+		{"邮箱", input.Email, profileEmailMaxLen},
+		{"手机号", input.Phone, profilePhoneMaxLen},
+		{"头像地址", input.Avatar, profileAvatarMaxLen},
+		{"个人简介", input.Bio, profileBioMaxLen},
+	}
+	for _, item := range limits {
+		if err := ensureFieldLength(item.label, item.value, item.limit); err != nil {
+			return err
+		}
+	}
+	if len(input.Contacts) > profileContactMaxCount {
+		return apperrors.New(40000, http.StatusBadRequest,
+			fmt.Sprintf("联系方式最多 %d 条", profileContactMaxCount))
+	}
+	for index, contact := range input.Contacts {
+		position := index + 1
+		fields := []struct {
+			label string
+			value string
+		}{
+			{fmt.Sprintf("第 %d 条联系方式的平台", position), contact.Platform},
+			{fmt.Sprintf("第 %d 条联系方式的账号", position), contact.Value},
+			{fmt.Sprintf("第 %d 条联系方式的备注", position), contact.Label},
+		}
+		for _, field := range fields {
+			if err := ensureFieldLength(field.label, field.value, profileContactMaxLen); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func ensureFieldLength(label string, value string, limit int) error {
+	if utf8.RuneCountInString(strings.TrimSpace(value)) <= limit {
+		return nil
+	}
+	return apperrors.New(40000, http.StatusBadRequest,
+		fmt.Sprintf("%s最多 %d 个字符", label, limit))
+}
 
 func hashUserPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -172,6 +243,12 @@ func (s *UserService) GetProfile(ctx context.Context, session *authdomain.Sessio
 }
 
 func (s *UserService) UpdateProfile(ctx context.Context, session *authdomain.Session, input userdomain.ProfileUpdate) (*userdomain.ProfileUpdateResult, error) {
+	// 先校验再落库：超长的输入到了数据库那一层只会得到
+	// `value too long for type character varying(N)`(22001)，那句话对用户毫无意义，
+	// 也说不出是哪一项超了。
+	if err := validateProfileUpdate(input); err != nil {
+		return nil, err
+	}
 	user, profile, err := s.loadActiveUser(ctx, session)
 	if err != nil {
 		return nil, err
