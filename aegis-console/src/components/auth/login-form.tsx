@@ -19,7 +19,7 @@ import { useAuthStore } from "@/lib/auth-store";
 import { useAdminCaptchaPublicConfigQuery, useOIDCPublicConfigQuery } from "@/lib/admin-hooks";
 import { getOIDCAuthURL } from "@/lib/api/system";
 import { CaptchaField } from "./captcha-field";
-import { LOGIN_EASE } from "./login-motion";
+import { AUTH_EASE } from "./auth-motion";
 import { LegalDialog } from "@/components/legal/legal-dialog";
 import { AegisMark } from "@/components/brand/aegis-mark";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -166,7 +166,7 @@ export function LoginForm() {
     <>
       <m.div
         layout={!reduced}
-        transition={reduced ? { duration: 0 } : { duration: 0.35, ease: LOGIN_EASE }}
+        transition={reduced ? { duration: 0 } : { duration: 0.35, ease: AUTH_EASE }}
         initial={reduced ? false : { opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         className="w-full"
@@ -183,7 +183,7 @@ export function LoginForm() {
                 initial={reduced ? false : { opacity: 0, y: 5 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={reduced ? undefined : { opacity: 0, y: -5 }}
-                transition={{ duration: 0.2, ease: LOGIN_EASE }}
+                transition={{ duration: 0.2, ease: AUTH_EASE }}
                 className="flex flex-col gap-1.5"
               >
                 <CardTitle className="text-xl font-semibold tracking-tight">{copy.title}</CardTitle>
@@ -202,7 +202,7 @@ export function LoginForm() {
                   initial={reduced ? false : { opacity: 0, x: 16 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={reduced ? undefined : { opacity: 0, x: -16 }}
-                  transition={{ duration: 0.25, ease: LOGIN_EASE }}
+                  transition={{ duration: 0.25, ease: AUTH_EASE }}
                 >
                   <MFAPanel
                     methods={mfaChallenge?.methods ?? []}
@@ -218,7 +218,7 @@ export function LoginForm() {
                   initial={reduced ? false : { opacity: 0, x: -16 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={reduced ? undefined : { opacity: 0, x: 16 }}
-                  transition={{ duration: 0.25, ease: LOGIN_EASE }}
+                  transition={{ duration: 0.25, ease: AUTH_EASE }}
                 >
                   <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
                     <div className="grid gap-2">
@@ -562,7 +562,7 @@ function ErrorAlert({ error, reduced }: { error: string | null; reduced: boolean
               : { opacity: 1, height: "auto", x: [0, -5, 5, -3, 3, 0] }
           }
           exit={reduced ? undefined : { opacity: 0, height: 0 }}
-          transition={{ duration: 0.3, ease: LOGIN_EASE }}
+          transition={{ duration: 0.3, ease: AUTH_EASE }}
           className="overflow-hidden"
         >
           <Alert variant="destructive" className="border-destructive/30 bg-destructive/5 py-2.5">

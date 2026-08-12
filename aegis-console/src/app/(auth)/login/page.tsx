@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { LoginForm } from "@/components/auth/login-form";
-import { LoginMotionProvider } from "@/components/auth/login-motion";
+import { AuthMotionProvider } from "@/components/auth/auth-motion";
 import { LoginRedirectGuard } from "@/components/auth/login-redirect-guard";
 import { LoginThemeToggle } from "@/components/auth/login-theme-toggle";
 
@@ -24,7 +24,7 @@ export const metadata: Metadata = {
  */
 export default function LoginPage() {
   return (
-    <LoginMotionProvider>
+    <AuthMotionProvider>
       <main className="relative flex min-h-svh flex-col items-center justify-center px-4 py-10">
         <LoginRedirectGuard />
 
@@ -41,6 +41,6 @@ export default function LoginPage() {
           </p>
         </div>
       </main>
-    </LoginMotionProvider>
+    </AuthMotionProvider>
   );
 }

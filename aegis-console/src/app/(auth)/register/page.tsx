@@ -1,43 +1,41 @@
-import { LoginBackground } from "@/components/auth/login-background";
-import { LoginBrandPanel } from "@/components/auth/login-brand-panel";
+import type { Metadata } from "next";
+import { AuthMotionProvider } from "@/components/auth/auth-motion";
 import { LoginRedirectGuard } from "@/components/auth/login-redirect-guard";
+import { LoginThemeToggle } from "@/components/auth/login-theme-toggle";
 import { RegisterForm } from "@/components/auth/register-form";
 
+export const metadata: Metadata = {
+  title: "注册 · Aegis Console",
+  description: "创建 Aegis 管理控制台账号"
+};
+
 /**
- * 注册页
+ * 注册页 —— 与登录页共用同一个骨架：单列居中，一屏之内只有这一件事。
  *
- * 布局与登录页 1:1 对齐：
- *   - 单张全屏 Three.js Waves 背景（LoginBackground）
- *   - 内容居中在两列网格里：**左列表单（RegisterForm）+ 右列品牌文案（LoginBrandPanel）**
- *   - 表单卡片不变（保留 RegisterForm 全部业务逻辑：注册、验证码、协议勾选等）
- *   - 移动端（<lg）自动堆叠为上下两段
- *   - 底部版权
+ * 两页互为跳转目标（「还没有账号 / 已有账号」），换页时除了卡片里的内容，
+ * 其余一切都不该变位置 —— 版式跳一下会让人以为自己点错了。
+ *
+ * 同样没有背景：此前的全屏滚动斜线已移除（组件本身保留给状态页与品牌首页），
+ * 也没有品牌大字与能力介绍。注册页要做的只有把这张表填完。
  */
 export default function RegisterPage() {
   return (
-    <main className="relative min-h-screen w-full overflow-hidden bg-background">
-      <LoginRedirectGuard />
+    <AuthMotionProvider>
+      <main className="relative flex min-h-svh flex-col items-center justify-center px-4 py-10">
+        <LoginRedirectGuard />
 
-      {/* 流动渐变背景（全屏铺底） */}
-      <LoginBackground />
+        <div className="absolute top-4 right-4">
+          <LoginThemeToggle />
+        </div>
 
-      {/* 内容网格：lg+ 两列；移动端自然堆叠 */}
-      <div className="relative z-10 mx-auto flex min-h-screen max-w-7xl flex-col items-center justify-center gap-10 px-6 py-14 lg:grid lg:grid-cols-2 lg:items-center lg:gap-20 lg:px-12 xl:gap-28 xl:px-16">
-        {/* 左列：注册表单 */}
-        <div className="flex w-full justify-center lg:justify-end">
+        <div className="flex w-full max-w-sm flex-col gap-6">
           <RegisterForm />
-        </div>
 
-        {/* 右列：品牌文案 */}
-        <div className="w-full max-w-xl lg:max-w-2xl">
-          <LoginBrandPanel />
+          <p className="text-center text-[11px] leading-5 text-muted-foreground/60">
+            &copy; {new Date().getFullYear()} Aegis Identity Fabric
+          </p>
         </div>
-      </div>
-
-      {/* 底部版权 —— 压到页面最底、不打扰主体 */}
-      <p className="pointer-events-none absolute inset-x-0 bottom-4 z-10 text-center text-[11px] text-muted-foreground/60 select-none">
-        &copy; {new Date().getFullYear()} Aegis Identity Fabric
-      </p>
-    </main>
+      </main>
+    </AuthMotionProvider>
   );
 }
