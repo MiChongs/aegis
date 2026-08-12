@@ -62,6 +62,7 @@ func registerAdminAuthRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		adminProfile.PUT("", h.UpdateAdminProfile)
 		adminProfile.POST("/avatar", h.UploadAdminAvatar)
 		adminProfile.POST("/upload-avatar", h.UploadAdminAvatar)
+		adminProfile.DELETE("/avatar", h.RemoveAdminAvatar)
 		adminProfile.GET("/security", h.AdminSecurity)
 		adminProfile.POST("/two-factor/enroll", h.BeginAdminTOTPEnrollment)
 		adminProfile.POST("/two-factor/enable", h.EnableAdminTOTP)
@@ -140,6 +141,13 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.DELETE("/apps/:appkey/vip/plans/:planId", h.AdminDeleteAppVipPlan)
 		admin.POST("/apps/:appkey/vip/grant", h.AdminGrantAppUserVip)
 		admin.GET("/apps/:appkey/vip/transactions", h.AdminAppVipTransactions)
+		admin.GET("/apps/:appkey/vip/entitlement", h.AdminAppUserVipEntitlement)
+		admin.GET("/apps/:appkey/vip/features", h.AdminAppVipFeatures)
+		admin.POST("/apps/:appkey/vip/features", h.AdminSaveAppVipFeature)
+		admin.DELETE("/apps/:appkey/vip/features/:tag", h.AdminDeleteAppVipFeature)
+		admin.GET("/apps/:appkey/vip/trial/claims", h.AdminAppVipTrialClaims)
+		admin.POST("/apps/:appkey/vip/trial/claims", h.AdminClaimAppVipTrial)
+		admin.DELETE("/apps/:appkey/vip/trial/claims/:userId", h.AdminResetAppVipTrial)
 		// 余额系统（管理端）
 		admin.GET("/apps/:appkey/users/:userId/wallet", h.AdminAppUserWallet)
 		admin.GET("/apps/:appkey/users/:userId/wallet/transactions", h.AdminAppUserWalletTransactions)
@@ -153,6 +161,12 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.GET("/apps/:appkey/commerce/overview", h.AdminAppCommerceOverview)
 		admin.GET("/apps/:appkey/functions", h.AdminListAppFunctions)
 		admin.POST("/apps/:appkey/functions", h.AdminCreateAppFunction)
+		// 能力目录 / KV 浏览器挂在应用下而不是某个函数下：前者是全局静态目录，
+		// 后者是多个函数共用的命名空间。放到 /functions/ 里还会与 :functionName
+		// 抢同一段路由，gin 直接 panic。
+		admin.GET("/apps/:appkey/function-catalog", h.AdminAppFunctionCatalog)
+		admin.GET("/apps/:appkey/function-kv", h.AdminBrowseAppFunctionKV)
+		admin.DELETE("/apps/:appkey/function-kv", h.AdminDeleteAppFunctionKV)
 		admin.GET("/apps/:appkey/function-keys", h.AdminListAppFunctionKeys)
 		admin.POST("/apps/:appkey/function-keys", h.AdminCreateAppFunctionKey)
 		admin.DELETE("/apps/:appkey/function-keys/:keyId", h.AdminRevokeAppFunctionKey)
@@ -161,9 +175,15 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.DELETE("/apps/:appkey/functions/:functionName", h.AdminDeleteAppFunction)
 		admin.GET("/apps/:appkey/functions/:functionName/versions", h.AdminListAppFunctionVersions)
 		admin.POST("/apps/:appkey/functions/:functionName/versions", h.AdminCreateAppFunctionVersion)
+		// 版本详情带脚本正文（仅管理端）：没有它，改一行脚本要从零重写整份
+		admin.GET("/apps/:appkey/functions/:functionName/versions/:version", h.AdminGetAppFunctionVersion)
+		admin.DELETE("/apps/:appkey/functions/:functionName/versions/:version", h.AdminDeleteAppFunctionVersion)
 		admin.POST("/apps/:appkey/functions/:functionName/versions/:version/activate", h.AdminActivateAppFunctionVersion)
+		// 试跑：不建版本、不写审计、写操作只记录不执行
+		admin.POST("/apps/:appkey/functions/:functionName/test", h.AdminTestAppFunction)
 		admin.POST("/apps/:appkey/functions/:functionName/invoke", h.AdminInvokeAppFunction)
 		admin.GET("/apps/:appkey/functions/:functionName/invocations", h.AdminListAppFunctionInvocations)
+		admin.GET("/apps/:appkey/functions/:functionName/stats", h.AdminAppFunctionStats)
 		// 应用级第三方登录渠道（配置 + 自检 + 绑定治理）
 		admin.GET("/oauth-providers/templates", h.AdminOAuthProviderTemplates)
 		admin.GET("/apps/:appkey/oauth-providers", h.AdminListAppOAuthProviders)

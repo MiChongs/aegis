@@ -239,6 +239,38 @@ func (s *LegalService) Delete(ctx context.Context, docType legaldomain.DocType, 
 	return nil
 }
 
+// BuiltinLocales 内置了哪些语言，供控制台的「新增语言」选择器使用。
+//
+// 让服务端给而不是前端硬编码一份：语言集是后端的 legalBuiltinLocales 说了算，
+// 前端另抄一份的结果是「选择器里有日文、存进去发现没有内置底稿」。
+func (s *LegalService) BuiltinLocales() []legaldomain.LocaleOption {
+	options := make([]legaldomain.LocaleOption, 0, len(legalBuiltinLocales))
+	for _, item := range legalBuiltinLocales {
+		tag := i18n.ParseTag(item.Locale)
+		if tag == language.Und {
+			continue
+		}
+		options = append(options, legaldomain.LocaleOption{
+			Locale:        item.Locale,
+			NativeName:    display.Self.Name(tag),
+			Name:          display.English.Tags().Name(tag),
+			Source:        legaldomain.SourceDefault,
+			Default:       tag == s.authoritative,
+			Authoritative: tag == s.authoritative,
+		})
+	}
+	return options
+}
+
+// RenderTokens 把一段草稿里的占位符按当前部署的值替换掉。
+//
+// 控制台的实时预览用它 —— 预览里如果还留着 `{{platformName}}`，
+// 管理员就没法判断这一版排版对不对；而前端自己拼的话，
+// 平台名与联系邮箱这两个值就得再下发一次、再各自维护一套替换规则。
+func (s *LegalService) RenderTokens(ctx context.Context, body, locale string) string {
+	return s.render(ctx, body, locale)
+}
+
 // ContactConfigured 联系邮箱是否已配置。控制台据此提示 ——
 // 内置文本的「联系我们」一节引用它，没配就会印出一句占位文字。
 func (s *LegalService) ContactConfigured() bool { return s.contactEmail != "" }

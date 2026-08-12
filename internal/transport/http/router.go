@@ -100,7 +100,7 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		cl                  = deps.CrashLog
 		log                 = deps.Logger
 		corsConfig          = deps.CORS
-		trustedProxies      = deps.TrustedProxies
+		clientIPResolver    = deps.ClientIP
 		docsPortalURL       = deps.DocsPortalURL
 	)
 	// 接住 gin 的路由调试回调：既灭掉 debug 档下每条路由一行的滚屏，
@@ -109,8 +109,13 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 	defer captureRouteChains()()
 
 	router := gin.New()
-	if err := router.SetTrustedProxies(trustedProxies); err != nil {
-		return nil, fmt.Errorf("配置可信代理失败: %w", err)
+	// gin 自己那套转发头解析必须关掉（nil = 不信任任何对端 → ClientIP 直接返回
+	// RemoteAddr）。客户端 IP 由 middleware.ClientIP 判定后**改写 RemoteAddr**，
+	// 两套解析同时开着只会让「到底谁说了算」变成一个没人答得上来的问题：
+	// gin 只认 X-Forwarded-For / X-Real-IP，不认 RFC 7239 Forwarded、不支持预设网段、
+	// 也不区分「平台注入的头」与「客户端自己写的头」。详见 middleware/client_ip.go。
+	if err := router.SetTrustedProxies(nil); err != nil {
+		return nil, fmt.Errorf("重置 gin 可信代理失败: %w", err)
 	}
 	router.HandleMethodNotAllowed = true
 	// 显式声明 multipart 内存缓冲上限：32MB
@@ -123,6 +128,9 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		log.Warn(warning)
 	}
 	router.Use(
+		// 必须是第一个：它之后的每一环（访问日志、防火墙限流与封禁、WAF、追踪、
+		// 地理定位）都要取客户端 IP，排在它前面的那些取到的会是反代地址。
+		middleware.ClientIP(clientIPResolver),
 		middleware.RequestID(),
 		middleware.RequestOrigin(),
 		middleware.CrashRecovery(log, cl),

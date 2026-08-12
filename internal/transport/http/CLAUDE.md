@@ -28,7 +28,7 @@ Gin 路由注册、HTTP Handler 实现、请求/响应 DTO、OpenAPI 规范生�
 | `docs_gateway.go` | 网关接口的 OpenAPI 元数据（由接入目录生成，多平台客户端从这一段产出） |
 | `docs_route_models.go` | **机器生成**：路由 → 请求模型映射，不要手工编辑 |
 | `admin_handlers.go` | 管理员相关 Handler |
-| `avatar_handlers.go` | 头像上传 Handler |
+| `avatar_handlers.go` | 头像：永久地址取图 + 上传 / 移除 / 历史 / 恢复（见 [docs](../../../docs/avatar.md)） |
 | `feature_handlers.go` | 功能性 Handler（密码策略、积分、版本等） |
 | `monitor_handlers.go` | 系统监控 Handler |
 | `realtime_handlers.go` | WebSocket Handler |
@@ -50,6 +50,9 @@ GET  /healthz                    健康检查
 GET  /readyz                     就绪检查
 GET  /api/system/monitor         系统监控（公开）
 GET  /api/app/public             App 公开信息
+GET  /api/avatars/:token         永久头像地址（**免登录是前提**：它出现在 <img src>
+                                 与邮件正文里，那两处都没机会带 Authorization 头；
+                                 防遍历靠地址自带的签名。docs/avatar.md）
 
 # 应用接入网关（接入方唯一需要认识的命名空间，见 docs/app-integration.md）
 /api/v1/apps/:appkey/*           免登录部分：config / captcha / auth.* / banners /

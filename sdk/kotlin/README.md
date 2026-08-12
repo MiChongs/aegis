@@ -148,6 +148,53 @@ AegisClient.builder(baseUrl, appKey).tokenStore(PrefsTokenStore(context)).build(
 Android 上放进协程 / IO 线程；服务端直接调。
 `AegisClient` 线程安全，全进程共用一个实例即可（内部 OkHttpClient 自带连接池）。
 
+## 服务端校验会员（AegisServerClient）
+
+`AegisClient` 是**终端用户**的客户端：凭据是登录换来的用户令牌。
+接入方**自己的后端**要问「这个用户是不是会员」时两样都没有 ——
+它没有用户令牌（那是用户的东西），也不该配管理员账号（那是整个租户的权限）。
+这条路由 `AegisServerClient` 走：
+
+```kotlin
+val server = AegisServerClient.builder(baseUrl, appKey, "afk_xxx").build()
+
+// userToken 是客户端调你的接口时带上来的那个 aegis 访问令牌，原样转过来即可
+if (!server.isMember(userToken)) return deny()                     // 只问是不是会员
+if (!server.hasFeature(userToken, "export")) return deny()         // 问的是"他能不能用导出"
+
+// 要拿字段时用完整版
+val check = server.verifyMembership(userToken, feature = "export")
+check.membership.isTrial          // 是不是试用会员 —— 决定引导"升级"还是"续费"
+check.membership.remainingDays    // 还剩几天
+check.membership.features         // 当前生效的全部功能标识
+```
+
+**被校验的用户由访问令牌指明，不能传 userId。** 这不是少做了一种便利：
+
+> 你的后端几乎一定会把「当前请求是谁」交给它自己的客户端来说。一旦这个接口收
+> userId，那条链路就是「客户端自报 42 → 你转发 42 → 我们回答 42 是会员 →
+> 你放行**发起请求的那个人**」。攻击者只要知道任意一个会员的 userId 就能白嫖，
+> 而服务端密钥拦不住这件事 —— 犯错的正是持有密钥的那一方。
+
+令牌则是平台签发、平台验证的：它同时证明了「是谁」和「这个人现在在场」。
+需要按 userId 批量查（对账、到期提醒、客服工单）走管理端
+`/api/admin/apps/{appKey}/vip/entitlement`，那条路有管理员鉴权与审计。
+
+| | `AegisClient` | `AegisServerClient` |
+|---|---|---|
+| 调用方 | 终端用户的 App / 网页 | 接入方自己的后端 |
+| 凭据 | 用户令牌 | 应用服务端密钥 `afk_…`（控制台「远程函数 → 调用密钥」签发） |
+| 命名空间 | `/api/v1/apps/{appKey}/*` | `/api/apps/{appKey}/*` |
+| 包装 | 按安全等级三档 | 纯 JSON |
+
+> **`afk_…` 只能放在服务器上。** 打进 APK 或前端包等于把它公开：
+> 谁拿到它都能问出任意用户的会员状态。要求与 `appSecret` 同档。
+
+功能标识必须先在控制台的**会员功能目录**里登记，再勾进套餐。
+传一个没登记的标识会得到 `40486` 而不是静默的 `false` ——
+拼错一个字母（`exprot`）和"他没有这项权益"是完全不同的两件事，
+而后者在自由字符串方案里永远查不出来。
+
 ## 目录里没封的接口
 
 类型化门面覆盖了 `/config` 目录里的全部接口。要调新增的（或自定义的）接口：

@@ -19,6 +19,7 @@ Config
 ├── AppName / AppEnv / HTTPPort
 ├── AdminAPIToken / AdminSessionTTL / AdminBootstrap
 ├── ReadTimeout / WriteTimeout / ShutdownTimeout
+├── ClientIP   → clientip.Config (受信代理网段 + 判定方式 + 平台探测)
 ├── CORS       → CORSConfig
 ├── JWT        → JWTConfig (Secret, Issuer, TTL, RefreshTTL)
 ├── Firewall   → FirewallConfig (WAF、限流、CIDR 黑白名单、UA 过滤)
@@ -41,6 +42,10 @@ Config
 - **防火墙默认值**：通过 `NormalizeFirewallConfig` 统一处理，调用者可单独复用
 - **OAuth 默认端点**：内置 qq/wechat/github/google/microsoft/weibo 端点，仅需配置 ClientID/Secret
 - **环境变量优先**：Viper `AutomaticEnv` 已开启，环境变量覆盖 `.env` 文件
+- **客户端 IP**：`TRUSTED_PROXIES` 支持预设名（`infra` / `cloudflare` / …）与 CIDR 混排，
+  留空取 `infra`（容器平台上开箱即用）。配置写错启动即失败 —— 静默跳过一条写错的网段，
+  表现是「线上大部分请求的 IP 突然变成网关地址」，从现象倒查回配置要很久。
+  详见 [docs/client-ip.md](../../docs/client-ip.md)
 - **出海网关**：`egress.go` 支持三种写法（紧凑 DSL / 内联 JSON / 配置文件），解析或校验失败直接返回 error —— 静默忽略一条写错的规则会让境外调用变成难以归因的超时
 
 ## 默认值摘要

@@ -106,12 +106,24 @@ func TestLoadWithViperParsesTrustedProxies(t *testing.T) {
 	v.Set("REDIS_ADDR", "127.0.0.1:6379")
 	v.Set("NATS_URL", "nats://127.0.0.1:4222")
 	v.Set("TRUSTED_PROXIES", "127.0.0.1/32, 10.0.0.0/8")
+	v.Set("CLIENT_IP_STRATEGY", "trusted-ranges")
+	v.Set("CLIENT_IP_LIST_HEADER", "Forwarded")
+	v.Set("CLIENT_IP_HOPS", "2")
 
 	cfg, err := loadWithViper(v)
 	if err != nil {
 		t.Fatalf("loadWithViper() error = %v", err)
 	}
-	if got, want := strings.Join(cfg.TrustedProxies, ","), "127.0.0.1/32,10.0.0.0/8"; got != want {
-		t.Fatalf("TrustedProxies = %q, want %q", got, want)
+	if got, want := strings.Join(cfg.ClientIP.TrustedProxies, ","), "127.0.0.1/32,10.0.0.0/8"; got != want {
+		t.Fatalf("ClientIP.TrustedProxies = %q, want %q", got, want)
+	}
+	if got, want := cfg.ClientIP.Strategy, "trusted-ranges"; got != want {
+		t.Fatalf("ClientIP.Strategy = %q, want %q", got, want)
+	}
+	if got, want := cfg.ClientIP.ListHeader, "Forwarded"; got != want {
+		t.Fatalf("ClientIP.ListHeader = %q, want %q", got, want)
+	}
+	if got, want := cfg.ClientIP.Hops, 2; got != want {
+		t.Fatalf("ClientIP.Hops = %d, want %d", got, want)
 	}
 }

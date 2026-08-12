@@ -20,6 +20,11 @@ import (
 // 让前端自己挑语言的结果是「浏览器语言是繁中、后端只有简中和英文」这种情形下，
 // 每一端各挑各的，同一次访问里页面标题和正文可能不是同一种语言。
 
+// LegalPreviewRequest 预览一段草稿。
+type LegalPreviewRequest struct {
+	Body string `json:"body"`
+}
+
 // LegalDocumentRequest 管理端写入一份法律文本。
 type LegalDocumentRequest struct {
 	Title       string `json:"title" binding:"required"`
@@ -90,6 +95,36 @@ func (h *Handler) AdminListLegalDocuments(c *gin.Context) {
 		// 内置文本引用联系邮箱，没配就会印出占位文字 —— 让管理员在这一页看见，
 		// 而不是等用户翻到隐私政策最后一节才发现。
 		"contactConfigured": h.legal.ContactConfigured(),
+		// 准据语言：多语言法律文本必须指定其中一版为准，控制台要标出来是哪一版
+		"authoritativeLocale": h.legal.AuthoritativeLocale(),
+		// 内置语言目录，供「新增语言」选择器使用。前端不另抄一份 ——
+		// 抄了就会出现「选择器里有这个语言、存进去发现没有内置底稿」。
+		"builtinLocales": h.legal.BuiltinLocales(),
+	})
+}
+
+// AdminPreviewLegalDocument 把一段草稿按当前部署的值渲染出来，供编辑器实时预览。
+//
+// 走服务端而不是前端自己替换：平台名与联系邮箱的取值规则（品牌配置优先、
+// 未配置时印占位文字而不是生造地址）只在服务端实现一次，
+// 前端另写一套必然和公开页渲染出的结果不一致 —— 而预览的全部意义就是「所见即所得」。
+func (h *Handler) AdminPreviewLegalDocument(c *gin.Context) {
+	if _, ok := requireSuperAdminSession(c); !ok {
+		response.Error(c, http.StatusForbidden, 40314, "仅超级管理员可管理法律文本")
+		return
+	}
+	if h.legal == nil {
+		response.Error(c, http.StatusServiceUnavailable, 50321, "法律文本服务暂不可用")
+		return
+	}
+	var req LegalPreviewRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	locale := strings.TrimSpace(c.Param("locale"))
+	response.Success(c, 200, "渲染成功", gin.H{
+		"body": h.legal.RenderTokens(c.Request.Context(), req.Body, locale),
 	})
 }
 

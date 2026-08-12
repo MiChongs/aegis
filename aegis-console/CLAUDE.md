@@ -28,6 +28,7 @@
 | Motion | ^13.0.0（动画；侧边栏用到 `layoutId` 滑动高亮、`AnimatePresence` 折叠、`Reorder` 拖拽排序） |
 | cmdk | ^1.1.1（命令面板 `⌘K` 的底座，shadcn `command` 组件依赖它） |
 | pinyin-pro | ^3.28.2（命令面板的拼音检索，**动态 import 按需加载**，见下方侧边栏一节） |
+| screenfull | ^6.0.2（顶栏全屏开关；跨浏览器前缀差异交给它，见下方顶栏一节） |
 | ESLint | ^9.39.5 |
 | pnpm | 11.21.0 |
 
@@ -123,9 +124,10 @@ src/
 │   ├── brand/                  # AegisMark、BrandHome、PublicHeader
 │   ├── dashboard/              # MetricCard、ActivityFeed
 │   ├── developers/             # PortalShell、CodeBlock、CodeSamples（门户 + 接入页共用）
-│   ├── functions/              # FunctionManager、FunctionKeysPanel
+│   ├── functions/              # 远程函数工作台（见下方「远程函数」一节）
 │   ├── layout/                 # ConsoleShell（外壳装配：侧边栏 + 顶栏 + 快捷键）
-│   │   └── sidebar/            # 侧边栏各部件（导航树 / 折叠轨道 / 命令面板 / 宽度手柄）
+│   │   ├── sidebar/            # 侧边栏各部件（导航树 / 折叠轨道 / 命令面板 / 宽度手柄）
+│   │   └── topbar/             # 顶栏各部件（面包屑 / 动作区 / 通知铃铛 / 账户菜单 / 移动端抽屉）
 │   ├── configuration/          # 平台级配置面板（品牌、出海代理网关）
 │   ├── monitor/                # AvailabilityDashboard
 │   └── ui/                     # shadcn/ui 组件库
@@ -278,13 +280,16 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8088
 
 | 文件 | 职责 |
 |---|---|
-| `layout/console-shell.tsx` | 外壳装配：侧边栏骨架 + 顶栏 + 全局快捷键 + 面包屑 |
+| `layout/console-shell.tsx` | 外壳装配：侧边栏骨架 + 顶栏挂载 + 全局快捷键 |
+| `layout/with-active-tab.tsx` | `withActiveTab()`：给组件补 `?tab=` 并自带 Suspense 边界 |
+| `layout/brand.tsx` | 品牌 logo / 标题（读 BrandingContext），侧边栏与移动端抽屉共用 |
 | `layout/sidebar/sidebar-nav.tsx` | 展开态：收藏区（`Reorder` 拖拽排序）+ 分组 → 页面 → 页内子项 |
 | `layout/sidebar/sidebar-rail.tsx` | 折叠态图标轨道；有子项的页面靠悬浮浮层列出全部面板 |
 | `layout/sidebar/command-palette.tsx` | `⌘K` 命令面板：跳转 + 主题 / 收藏 / 退出等操作 |
 | `layout/sidebar/sidebar-resizer.tsx` | 右边缘宽度拖拽手柄（208–380px，双击复位） |
 | `layout/sidebar/sidebar-shared.tsx` | `ActivePill` / `PinToggle` / `Kbd` / 缓动常量 |
 | `layout/sidebar/recent-tracker.tsx` | 最近访问打点（渲染 `null`） |
+| `layout/sidebar/search-trigger.tsx` | 命令面板入口（侧边栏顶部与移动端抽屉共用一份） |
 | `lib/navigation-hooks.ts` | 权限过滤后的分组与目标、`key → 目标` 索引 |
 | `lib/pinyin-search.ts` | 拼音检索，`pinyin-pro` 动态加载 + `useSyncExternalStore` 通知就绪 |
 
@@ -338,6 +343,49 @@ Shell 挂载 1.5s 后预热一次，面板打开时再兜底触发一次
 打分顺序：字面全等 > 前缀 > 包含 > 标题拼音 > 所属页面/分组拼音。
 拼音档内再按「从第一个字起算」与「字字相邻」加成 —— 少了这一层，
 输 `yh` 时「用户」和「远程函数」同分，排序退化成目录顺序，正命中的那个反而靠后。
+
+## 顶栏（components/layout/topbar/）
+
+| 文件 | 职责 |
+|---|---|
+| `topbar/console-topbar.tsx` | 顶栏骨架：容器查询上下文、滚动态、左右两区装配 |
+| `topbar/topbar-breadcrumb.tsx` | 面包屑：分组段 / 面板段是**可切换菜单**，窄屏折进 `…` |
+| `topbar/topbar-actions.tsx` | 动作区：搜索 / 收藏本页 / 主题 / 全屏 / 溢出菜单 + 统一的 `TopbarButton` |
+| `topbar/notification-bell.tsx` | 通知铃铛（见下方「通知铃铛与实时事件」） |
+| `topbar/user-menu.tsx` | 账户菜单：身份块 + 命令面板 / 资料 / 安全 / 帮助文档 / 退出 |
+| `topbar/mobile-nav.tsx` | 移动端导航抽屉（`lg` 以下），装的是同一棵导航树 |
+
+### 响应式按容器，不按视口
+
+顶栏可用宽度 = 视口 − 侧边栏，而侧边栏可折叠（56px）、可拖宽（208–380px）：
+**同一个 1280px 视口下顶栏能差出 300px**。所以顶栏是一个命名容器
+（`@container/topbar`），下列三件事全部以顶栏自身宽度为准：
+
+| 断点（顶栏宽度） | 变化 |
+|---|---|
+| `@lg` 32rem | 倒数第二级面包屑、账户名显隐 |
+| `@xl` 36rem | 顶栏搜索在「搜索条」与图标之间切换 |
+| `@2xl` 42rem | 收藏本页 / 主题 / 全屏三项在「平铺」与「收进 `⋯`」之间切换 |
+| `@3xl` 48rem | 完整路径 ↔ `…` 折叠（`…` 菜单里永远是完整路径） |
+
+只有两件事仍按视口（`lg:`）：移动端导航按钮与顶栏搜索 ——
+它们回答的是"侧边栏在不在"，而那正是 `lg` 断点的定义。
+
+**不要把 `lg:hidden` 和容器变体写在同一个元素上**：媒体查询与容器查询谁压过谁
+只取决于生成顺序，等于把显隐交给运气。要么套一层 wrapper，要么只用其中一种。
+
+三条实现约束：
+
+1. **面包屑的分隔符跟前一段同步显隐**，不是跟自己。跟自己同步的话，前一段折进 `…`
+   之后它会和 `…` 自带的分隔符并排出现，路径上凭空多一个 `›`。
+2. **段内菜单的同级页面必须经权限过滤**（`useVisibleGroups()`）——
+   否则面包屑会成为绕过侧边栏鉴权的后门，与一维目标同一条约束。
+3. **溢出菜单里一项不少**。顶栏放不下不等于这些能力在小屏上不存在，
+   而"某个功能只在大屏有"是使用者最难自己发现的一类差异。
+
+全屏走 `screenfull`（前缀差异交给它），状态用 `useSyncExternalStore` 订阅
+`fullscreenchange` —— 用 `useEffect` + `setState` 同步的话，用户按 F11 / Esc
+退出时按钮图标不会跟着变。滚动态走 motion 的 `useScroll`，布尔值只在跨过阈值时翻转。
 
 ## 配置的作用域划分（改配置页前必读）
 
@@ -699,7 +747,7 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 
 ## 通知铃铛与实时事件
 
-顶栏铃铛（`components/layout/notification-bell.tsx`）合并两个来源：
+顶栏铃铛（`components/layout/topbar/notification-bell.tsx`）合并两个来源：
 
 | 标签 | 数据源 | 已读状态存哪 |
 |---|---|---|
@@ -714,6 +762,45 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 工单实时事件统一以 `ticket.` 前缀分发，载荷带 `audience` 字段区分受众：
 前端只处理 `audience === "admin"` 的那一份（同一事件也会推给提单人）。
 收到即失效相关查询缓存；只有 `level === "critical"` 才弹 toast 打断操作。
+
+## 远程函数（/functions）
+
+三个页签同步到 URL（`?tab=functions|kv|keys`）：
+
+| 文件 | 职责 |
+|---|---|
+| `(console)/functions/page.tsx` | 页面骨架、应用选择、Tab 路由 |
+| `components/functions/function-manager.tsx` | 函数列表 + 四个面板的装配 |
+| `components/functions/function-create-dialog.tsx` | 新建：运行时 / 起始模板 / 能力 |
+| `components/functions/function-overview-panel.tsx` | 运行状况：成功率 / 耗时分位 / 趋势 / Top 错误 |
+| `components/functions/function-editor-panel.tsx` | 脚本工作台：写 → 试跑 → 发布 → 回滚 |
+| `components/functions/function-invocations-panel.tsx` | 调用审计（筛选 + 分页 + 详情抽屉）与真实调用 |
+| `components/functions/function-settings-panel.tsx` | 能力、运行闸门、函数配置、删除 |
+| `components/functions/function-kv-panel.tsx` | KV 浏览器（脚本的服务端独占状态） |
+| `components/functions/function-shared.tsx` | 能力勾选树、风险徽标、副作用清单、格式化 |
+| `components/functions/script-editor.tsx` | Monaco + 按能力生成的 SDK 类型 |
+| `lib/api/app-functions.ts` / `lib/function-hooks.ts` | 远程函数域 API 与 React Query hooks |
+
+五条硬约束：
+
+1. **能力目录来自后端**（`GET /function-catalog`），不在前端硬编码。
+   在这里另抄一份会同时招来「后端加了一项、控制台勾不上」和「控制台能勾、
+   保存时报不支持」两种漂移，而两边都没有报错提示 —— 与风控条件目录同源。
+2. **编辑器的类型声明也来自那份目录**。`aegis-sdk-types.ts` 只负责按已声明能力
+   过滤并拼装，声明片段本身在 Go 里。前端自己写一份类型的后果是
+   「补全里有、运行时没有」，而那要到发版之后才暴露。
+   拼装时**必须合并命名空间**（`user.read` 出 `get`、`user.write` 出 `ban`，同属
+   `aegis.user`）：漏了会在同一个接口里产生两个 `user:` 成员，TypeScript 报重复
+   声明后整份类型静默失效，表现是补全突然什么都没有。
+3. **四个面板对应四件不同的事**，不要合回一屏：概览回答「为什么调不通」，
+   脚本负责迭代，调用负责排障，设置负责闸门。旧形状最大的问题不是拥挤，
+   是**没有试跑** —— 唯一的验证方式是把半成品激活到线上。
+4. **试跑失败不是接口错误**。后端在脚本执行失败时仍返回 200，判成功要看
+   `result.ok`；按抛异常处理会把日志与副作用清单一起丢掉，而那正是要看的东西。
+   试跑产生的 effect 必须显示「未执行」标记，否则一份「发了 100 积分」的清单
+   会被当成真的发生过。
+5. **草稿按 (应用, 函数) 绑定**，切换函数时靠 `key` 整块重挂载，不用 effect 同步 ——
+   与配置面板、门户凭据同一条约束。
 
 ## Monaco 编辑器（JsonViewer / 远程函数脚本 / 插件 Expr）
 

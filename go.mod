@@ -15,6 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.34
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.3.11
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
+	github.com/bbrks/go-blurhash v1.1.1
 	github.com/blevesearch/bleve/v2 v2.6.0
 	github.com/boombuler/barcode v1.1.0
 	github.com/casbin/casbin/v2 v2.135.0
@@ -24,6 +25,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/crewjam/saml v0.5.1
 	github.com/dchest/captcha v1.1.0
+	github.com/disintegration/imaging v1.6.2
 	github.com/dop251/goja v0.0.0-20260806115107-493f22071ef6
 	github.com/dustin/go-humanize v1.0.1
 	github.com/ethereum/go-ethereum v1.17.5
@@ -49,6 +51,7 @@ require (
 	github.com/jedib0t/go-pretty/v6 v6.8.3
 	github.com/lucasb-eyer/go-colorful v1.4.0
 	github.com/mattn/go-isatty v0.0.24
+	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mileusna/useragent v1.3.5
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/mojocn/base64Captcha v1.3.8
@@ -60,6 +63,7 @@ require (
 	github.com/plutov/paypal/v4 v4.17.0
 	github.com/pquerna/otp v1.5.0
 	github.com/qiniu/go-sdk/v7 v7.27.0
+	github.com/realclientip/realclientip-go v1.0.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/russellhaering/goxmldsig v1.6.1
@@ -94,6 +98,7 @@ require (
 	go.temporal.io/sdk v1.47.0
 	go.uber.org/fx v1.24.0
 	go.uber.org/zap v1.28.0
+	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
 	golang.org/x/crypto v0.54.0
 	golang.org/x/image v0.44.0
 	golang.org/x/net v0.57.0
@@ -234,7 +239,6 @@ require (
 	github.com/mattermost/xml-roundtrip-validator v0.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-runewidth v0.0.23 // indirect
-	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect

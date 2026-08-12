@@ -5,11 +5,14 @@ import (
 	"strings"
 
 	"aegis/internal/service"
+	"aegis/pkg/clientip"
+
 	"github.com/gin-gonic/gin"
 )
 
 const (
-	clientIPContextKey   = "request.client_ip"
+	// 客户端 IP 由 ClientIP 中间件在链首写入（见 client_ip.go），这里只是复用同一个键。
+	clientIPContextKey   = clientip.ContextKeyClientIP
 	locationContextKey   = "request.ip_location"
 	locationTextFallback = ""
 )

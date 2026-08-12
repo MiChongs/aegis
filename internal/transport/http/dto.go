@@ -185,6 +185,11 @@ type AppIDQuery struct {
 	AppID int64 `json:"appid" form:"appid" binding:"required"`
 }
 
+// AvatarRestoreRequest 把头像历史里的某一条重新设为当前头像。
+type AvatarRestoreRequest struct {
+	AssetID int64 `json:"assetId" form:"assetId" binding:"required"`
+}
+
 type UpdateProfileRequest struct {
 	Nickname string                   `json:"nickname" form:"nickname"`
 	Avatar   string                   `json:"avatar" form:"avatar"`

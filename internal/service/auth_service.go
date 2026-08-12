@@ -986,9 +986,14 @@ func (s *AuthService) loginWithOAuthProfile(ctx context.Context, app *appdomain.
 		inviteCode = strings.TrimSpace(existingProfile.InviteCode)
 	}
 	if _, err := s.upsertUserProfileWithInviteCode(ctx, userdomain.Profile{
-		UserID:     user.ID,
-		Nickname:   profile.Nickname,
-		Avatar:     profile.Avatar,
+		UserID:   user.ID,
+		Nickname: profile.Nickname,
+		// 这里的 avatar 在原生 exchange 那条链路上来自**客户端请求体**
+		// （不是服务端从 userinfo 拉的），因此必须过一道闸门：
+		// 不挡的话可以填成 `storage://3/别人的私有文件.pdf`，注册完
+		// 再从自己的头像地址上把它读出来。不合规就是没头像，
+		// 服务端会画一个默认的，不该为此打断一次登录。
+		Avatar:     SanitizeExternalAvatar(profile.Avatar),
 		Email:      profile.Email,
 		InviteCode: inviteCode,
 		Extra: map[string]any{

@@ -73,10 +73,36 @@ export function getLegalDocument(docType: LegalDocType, locale?: string) {
 
 /* ── 管理端（超管） ── */
 
+export type AdminLegalOverview = {
+  items: LegalDocument[];
+  /** 联系邮箱是否已配置。内置文本引用它，没配就会印出占位文字 */
+  contactConfigured: boolean;
+  /** 准据语言。译文与它有歧义时以它为准 */
+  authoritativeLocale: string;
+  /** 内置语言目录，「新增语言」选择器用它 —— 前端不另抄一份 */
+  builtinLocales: LegalLocaleOption[];
+};
+
 export function getAdminLegalDocuments(token: string) {
-  return apiRequest<{ items: LegalDocument[]; contactConfigured: boolean }>(
-    "/api/admin/system/legal/documents",
-    { token }
+  return apiRequest<AdminLegalOverview>("/api/admin/system/legal/documents", { token });
+}
+
+/**
+ * 把草稿按当前部署的值渲染出来（替换 platformName / contactEmail 占位符）。
+ *
+ * 走服务端而不是前端自己替换：取值规则（品牌配置优先、未配置时印占位文字
+ * 而不是生造地址）只在服务端实现一次，前端另写一套必然和公开页不一致 ——
+ * 而预览的全部意义就是「所见即所得」。
+ */
+export function previewAdminLegalDocument(
+  token: string,
+  docType: LegalDocType,
+  locale: string,
+  body: string
+) {
+  return apiRequest<{ body: string }>(
+    `/api/admin/system/legal/documents/${docType}/${encodeURIComponent(locale)}/preview`,
+    { method: "POST", token, body: JSON.stringify({ body }) }
   );
 }
 

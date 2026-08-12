@@ -1,6 +1,7 @@
 package config
 
 import (
+	"aegis/pkg/clientip"
 	"aegis/pkg/egress"
 	"aegis/pkg/timeutil"
 	"errors"
@@ -40,15 +41,18 @@ type Config struct {
 	// APIBaseURL 是本服务自身的对外地址（如 https://api.example.com）。
 	// 邮件里的下载链接这类**必须绝对**的地址由它拼出 —— 邮件客户端里没有「当前站点」，
 	// 相对路径点不开。留空时相关邮件会退化为不带链接（附件仍照常发）。
-	APIBaseURL       string
-	HTTPPort         int
-	AdminSessionTTL  time.Duration
-	DefaultTimezone  string
-	AdminBootstrap   AdminBootstrapConfig
-	ReadTimeout      time.Duration
-	WriteTimeout     time.Duration
-	ShutdownTimeout  time.Duration
-	TrustedProxies   []string
+	APIBaseURL      string
+	HTTPPort        int
+	AdminSessionTTL time.Duration
+	DefaultTimezone string
+	AdminBootstrap  AdminBootstrapConfig
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
+	ShutdownTimeout time.Duration
+	// ClientIP 真实客户端 IP 的判定方式（含受信代理网段）。
+	// 限流、封禁、地理风控、审计全部建立在它算出来的那个地址上，
+	// 判错不会报错，只会让这几样一起静默失效。详见 pkg/clientip 与 docs/client-ip.md。
+	ClientIP         clientip.Config
 	CORS             CORSConfig
 	JWT              JWTConfig
 	Firewall         FirewallConfig
@@ -58,6 +62,7 @@ type Config struct {
 	LegacyMySQL      LegacyMySQLConfig
 	Redis            RedisConfig
 	PaymentReceipt   PaymentReceiptConfig
+	Avatar           AvatarConfig
 	AdminUserSearch  AdminUserSearchConfig
 	AccountBan       AccountBanConfig
 	Risk             RiskConfig
@@ -493,6 +498,52 @@ type PaymentReceiptConfig struct {
 	PublicBaseURL string
 }
 
+// AvatarConfig 头像服务。
+//
+// 头像的对外地址是**永久**的（/api/avatars/{token}），所以这里的每一项改动都
+// 只影响「以后长什么样」，不会让已经流出去的地址失效 —— 这是刻意的设计前提：
+// 头像地址会被客户端、邮件、CDN 长期持有，一个会因为改配置而失效的地址
+// 等于没有地址。
+type AvatarConfig struct {
+	// DefaultStyle 没有自定义头像时画什么：
+	// identicon（默认，几何图案）/ initials（首字母）/ gravatar（跳外部服务）/ none（不给地址）。
+	//
+	// 默认从 gravatar 改成了服务端自绘：老做法把每个用户的邮箱哈希送去第三方，
+	// 内网部署下还必然加载失败，而"头像加载失败"和"没有头像"在界面上长得一模一样。
+	DefaultStyle string
+	// GravatarBaseURL 仅 DefaultStyle=gravatar 时使用的头像服务前缀。
+	// 默认 WeAvatar（Gravatar 的国内镜像，同一套哈希规则）。
+	GravatarBaseURL string
+	// GravatarHashAlgo 标识符哈希算法：sha256（Gravatar 新规范）/ md5（旧规范）。
+	GravatarHashAlgo string
+	// Sizes 上传时生成哪些尺寸档（像素边长，上限 512）。
+	// **只能加不能减**：减掉一档不会让存量资产少一个文件，只会让请求那一档的
+	// 客户端回落到更大的一档，白白多下字节。
+	Sizes []int
+	// JPEGQuality 无透明通道时的编码质量（1~100）。88 在头像这个尺寸上
+	// 已经看不出与 95 的差别，体积却小三成。
+	JPEGQuality int
+	// KeepAnimated 允许保留动图头像（体积与尺寸都在限内时）。
+	// 关掉则一律拍平成静态首帧。
+	KeepAnimated bool
+	// MaxUploadBytes 单次上传的字节上限。
+	MaxUploadBytes int64
+	// UploadsPerHour 每个主体每小时最多换几次头像，0 表示不限。
+	// 头像上传是「一次请求触发多次对象存储写入 + 一次图像解码」的重活，
+	// 不设闸门时一个脚本就能把存储配额和 CPU 一起吃掉。
+	UploadsPerHour int
+	// StorageConfigName 指定用哪个存储配置，留空走该应用的默认配置。
+	StorageConfigName string
+	// CacheTTL 头像字节在 Redis 里的缓存时长。头像是典型的
+	// 「读多写极少」资源，缓存住就不必每次都去对象存储取一遍。
+	CacheTTL time.Duration
+	// PublicBaseURL 由 API_BASE_URL 拷贝而来，不是独立配置项。
+	// 留空时按请求域名拼地址。
+	PublicBaseURL string
+	// SigningKey 由 SECURITY_MASTER_KEY 拷贝而来，用于给主体令牌签名。
+	SigningKey string
+}
+
 type AdminUserSearchConfig struct {
 	RootDir           string
 	BatchSize         int
@@ -713,9 +764,16 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 		ConsoleBaseURL:           v.GetString("CONSOLE_BASE_URL"),
 		APIBaseURL:               v.GetString("API_BASE_URL"),
 		HTTPPort:                 v.GetInt("HTTP_PORT"),
-		TrustedProxies:           csvList(v.GetString("TRUSTED_PROXIES")),
-		AdminSessionTTL:          v.GetDuration("ADMIN_SESSION_TTL"),
-		DefaultTimezone:          v.GetString("APP_DEFAULT_IANA_TIMEZONE"),
+		ClientIP: clientip.Config{
+			Strategy:       strings.TrimSpace(v.GetString("CLIENT_IP_STRATEGY")),
+			TrustedProxies: csvList(v.GetString("TRUSTED_PROXIES")),
+			Header:         strings.TrimSpace(v.GetString("CLIENT_IP_HEADER")),
+			Hops:           v.GetInt("CLIENT_IP_HOPS"),
+			ListHeader:     strings.TrimSpace(v.GetString("CLIENT_IP_LIST_HEADER")),
+			DebugHeader:    getBool(v, "CLIENT_IP_DEBUG_HEADER", false),
+		},
+		AdminSessionTTL: v.GetDuration("ADMIN_SESSION_TTL"),
+		DefaultTimezone: v.GetString("APP_DEFAULT_IANA_TIMEZONE"),
 		AdminBootstrap: AdminBootstrapConfig{
 			Account:     v.GetString("ADMIN_BOOTSTRAP_ACCOUNT"),
 			Password:    v.GetString("ADMIN_BOOTSTRAP_PASSWORD"),
@@ -827,6 +885,18 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 			DefaultLocale:         v.GetString("PAYMENT_RECEIPT_DEFAULT_LOCALE"),
 			EmailLinkTTL:          v.GetDuration("PAYMENT_RECEIPT_EMAIL_LINK_TTL"),
 			EmailPerDay:           v.GetInt("PAYMENT_RECEIPT_EMAIL_PER_DAY"),
+		},
+		Avatar: AvatarConfig{
+			DefaultStyle:      v.GetString("AVATAR_DEFAULT_STYLE"),
+			GravatarBaseURL:   v.GetString("AVATAR_GRAVATAR_BASE_URL"),
+			GravatarHashAlgo:  v.GetString("AVATAR_GRAVATAR_HASH"),
+			Sizes:             csvInts(v.GetString("AVATAR_SIZES")),
+			JPEGQuality:       v.GetInt("AVATAR_JPEG_QUALITY"),
+			KeepAnimated:      getBool(v, "AVATAR_KEEP_ANIMATED", true),
+			MaxUploadBytes:    v.GetInt64("AVATAR_MAX_UPLOAD_BYTES"),
+			UploadsPerHour:    v.GetInt("AVATAR_UPLOADS_PER_HOUR"),
+			StorageConfigName: v.GetString("AVATAR_STORAGE_CONFIG"),
+			CacheTTL:          v.GetDuration("AVATAR_CACHE_TTL"),
 		},
 		AdminUserSearch: AdminUserSearchConfig{
 			RootDir:           v.GetString("ADMIN_USER_SEARCH_ROOT_DIR"),
@@ -1352,6 +1422,7 @@ func setDefaults(cfg *Config) {
 	if cfg.PaymentReceipt.CleanupInterval <= 0 {
 		cfg.PaymentReceipt.CleanupInterval = 5 * time.Minute
 	}
+	applyAvatarDefaults(&cfg.Avatar, cfg.Security.MasterKey, cfg.APIBaseURL)
 	if strings.TrimSpace(cfg.AdminUserSearch.RootDir) == "" {
 		cfg.AdminUserSearch.RootDir = filepath.Join("data", "search")
 	}
@@ -1512,6 +1583,58 @@ func getDuration(v *viper.Viper, key string, fallback time.Duration) time.Durati
 		return fallback
 	}
 	return d
+}
+
+// csvInts 解析逗号分隔的整数列表，忽略解析不了的项。
+// 忽略而不是报错：一个写错的尺寸档不该让整个服务起不来，
+// 而剩下的档位仍然是可用的（`applyAvatarDefaults` 会在全空时补回默认值）。
+func csvInts(raw string) []int {
+	items := csvList(raw)
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]int, 0, len(items))
+	for _, item := range items {
+		if value, err := strconv.Atoi(item); err == nil && value > 0 {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+// applyAvatarDefaults 补齐头像配置的默认值。
+//
+// 默认值 = 「不配任何 AVATAR_* 也能得到一套完整可用的头像服务」：
+// 服务端自绘默认头像、四档尺寸、10MB 上限、每小时 20 次。
+func applyAvatarDefaults(cfg *AvatarConfig, masterKey string, apiBaseURL string) {
+	if strings.TrimSpace(cfg.DefaultStyle) == "" {
+		cfg.DefaultStyle = "identicon"
+	}
+	if strings.TrimSpace(cfg.GravatarBaseURL) == "" {
+		cfg.GravatarBaseURL = "https://weavatar.com/avatar/"
+	}
+	if strings.TrimSpace(cfg.GravatarHashAlgo) == "" {
+		cfg.GravatarHashAlgo = "sha256"
+	}
+	if len(cfg.Sizes) == 0 {
+		cfg.Sizes = []int{64, 128, 256, 512}
+	}
+	if cfg.JPEGQuality <= 0 || cfg.JPEGQuality > 100 {
+		cfg.JPEGQuality = 88
+	}
+	if cfg.MaxUploadBytes <= 0 {
+		cfg.MaxUploadBytes = 10 << 20
+	}
+	if cfg.UploadsPerHour < 0 {
+		cfg.UploadsPerHour = 0
+	} else if cfg.UploadsPerHour == 0 {
+		cfg.UploadsPerHour = 20
+	}
+	if cfg.CacheTTL <= 0 {
+		cfg.CacheTTL = 6 * time.Hour
+	}
+	cfg.SigningKey = masterKey
+	cfg.PublicBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
 }
 
 func getBool(v *viper.Viper, key string, fallback bool) bool {

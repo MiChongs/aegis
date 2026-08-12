@@ -62,6 +62,13 @@ func registerUserRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appFunctions.POST("/:functionName/invoke", h.InvokeAppFunction)
 	}
 
+	// 接入方**服务端**调用的命名空间：凭据是应用服务端密钥（X-Aegis-Function-Key），
+	// 不走用户令牌、也不走网关的三档包装。会员校验与远程函数调用同处这里。
+	appServer := router.Group("/api/apps/:appkey")
+	{
+		appServer.POST("/vip/verify", h.VerifyVipMembership)
+	}
+
 	// 用户抽奖路由
 	lotteryUser := router.Group("/api/lottery")
 	lotteryUser.Use(middleware.Auth(authService))
@@ -118,6 +125,11 @@ func registerUserRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		user.POST("/profile/changes/confirm", h.ConfirmProfileChange)
 		user.POST("/profile/avatar", h.UploadUserAvatar)
 		user.POST("/profile/upload-avatar", h.UploadUserAvatar)
+		// 移除头像。以前没有这个入口：更新资料时空串的语义是"不修改"，
+		// 于是传过一次头像之后就再也回不到默认头像了。
+		user.DELETE("/profile/avatar", h.RemoveUserAvatar)
+		user.GET("/profile/avatar/history", h.ListUserAvatarHistory)
+		user.POST("/profile/avatar/restore", h.RestoreUserAvatar)
 		user.GET("/settings", h.Settings)
 		user.PUT("/settings", h.UpdateSettings)
 		user.POST("/level/info", h.LegacyMyLevel)
@@ -251,6 +263,7 @@ func registerCommerceRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		vip.GET("/status", h.MyVipStatus)
 		vip.GET("/transactions", h.MyVipTransactions)
 		vip.POST("/purchase", h.PurchaseVip)
+		vip.POST("/trial", h.ClaimVipTrial)
 	}
 
 	storage := router.Group("/api/storage")

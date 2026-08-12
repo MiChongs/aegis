@@ -550,7 +550,26 @@ func (s *AdminService) GetProfile(ctx context.Context, adminID int64) (*admindom
 func (s *AdminService) UpdateProfile(ctx context.Context, adminID int64, input admindomain.ProfileUpdate) (*admindomain.Profile, error) {
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	input.Email = strings.TrimSpace(input.Email)
+	// 与用户侧同一条约束：下发给控制台的 avatar 是展示地址，原样回传时
+	// 不能当成新的存储引用写回去（会覆盖掉唯一那份 storage:// 引用）。
+	// 详见 avatar_link.go 里 NormalizeAvatarInput 的说明。
 	input.Avatar = strings.TrimSpace(input.Avatar)
+	if input.Avatar != "" {
+		current, err := s.pg.GetAdminAccessByID(ctx, adminID)
+		if err != nil {
+			return nil, err
+		}
+		currentAvatar := ""
+		if current != nil {
+			currentAvatar = current.Account.Avatar
+		}
+		normalized, err := NormalizeAvatarInput(input.Avatar, currentAvatar)
+		if err != nil {
+			return nil, err
+		}
+		// 空串在仓储层的语义是「不修改」，正好是这里想要的结果
+		input.Avatar = normalized
+	}
 	return s.pg.UpdateAdminProfile(ctx, adminID, input)
 }
 

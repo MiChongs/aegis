@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"aegis/internal/config"
+	"aegis/pkg/clientip"
 	"aegis/pkg/egress"
 
 	"github.com/gin-gonic/gin"
@@ -33,7 +34,7 @@ func bannerTestConfig() config.Config {
 		DocsPortalURL:   "/developers",
 		ConsoleBaseURL:  "https://console.example.com",
 		DefaultTimezone: "Asia/Shanghai",
-		TrustedProxies:  []string{"127.0.0.1/32"},
+		ClientIP:        clientip.Config{TrustedProxies: []string{"127.0.0.1/32"}},
 		ReadTimeout:     15 * time.Second,
 		WriteTimeout:    30 * time.Second,
 		ShutdownTimeout: 15 * time.Second,
@@ -90,10 +91,17 @@ func renderTestBanner(t *testing.T, role Role) string {
 	cfg := bannerTestConfig()
 	cfg.Banner.Width = 120
 	cfg.Banner.Color = "never"
+	// 平台探测显式喂空：不这么做的话，横幅输出会随「跑测试的这台机器上恰好有哪些
+	// 环境变量」变化（CI 在 Kubernetes 里就会多出一行探测结果）。
+	resolver, err := clientip.NewWithEnv(cfg.ClientIP, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("clientip.NewWithEnv() error = %v", err)
+	}
 	return RenderReadyBanner(context.Background(), BannerRuntime{
-		Role:    role,
-		Config:  cfg,
-		Elapsed: 1234 * time.Millisecond,
+		Role:     role,
+		Config:   cfg,
+		ClientIP: resolver,
+		Elapsed:  1234 * time.Millisecond,
 	})
 }
 
@@ -134,12 +142,21 @@ func TestBannerSectionsByRole(t *testing.T) {
 		t.Errorf("API 角色应当展示入口分区，实际输出：\n%s", api)
 	}
 
+	// 客户端 IP 判定方式是排「线上 IP 不对」时第一个要确认的事实，
+	// 它必须在横幅上，而且报的是生效结果（受信网段数量）而不是配置原文。
+	if !strings.Contains(api, "客户端 IP") || !strings.Contains(api, "受信 1 个网段") {
+		t.Errorf("API 角色应当展示客户端 IP 判定方式，实际输出：\n%s", api)
+	}
+
 	worker := renderTestBanner(t, RoleWorker)
 	if strings.Contains(worker, "健康检查") {
 		t.Error("Worker 角色不应当展示入口分区")
 	}
 	if strings.Contains(worker, "CORS") {
-		t.Error("Worker 角色不应当展示 CORS / 受信代理这类 HTTP 侧配置")
+		t.Error("Worker 角色不应当展示 CORS / 客户端 IP 这类 HTTP 侧配置")
+	}
+	if strings.Contains(worker, "客户端 IP") {
+		t.Error("Worker 角色不对外提供 HTTP，不应当展示客户端 IP 判定方式")
 	}
 	if !strings.Contains(worker, "PostgreSQL") {
 		t.Error("Worker 角色仍然应当展示数据面")

@@ -10,6 +10,7 @@ import (
 	"aegis/internal/config"
 	httptransport "aegis/internal/transport/http"
 	"aegis/pkg/banner"
+	"aegis/pkg/clientip"
 	"aegis/pkg/egress"
 
 	"github.com/gin-gonic/gin"
@@ -70,6 +71,9 @@ type BannerRuntime struct {
 	// Router 用来数「这个进程到底暴露了哪些接口」。
 	// Worker 角色下为 nil，那时候「路由」分区整个不出现。
 	Router *gin.Engine
+	// ClientIP 客户端 IP 判定器。横幅要报的是**生效后的**判定方式
+	// （含平台探测与预设展开的结果），照抄配置项达不到这个目的。
+	ClientIP *clientip.Resolver
 }
 
 // BannerRuntimeOf 从装配完成的 APIApp 取横幅需要的运行期事实。
@@ -88,6 +92,7 @@ func (a *APIApp) BannerRuntimeOf(role Role, elapsed time.Duration) BannerRuntime
 		Egress:     a.EgressGateway,
 		OwnsEgress: a.OwnsEgress,
 		Router:     a.Router,
+		ClientIP:   a.ClientIP,
 	}
 }
 
@@ -452,7 +457,7 @@ func securitySection(rt BannerRuntime) banner.Section {
 	fields := []banner.Field{firewallField(cfg), jwtField(cfg)}
 
 	if rt.Role.servesHTTP() {
-		fields = append(fields, corsField(cfg), trustedProxyField(cfg))
+		fields = append(fields, corsField(cfg), clientIPField(rt))
 	}
 
 	replay := "已关闭"
@@ -537,19 +542,6 @@ func corsField(cfg config.Config) banner.Field {
 		Value: banner.Countf("放行 %d 个来源", len(cfg.CORS.AllowOrigins)),
 		State: banner.StateOK,
 		Note:  banner.Join(cfg.CORS.AllowOrigins...),
-	}
-}
-
-func trustedProxyField(cfg config.Config) banner.Field {
-	if len(cfg.TrustedProxies) == 0 {
-		// 不信任任何转发头是安全的默认；但挂在反代后面忘了配，客户端 IP 会全变成反代地址
-		return banner.Field{Key: "受信代理", Value: "不信任转发头", State: banner.StateNeutral, Note: "反代部署需配置 TRUSTED_PROXIES"}
-	}
-	return banner.Field{
-		Key:   "受信代理",
-		Value: banner.Countf("%d 个网段", len(cfg.TrustedProxies)),
-		State: banner.StateOK,
-		Note:  banner.Join(cfg.TrustedProxies...),
 	}
 }
 

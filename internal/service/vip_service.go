@@ -32,25 +32,17 @@ func (s *VipService) SetPaymentService(p *PaymentService) { s.payments = p }
 
 // ── 用户侧 ──
 
-// ListActivePlans 用户可见的在售套餐
+// ListActivePlans 用户可见的在售套餐（不含试用，理由见仓储层注释）。
+//
+// 试用套餐的信息由 `/vip/status` 的 trialOffer 给出：那里同时带着「能不能领」，
+// 而这里给不出这个答案 —— 一份列不出资格的试用卡片，客户端只能先渲染再报错。
 func (s *VipService) ListActivePlans(ctx context.Context, appID int64) ([]vipdomain.Plan, error) {
-	return s.pg.ListVipPlans(ctx, appID, true)
+	return s.pg.ListPurchasableVipPlans(ctx, appID)
 }
 
-// MyStatus 当前用户 VIP 状态
-func (s *VipService) MyStatus(ctx context.Context, session *authdomain.Session) (*vipdomain.Status, error) {
-	if session == nil {
-		return nil, apperrors.New(40170, http.StatusUnauthorized, "未认证")
-	}
-	status, err := s.pg.GetUserVipStatus(ctx, session.UserID, session.AppID)
-	if err != nil {
-		if errors.Is(err, pgrepo.ErrUserNotFound) {
-			return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
-		}
-		return nil, err
-	}
-	return status, nil
-}
+// 当前用户的会员状态见 `MyEntitlement`（vip_trial_service.go）——
+// 「是不是会员」只有那一个判定入口，这里刻意不再留一个只答"是/否"的简版：
+// 两个入口回答同一个问题，迟早会有一个说得不一样。
 
 // MyTransactions 当前用户开通/续费记录
 func (s *VipService) MyTransactions(ctx context.Context, session *authdomain.Session, page int, limit int) ([]vipdomain.Transaction, int64, error) {
@@ -111,6 +103,12 @@ func (s *VipService) requireActivePlan(ctx context.Context, appID int64, planID 
 	if plan == nil || !plan.IsActive {
 		return nil, apperrors.New(40480, http.StatusNotFound, "套餐不存在或已下架")
 	}
+	// 试用套餐是 0 元的，走购买入口就是一个绕开资格判定的免费开通入口：
+	// 换个幂等键再打一次，天数就又发一次。这条判断是它唯一的闸门。
+	if plan.IsTrial() {
+		return nil, apperrors.New(errCodeTrialPlanNotPurchase, http.StatusForbidden,
+			"试用套餐只能领取，不能购买")
+	}
 	return plan, nil
 }
 
@@ -123,6 +121,16 @@ func (s *VipService) AdminListPlans(ctx context.Context, appID int64) ([]vipdoma
 func (s *VipService) AdminSavePlan(ctx context.Context, mutation vipdomain.PlanMutation) (*vipdomain.Plan, error) {
 	if mutation.AppID <= 0 {
 		return nil, apperrors.New(40000, http.StatusBadRequest, "应用ID不能为空")
+	}
+	if err := s.validatePlanKind(ctx, &mutation); err != nil {
+		return nil, err
+	}
+	// 套餐引用的功能标识必须都在目录里。不校验的话，套餐上一个拼错的标识
+	// 不会有任何提示，直到几周后接入方来问「为什么买了高级版还是用不了导出」。
+	if mutation.Features != nil {
+		if err := s.EnsureFeatureTagsRegistered(ctx, mutation.AppID, *mutation.Features); err != nil {
+			return nil, err
+		}
 	}
 	if mutation.ID == 0 {
 		// 新建套餐的必填校验
@@ -147,12 +155,59 @@ func (s *VipService) AdminSavePlan(ctx context.Context, mutation vipdomain.PlanM
 	}
 	plan, err := s.pg.UpsertVipPlan(ctx, mutation)
 	if err != nil {
+		// vip_plans 上唯一的唯一索引就是「每个应用至多一个启用中的试用套餐」。
+		// 不翻译的话，管理员在控制台上看到的是一句原始的 SQL 约束名。
+		if pgrepo.IsUniqueViolation(err) {
+			return nil, apperrors.New(errCodeTrialPlanDuplicated, http.StatusBadRequest,
+				"该应用已有启用中的试用套餐，请先停用原有的那个")
+		}
 		return nil, err
 	}
 	if plan == nil {
 		return nil, apperrors.New(40480, http.StatusNotFound, "套餐不存在")
 	}
 	return plan, nil
+}
+
+// validatePlanKind 校验套餐种类，并把试用套餐的隐含约束补齐。
+//
+// 试用套餐恒为 0 元这条**不静默改写**管理员填的价格，而是当场报错：
+// 悄悄把 9.9 改成 0 存下去，控制台刷新后显示 0，没有人说得出为什么。
+func (s *VipService) validatePlanKind(ctx context.Context, mutation *vipdomain.PlanMutation) error {
+	kind := ""
+	if mutation.Kind != nil {
+		kind = strings.ToLower(strings.TrimSpace(*mutation.Kind))
+		if kind == "" {
+			kind = vipdomain.KindPaid
+		}
+		if kind != vipdomain.KindPaid && kind != vipdomain.KindTrial {
+			return apperrors.New(errCodeTrialPlanKindInvalid, http.StatusBadRequest,
+				"套餐类型只能是 paid（付费）或 trial（试用）")
+		}
+		mutation.Kind = &kind
+	} else if mutation.ID > 0 {
+		// 未指定种类时沿用库里的：控制台保存"改个名字"不该把试用套餐变成付费套餐
+		existing, err := s.pg.GetVipPlan(ctx, mutation.AppID, mutation.ID)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			kind = existing.Kind
+		}
+	}
+	if kind != vipdomain.KindTrial {
+		return nil
+	}
+	if mutation.Price != nil && mutation.Price.IsPositive() {
+		return apperrors.New(errCodeTrialPlanMustBeFree, http.StatusBadRequest,
+			"试用套餐必须是 0 元 —— 它只能领取，不能购买")
+	}
+	// 新建试用套餐时价格可以不填，这里补一个 0，免得撞上 CHECK 约束
+	if mutation.Price == nil && mutation.ID == 0 {
+		zero := decimal.Zero
+		mutation.Price = &zero
+	}
+	return nil
 }
 
 func (s *VipService) AdminDeletePlan(ctx context.Context, appID int64, planID int64) error {

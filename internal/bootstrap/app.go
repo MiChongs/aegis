@@ -17,6 +17,7 @@ import (
 	redisrepo "aegis/internal/repository/redis"
 	"aegis/internal/service"
 	httptransport "aegis/internal/transport/http"
+	"aegis/pkg/clientip"
 	"aegis/pkg/crashlog"
 	"aegis/pkg/egress"
 	pkglogger "aegis/pkg/logger"
@@ -53,9 +54,12 @@ type APIApp struct {
 	Memory          *service.MemoryManager
 	Database        *service.DatabaseManager
 	PostgresHandle  *db.Postgres
-	Firewall        *middleware.Firewall
-	Security        *service.SecurityService
-	Risk            *service.RiskService
+	// ClientIP 真实客户端 IP 判定器。装配期就要建好并留在这里：
+	// 横幅要把生效的判定方式说出来，否则「线上 IP 不对」只能靠猜配置。
+	ClientIP *clientip.Resolver
+	Firewall *middleware.Firewall
+	Security *service.SecurityService
+	Risk     *service.RiskService
 	// Governance 平台治理：后台循环负责到期解冻与跨实例快照收敛，退出时必须 Stop
 	Governance *service.PlatformGovernanceService
 	// AuthProviderHealth 后台 30s 轮询 LDAP/OIDC/SAML 可用性；进程退出时必须 Close() 避免 goroutine 泄漏
@@ -249,7 +253,21 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	vipService := service.NewVipService(log, pg)
 	workflowService := service.NewWorkflowService(log, pg, temporalClient, cfg.Temporal)
 	storageService := service.NewStorageService(log, pg, redisClient, cfg.Redis.KeyPrefix)
-	avatarService := service.NewAvatarService(log, storageService, userService, adminService)
+	avatarService := service.NewAvatarService(log, storageService, userService, adminService,
+		pg, redisClient, cfg.Redis.KeyPrefix, service.AvatarSettings{
+			DefaultStyle:      cfg.Avatar.DefaultStyle,
+			GravatarBaseURL:   cfg.Avatar.GravatarBaseURL,
+			GravatarHashAlgo:  cfg.Avatar.GravatarHashAlgo,
+			Sizes:             cfg.Avatar.Sizes,
+			JPEGQuality:       cfg.Avatar.JPEGQuality,
+			KeepAnimated:      cfg.Avatar.KeepAnimated,
+			MaxUploadBytes:    cfg.Avatar.MaxUploadBytes,
+			UploadsPerHour:    cfg.Avatar.UploadsPerHour,
+			StorageConfigName: cfg.Avatar.StorageConfigName,
+			CacheTTL:          cfg.Avatar.CacheTTL,
+			PublicBaseURL:     cfg.Avatar.PublicBaseURL,
+			SigningKey:        cfg.Avatar.SigningKey,
+		})
 	captchaRepo := redisrepo.NewCaptchaRepository(redisClient, cfg.Redis.KeyPrefix)
 	captchaService := service.NewCaptchaService(cfg, log, captchaRepo)
 	userService.SetVerificationServices(emailService, captchaService)
@@ -376,9 +394,18 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	dashboardService := service.NewDashboardService(log, pg)
 	pluginService := service.NewPluginService(log, pg)
 	appFunctionService := service.NewAppFunctionService(log, pg, cfg.JWT.Secret)
-	// script 运行时的 SDK 依赖：脚本通过它们读写平台数据，
-	// 未装配时 script 函数会直接拒绝执行（wasm/http 不受影响）。
-	appFunctionService.SetScriptDeps(pointsService, vipService, notificationService, auditService)
+	// script 运行时的 SDK 依赖：脚本通过它们读写平台数据。
+	// 未装配的那一项对应的能力会在绑定时被拒绝并点名，
+	// 而不是绑上去等脚本调用时空指针（wasm/http 不受影响）。
+	appFunctionService.SetScriptDeps(service.ScriptSDKDeps{
+		Points:        pointsService,
+		Vip:           vipService,
+		Notifications: notificationService,
+		Audit:         auditService,
+		Wallet:        walletService,
+		Email:         emailService,
+		Bans:          accountBanService,
+	})
 	if err := pluginService.Initialize(ctx); err != nil {
 		log.Warn("插件系统初始化失败（非致命）", zap.Error(err))
 	}
@@ -482,6 +509,21 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		postgres.Close()
 		return nil, err
 	}
+	// 客户端 IP 判定器要在路由之前建好：配置写错时应当**启动即失败**，
+	// 而不是先跑起来、再让每一条限流与封禁按错误的地址执行。
+	clientIPResolver, err := clientip.New(cfg.ClientIP)
+	if err != nil {
+		_ = accountBanService.Close(context.Background())
+		locationService.Close()
+		realtimeService.Close(context.Background())
+		closeTemporal()
+		natsConn.Close()
+		_ = redisClient.Close()
+		postgres.Close()
+		return nil, fmt.Errorf("客户端 IP 判定配置无效: %w", err)
+	}
+	logClientIPResolution(log, clientIPResolver)
+
 	router, err := httptransport.NewRouter(httptransport.RouterDeps{
 		Auth:               authService,
 		Admin:              adminService,
@@ -549,13 +591,13 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		MemoryManager:   memoryManager,
 		DatabaseManager: databaseManager,
 
-		Firewall:       firewall,
-		ReplayGuard:    replayGuard,
-		CrashLog:       cl,
-		Logger:         log,
-		CORS:           cfg.CORS,
-		TrustedProxies: cfg.TrustedProxies,
-		DocsPortalURL:  cfg.DocsPortalURL,
+		Firewall:      firewall,
+		ReplayGuard:   replayGuard,
+		CrashLog:      cl,
+		Logger:        log,
+		CORS:          cfg.CORS,
+		ClientIP:      clientIPResolver,
+		DocsPortalURL: cfg.DocsPortalURL,
 	})
 	if err != nil {
 		_ = accountBanService.Close(context.Background())
@@ -608,6 +650,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		OwnsEgress:         ownsEgress,
 		Database:           databaseManager,
 		PostgresHandle:     pgHandle,
+		ClientIP:           clientIPResolver,
 		ShutdownTracing:    shutdownTracing,
 	}
 	return app, nil

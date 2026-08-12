@@ -127,12 +127,13 @@ export const navigationGroups: NavigationGroup[] = [
         title: "内容",
         href: "/content",
         icon: BellDot,
-        summary: "Banner 与公告",
+        summary: "Banner、公告与法律文本",
         // 首项必须是该页默认 Tab，否则无 `?tab=` 时高亮会错位
         children: [
           { title: "Banner", tab: "banners" },
           { title: "应用公告", tab: "notices" },
-          { title: "系统公告", tab: "announcements" }
+          { title: "系统公告", tab: "announcements" },
+          { title: "法律文本", tab: "legal" }
         ]
       },
       {
@@ -181,9 +182,10 @@ export const navigationGroups: NavigationGroup[] = [
         title: "远程函数",
         href: "/functions",
         icon: Code2,
-        summary: "函数版本与调用密钥",
+        summary: "服务端脚本、版本与调用密钥",
         children: [
           { title: "函数", tab: "functions" },
+          { title: "键值存储", tab: "kv" },
           { title: "调用密钥", tab: "keys" }
         ]
       },

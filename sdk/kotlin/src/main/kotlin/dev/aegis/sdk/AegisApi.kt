@@ -258,9 +258,47 @@ class AegisMeApi internal constructor(private val client: AegisClient) {
     fun confirmProfileChange(field: String, code: String): JsonElement =
         client.call("POST", "/me/profile/changes/confirm", mapOf("field" to field, "code" to code), requireAuth = true)
 
-    /** 上传头像。sealed 档下整个 multipart 体会被加密，调用方式不变。 */
+    /**
+     * 上传头像。sealed 档下整个 multipart 体会被加密，调用方式不变。
+     *
+     * 可选的 [crop] 是**EXIF 纠正之后**坐标系里的裁剪框（x, y, width, height）。
+     * 传原始像素坐标会让所有竖拍照片裁错位置 —— 用户在预览里看到的正是纠正后的图。
+     * 不传时服务端居中取最大方形。
+     *
+     * 返回体里的 `upload.avatar` 是**永久地址**：它不会过期，也不需要在本地
+     * 缓存里做失效处理。`upload.view` 里另有 blurhash、主色与可用尺寸档，
+     * 可以直接拿去做加载占位。
+     */
     @Throws(IOException::class)
-    fun uploadAvatar(file: File): JsonElement = client.upload("/me/avatar", file)
+    @JvmOverloads
+    fun uploadAvatar(file: File, crop: IntArray? = null): JsonElement {
+        val fields = if (crop != null && crop.size == 4) {
+            mapOf(
+                "crop_x" to crop[0].toString(),
+                "crop_y" to crop[1].toString(),
+                "crop_width" to crop[2].toString(),
+                "crop_height" to crop[3].toString(),
+            )
+        } else {
+            emptyMap()
+        }
+        return client.upload("/me/avatar", file, fields = fields)
+    }
+
+    /** 移除头像，回到服务端生成的默认头像。 */
+    @Throws(IOException::class)
+    fun removeAvatar(): JsonElement = client.call("DELETE", "/me/avatar", requireAuth = true)
+
+    /** 头像历史（含当前），用于「换回上一张」。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun avatarHistory(limit: Int = 10): JsonElement =
+        client.call("GET", "/me/avatar/history", query = mapOf("limit" to limit.toString()), requireAuth = true)
+
+    /** 把历史里的某一张重新设为当前头像。[assetId] 取自 [avatarHistory] 的 `items[].id`。 */
+    @Throws(IOException::class)
+    fun restoreAvatar(assetId: Long): JsonElement =
+        client.call("POST", "/me/avatar/restore", mapOf("assetId" to assetId), requireAuth = true)
 
     @Throws(IOException::class)
     @JvmOverloads
@@ -552,6 +590,22 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
         "POST", "/vip/purchase",
         mapOf("planId" to planId, "idempotencyKey" to idempotencyKey), requireAuth = true,
     )
+
+    @Throws(IOException::class)
+    /**
+     * 领取试用会员。
+     *
+     * 没有参数也没有幂等键：试用一人一次，领哪个套餐由服务端的试用配置决定 ——
+     * 让客户端传 planId 就等于把"领哪个"交给了客户端。
+     *
+     * 领之前先看 [vipStatus] 里的 `trialOffer`：`available` 决定入口显不显示，
+     * 不可领时 `reason` 说明原因（already_claimed / member_active /
+     * device_claimed / device_required / not_configured）。
+     * 直接调用而资格不足时返回 403 与对应业务码（40373 / 40374 / 40375）。
+     *
+     * 重复调用是安全的：仍在试用期内会原样返回上一次的结果（`replayed = true`）。
+     */
+    fun claimVipTrial(): JsonElement = client.call("POST", "/vip/trial", requireAuth = true)
 
     @Throws(IOException::class)
     @JvmOverloads

@@ -13,10 +13,10 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-const vipPlanColumns = `id, appid, name, duration_days, price, original_price, bonus_integral,
+const vipPlanColumns = `id, appid, name, kind, trial_device_limited, features, duration_days, price, original_price, bonus_integral,
 COALESCE(description, ''), is_active, sort_order, created_at, updated_at`
 
-const vipTxnColumns = `id, transaction_no, user_id, appid, plan_id, plan_name, duration_days, pay_channel,
+const vipTxnColumns = `id, transaction_no, user_id, appid, plan_id, plan_name, features, duration_days, pay_channel,
 pay_amount, COALESCE(related_order_no, ''), bonus_integral, expire_before, expire_after,
 COALESCE(operator, ''), COALESCE(metadata, '{}'::jsonb), created_at`
 
@@ -44,13 +44,37 @@ func (r *Repository) ListVipPlans(ctx context.Context, appID int64, activeOnly b
 	return items, rows.Err()
 }
 
+// ListPurchasableVipPlans 用户可见的**在售**套餐 —— 不含试用。
+//
+// 试用套餐是 0 元的，且发放要过资格判定。把它混在售卖列表里，客户端会渲染出
+// 一张点了必然报 40376 的卡片，而"为什么这个 0 元套餐买不了"没有任何提示说得清。
+// 试用由 /vip/status 的 trialOffer 描述（含套餐名、天数、能不能领、不能领的原因）。
+func (r *Repository) ListPurchasableVipPlans(ctx context.Context, appID int64) ([]vipdomain.Plan, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+vipPlanColumns+
+		` FROM vip_plans WHERE appid = $1 AND is_active = TRUE AND kind <> 'trial'
+ORDER BY sort_order ASC, id ASC`, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]vipdomain.Plan, 0, 8)
+	for rows.Next() {
+		item, err := scanVipPlan(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
 func (r *Repository) GetVipPlan(ctx context.Context, appID int64, planID int64) (*vipdomain.Plan, error) {
 	return scanVipPlan(r.pool.QueryRow(ctx,
 		`SELECT `+vipPlanColumns+` FROM vip_plans WHERE appid = $1 AND id = $2 LIMIT 1`, appID, planID))
 }
 
 func (r *Repository) UpsertVipPlan(ctx context.Context, mutation vipdomain.PlanMutation) (*vipdomain.Plan, error) {
-	current := &vipdomain.Plan{AppID: mutation.AppID, IsActive: true, Price: decimal.Zero}
+	current := &vipdomain.Plan{AppID: mutation.AppID, Kind: vipdomain.KindPaid, IsActive: true, Price: decimal.Zero}
 	if mutation.ID > 0 {
 		existing, err := r.GetVipPlan(ctx, mutation.AppID, mutation.ID)
 		if err != nil {
@@ -64,6 +88,15 @@ func (r *Repository) UpsertVipPlan(ctx context.Context, mutation vipdomain.PlanM
 	}
 	if mutation.Name != nil {
 		current.Name = strings.TrimSpace(*mutation.Name)
+	}
+	if mutation.Kind != nil {
+		current.Kind = strings.TrimSpace(*mutation.Kind)
+	}
+	if mutation.TrialDeviceLimited != nil {
+		current.TrialDeviceLimited = *mutation.TrialDeviceLimited
+	}
+	if mutation.Features != nil {
+		current.Features = vipdomain.NormalizeFeatureTags(*mutation.Features)
 	}
 	if mutation.DurationDays != nil {
 		current.DurationDays = *mutation.DurationDays
@@ -91,10 +124,13 @@ func (r *Repository) UpsertVipPlan(ctx context.Context, mutation vipdomain.PlanM
 		originalPrice = current.OriginalPrice.StringFixed(2)
 	}
 	return scanVipPlan(r.pool.QueryRow(ctx,
-		`INSERT INTO vip_plans (id, appid, name, duration_days, price, original_price, bonus_integral, description, is_active, sort_order, created_at, updated_at)
-VALUES (COALESCE(NULLIF($1, 0), nextval(pg_get_serial_sequence('vip_plans', 'id'))), $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+		`INSERT INTO vip_plans (id, appid, name, kind, trial_device_limited, features, duration_days, price, original_price, bonus_integral, description, is_active, sort_order, created_at, updated_at)
+VALUES (COALESCE(NULLIF($1, 0), nextval(pg_get_serial_sequence('vip_plans', 'id'))), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
 ON CONFLICT (id) DO UPDATE SET
 	name = EXCLUDED.name,
+	kind = EXCLUDED.kind,
+	trial_device_limited = EXCLUDED.trial_device_limited,
+	features = EXCLUDED.features,
 	duration_days = EXCLUDED.duration_days,
 	price = EXCLUDED.price,
 	original_price = EXCLUDED.original_price,
@@ -104,8 +140,10 @@ ON CONFLICT (id) DO UPDATE SET
 	sort_order = EXCLUDED.sort_order,
 	updated_at = NOW()
 RETURNING `+vipPlanColumns,
-		mutation.ID, current.AppID, current.Name, current.DurationDays, current.Price.StringFixed(2),
-		originalPrice, current.BonusIntegral, nullableString(current.Description), current.IsActive, current.SortOrder))
+		mutation.ID, current.AppID, current.Name, current.Kind, current.TrialDeviceLimited,
+		vipdomain.NormalizeFeatureTags(current.Features), current.DurationDays,
+		current.Price.StringFixed(2), originalPrice, current.BonusIntegral,
+		nullableString(current.Description), current.IsActive, current.SortOrder))
 }
 
 func (r *Repository) DeleteVipPlan(ctx context.Context, appID int64, planID int64) (bool, error) {
@@ -118,18 +156,11 @@ func (r *Repository) DeleteVipPlan(ctx context.Context, appID int64, planID int6
 
 // ── VIP 状态 / 记录 ──
 
-func (r *Repository) GetUserVipStatus(ctx context.Context, userID int64, appID int64) (*vipdomain.Status, error) {
-	var expireAt *time.Time
-	if err := r.pool.QueryRow(ctx, `SELECT vip_expire_at FROM users WHERE id = $1 AND appid = $2 LIMIT 1`,
-		userID, appID).Scan(&expireAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, ErrUserNotFound
-		}
-		return nil, err
-	}
-	return buildVipStatus(expireAt), nil
-}
+// 会员状态查询走 `GetVipEntitlementFacts` + `vipdomain.Evaluate`（vip_trial_repository.go）。
+// 这里刻意不再留一个"只读 vip_expire_at 判个是/否"的简版：它回答不了
+// 「是不是试用」，而两个入口给出不同深浅的结论，迟早会有人拿浅的那个去做判断。
 
+// buildVipStatus 购买结果里的会员状态快照（不是判定入口）。
 func buildVipStatus(expireAt *time.Time) *vipdomain.Status {
 	status := &vipdomain.Status{ExpireAt: expireAt}
 	if expireAt != nil && expireAt.After(time.Now()) {
@@ -228,8 +259,10 @@ func extendUserVipTx(ctx context.Context, tx pgx.Tx, grant vipdomain.Grant) (*vi
 		TransactionNo:  generateTransactionNo("VIP"),
 		UserID:         grant.UserID,
 		AppID:          grant.AppID,
-		PlanID:         grant.PlanID,
-		PlanName:       grant.PlanName,
+		PlanID:   grant.PlanID,
+		PlanName: grant.PlanName,
+		// 功能快照：套餐配置随时会改，已经卖出去的权益不该被追溯改写
+		Features:       vipdomain.NormalizeFeatureTags(grant.Features),
 		DurationDays:   grant.DurationDays,
 		PayChannel:     grant.PayChannel,
 		PayAmount:      grant.PayAmount,
@@ -242,12 +275,12 @@ func extendUserVipTx(ctx context.Context, tx pgx.Tx, grant vipdomain.Grant) (*vi
 	}
 	metaJSON, _ := json.Marshal(grant.Metadata)
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO vip_transactions (transaction_no, user_id, appid, plan_id, plan_name, duration_days, pay_channel,
+		`INSERT INTO vip_transactions (transaction_no, user_id, appid, plan_id, plan_name, features, duration_days, pay_channel,
 pay_amount, related_order_no, bonus_integral, expire_before, expire_after, operator, metadata, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
 RETURNING id, created_at`,
-		txn.TransactionNo, txn.UserID, txn.AppID, txn.PlanID, txn.PlanName, txn.DurationDays, txn.PayChannel,
-		txn.PayAmount.StringFixed(2), nullableString(txn.RelatedOrderNo), txn.BonusIntegral,
+		txn.TransactionNo, txn.UserID, txn.AppID, txn.PlanID, txn.PlanName, txn.Features, txn.DurationDays,
+		txn.PayChannel, txn.PayAmount.StringFixed(2), nullableString(txn.RelatedOrderNo), txn.BonusIntegral,
 		txn.ExpireBefore, txn.ExpireAfter, nullableString(txn.Operator), metaJSON).
 		Scan(&txn.ID, &txn.CreatedAt); err != nil {
 		return nil, err
@@ -383,6 +416,7 @@ FROM user_wallets WHERE user_id = $1 AND appid = $2 LIMIT 1`, userID, appID))
 		AppID:         appID,
 		PlanID:        &planID,
 		PlanName:      plan.Name,
+		Features:      plan.Features,
 		DurationDays:  plan.DurationDays,
 		PayChannel:    vipdomain.ChannelWallet,
 		PayAmount:     plan.Price,
@@ -438,8 +472,9 @@ func scanVipPlan(row interface{ Scan(dest ...any) error }) (*vipdomain.Plan, err
 	var p vipdomain.Plan
 	var price string
 	var originalPrice *string
-	if err := row.Scan(&p.ID, &p.AppID, &p.Name, &p.DurationDays, &price, &originalPrice, &p.BonusIntegral,
-		&p.Description, &p.IsActive, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	if err := row.Scan(&p.ID, &p.AppID, &p.Name, &p.Kind, &p.TrialDeviceLimited, &p.Features,
+		&p.DurationDays, &price, &originalPrice, &p.BonusIntegral, &p.Description, &p.IsActive,
+		&p.SortOrder, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	p.Price = decimal.RequireFromString(price)
@@ -454,9 +489,9 @@ func scanVipTxn(row interface{ Scan(dest ...any) error }) (*vipdomain.Transactio
 	var t vipdomain.Transaction
 	var payAmount string
 	var meta []byte
-	if err := row.Scan(&t.ID, &t.TransactionNo, &t.UserID, &t.AppID, &t.PlanID, &t.PlanName, &t.DurationDays,
-		&t.PayChannel, &payAmount, &t.RelatedOrderNo, &t.BonusIntegral, &t.ExpireBefore, &t.ExpireAfter,
-		&t.Operator, &meta, &t.CreatedAt); err != nil {
+	if err := row.Scan(&t.ID, &t.TransactionNo, &t.UserID, &t.AppID, &t.PlanID, &t.PlanName, &t.Features,
+		&t.DurationDays, &t.PayChannel, &payAmount, &t.RelatedOrderNo, &t.BonusIntegral, &t.ExpireBefore,
+		&t.ExpireAfter, &t.Operator, &meta, &t.CreatedAt); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	t.PayAmount = decimal.RequireFromString(payAmount)

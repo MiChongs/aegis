@@ -195,6 +195,13 @@ var adminRouteRules = []RouteRule{
 	{Pattern: "/api/admin/user-settings/check-integrity", Permission: PermSystemUserSettingRead},
 	{Pattern: "/api/admin/user-settings/*", Permission: PermSystemUserSettingWrite},
 
+	// ── 法律文本 ──
+	//
+	// 单独一条而不是落进下面那个大桶：桶对应的权限点叫「管理员管理」，
+	// 被它挡下时错误信息会说「缺少管理员管理权限」—— 而管理员想改的是隐私政策，
+	// 这句提示会把人引到完全无关的地方去要权限。
+	{Pattern: "/api/admin/system/legal/*", Permission: PermSystemLegalManage},
+
 	// ── 其余 /api/admin/system/*：管理员与平台运维 ──
 	//
 	// 这是一个很粗的桶（两百多条路由共用一个权限点）。保持原样是为了让这次

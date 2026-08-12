@@ -38,6 +38,10 @@ func registerPublicRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 	router.GET("/api/app/public", h.AppPublic)
 	router.GET("/api/functions/signing-key", h.AppFunctionSigningKey)
 	router.GET("/api/avatar/:hash", h.AvatarRedirect)
+	// 永久头像地址。**免登录**是必须的：这个地址会出现在 <img src> 里，
+	// 而浏览器加载图片不会带上 Authorization 头；它也会出现在邮件正文里，
+	// 那里根本没有登录态。防遍历靠地址本身带的签名，不靠鉴权中间件。
+	router.GET("/api/avatars/:token", h.AvatarImage)
 	router.GET("/api/ws", h.WebSocket)
 }
 

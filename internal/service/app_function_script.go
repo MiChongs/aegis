@@ -175,6 +175,9 @@ func buildScriptArgument(vm *goja.Runtime, scriptCtx functiondomain.ScriptContex
 		"version":  scriptCtx.Version,
 		"caller":   caller,
 		"input":    input,
+		// 试跑标记要透给脚本：有些动作（给第三方发通知、写外部账本）
+		// 即便平台这边只是模拟，作者自己也该有机会跳过。
+		"dryRun": scriptCtx.DryRun,
 	}), nil
 }
 

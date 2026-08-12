@@ -6,6 +6,7 @@ import { useTheme } from "next-themes";
 import type { Monaco } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { Loader2 } from "lucide-react";
+import type { SDKTypeSource } from "@/lib/monaco/aegis-sdk-types";
 import { buildAegisSDKTypes } from "@/lib/monaco/aegis-sdk-types";
 import { loadMonaco } from "@/lib/monaco/loader";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,8 @@ type ScriptEditorProps = {
   onChange: (value: string) => void;
   /** 已声明的能力，决定 .d.ts 里出现哪些 aegis.* 成员 */
   capabilities: string[];
+  /** 后端下发的能力目录：类型声明的真实来源，缺它时退回最小兜底类型 */
+  typeSource?: SDKTypeSource;
   className?: string;
   height?: number | string;
   readOnly?: boolean;
@@ -46,6 +49,7 @@ export function ScriptEditor({
   value,
   onChange,
   capabilities,
+  typeSource,
   className,
   height = 460,
   readOnly = false
@@ -68,7 +72,7 @@ export function ScriptEditor({
     };
   }, []);
 
-  const applySDKTypes = useCallback((monaco: Monaco, declared: string[]) => {
+  const applySDKTypes = useCallback((monaco: Monaco, declared: string[], source?: SDKTypeSource) => {
     const defaults = monaco.languages.typescript.javascriptDefaults;
     defaults.setCompilerOptions({
       target: monaco.languages.typescript.ScriptTarget.ES2020,
@@ -90,24 +94,26 @@ export function ScriptEditor({
     });
 
     // 重设 extraLib：能力变化时旧声明必须被替换掉
-    defaults.setExtraLibs([{ content: buildAegisSDKTypes(declared), filePath: AEGIS_LIB_URI }]);
+    defaults.setExtraLibs([
+      { content: buildAegisSDKTypes(declared, source), filePath: AEGIS_LIB_URI }
+    ]);
   }, []);
 
   function handleBeforeMount(monaco: Monaco) {
     monacoRef.current = monaco;
-    applySDKTypes(monaco, capabilities);
+    applySDKTypes(monaco, capabilities, typeSource);
   }
 
   function handleMount(instance: editor.IStandaloneCodeEditor) {
     editorRef.current = instance;
   }
 
-  // 勾选能力后立刻刷新类型，编辑器里的可见成员随之增减
+  // 勾选能力后（或目录到位后）立刻刷新类型，编辑器里的可见成员随之增减
   useEffect(() => {
     if (monacoRef.current) {
-      applySDKTypes(monacoRef.current, capabilities);
+      applySDKTypes(monacoRef.current, capabilities, typeSource);
     }
-  }, [capabilities, applySDKTypes]);
+  }, [capabilities, typeSource, applySDKTypes]);
 
   if (failed) {
     return (

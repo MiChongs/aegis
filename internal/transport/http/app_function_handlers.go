@@ -15,22 +15,28 @@ import (
 )
 
 type createAppFunctionRequest struct {
-	Name             string   `json:"name" binding:"required"`
-	Description      string   `json:"description"`
-	Runtime          string   `json:"runtime" binding:"required"`
-	Capabilities     []string `json:"capabilities"`
-	TimeoutMs        int      `json:"timeoutMs"`
-	MaxRequestBytes  int      `json:"maxRequestBytes"`
-	MaxResponseBytes int      `json:"maxResponseBytes"`
+	Name             string          `json:"name" binding:"required"`
+	Description      string          `json:"description"`
+	Runtime          string          `json:"runtime" binding:"required"`
+	Capabilities     []string        `json:"capabilities"`
+	TimeoutMs        int             `json:"timeoutMs"`
+	MaxRequestBytes  int             `json:"maxRequestBytes"`
+	MaxResponseBytes int             `json:"maxResponseBytes"`
+	MaxConcurrency   int             `json:"maxConcurrency"`
+	RateLimitPerMin  int             `json:"rateLimitPerMin"`
+	Config           json.RawMessage `json:"config"`
 }
 
 type updateAppFunctionRequest struct {
-	Description      *string  `json:"description"`
-	Status           *string  `json:"status"`
-	Capabilities     []string `json:"capabilities"`
-	TimeoutMs        *int     `json:"timeoutMs"`
-	MaxRequestBytes  *int     `json:"maxRequestBytes"`
-	MaxResponseBytes *int     `json:"maxResponseBytes"`
+	Description      *string         `json:"description"`
+	Status           *string         `json:"status"`
+	Capabilities     []string        `json:"capabilities"`
+	TimeoutMs        *int            `json:"timeoutMs"`
+	MaxRequestBytes  *int            `json:"maxRequestBytes"`
+	MaxResponseBytes *int            `json:"maxResponseBytes"`
+	MaxConcurrency   *int            `json:"maxConcurrency"`
+	RateLimitPerMin  *int            `json:"rateLimitPerMin"`
+	Config           json.RawMessage `json:"config"`
 }
 
 type createAppFunctionVersionRequest struct {
@@ -40,6 +46,19 @@ type createAppFunctionVersionRequest struct {
 	WASMBase64        string `json:"wasmBase64"`
 	// Source 是 script 运行时的脚本正文，只在管理端出现，永不下发给接入方
 	Source string `json:"source"`
+	Notes  string `json:"notes"`
+}
+
+// testAppFunctionRequest 控制台试跑。
+//
+// 刻意不收 capabilities：试跑一律用函数已声明的那一份，
+// 否则「试跑通过」证明不了「发版之后能跑」。
+type testAppFunctionRequest struct {
+	Source    string          `json:"source" binding:"required"`
+	Input     json.RawMessage `json:"input"`
+	Config    json.RawMessage `json:"config"`
+	AsUserID  int64           `json:"asUserId"`
+	TimeoutMs int             `json:"timeoutMs"`
 }
 
 type invokeAppFunctionRequest struct {
@@ -79,6 +98,8 @@ func (h *Handler) AdminCreateAppFunction(c *gin.Context) {
 		AppID: appID, Name: req.Name, Description: req.Description, Runtime: req.Runtime,
 		Capabilities: req.Capabilities, TimeoutMs: req.TimeoutMs,
 		MaxRequestBytes: req.MaxRequestBytes, MaxResponseBytes: req.MaxResponseBytes,
+		MaxConcurrency: req.MaxConcurrency, RateLimitPerMin: req.RateLimitPerMin,
+		Config:    req.Config,
 		CreatedBy: currentAdminID(c),
 	})
 	if err != nil {
@@ -128,7 +149,8 @@ func (h *Handler) AdminUpdateAppFunction(c *gin.Context) {
 		functiondomain.UpdateFunctionInput{
 			Description: req.Description, Status: req.Status, Capabilities: req.Capabilities,
 			TimeoutMs: req.TimeoutMs, MaxRequestBytes: req.MaxRequestBytes,
-			MaxResponseBytes: req.MaxResponseBytes,
+			MaxResponseBytes: req.MaxResponseBytes, MaxConcurrency: req.MaxConcurrency,
+			RateLimitPerMin: req.RateLimitPerMin, Config: req.Config,
 		})
 	if err != nil {
 		h.writeError(c, err)
@@ -177,6 +199,7 @@ func (h *Handler) AdminCreateAppFunctionVersion(c *gin.Context) {
 		Version: req.Version, EndpointURL: strings.TrimSpace(req.EndpointURL),
 		ResponsePublicKey: strings.TrimSpace(req.ResponsePublicKey), WASMModule: module,
 		Source:    req.Source,
+		Notes:     req.Notes,
 		CreatedBy: currentAdminID(c),
 	})
 	if err != nil {
@@ -232,18 +255,161 @@ func (h *Handler) AdminInvokeAppFunction(c *gin.Context) {
 	response.Success(c, 200, "函数调用成功", result)
 }
 
+// AdminListAppFunctionInvocations 调用审计。
+//
+// 支持按状态 / 调用者类型 / eventId 筛选并分页：排障时看的从来不是
+// 「最近 50 条」，而是「失败的那几条」，而一个每分钟几百次调用的函数
+// 靠时间倒序永远翻不到它们。
 func (h *Handler) AdminListAppFunctionInvocations(c *gin.Context) {
 	appID, ok := resolveAppID(c, h.app)
 	if !ok {
 		return
 	}
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-	items, err := h.appFunction.ListInvocations(c.Request.Context(), appID, c.Param("functionName"), limit)
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	result, err := h.appFunction.ListInvocations(c.Request.Context(), appID, c.Param("functionName"),
+		functiondomain.InvocationQuery{
+			Status:     strings.TrimSpace(c.Query("status")),
+			CallerType: strings.TrimSpace(c.Query("callerType")),
+			EventID:    strings.TrimSpace(c.Query("eventId")),
+			Page:       page, Limit: limit,
+		})
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
-	response.Success(c, 200, "ok", items)
+	response.Success(c, 200, "ok", result)
+}
+
+// AdminAppFunctionCatalog 下发能力目录、运行时额度与内置模板。
+//
+// 控制台的能力勾选框、编辑器类型提示、模板选择器全部由它驱动：
+// 后端新增一种能力，前端零改动即自动出现。在前端另抄一份目录，
+// 会同时招来「后端加了一项、控制台勾不上」和「控制台能勾、保存时报不支持」
+// 两种漂移，而两边都没有报错提示。
+func (h *Handler) AdminAppFunctionCatalog(c *gin.Context) {
+	if _, ok := resolveAppID(c, h.app); !ok {
+		return
+	}
+	response.Success(c, 200, "ok", h.appFunction.Catalog())
+}
+
+// AdminGetAppFunctionVersion 版本详情，**含脚本正文**。
+//
+// 只走管理端这一条路由。接入方那条调用链上，正文由 domain 类型的
+// `json:"-"` 挡住，不依赖任何一处记得剔除它。
+func (h *Handler) AdminGetAppFunctionVersion(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	item, err := h.appFunction.GetVersionDetail(c.Request.Context(), appID,
+		c.Param("functionName"), c.Param("version"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "ok", item)
+}
+
+func (h *Handler) AdminDeleteAppFunctionVersion(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	if err := h.appFunction.DeleteVersion(c.Request.Context(), appID,
+		c.Param("functionName"), c.Param("version")); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "函数版本已删除", gin.H{"deleted": true})
+}
+
+// AdminTestAppFunction 试跑：不创建版本、不写调用审计、写操作只记录不执行。
+//
+// 注意它在**失败时也返回 200** —— 试跑失败是正常结果，作者要的是错误内容
+// 加上那之前的日志与副作用清单，回 4xx 会把这些全部丢掉。
+// 真正的接口级错误（函数不存在、不是 script 运行时、语法不过）仍然是 4xx。
+func (h *Handler) AdminTestAppFunction(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	var req testAppFunctionRequest
+	// 脚本正文上限 256KB，按 1MB 收以容纳编码开销
+	if err := bindLimitedJSON(c, &req, 1<<20); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	result, err := h.appFunction.TestScript(c.Request.Context(), appID, c.Param("functionName"),
+		functiondomain.TestRequest{
+			Source: req.Source, Input: req.Input, Config: req.Config,
+			AsUserID: req.AsUserID, TimeoutMs: req.TimeoutMs,
+		}, currentAdminID(c))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "试跑完成", result)
+}
+
+// AdminAppFunctionStats 运行状况：成功率、耗时分位、Top 错误、按小时分桶。
+func (h *Handler) AdminAppFunctionStats(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	hours, _ := strconv.Atoi(c.DefaultQuery("hours", "24"))
+	stats, err := h.appFunction.Stats(c.Request.Context(), appID, c.Param("functionName"), hours)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "ok", stats)
+}
+
+// AdminBrowseAppFunctionKV 查看脚本的服务端独占状态。
+//
+// KV 是应用级资源而不是函数级：多个函数共用同一个命名空间是常态
+// （发号的写、校验的读），因此路由挂在应用下而不是某个函数下。
+func (h *Handler) AdminBrowseAppFunctionKV(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	scopeID, _ := strconv.ParseInt(c.Query("scopeId"), 10, 64)
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	result, err := h.appFunction.BrowseKV(c.Request.Context(), appID, functiondomain.KVQuery{
+		Scope:   strings.TrimSpace(c.Query("scope")),
+		ScopeID: scopeID,
+		Prefix:  strings.TrimSpace(c.Query("prefix")),
+		Page:    page, Limit: limit,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "ok", result)
+}
+
+func (h *Handler) AdminDeleteAppFunctionKV(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	scopeID, _ := strconv.ParseInt(c.Query("scopeId"), 10, 64)
+	key := strings.TrimSpace(c.Query("key"))
+	if key == "" {
+		response.Error(c, http.StatusBadRequest, 40000, "缺少 key 参数")
+		return
+	}
+	if err := h.appFunction.DeleteKV(c.Request.Context(), appID,
+		strings.TrimSpace(c.Query("scope")), scopeID, key); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "键已删除", gin.H{"deleted": true})
 }
 
 func (h *Handler) AdminCreateAppFunctionKey(c *gin.Context) {

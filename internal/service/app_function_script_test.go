@@ -28,14 +28,51 @@ func scriptContext(input string) functiondomain.ScriptContext {
 // newTestSDK 构造一个只声明了指定能力的 SDK。
 // 这些用例只验证「能力是否被绑定」，不触发真正的数据库写入。
 func newTestSDK(capabilities ...string) *ScriptSDK {
+	return newTestSDKWithConfig(nil, capabilities...)
+}
+
+func newTestSDKWithConfig(config json.RawMessage, capabilities ...string) *ScriptSDK {
 	userID := int64(42)
 	return newScriptSDK(
 		context.Background(),
-		ScriptSDKDeps{Log: zap.NewNop()},
+		testScriptDeps(),
 		7, "demo_app", "test-fn", "evt",
 		functiondomain.Caller{Type: "user", UserID: &userID},
 		capabilities,
+		scriptSDKOptions{Config: config},
 	)
+}
+
+// newDryRunTestSDK 与 newTestSDK 相同，但打开试跑开关。
+func newDryRunTestSDK(capabilities ...string) *ScriptSDK {
+	userID := int64(42)
+	return newScriptSDK(
+		context.Background(),
+		testScriptDeps(),
+		7, "demo_app", "test-fn", "evt",
+		functiondomain.Caller{Type: "user", UserID: &userID},
+		capabilities,
+		scriptSDKOptions{DryRun: true},
+	)
+}
+
+// testScriptDeps 给出**非 nil 但从不被调用**的宿主依赖。
+//
+// 绑定阶段只检查依赖在不在（缺了就点名报错，而不是绑上去等运行时空指针），
+// 因此这里用零值指针即可让全部能力完成绑定。这些用例验证的是
+// 「能力是否被绑定」，一旦真的调用到业务方法就会 panic —— 那正是我们要的：
+// 谁不小心在这里写出一次真实调用，测试会立刻炸掉而不是静默打库。
+func testScriptDeps() ScriptSDKDeps {
+	return ScriptSDKDeps{
+		Log:           zap.NewNop(),
+		Points:        &PointsService{},
+		Vip:           &VipService{},
+		Notifications: &NotificationService{},
+		Audit:         &AuditService{},
+		Wallet:        &WalletService{},
+		Email:         &EmailService{},
+		Bans:          &AccountBanService{},
+	}
 }
 
 func TestScriptExecutorReturnsOutput(t *testing.T) {

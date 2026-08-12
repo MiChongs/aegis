@@ -78,7 +78,8 @@ val profile = client.me.profile()
 | `GET` | `/me` | 当前登录用户资料 |
 | `GET` `PUT` | `/me/profile` | 个人资料读写 |
 | `POST` | `/me/profile/changes/confirm` | 确认敏感资料变更 |
-| `POST` | `/me/avatar` | 上传头像（`multipart/form-data`） |
+| `POST` `DELETE` | `/me/avatar` | 上传 / 移除头像（上传为 `multipart/form-data`，可带 `crop_*` 裁剪框） |
+| `GET` `POST` | `/me/avatar/history`、`/me/avatar/restore` | 头像历史与恢复上一张 |
 | `GET` `PUT` | `/me/settings` | 用户设置 |
 | `GET` | `/me/security` | 账户安全概览 |
 | `POST` | `/me/2fa/totp/{enroll,enable,disable}` | TOTP 绑定 / 启用 / 关闭 |
@@ -95,9 +96,133 @@ val profile = client.me.profile()
 | `GET` | `/points/*` | 积分 / 经验 / 等级与流水 |
 | `GET` | `/leaderboard/*` | 排行榜 |
 | `GET` `POST` `DELETE` | `/notifications/*` | 站内信 |
-| `GET` `POST` | `/wallet/*`、`/vip/*`、`/pay/orders*` | 钱包 / 会员 / 支付 |
+| `GET` `POST` | `/wallet/*`、`/vip/*`、`/pay/orders*` | 钱包 / 会员 / 支付（含试用，见下节） |
 | `POST` | `/storage/upload`（`multipart`）、`/storage/object-link` | 存储 |
 | `GET` `POST` | `/tickets/*` | 工单自助 |
+
+### 会员与试用（`/vip/*`）
+
+判断「用户是不是会员」只有一个接口：`GET /vip/status`。它回答的不只是是/否：
+
+```jsonc
+{
+  "isVip": true,
+  "isTrial": true,                 // 当前这段会员期是试用给的
+  "source": "trial",               // none / trial / wallet / payment_order / admin_grant / unknown
+  "planName": "7 天试用",
+  "expireAt": "2026-03-08T12:00:00Z",
+  "remainingSeconds": 518400,
+  "remainingDays": 6,
+  "trial": {                       // 领取过才有；过期后仍保留，用于把"免费试用"换成"续费"
+    "active": true, "claimedAt": "...", "endsAt": "...", "durationDays": 7,
+    "planId": 7, "planName": "7 天试用", "remainingSeconds": 518400
+  },
+  "trialOffer": {                  // 现在能不能领
+    "available": false,
+    "reason": "already_claimed",   // eligible / not_configured / already_claimed /
+                                   // member_active / device_claimed / device_required
+    "message": "试用资格已使用",
+    "planId": 7, "planName": "7 天试用", "durationDays": 7
+  }
+}
+```
+
+**入口显隐读 `trialOffer.available`，文案分支读 `reason`**（不要匹配 `message`，
+那是会随文案调整变化的中文）。领取：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `POST` | `/vip/trial` | 领取试用，无请求体。资格由服务端判定，领哪个套餐也由服务端决定 |
+
+- **一人一次**，没有幂等键 —— 唯一约束就是幂等键。仍在试用期内重复调用会原样返回
+  上次结果（`replayed: true`），不会重复发放，也不会报错。
+- 资格不足时返回业务码：`40373` 已领过 / `40374` 当前已是会员 /
+  `40375` 该设备已领过 / `40040` 需要设备标识 / `40484` 应用未开放试用。
+- **试用套餐不出现在 `/vip/plans` 里**：那是"能买什么"的列表，而试用不能买。
+  它的套餐名、天数、描述都在 `trialOffer` 里。硬编码 planId 去买试用会被拒（`40376`）——
+  它是 0 元的，走购买链路等于绕开全部资格判定。
+- 试用期内购买正式套餐是**顺延**：剩余试用天数叠加到付费时长上。
+
+官方 Kotlin SDK：`api.vipStatus()` / `api.claimVipTrial()`。
+
+`/vip/status` 里还有一项 `features`：当前生效的**功能标识**（见下节）。
+两档会员（基础版能导出、高级版还能用 AI）时按它决定界面上哪些入口可用，
+不要拿 `planName` 做字符串比较 —— 那是运营随时会改的展示文案。
+
+### 服务端校验会员（接入方后端调用）
+
+上面那些接口的凭据都是**用户令牌**。接入方自己的服务器没有用户令牌，
+也不该配管理员账号，于是只能相信客户端捎上来的那句「我是会员」——
+而这句话客户端说了不算。服务端校验就是补这条路：
+
+```http
+POST /api/apps/{appKey}/vip/verify
+X-Aegis-Function-Key: afk_xxxxxxxx          # 应用服务端密钥，控制台签发
+Content-Type: application/json
+
+{ "accessToken": "eyJhbGciOi...", "feature": "export" }
+```
+
+两样凭据各证明一件事，缺一不可：
+
+| 凭据 | 证明 |
+|---|---|
+| `X-Aegis-Function-Key` | **谁在问** —— 只有你的后端持有 |
+| `accessToken` | **问的是谁** —— 平台签发、平台验证 |
+
+`accessToken` 就是用户登录后拿到的那个令牌，客户端调你的接口时带上来，你原样转发。
+`feature` 留空即通用档（只问是不是会员）。
+
+> **不接受 `userId` / `account`，这是刻意的。** 你的后端几乎一定会把
+> 「当前请求是谁」交给它自己的客户端来说。一旦这个接口收 userId，那条链路就是
+> 「客户端自报 42 → 你转发 42 → 我们回答 42 是会员 → 你放行**发起请求的那个人**」，
+> 攻击者只要知道任意一个会员的 userId 就能白嫖 —— 而服务端密钥拦不住这件事，
+> 因为犯错的正是持有密钥的那一方。
+>
+> 需要按 userId 批量查（对账、到期提醒、客服工单）走管理端
+> `GET /api/admin/apps/{appKey}/vip/entitlement?userId=`，那条路有管理员鉴权与审计。
+
+```jsonc
+{
+  "granted": true,                 // 放行只看这一个字段
+  "matched": true,
+  "userId": 42, "account": "zhangsan",
+  "membership": {
+    "isVip": true, "isTrial": false, "source": "wallet",
+    "planName": "高级版", "expireAt": "2026-04-01T00:00:00Z",
+    "remainingSeconds": 2592000, "remainingDays": 30,
+    "features": ["ai.chat", "export"]
+  },
+  "feature": { "tag": "export", "name": "批量导出", "granted": true },
+  "checkedAt": "2026-03-02T03:00:00Z"
+}
+```
+
+- **密钥只放服务器**。`afk_…` 打进 APK 或前端包等于把它公开。要求与 `appSecret` 同档。
+  它与远程函数调用共用同一把钥匙 —— 再造一套"会员校验专用密钥"只会让你在服务器上
+  配两份凭据，而它们的信任级别完全一样。
+- **令牌无效 / 过期返回 401（40100）**，令牌不属于该应用返回 403（40372）。
+  这两种都不要当成"不是会员"处理：前者该让客户端刷新令牌，后者是接入配置错了。
+- **缓存结论按 `checkedAt` 算 TTL**，别用本地时间 —— 两端时钟差会直接变成
+  权益的提前失效或延后失效。
+
+#### 功能标识（feature tag）
+
+`feature` 传的不是套餐名，而是**功能标识**：先在控制台的会员功能目录里登记
+（`export` / `ai.chat` 这类短标识），再勾进套餐。这样套餐改名、拆分、合并
+都不影响判定，接入方代码里那句 `feature == "export"` 永远成立。
+
+传一个没登记的标识会得到 `40486` 而不是静默的 `false` ——
+拼错一个字母和「他没有这项权益」是完全不同的两件事，
+而后者在自由字符串方案里永远查不出来。
+
+用户当前的功能权益是**尚未到期的每一段开通的并集**：先买基础版再买高级版时
+两段都没到期，两边的功能都生效；用完的那一段自动出局。
+开通时会把套餐当时的功能列表**快照**进账本，因此运营明天改套餐配置，
+不会让已经卖出去的会员当场少一项权益。
+
+官方 Kotlin SDK：`AegisServerClient.verifyMembership(userId = 42, feature = "export")`，
+详见 [sdk/kotlin/README.md](../sdk/kotlin/README.md#服务端校验会员aegisserverclient)。
 
 ### 免登录内容
 

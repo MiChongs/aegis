@@ -30,6 +30,7 @@ const (
 // 系统与应用权限点。
 const (
 	PermSystemAdminManage      = "system:admin:manage"
+	PermSystemLegalManage      = "system:legal:manage"
 	PermSystemSettingsRead     = "system:settings:read"
 	PermSystemSettingsWrite    = "system:settings:write"
 	PermSystemUserSettingRead  = "system:user_setting:read"
@@ -116,6 +117,7 @@ func PermissionCatalog() []admindomain.PermissionGroup {
 		}},
 		{Key: "system", Name: "系统管理", Permissions: []admindomain.Permission{
 			{Code: PermSystemAdminManage, Name: "管理员管理"},
+			{Code: PermSystemLegalManage, Name: "法律文本管理"},
 			{Code: PermSystemSettingsRead, Name: "系统设置查看"},
 			{Code: PermSystemSettingsWrite, Name: "系统设置修改"},
 			{Code: PermSystemUserSettingRead, Name: "用户设置查看"},

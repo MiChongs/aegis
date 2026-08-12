@@ -849,14 +849,14 @@
   {
     "method": "GET",
     "path": "/api/admin/system/legal/documents",
-    "permission": "system:admin:manage",
+    "permission": "system:legal:manage",
     "appScoped": false,
     "unmapped": false
   },
   {
     "method": "GET",
     "path": "/api/admin/system/legal/documents/:docType/:locale",
-    "permission": "system:admin:manage",
+    "permission": "system:legal:manage",
     "appScoped": false,
     "unmapped": false
   },
@@ -1304,6 +1304,27 @@
   {
     "method": "GET",
     "path": "/api/admin/apps/:appkey/vip/transactions",
+    "permission": "app:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/vip/entitlement",
+    "permission": "app:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/vip/trial/claims",
+    "permission": "app:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/vip/features",
     "permission": "app:read",
     "appScoped": true,
     "unmapped": false
@@ -1801,6 +1822,13 @@
   {
     "method": "GET",
     "path": "/api/avatar/:hash",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/avatars/:token",
     "permission": "",
     "appScoped": false,
     "unmapped": true
@@ -3242,6 +3270,20 @@
   },
   {
     "method": "POST",
+    "path": "/api/admin/apps/:appkey/vip/trial/claims",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/vip/features",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
     "path": "/api/admin/apps/:appkey/lottery/activities",
     "permission": "app:write",
     "appScoped": true,
@@ -4207,6 +4249,13 @@
     "unmapped": true
   },
   {
+    "method": "DELETE",
+    "path": "/api/admin/profile/avatar",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
     "method": "POST",
     "path": "/api/admin/profile/upload-avatar",
     "permission": "",
@@ -4670,6 +4719,13 @@
   },
   {
     "method": "POST",
+    "path": "/api/apps/:appkey/vip/verify",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "POST",
     "path": "/api/auth/passkey/options",
     "permission": "",
     "appScoped": false,
@@ -4950,6 +5006,27 @@
   },
   {
     "method": "POST",
+    "path": "/api/v1/apps/:appkey/me/avatar/restore",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/apps/:appkey/me/avatar/history",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/apps/:appkey/me/avatar",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "POST",
     "path": "/api/v1/apps/:appkey/me/sessions/revoke-all",
     "permission": "",
     "appScoped": false,
@@ -5069,6 +5146,13 @@
   },
   {
     "method": "POST",
+    "path": "/api/v1/apps/:appkey/vip/trial",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "POST",
     "path": "/api/v1/apps/:appkey/pay/orders",
     "permission": "",
     "appScoped": false,
@@ -5077,6 +5161,13 @@
   {
     "method": "POST",
     "path": "/api/vip/purchase",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/vip/trial",
     "permission": "",
     "appScoped": false,
     "unmapped": true
@@ -5160,6 +5251,27 @@
   },
   {
     "method": "POST",
+    "path": "/api/user/profile/avatar",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/user/profile/avatar/restore",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/user/profile/avatar/history",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "DELETE",
     "path": "/api/user/profile/avatar",
     "permission": "",
     "appScoped": false,
@@ -5770,7 +5882,7 @@
   {
     "method": "DELETE",
     "path": "/api/admin/system/legal/documents/:docType/:locale",
-    "permission": "system:admin:manage",
+    "permission": "system:legal:manage",
     "appScoped": false,
     "unmapped": false
   },
@@ -5889,6 +6001,20 @@
   {
     "method": "DELETE",
     "path": "/api/admin/apps/:appkey/vip/plans/:planId",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/apps/:appkey/vip/trial/claims/:userId",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/apps/:appkey/vip/features/:tag",
     "permission": "app:write",
     "appScoped": true,
     "unmapped": false
@@ -6295,7 +6421,7 @@
   {
     "method": "PUT",
     "path": "/api/admin/system/legal/documents/:docType/:locale",
-    "permission": "system:admin:manage",
+    "permission": "system:legal:manage",
     "appScoped": false,
     "unmapped": false
   },

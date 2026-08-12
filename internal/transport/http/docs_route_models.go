@@ -148,6 +148,9 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/apps/{appkey}/versions/{vid}"):                                        AdminAppVersionSaveRequest{},             // AdminUpdateVersion
 		routeKey("POST", "/api/admin/apps/{appkey}/vip/grant"):                                            AdminVipGrantRequest{},                   // AdminGrantAppUserVip
 		routeKey("POST", "/api/admin/apps/{appkey}/vip/plans"):                                            AdminVipPlanRequest{},                    // AdminSaveAppVipPlan
+		routeKey("POST", "/api/admin/apps/{appkey}/vip/features"):                                         AdminVipFeatureRequest{},                 // AdminSaveAppVipFeature
+		routeKey("POST", "/api/admin/apps/{appkey}/vip/trial/claims"):                                     AdminVipTrialClaimRequest{},              // AdminClaimAppVipTrial
+		routeKey("POST", "/api/apps/{appkey}/vip/verify"):                                                 VipVerifyRequest{},                       // VerifyVipMembership
 		routeKey("POST", "/api/admin/apps/{appkey}/wallet/adjust"):                                        AdminWalletAdjustRequest{},               // AdminAdjustAppUserWallet
 		routeKey("POST", "/api/admin/apps/{appkey}/wallet/receipt"):                                       AdminWalletReceiptRequest{},              // AdminAppWalletReceipt
 		routeKey("POST", "/api/admin/apps/{appkey}/wallet/receipt/email"):                                 AdminWalletReceiptEmailRequest{},         // AdminAppWalletReceiptEmail
@@ -428,6 +431,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/user/notice"):                                                               AppIDQuery{},                             // UserNotice
 		routeKey("POST", "/api/user/passkey/register"):                                                    PasskeyRegistrationFinishRequest{},       // FinishPasskeyRegistration
 		routeKey("PUT", "/api/user/profile"):                                                              UpdateProfileRequest{},                   // UpdateProfile
+		routeKey("POST", "/api/user/profile/avatar/restore"):                                              AvatarRestoreRequest{},                   // RestoreUserAvatar
 		routeKey("POST", "/api/user/profile/changes/confirm"):                                             ConfirmProfileChangeRequest{},            // ConfirmProfileChange
 		routeKey("POST", "/api/user/resubmit-site"):                                                       SiteDeleteRequest{},                      // ResubmitSite
 		routeKey("GET", "/api/user/role/applications"):                                                    RoleApplicationsQuery{},                  // RoleApplications

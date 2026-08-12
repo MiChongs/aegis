@@ -1,0 +1,58 @@
+# 行尾规范
+#
+# 起因是一次真实的失败：`core.autocrlf=true` 的 Windows 检出把
+# `testdata/routes.golden` 换成了 CRLF，而生成快照的 Go 代码写的是 LF，
+# 于是 `TestRouteTableMatchesGoldenSnapshot` 报「948 条路由消失、948 条新增」——
+# 一条都没变，只是每一行的结尾不同。这类失败最难认，因为 diff 看起来完全一样。
+
+# 默认：文本按仓库内 LF 存储，检出时交给 Git 按平台处理
+* text=auto eol=lf
+
+# 黄金快照与测试夹具：**必须逐字节稳定**。
+# 它们的唯一用途就是和程序输出做全等比较，平台换行转换会让比较永远失败。
+*.golden        text eol=lf
+testdata/**     text eol=lf
+
+# Go 工具链只认 LF（gofmt 会把 CRLF 当成内容差异）
+*.go            text eol=lf
+go.mod          text eol=lf
+go.sum          text eol=lf
+
+# Shell 脚本带 CRLF 在 Linux 上会报 `bad interpreter: ... ^M`
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+
+# SQL 迁移按内容哈希比对时同理
+*.sql           text eol=lf
+
+# 前端工具链（prettier / eslint / next）一律 LF
+*.ts            text eol=lf
+*.tsx           text eol=lf
+*.js            text eol=lf
+*.mjs           text eol=lf
+*.json          text eol=lf
+*.css           text eol=lf
+*.md            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+
+# Windows 批处理反过来：必须 CRLF
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+*.ps1           text eol=crlf
+
+# 二进制：不做任何换行处理，也不参与 diff
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.webp          binary
+*.woff          binary
+*.woff2         binary
+*.ttf           binary
+*.ttc           binary
+*.otf           binary
+*.mmdb          binary
+*.pdf           binary

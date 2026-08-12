@@ -511,6 +511,46 @@ func (s *StorageService) OpenProxyObject(ctx context.Context, ticketID string) (
 	return ticket, cfg, reader, nil
 }
 
+// ReadObjectBytes 直接把对象读进内存，不签票据、不生成任何链接。
+//
+// 给的是「服务端自己要用这份字节」的场景（头像代理就是），与 OpenProxyObject
+// 的区别是那条链路要先有一个 Redis 票据 —— 而票据是会过期的，
+// 拿它来实现一个**永久**地址等于把过期问题又搬了一遍。
+//
+// limit 是必须的：对象的大小由上传方决定，无界读入等于把内存交给别人管。
+func (s *StorageService) ReadObjectBytes(ctx context.Context, configID int64, objectKey string, limit int64) ([]byte, string, error) {
+	cfg, err := s.pg.GetStorageConfigByID(ctx, configID)
+	if err != nil {
+		return nil, "", err
+	}
+	if cfg == nil || !cfg.Enabled {
+		return nil, "", apperrors.New(40482, http.StatusNotFound, "未配置可用存储服务")
+	}
+	if err := validateStorageObjectKey(objectKey); err != nil {
+		return nil, "", err
+	}
+	provider, err := s.buildProvider(cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	reader, err := provider.Open(ctx, cfg, objectKey)
+	if err != nil {
+		return nil, "", apperrors.New(40481, http.StatusNotFound, "资源不可用")
+	}
+	defer closeSilently(reader.Body)
+	if limit <= 0 {
+		limit = 32 << 20
+	}
+	data, err := io.ReadAll(io.LimitReader(reader.Body, limit+1))
+	if err != nil {
+		return nil, "", apperrors.New(40481, http.StatusNotFound, "资源不可用")
+	}
+	if int64(len(data)) > limit {
+		return nil, "", apperrors.New(41381, http.StatusRequestEntityTooLarge, "对象超过读取上限")
+	}
+	return data, reader.ContentType, nil
+}
+
 func (s *StorageService) resolveConfig(ctx context.Context, opts storagedomain.ResolveOptions) (*storagedomain.Config, error) {
 	cacheKey := s.resolvedConfigKey(opts.AppID, opts.ConfigName, opts.Provider)
 	if s.redis != nil {

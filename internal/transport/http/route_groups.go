@@ -46,6 +46,11 @@ var routeGroups = []routeGroup{
 	{Realm: realmPublic, Title: "公开元数据", Tag: tagAPI, Auth: authPublic,
 		Exact:  []string{"/api/public/branding", "/api/system/announcements/active"},
 		Prefix: "/api/avatar/"},
+	// 永久头像地址。免登录是这条路由的**前提**而不是疏漏：它出现在 <img src>
+	// 与邮件正文里，那两处都没有机会带上 Authorization 头。防遍历靠地址
+	// 自带的签名，见 internal/service/avatar_link.go。
+	{Realm: realmPublic, Title: "头像", Tag: tagAPI, Auth: authPublic,
+		Prefix: "/api/avatars/"},
 	// 登录页与注册页在用户还没有账号时就要链到条款，要求登录才能读是荒谬的；
 	// 路径刻意不挂在 /api/admin/* 下，正是为了不落进任何管理端鉴权规则
 	{Realm: realmPublic, Title: "法律文本-公开读", Tag: tagAPI, Auth: authPublic,

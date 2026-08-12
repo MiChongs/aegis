@@ -5,6 +5,7 @@ import (
 	"aegis/internal/middleware"
 	redisrepo "aegis/internal/repository/redis"
 	"aegis/internal/service"
+	"aegis/pkg/clientip"
 	"aegis/pkg/crashlog"
 
 	"go.uber.org/zap"
@@ -98,12 +99,14 @@ type RouterDeps struct {
 	DatabaseManager *service.DatabaseManager
 
 	// ── 基础设施 ──────────────────────────────────────────────────────
-	Firewall       *middleware.Firewall
-	ReplayGuard    *middleware.ReplayGuard
-	CrashLog       *crashlog.Logger
-	Logger         *zap.Logger
-	CORS           config.CORSConfig
-	TrustedProxies []string
+	Firewall    *middleware.Firewall
+	ReplayGuard *middleware.ReplayGuard
+	CrashLog    *crashlog.Logger
+	Logger      *zap.Logger
+	CORS        config.CORSConfig
+	// ClientIP 真实客户端 IP 判定器，由 middleware.ClientIP 挂在中间件栈首位。
+	// 为 nil 时（openapi / routes 等零依赖装配）退化为直接使用直连地址。
+	ClientIP *clientip.Resolver
 	// DocsPortalURL 是 /docs 的 302 目标；前后端分域部署时要填绝对地址。
 	DocsPortalURL string
 }

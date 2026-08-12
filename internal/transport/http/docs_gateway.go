@@ -68,6 +68,7 @@ func gatewayRequestModels() map[string]any {
 		"profileConfirm": ConfirmProfileChangeRequest{},
 		"settings":       SettingsCategoryQuery{},
 		"settingsUpdate": UpdateSettingsRequest{},
+		"avatarRestore":  AvatarRestoreRequest{},
 
 		// 二次认证
 		"totpEnable":              TOTPEnableRequest{},

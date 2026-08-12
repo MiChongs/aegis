@@ -250,6 +250,9 @@ func registerAdminSystemRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		// 法律文本管理（限超管，权限在 handler 内二次校验）
 		adminSystem.GET("/legal/documents", h.AdminListLegalDocuments)
 		adminSystem.GET("/legal/documents/:docType/:locale", h.AdminGetLegalDocument)
+		// 预览：把草稿按当前部署的值渲染一遍，供编辑器的「预览」页签使用。
+		// 用 POST 是因为草稿正文放在请求体里 —— 一份两万字的条款塞不进 query。
+		adminSystem.POST("/legal/documents/:docType/:locale/preview", h.AdminPreviewLegalDocument)
 		adminSystem.PUT("/legal/documents/:docType/:locale", h.AdminSaveLegalDocument)
 		adminSystem.DELETE("/legal/documents/:docType/:locale", h.AdminDeleteLegalDocument)
 

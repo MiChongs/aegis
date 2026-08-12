@@ -5,7 +5,9 @@ DELETE	/api/admin/apps/:appkey/banners/:bannerId	DeleteAdminBanner
 DELETE	/api/admin/apps/:appkey/channels/:cid	AdminDeleteVersionChannel
 DELETE	/api/admin/apps/:appkey/channels/:cid/users	AdminRemoveVersionChannelUsers
 DELETE	/api/admin/apps/:appkey/function-keys/:keyId	AdminRevokeAppFunctionKey
+DELETE	/api/admin/apps/:appkey/function-kv	AdminDeleteAppFunctionKV
 DELETE	/api/admin/apps/:appkey/functions/:functionName	AdminDeleteAppFunction
+DELETE	/api/admin/apps/:appkey/functions/:functionName/versions/:version	AdminDeleteAppFunctionVersion
 DELETE	/api/admin/apps/:appkey/login-baseline/:userid	ResetAdminAppLoginBaseline
 DELETE	/api/admin/apps/:appkey/lottery/activities/:id	AdminDeleteLotteryActivity
 DELETE	/api/admin/apps/:appkey/lottery/prizes/:id	AdminDeleteLotteryPrize
@@ -17,11 +19,14 @@ DELETE	/api/admin/apps/:appkey/oauth-providers/:provider	AdminDeleteAppOAuthProv
 DELETE	/api/admin/apps/:appkey/users/:userId	AdminDeleteUser
 DELETE	/api/admin/apps/:appkey/users/:userId/sessions/:tokenHash	AdminRevokeUserSession
 DELETE	/api/admin/apps/:appkey/versions/:vid	AdminDeleteVersion
+DELETE	/api/admin/apps/:appkey/vip/features/:tag	AdminDeleteAppVipFeature
 DELETE	/api/admin/apps/:appkey/vip/plans/:planId	AdminDeleteAppVipPlan
+DELETE	/api/admin/apps/:appkey/vip/trial/claims/:userId	AdminResetAppVipTrial
 DELETE	/api/admin/notify/channels/:id	AdminDeleteNotifyChannel
 DELETE	/api/admin/notify/deliveries	AdminPurgeNotifyDeliveries
 DELETE	/api/admin/notify/subscriptions/:id	AdminDeleteNotifySubscription
 DELETE	/api/admin/notify/templates/:id	AdminDeleteNotifyTemplate
+DELETE	/api/admin/profile/avatar	RemoveAdminAvatar
 DELETE	/api/admin/profile/passkey/:credentialId	DeleteAdminPasskey
 DELETE	/api/admin/system/announcements/:id	AdminDeleteAnnouncement
 DELETE	/api/admin/system/banners/:id	DeletePlatformBanner
@@ -71,8 +76,10 @@ DELETE	/api/auth/oauth2/bindings/:provider	UnbindMyOAuthProvider
 DELETE	/api/notifications/:notificationId	DeleteNotification
 DELETE	/api/user/delete-site	DeleteSite
 DELETE	/api/user/passkey/:credentialId	DeletePasskey
+DELETE	/api/user/profile/avatar	RemoveUserAvatar
 DELETE	/api/user/sessions/:tokenHash	RevokeUserSession
 DELETE	/api/v1/apps/:appkey/auth/oauth/bindings/:provider	UnbindMyOAuthProvider
+DELETE	/api/v1/apps/:appkey/me/avatar	RemoveUserAvatar
 DELETE	/api/v1/apps/:appkey/me/passkeys/:credentialId	DeletePasskey
 DELETE	/api/v1/apps/:appkey/me/sessions/:tokenHash	RevokeUserSession
 DELETE	/api/v1/apps/:appkey/notifications/:notificationId	DeleteNotification
@@ -96,11 +103,15 @@ GET	/api/admin/apps/:appkey/commerce	AdminAppCommerceSettings
 GET	/api/admin/apps/:appkey/commerce/overview	AdminAppCommerceOverview
 GET	/api/admin/apps/:appkey/content/overview	AdminContentOverview
 GET	/api/admin/apps/:appkey/encryption	AdminAppEncryption
+GET	/api/admin/apps/:appkey/function-catalog	AdminAppFunctionCatalog
 GET	/api/admin/apps/:appkey/function-keys	AdminListAppFunctionKeys
+GET	/api/admin/apps/:appkey/function-kv	AdminBrowseAppFunctionKV
 GET	/api/admin/apps/:appkey/functions	AdminListAppFunctions
 GET	/api/admin/apps/:appkey/functions/:functionName	AdminGetAppFunction
 GET	/api/admin/apps/:appkey/functions/:functionName/invocations	AdminListAppFunctionInvocations
+GET	/api/admin/apps/:appkey/functions/:functionName/stats	AdminAppFunctionStats
 GET	/api/admin/apps/:appkey/functions/:functionName/versions	AdminListAppFunctionVersions
+GET	/api/admin/apps/:appkey/functions/:functionName/versions/:version	AdminGetAppFunctionVersion
 GET	/api/admin/apps/:appkey/governance	AdminAppGovernance
 GET	/api/admin/apps/:appkey/governance/history	AdminAppGovernanceHistory
 GET	/api/admin/apps/:appkey/login-baseline/:userid	AdminAppLoginBaseline
@@ -151,8 +162,11 @@ GET	/api/admin/apps/:appkey/users/export	ExportAdminAppUsers
 GET	/api/admin/apps/:appkey/versions	AdminListVersions
 GET	/api/admin/apps/:appkey/versions/:vid	AdminGetVersion
 GET	/api/admin/apps/:appkey/versions/stats	AdminVersionStats
+GET	/api/admin/apps/:appkey/vip/entitlement	AdminAppUserVipEntitlement
+GET	/api/admin/apps/:appkey/vip/features	AdminAppVipFeatures
 GET	/api/admin/apps/:appkey/vip/plans	AdminAppVipPlans
 GET	/api/admin/apps/:appkey/vip/transactions	AdminAppVipTransactions
+GET	/api/admin/apps/:appkey/vip/trial/claims	AdminAppVipTrialClaims
 GET	/api/admin/apps/:appkey/wallet/stats	AdminAppWalletStats
 GET	/api/admin/apps/:appkey/wallet/transactions	AdminAppWalletTransactions
 GET	/api/admin/apps/password-policy/templates	PasswordPolicyTemplates
@@ -338,6 +352,7 @@ GET	/api/auth/oauth2/bindings	ListMyOAuthBindings
 GET	/api/auth/oauth2/callback	OAuthCallback
 GET	/api/auth/oauth2/providers	AppOAuthPublicProviders
 GET	/api/avatar/:hash	AvatarRedirect
+GET	/api/avatars/:token	AvatarImage
 GET	/api/captcha/public-config	UserCaptchaPublicConfig
 GET	/api/functions/signing-key	AppFunctionSigningKey
 GET	/api/leaderboard/me	LeaderboardMe
@@ -395,6 +410,7 @@ GET	/api/user/level/config	LegacyLevelConfig
 GET	/api/user/notice	UserNotice
 GET	/api/user/passkey	ListPasskeys
 GET	/api/user/profile	Profile
+GET	/api/user/profile/avatar/history	ListUserAvatarHistory
 GET	/api/user/role/applications	RoleApplications
 GET	/api/user/role/applications/:applicationId	RoleApplicationDetail
 GET	/api/user/role/available	AvailableRoles
@@ -422,6 +438,7 @@ GET	/api/v1/apps/:appkey/me	AppMe
 GET	/api/v1/apps/:appkey/me/2fa/recovery-codes	ListRecoveryCodes
 GET	/api/v1/apps/:appkey/me/audits/login	UserLoginAudits
 GET	/api/v1/apps/:appkey/me/audits/sessions	UserSessionAudits
+GET	/api/v1/apps/:appkey/me/avatar/history	ListUserAvatarHistory
 GET	/api/v1/apps/:appkey/me/passkeys	ListPasskeys
 GET	/api/v1/apps/:appkey/me/profile	Profile
 GET	/api/v1/apps/:appkey/me/security	Security
@@ -540,6 +557,7 @@ POST	/api/admin/apps/:appkey/channels/:cid/users	AdminAddVersionChannelUsers
 POST	/api/admin/apps/:appkey/function-keys	AdminCreateAppFunctionKey
 POST	/api/admin/apps/:appkey/functions	AdminCreateAppFunction
 POST	/api/admin/apps/:appkey/functions/:functionName/invoke	AdminInvokeAppFunction
+POST	/api/admin/apps/:appkey/functions/:functionName/test	AdminTestAppFunction
 POST	/api/admin/apps/:appkey/functions/:functionName/versions	AdminCreateAppFunctionVersion
 POST	/api/admin/apps/:appkey/functions/:functionName/versions/:version/activate	AdminActivateAppFunctionVersion
 POST	/api/admin/apps/:appkey/governance/appeals	AdminAppSubmitGovernanceAppeal
@@ -567,8 +585,10 @@ POST	/api/admin/apps/:appkey/users/bans/batch	BatchCreateAdminAppUserBan
 POST	/api/admin/apps/:appkey/versions	AdminCreateVersion
 POST	/api/admin/apps/:appkey/versions/:vid/publish	AdminPublishVersion
 POST	/api/admin/apps/:appkey/versions/:vid/revoke	AdminRevokeVersion
+POST	/api/admin/apps/:appkey/vip/features	AdminSaveAppVipFeature
 POST	/api/admin/apps/:appkey/vip/grant	AdminGrantAppUserVip
 POST	/api/admin/apps/:appkey/vip/plans	AdminSaveAppVipPlan
+POST	/api/admin/apps/:appkey/vip/trial/claims	AdminClaimAppVipTrial
 POST	/api/admin/apps/:appkey/wallet/adjust	AdminAdjustAppUserWallet
 POST	/api/admin/apps/:appkey/wallet/receipt	AdminAppWalletReceipt
 POST	/api/admin/apps/:appkey/wallet/receipt/email	AdminAppWalletReceiptEmail
@@ -638,6 +658,7 @@ POST	/api/admin/system/firewall/geo-bans	AdminUpsertGeoBan
 POST	/api/admin/system/firewall/geo-fences	AdminCreateGeoFence
 POST	/api/admin/system/firewall/geo-fences/preview	AdminPreviewGeoFence
 POST	/api/admin/system/ldap/test	AdminLDAPTest
+POST	/api/admin/system/legal/documents/:docType/:locale/preview	AdminPreviewLegalDocument
 POST	/api/admin/system/memory/gc	AdminMemoryForceGC
 POST	/api/admin/system/oidc/test	AdminOIDCTest
 POST	/api/admin/system/org-approvals/:instanceId/decision	DecideApproval
@@ -752,6 +773,7 @@ POST	/api/app/workflow/templates/list	WorkflowTemplates
 POST	/api/app/workflow/update	WorkflowUpdate
 POST	/api/app/workflow/validate	WorkflowValidate
 POST	/api/apps/:appkey/functions/:functionName/invoke	InvokeAppFunction
+POST	/api/apps/:appkey/vip/verify	VerifyVipMembership
 POST	/api/auth/2fa/verify	VerifySecondFactor
 POST	/api/auth/login/password	PasswordLogin
 POST	/api/auth/logout	Logout
@@ -806,6 +828,7 @@ POST	/api/user/my-site	MySites
 POST	/api/user/passkey/register	FinishPasskeyRegistration
 POST	/api/user/passkey/register/options	BeginPasskeyRegistration
 POST	/api/user/profile/avatar	UploadUserAvatar
+POST	/api/user/profile/avatar/restore	RestoreUserAvatar
 POST	/api/user/profile/changes/confirm	ConfirmProfileChange
 POST	/api/user/profile/upload-avatar	UploadUserAvatar
 POST	/api/user/resubmit-site	ResubmitSite
@@ -850,6 +873,7 @@ POST	/api/v1/apps/:appkey/me/2fa/totp/disable	DisableTOTP
 POST	/api/v1/apps/:appkey/me/2fa/totp/enable	EnableTOTP
 POST	/api/v1/apps/:appkey/me/2fa/totp/enroll	BeginTOTPEnrollment
 POST	/api/v1/apps/:appkey/me/avatar	UploadUserAvatar
+POST	/api/v1/apps/:appkey/me/avatar/restore	RestoreUserAvatar
 POST	/api/v1/apps/:appkey/me/passkeys	FinishPasskeyRegistration
 POST	/api/v1/apps/:appkey/me/passkeys/options	BeginPasskeyRegistration
 POST	/api/v1/apps/:appkey/me/profile/changes/confirm	ConfirmProfileChange
@@ -868,8 +892,10 @@ POST	/api/v1/apps/:appkey/tickets/:ticketId/rating	UserRateTicket
 POST	/api/v1/apps/:appkey/tickets/:ticketId/replies	UserReplyTicket
 POST	/api/v1/apps/:appkey/tickets/attachments	UserUploadTicketAttachment
 POST	/api/v1/apps/:appkey/vip/purchase	PurchaseVip
+POST	/api/v1/apps/:appkey/vip/trial	ClaimVipTrial
 POST	/api/v1/apps/:appkey/wallet/consume	WalletConsume
 POST	/api/vip/purchase	PurchaseVip
+POST	/api/vip/trial	ClaimVipTrial
 POST	/api/wallet/consume	WalletConsume
 POST	/api/wallet/transactions/:transactionNo/bill	ExportWalletBill
 POST	/api/wallet/transactions/:transactionNo/receipt/email	EmailWalletReceipt

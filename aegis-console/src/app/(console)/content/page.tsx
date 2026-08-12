@@ -27,7 +27,10 @@ import { useContentOverviewQuery } from "@/lib/content-hooks";
  * 与 `/platform-banners` 的分工也是作用域：那边是画在控制台总览页的平台横幅，
  * 只有超管能改；这边是画在应用客户端里的素材，由应用管理员维护。
  */
-const TABS = ["banners", "notices", "announcements"] as const;
+// 这张表是**唯一**的页签白名单：`resolveTab` 拿它兜底，不在表里的 `?tab=`
+// 会被静默换成第一项。只加 TabsTrigger / TabsContent 而忘了这里，
+// 表现就是「点了页签什么都不显示」——URL 变了，渲染的还是 banners。
+const TABS = ["banners", "notices", "announcements", "legal"] as const;
 type ContentTab = (typeof TABS)[number];
 
 function resolveTab(value?: string | null): ContentTab {

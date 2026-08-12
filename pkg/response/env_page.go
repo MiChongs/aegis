@@ -10,8 +10,20 @@ import (
 	"strings"
 	"time"
 
+	"aegis/pkg/clientip"
+
 	"github.com/gin-gonic/gin"
 )
+
+// stringFromContext 取 gin 上下文里的字符串值，缺失或类型不符时返回空串。
+func stringFromContext(c *gin.Context, key string) string {
+	value, exists := c.Get(key)
+	if !exists {
+		return ""
+	}
+	text, _ := value.(string)
+	return text
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // HTML 环境查看页 (/cons-env) — Claude / Anthropic 设计语言
@@ -143,6 +155,16 @@ func ExtractEnvPageData(c *gin.Context) EnvPageData {
 	remotePort := ""
 	if _, p, err := net.SplitHostPort(remoteAddr); err == nil {
 		remotePort = p
+	}
+	// ClientIP 中间件会把判定结果写回 Request.RemoteAddr（见 internal/middleware/client_ip.go），
+	// 而这一行按字面意思应当是**直连对端**。不还原的话它会和上面的 Client IP 一模一样，
+	// 而这个页面恰恰是用来看这两者差在哪的。
+	if peer := stringFromContext(c, clientip.ContextKeyPeerIP); peer != "" {
+		if remotePort != "" {
+			remoteAddr = net.JoinHostPort(peer, remotePort)
+		} else {
+			remoteAddr = peer
+		}
 	}
 
 	d := EnvPageData{

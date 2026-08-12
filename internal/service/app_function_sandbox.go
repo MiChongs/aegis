@@ -200,27 +200,31 @@ func (e *AppFunctionHTTPExecutor) Execute(ctx context.Context, endpoint, respons
 	return body, nil
 }
 
-// Fetch 供 script 运行时的 aegis.fetch 使用。
+// FetchWithHeaders 供 script 运行时的 aegis.fetch 使用。
 //
 // 复用 Execute 的同一个 client，因此继承全部 SSRF 防护：仅 HTTPS、禁止重定向、
 // 连接时重新解析 IP 并拒绝环回/私网/链路本地/云元数据地址。
 // 与 Execute 不同的是不做 Ed25519 双向签名 —— 目标是任意第三方接口，
 // 因此非 2xx 也照常返回状态码，由脚本自行判断。
-func (e *AppFunctionHTTPExecutor) Fetch(
+//
+// 响应头一并回传：分页游标（Link）、限流剩余（X-RateLimit-*）、内容类型这些
+// 只存在于头里，拿不到它们的脚本要么猜、要么把翻页写死成一次。
+func (e *AppFunctionHTTPExecutor) FetchWithHeaders(
 	ctx context.Context,
 	method string,
 	endpoint string,
 	headers map[string]string,
 	body []byte,
 	maxOutput int,
-) (int, []byte, error) {
+) (int, map[string]string, []byte, error) {
 	if _, err := parseFunctionEndpoint(endpoint); err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	switch method {
-	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	case http.MethodGet, http.MethodHead, http.MethodPost,
+		http.MethodPut, http.MethodPatch, http.MethodDelete:
 	default:
-		return 0, nil, fmt.Errorf("不支持的 HTTP 方法: %s", method)
+		return 0, nil, nil, fmt.Errorf("不支持的 HTTP 方法: %s", method)
 	}
 
 	var reader io.Reader
@@ -229,7 +233,7 @@ func (e *AppFunctionHTTPExecutor) Fetch(
 	}
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	if len(body) > 0 && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
@@ -244,18 +248,29 @@ func (e *AppFunctionHTTPExecutor) Fetch(
 
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return 0, nil, fmt.Errorf("出站请求失败: %w", err)
+		return 0, nil, nil, fmt.Errorf("出站请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// 多值头只取第一个：脚本侧一个 Record<string,string> 已经覆盖了
+	// 除 Set-Cookie 之外的全部实际用途，而 Set-Cookie 本来就不该回给脚本
+	// （沙箱没有 cookie jar，回它只会诱导作者去手工拼会话）。
+	responseHeaders := make(map[string]string, len(resp.Header))
+	for name, values := range resp.Header {
+		if strings.EqualFold(name, "Set-Cookie") || len(values) == 0 {
+			continue
+		}
+		responseHeaders[name] = values[0]
+	}
+
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxOutput)+1))
 	if err != nil {
-		return resp.StatusCode, nil, err
+		return resp.StatusCode, responseHeaders, nil, err
 	}
 	if len(payload) > maxOutput {
-		return resp.StatusCode, nil, errors.New("出站响应超过大小限制")
+		return resp.StatusCode, responseHeaders, nil, errors.New("出站响应超过大小限制")
 	}
-	return resp.StatusCode, payload, nil
+	return resp.StatusCode, responseHeaders, payload, nil
 }
 
 func parseFunctionEndpoint(rawURL string) (*url.URL, error) {

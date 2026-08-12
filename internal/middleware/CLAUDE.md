@@ -10,6 +10,7 @@
 
 | 文件 | 中间件 | 作用 |
 |---|---|---|
+| `client_ip.go` | `ClientIP(resolver)` | 判定真实客户端 IP 并**改写 `RemoteAddr`**（必须第一个） |
 | `requestid.go` | `RequestID()` | 注入 `X-Request-Id` 响应头 |
 | `access_log.go` | `AccessLog(log, skipPaths...)` | zap 结构化访问日志，取代 `gin.Logger()` |
 | `cors.go` | `CORS(cfg)` | 跨域处理（gin-contrib/cors 封装） |
@@ -39,10 +40,23 @@
 ## 中间件在路由中的组装顺序
 
 ```
-RequestID → RequestOrigin → CrashRecovery → Tracing → CORS → AccessLog → Firewall
-  → ReplayGuard → AppGateway → AppEncryption → Location
+ClientIP → RequestID → RequestOrigin → CrashRecovery → Tracing → CORS → AccessLog
+  → Firewall → ReplayGuard → AppGateway → AppEncryption → Location
 [路由组中追加] AdminAuth 或 Auth
 ```
+
+## ClientIP 为什么必须排在第一位
+
+它之后的每一环 —— 访问日志、防火墙的限流与 IP 封禁、WAF、追踪、地理定位 ——
+都要取客户端 IP。排在它前面的那些取到的会是反代地址，而这个错误不会报错：
+限流照常计数、封禁照常写库，只是记的全是同一个地址。
+
+判定规则在 [pkg/clientip](../../pkg/clientip)（受信网段 + 平台探测 + 直连对端闸门），
+这里只做一件事：把结论**写回 `Request.RemoteAddr`**。之所以不另开一个「正确的取 IP 函数」，
+是因为 `c.ClientIP()` 在这个仓库里散布在 25 个文件、57 处调用中，还有一部分在第三方
+中间件内部；改写 `RemoteAddr` 让三种取法同时变正确，包括还没写出来的调用点。
+配套地 `router.SetTrustedProxies(nil)` 把 gin 自己那套解析关掉 —— 两套同时开着，
+「到底谁说了算」就没人答得上来。完整说明见 [docs/client-ip.md](../../docs/client-ip.md)。
 
 ## AccessLog 为什么取代 gin.Logger()
 

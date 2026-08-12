@@ -242,6 +242,19 @@ func (s *UserService) GetProfile(ctx context.Context, session *authdomain.Sessio
 	return profile, nil
 }
 
+// InvalidateProfileCache 清掉该用户的资料与 /me 缓存。
+//
+// 头像那条链路只改 user_profiles.avatar 一列（不走整份档案写回），
+// 因此需要一个独立入口来失效缓存 —— 少了它，换完头像后的 60 秒内
+// 读到的仍是旧引用，用户看到的是「传成功了但没变」。
+func (s *UserService) InvalidateProfileCache(ctx context.Context, appID int64, userID int64) {
+	if s == nil || s.sessions == nil {
+		return
+	}
+	_ = s.sessions.DeleteMyView(ctx, appID, userID)
+	_ = s.sessions.DeleteUserProfile(ctx, appID, userID)
+}
+
 func (s *UserService) UpdateProfile(ctx context.Context, session *authdomain.Session, input userdomain.ProfileUpdate) (*userdomain.ProfileUpdateResult, error) {
 	// 先校验再落库：超长的输入到了数据库那一层只会得到
 	// `value too long for type character varying(N)`(22001)，那句话对用户毫无意义，
@@ -262,9 +275,20 @@ func (s *UserService) UpdateProfile(ctx context.Context, session *authdomain.Ses
 		profile.Nickname = v
 		profileChanged = true
 	}
-	if v := strings.TrimSpace(input.Avatar); v != "" {
-		profile.Avatar = v
-		profileChanged = true
+	// 头像这一项不能照单全收。客户端最常见的写法是「读回整份资料 → 改一个字段
+	// → 整份 PUT 回来」，而我们下发的 avatar 是**展示地址**不是**存储引用**。
+	// 照原样写进去，就等于亲手把库里唯一那份 storage:// 引用覆盖掉 ——
+	// 老版本下发的还是 30 分钟就失效的代理票据地址，覆盖之后头像永久丢失。
+	// NormalizeAvatarInput 负责把这类值判回"不修改"，详见 avatar_link.go。
+	if strings.TrimSpace(input.Avatar) != "" {
+		normalized, err := NormalizeAvatarInput(input.Avatar, profile.Avatar)
+		if err != nil {
+			return nil, err
+		}
+		if normalized != "" && normalized != profile.Avatar {
+			profile.Avatar = normalized
+			profileChanged = true
+		}
 	}
 	if v := strings.TrimSpace(input.Birthday); v != "" {
 		if t, err := time.Parse("2006-01-02", v); err == nil {

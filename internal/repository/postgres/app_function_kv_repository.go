@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	functiondomain "aegis/internal/domain/appfunction"
@@ -118,6 +120,119 @@ func (r *Repository) IncrAppFunctionKV(
 		appID, scope, scopeID, key, delta, expiresAt,
 	).Scan(&result)
 	return result, err
+}
+
+// ListAppFunctionKVKeys 按前缀列出键名（脚本用，只回键不回值）。
+//
+// 只回键是刻意的：脚本要遍历一批状态时，值往往用不上却会把响应撑大，
+// 而 SDK 的额度是按调用次数算的 —— 一次 list 拉回 200 个对象与拉回
+// 200 个字符串，对脚本作者是同一笔开销，对数据库不是。
+func (r *Repository) ListAppFunctionKVKeys(
+	ctx context.Context,
+	appID int64,
+	scope string,
+	scopeID int64,
+	prefix string,
+	limit int,
+) ([]string, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT key FROM app_function_kv
+		WHERE appid = $1 AND scope = $2 AND scope_id = $3
+		  AND (expires_at IS NULL OR expires_at > NOW())
+		  AND ($4 = '' OR key LIKE $4 || '%')
+		ORDER BY key LIMIT $5`,
+		appID, scope, scopeID, prefix, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := make([]string, 0, limit)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+// BrowseAppFunctionKV 是管理端的 KV 浏览器。
+//
+// 存在的理由：脚本的全部「服务端独占状态」都落在这张表上，而排障时最常问的
+// 一句是「这个用户的配额计数现在是多少」。没有这个视图，唯一的回答方式是
+// 写一个临时脚本去读它 —— 而那本身就是一次真实的副作用。
+//
+// 过期条目会被列出并标注：判定上它们等于不存在，但看不见它们就解释不了
+// 「为什么 KV 表里有几十万行」。
+func (r *Repository) BrowseAppFunctionKV(
+	ctx context.Context,
+	appID int64,
+	query functiondomain.KVQuery,
+) (*functiondomain.KVPage, error) {
+	limit := query.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	page := query.Page
+	if page <= 0 {
+		page = 1
+	}
+	where := []string{"appid=$1"}
+	args := []any{appID}
+	if query.Scope != "" {
+		args = append(args, query.Scope)
+		where = append(where, fmt.Sprintf("scope=$%d", len(args)))
+	}
+	if query.ScopeID > 0 {
+		args = append(args, query.ScopeID)
+		where = append(where, fmt.Sprintf("scope_id=$%d", len(args)))
+	}
+	if query.Prefix != "" {
+		args = append(args, query.Prefix)
+		where = append(where, fmt.Sprintf("key LIKE $%d || '%%'", len(args)))
+	}
+	clause := " WHERE " + strings.Join(where, " AND ")
+
+	var total int64
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM app_function_kv`+clause, args...).Scan(&total); err != nil {
+		return nil, err
+	}
+
+	args = append(args, limit, (page-1)*limit)
+	// 值截断在 SQL 里做：一行可以到 32KB，一页 20 行就是 640KB，
+	// 而浏览器上真正要看的只是开头那几十个字符。
+	rows, err := r.pool.Query(ctx, `SELECT scope, scope_id, key,
+LEFT(value::text, 512), LENGTH(value::text) > 512, expires_at, updated_at
+FROM app_function_kv`+clause+
+		fmt.Sprintf(` ORDER BY updated_at DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]functiondomain.KVView, 0, limit)
+	for rows.Next() {
+		var (
+			item  functiondomain.KVView
+			value string
+		)
+		if err := rows.Scan(&item.Scope, &item.ScopeID, &item.Key, &value, &item.Truncated,
+			&item.ExpiresAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		// 截断后的字符串不再是合法 JSON，按字符串回传，展示端照原样显示
+		if item.Truncated {
+			encoded, _ := json.Marshal(value)
+			item.Value = encoded
+		} else {
+			item.Value = json.RawMessage(value)
+		}
+		items = append(items, item)
+	}
+	return &functiondomain.KVPage{List: items, Total: total, Page: page, Limit: limit}, rows.Err()
 }
 
 // PurgeExpiredAppFunctionKV 清理过期条目，返回删除行数。

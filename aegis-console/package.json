@@ -69,6 +69,7 @@
     "react-dropzone": "^20.1.0",
     "react-error-boundary": "^6.1.2",
     "recharts": "^3.10.1",
+    "screenfull": "^6.0.2",
     "simple-icons": "^16.28.0",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.6.0",

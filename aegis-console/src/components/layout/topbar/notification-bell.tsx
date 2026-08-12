@@ -3,9 +3,11 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Bell, CheckCheck, Inbox, Megaphone, Trash2, WifiOff } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { Button } from "@/components/ui/button";
 import { RichContent } from "@/components/ui/rich-editor";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useNotificationStore } from "@/lib/notification-store";
 import {
   useAdminInboxQuery,
@@ -58,6 +60,7 @@ type Tab = "inbox" | "announcements";
 
 export function NotificationBell() {
   const router = useRouter();
+  const reduced = useReducedMotion();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("inbox");
   const [selectedAnnouncement, setSelectedAnnouncement] = useState<number | null>(null);
@@ -117,28 +120,49 @@ export function NotificationBell() {
         if (!next) setSelectedAnnouncement(null);
       }}
     >
-      <PopoverPrimitive.Trigger asChild>
-        <Button variant="ghost" size="icon" className="relative size-8">
-          <Bell className="size-3.5" />
-          {totalUnread > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
-              {totalUnread > 9 ? "9+" : totalUnread}
-            </span>
-          )}
-          {totalUnread === 0 && realtimeDown && (
-            <span
-              title="实时连接已断开，通知可能延迟"
-              className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-amber-500"
-            />
-          )}
-        </Button>
-      </PopoverPrimitive.Trigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverPrimitive.Trigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={totalUnread > 0 ? `通知（${totalUnread} 条未读）` : "通知"}
+              className="relative rounded-lg text-muted-foreground hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
+            >
+              <Bell className="size-3.5" />
+              {totalUnread > 0 && (
+                // 角标描一圈底色：不描边时它压在铃铛线条上，两位数会糊成一团
+                <motion.span
+                  key={totalUnread}
+                  initial={reduced ? false : { scale: 0.5 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: "spring", stiffness: 600, damping: 20 }}
+                  className="absolute -top-0.5 -right-0.5 flex min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] leading-4 font-bold text-white ring-2 ring-background"
+                >
+                  {totalUnread > 99 ? "99+" : totalUnread}
+                </motion.span>
+              )}
+              {totalUnread === 0 && realtimeDown && (
+                <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-amber-500 ring-2 ring-background" />
+              )}
+            </Button>
+          </PopoverPrimitive.Trigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" sideOffset={6}>
+          <p>通知</p>
+          <p className="text-[10px] text-background/70">
+            {realtimeDown ? "实时连接已断开，可能延迟" : totalUnread > 0 ? `${totalUnread} 条未读` : "没有未读"}
+          </p>
+        </TooltipContent>
+      </Tooltip>
 
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Content
           align="end"
           sideOffset={8}
-          className="z-50 flex max-h-112 w-96 flex-col overflow-hidden rounded-xl border bg-popover shadow-xl animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
+          collisionPadding={12}
+          // 手机上 24rem 会顶出屏幕：宽度取「想要的」与「屏幕能给的」里较小的那个
+          className="z-50 flex max-h-[min(28rem,70vh)] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border bg-popover shadow-xl animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
         >
           {selected ? (
             <AnnouncementDetail item={selected} onBack={() => setSelectedAnnouncement(null)} />

@@ -14,13 +14,20 @@
 | `app_oauth_service.go` | `AppOAuthService` | 应用级第三方登录渠道配置（CRUD/密钥加密/自检/解析） |
 | `app_oauth_catalog.go` | — | 内置渠道模板目录（微信/QQ/微博/Gitee/GitHub/Google/… 13 个） |
 | `app_service.go` | `AppService` | 多租户 App 管理、App 加密密钥 |
+| `app_function_service.go` | `AppFunctionService` | **远程函数**：函数与版本、试跑、调用与幂等、并发与频次闸门、统计（见下节） |
+| `app_function_sdk.go` | — | 注入脚本的 `aegis` 全局对象；能力逐项绑定，试跑时写只记录不执行 |
+| `app_function_script.go` | — | goja 沙箱：编译校验、超时中断、`handle(ctx)` 调用与返回值编码 |
+| `app_function_sandbox.go` | — | WASM 沙箱 + HTTP 执行器（Ed25519 双向签名、SSRF 防护、`aegis.fetch` 出口） |
 | `app_content.go` | — | 应用级内容中心：Banner 投放位与公告（挂在 `AppService` 上，见下节） |
 | `auth_service.go` | `AuthService` | 用户 JWT 认证、Token 刷新、OAuth2 |
 | `auth_sms.go` | — | 短信验证码登录/自动建号 + `MobileOAuthLoginScoped`（叠加应用级开关） |
 | `auth_protocol_service.go` | `AuthProtocolService` | 接入协议：策略、安全等级、应用密钥签名、Transport v2 |
 | `auth_protocol_selftest.go` | — | 接入自检；同时是三档协议的**参考客户端实现** |
 | `auto_sign_service.go` | `AutoSignService` | 自动签到调度（Redis Sorted Set） |
-| `avatar_service.go` | `AvatarService` | 头像上传、存储路由 |
+| `avatar_service.go` | `AvatarService` | 头像：解析成**永久地址**、上传、移除、历史、取图（见下节） |
+| `avatar_link.go` | — | 主体令牌签名 + 永久地址构造 + **写回闸门**（`NormalizeAvatarInput`） |
+| `avatar_pipeline.go` | — | 解码校验 / EXIF 纠正 / 方形裁剪 / 多尺寸 / 重编码 / blurhash / 主色 |
+| `avatar_identity.go` | — | 默认头像的确定性生成（identicon / 拼音首字母） |
 | `db_manager.go` | `DatabaseManager` | 数据库生命周期与泄漏监控总入口（采集/告警/历史/会话治理） |
 | `db_leak.go` | — | 六类泄漏判定（连接/事务/快照/WAL/两阶段事务/存储）+ 指标趋势检测 |
 | `db_sessions.go` | — | pg_stat_activity / 复制槽 / 两阶段事务 / 死元组视图与会话终止 |
@@ -76,7 +83,9 @@
 | `payment_provider_schema.go` | — | 渠道自描述构造器（字段 schema / 分区 / 能力矩阵） |
 | `payment_provider_*.go` | — | 16 个渠道适配器，各自实现 `Describe()` 自描述 |
 | `wallet_service.go` | `WalletService` | 余额：查询 / 消费 / 流水（带凭证入口）/ 全应用流水与资金面板 / 管理员调账 |
-| `vip_service.go` | `VipService` | 会员：套餐、状态、**余额直购**（成功后按应用设置自动寄凭证）、管理端授予 |
+| `vip_service.go` | `VipService` | 会员：套餐、**余额直购**（成功后按应用设置自动寄凭证）、管理端授予 |
+| `vip_trial_service.go` | — | **会员判定的唯一入口**（`ResolveEntitlement`）+ 试用期会员：资格、领取、管理端重置（见下节） |
+| `vip_verify_service.go` | — | **服务端会员校验**（接入方后端调用）+ 会员功能标识目录（见下节） |
 | `platform_governance_service.go` | `PlatformGovernanceService` | **平台治理**：全站应用的限制/冻结/停运/封禁/归档 + 到期结算 + 申诉（内存快照判定） |
 | `platform_settings_service.go` | `PlatformSettingsService` | 平台设置读写、防火墙动态配置 |
 | `points_service.go` | `PointsService` | 积分 & 经验值调整、统计 |
@@ -648,6 +657,168 @@ Banner（投放位）与公告，方法挂在 `AppService` 上。三条结构性
 
 完整说明见 [docs/payment-receipt.md](../../docs/payment-receipt.md)。
 
+### 会员判定与试用期会员
+
+「这个用户是不是会员」以前是一行到处重写的表达式（`vip_expire_at.After(now)`），
+散落在仓储、远程函数 SDK、CSV 导出三处。它只回答得了"是/否"，
+而客户端真正要的是四个答案，少一个界面就只能猜：
+
+| 问题 | 字段 | 不回答会怎样 |
+|---|---|---|
+| 是不是会员 | `isVip` | —— |
+| 还剩多久 | `expireAt` / `remainingSeconds` / `remainingDays` | 到期前无法提醒 |
+| 是不是**试用**会员 | `isTrial` / `trial` | 试用用户被引导去"续费"、付费用户被弹"免费试用" |
+| 试用还能不能领、为什么不能 | `trialOffer.available` / `.reason` | 入口该藏还是该亮，客户端只能猜 |
+
+因此判定只有一个入口 `VipService.ResolveEntitlement`：事实一次查齐
+（`GetVipEntitlementFacts` 一条 SQL），结论由**纯函数** `vipdomain.Evaluate` 算出。
+纯函数意味着这套判定不需要数据库就能测 —— 边界情况（刚好到期、试用中途买了付费、
+领过但已过期）在 `internal/domain/vip/entitlement_test.go` 里表驱动跑一遍。
+用户端 `/vip/status`、管理端 `/vip/entitlement`、远程函数 `aegis.user.get()`
+读的都是这一份结论，不可能各说各话。
+
+#### 试用是套餐的一种，不是另一套时长体系
+
+试用仍然只是把 `vip_expire_at` 往后推、仍然进 `vip_transactions` 账本
+（`pay_channel = 'trial'`）。`vip_plans.kind = 'trial'` 标出它是哪个套餐，
+新增的只有一张资格账本 `vip_trial_claims`。
+
+把「试用几天」放进 `apps.settings` 是另一种做法，但那会立刻产生两处配置
+（套餐里一个时长、设置里另一个时长），且控制台上"改哪个才生效"没人说得清。
+
+| 约束 | 落点 | 为什么 |
+|---|---|---|
+| 一人一次 | `uq_vip_trial_claims_user` 唯一约束 | 应用层判断会被并发穿透，约束不会 |
+| 试用套餐恒 0 元 | `ck_vip_plans_trial_free` + 保存时报错 | 定价 > 0 的试用等于一个可反复触发的免费入口 |
+| 每应用至多一个启用中的试用 | `uq_vip_plans_active_trial` | 多于一个时「点领取到底领哪个」只能靠 `ORDER BY` 的偶然顺序 |
+| 试用套餐不能购买 | `requireActivePlan` + `PaymentService` 下单校验 | 0 元套餐走购买入口就绕过了全部资格判定 |
+| 试用不进 `/vip/plans` | `ListPurchasableVipPlans` | 那是"能买什么"的列表；混进去客户端会渲染一张点了必然报错的卡片 |
+| 会员期内不能领 | `ClaimVipTrial` 事务内判定 | 那不是试用，是白送几天 |
+| 同设备只能领一次（可选） | 事务内查 + `uq_vip_trial_claims_device` | 开关开着却因为请求没带设备标识而放行，等于没有这个开关 —— 所以缺标识是**拒领**（40040） |
+
+其余几处刻意的取舍：
+
+- **领取没有幂等键**：试用天然一人一次，唯一约束就是幂等键。
+  仍在试用期内的重复请求返回上一次的结果（`replayed = true`），
+  而不是一句"你已经领过了"—— 那是最常见的一次网络重试。
+- **「当前是不是试用中」是推导出来的**：`vip_expire_at` 恰好等于这次试用发到的时刻。
+  用户后来买了付费，到期时间被推远，判定自动切换，不需要任何状态迁移，
+  也不会出现"买了付费还显示试用中"。
+- **试用期内购买是顺延而不是作废**（沿用 `extendUserVipTx` 的既有语义）：
+  剩余试用天数叠加到付费时长上。这是唯一不会让用户觉得"我一付钱就少了几天"的做法。
+- **管理端重置资格只删资格，不收回已发的时长**：客服要的是"让他重领"，
+  顺手扣掉时长会变成用户眼里的"我的会员没了"。
+- **管理员代领仍走同一套资格判定**（`AdminClaimTrialFor`），刻意不给"跳过资格"的开关：
+  要跳过就是直接送天数，`AdminGrantVip` 已经能做且会如实记成 `admin_grant` ——
+  混进试用里会污染转化率，而转化率正是开试用的理由。
+
+### 服务端会员校验与功能标识
+
+判定入口仍然只有 `ResolveEntitlement` 一个，这一节加的是**谁来问**与**问得多细**。
+
+#### 谁来问：接入方自己的后端
+
+此前只有两条问路：客户端拿用户令牌问 `/vip/status`，管理员拿管理端令牌问
+`/vip/entitlement`。接入方**自己的服务器**两样都不该有 —— 它没有用户令牌
+（那是用户的东西），更不该配管理员账号（那是整个租户的权限）。于是它只能相信
+客户端捎上来的那句"我是会员"，而这句话客户端说了不算。
+
+```
+POST /api/apps/{appKey}/vip/verify        X-Aegis-Function-Key: afk_…
+{ "accessToken": "eyJ…", "feature": "export" }
+```
+
+两样凭据各证明一件事：**密钥证明「谁在问」，令牌证明「问的是谁」**。
+
+| 取舍 | 理由 |
+|---|---|
+| **只接受 accessToken，不接受 userId / account** | 接入方的后端几乎一定会把「当前请求是谁」交给它自己的客户端来说。收 userId 就等于把身份判定外包给客户端：「客户端自报 42 → 接入方转发 → 我们回答 42 是会员 → 接入方放行发起请求的那个人」，攻击者知道任意一个会员的 userId 就能白嫖，而服务端密钥拦不住 —— 犯错的正是持有密钥的那一方 |
+| 不在 `/api/v1/apps/*` 网关命名空间下 | 那条命名空间围绕「用户令牌 + 三档包装」设计；服务端调用不该为了问一句话去实现签名与加密 |
+| 复用远程函数的调用密钥（`afk_…`） | 再造一套"会员校验专用密钥"只会让接入方在服务器上配两份凭据，而它们的信任级别完全一样 |
+| 令牌还要核对归属应用（40372） | 否则拿 A 应用的令牌能问出 B 应用同号用户的状态 |
+| 按 userId 批量查走管理端 | 对账、到期提醒、客服工单确实需要它，但那条路有管理员鉴权与审计，且调用方不可能把它误接到客户端上 |
+
+`verifyMembership` 是**不导出**的（小写），对外入口只有 `VerifyMembershipByToken` ——
+让"按 userId 校验"在类型层面就不可达，比在文档里写一句警告可靠。
+
+#### 问得多细：功能标识（feature tag）
+
+「是不是会员」只有一个维度。接入方一旦有两档会员（基础版能导出、高级版还能用 AI），
+后端就只能拿套餐名做字符串比较 —— 而套餐名是运营随时会改的展示文案。
+功能标识把「卖的是哪个套餐」与「解锁的是哪个能力」拆开：
+
+```
+vip_features               应用维护的功能目录（tag → 展示名）
+vip_plans.features         这个套餐包含哪些功能
+vip_transactions.features  开通那一刻的功能快照
+```
+
+| 约束 | 落点 | 为什么 |
+|---|---|---|
+| 校验时传未登记的标识 → 报错 40486 | `VerifyMembership` | 拼错一个字母（`exprot`）在自由字符串方案下表现为"永远返回 false"，没有任何一处说得出为什么 |
+| 套餐引用的标识必须都在目录里 | `EnsureFeatureTagsRegistered`（保存套餐时） | 同上，只是把报错时机从"几周后接入方来问"提前到"保存那一刻" |
+| 开通时**快照**功能列表 | `Grant.Features` → `vip_transactions.features` | 套餐配置随时会改，已经卖出去的权益不该被追溯改写 |
+| 当前权益 = 尚未到期的每一段的**并集** | `activeFeatureUnionSQL` | 会员期是顺延的：先买基础版再买高级版时两段都没到期，两边功能都该生效；用完的那几段自然出集合，权益随时间自己收敛 |
+| 功能权益以「是不是会员」为前提 | `Entitlement.HasFeature` | 过期用户的快照仍在账本里，只按标签命中会让到期三个月的人继续用高级功能 |
+| 删除功能标识不级联清套餐 | `AdminDeleteFeature` 返回 `affectedPlans` | 删功能是运营动作，不该被"还有套餐在用"卡住；残留引用会在校验入口明确报错，比静默改写一批套餐配置好排查 |
+
+支付直购的功能快照在**下单**时取（`MetaKeyVipFeatures`），与天数、价格同一时刻 ——
+从下单到支付成功可能过去几天，用户拿到的必须是他下单时看到的那一份。
+
+客户端侧同一份结论也能拿到：`/vip/status` 的 `features`、远程函数的
+`aegis.user.get().vipFeatures`。三处都由 `ResolveEntitlement` 投影而来
+（`Entitlement.View()`），不存在"服务端说有、客户端说没有"。
+
+### 远程函数 —— 能力目录是单一事实源
+
+`script` 运行时把接入方的自定义 API 逻辑放进 Aegis 进程内的 goja 沙箱。
+沙箱是 deny-by-default：脚本能做的每一件有副作用的事都必须由 `ScriptSDK` 显式注入。
+
+**能力目录在 [internal/domain/appfunction/capabilities.go](../domain/appfunction/capabilities.go)**，
+同时驱动四处：服务端校验、SDK 绑定、控制台勾选框、编辑器类型提示。
+新增一种能力只需目录加一行 + SDK 加一个 binder，控制台零改动即自动出现 ——
+与支付渠道 `Describe()`、风控条件目录同一套做法。
+`TestCapabilityCatalogMatchesBinders` 双向钉死「目录 ↔ 绑定分支」：
+目录多一条 → 勾得上却没有那个对象；绑定多一条 → 没声明也能调。
+
+TypeScript 声明片段也放在目录里，随 `/function-catalog` 下发。放在控制台
+另写一份的后果是「补全里有、运行时没有」，而这种错误要到发版之后才暴露 ——
+编辑器提示的全部价值就是提前暴露它。
+
+修掉的几个「看起来能用、其实走不通」：
+
+| 问题 | 后果 |
+|---|---|
+| `CreateFunction` 只放行 `wasm`/`http` | 控制台默认选 `script`，**创建表单按默认值提交必然 40091**，功能从第一步就断 |
+| 版本正文任何接口都取不回来 | 改一行脚本要从零重写整份 |
+| 没有试跑 | 验证一行改动的唯一方式是把半成品激活到线上，且每改一次多一条永久版本 |
+| 能力/超时/限额建好即锁死 | 想加一项能力只能删掉重建，而删除会连同全部版本与调用审计一起消失 |
+| 并发上限硬编码为 8 | 20ms 的脚本与 3s 的 HTTP 转发共用同一个闸门 |
+
+其余结构性约束：
+
+- **试跑读真、写假**。读假数据毫无意义（脚本分支几乎全由服务端状态决定），
+  写真数据会让「试一下」变成一次不可撤销的线上操作。`points.add` / `kv.incr`
+  在试跑时读一次真实值再算出「如果执行会变成多少」，否则
+  「今日额度已用尽」那条分支永远测不到。出站请求按方法分流：GET/HEAD 照发，
+  其余跳过 —— POST 可能是一次扣款。
+- **试跑失败返回 200**。失败是正常结果，作者要的是错误内容加上那之前的日志与
+  effects；回 4xx 会把这些全丢掉。真正的接口错误（函数不存在、语法不过）仍是 4xx。
+- **试跑用函数已声明的能力**，请求侧不能临时加：否则「试跑通过」证明不了
+  「发版之后能跑」，而那正是试跑本该拦住的事。
+- **频次限制走数据库原子自增**（`app_function_kv` + `__aegis:` 保留前缀），不是内存计数。
+  内存计数在多实例下的表现是「配了 60/分钟，实际放行 60×实例数」，而控制台上看不出来。
+  保留前缀脚本读写不到，否则脚本能把限制自己的那个计数清零。
+- **并发闸门记住容量**：`maxConcurrency` 可在控制台改，而 channel 容量创建时定死，
+  不比对就会出现「显示 32、实际仍是 8」且无处报错。
+- **函数配置（`aegis.config`）顶层必须是对象**：数组或标量会让 `aegis.config.x`
+  恒为 undefined，而那种失败不报错，只让阈值静默变回代码里的默认值。
+- **`console` 绑成 `aegis.log` 的别名**：「沙箱里没有 DOM」与「没人绑 console」是两回事。
+- **`aegis.email.send` 不接受收件地址**（恒为调用者绑定邮箱），与凭证邮件同一条约束：
+  允许任意填写等于把平台变成一个谁都能驱动的转发器。
+
+完整说明见 [docs/app-functions.md](../../docs/app-functions.md)。
+
 ### 邮件出口 —— 两档 provider
 
 `EmailService.sendMail` 是平台**唯一**的邮件出口，验证码 / 密码重置 / 欢迎信 /
@@ -725,6 +896,51 @@ Banner（投放位）与公告，方法挂在 `AppService` 上。三条结构性
 ```bash
 AEGIS_MAIL_PREVIEW_DIR=./preview go test ./internal/service -run TestDumpEmailPreviews
 ```
+
+### AvatarService —— 头像地址必须是永久的
+
+头像和别的资源有一个不一样的性质：**它的地址会被别人存起来**。控制台存进
+localStorage、移动端存进本地库、邮件正文里嵌成 `<img>`、中间还可能有 CDN。
+因此「当场可用」是不够的。
+
+重构前的链路交出去的是一个 **30 分钟**的存储代理票据（`/api/storage/proxy/{ticket}`），
+于是所有那些副本半小时后一起变成死链。更致命的是第二跳：读-改-写的客户端会把
+那个临时地址**原样 PUT 回来**，覆盖掉库里唯一那份 `storage://` 引用 ——
+这之后头像不是过期，是永久丢失。这条链路只在自定义上传时存在，
+因为只有它才产生 storage 引用（第三方头像与 Gravatar 都是永久外链）。
+
+```
+落库：storage://{configID}/{objectKey}      （不变，存量零迁移）
+出网：/api/avatars/{ownerToken}?v={version}  （永久，编码的是「谁」不是「哪个对象」）
+```
+
+服务端解析时**不看** `v` —— 那个参数只用来破缓存。因此换了头像地址不变，
+两年前存下的那份副本今天点开拿到的仍是这个人今天的头像。没有头像时它指向
+服务端生成的默认头像，所以 `avatar` 字段**恒不为空**，客户端不必各写一套兜底。
+
+其余结构性约束：
+
+- **`NormalizeAvatarInput` 是资料更新链路上唯一的头像入口**（用户端与管理端共用）。
+  临时票据地址与自家永久地址一律判回「不修改」；客户端提交的 `storage://` 引用
+  **拒绝** —— 不挡的话任何登录用户都能把头像设成 `storage://3/别人的私有文件.pdf`
+  再从头像地址上读出来。非 http(s) 协议一并拒绝（`javascript:` 进了 `<a href>` 是可执行的）。
+- **解析不做任何存储访问**。原来每读一次资料就往 Redis 写一个票据，一个 20 行的
+  用户列表就是 20 次写入，而其中大多数图根本不会被下载。现在推迟到真的有人取图时。
+- **自愈**：库里那一列是空的或明显是临时票据地址时，按 `avatar_assets` 找回引用并回写。
+  其它形态一律不碰 —— 用户可能就是想设一个外链，自作主张改回去比丢了更糟。
+  因此这次修复**不需要迁移脚本**，受影响的行下次被读到时自己好。
+- **移除头像以前没有入口**：更新资料时空串的语义是「不修改」，传过一次就再也回不去。
+  现在有 `DELETE /me/avatar`，`avatar_assets` 里那条置为 `deleted` 而不是删行
+  （对象还在，才有「换回上一张」）。
+- **`upload.avatar` 仍是字符串**。改成对象会让所有已发布的 App 在上传成功后
+  把一个 `[object Object]` 当图片地址加载；新增的结构挂在 `upload.view` 上。
+- **管理员头像走平台级存储**（appID=0）：挂到某个应用下面的话，那个应用被归档时
+  管理员的头像会跟着一起没了。
+- **取对象失败时回落默认头像而不是 404**。存储配置被删、桶里的文件被清了，
+  界面上会变成一个碎图标，而用户什么都没做错 —— 真实原因留在日志里。
+
+图像管线（`avatar_pipeline.go`）与默认头像（`avatar_identity.go`）的逐条取舍
+见 [docs/avatar.md](../../docs/avatar.md)。
 
 ### RealtimeService
 - 每个 WebSocket 连接对应一个 NATS Subject（`realtime.user.{appid}.{userid}`）

@@ -83,8 +83,13 @@ const (
 	MetaKeyPurpose        = "purpose"
 	MetaKeyVipPlanID      = "vipPlanId"
 	MetaKeyVipPlanName    = "vipPlanName"
-	MetaKeyVipDays        = "vipDurationDays"
+	MetaKeyVipDays = "vipDurationDays"
 	MetaKeyVipBonus       = "vipBonusIntegral"
+	// MetaKeyVipFeatures 下单那一刻套餐包含的功能标识。
+	//
+	// 与天数、价格一样是**快照**：从下单到支付成功可能过去几分钟甚至几天，
+	// 期间运营改了套餐配置的话，用户拿到的必须是他下单时看到的那一份。
+	MetaKeyVipFeatures    = "vipFeatures"
 	MetaKeyIntegralAmount = "integralAmount"
 )
 
@@ -95,6 +100,7 @@ type FulfillmentInstruction struct {
 	WalletAmount   decimal.Decimal // wallet_recharge：入账金额
 	VipPlanID      *int64          // vip_purchase：套餐快照
 	VipPlanName    string
+	VipFeatures    []string
 	VipDays        int
 	VipBonus       int64
 	IntegralAmount int64 // integral_purchase：发放积分

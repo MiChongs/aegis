@@ -18,6 +18,7 @@ import (
 	paymentdomain "aegis/internal/domain/payment"
 	platformdomain "aegis/internal/domain/platform"
 	plugindomain "aegis/internal/domain/plugin"
+	vipdomain "aegis/internal/domain/vip"
 	pgrepo "aegis/internal/repository/postgres"
 	"aegis/pkg/egress"
 	apperrors "aegis/pkg/errors"
@@ -892,6 +893,12 @@ func (s *PaymentService) prepareFulfillmentMetadata(ctx context.Context, appID i
 		if plan == nil || !plan.IsActive {
 			return nil, apperrors.New(40480, http.StatusNotFound, "套餐不存在或已下架")
 		}
+		// 试用套餐 0 元：让它进支付链路等于开了一条"下个 0 元单就发试用"的路，
+		// 且完全绕过一人一次的资格判定。与余额购买那条闸门是同一件事。
+		if plan.IsTrial() {
+			return nil, apperrors.New(errCodeTrialPlanNotPurchase, http.StatusForbidden,
+				"试用套餐只能领取，不能购买")
+		}
 		if !plan.Price.Equal(amount) {
 			return nil, apperrors.New(40089, http.StatusBadRequest, "支付金额与套餐价格不一致")
 		}
@@ -899,6 +906,7 @@ func (s *PaymentService) prepareFulfillmentMetadata(ctx context.Context, appID i
 		out[paymentdomain.MetaKeyVipPlanName] = plan.Name
 		out[paymentdomain.MetaKeyVipDays] = plan.DurationDays
 		out[paymentdomain.MetaKeyVipBonus] = plan.BonusIntegral
+		out[paymentdomain.MetaKeyVipFeatures] = vipdomain.NormalizeFeatureTags(plan.Features)
 	case paymentdomain.PurposeIntegralPurchase:
 		app, err := s.pg.GetAppByID(ctx, appID)
 		if err != nil {
@@ -941,6 +949,7 @@ func (s *PaymentService) buildFulfillmentInstruction(order *paymentdomain.Order)
 		planID := metaInt64(order.Metadata, paymentdomain.MetaKeyVipPlanID)
 		instr.VipPlanID = &planID
 		instr.VipPlanName = metaString(order.Metadata, paymentdomain.MetaKeyVipPlanName)
+		instr.VipFeatures = metaStringSlice(order.Metadata, paymentdomain.MetaKeyVipFeatures)
 		instr.VipDays = int(metaInt64(order.Metadata, paymentdomain.MetaKeyVipDays))
 		instr.VipBonus = metaInt64(order.Metadata, paymentdomain.MetaKeyVipBonus)
 		if instr.VipDays <= 0 {
@@ -980,6 +989,31 @@ func (s *PaymentService) ensureOrderFulfilled(ctx context.Context, order *paymen
 }
 
 // metaString / metaInt64 从 JSON 反序列化的 metadata 中安全取值
+// metaStringSlice 从订单 metadata 里取一组字符串。
+//
+// 元数据经过一次 JSON 往返（落库时 marshal、读出来 unmarshal），
+// `[]string` 回来是 `[]any` —— 直接类型断言成 `[]string` 会永远失败，
+// 而失败的表现是"功能快照悄悄丢了"，用户付了钱却少一项权益。
+func metaStringSlice(m map[string]any, key string) []string {
+	if m == nil {
+		return nil
+	}
+	switch value := m[key].(type) {
+	case []string:
+		return value
+	case []any:
+		out := make([]string, 0, len(value))
+		for _, item := range value {
+			if text, ok := item.(string); ok {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 func metaString(m map[string]any, key string) string {
 	if m == nil {
 		return ""

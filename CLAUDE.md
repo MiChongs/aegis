@@ -85,17 +85,23 @@ graph TD
 | `internal/authz/` | **授权引擎**：Casbin 模型 + 权限词汇 + 内置角色 + 路由规则表 + 策略存储 | [CLAUDE.md](internal/authz/CLAUDE.md) |
 | `internal/domain/` | 所有领域类型定义 | [CLAUDE.md](internal/domain/CLAUDE.md) |
 | `internal/domain/organization/` | **组织架构**：租户边界、UUID 对外标识、内置角色与权限目录 | [docs](docs/organization.md) |
+| `internal/domain/appfunction/` | **远程函数能力目录**：能力键 / 风险档 / TS 声明 / 内置模板，一份目录同时驱动服务端校验、SDK 绑定、控制台勾选框与编辑器提示 | [docs](docs/app-functions.md) |
 | `internal/event/` | NATS 事件主题常量 | — |
 | `internal/middleware/` | Gin 中间件（防火墙/认证/加密/限流） | [CLAUDE.md](internal/middleware/CLAUDE.md) |
 | `internal/repository/` | Postgres / Redis / LegacyMySQL 数据访问 | [CLAUDE.md](internal/repository/CLAUDE.md) |
 | `internal/service/` | 所有业务逻辑服务 | [CLAUDE.md](internal/service/CLAUDE.md) |
 | `internal/transport/http/` | Gin 路由、Handler、DTO、OpenAPI | [CLAUDE.md](internal/transport/http/CLAUDE.md) |
 | **平台治理** | 全站应用的冻结 / 封禁 / 限制 / 申诉（超管与平台管理员） | [docs](docs/platform-governance.md) |
+| `pkg/clientip/` | **真实客户端 IP**：受信代理网段 + 平台探测 + 转发链判定 | [docs](docs/client-ip.md) |
 | `pkg/egress/` | **出海代理网关**：域名后缀路由 + 多协议端点 + 健康检查 | [docs](docs/egress-gateway.md) |
 | `pkg/banner/` | **启动横幅渲染引擎**：FIGlet 艺术字 + 明细表格 + 终端能力降级 | [bootstrap](internal/bootstrap/CLAUDE.md#启动横幅) |
 | `pkg/routetable/` | **路由清单渲染**：分组表格 / 树形 / Markdown / CSV / HTML / JSON，宽度自适应 | [transport/http](internal/transport/http/CLAUDE.md#路由清单与分组规则) |
+| **头像服务** | 地址**永久**不失效（编码的是「谁」不是「哪个对象」）+ EXIF 纠正 / 多尺寸 / blurhash + 服务端自绘默认头像 | [docs](docs/avatar.md) |
 | `pkg/receipt/` | **支付凭证 PDF**：10 语言 A4 排版 + 字体决策 + 分页 | [docs](docs/payment-receipt.md) |
 | **交易与凭证** | 订单与钱包流水**两类主体**都能出凭证；同一笔钱只出一份（挂着订单的流水由订单出具） | [docs](docs/payment-receipt.md#两类凭证主体) |
+| **会员与试用** | 会员判定收成一个入口（是不是会员 / 还剩多久 / 是不是**试用** / 试用还能不能领）；试用是套餐的一种，一人一次由唯一约束保证 | [service](internal/service/CLAUDE.md#会员判定与试用期会员) |
+| **远程函数** | 接入方把自定义 API 逻辑放进服务端 JS 沙箱；**试跑读真写假**、版本正文取得回、能力/闸门/配置随时可改 | [docs](docs/app-functions.md) |
+| **服务端会员校验** | 接入方后端用应用密钥直接问「这个用户是不是会员」，可细到**功能标识**（`export` / `ai.chat`）；套餐改名不影响判定 | [service](internal/service/CLAUDE.md#服务端会员校验与功能标识) |
 | `pkg/i18n/` | **通用国际化**：语言协商 + CLDR 复数 + 定点金额/日期格式化 | [docs](docs/payment-receipt.md#语言协商) |
 | `pkg/fontkit/` | **字体归一化**：TTC 拆分成独立 sfnt + 字符覆盖度查询 | [docs](docs/payment-receipt.md#中日韩字体) |
 | `pkg/` | 共享工具包（errors/logger/response/tracing） | — |
@@ -169,6 +175,12 @@ pnpm lint       # ESLint
 可选：`EGRESS_*` —— 出海代理网关。配好端点与域名后缀规则后，平台内所有出网调用
 （OAuth / 支付 / 对象存储 / GeoIP / Webhook / 邮件）按同一张路由表决定走直连还是境外线路。
 关闭时全部直连，详见 [docs/egress-gateway.md](docs/egress-gateway.md)。
+
+可选：`TRUSTED_PROXIES` / `CLIENT_IP_*` —— 真实客户端 IP 的判定方式。
+**默认值（`auto` + `infra`）在 Zeabur / Kubernetes / Docker / 同机反代下开箱即用**，
+站在 Cloudflare 后面时填 `TRUSTED_PROXIES=infra,cloudflare`。
+限流、封禁、地理风控、审计全部建立在它算出来的地址上，判错不报错只失效，
+详见 [docs/client-ip.md](docs/client-ip.md)。
 
 可选：`DOCS_PORTAL_URL`（默认 `/developers`）—— 后端 `/docs` 的 302 目标。
 文档由 aegis-console 的公开门户承载，后端只保留 `/openapi.json`；前后端分域部署时填绝对地址。
@@ -343,6 +355,7 @@ pnpm lint       # ESLint
 | 出海代理 | 自研网关（`pkg/egress`）：域名后缀路由 + http/https/socks5/socks5h/ssh/trojan/shadowsocks，协议实现分别来自 x/net/proxy、x/crypto/ssh、go-shadowsocks2 |
 | 启动横幅 | `pkg/banner`：go-figure（FIGlet 艺术字，内嵌 148 字体）+ go-pretty（表格/着色，自带 NO_COLOR 与 Windows VT 识别）+ gopsutil（主机事实）+ go-humanize + go-isatty/x/term（终端探测） |
 | 支付凭证 | `pkg/receipt`：gopdf（PDF 引擎，支持 TTF 子集嵌入）+ `pkg/fontkit`（TTC → 独立 sfnt，gopdf 读不了 TTC/OTF）+ `pkg/i18n`（x/text 的语言协商与 CLDR 复数）+ x/image/gofont（内嵌拉丁字形，保证英文凭证零依赖）+ go-colorful（Lab 空间配色派生与 WCAG 对比度）+ boombuler/barcode（矢量二维码）。10 语言、默认 en、Claude 暖调配色，详见 [docs](docs/payment-receipt.md) |
+| 客户端 IP | realclientip-go（XFF 与 RFC 7239 Forwarded 解析 + 五种取值策略 + 随库发布的 Cloudflare 网段）+ go4.org/netipx（受信网段集合运算），详见 [docs](docs/client-ip.md) |
 | 地理位置 | GeoIP2 MaxMind mmdb (自动更新) |
 | 风控引擎 | expr-lang/expr（表达式规则，**类型化 Env + 编译缓存**，写错变量名在保存时即报错）+ mileusna/useragent（客户端解析：设备型号 / 桌面·移动·平板·Bot 分类 / 浏览器与系统版本）+ redis_rate GCRA 限流 + Redis HyperLogLog 基数统计（账号扩散速度），详见 [internal/service](internal/service/CLAUDE.md#riskservice--风控中心) |
 | 可观测性 | OpenTelemetry + Zap |

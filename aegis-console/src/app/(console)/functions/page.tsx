@@ -1,12 +1,13 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Code2, ExternalLink, KeyRound } from "lucide-react";
+import { Code2, Database, ExternalLink, KeyRound } from "lucide-react";
 import { useAdminAppsQuery } from "@/lib/admin-hooks";
 import { FunctionManager } from "@/components/functions/function-manager";
 import { FunctionKeysPanel } from "@/components/functions/function-keys-panel";
+import { FunctionKvPanel } from "@/components/functions/function-kv-panel";
 import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/components/ui/data-state";
 import { SectionHeading } from "@/components/ui/section-heading";
@@ -20,11 +21,10 @@ function FunctionsPageInner() {
 
   const appsQuery = useAdminAppsQuery();
   const apps = useMemo(() => appsQuery.data || [], [appsQuery.data]);
+  // 只记录用户的显式选择，当前应用由它与列表**派生**出来。
+  // 用 effect 把首项同步进 state 会触发级联渲染，也过不了
+  // react-hooks/set-state-in-effect —— 与配置面板草稿同一条约束。
   const [selectedAppKey, setSelectedAppKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (apps.length > 0 && !selectedAppKey) setSelectedAppKey(apps[0].appKey);
-  }, [apps, selectedAppKey]);
 
   const selectedApp = useMemo(
     () => apps.find((app) => app.appKey === selectedAppKey) || apps[0] || null,
@@ -78,6 +78,10 @@ function FunctionsPageInner() {
               <Code2 className="size-4" />
               函数
             </TabsTrigger>
+            <TabsTrigger value="kv">
+              <Database className="size-4" />
+              键值存储
+            </TabsTrigger>
             <TabsTrigger value="keys">
               <KeyRound className="size-4" />
               调用密钥
@@ -86,6 +90,9 @@ function FunctionsPageInner() {
 
           <TabsContent value="functions">
             <FunctionManager appKey={selectedApp?.appKey} />
+          </TabsContent>
+          <TabsContent value="kv">
+            <FunctionKvPanel appKey={selectedApp?.appKey} />
           </TabsContent>
           <TabsContent value="keys">
             <FunctionKeysPanel appKey={selectedApp?.appKey} />

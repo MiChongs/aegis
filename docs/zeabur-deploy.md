@@ -18,6 +18,16 @@
 
 前端由 `aegis-console-git` 独立构建，产物也独立。
 
+## 客户端 IP：不用配
+
+Zeabur 的入口网关在集群内网，业务容器看到的直连对端是一个 `10.x` / `100.64.x` 地址。
+后端默认就把这些网段算作受信代理，并从 `X-Forwarded-For` 里取真实客户端 ——
+`auto` 档还会认出 `ZEABUR_SERVICE_ID` 并补上 CDN 边缘网段，
+所以 `TRUSTED_PROXIES` 留空即可。
+
+判定结果不对时，设 `CLIENT_IP_DEBUG_HEADER=true` 后 curl 一次就能看到结论与全部依据，
+详见 [client-ip.md](client-ip.md)。
+
 ## `zbpack.json`：把构建计划钉在仓库里
 
 仓库根有一个 `zbpack.json`：
@@ -54,19 +64,32 @@ Available Commands:
 | 读当前值 | 能：`zeabur service get --id <svc> --json` 看 `WatchPaths` |
 | 写 | **不能**，去 Dashboard → 服务 → Settings → Watch Paths |
 
-要配的值：
+**填进哪个框很重要**：是服务 Settings 里的 **Watch Paths**，一行一条。
+这几行**不是 Dockerfile 路径、不是 Dockerfile 内容**——填错框的表现是构建期
+`dockerfile parse error on line 1: unknown instruction: /aegis-console/**`，
+因为 Zeabur 把那几行当 Dockerfile 解析了。`aegis-console-git` 走 zbpack 对
+Next.js 的自动识别，它**根本不该有任何 Dockerfile 设置**。
+
+要配的值（gitignore 语法，**顺序有意义**）：
 
 ```
-# aegis-api-git
-!/aegis-console/**
+# aegis-api-git —— 先全收，再把前端排除掉
 /**
+!/aegis-console/**
 
-# aegis-console-git
+# aegis-console-git —— 只收前端
 /aegis-console/**
 ```
 
-写法是 gitignore 语法。留着缺省的 `*` 意味着**任何**改动都重建两个服务：
-只改一行前端文案会连带重建后端镜像、重启 API、断掉在线会话。
+**顺序不能反。** gitignore 是「最后一条命中的规则说了算」，写成
+
+```
+!/aegis-console/**
+/**            ← 它在后面，把前端又收回来了
+```
+
+的话，排除完全不生效：改前端照样重建后端，而且从设置界面上看不出问题
+（两条规则都在，只是次序让第一条失效）。
 
 配完用 CLI 核对：
 
