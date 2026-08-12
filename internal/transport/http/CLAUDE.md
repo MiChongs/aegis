@@ -10,7 +10,9 @@ Gin 路由注册、HTTP Handler 实现、请求/响应 DTO、OpenAPI 规范生�
 
 | 文件 | 说明 |
 |---|---|
-| `router.go` | `NewRouter()` — 路由注册入口（单文件，含所有路由组） |
+| `router.go` | `NewRouter()` — 中间件栈 + 按域编排（不含任何路由注册） |
+| `router_deps.go` | `RouterDeps` 具名依赖 + `Handler` 装配 |
+| `router_*.go` | 各域的路由注册，详见下表 |
 | `route_groups.go` | **命名空间规则表**（单一事实源）+ `deriveTags()` + `RouteInventory()` |
 | `route_chains.go` | 接住 `gin.DebugPrintRouteFunc`：灭掉调试滚屏 + 采集中间件链深度 |
 | `testdata/routes.golden` | 全量路由黄金快照，由 `TestRouteTableMatchesGoldenSnapshot` 钉住 |
@@ -91,6 +93,32 @@ POST    /api/admin/profile/avatar [AdminAuth]
 # WebSocket
 GET /api/ws                      实时通信入口
 ```
+
+## 路由注册的分域
+
+`NewRouter` 只做三件事：装中间件栈、建 `Handler`、按原顺序调用各域的 `register*`。
+近千条注册分在这些文件里：
+
+| 文件 | 注册函数 | 覆盖 |
+|---|---|---|
+| `router_public.go` | `registerPublicRoutes` / `registerPublicCaptchaAndLegalRoutes` | 站点页面、健康探针、公开元数据、验证码、法律文本 |
+| `router_gateway.go` | `registerGatewayRoutes` | `/api/v1/apps/:appkey/*` 接入网关 |
+| `router_admin.go` | `registerAdminAuthRoutes` / `registerAdminAppRoutes` / `registerAdminModuleRoutes` | 管理端认证、应用管理、工单与通知 |
+| `router_platform.go` | `registerPlatformGovernanceRoutes` / `registerPlatformStorageRoutes` | 平台治理与平台级存储（恒全局作用域） |
+| `router_admin_system.go` | `registerAdminSystemRoutes` / `registerPlatformBannerActiveRoute` | `/api/admin/system/*` 平台设置 |
+| `router_org.go` | `registerOrgRoutes` | 组织架构（收 `*gin.RouterGroup`，不自建组） |
+| `router_compat.go` | `registerAppCompatRoutes` / `registerAdminAppConfigRoutes` / `registerWorkflowCompatRoutes` | `/api/app/*` 与 `/api/admin/app/*` 旧命名空间 |
+| `router_user.go` | `registerLegacyAuthRoutes` / `registerUserRoutes` / `registerCommerceRoutes` | 旧明文认证、用户端、支付与钱包 |
+
+两条约束：
+
+**注册顺序不能重排。** gin 用前缀树存路由，静态段与参数段在同一层共存时是否 panic
+与注册先后有关（`/organizations/tree` 与 `/organizations/:orgId` 就是这种共存）。
+`NewRouter` 里那十六行严格复刻拆分前的顺序，按字母重排等于夹带一个只在启动时才炸的行为变更。
+`TestOrgRoutesRegisterWithoutConflict` 守这一条。
+
+**子域收路由组，不自建。** `registerOrgRoutes` 的入参是**已经配好中间件的** `adminSystem`
+组而不是 `*gin.Engine` —— 重新建一个同路径的组会另起一条中间件链，鉴权与审计就都对不上了。
 
 ## 路由清单与分组规则
 
