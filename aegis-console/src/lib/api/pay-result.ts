@@ -60,6 +60,34 @@ export function payMethodLabel(method: string): string {
   return table[method?.toLowerCase()] ?? method;
 }
 
+/**
+ * 渠道 → Simple Icons slug，与 `components/payment/payment-brand-icon.tsx` 的注册表对齐。
+ *
+ * 聚合渠道（易支付系）本身没有品牌 mark，但它的 `provider_type` 说明了钱最终
+ * 从哪个钱包出去 —— 用户记得的是「我用支付宝付的」，不是「我走的易支付」，
+ * 所以先看渠道、渠道认不出再看子类型。都认不出交给中性 mark 兜底。
+ */
+export function payBrandSlug(method: string, providerType?: string): string | undefined {
+  const byMethod: Record<string, string> = {
+    balance: "wallet",
+    alipay_native: "alipay",
+    wechat_native: "wechat",
+    stripe: "stripe",
+    paypal: "paypal",
+    paddle: "paddle",
+    lemonsqueezy: "lemonsqueezy",
+    razorpay: "razorpay",
+    coinbase: "coinbase",
+    square: "square"
+  };
+  const bySubType: Record<string, string> = {
+    alipay: "alipay",
+    wxpay: "wechat",
+    wechat: "wechat"
+  };
+  return byMethod[method?.toLowerCase()] ?? bySubType[providerType?.toLowerCase() ?? ""];
+}
+
 /** 子支付类型 → 中文名。空串表示这个渠道没有子类型概念。 */
 export function payTypeLabel(providerType?: string): string {
   const table: Record<string, string> = {

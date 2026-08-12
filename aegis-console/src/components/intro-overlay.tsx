@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { PixelIntro } from "@/components/background/pixel-intro";
 
 // ─────────────────────────────────────────────────────────────────────
@@ -18,18 +19,31 @@ const STORAGE_KEY = "aegis.intro.shown";
 const TOTAL_MS = 2400;
 const FADE_OUT_MS = 520;
 
+/**
+ * 交易类落地页不放品牌动画。
+ *
+ * `/pay/result` 面向的是刚付完钱的终端用户，而且几乎人人都是首访
+ * （渠道回跳、常常还在应用内的 WebView 里，localStorage 是空的），
+ * 于是这段 2.4 秒的开场恰好挡在「我这笔钱到底付没付成功」前面。
+ * 品牌门面的价值在这一屏上是负的。
+ */
+const SKIP_PREFIXES = ["/pay/"];
+
 // SSR 阶段永远返回 "idle"（不渲染任何 DOM），挂载后再决定是否展示动画；
 // 避免因 typeof window 分支导致服务端 / 客户端首次渲染的 DOM 不一致而触发
 // React 19 的 hydration mismatch 错误。
 type Phase = "idle" | "visible" | "fading" | "gone";
 
 export function IntroOverlay() {
+  const pathname = usePathname();
+  const skip = SKIP_PREFIXES.some((prefix) => pathname?.startsWith(prefix));
   const [phase, setPhase] = useState<Phase>("idle");
 
   // 挂载后（仅客户端）判定是否展示；通过 microtask 异步 setState，
   // 避免 React 19 规则 "setState synchronously within an effect" 告警，
   // 同时保证在首帧浏览器 paint 前就完成 state 切换。
   useEffect(() => {
+    if (skip) return;
     let cancelled = false;
     const resolve = () => {
       if (cancelled) return;
@@ -53,7 +67,9 @@ export function IntroOverlay() {
     return () => {
       cancelled = true;
     };
-  }, []);
+    // skip 只在跳过时阻止这次判定，**不写 STORAGE_KEY** ——
+    // 用户之后进控制台还是该看到一次开场，不该被一次支付回跳吃掉。
+  }, [skip]);
 
   const handleDone = useCallback(() => {
     setPhase("fading");
@@ -65,7 +81,7 @@ export function IntroOverlay() {
     return () => clearTimeout(t);
   }, [phase]);
 
-  if (phase === "idle" || phase === "gone") return null;
+  if (skip || phase === "idle" || phase === "gone") return null;
 
   return (
     <div
