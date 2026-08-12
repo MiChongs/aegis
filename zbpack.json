@@ -1,0 +1,6 @@
+{
+  "$schema": "https://schema.zeabur.app/zbpack.json",
+  "dockerfile": {
+    "path": "deploy/docker/Dockerfile"
+  }
+}
