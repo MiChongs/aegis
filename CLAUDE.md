@@ -96,6 +96,7 @@ graph TD
 | `pkg/egress/` | **出海代理网关**：域名后缀路由 + 多协议端点 + 健康检查 | [docs](docs/egress-gateway.md) |
 | `pkg/banner/` | **启动横幅渲染引擎**：FIGlet 艺术字 + 明细表格 + 终端能力降级 | [bootstrap](internal/bootstrap/CLAUDE.md#启动横幅) |
 | `pkg/routetable/` | **路由清单渲染**：分组表格 / 树形 / Markdown / CSV / HTML / JSON，宽度自适应 | [transport/http](internal/transport/http/CLAUDE.md#路由清单与分组规则) |
+| `pkg/gifcaptcha/` | **动态图片验证码**：逐帧动画 GIF（字形位移/旋转/变色 + 漂移噪点 + 干扰线 + 水波扭曲），纯 Go、字体内嵌 | [service](internal/service/CLAUDE.md#动态图片验证码gifcaptcha) |
 | **头像服务** | 地址**永久**不失效（编码的是「谁」不是「哪个对象」）+ EXIF 纠正 / 多尺寸 / blurhash + 服务端自绘默认头像 | [docs](docs/avatar.md) |
 | `pkg/receipt/` | **支付凭证 PDF**：10 语言 A4 排版 + 字体决策 + 分页 | [docs](docs/payment-receipt.md) |
 | **交易与凭证** | 订单与钱包流水**两类主体**都能出凭证；同一笔钱只出一份（挂着订单的流水由订单出具） | [docs](docs/payment-receipt.md#两类凭证主体) |
@@ -356,6 +357,7 @@ pnpm lint       # ESLint
 | 启动横幅 | `pkg/banner`：go-figure（FIGlet 艺术字，内嵌 148 字体）+ go-pretty（表格/着色，自带 NO_COLOR 与 Windows VT 识别）+ gopsutil（主机事实）+ go-humanize + go-isatty/x/term（终端探测） |
 | 支付凭证 | `pkg/receipt`：gopdf（PDF 引擎，支持 TTF 子集嵌入）+ `pkg/fontkit`（TTC → 独立 sfnt，gopdf 读不了 TTC/OTF）+ `pkg/i18n`（x/text 的语言协商与 CLDR 复数）+ x/image/gofont（内嵌拉丁字形，保证英文凭证零依赖）+ go-colorful（Lab 空间配色派生与 WCAG 对比度）+ boombuler/barcode（矢量二维码）。10 语言、默认 en、Claude 暖调配色，详见 [docs](docs/payment-receipt.md) |
 | 客户端 IP | realclientip-go（XFF 与 RFC 7239 Forwarded 解析 + 五种取值策略 + 随库发布的 Cloudflare 网段）+ go4.org/netipx（受信网段集合运算），详见 [docs](docs/client-ip.md) |
+| 验证码 | 静态图形 / 算术 / 数字走 base64Captcha；音频 WAV 走 dchest/captcha；**动态 GIF 是自研的 `pkg/gifcaptcha`**：image/gif（逐帧编码 + 全局色表）+ fogleman/gg（噪点与干扰曲线）+ x/image 的 opentype/gofont（内嵌字体）与 draw（仿射变换）+ go-colorful（HCL 取色）。外观按应用/平台分别动态配置，详见 [internal/service](internal/service/CLAUDE.md#动态图片验证码gifcaptcha) |
 | 地理位置 | GeoIP2 MaxMind mmdb (自动更新) |
 | 风控引擎 | expr-lang/expr（表达式规则，**类型化 Env + 编译缓存**，写错变量名在保存时即报错）+ mileusna/useragent（客户端解析：设备型号 / 桌面·移动·平板·Bot 分类 / 浏览器与系统版本）+ redis_rate GCRA 限流 + Redis HyperLogLog 基数统计（账号扩散速度），详见 [internal/service](internal/service/CLAUDE.md#riskservice--风控中心) |
 | 可观测性 | OpenTelemetry + Zap |

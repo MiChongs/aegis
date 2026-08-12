@@ -28,6 +28,10 @@
 | `avatar_link.go` | — | 主体令牌签名 + 永久地址构造 + **写回闸门**（`NormalizeAvatarInput`） |
 | `avatar_pipeline.go` | — | 解码校验 / EXIF 纠正 / 方形裁剪 / 多尺寸 / 重编码 / blurhash / 主色 |
 | `avatar_identity.go` | — | 默认头像的确定性生成（identicon / 拼音首字母） |
+| `captcha_service.go` | `CaptchaService` | 六档验证码的生成与校验入口 + 短信验证码与防轰炸链 |
+| `captcha_resolver.go` | — | 服务端决定下发哪一档（客户端不参与选择）+ 场景要求的折叠 |
+| `captcha_chiral.go` | — | 手性碳点选：分子生成 / 手性检测 / 2D 渲染 / 坐标校验（RDKit 微服务的降级实现） |
+| `captcha_sms.go` / `captcha_sms_config.go` | — | 短信服务商适配与按用途分模板的配置解析 |
 | `db_manager.go` | `DatabaseManager` | 数据库生命周期与泄漏监控总入口（采集/告警/历史/会话治理） |
 | `db_leak.go` | — | 六类泄漏判定（连接/事务/快照/WAL/两阶段事务/存储）+ 指标趋势检测 |
 | `db_sessions.go` | — | pg_stat_activity / 复制槽 / 两阶段事务 / 死元组视图与会话终止 |
@@ -405,6 +409,71 @@ Finish 阶段**不重新推导**，而是用 Begin 下发的那个 RP ID
   否则「管理员帮用户改一次密码」就绕过了整套策略。
 - `maxAge` / `preventReuse` 用 `lookupInt`（区分「键不存在」与「显式为 0」）而不是 `intSetting`：
   这两个字段的 0 是有效取值，用后者会让「关掉过期」被静默改回默认 365 天。
+
+### 动态图片验证码（gifcaptcha）
+
+`dynamic` 档此前调的是 `dchest/captcha` 的 `NewImage().WriteTo()`，而那个方法写的是
+**PNG**：类型叫 dynamic、`mimeType` 报 image/png、画面一动不动。现在渲染下沉到
+[pkg/gifcaptcha](../../pkg/gifcaptcha)，`CaptchaService` 只做「参数 → 渲染」「答案 → Redis」。
+
+逐帧变化的有五类，缺任何一类都会让逐帧相减重新变得可行：
+
+| 逐帧在变的 | 作用 |
+|---|---|
+| 每个字符各自的位移 / 旋转 / 缩放 | 单帧模板匹配失效 |
+| 每个字符的颜色（HCL 转圈） | 按色彩分割字符失效 |
+| 漂移噪点 | 噪点固定的话两帧相减就能消掉 |
+| 平移的干扰曲线（字前与字后各有） | 打断连通域切分 |
+| 全画面水波扭曲 + 扫过的色带 | 背景也在变，没有可当底图减掉的共同帧 |
+
+结构性约束：
+
+- **循环无缝**：周期运动的相位写成「整数圈 × t」，t=1 与 t=0 重合，
+  否则每轮交界处闪一下。`TestAnimationLoopsSeamlessly` 钉住。
+- **字体内嵌，不读系统字体目录**：最小镜像里往往一个字体都没有，
+  依赖系统字体的实现在那种环境画出来是空白且不报错。
+- **调色板固定、索引直接算**：`color.Palette.Index` 是 O(像素 × 256) 的最近色搜索，
+  240×80×12 帧要跑 5900 万次距离计算。改成 216 色立方体 + 40 级灰阶后索引由算术得出，
+  且所有帧共用一张全局色表。
+- **字形变换用 `ApproxBiLinear`**：带核重采样在 2 倍缩小时占整条链路四成时间（41ms → 10.6ms）。
+- **参数有上界**：宽 × 高 × 帧数决定渲染耗时与响应体大小，超预算时减帧而不是报错。
+- 答案按小写落库；字符集剔除 `0/O`、`1/I/L` 这类易混字符。
+
+#### 外观是动态配置
+
+| 作用域 | 存储 | 管理入口 |
+|---|---|---|
+| 应用级 | `apps.settings.captcha.dynamic` | `/apps/{appKey}?tab=captcha` |
+| 平台级 | `platform_settings` 的 `adminCaptcha.dynamic` | `/configuration?tab=security` |
+
+环境变量只留平台总开关 `CAPTCHA_DYNAMIC_ENABLED`（与 image/math/digit 同档），
+外观参数不配环境变量 —— 同一件事两个入口时没人说得清哪个生效。
+
+- **渲染参数由调用方带进来**（`GenerateRequest.Dynamic`）：两种作用域存在两张表里，
+  服务自己查就得同时依赖 `AppService` 与 `PlatformSettingsService`。
+- **读取先铺默认值再反序列化**：存量 JSON 没有 `dynamic` 键、或只存了一半时自动落回默认，
+  同时保住「显式写下的 0」（干扰强度调到 0 不能每次读取被改回 45）。
+  `TestAppConfigMergesPartialDynamicJSON` 钉住。
+- **更新接口里 `dynamic` 是指针，留空即不修改**：那个 PUT 是全量覆盖式的。
+- **落库前 `Normalized()`**：库里存的就是实际生效的值。
+
+#### 样张接口
+
+`POST /api/admin/apps/{appKey}/captcha-config/preview`（应用作用域）与
+`POST /api/admin/system/captcha/preview`（平台作用域）共用同一个 handler，
+参数全在请求体里，不读也不写配置。
+
+- **不落 Redis**，签发不出能通过校验的东西。`TestPreviewDynamicCaptchaLeavesNoRecord` 断言零写入。
+- 返回**夹取后真正生效的参数**与字节数，控制台据此说明「填 60 帧、实际 13 帧」。
+- 带样张答案：它不是凭据，而管理员要判断的正是辨识度。
+
+不经控制台看效果（默认跳过）：
+
+```bash
+AEGIS_CAPTCHA_PREVIEW_DIR=./preview go test ./pkg/gifcaptcha -run TestDumpDynamicCaptchaPreview
+```
+
+`audio` 档同时补上了 `Enabled` 的执行点：它与 `dynamic` 的开关此前都只在配置结构体里，没人读。
 
 ### DatabaseManager
 - 与 `MemoryManager` 同构：构造即可用，`Start` 拉后台采集，`Snapshot()` 纯内存读不打库

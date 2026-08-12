@@ -14,12 +14,10 @@ type CaptchaConfig struct {
 	SMS     SMSCaptchaConfig
 }
 
-// DynamicCaptchaConfig 动态 GIF 验证码配置
+// DynamicCaptchaConfig 动态 GIF 验证码配置。
+// 只有平台总开关；外观参数是动态配置，见 internal/domain/captcha.DynamicConfig。
 type DynamicCaptchaConfig struct {
-	Enabled bool // 是否启用
-	Length  int  // 数字位数（默认 6）
-	Width   int  // 图片宽度（默认 240）
-	Height  int  // 图片高度（默认 80）
+	Enabled bool // 平台级总开关：关掉后任何应用都签发不出动态验证码
 }
 
 // AudioCaptchaConfig 音频 WAV 验证码配置
@@ -114,16 +112,6 @@ func NormalizeCaptchaConfig(cfg CaptchaConfig) CaptchaConfig {
 		cfg.Digit.Height = 80
 	}
 
-	// 动态 GIF 验证码默认值
-	if cfg.Dynamic.Length <= 0 {
-		cfg.Dynamic.Length = 6
-	}
-	if cfg.Dynamic.Width <= 0 {
-		cfg.Dynamic.Width = 240
-	}
-	if cfg.Dynamic.Height <= 0 {
-		cfg.Dynamic.Height = 80
-	}
 
 	// 音频验证码默认值
 	if cfg.Audio.Length <= 0 {

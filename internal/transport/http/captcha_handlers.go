@@ -29,7 +29,7 @@ func (h *Handler) GenerateCaptcha(c *gin.Context) {
 	}
 
 	// 服务端决策验证码类型：读取 App 配置 → 按优先级选择实际类型
-	captchaType, perr := h.resolveUserCaptchaType(c, req.AppID)
+	captchaType, appCfg, perr := h.resolveUserCaptchaType(c, req.AppID)
 	if perr != nil {
 		h.writeError(c, perr)
 		return
@@ -45,6 +45,7 @@ func (h *Handler) GenerateCaptcha(c *gin.Context) {
 		Purpose: purpose,
 		Scope:   captchadomain.ScopeUser,
 		AppID:   req.AppID,
+		Dynamic: dynamicConfigOf(appCfg),
 	}
 
 	result, err := h.captcha.Generate(c.Request.Context(), captchaType, genReq)
@@ -145,18 +146,28 @@ func (h *Handler) UserCaptchaPublicConfig(c *gin.Context) {
 	response.Success(c, http.StatusOK, "ok", resp)
 }
 
-// resolveUserCaptchaType 根据 App 配置决定实际下发的验证码类型
-// 返回空 CaptchaType 表示该 App 未启用任何图形验证码
-func (h *Handler) resolveUserCaptchaType(c *gin.Context, appID int64) (captchadomain.CaptchaType, error) {
+// resolveUserCaptchaType 按 App 配置决定下发的验证码类型，并把配置一起返回
+// （动态验证码外观也在同一份配置里，避免调用方再查一次）。
+// 返回空 CaptchaType 表示该 App 未启用任何图形验证码。
+func (h *Handler) resolveUserCaptchaType(c *gin.Context, appID int64) (captchadomain.CaptchaType, *captchadomain.CaptchaAppConfig, error) {
 	if h.app == nil {
 		// AppService 未接入时回退到 image（保持服务可用）
-		return captchadomain.TypeImage, nil
+		return captchadomain.TypeImage, nil, nil
 	}
 	cfg, err := h.app.GetCaptchaConfig(c.Request.Context(), appID)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return service.ResolveCaptchaType(cfg), nil
+	return service.ResolveCaptchaType(cfg), cfg, nil
+}
+
+// dynamicConfigOf 取应用配置里的动态验证码外观，读不到时用默认值
+func dynamicConfigOf(cfg *captchadomain.CaptchaAppConfig) *captchadomain.DynamicConfig {
+	if cfg == nil {
+		return nil
+	}
+	dynamic := cfg.Dynamic
+	return &dynamic
 }
 
 // VerifyCaptcha 校验图形/算术/数字验证码
@@ -211,6 +222,8 @@ func (h *Handler) AdminGenerateCaptcha(c *gin.Context) {
 		Type:    captchaType,
 		Purpose: purpose,
 		Scope:   captchadomain.ScopeAdmin,
+		// 管理端外观走平台配置，与应用那份互不影响
+		Dynamic: h.adminDynamicCaptchaConfig(c),
 	}
 
 	result, err := h.captcha.Generate(c.Request.Context(), captchaType, genReq)
@@ -220,6 +233,35 @@ func (h *Handler) AdminGenerateCaptcha(c *gin.Context) {
 	}
 
 	response.Success(c, http.StatusOK, "验证码生成成功", result)
+}
+
+// adminDynamicCaptchaConfig 管理端动态验证码外观（平台级）
+func (h *Handler) adminDynamicCaptchaConfig(c *gin.Context) *captchadomain.DynamicConfig {
+	if h.system == nil {
+		return nil
+	}
+	dynamic := h.system.GetAdminCaptchaConfig(c.Request.Context()).Dynamic
+	return &dynamic
+}
+
+// AdminPreviewDynamicCaptcha 按请求参数渲染样张，不落库。
+// 应用面板与平台面板两条路由共用它，区别只在鉴权作用域。
+func (h *Handler) AdminPreviewDynamicCaptcha(c *gin.Context) {
+	if h.captcha == nil {
+		response.Error(c, http.StatusServiceUnavailable, 50371, "验证码服务不可用")
+		return
+	}
+	var req AdminCaptchaDynamicPreviewRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	preview, err := h.captcha.PreviewDynamicCaptcha(*req.AdminCaptchaDynamicRequest.ToDomain())
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "ok", preview)
 }
 
 // ────────────────────── 管理员验证码配置 ──────────────────────
@@ -247,6 +289,14 @@ func (h *Handler) AdminUpdateCaptchaConfig(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
+	// 外观留空即不修改：不带这一段的旧客户端不该把它清成零值
+	dynamic := captchadomain.DefaultDynamicConfig()
+	if current, err := h.app.GetCaptchaConfig(c.Request.Context(), appID); err == nil && current != nil {
+		dynamic = current.Dynamic
+	}
+	if patched := req.Dynamic.ToDomain(); patched != nil {
+		dynamic = *patched
+	}
 	cfg := captchadomain.CaptchaAppConfig{
 		ImageEnabled:       req.ImageEnabled,
 		MathEnabled:        req.MathEnabled,
@@ -258,6 +308,7 @@ func (h *Handler) AdminUpdateCaptchaConfig(c *gin.Context) {
 		DefaultType:        req.DefaultType,
 		RequireForLogin:    req.RequireForLogin,
 		RequireForRegister: req.RequireForRegister,
+		Dynamic:            dynamic,
 		SMS: captchadomain.CaptchaSMSConfig{
 			Provider:     req.SMS.Provider,
 			AccessKey:    req.SMS.AccessKey,

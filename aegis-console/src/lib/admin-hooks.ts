@@ -176,6 +176,8 @@ import {
   generateCaptcha,
   getAdminCaptchaPublicConfig,
   testAdminCaptchaSMS,
+  previewAppDynamicCaptcha,
+  previewAdminDynamicCaptcha,
   deleteAdminAppUser,
   adjustUserIntegral,
   adjustUserExperience,
@@ -2964,6 +2966,24 @@ export function useUpdateAdminCaptchaConfigMutation(appKey?: string | null) {
       queryClient.setQueryData(["admin-captcha-config", token, appKey], data);
       await queryClient.invalidateQueries({ queryKey: ["admin-captcha-config"] });
     }
+  });
+}
+
+/**
+ * 动态验证码样张。
+ *
+ * 用 mutation 而不是 query：每次调用都要出一张**新的**图（参数没变时也一样，
+ * 管理员看的是随机效果），而 query 的缓存语义正好相反。
+ *
+ * scope 决定打哪条路由：应用面板按应用授权、平台面板按平台授权。
+ */
+export function usePreviewDynamicCaptchaMutation(scope: "app" | "platform", appKey?: string | null) {
+  const token = useAdminToken();
+  return useMutation({
+    mutationFn: (config: import("@/lib/api/captcha").CaptchaDynamicConfig) =>
+      scope === "app"
+        ? previewAppDynamicCaptcha(token as string, appKey as string, config)
+        : previewAdminDynamicCaptcha(token as string, config)
   });
 }
 

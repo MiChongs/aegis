@@ -241,6 +241,8 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.GET("/apps/:appkey/captcha-config", h.AdminGetCaptchaConfig)
 		admin.PUT("/apps/:appkey/captcha-config", h.AdminUpdateCaptchaConfig)
 		admin.POST("/apps/:appkey/captcha-config/test-sms", h.AdminTestSMS)
+		// 动态验证码样张，与 /system/captcha/preview 同一 handler
+		admin.POST("/apps/:appkey/captcha-config/preview", h.AdminPreviewDynamicCaptcha)
 		admin.GET("/apps/:appkey/encryption", h.AdminAppEncryption)
 		admin.PUT("/apps/:appkey/encryption", h.UpdateAdminAppEncryption)
 		admin.GET("/apps/:appkey/content/overview", h.AdminContentOverview)

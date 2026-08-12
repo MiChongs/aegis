@@ -896,6 +896,7 @@ func (s *AppService) GetCaptchaConfig(ctx context.Context, appID int64) (*captch
 		jsonBytes, _ := gojson.Marshal(raw)
 		_ = gojson.Unmarshal(jsonBytes, &cfg)
 	}
+	cfg.Dynamic = cfg.Dynamic.Normalized() // 读到的就是实际生效的值
 	return &cfg, nil
 }
 
@@ -911,6 +912,7 @@ func (s *AppService) UpdateCaptchaConfig(ctx context.Context, appID int64, cfg c
 	if app.Settings == nil {
 		app.Settings = map[string]any{}
 	}
+	cfg.Dynamic = cfg.Dynamic.Normalized() // 落库前夹进合法区间
 	// 序列化配置到 map[string]any
 	jsonBytes, err := gojson.Marshal(cfg)
 	if err != nil {

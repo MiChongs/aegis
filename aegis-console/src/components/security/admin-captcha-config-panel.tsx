@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
 import { useAdminSystemSettingsQuery, useUpdateAdminSystemSettingsMutation } from "@/lib/admin-hooks";
 import { useAuthStore } from "@/lib/auth-store";
+import type { CaptchaDynamicConfig } from "@/lib/api/captcha";
+import { DynamicCaptchaDesigner, normalizeDynamicConfig } from "@/components/captcha/dynamic-captcha-designer";
 import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingState } from "@/components/ui/data-state";
 import { Label } from "@/components/ui/label";
@@ -19,6 +21,7 @@ type Draft = {
   requireForLogin: boolean;
   requireForRegister: boolean;
   audioLang: string;
+  dynamic: CaptchaDynamicConfig;
 };
 
 const defaultDraft: Draft = {
@@ -26,7 +29,8 @@ const defaultDraft: Draft = {
   type: "image",
   requireForLogin: false,
   requireForRegister: false,
-  audioLang: "zh"
+  audioLang: "zh",
+  dynamic: normalizeDynamicConfig()
 };
 
 const captchaTypeOptions = [
@@ -53,7 +57,8 @@ export function AdminCaptchaConfigPanel() {
         type: cfg.type || "image",
         requireForLogin: cfg.requireForLogin ?? false,
         requireForRegister: cfg.requireForRegister ?? false,
-        audioLang: cfg.audioLang || "zh"
+        audioLang: cfg.audioLang || "zh",
+        dynamic: normalizeDynamicConfig(cfg.dynamic)
       });
       setSynced(true);
     }
@@ -67,7 +72,8 @@ export function AdminCaptchaConfigPanel() {
           type: draft.type,
           requireForLogin: draft.requireForLogin,
           requireForRegister: draft.requireForRegister,
-          audioLang: draft.audioLang
+          audioLang: draft.audioLang,
+          dynamic: draft.dynamic
         }
       });
       toast.success("管理员验证码配置已保存");
@@ -126,6 +132,25 @@ export function AdminCaptchaConfigPanel() {
             </Select>
           </Row>
         </div>
+
+        {/* 只在选中动态图片时出现 */}
+        {draft.type === "dynamic" ? (
+          <div className="space-y-3 border-t pt-5">
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-foreground">动态验证码外观</h3>
+              <p className="text-xs text-muted-foreground">
+                只作用于管理控制台登录页；各应用的外观在 /apps/&#123;appKey&#125; 里单独配置。
+              </p>
+            </div>
+            <DynamicCaptchaDesigner
+              scope="platform"
+              value={draft.dynamic}
+              onChange={(next) => setDraft((s) => ({ ...s, dynamic: next }))}
+              enabled={draft.enabled}
+              disabledHint="管理员验证码总开关当前是关的，这里调的外观不会出现在登录页上。"
+            />
+          </div>
+        ) : null}
 
         <Button className="h-9 gap-1.5" disabled={updateMutation.isPending} onClick={handleSave}>
           {updateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}

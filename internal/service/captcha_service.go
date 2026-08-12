@@ -19,6 +19,7 @@ import (
 	redisrepo "aegis/internal/repository/redis"
 	"aegis/pkg/circuitbreaker"
 	apperrors "aegis/pkg/errors"
+	"aegis/pkg/gifcaptcha"
 
 	dchestcaptcha "github.com/dchest/captcha"
 	gojson "github.com/goccy/go-json"
@@ -201,51 +202,71 @@ func (s *CaptchaService) GenerateDigitCaptcha(ctx context.Context, req captchado
 	}, nil
 }
 
-// GenerateDynamicCaptcha 生成 GIF 动态验证码（使用 dchest/captcha）
+// GenerateDynamicCaptcha 生成动态 GIF 验证码。
+// 渲染交给 pkg/gifcaptcha，参数由调用方按作用域带进来（req.Dynamic）。
 func (s *CaptchaService) GenerateDynamicCaptcha(ctx context.Context, req captchadomain.GenerateRequest) (*captchadomain.GenerateResult, error) {
 	if !s.cfg.Captcha.Enabled {
 		return nil, apperrors.New(40310, http.StatusForbidden, "验证码服务未启用")
 	}
-	cfg := s.cfg.Captcha.Dynamic
-	length := cfg.Length
-	if length <= 0 {
-		length = 6
-	}
-	width := cfg.Width
-	if width <= 0 {
-		width = 240
-	}
-	height := cfg.Height
-	if height <= 0 {
-		height = 80
+	if !s.cfg.Captcha.Dynamic.Enabled {
+		return nil, apperrors.New(40323, http.StatusForbidden, "动态验证码未启用")
 	}
 
-	digits := dchestcaptcha.RandomDigits(length)
-	var buf bytes.Buffer
-	if _, err := dchestcaptcha.NewImage("", digits, width, height).WriteTo(&buf); err != nil {
+	dynamicCfg := captchadomain.DefaultDynamicConfig()
+	if req.Dynamic != nil {
+		dynamicCfg = *req.Dynamic
+	}
+	result, err := gifcaptcha.Generate(dynamicCfg.RenderOptions())
+	if err != nil {
+		s.log.Error("生成动态验证码失败", zap.Error(err))
 		return nil, apperrors.New(50010, http.StatusInternalServerError, "生成动态验证码失败")
 	}
-	b64 := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 
-	// 构建答案字符串
-	answer := digitsToString(digits)
-	captchaID := uuid.New().String()
+	captchaID := s.generateID()
 	expiresAt := time.Now().Add(s.cfg.Captcha.TTL)
 	record := captchadomain.CaptchaRecord{
-		Answer:    answer,
+		// 按小写落库，Verify 两侧都转小写
+		Answer:    strings.ToLower(result.Answer),
 		Purpose:   req.Purpose,
 		Scope:     req.Scope,
 		AppID:     req.AppID,
 		CreatedAt: time.Now(),
 	}
 	if err := s.repo.SetCaptcha(ctx, captchaID, record, s.cfg.Captcha.TTL); err != nil {
+		s.log.Error("存储验证码失败", zap.Error(err))
 		return nil, apperrors.New(50011, http.StatusInternalServerError, "存储验证码失败")
 	}
 	return &captchadomain.GenerateResult{
 		CaptchaID: captchaID,
-		ImageData: b64,
-		MimeType:  "image/png",
-		ExpiresAt: expiresAt.Unix(),
+		ImageData: "data:" + result.MimeType + ";base64," + base64.StdEncoding.EncodeToString(result.Data),
+		MimeType:  result.MimeType,
+		// 下发实际尺寸，客户端据此预留位置避免加载时抖动
+		ImageWidth:  result.Width,
+		ImageHeight: result.Height,
+		ExpiresAt:   expiresAt.Unix(),
+	}, nil
+}
+
+// PreviewDynamicCaptcha 按给定参数渲染样张，**不落 Redis**，因此签发不出可用的验证码。
+// 返回值带上夹取后真正生效的参数与字节数，供控制台如实展示。
+func (s *CaptchaService) PreviewDynamicCaptcha(cfg captchadomain.DynamicConfig) (*captchadomain.DynamicPreview, error) {
+	applied := cfg.Normalized()
+	result, err := gifcaptcha.Generate(applied.RenderOptions())
+	if err != nil {
+		s.log.Error("渲染动态验证码样张失败", zap.Error(err))
+		return nil, apperrors.New(50010, http.StatusInternalServerError, "生成动态验证码失败")
+	}
+	return &captchadomain.DynamicPreview{
+		ImageData:    "data:" + result.MimeType + ";base64," + base64.StdEncoding.EncodeToString(result.Data),
+		MimeType:     result.MimeType,
+		Answer:       result.Answer,
+		Width:        result.Width,
+		Height:       result.Height,
+		Frames:       result.Frames,
+		FrameDelayMs: int(result.Delay / time.Millisecond),
+		DurationMs:   int(result.Duration() / time.Millisecond),
+		ByteSize:     len(result.Data),
+		Applied:      applied,
 	}, nil
 }
 
@@ -253,6 +274,9 @@ func (s *CaptchaService) GenerateDynamicCaptcha(ctx context.Context, req captcha
 func (s *CaptchaService) GenerateAudioCaptcha(ctx context.Context, req captchadomain.GenerateRequest) (*captchadomain.GenerateResult, error) {
 	if !s.cfg.Captcha.Enabled {
 		return nil, apperrors.New(40310, http.StatusForbidden, "验证码服务未启用")
+	}
+	if !s.cfg.Captcha.Audio.Enabled {
+		return nil, apperrors.New(40324, http.StatusForbidden, "音频验证码未启用")
 	}
 	cfg := s.cfg.Captcha.Audio
 	length := cfg.Length

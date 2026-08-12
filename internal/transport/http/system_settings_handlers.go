@@ -93,6 +93,7 @@ func (h *Handler) AdminUpdateSystemSettings(c *gin.Context) {
 			RequireForLogin:    req.AdminCaptcha.RequireForLogin,
 			RequireForRegister: req.AdminCaptcha.RequireForRegister,
 			AudioLang:          req.AdminCaptcha.AudioLang,
+			Dynamic:            req.AdminCaptcha.Dynamic.ToDomain(),
 		},
 		LDAP:     mapLDAPPatch(req.LDAP),
 		OIDC:     mapOIDCPatch(req.OIDC),

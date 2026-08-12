@@ -74,6 +74,7 @@ type AdminCaptchaSettingsUpdateRequest struct {
 	RequireForLogin    *bool   `json:"requireForLogin,omitempty"`
 	RequireForRegister *bool   `json:"requireForRegister,omitempty"`
 	AudioLang          *string `json:"audioLang,omitempty"`
+	Dynamic *AdminCaptchaDynamicRequest `json:"dynamic,omitempty"`
 }
 
 type AdminFirewallSettingsUpdateRequest struct {

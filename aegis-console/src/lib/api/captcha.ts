@@ -15,6 +15,8 @@ export type CaptchaAppConfig = {
   requireForLogin: boolean;
   /** 注册场景是否要求验证码（默认 true） */
   requireForRegister: boolean;
+  /** 动态验证码外观（应用级动态配置，控制台可调、即时生效） */
+  dynamic: CaptchaDynamicConfig;
   sms: CaptchaSMSConfig;
   antiFlood: {
     requireCaptcha: boolean;
@@ -24,6 +26,47 @@ export type CaptchaAppConfig = {
     globalPhoneDailyLimit: number;
     sendIntervalSeconds: number;
   };
+};
+
+/**
+ * 动态验证码外观。
+ *
+ * 服务端会把越界值夹回区间（区间与默认值都由渲染引擎裁决），
+ * 因此这里不做第二套校验 —— 两处各夹一遍就会出现互相矛盾的解释。
+ */
+export type CaptchaDynamicConfig = {
+  /** 字符数 3-8 */
+  length: number;
+  /** 画布宽度 80-640 */
+  width: number;
+  /** 画布高度 40-240 */
+  height: number;
+  /** 帧数 4-40 */
+  frames: number;
+  /** 帧间隔（毫秒）20-1000 */
+  frameDelayMs: number;
+  /** 字符集：alnum / alpha / digit */
+  mode: string;
+  /** 干扰强度 0-100 */
+  noise: number;
+  /** 运动幅度 0-100 */
+  wobble: number;
+};
+
+/** 样张：不落库、无法用于校验，纯粹给管理员看效果 */
+export type CaptchaDynamicPreview = {
+  imageData: string;
+  mimeType: string;
+  /** 样张答案。它不是凭据（验不了），而管理员要判断的正是「认不认得出来」 */
+  answer: string;
+  width: number;
+  height: number;
+  frames: number;
+  frameDelayMs: number;
+  durationMs: number;
+  byteSize: number;
+  /** 夹取之后**真正生效**的参数：填了 60 帧只出 13 帧时界面要说得出为什么 */
+  applied: CaptchaDynamicConfig;
 };
 
 export type CaptchaSMSTemplateConfig = {
@@ -82,6 +125,26 @@ export function getAdminCaptchaConfig(token: string, appKey: string) {
 export function updateAdminCaptchaConfig(token: string, appKey: string, config: CaptchaAppConfig) {
   return apiRequest<CaptchaAppConfig>(`/api/admin/apps/${appKey}/captcha-config`, {
     method: "PUT",
+    token,
+    body: JSON.stringify(config)
+  });
+}
+
+/**
+ * 动态验证码样张。两条路由指向同一个后端 handler，区别只在鉴权作用域：
+ * 应用面板按应用授权、平台面板按平台授权。参数全在请求体里，不读也不写配置。
+ */
+export function previewAppDynamicCaptcha(token: string, appKey: string, config: CaptchaDynamicConfig) {
+  return apiRequest<CaptchaDynamicPreview>(`/api/admin/apps/${appKey}/captcha-config/preview`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(config)
+  });
+}
+
+export function previewAdminDynamicCaptcha(token: string, config: CaptchaDynamicConfig) {
+  return apiRequest<CaptchaDynamicPreview>("/api/admin/system/captcha/preview", {
+    method: "POST",
     token,
     body: JSON.stringify(config)
   });

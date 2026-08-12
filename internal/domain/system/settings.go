@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"aegis/internal/domain/captcha"
 	securitydomain "aegis/internal/domain/security"
 )
 
@@ -132,14 +133,18 @@ type AdminCaptchaSettingsView struct {
 	RequireForLogin    bool   `json:"requireForLogin"`    // 登录需验证码
 	RequireForRegister bool   `json:"requireForRegister"` // 注册需验证码
 	AudioLang          string `json:"audioLang"`          // 音频语言：zh / en
+
+	// Dynamic 管理端动态验证码外观，与应用那份同构但互不影响
+	Dynamic captcha.DynamicConfig `json:"dynamic"`
 }
 
 type AdminCaptchaSettingsPatch struct {
-	Enabled            *bool   `json:"enabled,omitempty"`
-	Type               *string `json:"type,omitempty"`
-	RequireForLogin    *bool   `json:"requireForLogin,omitempty"`
-	RequireForRegister *bool   `json:"requireForRegister,omitempty"`
-	AudioLang          *string `json:"audioLang,omitempty"`
+	Enabled            *bool                  `json:"enabled,omitempty"`
+	Type               *string                `json:"type,omitempty"`
+	RequireForLogin    *bool                  `json:"requireForLogin,omitempty"`
+	RequireForRegister *bool                  `json:"requireForRegister,omitempty"`
+	AudioLang          *string                `json:"audioLang,omitempty"`
+	Dynamic            *captcha.DynamicConfig `json:"dynamic,omitempty"`
 }
 
 type SettingsUpdate struct {

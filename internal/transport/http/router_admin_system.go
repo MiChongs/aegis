@@ -71,6 +71,8 @@ func registerAdminSystemRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		adminSystem.GET("/runtime", h.AdminSystemRuntime)
 		adminSystem.GET("/settings", h.AdminGetSystemSettings)
 		adminSystem.PUT("/settings", h.AdminUpdateSystemSettings)
+		// 管理端动态验证码样张（平台作用域）
+		adminSystem.POST("/captcha/preview", h.AdminPreviewDynamicCaptcha)
 		// 出海代理网关：按域名后缀把出站流量路由到境外线路
 		adminSystem.GET("/egress", h.AdminGetEgressSettings)
 		adminSystem.PUT("/egress", h.AdminUpdateEgressSettings)

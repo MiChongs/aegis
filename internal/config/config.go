@@ -1029,6 +1029,15 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 				Width:   v.GetInt("CAPTCHA_DIGIT_WIDTH"),
 				Height:  v.GetInt("CAPTCHA_DIGIT_HEIGHT"),
 			},
+			// 只有平台总开关；外观参数是动态配置（见 domain/captcha.DynamicConfig）
+			Dynamic: DynamicCaptchaConfig{
+				Enabled: getBool(v, "CAPTCHA_DYNAMIC_ENABLED", true),
+			},
+			Audio: AudioCaptchaConfig{
+				Enabled: getBool(v, "CAPTCHA_AUDIO_ENABLED", true),
+				Length:  v.GetInt("CAPTCHA_AUDIO_LENGTH"),
+				Lang:    v.GetString("CAPTCHA_AUDIO_LANG"),
+			},
 			SMS: SMSCaptchaConfig{
 				Enabled:               getBool(v, "CAPTCHA_SMS_ENABLED", false),
 				CodeLength:            v.GetInt("CAPTCHA_SMS_CODE_LENGTH"),

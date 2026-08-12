@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"aegis/internal/config"
+	captchadomain "aegis/internal/domain/captcha"
 	plugindomain "aegis/internal/domain/plugin"
 	securitydomain "aegis/internal/domain/security"
 	systemdomain "aegis/internal/domain/system"
@@ -623,21 +624,24 @@ func cloneModuleStatuses(values []securitydomain.ModuleStatus) []securitydomain.
 // ── 管理员验证码配置 ──
 
 type adminCaptchaConfig struct {
-	Enabled            bool   `json:"enabled"`
-	Type               string `json:"type"`
-	RequireForLogin    bool   `json:"requireForLogin"`
-	RequireForRegister bool   `json:"requireForRegister"`
-	AudioLang          string `json:"audioLang"`
+	Enabled            bool                        `json:"enabled"`
+	Type               string                      `json:"type"`
+	RequireForLogin    bool                        `json:"requireForLogin"`
+	RequireForRegister bool                        `json:"requireForRegister"`
+	AudioLang          string                      `json:"audioLang"`
+	Dynamic            captchadomain.DynamicConfig `json:"dynamic"`
 }
 
 func (s *PlatformSettingsService) decodeAdminCaptchaConfig(record *systemdomain.SettingRecord) adminCaptchaConfig {
-	cfg := adminCaptchaConfig{Type: "image"}
+	// 先铺默认值再反序列化：库里可能只存了部分字段
+	cfg := adminCaptchaConfig{Type: "image", Dynamic: captchadomain.DefaultDynamicConfig()}
 	if record != nil && len(record.Value) > 0 {
 		_ = json.Unmarshal(record.Value, &cfg)
 	}
 	if cfg.Type == "" {
 		cfg.Type = "image"
 	}
+	cfg.Dynamic = cfg.Dynamic.Normalized()
 	return cfg
 }
 
@@ -653,6 +657,7 @@ func (s *PlatformSettingsService) buildAdminCaptchaView(record *systemdomain.Set
 		RequireForLogin:    cfg.RequireForLogin,
 		RequireForRegister: cfg.RequireForRegister,
 		AudioLang:          audioLang,
+		Dynamic:            cfg.Dynamic,
 	}
 }
 
@@ -767,6 +772,10 @@ func applyAdminCaptchaPatch(current adminCaptchaConfig, patch systemdomain.Admin
 	}
 	if patch.AudioLang != nil {
 		current.AudioLang = strings.TrimSpace(*patch.AudioLang)
+	}
+	// 留空即不修改
+	if patch.Dynamic != nil {
+		current.Dynamic = patch.Dynamic.Normalized()
 	}
 	return current
 }

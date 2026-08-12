@@ -1,6 +1,10 @@
 package captcha
 
-import "time"
+import (
+	"time"
+
+	"aegis/pkg/gifcaptcha"
+)
 
 // ────────────────────── 验证码类型枚举 ──────────────────────
 
@@ -46,6 +50,10 @@ type GenerateRequest struct {
 	Purpose Purpose     // 用途
 	Scope   Scope       // 作用域
 	AppID   int64       // 租户 App ID（图形验证码可选，短信必填）
+
+	// Dynamic 动态验证码渲染参数，由调用方按作用域取来（应用侧取应用配置，
+	// 管理端取平台配置）。留空 = 用默认值。
+	Dynamic *DynamicConfig
 }
 
 // GenerateResult 验证码生成结果
@@ -143,6 +151,73 @@ type SMSProviderConfigMutation struct {
 	SDKAppID     *string
 }
 
+// ────────────────────── 动态验证码渲染参数 ──────────────────────
+
+// DynamicConfig 动态验证码外观。动态配置：应用级存 apps.settings.captcha.dynamic，
+// 管理端存 platform_settings 的 adminCaptcha.dynamic，控制台可改、即时生效。
+// 取值区间与默认值由 pkg/gifcaptcha 统一裁决，这里不重复夹取。
+type DynamicConfig struct {
+	Length       int    `json:"length"`       // 字符数 3-8
+	Width        int    `json:"width"`        // 画布宽度 80-640
+	Height       int    `json:"height"`       // 画布高度 40-240
+	Frames       int    `json:"frames"`       // 帧数 4-40
+	FrameDelayMs int    `json:"frameDelayMs"` // 帧间隔（毫秒）20-1000
+	Mode         string `json:"mode"`         // 字符集：alnum / alpha / digit
+	Noise        int    `json:"noise"`        // 干扰强度 0-100
+	Wobble       int    `json:"wobble"`       // 运动幅度 0-100
+}
+
+// DefaultDynamicConfig 默认参数，取自渲染引擎
+func DefaultDynamicConfig() DynamicConfig {
+	return fromRenderOptions(gifcaptcha.DefaultOptions())
+}
+
+// RenderOptions 翻成渲染引擎参数。新增参数必须出现在这里，否则它就是个存了不用的开关。
+func (c DynamicConfig) RenderOptions() gifcaptcha.Options {
+	return gifcaptcha.Options{
+		Width:      c.Width,
+		Height:     c.Height,
+		Length:     c.Length,
+		Frames:     c.Frames,
+		FrameDelay: time.Duration(c.FrameDelayMs) * time.Millisecond,
+		Mode:       gifcaptcha.Mode(c.Mode),
+		Noise:      c.Noise,
+		Wobble:     c.Wobble,
+	}
+}
+
+// Normalized 回填默认值并夹进合法区间。落库前要过一遍，让读到的配置就是生效的值。
+func (c DynamicConfig) Normalized() DynamicConfig {
+	return fromRenderOptions(c.RenderOptions().Normalize())
+}
+
+func fromRenderOptions(opts gifcaptcha.Options) DynamicConfig {
+	return DynamicConfig{
+		Length:       opts.Length,
+		Width:        opts.Width,
+		Height:       opts.Height,
+		Frames:       opts.Frames,
+		FrameDelayMs: int(opts.FrameDelay / time.Millisecond),
+		Mode:         string(opts.Mode),
+		Noise:        opts.Noise,
+		Wobble:       opts.Wobble,
+	}
+}
+
+// DynamicPreview 动态验证码样张，不落库、不可用于校验
+type DynamicPreview struct {
+	ImageData    string        `json:"imageData"`    // data:image/gif;base64,...
+	MimeType     string        `json:"mimeType"`     // image/gif
+	Answer       string        `json:"answer"`       // 样张答案，供判断辨识度
+	Width        int           `json:"width"`        //
+	Height       int           `json:"height"`       //
+	Frames       int           `json:"frames"`       //
+	FrameDelayMs int           `json:"frameDelayMs"` //
+	DurationMs   int           `json:"durationMs"`   // 一轮动画时长
+	ByteSize     int           `json:"byteSize"`     // GIF 字节数
+	Applied      DynamicConfig `json:"applied"`      // 夹取后真正生效的参数
+}
+
 // ────────────────────── 应用级验证码配置 ──────────────────────
 
 // CaptchaAppConfig 应用级验证码完整配置（存储在 apps.settings.captcha）
@@ -161,6 +236,10 @@ type CaptchaAppConfig struct {
 	// 与旧行为（任一类型启用即要求验证码）对齐；新 App / 管理员可显式关闭
 	RequireForLogin    bool `json:"requireForLogin"`
 	RequireForRegister bool `json:"requireForRegister"`
+
+	// Dynamic 动态验证码外观。存量 JSON 没有这个键时保留默认值，
+	// 因此库里可以只存部分字段，缺的自动落回默认。
+	Dynamic DynamicConfig `json:"dynamic"`
 
 	SMS       CaptchaSMSConfig       `json:"sms"`
 	AntiFlood CaptchaAntiFloodConfig `json:"antiFlood"`
@@ -209,6 +288,7 @@ func DefaultCaptchaAppConfig() CaptchaAppConfig {
 		DefaultType:        "image",
 		RequireForLogin:    true,
 		RequireForRegister: true,
+		Dynamic:            DefaultDynamicConfig(),
 		AntiFlood: CaptchaAntiFloodConfig{
 			RequireCaptcha:        true,
 			IPHourlyLimit:         5,

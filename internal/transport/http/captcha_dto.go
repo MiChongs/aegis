@@ -1,5 +1,7 @@
 package httptransport
 
+import captchadomain "aegis/internal/domain/captcha"
+
 // ────────────────────── 图形验证码 DTO ──────────────────────
 
 // CaptchaGenerateRequest 生成验证码请求
@@ -82,6 +84,43 @@ type AdminCaptchaConfigUpdateRequest struct {
 		GlobalPhoneDailyLimit int  `json:"globalPhoneDailyLimit"`
 		SendIntervalSeconds   int  `json:"sendIntervalSeconds"`
 	} `json:"antiFlood"`
+
+	// Dynamic 动态验证码外观，指针 = 留空即不修改（这份请求是全量覆盖式的）
+	Dynamic *AdminCaptchaDynamicRequest `json:"dynamic"`
+}
+
+// AdminCaptchaDynamicRequest 动态验证码外观参数（应用级与管理端同一形状）
+type AdminCaptchaDynamicRequest struct {
+	Length       int    `json:"length"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	Frames       int    `json:"frames"`
+	FrameDelayMs int    `json:"frameDelayMs"`
+	Mode         string `json:"mode"`
+	Noise        int    `json:"noise"`
+	Wobble       int    `json:"wobble"`
+}
+
+// ToDomain 翻成领域类型。越界值由渲染引擎统一夹取，这里不重复挡。
+func (r *AdminCaptchaDynamicRequest) ToDomain() *captchadomain.DynamicConfig {
+	if r == nil {
+		return nil
+	}
+	return &captchadomain.DynamicConfig{
+		Length:       r.Length,
+		Width:        r.Width,
+		Height:       r.Height,
+		Frames:       r.Frames,
+		FrameDelayMs: r.FrameDelayMs,
+		Mode:         r.Mode,
+		Noise:        r.Noise,
+		Wobble:       r.Wobble,
+	}
+}
+
+// AdminCaptchaDynamicPreviewRequest 样张请求：参数全在请求体里，不读也不写配置
+type AdminCaptchaDynamicPreviewRequest struct {
+	AdminCaptchaDynamicRequest
 }
 
 // AdminTestSMSRequest 测试短信发送

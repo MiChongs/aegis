@@ -77,7 +77,7 @@ func (h *Handler) AppCaptcha(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40017, "验证码用途只能是 login 或 register")
 		return
 	}
-	captchaType, err := h.resolveUserCaptchaType(c, app.ID)
+	captchaType, appCfg, err := h.resolveUserCaptchaType(c, app.ID)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -88,6 +88,7 @@ func (h *Handler) AppCaptcha(c *gin.Context) {
 	}
 	result, err := h.captcha.Generate(c.Request.Context(), captchaType, captchadomain.GenerateRequest{
 		Type: captchaType, Purpose: purpose, Scope: captchadomain.ScopeUser, AppID: app.ID,
+		Dynamic: dynamicConfigOf(appCfg),
 	})
 	if err != nil {
 		h.writeError(c, err)

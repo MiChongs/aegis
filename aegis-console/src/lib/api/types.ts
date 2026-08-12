@@ -1,3 +1,5 @@
+import type { CaptchaDynamicConfig } from "./captcha";
+
 export type AdminAssignment = {
   roleKey?: string;
   appid?: number | null;
@@ -206,6 +208,8 @@ export type AdminCaptchaSettings = {
   requireForLogin: boolean;
   requireForRegister: boolean;
   audioLang: string;
+  /** 管理控制台登录页的动态验证码外观（与各应用那份互不影响） */
+  dynamic?: CaptchaDynamicConfig;
 };
 
 export type LDAPSettings = {

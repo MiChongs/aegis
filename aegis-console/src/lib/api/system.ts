@@ -1,4 +1,5 @@
 import { apiRequest, buildQuery } from "./client";
+import type { CaptchaDynamicConfig } from "./captcha";
 import type { AdminLoginResult, BrandingConfig, FirewallLogEntry, FirewallLogPage, FirewallStats, GeoBanEntry, GeoBanScope, IPBanEntry, IPBanMode, IPBanModesResponse, IPBanPage, LDAPTestResult, OIDCTestResult, SAMLTestResult, SystemSettings } from "./types";
 
 export function getAdminSystemSettings(token: string) {
@@ -61,6 +62,7 @@ export function updateAdminSystemSettings(
       requireForLogin?: boolean;
       requireForRegister?: boolean;
       audioLang?: string;
+      dynamic?: CaptchaDynamicConfig;
     };
     ldap?: {
       enabled?: boolean;

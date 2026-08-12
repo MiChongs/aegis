@@ -14,6 +14,7 @@ import {
   useTestAdminCaptchaSMSMutation,
   useUpdateAdminCaptchaConfigMutation
 } from "@/lib/admin-hooks";
+import { DynamicCaptchaDesigner, normalizeDynamicConfig } from "@/components/captcha/dynamic-captcha-designer";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,6 +88,7 @@ function defaultConfig(): CaptchaAppConfig {
     defaultType: "image",
     requireForLogin: true,
     requireForRegister: true,
+    dynamic: normalizeDynamicConfig(),
     sms: {
       provider: "aliyun",
       accessKey: "",
@@ -127,6 +129,7 @@ function normalizeConfig(config?: Partial<CaptchaAppConfig> | null): CaptchaAppC
     ...fallback,
     ...config,
     defaultType: String(config?.defaultType ?? fallback.defaultType),
+    dynamic: normalizeDynamicConfig(config?.dynamic),
     sms: {
       ...fallback.sms,
       ...config?.sms,
@@ -366,6 +369,17 @@ export function AppCaptchaPanel({ appKey }: Props) {
             </Select>
           </Field>
         </div>
+      </PanelSection>
+
+      <PanelSection title="动态验证码外观">
+        <DynamicCaptchaDesigner
+          scope="app"
+          appKey={appKey}
+          value={currentDraft.dynamic}
+          onChange={(next) => patchDraft("dynamic", next)}
+          enabled={currentDraft.dynamicEnabled}
+          disabledHint="「动态图片」当前未启用，这里调的外观不会出现在登录页上。"
+        />
       </PanelSection>
 
       <PanelSection title="场景策略">

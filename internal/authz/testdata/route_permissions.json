@@ -3417,6 +3417,20 @@
   },
   {
     "method": "POST",
+    "path": "/api/admin/apps/:appkey/captcha-config/preview",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/captcha/preview",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
     "path": "/api/admin/apps/:appkey/governance/appeals",
     "permission": "app:write",
     "appScoped": true,

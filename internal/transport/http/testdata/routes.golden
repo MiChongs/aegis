@@ -551,6 +551,7 @@ POST	/api/admin/apps/:appkey/auth-protocol/selftest	AdminAppIntegrationSelfTest
 POST	/api/admin/apps/:appkey/auth-protocol/transport/rotate	AdminRotateAppTransportKey
 POST	/api/admin/apps/:appkey/banners	CreateAdminBanner
 POST	/api/admin/apps/:appkey/banners/image	UploadAdminBannerImage
+POST	/api/admin/apps/:appkey/captcha-config/preview	AdminPreviewDynamicCaptcha
 POST	/api/admin/apps/:appkey/captcha-config/test-sms	AdminTestSMS
 POST	/api/admin/apps/:appkey/channels	AdminCreateVersionChannel
 POST	/api/admin/apps/:appkey/channels/:cid/users	AdminAddVersionChannelUsers
@@ -641,6 +642,7 @@ POST	/api/admin/system/authz/roles/override	AdminAuthzSetRoleOverride
 POST	/api/admin/system/banners	CreatePlatformBanner
 POST	/api/admin/system/banners/bulk-delete	BulkDeletePlatformBanners
 POST	/api/admin/system/banners/upload	UploadPlatformBannerImage
+POST	/api/admin/system/captcha/preview	AdminPreviewDynamicCaptcha
 POST	/api/admin/system/database/refresh	AdminDatabaseRefresh
 POST	/api/admin/system/database/sessions/:pid/cancel	AdminDatabaseCancelSession
 POST	/api/admin/system/database/sessions/:pid/terminate	AdminDatabaseTerminateSession
