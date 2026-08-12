@@ -240,9 +240,9 @@ func (s *SecurityService) BeginAdminPasskeyRegistration(ctx context.Context, acc
 	if err != nil {
 		return nil, nil, err
 	}
-	webauthn := s.currentWebAuthn()
-	if webauthn == nil {
-		return nil, nil, apperrors.New(50322, http.StatusServiceUnavailable, "当前安全模块暂不可用")
+	webauthn, err := s.webAuthnForRequest(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 	adapter, err := s.makeAdminWebAuthnUser(ctx, account.Account.ID)
 	if err != nil {
@@ -311,9 +311,9 @@ func (s *SecurityService) FinishAdminPasskeyRegistration(ctx context.Context, ac
 	if err != nil {
 		return nil, apperrors.New(40053, http.StatusBadRequest, "Passkey 凭证数据不能为空")
 	}
-	webauthn := s.currentWebAuthn()
-	if webauthn == nil {
-		return nil, apperrors.New(50322, http.StatusServiceUnavailable, "当前安全模块暂不可用")
+	webauthn, err := s.webAuthnForCeremony(ctx, sessionData.RelyingPartyID)
+	if err != nil {
+		return nil, err
 	}
 	credential, err := webauthn.FinishRegistration(adapter, sessionData, req)
 	if err != nil {

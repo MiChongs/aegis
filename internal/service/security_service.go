@@ -455,9 +455,9 @@ func (s *SecurityService) BeginPasskeyRegistration(ctx context.Context, session 
 		return nil, nil, apperrors.New(50320, http.StatusServiceUnavailable, "安全会话服务不可用")
 	}
 	cfg := s.currentConfig()
-	webauthn := s.currentWebAuthn()
-	if webauthn == nil {
-		return nil, nil, apperrors.New(50322, http.StatusServiceUnavailable, "当前安全模块暂不可用")
+	webauthn, err := s.webAuthnForRequest(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 	adapter, err := s.makeWebAuthnUser(ctx, session.AppID, session.UserID)
 	if err != nil {
@@ -518,9 +518,9 @@ func (s *SecurityService) FinishPasskeyRegistration(ctx context.Context, session
 	if err != nil {
 		return nil, apperrors.New(40053, http.StatusBadRequest, "Passkey 凭证数据不能为空")
 	}
-	webauthn := s.currentWebAuthn()
-	if webauthn == nil {
-		return nil, apperrors.New(50322, http.StatusServiceUnavailable, "当前安全模块暂不可用")
+	webauthn, err := s.webAuthnForCeremony(ctx, sessionData.RelyingPartyID)
+	if err != nil {
+		return nil, err
 	}
 	credential, err := webauthn.FinishRegistration(adapter, sessionData, req)
 	if err != nil {
@@ -691,9 +691,9 @@ func (s *SecurityService) BeginPasskeyLogin(ctx context.Context, appID int64) (*
 		}
 	}
 	cfg := s.currentConfig()
-	webauthn := s.currentWebAuthn()
-	if webauthn == nil {
-		return nil, nil, apperrors.New(50322, http.StatusServiceUnavailable, "当前安全模块暂不可用")
+	webauthn, err := s.webAuthnForRequest(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 	assertion, sessionData, err := webauthn.BeginDiscoverableLogin()
 	if err != nil {
@@ -722,10 +722,6 @@ func (s *SecurityService) VerifyPasskeyLogin(ctx context.Context, appID int64, c
 	if s.sessions == nil {
 		return nil, apperrors.New(50320, http.StatusServiceUnavailable, "安全会话服务不可用")
 	}
-	webauthn := s.currentWebAuthn()
-	if webauthn == nil {
-		return nil, apperrors.New(50322, http.StatusServiceUnavailable, "当前安全模块暂不可用")
-	}
 	state, err := s.sessions.GetPasskeyLoginState(ctx, strings.TrimSpace(challengeID))
 	if err != nil {
 		return nil, err
@@ -735,6 +731,11 @@ func (s *SecurityService) VerifyPasskeyLogin(ctx context.Context, appID int64, c
 	}
 	var sessionData webauthnlib.SessionData
 	if err := gojson.Unmarshal(state.SessionData, &sessionData); err != nil {
+		return nil, err
+	}
+	// 实例要用 Begin 阶段那个 RP ID 来造，所以必须先把挑战取出来
+	webauthn, err := s.webAuthnForCeremony(ctx, sessionData.RelyingPartyID)
+	if err != nil {
 		return nil, err
 	}
 	req, err := buildJSONRequest(ctx, payload)

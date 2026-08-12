@@ -126,6 +126,30 @@ func NewXxxService(log *zap.Logger, pg *pgrepo.Queries, ...) *XxxService
   直接进本函数。任何「每次登录都要做一次」的检查都必须挂在 `finalizeLogin`，
   挂在 `completeLogin` 会漏掉后两条链路。登录一致性校验即挂在此处。
 
+### Passkey 的 RP ID 跟着访问域名走（`security_passkey_rp.go`）
+
+WebAuthn 规定 `rp.id` 只能**等于当前页面的有效域名、或它的可注册后缀**。
+不满足时浏览器在 `navigator.credentials.create()` 就抛
+「The relying party ID is not a registrable domain suffix of, nor equal to the current domain」——
+这句只出现在浏览器控制台，服务端日志里一片安静。
+
+因此 RP ID **不是一个静态配置值**，而是每次请求按来源解析：
+
+| 输入 | 来源 |
+|---|---|
+| 请求来源 | `middleware.RequestOrigin` 写进 context，取值优先级 `Origin` > `Referer` > 转发头 |
+| 允许来源白名单 | `SECURITY_PASSKEY_RP_ORIGINS` / 平台配置，**唯一的安全边界**，不匹配即 `40039` 并说清怎么改 |
+| RP ID | 配置值是来源域的可注册后缀时沿用（跨子域共享凭据），否则用来源域本身 |
+
+`SECURITY_PASSKEY_RP_ID` **留空是推荐值**，含义是「跟随访问域名」。
+以前它会被兜底成 `localhost`，而缺省白名单里同时有 `http://127.0.0.1:3000` ——
+两者自相矛盾，从 127.0.0.1 打开控制台必然报上面那句。
+
+Finish 阶段**不重新推导**，而是用 Begin 下发的那个 RP ID
+（go-webauthn 已把它写进 `SessionData.RelyingPartyID` 并随挑战落库）。
+注意 `CreateCredential` / `ValidateLogin` 读的是 `Config.RPID` 而**不是** session 里那个字段，
+所以必须按它重新造一个实例，`WithRegistrationRelyingPartyID` 单用会在 Finish 对不上。
+
 ### 应用级认证策略的执行点
 
 `appdomain.Policy` 的每一项都必须有明确执行点。**只落库不生效的开关比没有这个开关更危险** ——

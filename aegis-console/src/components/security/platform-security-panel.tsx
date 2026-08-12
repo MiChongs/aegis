@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
 import { useAdminSystemSettingsQuery, useUpdateAdminSystemSettingsMutation } from "@/lib/admin-hooks";
 import { useAuthStore } from "@/lib/auth-store";
+import { useOrigin } from "@/lib/use-client-value";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingState } from "@/components/ui/data-state";
@@ -104,6 +105,15 @@ export function PlatformSecurityPanel() {
   }, [seed, seedKey, syncedKey]);
 
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft(s => s ? { ...s, [k]: v } : s);
+
+  // Passkey 的两个值只有对照「此刻是从哪个地址打开的控制台」才有意义，
+  // 所以把浏览器的真实来源摆在表单旁边，而不是让人另开一个标签页去确认。
+  const browserOrigin = useOrigin();
+  const browserHost = browserOrigin ? browserOrigin.replace(/^https?:\/\//, "").split(":")[0] : "";
+  const originAllowed = useMemo(() => {
+    if (!browserOrigin || !draft) return true;
+    return textToList(draft.passkeyOrigins).some((item) => item.trim().toLowerCase() === browserOrigin.toLowerCase());
+  }, [browserOrigin, draft]);
 
   async function handleSave() {
     if (!draft) return;
@@ -245,12 +255,30 @@ export function PlatformSecurityPanel() {
                 <Input className="h-8 text-sm" placeholder="Aegis" value={draft.passkeyDisplayName} onChange={(e) => set("passkeyDisplayName", e.target.value)} />
               </Row>
               <Row label="RP ID">
-                <Input className="h-8 text-sm" placeholder="example.com" value={draft.passkeyRPID} onChange={(e) => set("passkeyRPID", e.target.value)} />
+                <Input className="h-8 text-sm" placeholder={`留空 = 跟随访问域名${browserHost ? `（当前 ${browserHost}）` : ""}`} value={draft.passkeyRPID} onChange={(e) => set("passkeyRPID", e.target.value)} />
               </Row>
             </div>
+            {/* RP ID 必须等于访问域名或它的可注册后缀，否则浏览器在弹窗之前就拒绝，
+                报「relying party ID is not a registrable domain suffix」。
+                填错的代价全部落在使用者身上，所以这里直接把判据和当前值写出来。 */}
+            <p className="text-[11px] leading-5 text-muted-foreground">
+              RP ID 决定 Passkey 绑在哪个域名上，只能填访问域名本身或它的父域
+              （如访问 <code className="font-data">console.example.com</code> 可填 <code className="font-data">example.com</code>，让同一批凭据跨子域通用）。
+              <strong className="font-medium text-foreground">留空即跟随每次访问的域名</strong>，多域部署建议留空。改动会让已绑定的 Passkey 失效。
+            </p>
             <Row label="来源 Origins（每行一个）">
               <Textarea className="text-sm" rows={3} placeholder="https://example.com" value={draft.passkeyOrigins} onChange={(e) => set("passkeyOrigins", e.target.value)} />
             </Row>
+            {browserOrigin ? (
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                <span>你正在访问 <code className="font-data text-foreground">{browserOrigin}</code>{originAllowed ? "，已在列表内。" : "，尚未在列表内 —— 从这里绑定 Passkey 会被拒绝。"}</span>
+                {originAllowed ? null : (
+                  <Button type="button" variant="outline" size="xs" onClick={() => set("passkeyOrigins", [draft.passkeyOrigins.trim(), browserOrigin].filter(Boolean).join("\n"))}>
+                    加入当前来源
+                  </Button>
+                )}
+              </div>
+            ) : null}
             <Row label="Top Origins（每行一个）">
               <Textarea className="text-sm" rows={2} value={draft.passkeyTopOrigins} onChange={(e) => set("passkeyTopOrigins", e.target.value)} />
             </Row>

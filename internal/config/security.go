@@ -97,9 +97,14 @@ func NormalizeSecurityConfig(cfg SecurityConfig, appName, jwtSecret string) Secu
 	if strings.TrimSpace(cfg.Passkey.RPDisplayName) == "" {
 		cfg.Passkey.RPDisplayName = strings.ToUpper(appName)
 	}
-	if strings.TrimSpace(cfg.Passkey.RPID) == "" {
-		cfg.Passkey.RPID = "localhost"
-	}
+	// RP ID 留空是**合法且推荐**的取值：留空表示「跟随访问域名」，
+	// 由 service.webAuthnForRequest 按本次请求的来源解析。
+	//
+	// 这里以前会兜底成 "localhost"，而缺省允许来源里同时写着 http://127.0.0.1:3000 ——
+	// 从 127.0.0.1 打开控制台时，浏览器会以「RP ID 不是当前域名的可注册后缀」
+	// 直接拒绝，缺省配置自己和自己打架。上线换域名后是同一个症状。
+	cfg.Passkey.RPID = strings.ToLower(strings.TrimSpace(cfg.Passkey.RPID))
+	cfg.Passkey.RPID = strings.TrimSuffix(cfg.Passkey.RPID, ".")
 	cfg.Passkey.RPOrigins = compactSecurityStrings(cfg.Passkey.RPOrigins)
 	if len(cfg.Passkey.RPOrigins) == 0 {
 		cfg.Passkey.RPOrigins = []string{"http://localhost:3000", "http://127.0.0.1:3000"}

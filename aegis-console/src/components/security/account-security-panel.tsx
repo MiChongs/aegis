@@ -12,7 +12,7 @@ import {
   useFinishAdminPasskeyRegistrationMutation, useGenerateAdminRecoveryCodesMutation, useRegenerateAdminRecoveryCodesMutation,
 } from "@/lib/admin-hooks";
 import type { RecoveryCodeIssueResult, TOTPEnrollment } from "@/lib/api/types";
-import { createPasskeyRegistrationCredential, passkeyRegistrationSupported } from "@/lib/webauthn";
+import { createPasskeyRegistrationCredential, passkeyRegistrationSupported, passkeySecureContextIssue } from "@/lib/webauthn";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingState } from "@/components/ui/data-state";
@@ -133,13 +133,20 @@ export function AccountSecurityPanel() {
   }
 
   async function handleRegisterPasskey() {
+    // 安全上下文的问题要在点击之前就说清楚：局域网 IP 打开时 `navigator.credentials`
+    // 根本不存在，只报「不支持」会让人去查浏览器版本，而真正要改的是访问地址。
+    const insecure = passkeySecureContextIssue();
+    if (insecure) { toast.error(insecure); return; }
     if (!passkeySupport) { toast.error("当前环境不支持 Passkey"); return; }
     try {
       const reg = await beginPasskey.mutateAsync();
       const cred = await createPasskeyRegistrationCredential(reg.options);
       await finishPasskey.mutateAsync({ challengeId: reg.session.challengeId, credential: cred, credentialName: passkeyName.trim() || undefined });
       setPasskeyName(""); toast.success("Passkey 已绑定");
-    } catch (e) { toast.error(e instanceof ApiError ? e.message : e instanceof Error ? e.message : "绑定失败"); }
+    } catch (e) {
+      // 后端的 40039（来源不在白名单）与浏览器的 SecurityError 都已带处置办法，原样透出
+      toast.error(e instanceof ApiError ? e.message : e instanceof Error ? e.message : "绑定失败", { duration: 10000 });
+    }
   }
 
   async function handleDeletePasskey(id: string) {

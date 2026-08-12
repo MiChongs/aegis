@@ -111,6 +111,7 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	}
 	router.Use(
 		middleware.RequestID(),
+		middleware.RequestOrigin(),
 		middleware.CrashRecovery(log, cl),
 		tracing.GinMiddleware("aegis", "/healthz", "/readyz"),
 		middleware.CORS(corsConfig),
