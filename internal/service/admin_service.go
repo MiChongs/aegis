@@ -28,10 +28,10 @@ import (
 )
 
 type AdminService struct {
-	cfg         config.Config
-	log         *zap.Logger
-	pg          *pgrepo.Repository
-	sessions    *redisrepo.SessionRepository
+	cfg      config.Config
+	log      *zap.Logger
+	pg       *pgrepo.Repository
+	sessions *redisrepo.SessionRepository
 	// authz 是平台唯一的授权判定引擎（策略落库 + 跨实例同步 + 可解释）。
 	// 它取代了原来挂在本结构体上的那个内存 Casbin enforcer。
 	authz *authz.Engine
@@ -687,6 +687,15 @@ func (s *AdminService) UpdateAdminAccess(ctx context.Context, adminID int64, inp
 	return nil
 }
 
+// ListRoles 返回全部角色，`Permissions` 是**展开后的生效集合**。
+//
+// 展开是必须的：角色定义里现在可以写前缀通配（`content:*`）、可以继承父角色、
+// 还可能被一条 override 的 deny 砍掉一项。直接把定义里的字符串发出去，
+// 权限矩阵会把 `content:*` 当成一个查无此项的权限点，于是
+// app_admin 在矩阵里看起来几乎什么都没有 —— 而它其实什么都有。
+//
+// 展开走的是与真实判定完全相同的那段代码，因此矩阵上打勾的每一项，
+// 点下去一定不会 403。
 func (s *AdminService) ListRoles() []admindomain.RoleDefinition {
 	items := make([]admindomain.RoleDefinition, 0, len(s.roles)+len(s.customRoles))
 	for _, item := range s.roles {
@@ -697,6 +706,13 @@ func (s *AdminService) ListRoles() []admindomain.RoleDefinition {
 		items = append(items, item)
 	}
 	s.rolesMu.RUnlock()
+	catalog := authz.AllPermissionCodes()
+	for i := range items {
+		// 用应用域展开：应用级角色的权限只在应用域下成立，
+		// 用平台域展开会让它们看起来一个权限都没有。
+		items[i].Permissions = s.authz.PermissionsFor(
+			[]string{authz.RoleSubject(items[i].Key)}, authz.AppDomain(1), catalog)
+	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Level == items[j].Level {
 			return items[i].Key < items[j].Key
@@ -712,12 +728,12 @@ func (s *AdminService) ListRolesWithPermissionTree() []admindomain.RoleWithPermi
 	allGroups := allPermissionGroups()
 	result := make([]admindomain.RoleWithPermissions, 0, len(roles))
 	for _, role := range roles {
+		// role.Permissions 已由 ListRoles 展开成生效集合（含通配展开、继承与拒绝），
+		// 因此这里不再需要"超管特判"那一行 —— 它的 `*` 策略会如实展开成全部权限点。
 		granted := make(map[string]bool, len(role.Permissions))
 		for _, p := range role.Permissions {
 			granted[p] = true
 		}
-		// 超级管理员拥有全部权限
-		isSuperAdmin := role.Key == "super_admin"
 
 		groups := make([]admindomain.PermissionGroup, 0, len(allGroups))
 		for _, g := range allGroups {
@@ -728,7 +744,7 @@ func (s *AdminService) ListRolesWithPermissionTree() []admindomain.RoleWithPermi
 			})
 			// 标记哪些权限是授权的（通过 Description 字段传递，前端读取）
 			for i := range groups[len(groups)-1].Permissions {
-				if isSuperAdmin || granted[groups[len(groups)-1].Permissions[i].Code] {
+				if granted[groups[len(groups)-1].Permissions[i].Code] {
 					groups[len(groups)-1].Permissions[i].Description = "granted"
 				}
 			}

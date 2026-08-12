@@ -59,59 +59,58 @@ RequestID → RequestOrigin → CrashRecovery → Tracing → CORS → AccessLog
 「有人在探接口」，都该在默认级别下被看到）；`/healthz` 与 `/readyz` **不记**
 （编排系统每几秒打一次且永远 200，记下来只会把真实流量冲淡）。
 
-## AdminAccess 的权限判定：appScoped 是最容易把页面搞空的一处
+## AdminAccess 的权限判定：规则表在 internal/authz
 
-`resolveAdminPermission` 为每条管理路由返回 `(权限点, 是否应用级)`。**「是否应用级」判错不会报错，
-只会让页面静默空掉** —— 因为链路是：`appScoped=true` → `extractAdminAppID` 找不到应用标识 →
-`40058 缺少有效的应用标识`，而控制台的 React Query 只是拿不到数据，面板照常渲染成「暂无」。
+`resolveAdminPermission` 现在只是一次查表 —— 规则表、权限词汇、角色定义、判定引擎
+全部在 [internal/authz](../authz)。这里曾经是 250 行嵌套 switch，三类问题都不会在
+编译期暴露：
+
+| 旧写法 | 后果 |
+|---|---|
+| `strings.Contains(path, "/users")` 不锚定 | 任何路径里出现 users 的接口都被当成用户接口 |
+| `isCompatReadPath` 后缀匹配 | 以 `/list` 结尾的**写**接口被判成读；漏登记读路径（`/deliveries`）让只读管理员打开列表就 403 |
+| 分支顺序即优先级，顺序藏在嵌套里 | 新规则被上面的宽前缀整个遮住，不报错、只是永不生效 |
+
+现在是一张有序、按段锚定的规则表，`:param` 吃一段、`*` 吃剩余（含零段）。
+两条测试钉住它：`internal/authz/testdata/route_permissions.json` 逐条守住
+**941 条真实路由**的判定结果与重构前一致；`TestNoUnreachableRouteRule`
+保证没有哪条规则被上面的规则完全遮住（旧实现里就沉淀了三段这样的死代码）。
+
+新增管理端路由时往 `adminRouteRules` 补一行。忘了补的表现是 **40315**
+「该管理端接口尚未登记权限规则」，而不是静默放行；
+`TestEveryAdminRouteHasAuthzRule` 会在 CI 里先一步抓到。
+
+### appScoped 仍是最容易把页面搞空的一处
+
+**「是否应用级」判错不会报错，只会让页面静默空掉** —— 链路是：`ScopeApp` →
+`extractAdminAppID` 找不到应用标识 → `40058 缺少有效的应用标识`，
+而控制台的 React Query 只是拿不到数据，面板照常渲染成「暂无」。
 
 判据很简单：**这个接口的返回值会因应用不同而不同吗？** 不会的一律不是应用级。
-典型的「不是应用级」是编译进二进制的静态目录：
+典型的「不是应用级」是编译进二进制的静态目录（支付渠道目录、工作流节点类型、
+第三方登录模板）。注意这类接口**光把作用域改成全局还不够**，权限点也要一并去掉：
+全局作用域只认全局授权，应用级管理员会从 400 变成 403，页面同样是空的。
 
-| 路由 | 返回什么 | 判定 |
-|---|---|---|
-| `/api/admin/app/payment-config/methods` | 平台支持哪些支付渠道（`Provider.Describe()`：能力矩阵 + 字段 schema） | `"", false` |
-| `/api/app/workflow/node-types` | 工作流节点类型目录 | `"", false` |
-| `/api/app/workflow/engine/status` | Temporal 连通性 | `"", false` |
-| `/api/admin/oauth-providers/templates` | 第三方登录渠道模板 | `"", false` |
+`/api/admin/platform/*` 是第三类：**恒为全局作用域**。这不是为了页面能显示，
+而是整套平台治理的地基 —— 作用域匹配在请求带应用时会认可「绑定到该应用的角色」
+所持有的权限点，一旦治理路由变成应用级，被冻结应用自己的管理员只要拿到
+`platform:app:govern` 就能给自己解封。
 
-注意这类接口**光把 `appScoped` 改成 false 还不够**，权限点也要一并去掉：
-`scopeMatches(assignmentAppID, nil)` 在 `requestAppID` 为 nil 时只认**全局作用域**的授权，
-于是应用级管理员会从 400 变成 403 —— 页面同样是空的。它们不含租户数据与凭据，
-任意已登录管理员可读是安全的。
-
-`internal/middleware/admin_permission_test.go` 钉住了上述两组用例（静态目录不得 appScoped、
-真正的应用资源必须 appScoped），新增路由时往表里加一行即可。
-
-### 第四类：`POST /api/admin/apps` 不要权限点
-
-建应用返回 `("", false)`。这不是漏写 —— 要求 `app:write` 会造出一个死锁：
-自助注册出来的管理员一条 assignment 都没有，而唯一能让他拿到权限的动作
-（建自己的第一个应用、成为它的 `app_admin`）本身就被 `app:write` 挡住了。
-控制台上的表现是填完表单、点提交、拿回一句「当前管理员无权执行此操作」。
-
-之所以能放行到 service 层再判，是因为这个动作不读写任何既有租户的数据，
-产物只属于发起人。真正的闸门（平台开关 + 每人配额）在
-`AdminService.EnsureCanCreateApp` —— 它要打库，而这张权限表是纯内存判定，
-放在这里既做不到配额，也会变成同一件事有两处配置入口。
-
-放开的**只有「建」这一个动作**：列表仍按 `app:read` 判定并在 handler 里按授权过滤，
-改既有应用仍要该应用的 `app:write`。`TestCreateAppNeedsNoPermissionPoint` 与
-`TestExistingAppRoutesKeepTheirGates` 成对钉住这条边界。
+`POST /api/admin/apps` 是第四类：**不要权限点**。要求 `app:write` 会造出死锁 ——
+自助注册出来的管理员一条角色都没有，而唯一能让他拿到权限的动作（建自己的第一个
+应用、成为它的 app_admin）本身就被 `app:write` 挡住。真正的闸门
+（平台开关 + 每人配额）在 `AdminService.EnsureCanCreateApp`。
+放开的只有「建」这一个动作，列表与改既有应用的闸门不变。
 
 ### 没登记的路由：默认拒绝，但要说清是"没登记"
 
-`resolveAdminPermission` 返回 error 时中间件回 `40315`，文案明说是权限规则未登记。
-与「没权限」共用 `40312` 那句通用文案时，一条漏登记的新路由会伪装成一次权限配置问题，
-于是排查方向从「补一行权限表」歪到「给这个人加授权」。
+规则表没命中时中间件回 `40315`，文案明说是权限规则未登记。与「没权限」共用
+`40312` 那句通用文案时，一条漏登记的新路由会伪装成一次权限配置问题，
+于是排查方向从「补一行规则表」歪到「给这个人加授权」。
 
-同理 `writeAdminError` 只对**非** `AppError` 兜底：`AdminService.Authorize` 的拒绝
-文案里带着缺失的权限点与作用域，在传输层改写成通用文案等于把刚算出来的信息丢掉。
-
-**`/api/admin/platform/*` 是第三类：恒为全局作用域。** 这不是为了页面能显示，
-而是整套平台治理的地基 —— `scopeMatches` 在 `requestAppID` 非空时会认可
-「绑定到该应用的角色」所持有的权限点，一旦治理路由变成应用级，
-被冻结应用自己的管理员只要拿到 `platform:app:govern` 就能给自己解封。同一个测试文件里有用例守它。
+同理 `writeAdminError` 只对**非** `AppError` 兜底：`AdminService.Authorize` 的
+拒绝文案里带着缺失的权限点、作用域、以及（被 deny 挡住时）那条策略行本身，
+在传输层改写成通用文案等于把刚算出来的信息丢掉。
 
 ## AdminAccess 的第二道闸门：治理只读期
 
@@ -120,18 +119,10 @@ RequestID → RequestOrigin → CrashRecovery → Tracing → CORS → AccessLog
 但对平台级管理员（超管或全局 `platform:app:govern`）放行 —— 否则谁都改不动，
 连解除治理本身都做不到。
 
-两处刻意的豁免：
-
-- **GET 一律放行**：只读化不等于失明，被治理方还要能看审计与配置排查问题。
-- **`/governance/appeals` 放行**：申诉是被治理方唯一的出口，挡住它就成了
-  「停运的应用连喊冤都喊不了」。
-
-判定读的是 `PlatformGovernanceService` 的内存快照（不打库），冻结档不设 `blockAdminWrite`，
-因此只有停运及以上才会触发这道闸门。
-
-另一个同源坑：`isCompatReadPath` 是**后缀匹配**。写操作路径若不小心以 `/list`、`/detail` 结尾
-会被误判成读；反过来漏登记读路径（如 `/deliveries`、`/refunds/refundable`）会让只有读权限的
-管理员在打开列表时吃 403。
+两处刻意的豁免：**GET 一律放行**（只读化不等于失明，被治理方还要能看审计排查问题）、
+**`/governance/appeals` 放行**（申诉是被治理方唯一的出口，挡住它就成了
+「停运的应用连喊冤都喊不了」）。判定读 `PlatformGovernanceService` 的内存快照（不打库），
+冻结档不设 `blockAdminWrite`，因此只有停运及以上才会触发这道闸门。
 
 ## AppGateway —— 应用接入网关
 

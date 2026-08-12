@@ -116,10 +116,10 @@ func TestMatchRoutePattern(t *testing.T) {
 	}{
 		{"/api/admin/apps", "/api/admin/apps", true},
 		{"/api/admin/apps/:appkey", "/api/admin/apps", false},
-		{"/api/admin/apps/:appkey/users", "/api/admin/apps/:appkey/users/*", true},          // * 吃零段
-		{"/api/admin/apps/:appkey/users/:userId", "/api/admin/apps/:appkey/users/*", true},  // * 吃多段
-		{"/api/admin/apps/:appkey/usersx", "/api/admin/apps/:appkey/users/*", false},        // 锚定在段边界
-		{"/api/admin/appsx/y", "/api/admin/apps/*", false},                                  // 前缀不能吃半个段
+		{"/api/admin/apps/:appkey/users", "/api/admin/apps/:appkey/users/*", true},         // * 吃零段
+		{"/api/admin/apps/:appkey/users/:userId", "/api/admin/apps/:appkey/users/*", true}, // * 吃多段
+		{"/api/admin/apps/:appkey/usersx", "/api/admin/apps/:appkey/users/*", false},       // 锚定在段边界
+		{"/api/admin/appsx/y", "/api/admin/apps/*", false},                                 // 前缀不能吃半个段
 		{"/api/admin/apps/:appkey/channels/:cid/users", "/api/admin/apps/:appkey/users/*", false},
 		{"/api/admin/tickets", "/api/admin/tickets/*", true},
 		{"/a/b/c", "/a/:x/c", true},

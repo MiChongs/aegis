@@ -82,6 +82,7 @@ graph TD
 | `internal/bootstrap/` | 应用启动 & CLI 命令 | [CLAUDE.md](internal/bootstrap/CLAUDE.md) |
 | `internal/config/` | 配置结构 & 加载 | [CLAUDE.md](internal/config/CLAUDE.md) |
 | `internal/db/` | 数据库/中间件连接 | — |
+| `internal/authz/` | **授权引擎**：Casbin 模型 + 权限词汇 + 内置角色 + 路由规则表 + 策略存储 | [CLAUDE.md](internal/authz/CLAUDE.md) |
 | `internal/domain/` | 所有领域类型定义 | [CLAUDE.md](internal/domain/CLAUDE.md) |
 | `internal/domain/organization/` | **组织架构**：租户边界、UUID 对外标识、内置角色与权限目录 | [docs](docs/organization.md) |
 | `internal/event/` | NATS 事件主题常量 | — |
@@ -214,6 +215,29 @@ pnpm lint       # ESLint
 
 新增配置项先确定归属，**不要两边都放**。应用级策略的逐项执行点索引见
 [internal/service/CLAUDE.md](internal/service/CLAUDE.md#应用级认证策略的执行点)。
+
+## 授权：一个引擎，一份策略表
+
+管理端授权此前有**两个 Casbin enforcer、两套模型、都只活在内存里**，
+外加一段 250 行的路由 switch。现在只有 [internal/authz](internal/authz/CLAUDE.md)：
+一份模型、一张 `authz_policies` 表、一个引擎，平台/应用/组织三种作用域靠**域**区分。
+
+| 维度 | 取值 |
+|---|---|
+| 主体 | `role:<key>` / `admin:<id>` / `orgrole:<key>` / `orgrole:<orgID>:<key>` |
+| 域 | 请求侧 `platform` / `app:N` / `org:N`；策略侧另可用 `*`、`app:*` |
+| 权限点 | 支持结尾通配 `ticket:*` / `*` |
+| 效果 | `allow` / `deny`，**显式拒绝跨主体压倒放行** |
+
+因此这四件以前做不到的事现在都是一条策略：给某人单独加一个权限点（不建角色）、
+收回某人某项能力（不动他的角色）、给**内置角色**补一项或砍一项、让角色继承角色
+（`base_role` 终于有执行点）。策略落库并经 NATS 跨实例广播 —— 改一次角色，所有实例立刻生效。
+
+两处刻意**不进策略表**，因为策略带缓存而它们要的是即时性：
+「谁有哪个角色、绑在哪个应用上」（撤销必须立刻生效）与临时权限（价值就是到点失效）。
+
+排障入口：`POST /api/admin/system/authz/explain` 回答「某人在某作用域下能不能做某事，为什么」，
+返回判定用到的全部主体与命中的策略行。
 
 ## 零权限账号的出口（自助能力）
 

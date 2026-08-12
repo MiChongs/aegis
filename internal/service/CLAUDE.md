@@ -112,10 +112,26 @@ func NewXxxService(log *zap.Logger, pg *pgrepo.Queries, ...) *XxxService
 ## 关键服务说明
 
 ### AdminService
-- 初始化时加载 Casbin enforcer（策略存储在 PostgreSQL）
+- **判定全部委托给 [internal/authz](../authz/CLAUDE.md)** —— 本服务不再持有 enforcer。
+  它只负责组装主体（本人 + 该作用域下生效的角色）并把结论翻成业务错误
 - `EnsureBootstrapSuperAdmin`：首次启动自动创建超级管理员
 - 会话存储在 Redis，带 TTL（默认 12h）
-- 权限判定与自助能力单独放在 `admin_authorization.go`（见下两节）
+- `admin_authorization.go` 权限判定与自助能力；`admin_policy_service.go` 策略管理面
+
+### 授权引擎接管了什么
+
+| 以前 | 现在 |
+|---|---|
+| `AdminService` 持有一个内存 Casbin enforcer，模型是 `r.obj == p.obj` | 判定走 `authz.Engine`，模型支持域 / 通配 / 拒绝 / 继承 |
+| `OrgAccessControl` 持有**第二个** enforcer 与**第二套**模型 | 同一个引擎，靠域 `org:N` 与主体前缀 `orgrole:` 区分 |
+| 内置角色写死在 `builtInAdminRoles()`，进程重启即回到编译期状态 | 定义仍在代码（保证升级能 propagate），但落库并可被 `override` 增减 |
+| 角色改动只有当前实例知道 | 策略落库 + NATS 广播，所有实例即时重载 |
+| `base_role` 只被拿去画关系图 | 落成一条角色继承边，父角色加权限子角色跟着有 |
+| 展开权限集与真实判定是两段代码 | 展开就是逐条跑判定，两者不可能漂移 |
+
+**`scopeMatches` 仍留在 Go 里**（过滤"这个角色在本次作用域下算不算数"）：
+角色绑定关系每次请求随会话现查，灌进带缓存的策略表会引入
+"撤销了角色但还能用一段时间"的窗口 —— 这是授权系统里最不该有的那种延迟。
 
 ### 自助能力 —— 零权限账号唯一的出口
 

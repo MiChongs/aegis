@@ -200,6 +200,9 @@ GET	/api/admin/system/audit-logs	ListAuditLogs
 GET	/api/admin/system/audit-logs/:id	GetAuditLog
 GET	/api/admin/system/audit-logs/export	ExportAuditLogs
 GET	/api/admin/system/audit-logs/stats	GetAuditStats
+GET	/api/admin/system/authz/model	AdminAuthzModel
+GET	/api/admin/system/authz/policies	AdminAuthzPolicies
+GET	/api/admin/system/authz/policies/subject	AdminAuthzSubjectPolicies
 GET	/api/admin/system/banners	ListPlatformBanners
 GET	/api/admin/system/banners/:id	GetPlatformBanner
 GET	/api/admin/system/banners/active	GetActivePlatformBanners
@@ -612,6 +615,9 @@ POST	/api/admin/system/admins/:adminId/force-logout	ForceLogoutAdmin
 POST	/api/admin/system/announcements	AdminCreateAnnouncement
 POST	/api/admin/system/announcements/:id/archive	AdminArchiveAnnouncement
 POST	/api/admin/system/announcements/:id/publish	AdminPublishAnnouncement
+POST	/api/admin/system/authz/explain	AdminAuthzExplain
+POST	/api/admin/system/authz/reload	AdminAuthzReload
+POST	/api/admin/system/authz/roles/override	AdminAuthzSetRoleOverride
 POST	/api/admin/system/banners	CreatePlatformBanner
 POST	/api/admin/system/banners/bulk-delete	BulkDeletePlatformBanners
 POST	/api/admin/system/banners/upload	UploadPlatformBannerImage
@@ -895,6 +901,7 @@ PUT	/api/admin/profile	UpdateAdminProfile
 PUT	/api/admin/system/admins/:adminId/access	AdminUpdateAccountAccess
 PUT	/api/admin/system/admins/:adminId/status	AdminUpdateAccountStatus
 PUT	/api/admin/system/announcements/:id	AdminUpdateAnnouncement
+PUT	/api/admin/system/authz/admins/:adminId/grants	AdminAuthzSetAdminGrants
 PUT	/api/admin/system/banners/:id	UpdatePlatformBanner
 PUT	/api/admin/system/device-marketing-names/:id	UpdateDeviceMarketingName
 PUT	/api/admin/system/egress	AdminUpdateEgressSettings

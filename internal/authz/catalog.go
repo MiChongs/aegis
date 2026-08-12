@@ -85,10 +85,10 @@ const (
 	PermTicketManage   = "ticket:manage"
 	PermTicketExport   = "ticket:export"
 
-	PermNotifyChannelRead   = "notify:channel:read"
-	PermNotifyChannelWrite  = "notify:channel:write"
-	PermNotifyDeliveryRead  = "notify:delivery:read"
-	PermNotifyTest          = "notify:test"
+	PermNotifyChannelRead  = "notify:channel:read"
+	PermNotifyChannelWrite = "notify:channel:write"
+	PermNotifyDeliveryRead = "notify:delivery:read"
+	PermNotifyTest         = "notify:test"
 
 	PermOrgCreate       = "org:create"
 	PermOrgWrite        = "org:write"

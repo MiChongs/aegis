@@ -125,14 +125,14 @@ func (s *AdminService) SetAdminGrants(ctx context.Context, adminID int64, grants
 
 // AuthorizationExplain 一次「为什么能/不能」的完整解释。
 type AuthorizationExplain struct {
-	AdminID      int64          `json:"adminId"`
-	Permission   string         `json:"permission"`
-	Domain       string         `json:"domain"`
-	IsSuperAdmin bool           `json:"isSuperAdmin"`
+	AdminID      int64  `json:"adminId"`
+	Permission   string `json:"permission"`
+	Domain       string `json:"domain"`
+	IsSuperAdmin bool   `json:"isSuperAdmin"`
 	// Subjects 本次判定实际用到的主体（本人 + 该作用域下生效的角色）。
 	// 角色为空时基本就能确定问题在"没授权"而不是"权限点配错了"。
-	Subjects []string        `json:"subjects"`
-	Decision authz.Decision  `json:"decision"`
+	Subjects []string       `json:"subjects"`
+	Decision authz.Decision `json:"decision"`
 	// TempPermission 命中的临时权限（如果是它放行的）。
 	TempPermission bool   `json:"tempPermission"`
 	Allowed        bool   `json:"allowed"`

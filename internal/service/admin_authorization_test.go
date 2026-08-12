@@ -235,3 +235,46 @@ func containsPermission(items []string, want string) bool {
 	}
 	return false
 }
+
+// 角色列表下发的必须是**展开后**的权限集。
+//
+// 角色定义里现在可以写 `content:*`、可以继承父角色、还可能被 override 的 deny 砍掉，
+// 把定义原文发出去会让权限矩阵把 `content:*` 当成一个查无此项的权限点 ——
+// 于是 app_admin 在矩阵里看起来几乎什么都没有，而它其实什么都有。
+func TestListRolesReturnsExpandedPermissions(t *testing.T) {
+	t.Parallel()
+
+	svc := newAuthorizationTestService(t)
+	roles := svc.ListRoles()
+	if len(roles) == 0 {
+		t.Fatal("角色列表不应为空")
+	}
+	catalog := map[string]bool{}
+	for _, code := range authz.AllPermissionCodes() {
+		catalog[code] = true
+	}
+	var sawAppAdmin bool
+	for _, role := range roles {
+		for _, permission := range role.Permissions {
+			if !catalog[permission] {
+				t.Errorf("角色 %s 下发了一个不在目录里的权限项 %q —— "+
+					"通配符必须在服务端展开，否则前端会把它当成未知权限丢掉", role.Key, permission)
+			}
+		}
+		if role.Key == authz.RoleAppAdmin {
+			sawAppAdmin = true
+			if !containsPermission(role.Permissions, authz.PermContentBannerWrite) {
+				t.Error("app_admin 的 content:* 应展开出 content:banner:write")
+			}
+			if containsPermission(role.Permissions, authz.PermTicketDelete) {
+				t.Error("app_admin 不该有 ticket:delete —— 它的工单权限是显式列表而非 ticket:*")
+			}
+		}
+		if role.Key == authz.RoleSuperAdmin && len(role.Permissions) != len(catalog) {
+			t.Errorf("超管应展开成全部 %d 个权限点，得到 %d 个", len(catalog), len(role.Permissions))
+		}
+	}
+	if !sawAppAdmin {
+		t.Fatal("角色列表里应包含 app_admin")
+	}
+}
