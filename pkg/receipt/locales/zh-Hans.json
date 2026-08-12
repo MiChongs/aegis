@@ -108,6 +108,26 @@
   "purpose.vip_purchase": "会员开通",
   "purpose.integral_purchase": "积分购买",
 
+  "wallet.type.recharge": "余额充值",
+  "wallet.type.consume": "余额消费",
+  "wallet.type.refund": "退款入账",
+  "wallet.type.admin_adjust": "管理员余额调整",
+  "wallet.type.vip_purchase": "会员开通",
+  "wallet.type.order_pay": "余额支付订单",
+  "wallet.direction.in": "入账",
+  "wallet.direction.out": "出账",
+
+  "meta.walletTxnNo": "钱包流水号",
+  "meta.walletType": "流水类型",
+  "meta.direction": "资金方向",
+  "meta.balanceBefore": "变动前余额",
+  "meta.balanceAfter": "变动后余额",
+  "meta.relatedOrder": "关联订单",
+  "meta.operator": "经办人",
+
+  "notes.walletDebit": "本笔款项从该账号的钱包余额中扣除，未经过任何第三方支付渠道。",
+  "notes.walletCredit": "本笔款项已计入该账号的钱包余额。",
+
   "notes.unpaid": "本单据不作为付款凭证：该订单尚未完成支付。",
   "notes.refunded": "该订单已全额退款，实收净额为零。",
   "notes.partiallyRefunded": "该订单已部分退款，明细见退款记录。",

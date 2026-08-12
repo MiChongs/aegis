@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"sort"
 	"strconv"
@@ -56,6 +57,35 @@ func configFloat(data map[string]any, key string) float64 {
 	}
 }
 
+// configString 从原始配置 map 中安全读取字符串（缺键 / 类型不符一律当空）
+func configString(data map[string]any, key string) string {
+	if data == nil {
+		return ""
+	}
+	if v, ok := data[key].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+// callbackAmount 解析回调里的金额（元）。
+//
+// **解析不出来一律返回零值，而不是报错。** 网关层的金额交叉校验以
+// `Amount.IsPositive()` 为前置条件，零值即跳过该校验 —— 把读不到的金额当成
+// 「不一致」会把合法支付判成异常并让上游一直重试，代价远大于少做一次比对。
+func callbackAmount(raw string) decimal.Decimal {
+	value, err := decimal.NewFromString(strings.TrimSpace(raw))
+	if err != nil || !value.IsPositive() {
+		return decimal.Zero
+	}
+	return value
+}
+
+// callbackAmountFen 解析以「分」为单位的金额（PAYJS 的 total_fee）并换算成元。
+func callbackAmountFen(raw string) decimal.Decimal {
+	return callbackAmount(raw).Shift(-2)
+}
+
 // ── 支付签名与表单辅助 ──
 
 func normalizeProviderType(value string) string {
@@ -75,10 +105,18 @@ func normalizeSignType(value string) string {
 	}
 }
 
+// generatePaymentSign 易支付系通用签名：参数按键名升序拼成 `a=1&b=2`，
+// 末尾直接接商户密钥（不加 `&` 也不加 `key=`）后取摘要。
+//
+// **`sign` / `sign_type` 与空值参数一律不参与签名**，这是易支付协议的规定
+// （PHP 参考实现里就是 `unset($_POST['sign_type'])`）。这三条排除规则必须写在
+// 函数内部而不是各调用点：漏掉一处的表现是上游只回一句「MD5签名校验失败」，
+// 本地怎么算都自洽，排查时无从下手。此前下单链路正是因为在调用点漏了 `sign_type`
+// 而验签必然失败，回调链路却排除了 —— 两边不对称，任何一处的单测都发现不了。
 func generatePaymentSign(params map[string]string, key string, signType string) string {
 	keys := make([]string, 0, len(params))
 	for k, v := range params {
-		if strings.TrimSpace(v) == "" {
+		if k == "sign" || k == "sign_type" || strings.TrimSpace(v) == "" {
 			continue
 		}
 		keys = append(keys, k)
@@ -102,10 +140,14 @@ func generatePaymentSign(params map[string]string, key string, signType string) 
 	}
 }
 
+// buildPaymentFormHTML 生成一张自动提交的跳转表单页。
+//
+// 值必须做 HTML 转义：`name`（商品名）是下单方填的，带一个引号就能把 value 属性
+// 提前闭合，表单当场变形。转义不会影响验签 —— 浏览器提交前会还原成原始字符串。
 func buildPaymentFormHTML(action string, params map[string]string) string {
 	var b strings.Builder
 	b.WriteString(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>支付跳转</title></head><body><form id="payForm" action="`)
-	b.WriteString(action)
+	b.WriteString(html.EscapeString(action))
 	b.WriteString(`" method="post">`)
 	keys := make([]string, 0, len(params))
 	for k := range params {

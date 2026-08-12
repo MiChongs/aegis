@@ -229,6 +229,13 @@ type SessionDetailView struct {
 	City        string    `json:"city,omitempty"`
 	ISP         string    `json:"isp,omitempty"`
 	Location    string    `json:"location,omitempty"`
+	// 经纬度来自 GeoIP 库。指针而非 0 值：赤道几内亚湾（0,0）是合法坐标，
+	// 用 0 表示"没解析出来"会让所有未知 IP 在地图上堆到大西洋里。
+	Latitude  *float64 `json:"latitude,omitempty"`
+	Longitude *float64 `json:"longitude,omitempty"`
+	// IsPrivate 为真表示来源是内网 / 回环地址（GeoIP 对它没有任何结论），
+	// 前端据此把这条会话归到"服务器地址"而不是伪造一个地理位置。
+	IsPrivate bool `json:"isPrivate,omitempty"`
 }
 
 type SessionRevokeResult struct {
@@ -262,6 +269,17 @@ type LoginAuditItem struct {
 	Status    string         `json:"status"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedAt time.Time      `json:"createdAt"`
+	// 以下位置字段由 Handler 层按 IP 解析后回填（与会话详情同一套 GeoIP），
+	// 落库的审计行里没有它们 —— GeoIP 库会更新，位置是查询时的结论而非事实。
+	Country     string   `json:"country,omitempty"`
+	CountryCode string   `json:"countryCode,omitempty"`
+	Region      string   `json:"region,omitempty"`
+	City        string   `json:"city,omitempty"`
+	ISP         string   `json:"isp,omitempty"`
+	Location    string   `json:"location,omitempty"`
+	Latitude    *float64 `json:"latitude,omitempty"`
+	Longitude   *float64 `json:"longitude,omitempty"`
+	IsPrivate   bool     `json:"isPrivate,omitempty"`
 }
 
 type LoginAuditListResult struct {

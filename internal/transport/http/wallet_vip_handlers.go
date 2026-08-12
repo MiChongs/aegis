@@ -75,6 +75,10 @@ func (h *Handler) MyWallet(c *gin.Context) {
 }
 
 // MyWalletTransactions GET /api/wallet/transactions
+//
+// 每条流水都带上 receipt 区块 ——「这笔能不能开凭证、开出来是收据还是退款凭证、
+// 由流水自己出具还是由关联订单出具、能不能寄到邮箱」全部由服务端算好。
+// 与订单列表同一套约定，客户端可以复用同一段渲染代码。
 func (h *Handler) MyWalletTransactions(c *gin.Context) {
 	session, ok := authSession(c)
 	if !ok {
@@ -83,9 +87,9 @@ func (h *Handler) MyWalletTransactions(c *gin.Context) {
 	}
 	var query WalletTransactionsQuery
 	_ = c.ShouldBindQuery(&query)
-	result, err := h.wallet.ListMyTransactions(c.Request.Context(), session, walletdomain.ListQuery{
+	result, err := h.wallet.ListMyTransactionViews(c.Request.Context(), session, walletdomain.ListQuery{
 		Type: query.Type, Page: query.Page, Limit: query.Limit,
-	})
+	}, receiptOptions(c, PaymentBillExportRequest{}))
 	if err != nil {
 		h.writeError(c, err)
 		return

@@ -55,7 +55,7 @@ func (p *payjsProvider) Describe() paymentdomain.ProviderMeta {
 				fSecret("key", "通信密钥", "PAYJS Key", "用于请求签名与回调验签", true),
 				fURL("apiUrl", "网关地址", "https://payjs.cn/api", "留空使用官方默认网关"),
 			),
-			callbackFields("PAYJS 服务端异步通知地址", "用户支付完成后跳转的前端页面"),
+			callbackFields("PAYJS 服务端异步通知地址", ""),
 			limitFields("0.01", "50000"),
 		),
 	})
@@ -227,7 +227,10 @@ func (p *payjsProvider) HandleCallback(ctx context.Context, data map[string]any,
 		ProviderOrderNo: callbackData["payjs_order_id"],
 		TradeStatus:     status,
 		PaymentMethod:   "wxpay",
-		RawData:         mapStringAny(callbackData),
+		// PAYJS 全程以「分」计价（下单提交的也是 total_fee），换算成元后
+		// 才能与订单金额比对。缺字段时为零值，网关层跳过金额校验。
+		Amount:  callbackAmountFen(callbackData["total_fee"]),
+		RawData: mapStringAny(callbackData),
 	}, nil
 }
 

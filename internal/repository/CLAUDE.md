@@ -13,6 +13,7 @@ repository/
 ├── postgres/          # PostgreSQL 主数据库
 │   ├── repository.go            # Queries 结构体（根聚合，pgx/v5）
 │   ├── admin_repository.go      # 管理员账号 CRUD、Casbin 策略
+│   ├── app_content_repository.go # 应用级 Banner 与公告：展示端/管理端两套过滤、排序事务、总览聚合
 │   ├── app_oauth_repository.go  # 应用级第三方登录渠道 & oauth_bindings 绑定记录
 │   ├── email_repository.go      # 邮件渠道配置 + 投递留痕（状态推进判定写在 SQL 里）
 │   ├── org_repository.go        # 组织 CRUD / 层级 / 概览统计 / 活动留痕 / 应用绑定

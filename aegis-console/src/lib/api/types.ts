@@ -372,10 +372,21 @@ export type AppPolicy = {
   [key: string]: unknown;
 };
 
-/** 应用级交易设置 */
+/**
+ * 应用级交易设置。
+ *
+ * 四个字段**必须整体提交**：后端的 PUT 是全量覆盖，
+ * 只发一个字段会把其余三个静默重置成零值。
+ */
 export type AppCommerceSettings = {
   /** 每单位金额兑换的积分数（integral_purchase 订单用） */
   integralPerCurrency: number;
+  /** 支付成功后自动把凭证寄到下单用户绑定的邮箱 */
+  receiptEmailOnPaid?: boolean;
+  /** 自动寄送时的凭证语言（BCP 47）；留空则按用户设置协商 */
+  receiptLocale?: string;
+  /** 钱包记账币种（ISO 4217），钱包流水凭证上的金额单位 */
+  walletCurrency?: string;
 };
 
 /** 某用户的登录绑定基线：开启设备/IP/属地强绑定后的判定依据 */
@@ -752,13 +763,19 @@ export type AppMonitorOverview = {
   components: MonitorComponent[];
 };
 
+/** Banner 展示位：客户端据此决定这条 Banner 画在哪儿。 */
+export type BannerSlot = "hero" | "popup" | "splash" | "notice" | "card";
+
 export type BannerItem = {
   id: number;
+  /** 落库的持久形态：外链 URL 或 `storage://{configId}/{objectKey}` */
   header?: string;
+  /** 服务端解析出的可直接展示地址；`<img src>` 用这个，不要用 header */
+  headerDisplayUrl?: string;
   title?: string;
   content?: string;
   url?: string;
-  type?: string;
+  type?: BannerSlot | string;
   position?: number;
   status?: boolean;
   startTime?: string | null;
@@ -769,12 +786,60 @@ export type BannerItem = {
   updatedAt?: string;
 };
 
+export type NoticeType = "notice" | "activity" | "maintenance" | "update" | "security";
+export type NoticeLevel = "normal" | "important" | "critical";
+export type NoticeStatus = "draft" | "published" | "archived";
+
 export type NoticeItem = {
   id: number;
   title?: string;
+  /** 富文本 HTML，服务端已净化 */
   content?: string;
+  /** 服务端提取的纯文本摘要，列表与推送用它 */
+  summary?: string;
+  type?: NoticeType | string;
+  level?: NoticeLevel | string;
+  status?: NoticeStatus | string;
+  pinned?: boolean;
+  startTime?: string | null;
+  endTime?: string | null;
+  publishedAt?: string | null;
+  viewCount?: number;
+  createdBy?: number | null;
   createdAt?: string;
   updatedAt?: string;
+};
+
+export type NoticeListResponse = {
+  items: NoticeItem[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+/** 内容中心总览：Banner 与公告的计数一次取齐。 */
+export type ContentOverview = {
+  bannerTotal: number;
+  bannerLive: number;
+  bannerScheduled: number;
+  bannerExpired: number;
+  bannerDisabled: number;
+  bannerViews: number;
+  bannerClicks: number;
+  noticeTotal: number;
+  noticePublished: number;
+  noticeDraft: number;
+  noticeArchived: number;
+  noticePinned: number;
+  noticeViews: number;
+  lastPublishedAt?: string | null;
+};
+
+export type ContentImageUploadResult = {
+  /** 落库用的持久引用 */
+  reference: string;
+  /** 当场预览用的带票据地址 */
+  url: string;
 };
 
 // 平台级 Banner —— 超级管理员专属的全局横幅（后端 /api/admin/system/banners/*）
@@ -3007,6 +3072,16 @@ export type UserLoginAuditRecord = {
   status: string;
   metadata?: Record<string, unknown>;
   createdAt: string;
+  // 以下位置字段由后端按 loginIp 实时解析（不落库：GeoIP 库会更新）
+  country?: string;
+  countryCode?: string;
+  region?: string;
+  city?: string;
+  isp?: string;
+  location?: string;
+  latitude?: number;
+  longitude?: number;
+  isPrivate?: boolean;
 };
 
 export type UserLoginAuditList = {
@@ -3220,4 +3295,147 @@ export type IPBanPage = {
   page: number;
   pageSize: number;
   totalPages: number;
+};
+
+// ── 交易中心 ──
+
+/** 钱包流水（管理端行：流水本体 + 账号信息） */
+export type AdminWalletTransaction = {
+  id: number;
+  transactionNo: string;
+  userId: number;
+  appid: number;
+  /** recharge / consume / refund / admin_adjust / vip_purchase / order_pay */
+  type: string;
+  /** 正数入账、负数出账 */
+  amount: string;
+  balanceBefore: string;
+  balanceAfter: string;
+  relatedOrderNo?: string;
+  title: string;
+  remark?: string;
+  operator?: string;
+  clientIp?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  account?: string;
+  nickname?: string;
+};
+
+export type AdminWalletTransactionList = {
+  items: AdminWalletTransaction[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
+/** 按流水类型的聚合 */
+export type WalletTypeStat = {
+  type: string;
+  count: number;
+  amount: string;
+};
+
+/**
+ * 钱包资金面板。
+ *
+ * 入账与出账分开：净额为零既可能是没有交易，也可能是充了一万又花了一万。
+ * balance 是时点值（平台此刻的待兑付负债），不随时间窗变化。
+ */
+export type WalletStats = {
+  totalIn: string;
+  totalOut: string;
+  net: string;
+  count: number;
+  userCount: number;
+  balance: string;
+  byType: WalletTypeStat[];
+};
+
+/** 订单口径的资金面板 */
+export type OrderGroupStat = {
+  key: string;
+  count: number;
+  amount: string;
+};
+
+export type OrderStats = {
+  totalOrders: number;
+  paidOrders: number;
+  paidAmount: string;
+  pendingOrders: number;
+  pendingAmount: string;
+  refundCount: number;
+  refundedAmount: string;
+  /** 实收净额 = 已支付 - 已成功退款 */
+  netAmount: string;
+  payerCount: number;
+  byStatus: OrderGroupStat[];
+  byMethod: OrderGroupStat[];
+};
+
+/** 一种凭证语言 */
+export type PaymentReceiptLocale = {
+  tag: string;
+  name: string;
+  nativeName: string;
+  direction: string;
+  script: string;
+  default: boolean;
+  /** 该语言需要中日韩字体 */
+  needsFont: boolean;
+  /** 当前环境能否真正输出该语言 */
+  available: boolean;
+};
+
+/** 凭证能力自述：这台机器能不能出中文凭证 */
+export type PaymentReceiptCapability = {
+  locales: PaymentReceiptLocale[];
+  defaultLocale: string;
+  supportsCJK: boolean;
+  fontStatus: string;
+  fontNotes?: string[];
+};
+
+export type PaymentReceiptEmailResult = {
+  to: string;
+  locale: string;
+  documentType: string;
+  /** false 表示渠道不支持附件，只发了下载链接 */
+  attached: boolean;
+  downloadUrl?: string;
+  linkExpiresAt: string;
+  messageId?: string;
+  localeFallback?: boolean;
+};
+
+/** 一个时间桶上的资金往来 */
+export type CommerceTrendPoint = {
+  /** 桶起始时刻（UTC, RFC3339） */
+  bucket: string;
+  /** 直接可展示的短标签（日 `03-21` / 月 `2026-03`），由服务端按粒度生成 */
+  label: string;
+  paidAmount: string;
+  paidOrders: number;
+  refundedAmount: string;
+  /** 实收净额 = 已支付 - 已退款 */
+  netAmount: string;
+  walletIn: string;
+  walletOut: string;
+};
+
+/** 交易趋势。粒度由服务端按跨度自动决定，前端不指定也不推断。 */
+export type CommerceTrend = {
+  /** day / week / month */
+  bucket: string;
+  points: CommerceTrendPoint[];
+};
+
+/** 交易概览首屏：订单 + 钱包 + 趋势 + 凭证能力一次取齐 */
+export type CommerceOverview = {
+  orders: OrderStats;
+  wallet: WalletStats;
+  trend: CommerceTrend;
+  receipt: PaymentReceiptCapability;
 };

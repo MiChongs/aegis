@@ -395,8 +395,11 @@ func (r *SessionRepository) appKey(appID int64) string {
 	return fmt.Sprintf("%s:app:%d", r.keyPrefix, appID)
 }
 
+// v2：内容中心升级后 Banner 与公告的结构都变宽了（Banner 多了展示 URL，
+// 公告多了状态 / 级别 / 时间窗）。沿用旧键会让升级后的头两分钟里，
+// 客户端拿到按新结构反序列化、但新字段全是零值的旧缓存 —— 那比缓存未命中难查得多。
 func (r *SessionRepository) bannerKey(appID int64) string {
-	return fmt.Sprintf("%s:app:banner:%d", r.keyPrefix, appID)
+	return fmt.Sprintf("%s:app:banner:v2:%d", r.keyPrefix, appID)
 }
 
 func (r *SessionRepository) platformBannerKey() string {
@@ -404,7 +407,7 @@ func (r *SessionRepository) platformBannerKey() string {
 }
 
 func (r *SessionRepository) noticeKey(appID int64) string {
-	return fmt.Sprintf("%s:app:notice:%d", r.keyPrefix, appID)
+	return fmt.Sprintf("%s:app:notice:v2:%d", r.keyPrefix, appID)
 }
 
 func (r *SessionRepository) myKey(appID int64, userID int64) string {

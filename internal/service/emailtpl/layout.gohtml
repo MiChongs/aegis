@@ -1,0 +1,127 @@
+{{- /*
+邮件 HTML 骨架。
+
+用 html/template 而不是在 Go 里拼字符串：模板引擎按上下文自动转义
+（标签内、属性内、URL 内各有各的规则），业务代码里再也不需要出现
+html.EscapeString —— 手工转义一旦漏一处就是注入。
+
+整体是表格布局：Outlook 2007–2021 用 Word 排版引擎，不认 flex、
+不认 div 上的 max-width、不认 border-radius。role="presentation"
+让读屏软件跳过纯排版表格，不会把版式念成数据表。
+
+样式全部走 class，由 premailer 在渲染时内联；这里只管结构。
+*/ -}}
+<!DOCTYPE html>
+<html lang="{{ .Lang }}">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+{{- /* iOS Mail 会按自己的算法缩放整封信，关掉才能保证字号与桌面一致 */}}
+<meta name="x-apple-disable-message-reformatting" />
+<meta name="color-scheme" content="light dark" />
+<meta name="supported-color-schemes" content="light dark" />
+<title>{{ .Title }}</title>
+<style type="text/css">{{ .CSS }}</style>
+</head>
+<body class="m-page" style="font-family:{{ .FontSans }};">
+{{- /*
+预览行：display:none 只是不显示，客户端仍会拿它当收件箱摘要。
+不给的话客户端会自己抓正文开头，抓到的往往是品牌名或一片空白。
+尾部那串零宽字符用来撑开摘要，防止客户端把正文接在后面。
+*/}}
+<div class="m-preheader">{{ .Preheader }}{{ .PreheaderPad }}</div>
+
+<table class="m-outer" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+<tr><td class="m-gutter" align="center">
+
+<table class="m-card" role="presentation" width="600" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="m-head" style="font-family:{{ .FontSans }};">
+    {{- with .Brand }}<div class="m-brand">{{ . }}</div>{{ end }}
+    <h1 class="m-title">{{ .Title }}</h1>
+    {{- with .Lead }}<p class="m-lead">{{ . }}</p>{{ end }}
+  </td></tr>
+
+  <tr><td class="m-body" style="font-family:{{ .FontSans }};">
+    {{- range .Blocks }}
+    {{- if eq .Kind "paragraph" }}
+    <p class="m-p">{{ .Text }}</p>
+
+    {{- else if eq .Kind "code" }}
+    <table class="m-code-wrap" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td class="m-code-cell" align="center">
+        <div class="m-code" style="font-family:{{ $.FontMono }};">{{ .Code }}</div>
+        {{- with .Note }}<div class="m-code-hint">{{ . }}</div>{{ end }}
+      </td></tr>
+    </table>
+
+    {{- else if eq .Kind "details" }}
+    <table class="m-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      {{- $last := .LastIndex }}
+      {{- range $i, $row := .Details }}
+      <tr>
+        <td class="m-label{{ if lt $i $last }} m-hairline{{ end }}">{{ $row.Label }}</td>
+        <td class="m-value{{ if lt $i $last }} m-hairline{{ end }}" align="right">{{ $row.Value }}</td>
+      </tr>
+      {{- end }}
+    </table>
+
+    {{- else if eq .Kind "notice" }}
+    <table class="m-box" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td class="m-box-cell">
+        <div class="m-box-title">{{ .Title }}</div>
+        <div class="m-box-text">{{ .Text }}</div>
+      </td></tr>
+    </table>
+
+    {{- else if eq .Kind "link" }}
+    <table class="m-box" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td class="m-box-cell">
+        <div class="m-box-label">{{ .Label }}</div>
+        <div class="m-url" style="font-family:{{ $.FontMono }};">{{ .URL }}</div>
+      </td></tr>
+    </table>
+
+    {{- else if eq .Kind "button" }}
+    {{- /*
+    Outlook 不认 a 标签上的 padding 与圆角，只会画出一行裸链接，
+    因此用 VML 单独给它画一个圆角矩形；其余客户端走下面的普通 <a>。
+    条件注释必须由 Go 侧以 template.HTML 注入 —— html/template 会
+    把模板源码里的 HTML 注释整段删掉。
+    */}}
+    <table class="m-btn-wrap" role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td>
+      {{ .MSOStart }}
+      <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+        href="{{ .URL }}" style="height:44px;v-text-anchor:middle;width:{{ .VMLWidth }}px;"
+        arcsize="22%" stroke="f" fillcolor="{{ $.ButtonBG }}">
+        <w:anchorlock/>
+        <center style="color:{{ $.ButtonFG }};font-family:{{ $.FontSans }};font-size:14px;font-weight:600;">{{ .Label }}</center>
+      </v:roundrect>
+      {{ .MSOEnd }}
+      {{ .NonMSOStart }}
+      <a class="m-btn" href="{{ .URL }}">{{ .Label }}</a>
+      {{ .NonMSOEnd }}
+    </td></tr></table>
+    {{- end }}
+    {{- end }}
+  </td></tr>
+
+  {{- if .FooterNote }}
+  <tr><td class="m-note" style="font-family:{{ .FontSans }};">
+    <div class="m-note-inner"><div class="m-note-text">{{ .FooterNote }}</div></div>
+  </td></tr>
+  {{- else }}
+  <tr><td class="m-tail"></td></tr>
+  {{- end }}
+</table>
+
+<table class="m-foot" role="presentation" width="600" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="m-foot-cell" align="center" style="font-family:{{ .FontSans }};">
+    <div class="m-foot-text">{{ .NoReply }}</div>
+    {{- with .AppName }}<div class="m-foot-text">{{ . }}</div>{{ end }}
+  </td></tr>
+</table>
+
+</td></tr>
+</table>
+</body>
+</html>

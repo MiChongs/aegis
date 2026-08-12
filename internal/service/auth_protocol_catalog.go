@@ -133,6 +133,7 @@ var gatewayOperations = []authprotocol.Operation{
 
 	// ── 内容与版本（免登录）──
 	{Key: "banners", Method: "GET", Path: "/banners", Summary: "轮播图"},
+	{Key: "bannerClick", Method: "POST", Path: "/banners/{bannerId}/click", Summary: "轮播图点击上报"},
 	{Key: "notices", Method: "GET", Path: "/notices", Summary: "公告"},
 	{Key: "versionCheck", Method: "GET", Path: "/version/check", Summary: "版本检查与更新"},
 }

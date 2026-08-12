@@ -108,6 +108,26 @@
   "purpose.vip_purchase": "会員登録",
   "purpose.integral_purchase": "ポイント購入",
 
+  "wallet.type.recharge": "残高チャージ",
+  "wallet.type.consume": "残高でのお支払い",
+  "wallet.type.refund": "残高への返金",
+  "wallet.type.admin_adjust": "管理者による残高調整",
+  "wallet.type.vip_purchase": "会員登録",
+  "wallet.type.order_pay": "残高による注文決済",
+  "wallet.direction.in": "入金",
+  "wallet.direction.out": "出金",
+
+  "meta.walletTxnNo": "ウォレット取引番号",
+  "meta.walletType": "取引種別",
+  "meta.direction": "入出金区分",
+  "meta.balanceBefore": "変更前残高",
+  "meta.balanceAfter": "変更後残高",
+  "meta.relatedOrder": "関連注文",
+  "meta.operator": "処理担当者",
+
+  "notes.walletDebit": "本件は当アカウントのウォレット残高から差し引かれました。外部の決済チャネルは経由していません。",
+  "notes.walletCredit": "本件は当アカウントのウォレット残高に入金されました。",
+
   "notes.unpaid": "本書は支払の証明にはなりません：この注文はまだ決済されていません。",
   "notes.refunded": "この注文は全額返金されました。差引受領額はゼロです。",
   "notes.partiallyRefunded": "この注文は一部返金されました。詳細は返金履歴をご覧ください。",

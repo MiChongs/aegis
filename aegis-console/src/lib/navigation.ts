@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   Smartphone,
   Users2,
+  Wallet,
   Workflow
 } from "lucide-react";
 import { appSections } from "@/lib/app-sections";
@@ -126,7 +127,13 @@ export const navigationGroups: NavigationGroup[] = [
         title: "内容",
         href: "/content",
         icon: BellDot,
-        summary: "Banner 与公告"
+        summary: "Banner 与公告",
+        // 首项必须是该页默认 Tab，否则无 `?tab=` 时高亮会错位
+        children: [
+          { title: "Banner", tab: "banners" },
+          { title: "应用公告", tab: "notices" },
+          { title: "系统公告", tab: "announcements" }
+        ]
       },
       {
         title: "平台横幅",
@@ -147,6 +154,21 @@ export const navigationGroups: NavigationGroup[] = [
         href: "/releases",
         icon: PackageCheck,
         summary: "版本与渠道"
+      },
+      {
+        // 与 /apps?tab=payment 的分工是「运营 vs 配置」：那边配渠道密钥与限额，
+        // 这里看已经发生的钱。同一件事只有一个入口，两边不重复。
+        title: "交易",
+        href: "/commerce",
+        icon: Wallet,
+        summary: "订单、退款、钱包与凭证",
+        children: [
+          { title: "概览", tab: "overview" },
+          { title: "订单", tab: "orders" },
+          { title: "退款", tab: "refunds" },
+          { title: "钱包流水", tab: "wallet" },
+          { title: "会员", tab: "vip" }
+        ]
       }
     ]
   },

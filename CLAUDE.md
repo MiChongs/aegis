@@ -93,10 +93,11 @@ graph TD
 | `pkg/egress/` | **出海代理网关**：域名后缀路由 + 多协议端点 + 健康检查 | [docs](docs/egress-gateway.md) |
 | `pkg/banner/` | **启动横幅渲染引擎**：FIGlet 艺术字 + 明细表格 + 终端能力降级 | [bootstrap](internal/bootstrap/CLAUDE.md#启动横幅) |
 | `pkg/receipt/` | **支付凭证 PDF**：10 语言 A4 排版 + 字体决策 + 分页 | [docs](docs/payment-receipt.md) |
+| **交易与凭证** | 订单与钱包流水**两类主体**都能出凭证；同一笔钱只出一份（挂着订单的流水由订单出具） | [docs](docs/payment-receipt.md#两类凭证主体) |
 | `pkg/i18n/` | **通用国际化**：语言协商 + CLDR 复数 + 定点金额/日期格式化 | [docs](docs/payment-receipt.md#语言协商) |
 | `pkg/fontkit/` | **字体归一化**：TTC 拆分成独立 sfnt + 字符覆盖度查询 | [docs](docs/payment-receipt.md#中日韩字体) |
 | `pkg/` | 共享工具包（errors/logger/response/tracing） | — |
-| `migrations/postgres/` | 顺序 SQL 迁移文件（000001–000068） | — |
+| `migrations/postgres/` | 顺序 SQL 迁移文件（000001–000072） | — |
 | `sdk/kotlin/` | **官方 Kotlin/Java 客户端**：三档 transport 适配器 + 全量 API，Android 与 JVM 服务端共用 | [README](sdk/kotlin/README.md) |
 | `aegis-console/` | Next.js 管理前端 | [CLAUDE.md](aegis-console/CLAUDE.md) |
 
@@ -290,6 +291,7 @@ pnpm lint       # ESLint
 | WAF | Coraza v3 + OWASP CRS v4 |
 | 权限控制 | Casbin v2 (RBAC) |
 | 密码强度 | zxcvbn（trustelem 端口，猜测次数估算）+ PRECIS RFC 8265 OpaqueString（x/text，归一化与合法性）+ 自带中文语境弱口令补充表，详见 [internal/service](internal/service/CLAUDE.md#密码强度评估--zxcvbn不是字符类规则) |
+| 富文本净化 | bluemonday（公告正文写入时净化，白名单放行 tiptap 的排版标签与 class，拒绝 style 与事件属性）+ html2text（提取纯文本摘要），详见 [internal/service](internal/service/CLAUDE.md#应用级内容中心app_contentgo) |
 | 多云存储 | Azure Blob / Aliyun OSS / AWS S3 / Tencent COS / Qiniu / WebDAV |
 | OAuth2 | QQ / 微信 / GitHub / Google / Microsoft / 微博 |
 | 支付渠道 | 16 个内置渠道，均由 `Provider.Describe()` 自描述（详见 [internal/service/CLAUDE.md](internal/service/CLAUDE.md#支付网关)）：<br>内部钱包 / 支付宝 (smartwalle) / 微信支付 (官方 wechatpay-go) / 易支付系聚合（易支付·彩虹·虎皮椒·PAYJS·码支付·V免签）/ Stripe (stripe-go) / PayPal (plutov) / Paddle / Lemon Squeezy / Square / Razorpay / Coinbase Commerce |

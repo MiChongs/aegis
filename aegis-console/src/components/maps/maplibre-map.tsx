@@ -181,10 +181,27 @@ export function MapLibreMap({
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     mapRef.current = map;
 
-    map.on("load", () => {
+    // 就绪 = style 解析完（可以加 source / layer / overlay），**不是** load。
+    //
+    // load 要等到"所有必要资源下载完且首帧渲染完成"，其中包含瓦片：
+    // 街道模式下 Carto 瓦片若被墙或超时，load 可能永远不来，
+    // 业务面板的图层就一条都挂不上去（地图看着正常，数据层整体消失）。
+    // styledata 只表示样式本身就绪，正是这里需要的语义。
+    //
+    // 三个入口都收敛到同一个只发一次的通知：监听挂上时可能已经就绪
+    //（HMR / 严格模式重挂载），load 作为最后兜底。
+    let notified = false;
+    const notifyReady = () => {
+      if (notified) return;
+      notified = true;
       setReady(true);
       onMapReadyRef.current?.(map);
-    });
+    };
+    if (map.isStyleLoaded()) notifyReady();
+    else {
+      map.once("styledata", notifyReady);
+      map.once("load", notifyReady);
+    }
 
     const ro = new ResizeObserver(() => map.resize());
     ro.observe(container);

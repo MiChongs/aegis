@@ -63,7 +63,7 @@ func (p *wechatNativeProvider) Describe() paymentdomain.ProviderMeta {
 			),
 			callbackFields(
 				"填到 /api/public/pay/callback/wechat_native 为止，不要加任何查询参数",
-				"用户支付完成后跳转的前端页面",
+				"",
 			),
 			limitFields("0.01", "50000"),
 			advanced(inGroup(paymentdomain.GroupAdvanced,

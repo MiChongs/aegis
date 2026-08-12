@@ -11,7 +11,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"html"
 	"math/big"
 	"net/http"
 	"net/mail"
@@ -300,6 +299,11 @@ func (s *EmailService) VerifyCode(ctx context.Context, appID int64, email string
 	return valid, nil
 }
 
+// passwordResetTTLMinutes 重置链接的有效期。
+// 邮件正文里那句「链接 N 分钟后失效」由它渲染，改这里两边一起动 ——
+// 分开写迟早会出现「信里说 30 分钟、实际 10 分钟就打不开了」。
+const passwordResetTTLMinutes = 30
+
 func (s *EmailService) SendPasswordResetEmail(ctx context.Context, appID int64, email string, resetBaseURL string, configName string) (*emaildomain.ResetResult, error) {
 	config, err := s.resolveConfig(ctx, appID, configName)
 	if err != nil {
@@ -313,25 +317,25 @@ func (s *EmailService) SendPasswordResetEmail(ctx context.Context, appID int64, 
 	if err != nil {
 		return nil, err
 	}
-	expireAt := timeutil.Now().Add(timeutil.Minutes(30))
+	expireAt := timeutil.Now().Add(timeutil.Minutes(passwordResetTTLMinutes))
 	resetURL := strings.TrimRight(strings.TrimSpace(resetBaseURL), "/")
 	if resetURL != "" {
 		resetURL += "?token=" + token + "&email=" + email
 	}
-	subject := fmt.Sprintf("%s 密码重置通知", app.Name)
-	html := renderEmailLayout(
-		app.Name,
-		"安全通知",
-		"密码重置请求",
-		"系统收到一次密码重置申请，请在 30 分钟内完成验证。",
-		renderPasswordResetBody(resetURL),
-		"如果这不是您本人发起的操作，请忽略本邮件，并尽快检查账号安全设置。",
-	)
-	messageID, err := s.sendMail(ctx, config, email, subject, html, "password_reset")
+	subject := fmt.Sprintf("重置 %s 的登录密码", app.Name)
+	html, text := renderEmail(emailLayout{
+		AppName:    app.Name,
+		Title:      "重置密码",
+		Lead:       "我们收到了一次重置这个账号密码的请求。",
+		Preheader:  fmt.Sprintf("重置密码的链接 %d 分钟内有效", passwordResetTTLMinutes),
+		Blocks:     passwordResetBlocks(resetURL, passwordResetTTLMinutes),
+		FooterNote: "不是您本人申请的话，忽略这封信即可，密码不会有任何变化。",
+	})
+	messageID, err := s.sendRenderedMail(ctx, config, email, subject, mailBody{HTML: html, Text: text}, "password_reset")
 	if err != nil {
 		return nil, err
 	}
-	if err := s.redis.Set(ctx, s.resetTokenKey(appID, email), token, timeutil.Minutes(30)).Err(); err != nil {
+	if err := s.redis.Set(ctx, s.resetTokenKey(appID, email), token, timeutil.Minutes(passwordResetTTLMinutes)).Err(); err != nil {
 		return nil, err
 	}
 	return &emaildomain.ResetResult{Success: true, Email: email, Token: token, ResetURL: resetURL, ExpireAt: expireAt, MessageID: messageID}, nil
@@ -357,16 +361,17 @@ func (s *EmailService) SendWelcomeEmail(ctx context.Context, appID int64, email 
 	if err != nil {
 		return err
 	}
-	subject := fmt.Sprintf("欢迎加入 %s", app.Name)
-	html := renderEmailLayout(
-		app.Name,
-		"账号开通成功",
-		fmt.Sprintf("欢迎加入 %s", app.Name),
-		renderWelcomeLead(userName),
-		renderWelcomeBody(app.Name),
-		"建议首次登录后尽快完善资料，并开启更高等级的账号安全保护。",
-	)
-	_, err = s.sendMail(ctx, config, email, subject, html, "welcome")
+	subject := fmt.Sprintf("%s 账号已开通", app.Name)
+	html, text := renderEmail(emailLayout{
+		AppName: app.Name,
+		Title:   "账号已开通",
+		Lead:    welcomeLead(app.Name, userName),
+		Blocks: []mailBlock{
+			mailDetails(emailDetail{Label: "登录邮箱", Value: email}),
+		},
+		FooterNote: fmt.Sprintf("如果您没有注册过 %s，忽略这封信即可。", app.Name),
+	})
+	_, err = s.sendRenderedMail(ctx, config, email, subject, mailBody{HTML: html, Text: text}, "welcome")
 	return err
 }
 
@@ -379,16 +384,22 @@ func (s *EmailService) SendProfileChangeCompletedEmail(ctx context.Context, appI
 	if err != nil {
 		return err
 	}
-	subject := fmt.Sprintf("%s 资料变更完成通知", app.Name)
-	html := renderEmailLayout(
-		app.Name,
-		"安全通知",
-		"资料变更已生效",
-		fmt.Sprintf("您的%s已经完成变更。如非本人操作，请立即检查账号安全设置。", describeProfileChangeField(field)),
-		renderProfileChangeCompletedBody(field, oldValue, newValue),
-		"若本次操作并非您本人发起，建议立即修改密码并检查近期登录记录。",
-	)
-	_, err = s.sendMail(ctx, config, email, subject, html, "profile_change")
+	fieldName := describeProfileChangeField(field)
+	subject := fmt.Sprintf("%s 的%s已变更", app.Name, fieldName)
+	html, text := renderEmail(emailLayout{
+		AppName:   app.Name,
+		Title:     fieldName + "已变更",
+		Lead:      "变更已经生效，下面是这次的改动。",
+		Preheader: fmt.Sprintf("%s 的%s刚刚被修改", app.Name, fieldName),
+		Blocks: []mailBlock{
+			mailDetails(
+				emailDetail{Label: "变更前", Value: maskProfileChangeNotificationValue(field, oldValue)},
+				emailDetail{Label: "变更后", Value: maskProfileChangeNotificationValue(field, newValue)},
+			),
+		},
+		FooterNote: "不是您本人改的话，请立刻修改密码，并检查账号的绑定信息和最近登录记录。",
+	})
+	_, err = s.sendRenderedMail(ctx, config, email, subject, mailBody{HTML: html, Text: text}, "profile_change")
 	return err
 }
 
@@ -453,8 +464,8 @@ func (s *EmailService) sendCodeMail(ctx context.Context, appID int64, config *em
 		expireMinutes = 5
 	}
 	expireAt := timeutil.Now().Add(timeutil.Minutes(expireMinutes))
-	subject, html := renderCodeMailContent(app.Name, config.Name, purpose, code, expireMinutes)
-	messageID, err := s.sendMail(ctx, config, email, subject, html, purpose)
+	subject, html, text := renderCodeMailContent(app.Name, config.Name, purpose, code, expireMinutes)
+	messageID, err := s.sendRenderedMail(ctx, config, email, subject, mailBody{HTML: html, Text: text}, purpose)
 	return expireAt, messageID, err
 }
 
@@ -522,7 +533,23 @@ func (s *EmailService) SendDocumentEmail(ctx context.Context, appID int64, mail 
 	return s.sendMail(ctx, config, mail.To, mail.Subject, mail.HTML, purpose, files...)
 }
 
+// mailBody 一封渲染完成的信：HTML 与配套纯文本成对交出。
+//
+// 模板渲染的信（验证码 / 重置 / 欢迎 / 资料变更 / 凭证）由 layout.gotxt
+// 从同一份内容模型生成纯文本；只有「正文是外部给的一段 HTML」那条路径
+// 才回落到 htmlToPlainText 去抓。抓取版永远比照着内容写的差一档。
+type mailBody struct {
+	HTML string
+	Text string
+}
+
+// sendMail 正文由外部给 HTML 时的入口，纯文本靠抓取补齐。
 func (s *EmailService) sendMail(ctx context.Context, config *emaildomain.Config, to string, subject string, htmlBody string, purpose string, attachments ...emailAttachment) (string, error) {
+	return s.sendRenderedMail(ctx, config, to, subject,
+		mailBody{HTML: htmlBody, Text: htmlToPlainText(htmlBody)}, purpose, attachments...)
+}
+
+func (s *EmailService) sendRenderedMail(ctx context.Context, config *emaildomain.Config, to string, subject string, body mailBody, purpose string, attachments ...emailAttachment) (string, error) {
 	to = strings.TrimSpace(to)
 	if _, err := mail.ParseAddress(to); err != nil {
 		return "", apperrors.New(40062, http.StatusBadRequest, "邮箱地址格式错误")
@@ -548,8 +575,8 @@ func (s *EmailService) sendMail(ctx context.Context, config *emaildomain.Config,
 	out := emailOutbound{
 		To:          to,
 		Subject:     subject,
-		HTML:        htmlBody,
-		Text:        htmlToPlainText(htmlBody),
+		HTML:        body.HTML,
+		Text:        body.Text,
 		Purpose:     purpose,
 		Attachments: attachments,
 	}
@@ -646,406 +673,4 @@ func generateResetToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
-}
-
-type emailDetail struct {
-	Label string
-	Value string
-}
-
-type emailPurposePresentation struct {
-	Eyebrow     string
-	Title       string
-	DisplayName string
-	Lead        string
-	Footer      string
-}
-
-func renderCodeMailContent(appName string, configName string, purpose string, code string, expireMinutes int) (string, string) {
-	normalizedPurpose := normalizeEmailPurpose(purpose)
-	if normalizedPurpose == "test" {
-		return fmt.Sprintf("%s 邮件通道测试", appName), renderEmailLayout(
-			appName,
-			"通道测试",
-			"邮件服务连通性验证",
-			"这是一封由后台主动触发的测试邮件，用于验证当前邮件配置是否可正常投递。",
-			renderCodeBody(code, expireMinutes, []emailDetail{
-				{Label: "测试用途", Value: "邮件服务配置验证"},
-				{Label: "发送通道", Value: fallbackEmailValue(configName, "默认配置")},
-			}),
-			"如果您已收到此邮件，说明当前 SMTP 配置、认证和模板渲染链路均已生效。",
-		)
-	}
-
-	presentation := getEmailPurposePresentation(normalizedPurpose)
-	return fmt.Sprintf("%s 验证码", appName), renderEmailLayout(
-		appName,
-		presentation.Eyebrow,
-		presentation.Title,
-		presentation.Lead,
-		renderCodeBody(code, expireMinutes, []emailDetail{
-			{Label: "用途", Value: presentation.DisplayName},
-			{Label: "有效期", Value: fmt.Sprintf("%d 分钟", expireMinutes)},
-		}),
-		presentation.Footer,
-	)
-}
-
-func renderPasswordResetBody(resetURL string) string {
-	content := renderEmailParagraph("点击下方按钮即可进入密码重置流程。若按钮无法打开，可复制备用链接到浏览器访问。")
-	if strings.TrimSpace(resetURL) != "" {
-		content += renderEmailButton("立即重置密码", resetURL)
-		content += renderEmailLinkBlock("备用链接", resetURL)
-	} else {
-		content += renderEmailInfoBox("未配置密码重置地址", "当前应用尚未提供密码重置入口地址，请联系管理员补充 resetBaseURL 配置。")
-	}
-	return content
-}
-
-func renderWelcomeLead(userName string) string {
-	name := strings.TrimSpace(userName)
-	if name == "" {
-		return "您的账号已完成初始化，可以开始使用当前应用。"
-	}
-	return fmt.Sprintf("%s，您好。您的账号已完成初始化，可以开始使用当前应用。", name)
-}
-
-func renderWelcomeBody(appName string) string {
-	return renderEmailParagraph(fmt.Sprintf("欢迎使用 %s。系统已为您完成基础账号准备工作。", appName)) +
-		renderEmailInfoBox("建议后续操作", "首次登录后建议尽快修改初始密码、补充安全信息，并检查通知与隐私设置。")
-}
-
-func renderProfileChangeCompletedBody(field string, oldValue string, newValue string) string {
-	return renderEmailParagraph("系统已完成本次敏感资料变更，以下为本次变更摘要。") +
-		renderEmailDetails([]emailDetail{
-			{Label: "变更项目", Value: describeProfileChangeField(field)},
-			{Label: "变更前", Value: maskProfileChangeNotificationValue(field, oldValue)},
-			{Label: "变更后", Value: maskProfileChangeNotificationValue(field, newValue)},
-		}) +
-		renderEmailInfoBox("安全提醒", "如果这不是您本人发起的操作，请立即修改密码，并检查账号绑定信息与近期登录记录。")
-}
-
-func renderCodeBody(code string, expireMinutes int, details []emailDetail) string {
-	return renderEmailDetails(details) +
-		fmt.Sprintf(`<div style="margin:24px 0;padding:24px;border:1px solid #e2e2e2;border-radius:10px;background:#fcfcfc;text-align:center;">
-<div style="font-size:11px;line-height:16px;letter-spacing:0.08em;text-transform:uppercase;color:#6f6f6f;">Verification Code</div>
-<div style="margin-top:12px;font-size:32px;line-height:1;font-weight:700;letter-spacing:0.28em;color:#171717;">%s</div>
-</div>`, html.EscapeString(strings.TrimSpace(code))) +
-		renderEmailInfoBox("有效期说明", fmt.Sprintf("验证码将在 %d 分钟后失效，请尽快完成操作。", expireMinutes))
-}
-
-// emailLayout 一封信的外壳参数。
-//
-// 拆出来是因为凭证邮件要按收件人的语言出具（含 <html lang> 与「请勿回复」那句话），
-// 而平台自身的验证码 / 密码重置邮件仍是中文。同一个外壳、两种语言，
-// 用参数表达比复制一份布局函数可靠。
-type emailLayout struct {
-	// Lang HTML 语言标记，留空为 zh-CN
-	Lang       string
-	AppName    string
-	Eyebrow    string
-	Title      string
-	Lead       string
-	Body       string
-	FooterNote string
-	// NoReplyNote 页脚的「请勿回复」提示，留空用中文默认句
-	NoReplyNote string
-}
-
-func renderEmailLayout(appName string, eyebrow string, title string, lead string, bodyHTML string, footerNote string) string {
-	return renderEmailLayoutWith(emailLayout{
-		AppName: appName, Eyebrow: eyebrow, Title: title,
-		Lead: lead, Body: bodyHTML, FooterNote: footerNote,
-	})
-}
-
-func renderEmailLayoutWith(layout emailLayout) string {
-	appName, eyebrow, title := layout.AppName, layout.Eyebrow, layout.Title
-	lead, bodyHTML, footerNote := layout.Lead, layout.Body, layout.FooterNote
-	lang := strings.TrimSpace(layout.Lang)
-	if lang == "" {
-		lang = "zh-CN"
-	}
-	noReply := strings.TrimSpace(layout.NoReplyNote)
-	if noReply == "" {
-		noReply = "这是一封系统邮件，请勿直接回复。"
-	}
-	safeNoReply := html.EscapeString(noReply)
-	safeAppName := html.EscapeString(strings.TrimSpace(appName))
-	safeEyebrow := html.EscapeString(strings.TrimSpace(eyebrow))
-	safeTitle := html.EscapeString(strings.TrimSpace(title))
-	safeLead := html.EscapeString(strings.TrimSpace(lead))
-	safeFooter := html.EscapeString(strings.TrimSpace(footerNote))
-
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html lang="%s">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>%s</title>
-</head>
-<body style="margin:0;padding:0;background:#f8f8f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;color:#171717;">
-<div style="padding:32px 16px;">
-<div style="max-width:640px;margin:0 auto;border:1px solid #e2e2e2;border-radius:12px;overflow:hidden;background:#fcfcfc;">
-<div style="padding:28px 28px 20px;background:#fcfcfc;border-bottom:1px solid #ededed;">
-<div style="display:inline-block;padding:2px 10px;border:1px solid #e2e2e2;border-radius:999px;background:#f8f8f8;font-size:12px;line-height:22px;font-weight:500;color:#6f6f6f;">%s</div>
-<h1 style="margin:16px 0 8px;font-size:28px;line-height:1.2;font-weight:700;color:#171717;">%s</h1>
-<p style="margin:0;font-size:14px;line-height:24px;color:#6f6f6f;">%s</p>
-</div>
-<div style="padding:24px 28px 12px;background:#fcfcfc;">%s</div>
-<div style="padding:0 28px 28px;background:#fcfcfc;">
-<div style="padding:14px 16px;border:1px solid #e2e2e2;border-radius:10px;background:#f8f8f8;color:#6f6f6f;font-size:13px;line-height:22px;">%s</div>
-</div>
-</div>
-<div style="max-width:640px;margin:12px auto 0;padding:0 8px;color:#6f6f6f;font-size:12px;line-height:22px;text-align:center;">
-<div style="font-weight:500;color:#6f6f6f;">%s</div>
-<div>%s</div>
-</div>
-</div>
-</body>
-</html>`, lang, safeTitle, safeEyebrow, safeTitle, safeLead, bodyHTML, safeFooter, safeAppName, safeNoReply)
-}
-
-func renderEmailParagraph(text string) string {
-	return fmt.Sprintf(`<p style="margin:0 0 16px;font-size:14px;line-height:24px;color:#6f6f6f;">%s</p>`, html.EscapeString(strings.TrimSpace(text)))
-}
-
-func renderEmailInfoBox(title string, text string) string {
-	return fmt.Sprintf(`<div style="margin:16px 0;padding:16px 18px;border-radius:10px;background:#f8f8f8;border:1px solid #e2e2e2;">
-<div style="font-size:13px;line-height:20px;font-weight:600;color:#171717;">%s</div>
-<div style="margin-top:6px;font-size:14px;line-height:24px;color:#6f6f6f;">%s</div>
-</div>`, html.EscapeString(strings.TrimSpace(title)), html.EscapeString(strings.TrimSpace(text)))
-}
-
-func renderEmailButton(label string, url string) string {
-	safeLabel := html.EscapeString(strings.TrimSpace(label))
-	safeURL := html.EscapeString(strings.TrimSpace(url))
-	return fmt.Sprintf(`<div style="margin:24px 0 20px;">
-<a href="%s" style="display:inline-block;padding:10px 16px;border:1px solid #171717;border-radius:8px;background:#171717;color:#ffffff;text-decoration:none;font-size:14px;line-height:20px;font-weight:500;">%s</a>
-</div>`, safeURL, safeLabel)
-}
-
-func renderEmailLinkBlock(label string, url string) string {
-	return fmt.Sprintf(`<div style="margin:0 0 16px;padding:16px 18px;border-radius:10px;background:#fcfcfc;border:1px solid #e2e2e2;">
-<div style="font-size:13px;line-height:20px;font-weight:600;color:#171717;">%s</div>
-<div style="margin-top:8px;word-break:break-all;font-size:13px;line-height:22px;color:#3e63dd;">%s</div>
-</div>`, html.EscapeString(strings.TrimSpace(label)), html.EscapeString(strings.TrimSpace(url)))
-}
-
-func renderEmailDetails(details []emailDetail) string {
-	if len(details) == 0 {
-		return ""
-	}
-	filtered := make([]emailDetail, 0, len(details))
-	for _, item := range details {
-		if strings.TrimSpace(item.Label) == "" && strings.TrimSpace(item.Value) == "" {
-			continue
-		}
-		filtered = append(filtered, item)
-	}
-	if len(filtered) == 0 {
-		return ""
-	}
-	var builder strings.Builder
-	builder.WriteString(`<div style="margin:0 0 16px;padding:14px 18px;border-radius:10px;background:#fcfcfc;border:1px solid #e2e2e2;">`)
-	for idx, item := range filtered {
-		borderStyle := ""
-		if idx < len(filtered)-1 {
-			borderStyle = "border-bottom:1px solid #ededed;"
-		}
-		builder.WriteString(fmt.Sprintf(`<div style="display:flex;justify-content:space-between;gap:16px;padding:10px 0;%s">
-<div style="font-size:13px;line-height:20px;color:#6f6f6f;">%s</div>
-<div style="font-size:13px;line-height:20px;font-weight:500;color:#171717;text-align:right;">%s</div>
-</div>`, borderStyle, html.EscapeString(strings.TrimSpace(item.Label)), html.EscapeString(strings.TrimSpace(item.Value))))
-	}
-	builder.WriteString(`</div>`)
-	return builder.String()
-}
-
-func normalizeEmailPurpose(purpose string) string {
-	return strings.ToLower(strings.TrimSpace(purpose))
-}
-
-func describeEmailPurpose(purpose string) string {
-	return getEmailPurposePresentation(purpose).DisplayName
-}
-
-func getEmailPurposePresentation(purpose string) emailPurposePresentation {
-	switch normalizeEmailPurpose(purpose) {
-	case "register", "signup", "sign-up":
-		return emailPurposePresentation{
-			Eyebrow:     "账号安全",
-			Title:       "注册验证码",
-			DisplayName: "账号注册",
-			Lead:        "本次验证码用于新账号注册，请在有效期内完成验证。",
-			Footer:      "请勿将验证码泄露给任何人。系统工作人员不会向您索取验证码。",
-		}
-	case "login", "signin", "sign-in":
-		return emailPurposePresentation{
-			Eyebrow:     "身份校验",
-			Title:       "登录验证码",
-			DisplayName: "登录验证",
-			Lead:        "本次验证码用于登录校验，请确认是您本人正在进行登录操作。",
-			Footer:      "如非本人操作，请立即修改密码并检查账号安全设置。",
-		}
-	case "admin_login":
-		return emailPurposePresentation{
-			Eyebrow:     "后台安全",
-			Title:       "管理员登录验证码",
-			DisplayName: "管理员登录",
-			Lead:        "本次验证码用于管理员登录校验，请仅在您本人操作时使用。",
-			Footer:      "后台验证码具有较高安全等级，请勿转发或截图外传。",
-		}
-	case "bind_email", "bind-email":
-		return emailPurposePresentation{
-			Eyebrow:     "资料验证",
-			Title:       "绑定邮箱验证码",
-			DisplayName: "绑定邮箱",
-			Lead:        "本次验证码用于绑定邮箱，请在有效期内完成验证。",
-			Footer:      "完成验证后，该邮箱将绑定到您的账号。",
-		}
-	case "change_email", "change-email":
-		return emailPurposePresentation{
-			Eyebrow:     "资料验证",
-			Title:       "邮箱变更验证码",
-			DisplayName: "变更邮箱",
-			Lead:        "本次验证码用于修改邮箱，请在有效期内完成验证。",
-			Footer:      "若本次变更不是您本人发起，请忽略本邮件并及时检查账号安全。",
-		}
-	case "profile_email_change":
-		return emailPurposePresentation{
-			Eyebrow:     "资料验证",
-			Title:       "邮箱变更验证码",
-			DisplayName: "个人资料邮箱变更",
-			Lead:        "本次验证码用于确认新的个人资料邮箱地址，请在有效期内完成验证。",
-			Footer:      "完成验证后，新的邮箱地址将更新到您的个人资料。",
-		}
-	case "profile_phone_change":
-		return emailPurposePresentation{
-			Eyebrow:     "资料验证",
-			Title:       "手机号变更验证码",
-			DisplayName: "个人资料手机号变更",
-			Lead:        "本次验证码用于确认新的个人资料手机号，请在有效期内完成验证。",
-			Footer:      "完成验证后，新的手机号将更新到您的个人资料。",
-		}
-	case "bind_phone", "bind-phone":
-		return emailPurposePresentation{
-			Eyebrow:     "资料验证",
-			Title:       "绑定手机验证码",
-			DisplayName: "绑定手机号",
-			Lead:        "本次验证码用于绑定手机号，请在有效期内完成验证。",
-			Footer:      "完成验证后，该手机号将绑定到您的账号。",
-		}
-	case "change_phone", "change-phone":
-		return emailPurposePresentation{
-			Eyebrow:     "资料验证",
-			Title:       "手机号变更验证码",
-			DisplayName: "变更手机号",
-			Lead:        "本次验证码用于修改手机号，请在有效期内完成验证。",
-			Footer:      "若本次变更不是您本人发起，请及时检查账号安全设置。",
-		}
-	case "password_reset", "reset_password", "reset-password":
-		return emailPurposePresentation{
-			Eyebrow:     "账号安全",
-			Title:       "密码重置验证码",
-			DisplayName: "重置密码",
-			Lead:        "本次验证码用于密码重置，请在有效期内完成验证。",
-			Footer:      "若本次操作并非您本人发起，请忽略本邮件并尽快检查账号安全。",
-		}
-	case "verify_identity", "identity_verify", "identity-verification":
-		return emailPurposePresentation{
-			Eyebrow:     "身份校验",
-			Title:       "身份验证验证码",
-			DisplayName: "身份验证",
-			Lead:        "本次验证码用于身份核验，请在有效期内完成验证。",
-			Footer:      "请勿向任何人透露验证码，系统人员不会以任何理由索要该验证码。",
-		}
-	case "two_factor", "two-factor", "2fa", "mfa":
-		return emailPurposePresentation{
-			Eyebrow:     "二次验证",
-			Title:       "二次验证验证码",
-			DisplayName: "双重验证",
-			Lead:        "本次验证码用于双重验证，请在有效期内完成确认。",
-			Footer:      "如您未开启或未触发本次验证，请立即检查账号安全。",
-		}
-	case "custom":
-		return emailPurposePresentation{
-			Eyebrow:     "身份校验",
-			Title:       "验证码",
-			DisplayName: "自定义验证",
-			Lead:        "本次验证码用于自定义安全校验，请在有效期内完成验证。",
-			Footer:      "请勿将验证码泄露给任何人。系统工作人员不会向您索取验证码。",
-		}
-	case "test":
-		return emailPurposePresentation{
-			Eyebrow:     "通道测试",
-			Title:       "邮件服务连通性验证",
-			DisplayName: "邮件配置测试",
-			Lead:        "这是一封由后台主动触发的测试邮件，用于验证当前邮件配置是否可正常投递。",
-			Footer:      "如果您已收到此邮件，说明当前 SMTP 配置、认证和模板渲染链路均已生效。",
-		}
-	default:
-		return emailPurposePresentation{
-			Eyebrow:     "身份校验",
-			Title:       "验证码",
-			DisplayName: "安全验证",
-			Lead:        "本次验证码用于安全校验，请在有效期内完成验证。",
-			Footer:      "请勿将验证码泄露给任何人。系统工作人员不会向您索取验证码。",
-		}
-	}
-}
-
-func fallbackEmailValue(value string, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return strings.TrimSpace(value)
-}
-
-func describeProfileChangeField(field string) string {
-	switch strings.ToLower(strings.TrimSpace(field)) {
-	case "email":
-		return "邮箱地址"
-	case "phone":
-		return "手机号码"
-	default:
-		return "资料信息"
-	}
-}
-
-func maskProfileChangeNotificationValue(field string, value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "未设置"
-	}
-	switch strings.ToLower(strings.TrimSpace(field)) {
-	case "email":
-		return maskEmailForNotification(value)
-	case "phone":
-		return maskPhoneForNotification(value)
-	default:
-		return value
-	}
-}
-
-func maskEmailForNotification(value string) string {
-	parts := strings.Split(value, "@")
-	if len(parts) != 2 {
-		return value
-	}
-	local := parts[0]
-	if len(local) <= 1 {
-		return "*@" + parts[1]
-	}
-	if len(local) == 2 {
-		return local[:1] + "*@" + parts[1]
-	}
-	return local[:1] + strings.Repeat("*", len(local)-2) + local[len(local)-1:] + "@" + parts[1]
-}
-
-func maskPhoneForNotification(value string) string {
-	if len(value) <= 7 {
-		return "***"
-	}
-	return value[:3] + "****" + value[len(value)-4:]
 }

@@ -107,6 +107,26 @@
   "purpose.vip_purchase": "Membership purchase",
   "purpose.integral_purchase": "Points purchase",
 
+  "wallet.type.recharge": "Wallet top-up",
+  "wallet.type.consume": "Wallet purchase",
+  "wallet.type.refund": "Refund to wallet",
+  "wallet.type.admin_adjust": "Manual balance adjustment",
+  "wallet.type.vip_purchase": "Membership purchase",
+  "wallet.type.order_pay": "Order paid with balance",
+  "wallet.direction.in": "Credit",
+  "wallet.direction.out": "Debit",
+
+  "meta.walletTxnNo": "Wallet entry",
+  "meta.walletType": "Entry type",
+  "meta.direction": "Direction",
+  "meta.balanceBefore": "Balance before",
+  "meta.balanceAfter": "Balance after",
+  "meta.relatedOrder": "Related order",
+  "meta.operator": "Processed by",
+
+  "notes.walletDebit": "Paid from the wallet balance of this account. No external payment channel was involved.",
+  "notes.walletCredit": "This amount was credited to the wallet balance of this account.",
+
   "notes.unpaid": "This document is not proof of payment: the order has not been settled yet.",
   "notes.refunded": "This order has been refunded in full. The amount shown as net paid is zero.",
   "notes.partiallyRefunded": "Part of this order has been refunded. See the refunds section for details.",

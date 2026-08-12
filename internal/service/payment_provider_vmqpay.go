@@ -51,7 +51,7 @@ func (p *vmqpayProvider) Describe() paymentdomain.ProviderMeta {
 				fURL("apiUrl", "服务地址", "https://vmq.example.com", "自建 V免签 服务端地址"),
 				fSecret("key", "通信密钥", "Key", "V免签后台的通信密钥，用于签名与验签", true),
 			),
-			callbackFields("V免签服务端异步通知地址", "用户支付完成后跳转的前端页面"),
+			callbackFields("V免签服务端异步通知地址", ""),
 			limitFields("0.01", "50000"),
 		),
 	})
@@ -180,7 +180,10 @@ func (p *vmqpayProvider) HandleCallback(ctx context.Context, data map[string]any
 		ProviderOrderNo: fmt.Sprintf("vmq_%s", payID),
 		TradeStatus:     "TRADE_SUCCESS",
 		PaymentMethod:   payType,
-		RawData:         mapStringAny(callbackData),
+		// 同码支付：price 是下单原始金额，reallyPrice 是被调整过的实付额。
+		// 比对订单金额只能用前者。
+		Amount:  callbackAmount(price),
+		RawData: mapStringAny(callbackData),
 	}, nil
 }
 

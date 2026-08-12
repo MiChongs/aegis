@@ -91,4 +91,30 @@ type PurchaseResult struct {
 	Status        Status          `json:"status"`
 	WalletBalance decimal.Decimal `json:"walletBalance"`
 	BonusIntegral int64           `json:"bonusIntegral"`
+	// WalletTransactionNo 扣款对应的钱包流水号。凭证由它出具 ——
+	// 余额直购不产生支付订单，这是这笔购买唯一的资金凭据。
+	// 0 元套餐不动钱包，此处为空。
+	WalletTransactionNo string `json:"walletTransactionNo,omitempty"`
+	// Replayed 命中幂等键，返回的是首次购买结果，本次未实际扣款
+	Replayed bool `json:"replayed,omitempty"`
+	// Receipt 这笔购买的凭证入口；未接入凭证引擎或 0 元套餐时为空
+	Receipt *ReceiptEntry `json:"receipt,omitempty"`
+}
+
+// ReceiptEntry 会员购买的凭证入口。
+//
+// 字段与钱包流水的凭证入口一致，客户端可以用同一段代码渲染按钮。
+// 之所以不直接复用 walletdomain 的类型：domain 之间互相 import 会
+// 把「会员」和「钱包」两个本可独立演进的包焊死在一起。
+type ReceiptEntry struct {
+	Available     bool   `json:"available"`
+	TransactionNo string `json:"transactionNo,omitempty"`
+	DocumentType  string `json:"documentType,omitempty"`
+	Locale        string `json:"locale,omitempty"`
+	Currency      string `json:"currency,omitempty"`
+	DownloadURL   string `json:"downloadUrl,omitempty"`
+	ExportURL     string `json:"exportUrl,omitempty"`
+	EmailURL      string `json:"emailUrl,omitempty"`
+	Emailable     bool   `json:"emailable"`
+	EmailHint     string `json:"emailHint,omitempty"`
 }

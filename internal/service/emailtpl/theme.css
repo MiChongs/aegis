@@ -1,0 +1,322 @@
+/*
+ * 邮件主题样式。
+ *
+ * 这里的每一个色值都**抄自控制台的设计令牌**（aegis-console/src/app/globals.css
+ * 的 `:root` 与 `.dark`），不另起一套：邮件是产品的一部分，收件人前一分钟可能
+ * 还在看控制台。对照关系写在注释里，改令牌时照着改这一处即可。
+ *
+ * | 这里          | 控制台令牌            | 浅色    | 深色    |
+ * |---------------|----------------------|---------|---------|
+ * | 页底          | --background         | #f4f4f5 | #09090b |
+ * | 卡片          | --card               | #ffffff | #18181b |
+ * | 主文字        | --foreground         | #18181b | #f4f4f5 |
+ * | 次文字        | --muted-foreground   | #71717a | #a1a1aa |
+ * | 描边          | --border             | #e4e4e7 | #27272a |
+ * | 弱背景        | --muted / --accent   | #f4f4f5 | #27272a |
+ * | 按钮          | --primary            | #18181b | #fafafa |
+ * | 按钮文字      | --primary-foreground | #fafafa | #18181b |
+ * 圆角取 --radius(1rem)=16px 与其派生档，与控制台的 rounded-2xl / rounded-xl 对齐。
+ *
+ * 写成一张样式表而不是内联属性，是因为 premailer 会在渲染时把它内联进标签
+ * （邮件客户端普遍不认 <style>）。人写类名、机器做内联 —— 手写内联样式那种
+ * 一个色值散落在几十处的写法，改一次主题就要全文替换。
+ *
+ * 媒体查询无法内联，premailer 会原样留在 <style> 里，因此深色规则必须
+ * 带 !important 才能盖过被内联到标签上的浅色值。
+ */
+
+.m-page {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  background-color: #f4f4f5;
+  -webkit-text-size-adjust: 100%;
+  -ms-text-size-adjust: 100%;
+}
+
+.m-outer {
+  width: 100%;
+  background-color: #f4f4f5;
+}
+
+.m-gutter {
+  padding: 32px 12px;
+}
+
+/* 信体卡片：白底 + 1px 描边 + 16px 圆角，与控制台的卡片同一形状 */
+.m-card {
+  width: 600px;
+  max-width: 600px;
+  background-color: #ffffff;
+  border: 1px solid #e4e4e7;
+  border-radius: 16px;
+}
+
+.m-head {
+  padding: 30px 30px 0 30px;
+}
+
+.m-brand {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #71717a;
+}
+
+.m-title {
+  margin: 10px 0 0 0;
+  font-size: 21px;
+  line-height: 30px;
+  font-weight: 600;
+  color: #18181b;
+}
+
+.m-lead {
+  margin: 8px 0 0 0;
+  font-size: 14px;
+  line-height: 23px;
+  color: #71717a;
+}
+
+.m-body {
+  padding: 22px 30px 0 30px;
+}
+
+.m-p {
+  margin: 0 0 16px 0;
+  font-size: 14px;
+  line-height: 23px;
+  color: #71717a;
+}
+
+/* 验证码卡片 */
+.m-code-wrap {
+  width: 100%;
+  margin: 0 0 18px 0;
+  background-color: #f4f4f5;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+}
+
+.m-code-cell {
+  padding: 24px 16px 20px 16px;
+}
+
+/*
+ * text-indent 抵消最后一位数字右侧多出的字距，否则整串看起来偏左。
+ * 数字之间不插真空格：插了以后复制粘贴会带空格，iOS 的一次性验证码
+ * 自动填充也识别不出来。
+ */
+.m-code {
+  font-size: 34px;
+  line-height: 40px;
+  font-weight: 700;
+  letter-spacing: 10px;
+  text-indent: 10px;
+  color: #18181b;
+}
+
+.m-code-hint {
+  margin: 10px 0 0 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: #71717a;
+}
+
+/* 字段表：左标签右值 */
+.m-table {
+  width: 100%;
+  margin: 0 0 18px 0;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+}
+
+.m-label {
+  padding: 11px 16px;
+  font-size: 13px;
+  line-height: 20px;
+  color: #71717a;
+  white-space: nowrap;
+}
+
+.m-value {
+  padding: 11px 16px;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: #18181b;
+  word-break: break-all;
+}
+
+.m-hairline {
+  border-bottom: 1px solid #f4f4f5;
+}
+
+/* 提示框 / 链接框 */
+.m-box {
+  width: 100%;
+  margin: 0 0 16px 0;
+  background-color: #f4f4f5;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+}
+
+.m-box-cell {
+  padding: 14px 16px;
+}
+
+.m-box-title {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: #18181b;
+}
+
+.m-box-text {
+  margin: 4px 0 0 0;
+  font-size: 13px;
+  line-height: 21px;
+  color: #71717a;
+}
+
+.m-box-label {
+  font-size: 12px;
+  line-height: 18px;
+  color: #71717a;
+}
+
+.m-url {
+  margin: 6px 0 0 0;
+  word-break: break-all;
+  font-size: 12px;
+  line-height: 19px;
+  color: #18181b;
+}
+
+/* 按钮：控制台主按钮的形状（primary 底、10px 圆角） */
+.m-btn-wrap {
+  margin: 2px 0 18px 0;
+}
+
+.m-btn {
+  display: inline-block;
+  padding: 12px 22px;
+  background-color: #18181b;
+  border: 1px solid #18181b;
+  border-radius: 10px;
+  color: #fafafa;
+  text-decoration: none;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+/* 卡内页脚：一条细分隔线 + 一句处置提示 */
+.m-note {
+  padding: 6px 30px 30px 30px;
+}
+
+.m-note-inner {
+  border-top: 1px solid #f4f4f5;
+  padding-top: 14px;
+}
+
+.m-note-text {
+  font-size: 12px;
+  line-height: 20px;
+  color: #71717a;
+}
+
+.m-tail {
+  padding: 0 30px 30px 30px;
+}
+
+/* 卡外页脚 */
+.m-foot {
+  width: 600px;
+  max-width: 600px;
+}
+
+.m-foot-cell {
+  padding: 16px 12px 0 12px;
+}
+
+.m-foot-text {
+  font-size: 12px;
+  line-height: 20px;
+  color: #71717a;
+}
+
+.m-preheader {
+  display: none;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  mso-hide: all;
+}
+
+@media (prefers-color-scheme: dark) {
+  .m-page,
+  .m-outer {
+    background-color: #09090b !important;
+  }
+  .m-card {
+    background-color: #18181b !important;
+    border-color: #27272a !important;
+  }
+  .m-title,
+  .m-value,
+  .m-box-title,
+  .m-code,
+  .m-url {
+    color: #f4f4f5 !important;
+  }
+  .m-brand,
+  .m-lead,
+  .m-p,
+  .m-code-hint,
+  .m-label,
+  .m-box-text,
+  .m-box-label,
+  .m-note-text,
+  .m-foot-text {
+    color: #a1a1aa !important;
+  }
+  .m-code-wrap,
+  .m-box {
+    background-color: #27272a !important;
+    border-color: #27272a !important;
+  }
+  .m-table {
+    border-color: #27272a !important;
+  }
+  .m-hairline {
+    border-bottom-color: #27272a !important;
+  }
+  .m-note-inner {
+    border-top-color: #27272a !important;
+  }
+  .m-btn {
+    background-color: #fafafa !important;
+    border-color: #fafafa !important;
+    color: #18181b !important;
+  }
+}
+
+@media only screen and (max-width: 620px) {
+  .m-card,
+  .m-foot {
+    width: 100% !important;
+  }
+  .m-head,
+  .m-body {
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+  .m-note,
+  .m-tail {
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+}

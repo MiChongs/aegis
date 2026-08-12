@@ -170,6 +170,11 @@ export type SessionDetailView = {
   city?: string;
   isp?: string;
   location?: string;
+  /** GeoIP 经纬度。缺失表示没解析出来（内网地址恒缺失），不要当 0 用 */
+  latitude?: number;
+  longitude?: number;
+  /** 内网 / 回环来源。活动地图据此归到「服务器地址」而不是伪造坐标 */
+  isPrivate?: boolean;
 };
 
 export function getAdminUserSessions(token: string, appKey: string, userId: number | string) {

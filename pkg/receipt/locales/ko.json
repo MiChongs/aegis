@@ -105,6 +105,26 @@
   "purpose.vip_purchase": "멤버십 구매",
   "purpose.integral_purchase": "포인트 구매",
 
+  "wallet.type.recharge": "잔액 충전",
+  "wallet.type.consume": "잔액 결제",
+  "wallet.type.refund": "잔액 환불 입금",
+  "wallet.type.admin_adjust": "관리자 잔액 조정",
+  "wallet.type.vip_purchase": "멤버십 구매",
+  "wallet.type.order_pay": "잔액으로 주문 결제",
+  "wallet.direction.in": "입금",
+  "wallet.direction.out": "출금",
+
+  "meta.walletTxnNo": "지갑 거래번호",
+  "meta.walletType": "거래 유형",
+  "meta.direction": "입출금 구분",
+  "meta.balanceBefore": "변경 전 잔액",
+  "meta.balanceAfter": "변경 후 잔액",
+  "meta.relatedOrder": "연결 주문",
+  "meta.operator": "처리자",
+
+  "notes.walletDebit": "본 금액은 해당 계정의 지갑 잔액에서 차감되었습니다. 외부 결제 채널은 사용되지 않았습니다.",
+  "notes.walletCredit": "본 금액은 해당 계정의 지갑 잔액에 입금되었습니다.",
+
   "notes.unpaid": "본 문서는 결제 증빙이 아닙니다: 해당 주문은 아직 결제되지 않았습니다.",
   "notes.refunded": "이 주문은 전액 환불되었으며 실수령액은 0입니다.",
   "notes.partiallyRefunded": "이 주문은 일부 환불되었습니다. 자세한 내용은 환불 내역을 확인하세요.",

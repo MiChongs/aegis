@@ -22,50 +22,27 @@ import type { Layer, PickingInfo } from "@deck.gl/core";
 import { clustersDbscan, featureCollection, point } from "@turf/turf";
 import type { Feature, Point as GeoJSONPoint } from "geojson";
 import { useTheme } from "next-themes";
-import { Loader2, MapPin, Settings2 } from "lucide-react";
+import { Loader2, Settings2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { MapLibreMap as BaseMap } from "@/components/maps/maplibre-map";
+import { ServerLocationDialog } from "@/components/maps/server-location-dialog";
+import { useServerLocation, type ServerLocation } from "@/lib/geo/server-location";
 import { useFirewallLogsQuery } from "@/lib/admin-hooks";
 import type { FirewallLogEntry } from "@/lib/api/types";
 import { coordsBounds, flagImgHtml, fmtCount, haversineKm } from "@/lib/geo/geo-map-shared";
 
 // ── 常量与持久化 ──────────────────────────
 
-const STORAGE_KEY = "aegis:attack-map:server-location";
 const VIEW_KEY = "aegis:attack-map:view-mode";
 const STYLE_KEY = "aegis:attack-map:layer-style";
 const MAP_PAGE_SIZE = 500;
 const MAX_ARCS = 150;
 const CLUSTER_DISTANCE_KM = 120;
 
-type ServerLocation = { name: string; lat: number; lng: number };
 type ViewMode = "flat" | "tilt";
 type LayerStyle = "arcs" | "heat";
-
-const defaultServer: ServerLocation = { name: "服务器", lat: 39.9, lng: 116.4 };
-
-function loadServerLocation(): ServerLocation {
-  if (typeof window === "undefined") return defaultServer;
-  try {
-    const p = JSON.parse(localStorage.getItem(STORAGE_KEY) || "") as ServerLocation;
-    if (typeof p.lat === "number" && typeof p.lng === "number") return p;
-  } catch {
-    // 无缓存或格式损坏 → 默认
-  }
-  return defaultServer;
-}
 
 function loadEnum<T extends string>(key: string, allowed: T[], fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -264,15 +241,11 @@ export function AttackFlightMap({ timeRange }: AttackFlightMapProps) {
   const { resolvedTheme } = useTheme();
   const dark = resolvedTheme === "dark";
 
-  const [server, setServer] = useState<ServerLocation>(loadServerLocation);
+  // 端点位置与「用户活动地图」共用一份配置（同一台机器不该在两张图上各在一处）
+  const server = useServerLocation();
   const [viewMode, setViewMode] = useState<ViewMode>(() => loadEnum(VIEW_KEY, ["flat", "tilt"], "flat"));
   const [layerStyle, setLayerStyle] = useState<LayerStyle>(() => loadEnum(STYLE_KEY, ["arcs", "heat"], "arcs"));
-
-  // 端点设置对话框
   const [showSettings, setShowSettings] = useState(false);
-  const [editName, setEditName] = useState(server.name);
-  const [editLat, setEditLat] = useState(String(server.lat));
-  const [editLng, setEditLng] = useState(String(server.lng));
 
   const mapQuery = useFirewallLogsQuery({
     pageSize: MAP_PAGE_SIZE,
@@ -547,25 +520,6 @@ export function AttackFlightMap({ timeRange }: AttackFlightMapProps) {
     persist(STYLE_KEY, v);
   }, []);
 
-  const openSettings = useCallback(() => {
-    setEditName(server.name);
-    setEditLat(String(server.lat));
-    setEditLng(String(server.lng));
-    setShowSettings(true);
-  }, [server]);
-
-  const saveSettings = useCallback(() => {
-    const lat = Number(editLat);
-    const lng = Number(editLng);
-    if (!Number.isFinite(lat) || lat < -90 || lat > 90) return;
-    if (!Number.isFinite(lng) || lng < -180 || lng > 180) return;
-    const next: ServerLocation = { name: editName.trim() || "服务器", lat, lng };
-    setServer(next);
-    persist(STORAGE_KEY, JSON.stringify(next));
-    setShowSettings(false);
-    fitPendingRef.current = true;
-  }, [editName, editLat, editLng]);
-
   const isEmpty = !mapQuery.isLoading && mapQuery.isSuccess && points.length === 0;
 
   return (
@@ -612,7 +566,7 @@ export function AttackFlightMap({ timeRange }: AttackFlightMapProps) {
             {points.length < rawPoints.length && <>（聚合为 {points.length} 个攻击源）</>}
           </span>
         </div>
-        <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={openSettings}>
+        <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => setShowSettings(true)}>
           <Settings2 className="size-3.5" />
           端点位置
         </Button>
@@ -654,53 +608,15 @@ export function AttackFlightMap({ timeRange }: AttackFlightMapProps) {
       </BaseMap>
 
       {/* 端点设置 */}
-      <Dialog open={showSettings} onOpenChange={setShowSettings}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-sm">
-              <MapPin className="size-4 text-emerald-500" />
-              服务器端点位置
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              攻击弧线的汇聚目标；无坐标的本地流量也会散布在该位置附近
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label className="text-[12px]">名称</Label>
-              <Input className="h-9 text-sm" value={editName} onChange={(e) => setEditName(e.target.value)} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-[12px]">纬度</Label>
-                <Input
-                  className="h-9 font-mono text-sm"
-                  value={editLat}
-                  onChange={(e) => setEditLat(e.target.value)}
-                  placeholder="-90 ~ 90"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-[12px]">经度</Label>
-                <Input
-                  className="h-9 font-mono text-sm"
-                  value={editLng}
-                  onChange={(e) => setEditLng(e.target.value)}
-                  placeholder="-180 ~ 180"
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" size="sm" onClick={() => setShowSettings(false)}>
-              取消
-            </Button>
-            <Button size="sm" onClick={saveSettings}>
-              保存
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ServerLocationDialog
+        open={showSettings}
+        onOpenChange={setShowSettings}
+        value={server}
+        description="攻击弧线的汇聚目标；无坐标的本地流量也会散布在该位置附近"
+        onSaved={() => {
+          fitPendingRef.current = true;
+        }}
+      />
     </div>
   );
 }

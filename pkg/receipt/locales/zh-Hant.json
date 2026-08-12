@@ -105,6 +105,26 @@
   "purpose.vip_purchase": "會員開通",
   "purpose.integral_purchase": "點數購買",
 
+  "wallet.type.recharge": "餘額儲值",
+  "wallet.type.consume": "餘額消費",
+  "wallet.type.refund": "退款入帳",
+  "wallet.type.admin_adjust": "管理員餘額調整",
+  "wallet.type.vip_purchase": "會員開通",
+  "wallet.type.order_pay": "餘額支付訂單",
+  "wallet.direction.in": "入帳",
+  "wallet.direction.out": "出帳",
+
+  "meta.walletTxnNo": "錢包流水號",
+  "meta.walletType": "流水類型",
+  "meta.direction": "資金方向",
+  "meta.balanceBefore": "異動前餘額",
+  "meta.balanceAfter": "異動後餘額",
+  "meta.relatedOrder": "關聯訂單",
+  "meta.operator": "經辦人",
+
+  "notes.walletDebit": "本筆款項自該帳號的錢包餘額中扣除，未經過任何第三方支付管道。",
+  "notes.walletCredit": "本筆款項已計入該帳號的錢包餘額。",
+
   "notes.unpaid": "本單據不作為付款憑證：該訂單尚未完成付款。",
   "notes.refunded": "該訂單已全額退款，實收淨額為零。",
   "notes.partiallyRefunded": "該訂單已部分退款，明細見退款紀錄。",

@@ -1,6 +1,8 @@
 package service
 
 import (
+	"strings"
+
 	paymentdomain "aegis/internal/domain/payment"
 )
 
@@ -115,11 +117,38 @@ func fields(groups ...[]paymentdomain.ConfigField) []paymentdomain.ConfigField {
 // ── 通用分区 ──
 
 // callbackFields 网关分区的通用回调地址字段（几乎所有渠道都有）
+// callbackFields 网关与回调分区。
+//
+// 两个字段的提示语都承诺了「留空有默认值」，而这两句话必须真的有代码兑现：
+// notifyUrl 的默认值由 PaymentService.resolveNotifyURL 用 API_BASE_URL + 渠道自述的
+// CallbackPath 拼出，returnUrl 的由 resolveReturnURL 用 CONSOLE_BASE_URL + PaymentResultPath
+// 拼出。此前 notifyUrl 那句是空头支票 —— 留空的后果是渠道收不到通知地址，
+// 用户付了钱而订单永远停在待支付。
 func callbackFields(notifyHelp, returnHelp string) []paymentdomain.ConfigField {
 	return inGroup(paymentdomain.GroupGateway,
-		fURL("notifyUrl", "异步通知地址", "https://your-domain.com/api/public/pay/callback/...", notifyHelp),
-		fURL("returnUrl", "同步跳转地址", "https://your-domain.com/pay/result", returnHelp),
+		fURL("notifyUrl", "异步通知地址", "https://your-domain.com/api/public/pay/callback/...",
+			joinHelp(notifyHelp, notifyDefaultNote)),
+		fURL("returnUrl", "同步跳转地址", "https://your-domain.com/pay/result",
+			joinHelp(returnHelp, returnDefaultNote)),
 	)
+}
+
+// 「留空会怎样」由这两句统一说明，不散在各渠道的提示语里 ——
+// 散着写必然漂移：改了默认值的实现，六处文案不会跟着改。
+const (
+	notifyDefaultNote = "留空则使用平台默认回调地址（需配置 API_BASE_URL）"
+	returnDefaultNote = "留空则跳转平台自带的支付结果页（需配置 CONSOLE_BASE_URL），也可填自己的前端页面"
+)
+
+// joinHelp 用中文分号拼接非空的说明片段
+func joinHelp(parts ...string) string {
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			kept = append(kept, trimmed)
+		}
+	}
+	return strings.Join(kept, "；")
 }
 
 // limitFields 交易限额分区（网关层统一强制执行，见 enforceAmountLimits）

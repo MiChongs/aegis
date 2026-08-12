@@ -431,7 +431,7 @@ func (r *Renderer) drawItems(c *canvas, doc *Document, loc *i18n.Localizer) {
 	r.drawItemsHead(c, cols, loc)
 	for _, item := range doc.Items {
 		c.setFont(th.sizeBody, false)
-		nameLines := c.wrap(item.Name, cols.desc-10)
+		nameLines := c.wrap(r.itemName(loc, item), cols.desc-10)
 		c.setFont(th.sizeSmall, false)
 		descLines := c.wrap(item.Description, cols.desc-10)
 		height := float64(len(nameLines))*th.lineBody + float64(len(descLines))*th.lineSmall + 12
@@ -468,6 +468,15 @@ func (r *Renderer) drawItems(c *canvas, doc *Document, loc *i18n.Localizer) {
 		c.rule(c.y-5, th.hairline)
 	}
 	c.y += 12
+}
+
+// itemName 品名：平台生成的品名走译文键，用户填的走字面值。
+// 键存在但没译文时退回字面值 —— 漏一条翻译不该让商品栏变成空白。
+func (r *Renderer) itemName(loc *i18n.Localizer, item LineItem) string {
+	if key := strings.TrimSpace(item.NameKey); key != "" && loc.Has(key) {
+		return loc.T(key)
+	}
+	return item.Name
 }
 
 func (r *Renderer) drawItemsHead(c *canvas, cols itemColumns, loc *i18n.Localizer) {

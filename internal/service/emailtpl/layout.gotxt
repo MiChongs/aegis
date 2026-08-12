@@ -1,0 +1,44 @@
+{{- /*
+纯文本版正文。
+
+从**同一份内容模型**渲染，而不是把渲染好的 HTML 再抓一遍文本：
+抓取版永远会带上预览行的零宽字符、按钮的重复文案和表格的错位缩进，
+而且 HTML 一改就悄悄劣化。这里的每一行都是照着内容写的。
+
+Zeabur 要求 html / text 至少给一个，两个都给才是正经做法 ——
+纯文本分片能改善反垃圾评分，也照顾纯文本客户端。
+*/ -}}
+{{ with .Brand }}{{ . }}
+{{ end }}{{ .Title }}
+{{ with .Lead }}
+{{ . }}
+{{ end }}
+{{- range .Blocks }}
+{{- if eq .Kind "paragraph" }}
+{{ .Text }}
+{{ else if eq .Kind "code" }}
+    {{ .Code }}
+{{ with .Note }}{{ . }}
+{{ end }}
+{{- else if eq .Kind "details" }}
+{{ range .Details }}{{ .Label }}：{{ .Value }}
+{{ end }}
+{{- else if eq .Kind "notice" }}
+{{ .Title }}
+{{ .Text }}
+{{ else if eq .Kind "link" }}
+{{ .Label }}：
+{{ .URL }}
+{{ else if eq .Kind "button" }}
+{{ .Label }}：
+{{ .URL }}
+{{ end }}
+{{- end }}
+{{- with .FooterNote }}
+{{ . }}
+{{ end }}
+--
+{{ .NoReply }}
+{{- with .AppName }}
+{{ . }}
+{{- end }}

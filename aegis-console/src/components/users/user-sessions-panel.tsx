@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Globe2, Loader2, Monitor, Smartphone, Trash2, XCircle } from "lucide-react";
-import { SessionLocationMap } from "./session-location-map";
+import { Globe2, Loader2, Monitor, Server, Smartphone, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
 import type { SessionDetailView } from "@/lib/api/apps";
+import { classifyIp, isServerSideAddress } from "@/lib/geo/private-network";
 import {
   useAdminUserSessionsQuery,
   useRevokeAdminUserSessionMutation,
@@ -35,9 +35,21 @@ function parseUA(ua?: string) {
   return { device: isMobile ? "移动设备" : "桌面设备", browser, os };
 }
 
-function locationText(s: SessionDetailView) {
+/**
+ * 位置文案。
+ *
+ * 内网 / 回环来源不说「未知位置」——它不是查不到，而是这条会话本来就来自
+ * 服务端自己那一侧（本机调试、反代未透传真实 IP、内网客户端）。
+ * 把这两件事混成一句「未知」，排查的人会一直去追一个不存在的地理位置。
+ */
+function locationText(s: SessionDetailView): { text: string; server: boolean; hint?: string } {
+  if (isServerSideAddress(s.ip, s.isPrivate)) {
+    const cls = classifyIp(s.ip);
+    return { text: cls.label, server: true, hint: cls.detail };
+  }
   const parts = [s.city, s.region, s.country].filter(Boolean);
-  return parts.length ? parts.join(", ") : s.location || "未知位置";
+  if (parts.length) return { text: parts.join(", "), server: false };
+  return { text: s.location || "未知位置", server: false };
 }
 
 export function UserSessionsPanel({ appKey, userId }: { appKey?: string | null; userId?: number | null }) {
@@ -115,7 +127,6 @@ export function UserSessionsPanel({ appKey, userId }: { appKey?: string | null; 
       {sessions.length === 0 ? (
         <div className="py-8 text-center text-sm text-muted-foreground">无活跃会话</div>
       ) : (<>
-        <SessionLocationMap sessions={sessions} />
         <TooltipProvider delayDuration={120}>
           <div className="overflow-hidden rounded-xl border">
             <Table>
@@ -135,15 +146,20 @@ export function UserSessionsPanel({ appKey, userId }: { appKey?: string | null; 
                 {sessions.map((s) => {
                   const ua = parseUA(s.userAgent);
                   const DeviceIcon = /mobile|android|iphone|ipad/i.test(s.userAgent || "") ? Smartphone : Monitor;
+                  const loc = locationText(s);
                   return (
                     <TableRow key={s.tokenHash}>
                       <TableCell>
                         <Checkbox checked={selected.has(s.tokenHash)} onCheckedChange={() => toggleSelect(s.tokenHash)} />
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <Globe2 className="size-3 shrink-0 text-muted-foreground" />
-                          <span className="text-xs">{locationText(s)}</span>
+                        <div className="flex items-center gap-1.5" title={loc.hint}>
+                          {loc.server ? (
+                            <Server className="size-3 shrink-0 text-violet-500" />
+                          ) : (
+                            <Globe2 className="size-3 shrink-0 text-muted-foreground" />
+                          )}
+                          <span className="text-xs">{loc.text}</span>
                         </div>
                       </TableCell>
                       <TableCell>

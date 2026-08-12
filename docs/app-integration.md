@@ -104,7 +104,12 @@ val profile = client.me.profile()
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/banners`、`/notices` | 轮播图与公告 |
+| `POST` | `/banners/{bannerId}/click` | 轮播图点击上报 |
 | `GET` | `/version/check` | 版本检查（`versionCode` + `platform`） |
+
+> 曝光由服务端在下发 `/banners` 时自己累加，**点击只有客户端知道**：
+> 用户点开一条 Banner 时要显式调一次上报口。不调的表现是控制台上点击率恒为 0，
+> 而那个数字是运营调整投放的唯一依据。
 
 > 这一整套接口在网关命名空间下**共用同一套包装**。旧的 `/api/user/*`、
 > `/api/points/*` 等命名空间仍然可用，但它们走的是另一套加密机制

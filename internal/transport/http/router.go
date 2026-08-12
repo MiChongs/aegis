@@ -104,6 +104,11 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 	// Gin 默认 32MB，这里显式写出便于一眼读懂上传体量策略；
 	// 超过该值的部分会 spill 到临时文件，不影响成功率，仅影响解析成本。
 	router.MaxMultipartMemory = 32 << 20
+	// 空 CORS 配置会让浏览器的每一个写请求都吃 403（同源 POST 也带 Origin），
+	// 而那个 403 没有 body 也没有日志。在启动时说一次，比让人从空白页倒查回来强。
+	if warning := middleware.CORSGuardWarning(corsConfig); warning != "" && log != nil {
+		log.Warn(warning)
+	}
 	router.Use(
 		middleware.RequestID(),
 		middleware.CrashRecovery(log, cl),
@@ -174,6 +179,9 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		appGateway.POST("/auth/passkey/login", h.AppPasskeyLogin)
 		// 免登录的内容接口
 		appGateway.GET("/banners", h.AppBanners)
+		// 点击上报：banners.click_count 从建表起就在，却从来没有代码写过它。
+		// 没有这条接口，控制台上的「点击 0」既可能是真没人点、也可能是根本没统计。
+		appGateway.POST("/banners/:bannerId/click", h.AppBannerClick)
 		appGateway.GET("/notices", h.AppNotices)
 		appGateway.GET("/version/check", h.AppVersionCheck)
 	}
@@ -493,6 +501,13 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		admin.GET("/apps/:appkey/users/:userId/wallet", h.AdminAppUserWallet)
 		admin.GET("/apps/:appkey/users/:userId/wallet/transactions", h.AdminAppUserWalletTransactions)
 		admin.POST("/apps/:appkey/wallet/adjust", h.AdminAdjustAppUserWallet)
+		// 全应用资金视图：按用户一个个点过去无法对账
+		admin.GET("/apps/:appkey/wallet/transactions", h.AdminAppWalletTransactions)
+		admin.GET("/apps/:appkey/wallet/stats", h.AdminAppWalletStats)
+		admin.POST("/apps/:appkey/wallet/receipt", h.AdminAppWalletReceipt)
+		admin.POST("/apps/:appkey/wallet/receipt/email", h.AdminAppWalletReceiptEmail)
+		// 交易概览：订单 + 钱包 + 凭证能力一次取齐（分开拉会出现时间窗对不上的画面）
+		admin.GET("/apps/:appkey/commerce/overview", h.AdminAppCommerceOverview)
 		admin.GET("/apps/:appkey/functions", h.AdminListAppFunctions)
 		admin.POST("/apps/:appkey/functions", h.AdminCreateAppFunction)
 		admin.GET("/apps/:appkey/function-keys", h.AdminListAppFunctionKeys)
@@ -565,10 +580,14 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		admin.POST("/apps/:appkey/captcha-config/test-sms", h.AdminTestSMS)
 		admin.GET("/apps/:appkey/encryption", h.AdminAppEncryption)
 		admin.PUT("/apps/:appkey/encryption", h.UpdateAdminAppEncryption)
+		admin.GET("/apps/:appkey/content/overview", h.AdminContentOverview)
 		admin.GET("/apps/:appkey/banners", h.AdminBanners)
 		admin.GET("/apps/:appkey/banners/export", h.ExportAdminBanners)
 		admin.POST("/apps/:appkey/banners", h.CreateAdminBanner)
+		admin.POST("/apps/:appkey/banners/image", h.UploadAdminBannerImage)
 		admin.DELETE("/apps/:appkey/banners", h.DeleteAdminBanners)
+		// order 在 :bannerId 之前注册：拖拽提交的是完整顺序，不是某一条的新位置
+		admin.PUT("/apps/:appkey/banners/order", h.ReorderAdminBanners)
 		admin.PUT("/apps/:appkey/banners/:bannerId", h.UpdateAdminBanner)
 		admin.DELETE("/apps/:appkey/banners/:bannerId", h.DeleteAdminBanner)
 		admin.GET("/apps/:appkey/notices", h.AdminNotices)
@@ -1000,6 +1019,14 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		wallet.GET("", h.MyWallet)
 		wallet.GET("/transactions", h.MyWalletTransactions)
 		wallet.POST("/consume", h.WalletConsume)
+		// 流水凭证：与订单凭证同构的三条入口（直接取 PDF / 导出可分享凭据 / 寄邮箱）。
+		// 余额直购会员、业务消费、管理员调账都不产生支付订单，
+		// 没有这几条，用「钱包付的钱」就永远拿不到凭证。
+		wallet.GET("/transactions/:transactionNo", h.MyWalletTransactionDetail)
+		wallet.GET("/transactions/:transactionNo/receipt", h.DownloadWalletReceipt)
+		wallet.GET("/transactions/:transactionNo/bill", h.ExportWalletBill)
+		wallet.POST("/transactions/:transactionNo/bill", h.ExportWalletBill)
+		wallet.POST("/transactions/:transactionNo/receipt/email", h.EmailWalletReceipt)
 	}
 
 	// 会员系统（用户端）
@@ -1028,6 +1055,8 @@ func NewRouter(authService *service.AuthService, adminService *service.AdminServ
 		// 路径段携带应用标识（微信支付 v3 通知地址禁止查询参数）
 		publicPay.POST("/callback/:method/:appid", h.PaymentCallback)
 		publicPay.GET("/callback/:method/:appid", h.PaymentCallback)
+		// 同步跳转结果查询（只读，凭渠道的签名 query 换订单状态；渠道由订单推导）
+		publicPay.GET("/return", h.PaymentReturn)
 	}
 
 	publicStorage := router.Group("/api/storage")
@@ -2835,18 +2864,26 @@ func (h *Handler) AdminListUserSessions(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	// GeoIP 位置解析
+	// GeoIP 位置解析（含经纬度与内网标记，供活动地图定位）
 	if h.location != nil {
+		ips := make([]string, 0, len(sessions))
 		for i := range sessions {
-			if sessions[i].IP != "" {
-				loc := h.location.Resolve(c.Request.Context(), sessions[i].IP)
-				sessions[i].Country = loc.Country
-				sessions[i].CountryCode = loc.CountryCode
-				sessions[i].Region = loc.Region
-				sessions[i].City = loc.City
-				sessions[i].ISP = loc.ISP
-				sessions[i].Location = loc.Location
+			ips = append(ips, sessions[i].IP)
+		}
+		located := h.resolveIPLocations(c.Request.Context(), ips)
+		for i := range sessions {
+			loc, ok := located[sessions[i].IP]
+			if !ok {
+				continue
 			}
+			sessions[i].Country = loc.Country
+			sessions[i].CountryCode = loc.CountryCode
+			sessions[i].Region = loc.Region
+			sessions[i].City = loc.City
+			sessions[i].ISP = loc.ISP
+			sessions[i].Location = loc.Location
+			sessions[i].Latitude, sessions[i].Longitude = geoCoords(loc)
+			sessions[i].IsPrivate = loc.IsPrivate
 		}
 	}
 	response.Success(c, 200, "获取成功", gin.H{"items": sessions, "total": len(sessions)})
@@ -3388,272 +3425,6 @@ func (h *Handler) saveAdminApp(c *gin.Context, appID int64, req AdminAppUpsertRe
 		return
 	}
 	response.Success(c, 200, "保存成功", item)
-}
-
-func (h *Handler) AdminBanners(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	items, err := h.app.ListBannersForAdmin(c.Request.Context(), appID)
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-	response.Success(c, 200, "获取成功", items)
-}
-
-func (h *Handler) ExportAdminBanners(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	items, err := h.app.ListBannersForAdmin(c.Request.Context(), appID)
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-
-	filename := "app_banners_" + strconv.FormatInt(appID, 10) + ".csv"
-	c.Header("Content-Type", "text/csv; charset=utf-8")
-	c.Header("Content-Disposition", "attachment; filename="+filename)
-	writer := csv.NewWriter(c.Writer)
-	defer writer.Flush()
-
-	_ = writer.Write([]string{"id", "header", "title", "content", "url", "type", "position", "status", "start_time", "end_time", "view_count", "click_count", "created_at", "updated_at"})
-	for _, item := range items {
-		startTime := ""
-		if item.StartTime != nil {
-			startTime = item.StartTime.UTC().Format(time.RFC3339)
-		}
-		endTime := ""
-		if item.EndTime != nil {
-			endTime = item.EndTime.UTC().Format(time.RFC3339)
-		}
-		_ = writer.Write([]string{
-			strconv.FormatInt(item.ID, 10),
-			item.Header,
-			item.Title,
-			item.Content,
-			item.URL,
-			item.Type,
-			strconv.Itoa(item.Position),
-			strconv.FormatBool(item.Status),
-			startTime,
-			endTime,
-			strconv.FormatInt(item.ViewCount, 10),
-			strconv.FormatInt(item.ClickCount, 10),
-			item.CreatedAt.UTC().Format(time.RFC3339),
-			item.UpdatedAt.UTC().Format(time.RFC3339),
-		})
-	}
-}
-
-func (h *Handler) CreateAdminBanner(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	var req AdminBannerUpsertRequest
-	if err := bind(c, &req); err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, err.Error())
-		return
-	}
-	h.saveAdminBanner(c, appID, 0, req)
-}
-
-func (h *Handler) UpdateAdminBanner(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	bannerID, err := pathInt64(c, "bannerId")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的 Banner 标识")
-		return
-	}
-	var req AdminBannerUpsertRequest
-	if err := bind(c, &req); err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, err.Error())
-		return
-	}
-	h.saveAdminBanner(c, appID, bannerID, req)
-}
-
-func (h *Handler) saveAdminBanner(c *gin.Context, appID int64, bannerID int64, req AdminBannerUpsertRequest) {
-	item, err := h.app.SaveBanner(c.Request.Context(), appID, appdomain.BannerMutation{
-		ID:        bannerID,
-		Header:    req.Header,
-		Title:     req.Title,
-		Content:   req.Content,
-		URL:       req.URL,
-		Type:      req.Type,
-		Position:  req.Position,
-		Status:    req.Status,
-		StartTime: req.StartTime,
-		EndTime:   req.EndTime,
-	})
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-	response.Success(c, 200, "保存成功", item)
-}
-
-func (h *Handler) DeleteAdminBanner(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	bannerID, err := pathInt64(c, "bannerId")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的 Banner 标识")
-		return
-	}
-	if err := h.app.DeleteBanner(c.Request.Context(), appID, bannerID); err != nil {
-		h.writeError(c, err)
-		return
-	}
-	response.Success(c, 200, "删除成功", gin.H{"id": bannerID})
-}
-
-func (h *Handler) DeleteAdminBanners(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	var req AdminBatchIDsRequest
-	if err := bind(c, &req); err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, err.Error())
-		return
-	}
-	deleted, ids, err := h.app.DeleteBanners(c.Request.Context(), appID, req.IDs)
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-	response.Success(c, 200, "批量删除成功", gin.H{"deleted": deleted, "ids": ids})
-}
-
-func (h *Handler) AdminNotices(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	items, err := h.app.ListNoticesForAdmin(c.Request.Context(), appID)
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-	response.Success(c, 200, "获取成功", items)
-}
-
-func (h *Handler) ExportAdminNotices(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	items, err := h.app.ListNoticesForAdmin(c.Request.Context(), appID)
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-
-	filename := "app_notices_" + strconv.FormatInt(appID, 10) + ".csv"
-	c.Header("Content-Type", "text/csv; charset=utf-8")
-	c.Header("Content-Disposition", "attachment; filename="+filename)
-	writer := csv.NewWriter(c.Writer)
-	defer writer.Flush()
-
-	_ = writer.Write([]string{"id", "title", "content", "created_at", "updated_at"})
-	for _, item := range items {
-		_ = writer.Write([]string{
-			strconv.FormatInt(item.ID, 10),
-			item.Title,
-			item.Content,
-			item.CreatedAt.UTC().Format(time.RFC3339),
-			item.UpdatedAt.UTC().Format(time.RFC3339),
-		})
-	}
-}
-
-func (h *Handler) CreateAdminNotice(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	var req AdminNoticeUpsertRequest
-	if err := bind(c, &req); err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, err.Error())
-		return
-	}
-	h.saveAdminNotice(c, appID, 0, req)
-}
-
-func (h *Handler) UpdateAdminNotice(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	noticeID, err := pathInt64(c, "noticeId")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的公告标识")
-		return
-	}
-	var req AdminNoticeUpsertRequest
-	if err := bind(c, &req); err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, err.Error())
-		return
-	}
-	h.saveAdminNotice(c, appID, noticeID, req)
-}
-
-func (h *Handler) saveAdminNotice(c *gin.Context, appID int64, noticeID int64, req AdminNoticeUpsertRequest) {
-	item, err := h.app.SaveNotice(c.Request.Context(), appID, appdomain.NoticeMutation{
-		ID:      noticeID,
-		Title:   req.Title,
-		Content: req.Content,
-	})
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-	response.Success(c, 200, "保存成功", item)
-}
-
-func (h *Handler) DeleteAdminNotice(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	noticeID, err := pathInt64(c, "noticeId")
-	if err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, "无效的公告标识")
-		return
-	}
-	if err := h.app.DeleteNotice(c.Request.Context(), appID, noticeID); err != nil {
-		h.writeError(c, err)
-		return
-	}
-	response.Success(c, 200, "删除成功", gin.H{"id": noticeID})
-}
-
-func (h *Handler) DeleteAdminNotices(c *gin.Context) {
-	appID, ok := resolveAppID(c, h.app)
-	if !ok {
-		return
-	}
-	var req AdminBatchIDsRequest
-	if err := bind(c, &req); err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, err.Error())
-		return
-	}
-	deleted, ids, err := h.app.DeleteNotices(c.Request.Context(), appID, req.IDs)
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-	response.Success(c, 200, "批量删除成功", gin.H{"deleted": deleted, "ids": ids})
 }
 
 func (h *Handler) AdminUserSettingsStats(c *gin.Context) {

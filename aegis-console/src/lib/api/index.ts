@@ -16,3 +16,4 @@ export * from "./egress";
 export * from "./geo";
 export * from "./captcha";
 export * from "./device-marketing";
+export * from "./commerce";

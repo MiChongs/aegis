@@ -102,7 +102,8 @@ src/
 │   │   ├── users/              # 用户管理
 │   │   ├── platform/           # 平台治理台（全站作用域，无应用选择器）
 │   │   ├── configuration/      # 平台级配置（不含任何应用级配置）
-│   │   ├── content/            # 内容管理
+│   │   ├── content/            # 内容中心（Banner / 应用公告 / 系统公告）
+│   │   ├── commerce/           # 交易中心（订单 / 退款 / 钱包流水 / 会员 / 凭证）
 │   │   ├── storage/            # 存储管理
 │   │   ├── workflows/          # 工作流（含画布编辑器）
 │   │   ├── functions/          # 远程函数（函数版本 + 调用密钥）
@@ -292,7 +293,7 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8088
 新增导航时注意：
 
 - **三级子项只能挂在「Tab 同步到 URL」的页面上**（当前为 `/apps`、`/users`、`/reports`、`/storage`、`/functions`、
-  `/tickets`、`/configuration`、`/security`、`/risk-control`，即 `const tab = searchParams.get("tab")` + `router.replace(...?tab=)` 那套写法）。
+  `/tickets`、`/commerce`、`/configuration`、`/security`、`/risk-control`，即 `const tab = searchParams.get("tab")` + `router.replace(...?tab=)` 那套写法）。
   若某页 Tab 只存在于组件 state，登记子项后链接点了不会切面板。
   `children` 数组的**首项必须是该页默认 Tab**，否则无 `?tab=` 时高亮会错位。
 - 分组鉴权用 `usePermissionChecker()` 批量过滤（Hook 不能在列表里逐项调用）。
@@ -492,6 +493,129 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 大盘顶部的**引擎运行态条**不是装饰：「大盘全是 0」有两种截然不同的原因
 （真没风险 / 根本没规则在跑），不显式说出来管理员会把后者当成前者。
 
+## 交易中心（/commerce）
+
+五个页签同步到 URL（`?tab=overview|orders|refunds|wallet|vip`）：
+
+| 文件 | 职责 |
+|---|---|
+| `(console)/commerce/page.tsx` | 页面骨架、应用与时间窗选择、Tab 路由 |
+| `components/commerce/commerce-overview-panel.tsx` | 概览：KPI + 趋势 + 三张分布图 + 凭证能力 |
+| `components/commerce/commerce-charts.tsx` | 图表外壳 `ChartCard` 与**配色目录**（资金 / 订单状态 / 流水类型 / 分类色轮） |
+| `components/commerce/commerce-range-picker.tsx` | 时间窗：预设 + 日历范围，对外只吐 `{start, end}` |
+| `components/commerce/wallet-transactions-panel.tsx` | 钱包流水台：筛选、凭证下载与寄送、调账入口 |
+| `components/commerce/wallet-adjust-dialog.tsx` | 管理员调账（用户选择器 + 方向开关 + 面额/理由预设） |
+| `components/commerce/user-picker.tsx` | 用户选择器（服务端搜索 + 300ms 防抖） |
+| `components/commerce/currency-select.tsx` | 币种选择（常用表 + 表外代码直接可用） |
+| `components/commerce/receipt-locale-select.tsx` | 凭证语言（页面级，缺字体的语言标注而不灰掉） |
+| `components/commerce/receipt-email-dialog.tsx` | 凭证寄送弹窗（订单与流水共用，收件人一键填入） |
+| `components/commerce/vip-transactions-panel.tsx` | 会员开通记录 |
+| `components/commerce/commerce-format.tsx` | 金额 / 方向 / 类型徽标的**统一口径** |
+| `components/payment/payment-orders-panel.tsx` | 订单台（原本写好却没有任何页面挂载） |
+| `components/payment/payment-refunds-panel.tsx` | 退款台（同上） |
+| `lib/api/commerce.ts` / `lib/commerce-hooks.ts` | 交易域 API 与 React Query hooks |
+| `lib/use-debounced-value.ts` | 防抖取值，替代「输入框 + 查询按钮」 |
+
+### 交互约定：别让管理员当输入机
+
+这一节是硬约束，不是建议。凡是能由机器检索、推断或预置的，都不要做成输入框：
+
+| 原本 | 现在 | 为什么 |
+|---|---|---|
+| 手输用户 ID | `UserPicker` 搜账号 / 昵称 / 邮箱 | 那个数字没人记得住，实际操作是「去用户页搜一遍、复制、切回来粘贴」 |
+| 负数表示扣减 | 方向开关 + 恒为正数的金额框 | 少打一个减号就是反向调账，而这类操作不可撤销 |
+| 手输金额 | 常用面额一键 + 仍可自由输入 | 客服补偿的金额高度集中 |
+| 手输调账理由 | 常用理由 chips + 仍可编辑 | 同一句话不该每次重打 |
+| 手输收件邮箱 | 「下单用户」「我自己」一键填入 | 手抄邮箱既慢又会抄错，而抄错等于把交易明细发给别人 |
+| 手输 3 位币种代码 | `CurrencySelect`（可搜中文名） | 不该要求管理员背 ISO 4217 |
+| 两个 `<input type=date>` | `CommerceRangePicker` | 手打 `2026-03-21` 打错了还没有提示 |
+| 输入框 + 「查询」按钮 | 300ms 防抖，即时生效 | 节流是机器的活，不该转嫁给操作者 |
+
+另外两条：**筛选任何一项变化都要回到第 1 页**（否则会停在新条件下不存在的页码上，
+表现为「明明有数据却是空的」）；**表格里的账号可点**，点了即按该用户筛选。
+
+### 图表：一律走 shadcn `ChartContainer`
+
+不要手搓进度条、`<div style={{width}}>` 这类"看起来像图表"的东西 ——
+它们没有 tooltip、没有图例、不响应主题、也没法和其它页面的图对齐。
+
+- 配色走 `ChartConfig` 的 `theme: { light, dark }`（目录在 `commerce-charts.tsx`），
+  由 `ChartContainer` 注入成 `var(--color-<key>)`。**不要在组件里写死十六进制色** ——
+  深色模式下要么刺眼要么看不见。
+- **进项与出项必须分色系**，否则「收了 10 万」和「退了 10 万」在图上一模一样。
+- 趋势图分「收入 / 钱包」两组切换，而不是六条线挤在一张图上：
+  六条线的图看起来很全，但没有人能从里面读出结论。
+- **实收净额画成虚线**：它是算出来的，不是一笔一笔真实发生的资金。
+- 坐标轴金额用紧凑写法（`12.8万`），写全位数会把刻度挤成一团。
+- 粒度（日 / 周 / 月）由**服务端**按跨度决定并下发标签，前端不选也不推断 ——
+  让前端选粒度的结果是「拉了两年、按天分桶、七百个点」。
+
+五条硬约束：
+
+1. **与 `/apps/{appKey}?tab=payment` 的分工是「运营 vs 配置」**：那边是渠道密钥、限额、
+   积分兑换率这类应用配置，这里是**已经发生的**资金记录。同一件事只有一个入口。
+2. **五个页签合起来才是完整的资金视图。** 订单只覆盖走支付渠道的钱；余额直购会员、
+   业务消费、管理员调账**不产生订单**，只在钱包流水里；退款是反向资金流，
+   不看它算出来的实收永远偏高。少看一个页签就会得出错误结论。
+3. **金额一律按字符串处理**（后端 `shopspring/decimal`），`formatMoney()` 只做展示格式化。
+   转 `number` 会丢分。格式化与类型徽标集中在 `commerce-format.tsx`：各面板各写一份，
+   同一笔钱在概览页和流水页就会显示成两个数字，而对账的人无从判断哪个是对的。
+4. **币种只标在钱包那一段**。订单金额按渠道计价，可能不止一种货币；
+   给它统一贴一个币种符号就是在撒谎。钱包币种来自应用级 `walletCurrency`。
+5. **凭证 PDF 走 `fetch` 拿 blob 再触发下载**（`lib/api/commerce.ts` 的 `downloadPdf`）：
+   两条管理端下载都是 **POST + Bearer**，裸 `<a href>` 发出的请求不带任何头，后端会 401。
+
+概览刻意用**一个**接口取齐订单 + 钱包 + 趋势 + 凭证能力（`/commerce/overview`）：
+这四段数据在页面上是一起呈现的，分开拉会出现「订单已刷新、退款还是上一个时间窗」
+这种自相矛盾的画面，而人会照着它做决定。
+
+时间窗与凭证语言提在**页面级**：它们对每个页签都成立，放到各面板里会让人
+切页签时反复设置同一件事。各口径的时间列不同（实收按到账、退款按退款成功、
+钱包按流水时间），这一点写在日期选择器的脚注里 —— 不写就会有人问「为什么
+订单页 30 笔、概览说 28 笔」。
+
+## 内容中心（/content）
+
+三个页签同步到 URL（`?tab=banners|notices|announcements`）：
+
+| 文件 | 职责 |
+|---|---|
+| `(console)/content/page.tsx` | 页面骨架、应用选择、Tab 路由、总览条 |
+| `(console)/content/announcements-panel.tsx` | 系统公告（平台级广播，与应用选择器无关） |
+| `components/content/content-shared.tsx` | **枚举目录**（展示位 / 类型 / 级别 / 状态）、投放态推导、格式化、`StatTile` |
+| `components/content/banner-panel.tsx` | Banner 台：按展示位分组、拖拽排序、逐行启停 |
+| `components/content/banner-preview.tsx` | 投放预览（embla）：只画当前**真正生效**的那几条 |
+| `components/content/banner-editor.tsx` | Banner 编辑抽屉（ImageDropzone 上传 + zod 校验） |
+| `components/content/notice-panel.tsx` | 公告台：服务端过滤分页、发布 / 归档 / 置顶 |
+| `components/content/notice-editor.tsx` | 公告编辑抽屉（tiptap 富文本，存草稿与发布分成两个动作） |
+| `lib/api/content.ts` / `lib/content-hooks.ts` | 内容域 API 与 React Query hooks |
+
+六条硬约束：
+
+1. **作用域在页面上必须能一眼分清。** Banner 与应用公告属于上方选中的那个应用；
+   系统公告是平台级广播，发给控制台管理员，**不随应用切换**。
+   与 `/platform-banners` 的分工同理：那边是画在控制台总览页的平台横幅（限超管），
+   这边是画在应用客户端里的素材。
+2. **枚举目录是单一事实源**（`content-shared.tsx`），与后端
+   `internal/domain/app/types.go` 的白名单一一对应。在面板里各抄一份，会同时招来
+   「后端加了一档、控制台选不出来」和「控制台能选、保存时报不支持」两种漂移，
+   而两边都没有报错提示。
+3. **投放态是推导出来的结论，不是字段罗列**（`resolveSchedule`）。
+   「已启用」回答不了「用户现在看不看得到」—— 一条启用但结束时间已过的 Banner，
+   开关是开的，客户端上什么都没有。界面必须直接说结论，否则管理员要拿三个字段
+   和当前时间做心算。
+4. **Banner 列表不分页，公告列表分页。** 形状不同不是遗漏：Banner 要拖拽排序，
+   分页会让第 2 页的第 1 条拖不到第 1 页去；公告会持续累积，运营两年有几千条。
+5. **拖拽提交的是完整顺序，且要把其它展示位一并带上。** 后端按数组下标重写
+   `position`，只提交当前展示位会让没被提交的那些保留旧值并与新值撞车。
+6. **图片存 `reference` 不存预览 URL。** 上传返回 `{reference, url}`：前者是
+   `storage://{configId}/{objectKey}`，后者是带票据的临时地址。把预览地址存进库里
+   过两天就是死链。`<img src>` 一律用后端解析出的 `headerDisplayUrl`。
+
+点击率在曝光为 0 时显示「—」而不是 0%：「没人看过」和「看过但没人点」是两回事，
+只有后者说明素材有问题。点击数依赖客户端调 `POST /api/v1/apps/{appKey}/banners/{id}/click`
+上报，官方 SDK 是 `content.reportBannerClick()`。
+
 ## 工单中心（/tickets）
 
 一屏承载服务台与通知出口，Tab 同步到 URL（`?tab=inbox|mine|analytics|settings|notify`）：
@@ -530,7 +654,10 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 | `components/users/detail/user-profile-tab.tsx` | 资料编辑（仅昵称/邮箱）+ 只读明细 + 用户端设置 |
 | `components/users/detail/user-security-tab.tsx` | 凭据矩阵 / 密码生命周期 / 2FA / Passkey / 登录绑定基线 |
 | `components/users/detail/user-assets-tab.tsx` | 积分经验 / 钱包与流水 / 会员与赠送 |
-| `components/users/detail/user-activity-tab.tsx` | 活跃会话 / 登录记录 / 会话事件 / 风控评估 |
+| `components/users/detail/user-activity-tab.tsx` | 活动地图 / 活跃会话 / 登录记录 / 会话事件 / 风控评估 |
+| `components/users/detail/user-activity-map.tsx` | 活动地图（deck.gl ⋈ MapLibre）：活动点 / 密度热力 / 位移轨迹 |
+| `lib/geo/private-network.ts` | 内网 / 回环 / CGNAT 识别（"服务器地址"的判据） |
+| `lib/geo/server-location.ts` | 服务端端点位置，与攻击飞线图共用一份 |
 | `components/users/detail/user-governance-tab.tsx` | 账号开关 / 新建封禁 / 封禁历史与撤销 / 删除 |
 | `lib/api/app-users.ts` | 单用户维度 API（封禁 / 钱包 / 单用户审计） |
 | `lib/app-user-hooks.ts` | 上述 hooks + 成组失效 `USER_SCOPE_KEYS` |
@@ -555,10 +682,20 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 5. **单用户审计走 `/users/:userId/audits/{login,sessions}`**，不要用应用级
    `/apps/:appkey/audits/login?keyword=账号` 拼。keyword 同时匹配账号 / 昵称 / IP /
    deviceId / UA / provider，拼出来的结果会混进他人记录，分页总数也不是这个人的。
+6. **内网地址不许伪造坐标。** GeoIP 对 127/8、RFC1918、fe80::/10 这些地址没有任何结论，
+   旧版按 IP 求和取模把它们散布在中国上空 —— 看起来像真数据，其实全是噪音，
+   还会在轨迹里凭空造出「不可能位移」。现在统一收敛到一个「服务器地址」节点
+   （`lib/geo/private-network.ts` 判定，位置取 `lib/geo/server-location.ts`，
+   与 `/security` 的攻击飞线图共用同一份配置），并在图下明写有多少次被这样归并。
+   CGNAT（100.64/10）刻意不算内网：那是运营商级 NAT，归进机房会把真实的移动用户画错地方。
 
 字段展示用 `<Facts>` 密集行表，**不要退回"每个字段一张 `rounded-2xl border` 卡片"** ——
 旧版四十个字段就是四十张视觉权重相同的卡，"账号"和"自定义 ID 次数"长得一模一样。
 需要强调靠 `<StatTile>` / 徽标 / 信号带，不是靠给每个字段加边框。
+
+活动地图取的是**不带状态筛选**的登录样本（上限 100 条），与页面上那份「登录记录」分开查：
+共用一份的话，选了「仅失败」整张图就只剩失败点，看图的人会得出"这个人只在国外登录失败过"
+这种结论。会话那份则复用「活跃会话」面板的同一个 query key，不会多打一次请求。
 
 ## 通知铃铛与实时事件
 

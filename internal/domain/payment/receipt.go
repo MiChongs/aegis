@@ -1,6 +1,10 @@
 package payment
 
-import "time"
+import (
+	"time"
+
+	"github.com/shopspring/decimal"
+)
 
 // 凭证类型。默认按订单状态推导：已支付出「收据」，未支付出「账单」，
 // 全额退款出「退款凭证」—— 给一笔没收到的钱开收据是在伪造凭证。
@@ -30,11 +34,14 @@ type ReceiptOptions struct {
 // JSON 里保留 billId / downloadUrl 这两个旧键名：下载路由
 // /api/pay/bills/:billId/download 已经发出去了，改键名会让在用的客户端下不到文件。
 type ReceiptExport struct {
-	BillID       string `json:"billId"`
-	OrderNo      string `json:"orderNo"`
-	FileName     string `json:"fileName"`
-	DownloadURL  string `json:"downloadUrl"`
-	DocumentType string `json:"documentType"`
+	BillID string `json:"billId"`
+	// OrderNo 凭证对应的订单号；钱包流水自行出具的凭证没有订单，此处为空
+	OrderNo string `json:"orderNo"`
+	// TransactionNo 凭证对应的钱包流水号，仅钱包凭证有值
+	TransactionNo string `json:"transactionNo,omitempty"`
+	FileName      string `json:"fileName"`
+	DownloadURL   string `json:"downloadUrl"`
+	DocumentType  string `json:"documentType"`
 
 	// Locale 凭证实际使用的语言
 	Locale string `json:"locale"`
@@ -110,6 +117,76 @@ type ReceiptCapability struct {
 	FontStatus string `json:"fontStatus"`
 	// FontNotes 字体解析过程中的诊断信息（缺字体、.otf 不支持等）
 	FontNotes []string `json:"fontNotes,omitempty"`
+}
+
+// OrderStats 订单口径的资金面板。
+//
+// 实收（NetAmount）单列一项而不是让前端自己减：已支付金额与已退金额是两张表
+// 各自算出来的，减法放到客户端就会出现「订单页减法结果」与「报表页减法结果」
+// 因为取数时刻不同而对不上。
+type OrderStats struct {
+	// TotalOrders 时间窗内创建的订单总数
+	TotalOrders int64 `json:"totalOrders"`
+	// PaidOrders / PaidAmount 已支付订单数与金额
+	PaidOrders int64           `json:"paidOrders"`
+	PaidAmount decimal.Decimal `json:"paidAmount"`
+	// PendingOrders / PendingAmount 待支付（仍可能成交的部分）
+	PendingOrders int64           `json:"pendingOrders"`
+	PendingAmount decimal.Decimal `json:"pendingAmount"`
+	// RefundCount / RefundedAmount 已成功退款的笔数与金额
+	RefundCount    int64           `json:"refundCount"`
+	RefundedAmount decimal.Decimal `json:"refundedAmount"`
+	// NetAmount 实收净额 = 已支付 - 已成功退款
+	NetAmount decimal.Decimal `json:"netAmount"`
+	// PayerCount 发生过支付的用户数
+	PayerCount int64 `json:"payerCount"`
+	// ByStatus / ByMethod 分布
+	ByStatus []OrderGroupStat `json:"byStatus"`
+	ByMethod []OrderGroupStat `json:"byMethod"`
+}
+
+// OrderGroupStat 一个分组维度上的订单聚合
+type OrderGroupStat struct {
+	// Key 状态值或渠道标识
+	Key    string          `json:"key"`
+	Count  int64           `json:"count"`
+	Amount decimal.Decimal `json:"amount"`
+}
+
+// 趋势的分桶粒度。由时间跨度自动决定，不让调用方指定 ——
+// 让前端选粒度的结果是「拉了两年、按天分桶、七百个点」这种没人看得懂的图。
+const (
+	TrendBucketDay   = "day"
+	TrendBucketWeek  = "week"
+	TrendBucketMonth = "month"
+)
+
+// TrendPoint 一个时间桶上的资金往来。
+//
+// 订单、退款、钱包三条线放在同一个桶里，是为了让它们能画在同一张图上：
+// 「这个月收了 10 万」单独看没有意义，要和「退了 3 万、钱包又花掉 2 万」一起看。
+type TrendPoint struct {
+	// Bucket 桶的起始时刻（UTC，按 Bucket 粒度对齐）
+	Bucket time.Time `json:"bucket"`
+	// Label 直接可展示的短标签（日 `03-21` / 周 `03-21` / 月 `2026-03`）
+	Label string `json:"label"`
+	// PaidAmount / PaidOrders 该桶内**支付时间**落在其中的订单
+	PaidAmount decimal.Decimal `json:"paidAmount"`
+	PaidOrders int64           `json:"paidOrders"`
+	// RefundedAmount 该桶内退款成功的金额
+	RefundedAmount decimal.Decimal `json:"refundedAmount"`
+	// NetAmount 实收净额 = 已支付 - 已退款
+	NetAmount decimal.Decimal `json:"netAmount"`
+	// WalletIn / WalletOut 钱包出入账（均为正数）
+	WalletIn  decimal.Decimal `json:"walletIn"`
+	WalletOut decimal.Decimal `json:"walletOut"`
+}
+
+// Trend 一段时间窗上的交易趋势。
+type Trend struct {
+	// Bucket day / week / month
+	Bucket string       `json:"bucket"`
+	Points []TrendPoint `json:"points"`
 }
 
 // ReceiptLocale 一个可选语言。

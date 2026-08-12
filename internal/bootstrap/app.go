@@ -367,10 +367,17 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	notificationService.SetPluginService(pluginService)
 	storageService.SetPluginService(pluginService)
 	systemService.SetPluginService(pluginService)
+	// Banner 图片落到该应用自己的对象存储，落库的是 storage:// 引用
+	appService.SetStorageService(storageService)
 	// 凭证：抬头的品牌名来自平台设置，寄送走邮件出口，是否自动寄送读应用级交易设置
 	paymentService.SetPlatformSettingsService(systemService)
 	paymentService.SetEmailService(emailService)
 	paymentService.SetAppService(appService)
+	paymentService.SetConsoleBaseURL(cfg.ConsoleBaseURL) // 同步跳转默认指向控制台的支付结果页
+	// 钱包流水与会员直购也要能出凭证：凭证引擎只有 PaymentService 持有，
+	// 这两个服务通过它把自己的资金记录接进同一套排版与寄送链路
+	walletService.SetPaymentService(paymentService)
+	vipService.SetPaymentService(paymentService)
 	sessionMgmtService := service.NewSessionMgmtService(log, pg, sessions, realtimeService)
 	storageResourceService := service.NewStorageResourceService(log, pg)
 	userMasterService := service.NewUserMasterService(log, pg)

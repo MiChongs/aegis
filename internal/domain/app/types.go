@@ -76,10 +76,19 @@ type CommerceSettings struct {
 	// ReceiptLocale 自动寄送时的凭证语言（BCP 47）。留空则按用户设置协商，
 	// 再协商不到用平台默认（en）。
 	ReceiptLocale string `json:"receiptLocale,omitempty"`
+	// WalletCurrency 钱包记账币种（ISO 4217）。
+	//
+	// 执行点是钱包流水凭证上的币种：钱包余额本身没有币种列（余额只是一个数），
+	// 而一份印着数字却不说是哪国钱的凭证既不能报销也不能对账。
+	// 应用级而不是平台级：同一个平台上完全可能一个应用收人民币、另一个收美元。
+	WalletCurrency string `json:"walletCurrency,omitempty"`
 }
 
 // DefaultIntegralPerCurrency 未配置时的兑换率，与 PaymentService 的兜底值一致。
 const DefaultIntegralPerCurrency = 100
+
+// DefaultWalletCurrency 未配置时的钱包记账币种，与余额渠道自述的首选货币一致。
+const DefaultWalletCurrency = "CNY"
 
 // LoginBaseline 登录一致性基线：该用户上一次被放行的登录指纹。
 // 存 Redis（登录路径上的读写，不该每次登录都打库），过期即视为无基线放行。
@@ -257,21 +266,28 @@ type AuthSourceStats struct {
 	ProviderBindings []AuthSourceStatItem `json:"providerBindings"`
 }
 
+// Banner 应用级轮播/投放位。
+//
+// Header 存的是**持久化形态**：外链 URL，或上传到对象存储后得到的
+// `storage://{configID}/{objectKey}` 引用。浏览器不能直接访问后者，
+// 因此读取时另外解析出 HeaderDisplayURL —— 与 system.PlatformBanner 同一套约定。
 type Banner struct {
-	ID         int64      `json:"id"`
-	Header     string     `json:"header,omitempty"`
-	Title      string     `json:"title"`
-	Content    string     `json:"content,omitempty"`
-	URL        string     `json:"url,omitempty"`
-	Type       string     `json:"type"`
-	Position   int        `json:"position"`
-	Status     bool       `json:"status"`
-	StartTime  *time.Time `json:"startTime,omitempty"`
-	EndTime    *time.Time `json:"endTime,omitempty"`
-	ViewCount  int64      `json:"viewCount"`
-	ClickCount int64      `json:"clickCount"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	UpdatedAt  time.Time  `json:"updatedAt"`
+	ID     int64  `json:"id"`
+	Header string `json:"header,omitempty"`
+	// HeaderDisplayURL 读取时解析得到的可直接展示地址；不落库。
+	HeaderDisplayURL string     `json:"headerDisplayUrl,omitempty"`
+	Title            string     `json:"title"`
+	Content          string     `json:"content,omitempty"`
+	URL              string     `json:"url,omitempty"`
+	Type             string     `json:"type"`
+	Position         int        `json:"position"`
+	Status           bool       `json:"status"`
+	StartTime        *time.Time `json:"startTime,omitempty"`
+	EndTime          *time.Time `json:"endTime,omitempty"`
+	ViewCount        int64      `json:"viewCount"`
+	ClickCount       int64      `json:"clickCount"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
 }
 
 type BannerMutation struct {
@@ -287,18 +303,120 @@ type BannerMutation struct {
 	EndTime   *time.Time
 }
 
+// Notice 应用级公告。
+//
+// Summary 是服务端从 Content 提取的纯文本摘要：列表页、推送、客户端通知栏
+// 要的都是这一段，让每一端各自解析一遍富文本既慢，解析结果也不会一致。
 type Notice struct {
-	ID        int64     `json:"id"`
-	Title     string    `json:"title,omitempty"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID          int64      `json:"id"`
+	Title       string     `json:"title,omitempty"`
+	Content     string     `json:"content"`
+	Summary     string     `json:"summary,omitempty"`
+	Type        string     `json:"type"`
+	Level       string     `json:"level"`
+	Status      string     `json:"status"`
+	Pinned      bool       `json:"pinned"`
+	StartTime   *time.Time `json:"startTime,omitempty"`
+	EndTime     *time.Time `json:"endTime,omitempty"`
+	PublishedAt *time.Time `json:"publishedAt,omitempty"`
+	ViewCount   int64      `json:"viewCount"`
+	CreatedBy   *int64     `json:"createdBy,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
 type NoticeMutation struct {
-	ID      int64
-	Title   *string
-	Content *string
+	ID        int64
+	Title     *string
+	Content   *string
+	Type      *string
+	Level     *string
+	Status    *string
+	Pinned    *bool
+	StartTime *time.Time
+	EndTime   *time.Time
+	CreatedBy *int64
+}
+
+// NoticeFilter 管理端列表过滤。Status / Type / Level 为空表示不限。
+type NoticeFilter struct {
+	Status  string
+	Type    string
+	Level   string
+	Keyword string
+	Limit   int
+	Offset  int
+}
+
+// BannerFilter 管理端列表过滤。Banner 数量天然很少（一个投放位通常个位数），
+// 因此不分页 —— 分页会让拖拽排序失去全局视野，第 2 页的第 1 条拖不到第 1 页去。
+type BannerFilter struct {
+	Status  *bool
+	Type    string
+	Keyword string
+}
+
+// ContentOverview 内容中心总览。一次取齐 Banner 与公告两侧的计数，
+// 分开拉会出现「Banner 已刷新、公告还是上一次」的自相矛盾画面。
+type ContentOverview struct {
+	BannerTotal      int64 `json:"bannerTotal"`
+	BannerLive       int64 `json:"bannerLive"`      // 启用且在投放窗口内
+	BannerScheduled  int64 `json:"bannerScheduled"` // 启用但还没开始
+	BannerExpired    int64 `json:"bannerExpired"`   // 启用但已过期
+	BannerDisabled   int64 `json:"bannerDisabled"`
+	BannerViews      int64 `json:"bannerViews"`
+	BannerClicks     int64 `json:"bannerClicks"`
+	NoticeTotal      int64 `json:"noticeTotal"`
+	NoticePublished  int64 `json:"noticePublished"`
+	NoticeDraft      int64 `json:"noticeDraft"`
+	NoticeArchived   int64 `json:"noticeArchived"`
+	NoticePinned     int64 `json:"noticePinned"`
+	NoticeViews      int64 `json:"noticeViews"`
+	LastPublishedAt  *time.Time `json:"lastPublishedAt,omitempty"`
+}
+
+// 展示位：客户端据此决定这条 Banner 画在哪儿。
+// 一个接口返回全部 Banner，客户端按位取用，比每个位开一条接口好维护。
+const (
+	BannerSlotHero   = "hero"   // 首页轮播
+	BannerSlotPopup  = "popup"  // 启动弹窗
+	BannerSlotSplash = "splash" // 开屏
+	BannerSlotNotice = "notice" // 通知条
+	BannerSlotCard   = "card"   // 卡片位
+)
+
+var ValidBannerTypes = map[string]struct{}{
+	BannerSlotHero:   {},
+	BannerSlotPopup:  {},
+	BannerSlotSplash: {},
+	BannerSlotNotice: {},
+	BannerSlotCard:   {},
+}
+
+const (
+	NoticeStatusDraft     = "draft"
+	NoticeStatusPublished = "published"
+	NoticeStatusArchived  = "archived"
+)
+
+var ValidNoticeStatuses = map[string]struct{}{
+	NoticeStatusDraft:     {},
+	NoticeStatusPublished: {},
+	NoticeStatusArchived:  {},
+}
+
+var ValidNoticeTypes = map[string]struct{}{
+	"notice":      {},
+	"activity":    {},
+	"maintenance": {},
+	"update":      {},
+	"security":    {},
+}
+
+var ValidNoticeLevels = map[string]struct{}{
+	"normal":    {},
+	"important": {},
+	"critical":  {},
 }
 
 type PasswordPolicy struct {

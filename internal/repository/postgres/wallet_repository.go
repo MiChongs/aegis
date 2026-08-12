@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	walletdomain "aegis/internal/domain/wallet"
 	"github.com/jackc/pgx/v5"
@@ -207,6 +208,170 @@ func (r *Repository) ListWalletTransactions(ctx context.Context, userID int64, a
 	return items, total, rows.Err()
 }
 
+// ── 单条流水定位（凭证出具的取数入口）──
+
+// GetWalletTransactionByNo 按流水号取一条流水（管理端）。
+// 流水号全局唯一，但仍按 appid 收敛：跨应用取到别人家的流水就是越权。
+func (r *Repository) GetWalletTransactionByNo(ctx context.Context, appID int64, transactionNo string) (*walletdomain.Transaction, error) {
+	return scanWalletTxn(r.pool.QueryRow(ctx,
+		`SELECT `+walletTxnColumns+` FROM wallet_transactions WHERE appid = $1 AND transaction_no = $2 LIMIT 1`,
+		appID, strings.TrimSpace(transactionNo)))
+}
+
+// GetWalletTransactionByNoForUser 用户侧取自己的流水。
+//
+// 归属校验写在 SQL 里而不是取回来再比：先查后比会让「流水存在但不是你的」
+// 和「流水不存在」走两条不同的分支，多一处就多一次写错的机会。
+func (r *Repository) GetWalletTransactionByNoForUser(ctx context.Context, appID int64, userID int64, transactionNo string) (*walletdomain.Transaction, error) {
+	return scanWalletTxn(r.pool.QueryRow(ctx,
+		`SELECT `+walletTxnColumns+` FROM wallet_transactions
+WHERE appid = $1 AND user_id = $2 AND transaction_no = $3 LIMIT 1`,
+		appID, userID, strings.TrimSpace(transactionNo)))
+}
+
+// ── 管理端全应用流水 ──
+
+// walletTxnColumnsAliased 与 walletTxnColumns 同序，只是带表别名。
+// 管理端列表要联表取账号，不带别名会撞上 users 的同名列。
+const walletTxnColumnsAliased = `wt.id, wt.transaction_no, wt.user_id, wt.appid, wt.type, wt.amount,
+wt.balance_before, wt.balance_after, COALESCE(wt.related_order_no, ''), COALESCE(wt.idempotency_key, ''),
+wt.title, COALESCE(wt.remark, ''), COALESCE(wt.operator, ''), COALESCE(wt.client_ip, ''),
+COALESCE(wt.metadata, '{}'::jsonb), wt.created_at`
+
+// walletAdminWhere 拼出管理端流水查询的过滤条件与参数。
+// 计数与取数必须用同一份条件，因此单独成函数 —— 两处各拼一遍，
+// 迟早出现「总数 100、翻到第 2 页却空了」。
+func walletAdminWhere(appID int64, query walletdomain.AdminListQuery) (string, []any) {
+	args := []any{appID}
+	where := ` WHERE wt.appid = $1`
+	if query.UserID > 0 {
+		args = append(args, query.UserID)
+		where += fmt.Sprintf(" AND wt.user_id = $%d", len(args))
+	}
+	if txnType := strings.TrimSpace(query.Type); txnType != "" {
+		args = append(args, txnType)
+		where += fmt.Sprintf(" AND wt.type = $%d", len(args))
+	}
+	switch strings.TrimSpace(query.Direction) {
+	case walletdomain.DirectionIn:
+		where += " AND wt.amount > 0"
+	case walletdomain.DirectionOut:
+		where += " AND wt.amount < 0"
+	}
+	if start := query.Start; start != nil && !start.IsZero() {
+		args = append(args, *start)
+		where += fmt.Sprintf(" AND wt.created_at >= $%d", len(args))
+	}
+	if end := query.End; end != nil && !end.IsZero() {
+		args = append(args, *end)
+		where += fmt.Sprintf(" AND wt.created_at <= $%d", len(args))
+	}
+	if keyword := strings.TrimSpace(query.Keyword); keyword != "" {
+		args = append(args, "%"+keyword+"%")
+		where += fmt.Sprintf(` AND (wt.transaction_no ILIKE $%d OR wt.related_order_no ILIKE $%d
+OR wt.title ILIKE $%d OR wt.remark ILIKE $%d OR u.account ILIKE $%d)`,
+			len(args), len(args), len(args), len(args), len(args))
+	}
+	return where, args
+}
+
+// ListWalletTransactionsByApp 管理端按应用分页查询流水（含账号信息）。
+func (r *Repository) ListWalletTransactionsByApp(ctx context.Context, appID int64, query walletdomain.AdminListQuery) ([]walletdomain.AdminTransactionItem, int64, error) {
+	page, limit := query.Page, query.Limit
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	// 账号联表在计数时也要在：keyword 会命中 u.account，两边条件必须完全一致
+	const from = ` FROM wallet_transactions wt
+LEFT JOIN users u ON u.id = wt.user_id
+LEFT JOIN user_profiles p ON p.user_id = wt.user_id`
+	where, args := walletAdminWhere(appID, query)
+
+	var total int64
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+from+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	args = append(args, limit, (page-1)*limit)
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+walletTxnColumnsAliased+`, COALESCE(u.account, ''), COALESCE(p.nickname, '')`+from+where+
+			fmt.Sprintf(` ORDER BY wt.id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	items := make([]walletdomain.AdminTransactionItem, 0, limit)
+	for rows.Next() {
+		item, err := scanAdminWalletTxn(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, *item)
+	}
+	return items, total, rows.Err()
+}
+
+// WalletStats 应用维度的资金面板。
+//
+// 入账与出账分开统计：净额为零既可能是没有交易，也可能是充了一万又花了一万，
+// 这两种情况的运营含义完全相反。余额合计不受时间窗影响 ——
+// 它是一个时点值（平台此刻的待兑付负债），不是区间累计。
+func (r *Repository) WalletStats(ctx context.Context, appID int64, start *time.Time, end *time.Time) (*walletdomain.Stats, error) {
+	args := []any{appID}
+	where := ` WHERE appid = $1`
+	if start != nil && !start.IsZero() {
+		args = append(args, *start)
+		where += fmt.Sprintf(" AND created_at >= $%d", len(args))
+	}
+	if end != nil && !end.IsZero() {
+		args = append(args, *end)
+		where += fmt.Sprintf(" AND created_at <= $%d", len(args))
+	}
+
+	stats := &walletdomain.Stats{ByType: make([]walletdomain.TypeStat, 0, 6)}
+	var totalIn, totalOut string
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0)::text,
+COALESCE(-SUM(amount) FILTER (WHERE amount < 0), 0)::text,
+COUNT(*), COUNT(DISTINCT user_id) FROM wallet_transactions`+where, args...).
+		Scan(&totalIn, &totalOut, &stats.Count, &stats.UserCount); err != nil {
+		return nil, err
+	}
+	stats.TotalIn = decimal.RequireFromString(totalIn)
+	stats.TotalOut = decimal.RequireFromString(totalOut)
+	stats.Net = stats.TotalIn.Sub(stats.TotalOut)
+
+	rows, err := r.pool.Query(ctx,
+		`SELECT type, COUNT(*), COALESCE(SUM(amount), 0)::text FROM wallet_transactions`+where+
+			` GROUP BY type ORDER BY type`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item walletdomain.TypeStat
+		var amount string
+		if err := rows.Scan(&item.Type, &item.Count, &amount); err != nil {
+			return nil, err
+		}
+		item.Amount = decimal.RequireFromString(amount)
+		stats.ByType = append(stats.ByType, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var balance string
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(balance), 0)::text FROM user_wallets WHERE appid = $1`, appID).Scan(&balance); err != nil {
+		return nil, err
+	}
+	stats.Balance = decimal.RequireFromString(balance)
+	return stats, nil
+}
+
 func scanWallet(row interface{ Scan(dest ...any) error }) (*walletdomain.Wallet, error) {
 	var w walletdomain.Wallet
 	var balance, frozen, recharged, consumed string
@@ -233,6 +398,25 @@ func scanWalletTxn(row interface{ Scan(dest ...any) error }) (*walletdomain.Tran
 	t.BalanceAfter = decimal.RequireFromString(after)
 	_ = json.Unmarshal(meta, &t.Metadata)
 	return &t, nil
+}
+
+// scanAdminWalletTxn 管理端行：流水各列之后再跟账号与昵称，顺序与查询里的
+// walletTxnColumnsAliased + 两个 COALESCE 一一对应。
+func scanAdminWalletTxn(row interface{ Scan(dest ...any) error }) (*walletdomain.AdminTransactionItem, error) {
+	var item walletdomain.AdminTransactionItem
+	var amount, before, after string
+	var meta []byte
+	if err := row.Scan(&item.ID, &item.TransactionNo, &item.UserID, &item.AppID, &item.Type,
+		&amount, &before, &after, &item.RelatedOrderNo, &item.IdempotencyKey, &item.Title,
+		&item.Remark, &item.Operator, &item.ClientIP, &meta, &item.CreatedAt,
+		&item.Account, &item.Nickname); err != nil {
+		return nil, normalizeNotFound(err)
+	}
+	item.Amount = decimal.RequireFromString(amount)
+	item.BalanceBefore = decimal.RequireFromString(before)
+	item.BalanceAfter = decimal.RequireFromString(after)
+	_ = json.Unmarshal(meta, &item.Metadata)
+	return &item, nil
 }
 
 // applyIntegralChangeTx 事务内积分变更（与管理端调整同构：锁行 → 校验 → 更新 → 记账）。

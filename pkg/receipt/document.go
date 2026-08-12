@@ -55,7 +55,14 @@ type Party struct {
 
 // LineItem 一行商品。数量与单价可以为零值 —— 单件商品的凭证不必强行凑出「x1」。
 type LineItem struct {
-	Name        string
+	// Name 品名字面值
+	Name string
+	// NameKey 品名的译文键；有译文时取代 Name。
+	//
+	// 与 KeyValue.ValueKey 同一套约定：**平台生成**的品名（钱包流水的
+	// 「余额支付订单」「管理员调整」之类）必须能跟着凭证语言走，否则一份
+	// 英文凭证的商品栏会是中文。用户自己填的品名走 Name，不参与翻译。
+	NameKey     string
 	Description string
 	Quantity    decimal.Decimal
 	UnitPrice   decimal.Decimal

@@ -130,7 +130,7 @@ func TestReceiptEmailFollowsDocumentLocale(t *testing.T) {
 		subject, body := s.buildReceiptEmail(loc, receiptEmailView{
 			Brand:       "Aegis",
 			Doc:         sampleReceiptDoc(),
-			Order:       order,
+			Subject:     newOrderEmailSubject(order),
 			Customer:    &userdomain.Profile{Nickname: "张三"},
 			Attached:    true,
 			DownloadURL: "https://api.example.com/api/pay/receipts/12/abc/download?expires=1&token=x",
@@ -167,7 +167,7 @@ func TestReceiptEmailWordingMatchesAttachmentCapability(t *testing.T) {
 	view := receiptEmailView{
 		Brand:       "Aegis",
 		Doc:         sampleReceiptDoc(),
-		Order:       paidOrder(),
+		Subject:     newOrderEmailSubject(paidOrder()),
 		Attached:    true,
 		DownloadURL: "https://api.example.com/receipt",
 		LinkExpiry:  time.Now().Add(time.Hour),
@@ -195,7 +195,7 @@ func TestReceiptEmailWordingMatchesAttachmentCapability(t *testing.T) {
 func TestReceiptEmailGreetingFallsBack(t *testing.T) {
 	s := newReceiptEmailService(t)
 	_, body := s.buildReceiptEmail(s.receipts.Localizer("en"), receiptEmailView{
-		Brand: "Aegis", Doc: sampleReceiptDoc(), Order: paidOrder(), Timezone: time.UTC,
+		Brand: "Aegis", Doc: sampleReceiptDoc(), Subject: newOrderEmailSubject(paidOrder()), Timezone: time.UTC,
 	})
 	if strings.Contains(body, "Hi ,") {
 		t.Error("缺昵称时出现了空称呼")
@@ -285,7 +285,7 @@ func TestWriteReceiptEmailSamples(t *testing.T) {
 		subject, body := s.buildReceiptEmail(s.receipts.Localizer(info.Tag), receiptEmailView{
 			Brand:       "Aegis",
 			Doc:         sampleReceiptDoc(),
-			Order:       order,
+			Subject:     newOrderEmailSubject(order),
 			Customer:    &userdomain.Profile{Nickname: "张三 Zhang San"},
 			Attached:    true,
 			DownloadURL: "https://api.example.com/api/pay/receipts/12/9f2c/download?expires=1774000000&token=abcdef",

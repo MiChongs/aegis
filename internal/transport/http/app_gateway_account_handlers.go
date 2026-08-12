@@ -113,3 +113,24 @@ func (h *Handler) AppPasskeyLogin(c *gin.Context)   { h.withGatewayAppID(h.Passk
 func (h *Handler) AppBanners(c *gin.Context)      { h.withGatewayAppID(h.UserBanner)(c) }
 func (h *Handler) AppNotices(c *gin.Context)      { h.withGatewayAppID(h.UserNotice)(c) }
 func (h *Handler) AppVersionCheck(c *gin.Context) { h.withGatewayAppID(h.CheckVersion)(c) }
+
+// AppBannerClick 轮播图点击上报。
+//
+// 没有对应的旧 handler 可以复用，因此直接从路径取应用 —— 这条接口是新加的，
+// 不背「请求里带 appid」那套历史包袱。免登录：Banner 本来就在登录前展示。
+func (h *Handler) AppBannerClick(c *gin.Context) {
+	app, _, ok := h.resolveGatewayApp(c)
+	if !ok {
+		return
+	}
+	bannerID, err := pathInt64(c, "bannerId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的 Banner 标识")
+		return
+	}
+	if err := h.app.TrackBannerClick(c.Request.Context(), app.ID, bannerID); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "上报成功", gin.H{"id": bannerID})
+}

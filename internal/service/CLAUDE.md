@@ -14,6 +14,7 @@
 | `app_oauth_service.go` | `AppOAuthService` | 应用级第三方登录渠道配置（CRUD/密钥加密/自检/解析） |
 | `app_oauth_catalog.go` | — | 内置渠道模板目录（微信/QQ/微博/Gitee/GitHub/Google/… 13 个） |
 | `app_service.go` | `AppService` | 多租户 App 管理、App 加密密钥 |
+| `app_content.go` | — | 应用级内容中心：Banner 投放位与公告（挂在 `AppService` 上，见下节） |
 | `auth_service.go` | `AuthService` | 用户 JWT 认证、Token 刷新、OAuth2 |
 | `auth_sms.go` | — | 短信验证码登录/自动建号 + `MobileOAuthLoginScoped`（叠加应用级开关） |
 | `auth_protocol_service.go` | `AuthProtocolService` | 接入协议：策略、安全等级、应用密钥签名、Transport v2 |
@@ -23,8 +24,10 @@
 | `db_manager.go` | `DatabaseManager` | 数据库生命周期与泄漏监控总入口（采集/告警/历史/会话治理） |
 | `db_leak.go` | — | 六类泄漏判定（连接/事务/快照/WAL/两阶段事务/存储）+ 指标趋势检测 |
 | `db_sessions.go` | — | pg_stat_activity / 复制槽 / 两阶段事务 / 死元组视图与会话终止 |
-| `email_service.go` | `EmailService` | 邮件出口总入口：挑 provider、模板渲染、投递留痕、密钥加解密 |
-| `email_sender.go` | — | `emailSender` provider 抽象与分派 + HTML→纯文本 |
+| `email_service.go` | `EmailService` | 邮件出口总入口：挑 provider、组织内容、投递留痕、密钥加解密 |
+| `email_template.go` | — | 邮件内容模型与渲染（html/template + premailer 内联），全部文案在此 |
+| `emailtpl/` | — | 模板资源：`layout.gohtml` / `layout.gotxt` / `theme.css`（go:embed） |
+| `email_sender.go` | — | `emailSender` provider 抽象与分派 |
 | `email_provider_smtp.go` | — | SMTP 直连发送器（go-mail）与错误分类 |
 | `email_provider_zeabur.go` | — | Zeabur Email REST 发送器（错误映射 / 429 不重试 / 独立熔断） |
 | `email_webhook.go` | — | Zeabur 投递回执：HMAC 验签、防重放、状态推进 |
@@ -67,10 +70,13 @@
 | `password_dictionary_zh.go` | — | 中文语境与通用弱口令补充词表（zxcvbn 内置词表零覆盖中文） |
 | `payment_service.go` | `PaymentService` | 支付网关：渠道注册表、订单创建/查询/回调、统一限额、履约 |
 | `payment_receipt.go` | — | 支付凭证：订单 → 凭证文档装配、语言/时区/币种解析、导出落盘与清理、订单上的凭证入口 |
+| `payment_receipt_wallet.go` | — | 钱包流水凭证：流水 → 凭证文档装配、订单委派判定、流水上的凭证入口 |
 | `payment_receipt_email.go` | — | 凭证邮件：签名下载链接、与 PDF 同语言的正文、频次限制、支付成功自动寄送 |
 | `payment_provider.go` | — | `paymentProvider` 接口 + 回调保留键与签名头白名单 |
 | `payment_provider_schema.go` | — | 渠道自描述构造器（字段 schema / 分区 / 能力矩阵） |
 | `payment_provider_*.go` | — | 16 个渠道适配器，各自实现 `Describe()` 自描述 |
+| `wallet_service.go` | `WalletService` | 余额：查询 / 消费 / 流水（带凭证入口）/ 全应用流水与资金面板 / 管理员调账 |
+| `vip_service.go` | `VipService` | 会员：套餐、状态、**余额直购**（成功后按应用设置自动寄凭证）、管理端授予 |
 | `platform_governance_service.go` | `PlatformGovernanceService` | **平台治理**：全站应用的限制/冻结/停运/封禁/归档 + 到期结算 + 申诉（内存快照判定） |
 | `platform_settings_service.go` | `PlatformSettingsService` | 平台设置读写、防火墙动态配置 |
 | `points_service.go` | `PointsService` | 积分 & 经验值调整、统计 |
@@ -350,6 +356,48 @@ func NewXxxService(log *zap.Logger, pg *pgrepo.Queries, ...) *XxxService
 不是查完再过滤；详情响应里的 `permissions`（`ActionSet`）是后端算好的动作集，
 前端据此控制按钮显隐，不会出现"点了才 403"。
 
+### 应用级内容中心（app_content.go）
+
+Banner（投放位）与公告，方法挂在 `AppService` 上。三条结构性约束：
+
+1. **富文本在写入时净化，不在读取时。** 公告正文来自控制台的富文本编辑器，
+   最终会进控制台预览、客户端 WebView 与公告邮件。放在读取端意味着每个消费方
+   都要自己记得做一次，漏一个就是一次**存储型** XSS；放在写入端只有一个入口。
+   用 [bluemonday](https://github.com/microcosm-cc/bluemonday) 而不是手写白名单 ——
+   标签闭合、属性大小写、URL 协议、实体编码这些坑它全踩过。
+   放行 `class` 但**不放行 `style`**：前者是 tiptap 表达对齐/高亮的方式，丢了排版就塌，
+   后者是 XSS 的老入口。外链强制 `nofollow` + `target=_blank`，
+   否则点一下就把宿主 WebView 导航走、退不回来。
+2. **摘要由服务端提取并落库**（html2text）。列表、推送、客户端通知栏要的都是纯文本
+   一段；让每一端各自解析富文本既慢，也必然解析出不同结果。按 rune 截断，
+   按字节切会把汉字劈成两半。
+3. **图片走对象存储，落库的是 `storage://{configID}/{objectKey}` 引用**，
+   读取时现解析成带票据的代理地址。可访问 URL 会过期，存进去过两天就是死链。
+   `storageRefPrefix` 与平台横幅共用，两处各定义一份会让同一个引用在一处解析得出、
+   在另一处解析不出来。
+
+其余要点：
+
+- **`banners.click_count` 现在有执行点了。** 这一列从建表起就在，却从来没有代码写过它，
+  于是控制台上「点击 0」既可能是真没人点、也可能是根本没在统计 ——
+  而这两件事会导出完全相反的投放决定。补的入口是免登录的
+  `POST /api/v1/apps/{appKey}/banners/{bannerId}/click`（目录 key `bannerClick`，
+  Kotlin SDK `content.reportBannerClick()`）。曝光则在下发列表时由服务端自己累加。
+- **`banners.type` 从「说不出是什么意思的 'url'」改成展示位枚举**
+  （hero / popup / splash / notice / card）：一个接口返回全部 Banner，
+  客户端按位取用，比每个位开一条接口好维护。迁移 000072 把存量值统一落到 `hero`。
+- **公告补上了生命周期**：草稿 / 已发布 / 已归档 + 置顶 + 投放时间窗。
+  展示端只下发已发布且在窗口内的，置顶优先；首次发布才盖 `published_at`，
+  归档后重新发布沿用原时间 —— 那是同一条公告，改一次状态就把它顶到最前面会误导所有人。
+- **拖拽排序一次提交完整顺序**（`ReorderBanners`，单事务批量改写 `position`）。
+  提交「把第 3 条移到第 1 条」这类增量指令，在两个管理员同时拖拽时会算出
+  谁也没想要的第三种顺序。
+- **零值时间等于清空**（`normalizeContentTime`）：前端删掉时间输入框发来的是零值，
+  照原样存下去会得到 0001-01-01，那个时间永远早于 now，
+  于是「不限开始时间」和「从公元一年开始」在库里长得一样。
+- **Redis 缓存键带 `v2`**：两个结构都变宽了，沿用旧键会让升级后的头两分钟里，
+  客户端拿到按新结构反序列化、新字段全是零值的旧缓存 —— 比缓存未命中难查得多。
+
 ### AppOAuthService
 - 渠道配置存 `app_oauth_providers`（每 App 独立，最多 32 个）
 - `client_secret` 以 AES-GCM 落库，密钥派生自 `SECURITY_MASTER_KEY`，出网只给 `clientSecretSet`
@@ -443,6 +491,38 @@ func NewXxxService(log *zap.Logger, pg *pgrepo.Queries, ...) *XxxService
 - **订单查询自带 `receipt` 区块**（`ListUserOrderViews` / `GetUserOrderView`）：
   凭证类型、推荐语言、能否寄送都由服务端算好。放到客户端会各端各写一套且很快不一致。
 
+#### 钱包流水凭证（payment_receipt_wallet.go）
+
+支付订单与钱包流水是**两条并行的资金记录**，此前只有前者能出凭证。
+于是三种「用钱包付的钱」拿不到任何可归档、可报销、可对账的文件：
+余额直购会员（`/vip/purchase`）、业务消费（`/wallet/consume`）、管理员调账 ——
+它们都只落 `wallet_transactions`，不产生订单。
+
+- **同一笔钱只出一份凭证**。流水挂着 `related_order_no` 时（充值到账、余额支付订单），
+  凭证**由订单出具**，钱包这边只是把同一份文档再交付一次。否则同一笔交易会有
+  `RCP-WAL…` 与 `RCP-P…` 两个编号，对账时无从判断哪个算数。
+  委派前三重校验（订单存在、同应用、同用户）：`related_order_no` 是一列没有外键约束的文本。
+- **列表上的凭证入口不查订单表**。一页 20 行逐行确认关联订单就是 20 次查库；
+  出具方按 `related_order_no` 是否存在推导即可，而下载入口**恒指向钱包这条路由**，
+  因此关联订单被清理时按钮也不会失效（内部退回按流水自行出具）。
+- **合计恒为正数**，方向由类型与附注表达。印一个负数总额会让任何一款报销系统都拒收。
+- **品名分两种来源**：平台生成的标题走译文键（`wallet.type.*`），否则一份英文凭证的
+  商品栏会是中文；`consume` 的标题是**接入方填的**消费说明，是真正的业务内容，
+  翻译它等于把用户的数据改掉。`receipt.LineItem.NameKey` 就是为这件事加的。
+- **不占用「订单号」与「交易流水号」两个字段**。前者真的没有；后者在支付明细区
+  表示的是**上游渠道**的单号，内部账本没有这个东西，填进去会让人拿着它去找渠道对账。
+  流水号走附加信息区。
+- **变动前后余额必须印**：只写「扣了 50」的凭证无法自证，
+  而「变动前 200 → 变动后 150」可以与对账单逐行核对。
+- **币种取应用级 `walletCurrency`**（默认 CNY）：钱包余额没有币种列，
+  而一份印着数字却不说是哪国钱的凭证既不能报销也不能对账。
+- **自动寄送与订单共用同一个开关**（`receiptEmailOnPaid`）：用钱包付的钱与用支付宝
+  付的钱，收不收得到收据不该有区别。但只挂在**购买**上（余额直购会员），
+  不挂消费与调账 —— `consume` 一天可能发生几百次，每次寄一封信会先把邮件配额烧光。
+- **装配是纯函数**（`assembleWalletReceiptDocument` + `walletReceiptEnv`）：
+  应用名 / 品牌 / 币种各要打一次库，混在装配里就意味着「凭证长什么样」这件事
+  没有数据库就测不了。
+
 #### 凭证邮件（payment_receipt_email.go）
 
 - **附件能力如实声明**（`emailSender.SupportsAttachments`），调用方**先问能力再写正文**。
@@ -492,6 +572,52 @@ func NewXxxService(log *zap.Logger, pg *pgrepo.Queries, ...) *XxxService
   只说「检查网络」会让排查一路走偏到邮箱服务商那边。
 
 完整接入说明见 [docs/zeabur-email.md](../../docs/zeabur-email.md)。
+
+#### 邮件模板（email_template.go + emailtpl/）
+
+| 文件 | 角色 |
+|---|---|
+| `email_template.go` | 内容模型（`emailLayout` + `mailBlock`）、全部文案、渲染入口 |
+| `emailtpl/layout.gohtml` | HTML 骨架（表格布局），`html/template` 渲染 |
+| `emailtpl/layout.gotxt` | 纯文本骨架，`text/template` 渲染 |
+| `emailtpl/theme.css` | 样式表，色值逐条对应控制台的设计令牌 |
+
+**业务代码不写 HTML。** 调用方只声明内容 —— `mailParagraph` / `mailCode` /
+`mailDetails` / `mailButton` / `mailLink` / `mailNotice` —— 长什么样是模板的事。
+样式写成一张类名样式表，由 [premailer](https://github.com/vanng822/go-premailer)
+在渲染时内联进标签（邮件客户端普遍不认 `<style>`）。重构前是 400 行 `fmt.Sprintf`
+拼字符串加手工 `html.EscapeString`：同一个色值散落在几十处，转义漏一处就是注入。
+
+六条硬约束：
+
+1. **表格布局，不用 flex / div 上的 max-width / div 的 border-radius**。
+   Outlook 2007–2021 用 Word 排版引擎，全都不认。旧版字段行用
+   `display:flex;justify-content:space-between`，在 Outlook 里标签与值竖排。
+   有测试扫描产物里的 `display:flex`。
+2. **纯文本版从同一份内容模型渲染**，不是把 HTML 抓一遍。抓取版必然带上
+   预览行的零宽字符与按钮重复文案，且 HTML 一改就悄悄劣化。
+   只有「正文是外部给的一段 HTML」那条路径才回落到 `htmlToPlainText`（html2text 库）。
+3. **`prefers-color-scheme` 与窄屏规则必须留在 `<style>` 里**：premailer 内联不了
+   媒体查询，且内联样式优先级更高，所以深色规则一律带 `!important`，
+   并且 `WithRemoveClasses(false)`（类名是媒体查询唯一的抓手）。
+4. **VML 条件注释由 Go 侧以 `template.HTML` 注入**。`html/template` 会把模板源码里的
+   HTML 注释整段删掉，写在 `.gohtml` 里的 `<!--[if mso]>` 到不了收件人手上。
+   没有它 Outlook 只会画出一行裸链接。
+5. **色值抄控制台的设计令牌**（`aegis-console/src/app/globals.css` 的 `:root` / `.dark`），
+   对照表写在 `theme.css` 顶部。邮件是产品的一部分，收件人前一分钟可能还在看控制台。
+6. **文案每句只说一次事**。旧版 12 个验证码场景共用同一句「本次验证码用于 XX，
+   请在有效期内完成验证」+「请勿将验证码泄露给任何人」，标题、引导句、字段行「用途」
+   把同一件事说三遍，真正要看的那行反而被淹没。`TestPurposeCopyStaysSpecific`
+   会扫套话黑名单、检查各场景引导句互不重复、以及引导句有没有复述标题。
+
+验证码邮件的主题把码放在最前面（「482913 是您的登录验证码」）：手机通知栏和
+邮件列表只显示开头十几个字，放在那里往往不用点开邮件。
+
+人工核对排版用预览导出（默认跳过，不进 CI）：
+
+```bash
+AEGIS_MAIL_PREVIEW_DIR=./preview go test ./internal/service -run TestDumpEmailPreviews
+```
 
 ### RealtimeService
 - 每个 WebSocket 连接对应一个 NATS Subject（`realtime.user.{appid}.{userid}`）

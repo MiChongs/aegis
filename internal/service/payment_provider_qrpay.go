@@ -53,7 +53,7 @@ func (p *qrpayProvider) Describe() paymentdomain.ProviderMeta {
 				fSecret("token", "通信密钥", "Token", "用于请求签名与回调验签", true),
 				fURL("apiUrl", "网关地址", "https://pay.example.com", "自建码支付站点地址"),
 			),
-			callbackFields("码支付服务端异步通知地址", "用户支付完成后跳转的前端页面"),
+			callbackFields("码支付服务端异步通知地址", ""),
 			limitFields("0.01", "50000"),
 		),
 	})
@@ -184,7 +184,11 @@ func (p *qrpayProvider) HandleCallback(ctx context.Context, data map[string]any,
 		ProviderOrderNo: fmt.Sprintf("%s_%s", payID, time.Now().UTC().Format("20060102150405")),
 		TradeStatus:     "TRADE_SUCCESS",
 		PaymentMethod:   payType,
-		RawData:         mapStringAny(callbackData),
+		// 取 price（下单时提交的原始金额）而**不是** reallyPrice：
+		// 码支付会把实付额上下调整几分钱以区分并发的同额订单，
+		// 拿 reallyPrice 去比对订单金额会把每一笔被调整过的合法支付判成金额不符。
+		Amount:  callbackAmount(price),
+		RawData: mapStringAny(callbackData),
 	}, nil
 }
 

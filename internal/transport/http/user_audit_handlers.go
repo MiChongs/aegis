@@ -49,6 +49,28 @@ func (h *Handler) AdminAppUserLoginAudits(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	// 位置回填：活动地图按这批记录画点与轨迹，没有经纬度就只能靠城市名猜坐标
+	if item != nil && h.location != nil {
+		ips := make([]string, 0, len(item.Items))
+		for i := range item.Items {
+			ips = append(ips, item.Items[i].LoginIP)
+		}
+		located := h.resolveIPLocations(c.Request.Context(), ips)
+		for i := range item.Items {
+			loc, ok := located[item.Items[i].LoginIP]
+			if !ok {
+				continue
+			}
+			item.Items[i].Country = loc.Country
+			item.Items[i].CountryCode = loc.CountryCode
+			item.Items[i].Region = loc.Region
+			item.Items[i].City = loc.City
+			item.Items[i].ISP = loc.ISP
+			item.Items[i].Location = loc.Location
+			item.Items[i].Latitude, item.Items[i].Longitude = geoCoords(loc)
+			item.Items[i].IsPrivate = loc.IsPrivate
+		}
+	}
 	response.Success(c, 200, "获取成功", item)
 }
 

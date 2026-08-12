@@ -25,8 +25,12 @@ import (
 
 const (
 	platformBannerMaxUploadSize = 10 << 20 // 10 MB
-	platformBannerStoragePrefix = "storage://"
 	platformBannerProxyTTL      = 30 * time.Minute
+
+	// storageRefPrefix 是「图片存在对象存储里」的规范持久化形态：
+	// `storage://{configID}/{escapedObjectKey}`。平台横幅与应用 Banner 共用它 ——
+	// 两处各定义一份的话，同一个引用会在一处解析得出、在另一处解析不出来。
+	storageRefPrefix = "storage://"
 )
 
 // PlatformBannerService 负责管理平台级 Banner（超级管理员专属管理）。
@@ -257,7 +261,7 @@ func (s *PlatformBannerService) UploadImage(ctx context.Context, baseURL string,
 		return nil, apperrors.New(50381, http.StatusServiceUnavailable, "存储返回结果异常")
 	}
 
-	reference := buildPlatformBannerStorageReference(stored.ConfigID, stored.Key)
+	reference := buildStorageReference(stored.ConfigID, stored.Key)
 	displayURL := s.resolveStorageURL(ctx, baseURL, stored.ConfigID, stored.Key)
 	if displayURL == "" {
 		// 理论上不应发生；兜底返回 storage provider 给出的原始 URL
@@ -293,7 +297,7 @@ func (s *PlatformBannerService) resolveImageURL(ctx context.Context, baseURL str
 	if stored == "" {
 		return ""
 	}
-	if configID, objectKey, ok := parsePlatformBannerStorageReference(stored); ok {
+	if configID, objectKey, ok := parseStorageReference(stored); ok {
 		if resolved := s.resolveStorageURL(ctx, baseURL, configID, objectKey); resolved != "" {
 			return resolved
 		}
@@ -373,22 +377,22 @@ func platformBannerObjectKey(ext string) (string, error) {
 	return fmt.Sprintf("platform/banners/%s/%s%s", time.Now().UTC().Format("200601"), hex.EncodeToString(buf), ext), nil
 }
 
-// buildPlatformBannerStorageReference 拼接 `storage://{configID}/{escapedKey}`。
-func buildPlatformBannerStorageReference(configID int64, objectKey string) string {
+// buildStorageReference 拼接 `storage://{configID}/{escapedKey}`。
+func buildStorageReference(configID int64, objectKey string) string {
 	objectKey = strings.TrimSpace(objectKey)
 	if configID <= 0 || objectKey == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s%d/%s", platformBannerStoragePrefix, configID, url.PathEscape(objectKey))
+	return fmt.Sprintf("%s%d/%s", storageRefPrefix, configID, url.PathEscape(objectKey))
 }
 
-// parsePlatformBannerStorageReference 解析 `storage://{configID}/{objectKey}`，返回是否命中。
-func parsePlatformBannerStorageReference(raw string) (int64, string, bool) {
+// parseStorageReference 解析 `storage://{configID}/{objectKey}`，返回是否命中。
+func parseStorageReference(raw string) (int64, string, bool) {
 	trimmed := strings.TrimSpace(raw)
-	if !strings.HasPrefix(trimmed, platformBannerStoragePrefix) {
+	if !strings.HasPrefix(trimmed, storageRefPrefix) {
 		return 0, "", false
 	}
-	rest := strings.TrimPrefix(trimmed, platformBannerStoragePrefix)
+	rest := strings.TrimPrefix(trimmed, storageRefPrefix)
 	parts := strings.SplitN(rest, "/", 2)
 	if len(parts) != 2 {
 		return 0, "", false

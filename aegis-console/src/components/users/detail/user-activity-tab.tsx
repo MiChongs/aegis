@@ -7,6 +7,7 @@ import {
   FileClock,
   Globe2,
   LogIn,
+  Map as MapIcon,
   Monitor,
   MonitorSmartphone,
   Radar,
@@ -62,6 +63,7 @@ import {
   textValue
 } from "./user-detail-shared";
 import { UserSessionsPanel } from "../user-sessions-panel";
+import { UserActivityMap } from "./user-activity-map";
 
 const LOGIN_STATUS_OPTIONS = [
   { value: "all", label: "全部结果" },
@@ -80,6 +82,9 @@ const LOGIN_STATUS_OPTIONS = [
  *   登录记录   谁尝试过登录、成没成、从哪来
  *   会话事件   令牌的签发 / 刷新 / 撤销轨迹
  *   风控评估   引擎怎么给这个账号打的分
+ *
+ * 顶部的活动地图是前两条流的**空间投影**（不是第五条流）：
+ * 同一批数据，换一个「在哪」的问法，因此不给它单独的筛选器。
  */
 export function UserActivityTab({
   appKey,
@@ -103,6 +108,14 @@ export function UserActivityTab({
 
   return (
     <div className="space-y-5">
+      <Panel
+        title="活动地图"
+        icon={<MapIcon className="size-4" />}
+        description="活跃会话与登录记录的空间分布；按时间相连的位移超过民航速度会标红。内网与回环地址没有地理位置，统一归到服务器端点。"
+      >
+        <UserActivityMap appKey={appKey} userId={userId} />
+      </Panel>
+
       <Panel
         title="活跃会话"
         icon={<MonitorSmartphone className="size-4" />}

@@ -245,34 +245,59 @@ func (s *PaymentService) renderReceipt(
 	settings map[string]any,
 ) (receipt.Document, *receipt.Result, error) {
 	if s.receipts == nil {
-		return receipt.Document{}, nil, apperrors.New(50372, http.StatusServiceUnavailable,
-			"凭证渲染器不可用，请检查 PAYMENT_RECEIPT_FONT_PATH 配置与服务日志")
+		return receipt.Document{}, nil, errReceiptRendererUnavailable()
 	}
 	doc, err := s.buildReceiptDocument(ctx, order, user, profile, opts)
 	if err != nil {
 		return receipt.Document{}, nil, err
+	}
+	result, err := s.renderReceiptDocument(doc, order.OrderNo, opts, settings)
+	if err != nil {
+		return receipt.Document{}, nil, err
+	}
+	return doc, result, nil
+}
+
+// renderReceiptDocument 把一份装配好的文档交给渲染器，并统一处理降级与缺字上报。
+//
+// 订单凭证与钱包流水凭证共用这一步：语言协商、时区、字体降级判定与告警口径
+// 都与凭证主体无关，各写一份只会让两种凭证在同一个环境下表现不一致。
+// subject 只进日志（订单号或流水号），用于把告警定位回具体那一笔。
+func (s *PaymentService) renderReceiptDocument(
+	doc receipt.Document,
+	subject string,
+	opts paymentdomain.ReceiptOptions,
+	settings map[string]any,
+) (*receipt.Result, error) {
+	if s.receipts == nil {
+		return nil, errReceiptRendererUnavailable()
 	}
 	result, err := s.receipts.Render(doc, receipt.Options{
 		LocalePrefs: s.resolveLocalePrefs(opts, settings),
 		Timezone:    resolveReceiptTimezone(opts.Timezone, settings),
 	})
 	if err != nil {
-		s.log.Error("render payment receipt failed", zap.String("orderNo", order.OrderNo), zap.Error(err))
-		return receipt.Document{}, nil, apperrors.New(50373, http.StatusInternalServerError, "生成凭证失败")
+		s.log.Error("render payment receipt failed", zap.String("subject", subject), zap.Error(err))
+		return nil, apperrors.New(50373, http.StatusInternalServerError, "生成凭证失败")
 	}
 	if result.LocaleFallback {
 		s.log.Warn("payment receipt locale downgraded to default",
-			zap.String("orderNo", order.OrderNo),
+			zap.String("subject", subject),
 			zap.String("requested", result.RequestedLocale),
 			zap.String("fonts", s.receipts.FontStatus()))
 	}
 	if len(result.MissingGlyphs) > 0 {
 		s.log.Warn("payment receipt has unrenderable characters",
-			zap.String("orderNo", order.OrderNo),
+			zap.String("subject", subject),
 			zap.String("glyphs", string(result.MissingGlyphs)),
 			zap.String("fonts", s.receipts.FontStatus()))
 	}
-	return doc, result, nil
+	return result, nil
+}
+
+func errReceiptRendererUnavailable() error {
+	return apperrors.New(50372, http.StatusServiceUnavailable,
+		"凭证渲染器不可用，请检查 PAYMENT_RECEIPT_FONT_PATH 配置与服务日志")
 }
 
 // buildReceiptDocument 把订单装配成一份凭证文档。
@@ -483,6 +508,14 @@ func resolveReceiptStatus(order *paymentdomain.Order) receipt.Status {
 // receiptNumber 凭证编号：类型前缀 + 订单号。同一订单反复导出得到同一个编号 ——
 // 凭证编号是给人对账用的，每次下载都变一个号会让对账无从下手。
 func receiptNumber(docType receipt.DocType, order *paymentdomain.Order) string {
+	return receiptNumberFor(docType, order.OrderNo)
+}
+
+// receiptNumberFor 编号规则的唯一实现，订单与钱包流水共用。
+//
+// 两类主体不另立前缀：单号本身就带出处（订单是 P…、钱包流水是 WAL…），
+// 再分一套 RCP/WAL 前缀只会多出一条对账时要记住的规则。
+func receiptNumberFor(docType receipt.DocType, subjectNo string) string {
 	prefix := "RCP"
 	switch docType {
 	case receipt.TypeInvoice:
@@ -490,7 +523,7 @@ func receiptNumber(docType receipt.DocType, order *paymentdomain.Order) string {
 	case receipt.TypeCreditNote:
 		prefix = "CRN"
 	}
-	return prefix + "-" + order.OrderNo
+	return prefix + "-" + subjectNo
 }
 
 // ── 语言、时区与币种 ──
@@ -623,15 +656,17 @@ func receiptFileName(docType receipt.DocType, orderNo string, locale string) str
 
 // receiptMeta 落盘凭证的元数据。与 PDF 同目录、同名不同后缀。
 type receiptMeta struct {
-	BillID    string    `json:"billId"`
-	AppID     int64     `json:"appid"`
-	UserID    int64     `json:"userId"`
-	OrderNo   string    `json:"orderNo"`
-	FileName  string    `json:"fileName"`
-	FilePath  string    `json:"filePath"`
-	Locale    string    `json:"locale,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
-	ExpiresAt time.Time `json:"expiresAt"`
+	BillID string `json:"billId"`
+	AppID  int64  `json:"appid"`
+	UserID int64  `json:"userId"`
+	// OrderNo / TransactionNo 二选一：凭证要么由订单出具，要么由钱包流水出具
+	OrderNo       string    `json:"orderNo,omitempty"`
+	TransactionNo string    `json:"transactionNo,omitempty"`
+	FileName      string    `json:"fileName"`
+	FilePath      string    `json:"filePath"`
+	Locale        string    `json:"locale,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+	ExpiresAt     time.Time `json:"expiresAt"`
 }
 
 func (s *PaymentService) resolveReceiptTTL(override time.Duration) time.Duration {
@@ -669,15 +704,16 @@ func (s *PaymentService) persistReceipt(appID int64, userID int64, export paymen
 	}
 	pdfPath, metaPath := s.receiptPaths(appID, export.BillID)
 	meta := receiptMeta{
-		BillID:    export.BillID,
-		AppID:     appID,
-		UserID:    userID,
-		OrderNo:   export.OrderNo,
-		FileName:  export.FileName,
-		FilePath:  pdfPath,
-		Locale:    export.Locale,
-		CreatedAt: export.CreatedAt,
-		ExpiresAt: export.ExpiresAt,
+		BillID:        export.BillID,
+		AppID:         appID,
+		UserID:        userID,
+		OrderNo:       export.OrderNo,
+		TransactionNo: export.TransactionNo,
+		FileName:      export.FileName,
+		FilePath:      pdfPath,
+		Locale:        export.Locale,
+		CreatedAt:     export.CreatedAt,
+		ExpiresAt:     export.ExpiresAt,
 	}
 	if err := os.WriteFile(pdfPath, pdfBytes, 0o600); err != nil {
 		s.log.Warn("write receipt file failed", zap.String("bill_id", export.BillID), zap.String("file_path", pdfPath), zap.Error(err))
@@ -856,9 +892,13 @@ func (s *PaymentService) GetUserOrderView(ctx context.Context, session *authdoma
 // orderReceiptContext 一次请求内对所有订单都相同的部分：推荐语言、能否寄送。
 // 单独算一次，否则列表里每条订单都要重新读一遍用户设置与资料。
 type orderReceiptContext struct {
-	locale    string
-	emailable bool
-	emailHint string
+	locale string
+	// walletCurrency 钱包记账币种，钱包流水的凭证入口用它标注金额单位。
+	// 只在钱包那条链路上填（见 WalletService.receiptContext）——
+	// 订单列表用不到它，为它多打一次库不划算。
+	walletCurrency string
+	emailable      bool
+	emailHint      string
 }
 
 func (s *PaymentService) resolveOrderReceiptContext(ctx context.Context, session *authdomain.Session, opts paymentdomain.ReceiptOptions) orderReceiptContext {

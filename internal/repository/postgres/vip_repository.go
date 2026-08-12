@@ -309,6 +309,7 @@ FROM user_wallets WHERE user_id = $1 AND appid = $2 LIMIT 1`, userID, appID))
 			if err != nil {
 				return nil, err
 			}
+			walletTxnNo := findWalletTxnNoByIdemKey(ctx, tx, key)
 			if err := tx.Commit(ctx); err != nil {
 				return nil, err
 			}
@@ -318,10 +319,12 @@ FROM user_wallets WHERE user_id = $1 AND appid = $2 LIMIT 1`, userID, appID))
 				balance = wallet.Balance
 			}
 			return &vipdomain.PurchaseResult{
-				Transaction:   *existing,
-				Status:        *buildVipStatus(expireAt),
-				WalletBalance: balance,
-				BonusIntegral: existing.BonusIntegral,
+				Transaction:         *existing,
+				Status:              *buildVipStatus(expireAt),
+				WalletBalance:       balance,
+				BonusIntegral:       existing.BonusIntegral,
+				WalletTransactionNo: walletTxnNo,
+				Replayed:            true,
 			}, nil
 		}
 	}
@@ -360,7 +363,12 @@ FROM user_wallets WHERE user_id = $1 AND appid = $2 LIMIT 1`, userID, appID))
 				return nil, err
 			}
 			tx = nil
-			result := &vipdomain.PurchaseResult{Status: *buildVipStatus(expireAt), WalletBalance: walletResult.Wallet.Balance}
+			result := &vipdomain.PurchaseResult{
+				Status:              *buildVipStatus(expireAt),
+				WalletBalance:       walletResult.Wallet.Balance,
+				WalletTransactionNo: walletResult.Transaction.TransactionNo,
+				Replayed:            true,
+			}
 			if txn != nil {
 				result.Transaction = *txn
 				result.BonusIntegral = txn.BonusIntegral
@@ -394,15 +402,36 @@ FROM user_wallets WHERE user_id = $1 AND appid = $2 LIMIT 1`, userID, appID))
 	tx = nil
 
 	balance := decimal.Zero
+	walletTxnNo := ""
 	if walletResult != nil {
 		balance = walletResult.Wallet.Balance
+		walletTxnNo = walletResult.Transaction.TransactionNo
 	}
 	return &vipdomain.PurchaseResult{
-		Transaction:   *txn,
-		Status:        *buildVipStatus(&txn.ExpireAfter),
-		WalletBalance: balance,
-		BonusIntegral: plan.BonusIntegral,
+		Transaction:         *txn,
+		Status:              *buildVipStatus(&txn.ExpireAfter),
+		WalletBalance:       balance,
+		BonusIntegral:       plan.BonusIntegral,
+		WalletTransactionNo: walletTxnNo,
 	}, nil
+}
+
+// findWalletTxnNoByIdemKey 幂等重放时回查扣款流水号。
+//
+// 只在重放分支上跑，因此多这一次查询不影响正常购买路径；
+// 没有它的话，重试一次购买请求返回的结果里就没有凭证入口 ——
+// 而重试恰恰是最容易发生在「用户没看到结果」之后的那次点击上。
+func findWalletTxnNoByIdemKey(ctx context.Context, tx pgx.Tx, idemKey string) string {
+	if idemKey = strings.TrimSpace(idemKey); idemKey == "" {
+		return ""
+	}
+	var transactionNo string
+	if err := tx.QueryRow(ctx,
+		`SELECT transaction_no FROM wallet_transactions WHERE idempotency_key = $1 LIMIT 1`,
+		idemKey).Scan(&transactionNo); err != nil {
+		return ""
+	}
+	return transactionNo
 }
 
 func scanVipPlan(row interface{ Scan(dest ...any) error }) (*vipdomain.Plan, error) {

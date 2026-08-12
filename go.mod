@@ -44,6 +44,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/inbucket/html2text v1.0.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jedib0t/go-pretty/v6 v6.8.3
 	github.com/lucasb-eyer/go-colorful v1.4.0
@@ -78,6 +79,7 @@ require (
 	github.com/things-go/go-socks5 v0.1.1
 	github.com/trustelem/zxcvbn v1.0.1
 	github.com/ulule/limiter/v3 v3.11.2
+	github.com/vanng822/go-premailer v1.35.0
 	github.com/wechatpay-apiv3/wechatpay-go v0.2.21
 	github.com/wneessen/go-mail v0.8.1
 	github.com/xuri/excelize/v2 v2.11.0
@@ -114,12 +116,14 @@ require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20260311194731-d5b7577c683d // indirect
+	github.com/PuerkitoBio/goquery v1.12.0 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.16.0 // indirect
 	github.com/StackExchange/wmi v1.2.1 // indirect
 	github.com/alex-ant/gomath v0.0.0-20160516115720-89013a210a82 // indirect
 	github.com/alibabacloud-go/alibabacloud-gateway-spi v0.0.5 // indirect
 	github.com/alibabacloud-go/debug v1.0.1 // indirect
 	github.com/alibabacloud-go/tea-utils/v2 v2.0.9 // indirect
+	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.16 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.35 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.35 // indirect
@@ -134,6 +138,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.4 // indirect
 	github.com/aws/smithy-go v1.27.6 // indirect
+	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/beevik/etree v1.7.0 // indirect
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/blevesearch/bleve_index_api v1.3.11 // indirect
@@ -176,6 +181,7 @@ require (
 	github.com/ebitengine/purego v0.10.2 // indirect
 	github.com/ethereum/c-kzg-4844/v2 v2.1.8 // indirect
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a // indirect
+	github.com/fatih/color v1.19.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fjl/jsonw v0.1.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
@@ -206,6 +212,7 @@ require (
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.19 // indirect
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
+	github.com/gorilla/css v1.0.1 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
@@ -225,7 +232,9 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/magefile/mage v1.17.0 // indirect
 	github.com/mattermost/xml-roundtrip-validator v0.1.0 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-runewidth v0.0.23 // indirect
+	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
@@ -240,6 +249,9 @@ require (
 	github.com/nexus-rpc/sdk-go v0.6.0 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
+	github.com/olekukonko/errors v1.1.0 // indirect
+	github.com/olekukonko/ll v0.0.9 // indirect
+	github.com/olekukonko/tablewriter v1.0.7 // indirect
 	github.com/oschwald/maxminddb-golang v1.13.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
 	github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745 // indirect
@@ -265,6 +277,7 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
@@ -281,6 +294,7 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	github.com/valllabh/ocsf-schema-golang v1.0.3 // indirect
+	github.com/vanng822/css v1.0.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect

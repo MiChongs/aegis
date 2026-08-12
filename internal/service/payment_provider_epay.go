@@ -69,8 +69,8 @@ func (p *epayProvider) Describe() paymentdomain.ProviderMeta {
 				fText("sitename", "站点名称", "My Site", "部分易支付站点要求提交站点名", false),
 			),
 			callbackFields(
-				"留空则使用平台默认回调地址；建议在易支付后台同步填写",
-				"用户支付完成后跳转的前端页面",
+				"建议在易支付后台同步填写",
+				"",
 			),
 			limitFields("0.01", "50000"),
 			advanced(fields(
@@ -126,10 +126,16 @@ func (p *epayProvider) CreateOrder(ctx context.Context, data map[string]any, req
 		"money":        req.Amount.StringFixed(2),
 		"sign_type":    normalizeSignType(epay.SignType),
 	}
+	// sitename 是易支付 submit 接口的选填参数；此前它只落在配置里没人读，
+	// 管理员填了也不会生效。空值不会进签名串（generatePaymentSign 跳过空值）。
+	if site := strings.TrimSpace(epay.SiteName); site != "" {
+		params["sitename"] = site
+	}
 	if len(req.Metadata) > 0 {
 		raw, _ := json.Marshal(req.Metadata)
 		params["param"] = string(raw)
 	}
+	// 签名不含 sign_type 本身，排除规则在 generatePaymentSign 内部统一执行。
 	params["sign"] = generatePaymentSign(params, epay.Key, params["sign_type"])
 	submitURL := strings.TrimRight(epay.APIURL, "/") + "/submit.php"
 	return &paymentdomain.PaymentPayload{
@@ -216,28 +222,13 @@ func (p *epayProvider) HandleCallback(ctx context.Context, data map[string]any, 
 		return nil, err
 	}
 
-	// 签名验证
-	sign := callbackData["sign"]
-	signType := normalizeSignType(firstNonEmpty(callbackData["sign_type"], epay.SignType))
-	if sign == "" {
-		return nil, apperrors.New(40075, http.StatusBadRequest, "缺少签名")
-	}
-
-	// IP 白名单验证
+	// IP 白名单只对异步通知有意义：那是渠道服务器直连过来的。
+	// 同步跳转由用户浏览器发起（见 VerifyReturn），套用白名单会把每个真实用户都挡掉。
 	if epay.VerifyIP && len(epay.AllowedIPs) > 0 && !containsString(epay.AllowedIPs, clientIP) {
 		return nil, apperrors.New(40370, http.StatusForbidden, "回调IP未授权")
 	}
-
-	// 构建验签数据（跳过框架注入的保留键 __*，它们不属于上游签名参数集）
-	verifyData := map[string]string{}
-	for k, v := range callbackData {
-		if k == "sign" || k == "sign_type" || strings.HasPrefix(k, "__") || strings.TrimSpace(v) == "" {
-			continue
-		}
-		verifyData[k] = v
-	}
-	if !strings.EqualFold(generatePaymentSign(verifyData, epay.Key, signType), sign) {
-		return nil, apperrors.New(40076, http.StatusBadRequest, "签名验证失败")
+	if err := verifyEpaySignature(epay, callbackData); err != nil {
+		return nil, err
 	}
 
 	tradeStatus := callbackData["trade_status"]
@@ -250,8 +241,56 @@ func (p *epayProvider) HandleCallback(ctx context.Context, data map[string]any, 
 		ProviderOrderNo: callbackData["trade_no"],
 		TradeStatus:     tradeStatus,
 		PaymentMethod:   normalizeProviderType(callbackData["type"]),
-		RawData:         mapStringAny(callbackData),
+		// money 是签过名的，丢掉它等于让网关层那道「回调金额必须与订单一致」
+		// 的交叉校验对整个易支付系空转 —— Amount 为零时那段判断整条跳过。
+		Amount:  callbackAmount(callbackData["money"]),
+		RawData: mapStringAny(callbackData),
 	}, nil
+}
+
+// VerifyReturn 校验同步跳转（return_url）带回来的参数。
+//
+// 易支付把与异步通知同一批参数、同一套签名原样附在 return_url 上，因此浏览器
+// 手里这串 query 是可验证的凭据 —— 结果页据此才敢把订单信息显示给它。
+// 没有签名就什么都不给：订单号是可枚举的，凭订单号直接查等于把交易明细敞开。
+//
+// **不判 trade_status，也不返回任何「已支付」的结论。** 这里只回答「这串参数
+// 确实来自持有商户密钥的一方，且指向这笔订单」；钱到没到只认渠道打给服务端的
+// 那一次异步通知。浏览器上的 URL 是用户可以来回刷、也可以停在半路的。
+func (p *epayProvider) VerifyReturn(data map[string]any, params map[string]string) (string, error) {
+	epay, err := decodeEpayConfig(data)
+	if err != nil {
+		return "", err
+	}
+	if err := verifyEpaySignature(epay, params); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(params["out_trade_no"]), nil
+}
+
+// verifyEpaySignature 易支付系验签，异步通知与同步跳转共用。
+//
+// 两条链路的参数集与签名规则完全相同，各写一份的下场上一次已经见过了：
+// 下单那侧漏排除 sign_type，回调侧没漏，于是两边都「自洽」而对不上。
+func verifyEpaySignature(epay *paymentdomain.EpayConfig, params map[string]string) error {
+	sign := strings.TrimSpace(params["sign"])
+	if sign == "" {
+		return apperrors.New(40075, http.StatusBadRequest, "缺少签名")
+	}
+	// 跳过框架注入的保留键 __*，它们不属于上游签名参数集；
+	// sign / sign_type / 空值由 generatePaymentSign 统一排除。
+	verifyData := map[string]string{}
+	for k, v := range params {
+		if strings.HasPrefix(k, "__") {
+			continue
+		}
+		verifyData[k] = v
+	}
+	signType := normalizeSignType(firstNonEmpty(params["sign_type"], epay.SignType))
+	if !strings.EqualFold(generatePaymentSign(verifyData, epay.Key, signType), sign) {
+		return apperrors.New(40076, http.StatusBadRequest, "签名验证失败")
+	}
+	return nil
 }
 
 // ── Epay 配置解码 ──

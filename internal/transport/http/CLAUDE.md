@@ -18,6 +18,7 @@ Gin 路由注册、HTTP Handler 实现、请求/响应 DTO、OpenAPI 规范生�
 | `system_settings_dto.go` | 平台设置 DTO |
 | `app_gateway_handlers.go` | 应用接入网关的认证生命周期 Handler（`/api/v1/apps/:appkey/auth/*`） |
 | `app_gateway_account_handlers.go` | 网关的账户与内容部分：把只认 `appid` 的旧 handler 接进以 appKey 定位的命名空间 |
+| `app_content_handlers.go` | 应用级内容中心管理端：Banner（列表 / 排序 / 图片上传）、公告（分页过滤）、总览 |
 | `auth_protocol_handlers.go` | 接入配置的管理端 Handler（策略 / 应用密钥 / 自检 / 传输密钥） |
 | `docs_gateway.go` | 网关接口的 OpenAPI 元数据（由接入目录生成，多平台客户端从这一段产出） |
 | `docs_route_models.go` | **机器生成**：路由 → 请求模型映射，不要手工编辑 |

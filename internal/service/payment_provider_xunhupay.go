@@ -55,7 +55,7 @@ func (p *xunhupayProvider) Describe() paymentdomain.ProviderMeta {
 				fSecret("appSecret", "应用密钥", "App Secret", "用于请求签名与回调验签", true),
 				fURL("apiUrl", "网关地址", "https://api.xunhupay.com/payment/do.html", "留空使用官方默认网关"),
 			),
-			callbackFields("虎皮椒服务端异步通知地址", "用户支付完成后跳转的前端页面"),
+			callbackFields("虎皮椒服务端异步通知地址", ""),
 			limitFields("0.01", "50000"),
 			advanced(inGroup(paymentdomain.GroupAdvanced,
 				fURL("wxpayUrl", "微信独立网关", "https://api.xunhupay.com/payment/do.html", "部分商户的微信通道使用独立域名，留空则复用主网关"),

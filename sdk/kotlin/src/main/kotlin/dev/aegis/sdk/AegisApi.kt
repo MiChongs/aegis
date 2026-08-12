@@ -631,6 +631,15 @@ class AegisContentApi internal constructor(private val client: AegisClient) {
     @Throws(IOException::class)
     fun banners(): JsonElement = client.call("GET", "/banners")
 
+    /**
+     * 轮播图点击上报。曝光由服务端在下发列表时自己算，点击只有客户端知道，
+     * 因此这一条必须由调用方在用户点开 Banner 时显式调用 —— 不调的表现是
+     * 控制台上点击率恒为 0，而那个数字是投放决策的唯一依据。
+     */
+    @Throws(IOException::class)
+    fun reportBannerClick(bannerId: Long): JsonElement =
+        client.call("POST", "/banners/$bannerId/click")
+
     @Throws(IOException::class)
     fun notices(): JsonElement = client.call("GET", "/notices")
 

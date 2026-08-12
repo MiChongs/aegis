@@ -756,6 +756,29 @@ func (h *Handler) PaymentCallback(c *gin.Context) {
 	c.String(http.StatusOK, "fail")
 }
 
+// PaymentReturn 同步跳转结果查询：GET /api/public/pay/return
+//
+// 用户付完款被渠道跳回结果页，页面把渠道附上的那串 query 原样交给这里换取订单状态。
+// **只读**：订单状态由异步通知决定，浏览器带回来的 trade_status 不作数
+// （用户可以刷新、可以只走一半，那串 URL 也可以被转发给别人）。
+//
+// 不在鉴权组里：付款人是应用用户，跳回来的浏览器上没有本站登录态。
+// 凭据是渠道的签名 query 本身 —— 验不过就什么都不返回。
+func (h *Handler) PaymentReturn(c *gin.Context) {
+	params := map[string]string{}
+	for key, values := range c.Request.URL.Query() {
+		if len(values) > 0 {
+			params[key] = values[0]
+		}
+	}
+	view, err := h.payment.VerifyPaymentReturn(c.Request.Context(), params)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "查询成功", view)
+}
+
 func (h *Handler) PaymentMethods(c *gin.Context) {
 	methods := h.payment.AvailableMethods()
 	response.Success(c, 200, "获取成功", methods)

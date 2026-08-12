@@ -107,6 +107,26 @@
   "purpose.vip_purchase": "Achat d'abonnement",
   "purpose.integral_purchase": "Achat de points",
 
+  "wallet.type.recharge": "Rechargement du solde",
+  "wallet.type.consume": "Paiement par solde",
+  "wallet.type.refund": "Remboursement sur le solde",
+  "wallet.type.admin_adjust": "Ajustement manuel du solde",
+  "wallet.type.vip_purchase": "Achat d'abonnement",
+  "wallet.type.order_pay": "Commande payée par solde",
+  "wallet.direction.in": "Crédit",
+  "wallet.direction.out": "Débit",
+
+  "meta.walletTxnNo": "Écriture de solde",
+  "meta.walletType": "Type d'écriture",
+  "meta.direction": "Sens",
+  "meta.balanceBefore": "Solde avant",
+  "meta.balanceAfter": "Solde après",
+  "meta.relatedOrder": "Commande associée",
+  "meta.operator": "Traité par",
+
+  "notes.walletDebit": "Ce montant a été débité du solde de ce compte. Aucun prestataire de paiement externe n'est intervenu.",
+  "notes.walletCredit": "Ce montant a été crédité sur le solde de ce compte.",
+
   "notes.unpaid": "Ce document ne constitue pas une preuve de paiement : la commande n'a pas encore été réglée.",
   "notes.refunded": "Cette commande a été intégralement remboursée. Le net payé est nul.",
   "notes.partiallyRefunded": "Cette commande a été partiellement remboursée. Voir la section Remboursements.",

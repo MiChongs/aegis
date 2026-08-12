@@ -69,6 +69,9 @@ type ChangeResult struct {
 	Wallet      Wallet      `json:"wallet"`
 	// Replayed 为 true 表示命中幂等键，本次未实际变更余额（返回的是首次流水）
 	Replayed bool `json:"replayed,omitempty"`
+	// Receipt 这笔流水的凭证入口。由服务层填充（仓储层不认识凭证）。
+	// 扣完款当场把凭证入口一并给出，客户端不必为了拿下载地址再拉一次列表。
+	Receipt *TransactionReceipt `json:"receipt,omitempty"`
 }
 
 // ListQuery 流水查询

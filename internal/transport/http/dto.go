@@ -266,6 +266,40 @@ type AdminBannerUpsertRequest struct {
 type AdminNoticeUpsertRequest struct {
 	Title   *string `json:"title"`
 	Content *string `json:"content"`
+	// Type 公告类型：notice / activity / maintenance / update / security
+	Type *string `json:"type"`
+	// Level 提示级别：normal / important / critical
+	Level *string `json:"level"`
+	// Status 生命周期：draft / published / archived
+	Status    *string    `json:"status"`
+	Pinned    *bool      `json:"pinned"`
+	StartTime *time.Time `json:"startTime"`
+	EndTime   *time.Time `json:"endTime"`
+}
+
+// AdminBannerListQuery 管理端 Banner 过滤。刻意不分页：一个应用的 Banner 是个位数，
+// 而分页会让拖拽排序失去全局视野 —— 第 2 页的第 1 条拖不到第 1 页去。
+type AdminBannerListQuery struct {
+	Status  string `form:"status"` // enabled / disabled，空表示不限
+	Type    string `form:"type"`
+	Keyword string `form:"keyword"`
+}
+
+// AdminNoticeListQuery 管理端公告过滤与分页。
+type AdminNoticeListQuery struct {
+	Status  string `form:"status"`
+	Type    string `form:"type"`
+	Level   string `form:"level"`
+	Keyword string `form:"keyword"`
+	Page    int    `form:"page"`
+	Limit   int    `form:"limit"`
+}
+
+// AdminBannerReorderRequest 拖拽排序：一次提交完整顺序。
+// 提交「把第 3 条移到第 1 条」这类增量指令，在两个管理员同时拖拽时
+// 会算出谁也没想要的第三种顺序。
+type AdminBannerReorderRequest struct {
+	IDs []int64 `json:"ids" binding:"required"`
 }
 
 type AdminBatchIDsRequest struct {

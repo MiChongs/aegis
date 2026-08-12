@@ -107,6 +107,26 @@
   "purpose.vip_purchase": "Compra de membresía",
   "purpose.integral_purchase": "Compra de puntos",
 
+  "wallet.type.recharge": "Recarga de saldo",
+  "wallet.type.consume": "Pago con saldo",
+  "wallet.type.refund": "Reembolso al saldo",
+  "wallet.type.admin_adjust": "Ajuste manual de saldo",
+  "wallet.type.vip_purchase": "Compra de membresía",
+  "wallet.type.order_pay": "Pedido pagado con saldo",
+  "wallet.direction.in": "Abono",
+  "wallet.direction.out": "Cargo",
+
+  "meta.walletTxnNo": "Movimiento de saldo",
+  "meta.walletType": "Tipo de movimiento",
+  "meta.direction": "Sentido",
+  "meta.balanceBefore": "Saldo anterior",
+  "meta.balanceAfter": "Saldo posterior",
+  "meta.relatedOrder": "Pedido relacionado",
+  "meta.operator": "Procesado por",
+
+  "notes.walletDebit": "Este importe se descontó del saldo de esta cuenta. No intervino ninguna pasarela de pago externa.",
+  "notes.walletCredit": "Este importe se abonó al saldo de esta cuenta.",
+
   "notes.unpaid": "Este documento no es comprobante de pago: el pedido aún no se ha abonado.",
   "notes.refunded": "Este pedido se ha reembolsado en su totalidad. El neto pagado es cero.",
   "notes.partiallyRefunded": "Este pedido se ha reembolsado parcialmente. Consulte la sección de reembolsos.",

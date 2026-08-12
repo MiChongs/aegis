@@ -111,6 +111,26 @@
   "purpose.vip_purchase": "Покупка подписки",
   "purpose.integral_purchase": "Покупка баллов",
 
+  "wallet.type.recharge": "Пополнение баланса",
+  "wallet.type.consume": "Оплата с баланса",
+  "wallet.type.refund": "Возврат на баланс",
+  "wallet.type.admin_adjust": "Ручная корректировка баланса",
+  "wallet.type.vip_purchase": "Покупка подписки",
+  "wallet.type.order_pay": "Заказ оплачен с баланса",
+  "wallet.direction.in": "Приход",
+  "wallet.direction.out": "Расход",
+
+  "meta.walletTxnNo": "Операция по балансу",
+  "meta.walletType": "Тип операции",
+  "meta.direction": "Направление",
+  "meta.balanceBefore": "Баланс до",
+  "meta.balanceAfter": "Баланс после",
+  "meta.relatedOrder": "Связанный заказ",
+  "meta.operator": "Исполнитель",
+
+  "notes.walletDebit": "Сумма списана с баланса этого аккаунта. Внешние платёжные каналы не задействованы.",
+  "notes.walletCredit": "Сумма зачислена на баланс этого аккаунта.",
+
   "notes.unpaid": "Этот документ не является подтверждением оплаты: заказ ещё не оплачен.",
   "notes.refunded": "Заказ возвращён полностью. Итоговая сумма к оплате — ноль.",
   "notes.partiallyRefunded": "По заказу выполнен частичный возврат. Подробности — в разделе «Возвраты».",

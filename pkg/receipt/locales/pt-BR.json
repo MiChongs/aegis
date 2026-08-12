@@ -107,6 +107,26 @@
   "purpose.vip_purchase": "Compra de assinatura",
   "purpose.integral_purchase": "Compra de pontos",
 
+  "wallet.type.recharge": "Recarga de saldo",
+  "wallet.type.consume": "Pagamento com saldo",
+  "wallet.type.refund": "Reembolso ao saldo",
+  "wallet.type.admin_adjust": "Ajuste manual de saldo",
+  "wallet.type.vip_purchase": "Compra de assinatura",
+  "wallet.type.order_pay": "Pedido pago com saldo",
+  "wallet.direction.in": "Crédito",
+  "wallet.direction.out": "Débito",
+
+  "meta.walletTxnNo": "Lançamento de saldo",
+  "meta.walletType": "Tipo de lançamento",
+  "meta.direction": "Sentido",
+  "meta.balanceBefore": "Saldo anterior",
+  "meta.balanceAfter": "Saldo posterior",
+  "meta.relatedOrder": "Pedido relacionado",
+  "meta.operator": "Processado por",
+
+  "notes.walletDebit": "Este valor foi debitado do saldo desta conta. Nenhum canal de pagamento externo foi utilizado.",
+  "notes.walletCredit": "Este valor foi creditado no saldo desta conta.",
+
   "notes.unpaid": "Este documento não é comprovante de pagamento: o pedido ainda não foi quitado.",
   "notes.refunded": "Este pedido foi totalmente reembolsado. O valor líquido pago é zero.",
   "notes.partiallyRefunded": "Este pedido foi parcialmente reembolsado. Consulte a seção de reembolsos.",

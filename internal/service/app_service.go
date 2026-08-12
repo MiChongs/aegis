@@ -29,9 +29,15 @@ type AppService struct {
 	// governance 平台治理判定。与 apps.status 是「与」的关系：
 	// 应用自己把开关打开也盖不过平台的冻结结论。
 	governance *PlatformGovernanceService
+	// storage Banner 图片的落地通道。构造期还没有 StorageService，
+	// 与 plugin / governance 一样走 setter 注入。为空时上传接口如实报「存储未启用」。
+	storage *StorageService
 }
 
 func (s *AppService) SetPluginService(p *PluginService) { s.plugin = p }
+
+// SetStorageService 注入存储服务（bootstrap 中调用，避免构造期循环依赖）。
+func (s *AppService) SetStorageService(st *StorageService) { s.storage = st }
 
 // SetGovernanceService 注入平台治理服务（bootstrap 中调用，避免构造期循环依赖）。
 func (s *AppService) SetGovernanceService(g *PlatformGovernanceService) { s.governance = g }
@@ -91,7 +97,10 @@ func (s *AppService) ResolvePolicy(app *appdomain.App) appdomain.Policy {
 // 包级函数而非方法：PaymentService 下单时也要读同一份兑换率，但它不持有 AppService。
 // 兑换率与兜底值只在这里定义一次，避免「控制台显示 100、下单按另一个值算」。
 func resolveCommerceSettings(app *appdomain.App) appdomain.CommerceSettings {
-	settings := appdomain.CommerceSettings{IntegralPerCurrency: appdomain.DefaultIntegralPerCurrency}
+	settings := appdomain.CommerceSettings{
+		IntegralPerCurrency: appdomain.DefaultIntegralPerCurrency,
+		WalletCurrency:      appdomain.DefaultWalletCurrency,
+	}
 	if app == nil {
 		return settings
 	}
@@ -103,6 +112,11 @@ func resolveCommerceSettings(app *appdomain.App) appdomain.CommerceSettings {
 	}
 	if value, ok := app.Settings["receiptLocale"].(string); ok {
 		settings.ReceiptLocale = strings.TrimSpace(value)
+	}
+	if value, ok := app.Settings["walletCurrency"].(string); ok {
+		if code := strings.ToUpper(strings.TrimSpace(value)); code != "" {
+			settings.WalletCurrency = code
+		}
 	}
 	return settings
 }
@@ -132,6 +146,15 @@ func (s *AppService) UpdateCommerceSettings(ctx context.Context, appID int64, in
 	if locale := strings.TrimSpace(input.ReceiptLocale); locale != "" && !receiptLocaleSupported(locale) {
 		return nil, apperrors.New(40030, http.StatusBadRequest, "不支持的凭证语言："+locale)
 	}
+	// 币种同样当场校验：它会原样印在凭证上，存一个 "人民币" 进去
+	// 只会在几个月后的某份凭证上出现「人民币 128.00」这种谁也认不出的写法。
+	input.WalletCurrency = strings.ToUpper(strings.TrimSpace(input.WalletCurrency))
+	if input.WalletCurrency == "" {
+		input.WalletCurrency = appdomain.DefaultWalletCurrency
+	}
+	if !isCurrencyCode(input.WalletCurrency) {
+		return nil, apperrors.New(40031, http.StatusBadRequest, "钱包币种必须是 3 位 ISO 4217 代码，如 CNY / USD")
+	}
 	app, err := s.GetApp(ctx, appID)
 	if err != nil {
 		return nil, err
@@ -141,6 +164,7 @@ func (s *AppService) UpdateCommerceSettings(ctx context.Context, appID int64, in
 	settings["receiptEmailOnPaid"] = input.ReceiptEmailOnPaid
 	input.ReceiptLocale = strings.TrimSpace(input.ReceiptLocale)
 	settings["receiptLocale"] = input.ReceiptLocale
+	settings["walletCurrency"] = input.WalletCurrency
 	if _, err := s.SaveApp(ctx, appdomain.AppMutation{ID: appID, Settings: settings}); err != nil {
 		return nil, err
 	}
@@ -365,54 +389,6 @@ func (s *AppService) EnsureRegisterAllowed(ctx context.Context, appID int64) (*a
 		return nil, apperrors.New(40312, http.StatusForbidden, message)
 	}
 	return app, nil
-}
-
-func (s *AppService) GetBanners(ctx context.Context, appID int64) ([]appdomain.Banner, error) {
-	if _, err := s.GetApp(ctx, appID); err != nil {
-		return nil, err
-	}
-	if s.sessions != nil {
-		cached, err := s.sessions.GetBanners(ctx, appID)
-		if err != nil {
-			s.log.Warn("load banners cache failed", zap.Int64("appid", appID), zap.Error(err))
-		} else if cached != nil {
-			return cached, nil
-		}
-	}
-	items, err := s.pg.ListActiveBanners(ctx, appID, time.Now().In(s.location))
-	if err != nil {
-		return nil, err
-	}
-	if s.sessions != nil {
-		if err := s.sessions.SetBanners(ctx, appID, items, 2*time.Minute); err != nil {
-			s.log.Warn("cache banners failed", zap.Int64("appid", appID), zap.Error(err))
-		}
-	}
-	return items, nil
-}
-
-func (s *AppService) GetNotices(ctx context.Context, appID int64) ([]appdomain.Notice, error) {
-	if _, err := s.GetApp(ctx, appID); err != nil {
-		return nil, err
-	}
-	if s.sessions != nil {
-		cached, err := s.sessions.GetNotices(ctx, appID)
-		if err != nil {
-			s.log.Warn("load notices cache failed", zap.Int64("appid", appID), zap.Error(err))
-		} else if cached != nil {
-			return cached, nil
-		}
-	}
-	items, err := s.pg.ListNotices(ctx, appID)
-	if err != nil {
-		return nil, err
-	}
-	if s.sessions != nil {
-		if err := s.sessions.SetNotices(ctx, appID, items, 2*time.Minute); err != nil {
-			s.log.Warn("cache notices failed", zap.Int64("appid", appID), zap.Error(err))
-		}
-	}
-	return items, nil
 }
 
 func (s *AppService) ListApps(ctx context.Context) ([]appdomain.App, error) {
@@ -712,191 +688,12 @@ func (s *AppService) UpdatePolicy(ctx context.Context, appID int64, policy appdo
 	return &updated, nil
 }
 
-func (s *AppService) ListBannersForAdmin(ctx context.Context, appID int64) ([]appdomain.Banner, error) {
-	if _, err := s.GetApp(ctx, appID); err != nil {
-		return nil, err
-	}
-	return s.pg.ListBanners(ctx, appID)
-}
-
-func (s *AppService) SaveBanner(ctx context.Context, appID int64, mutation appdomain.BannerMutation) (*appdomain.Banner, error) {
-	if _, err := s.GetApp(ctx, appID); err != nil {
-		return nil, err
-	}
-	current, err := s.pg.GetBannerByID(ctx, appID, mutation.ID)
-	if err != nil {
-		return nil, err
-	}
-	item := appdomain.Banner{
-		ID:       mutation.ID,
-		Type:     "url",
-		Status:   true,
-		Position: 0,
-	}
-	if current != nil {
-		item = *current
-	}
-
-	if mutation.Header != nil {
-		item.Header = strings.TrimSpace(*mutation.Header)
-	}
-	if mutation.Title != nil {
-		item.Title = strings.TrimSpace(*mutation.Title)
-	}
-	if strings.TrimSpace(item.Title) == "" {
-		return nil, apperrors.New(40022, http.StatusBadRequest, "Banner 标题不能为空")
-	}
-	if mutation.Content != nil {
-		item.Content = strings.TrimSpace(*mutation.Content)
-	}
-	if mutation.URL != nil {
-		item.URL = strings.TrimSpace(*mutation.URL)
-	}
-	if mutation.Type != nil {
-		item.Type = strings.TrimSpace(*mutation.Type)
-	}
-	if item.Type == "" {
-		item.Type = "url"
-	}
-	if mutation.Position != nil {
-		item.Position = *mutation.Position
-	}
-	if mutation.Status != nil {
-		item.Status = *mutation.Status
-	}
-	if mutation.StartTime != nil {
-		item.StartTime = mutation.StartTime
-	}
-	if mutation.EndTime != nil {
-		item.EndTime = mutation.EndTime
-	}
-
-	saved, err := s.pg.UpsertBanner(ctx, appID, item)
-	if err != nil {
-		return nil, err
-	}
-	s.invalidateBannerCache(ctx, appID)
-	return saved, nil
-}
-
-func (s *AppService) DeleteBanner(ctx context.Context, appID int64, bannerID int64) error {
-	deleted, err := s.pg.DeleteBanner(ctx, appID, bannerID)
-	if err != nil {
-		return err
-	}
-	if !deleted {
-		return apperrors.New(40411, http.StatusNotFound, "Banner 不存在")
-	}
-	s.invalidateBannerCache(ctx, appID)
-	return nil
-}
-
-func (s *AppService) DeleteBanners(ctx context.Context, appID int64, bannerIDs []int64) (int64, []int64, error) {
-	if _, err := s.GetApp(ctx, appID); err != nil {
-		return 0, nil, err
-	}
-	ids := normalizeUniqueIDs(bannerIDs)
-	if len(ids) == 0 {
-		return 0, nil, apperrors.New(40025, http.StatusBadRequest, "Banner 标识不能为空")
-	}
-	deleted, err := s.pg.DeleteBanners(ctx, appID, ids)
-	if err != nil {
-		return 0, nil, err
-	}
-	s.invalidateBannerCache(ctx, appID)
-	return deleted, ids, nil
-}
-
-func (s *AppService) ListNoticesForAdmin(ctx context.Context, appID int64) ([]appdomain.Notice, error) {
-	if _, err := s.GetApp(ctx, appID); err != nil {
-		return nil, err
-	}
-	return s.pg.ListNotices(ctx, appID)
-}
-
-func (s *AppService) SaveNotice(ctx context.Context, appID int64, mutation appdomain.NoticeMutation) (*appdomain.Notice, error) {
-	if _, err := s.GetApp(ctx, appID); err != nil {
-		return nil, err
-	}
-	current, err := s.pg.GetNoticeByID(ctx, appID, mutation.ID)
-	if err != nil {
-		return nil, err
-	}
-	item := appdomain.Notice{ID: mutation.ID}
-	if current != nil {
-		item = *current
-	}
-
-	if mutation.Title != nil {
-		item.Title = strings.TrimSpace(*mutation.Title)
-	}
-	if mutation.Content != nil {
-		item.Content = strings.TrimSpace(*mutation.Content)
-	}
-	if strings.TrimSpace(item.Content) == "" {
-		return nil, apperrors.New(40023, http.StatusBadRequest, "公告内容不能为空")
-	}
-
-	saved, err := s.pg.UpsertNotice(ctx, appID, item)
-	if err != nil {
-		return nil, err
-	}
-	s.invalidateNoticeCache(ctx, appID)
-	return saved, nil
-}
-
-func (s *AppService) DeleteNotice(ctx context.Context, appID int64, noticeID int64) error {
-	deleted, err := s.pg.DeleteNotice(ctx, appID, noticeID)
-	if err != nil {
-		return err
-	}
-	if !deleted {
-		return apperrors.New(40412, http.StatusNotFound, "公告不存在")
-	}
-	s.invalidateNoticeCache(ctx, appID)
-	return nil
-}
-
-func (s *AppService) DeleteNotices(ctx context.Context, appID int64, noticeIDs []int64) (int64, []int64, error) {
-	if _, err := s.GetApp(ctx, appID); err != nil {
-		return 0, nil, err
-	}
-	ids := normalizeUniqueIDs(noticeIDs)
-	if len(ids) == 0 {
-		return 0, nil, apperrors.New(40026, http.StatusBadRequest, "公告标识不能为空")
-	}
-	deleted, err := s.pg.DeleteNotices(ctx, appID, ids)
-	if err != nil {
-		return 0, nil, err
-	}
-	s.invalidateNoticeCache(ctx, appID)
-	return deleted, ids, nil
-}
-
 func (s *AppService) invalidateAppCache(ctx context.Context, appID int64) {
 	if s.sessions == nil {
 		return
 	}
 	if err := s.sessions.DeleteAppByID(ctx, appID); err != nil {
 		s.log.Warn("delete app cache failed", zap.Int64("appid", appID), zap.Error(err))
-	}
-}
-
-func (s *AppService) invalidateBannerCache(ctx context.Context, appID int64) {
-	if s.sessions == nil {
-		return
-	}
-	if err := s.sessions.DeleteBanners(ctx, appID); err != nil {
-		s.log.Warn("delete banner cache failed", zap.Int64("appid", appID), zap.Error(err))
-	}
-}
-
-func (s *AppService) invalidateNoticeCache(ctx context.Context, appID int64) {
-	if s.sessions == nil {
-		return
-	}
-	if err := s.sessions.DeleteNotices(ctx, appID); err != nil {
-		s.log.Warn("delete notice cache failed", zap.Int64("appid", appID), zap.Error(err))
 	}
 }
 
@@ -1171,6 +968,23 @@ func normalizeUniqueIDs(ids []int64) []int64 {
 		result = append(result, id)
 	}
 	return result
+}
+
+// isCurrencyCode ISO 4217 的形状：恰好 3 个大写拉丁字母。
+//
+// 刻意只校验形状而不比对一张币种全表：ISO 4217 每年都在增删（新币启用、
+// 旧币退役），维护一张会过期的白名单只会让某天上线的合法币种被拒。
+// 形状校验已经挡住了「人民币」「￥」「CNY 元」这类真正会印坏凭证的输入。
+func isCurrencyCode(code string) bool {
+	if len(code) != 3 {
+		return false
+	}
+	for _, r := range code {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 // receiptLocaleSupported 凭证渲染器是否内置了该语言。

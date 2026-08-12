@@ -54,7 +54,7 @@ func (p *alipayNativeProvider) Describe() paymentdomain.ProviderMeta {
 			),
 			callbackFields(
 				"支付宝异步通知地址（notify_url）",
-				"用户支付完成后跳转的前端页面（return_url）",
+				"",
 			),
 			limitFields("0.01", "50000"),
 			advanced(inGroup(paymentdomain.GroupAdvanced,

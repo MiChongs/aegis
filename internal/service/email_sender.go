@@ -6,8 +6,6 @@ import (
 	"context"
 	"net/http"
 	"strings"
-
-	"golang.org/x/net/html"
 )
 
 // emailAttachment 一个邮件附件。
@@ -70,50 +68,4 @@ func normalizeEmailProvider(provider string) string {
 		return emaildomain.ProviderSMTP
 	}
 	return normalized
-}
-
-// htmlToPlainText 从 HTML 正文提取纯文本备份。
-//
-// Zeabur 要求 html / text 至少给一个，但两个都给才是正经做法：
-// 纯文本分片能改善反垃圾评分，也照顾纯文本客户端。
-func htmlToPlainText(source string) string {
-	node, err := html.Parse(strings.NewReader(source))
-	if err != nil {
-		return strings.TrimSpace(source)
-	}
-	var builder strings.Builder
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode {
-			switch n.Data {
-			case "script", "style", "head", "title":
-				return
-			}
-		}
-		if n.Type == html.TextNode {
-			text := strings.TrimSpace(n.Data)
-			if text != "" {
-				builder.WriteString(text)
-				builder.WriteString(" ")
-			}
-		}
-		for child := n.FirstChild; child != nil; child = child.NextSibling {
-			walk(child)
-		}
-		if n.Type == html.ElementNode {
-			switch n.Data {
-			case "p", "div", "br", "tr", "h1", "h2", "h3", "h4", "li":
-				builder.WriteString("\n")
-			}
-		}
-	}
-	walk(node)
-
-	lines := make([]string, 0, 16)
-	for _, line := range strings.Split(builder.String(), "\n") {
-		if trimmed := strings.Join(strings.Fields(line), " "); trimmed != "" {
-			lines = append(lines, trimmed)
-		}
-	}
-	return strings.Join(lines, "\n")
 }

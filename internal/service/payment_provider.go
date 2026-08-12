@@ -39,6 +39,17 @@ type callbackOrderExtractor interface {
 	ExtractOrderNo(callbackData map[string]string) string
 }
 
+// paymentReturnVerifier 可选能力：能从「同步跳转」（return_url）的查询参数里
+// 验出订单归属的渠道实现此接口，返回其中的本地订单号。
+//
+// 只有把回调参数原样带在 return_url 上、且带签名的渠道做得到 —— 易支付系是这样，
+// Stripe / PayPal 的跳转不带任何可验证凭据。**不实现比假装实现好**：
+// 结果页宁可说「这条路证实不了，请回到应用内查看」，也不能凭一串谁都能编的
+// query 就告诉用户「支付成功」。
+type paymentReturnVerifier interface {
+	VerifyReturn(configData map[string]any, params map[string]string) (orderNo string, err error)
+}
+
 // callbackHeader 读取传输层注入的请求头（大小写不敏感）
 func callbackHeader(callbackData map[string]string, name string) string {
 	return callbackData[CallbackHeaderPrefix+strings.ToLower(name)]

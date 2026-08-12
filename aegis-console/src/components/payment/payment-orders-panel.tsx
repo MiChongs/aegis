@@ -1,13 +1,22 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, RefreshCw, Search, Undo2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Mail, RefreshCw, Search, Undo2, X } from "lucide-react";
+import { toast } from "sonner";
+import { ApiError } from "@/lib/api-client";
 import {
   useAdminOrderRefundsQuery,
   useAdminPaymentMethodsQuery,
   useAdminPaymentOrderDetailQuery,
   useAdminPaymentOrdersQuery
 } from "@/lib/admin-hooks";
+import {
+  useDownloadOrderReceiptMutation,
+  useEmailOrderReceiptMutation,
+  useReceiptRecipients
+} from "@/lib/commerce-hooks";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
+import { ReceiptEmailDialog } from "@/components/commerce/receipt-email-dialog";
 import type { AdminPaymentOrder } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,14 +58,41 @@ function formatTime(value?: string | null) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("zh-CN", { hour12: false });
 }
 
-export function PaymentOrdersPanel({ appId }: { appId?: number | null }) {
+export function PaymentOrdersPanel({
+  appId,
+  appKey,
+  receiptLocale,
+  receiptLocaleLabel
+}: {
+  appId?: number | null;
+  appKey?: string | null;
+  receiptLocale?: string;
+  receiptLocaleLabel?: string;
+}) {
   const [status, setStatus] = useState(ALL);
   const [method, setMethod] = useState(ALL);
   const [keywordInput, setKeywordInput] = useState("");
-  const [keyword, setKeyword] = useState("");
+  // 搜索即时生效（300ms 防抖），不再要求先打字再点一次「查询」
+  const keyword = useDebouncedValue(keywordInput.trim(), 300);
   const [page, setPage] = useState(1);
   const [detailOrderNo, setDetailOrderNo] = useState<string | null>(null);
   const [refundOrderNo, setRefundOrderNo] = useState<string | null>(null);
+  const [emailTarget, setEmailTarget] = useState<{ orderNo: string; subject: string; userId?: number | null } | null>(
+    null
+  );
+
+  const downloadReceipt = useDownloadOrderReceiptMutation(appId);
+  const emailReceipt = useEmailOrderReceiptMutation(appId);
+  const recipients = useReceiptRecipients(appKey, emailTarget?.userId ?? null);
+
+  async function handleDownloadReceipt(orderNo: string) {
+    try {
+      await downloadReceipt.mutateAsync({ order_no: orderNo, locale: receiptLocale });
+      toast.success("凭证已生成");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "凭证生成失败");
+    }
+  }
 
   const filters = useMemo(
     () => ({
@@ -81,23 +117,27 @@ export function PaymentOrdersPanel({ appId }: { appId?: number | null }) {
   const items = data?.items || [];
   const totalPages = data?.totalPages || 1;
 
-  function applySearch() {
-    setPage(1);
-    setKeyword(keywordInput.trim());
-  }
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            className="h-8 w-56 pl-8 text-xs"
+            className="h-8 w-56 pl-8 pr-7 text-xs"
             placeholder="订单号 / 上游单号 / 商品名"
             value={keywordInput}
-            onChange={(e) => setKeywordInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && applySearch()}
+            onChange={(e) => { setKeywordInput(e.target.value); setPage(1); }}
           />
+          {keywordInput ? (
+            <button
+              type="button"
+              aria-label="清空关键词"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={() => { setKeywordInput(""); setPage(1); }}
+            >
+              <X className="size-3.5" />
+            </button>
+          ) : null}
         </div>
         <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
           <SelectTrigger className="h-8 w-28 text-xs"><SelectValue /></SelectTrigger>
@@ -113,7 +153,6 @@ export function PaymentOrdersPanel({ appId }: { appId?: number | null }) {
             {methods.map((m) => <SelectItem key={m.method} value={m.method}>{m.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={applySearch}>查询</Button>
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs tabular-nums text-muted-foreground">共 {data?.total ?? 0} 笔</span>
           <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => void ordersQuery.refetch()}>
@@ -138,6 +177,7 @@ export function PaymentOrdersPanel({ appId }: { appId?: number | null }) {
                 <TableHead>状态</TableHead>
                 <TableHead>用户</TableHead>
                 <TableHead>创建时间</TableHead>
+                <TableHead className="text-right">凭证</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -159,6 +199,28 @@ export function PaymentOrdersPanel({ appId }: { appId?: number | null }) {
                   <TableCell>{statusBadge(order.status)}</TableCell>
                   <TableCell className="text-xs tabular-nums text-muted-foreground">{order.user_id ?? "—"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{formatTime(order.createdAt)}</TableCell>
+                  {/* 凭证按钮吃掉行点击：点「下载」不该顺带把详情抽屉也拉开 */}
+                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 text-xs"
+                        disabled={downloadReceipt.isPending}
+                        onClick={() => void handleDownloadReceipt(order.order_no)}
+                      >
+                        <Download className="size-3" />下载
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 text-xs"
+                        onClick={() => setEmailTarget({ orderNo: order.order_no, subject: order.subject, userId: order.user_id })}
+                      >
+                        <Mail className="size-3" />寄送
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -263,6 +325,22 @@ export function PaymentOrdersPanel({ appId }: { appId?: number | null }) {
         onOpenChange={(open) => !open && setRefundOrderNo(null)}
         appId={appId}
         orderNo={refundOrderNo}
+      />
+
+      <ReceiptEmailDialog
+        open={Boolean(emailTarget)}
+        onOpenChange={(open) => !open && setEmailTarget(null)}
+        title="寄送订单凭证"
+        subject={emailTarget?.subject ?? ""}
+        reference={emailTarget?.orderNo ?? ""}
+        suggestions={recipients}
+        localeLabel={receiptLocaleLabel}
+        pending={emailReceipt.isPending}
+        onSubmit={async (to) => {
+          if (!emailTarget) return;
+          await emailReceipt.mutateAsync({ order_no: emailTarget.orderNo, email: to, locale: receiptLocale });
+          setEmailTarget(null);
+        }}
       />
     </div>
   );

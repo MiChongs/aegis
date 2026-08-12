@@ -1519,6 +1519,48 @@
           "response": []
         },
         {
+          "name": "提交v1应用横幅click",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/apps/{{appkey}}/banners/{{bannerId}}/click",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "apps",
+                "{{appkey}}",
+                "banners",
+                "{{bannerId}}",
+                "click"
+              ],
+              "variable": [
+                {
+                  "key": "appkey",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                },
+                {
+                  "key": "bannerId",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "轮播图点击上报。\n\n按应用的 `security.level` 包装：standard 直发 JSON；signed 追加 HMAC 签名头；sealed 在此之上把载荷整体加密。包装由 transport 适配器统一处理，请求体与响应体三档完全一致。"
+          },
+          "response": []
+        },
+        {
           "name": "提交v1应用签到",
           "request": {
             "method": "POST",
@@ -15427,7 +15469,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/users/export?appid={{appid}}\u0026keyword=test\u0026account=示例值\u0026nickname=示例值\u0026email=示例值\u0026phone=示例值\u0026inviteCode=示例值\u0026registerIp=示例值\u0026userId=0\u0026enabled=false\u0026createdFrom=示例值\u0026createdTo=示例值\u0026page=1\u0026limit=20",
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/users/export?appid={{appid}}\u0026keyword=test\u0026account=示例值\u0026nickname=示例值\u0026email=示例值\u0026phone=示例值\u0026inviteCode=示例值\u0026registerIp=示例值\u0026userId=0\u0026enabled=false\u0026createdFrom=示例值\u0026createdTo=示例值\u0026sort=示例值\u0026order=示例值\u0026page=1\u0026limit=20",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -15486,6 +15528,14 @@
                 },
                 {
                   "key": "createdTo",
+                  "value": "示例值"
+                },
+                {
+                  "key": "sort",
+                  "value": "示例值"
+                },
+                {
+                  "key": "order",
                   "value": "示例值"
                 },
                 {
@@ -18113,6 +18163,129 @@
           "response": []
         },
         {
+          "name": "提交管理端应用walletreceipt",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}",
+                "type": "text",
+                "disabled": true
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentType\": \"示例值\",\n  \"expireMinutes\": 0,\n  \"locale\": \"示例值\",\n  \"timezone\": \"示例值\",\n  \"transactionNo\": \"示例值\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/wallet/receipt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{appkey}}",
+                "wallet",
+                "receipt"
+              ],
+              "variable": [
+                {
+                  "key": "appkey",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`POST /api/admin/apps/{appkey}/wallet/receipt`。"
+          },
+          "response": []
+        },
+        {
+          "name": "提交管理端应用walletreceipt邮件",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}",
+                "type": "text",
+                "disabled": true
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentType\": \"示例值\",\n  \"expireMinutes\": 0,\n  \"locale\": \"示例值\",\n  \"timezone\": \"示例值\",\n  \"to\": \"示例值\",\n  \"transactionNo\": \"示例值\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/wallet/receipt/email",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{appkey}}",
+                "wallet",
+                "receipt",
+                "email"
+              ],
+              "variable": [
+                {
+                  "key": "appkey",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`POST /api/admin/apps/{appkey}/wallet/receipt/email`。"
+          },
+          "response": []
+        },
+        {
           "name": "提交管理端应用公告",
           "request": {
             "method": "POST",
@@ -18141,7 +18314,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"content\": \"示例值\",\n  \"title\": \"示例值\"\n}",
+              "raw": "{\n  \"content\": \"示例值\",\n  \"endTime\": \"2026-03-20T00:00:00Z\",\n  \"level\": \"示例值\",\n  \"pinned\": false,\n  \"startTime\": \"2026-03-20T00:00:00Z\",\n  \"status\": \"示例值\",\n  \"title\": \"示例值\",\n  \"type\": \"示例值\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -18847,6 +19020,53 @@
               ]
             },
             "description": "接口说明：`POST /api/admin/apps/{appkey}/banners`。"
+          },
+          "response": []
+        },
+        {
+          "name": "提交管理端应用横幅image",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/banners/image",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{appkey}}",
+                "banners",
+                "image"
+              ],
+              "variable": [
+                {
+                  "key": "appkey",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`POST /api/admin/apps/{appkey}/banners/image`。"
           },
           "response": []
         },
@@ -22168,7 +22388,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"content\": \"示例值\",\n  \"title\": \"示例值\"\n}",
+              "raw": "{\n  \"content\": \"示例值\",\n  \"endTime\": \"2026-03-20T00:00:00Z\",\n  \"level\": \"示例值\",\n  \"pinned\": false,\n  \"startTime\": \"2026-03-20T00:00:00Z\",\n  \"status\": \"示例值\",\n  \"title\": \"示例值\",\n  \"type\": \"示例值\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -22434,6 +22654,67 @@
               ]
             },
             "description": "接口说明：`PUT /api/admin/apps/{appkey}/banners/{bannerId}`。"
+          },
+          "response": []
+        },
+        {
+          "name": "更新管理端应用横幅order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}",
+                "type": "text",
+                "disabled": true
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ids\": [\n    0\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/banners/order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{appkey}}",
+                "banners",
+                "order"
+              ],
+              "variable": [
+                {
+                  "key": "appkey",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`PUT /api/admin/apps/{appkey}/banners/order`。"
           },
           "response": []
         },
@@ -24914,6 +25195,100 @@
           "response": []
         },
         {
+          "name": "获取管理端应用commerce概览",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/commerce/overview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{appkey}}",
+                "commerce",
+                "overview"
+              ],
+              "variable": [
+                {
+                  "key": "appkey",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`GET /api/admin/apps/{appkey}/commerce/overview`。"
+          },
+          "response": []
+        },
+        {
+          "name": "获取管理端应用content概览",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/content/overview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{appkey}}",
+                "content",
+                "overview"
+              ],
+              "variable": [
+                {
+                  "key": "appkey",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`GET /api/admin/apps/{appkey}/content/overview`。"
+          },
+          "response": []
+        },
+        {
           "name": "获取管理端应用encryption",
           "request": {
             "method": "GET",
@@ -26577,6 +26952,100 @@
           "response": []
         },
         {
+          "name": "获取管理端应用wallettransactions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/wallet/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{appkey}}",
+                "wallet",
+                "transactions"
+              ],
+              "variable": [
+                {
+                  "key": "appkey",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`GET /api/admin/apps/{appkey}/wallet/transactions`。"
+          },
+          "response": []
+        },
+        {
+          "name": "获取管理端应用wallet统计",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/wallet/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "apps",
+                "{{appkey}}",
+                "wallet",
+                "stats"
+              ],
+              "variable": [
+                {
+                  "key": "appkey",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`GET /api/admin/apps/{appkey}/wallet/stats`。"
+          },
+          "response": []
+        },
+        {
           "name": "获取管理端应用公告",
           "request": {
             "method": "GET",
@@ -26599,7 +27068,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/notices",
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/notices?status=active\u0026type=示例值\u0026level=示例值\u0026keyword=test\u0026page=1\u0026limit=20",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -26609,6 +27078,32 @@
                 "apps",
                 "{{appkey}}",
                 "notices"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "active"
+                },
+                {
+                  "key": "type",
+                  "value": "示例值"
+                },
+                {
+                  "key": "level",
+                  "value": "示例值"
+                },
+                {
+                  "key": "keyword",
+                  "value": "test"
+                },
+                {
+                  "key": "page",
+                  "value": 1
+                },
+                {
+                  "key": "limit",
+                  "value": 20
+                }
               ],
               "variable": [
                 {
@@ -27020,7 +27515,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/banners",
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/banners?status=active\u0026type=示例值\u0026keyword=test",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -27030,6 +27525,20 @@
                 "apps",
                 "{{appkey}}",
                 "banners"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "active"
+                },
+                {
+                  "key": "type",
+                  "value": "示例值"
+                },
+                {
+                  "key": "keyword",
+                  "value": "test"
+                }
               ],
               "variable": [
                 {
@@ -27522,7 +28031,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/users?appid={{appid}}\u0026keyword=test\u0026account=示例值\u0026nickname=示例值\u0026email=示例值\u0026phone=示例值\u0026inviteCode=示例值\u0026registerIp=示例值\u0026userId=0\u0026enabled=false\u0026createdFrom=示例值\u0026createdTo=示例值\u0026page=1\u0026limit=20",
+              "raw": "{{baseUrl}}/api/admin/apps/{{appkey}}/users?appid={{appid}}\u0026keyword=test\u0026account=示例值\u0026nickname=示例值\u0026email=示例值\u0026phone=示例值\u0026inviteCode=示例值\u0026registerIp=示例值\u0026userId=0\u0026enabled=false\u0026createdFrom=示例值\u0026createdTo=示例值\u0026sort=示例值\u0026order=示例值\u0026page=1\u0026limit=20",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -27580,6 +28089,14 @@
                 },
                 {
                   "key": "createdTo",
+                  "value": "示例值"
+                },
+                {
+                  "key": "sort",
+                  "value": "示例值"
+                },
+                {
+                  "key": "order",
                   "value": "示例值"
                 },
                 {
@@ -34617,6 +35134,68 @@
           "response": []
         },
         {
+          "name": "提交管理端系统存储objectslink",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}",
+                "type": "text",
+                "disabled": true
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"download\": false,\n  \"expiresIn\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/system/storage/objects/{{objectId}}/link",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "system",
+                "storage",
+                "objects",
+                "{{objectId}}",
+                "link"
+              ],
+              "variable": [
+                {
+                  "key": "objectId",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`POST /api/admin/system/storage/objects/{objectId}/link`。"
+          },
+          "response": []
+        },
+        {
           "name": "提交管理端系统存储objectsrestore",
           "request": {
             "method": "POST",
@@ -34661,6 +35240,60 @@
               ]
             },
             "description": "接口说明：`POST /api/admin/system/storage/objects/{objectId}/restore`。"
+          },
+          "response": []
+        },
+        {
+          "name": "提交管理端系统存储objects批量",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}",
+                "type": "text",
+                "disabled": true
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"示例值\",\n  \"ids\": [\n    0\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/system/storage/objects/batch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "system",
+                "storage",
+                "objects",
+                "batch"
+              ]
+            },
+            "description": "接口说明：`POST /api/admin/system/storage/objects/batch`。"
           },
           "response": []
         },
@@ -42203,7 +42836,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/admin/system/storage/objects?configId=0\u0026appId=0\u0026prefix=示例值\u0026contentType=示例值\u0026status=active\u0026page=1\u0026limit=20",
+              "raw": "{{baseUrl}}/api/admin/system/storage/objects?configId=0\u0026appId=0\u0026prefix=示例值\u0026folder=示例值\u0026folderView=false\u0026keyword=test\u0026contentType=示例值\u0026status=active\u0026statuses=示例值\u0026uploaderType=示例值\u0026uploadedBy=0\u0026minSize=0\u0026maxSize=0\u0026createdFrom=示例值\u0026createdTo=示例值\u0026sort=示例值\u0026order=示例值\u0026page=1\u0026limit=20",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -42228,12 +42861,60 @@
                   "value": "示例值"
                 },
                 {
+                  "key": "folder",
+                  "value": "示例值"
+                },
+                {
+                  "key": "folderView",
+                  "value": false
+                },
+                {
+                  "key": "keyword",
+                  "value": "test"
+                },
+                {
                   "key": "contentType",
                   "value": "示例值"
                 },
                 {
                   "key": "status",
                   "value": "active"
+                },
+                {
+                  "key": "statuses",
+                  "value": "示例值"
+                },
+                {
+                  "key": "uploaderType",
+                  "value": "示例值"
+                },
+                {
+                  "key": "uploadedBy",
+                  "value": 0
+                },
+                {
+                  "key": "minSize",
+                  "value": 0
+                },
+                {
+                  "key": "maxSize",
+                  "value": 0
+                },
+                {
+                  "key": "createdFrom",
+                  "value": "示例值"
+                },
+                {
+                  "key": "createdTo",
+                  "value": "示例值"
+                },
+                {
+                  "key": "sort",
+                  "value": "示例值"
+                },
+                {
+                  "key": "order",
+                  "value": "示例值"
                 },
                 {
                   "key": "page",
@@ -42293,6 +42974,54 @@
               ]
             },
             "description": "接口说明：`GET /api/admin/system/storage/objects/{objectId}`。"
+          },
+          "response": []
+        },
+        {
+          "name": "获取管理端系统存储objectsthumbnail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/system/storage/objects/{{objectId}}/thumbnail",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "system",
+                "storage",
+                "objects",
+                "{{objectId}}",
+                "thumbnail"
+              ],
+              "variable": [
+                {
+                  "key": "objectId",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`GET /api/admin/system/storage/objects/{objectId}/thumbnail`。"
           },
           "response": []
         },
@@ -43836,6 +44565,115 @@
           "response": []
         },
         {
+          "name": "提交wallettransactionsbill",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentType\": \"示例值\",\n  \"expireMinutes\": 0,\n  \"locale\": \"示例值\",\n  \"timezone\": \"示例值\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/wallet/transactions/{{transactionNo}}/bill",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "wallet",
+                "transactions",
+                "{{transactionNo}}",
+                "bill"
+              ],
+              "variable": [
+                {
+                  "key": "transactionNo",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`POST /api/wallet/transactions/{transactionNo}/bill`。"
+          },
+          "response": []
+        },
+        {
+          "name": "提交wallettransactionsreceipt邮件",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentType\": \"示例值\",\n  \"expireMinutes\": 0,\n  \"locale\": \"示例值\",\n  \"timezone\": \"示例值\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/wallet/transactions/{{transactionNo}}/receipt/email",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "wallet",
+                "transactions",
+                "{{transactionNo}}",
+                "receipt",
+                "email"
+              ],
+              "variable": [
+                {
+                  "key": "transactionNo",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`POST /api/wallet/transactions/{transactionNo}/receipt/email`。"
+          },
+          "response": []
+        },
+        {
           "name": "提交应用functionsinvoke",
           "request": {
             "method": "POST",
@@ -44575,6 +45413,125 @@
               ]
             },
             "description": "接口说明：`GET /api/wallet/transactions`。"
+          },
+          "response": []
+        },
+        {
+          "name": "获取wallettransactions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/wallet/transactions/{{transactionNo}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "wallet",
+                "transactions",
+                "{{transactionNo}}"
+              ],
+              "variable": [
+                {
+                  "key": "transactionNo",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`GET /api/wallet/transactions/{transactionNo}`。"
+          },
+          "response": []
+        },
+        {
+          "name": "获取wallettransactionsbill",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/wallet/transactions/{{transactionNo}}/bill",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "wallet",
+                "transactions",
+                "{{transactionNo}}",
+                "bill"
+              ],
+              "variable": [
+                {
+                  "key": "transactionNo",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`GET /api/wallet/transactions/{transactionNo}/bill`。"
+          },
+          "response": []
+        },
+        {
+          "name": "获取wallettransactionsreceipt",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/wallet/transactions/{{transactionNo}}/receipt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "wallet",
+                "transactions",
+                "{{transactionNo}}",
+                "receipt"
+              ],
+              "variable": [
+                {
+                  "key": "transactionNo",
+                  "value": "1",
+                  "description": "Path parameter extracted from the route."
+                }
+              ]
+            },
+            "description": "接口说明：`GET /api/wallet/transactions/{transactionNo}/receipt`。"
           },
           "response": []
         },
@@ -45734,6 +46691,10 @@
     {
       "key": "tokenHash",
       "value": "示例会话哈希"
+    },
+    {
+      "key": "transactionNo",
+      "value": "1"
     },
     {
       "key": "type",

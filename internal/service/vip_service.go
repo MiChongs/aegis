@@ -19,11 +19,16 @@ import (
 type VipService struct {
 	log *zap.Logger
 	pg  *pgrepo.Repository
+	// payments 凭证引擎的持有者；余额直购成功后由它按应用设置自动寄送凭证
+	payments *PaymentService
 }
 
 func NewVipService(log *zap.Logger, pg *pgrepo.Repository) *VipService {
 	return &VipService{log: log, pg: pg}
 }
+
+// SetPaymentService 注入凭证引擎（bootstrap 中调用）。
+func (s *VipService) SetPaymentService(p *PaymentService) { s.payments = p }
 
 // ── 用户侧 ──
 
@@ -84,6 +89,14 @@ func (s *VipService) PurchaseWithWallet(ctx context.Context, session *authdomain
 			return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
 		default:
 			return nil, err
+		}
+	}
+	// 余额直购是一笔实打实的购买，凭证待遇必须与「用支付宝买同一个套餐」一致。
+	if s.payments != nil {
+		result.Receipt = s.payments.BuildVipPurchaseReceipt(ctx, session, result.WalletTransactionNo)
+		// 幂等重放不再寄一次：用户重试一下网络请求不该多收到一封收据
+		if !result.Replayed && strings.TrimSpace(result.WalletTransactionNo) != "" {
+			go s.payments.autoEmailWalletReceipt(session.AppID, result.WalletTransactionNo)
 		}
 	}
 	return result, nil

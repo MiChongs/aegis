@@ -188,28 +188,30 @@ func (p *emailNotifyProvider) Send(ctx context.Context, hub *NotifyHub, channel 
 }
 
 // notifyEmailHTML 通知邮件正文（复用邮件模板的排版骨架）。
+//
+// 正文只出现一次：`msg.Body` 作为标题下的引导句，不再同时塞进正文区 ——
+// 旧实现两处都写，收到的人会看到同一段话连着重复两遍。
+// 字段表与按钮直接用模板积木，与验证码 / 凭证邮件同一套排版（含 Outlook 兼容）。
 func notifyEmailHTML(msg *notifydomain.Message) string {
-	var body strings.Builder
-	if strings.TrimSpace(msg.Body) != "" {
-		body.WriteString("<p>")
-		body.WriteString(htmlEscapeText(msg.Body))
-		body.WriteString("</p>")
-	}
+	blocks := make([]mailBlock, 0, 2)
 	if len(msg.Event.Fields) > 0 {
-		body.WriteString(`<table style="width:100%;border-collapse:collapse;margin:16px 0">`)
+		details := make([]emailDetail, 0, len(msg.Event.Fields))
 		for _, field := range msg.Event.Fields {
-			body.WriteString(`<tr><td style="padding:6px 12px;color:#71717a;white-space:nowrap">`)
-			body.WriteString(htmlEscapeText(field.Label))
-			body.WriteString(`</td><td style="padding:6px 12px;color:#18181b">`)
-			body.WriteString(htmlEscapeText(field.Value))
-			body.WriteString(`</td></tr>`)
+			details = append(details, emailDetail{Label: field.Label, Value: field.Value})
 		}
-		body.WriteString(`</table>`)
+		blocks = append(blocks, mailDetails(details...))
 	}
 	if link := strings.TrimSpace(msg.Event.Link); link != "" {
-		body.WriteString(`<p><a href="` + htmlEscapeText(link) + `" style="color:#2563eb">查看详情</a></p>`)
+		blocks = append(blocks, mailButton("查看详情", link))
 	}
-	return renderEmailLayout("Aegis", "通知", msg.Title, msg.Body, body.String(), "本邮件由 Aegis 统一通知出口自动发送。")
+	return renderEmailLayoutWith(emailLayout{
+		AppName:    "Aegis",
+		Eyebrow:    "通知",
+		Title:      msg.Title,
+		Lead:       msg.Body,
+		Blocks:     blocks,
+		FooterNote: "这条通知按您在控制台配置的订阅规则发出。",
+	})
 }
 
 func htmlEscapeText(value string) string {

@@ -107,6 +107,26 @@
   "purpose.vip_purchase": "Mitgliedschaft",
   "purpose.integral_purchase": "Punktekauf",
 
+  "wallet.type.recharge": "Guthabenaufladung",
+  "wallet.type.consume": "Zahlung per Guthaben",
+  "wallet.type.refund": "Rückerstattung auf Guthaben",
+  "wallet.type.admin_adjust": "Manuelle Guthabenanpassung",
+  "wallet.type.vip_purchase": "Mitgliedschaft",
+  "wallet.type.order_pay": "Bestellung per Guthaben bezahlt",
+  "wallet.direction.in": "Gutschrift",
+  "wallet.direction.out": "Belastung",
+
+  "meta.walletTxnNo": "Guthabenbuchung",
+  "meta.walletType": "Buchungsart",
+  "meta.direction": "Richtung",
+  "meta.balanceBefore": "Guthaben vorher",
+  "meta.balanceAfter": "Guthaben nachher",
+  "meta.relatedOrder": "Zugehörige Bestellung",
+  "meta.operator": "Bearbeitet von",
+
+  "notes.walletDebit": "Dieser Betrag wurde vom Guthaben dieses Kontos abgebucht. Es war kein externer Zahlungsdienstleister beteiligt.",
+  "notes.walletCredit": "Dieser Betrag wurde dem Guthaben dieses Kontos gutgeschrieben.",
+
   "notes.unpaid": "Dieses Dokument ist kein Zahlungsnachweis: Die Bestellung wurde noch nicht bezahlt.",
   "notes.refunded": "Diese Bestellung wurde vollständig erstattet. Der Nettobetrag beträgt null.",
   "notes.partiallyRefunded": "Diese Bestellung wurde teilweise erstattet. Einzelheiten siehe Erstattungen.",

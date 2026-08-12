@@ -25,11 +25,9 @@ import {
   batchReviewAdminRoleApplications,
   checkUserSettingsIntegrity,
   cleanupUserSettings,
-  createAdminBanner,
   createAdminAccount,
   createAdminApp,
   createAdminEmailConfig,
-  createAdminNotice,
   createAdminPaymentConfig,
   deleteAdminVipPlan,
   getAdminPaymentOrderDetail,
@@ -44,11 +42,7 @@ import {
   createGlobalStorageConfig,
   createWorkflow,
   createWorkflowFromTemplate,
-  deleteAdminBanner,
-  deleteAdminBanners,
   deleteAdminEmailConfig,
-  deleteAdminNotice,
-  deleteAdminNotices,
   deleteAdminPaymentConfig,
   deleteAdminSite,
   deleteAdminVersion,
@@ -63,10 +57,8 @@ import {
   getAdminAppCommerceSettings,
   getAdminAppLoginBaseline,
   getAdminAppPolicy,
-  getAdminBanners,
   getAdminEmailConfigs,
   getAdminEmailDeliveries,
-  getAdminNotices,
   getAdminPaymentConfigs,
   getAdminPaymentMethods,
   getAdminPaymentRefundable,
@@ -172,7 +164,6 @@ import {
   updateAdminAppSignInReward,
   updateAdminAppPolicy,
   updateAdminProfile,
-  updateAdminBanner,
   updateAdminAppUserStatus,
   updateAdminAppUserProfile,
   resetAdminAppUserPassword,
@@ -189,7 +180,6 @@ import {
   adjustUserIntegral,
   adjustUserExperience,
   updateAdminEmailConfig,
-  updateAdminNotice,
   updateAdminPaymentConfig,
   updateAdminSite,
   updateAdminVersion,
@@ -839,7 +829,7 @@ export function useStorageObjectLinkMutation() {
 }
 export function useCleanupTrashMutation() {
   const token = useAdminToken(); const qc = useQueryClient();
-  return useMutation({ mutationFn: (days?: number) => storageRes.cleanupTrash(token as string, days), onSuccess: () => { qc.invalidateQueries({ queryKey: ["storage-trash"] }); } });
+  return useMutation({ mutationFn: (days?: number) => storageRes.cleanupTrash(token as string, days), onSuccess: () => invalidateStorageObjectScope(qc) });
 }
 export function useStorageRulesQuery(configId?: number, appId?: number) {
   const token = useAdminToken();
@@ -1477,61 +1467,6 @@ export function useResetAdminAppSignInRewardMutation(appKey?: string | null) {
   });
 }
 
-export function useAdminBannersQuery(appId?: number | string | null) {
-  const token = useAdminToken();
-  return useQuery({
-    queryKey: ["admin-banners", token, appId],
-    queryFn: () => getAdminBanners(token as string, appId as string | number),
-    enabled: Boolean(token && appId)
-  });
-}
-
-export function useCreateAdminBannerMutation(appId?: number | string | null) {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: Parameters<typeof createAdminBanner>[2]) =>
-      createAdminBanner(token as string, appId as string | number, payload),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["admin-banners"] });
-    }
-  });
-}
-
-export function useUpdateAdminBannerMutation(appId?: number | string | null) {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: { bannerId: number | string; data: Parameters<typeof updateAdminBanner>[3] }) =>
-      updateAdminBanner(token as string, appId as string | number, payload.bannerId, payload.data),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["admin-banners"] });
-    }
-  });
-}
-
-export function useDeleteAdminBannerMutation(appId?: number | string | null) {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (bannerId: number | string) => deleteAdminBanner(token as string, appId as string | number, bannerId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["admin-banners"] });
-    }
-  });
-}
-
-export function useDeleteAdminBannersMutation(appId?: number | string | null) {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (ids: number[]) => deleteAdminBanners(token as string, appId as string | number, ids),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["admin-banners"] });
-    }
-  });
-}
-
 // ──────────────── 平台级 Banner（超级管理员专属） ────────────────
 
 export function usePlatformBannersQuery(params: PlatformBannerListParams = {}) {
@@ -1609,61 +1544,6 @@ export function useUploadPlatformBannerImageMutation() {
   return useMutation({
     mutationFn: (args: { file: File; configName?: string }) =>
       uploadPlatformBannerImage(token as string, args.file, args.configName)
-  });
-}
-
-export function useAdminNoticesQuery(appId?: number | string | null) {
-  const token = useAdminToken();
-  return useQuery({
-    queryKey: ["admin-notices", token, appId],
-    queryFn: () => getAdminNotices(token as string, appId as string | number),
-    enabled: Boolean(token && appId)
-  });
-}
-
-export function useCreateAdminNoticeMutation(appId?: number | string | null) {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: Parameters<typeof createAdminNotice>[2]) =>
-      createAdminNotice(token as string, appId as string | number, payload),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["admin-notices"] });
-    }
-  });
-}
-
-export function useUpdateAdminNoticeMutation(appId?: number | string | null) {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: { noticeId: number | string; data: Parameters<typeof updateAdminNotice>[3] }) =>
-      updateAdminNotice(token as string, appId as string | number, payload.noticeId, payload.data),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["admin-notices"] });
-    }
-  });
-}
-
-export function useDeleteAdminNoticeMutation(appId?: number | string | null) {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (noticeId: number | string) => deleteAdminNotice(token as string, appId as string | number, noticeId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["admin-notices"] });
-    }
-  });
-}
-
-export function useDeleteAdminNoticesMutation(appId?: number | string | null) {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (ids: number[]) => deleteAdminNotices(token as string, appId as string | number, ids),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["admin-notices"] });
-    }
   });
 }
 

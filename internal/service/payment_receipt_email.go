@@ -99,7 +99,7 @@ func (s *PaymentService) EmailUserOrderReceipt(ctx context.Context, session *aut
 // 收件地址由操作者指定，因此这条路径**必须走管理端鉴权与审计中间件**。
 func (s *PaymentService) EmailAppOrderReceipt(ctx context.Context, appID int64, orderNo string, to string, opts paymentdomain.ReceiptOptions) (*ReceiptEmailResult, error) {
 	to = strings.TrimSpace(to)
-	if _, err := mail.ParseAddress(to); err != nil {
+	if !isEmailAddress(to) {
 		return nil, apperrors.New(40098, http.StatusBadRequest, "收件邮箱格式错误")
 	}
 	order, err := s.pg.GetPaymentOrderByOrderNo(ctx, strings.TrimSpace(orderNo))
@@ -191,21 +191,62 @@ func (s *PaymentService) deliverReceiptEmail(
 	if err != nil {
 		return nil, err
 	}
+	return s.sendReceiptDocumentEmail(ctx, newOrderEmailSubject(order), doc, rendered, profile, to, opts, uiSettings)
+}
 
+// newOrderEmailSubject 订单 → 邮件主体事实。
+func newOrderEmailSubject(order *paymentdomain.Order) receiptEmailSubject {
+	subject := receiptEmailSubject{
+		AppID:         order.AppID,
+		OrderNo:       order.OrderNo,
+		PaidAt:        order.PaidAt,
+		PaymentMethod: order.PaymentMethod,
+	}
+	if order.UserID != nil {
+		subject.UserID = *order.UserID
+	}
+	return subject
+}
+
+// receiptEmailSubject 一封凭证邮件里与**凭证主体**有关的最小事实。
+//
+// 抽出来是因为投递链路（能力探测 → 落盘 → 签名链接 → 同语言正文 → 附件）
+// 与主体是订单还是钱包流水完全无关。不抽的话，钱包凭证要么复制一整条
+// 六十行的链路，要么被迫伪造一个 Order —— 两条路都会在下一次改动时分叉。
+type receiptEmailSubject struct {
+	AppID         int64
+	UserID        int64
+	OrderNo       string
+	TransactionNo string
+	PaidAt        *time.Time
+	PaymentMethod string
+}
+
+// sendReceiptDocumentEmail 投递一份已经渲染好的凭证。订单与钱包流水共用。
+func (s *PaymentService) sendReceiptDocumentEmail(
+	ctx context.Context,
+	subject receiptEmailSubject,
+	doc receipt.Document,
+	rendered *receipt.Result,
+	profile *userdomain.Profile,
+	to string,
+	opts paymentdomain.ReceiptOptions,
+	uiSettings map[string]any,
+) (*ReceiptEmailResult, error) {
 	// 先问渠道能不能带附件，再决定正文怎么写。
 	// 顺序反过来的话，正文已经写着「收据见附件」了才发现带不了。
-	capability, err := s.email.ResolveChannelCapability(ctx, order.AppID, "")
+	capability, err := s.email.ResolveChannelCapability(ctx, subject.AppID, "")
 	if err != nil {
 		return nil, err
 	}
 
 	// 无论能否附件都落一份带签名链接的导出：附件会被邮件网关剥离，
 	// 邮件也会被转发到打不开附件的客户端上。
-	export, err := s.persistEmailReceipt(order, doc, rendered)
+	export, err := s.persistEmailReceipt(subject, doc, rendered)
 	if err != nil {
 		return nil, err
 	}
-	downloadURL := s.signedReceiptURL(order.AppID, export.BillID, export.ExpiresAt)
+	downloadURL := s.signedReceiptURL(subject.AppID, export.BillID, export.ExpiresAt)
 
 	if !capability.Attachments && downloadURL == "" {
 		// 既带不了附件又拼不出链接（未配置 API_BASE_URL），这封信发出去也是空的
@@ -214,11 +255,10 @@ func (s *PaymentService) deliverReceiptEmail(
 	}
 
 	loc := s.receipts.Localizer(rendered.Locale)
-	brand := s.platformBrand(ctx)
-	subject, body := s.buildReceiptEmail(loc, receiptEmailView{
-		Brand:       brand,
+	mailSubject, body := s.buildReceiptEmail(loc, receiptEmailView{
+		Brand:       s.platformBrand(ctx),
 		Doc:         doc,
-		Order:       order,
+		Subject:     subject,
 		Customer:    profile,
 		Attached:    capability.Attachments,
 		DownloadURL: downloadURL,
@@ -226,7 +266,7 @@ func (s *PaymentService) deliverReceiptEmail(
 		Timezone:    resolveReceiptTimezone(opts.Timezone, uiSettings),
 	})
 
-	message := newReceiptEmailMessage(to, subject, body)
+	message := newReceiptEmailMessage(to, mailSubject, body)
 	if capability.Attachments {
 		message.Files = []DocumentAttachment{{
 			Filename:    export.FileName,
@@ -234,7 +274,7 @@ func (s *PaymentService) deliverReceiptEmail(
 			Content:     rendered.PDF,
 		}}
 	}
-	messageID, err := s.email.SendDocumentEmail(ctx, order.AppID, message)
+	messageID, err := s.email.SendDocumentEmail(ctx, subject.AppID, message)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +290,13 @@ func (s *PaymentService) deliverReceiptEmail(
 	}, nil
 }
 
+// isEmailAddress 收件地址是否可解析。管理端代发的两条路径共用同一判定 ——
+// 两处各写一遍，迟早出现「订单凭证能寄、钱包凭证说格式错」这种解释不清的差异。
+func isEmailAddress(value string) bool {
+	_, err := mail.ParseAddress(strings.TrimSpace(value))
+	return err == nil
+}
+
 // newReceiptEmailMessage 构造一封凭证邮件的骨架。
 func newReceiptEmailMessage(to, subject, body string) DocumentEmail {
 	return DocumentEmail{To: to, Subject: subject, HTML: body, Purpose: receiptEmailPurpose}
@@ -259,7 +306,7 @@ func newReceiptEmailMessage(to, subject, body string) DocumentEmail {
 //
 // 单独一条路径而不是复用 CreateUserOrderReceipt：那条是「用户刚点了下载」，
 // 半小时有效期足够；邮件里的链接可能几天后才被点开，用同一个 TTL 等于没发。
-func (s *PaymentService) persistEmailReceipt(order *paymentdomain.Order, doc receipt.Document, rendered *receipt.Result) (paymentdomain.ReceiptExport, error) {
+func (s *PaymentService) persistEmailReceipt(subject receiptEmailSubject, doc receipt.Document, rendered *receipt.Result) (paymentdomain.ReceiptExport, error) {
 	ttl := s.receiptCfg.EmailLinkTTL
 	if ttl <= 0 {
 		ttl = 7 * 24 * time.Hour
@@ -268,7 +315,8 @@ func (s *PaymentService) persistEmailReceipt(order *paymentdomain.Order, doc rec
 	export := paymentdomain.ReceiptExport{
 		BillID:          randomReceiptID(16),
 		OrderNo:         doc.OrderNo,
-		FileName:        receiptFileName(doc.Type, doc.OrderNo, rendered.Locale),
+		TransactionNo:   subject.TransactionNo,
+		FileName:        receiptFileName(doc.Type, receiptSubjectNo(doc), rendered.Locale),
 		DocumentType:    string(doc.Type),
 		Locale:          rendered.Locale,
 		RequestedLocale: rendered.RequestedLocale,
@@ -280,11 +328,7 @@ func (s *PaymentService) persistEmailReceipt(order *paymentdomain.Order, doc rec
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(ttl),
 	}
-	userID := int64(0)
-	if order.UserID != nil {
-		userID = *order.UserID
-	}
-	if err := s.persistReceipt(order.AppID, userID, export, rendered.PDF); err != nil {
+	if err := s.persistReceipt(subject.AppID, subject.UserID, export, rendered.PDF); err != nil {
 		return paymentdomain.ReceiptExport{}, err
 	}
 	return export, nil
@@ -396,7 +440,7 @@ func (s *PaymentService) DownloadSignedReceipt(ctx context.Context, appID int64,
 type receiptEmailView struct {
 	Brand       string
 	Doc         receipt.Document
-	Order       *paymentdomain.Order
+	Subject     receiptEmailSubject
 	Customer    *userdomain.Profile
 	Attached    bool
 	DownloadURL string
@@ -423,23 +467,28 @@ func (s *PaymentService) buildReceiptEmail(loc *i18n.Localizer, view receiptEmai
 		name = loc.T("party.guest")
 	}
 
-	body := renderEmailParagraph(loc.T("email.greeting", i18n.Args{"name": name}))
+	blocks := []mailBlock{mailParagraph(loc.T("email.greeting", i18n.Args{"name": name}))}
 	if view.Attached {
-		body += renderEmailParagraph(loc.T("email.attached"))
+		blocks = append(blocks, mailParagraph(loc.T("email.attached")))
 	}
-	body += renderEmailDetails([]emailDetail{
-		{Label: loc.T("payment.orderNo"), Value: view.Doc.OrderNo},
-		{Label: loc.T("totals.total"), Value: loc.MoneyWithCode(view.Doc.Total, view.Doc.Currency)},
-		{Label: loc.T("payment.method"), Value: s.receiptMethodLabel(loc, view.Order.PaymentMethod)},
-		{Label: loc.T("payment.paidAt"), Value: formatReceiptTime(loc, view.Order.PaidAt, view.Timezone)},
-		{Label: loc.T("refunds.status"), Value: loc.T(receipt.StatusKey(view.Doc.Status))},
-	})
+	// 单号行按主体取：订单凭证给订单号，钱包凭证给流水号。
+	// 空值的明细行由 mailDetails 自行略过，因此两者各填各的即可。
+	blocks = append(blocks, mailDetails(
+		emailDetail{Label: loc.T("payment.orderNo"), Value: view.Doc.OrderNo},
+		emailDetail{Label: loc.T("meta.walletTxnNo"), Value: view.Subject.TransactionNo},
+		emailDetail{Label: loc.T("totals.total"), Value: loc.MoneyWithCode(view.Doc.Total, view.Doc.Currency)},
+		emailDetail{Label: loc.T("payment.method"), Value: s.receiptMethodLabel(loc, view.Subject.PaymentMethod)},
+		emailDetail{Label: loc.T("payment.paidAt"), Value: formatReceiptTime(loc, view.Subject.PaidAt, view.Timezone)},
+		emailDetail{Label: loc.T("refunds.status"), Value: loc.T(receipt.StatusKey(view.Doc.Status))},
+	))
 	if view.DownloadURL != "" {
-		body += renderEmailParagraph(loc.T("email.linkLead", i18n.Args{
-			"expiry": loc.DateTime(view.LinkExpiry, view.Timezone),
-		}))
-		body += renderEmailButton(loc.T("email.button", args), view.DownloadURL)
-		body += renderEmailLinkBlock(title, view.DownloadURL)
+		blocks = append(blocks,
+			mailParagraph(loc.T("email.linkLead", i18n.Args{
+				"expiry": loc.DateTime(view.LinkExpiry, view.Timezone),
+			})),
+			mailButton(loc.T("email.button", args), view.DownloadURL),
+			mailLink(title, view.DownloadURL),
+		)
 	}
 
 	html := renderEmailLayoutWith(emailLayout{
@@ -448,7 +497,7 @@ func (s *PaymentService) buildReceiptEmail(loc *i18n.Localizer, view receiptEmai
 		Eyebrow:     title,
 		Title:       loc.T("email.title", args),
 		Lead:        loc.T("email.lead", args),
-		Body:        body,
+		Blocks:      blocks,
 		FooterNote:  loc.T("footer.disclaimer"),
 		NoReplyNote: loc.T("email.footer"),
 	})

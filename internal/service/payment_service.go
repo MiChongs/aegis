@@ -49,6 +49,15 @@ type PaymentService struct {
 	email *EmailService
 	// apps 应用级交易设置（是否支付成功自动寄送凭证）
 	apps *AppService
+	// consoleBaseURL 控制台对外地址（CONSOLE_BASE_URL），用于拼支付结果页地址。
+	// 留空时同步跳转不下发，渠道展示它自己的结果页 —— 与其把用户送到一个
+	// 猜出来的域名，不如让渠道兜底。
+	consoleBaseURL string
+}
+
+// SetConsoleBaseURL 注入控制台对外地址（bootstrap 中调用）。
+func (s *PaymentService) SetConsoleBaseURL(baseURL string) {
+	s.consoleBaseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 }
 
 func (s *PaymentService) SetPluginService(p *PluginService) { s.plugin = p }
@@ -334,6 +343,56 @@ func (s *PaymentService) InitDefaultEpayConfig(ctx context.Context, appID int64,
 
 // ── 订单流程 ──
 
+// resolveNotifyURL 异步通知地址的三级取值：下单请求 → 渠道配置 → 平台默认。
+//
+// 平台默认这一级此前**不存在**，而配置表单上一直写着「留空则使用平台默认回调地址」。
+// 后果是留空时 `notify_url` 空着发给上游：用户付了钱，渠道无处通知，订单永远停在
+// 待支付，权益也永远不会发放。这类故障不报任何错，只有对账时才发现 ——
+// 比直接拒绝下单危险得多。
+//
+// 路径取自渠道自己的 `Describe().CallbackPath`，与控制台展示的那条同源，
+// 不另建一张 method → 路径的表。`API_BASE_URL` 没配时返回空串、退回原来的行为
+// （微信当场报错，其余渠道由上游拒绝），绝不拿一个猜出来的域名去兑现承诺 ——
+// 错的回调地址比没有更难查。
+//
+// 顺序不能反：管理员在渠道里填了地址，就该盖过平台默认值。
+func (s *PaymentService) resolveNotifyURL(provider paymentProvider, config *paymentdomain.Config, requested string) string {
+	if resolved := pickString(requested, configString(config.ConfigData, "notifyUrl")); resolved != "" {
+		return resolved
+	}
+	base := strings.TrimRight(strings.TrimSpace(s.receiptCfg.PublicBaseURL), "/")
+	path := strings.TrimSpace(provider.Describe().CallbackPath)
+	if base == "" || path == "" {
+		return ""
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return base + path
+}
+
+// resolveReturnURL 同步跳转地址的三级取值：下单请求 → 渠道配置 → 平台结果页。
+//
+// 平台默认指向控制台自带的 `/pay/result` —— 那一页只凭渠道的签名 query 展示订单状态，
+// 不需要登录态，正是给这种「刚付完款、被浏览器甩回来」的场景准备的。
+//
+// `CONSOLE_BASE_URL` 没配时**不下发** return_url，由渠道展示它自己的结果页。
+// 这里绝不用 API_BASE_URL 顶替：那是后端地址，`/pay/result` 在它上面是 404，
+// 把刚付过钱的用户送到一个 404 比不跳转糟得多。
+func (s *PaymentService) resolveReturnURL(config *paymentdomain.Config, requested string) string {
+	if resolved := pickString(requested, configString(config.ConfigData, "returnUrl")); resolved != "" {
+		return resolved
+	}
+	if s.consoleBaseURL == "" {
+		return ""
+	}
+	return s.consoleBaseURL + PaymentResultPath
+}
+
+// PaymentResultPath 控制台支付结果页的路径。改这里必须同步改
+// aegis-console 的 src/app/pay/result/，以及渠道配置表单里 returnUrl 的占位提示。
+const PaymentResultPath = "/pay/result"
+
 func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Session, subject string, body string, amount string, providerType string, configName string, notifyURL string, returnURL string, metadata map[string]any, clientIP string) (*paymentdomain.PaymentPayload, *paymentdomain.Order, error) {
 	if session == nil {
 		return nil, nil, apperrors.New(40170, http.StatusUnauthorized, "未认证")
@@ -416,6 +475,10 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 		if payErr != nil {
 			return nil, nil, payErr
 		}
+		// 回读订单：手里这份是状态翻转**之前**的快照，直接返回会让客户端
+		// 收到「支付成功 + status: pending」这种自相矛盾的响应，
+		// 顺带把凭证区块算成「账单」而不是「收据」。
+		order = s.reloadOrderAfterPayment(ctx, order)
 		// 余额支付在同一个事务里就完成了扣款与确认，此处即是「首次确认」
 		go s.autoEmailReceipt(session.AppID, order.OrderNo)
 		if s.plugin != nil {
@@ -434,8 +497,8 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 		Body:         order.Body,
 		Amount:       parsedAmount,
 		ProviderType: strings.TrimSpace(providerType),
-		NotifyURL:    order.NotifyURL,
-		ReturnURL:    order.ReturnURL,
+		NotifyURL:    s.resolveNotifyURL(provider, config, order.NotifyURL),
+		ReturnURL:    s.resolveReturnURL(config, order.ReturnURL),
 		ClientIP:     clientIP,
 		Metadata:     metadata,
 		ExpireAt:     &expireAt,
@@ -488,6 +551,22 @@ func (s *PaymentService) payOrderWithBalance(ctx context.Context, order *payment
 			"balanceAfter":        walletTxn.BalanceAfter,
 		},
 	}, nil
+}
+
+// reloadOrderAfterPayment 支付确认后回读订单。
+//
+// 读失败时退回原快照而不是报错：钱已经扣了、权益也发了，
+// 为了一次查库抖动把整个下单请求判失败，会让客户端以为支付没成功而重试。
+func (s *PaymentService) reloadOrderAfterPayment(ctx context.Context, order *paymentdomain.Order) *paymentdomain.Order {
+	fresh, err := s.pg.GetPaymentOrderByOrderNo(ctx, order.OrderNo)
+	if err != nil || fresh == nil {
+		if err != nil {
+			s.log.Warn("reload order after balance payment failed",
+				zap.String("orderNo", order.OrderNo), zap.Error(err))
+		}
+		return order
+	}
+	return fresh
 }
 
 func (s *PaymentService) QueryOrder(ctx context.Context, orderNo string) (*paymentdomain.Order, error) {
@@ -577,6 +656,72 @@ func (s *PaymentService) QueryRemoteOrder(ctx context.Context, orderNo string) (
 // HandleEpayCallback 处理易支付回调（兼容旧路由）
 func (s *PaymentService) HandleEpayCallback(ctx context.Context, callbackData map[string]string, callbackMethod string, clientIP string) (*paymentdomain.CallbackResult, error) {
 	return s.HandleCallback(ctx, paymentdomain.MethodEpay, callbackData, callbackMethod, clientIP)
+}
+
+// VerifyPaymentReturn 校验同步跳转参数并返回可展示的订单状态。
+//
+// 与 HandleCallback 的分工是这套设计的关键：
+//
+//	异步通知（渠道 → 服务端）：唯一能改变订单状态的入口
+//	同步跳转（渠道 → 用户浏览器）：只读，回答「这笔单现在什么状态」
+//
+// 结果页绝不能拿浏览器带回来的 trade_status 当结论去翻转订单 —— 那串 query
+// 停在用户手里，可以重放、可以只走一半。真正的钱到账与否只有服务端收到的
+// 那次通知说了算，本函数因此**没有任何写操作**。
+//
+// 定位顺序：out_trade_no 找到订单 → 用**订单自己的**那份渠道配置验签。
+// 渠道不从 URL 上取 —— 订单号已经唯一确定了它是哪家渠道的单，让调用方再声明一次
+// 只是多一处能配错的地方，还得防着「拿 A 渠道的密钥验 B 渠道的单」。
+//
+// 先查库再验签是必然的：不知道是哪笔订单就不知道该用谁的密钥。查库本身不泄露
+// 任何东西 —— 验不过就什么都不返回。
+func (s *PaymentService) VerifyPaymentReturn(ctx context.Context, params map[string]string) (*paymentdomain.ReturnView, error) {
+	orderNo := strings.TrimSpace(params["out_trade_no"])
+	if orderNo == "" {
+		return nil, apperrors.New(40074, http.StatusBadRequest, "缺少订单号")
+	}
+	order, err := s.pg.GetPaymentOrderByOrderNo(ctx, orderNo)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, apperrors.New(40472, http.StatusNotFound, "订单不存在")
+	}
+	config, err := s.pg.GetPaymentConfigByID(ctx, order.AppID, order.ConfigID)
+	if err != nil {
+		return nil, err
+	}
+	if config == nil {
+		return nil, apperrors.New(40473, http.StatusNotFound, "支付配置不存在")
+	}
+	provider, err := s.resolveProvider(config.PaymentMethod)
+	if err != nil {
+		return nil, err
+	}
+	verifier, ok := provider.(paymentReturnVerifier)
+	if !ok {
+		return nil, apperrors.New(40097, http.StatusBadRequest, "该支付渠道不支持同步跳转校验，请回到应用内查看订单状态")
+	}
+
+	signedOrderNo, err := verifier.VerifyReturn(config.ConfigData, params)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(signedOrderNo) != order.OrderNo {
+		return nil, apperrors.New(40095, http.StatusBadRequest, "回跳订单号不一致")
+	}
+
+	return &paymentdomain.ReturnView{
+		OrderNo:       order.OrderNo,
+		Subject:       order.Subject,
+		Amount:        order.Amount,
+		Currency:      order.Currency,
+		PaymentMethod: order.PaymentMethod,
+		ProviderType:  order.ProviderType,
+		Status:        order.Status,
+		PaidAt:        order.PaidAt,
+		Pending:       order.Status == "pending",
+	}, nil
 }
 
 // HandleCallback 处理通用支付回调
@@ -906,6 +1051,19 @@ func (s *PaymentService) AdminListOrders(ctx context.Context, appID int64, query
 		Total:      total,
 		TotalPages: calcPaymentTotalPages(total, limit),
 	}, nil
+}
+
+// AdminOrderStats 管理端订单资金面板（交易概览首屏）。
+func (s *PaymentService) AdminOrderStats(ctx context.Context, appID int64, start *time.Time, end *time.Time) (*paymentdomain.OrderStats, error) {
+	if _, err := s.requireApp(ctx, appID); err != nil {
+		return nil, err
+	}
+	return s.pg.PaymentOrderStats(ctx, appID, start, end)
+}
+
+// AdminTransactionTrend 管理端交易趋势（实收 / 退款 / 钱包出入，粒度由跨度自动决定）。
+func (s *PaymentService) AdminTransactionTrend(ctx context.Context, appID int64, start *time.Time, end *time.Time) (*paymentdomain.Trend, error) {
+	return s.pg.PaymentTrend(ctx, appID, start, end)
 }
 
 // AdminOrderDetail 管理端订单详情：订单 + 履约状态 + 回调日志

@@ -554,6 +554,26 @@ type Order struct {
 	UpdatedAt       time.Time       `json:"updatedAt"`
 }
 
+// ReturnView 同步跳转结果页能看到的订单信息。
+//
+// 字段刻意只有这几个。这条响应的凭据是渠道附在 return_url 上的签名 query，
+// 谁拿到那串 URL 谁就能读到它 —— 用户标识、客户端 IP、履约快照、回调原文
+// 都不是「让付款人确认这笔交易」需要的东西，不该顺手带出去。
+type ReturnView struct {
+	OrderNo       string          `json:"order_no"`
+	Subject       string          `json:"subject"`
+	Amount        decimal.Decimal `json:"amount"`
+	Currency      string          `json:"currency,omitempty"`
+	PaymentMethod string          `json:"payment_method"`
+	ProviderType  string          `json:"provider_type,omitempty"`
+	Status        string          `json:"status"`
+	PaidAt        *time.Time      `json:"paid_at,omitempty"`
+	// Pending 为 true 表示异步通知还没到。**这不是失败** ——
+	// 浏览器跳回来通常快过渠道的服务器通知，结果页据此继续轮询，
+	// 而不是当场告诉用户支付失败。
+	Pending bool `json:"pending"`
+}
+
 type OrderListQuery struct {
 	Status string `json:"status"`
 	Page   int    `json:"page"`
