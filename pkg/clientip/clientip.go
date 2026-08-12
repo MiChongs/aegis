@@ -152,18 +152,21 @@ func (r Result) String() string {
 
 // Resolver 判定器。构造一次、并发只读，Resolve 可安全并发调用。
 type Resolver struct {
-	strategy    Strategy
-	listHeader  string
-	singleHdrs  []string
-	hops        int
-	trusted     *netipx.IPSet
-	prefixes    []netip.Prefix
-	trustPeer   bool
-	chain       realclientip.Strategy
-	chainSource Source
-	platform    Platform
-	debugHeader bool
-	warnings    []string
+	strategy   Strategy
+	listHeader string
+	singleHdrs []string
+	hops       int
+	trusted    *netipx.IPSet
+	prefixes   []netip.Prefix
+	trustPeer  bool
+	// peerTrustReason 为什么信任直连对端：config:direct-peer 或 platform:<key>。
+	// 排障时「这是我配的还是它自己认出来的」是第一个要分清的问题。
+	peerTrustReason string
+	chain           realclientip.Strategy
+	chainSource     Source
+	platform        Platform
+	debugHeader     bool
+	warnings        []string
 }
 
 // New 按配置构造判定器，平台探测读进程环境变量。
@@ -195,6 +198,9 @@ func NewWithEnv(cfg Config, getenv func(string) string) (*Resolver, error) {
 	}
 	// direct-peer 表达的是「不管它是什么地址」，落不成网段，先摘出来单独记。
 	entries, r.trustPeer = extractDirectPeer(entries)
+	if r.trustPeer {
+		r.peerTrustReason = "config:direct-peer"
+	}
 
 	// auto 档才做平台探测：平台自己注入的环境变量（FLY_APP_NAME / ZEABUR_SERVICE_ID …）
 	// 是攻击者写不进来的事实，据此补上该平台的受信网段与单值头是安全的。
@@ -204,6 +210,14 @@ func NewWithEnv(cfg Config, getenv func(string) string) (*Resolver, error) {
 		r.platform = DetectPlatform(getenv)
 		if len(r.platform.TrustedPresets) > 0 {
 			entries = append(entries, r.platform.TrustedPresets...)
+		}
+		// 托管平台把全部入站流量终结在自己的边缘，容器收不到公网直连，
+		// 因此对端只可能是平台入口。这一条覆盖的是「入口回源时持有公网地址」
+		// 的那些平台 —— 没有它，infra 默认值在那儿一条都匹配不上，
+		// 转发头会被整个丢掉、全站客户端 IP 收敛成入口那一个地址。
+		if r.platform.TrustPeer {
+			r.trustPeer = true
+			r.peerTrustReason = "platform:" + r.platform.Key
 		}
 	}
 
@@ -230,7 +244,10 @@ func NewWithEnv(cfg Config, getenv func(string) string) (*Resolver, error) {
 		r.warnings = append(r.warnings,
 			"受信网段覆盖了全部地址：任何客户端都能用一个 X-Forwarded-For 伪造自己的 IP，限流与封禁将随之失效")
 	}
-	if r.trustPeer {
+	// 只有**显式**配 direct-peer 才告警。平台探测得出的那一份是平台自身的性质
+	// （入站流量由平台边缘终结），不是部署方需要复核的选择；每次启动都警告一遍，
+	// 只会让这条告警变成噪音，真正需要人确认的那一次反而被淹掉。
+	if r.trustPeer && r.peerTrustReason == "config:direct-peer" {
 		r.warnings = append(r.warnings,
 			"TRUSTED_PROXIES 含 direct-peer：直连对端一律受信。仅当本服务只能经由自己的入口访问时才成立，源站若同时能被直连，客户端 IP 可被伪造")
 	}
@@ -414,6 +431,8 @@ type Description struct {
 	Warnings   []string
 	TrustsAll  bool
 	TrustsPeer bool
+	// PeerTrustReason 信任对端的来源：config:direct-peer 或 platform:<key>，都不信任时为空。
+	PeerTrustReason string
 }
 
 // Describe 汇报生效配置。判定规则藏在几个环境变量的组合里，
@@ -423,15 +442,16 @@ func (r *Resolver) Describe() Description {
 		return Description{Strategy: StrategyPeer}
 	}
 	desc := Description{
-		Strategy:   r.strategy,
-		Platform:   r.platform.Key,
-		PlatformCN: r.platform.Name,
-		ListHeader: r.listHeader,
-		Headers:    append([]string(nil), r.singleHdrs...),
-		Hops:       r.hops,
-		Prefixes:   append([]netip.Prefix(nil), r.prefixes...),
-		Warnings:   append([]string(nil), r.warnings...),
-		TrustsPeer: r.trustPeer,
+		Strategy:        r.strategy,
+		Platform:        r.platform.Key,
+		PlatformCN:      r.platform.Name,
+		ListHeader:      r.listHeader,
+		Headers:         append([]string(nil), r.singleHdrs...),
+		Hops:            r.hops,
+		Prefixes:        append([]netip.Prefix(nil), r.prefixes...),
+		Warnings:        append([]string(nil), r.warnings...),
+		TrustsPeer:      r.trustPeer,
+		PeerTrustReason: r.peerTrustReason,
 	}
 	if r.trusted != nil {
 		// 受信集合覆盖了 0.0.0.0 / :: 就等于「谁都信」，此时转发头完全可伪造。

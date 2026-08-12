@@ -19,6 +19,18 @@ type Platform struct {
 	Hops int
 	// TrustedPresets 该平台需要额外信任的网段预设。
 	TrustedPresets []string
+	// TrustPeer 该平台的直连对端是否**按构造**就是它自己的入口。
+	//
+	// 托管平台把全部入站流量终结在自己的边缘，业务容器收不到来自公网的直连 ——
+	// 这不是配置出来的，是平台的定义。因此对端只可能是平台入口，信任它安全。
+	//
+	// 这条存在的理由是：入口到容器这一跳**并不总是走内网**。云上的 LB、部分 PaaS
+	// 的入口回源时持有公网地址，落不进 infra 预设，于是转发头被整个丢掉、
+	// 全站客户端 IP 收敛成入口那一个。而地址还会漂移，写死也撑不了多久。
+	//
+	// 自建 Kubernetes 与 ECS 刻意**不设**：hostNetwork / NodePort / 公网任务
+	// 都能让容器被直连，那时对端就是客户端本人，信任它等于交出伪造权。
+	TrustPeer bool
 	// Env 探测变量，任意一个非空即判定命中。
 	Env []string
 }
@@ -30,37 +42,43 @@ type Platform struct {
 // 那些平台特有的头与网段就再也用不上了。
 var platformProfiles = []Platform{
 	{
-		Key:  "fly",
-		Name: "Fly.io",
+		Key:       "fly",
+		TrustPeer: true,
+		Name:      "Fly.io",
 		// Fly 的边缘代理会覆写这个头，客户端写进来的同名头到不了应用。
 		Header: "Fly-Client-IP",
 		Env:    []string{"FLY_APP_NAME", "FLY_ALLOC_ID", "FLY_MACHINE_ID"},
 	},
 	{
-		Key:    "appengine",
-		Name:   "Google App Engine",
-		Header: "X-Appengine-User-Ip",
-		Env:    []string{"GAE_ENV", "GAE_SERVICE", "GAE_INSTANCE"},
+		Key:       "appengine",
+		TrustPeer: true,
+		Name:      "Google App Engine",
+		Header:    "X-Appengine-User-Ip",
+		Env:       []string{"GAE_ENV", "GAE_SERVICE", "GAE_INSTANCE"},
 	},
 	{
-		Key:  "cloudrun",
-		Name: "Google Cloud Run",
+		Key:       "cloudrun",
+		TrustPeer: true,
+		Name:      "Google Cloud Run",
 		// 直挂 run.app 时转发链只有客户端一条；挂在外部 HTTPS 负载均衡后面会多一跳，
 		// 而那一跳是**公网**地址，不把 GCP LB 段算作受信就会停在它上面。
 		TrustedPresets: []string{PresetGCPLoadBalancer},
 		Env:            []string{"K_SERVICE", "K_REVISION", "K_CONFIGURATION"},
 	},
 	{
-		Key:    "netlify",
-		Name:   "Netlify",
-		Header: "X-Nf-Client-Connection-Ip",
-		Env:    []string{"NETLIFY"},
+		Key:       "netlify",
+		TrustPeer: true,
+		Name:      "Netlify",
+		Header:    "X-Nf-Client-Connection-Ip",
+		Env:       []string{"NETLIFY"},
 	},
 	{
-		Key:  "zeabur",
-		Name: "Zeabur",
-		// 入口网关到业务容器这一跳走集群内网（已含在 infra 里），
-		// 而平台分发的 *.zeabur.app 域名通常还挂着 CDN —— 那一跳是公网地址，
+		Key:       "zeabur",
+		TrustPeer: true,
+		Name:      "Zeabur",
+		// 两跳都不在 infra 里，缺一条就取不到真实客户端：
+		// 入口回源到业务容器时**持有公网地址**（靠 TrustPeer 覆盖），
+		// 而平台分发的 *.zeabur.app 域名前面还挂着 CDN，那一跳同样是公网地址 ——
 		// 不信任它的话「从右往左找第一个不受信条目」会停在 CDN 边缘上，
 		// 结果是全站用户的 IP 收敛成一小撮机房地址。
 		TrustedPresets: []string{PresetCloudflare},
@@ -68,37 +86,43 @@ var platformProfiles = []Platform{
 	},
 	{
 		Key:            "railway",
+		TrustPeer:      true,
 		Name:           "Railway",
 		TrustedPresets: []string{PresetCloudflare},
 		Env:            []string{"RAILWAY_ENVIRONMENT", "RAILWAY_SERVICE_ID", "RAILWAY_PROJECT_ID"},
 	},
 	{
 		Key:            "render",
+		TrustPeer:      true,
 		Name:           "Render",
 		TrustedPresets: []string{PresetCloudflare},
 		Env:            []string{"RENDER", "RENDER_SERVICE_ID"},
 	},
 	{
 		Key:            "koyeb",
+		TrustPeer:      true,
 		Name:           "Koyeb",
 		TrustedPresets: []string{PresetCloudflare},
 		Env:            []string{"KOYEB_APP_NAME", "KOYEB_SERVICE_ID"},
 	},
 	{
-		Key:  "heroku",
-		Name: "Heroku",
+		Key:       "heroku",
+		TrustPeer: true,
+		Name:      "Heroku",
 		// Heroku 路由层把「连到路由的那个地址」追加到转发链末尾，
 		// 因此受信网段判定天然给出正确结果，不需要额外档案。
 		Env: []string{"DYNO"},
 	},
 	{
-		Key:  "vercel",
-		Name: "Vercel",
-		Env:  []string{"VERCEL", "VERCEL_ENV"},
+		Key:       "vercel",
+		TrustPeer: true,
+		Name:      "Vercel",
+		Env:       []string{"VERCEL", "VERCEL_ENV"},
 	},
 	{
-		Key:  "azure-app-service",
-		Name: "Azure App Service",
+		Key:       "azure-app-service",
+		TrustPeer: true,
+		Name:      "Azure App Service",
 		// 这家的转发链条目带端口（1.2.3.4:56789），端口由解析库统一剥掉。
 		Env: []string{"WEBSITE_SITE_NAME", "WEBSITE_INSTANCE_ID"},
 	},

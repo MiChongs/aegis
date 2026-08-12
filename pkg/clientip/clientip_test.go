@@ -277,6 +277,49 @@ func TestPublicIngressTopology(t *testing.T) {
 		}
 	})
 
+	t.Run("探测到托管平台时零配置就取到真实客户端", func(t *testing.T) {
+		// 这是这套拓扑最该有的表现：托管平台把全部入站流量终结在自己的边缘，
+		// 容器收不到公网直连，所以对端只可能是平台入口 —— 那是平台的性质，
+		// 不该要求部署方先去查出入口地址再手工写进配置。
+		env := func(key string) string {
+			if key == "ZEABUR_SERVICE_ID" {
+				return "svc-123"
+			}
+			return ""
+		}
+		resolver := mustResolver(t, Config{}, env)
+		result := resolver.Resolve(newRequest(t, ingress, map[string]string{"X-Forwarded-For": chain}))
+		if got := result.IP.String(); got != client {
+			t.Fatalf("IP = %s, want %s（判定过程：%s）", got, client, result)
+		}
+		if !result.PeerTrusted {
+			t.Error("托管平台的直连对端应当受信")
+		}
+		if reason := resolver.Describe().PeerTrustReason; reason != "platform:zeabur" {
+			t.Errorf("PeerTrustReason = %q, want platform:zeabur", reason)
+		}
+		// 平台性质不是部署方要复核的选择，每次启动警告一遍只会变成噪音
+		if warnings := resolver.Describe().Warnings; len(warnings) != 0 {
+			t.Errorf("平台探测得出的对端信任不该告警，得到 %v", warnings)
+		}
+	})
+
+	t.Run("自建 Kubernetes 不自动信任对端", func(t *testing.T) {
+		// 托管平台的边缘是平台自己的，而自建集群里 hostNetwork / NodePort
+		// 都能让容器被直连 —— 那时对端就是客户端本人，信任它等于交出伪造权。
+		env := func(key string) string {
+			if key == "KUBERNETES_SERVICE_HOST" {
+				return "10.96.0.1"
+			}
+			return ""
+		}
+		resolver := mustResolver(t, Config{}, env)
+		result := resolver.Resolve(newRequest(t, ingress, map[string]string{"X-Forwarded-For": chain}))
+		if result.PeerTrusted {
+			t.Fatal("自建 Kubernetes 的直连对端不该被自动信任")
+		}
+	})
+
 	t.Run("direct-peer 让对端受信后取到真实客户端", func(t *testing.T) {
 		resolver := mustResolver(t, Config{
 			TrustedProxies: []string{PresetInfra, PresetCloudflare, PresetDirectPeer},

@@ -97,6 +97,9 @@ Zeabur / Kubernetes / Docker Compose / ECS 里，入口网关到业务容器这�
 直连过来时都是公网地址。这时对端不在受信集合内，整条转发头被判为不可信而丢掉，
 表现是全站客户端 IP 收敛成入口那一个地址。
 
+**探测到托管平台时这件事已经自动处理**（见上表「信任对端」列），下面这一节是给
+自建 Kubernetes / ECS / 裸机反代的 —— 那些环境里容器可能被直连，不能默认信任对端。
+
 服务端会在**第一次**遇到这种请求时按对端去重地打一条 warn，把地址、被丢掉的链
 和改法一起说出来：
 
@@ -128,21 +131,31 @@ Zeabur / Kubernetes / Docker Compose / ECS 里，入口网关到业务容器这�
 这是安全的依据：`FLY_APP_NAME` / `ZEABUR_SERVICE_ID` 只有平台的运行时能写进来，
 攻击者构造不出，因此据此补充受信网段或选定单值头不会给伪造留口子。
 
-| 平台 | 探测变量 | 档案 |
-|---|---|---|
-| Fly.io | `FLY_APP_NAME` / `FLY_ALLOC_ID` / `FLY_MACHINE_ID` | 读 `Fly-Client-IP` |
-| Google App Engine | `GAE_ENV` / `GAE_SERVICE` / `GAE_INSTANCE` | 读 `X-Appengine-User-Ip` |
-| Google Cloud Run | `K_SERVICE` / `K_REVISION` / `K_CONFIGURATION` | 补 `gcp-lb` |
-| Netlify | `NETLIFY` | 读 `X-Nf-Client-Connection-Ip` |
-| Zeabur | `ZEABUR_SERVICE_ID` / `ZEABUR_PROJECT_ID` / `ZEABUR_ENVIRONMENT_ID` | 补 `cloudflare` |
-| Railway | `RAILWAY_ENVIRONMENT` / `RAILWAY_SERVICE_ID` / `RAILWAY_PROJECT_ID` | 补 `cloudflare` |
-| Render | `RENDER` / `RENDER_SERVICE_ID` | 补 `cloudflare` |
-| Koyeb | `KOYEB_APP_NAME` / `KOYEB_SERVICE_ID` | 补 `cloudflare` |
-| Heroku | `DYNO` | 无需补充 |
-| Vercel | `VERCEL` / `VERCEL_ENV` | 无需补充 |
-| Azure App Service | `WEBSITE_SITE_NAME` / `WEBSITE_INSTANCE_ID` | 无需补充 |
-| AWS ECS / App Runner | `ECS_CONTAINER_METADATA_URI_V4` / `AWS_EXECUTION_ENV` | 无需补充 |
-| Kubernetes | `KUBERNETES_SERVICE_HOST` | 无需补充 |
+| 平台 | 探测变量 | 补充网段 / 头 | 信任对端 |
+|---|---|---|:--:|
+| Fly.io | `FLY_APP_NAME` / `FLY_ALLOC_ID` / `FLY_MACHINE_ID` | 读 `Fly-Client-IP` | ✅ |
+| Google App Engine | `GAE_ENV` / `GAE_SERVICE` / `GAE_INSTANCE` | 读 `X-Appengine-User-Ip` | ✅ |
+| Google Cloud Run | `K_SERVICE` / `K_REVISION` / `K_CONFIGURATION` | 补 `gcp-lb` | ✅ |
+| Netlify | `NETLIFY` | 读 `X-Nf-Client-Connection-Ip` | ✅ |
+| Zeabur | `ZEABUR_SERVICE_ID` / `ZEABUR_PROJECT_ID` / `ZEABUR_ENVIRONMENT_ID` | 补 `cloudflare` | ✅ |
+| Railway | `RAILWAY_ENVIRONMENT` / `RAILWAY_SERVICE_ID` / `RAILWAY_PROJECT_ID` | 补 `cloudflare` | ✅ |
+| Render | `RENDER` / `RENDER_SERVICE_ID` | 补 `cloudflare` | ✅ |
+| Koyeb | `KOYEB_APP_NAME` / `KOYEB_SERVICE_ID` | 补 `cloudflare` | ✅ |
+| Heroku | `DYNO` | — | ✅ |
+| Vercel | `VERCEL` / `VERCEL_ENV` | — | ✅ |
+| Azure App Service | `WEBSITE_SITE_NAME` / `WEBSITE_INSTANCE_ID` | — | ✅ |
+| AWS ECS / App Runner | `ECS_CONTAINER_METADATA_URI_V4` / `AWS_EXECUTION_ENV` | — | — |
+| Kubernetes | `KUBERNETES_SERVICE_HOST` | — | — |
+
+**「信任对端」那一列是这套东西在托管平台上能零配置跑对的关键。** 平台把全部入站流量
+终结在自己的边缘，业务容器收不到来自公网的直连 —— 这不是配置出来的，是平台的定义，
+所以对端只可能是平台入口。它必须单独成一条，是因为**入口回源到容器这一跳并不总是走内网**：
+好几家 PaaS 与云 LB 回源时持有公网地址，落不进 `infra`，于是转发头被整个丢掉、
+全站客户端 IP 收敛成入口那一个，而那个地址还会漂移，写死也撑不了多久。
+
+自建 Kubernetes 与 ECS 刻意**不给**这一条：`hostNetwork`、NodePort、带公网 IP 的任务
+都能让容器被直连，那时对端就是客户端本人，信任它等于把伪造权交出去。这两种环境下
+入口若持公网地址，按下一节手工配置。
 
 **探测顺序是先具体后笼统**，Kubernetes 排在最后：上面几乎每一家 PaaS 底层都是 K8s
 也都会注入 `KUBERNETES_SERVICE_HOST`，它排在前面的话所有平台都会被认成「Kubernetes」，

@@ -33,6 +33,14 @@ func logClientIPResolution(log *zap.Logger, resolver *clientip.Resolver) {
 	if desc.Hops > 0 {
 		fields = append(fields, zap.Int("hops", desc.Hops))
 	}
+	// 「对端受不受信」是判定链上最容易出错的一环，而它可能来自配置、也可能来自
+	// 平台探测。只报 true/false 会让人分不清「我配的」还是「它自己认出来的」。
+	if desc.TrustsPeer {
+		fields = append(fields,
+			zap.Bool("trust_peer", true),
+			zap.String("trust_peer_reason", desc.PeerTrustReason),
+		)
+	}
 	log.Info("client ip resolution ready", fields...)
 
 	for _, warning := range desc.Warnings {
@@ -68,13 +76,17 @@ func clientIPField(rt BannerRuntime) banner.Field {
 		parts = append(parts, desc.ListHeader)
 	}
 
+	note := banner.Countf("受信 %d 个网段", len(desc.Prefixes))
+	if desc.TrustsPeer {
+		note = banner.Join(note, "含直连对端（"+desc.PeerTrustReason+"）")
+	}
 	field := banner.Field{
 		Key:   "客户端 IP",
 		Value: banner.Join(parts...),
 		State: banner.StateOK,
-		Note:  banner.Countf("受信 %d 个网段", len(desc.Prefixes)),
+		Note:  note,
 	}
-	if len(desc.Prefixes) == 0 {
+	if len(desc.Prefixes) == 0 && !desc.TrustsPeer {
 		// 一个网段都不信 = 转发头全部不看。直连公网时这是对的，
 		// 挂在反代后面时全站 IP 会收敛成反代地址，所以这里必须显眼。
 		field.State = banner.StateNeutral
