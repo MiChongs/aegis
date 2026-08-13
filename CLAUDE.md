@@ -99,6 +99,7 @@ graph TD
 | `pkg/gifcaptcha/` | **动态图片验证码**：逐帧动画 GIF（字形位移/旋转/变色 + 漂移噪点 + 干扰线 + 水波扭曲），纯 Go、字体内嵌 | [service](internal/service/CLAUDE.md#动态图片验证码gifcaptcha) |
 | **头像服务** | 地址**永久**不失效（编码的是「谁」不是「哪个对象」）+ EXIF 纠正 / 多尺寸 / blurhash + 服务端自绘默认头像 | [docs](docs/avatar.md) |
 | `pkg/receipt/` | **支付凭证 PDF**：10 语言 A4 排版 + 字体决策 + 分页 | [docs](docs/payment-receipt.md) |
+| **地图底图** | 13 家供应商自述式目录，默认档跟随**浏览器语言**（简体中文走境内、其余走全球）；GCJ-02 底图在瓦片管线里纠偏，业务坐标恒为 WGS-84 | [aegis-console](aegis-console/CLAUDE.md#地图底图多供应商--跟随浏览器语言) |
 | **交易与凭证** | 订单与钱包流水**两类主体**都能出凭证；同一笔钱只出一份（挂着订单的流水由订单出具） | [docs](docs/payment-receipt.md#两类凭证主体) |
 | **会员与试用** | 会员判定收成一个入口（是不是会员 / 还剩多久 / 是不是**试用** / 试用还能不能领）；试用是套餐的一种，一人一次由唯一约束保证 | [service](internal/service/CLAUDE.md#会员判定与试用期会员) |
 | **卡密** | 一张卡两种形态：**授权卡**（卡即登录凭证，绑设备、有授权期）与**兑换卡**（发会员/积分/经验/余额/抽奖次数/设备位）。七档权益由目录驱动，一码一用由三道保证叠出来 | [docs](docs/card-key.md) |

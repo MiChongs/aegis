@@ -12,7 +12,7 @@
     "prebuild": "node ./scripts/clean-next.mjs && node ./scripts/sync-monaco-assets.mjs",
     "build": "tsc --noEmit && next build",
     "start": "node --import=./scripts/forwarded-headers-preload.mjs ./node_modules/next/dist/bin/next start",
-    "test": "node --test \"scripts/*.test.mjs\"",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"scripts/*.test.mjs\"",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "typecheck:ts6": "tsc6 --noEmit"
