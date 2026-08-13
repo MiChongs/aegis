@@ -25,7 +25,7 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "captcha", Method: "POST", Path: "/captcha", Summary: "按策略签发图形验证码"},
 	{Key: "smsCode", Method: "POST", Path: "/auth/sms/code", Summary: "申请短信验证码（purpose: login | register）"},
 	{Key: "register", Method: "POST", Path: "/auth/register", Summary: "注册（method: password | sms）"},
-	{Key: "login", Method: "POST", Path: "/auth/login", Summary: "登录（method: password | sms）"},
+	{Key: "login", Method: "POST", Path: "/auth/login", Summary: "登录（method: password | sms | cardkey）"},
 	{Key: "refresh", Method: "POST", Path: "/auth/refresh", Summary: "刷新访问令牌"},
 	{Key: "secondFactor", Method: "POST", Path: "/auth/2fa/verify", Summary: "完成登录返回的二次认证挑战"},
 	{Key: "logout", Method: "POST", Path: "/auth/logout", Auth: true, Summary: "注销当前会话"},
@@ -50,6 +50,15 @@ var gatewayOperations = []authprotocol.Operation{
 	// ── Passkey 登录 ──
 	{Key: "passkeyOptions", Method: "POST", Path: "/auth/passkey/options", Summary: "取 Passkey 登录参数"},
 	{Key: "passkeyLogin", Method: "POST", Path: "/auth/passkey/login", Summary: "Passkey 登录校验"},
+
+	// ── 卡密 ──
+	//
+	// 授权卡登录不在这里：它是 /auth/login 的一档 method（cardkey），
+	// 加登录方式不加路由，客户端也就不需要认识第二条登录入口。
+	{Key: "cardKeyRedeem", Method: "POST", Path: "/card-keys/redeem", Auth: true,
+		Summary: "兑换卡密（会员 / 积分 / 经验 / 余额 / 抽奖次数 / 设备位）"},
+	{Key: "cardKeyMine", Method: "GET", Path: "/card-keys/mine", Auth: true,
+		Summary: "我名下的授权卡：授权到期时间与已绑定设备数"},
 
 	// ── 当前用户 ──
 	{Key: "me", Method: "GET", Path: "/me", Auth: true, Summary: "当前登录用户资料"},
@@ -202,6 +211,29 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 		Recovery: authprotocol.RecoveryNone},
 	{Code: 40376, Name: "TRIAL_PLAN_NOT_PURCHASABLE", Message: "试用套餐只能领取，不能购买",
 		Recovery: authprotocol.RecoveryNone, Hint: "kind=trial 的套餐走 /vip/trial，不要传给 /vip/purchase"},
+	// ── 卡密 ──
+	// 每个判据一个码，客户端据此分支。文案区分得比较细是有原因的：
+	// 「已作废」「已用过」「已过期」对用户是三件完全不同的事，
+	// 合成一句「卡密无效」的结果是客服无从判断该补发、该解释、还是该退款。
+	{Code: 40340, Name: "CARD_KEY_DISABLED", Message: "该卡密已被作废",
+		Recovery: authprotocol.RecoveryNone, Hint: "运营主动作废了这张卡或整个批次，引导用户联系客服"},
+	{Code: 40341, Name: "CARD_KEY_USED", Message: "该卡密已被使用",
+		Recovery: authprotocol.RecoveryNone},
+	{Code: 40342, Name: "CARD_KEY_EXPIRED", Message: "该卡密已过期",
+		Recovery: authprotocol.RecoveryNone, Hint: "授权卡的授权期已结束，引导续期"},
+	{Code: 40343, Name: "CARD_KEY_DEVICE_LIMIT", Message: "该卡可绑定的设备数已满",
+		Recovery: authprotocol.RecoveryNone,
+		Hint:     "在其它设备上退出，或让管理员在控制台解绑一台；请求必须带设备标识（deviceId）"},
+	{Code: 40344, Name: "CARD_KEY_BOUND_OTHER", Message: "该卡密已绑定其它账号",
+		Recovery: authprotocol.RecoveryNone},
+	{Code: 40345, Name: "CARD_KEY_KIND_MISMATCH", Message: "卡密类型不符",
+		Recovery: authprotocol.RecoveryNone, Hint: "授权卡走 /auth/login 的 cardkey 方式，兑换卡走 /card-keys/redeem"},
+	{Code: 40346, Name: "CARD_KEY_NO_LOGIN_CARD", Message: "名下没有可加设备位的授权卡",
+		Recovery: authprotocol.RecoveryNone},
+	{Code: 40441, Name: "CARD_KEY_NOT_FOUND", Message: "卡密不存在",
+		Recovery: authprotocol.RecoveryNone, Hint: "服务端已忽略大小写与分隔符差异，走到这里就是真的没有这张卡"},
+	{Code: 40910, Name: "CARD_KEY_REDEEMING", Message: "该卡密正在被核销",
+		Recovery: authprotocol.RecoveryNone},
 	{Code: 40470, Name: "APP_NOT_FOUND", Message: "应用不存在或已停用", Recovery: authprotocol.RecoveryNone},
 	{Code: 40484, Name: "TRIAL_NOT_AVAILABLE", Message: "当前应用未开放试用",
 		Recovery: authprotocol.RecoveryNone, Hint: "管理员没有配置启用中的试用套餐，入口应当整个隐藏"},

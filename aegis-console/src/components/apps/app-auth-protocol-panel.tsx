@@ -89,10 +89,14 @@ const IDENTIFIER_OPTIONS = [
 
 // 登录与注册的可选集合刻意不同：第三方能否自动建号由每个渠道自己的
 // allowRegister 决定（在「第三方登录」页配），这里再开一个开关会变成两处配同一件事。
+// cardkey 不在 REGISTER_METHODS 里：卡是运营发出去的，发出去就意味着允许它建号，
+// 再加一个注册开关会造出「卡有效但登不进去」这种没人解释得清的状态。
+// 要停发就在「卡密」区块停用批次或作废卡，那两个动作的语义是明确的。
 const LOGIN_METHODS = [
   { value: "password", label: "密码" },
   { value: "sms", label: "短信" },
-  { value: "oauth", label: "第三方" }
+  { value: "oauth", label: "第三方" },
+  { value: "cardkey", label: "卡密" }
 ];
 
 const REGISTER_METHODS = [
@@ -625,7 +629,7 @@ function IntegrationEditor({
               <div className="grid gap-4 sm:grid-cols-2">
                 <CheckboxGroup
                   label="登录方式"
-                  hint="第三方的可用渠道在「第三方登录」页配置"
+                  hint="第三方渠道在「第三方登录」页配置；卡密在「卡密」区块生成"
                   options={LOGIN_METHODS}
                   value={policy.loginMethods}
                   onChange={(loginMethods) => setPolicy({ ...policy, loginMethods })}

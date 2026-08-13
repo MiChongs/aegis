@@ -198,37 +198,10 @@ func (s *LotteryService) Draw(ctx context.Context, userID int64, appID int64, ac
 		_ = s.pg.JoinLotteryActivity(ctx, activityID, userID, "auto")
 	}
 
-	// 3. 检查每日限制
-	if activity.DailyLimit > 0 {
-		todayCount, err := s.pg.CountUserLotteryDrawsToday(ctx, activityID, userID)
-		if err != nil {
-			return nil, err
-		}
-		if todayCount >= int64(activity.DailyLimit) {
-			return nil, apperrors.New(40029, http.StatusTooManyRequests, "今日抽奖次数已达上限")
-		}
-	}
-
-	// 4. 检查总次数限制
-	if activity.TotalLimit > 0 {
-		totalCount, err := s.pg.CountUserLotteryDrawsTotal(ctx, activityID, userID)
-		if err != nil {
-			return nil, err
-		}
-		if totalCount >= int64(activity.TotalLimit) {
-			return nil, apperrors.New(40029, http.StatusTooManyRequests, "抽奖次数已达上限")
-		}
-	}
-
-	// 5. 如果需要消耗积分则扣除
-	if activity.CostType == "points" && activity.CostAmount > 0 {
-		_, err := s.points.AdjustUserIntegral(ctx, userID, appID, -int64(activity.CostAmount), "抽奖消耗", pointdomain.AdminAdjustOptions{})
-		if err != nil {
-			return nil, apperrors.New(40030, http.StatusBadRequest, fmt.Sprintf("积分不足，需要 %d 积分", activity.CostAmount))
-		}
-	}
-
-	// 6. 获取奖品列表并抽奖
+	// 3. 先确认奖池不是空的。
+	//
+	// 这一步刻意排在扣费之前：奖池为空是活动的配置问题，不该让用户先付出代价
+	// 再被告知「活动没有配置奖品」—— 那笔积分与那次赠送次数都退不回来。
 	prizes, err := s.pg.ListLotteryPrizes(ctx, activityID)
 	if err != nil {
 		return nil, err
@@ -237,19 +210,68 @@ func (s *LotteryService) Draw(ctx context.Context, userID int64, appID int64, ac
 		return nil, apperrors.New(40010, http.StatusBadRequest, "活动没有配置奖品")
 	}
 
+	// 4. 优先消耗卡密赠送的抽奖次数。
+	//
+	// 赠送次数**跳过日限、总限与积分扣费**：那三项限制是给常规抽奖入口用的，
+	// 让它们把买来的次数吃掉，等于卡密白买，而用户无从得知次数去了哪里。
+	usedGrant, err := s.pg.ConsumeLotteryDrawGrant(ctx, appID, userID)
+	if err != nil {
+		return nil, err
+	}
+	// 后面任何一步失败都要把这一次还回去。次数是用户花钱买的。
+	refundGrant := func() {
+		if usedGrant {
+			_ = s.pg.RefundLotteryDrawGrant(ctx, appID, userID)
+		}
+	}
+
+	if !usedGrant {
+		// 5. 检查每日限制
+		if activity.DailyLimit > 0 {
+			todayCount, err := s.pg.CountUserLotteryDrawsToday(ctx, activityID, userID)
+			if err != nil {
+				return nil, err
+			}
+			if todayCount >= int64(activity.DailyLimit) {
+				return nil, apperrors.New(40029, http.StatusTooManyRequests, "今日抽奖次数已达上限")
+			}
+		}
+
+		// 6. 检查总次数限制
+		if activity.TotalLimit > 0 {
+			totalCount, err := s.pg.CountUserLotteryDrawsTotal(ctx, activityID, userID)
+			if err != nil {
+				return nil, err
+			}
+			if totalCount >= int64(activity.TotalLimit) {
+				return nil, apperrors.New(40029, http.StatusTooManyRequests, "抽奖次数已达上限")
+			}
+		}
+
+		// 7. 如果需要消耗积分则扣除
+		if activity.CostType == "points" && activity.CostAmount > 0 {
+			_, err := s.points.AdjustUserIntegral(ctx, userID, appID, -int64(activity.CostAmount), "抽奖消耗", pointdomain.AdminAdjustOptions{})
+			if err != nil {
+				return nil, apperrors.New(40030, http.StatusBadRequest, fmt.Sprintf("积分不足，需要 %d 积分", activity.CostAmount))
+			}
+		}
+	}
+
 	// 生成随机种子
 	seedBytes := make([]byte, 32)
 	if _, err := rand.Read(seedBytes); err != nil {
+		refundGrant()
 		return nil, fmt.Errorf("生成随机种子失败: %w", err)
 	}
 
 	// 使用加权随机选择奖品
 	prizeIndex, selectedPrize := s.selectPrize(prizes, seedBytes)
 	if selectedPrize == nil {
+		refundGrant()
 		return nil, apperrors.New(50000, http.StatusInternalServerError, "抽奖选择奖品失败")
 	}
 
-	// 7. 扣减库存
+	// 8. 扣减库存
 	if err := s.pg.DecrementLotteryPrizeStock(ctx, selectedPrize.ID); err != nil {
 		// 库存不足时尝试选保底奖
 		defaultPrize := s.findDefaultPrize(prizes)
@@ -258,14 +280,16 @@ func (s *LotteryService) Draw(ctx context.Context, userID int64, appID int64, ac
 				selectedPrize = defaultPrize
 				prizeIndex = s.findPrizeIndex(prizes, defaultPrize.ID)
 			} else {
+				refundGrant()
 				return nil, apperrors.New(40010, http.StatusBadRequest, "奖品已发完")
 			}
 		} else {
+			refundGrant()
 			return nil, apperrors.New(40010, http.StatusBadRequest, "奖品已发完")
 		}
 	}
 
-	// 8. 创建抽奖记录
+	// 9. 创建抽奖记录
 	seedHex := hex.EncodeToString(seedBytes)
 	proofHash := sha256.Sum256(seedBytes)
 	proofHex := hex.EncodeToString(proofHash[:])
@@ -291,10 +315,13 @@ func (s *LotteryService) Draw(ctx context.Context, userID int64, appID int64, ac
 	}
 	createdDraw, err := s.pg.CreateLotteryDraw(ctx, draw)
 	if err != nil {
+		// 库存已经扣掉了，这里退不回来（那需要整条链路在一个事务里，是另一件事）；
+		// 但次数还回去至少让用户能再抽一次。
+		refundGrant()
 		return nil, err
 	}
 
-	// 9. 自动发放积分/经验奖励
+	// 10. 自动发放积分/经验奖励
 	s.autoAwardPrize(ctx, userID, appID, selectedPrize)
 
 	return &lotterydomain.DrawResult{

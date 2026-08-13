@@ -14,6 +14,10 @@ const (
 	TxnTypeAdminAdjust = "admin_adjust" // 管理员调整（正负皆可）
 	TxnTypeVipPurchase = "vip_purchase" // 余额购买 VIP
 	TxnTypeOrderPay    = "order_pay"    // 余额支付订单
+	// TxnTypeCardKey 卡密核销入账。刻意不复用 recharge：卡密不是充值，
+	// 算进 total_recharged 会让充值报表凭空虚高（applyWalletChangeTx 只把
+	// recharge / refund 计入累计充值，这里正是靠类型区分开的）。
+	TxnTypeCardKey = "card_key"
 )
 
 // Wallet 用户钱包

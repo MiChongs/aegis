@@ -393,6 +393,10 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	auditService := service.NewAuditService(log, pg)
 	dashboardService := service.NewDashboardService(log, pg)
 	pluginService := service.NewPluginService(log, pg)
+	cardKeyService := service.NewCardKeyService(log, pg)
+	// 卡密即登录凭证：注入后 loginMethods 里的 cardkey 一档才真正可用，
+	// 未注入时该方式直接报「未启用」而不是空指针。
+	authService.SetCardKeyService(cardKeyService)
 	appFunctionService := service.NewAppFunctionService(log, pg, cfg.JWT.Secret)
 	// script 运行时的 SDK 依赖：脚本通过它们读写平台数据。
 	// 未装配的那一项对应的能力会在绑定时被拒绝并点名，
@@ -542,6 +546,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 
 		App:              appService,
 		AppFunction:      appFunctionService,
+		CardKey:          cardKeyService,
 		Site:             siteService,
 		Version:          versionService,
 		PlatformSettings: systemService,

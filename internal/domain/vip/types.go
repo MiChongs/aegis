@@ -12,6 +12,7 @@ const (
 	ChannelPaymentOrder = "payment_order" // 在线支付直购
 	ChannelAdminGrant   = "admin_grant"   // 管理员授予
 	ChannelTrial        = "trial"         // 领取试用
+	ChannelCardKey      = "card_key"      // 卡密核销
 )
 
 // 套餐种类。

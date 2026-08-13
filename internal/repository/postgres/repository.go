@@ -3474,67 +3474,25 @@ func (r *Repository) AdjustUserExperienceByAdmin(ctx context.Context, userID int
 		}
 	}()
 
-	var userIDDB int64
-	var account string
-	var experienceBefore int64
-	if err := tx.QueryRow(ctx, `SELECT id, account, experience FROM users WHERE id = $1 AND appid = $2 FOR UPDATE`, userID, appID).Scan(&userIDDB, &account, &experienceBefore); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, ErrUserNotFound
-		}
-		return nil, err
-	}
-
-	levels, err := r.getActiveLevels(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	beforeState := r.resolveLevelState(levels, experienceBefore)
-	experienceAfter := experienceBefore + amount
-	afterState := r.resolveLevelState(levels, experienceAfter)
-	now := time.Now().UTC()
-
-	if _, err := tx.Exec(ctx, `UPDATE users SET experience = $1, updated_at = NOW() WHERE id = $2 AND appid = $3`, experienceAfter, userID, appID); err != nil {
-		return nil, err
-	}
-	if _, err := r.syncUserLevelRecord(ctx, tx, userID, appID, experienceAfter, now); err != nil {
-		return nil, err
-	}
-
-	transactionNo := generateTransactionNo("EXP")
-	title := "管理员手动调整"
 	if strings.TrimSpace(reason) == "" {
 		reason = "管理员手动调整经验值"
 	}
-	isLevelUp := afterState.CurrentLevel > beforeState.CurrentLevel
+	var sourceID *int64
+	if options.AdminID != 0 {
+		adminID := options.AdminID
+		sourceID = &adminID
+	}
 
-	extraData, _ := json.Marshal(map[string]any{
-		"adminId":      options.AdminID,
-		"adminAccount": options.AdminAccount,
-		"reason":       reason,
-		"oldLevel":     beforeState.CurrentLevel,
-		"newLevel":     afterState.CurrentLevel,
-	})
-
-	if _, err := tx.Exec(ctx, `INSERT INTO experience_transactions (transaction_no, user_id, appid, type, category, amount, balance_before, balance_after, level_before, level_after, status, title, description, source_id, source_type, multiplier, is_level_up, client_ip, user_agent, extra_data, created_at, updated_at)
-VALUES ($1, $2, $3, 'earn', 'admin_adjust', $4, $5, $6, $7, $8, 'completed', $9, $10, $11, 'admin_manual', 1, $12, $13, $14, $15, $16, $16)`,
-		transactionNo,
-		userID,
-		appID,
-		amount,
-		experienceBefore,
-		experienceAfter,
-		beforeState.CurrentLevel,
-		afterState.CurrentLevel,
-		title,
-		reason,
-		nullableInt64(options.AdminID),
-		isLevelUp,
-		nullableString(options.ClientIP),
-		nullableString(options.UserAgent),
-		extraData,
-		now,
-	); err != nil {
+	result, err := r.applyExperienceChangeTx(ctx, tx, userID, appID, amount,
+		"admin_adjust", "管理员手动调整", reason, "admin_manual", sourceID,
+		map[string]any{
+			"adminId":      options.AdminID,
+			"adminAccount": options.AdminAccount,
+			"reason":       reason,
+			"clientIp":     options.ClientIP,
+			"userAgent":    options.UserAgent,
+		})
+	if err != nil {
 		return nil, err
 	}
 
@@ -3543,21 +3501,7 @@ VALUES ($1, $2, $3, 'earn', 'admin_adjust', $4, $5, $6, $7, $8, 'completed', $9,
 	}
 	tx = nil
 
-	return &pointdomain.ExperienceAdjustResult{
-		UserID:        userIDDB,
-		AppID:         appID,
-		Account:       account,
-		Amount:        amount,
-		BeforeAmount:  experienceBefore,
-		AfterAmount:   experienceAfter,
-		Reason:        reason,
-		OperationType: "add",
-		TransactionNo: transactionNo,
-		LevelChanged:  isLevelUp,
-		OldLevel:      beforeState.CurrentLevel,
-		NewLevel:      afterState.CurrentLevel,
-		CreatedAt:     now,
-	}, nil
+	return result, nil
 }
 
 func (r *Repository) GetIntegralRankings(ctx context.Context, appID int64, page int, limit int, currentUserID int64) (*pointdomain.RankingResponse, error) {

@@ -464,7 +464,7 @@ Shell 挂载 1.5s 后预热一次，面板打开时再兜底触发一次
 
 | 文件 | 职责 |
 |---|---|
-| `lib/app-sections.ts` | **区块目录**：13 个区块的键 / 标题 / 说明 / 图标 + 分组 |
+| `lib/app-sections.ts` | **区块目录**：每个区块的键 / 标题 / 说明 / 图标 + 分组 |
 | `lib/app-scope-store.ts` | 最近打开的应用、列表视图偏好（localStorage） |
 | `components/apps/app-shared.tsx` | 标识块、状态徽标、AppKey 复制、格式化 |
 | `components/apps/app-list-views.tsx` | 卡片网格 / 表格两种列表视图 |
@@ -472,6 +472,8 @@ Shell 挂载 1.5s 后预热一次，面板打开时再兜底触发一次
 | `components/apps/app-detail-header.tsx` | 详情页标识条 + 带区块换应用 + 关联页面入口 |
 | `components/apps/app-section-nav.tsx` | 区块导航（宽屏竖向分组 / 窄屏横向胶囊） |
 | `components/apps/vip/` | 会员区块：套餐 / 功能标识 / 试用 / 会员查询（见下节） |
+| `components/apps/card-key/` | 卡密区块：批次 / 卡密 / 核销记录（权益表单由后端目录驱动） |
+| `lib/api/card-key.ts` / `lib/card-key-hooks.ts` | 卡密域 API 与 React Query hooks |
 | `lib/api/vip.ts` / `lib/vip-hooks.ts` | 会员域 API 与 React Query hooks |
 
 四条硬约束：
@@ -482,8 +484,8 @@ Shell 挂载 1.5s 后预热一次，面板打开时再兜底触发一次
    「认证与会话」「接入」），已分享出去的深链不该因为改叫法而失效。
 3. **侧边栏子项链接不带 appKey**（`/apps?tab=oauth`），由列表页转交给
    `app-scope-store` 记住的最近应用。因此**详情页必须写这条记忆**，
-   否则侧边栏的 13 个子项会永远落到第一个应用上。
-4. **详情页只挂载当前区块**。13 个面板同时挂载会在进页面的一瞬间打出十几条请求
+   否则侧边栏那一批子项会永远落到第一个应用上。
+4. **详情页只挂载当前区块**。十几个面板同时挂载会在进页面的一瞬间打出十几条请求
    （OAuth 渠道、抽奖奖池、密码策略模板……），其中绝大多数当次不会被看到。
 
 列表页的用户数 / 今日新增来自治理总览接口（一次返回全部应用的聚合值），

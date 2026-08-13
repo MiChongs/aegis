@@ -688,7 +688,7 @@ func validateAuthProtocolPolicy(policy *authprotocol.Policy) error {
 	for _, value := range policy.LoginMethods {
 		if !authprotocol.ValidLoginMethod(value) {
 			return apperrors.New(40082, http.StatusBadRequest,
-				"登录方式只能是 password / sms / oauth")
+				"登录方式只能是 password / sms / oauth / cardkey")
 		}
 	}
 	// 第三方注册没有独立开关：是否允许自动建号由每个渠道自己的 allowRegister 决定，

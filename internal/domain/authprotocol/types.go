@@ -80,11 +80,17 @@ const (
 	MethodPassword = "password"
 	MethodSMS      = "sms"
 	MethodOAuth    = "oauth"
+	// MethodCardKey 卡密即登录凭证（软件授权码）。首次使用自动建号并与卡绑定。
+	//
+	// 它不在 RegisterMethods 里：卡是运营发出去的，发出去就意味着允许它建号，
+	// 再加一个注册开关会造出「卡有效但登不进去」这种没人解释得清的状态。
+	// 要停发就停用批次或作废卡，那两个动作的语义是明确的。
+	MethodCardKey = "cardkey"
 )
 
 var (
 	// LoginMethods 应用可启用的登录方式。
-	LoginMethods = []string{MethodPassword, MethodSMS, MethodOAuth}
+	LoginMethods = []string{MethodPassword, MethodSMS, MethodOAuth, MethodCardKey}
 	// RegisterMethods 应用可启用的注册方式。
 	RegisterMethods = []string{MethodPassword, MethodSMS}
 )
@@ -413,7 +419,9 @@ type LoginInput struct {
 	Password string `json:"password"`
 	Phone    string `json:"phone"`
 	// Code 短信验证码
-	Code          string `json:"code"`
+	Code string `json:"code"`
+	// CardKey 卡密（method = cardkey 时使用）
+	CardKey       string `json:"cardKey"`
 	DeviceID      string `json:"deviceId"`
 	Device        string `json:"device"`
 	CaptchaID     string `json:"captchaId"`

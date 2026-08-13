@@ -57,6 +57,8 @@ type AuthService struct {
 	consistency    *LoginConsistencyService
 	// governance 平台治理判定：应用被冻结 / 封禁时，连已经签发的会话也当场失效
 	governance     *PlatformGovernanceService
+	// cardKey 卡密登录。未注入时 cardkey 登录方式直接报「未启用」而不是空指针
+	cardKey        *CardKeyService
 	registerFlight singleflight.Group
 	// jwtSecret 预转换的签名密钥字节，避免每次签发/校验重复分配
 	jwtSecret []byte
@@ -114,6 +116,11 @@ func (s *AuthService) SetLoginGuard(guard *LoginGuardService) {
 
 func (s *AuthService) SetAdminUserSearchService(search *AdminUserSearchService) {
 	s.search = search
+}
+
+// SetCardKeyService 注入卡密服务，启用「卡密即登录凭证」这一档登录方式。
+func (s *AuthService) SetCardKeyService(cardKey *CardKeyService) {
+	s.cardKey = cardKey
 }
 
 func NewAuthService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository, publisher *event.Publisher, app *AppService, security *SecurityService) *AuthService {

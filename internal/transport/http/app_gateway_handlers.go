@@ -144,6 +144,26 @@ func (h *Handler) AppLogin(c *gin.Context) {
 			DeviceID:      deviceID, Device: device,
 			IP: c.ClientIP(), UserAgent: c.Request.UserAgent(),
 		})
+	case authprotocol.MethodCardKey:
+		// 卡密自带授权快照（还剩多久、已用几台设备），因此这一档单独响应：
+		// 那两件事正是买了卡的用户最想确认的，让客户端再打一次接口去问，
+		// 等于允许「登录成功但授权信息拿不到」这种状态存在。
+		if strings.TrimSpace(req.CardKey) == "" {
+			response.Error(c, http.StatusBadRequest, 40000, "cardKey 不能为空")
+			return
+		}
+		outcome, cardErr := h.auth.CardKeyLogin(c.Request.Context(), service.CardKeyLoginInput{
+			AppID: app.ID, Code: req.CardKey,
+			DeviceID: deviceID, Device: device,
+			IP: c.ClientIP(), UserAgent: c.Request.UserAgent(),
+		})
+		if cardErr != nil {
+			h.writeError(c, cardErr)
+			return
+		}
+		response.Success(c, http.StatusOK, authResultMessage(outcome.Login, "登录成功"),
+			CardKeyLoginResponse{LoginResult: outcome.Login, Authorization: outcome.Authorization})
+		return
 	case authprotocol.MethodOAuth:
 		response.Error(c, http.StatusBadRequest, 40087,
 			"第三方登录请走 /auth/oauth/url 与 /auth/oauth/exchange")

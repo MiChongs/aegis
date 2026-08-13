@@ -74,6 +74,27 @@ class AegisAuthApi internal constructor(private val client: AegisClient) {
     )
 
     /**
+     * 卡密登录（软件授权码）。卡本身就是凭证，首次使用自动建号并与卡绑定。
+     *
+     * 与另外两种登录方式的区别：**[deviceId] 是必填的**。一张卡能在几台设备上用
+     * 由卡决定，没有设备标识就无从判断这次登录算不算超出上限 ——
+     * 服务端在缺标识时拒绝（40343）而不是放行，否则那个限制等于不存在。
+     *
+     * 响应在标准会话字段之外多一个 `authorization`：授权到期时间、可绑设备数、
+     * 已绑设备数。客户端应当直接用它渲染「授权剩余 N 天 / 已用 x/y 台」，
+     * 不必再调 [AegisCommerceApi.myCardKeys]。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun loginWithCardKey(
+        cardKey: String,
+        deviceId: String,
+        device: String? = null,
+    ): AegisSession = login(
+        buildBody("method" to "cardkey", "cardKey" to cardKey, "deviceId" to deviceId, "device" to device)
+    )
+
+    /**
      * 注册。`profile` 里能放哪些字段由 `/config` 的 `auth.registrationSchema` 决定，
      * **不要在客户端硬编码表单** —— 管理员加一个必填字段就得发版。
      */
@@ -606,6 +627,34 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
      * 重复调用是安全的：仍在试用期内会原样返回上一次的结果（`replayed = true`）。
      */
     fun claimVipTrial(): JsonElement = client.call("POST", "/vip/trial", requireAuth = true)
+
+    @Throws(IOException::class)
+    /**
+     * 兑换卡密。
+     *
+     * 卡面大小写与分隔符由服务端归一化（抄卡密的人会用小写、把 `-` 打成空格），
+     * 客户端原样上送即可，不要自己"清洗"一遍 —— 两边各洗一次反而会洗出分歧。
+     *
+     * 失败一律是 4xx 且业务码区分得很细：40340 已作废 / 40341 已使用 /
+     * 40342 已过期 / 40343 设备数已满 / 40344 已绑定他人 / 40345 类型不符 /
+     * 40441 卡密不存在。把它们合并成一句"兑换失败"会让用户无从判断下一步该做什么。
+     *
+     * [deviceId] 只在兑换「设备位」类权益时有意义，其余情况可以不传。
+     */
+    @JvmOverloads
+    fun redeemCardKey(code: String, deviceId: String? = null): JsonElement = client.call(
+        "POST", "/card-keys/redeem",
+        mapOf("code" to code, "deviceId" to deviceId), requireAuth = true,
+    )
+
+    @Throws(IOException::class)
+    /**
+     * 我名下的授权卡：授权到期时间与已绑定设备数。
+     *
+     * 用卡密登录（`login(method = "cardkey")`）时，这两项已经随登录结果一起下发了；
+     * 这个接口是给「登录之后过了一段时间再看一眼」用的。
+     */
+    fun myCardKeys(): JsonElement = client.call("GET", "/card-keys/mine", requireAuth = true)
 
     @Throws(IOException::class)
     @JvmOverloads

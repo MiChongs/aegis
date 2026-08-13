@@ -67,6 +67,11 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/auth/oauth/bindings", h.ListMyOAuthBindings)
 		appGatewayAuthed.DELETE("/auth/oauth/bindings/:provider", h.UnbindMyOAuthProvider)
 
+		// 卡密：兑换与「我的授权」。授权卡登录本身不在这里 ——
+		// 它是 /auth/login 的一档 method，加登录方式不加路由。
+		appGatewayAuthed.POST("/card-keys/redeem", h.AppRedeemCardKey)
+		appGatewayAuthed.GET("/card-keys/mine", h.AppMyCardKeys)
+
 		// 当前用户：资料 / 设置 / 安全概览
 		appGatewayAuthed.GET("/me", h.AppMe)
 		appGatewayAuthed.GET("/me/profile", h.Profile)

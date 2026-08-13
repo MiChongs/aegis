@@ -2,6 +2,8 @@ DELETE	/api/admin/apps/:appkey	AdminDeleteApp
 DELETE	/api/admin/apps/:appkey/auth-protocol/transport/keys/:keyId	AdminRevokeAppTransportKey
 DELETE	/api/admin/apps/:appkey/banners	DeleteAdminBanners
 DELETE	/api/admin/apps/:appkey/banners/:bannerId	DeleteAdminBanner
+DELETE	/api/admin/apps/:appkey/card-keys/batches/:batchId	AdminDeleteCardKeyBatch
+DELETE	/api/admin/apps/:appkey/card-keys/codes/:cardId/devices/:deviceId	AdminUnbindCardKeyDevice
 DELETE	/api/admin/apps/:appkey/channels/:cid	AdminDeleteVersionChannel
 DELETE	/api/admin/apps/:appkey/channels/:cid/users	AdminRemoveVersionChannelUsers
 DELETE	/api/admin/apps/:appkey/function-keys/:keyId	AdminRevokeAppFunctionKey
@@ -96,6 +98,12 @@ GET	/api/admin/apps/:appkey/auth-protocol/transport/keys	AdminListAppTransportKe
 GET	/api/admin/apps/:appkey/banners	AdminBanners
 GET	/api/admin/apps/:appkey/banners/export	ExportAdminBanners
 GET	/api/admin/apps/:appkey/captcha-config	AdminGetCaptchaConfig
+GET	/api/admin/apps/:appkey/card-keys/batches	AdminListCardKeyBatches
+GET	/api/admin/apps/:appkey/card-keys/batches/:batchId/export	AdminExportCardKeyBatch
+GET	/api/admin/apps/:appkey/card-keys/catalog	AdminCardKeyCatalog
+GET	/api/admin/apps/:appkey/card-keys/codes	AdminListCardKeys
+GET	/api/admin/apps/:appkey/card-keys/codes/:cardId/devices	AdminListCardKeyDevices
+GET	/api/admin/apps/:appkey/card-keys/redemptions	AdminListCardKeyRedemptions
 GET	/api/admin/apps/:appkey/channels	AdminListVersionChannels
 GET	/api/admin/apps/:appkey/channels/:cid	AdminGetVersionChannel
 GET	/api/admin/apps/:appkey/channels/:cid/users	AdminListVersionChannelUsers
@@ -429,6 +437,7 @@ GET	/api/user/two-factor/recovery-codes	ListRecoveryCodes
 GET	/api/v1/apps/:appkey/auth/oauth/bindings	ListMyOAuthBindings
 GET	/api/v1/apps/:appkey/auth/oauth/callback	AppOAuthCallback
 GET	/api/v1/apps/:appkey/banners	AppBanners
+GET	/api/v1/apps/:appkey/card-keys/mine	AppMyCardKeys
 GET	/api/v1/apps/:appkey/config	AppConfig
 GET	/api/v1/apps/:appkey/leaderboard/me	LeaderboardMe
 GET	/api/v1/apps/:appkey/leaderboard/points/:type	LeaderboardPoints
@@ -553,6 +562,9 @@ POST	/api/admin/apps/:appkey/banners	CreateAdminBanner
 POST	/api/admin/apps/:appkey/banners/image	UploadAdminBannerImage
 POST	/api/admin/apps/:appkey/captcha-config/preview	AdminPreviewDynamicCaptcha
 POST	/api/admin/apps/:appkey/captcha-config/test-sms	AdminTestSMS
+POST	/api/admin/apps/:appkey/card-keys/batches	AdminGenerateCardKeys
+POST	/api/admin/apps/:appkey/card-keys/codes/disable	AdminDisableCardKeys
+POST	/api/admin/apps/:appkey/card-keys/codes/restore	AdminRestoreCardKeys
 POST	/api/admin/apps/:appkey/channels	AdminCreateVersionChannel
 POST	/api/admin/apps/:appkey/channels/:cid/users	AdminAddVersionChannelUsers
 POST	/api/admin/apps/:appkey/function-keys	AdminCreateAppFunctionKey
@@ -869,6 +881,7 @@ POST	/api/v1/apps/:appkey/auth/register	AppRegister
 POST	/api/v1/apps/:appkey/auth/sms/code	AppSMSCode
 POST	/api/v1/apps/:appkey/banners/:bannerId/click	AppBannerClick
 POST	/api/v1/apps/:appkey/captcha	AppCaptcha
+POST	/api/v1/apps/:appkey/card-keys/redeem	AppRedeemCardKey
 POST	/api/v1/apps/:appkey/me/2fa/recovery-codes	GenerateRecoveryCodes
 POST	/api/v1/apps/:appkey/me/2fa/recovery-codes/regenerate	RegenerateRecoveryCodes
 POST	/api/v1/apps/:appkey/me/2fa/totp/disable	DisableTOTP
@@ -906,6 +919,7 @@ PUT	/api/admin/apps/:appkey/auth-protocol	AdminUpdateAppAuthProtocol
 PUT	/api/admin/apps/:appkey/banners/:bannerId	UpdateAdminBanner
 PUT	/api/admin/apps/:appkey/banners/order	ReorderAdminBanners
 PUT	/api/admin/apps/:appkey/captcha-config	AdminUpdateCaptchaConfig
+PUT	/api/admin/apps/:appkey/card-keys/batches/:batchId/status	AdminSetCardKeyBatchStatus
 PUT	/api/admin/apps/:appkey/channels/:cid	AdminUpdateVersionChannel
 PUT	/api/admin/apps/:appkey/commerce	UpdateAdminAppCommerceSettings
 PUT	/api/admin/apps/:appkey/encryption	UpdateAdminAppEncryption

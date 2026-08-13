@@ -44,6 +44,7 @@ type RouterDeps struct {
 	// ── 应用与平台 ────────────────────────────────────────────────────
 	App              *service.AppService
 	AppFunction      *service.AppFunctionService
+	CardKey          *service.CardKeyService
 	Site             *service.SiteService
 	Version          *service.VersionService
 	PlatformSettings *service.PlatformSettingsService
@@ -157,6 +158,7 @@ func (d RouterDeps) newHandler() *Handler {
 		audit:              d.Audit,
 		plugin:             d.Plugin,
 		appFunction:        d.AppFunction,
+		cardKey:            d.CardKey,
 		authProtocol:       d.AuthProtocol,
 		dashboard:          d.Dashboard,
 		orgApproval:        d.OrgApproval,

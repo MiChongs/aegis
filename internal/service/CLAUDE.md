@@ -21,6 +21,8 @@
 | `app_content.go` | — | 应用级内容中心：Banner 投放位与公告（挂在 `AppService` 上，见下节） |
 | `auth_service.go` | `AuthService` | 用户 JWT 认证、Token 刷新、OAuth2 |
 | `auth_sms.go` | — | 短信验证码登录/自动建号 + `MobileOAuthLoginScoped`（叠加应用级开关） |
+| `auth_cardkey.go` | — | 卡密登录：卡即凭证，首次使用按卡面派生账号自动建号并绑卡绑设备 |
+| `cardkey_service.go` | `CardKeyService` | **卡密**：批次生成 / 作废 / 导出 / 兑换 / 设备解绑（见下节） |
 | `auth_protocol_service.go` | `AuthProtocolService` | 接入协议：策略、安全等级、应用密钥签名、Transport v2 |
 | `auth_protocol_selftest.go` | — | 接入自检；同时是三档协议的**参考客户端实现** |
 | `auto_sign_service.go` | `AutoSignService` | 自动签到调度（Redis Sorted Set） |
@@ -837,6 +839,35 @@ vip_transactions.features  开通那一刻的功能快照
 客户端侧同一份结论也能拿到：`/vip/status` 的 `features`、远程函数的
 `aegis.user.get().vipFeatures`。三处都由 `ResolveEntitlement` 投影而来
 （`Entitlement.View()`），不存在"服务端说有、客户端说没有"。
+
+### 卡密 —— 一码一用靠三道保证，不靠判断
+
+一张卡有两种形态（授权卡 / 兑换卡），共用同一套生成、作废、核销与权益目录。
+完整说明见 [docs/card-key.md](../../docs/card-key.md)，这里只列服务层的取舍：
+
+- **授权卡登录不新增路由**：`/auth/login` 的 `method` 就是分发点，加一档 `cardkey` 即可。
+  会话的 `provider` 填 `"cardkey"`（自由字符串，不需要改枚举），
+  收口仍是 `finalizeLogin`，因此登录一致性、MFA、同时在线上限全都照常生效。
+- **账号名由卡面派生**（`CardKeyAccount`）。这让首次建号成为**确定性**操作：
+  用随机账号名的话，同一张卡的两次并发首登会造出两个账号，其中一个成为孤儿；
+  用卡面则第二次撞 `uq_users_appid_account`，服务层据此回读同一个用户。
+- **一码一用有三道保证**，各自防不同的失效模式：行锁（并发串行化）→
+  条件 UPDATE 抢占（`WHERE status='unused'`，与 `FulfillPaymentOrder` 同构）→
+  `uq_card_key_redemptions_card` 唯一约束（兜住前两道被改坏，那种 bug 的表现是重复发钱）。
+- **七档权益在同一个事务里发放**。四档复用既有的事务内助手（`extendUserVipTx` /
+  `applyIntegralChangeTx` / `applyWalletChangeTx`），经验值这次新抽出
+  `applyExperienceChangeTx` —— 它此前**只有**一个自开事务的管理端入口，
+  接不进「要么全发、要么全不发」。
+- **权益目录是单一事实源**（`internal/domain/cardkey/catalog.go`），
+  `TestRewardCatalogHasGrantBranch` 双向钉死「目录 ↔ 发放分支」。
+- **缺设备标识时拒绝而不是放行**（40343）：开着的限制因为请求没带标识就放行，
+  等于没有这个限制 —— 与试用的设备去重同一取向。
+- **错误码分得细**：「已作废」「已用过」「已过期」是三件不同的事，
+  合成一句「卡密无效」会让客服无从判断该补发、该解释、还是该退款。
+  `checkCardUsable` 的判定顺序即错误优先级。
+
+抽奖次数是这次新建的概念（`lottery_draw_grants`）：抽奖此前只有「数历史行」的
+日限与总限，没有余额。赠送次数**跳过日限、总限与积分扣费** —— 被日限吃掉等于卡密白买。
 
 ### 远程函数 —— 能力目录是单一事实源
 

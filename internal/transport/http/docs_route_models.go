@@ -90,6 +90,11 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/apps/{appkey}/banners/{bannerId}"):                                    AdminBannerUpsertRequest{},               // UpdateAdminBanner
 		routeKey("PUT", "/api/admin/apps/{appkey}/captcha-config"):                                        AdminCaptchaConfigUpdateRequest{},        // AdminUpdateCaptchaConfig
 		routeKey("POST", "/api/admin/apps/{appkey}/captcha-config/test-sms"):                              AdminTestSMSRequest{},                    // AdminTestSMS
+		routeKey("POST", "/api/admin/apps/{appkey}/card-keys/batches"):                                    GenerateCardKeysRequest{},                // AdminGenerateCardKeys
+		routeKey("PUT", "/api/admin/apps/{appkey}/card-keys/batches/{batchId}/status"):                    CardKeyBatchStatusRequest{},              // AdminSetCardKeyBatchStatus
+		routeKey("POST", "/api/admin/apps/{appkey}/card-keys/codes/disable"):                              CardKeyIDsRequest{},                      // AdminDisableCardKeys
+		routeKey("POST", "/api/admin/apps/{appkey}/card-keys/codes/restore"):                              CardKeyIDsRequest{},                      // AdminRestoreCardKeys
+		routeKey("POST", "/api/v1/apps/{appkey}/card-keys/redeem"):                                        RedeemCardKeyRequest{},                   // AppRedeemCardKey
 		routeKey("POST", "/api/admin/apps/{appkey}/channels"):                                             AdminVersionChannelSaveRequest{},         // AdminCreateVersionChannel
 		routeKey("PUT", "/api/admin/apps/{appkey}/channels/{cid}"):                                        AdminVersionChannelSaveRequest{},         // AdminUpdateVersionChannel
 		routeKey("DELETE", "/api/admin/apps/{appkey}/channels/{cid}/users"):                               VersionChannelUsersRequest{},             // AdminRemoveVersionChannelUsers

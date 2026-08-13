@@ -23,6 +23,7 @@ import { AppPaymentPanel } from "@/components/apps/app-payment-panel";
 import { AppSignInRewardPanel } from "@/components/apps/app-signin-reward-panel";
 import { AppStatsPanel } from "@/components/apps/app-stats-panel";
 import { AppUserSettingsPanel } from "@/components/apps/app-user-settings-panel";
+import { AppCardKeyPanel } from "@/components/apps/card-key/app-card-key-panel";
 import { AppVipPanel } from "@/components/apps/vip/app-vip-panel";
 import { EmailConfigPanel } from "@/components/configuration/email-config-panel";
 import { useAdminAppQuery, useAdminAppsQuery, useDeleteAdminAppMutation } from "@/lib/admin-hooks";
@@ -59,7 +60,7 @@ function AppDetailInner() {
   // 治理状态与顶部横幅共用同一个查询（同 queryKey，不会多打一次请求）
   const governanceQuery = useAppGovernanceQuery(appKey);
 
-  // 记住最近打开的应用：侧边栏那 13 个不带 appKey 的深链靠它落回这里
+  // 记住最近打开的应用：侧边栏那批不带 appKey 的深链靠它落回这里
   const setLastAppKey = useAppScopeStore((s) => s.setLastAppKey);
   useEffect(() => {
     if (app?.appKey) setLastAppKey(app.appKey);
@@ -136,7 +137,7 @@ function AppDetailInner() {
 /**
  * 只挂载当前区块。
  *
- * 13 个面板同时挂载会在进页面的一瞬间打出十几条请求（OAuth 渠道、抽奖奖池、
+ * 十几个面板同时挂载会在进页面的一瞬间打出十几条请求（OAuth 渠道、抽奖奖池、
  * 密码策略模板……），其中绝大多数当次根本不会被看到。
  */
 function AppSectionPanel({ section, app }: { section: string; app: AppSummary }) {
@@ -163,6 +164,8 @@ function AppSectionPanel({ section, app }: { section: string; app: AppSummary })
       return <AppUserSettingsPanel appId={app.id} />;
     case "vip":
       return <AppVipPanel appKey={app.appKey} />;
+    case "card-key":
+      return <AppCardKeyPanel appKey={app.appKey} />;
     case "signin-reward":
       return <AppSignInRewardPanel appKey={app.appKey} />;
     case "lottery":

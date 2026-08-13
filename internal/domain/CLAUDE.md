@@ -13,6 +13,7 @@
 | `admin` | `Account`, `Profile`, `Session`, `AccessContext`, `LoginResult`, `Assignment`, `AssignmentMutation` |
 | `app` | App 相关类型（多租户应用元数据） |
 | `auth` | JWT 声明、OAuth2 Token、用户认证上下文 |
+| `cardkey` | 卡密：批次 / 单卡 / 设备绑定 / 核销流水 + **七档权益目录**（`catalog.go`，同时驱动服务端校验与控制台表单） |
 | `email` | 邮件渠道配置（`SMTPConfig` / `ZeaburConfig`）、投递记录 `Delivery`、webhook 事件 |
 | `organization` | **组织架构**：`Organization`/`Department`/`Member`/`Position`/`Role`/`ApprovalChain`。对外一律 UUID（`ID` 带 `json:"-"`，`UUID` 序列化成 `id`）；内置角色与权限目录也在这里，`PermissionCatalog()` 经 `/org-metadata` 驱动控制台的权限勾选树 |
 | `oauth` | 应用级第三方登录渠道配置、模板目录、绑定记录 |

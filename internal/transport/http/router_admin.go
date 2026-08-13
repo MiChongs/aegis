@@ -184,6 +184,21 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/functions/:functionName/invoke", h.AdminInvokeAppFunction)
 		admin.GET("/apps/:appkey/functions/:functionName/invocations", h.AdminListAppFunctionInvocations)
 		admin.GET("/apps/:appkey/functions/:functionName/stats", h.AdminAppFunctionStats)
+		// 卡密。二级段全部是静态词（batches / codes / redemptions / catalog），
+		// 参数段只出现在第三级 —— 与 :functionName 那一层同理，静态与参数抢同一段
+		// 会让 gin 在启动时 panic，而那是启动期才炸的问题。
+		admin.GET("/apps/:appkey/card-keys/catalog", h.AdminCardKeyCatalog)
+		admin.GET("/apps/:appkey/card-keys/batches", h.AdminListCardKeyBatches)
+		admin.POST("/apps/:appkey/card-keys/batches", h.AdminGenerateCardKeys)
+		admin.PUT("/apps/:appkey/card-keys/batches/:batchId/status", h.AdminSetCardKeyBatchStatus)
+		admin.DELETE("/apps/:appkey/card-keys/batches/:batchId", h.AdminDeleteCardKeyBatch)
+		admin.GET("/apps/:appkey/card-keys/batches/:batchId/export", h.AdminExportCardKeyBatch)
+		admin.GET("/apps/:appkey/card-keys/codes", h.AdminListCardKeys)
+		admin.POST("/apps/:appkey/card-keys/codes/disable", h.AdminDisableCardKeys)
+		admin.POST("/apps/:appkey/card-keys/codes/restore", h.AdminRestoreCardKeys)
+		admin.GET("/apps/:appkey/card-keys/codes/:cardId/devices", h.AdminListCardKeyDevices)
+		admin.DELETE("/apps/:appkey/card-keys/codes/:cardId/devices/:deviceId", h.AdminUnbindCardKeyDevice)
+		admin.GET("/apps/:appkey/card-keys/redemptions", h.AdminListCardKeyRedemptions)
 		// 应用级第三方登录渠道（配置 + 自检 + 绑定治理）
 		admin.GET("/oauth-providers/templates", h.AdminOAuthProviderTemplates)
 		admin.GET("/apps/:appkey/oauth-providers", h.AdminListAppOAuthProviders)
