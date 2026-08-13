@@ -16,6 +16,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// docs_route_models.go 由 scripts/docsgen 生成：它把「运行时的真实路由表」与
+// 「静态分析出的 handler 绑定类型」交叉，得出每条路由的请求模型。
+// 改了 handler 的请求绑定之后跑一次，产物要一起提交（CI 用 -check 校验）。
+//
+//go:generate go run ../../../scripts/docsgen
+
 type DocsOptions struct {
 	Title       string
 	Description string
@@ -197,6 +203,12 @@ func BuildOpenAPISpec(router *gin.Engine, opts DocsOptions) (*openapi3.T, error)
 		}
 
 		method := strings.ToUpper(strings.TrimSpace(route.Method))
+		// HEAD 不进规范。它与同路径的 GET 共用契约（同样的参数、同样的响应头，
+		// 差别只是没有响应体），单独列出来只会让生成式客户端多出一批
+		// 名字雷同、拿不到数据的方法 —— 调用方几乎必然误用其中之一。
+		if method == http.MethodHead {
+			continue
+		}
 		openAPIPath := normalizeOpenAPIPath(route.Path)
 		key := routeKey(method, openAPIPath)
 		meta, ok := routeDocs[key]

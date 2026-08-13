@@ -97,9 +97,10 @@ graph TD
 | `pkg/banner/` | **启动横幅渲染引擎**：FIGlet 艺术字 + 明细表格 + 终端能力降级 | [bootstrap](internal/bootstrap/CLAUDE.md#启动横幅) |
 | `pkg/routetable/` | **路由清单渲染**：分组表格 / 树形 / Markdown / CSV / HTML / JSON，宽度自适应 | [transport/http](internal/transport/http/CLAUDE.md#路由清单与分组规则) |
 | `pkg/gifcaptcha/` | **动态图片验证码**：逐帧动画 GIF（字形位移/旋转/变色 + 漂移噪点 + 干扰线 + 水波扭曲），纯 Go、字体内嵌 | [service](internal/service/CLAUDE.md#动态图片验证码gifcaptcha) |
+| **邮件系统** | 平台级 + 应用级两种作用域，九档服务商（SMTP / Zeabur / AWS SES / Resend / SendGrid / Mailgun / Postmark / 阿里云 / 腾讯云）一律优先官方 SDK；服务商目录自述驱动服务端校验与控制台表单 | [docs](docs/email.md) |
 | **头像服务** | 地址**永久**不失效（编码的是「谁」不是「哪个对象」）+ EXIF 纠正 / 多尺寸 / blurhash + 服务端自绘默认头像 | [docs](docs/avatar.md) |
-| `pkg/receipt/` | **支付凭证 PDF**：10 语言 A4 排版 + 字体决策 + 分页 | [docs](docs/payment-receipt.md) |
 | **地图底图** | 13 家供应商自述式目录，默认档跟随**浏览器语言**（简体中文走境内、其余走全球）；GCJ-02 底图在瓦片管线里纠偏，业务坐标恒为 WGS-84 | [aegis-console](aegis-console/CLAUDE.md#地图底图多供应商--跟随浏览器语言) |
+| `pkg/receipt/` | **支付凭证 PDF**：10 语言 A4 排版 + 字体决策 + 分页 | [docs](docs/payment-receipt.md) |
 | **交易与凭证** | 订单与钱包流水**两类主体**都能出凭证；同一笔钱只出一份（挂着订单的流水由订单出具） | [docs](docs/payment-receipt.md#两类凭证主体) |
 | **会员与试用** | 会员判定收成一个入口（是不是会员 / 还剩多久 / 是不是**试用** / 试用还能不能领）；试用是套餐的一种，一人一次由唯一约束保证 | [service](internal/service/CLAUDE.md#会员判定与试用期会员) |
 | **卡密** | 一张卡两种形态：**授权卡**（卡即登录凭证，绑设备、有授权期）与**兑换卡**（发会员/积分/经验/余额/抽奖次数/设备位）。七档权益由目录驱动，一码一用由三道保证叠出来 | [docs](docs/card-key.md) |
@@ -108,7 +109,9 @@ graph TD
 | `pkg/i18n/` | **通用国际化**：语言协商 + CLDR 复数 + 定点金额/日期格式化 | [docs](docs/payment-receipt.md#语言协商) |
 | `pkg/fontkit/` | **字体归一化**：TTC 拆分成独立 sfnt + 字符覆盖度查询 | [docs](docs/payment-receipt.md#中日韩字体) |
 | `pkg/` | 共享工具包（errors/logger/response/tracing） | — |
-| `migrations/postgres/` | 顺序 SQL 迁移文件（000001–000072） | — |
+| `migrations/postgres/` | 顺序 SQL 迁移文件（000001–000080） | — |
+| `sql/queries/` | **sqlc 查询源**：迁移目录即 schema，可空性由生成器算出（含 LEFT JOIN 污染的那些列），产物落 `internal/repository/postgres/sqlcgen` | [docs](docs/sqlc.md) |
+| `scripts/docsgen/` | **OpenAPI 请求模型生成器**：运行时路由表 × `x/tools` 静态分析，推出每条路由的请求类型。gin 的 handler 签名擦掉了类型，没有哪个 OpenAPI 库能代劳 | [transport/http](internal/transport/http/CLAUDE.md#第-1-层为什么必须由生成器产出) |
 | `sdk/kotlin/` | **官方 Kotlin/Java 客户端**：三档 transport 适配器 + 全量 API，Android 与 JVM 服务端共用 | [README](sdk/kotlin/README.md) |
 | `aegis-console/` | Next.js 管理前端 | [CLAUDE.md](aegis-console/CLAUDE.md) |
 
@@ -132,6 +135,10 @@ go run ./cmd/server migrate
 # 导出 OpenAPI 规范
 go run ./cmd/server openapi docs/openapi.json
 
+# 重新生成「路由 → 请求模型」映射表（改了 handler 的请求绑定后必须跑，产物要提交）
+go generate ./internal/transport/http/
+go run ./scripts/docsgen -check   # CI 跑的就是这条：产物过期即失败
+
 # 导出 Postman 集合
 go run ./cmd/server postman
 
@@ -151,6 +158,19 @@ go run ./cmd/server import-dump <dump.sql> --appid <id> --password <统一密码
 # 运行测试
 go test ./...
 ```
+
+#### sqlc（从迁移文件生成类型安全的查询代码）
+
+```bash
+sqlc generate   # 改了 migrations/ 或 sql/queries/ 之后必须跑，产物要一起提交
+sqlc vet        # 按 sqlc.yaml 的规则检查每条查询（不连库）
+sqlc diff       # 产物是否与当前 schema/queries 一致；CI 跑的就是 vet + diff
+```
+
+版本钉在 `1.31.1`（与 CI 一致，浮动版本会让 `diff` 随机变红）：
+`scoop install sqlc` / `brew install sqlc` / [Releases](https://github.com/sqlc-dev/sqlc/releases/tag/v1.31.1)。
+定位是**渐进接管**：新查询优先写成 `.sql`，存量手写 pgx 保持原样，
+两者共用同一个连接池。详见 [docs/sqlc.md](docs/sqlc.md)。
 
 ### 前端（aegis-console）
 
@@ -242,7 +262,7 @@ docker build -f deploy/docker/console.Dockerfile \
 | 作用域 | 存储 | 管理入口 | 判据 |
 |---|---|---|---|
 | 应用级 | `apps.settings` JSONB（`policy` / `passwordPolicy` / `captcha` / `transportEncryption` / `integralPerCurrency`） | 控制台 `/apps/{appKey}`，路径里的 appKey 即作用域 | 换个应用这项会不同 |
-| 平台级 | `platform_settings` K/V（firewall / security / adminCaptcha / ldap / oidc / saml / branding / selfService） | 控制台 `/configuration`（超管，无应用选择器） | 对所有应用一视同仁 |
+| 平台级 | `platform_settings` K/V（firewall / security / adminCaptcha / ldap / oidc / saml / branding / selfService）；邮件通道另在 `app_email_configs` 里以 `appid IS NULL` 表示 | 控制台 `/configuration`（超管，无应用选择器） | 对所有应用一视同仁 |
 
 新增配置项先确定归属，**不要两边都放**。应用级策略的逐项执行点索引见
 [internal/service/CLAUDE.md](internal/service/CLAUDE.md#应用级认证策略的执行点)。
@@ -376,7 +396,7 @@ docker build -f deploy/docker/console.Dockerfile \
 | 多云存储 | Azure Blob / Aliyun OSS / AWS S3 / Tencent COS / Qiniu / WebDAV |
 | OAuth2 | QQ / 微信 / GitHub / Google / Microsoft / 微博 |
 | 支付渠道 | 16 个内置渠道，均由 `Provider.Describe()` 自描述（详见 [internal/service/CLAUDE.md](internal/service/CLAUDE.md#支付网关)）：<br>内部钱包 / 支付宝 (smartwalle) / 微信支付 (官方 wechatpay-go) / 易支付系聚合（易支付·彩虹·虎皮椒·PAYJS·码支付·V免签）/ Stripe (stripe-go) / PayPal (plutov) / Paddle / Lemon Squeezy / Square / Razorpay / Coinbase Commerce |
-| 邮件出口 | 可插拔 provider：`smtp` 直连（go-mail）/ `zeabur` REST API（详见 [docs/zeabur-email.md](docs/zeabur-email.md)）<br>**Zeabur 平台封禁出站 SMTP 端口**，部署在其上时只能走 `zeabur` 档 |
+| 邮件出口 | 九档可插拔 provider，一律优先官方 SDK：`smtp` 直连（go-mail）/ `zeabur` REST / `ses`（aws-sdk-go-v2 sesv2，Raw MIME 带附件）/ `resend`（resend-go）/ `sendgrid`（sendgrid-go）/ `mailgun`（mailgun-go v5）/ `postmark`（REST，无官方 Go SDK）/ `aliyun`（dm-20151123）/ `tencent`（tencentcloud-sdk-go ses）。配置全部落库、控制台动态表单由服务商自述驱动，详见 [docs/email.md](docs/email.md)<br>**Zeabur 平台封禁出站 SMTP 端口**，部署在其上时不能用 `smtp` 档 |
 | 出海代理 | 自研网关（`pkg/egress`）：域名后缀路由 + http/https/socks5/socks5h/ssh/trojan/shadowsocks，协议实现分别来自 x/net/proxy、x/crypto/ssh、go-shadowsocks2 |
 | 启动横幅 | `pkg/banner`：go-figure（FIGlet 艺术字，内嵌 148 字体）+ go-pretty（表格/着色，自带 NO_COLOR 与 Windows VT 识别）+ gopsutil（主机事实）+ go-humanize + go-isatty/x/term（终端探测） |
 | 支付凭证 | `pkg/receipt`：gopdf（PDF 引擎，支持 TTF 子集嵌入）+ `pkg/fontkit`（TTC → 独立 sfnt，gopdf 读不了 TTC/OTF）+ `pkg/i18n`（x/text 的语言协商与 CLDR 复数）+ x/image/gofont（内嵌拉丁字形，保证英文凭证零依赖）+ go-colorful（Lab 空间配色派生与 WCAG 对比度）+ boombuler/barcode（矢量二维码）。10 语言、默认 en、Claude 暖调配色，详见 [docs](docs/payment-receipt.md) |

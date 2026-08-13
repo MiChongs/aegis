@@ -1,13 +1,18 @@
 package httptransport
 
-// 本文件由路由表推导生成，请勿手工编辑。
+// 本文件由 scripts/docsgen 生成，请勿手工编辑。
 //
-// 生成方式：取运行时 gin 路由表，找到每条路由的 handler，再回到源码里看它把请求
-// 绑定到了哪个具名类型（bind / bindLimitedJSON / c.ShouldBind*）。因此这里的每一项
-// 都与 handler 真正解析的结构一致，不是照着文档抄的。
+// 重新生成：
+//
+//	go generate ./internal/transport/http/
+//
+// 生成方式是把两份事实交叉，两边都不是人手维护的清单：
+//
+//	运行时  装配真实路由表，得到 method + path → handler
+//	静态    用 x/tools 加载本包的类型信息，得到 handler → 它绑定的具名类型
 //
 // 它解决的是「生成式客户端拿到一堆没有参数的空方法」：openapi-generator 只认
-// requestBody / parameters，路由再全，缺了 schema 也生成不出可用的 Java/Kotlin 客户端。
+// requestBody / parameters，路由再全，缺了 schema 也生成不出可用的客户端。
 //
 // 覆盖不到的情况有两类，都不是遗漏：
 //   1. 请求体是匿名 struct（var body struct{...}），没有类型名可引用；
@@ -15,13 +20,22 @@ package httptransport
 //
 // 手工登记的 manualRouteDocs 与网关的 gatewayRouteDocs 会覆盖本表同名条目。
 
+import (
+	"aegis/internal/domain/app"
+	"aegis/internal/domain/authprotocol"
+	"aegis/internal/domain/system"
+	"aegis/internal/service"
+)
+
 func generatedRouteModels() map[string]any {
 	return map[string]any{
+		routeKey("POST", "/api/admin/app/email-config/channel"):                                           AdminEmailChannelRequest{},               // AdminEmailChannel
 		routeKey("POST", "/api/admin/app/email-config/create"):                                            AdminEmailConfigSaveRequest{},            // AdminEmailConfigCreate
 		routeKey("POST", "/api/admin/app/email-config/delete"):                                            AdminEmailConfigDetailRequest{},          // AdminEmailConfigDelete
 		routeKey("POST", "/api/admin/app/email-config/deliveries"):                                        AdminEmailDeliveryListRequest{},          // AdminEmailDeliveryList
 		routeKey("POST", "/api/admin/app/email-config/detail"):                                            AdminEmailConfigDetailRequest{},          // AdminEmailConfigDetail
 		routeKey("POST", "/api/admin/app/email-config/list"):                                              AdminEmailConfigListRequest{},            // AdminEmailConfigList
+		routeKey("POST", "/api/admin/app/email-config/stats"):                                             AdminEmailConfigListRequest{},            // AdminEmailDeliveryStats
 		routeKey("POST", "/api/admin/app/email-config/test"):                                              AdminEmailConfigTestRequest{},            // AdminEmailConfigTest
 		routeKey("POST", "/api/admin/app/email-config/update"):                                            AdminEmailConfigSaveRequest{},            // AdminEmailConfigUpdate
 		routeKey("POST", "/api/admin/app/payment-config/create"):                                          AdminPaymentConfigSaveRequest{},          // AdminPaymentConfigCreate
@@ -82,6 +96,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/admin/apps/{appkey}/audits/login/export"):                                   AdminLoginAuditQuery{},                   // ExportAdminAppLoginAudits
 		routeKey("GET", "/api/admin/apps/{appkey}/audits/sessions"):                                       AdminSessionAuditQuery{},                 // AdminAppSessionAudits
 		routeKey("GET", "/api/admin/apps/{appkey}/audits/sessions/export"):                                AdminSessionAuditQuery{},                 // ExportAdminAppSessionAudits
+		routeKey("PUT", "/api/admin/apps/{appkey}/auth-protocol"):                                         authprotocol.PolicyPatch{},               // AdminUpdateAppAuthProtocol
 		routeKey("POST", "/api/admin/apps/{appkey}/auth-protocol/selftest"):                               AppIntegrationSelfTestRequest{},          // AdminAppIntegrationSelfTest
 		routeKey("DELETE", "/api/admin/apps/{appkey}/banners"):                                            AdminBatchIDsRequest{},                   // DeleteAdminBanners
 		routeKey("GET", "/api/admin/apps/{appkey}/banners"):                                               AdminBannerListQuery{},                   // AdminBanners
@@ -89,20 +104,24 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/apps/{appkey}/banners/order"):                                         AdminBannerReorderRequest{},              // ReorderAdminBanners
 		routeKey("PUT", "/api/admin/apps/{appkey}/banners/{bannerId}"):                                    AdminBannerUpsertRequest{},               // UpdateAdminBanner
 		routeKey("PUT", "/api/admin/apps/{appkey}/captcha-config"):                                        AdminCaptchaConfigUpdateRequest{},        // AdminUpdateCaptchaConfig
+		routeKey("POST", "/api/admin/apps/{appkey}/captcha-config/preview"):                               AdminCaptchaDynamicPreviewRequest{},      // AdminPreviewDynamicCaptcha
 		routeKey("POST", "/api/admin/apps/{appkey}/captcha-config/test-sms"):                              AdminTestSMSRequest{},                    // AdminTestSMS
 		routeKey("POST", "/api/admin/apps/{appkey}/card-keys/batches"):                                    GenerateCardKeysRequest{},                // AdminGenerateCardKeys
 		routeKey("PUT", "/api/admin/apps/{appkey}/card-keys/batches/{batchId}/status"):                    CardKeyBatchStatusRequest{},              // AdminSetCardKeyBatchStatus
 		routeKey("POST", "/api/admin/apps/{appkey}/card-keys/codes/disable"):                              CardKeyIDsRequest{},                      // AdminDisableCardKeys
 		routeKey("POST", "/api/admin/apps/{appkey}/card-keys/codes/restore"):                              CardKeyIDsRequest{},                      // AdminRestoreCardKeys
-		routeKey("POST", "/api/v1/apps/{appkey}/card-keys/redeem"):                                        RedeemCardKeyRequest{},                   // AppRedeemCardKey
 		routeKey("POST", "/api/admin/apps/{appkey}/channels"):                                             AdminVersionChannelSaveRequest{},         // AdminCreateVersionChannel
 		routeKey("PUT", "/api/admin/apps/{appkey}/channels/{cid}"):                                        AdminVersionChannelSaveRequest{},         // AdminUpdateVersionChannel
 		routeKey("DELETE", "/api/admin/apps/{appkey}/channels/{cid}/users"):                               VersionChannelUsersRequest{},             // AdminRemoveVersionChannelUsers
 		routeKey("POST", "/api/admin/apps/{appkey}/channels/{cid}/users"):                                 VersionChannelUsersRequest{},             // AdminAddVersionChannelUsers
+		routeKey("PUT", "/api/admin/apps/{appkey}/commerce"):                                              app.CommerceSettings{},                   // UpdateAdminAppCommerceSettings
+		routeKey("GET", "/api/admin/apps/{appkey}/commerce/overview"):                                     AdminWalletStatsQuery{},                  // AdminAppCommerceOverview
+		routeKey("PUT", "/api/admin/apps/{appkey}/encryption"):                                            app.TransportEncryptionUpdate{},          // UpdateAdminAppEncryption
 		routeKey("POST", "/api/admin/apps/{appkey}/function-keys"):                                        createAppFunctionKeyRequest{},            // AdminCreateAppFunctionKey
 		routeKey("POST", "/api/admin/apps/{appkey}/functions"):                                            createAppFunctionRequest{},               // AdminCreateAppFunction
 		routeKey("PUT", "/api/admin/apps/{appkey}/functions/{functionName}"):                              updateAppFunctionRequest{},               // AdminUpdateAppFunction
 		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/invoke"):                      invokeAppFunctionRequest{},               // AdminInvokeAppFunction
+		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/test"):                        testAppFunctionRequest{},                 // AdminTestAppFunction
 		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/versions"):                    createAppFunctionVersionRequest{},        // AdminCreateAppFunctionVersion
 		routeKey("POST", "/api/admin/apps/{appkey}/governance/appeals"):                                   GovernanceAppealRequest{},                // AdminAppSubmitGovernanceAppeal
 		routeKey("GET", "/api/admin/apps/{appkey}/lottery/activities"):                                    LotteryActivityListQuery{},               // AdminListLotteryActivities
@@ -129,8 +148,19 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/apps/{appkey}/password-policy"):                                       AdminPasswordPolicyUpdateRequest{},       // UpdateAdminAppPasswordPolicy
 		routeKey("POST", "/api/admin/apps/{appkey}/password-policy/test"):                                 AdminPasswordPolicyTestRequest{},         // TestAdminAppPasswordPolicy
 		routeKey("PUT", "/api/admin/apps/{appkey}/policy"):                                                AdminAppPolicyRequest{},                  // UpdateAdminAppPolicy
+		routeKey("GET", "/api/admin/apps/{appkey}/reports/active"):                                        ReportQueryParams{},                      // ReportActive
 		routeKey("GET", "/api/admin/apps/{appkey}/reports/activity"):                                      ReportQueryParams{},                      // ReportActivity
+		routeKey("GET", "/api/admin/apps/{appkey}/reports/channel"):                                       ReportQueryParams{},                      // ReportChannel
+		routeKey("GET", "/api/admin/apps/{appkey}/reports/device"):                                        ReportQueryParams{},                      // ReportDevice
 		routeKey("GET", "/api/admin/apps/{appkey}/reports/export"):                                        ExportQueryParams{},                      // ReportExport
+		routeKey("GET", "/api/admin/apps/{appkey}/reports/funnel"):                                        ReportQueryParams{},                      // ReportFunnel
+		routeKey("GET", "/api/admin/apps/{appkey}/reports/login"):                                         ReportQueryParams{},                      // ReportLogin
+		routeKey("GET", "/api/admin/apps/{appkey}/reports/notification"):                                  ReportQueryParams{},                      // ReportNotification
+		routeKey("GET", "/api/admin/apps/{appkey}/reports/payment"):                                       ReportQueryParams{},                      // ReportPayment
+		routeKey("GET", "/api/admin/apps/{appkey}/reports/region"):                                        ReportQueryParams{},                      // ReportRegion
+		routeKey("GET", "/api/admin/apps/{appkey}/reports/registration"):                                  ReportQueryParams{},                      // ReportRegistration
+		routeKey("GET", "/api/admin/apps/{appkey}/reports/retention"):                                     ReportQueryParams{},                      // ReportRetention
+		routeKey("GET", "/api/admin/apps/{appkey}/reports/risk"):                                          ReportQueryParams{},                      // ReportRisk
 		routeKey("PUT", "/api/admin/apps/{appkey}/signin-reward"):                                         AdminSignInRewardPolicyUpdateRequest{},   // UpdateAdminAppSignInReward
 		routeKey("POST", "/api/admin/apps/{appkey}/signin-reward/test"):                                   AdminSignInRewardTestRequest{},           // TestAdminAppSignInReward
 		routeKey("GET", "/api/admin/apps/{appkey}/signin/records"):                                        AdminAppSignInRecordQuery{},              // AdminAppSignInRecords
@@ -141,6 +171,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/users/bans/batch"):                                     AdminUserBanBatchCreateRequest{},         // BatchCreateAdminAppUserBan
 		routeKey("GET", "/api/admin/apps/{appkey}/users/export"):                                          AdminUserListQuery{},                     // ExportAdminAppUsers
 		routeKey("PUT", "/api/admin/apps/{appkey}/users/status/batch"):                                    AdminUserBatchStatusRequest{},            // BatchUpdateAdminAppUserStatus
+		routeKey("GET", "/api/admin/apps/{appkey}/users/{userId}/audits/login"):                           AdminUserLoginAuditQuery{},               // AdminAppUserLoginAudits
+		routeKey("GET", "/api/admin/apps/{appkey}/users/{userId}/audits/sessions"):                        AdminUserSessionAuditQuery{},             // AdminAppUserSessionAudits
 		routeKey("GET", "/api/admin/apps/{appkey}/users/{userId}/bans"):                                   AdminUserBanListQuery{},                  // AdminAppUserBans
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/bans"):                                  AdminUserBanCreateRequest{},              // CreateAdminAppUserBan
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/bans/{banId}/revoke"):                   AdminUserBanRevokeRequest{},              // RevokeAdminAppUserBan
@@ -151,17 +183,18 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/admin/apps/{appkey}/users/{userId}/wallet/transactions"):                    WalletTransactionsQuery{},                // AdminAppUserWalletTransactions
 		routeKey("POST", "/api/admin/apps/{appkey}/versions"):                                             AdminAppVersionSaveRequest{},             // AdminCreateVersion
 		routeKey("PUT", "/api/admin/apps/{appkey}/versions/{vid}"):                                        AdminAppVersionSaveRequest{},             // AdminUpdateVersion
+		routeKey("POST", "/api/admin/apps/{appkey}/vip/features"):                                         AdminVipFeatureRequest{},                 // AdminSaveAppVipFeature
 		routeKey("POST", "/api/admin/apps/{appkey}/vip/grant"):                                            AdminVipGrantRequest{},                   // AdminGrantAppUserVip
 		routeKey("POST", "/api/admin/apps/{appkey}/vip/plans"):                                            AdminVipPlanRequest{},                    // AdminSaveAppVipPlan
-		routeKey("POST", "/api/admin/apps/{appkey}/vip/features"):                                         AdminVipFeatureRequest{},                 // AdminSaveAppVipFeature
 		routeKey("POST", "/api/admin/apps/{appkey}/vip/trial/claims"):                                     AdminVipTrialClaimRequest{},              // AdminClaimAppVipTrial
-		routeKey("POST", "/api/apps/{appkey}/vip/verify"):                                                 VipVerifyRequest{},                       // VerifyVipMembership
 		routeKey("POST", "/api/admin/apps/{appkey}/wallet/adjust"):                                        AdminWalletAdjustRequest{},               // AdminAdjustAppUserWallet
 		routeKey("POST", "/api/admin/apps/{appkey}/wallet/receipt"):                                       AdminWalletReceiptRequest{},              // AdminAppWalletReceipt
 		routeKey("POST", "/api/admin/apps/{appkey}/wallet/receipt/email"):                                 AdminWalletReceiptEmailRequest{},         // AdminAppWalletReceiptEmail
+		routeKey("GET", "/api/admin/apps/{appkey}/wallet/stats"):                                          AdminWalletStatsQuery{},                  // AdminAppWalletStats
+		routeKey("GET", "/api/admin/apps/{appkey}/wallet/transactions"):                                   AdminWalletTransactionsQuery{},           // AdminAppWalletTransactions
 		routeKey("POST", "/api/admin/auth/login"):                                                         AdminLoginRequest{},                      // AdminLogin
-		routeKey("POST", "/api/admin/auth/register"):                                                      AdminRegisterRequest{},                   // AdminRegister
 		routeKey("POST", "/api/admin/auth/oidc/exchange"):                                                 AdminOIDCExchangeRequest{},               // AdminOIDCExchange
+		routeKey("POST", "/api/admin/auth/register"):                                                      AdminRegisterRequest{},                   // AdminRegister
 		routeKey("POST", "/api/admin/auth/saml/exchange"):                                                 AdminSAMLExchangeRequest{},               // AdminSAMLExchange
 		routeKey("POST", "/api/admin/auth/verify-mfa"):                                                    AdminVerifyMFARequest{},                  // AdminVerifyMFA
 		routeKey("POST", "/api/admin/captcha/generate"):                                                   CaptchaGenerateRequest{},                 // AdminGenerateCaptcha
@@ -199,16 +232,24 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/system/announcements/{id}"):                                           AnnouncementSaveRequest{},                // AdminUpdateAnnouncement
 		routeKey("GET", "/api/admin/system/audit-logs"):                                                   AuditLogQuery{},                          // ListAuditLogs
 		routeKey("GET", "/api/admin/system/audit-logs/export"):                                            AuditLogQuery{},                          // ExportAuditLogs
+		routeKey("PUT", "/api/admin/system/authz/admins/{adminId}/grants"):                                AdminAuthzGrantsRequest{},                // AdminAuthzSetAdminGrants
+		routeKey("POST", "/api/admin/system/authz/explain"):                                               AdminAuthzExplainRequest{},               // AdminAuthzExplain
+		routeKey("POST", "/api/admin/system/authz/roles/override"):                                        service.PolicyOverrideInput{},            // AdminAuthzSetRoleOverride
 		routeKey("GET", "/api/admin/system/banners"):                                                      PlatformBannerListQuery{},                // ListPlatformBanners
 		routeKey("POST", "/api/admin/system/banners"):                                                     PlatformBannerUpsertRequest{},            // CreatePlatformBanner
 		routeKey("POST", "/api/admin/system/banners/bulk-delete"):                                         PlatformBannerBatchIDsRequest{},          // BulkDeletePlatformBanners
 		routeKey("PUT", "/api/admin/system/banners/{id}"):                                                 PlatformBannerUpsertRequest{},            // UpdatePlatformBanner
+		routeKey("POST", "/api/admin/system/captcha/preview"):                                             AdminCaptchaDynamicPreviewRequest{},      // AdminPreviewDynamicCaptcha
 		routeKey("POST", "/api/admin/system/delegations"):                                                 CreateDelegationRequest{},                // CreateDelegation
 		routeKey("GET", "/api/admin/system/device-marketing-names"):                                       DeviceMarketingQuery{},                   // ListDeviceMarketingNames
 		routeKey("POST", "/api/admin/system/device-marketing-names"):                                      DeviceMarketingCreateRequest{},           // CreateDeviceMarketingName
 		routeKey("PUT", "/api/admin/system/device-marketing-names/{id}"):                                  DeviceMarketingUpdateRequest{},           // UpdateDeviceMarketingName
+		routeKey("PUT", "/api/admin/system/egress"):                                                       system.EgressSettingsUpdate{},            // AdminUpdateEgressSettings
 		routeKey("POST", "/api/admin/system/egress/explain"):                                              AdminEgressExplainRequest{},              // AdminExplainEgress
 		routeKey("POST", "/api/admin/system/egress/test"):                                                 AdminEgressTestRequest{},                 // AdminTestEgress
+		routeKey("POST", "/api/admin/system/email/configs"):                                               AdminPlatformEmailConfigSaveRequest{},    // AdminPlatformEmailConfigCreate
+		routeKey("PUT", "/api/admin/system/email/configs/{configId}"):                                     AdminPlatformEmailConfigSaveRequest{},    // AdminPlatformEmailConfigUpdate
+		routeKey("POST", "/api/admin/system/email/configs/{configId}/test"):                               AdminPlatformEmailTestRequest{},          // AdminPlatformEmailConfigTest
 		routeKey("GET", "/api/admin/system/firewall/bans"):                                                IPBanListRequest{},                       // AdminListIPBans
 		routeKey("POST", "/api/admin/system/firewall/bans"):                                               IPBanCreateRequest{},                     // AdminBanIP
 		routeKey("POST", "/api/admin/system/firewall/geo-bans"):                                           GeoBanUpsertRequest{},                    // AdminUpsertGeoBan
@@ -221,6 +262,9 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/admin/system/firewall/logs"):                                                FirewallLogListRequest{},                 // AdminFirewallLogs
 		routeKey("GET", "/api/admin/system/firewall/stats"):                                               FirewallLogStatsRequest{},                // AdminFirewallStats
 		routeKey("POST", "/api/admin/system/ldap/test"):                                                   AdminLDAPTestRequest{},                   // AdminLDAPTest
+		routeKey("PUT", "/api/admin/system/legal/documents/{docType}/{locale}"):                           LegalDocumentRequest{},                   // AdminSaveLegalDocument
+		routeKey("POST", "/api/admin/system/legal/documents/{docType}/{locale}/preview"):                  LegalPreviewRequest{},                    // AdminPreviewLegalDocument
+		routeKey("PUT", "/api/admin/system/memory/gogc"):                                                  AdminMemoryGOGCRequest{},                 // AdminMemorySetGOGC
 		routeKey("POST", "/api/admin/system/oidc/test"):                                                   AdminOIDCTestRequest{},                   // AdminOIDCTest
 		routeKey("POST", "/api/admin/system/org-approvals/{instanceId}/decision"):                         ApprovalDecisionRequest{},                // DecideApproval
 		routeKey("GET", "/api/admin/system/org-invitations"):                                              InvitationListQueryParams{},              // ListMyInvitations
@@ -256,21 +300,21 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/system/plugins/{id}"):                                                 PluginUpdateRequest{},                    // AdminUpdatePlugin
 		routeKey("POST", "/api/admin/system/risk/actions"):                                                RiskActionCreateRequest{},                // AdminCreateRiskAction
 		routeKey("PUT", "/api/admin/system/risk/actions/{id}"):                                            RiskActionUpdateRequest{},                // AdminUpdateRiskAction
+		routeKey("DELETE", "/api/admin/system/risk/assessments"):                                          RiskPurgeRequest{},                       // AdminPurgeRiskAssessments
 		routeKey("GET", "/api/admin/system/risk/assessments"):                                             RiskAssessmentListRequest{},              // AdminListRiskAssessments
 		routeKey("POST", "/api/admin/system/risk/assessments/{id}/review"):                                RiskReviewRequest{},                      // AdminReviewRiskAssessment
 		routeKey("GET", "/api/admin/system/risk/dashboard"):                                               RiskDashboardRequest{},                   // AdminRiskDashboard
+		routeKey("GET", "/api/admin/system/risk/devices"):                                                 RiskEntityListRequest{},                  // AdminListRiskDevices
 		routeKey("GET", "/api/admin/system/risk/devices/suspicious"):                                      RiskPageRequest{},                        // AdminListSuspiciousDevices
 		routeKey("PUT", "/api/admin/system/risk/devices/{id}/tag"):                                        DeviceRiskTagRequest{},                   // AdminUpdateDeviceRiskTag
 		routeKey("POST", "/api/admin/system/risk/evaluate"):                                               RiskEvalRequest{},                        // AdminEvaluateRisk
+		routeKey("POST", "/api/admin/system/risk/expression/validate"):                                    RiskExprValidateRequest{},                // AdminValidateRiskExpression
 		routeKey("GET", "/api/admin/system/risk/ips"):                                                     RiskEntityListRequest{},                  // AdminListHighRiskIPs
 		routeKey("PUT", "/api/admin/system/risk/ips/{id}/tag"):                                            IPRiskTagRequest{},                       // AdminUpdateIPRiskTag
 		routeKey("GET", "/api/admin/system/risk/reviews/pending"):                                         RiskPageRequest{},                        // AdminListPendingReviews
 		routeKey("POST", "/api/admin/system/risk/rules"):                                                  RiskRuleCreateRequest{},                  // AdminCreateRiskRule
 		routeKey("PUT", "/api/admin/system/risk/rules/{id}"):                                              RiskRuleUpdateRequest{},                  // AdminUpdateRiskRule
 		routeKey("POST", "/api/admin/system/risk/rules/{id}/simulate"):                                    RiskSimulateRequest{},                    // AdminSimulateRiskRule
-		routeKey("DELETE", "/api/admin/system/risk/assessments"):                                          RiskPurgeRequest{},                       // AdminPurgeRiskAssessments
-		routeKey("GET", "/api/admin/system/risk/devices"):                                                 RiskEntityListRequest{},                  // AdminListRiskDevices
-		routeKey("POST", "/api/admin/system/risk/expression/validate"):                                    RiskExprValidateRequest{},                // AdminValidateRiskExpression
 		routeKey("POST", "/api/admin/system/risk/simulate"):                                               RiskSimulateRequest{},                    // AdminSimulateRisk
 		routeKey("POST", "/api/admin/system/roles"):                                                       CreateCustomRoleRequest{},                // AdminCreateCustomRole
 		routeKey("PUT", "/api/admin/system/roles/{roleKey}"):                                              UpdateCustomRoleRequest{},                // AdminUpdateCustomRole
@@ -311,6 +355,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/system/user-master/tags"):                                            CreateTagRequest{},                       // AdminCreateUserTag
 		routeKey("POST", "/api/admin/system/user-master/tags/assign"):                                     TagAssignRequest{},                       // AdminAssignTag
 		routeKey("POST", "/api/admin/system/user-master/tags/remove"):                                     TagAssignRequest{},                       // AdminRemoveTag
+		routeKey("GET", "/api/admin/system/user-master/user-lists"):                                       ListEntryListQuery{},                     // AdminListUserListEntries
+		routeKey("POST", "/api/admin/system/user-master/user-lists"):                                      CreateListEntryRequest{},                 // AdminCreateUserListEntry
 		routeKey("GET", "/api/admin/tickets"):                                                             TicketListQuery{},                        // AdminListTickets
 		routeKey("POST", "/api/admin/tickets"):                                                            TicketCreateRequest{},                    // AdminCreateTicket
 		routeKey("POST", "/api/admin/tickets/bulk"):                                                       TicketBulkRequest{},                      // AdminBulkTickets
@@ -376,6 +422,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/app/workflow/update"):                                                      WorkflowSaveRequest{},                    // WorkflowUpdate
 		routeKey("POST", "/api/app/workflow/validate"):                                                    WorkflowValidateRequest{},                // WorkflowValidate
 		routeKey("POST", "/api/apps/{appkey}/functions/{functionName}/invoke"):                            invokeAppFunctionRequest{},               // InvokeAppFunction
+		routeKey("POST", "/api/apps/{appkey}/vip/verify"):                                                 VipVerifyRequest{},                       // VerifyVipMembership
 		routeKey("POST", "/api/auth/2fa/verify"):                                                          SecondFactorVerifyRequest{},              // VerifySecondFactor
 		routeKey("POST", "/api/auth/login/password"):                                                      PasswordLoginRequest{},                   // PasswordLogin
 		routeKey("POST", "/api/auth/oauth2/auth-url"):                                                     OAuthAuthURLRequest{},                    // OAuthAuthURL
@@ -399,6 +446,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/email/send-password-reset"):                                                EmailResetRequest{},                      // SendPasswordResetEmail
 		routeKey("POST", "/api/email/verify-code"):                                                        EmailVerifyRequest{},                     // VerifyEmailCode
 		routeKey("POST", "/api/email/verify-reset-token"):                                                 EmailVerifyResetRequest{},                // VerifyResetToken
+		routeKey("GET", "/api/leaderboard/points/{type}"):                                                 LeaderboardListQuery{},                   // LeaderboardPoints
+		routeKey("GET", "/api/leaderboard/signin/{type}"):                                                 LeaderboardListQuery{},                   // LeaderboardSignIn
 		routeKey("GET", "/api/lottery/activities"):                                                        LotteryActivityListQuery{},               // UserLotteryActivities
 		routeKey("POST", "/api/lottery/draw"):                                                             LotteryDrawRequest{},                     // UserLotteryDraw
 		routeKey("GET", "/api/lottery/draws"):                                                             LotteryMyDrawListQuery{},                 // UserLotteryDrawHistory
@@ -464,10 +513,55 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/user/two-factor/recovery-codes"):                                           RecoveryCodesRegenerateRequest{},         // GenerateRecoveryCodes
 		routeKey("POST", "/api/user/two-factor/recovery-codes/regenerate"):                                RecoveryCodesRegenerateRequest{},         // RegenerateRecoveryCodes
 		routeKey("PUT", "/api/user/update-site"):                                                          SiteUpdateRequest{},                      // UpdateSite
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/2fa/verify"):                                         SecondFactorVerifyRequest{},              // AppSecondFactor
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/login"):                                              authprotocol.LoginInput{},                // AppLogin
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/oauth/bind/url"):                                     OAuthBindURLRequest{},                    // OAuthBindURL
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/oauth/exchange"):                                     OAuthMobileLoginRequest{},                // AppOAuthExchange
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/password/change"):                                    ChangePasswordRequest{},                  // ChangePassword
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/password/verify"):                                    VerifyPasswordRequest{},                  // VerifyPassword
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/register"):                                           authprotocol.RegisterInput{},             // AppRegister
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/sms/code"):                                           authprotocol.SMSCodeInput{},              // AppSMSCode
+		routeKey("POST", "/api/v1/apps/{appkey}/card-keys/redeem"):                                        RedeemCardKeyRequest{},                   // AppRedeemCardKey
+		routeKey("GET", "/api/v1/apps/{appkey}/leaderboard/points/{type}"):                                LeaderboardListQuery{},                   // LeaderboardPoints
+		routeKey("GET", "/api/v1/apps/{appkey}/leaderboard/signin/{type}"):                                LeaderboardListQuery{},                   // LeaderboardSignIn
+		routeKey("POST", "/api/v1/apps/{appkey}/me/2fa/recovery-codes"):                                   RecoveryCodesRegenerateRequest{},         // GenerateRecoveryCodes
+		routeKey("POST", "/api/v1/apps/{appkey}/me/2fa/recovery-codes/regenerate"):                        RecoveryCodesRegenerateRequest{},         // RegenerateRecoveryCodes
+		routeKey("POST", "/api/v1/apps/{appkey}/me/2fa/totp/disable"):                                     TOTPDisableRequest{},                     // DisableTOTP
+		routeKey("POST", "/api/v1/apps/{appkey}/me/2fa/totp/enable"):                                      TOTPEnableRequest{},                      // EnableTOTP
+		routeKey("GET", "/api/v1/apps/{appkey}/me/audits/login"):                                          UserLoginAuditQuery{},                    // UserLoginAudits
+		routeKey("GET", "/api/v1/apps/{appkey}/me/audits/sessions"):                                       UserSessionAuditQuery{},                  // UserSessionAudits
+		routeKey("POST", "/api/v1/apps/{appkey}/me/avatar/restore"):                                       AvatarRestoreRequest{},                   // RestoreUserAvatar
+		routeKey("POST", "/api/v1/apps/{appkey}/me/passkeys"):                                             PasskeyRegistrationFinishRequest{},       // FinishPasskeyRegistration
+		routeKey("PUT", "/api/v1/apps/{appkey}/me/profile"):                                               UpdateProfileRequest{},                   // UpdateProfile
+		routeKey("POST", "/api/v1/apps/{appkey}/me/profile/changes/confirm"):                              ConfirmProfileChangeRequest{},            // ConfirmProfileChange
+		routeKey("POST", "/api/v1/apps/{appkey}/me/sessions/revoke-all"):                                  UserSessionRevokeAllRequest{},            // RevokeAllUserSessions
+		routeKey("PUT", "/api/v1/apps/{appkey}/me/settings"):                                              UpdateSettingsRequest{},                  // UpdateSettings
+		routeKey("GET", "/api/v1/apps/{appkey}/notifications"):                                            NotificationQuery{},                      // Notifications
+		routeKey("POST", "/api/v1/apps/{appkey}/notifications/clear"):                                     NotificationClearRequest{},               // ClearNotifications
+		routeKey("POST", "/api/v1/apps/{appkey}/notifications/read"):                                      NotificationReadRequest{},                // ReadNotification
+		routeKey("POST", "/api/v1/apps/{appkey}/notifications/read-batch"):                                NotificationReadBatchRequest{},           // ReadNotificationsBatch
+		routeKey("GET", "/api/v1/apps/{appkey}/pay/orders"):                                               UserPaymentOrdersQuery{},                 // PaymentOrders
+		routeKey("POST", "/api/v1/apps/{appkey}/pay/orders"):                                              CreatePaymentOrderRequest{},              // CreatePaymentOrder
+		routeKey("GET", "/api/v1/apps/{appkey}/points/experience-transactions"):                           PaginationQuery{},                        // ExperienceTransactions
+		routeKey("GET", "/api/v1/apps/{appkey}/points/integral-transactions"):                             PaginationQuery{},                        // IntegralTransactions
+		routeKey("POST", "/api/v1/apps/{appkey}/signin"):                                                  SignInRequest{},                          // SignIn
+		routeKey("GET", "/api/v1/apps/{appkey}/signin/history"):                                           PaginationQuery{},                        // SignInHistory
+		routeKey("POST", "/api/v1/apps/{appkey}/storage/object-link"):                                     StorageObjectLinkRequest{},               // StorageObjectLink
+		routeKey("GET", "/api/v1/apps/{appkey}/tickets"):                                                  TicketListQuery{},                        // UserListTickets
+		routeKey("POST", "/api/v1/apps/{appkey}/tickets"):                                                 TicketCreateRequest{},                    // UserCreateTicket
+		routeKey("POST", "/api/v1/apps/{appkey}/tickets/{ticketId}/cancel"):                               TicketCancelRequest{},                    // UserCancelTicket
+		routeKey("POST", "/api/v1/apps/{appkey}/tickets/{ticketId}/rating"):                               TicketRatingRequest{},                    // UserRateTicket
+		routeKey("POST", "/api/v1/apps/{appkey}/tickets/{ticketId}/replies"):                              TicketReplyRequest{},                     // UserReplyTicket
+		routeKey("POST", "/api/v1/apps/{appkey}/vip/purchase"):                                            VipPurchaseRequest{},                     // PurchaseVip
+		routeKey("POST", "/api/v1/apps/{appkey}/wallet/consume"):                                          WalletConsumeRequest{},                   // WalletConsume
+		routeKey("GET", "/api/v1/apps/{appkey}/wallet/transactions"):                                      WalletTransactionsQuery{},                // MyWalletTransactions
 		routeKey("POST", "/api/vip/purchase"):                                                             VipPurchaseRequest{},                     // PurchaseVip
 		routeKey("POST", "/api/wallet/consume"):                                                           WalletConsumeRequest{},                   // WalletConsume
-		routeKey("POST", "/api/wallet/transactions/{transactionNo}/bill"):                                 PaymentBillExportRequest{},               // ExportWalletBill
-		routeKey("POST", "/api/wallet/transactions/{transactionNo}/receipt/email"):                        PaymentBillExportRequest{},               // EmailWalletReceipt
 		routeKey("GET", "/api/wallet/transactions"):                                                       WalletTransactionsQuery{},                // MyWalletTransactions
+		routeKey("GET", "/api/wallet/transactions/{transactionNo}"):                                       PaymentBillExportRequest{},               // MyWalletTransactionDetail
+		routeKey("GET", "/api/wallet/transactions/{transactionNo}/bill"):                                  PaymentBillExportRequest{},               // ExportWalletBill
+		routeKey("POST", "/api/wallet/transactions/{transactionNo}/bill"):                                 PaymentBillExportRequest{},               // ExportWalletBill
+		routeKey("GET", "/api/wallet/transactions/{transactionNo}/receipt"):                               PaymentBillExportRequest{},               // DownloadWalletReceipt
+		routeKey("POST", "/api/wallet/transactions/{transactionNo}/receipt/email"):                        PaymentBillExportRequest{},               // EmailWalletReceipt
 	}
 }

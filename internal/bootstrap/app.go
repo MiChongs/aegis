@@ -475,6 +475,9 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	storageService.SetGovernanceService(governanceService)         // blockStorage
 	notificationService.SetGovernanceService(governanceService)    // blockNotification（站内信）
 	emailService.SetGovernanceService(governanceService)           // blockNotification（邮件）
+	// 平台级邮件的落款主体取品牌名（应用级取应用名）。没有它的话，
+	// 一封平台通知的标题会渲染成「 账号已开通」——前面缺一个词。
+	emailService.SetPlatformSettings(systemService)
 
 	// 统一通知出口：所有业务事件（工单、SLA 告警…）只发到这里，
 	// 由订阅表决定投给飞书 / 钉钉 / 企微 / Slack / Webhook / 邮件 / 站内信 / 实时推送

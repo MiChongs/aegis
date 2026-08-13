@@ -43,6 +43,15 @@ func (h *memoryHandlers) AdminMemoryForceGC(c *gin.Context) {
 	response.Success(c, 200, "强制 GC 已执行", snap)
 }
 
+// AdminMemoryGOGCRequest 是设置 GOGC 的请求体。
+//
+// 提成具名类型不只是风格问题：docsgen 从 handler 的绑定目标反查请求模型，
+// 匿名 struct 没有名字可引用，这个接口在 OpenAPI 里就会缺 requestBody，
+// 生成式客户端拿到的是一个传不了参数的方法。
+type AdminMemoryGOGCRequest struct {
+	Value int `json:"value" binding:"required,min=10,max=500"`
+}
+
 // AdminMemorySetGOGC 手动设置 GOGC 值
 func (h *memoryHandlers) AdminMemorySetGOGC(c *gin.Context) {
 	if _, ok := requireSuperAdminSession(c); !ok {
@@ -53,9 +62,7 @@ func (h *memoryHandlers) AdminMemorySetGOGC(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, 50320, "内存管理服务暂不可用")
 		return
 	}
-	var req struct {
-		Value int `json:"value" binding:"required,min=10,max=500"`
-	}
+	var req AdminMemoryGOGCRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, "GOGC 值必须在 10~500 之间")
 		return

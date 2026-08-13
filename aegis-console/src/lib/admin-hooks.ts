@@ -27,7 +27,6 @@ import {
   cleanupUserSettings,
   createAdminAccount,
   createAdminApp,
-  createAdminEmailConfig,
   createAdminPaymentConfig,
   deleteAdminVipPlan,
   getAdminPaymentOrderDetail,
@@ -42,7 +41,6 @@ import {
   createGlobalStorageConfig,
   createWorkflow,
   createWorkflowFromTemplate,
-  deleteAdminEmailConfig,
   deleteAdminPaymentConfig,
   deleteAdminSite,
   deleteAdminVersion,
@@ -57,8 +55,6 @@ import {
   getAdminAppCommerceSettings,
   getAdminAppLoginBaseline,
   getAdminAppPolicy,
-  getAdminEmailConfigs,
-  getAdminEmailDeliveries,
   getAdminPaymentConfigs,
   getAdminPaymentMethods,
   getAdminPaymentRefundable,
@@ -147,7 +143,6 @@ import {
   startWorkflow,
   testAdminAppPasswordPolicy,
   testAdminAppSignInReward,
-  testAdminEmailConfig,
   testAdminPaymentConfig,
   testAppStorageConfig,
   testGlobalStorageConfig,
@@ -181,7 +176,6 @@ import {
   deleteAdminAppUser,
   adjustUserIntegral,
   adjustUserExperience,
-  updateAdminEmailConfig,
   updateAdminPaymentConfig,
   updateAdminSite,
   updateAdminVersion,
@@ -1616,84 +1610,6 @@ export function useCleanupUserSettingsMutation() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["admin-user-settings-stats"] });
     }
-  });
-}
-
-export function useAdminEmailConfigsQuery(appId?: number | null) {
-  const token = useAdminToken();
-  return useQuery({
-    queryKey: ["admin-email-configs", token, appId],
-    queryFn: () => getAdminEmailConfigs(token as string, { appid: appId as number }),
-    enabled: Boolean(token && appId)
-  });
-}
-
-export function useCreateAdminEmailConfigMutation() {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: Parameters<typeof createAdminEmailConfig>[1]) =>
-      createAdminEmailConfig(token as string, payload),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["admin-email-configs"] });
-    }
-  });
-}
-
-export function useUpdateAdminEmailConfigMutation() {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: Parameters<typeof updateAdminEmailConfig>[1]) =>
-      updateAdminEmailConfig(token as string, payload),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["admin-email-configs"] });
-    }
-  });
-}
-
-export function useDeleteAdminEmailConfigMutation() {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: Parameters<typeof deleteAdminEmailConfig>[1]) =>
-      deleteAdminEmailConfig(token as string, payload),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["admin-email-configs"] });
-    }
-  });
-}
-
-export function useTestAdminEmailConfigMutation() {
-  const token = useAdminToken();
-  return useMutation({
-    mutationFn: (payload: Parameters<typeof testAdminEmailConfig>[1]) =>
-      testAdminEmailConfig(token as string, payload)
-  });
-}
-
-/**
- * 邮件投递留痕。Zeabur 通道的状态由 webhook 异步推进，
- * 因此开着面板时定时刷新，避免看到的永远是刚发出时的 pending。
- */
-export function useAdminEmailDeliveriesQuery(
-  appId?: number | null,
-  filters?: { configId?: number; status?: string; keyword?: string; page?: number; pageSize?: number }
-) {
-  const token = useAdminToken();
-  return useQuery({
-    queryKey: ["admin-email-deliveries", token, appId, filters],
-    queryFn: () =>
-      getAdminEmailDeliveries(token as string, {
-        appid: appId as number,
-        config_id: filters?.configId,
-        status: filters?.status,
-        keyword: filters?.keyword,
-        page: filters?.page,
-        pageSize: filters?.pageSize
-      }),
-    enabled: Boolean(token && appId),
-    refetchInterval: 30_000
   });
 }
 

@@ -13,6 +13,7 @@ export * from "./storage";
 export * from "./workflow";
 export * from "./system";
 export * from "./egress";
+export * from "./email";
 export * from "./geo";
 export * from "./captcha";
 export * from "./device-marketing";

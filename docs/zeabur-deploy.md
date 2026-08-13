@@ -10,6 +10,13 @@
 | `aegis-api-git` | 仓库根 | `deploy/docker/Dockerfile` | Go 代码、`migrations/`、`deploy/` |
 | `aegis-console-git` | `aegis-console` | zbpack 自动识别 Next.js | `aegis-console/` |
 
+> 仓库里另有一份 `deploy/docker/console.Dockerfile`（自建容器用，见
+> [aegis-console/CLAUDE.md](../aegis-console/CLAUDE.md#容器镜像deploydockerconsoledockerfile)）。
+> 它**刻意不叫 `aegis-console/Dockerfile`**：zbpack 见到构建根下有 Dockerfile 就会切到
+> docker 计划，而那条路上 `AEGIS_API_BACKEND` 得作为 build arg 传进去，不传就会烘进
+> 默认的 `127.0.0.1:8088`，控制台反代到它自己。放在 `deploy/docker/` 下，
+> `aegis-console-git` 就仍然走 zbpack，不会被这份文件影响。
+
 **后端镜像里没有、也不该有前端。** 两处保证这一点：
 
 1. `.dockerignore` 排除 `aegis-console`、`node_modules`、`.next`——

@@ -534,18 +534,6 @@
   .dark .status-code-4xx     { color: #fbbf24; }
   .dark .status-code-5xx     { color: #f87171; }
 
-  .brand-status-page__dashboard .monitor-page-shell {
-    border-color: rgba(255, 255, 255, 0.12);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
-      linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
-      rgba(8, 11, 16, 0.58);
-    background-size: auto, 28px 28px, 28px 28px, auto;
-    backdrop-filter: blur(18px);
-    box-shadow: var(--shadow-strong);
-  }
-
   .page-stack {
     @apply flex flex-col gap-5 pt-1;
   }
@@ -1481,6 +1469,314 @@
 
 .theme-reveal-overlay[data-to="dark"] {
   background-color: #09090b;
+}
+
+/* ====================================================================
+ *  公开首页（/）的视觉层
+ *
+ *  控制台通体是 zinc 单色，那是**长时间盯着看**的界面该有的克制；
+ *  但首页是门面，一眼扫过去全是灰阶就只剩"朴素"。所以这里补一层
+ *  强调色与动效，并且**只在首页作用域内**（`.home-surface` 之下），
+ *  不会渗进控制台。
+ *
+ *  强调色锚定在登录页已经在用的青蓝上（`--aurora-bright: #22d3ee`），
+ *  首页因此和登录页是同一套品牌印象，不是第三种配色。
+ *  深浅两套各给一份：浅色下要压暗才不刺眼，深色下要提亮才看得见。
+ * ==================================================================== */
+
+:root {
+  /* 主强调只有一个，且**刻意避开蓝紫**：
+     「青蓝渐变 + 紫色副色 + 大团发光」是这两年生成式配色的三件套，
+     它出现在哪一页，哪一页就立刻显得像是随手生成的。这里换成暖铜（amber-700），
+     与近黑的墨色搭配，读起来是印刷品/仪器面板，而不是渐变海报。 */
+  --home-accent: #b45309;
+  --home-accent-soft: #d97706;
+  /* 第二序列**不给第二种颜色**，只给一档中性石灰。图表上"墨色 + 一个暖色"
+     永远比"蓝配紫"耐看，也不会让两条线抢同一个视觉层级。 */
+  --home-accent-alt: #57534e;
+  /* 出项 / 告警：暗酒红。它与暖铜同属暖色系但明显更沉，
+     在同一张图里能一眼分出"进来的钱"和"退出去的钱"。 */
+  --home-accent-warm: #9f1239;
+  --home-accent-ok: #3f6212;
+
+  --home-spotlight: color-mix(in srgb, var(--home-accent) 10%, transparent);
+  --home-beam: color-mix(in srgb, var(--home-accent) 42%, transparent);
+  --home-grid: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --home-vignette: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --home-grain-opacity: 0.05;
+
+  /* 冷开场：无论深浅主题都是同一块墨底。电影片头没有"浅色版本"，
+     真按主题切两套，深色用户会先被闪一下白。 */
+  --home-intro-ink: #0a0a0b;
+  --home-intro-paper: #f5f3ef;
+  --home-intro-accent: #d97706;
+}
+
+.dark {
+  --home-accent: #f0a339;
+  --home-accent-soft: #fbbf24;
+  --home-accent-alt: #a8a29e;
+  --home-accent-warm: #fb7185;
+  --home-accent-ok: #a3e635;
+
+  --home-spotlight: color-mix(in srgb, var(--home-accent) 12%, transparent);
+  --home-beam: color-mix(in srgb, var(--home-accent) 50%, transparent);
+  --home-grid: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --home-vignette: color-mix(in srgb, #000 55%, transparent);
+  --home-grain-opacity: 0.07;
+}
+
+/* ── 底纹：网格 / 点阵，靠 mask 在边缘自然溶解 ── */
+.home-grid-pattern {
+  background-image:
+    linear-gradient(to right, var(--home-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--home-grid) 1px, transparent 1px);
+  background-size: var(--home-grid-size, 56px) var(--home-grid-size, 56px);
+  -webkit-mask-image: var(--home-grid-mask, radial-gradient(ellipse 80% 60% at 50% 0%, #000 10%, transparent 75%));
+  mask-image: var(--home-grid-mask, radial-gradient(ellipse 80% 60% at 50% 0%, #000 10%, transparent 75%));
+}
+
+.home-dot-pattern {
+  background-image: radial-gradient(var(--home-grid) 1px, transparent 1px);
+  background-size: 18px 18px;
+  -webkit-mask-image: var(--home-grid-mask, radial-gradient(ellipse 70% 70% at 50% 50%, #000, transparent 75%));
+  mask-image: var(--home-grid-mask, radial-gradient(ellipse 70% 70% at 50% 50%, #000, transparent 75%));
+}
+
+/* ── 胶片颗粒 ──
+   取代原来那两团大面积彩色光晕。发光球是生成式视觉的另一个显著特征，
+   而且它在浅色模式下只会让整块底发灰。颗粒给的是"质感"而不是"光"：
+   一层极淡的静态噪声，把纯色平面变成印刷纸面，缩略图上几乎看不见，
+   全屏时能明显感到画面不是塑料的。
+
+   噪声用内联 SVG feTurbulence 生成，不额外请求一张图。 */
+.home-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--home-grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+.dark .home-grain {
+  mix-blend-mode: soft-light;
+}
+
+/* ── 暗角：把视线压回版心。中性色，不带任何色相 ── */
+.home-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse var(--home-vignette-size, 78% 70%) at 50% 45%,
+    transparent 40%,
+    var(--home-vignette) 100%
+  );
+}
+
+/* ── 跑马灯：技术栈品牌图标无缝横向滚动 ──
+   轨道里同一组内容渲染两遍，位移恰好 -50% 时首尾像素重合，循环无缝。 */
+.home-marquee {
+  display: flex;
+  width: max-content;
+  animation: home-marquee var(--home-marquee-duration, 42s) linear infinite;
+}
+
+.home-marquee--reverse {
+  animation-direction: reverse;
+}
+
+.home-marquee-viewport:hover .home-marquee {
+  animation-play-state: paused;
+}
+
+@keyframes home-marquee {
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+/* ── 描边流光：一段强调色沿卡片边框跑一圈，用于收尾 CTA ──
+   conic 渐变整块旋转，再由内层实心卡片盖住中心，只露出 1px 边。 */
+.home-beam-frame {
+  position: relative;
+  isolation: isolate;
+}
+
+.home-beam-frame::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    var(--home-beam) 40deg,
+    transparent 110deg,
+    transparent 360deg
+  );
+  animation: home-beam-spin 6s linear infinite;
+}
+
+@keyframes home-beam-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/* ── 徽章微光：一道柔光横扫过 badge，暗示"在线/实时" ── */
+.home-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.home-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    color-mix(in srgb, var(--home-accent) 26%, transparent) 50%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+  animation: home-shimmer 4.5s ease-in-out infinite;
+}
+
+@keyframes home-shimmer {
+  0%,
+  60% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* ── 架构图：一颗"请求"沿着五层向下走，走到底再回到顶 ── */
+@keyframes home-request-travel {
+  0% {
+    top: 0;
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+.home-request-dot {
+  animation: home-request-travel 5.5s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+/* ── 光标：远程函数卡片里那根打字光标 ── */
+@keyframes home-caret {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  50%,
+  95% {
+    opacity: 0;
+  }
+}
+
+.home-caret {
+  animation: home-caret 1.1s steps(1) infinite;
+}
+
+/* ── 脉冲环：多租户卡片里逐个亮起的应用块 ── */
+@keyframes home-tile-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.home-tile-pulse {
+  animation: home-tile-pulse 3.2s ease-in-out infinite;
+}
+
+/* ── 冷开场（IntroOverlay）──
+   整块墨底压在页面之上，几段字依次出现，末了整层淡出露出首屏。
+   它**只在每个会话的第一次访问**播放一次，任何键 / 点击 / 滚动都能跳过，
+   `prefers-reduced-motion` 下根本不挂载。这几条是它可以存在的前提：
+   一个每次进站都要看完的开场动画，第二次就变成了阻塞。 */
+.home-intro {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483001; /* 压过 NextTopLoader 的 2147483000 */
+  background: var(--home-intro-ink);
+  color: var(--home-intro-paper);
+  overscroll-behavior: contain;
+}
+
+/* 开场自带扫描线，强化"这是一段影像"的暗示；密度很低，不影响读字 */
+.home-intro__scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.035) 0px,
+    rgba(255, 255, 255, 0.035) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+}
+
+.home-intro__grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.16;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: home-intro-grain 0.6s steps(3) infinite;
+}
+
+@keyframes home-intro-grain {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  33% {
+    transform: translate3d(-2%, 1%, 0);
+  }
+  66% {
+    transform: translate3d(1%, -2%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* 首页的装饰动效一律在 reduce 档下停掉。它们都是"锦上添花"层，
+   停掉之后信息一条不少 —— 这也是它们只做 transform / opacity 的原因。 */
+@media (prefers-reduced-motion: reduce) {
+  .home-intro__grain,
+  .home-marquee,
+  .home-beam-frame::before,
+  .home-shimmer::after,
+  .home-request-dot,
+  .home-caret,
+  .home-tile-pulse {
+    animation: none;
+  }
+
+  .home-shimmer::after {
+    opacity: 0;
+  }
 }
 
 /* ==================================================================== */

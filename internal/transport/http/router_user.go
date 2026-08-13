@@ -204,10 +204,29 @@ func registerUserRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		emailPublic.POST("/verify-code", h.VerifyEmailCode)
 		emailPublic.POST("/send-password-reset", h.SendPasswordResetEmail)
 		emailPublic.POST("/verify-reset-token", h.VerifyResetToken)
-		// Zeabur Email 投递回执。公开路由，准入靠 HMAC 签名而非管理员令牌；
-		// 不带 :config 时落到该应用的默认邮件配置。
-		emailPublic.POST("/webhook/zeabur/:appid", h.ZeaburEmailWebhook)
-		emailPublic.POST("/webhook/zeabur/:appid/:config", h.ZeaburEmailWebhook)
+		// 投递回执。全部是公开路由 —— 服务商侧不可能携带管理员令牌，
+		// 准入靠各家自己的验签（Zeabur/Resend/Mailgun 用共享密钥的 HMAC，
+		// SES 用 SNS 的证书签名，SendGrid 用 ECDSA 公钥）。
+		// 地址段是作用域：应用 id，或字面量 `platform` 表示平台级通道。
+		// 不带 :config 时落到该作用域的默认邮件配置。
+		emailPublic.POST("/webhook/zeabur/:scope", h.ZeaburEmailWebhook)
+		emailPublic.POST("/webhook/zeabur/:scope/:config", h.ZeaburEmailWebhook)
+		emailPublic.POST("/webhook/ses/:scope", h.SESEmailWebhook)
+		emailPublic.POST("/webhook/ses/:scope/:config", h.SESEmailWebhook)
+		emailPublic.POST("/webhook/resend/:scope", h.ResendEmailWebhook)
+		emailPublic.POST("/webhook/resend/:scope/:config", h.ResendEmailWebhook)
+		emailPublic.POST("/webhook/sendgrid/:scope", h.SendGridEmailWebhook)
+		emailPublic.POST("/webhook/sendgrid/:scope/:config", h.SendGridEmailWebhook)
+		emailPublic.POST("/webhook/mailgun/:scope", h.MailgunEmailWebhook)
+		emailPublic.POST("/webhook/mailgun/:scope/:config", h.MailgunEmailWebhook)
+		// 以下三家**不对回执签名**，准入靠地址里的回调令牌（`?token=`）。
+		// 它们的报文里没有任何可验证的东西，因此那个地址等同于密钥。
+		emailPublic.POST("/webhook/postmark/:scope", h.PostmarkEmailWebhook)
+		emailPublic.POST("/webhook/postmark/:scope/:config", h.PostmarkEmailWebhook)
+		emailPublic.POST("/webhook/aliyun/:scope", h.AliyunEmailWebhook)
+		emailPublic.POST("/webhook/aliyun/:scope/:config", h.AliyunEmailWebhook)
+		emailPublic.POST("/webhook/tencent/:scope", h.TencentEmailWebhook)
+		emailPublic.POST("/webhook/tencent/:scope/:config", h.TencentEmailWebhook)
 	}
 }
 

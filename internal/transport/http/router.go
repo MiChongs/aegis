@@ -149,9 +149,7 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 	router.NoRoute(func(c *gin.Context) {
 		response.Error(c, http.StatusNotFound, 40400, "请求的页面不存在")
 	})
-	router.NoMethod(func(c *gin.Context) {
-		response.Error(c, http.StatusNotImplemented, 50100, "服务能力暂未开放")
-	})
+	router.NoMethod(methodNotAllowed)
 
 	h := deps.newHandler()
 

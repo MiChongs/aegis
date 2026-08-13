@@ -180,6 +180,18 @@ type ReplayProtectionConfig struct {
 	NonceSkew        time.Duration
 	FingerprintTTL   time.Duration
 	SignatureEnabled bool
+
+	// IdempotencyEnabled 是否处理 Idempotency-Key。
+	// 关掉之后带键的请求会被当作普通请求执行（而不是报错）——
+	// 幂等是"更好的重试体验"，不是安全边界，不该因为没开就拒绝服务。
+	IdempotencyEnabled bool
+	// IdempotencyTTL 一次已完成响应可被回放多久。默认 24h，与 Stripe 同量级：
+	// 短于一次人工排查的时长就失去了意义，长于一天则会让"改了参数复用旧键"
+	// 这类客户端 bug 拖很久才暴露。
+	IdempotencyTTL time.Duration
+	// IdempotencyLockTTL 执行中标记的存活时间，应当略长于最慢的那个写接口。
+	// 太短会让一次慢请求在执行期间被判成"没人在跑"从而重复执行。
+	IdempotencyLockTTL time.Duration
 }
 
 type CORSConfig struct {
@@ -1094,6 +1106,10 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 			NonceSkew:        getDuration(v, "REPLAY_PROTECTION_NONCE_SKEW", 30*time.Second),
 			FingerprintTTL:   getDuration(v, "REPLAY_PROTECTION_FINGERPRINT_TTL", 5*time.Second),
 			SignatureEnabled: getBool(v, "REPLAY_PROTECTION_SIGNATURE_ENABLED", true),
+
+			IdempotencyEnabled: getBool(v, "IDEMPOTENCY_ENABLED", true),
+			IdempotencyTTL:     getDuration(v, "IDEMPOTENCY_TTL", 24*time.Hour),
+			IdempotencyLockTTL: getDuration(v, "IDEMPOTENCY_LOCK_TTL", 30*time.Second),
 		},
 		Tracing: TracingConfig{
 			Enabled:        getBool(v, "TRACING_ENABLED", true),

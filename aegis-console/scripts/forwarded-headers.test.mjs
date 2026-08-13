@@ -10,7 +10,13 @@ import http from "node:http";
 import net from "node:net";
 import { after, describe, it } from "node:test";
 
-import { installOnServer, normalizePeerAddress, stampForwardedHeaders } from "./forwarded-headers.mjs";
+import {
+  backendHopWarning,
+  describeBackendHop,
+  installOnServer,
+  normalizePeerAddress,
+  stampForwardedHeaders
+} from "./forwarded-headers.mjs";
 
 /** 造一个够用的假请求：只有 headers 与 socket 参与判定。 */
 function fakeRequest({ headers = {}, remoteAddress = "10.0.0.7", localPort = 3000, encrypted = false } = {}) {
@@ -109,6 +115,46 @@ describe("stampForwardedHeaders", () => {
     const req = { headers: { "x-forwarded-for": "8.8.8.8" }, socket: { remoteAddress: undefined } };
     assert.equal(stampForwardedHeaders(req), false);
     assert.equal(req.headers["x-forwarded-for"], "8.8.8.8");
+  });
+});
+
+describe("describeBackendHop", () => {
+  const scopeOf = (origin) => describeBackendHop(origin).scope;
+
+  it("同机与内网地址算内网", () => {
+    assert.equal(scopeOf("http://127.0.0.1:8088"), "loopback");
+    assert.equal(scopeOf("http://[::1]:8088"), "loopback");
+    assert.equal(scopeOf("http://localhost:8088"), "loopback");
+    assert.equal(scopeOf("http://10.42.0.7:8088"), "private");
+    assert.equal(scopeOf("http://192.168.1.9:8088"), "private");
+    assert.equal(scopeOf("http://100.64.1.1:8088"), "private"); // CGNAT，多数 PaaS 的容器网段
+  });
+
+  it("只可能在内部网络解析的主机名算内网", () => {
+    assert.equal(scopeOf("http://aegis-api-git.zeabur.internal:8088"), "internal-name");
+    assert.equal(scopeOf("http://aegis-api:8088"), "internal-name"); // 裸服务名
+    assert.equal(scopeOf("http://api.default.svc.cluster.local:8088"), "internal-name");
+  });
+
+  it("公网地址就是公网地址", () => {
+    // 这一档正是线上踩到的：控制台反代绕出公网再回来，
+    // 边缘写下的是控制台自己的出口地址，浏览器地址被它挡在后面。
+    assert.equal(scopeOf("https://aegis-api.zeabur.app"), "public");
+    assert.equal(scopeOf("https://aegis.karpov.cn"), "public");
+    assert.equal(scopeOf("http://117.152.185.89:8088"), "public");
+  });
+
+  it("没配就不下结论", () => {
+    assert.equal(scopeOf(""), "unset");
+    assert.equal(scopeOf(undefined), "unset");
+    assert.equal(scopeOf("这不是个地址"), "unknown");
+  });
+
+  it("只有公网那一档才告警", () => {
+    assert.match(backendHopWarning("https://aegis-api.zeabur.app"), /公网地址/);
+    for (const ok of ["http://127.0.0.1:8088", "http://aegis-api:8088", "", "这不是个地址"]) {
+      assert.equal(backendHopWarning(ok), "");
+    }
   });
 });
 

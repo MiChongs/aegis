@@ -358,6 +358,7 @@ export const navigationGroups: NavigationGroup[] = [
           { title: "品牌与外观", tab: "branding" },
           { title: "防火墙与限流", tab: "firewall" },
           { title: "出海代理", tab: "egress" },
+          { title: "邮件", tab: "email" },
           { title: "安全模块", tab: "security" },
           { title: "LDAP", tab: "ldap" },
           { title: "OIDC", tab: "oidc" },

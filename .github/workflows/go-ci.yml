@@ -24,3 +24,45 @@ jobs:
 
       - name: Run tests
         run: go test ./...
+
+  # 生成代码必须与 migrations/ + sql/queries/ 保持同步。
+  # 少了这一步，改了迁移却忘了 `sqlc generate` 的后果是产物里还留着旧列，
+  # 而它编译得过 —— 直到线上 Scan 报错才发现。
+  sqlc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 版本必须钉死：不同版本的 sqlc 生成结果有差异，浮动版本会让 diff 随机红
+      - name: Setup sqlc
+        uses: sqlc-dev/setup-sqlc@v5
+        with:
+          sqlc-version: "1.31.1"
+
+      - name: Lint queries
+        run: sqlc vet
+
+      - name: Check generated code is up to date
+        run: sqlc diff
+
+  # 「路由 → 请求模型」映射表必须跟得上 handler 的请求绑定。
+  # 这张表决定 OpenAPI 里有没有 requestBody / query 参数，而多平台客户端
+  # 整个是从那份规范生成的：表过期了不会有任何编译错误，只会让新接口在
+  # 生成出来的 SDK 里变成一个不带参数、调过去必然 400 的空方法。
+  docsgen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Check route model table is up to date
+        run: go run ./scripts/docsgen -check

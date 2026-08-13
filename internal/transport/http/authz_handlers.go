@@ -82,6 +82,21 @@ func (h *Handler) AdminAuthzSetRoleOverride(c *gin.Context) {
 	response.Success(c, 200, "已保存", gin.H{"roleKey": req.RoleKey})
 }
 
+// AdminAuthzGrantsRequest 是整组替换某个管理员直接授予/禁止的请求体。
+//
+// 与下面的 AdminAuthzExplainRequest 一样，提成具名类型是为了让 docsgen
+// 能反查到它：匿名 struct 没有名字可引用，接口在 OpenAPI 里就会缺 requestBody。
+type AdminAuthzGrantsRequest struct {
+	Grants []service.AdminGrantInput `json:"grants"`
+}
+
+// AdminAuthzExplainRequest 是排障接口的请求体：某人在某作用域下能否做某事。
+type AdminAuthzExplainRequest struct {
+	AdminID    int64  `json:"adminId"`
+	Permission string `json:"permission"`
+	AppID      *int64 `json:"appid"`
+}
+
 // AdminAuthzSetAdminGrants 整组替换某个管理员的直接授予/禁止。
 func (h *Handler) AdminAuthzSetAdminGrants(c *gin.Context) {
 	adminID, err := pathInt64(c, "adminId")
@@ -89,9 +104,7 @@ func (h *Handler) AdminAuthzSetAdminGrants(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40058, "无效的管理员标识")
 		return
 	}
-	var req struct {
-		Grants []service.AdminGrantInput `json:"grants"`
-	}
+	var req AdminAuthzGrantsRequest
 	if err := bind(c, &req); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
@@ -112,11 +125,7 @@ func (h *Handler) AdminAuthzSetAdminGrants(c *gin.Context) {
 // 一次 403 的排查以前要翻四个地方（角色定义、权限点常量、路由映射、作用域），
 // 且四处都在代码里。现在一次请求给出：判定用到的全部主体、命中的策略行、结论。
 func (h *Handler) AdminAuthzExplain(c *gin.Context) {
-	var req struct {
-		AdminID    int64  `json:"adminId"`
-		Permission string `json:"permission"`
-		AppID      *int64 `json:"appid"`
-	}
+	var req AdminAuthzExplainRequest
 	if err := bind(c, &req); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return

@@ -37,13 +37,22 @@
 | `db_manager.go` | `DatabaseManager` | 数据库生命周期与泄漏监控总入口（采集/告警/历史/会话治理） |
 | `db_leak.go` | — | 六类泄漏判定（连接/事务/快照/WAL/两阶段事务/存储）+ 指标趋势检测 |
 | `db_sessions.go` | — | pg_stat_activity / 复制槽 / 两阶段事务 / 死元组视图与会话终止 |
-| `email_service.go` | `EmailService` | 邮件出口总入口：挑 provider、组织内容、投递留痕、密钥加解密 |
+| `email_service.go` | `EmailService` | 邮件出口总入口：作用域解析、挑 provider、投递留痕、密钥加解密 |
 | `email_template.go` | — | 邮件内容模型与渲染（html/template + premailer 内联），全部文案在此 |
 | `emailtpl/` | — | 模板资源：`layout.gohtml` / `layout.gotxt` / `theme.css`（go:embed） |
-| `email_sender.go` | — | `emailSender` provider 抽象与分派 |
+| `email_sender.go` | — | `emailSender` provider 抽象、注册表与展示顺序、Raw MIME 组装 |
+| `email_schema.go` | — | 目录字段构造器 + 目录驱动的通用校验 + 出网客户端 |
 | `email_provider_smtp.go` | — | SMTP 直连发送器（go-mail）与错误分类 |
 | `email_provider_zeabur.go` | — | Zeabur Email REST 发送器（错误映射 / 429 不重试 / 独立熔断） |
+| `email_provider_ses.go` | — | AWS SES v2（官方 SDK，Raw MIME 以支持附件） |
+| `email_provider_resend.go` | — | Resend（官方 SDK） |
+| `email_provider_sendgrid.go` | — | SendGrid（官方 SDK 组装报文，请求走平台出网客户端） |
+| `email_provider_mailgun.go` | — | Mailgun（官方 SDK，地域选错的 404 有专门文案） |
+| `email_provider_postmark.go` | — | Postmark REST（无官方 Go SDK），ErrorCode 分类 |
+| `email_provider_aliyun.go` | — | 阿里云邮件推送 DirectMail（官方 SDK） |
+| `email_provider_tencent.go` | — | 腾讯云 SES（官方 SDK，正文需 base64） |
 | `email_webhook.go` | — | Zeabur 投递回执：HMAC 验签、防重放、状态推进 |
+| `email_webhook_providers.go` | — | 其余七家回执：SES(SNS 证书验签 + 订阅确认) / Resend(svix) / SendGrid(ECDSA) / Mailgun(HMAC + nonce 防重放) / Postmark / 阿里云 / 腾讯云（后三家靠回调令牌，报文按别名容忍解析） |
 | `egress_service.go` | `EgressService` | 出海代理网关管理面：配置持久化 / 密钥加解密 / 数据库覆盖 .env / 自测与路由解释 |
 | `geo_analytics_service.go` | `GeoAnalyticsService` | 地理分析：小时聚合 / DBSCAN 攻击聚类 / 用户轨迹 / 分区与画像维护 |
 | `geo_ban_service.go` | `GeoBanService` | 地域/ASN/ISP 封禁（DB 存储 + 内存匹配 + 热重载） |
@@ -919,37 +928,97 @@ TypeScript 声明片段也放在目录里，随 `/function-catalog` 下发。放
 
 完整说明见 [docs/app-functions.md](../../docs/app-functions.md)。
 
-### 邮件出口 —— 两档 provider
+### 邮件出口 —— 两种作用域、九档服务商
 
-`EmailService.sendMail` 是平台**唯一**的邮件出口，验证码 / 密码重置 / 欢迎信 /
-资料变更通知 / NotifyHub 的 `email` 渠道全部经过它。传输方式由配置的 provider 决定：
+`EmailService.sendRenderedMail` 是平台**唯一**的邮件出口：验证码 / 密码重置 /
+欢迎信 / 资料变更通知 / 凭证 / NotifyHub 的 `email` 渠道全部经过它。
 
-| provider | 传输 | 何时用 |
+**作用域有两种**，靠 `appid` 区分（`0` = `emaildomain.PlatformAppID` = 平台级）：
+
+| | 应用级 | 平台级 |
 |---|---|---|
-| `smtp`（默认） | 直连 SMTP | 自有服务器 / 不封出站端口的环境 |
-| `zeabur` | Zeabur Email REST API | **Zeabur 部署的唯一选项** —— 平台底层封禁出站 SMTP 端口，直连必然超时 |
+| 存储 | `app_email_configs.appid = <应用 id>` | 同表，`appid IS NULL` |
+| 管理入口 | `/apps/{appKey}?tab=email` | `/configuration?tab=email` |
+| 服务的信 | 该应用用户的信 | 管理员通知、平台告警 |
 
-新增服务商只需实现 `emailSender` 接口并注册进 `EmailService.senders`，业务代码零改动。
-`resolveSender` 对未知 provider **直接报错而不静默回落到 SMTP** ——
-回落会让「配了 A 却在用 B」这种故障以超时的形式出现在几层之外。
+平台级这一档此前**不存在**：`appid` 是 NOT NULL 且外键指向 `apps(id)`，于是
+NotifyHub 的平台级 email 渠道（`notify_channels.appid = 0`）会在
+`requireApp` 那一步拿到 40410「无法找到该应用」—— 渠道配得起来、发不出去。
+
+作用域用 `appid IS NULL` 而不是 `appid = 0`：0 那种写法要求列上没有外键，
+而外键正是「删掉应用时把它的邮件配置一并带走」的唯一保证。`0 ↔ NULL`
+的映射收在仓储层一处，上层看到的永远是一个 `int64`。
+
+通道解析优先级：**指名的配置 → 本作用域的默认配置 → 平台级「已共享」的默认通道**。
+最后一档只对应用级生效，且要求平台管理员显式打开 `shared`（默认关）——
+打开它意味着该应用的信会用平台的发件人身份发出去，而应用管理员既没参与这个决定、
+也看不出信是从哪条通道走的。回落发生时 `ResolveChannel` 的 `inherited` 为 true，
+控制台据此明说，否则管理员会对着一个空的配置页纳闷验证码是怎么发出去的。
+
+**投递回执刻意不走这条回落**（`resolveWebhookConfig` 单独实现）：回执必须回填到
+发出这封信的那条通道上，回落会让 A 应用的回调拿平台通道的密钥去验签。
+
+**九档服务商**，一律优先用官方 SDK：
+
+| provider | SDK | 附件 | 回执 |
+|---|---|:--:|:--:|
+| `smtp` | go-mail | ✅ | — |
+| `zeabur` | 自研 REST | ❌ | ✅ |
+| `ses` | `aws-sdk-go-v2/service/sesv2` | ✅（Raw MIME） | ✅（SNS） |
+| `resend` | `resend-go/v2` | ✅ | ✅ |
+| `sendgrid` | `sendgrid-go`（只用于组装报文） | ✅ | ✅ |
+| `mailgun` | `mailgun-go/v5` | ✅ | ✅ |
+| `postmark` | 自研 REST（无官方 Go SDK） | ✅ | ✅ |
+| `aliyun` | `dm-20151123/v2` | ❌ | ✅ |
+| `tencent` | `tencentcloud-sdk-go/.../ses` | ✅ | ✅ |
+
+新增服务商只需实现 `emailSender` 接口（含 `Describe()`）并注册进
+`EmailService.senders`，**业务代码与控制台都零改动**。`resolveSender` 对未知
+provider 直接报错而不静默回落到 SMTP —— 回落会让「配了 A 却在用 B」这种故障
+以超时的形式出现在几层之外。
 
 其余结构性约束：
 
-- **密钥 AES-GCM 落库**（用途盐 `aegis.email.master`），管理接口出网一律抹除，
-  只保留 `apiKeySet` / `webhookSecretSet` 布尔位。所有密钥字段**留空即不修改**
-  —— 前端编辑态从不回显密钥，直接覆盖会让改个发件人名就把密码清空。
+- **配置字段是通用袋子 + 目录 schema**（`Settings` / `Secrets` + `ProviderMeta.Fields`），
+  不是每家一个具名 struct。后者在两家时还行，到九家就意味着每加一家要动领域类型、
+  仓储载荷、传输 DTO、控制台表单四处，而其中任何一处漏改都不报错。
+- **密钥的三条语义由服务端统一兑现**（依据是目录里的 `Secret` 标记，不是写死的字段名）：
+  AES-GCM 加密落库（用途盐 `aegis.email.master`）、出网一律抹除只留 `secretSet`
+  布尔位、提交留空即不修改（显式清空走 `ClearSecrets`）。
+  顺带修掉一处：SMTP 密码此前是**明文**落库的，现在统一加密，存量明文在下一次
+  保存时自愈，不需要迁移脚本。
+- **附件能力必须如实自述**。调用方先问能力再写正文（能带附件的写「收据见附件」，
+  不能的写「点这里下载」），问到假答案的表现是「邮件送达、附件不翼而飞」。
+  Zeabur 与阿里云如实声明为不支持；通道带不了附件时当场报错，绝不静默丢掉。
+- **存量数据零迁移**：仓储层读兼容旧的扁平 SMTP 与 `zeabur` 嵌套形态，写入只产出
+  新形态。解存量行时按 provider 分流 —— 旧代码无论服务商是什么都会把 SMTP 段
+  原样写进去，不分流的话 Zeabur 的发件地址会被 SMTP 段那个覆盖掉。
 - **投递留痕失败绝不反噬发信**（`recordDelivery` 只记 warn）：信已经交出去了，
-  此时报错只会让调用方重发一封。留痕用 `context.WithoutCancel`，
-  避免请求结束把事后账一起取消掉。
+  此时报错只会让调用方重发一封。留痕用 `context.WithoutCancel`。
+- **回执准入分两档**。有官方签名机制的五家（Zeabur/SES/Resend/SendGrid/Mailgun）验签；
+  没有的三家（Postmark/阿里云/腾讯云）报文里**没有任何可验证的东西**，
+  准入靠地址里的回调令牌（query `token` / `X-Aegis-Webhook-Token` / Basic Auth 的密码位，
+  恒定时间比较）。代价是那个地址等同于密钥，控制台在回执卡片上直接写明。
+- **Mailgun 额外要防重放**：它的签名只覆盖 `timestamp + token`、**不覆盖报文体**，
+  被截获的回调在窗口内可原样重放任意多次。用 Redis 把那个一次性 token 记成 nonce；
+  Redis 不可用时放行并记 warn —— 拒收会把一次缓存抖动变成整批回执丢失，而回执不可补。
+- **阿里云 / 腾讯云的字段拼写按别名集合解**（忽略大小写与 `_`/`-`，下钻一层 `data`）：
+  这两家的回执字段在不同投递方式与文档版本里有三种写法，钉死一种的代价是
+  换个投递方式就一条也匹配不上，而那个失败是静默的（HTTP 200、零条匹配）。
+  认不出的报文**不猜**，如实记一条带全部键名的 info 日志。
 - **webhook 状态单向推进**（判定写在 SQL 里）：终态不被后到的 `delivery` 覆盖，
-  `open`/`click` 只累加计数不动主状态。webhook 到达顺序没有保证，
-  乱序会把已退信的邮件显示成投递成功。
-- **429 不重试**：Zeabur 日配额按 UTC 00:00 重置，重试只会拖长请求并加深熔断。
-  两档 provider 各有独立熔断器，互不牵连。
-- SMTP 超时的错误文案**点名 Zeabur** —— 出站被封时表现就是纯超时，
-  只说「检查网络」会让排查一路走偏到邮箱服务商那边。
+  `open`/`click` 只累加计数不动主状态；SES 的 `DeliveryDelay`、SendGrid 的 `deferred`、
+  Mailgun 的 `severity=temporary`、Postmark 与腾讯云的 `SoftBounce` 一律只记事件
+  不改状态 —— 写成失败会让一封最终送达的信永远显示成失败。
+- **配额类错误不重试**（各家的 429 / 配额码）：重试只会把剩余配额烧得更快并加深熔断。
+  每档 provider 各有独立熔断器，互不牵连。
+- **平台级配置不参与应用治理判定**：它不属于任何被治理的应用，且平台告警
+  恰恰在治理动作发生时最需要发得出去。
+- SMTP 超时的错误文案**点名封端口的平台并列出替代通道** —— 出站被封时表现就是
+  纯超时，只说「检查网络」会让排查一路走偏到邮箱服务商那边。
 
-完整接入说明见 [docs/zeabur-email.md](../../docs/zeabur-email.md)。
+完整说明见 [docs/email.md](../../docs/email.md)；Zeabur 那一档的接入步骤见
+[docs/zeabur-email.md](../../docs/zeabur-email.md)。
 
 #### 邮件模板（email_template.go + emailtpl/）
 

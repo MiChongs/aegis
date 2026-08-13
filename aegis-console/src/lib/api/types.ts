@@ -927,43 +927,95 @@ export type SettingsCleanupResult = {
   invalidSettings: Array<{ id: number; userId: number; category: string; isActive: boolean }>;
 };
 
-export type EmailSMTPConfig = {
-  host?: string;
-  port?: number;
-  username?: string;
-  fromAddress?: string;
-  fromName?: string;
-  replyTo?: string;
-  useTLS?: boolean;
-  insecureSkipVerify?: boolean;
+/** 邮件服务商配置字段的声明式描述（后端 Describe() 自述，驱动动态表单）。 */
+export type EmailConfigField = {
+  key: string;
+  label: string;
+  type: "text" | "secret" | "number" | "switch" | "select" | "textarea" | "email" | "url" | "kv";
+  group?: string;
+  required?: boolean;
+  /** 密钥字段：加密落库、出网抹除、提交留空即不修改。 */
+  secret?: boolean;
+  placeholder?: string;
+  help?: string;
+  default?: unknown;
+  options?: { value: string; label: string; help?: string }[];
+  advanced?: boolean;
+};
+
+/** 一条通道的能力自述。attachments 决定凭证是走附件还是走下载链接。 */
+export type EmailProviderCapabilities = {
+  attachments: boolean;
+  webhook: boolean;
+  tags: boolean;
+  tracking: boolean;
 };
 
 /**
- * Zeabur Email 渠道配置。
- * API Key 与 Webhook 密钥永不回传，只有 *Set 布尔位表示「已配置」。
+ * 邮件服务商元数据。由后端各发送器的 Describe() 自述，
+ * 驱动「服务商卡片 + 动态配置表单 + 回调地址提示」三处 UI ——
+ * 因此后端新增一家服务商时，这里零改动即自动出现。
  */
-export type EmailZeaburConfig = {
-  apiKeySet?: boolean;
-  baseUrl?: string;
-  fromAddress?: string;
-  fromName?: string;
-  replyTo?: string;
-  webhookSecretSet?: boolean;
-  tags?: Record<string, string>;
+export type EmailProviderMeta = {
+  provider: string;
+  name: string;
+  description?: string;
+  category?: string;
+  categoryName?: string;
+  icon?: string;
+  brandColor?: string;
+  docUrl?: string;
+  capabilities: EmailProviderCapabilities;
+  fields?: EmailConfigField[];
+  /** 回执回调路径模板，{scope} 由前端替换成应用 id 或 platform。 */
+  webhookPath?: string;
+  webhookNote?: string;
+  notes?: string[];
+};
+
+export type EmailProviderCatalog = {
+  providers: EmailProviderMeta[];
+  groups: Record<string, string>;
+  categories: Record<string, string>;
 };
 
 export type EmailConfig = {
   id: number;
+  /** 0 表示平台级配置。 */
   appid?: number;
   name?: string;
   provider?: string;
   enabled?: boolean;
   isDefault?: boolean;
+  /** 仅平台级有意义：允许应用在自己没有配置时回落到这条通道。 */
+  shared?: boolean;
   description?: string;
-  smtp?: EmailSMTPConfig;
-  zeabur?: EmailZeaburConfig;
+  /** 非密钥字段，键由服务商目录声明。 */
+  settings?: Record<string, string>;
+  /** 密钥「配没配」的布尔位 —— 值本身永不回传。 */
+  secretSet?: Record<string, boolean>;
   createdAt?: string;
   updatedAt?: string;
+};
+
+/** 「这个作用域现在实际用哪条通道发信」。inherited 表示回落到了平台共享通道。 */
+export type EmailChannelResolution = {
+  configId: number;
+  configName: string;
+  provider: string;
+  scope: "app" | "platform";
+  inherited: boolean;
+  attachments: boolean;
+};
+
+export type EmailDeliveryStats = {
+  total: number;
+  sent: number;
+  delivered: number;
+  failed: number;
+  bounced: number;
+  pending: number;
+  last24h: number;
 };
 
 export type EmailDelivery = {

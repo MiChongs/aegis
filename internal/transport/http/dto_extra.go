@@ -2,7 +2,6 @@ package httptransport
 
 import (
 	appdomain "aegis/internal/domain/app"
-	"aegis/internal/domain/email"
 )
 
 type AdminEmailConfigListRequest struct {
@@ -14,34 +13,75 @@ type AdminEmailConfigDetailRequest struct {
 	ConfigID int64 `json:"config_id" form:"config_id" binding:"required"`
 }
 
+// AdminEmailConfigSaveRequest 应用级邮件配置写入。
+//
+// settings / secrets 是**目录驱动**的通用字段袋：键由服务商自述
+// （GET /providers 返回的 ConfigField.Key），因此新增一家服务商时
+// 这个 DTO 一行都不用改。下面那批 smtp_* / zeabur_* 是重构前的扁平字段，
+// 保留只为兼容已发出去的旧客户端；新代码一律用 settings / secrets。
 type AdminEmailConfigSaveRequest struct {
-	AppID        int64             `json:"appid" form:"appid" binding:"required"`
-	ConfigID     int64             `json:"config_id" form:"config_id"`
-	Name         string            `json:"config_name" form:"config_name"`
-	Provider     string            `json:"provider" form:"provider"`
-	Enabled      *bool             `json:"enabled"`
-	IsDefault    *bool             `json:"is_default"`
-	Description  string            `json:"description" form:"description"`
-	SMTPHost     string            `json:"smtp_host" form:"smtp_host"`
-	SMTPPort     int               `json:"smtp_port" form:"smtp_port"`
-	SMTPUser     string            `json:"smtp_user" form:"smtp_user"`
-	SMTPPassword string            `json:"smtp_password" form:"smtp_password"`
-	SMTPFrom     string            `json:"smtp_from" form:"smtp_from"`
-	SMTPFromName string            `json:"smtp_from_name" form:"smtp_from_name"`
-	SMTPReplyTo  string            `json:"smtp_reply_to" form:"smtp_reply_to"`
-	SMTPTLS      *bool             `json:"smtp_tls"`
-	SMTPInsecure *bool             `json:"smtp_insecure_skip_verify"`
-	SMTP         *email.SMTPConfig `json:"smtp"`
+	AppID       int64  `json:"appid" form:"appid" binding:"required"`
+	ConfigID    int64  `json:"config_id" form:"config_id"`
+	Name        string `json:"config_name" form:"config_name"`
+	Provider    string `json:"provider" form:"provider"`
+	Enabled     *bool  `json:"enabled"`
+	IsDefault   *bool  `json:"is_default"`
+	Description string `json:"description" form:"description"`
 
-	// Zeabur Email（provider=zeabur）。API Key 与 Webhook 密钥留空表示「不修改」。
-	ZeaburAPIKey        string              `json:"zeabur_api_key" form:"zeabur_api_key"`
-	ZeaburBaseURL       string              `json:"zeabur_base_url" form:"zeabur_base_url"`
-	ZeaburFrom          string              `json:"zeabur_from" form:"zeabur_from"`
-	ZeaburFromName      string              `json:"zeabur_from_name" form:"zeabur_from_name"`
-	ZeaburReplyTo       string              `json:"zeabur_reply_to" form:"zeabur_reply_to"`
-	ZeaburWebhookSecret string              `json:"zeabur_webhook_secret" form:"zeabur_webhook_secret"`
-	ZeaburTags          map[string]string   `json:"zeabur_tags"`
-	Zeabur              *email.ZeaburConfig `json:"zeabur"`
+	EmailConfigFields
+
+	// ── 以下为兼容字段，勿在新代码里使用 ──
+	SMTPHost     string `json:"smtp_host" form:"smtp_host"`
+	SMTPPort     int    `json:"smtp_port" form:"smtp_port"`
+	SMTPUser     string `json:"smtp_user" form:"smtp_user"`
+	SMTPPassword string `json:"smtp_password" form:"smtp_password"`
+	SMTPFrom     string `json:"smtp_from" form:"smtp_from"`
+	SMTPFromName string `json:"smtp_from_name" form:"smtp_from_name"`
+	SMTPReplyTo  string `json:"smtp_reply_to" form:"smtp_reply_to"`
+	SMTPTLS      *bool  `json:"smtp_tls"`
+	SMTPInsecure *bool  `json:"smtp_insecure_skip_verify"`
+
+	ZeaburAPIKey        string            `json:"zeabur_api_key" form:"zeabur_api_key"`
+	ZeaburBaseURL       string            `json:"zeabur_base_url" form:"zeabur_base_url"`
+	ZeaburFrom          string            `json:"zeabur_from" form:"zeabur_from"`
+	ZeaburFromName      string            `json:"zeabur_from_name" form:"zeabur_from_name"`
+	ZeaburReplyTo       string            `json:"zeabur_reply_to" form:"zeabur_reply_to"`
+	ZeaburWebhookSecret string            `json:"zeabur_webhook_secret" form:"zeabur_webhook_secret"`
+	ZeaburTags          map[string]string `json:"zeabur_tags"`
+}
+
+// EmailConfigFields 是通用字段袋，应用级与平台级请求共用。
+type EmailConfigFields struct {
+	// Settings 非密钥字段，按键合并（不出现的键保持原值）。
+	Settings map[string]string `json:"settings"`
+	// Secrets 密钥字段明文。**空值会被忽略**——前端编辑态从不回显密钥，
+	// 无条件覆盖会让「改个发件人名」把 API Key 清空，而这件事要到下一次发信才暴露。
+	Secrets map[string]string `json:"secrets"`
+	// ClearSecrets 显式清空这些密钥。与「留空」分开表达，否则两者无从区分。
+	ClearSecrets []string `json:"clear_secrets"`
+	// ReplaceSettings 为 true 时整体替换而不是逐键合并，供「换服务商」使用。
+	ReplaceSettings bool `json:"replace_settings"`
+}
+
+// AdminPlatformEmailConfigSaveRequest 平台级邮件配置写入。
+//
+// 刻意不带 appid：作用域由路由决定。带上它就得防「传了别的 appid 会怎样」，
+// 而那正是应用级与平台级混用同一组路由时最容易漏掉的一处越权。
+type AdminPlatformEmailConfigSaveRequest struct {
+	Name        string `json:"config_name" form:"config_name"`
+	Provider    string `json:"provider" form:"provider"`
+	Enabled     *bool  `json:"enabled"`
+	IsDefault   *bool  `json:"is_default"`
+	Description string `json:"description" form:"description"`
+	// Shared 允许应用在自己没有任何可用配置时回落到这条通道。默认关。
+	Shared *bool `json:"shared"`
+
+	EmailConfigFields
+}
+
+// AdminPlatformEmailTestRequest 平台级通道试发。
+type AdminPlatformEmailTestRequest struct {
+	TestEmail string `json:"test_email" form:"test_email" binding:"required"`
 }
 
 type AdminEmailConfigTestRequest struct {
@@ -55,9 +95,16 @@ type AdminEmailDeliveryListRequest struct {
 	ConfigID int64  `json:"config_id" form:"config_id"`
 	Status   string `json:"status" form:"status"`
 	Provider string `json:"provider" form:"provider"`
+	Purpose  string `json:"purpose" form:"purpose"`
 	Keyword  string `json:"keyword" form:"keyword"`
 	Page     int    `json:"page" form:"page"`
 	PageSize int    `json:"pageSize" form:"pageSize"`
+}
+
+// AdminEmailChannelRequest 查「这个作用域现在实际用哪条通道发信」。
+type AdminEmailChannelRequest struct {
+	AppID      int64  `json:"appid" form:"appid" binding:"required"`
+	ConfigName string `json:"config_name" form:"config_name"`
 }
 
 type EmailCodeRequest struct {

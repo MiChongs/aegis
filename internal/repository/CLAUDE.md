@@ -31,7 +31,8 @@ repository/
 │   ├── storage_repository.go    # 存储桶 & 文件元数据
 │   ├── version_repository.go    # App 版本 & 渠道
 │   ├── workflow_repository.go   # 工作流定义
-│   └── workflow_scan.go         # 工作流结果扫描辅助
+│   ├── workflow_scan.go         # 工作流结果扫描辅助
+│   └── sqlcgen/                 # sqlc 生成产物（勿手改）：源在 sql/queries/*.sql
 ├── redis/             # Redis 缓存与会话
 │   ├── session_repository.go        # 用户会话 Token（JWT 黑名单 & 活跃会话）
 │   ├── admin_session_repository.go  # 管理员会话
@@ -64,9 +65,31 @@ legacy := legacyrepo.New(db)
 - AutoSign 使用 Redis Sorted Set，score 为 Unix 时间戳（下次签到时间）
 - LegacyMySQL 仅在 `cmd/server sync-legacy-*` 命令中使用，正常运行时不连接
 
+## 手写 SQL 与 sqlc 的分工
+
+手写 pgx 的代价集中在一处：**Scan 目标与真实列类型的对应关系编译期查不出来**。
+`*string` 与 `**string` 都是合法的 Scan 参数，写错只在运行期、且往往只在某一类数据上炸。
+最典型的是 `LEFT JOIN` 不命中 —— 建表语句里 `NOT NULL` 的列，JOIN 不命中时整行是 NULL
+（见 `vip_trial_repository.go` 里 `vipEntitlementFactsSQL` 的注释与它的钉子测试）。
+
+[sqlc](../../docs/sqlc.md) 读 `migrations/postgres/` 算可空性，**包括被 LEFT JOIN 污染的那些列**，
+因此对不上的写法根本编译不过。它的定位是渐进接管：
+
+| | 写在哪 | 适用 |
+|---|---|---|
+| 手写 pgx | `postgres/*_repository.go` | 存量查询；需要动态拼 where / order by 的列表接口 |
+| sqlc | `sql/queries/*.sql` → `sqlcgen/` | 新查询；列固定的读写 |
+
+两者共用同一个 `*pgxpool.Pool`。**动态拼接的查询不要硬塞给 sqlc** ——
+那种形状套进来只会得到十几条近乎重复的查询。
+
 ## 扩展说明
 
 添加新的 Repository 方法：
 1. 在对应 `*_repository.go` 文件中添加方法到 `Queries` 结构体
 2. 在 Service 层通过 `pg.*Method()` 调用
 3. 无需额外注册，`Queries` 已在 bootstrap 统一传递
+
+列固定的新查询优先走 sqlc：在 `sql/queries/` 加一段带 `-- name:` 注解的 SQL，
+`sqlc generate` 后由 repository 方法包一层转成 `internal/domain` 的领域类型。
+**生成的 `Row` 结构不要直接出网** —— 那等于把库结构变成对外 API 契约。

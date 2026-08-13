@@ -22,6 +22,13 @@ func registerPublicRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 	router.GET("/cons-env", h.EnvPage)
 	router.GET("/healthz", h.Healthz)
 	router.GET("/readyz", h.Readyz)
+	// 探针另注册 HEAD：**gin 不会让 GET 顺带响应 HEAD**（与 net/http 的
+	// ServeMux 不同，它按方法分树，HEAD 查不到就落 NoMethod）。而负载均衡器、
+	// 容器编排的存活检查与外部 uptime 监控默认发的就是 HEAD，
+	// 于是「服务好着呢，探针全红」。handler 复用 GET 那个，
+	// 响应体由 net/http 按 HEAD 语义自动丢弃。
+	router.HEAD("/healthz", h.Healthz)
+	router.HEAD("/readyz", h.Readyz)
 	router.GET("/api/system/announcements/active", h.ActiveAnnouncements)
 	router.GET("/api/public/branding", h.AdminGetPublicBranding)
 	systemMonitor := router.Group("/api/system/monitor")
@@ -42,6 +49,10 @@ func registerPublicRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 	// 而浏览器加载图片不会带上 Authorization 头；它也会出现在邮件正文里，
 	// 那里根本没有登录态。防遍历靠地址本身带的签名，不靠鉴权中间件。
 	router.GET("/api/avatars/:token", h.AvatarImage)
+	// 同上，HEAD 要单独注册。这两个地址的消费方正是最爱发 HEAD 的那一类：
+	// 邮件客户端的图片代理在拉取前先探一次，链接检查器也只发 HEAD。
+	router.HEAD("/api/avatar/:hash", h.AvatarRedirect)
+	router.HEAD("/api/avatars/:token", h.AvatarImage)
 	router.GET("/api/ws", h.WebSocket)
 }
 

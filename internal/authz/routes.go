@@ -202,6 +202,19 @@ var adminRouteRules = []RouteRule{
 	// 这句提示会把人引到完全无关的地方去要权限。
 	{Pattern: "/api/admin/system/legal/*", Permission: PermSystemLegalManage},
 
+	// ── 平台级邮件通道 ──
+	//
+	// 与法律文本同理，单独登记而不是落进下面那个大桶：桶对应的权限点叫
+	// 「管理员管理」，被它挡下时错误信息会说「缺少管理员管理权限」——
+	// 而管理员想改的是发信配置，这句提示会把人引到完全无关的地方去要权限。
+	//
+	// 作用域恒为全局。平台通道对所有应用生效（还能被共享成应用的兜底出口），
+	// 按应用作用域判定的话，任何一个应用管理员都能改到全站的发信出口 ——
+	// 与 /api/admin/platform/* 那条「恒全局」是同一个理由。
+	{Pattern: "/api/admin/system/email/providers", Note: "邮件服务商静态目录，不含租户数据与凭据"},
+	{Methods: readMethods, Pattern: "/api/admin/system/email/*", Permission: PermEmailRead},
+	{Pattern: "/api/admin/system/email/*", Permission: PermEmailWrite},
+
 	// ── 其余 /api/admin/system/*：管理员与平台运维 ──
 	//
 	// 这是一个很粗的桶（两百多条路由共用一个权限点）。保持原样是为了让这次
@@ -271,9 +284,14 @@ var adminRouteRules = []RouteRule{
 	{Pattern: "/api/admin/app/role-application/statistics", Permission: PermRoleApplicationRead, Scope: ScopeApp},
 	{Pattern: "/api/admin/app/role-application/*", Permission: PermRoleApplicationReview, Scope: ScopeApp},
 
+	// 服务商目录是静态自述，不含租户数据也不含凭据；控制台**不带 appid** 调它，
+	// 按 ScopeApp 判定会被 40058 拦掉（与支付渠道目录同一条）。
+	{Pattern: "/api/admin/app/email-config/providers", Note: "平台支持哪些邮件服务商（发送器 Describe() 的静态目录）"},
 	{Pattern: "/api/admin/app/email-config/list", Permission: PermEmailRead, Scope: ScopeApp},
 	{Pattern: "/api/admin/app/email-config/detail", Permission: PermEmailRead, Scope: ScopeApp},
 	{Pattern: "/api/admin/app/email-config/deliveries", Permission: PermEmailRead, Scope: ScopeApp},
+	{Pattern: "/api/admin/app/email-config/stats", Permission: PermEmailRead, Scope: ScopeApp},
+	{Pattern: "/api/admin/app/email-config/channel", Permission: PermEmailRead, Scope: ScopeApp},
 	{Pattern: "/api/admin/app/email-config/*", Permission: PermEmailWrite, Scope: ScopeApp},
 
 	{Pattern: "/api/admin/app/storage-config/list", Permission: PermStorageRead, Scope: ScopeApp},

@@ -8,16 +8,20 @@ Zeabur 的底层网络（Akamai / Linode）**封禁出站 SMTP 端口**。
 部署在 Zeabur 上的实例无论把 SMTP 主机、端口、加密方式配成什么组合，
 连接都只会以超时告终 —— 这不是配置问题，是平台的网络策略。
 
-因此 Aegis 的邮件出口做成了可插拔的 provider，目前两档：
+因此 Aegis 的邮件出口做成了可插拔的 provider。本文只讲 `zeabur` 这一档，
+**九档服务商与两种作用域（应用级 / 平台级）的全貌见 [email.md](email.md)**。
 
-| provider | 传输 | 适用场景 |
-|---|---|---|
-| `smtp`（默认） | 直连 SMTP（go-mail） | 自有服务器 / 容器 / 任何不封 25·465·587 的环境 |
-| `zeabur` | Zeabur Email REST API | Zeabur 部署，或任何出站 SMTP 不通的 PaaS |
+在 Zeabur 上部署时，除本档外还可以选任何走 HTTP API 的服务商
+（AWS SES / Resend / SendGrid / Mailgun / Postmark / 阿里云 / 腾讯云）——
+被封的只是出站 SMTP 端口，HTTPS 一律通。`zeabur` 档的优势是不用另外开账号。
 
-两档共用同一套业务代码：验证码、密码重置、欢迎信、资料变更通知、
-以及 NotifyHub 的 `email` 渠道全部经由 `EmailService.sendMail` 出口，
+所有 provider 共用同一套业务代码：验证码、密码重置、欢迎信、资料变更通知、
+以及 NotifyHub 的 `email` 渠道全部经由 `EmailService.sendRenderedMail` 出口，
 切换 provider 不需要改任何业务逻辑。
+
+> **注意**：这条通道**带不了附件**（REST 接口没有公开的附件字段）。
+> 需要随信寄送凭证 PDF 时平台会自动改发签名下载链接；要真附件请改用
+> SMTP / AWS SES / Resend / SendGrid / Mailgun / Postmark / 腾讯云。
 
 ## 配置步骤
 
@@ -47,11 +51,15 @@ Zeabur 的底层网络（Akamai / Linode）**封禁出站 SMTP 端口**。
 ### 3. 回调地址
 
 ```
-POST {你的后端地址}/api/email/webhook/zeabur/{appid}/{配置名}
-POST {你的后端地址}/api/email/webhook/zeabur/{appid}          # 省略配置名时落到该应用的默认配置
+POST {你的后端地址}/api/email/webhook/zeabur/{scope}/{配置名}
+POST {你的后端地址}/api/email/webhook/zeabur/{scope}          # 省略配置名时落到该作用域的默认配置
 ```
 
-控制台的 Zeabur 字段组里会直接算好完整地址并提供复制按钮。
+`{scope}` 是应用 id，或字面量 **`platform`**（平台级通道）。用关键字而不是数字 0：
+这个地址要人工填进 Zeabur 控制台，`/webhook/zeabur/0` 看起来像个占位符没替换掉，
+而填错的后果是回执永远匹配不到留痕，且不报错。
+
+控制台的配置表单里会直接算好完整地址并提供复制按钮。
 
 该路由是公开的（Zeabur 不可能携带管理员令牌），**准入完全依赖 HMAC 签名**：
 

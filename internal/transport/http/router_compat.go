@@ -107,6 +107,11 @@ func registerAdminAppConfigRoutes(router *gin.Engine, h *Handler, deps RouterDep
 		emailAdmin.POST("/delete", h.AdminEmailConfigDelete)
 		emailAdmin.POST("/test", h.AdminEmailConfigTest)
 		emailAdmin.POST("/deliveries", h.AdminEmailDeliveryList)
+		emailAdmin.POST("/stats", h.AdminEmailDeliveryStats)
+		// 服务商目录：静态自述，两个作用域共用同一个 handler
+		emailAdmin.POST("/providers", h.EmailProviderCatalog)
+		// 当前生效的通道（含「继承自平台共享通道」的判定）
+		emailAdmin.POST("/channel", h.AdminEmailChannel)
 	}
 
 	payCompat := router.Group("/api/admin/app/payment-config")

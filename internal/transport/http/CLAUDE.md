@@ -15,6 +15,7 @@ Gin 路由注册、HTTP Handler 实现、请求/响应 DTO、OpenAPI 规范生�
 | `router_*.go` | 各域的路由注册，详见下表 |
 | `route_groups.go` | **命名空间规则表**（单一事实源）+ `deriveTags()` + `RouteInventory()` |
 | `route_chains.go` | 接住 `gin.DebugPrintRouteFunc`：灭掉调试滚屏 + 采集中间件链深度 |
+| `route_methods.go` | `NoMethod` 收口：405 + `Allow`，OPTIONS 兜底成 204 |
 | `testdata/routes.golden` | 全量路由黄金快照，由 `TestRouteTableMatchesGoldenSnapshot` 钉住 |
 | `dto.go` | 通用请求/响应 DTO（用户、认证、通知等） |
 | `dto_extra.go` | 扩展 DTO（角色、版本、站点等） |
@@ -26,7 +27,7 @@ Gin 路由注册、HTTP Handler 实现、请求/响应 DTO、OpenAPI 规范生�
 | `app_content_handlers.go` | 应用级内容中心管理端：Banner（列表 / 排序 / 图片上传）、公告（分页过滤）、总览 |
 | `auth_protocol_handlers.go` | 接入配置的管理端 Handler（策略 / 应用密钥 / 自检 / 传输密钥） |
 | `docs_gateway.go` | 网关接口的 OpenAPI 元数据（由接入目录生成，多平台客户端从这一段产出） |
-| `docs_route_models.go` | **机器生成**：路由 → 请求模型映射，不要手工编辑 |
+| `docs_route_models.go` | **由 `scripts/docsgen` 生成**：路由 → 请求模型映射，勿手改 |
 | `admin_handlers.go` | 管理员相关 Handler |
 | `avatar_handlers.go` | 头像：永久地址取图 + 上传 / 移除 / 历史 / 恢复（见 [docs](../../../docs/avatar.md)） |
 | `feature_handlers.go` | 功能性 Handler（密码策略、积分、版本等） |
@@ -46,13 +47,14 @@ Gin 路由注册、HTTP Handler 实现、请求/响应 DTO、OpenAPI 规范生�
 ## 路由组织方式
 
 ```
-GET  /healthz                    健康检查
-GET  /readyz                     就绪检查
+GET|HEAD /healthz                健康检查（HEAD 是负载均衡器与 uptime 监控的默认发法）
+GET|HEAD /readyz                 就绪检查
 GET  /api/system/monitor         系统监控（公开）
 GET  /api/app/public             App 公开信息
-GET  /api/avatars/:token         永久头像地址（**免登录是前提**：它出现在 <img src>
+GET|HEAD /api/avatars/:token     永久头像地址（**免登录是前提**：它出现在 <img src>
                                  与邮件正文里，那两处都没机会带 Authorization 头；
                                  防遍历靠地址自带的签名。docs/avatar.md）
+                                 HEAD 供邮件客户端的图片代理与链接检查器预探
 
 # 应用接入网关（接入方唯一需要认识的命名空间，见 docs/app-integration.md）
 /api/v1/apps/:appkey/*           免登录部分：config / captcha / auth.* / banners /
@@ -122,6 +124,51 @@ GET /api/ws                      实时通信入口
 
 **子域收路由组，不自建。** `registerOrgRoutes` 的入参是**已经配好中间件的** `adminSystem`
 组而不是 `*gin.Engine` —— 重新建一个同路径的组会另起一条中间件链，鉴权与审计就都对不上了。
+
+## 方法收口：405 / OPTIONS / HEAD
+
+路径存在、方法不匹配的请求由 `route_methods.go` 的 `methodNotAllowed` 收口。
+它是运维与接入方每天都在制造、却从不出现在功能用例里的那类请求，
+因此三条行为各有一条测试钉住（`route_methods_test.go`）。
+
+| 情形 | 响应 | 为什么 |
+|---|---|---|
+| 方法不匹配 | `405` + `Allow` + `40500` | 见下 |
+| OPTIONS 落到兜底 | `204` + `Allow` | CORS 管不到的那两类 |
+| HEAD（探针与头像） | 同 GET，无 body | gin 不会让 GET 顺带响应 HEAD |
+
+**405 而不是 501。** 这个位置曾经回 `501 服务能力暂未开放`，三处都不对：
+501 的定义是「服务器不认识这个方法」（对任何资源都不支持），而这里的事实是
+方法认识、只是这个资源不接受；501 属于 **5xx**，于是「调用方把 GET 写成了 POST」
+会被计成服务端故障，抬高错误率与 SLO 违约、把排查方向带向后端；HTTP 客户端与 SDK
+普遍**对 5xx 重试、对 4xx 不重试**，用错方法的调用方会带着必然失败的请求一直打回来。
+
+`Allow` 头是 gin 在 `handleHTTPRequest` 里算好后预置的（连同 405 状态），
+这里只是不把它改坏 —— RFC 9110 §15.5.6 要求 405 必须携带它。
+
+**OPTIONS 为什么要在这里兜底。** gin-contrib/cors 只处理**带 `Origin` 头**的请求，
+且 CORS 未启用时 `middleware.CORS` 整个是直通的。因此两类 OPTIONS 会漏到这里：
+关闭 CORS 时浏览器发出的预检，以及非浏览器客户端拿 OPTIONS 探能力。
+回 405 等于对「这个资源支持什么方法」回答「不支持提问」，而答案就在 `Allow` 里。
+带 Origin 的预检仍由 CORS 中间件在更靠前的位置短路，两条路径不打架。
+
+**HEAD 必须显式注册。** gin 按方法分树，`GET` 不会顺带响应 `HEAD`
+（与 `net/http` 的 `ServeMux` 不同，很容易想当然）。而负载均衡器的存活检查、
+邮件客户端的图片代理、链接检查器发的都是 HEAD，收到 405 的表现是
+「服务好着呢，探针全红」。因此 `/healthz`、`/readyz` 与两个头像地址各注册一条
+HEAD，复用 GET 的 handler，响应体由 net/http 按 HEAD 语义自动丢弃。
+
+两处配套约束：
+
+- **不要用 `httptest.NewRecorder` 断言「HEAD 无 body」**。body 的丢弃是 net/http
+  在 `response.write` 里按 `req.Method == "HEAD"` 做的，Recorder 只是个 buffer，
+  不实现那一层 —— 拿它断言会得到假阳性的失败。`TestHeadIsServedOnProbeAndAvatarRoutes`
+  因此起真实服务器。
+- **HEAD 不进 OpenAPI**（`docs.go` 里显式跳过）。它与同路径的 GET 共用契约，
+  单独列出只会让生成式客户端多出一批名字雷同、永远拿不到数据的方法。
+
+与防火墙层的 501 不冲突：`middleware.blockedMethod` 拦的是
+CONNECT / TRACE / TRACK / DEBUG，那是**服务器整体不支持**的方法，501 正是它的定义。
 
 ## 路由清单与分组规则
 
@@ -199,14 +246,50 @@ go run ./cmd/server postman
 
 | 层 | 来源 | 覆盖面 |
 |---|---|---|
-| 1 | `docs_route_models.go`（机器生成，勿手改） | 由路由表反查 handler 的绑定目标推导，覆盖最广 |
+| 1 | `docs_route_models.go`（`scripts/docsgen` 生成，勿手改） | 由路由表反查 handler 的绑定目标推导，覆盖最广 |
 | 2 | `manualRouteDocs()` | 手工登记的摘要与响应示例，只覆盖少数重点接口 |
 | 3 | `gatewayRouteDocs()` | 网关命名空间，由接入目录生成 |
 
-第 1 层的重新生成方式：取运行时 gin 路由表 → 找到每条路由的 handler →
-回源码看它 `bind` / `bindLimitedJSON` / `c.ShouldBind*` 到了哪个**具名**类型。
-因此每一项都与 handler 真正解析的结构一致。覆盖不到的只有两类，都不是遗漏：
-请求体是匿名 struct（没有类型名可引用，应提成具名类型），或该接口本来就没有请求体。
+### 第 1 层为什么必须由生成器产出
+
+这一层回答的是「**这条路由的请求体是什么类型**」，而这个问题**没有任何 OpenAPI
+库能替你回答**：gin 的 handler 签名是 `func(*gin.Context)`，请求类型在运行时
+已经被擦掉了。kin-openapi 只能从「已知的 Go 类型」反射出 schema，
+却无从知道哪条路由对应哪个类型。出路只有两条：静态分析源码，或改造全部
+handler 的签名（huma 那类框架的做法，代价是 1000+ 个 handler 全部重写）。
+
+`scripts/docsgen` 走前者，把两份**都不是人手维护**的事实交叉：
+
+| 来源 | 得到 |
+|---|---|
+| 运行时装配一次真实路由表 | method + path → handler |
+| `x/tools` 加载本包类型信息 | handler → 它绑定的具名类型 |
+
+绑定只认五种写法（`bind` / `bindLimitedJSON` / `c.ShouldBindJSON` /
+`c.ShouldBindQuery` / `c.ShouldBind`），它们覆盖了全部 450 处绑定。
+另有两处不做不行：
+
+- **沿调用图下探**。大量 handler 把请求解析**委托**出去 ——
+  `AdminEmailConfigCreate` 只有一行 `h.adminEmailConfigSave(c, 0)`。
+  只看 handler 自己的函数体，这些接口会整片漏成「没有请求体」。
+  优先级是自己的绑定压过转手的，反过来会张冠李戴。
+- **按 HTTP 方法分流**。同一个 handler 同时挂在 GET 与 POST 上是本仓库的常态，
+  不分流的话 GET 会拿到请求体模型、被渲染成一串根本不存在的 query 参数。
+
+跨包的具名类型（handler 直接绑 `service.PolicyOverrideInput` 这类）由产物
+`import` 进来，不是「引用不到」。真正覆盖不了的只有匿名 struct ——
+生成器会把它们逐条列出来，**提成具名类型即可纳入规范**，这是唯一一类
+能修好的缺口，因此不与「本来就没有请求体」混为一谈。
+
+```bash
+go generate ./internal/transport/http/   # 改了 handler 的请求绑定后跑，产物一起提交
+go run ./scripts/docsgen -check          # 校验产物是否过期（CI 的 docsgen job）
+```
+
+**过期不会有任何编译错误**，只会让新接口在生成出来的 SDK 里变成一个不带参数、
+调过去必然 400 的空方法 —— 所以它必须由 CI 把关，而不是靠记性。
+两条测试从另一侧守着：`TestGeneratedRouteModelsHaveNoDeadEntries`（表里没有
+指向空气的条目）与 `TestWriteRouteRequestBodyCoverageHasNotRegressed`（覆盖不倒退）。
 
 网关接口另外三件事必须做到位，否则生成的客户端不可用：**短 `operationId`**
 （默认值是从路径拼的 `post__api__v1__apps__by_appkey__auth__login`）、

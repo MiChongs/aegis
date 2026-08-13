@@ -35,11 +35,23 @@ const (
 	replayGuardBodyLimit = 8 << 20
 )
 
-// ReplayGuard 防重放中间件（三层：指纹 + Nonce + HMAC 签名）
+// ReplayGuard 防重复请求中间件。
+//
+// 四层，从"调用方明确表达意图"到"服务端兜底猜测"依次降级：
+//
+//	1. 路由策略   —— 这条路由该不该做去重（replay_policy.go 的那张表）
+//	2. Nonce+签名 —— 客户端带了 X-Timestamp / X-Nonce / X-Signature 时的强校验
+//	3. 幂等键     —— 带了 Idempotency-Key 时回放首次响应（idempotency.go）
+//	4. 指纹兜底   —— 只对 PolicyGuarded 的路由生效
+//
+// 这个顺序不是随手排的：越靠前的层越知道调用方**想要什么**，
+// 越靠后的层越是在替调用方猜。旧实现只有第 4 层，且对所有非 GET 请求生效，
+// 于是「猜」变成了默认行为，验证码这类天然可重复的接口被稳定误杀。
 type ReplayGuard struct {
 	enabled          bool
 	signatureEnabled bool
 	repo             *redisrepo.ReplayRepository
+	idem             *IdempotencyManager
 	nonceWindow      time.Duration
 	nonceSkew        time.Duration
 	nonceExpiry      time.Duration
@@ -48,16 +60,23 @@ type ReplayGuard struct {
 	log              *zap.Logger
 }
 
-// NewReplayGuard 创建防重放中间件
+// NewReplayGuard 创建防重复请求中间件
 func NewReplayGuard(cfg config.ReplayProtectionConfig, jwtSecret string, repo *redisrepo.ReplayRepository, log *zap.Logger) *ReplayGuard {
 	if log == nil {
 		log = zap.NewNop()
 	}
 	nonceExpiry := cfg.NonceWindow + cfg.NonceSkew + 30*time.Second
+
+	var idem *IdempotencyManager
+	if cfg.IdempotencyEnabled {
+		idem = NewIdempotencyManager(repo, cfg.IdempotencyTTL, cfg.IdempotencyLockTTL, log)
+	}
+
 	return &ReplayGuard{
 		enabled:          cfg.Enabled,
 		signatureEnabled: cfg.SignatureEnabled,
 		repo:             repo,
+		idem:             idem,
 		nonceWindow:      cfg.NonceWindow,
 		nonceSkew:        cfg.NonceSkew,
 		nonceExpiry:      nonceExpiry,
@@ -76,130 +95,178 @@ func (g *ReplayGuard) Handler() gin.HandlerFunc {
 		}
 
 		method := strings.ToUpper(c.Request.Method)
-		// 跳过幂等方法
+		// 幂等方法不需要任何去重
 		if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
 			c.Next()
 			return
 		}
 
-		// 跳过健康检查
 		path := c.Request.URL.Path
 		if path == "/healthz" || path == "/readyz" {
 			c.Next()
 			return
 		}
-		// 应用接入网关自己负责防重放，这里整段让开：
-		//   signed / sealed —— 网关有强制时间窗、一次性 Nonce 与 HMAC/AEAD 完整性，
-		//     严格强于本中间件；且 sealed 的 octet-stream 密文会让 snapshotBody 返回 nil，
-		//     指纹退化成 method+path+ip，同一 IP 的第二个请求就会被误杀。
-		//   standard —— 应用明确选择了"不加任何包装"，此时用 body 哈希去重会把
-		//     合法重试和两次相同的登录尝试判成"重复请求"，正是本次重构要消灭的意外。
-		if strings.HasPrefix(path, gatewayPathPrefix) {
+
+		// Layer 1：路由策略。明确声明可重复的路由到此为止。
+		policy, reason := ResolveReplayPolicy(method, path)
+		if policy == PolicyOff {
+			c.Header("X-Replay-Policy", "off")
+			_ = reason // 保留在表里供排障阅读，不进响应头
 			c.Next()
 			return
 		}
 
-		// 读取并恢复请求体
 		body, err := g.snapshotBody(c.Request)
 		if err != nil {
 			c.Next()
 			return
 		}
 
+		// Layer 2：Nonce + 时间戳 + 签名
 		ts := strings.TrimSpace(c.GetHeader(headerTimestamp))
 		nonce := strings.TrimSpace(c.GetHeader(headerNonce))
-		sig := strings.TrimSpace(c.GetHeader(headerSignature))
-
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
-		defer cancel()
-
-		// Layer 1: Nonce + 时间戳
 		if ts != "" && nonce != "" {
-			// 验证时间窗口
-			tsUnix, parseErr := strconv.ParseInt(ts, 10, 64)
-			if parseErr != nil {
-				response.Error(c, http.StatusForbidden, 40381, "无效的请求时间戳")
-				c.Abort()
+			if !g.verifyNonce(c, method, path, ts, nonce, body) {
 				return
 			}
-			diff := time.Duration(math.Abs(float64(time.Now().Unix()-tsUnix))) * time.Second
-			if diff > g.nonceWindow+g.nonceSkew {
-				g.log.Warn("replay guard: timestamp expired",
-					zap.String("ip", c.ClientIP()),
-					zap.String("path", path),
-					zap.Int64("timestamp", tsUnix),
-					zap.Duration("diff", diff),
-				)
-				response.Error(c, http.StatusForbidden, 40381, "请求时间戳已过期")
-				c.Abort()
-				return
-			}
-
-			// Nonce 去重
-			if len(nonce) < 8 || len(nonce) > 128 {
-				response.Error(c, http.StatusForbidden, 40382, "无效的 Nonce")
-				c.Abort()
-				return
-			}
-			acquired, redisErr := g.repo.TryAcquireNonce(ctx, nonce, g.nonceExpiry)
-			if redisErr != nil {
-				g.log.Warn("replay guard: redis nonce check failed", zap.Error(redisErr))
-				c.Next() // Redis 故障时放行
-				return
-			}
-			if !acquired {
-				g.log.Warn("replay guard: nonce reused",
-					zap.String("ip", c.ClientIP()),
-					zap.String("path", path),
-					zap.String("nonce", nonce[:8]+"..."),
-				)
-				response.Error(c, http.StatusForbidden, 40382, "重复请求")
-				c.Abort()
-				return
-			}
-
-			// Layer 3: HMAC 签名验证
-			if sig != "" && g.signatureEnabled {
-				bodyHash := sha256Hex(body)
-				payload := ts + "\n" + nonce + "\n" + method + "\n" + path + "\n" + bodyHash
-				secret := g.deriveSecret(c)
-				expected := computeHMAC(secret, payload)
-
-				if !hmac.Equal([]byte(sig), []byte(expected)) {
-					g.log.Warn("replay guard: signature mismatch",
-						zap.String("ip", c.ClientIP()),
-						zap.String("path", path),
-					)
-					response.Error(c, http.StatusForbidden, 40383, "签名验证失败")
-					c.Abort()
-					return
-				}
-			}
-
 			c.Next()
 			return
 		}
 
-		// Layer 2: 指纹去重（兜底，无需客户端配合）
-		fp := g.computeFingerprint(c, body)
-		acquired, redisErr := g.repo.TryAcquireFingerprint(ctx, fp, g.fingerprintTTL)
-		if redisErr != nil {
-			g.log.Warn("replay guard: redis fingerprint check failed", zap.Error(redisErr))
-			c.Next()
-			return
-		}
-		if !acquired {
-			g.log.Warn("replay guard: duplicate request fingerprint",
-				zap.String("ip", c.ClientIP()),
-				zap.String("path", path),
-				zap.String("method", method),
-			)
-			response.Error(c, http.StatusForbidden, 40382, "重复请求")
+		// Layer 3：幂等键
+		key, present, keyErr := NormalizeIdempotencyKey(c)
+		if keyErr != nil {
+			response.Error(c, http.StatusBadRequest, 40387,
+				"Idempotency-Key 格式无效：需为 8-255 个可打印 ASCII 字符且不含冒号")
 			c.Abort()
+			return
+		}
+		if present && g.idem != nil {
+			if g.idem.Handle(c, key, canonicalRequestHash(method, path, body)) {
+				return
+			}
+			c.Next()
+			return
+		}
+
+		// Layer 4：指纹兜底。**只对声明为 guarded 的路由生效。**
+		if policy == PolicyGuarded {
+			g.guardByFingerprint(c, method, path, body)
 			return
 		}
 
 		c.Next()
+	}
+}
+
+// verifyNonce 校验时间窗、签名与一次性 Nonce。返回 false 表示已写入错误响应。
+//
+// 顺序是刻意的：**先验签名，后消耗 Nonce。**
+// 反过来的话（旧实现就是反的），一个签名错误的请求会把 Nonce 先烧掉，
+// 于是客户端拿正确签名重试时收到的是「重复请求」——
+// 而它其实一次都没成功过。更糟的是，任何人只要猜到别人正在用的 Nonce，
+// 就能用一个乱签名把它作废掉。
+func (g *ReplayGuard) verifyNonce(c *gin.Context, method, path, ts, nonce string, body []byte) bool {
+	tsUnix, parseErr := strconv.ParseInt(ts, 10, 64)
+	if parseErr != nil {
+		response.Error(c, http.StatusForbidden, 40381, "无效的请求时间戳")
+		c.Abort()
+		return false
+	}
+	diff := time.Duration(math.Abs(float64(time.Now().Unix()-tsUnix))) * time.Second
+	if diff > g.nonceWindow+g.nonceSkew {
+		g.log.Warn("replay guard: timestamp expired",
+			zap.String("ip", c.ClientIP()),
+			zap.String("path", path),
+			zap.Int64("timestamp", tsUnix),
+			zap.Duration("diff", diff),
+		)
+		response.Error(c, http.StatusForbidden, 40381, "请求时间戳已过期")
+		c.Abort()
+		return false
+	}
+
+	if len(nonce) < 8 || len(nonce) > 128 {
+		response.Error(c, http.StatusForbidden, 40382, "无效的 Nonce")
+		c.Abort()
+		return false
+	}
+
+	if sig := strings.TrimSpace(c.GetHeader(headerSignature)); sig != "" && g.signatureEnabled {
+		payload := ts + "\n" + nonce + "\n" + method + "\n" + path + "\n" + sha256Hex(body)
+		expected := computeHMAC(g.deriveSecret(c), payload)
+		if !hmac.Equal([]byte(sig), []byte(expected)) {
+			g.log.Warn("replay guard: signature mismatch",
+				zap.String("ip", c.ClientIP()),
+				zap.String("path", path),
+			)
+			response.Error(c, http.StatusForbidden, 40383, "签名验证失败")
+			c.Abort()
+			return false
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
+	defer cancel()
+	acquired, redisErr := g.repo.TryAcquireNonce(ctx, nonce, g.nonceExpiry)
+	if redisErr != nil {
+		// Redis 故障时放行。防重放是纵深防御的一层，不是唯一一层；
+		// 把它变成硬依赖会让一次缓存抖动升级成全站写操作不可用。
+		g.log.Warn("replay guard: redis nonce check failed", zap.Error(redisErr))
+		return true
+	}
+	if !acquired {
+		g.log.Warn("replay guard: nonce reused",
+			zap.String("ip", c.ClientIP()),
+			zap.String("path", path),
+			zap.String("nonce", nonce[:8]+"..."),
+		)
+		response.Error(c, http.StatusConflict, 40382, "重复请求：该 Nonce 已被使用")
+		c.Abort()
+		return false
+	}
+	return true
+}
+
+// guardByFingerprint 指纹兜底。只在 PolicyGuarded 且调用方没给幂等键时走到。
+func (g *ReplayGuard) guardByFingerprint(c *gin.Context, method, path string, body []byte) {
+	fp := g.computeFingerprint(c, body)
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
+	defer cancel()
+	acquired, redisErr := g.repo.TryAcquireFingerprint(ctx, fp, g.fingerprintTTL)
+	if redisErr != nil {
+		g.log.Warn("replay guard: redis fingerprint check failed", zap.Error(redisErr))
+		c.Next()
+		return
+	}
+	if !acquired {
+		g.log.Warn("replay guard: duplicate request fingerprint",
+			zap.String("ip", c.ClientIP()),
+			zap.String("path", path),
+			zap.String("method", method),
+		)
+		// 409 而不是 403：这不是"你没有权限"，是"这一单可能已经在处理中"。
+		// 403 会把调用方引向排查凭据，而正确的动作是稍后重试或去查询结果。
+		c.Header("Retry-After", "1")
+		response.Error(c, http.StatusConflict, 40382,
+			"重复请求：相同内容的提交正在处理中，请稍后重试或改用 Idempotency-Key")
+		c.Abort()
+		return
+	}
+
+	c.Next()
+
+	// 这次请求失败了就把占位还回去。指纹是在执行前占下的，
+	// 而失败的请求没有产生副作用 —— 留着它会让用户改完参数立刻重试时
+	// 撞上自己刚才那次失败，且错误信息是「重复请求」，与真正的问题无关。
+	if c.Writer.Status() >= http.StatusBadRequest {
+		releaseCtx, releaseCancel := context.WithTimeout(
+			context.WithoutCancel(c.Request.Context()), 200*time.Millisecond)
+		defer releaseCancel()
+		if err := g.repo.ReleaseFingerprint(releaseCtx, fp); err != nil {
+			g.log.Warn("replay guard: release fingerprint failed", zap.Error(err))
+		}
 	}
 }
 

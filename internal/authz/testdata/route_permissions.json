@@ -6725,5 +6725,83 @@
     "permission": "",
     "appScoped": false,
     "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/app/email-config/providers",
+    "permission": "",
+    "appScoped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/app/email-config/stats",
+    "permission": "email:read",
+    "appScoped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/app/email-config/channel",
+    "permission": "email:read",
+    "appScoped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/email/providers",
+    "permission": "",
+    "appScoped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/email/configs",
+    "permission": "email:read",
+    "appScoped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/email/configs",
+    "permission": "email:write",
+    "appScoped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/email/configs/:configId",
+    "permission": "email:read",
+    "appScoped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/system/email/configs/:configId",
+    "permission": "email:write",
+    "appScoped": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/system/email/configs/:configId",
+    "permission": "email:write",
+    "appScoped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/email/configs/:configId/test",
+    "permission": "email:write",
+    "appScoped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/email/channel",
+    "permission": "email:read",
+    "appScoped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/email/deliveries",
+    "permission": "email:read",
+    "appScoped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/email/stats",
+    "permission": "email:read",
+    "appScoped": false
   }
 ]

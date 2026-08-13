@@ -182,27 +182,27 @@ func TestZeaburEndpointFallsBackToDefault(t *testing.T) {
 	}
 }
 
-func TestFormatZeaburFrom(t *testing.T) {
-	if got := formatZeaburFrom("noreply@example.com", ""); got != "noreply@example.com" {
+func TestFormatMailAddress(t *testing.T) {
+	if got := formatMailAddress("noreply@example.com", ""); got != "noreply@example.com" {
 		t.Fatalf("无发件人名应只给地址，实际: %s", got)
 	}
-	got := formatZeaburFrom("noreply@example.com", "Aegis 平台")
+	got := formatMailAddress("noreply@example.com", "Aegis 平台")
 	if !strings.Contains(got, "<noreply@example.com>") {
 		t.Fatalf("带名字时应为 RFC 5322 形式，实际: %s", got)
 	}
 }
 
-func TestBuildZeaburTagsMergesPurpose(t *testing.T) {
-	tags := buildZeaburTags(map[string]string{"env": "prod"}, "register")
+func TestBuildProviderTagsMergesPurpose(t *testing.T) {
+	tags := buildProviderTags(map[string]string{"env": "prod"}, "register")
 	if tags["env"] != "prod" || tags["purpose"] != "register" {
 		t.Fatalf("用途应并入标签，实际: %v", tags)
 	}
 	// 用户显式配置的 purpose 不应被业务用途覆盖
-	tags = buildZeaburTags(map[string]string{"purpose": "custom"}, "register")
+	tags = buildProviderTags(map[string]string{"purpose": "custom"}, "register")
 	if tags["purpose"] != "custom" {
 		t.Fatalf("显式配置的标签优先级更高，实际: %v", tags)
 	}
-	if buildZeaburTags(nil, "") != nil {
+	if buildProviderTags(nil, "") != nil {
 		t.Fatal("无标签时应返回 nil，避免发送空对象")
 	}
 }
@@ -217,23 +217,21 @@ func TestZeaburSenderValidate(t *testing.T) {
 
 	// 编辑既有配置时前端不回传明文 Key，仅凭密文也应判定为已配置
 	config := emaildomain.Config{
-		Provider: emaildomain.ProviderZeabur,
-		Zeabur: emaildomain.ZeaburConfig{
-			APIKeyCipher: "cipher-text",
-			FromAddress:  "noreply@example.com",
-		},
+		Provider:      emaildomain.ProviderZeabur,
+		Settings:      map[string]string{emaildomain.KeyFromAddress: "noreply@example.com"},
+		SecretsCipher: map[string]string{"apiKey": "cipher-text"},
 	}
 	if err := sender.Validate(config); err != nil {
 		t.Fatalf("已有密文的配置应通过校验，实际: %v", err)
 	}
 
-	config.Zeabur.FromAddress = "not-an-email"
+	config.Settings[emaildomain.KeyFromAddress] = "not-an-email"
 	if err := sender.Validate(config); err == nil {
 		t.Fatal("非法发件地址应校验失败")
 	}
 
-	config.Zeabur.FromAddress = "noreply@example.com"
-	config.Zeabur.BaseURL = "http://api.example.com"
+	config.Settings[emaildomain.KeyFromAddress] = "noreply@example.com"
+	config.Settings["baseUrl"] = "http://api.example.com"
 	if err := sender.Validate(config); err == nil {
 		t.Fatal("非 https 的 API 地址应被拒绝")
 	}
@@ -267,41 +265,50 @@ func TestNormalizeEmailProviderDefaultsToSMTP(t *testing.T) {
 }
 
 func TestSanitizeEmailConfigStripsSecrets(t *testing.T) {
+	service := &EmailService{senders: map[string]emailSender{
+		emaildomain.ProviderZeabur: newZeaburEmailSender(zap.NewNop()),
+	}}
 	config := emaildomain.Config{
 		Provider: emaildomain.ProviderZeabur,
-		SMTP:     emaildomain.SMTPConfig{Password: "smtp-secret"},
-		Zeabur: emaildomain.ZeaburConfig{
-			APIKey:              "zb_live_key",
-			APIKeyCipher:        "cipher",
-			WebhookSecret:       "whsec",
-			WebhookSecretCipher: "cipher2",
+		Secrets: map[string]string{
+			"apiKey":                     "zb_live_key",
+			emaildomain.KeyWebhookSecret: "whsec",
+		},
+		SecretsCipher: map[string]string{
+			"apiKey":                     "cipher",
+			emaildomain.KeyWebhookSecret: "cipher2",
 		},
 	}
-	sanitizeEmailConfig(&config)
+	service.sanitizeConfig(&config)
 
-	if config.SMTP.Password != "" || config.Zeabur.APIKey != "" || config.Zeabur.APIKeyCipher != "" ||
-		config.Zeabur.WebhookSecret != "" || config.Zeabur.WebhookSecretCipher != "" {
+	if config.Secrets != nil || config.SecretsCipher != nil {
 		t.Fatalf("密钥不得随响应出网，实际: %+v", config)
 	}
-	if !config.Zeabur.APIKeySet || !config.Zeabur.WebhookSecretSet {
+	if !config.SecretSet["apiKey"] || !config.SecretSet[emaildomain.KeyWebhookSecret] {
 		t.Fatal("脱敏后仍应保留「已配置」的布尔位，否则前端无法区分未配置与不回显")
 	}
 }
 
-func TestSenderIdentityFollowsProvider(t *testing.T) {
+// 发件人身份三件套全服务商共用同一批键，因此换 provider 不改变取值来源。
+// 这正是通用字段袋替换掉「每家一个具名 struct」的意义：
+// 旧实现里 SenderIdentity 要按 provider 分支去取，加一家就得改一处。
+func TestSenderIdentityIsProviderAgnostic(t *testing.T) {
 	config := emaildomain.Config{
 		Provider: emaildomain.ProviderZeabur,
-		SMTP:     emaildomain.SMTPConfig{FromAddress: "smtp@example.com"},
-		Zeabur:   emaildomain.ZeaburConfig{FromAddress: "zeabur@example.com", FromName: "Aegis"},
+		Settings: map[string]string{
+			emaildomain.KeyFromAddress: "noreply@example.com",
+			emaildomain.KeyFromName:    "Aegis",
+			emaildomain.KeyReplyTo:     "support@example.com",
+		},
 	}
-	from, name, _ := config.SenderIdentity()
-	if from != "zeabur@example.com" || name != "Aegis" {
-		t.Fatalf("zeabur 配置应取 Zeabur 段的发件人，实际: %s / %s", from, name)
+	from, name, replyTo := config.SenderIdentity()
+	if from != "noreply@example.com" || name != "Aegis" || replyTo != "support@example.com" {
+		t.Fatalf("发件人身份取值有误：%s / %s / %s", from, name, replyTo)
 	}
 
-	config.Provider = emaildomain.ProviderSMTP
-	if from, _, _ = config.SenderIdentity(); from != "smtp@example.com" {
-		t.Fatalf("smtp 配置应取 SMTP 段的发件人，实际: %s", from)
+	config.Provider = emaildomain.ProviderSES
+	if from, _, _ = config.SenderIdentity(); from != "noreply@example.com" {
+		t.Fatalf("换服务商不应改变发件人取值来源，实际: %s", from)
 	}
 }
 
@@ -316,11 +323,17 @@ func TestDescribeZeaburFailure(t *testing.T) {
 }
 
 func TestSMTPBlockedHintMentionsZeabur(t *testing.T) {
-	// SMTP 出站被平台封禁时表现就是纯超时，提示必须点破根因，
-	// 否则排查会一路走偏到邮箱服务商那边。
+	// SMTP 出站被平台封禁时表现就是纯超时，提示必须点破根因（是平台封了端口，
+	// 不是邮箱服务商的问题）并给出可行的替代通道 —— 否则排查会一路走偏。
 	hint := smtpBlockedHint("smtp.example.com:587")
-	if !strings.Contains(hint, "Zeabur") || !strings.Contains(hint, "zeabur") {
-		t.Fatalf("超时提示应指向 Zeabur 渠道，实际: %s", hint)
+	if !strings.Contains(hint, "Zeabur") {
+		t.Fatalf("超时提示应点破 Zeabur / Linode 这类封端口的平台，实际: %s", hint)
+	}
+	// 替代方案必须列得出来：只说「换一个走 HTTP 的」等于没说。
+	for _, alternative := range []string{"AWS SES", "Resend", "阿里云"} {
+		if !strings.Contains(hint, alternative) {
+			t.Fatalf("超时提示应列出 %s 等可用的 HTTP API 通道，实际: %s", alternative, hint)
+		}
 	}
 }
 

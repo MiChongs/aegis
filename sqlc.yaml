@@ -1,13 +1,171 @@
+# sqlc —— 由「迁移文件 + 查询文件」生成类型安全的 pgx 代码。
+#
+# ── 为什么要有它 ──
+#
+# 本仓库的数据访问层是手写 pgx SQL（见 internal/repository/CLAUDE.md），
+# 手写的代价集中在一个地方：**Scan 目标与真实列类型的对应关系，编译期查不出来**。
+# `*string` 和 `**string` 都是合法的 Scan 目标，写错要等到运行期、
+# 而且往往只在某一类数据上才触发 —— 典型的是 LEFT JOIN 不命中时整行为 NULL
+# （见 vip_trial_repository.go 里那条判定 SQL 的注释）。
+#
+# sqlc 读的是 migrations/ 里的真实建表语句，因此它算得出每一列的可空性，
+# 包括 LEFT JOIN 之后被"污染"成可空的那些列。生成的 Scan 目标不可能和列类型对不上。
+#
+# 因此它在这里的定位是**渐进接管**，不是一次性重写：新查询优先写成 .sql 由它生成，
+# 存量手写 SQL 保持原样。两者共用同一个 pgxpool，互不干扰。
+
 version: "2"
+
 sql:
   - engine: "postgresql"
+    # 查询文件；一个文件对应一组相关查询，命名与 internal/repository/postgres/*.go 对齐
     queries: "./sql/queries"
+    # 库结构的唯一事实来源就是迁移目录本身 —— 另外维护一份 schema.sql 必然漂移，
+    # 而漂移的表现是"生成的代码和线上库对不上"，比没有生成器更糟。
+    # sqlc 认得 `-- +migrate Up` 注解（sql-migrate 风格），并自动跳过 *.down.sql。
     schema: "./migrations/postgres"
+
+    # 规则定义在文件末尾，但**必须在这里逐条启用**才会生效 ——
+    # 只写 rules: 定义、不在 sql 块里登记的话，`sqlc vet` 一条都不跑且返回 0。
+    rules:
+      - "no-unbounded-delete"
+      - "no-unbounded-update"
+
     gen:
       go:
         package: "sqlcgen"
         out: "./internal/repository/postgres/sqlcgen"
         sql_package: "pgx/v5"
+
         emit_json_tags: true
+        # 不生成 Querier 接口：本仓库的服务层依赖的是 *postgres.Repository 这个具体类型，
+        # 多一个只有一处实现的接口没有收益。
         emit_interface: false
+        # :many 无结果时返回空切片而不是 nil —— 直接 JSON 序列化时前者是 []，后者是 null，
+        # 而已发布的客户端对这两者的处理常常不同。
         emit_empty_slices: true
+        # 可空列生成 *string / *time.Time / *int64，而不是 pgtype.Text 这类包装类型。
+        # 这一条是配置里最要紧的：internal/domain 的可选字段全部是指针，
+        # 生成 pgtype 会让每个调用点都要写一遍 `if v.Valid { … }` 的转换，
+        # 而那段转换正是本该被生成器消灭的手工活。
+        emit_pointers_for_null_types: true
+        # 只生成查询真正用到的结构体。否则 80 张表会生成两千多行没人 import 的
+        # 表模型，与 internal/domain 里的领域类型重复一份，且永远不会被发现失效。
+        omit_unused_structs: true
+
+        # 首字母缩写按 Go 习惯全大写（sqlc 默认只认 id）
+        initialisms:
+          - "id"
+          - "api"
+          - "url"
+          - "uri"
+          - "ip"
+          - "uuid"
+          - "sms"
+          - "smtp"
+          - "jwt"
+          - "mfa"
+          - "sla"
+          - "vip"
+          - "ttl"
+          - "isp"
+          - "asn"
+          - "cidr"
+          - "dsn"
+          - "html"
+          - "json"
+          - "sql"
+
+        # rename 按 SQL 标识符全局生效，一条覆盖所有表。
+        # appid 是一个词、切不出 "app"+"id"，靠 initialisms 只会得到 APPID。
+        rename:
+          appid: "AppID"
+          app_id: "AppID"
+          oauth: "OAuth"
+          openid: "OpenID"
+          unionid: "UnionID"
+
+        # ⚠ db_type 的写法**逐类型不同**，且写错时 sqlc 不报错、只是那条覆盖静默不生效：
+        #   时间类要写裸名 `timestamptz`（写 `pg_catalog.timestamptz` 无效）
+        #   numeric 要写 `pg_catalog.numeric`（写 `numeric` 无效）
+        # 判断有没有生效的唯一办法是生成一次再看产物类型。改动这一段后请照做。
+        overrides:
+          # 时间列一律取成 time.Time / *time.Time。
+          # sqlc 的 pgx/v5 档默认给 pgtype.Timestamptz，且**不分可空与否**都给它 ——
+          # 于是 `emit_pointers_for_null_types` 对时间列不起作用，而 internal/domain
+          # 里的时间字段无一例外是 time.Time 与 *time.Time。不在这里对齐，
+          # 每个调用点都要写一遍 `if t.Valid { x = &t.Time }`。
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
+          - db_type: "timestamp"
+            go_type: "time.Time"
+          - db_type: "timestamp"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
+          - db_type: "date"
+            go_type: "time.Time"
+          - db_type: "date"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
+
+          # numeric 一律取成 string，与手写层的既有约定一致：
+          # 金额落库是 numeric，读出来先进 string 再 decimal.RequireFromString
+          # （见 scanVipPlan / scanVipTxn）。pgtype.Numeric 是 big.Int + Exp 的组合，
+          # 拿到手第一件事仍然是转成 decimal，中间那一层只是多一次转换和多一种写错的方式。
+          - db_type: "pg_catalog.numeric"
+            go_type: "string"
+          - db_type: "pg_catalog.numeric"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+
+          # 以下几类**刻意不覆盖**，理由各不相同：
+          #
+          #   jsonb    → []byte      与手写层一致（拿到手就 json.Unmarshal 进领域类型）
+          #   inet     → netip.Addr  pgx 原生支持且信息不丢；查询里要字符串就照既有写法
+          #                          用 HOST(col) / col::text，那样 sqlc 直接判成 text
+          #   uuid     → pgtype.UUID 同上，取字符串请在查询里写 col::text
+          #                          （组织架构对外一律 UUID 字符串，见 org_repository.go）
+          #   geometry / geography → interface{}
+          #                          sqlc 不认识 PostGIS 类型。这里**不给它一个能编译的
+          #                          映射**是有意的：几何列本来就不该被直接 SELECT，
+          #                          要坐标写 ST_X/ST_Y，要图形写 ST_AsGeoJSON。
+          #                          生成出一个 interface{} 恰好是"这条查询写法不对"的信号。
+
+# ── sqlc vet 规则 ──
+#
+# 这几条不需要连数据库，可以在 CI 里对每条查询跑一遍。
+# 需要真库的 `sqlc/db-prepare`（把每条查询拿去 PREPARE 一次，能查出 sqlc 自己
+# 解析不了的问题）要配 database.uri，本地想跑就临时加：
+#
+#   database:
+#     uri: "${POSTGRES_DSN}"
+#
+rules:
+  - name: no-unbounded-delete
+    message: "DELETE 必须带 WHERE —— 少写一个条件就是清表"
+    rule: |
+      query.sql.matches("(?i)^\\s*DELETE\\s+FROM") && !query.sql.matches("(?i)\\sWHERE\\s")
+
+  - name: no-unbounded-update
+    message: "UPDATE 必须带 WHERE —— 少写一个条件就是全表改写"
+    rule: |
+      query.sql.matches("(?i)^\\s*UPDATE\\s") && !query.sql.matches("(?i)\\sWHERE\\s")
+
+# 刻意**没有** no-select-star 规则：`query.sql` 拿到的是展开后的 SQL，
+# sqlc 在解析阶段就把 `*` 换成了当下的完整列名清单，规则永远匹配不到 ——
+# 一条永不命中的规则比没有这条规则更危险（评审时会以为已经防住了）。
+# 而且这件事本来也不需要防：展开结果会写进产物，改库结构时 `sqlc diff` 直接报出来。

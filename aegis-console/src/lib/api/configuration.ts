@@ -3,8 +3,6 @@ import type {
   AdminPaymentOrderDetail,
   AdminPaymentOrderList,
   AdminUserSettingsView,
-  EmailConfig,
-  EmailDeliveryPage,
   PaymentConfig,
   PaymentProviderMeta,
   PaymentRefund,
@@ -160,78 +158,6 @@ export function cleanupUserSettings(
     token
   });
 }
-
-export function getAdminEmailConfigs(token: string, payload: { appid: number }) {
-  return apiRequest<EmailConfig[]>("/api/admin/app/email-config/list", {
-    method: "POST",
-    token,
-    body: JSON.stringify(payload)
-  });
-}
-
-export function getAdminEmailConfigDetail(token: string, payload: { appid: number; config_id: number }) {
-  return apiRequest<EmailConfig>("/api/admin/app/email-config/detail", {
-    method: "POST",
-    token,
-    body: JSON.stringify(payload)
-  });
-}
-
-export function createAdminEmailConfig(token: string, payload: Record<string, unknown>) {
-  return apiRequest<EmailConfig>("/api/admin/app/email-config/create", {
-    method: "POST",
-    token,
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateAdminEmailConfig(token: string, payload: Record<string, unknown>) {
-  return apiRequest<EmailConfig>("/api/admin/app/email-config/update", {
-    method: "POST",
-    token,
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteAdminEmailConfig(token: string, payload: { appid: number; config_id: number }) {
-  return apiRequest<null>("/api/admin/app/email-config/delete", {
-    method: "POST",
-    token,
-    body: JSON.stringify(payload)
-  });
-}
-
-export function testAdminEmailConfig(
-  token: string,
-  payload: { appid: number; config_id: number; test_email: string }
-) {
-  return apiRequest<Record<string, unknown>>("/api/admin/app/email-config/test", {
-    method: "POST",
-    token,
-    body: JSON.stringify(payload)
-  });
-}
-
-/** 邮件投递留痕。SMTP 通道止于 sent，Zeabur 通道由 webhook 推进到 delivered/bounced。 */
-export function getAdminEmailDeliveries(
-  token: string,
-  payload: {
-    appid: number;
-    config_id?: number;
-    status?: string;
-    provider?: string;
-    keyword?: string;
-    page?: number;
-    pageSize?: number;
-  }
-) {
-  return apiRequest<EmailDeliveryPage>("/api/admin/app/email-config/deliveries", {
-    method: "POST",
-    token,
-    body: JSON.stringify(payload)
-  });
-}
-
 /**
  * 拉取全部支付渠道的自描述元数据（含配置字段 schema）。
  * 渠道市场与配置表单完全由该结果驱动，后端新增渠道时前端无需改动。

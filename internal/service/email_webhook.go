@@ -33,6 +33,8 @@ const zeaburWebhookTolerance = 5 * time.Minute
 // ZeaburWebhookRequest 是传输层递交上来的原始回调。
 // Body 必须是**未经解析的原始字节** —— 签名覆盖的是原文，
 // 任何重新序列化（键序、空白、转义差异）都会让验签失败。
+//
+// AppID 为 0 时是平台级通道的回执（emaildomain.PlatformAppID）。
 type ZeaburWebhookRequest struct {
 	AppID      int64
 	ConfigName string
@@ -57,11 +59,11 @@ type ZeaburWebhookResult struct {
 // 只有走完「找到配置 → 取出密钥 → 验签 → 时间窗口」四步才会碰数据库；
 // 任一步失败都以 4xx 返回，让 Zeabur 侧的重试与告警能如实反映问题。
 func (s *EmailService) HandleZeaburWebhook(ctx context.Context, request ZeaburWebhookRequest) (*ZeaburWebhookResult, error) {
-	config, err := s.resolveWebhookConfig(ctx, request.AppID, request.ConfigName)
+	config, err := s.resolveWebhookConfig(ctx, request.AppID, request.ConfigName, emaildomain.ProviderZeabur)
 	if err != nil {
 		return nil, err
 	}
-	secret := strings.TrimSpace(config.Zeabur.WebhookSecret)
+	secret := config.Secret(emaildomain.KeyWebhookSecret)
 	if secret == "" {
 		return nil, apperrors.New(40073, http.StatusPreconditionFailed,
 			"该邮件配置尚未设置 Zeabur Webhook 密钥，无法校验回调来源")
@@ -111,8 +113,15 @@ func (s *EmailService) HandleZeaburWebhook(ctx context.Context, request ZeaburWe
 }
 
 // resolveWebhookConfig 定位回调对应的邮件配置。
-// 指定了配置名就精确匹配，否则回落到该应用的默认配置。
-func (s *EmailService) resolveWebhookConfig(ctx context.Context, appID int64, configName string) (*emaildomain.Config, error) {
+//
+// 指定了配置名就精确匹配，否则回落到该作用域的默认配置；
+// 并且**必须**是该服务商的配置 —— 拿 A 家的密钥去验 B 家的回调只会得到
+// 一句「验签失败」，而真正的原因是回调地址挂错了通道。
+//
+// 这里刻意不走 resolveConfig：那条路径带「应用没配就回落到平台共享通道」的语义，
+// 而回执必须回填到**发出这封信的那条通道**上。回落会让 A 应用的回调
+// 拿平台通道的密钥去验签，验过了还会把状态写到错误的作用域里。
+func (s *EmailService) resolveWebhookConfig(ctx context.Context, appID int64, configName string, provider string) (*emaildomain.Config, error) {
 	var (
 		item *emaildomain.Config
 		err  error
@@ -128,10 +137,11 @@ func (s *EmailService) resolveWebhookConfig(ctx context.Context, appID int64, co
 	if item == nil {
 		return nil, apperrors.New(40460, http.StatusNotFound, "邮件配置不存在")
 	}
-	if normalizeEmailProvider(item.Provider) != emaildomain.ProviderZeabur {
-		return nil, apperrors.New(40075, http.StatusBadRequest, "该邮件配置的服务商不是 zeabur，不接受 Zeabur 回调")
+	if normalizeEmailProvider(item.Provider) != provider {
+		return nil, apperrors.New(40075, http.StatusBadRequest,
+			"该邮件配置的服务商是 "+item.Provider+"，不接受 "+provider+" 的投递回执")
 	}
-	s.decryptEmailSecrets(item)
+	s.decryptSecrets(item)
 	return item, nil
 }
 

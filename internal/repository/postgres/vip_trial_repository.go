@@ -75,6 +75,30 @@ func (r *Repository) TrialDeviceClaimed(ctx context.Context, appID int64, device
 	return exists, err
 }
 
+// vipEntitlementFactsSQL 会员判定事实的唯一查询。
+//
+// 两个 LEFT JOIN 对绝大多数用户都**不命中**（没领过试用、还没开通过会员），
+// 此时那一侧的每一列都是 NULL。因此可空侧的列一律不能直接扫进值类型：
+// 定长列用 COALESCE 兜住，两个时间戳没有像样的默认值（补 epoch 会让
+// "领过但早已过期"和"没领过"在下游长得一样），改用指针接。
+//
+// 提成常量是为了让 TestVipEntitlementFactsNullableColumnsAreNullSafe 直接读它 ——
+// 漏兜一列的表现是运行期 `cannot scan NULL into *string`，且只出现在
+// 没领过试用的用户身上，而开发机上随手建的账号往往恰好领过。
+const vipEntitlementFactsSQL = `SELECT u.vip_expire_at,
+       t.pay_channel, t.plan_name,
+       c.id, c.plan_id, COALESCE(c.plan_name, ''), COALESCE(c.duration_days, 0),
+       c.trial_ends_at, COALESCE(c.transaction_no, ''),
+       COALESCE(c.device_id, ''), COALESCE(c.device_locked, FALSE), c.created_at,
+       ` + activeFeatureUnionSQL + `
+FROM users u
+LEFT JOIN vip_trial_claims c ON c.appid = u.appid AND c.user_id = u.id
+LEFT JOIN LATERAL (
+    SELECT pay_channel, plan_name FROM vip_transactions
+    WHERE appid = u.appid AND user_id = u.id ORDER BY id DESC LIMIT 1
+) t ON TRUE
+WHERE u.id = $1 AND u.appid = $2 LIMIT 1`
+
 // GetVipEntitlementFacts 一次取齐会员判定所需的全部事实。
 //
 // 一次查询而不是三次：三次之间用户可能刚好买了会员 / 试用刚好到期，
@@ -85,23 +109,14 @@ func (r *Repository) GetVipEntitlementFacts(ctx context.Context, appID int64, us
 		lastChannel  *string
 		lastPlanName *string
 		claimID      *int64
+		claimEndsAt  *time.Time
+		claimCreated *time.Time
 	)
 	claim := vipdomain.TrialClaim{AppID: appID, UserID: userID}
-	err := r.pool.QueryRow(ctx, `SELECT u.vip_expire_at,
-       t.pay_channel, t.plan_name,
-       c.id, c.plan_id, c.plan_name, c.duration_days, c.trial_ends_at, c.transaction_no,
-       COALESCE(c.device_id, ''), COALESCE(c.device_locked, FALSE), c.created_at,
-       ` + activeFeatureUnionSQL + `
-FROM users u
-LEFT JOIN vip_trial_claims c ON c.appid = u.appid AND c.user_id = u.id
-LEFT JOIN LATERAL (
-    SELECT pay_channel, plan_name FROM vip_transactions
-    WHERE appid = u.appid AND user_id = u.id ORDER BY id DESC LIMIT 1
-) t ON TRUE
-WHERE u.id = $1 AND u.appid = $2 LIMIT 1`, userID, appID).
+	err := r.pool.QueryRow(ctx, vipEntitlementFactsSQL, userID, appID).
 		Scan(&facts.ExpireAt, &lastChannel, &lastPlanName,
-			&claimID, &claim.PlanID, &claim.PlanName, &claim.DurationDays, &claim.TrialEndsAt,
-			&claim.TransactionNo, &claim.DeviceID, &claim.DeviceLocked, &claim.CreatedAt,
+			&claimID, &claim.PlanID, &claim.PlanName, &claim.DurationDays, &claimEndsAt,
+			&claim.TransactionNo, &claim.DeviceID, &claim.DeviceLocked, &claimCreated,
 			&facts.Features)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -115,8 +130,15 @@ WHERE u.id = $1 AND u.appid = $2 LIMIT 1`, userID, appID).
 	if lastPlanName != nil {
 		facts.LastPlanName = *lastPlanName
 	}
+	// claim.id 是主键，非空即"这个人领过" —— 只有此时那批列才有意义
 	if claimID != nil {
 		claim.ID = *claimID
+		if claimEndsAt != nil {
+			claim.TrialEndsAt = *claimEndsAt
+		}
+		if claimCreated != nil {
+			claim.CreatedAt = *claimCreated
+		}
 		facts.Claim = &claim
 	}
 	return &facts, nil
@@ -269,17 +291,21 @@ RETURNING `+vipTrialClaimColumns,
 	}, nil
 }
 
-// entitlementFactsTx 事务内取判定事实（试用记录由调用方给出，避免重复查一次）。
-func entitlementFactsTx(ctx context.Context, tx pgx.Tx, appID int64, userID int64, claim *vipdomain.TrialClaim) (*vipdomain.EvalInput, error) {
-	facts := vipdomain.EvalInput{Claim: claim}
-	var lastChannel, lastPlanName *string
-	if err := tx.QueryRow(ctx, `SELECT u.vip_expire_at, t.pay_channel, t.plan_name, `+activeFeatureUnionSQL+`
+// vipEntitlementFactsTxSQL 事务内那份（试用记录由调用方给出，因此不 JOIN 资格表）。
+// `t` 一侧同样可空 —— 第一次开通尚未落账时它整行是 NULL，两列都用指针接。
+const vipEntitlementFactsTxSQL = `SELECT u.vip_expire_at, t.pay_channel, t.plan_name, ` + activeFeatureUnionSQL + `
 FROM users u
 LEFT JOIN LATERAL (
     SELECT pay_channel, plan_name FROM vip_transactions
     WHERE appid = u.appid AND user_id = u.id ORDER BY id DESC LIMIT 1
 ) t ON TRUE
-WHERE u.id = $1 AND u.appid = $2 LIMIT 1`, userID, appID).
+WHERE u.id = $1 AND u.appid = $2 LIMIT 1`
+
+// entitlementFactsTx 事务内取判定事实（试用记录由调用方给出，避免重复查一次）。
+func entitlementFactsTx(ctx context.Context, tx pgx.Tx, appID int64, userID int64, claim *vipdomain.TrialClaim) (*vipdomain.EvalInput, error) {
+	facts := vipdomain.EvalInput{Claim: claim}
+	var lastChannel, lastPlanName *string
+	if err := tx.QueryRow(ctx, vipEntitlementFactsTxSQL, userID, appID).
 		Scan(&facts.ExpireAt, &lastChannel, &lastPlanName, &facts.Features); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound

@@ -45,7 +45,13 @@
 
 import http from "node:http";
 import https from "node:https";
-import { isIP } from "node:net";
+
+// 地址的解析与归类交给 ipaddr.js（Express 的 `trust proxy` 底下就是它，
+// 经由 proxy-addr）。这里需要的两件事它都做对了，而这两件事都不适合手写：
+//   - `::ffff:203.0.113.9` 这种 IPv4 映射地址要还原成 IPv4
+//   - 判断一个地址是环回 / RFC1918 / CGNAT / IPv6 ULA 还是公网单播
+// 后者是一组记不住的网段，自己抄一份的下场是它慢慢过期，而过期不会报错。
+import ipaddr from "ipaddr.js";
 
 // 打在请求对象上的幂等标记。同一个请求只应被追加一次 —— 重复追加会在链上
 // 造出两条相同条目，让「本服务前面有几层代理」这个判断凭空多一跳。
@@ -65,20 +71,35 @@ let announced = false;
  *   - `fe80::1%eth0`：IPv6 zone 只对本机有意义，跨进程传出去没有含义
  */
 export function normalizePeerAddress(raw) {
-  if (typeof raw !== "string") return "";
+  const addr = parseAddress(raw);
+  return addr ? addr.toString() : "";
+}
+
+/** 解析成 ipaddr.js 的地址对象；拿不到合法地址返回 null。 */
+function parseAddress(raw) {
+  if (typeof raw !== "string") return null;
 
   let value = raw.trim();
-  if (!value) return "";
+  if (!value) return null;
 
-  // Unix domain socket / 命名管道没有对端地址，remoteAddress 会是空或非 IP。
+  // IPv6 zone 只对本机有意义，跨进程传出去没有含义。ipaddr.js 认得它但会原样
+  // 保留在 toString() 里，所以在解析之前先摘掉。
   const zone = value.lastIndexOf("%");
   if (zone > 0) value = value.slice(0, zone);
+  // 少数场景下对端地址带方括号（[::1]）。
+  if (value.startsWith("[") && value.endsWith("]")) value = value.slice(1, -1);
 
-  if (/^::ffff:/i.test(value) && isIP(value.slice(7)) === 4) {
-    value = value.slice(7);
+  let addr;
+  try {
+    // Unix domain socket / 命名管道没有对端地址，remoteAddress 会是空或非 IP。
+    addr = ipaddr.parse(value);
+  } catch {
+    return null;
   }
-
-  return isIP(value) ? value : "";
+  if (addr.kind() === "ipv6" && addr.isIPv4MappedAddress()) {
+    return addr.toIPv4Address();
+  }
+  return addr;
 }
 
 /** 取头值：Node 只有 set-cookie 是数组，其余同名头已按 ", " 合并，这里仍防一手。 */
@@ -92,7 +113,7 @@ function headerValue(value) {
  * 写错的话下游解析器会把 `for=::1` 里的冒号当成参数分隔符。
  */
 function forwardedNode(peer) {
-  return isIP(peer) === 6 ? `for="[${peer}]"` : `for=${peer}`;
+  return peer.includes(":") ? `for="[${peer}]"` : `for=${peer}`;
 }
 
 /**
@@ -195,6 +216,71 @@ function announce() {
   if (announced) return;
   announced = true;
   console.log("▲ 客户端 IP 透传已启用：反代到后端的请求会追加本进程看到的直连对端（X-Forwarded-For）");
+
+  // 读 process.env 而不是 next.config 里那个变量：Next 在建服务器之前就已经把
+  // .env / .env.local 灌进 process.env 了（`AEGIS_API_BACKEND` 本来就是这么被
+  // next.config 读到的），因此这里不需要和它耦合。
+  const warning = backendHopWarning(process.env.AEGIS_API_BACKEND);
+  if (warning) console.warn(warning);
+}
+
+/**
+ * 判断反代到后端的这一跳走的是内网还是公网。
+ *
+ * 这件事必须有人说出来，因为它错得**完全没有声音**：反代照常工作、接口照常返回，
+ * 只有客户端 IP 悄悄变成同一个地址。
+ */
+export function describeBackendHop(rawOrigin) {
+  const origin = typeof rawOrigin === "string" ? rawOrigin.trim() : "";
+  if (!origin) return { origin: "", host: "", scope: "unset" };
+
+  let host;
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return { origin, host: "", scope: "unknown" };
+  }
+  // URL 会把 IPv6 主机名带上方括号，parseAddress 里已经处理。
+  const addr = parseAddress(host);
+  if (addr) {
+    switch (addr.range()) {
+      case "loopback":
+        return { origin, host, scope: "loopback" };
+      case "private":
+      case "uniqueLocal":
+      case "linkLocal":
+      case "carrierGradeNat":
+        return { origin, host, scope: "private" };
+      default:
+        return { origin, host, scope: "public" };
+    }
+  }
+
+  const name = host.toLowerCase().replace(/\.$/, "");
+  if (name === "localhost" || name.endsWith(".localhost")) {
+    return { origin, host, scope: "loopback" };
+  }
+  // 不带点的裸主机名只可能在某个内部网络里解析得出来（容器编排的服务名、
+  // Zeabur 的 *.zeabur.internal、K8s 的 *.svc.cluster.local 都是这一类）。
+  if (!name.includes(".") || /\.(internal|local|localdomain|svc)$/.test(name)) {
+    return { origin, host, scope: "internal-name" };
+  }
+  return { origin, host, scope: "public" };
+}
+
+/** 走公网时给出的告警文案；其余情况返回空串。 */
+export function backendHopWarning(rawOrigin) {
+  const hop = describeBackendHop(rawOrigin);
+  if (hop.scope !== "public") return "";
+
+  return [
+    `⚠ 客户端 IP 透传到此为止：AEGIS_API_BACKEND=${hop.origin} 是公网地址。`,
+    "  这一跳出公网再绕回来，途中的边缘/网关会如实写下「连接方是本控制台的出口地址」，",
+    "  后端从右往左找第一个不受信条目时会正确地停在那里 —— 于是**每个用户的每个请求**",
+    "  都收敛成同一个 IP，本进程追加的浏览器地址永远够不着。限流 / 封禁 / 地理风控随之失效。",
+    "  改法：把 AEGIS_API_BACKEND 指向后端的内网地址（同项目内网服务名 / 同机 127.0.0.1）。",
+    "  详见 docs/client-ip.md#控制台反代这一跳"
+  ].join("\n");
 }
 
 /**

@@ -25,7 +25,7 @@ import { AppStatsPanel } from "@/components/apps/app-stats-panel";
 import { AppUserSettingsPanel } from "@/components/apps/app-user-settings-panel";
 import { AppCardKeyPanel } from "@/components/apps/card-key/app-card-key-panel";
 import { AppVipPanel } from "@/components/apps/vip/app-vip-panel";
-import { EmailConfigPanel } from "@/components/configuration/email-config-panel";
+import { EmailChannelPanel } from "@/components/email/email-channel-panel";
 import { useAdminAppQuery, useAdminAppsQuery, useDeleteAdminAppMutation } from "@/lib/admin-hooks";
 import { useAppGovernanceQuery } from "@/lib/platform-governance-hooks";
 import { useAppScopeStore } from "@/lib/app-scope-store";
@@ -157,7 +157,7 @@ function AppSectionPanel({ section, app }: { section: string; app: AppSummary })
     case "auth-protocol":
       return <AppAuthProtocolPanel appKey={app.appKey} />;
     case "email":
-      return <EmailConfigPanel appId={app.id} />;
+      return <EmailChannelPanel scope={{ kind: "app", appId: app.id }} />;
     case "payment":
       return <AppPaymentPanel appId={app.id} appKey={app.appKey} />;
     case "settings":

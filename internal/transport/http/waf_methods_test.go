@@ -35,8 +35,14 @@ func TestRegisteredRouteMethodsAreAllowedByWAF(t *testing.T) {
 		}
 	}
 
-	// HEAD / OPTIONS 由 gin 与 CORS 中间件隐式处理，不会出现在 Routes() 里，
-	// 但客户端确实会发，因此白名单必须留着它们 —— 这里只核对其余部分。
+	// OPTIONS 不出现在 Routes() 里：带 Origin 的预检由 CORS 中间件短路，
+	// 其余由 NoMethod 兜底成 204 + Allow（见 route_methods.go）。
+	// 它照样是客户端真会发的方法，白名单必须留着。
+	//
+	// HEAD 则**不是**隐式的 —— gin 按方法分树，GET 不会顺带响应 HEAD，
+	// 探针与头像那几条是显式注册的，所以它已经出现在 registered 里，
+	// 无须在这里豁免。留在这个集合里只是为了：万一那几条被删光，
+	// 白名单里的 HEAD 也不该被判成"该收回"。
 	implicit := map[string]bool{"HEAD": true, "OPTIONS": true}
 	var stale []string
 	for method := range allowed {

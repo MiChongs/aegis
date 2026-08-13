@@ -10,7 +10,7 @@
 | React | 19.2.8 |
 | TypeScript | 7.0.2（编译器）+ 6.0.2（工具链 API，见下） |
 | Tailwind CSS | ^4.3.3 |
-| shadcn/ui | new-york-v4，32 个官方组件均为最新版（见下方扩展说明） |
+| shadcn/ui | new-york-v4，40 个官方组件均为最新版（见下方扩展说明） |
 | radix-ui | ^1.6.7（**统一包**，已取代 32 个 `@radix-ui/react-*` 独立包） |
 | TanStack React Query | ^5.101.4 |
 | TanStack React Table | ^9.1.2（表格，v9 按需注册功能） |
@@ -44,9 +44,15 @@
 | `input.tsx` | `suppressHydrationWarning` | 抑制浏览器扩展注入属性导致的 React 19 水合告警 |
 | `breadcrumb` / `dialog` / `sheet` | `sr-only` 文案中文化（"更多" / "关闭"） | 无障碍文案本地化 |
 
-`src/components/ui/` 下另有 9 个**项目自有组件**（非 shadcn，CLI 不会碰）：
-`country-flag`、`data-state`、`error-boundary`、`image-dropzone`、`image-lightbox`、
+`src/components/ui/` 下另有 12 个**项目自有组件**（非 shadcn，CLI 不会碰）：
+`brand-icon`、`country-flag`、`data-state`、`error-boundary`、`image-dropzone`、`image-lightbox`、
 `json-viewer`、`rich-editor`、`section-heading`、`surface-card`、`toast-detail`、`virtual-list`。
+
+补装组件用 `pnpm dlx shadcn@latest add <name>`，**永远不要带 `--overwrite`** ——
+上表四项扩展会被一次性抹掉，而覆盖是静默的。CLI 对已存在且内容一致的文件会自己跳过。
+
+> `ui/` 里不留没有任何页面用到的组件。官方注册表有 63 个 UI 项，装进来的判据是
+> "现在就有地方用"，而不是"以后可能用得上" —— 后者的结果是没人知道哪些还活着。
 
 > **统一 radix-ui 包**：新版组件一律 `import { Dialog as DialogPrimitive } from "radix-ui"`，
 > 不再使用 `@radix-ui/react-*`。新增代码请沿用统一包写法，否则会重新引入已删除的依赖。
@@ -78,7 +84,7 @@ TypeScript 7 是 Go 重写的编译器（tsgo），**不再提供 JS 版的 comp
 留慢的那个没有意义。因此 `next.config.ts` 里 `typescript.ignoreBuildErrors: true`，
 把这道关口前移成 `build` 脚本的第一步 `tsc --noEmit`：类型不过一样构建不出来，
 而且报错来得更早（不用等 Turbopack 编译完）。**改 `build` 脚本时不要把它去掉**，
-去掉之后除了 CI 就没有任何地方在检查类型了。
+仓库目前没有前端 CI，去掉之后就真的没有任何地方在检查类型了。
 
 **`next.config.ts` 中的 `experimental.useTypeScriptCli: false` 同样不可删除**：Next 16.3 该项默认为 `true`，
 CLI 模式会去找 `typescript/bin/tsc`，而 TS 6 兼容包只提供 `bin/tsc6`，Next 会误判「typescript 未安装」
@@ -128,7 +134,8 @@ src/
 │   └── status/                 # 状态页
 ├── components/
 │   ├── auth/                   # AuthGate、LoginForm、LoginBackground
-│   ├── brand/                  # AegisMark、BrandHome、PublicHeader
+│   ├── brand/                  # 公开站点：AegisMark、PublicHeader、SiteFooter
+│   │   └── home/               # 首页各分区 + home-content.ts（文案单一事实源）
 │   ├── dashboard/              # MetricCard、ActivityFeed
 │   ├── developers/             # PortalShell、CodeBlock、CodeSamples（门户 + 接入页共用）
 │   ├── functions/              # 远程函数工作台（见下方「远程函数」一节）
@@ -168,6 +175,159 @@ src/
     ├── pinyin-search.ts        # 命令面板的拼音检索（pinyin-pro 动态加载）
     └── env.ts                  # 环境变量（NEXT_PUBLIC_*）
 ```
+
+## 公开站点（/ 与 /status）
+
+免登录的品牌门面，与控制台共用同一套语义令牌，因此深浅两色都成立。
+
+| 文件 | 职责 |
+|---|---|
+| `brand/brand-home.tsx` | 首页装配：九个分区的顺序即阅读顺序 |
+| `brand/home/home-content.ts` | **文案与数据的单一事实源**（首屏 / 数字 / 能力 / 架构 / 接入 / FAQ / 赞助商 / 页脚） |
+| `brand/home/section.tsx` | 容器宽度、标题组 `SectionHeading`、入场动效 `Reveal` |
+| `brand/home/visuals.tsx` | 视觉原语：底纹 `Pattern`、光晕 `AuroraOrbs`、聚光卡 `SpotlightCard`、跑马灯 `Marquee`、数字滚动 `CountUp` |
+| `brand/home/feature-visuals.tsx` | 六张能力卡各自的配图（两张走 recharts，四张纯 CSS） |
+| `brand/home/*-section.tsx` | 各分区，只排版不写文案 |
+| `brand/home/sponsors-section.tsx` | 赞助商跑马灯（`kibo-ui/marquee`，两行反向 + 渐变模糊边缘） |
+| `brand/sponsors/brand-logo.tsx` | 品牌标识渲染：图形标 + 字标，尺寸由字号决定，颜色走 `currentColor` |
+| `brand/sponsors/brand-logos.generated.ts` | **生成产物**，由 `pnpm logos:sync` 从 `@lobehub/icons-static-svg` 抽出 |
+| `brand/public-header.tsx` | 公开顶栏（首页与状态页共用），`NavigationMenu` + 主题开关 + 移动端抽屉 |
+| `brand/site-footer.tsx` | 公开页脚（三栏导航 + 版权），法律条款入口在这里 |
+| `brand/public-entry-actions.tsx` | 「进控制台 / 次操作」一对入口 |
+
+五条硬约束：
+
+1. **一个颜色都不许写死。** 首页曾是 `bg-[#060a12] text-white` 加满屏 `white/6`，
+   于是它成了全站唯一不认主题的页面 —— 浅色模式下从控制台点回首页，
+   画面会毫无预告地黑掉一屏。现在全部走 `background` / `card` / `muted-foreground`
+   / `border` 这些语义令牌，改调色板不需要回来改首页。
+2. **文案不写在组件里。** 分区组件只排版，字全在 `home-content.ts`。
+   改一句话不必在八个 tsx 里找它在哪。撰写口径是**产品文档的中性书面语**：
+   不用第一人称口吻、反问句与旁白（「先进去看一眼」「不是…而是…」都不要），
+   也**不要用破折号 `——`**，该断句就断句，该用冒号就用冒号。
+3. **内容动效只有一种**：进入视口时淡入上移一次（`Reveal`），`prefers-reduced-motion`
+   下直接不放。旧版为了播两段"卡片浮入"要了 **750vh** 的 sticky 滚动距离换四屏内容，
+   用户以为在往下翻，实际什么都没翻到。装饰动效（光晕漂移 / 跑马灯 / 描边流光 /
+   请求光点）走 CSS keyframes，**一律只做 transform 与 opacity**，
+   并在 `globals.css` 末尾由一条 `prefers-reduced-motion` 规则统一停掉。
+4. **数字必须能核对。** 「1000+ 接口」「16 支付渠道」「9 邮件服务商」都数得出来，
+   每个下面还写了它是怎么来的。核不了的数字读者只能选择信或不信，两种反应都没用。
+5. **顶栏里的分区锚点写绝对路径**（`/#features`）。这个顶栏也挂在 `/status` 上，
+   裸 `#features` 在那里指向一个不存在的锚点。
+
+`ButtonGroup` 只用在**同一件事的两个去处**（接入分区的「文档 / 接口」），
+不要拿它摆首屏那对 CTA —— 它会把两个按钮粘成一个分段控件并吃掉次按钮的左边框，
+而那两个是并列的两件事，该用间距分开。
+
+### 首页的视觉层（`--home-*`）
+
+控制台通体 zinc 单色是对的，那是**长时间盯着看**的界面该有的克制；
+但同一套克制搬到门面上就只剩朴素。所以首页额外有一层强调色、光晕与底纹，
+令牌与 keyframes 全部定义在 `globals.css` 末尾的 `--home-*` 命名空间下。
+
+**配色刻意避开蓝紫。** 「青蓝 → 紫渐变字 + 大团发光球 + 玻璃拟态」是这两年
+生成式配色的三件套，它出现在哪一页，哪一页就立刻显得像是随手生成的。
+这三样在首页一件都没有：
+
+| 令牌 | 取值 | 用途 |
+|---|---|---|
+| `--home-accent` / `--home-accent-soft` | 暖铜（浅 `#b45309` / 深 `#f0a339`） | 唯一强调色，覆盖率约 5% |
+| `--home-accent-alt` | 中性石灰 | 图表第二序列。**不给第二种色相**，墨色加一个暖色永远比蓝配紫耐看 |
+| `--home-accent-warm` | 暗酒红 | 出项 / 告警，与暖铜同色系但明显更沉，一眼分得出进项出项 |
+| `--home-spotlight` / `--home-beam` | 由强调色 `color-mix` 派生 | 鼠标聚光、收尾 CTA 的描边流光 |
+| `--home-vignette` / `--home-grain-opacity` | 中性 | 暗角与胶片颗粒，**取代**了原来的发光球 |
+| `--home-intro-*` | 墨底 / 纸白 / 暖铜 | 冷开场专用，不随主题切换（见下） |
+
+| 原语（`home/visuals.tsx`） | 用在哪 |
+|---|---|
+| `Pattern` | 网格 / 点阵底纹，靠 mask 在边缘溶解 |
+| `Grain` | 胶片颗粒（内联 SVG `feTurbulence`，不额外请求图片） |
+| `Vignette` | 中性暗角，把视线压回版心 |
+| `SpotlightCard` | 鼠标跟随高光（能力卡、架构卡、全景条目） |
+| `Marquee` | 首屏底部的技术栈跑马灯（与赞助商那套是两回事，见下节） |
+| `MaskLine` / `SplitChars` / `Typewriter` | 文字动画：遮罩逐行揭示 / 逐字入场 / 打字机 |
+| `CountUp` | 数字带进入视口时从 0 滚上来 |
+
+五条约束：
+
+1. **深浅两套各给一份。** 浅色下强调色要压暗才不刺眼，深色下要提亮才看得见，
+   只写一份的话总有一个方向是错的。
+2. **图表颜色走 `ChartConfig` 的 `color: "var(--home-accent)"`**，不写十六进制。
+   CSS 变量在使用点解析，一份配置同时管住深浅两色。
+3. **文字动画的核心是遮罩，不是位移。** `MaskLine` 外层 `overflow-hidden`、
+   内层从 `y: 108%` 升上来，看起来是被"印"出来的；淡入加位移只是元素在飘。
+   `Typewriter` 用 `clipPath` 沿宽度展开而不是逐字 `setState`，
+   代价是只能用等宽字体（否则裁切点会落在字形中间），这也是它只用在 mono 标签上的原因。
+4. **鼠标跟随与数字滚动不许在动画帧里 `setState`。** 前者用 `useMotionTemplate`
+   把指针位置直接喂给 style，后者用 `useMotionValueEvent` 写 `textContent`，两者都零 re-render。
+5. **`CountUp` 的静态值必须留在 SSR 输出里**（滚动只是覆盖 `textContent`），
+   否则没有 JS 或 reduce 档下，页面上会是一排 0。
+
+### 冷开场（`home/intro-overlay.tsx`）
+
+一块墨底压在整页之上，三拍报出三个能力域，落版是产品定位，然后整层淡出露出首屏。
+三拍与首屏的三列能力域**是同一份目录**，所以这段动画是内容的一部分，
+而不是内容前面的一段广告。
+
+一个每次进站都要看完的开场，第二次就变成了阻塞。四条闸门缺一不可：
+
+1. **每个会话只播一次**（`sessionStorage`）。第二次进来直接是首屏。
+2. **随时可跳过**：任意键 / 点击 / 滚动 / 触摸，外加一个始终可见的跳过按钮。
+3. **进度条必须看得见。** 等待可以忍受的前提是知道还剩多久；
+   一个不知道什么时候结束的黑屏，第三秒就会被当成页面挂了。
+4. **`prefers-reduced-motion` 下根本不挂载。**
+
+三条实现约束：
+
+- **首屏内容始终在 DOM 里**，这一层只是盖在上面。爬虫与读屏软件看到的是完整页面。
+- **"本会话是否播过"用惰性 `useState` 初始化器读取**（纯读，StrictMode 双调用返回同值），
+  写入放在 effect 里。渲染期写存储会在 StrictMode 下执行两次。
+  组件整体由 `useIsClient()` 把关，水合时两端都渲染 `null`，因此没有水合不一致。
+- **推进节拍的 `setState` 在 `setTimeout` 回调里**（异步），不是 effect 体内的同步调用 ——
+  后者过不了 `react-hooks/set-state-in-effect`，与全站同一条约束。
+
+### 赞助商跑马灯
+
+第 3 条（动效只有一种）在这里有唯一一处例外：跑马灯本身就是这个分区的形态。
+它同样受 `prefers-reduced-motion` 约束 —— 命中时 `play={false}` 直接停住，
+名单仍然完整可读。
+
+| 部件 | 来源 |
+|---|---|
+| 跑马灯 | shadcn 注册表 `@kibo-ui/marquee`（底层 `react-fast-marquee`，`autoFill` 自动按容器宽度补足份数），三行逐行反向、行速互不相同 |
+| 边缘处理 | `MarqueeFade` + 单层 arbitrary `mask-image` |
+| 品牌标识 | `@lobehub/icons-static-svg`（零依赖 SVG 资源包）经 `pnpm logos:sync` 抽成内联标记 |
+| 单条目 | shadcn `Item` + `Tooltip`（品牌名 + 领域，已内置适配的另说明它在 Aegis 里承担什么） |
+
+六条约束，每一条都是踩过的坑：
+
+1. **字标是品牌自有字体的轮廓，不是排出来的文字。** 用 `font-semibold` 打一行
+   "Cloudflare" 单看像回事，二十几个 logo 摆在一起就会发现只有它是 Geist。
+   图形标彩色、字标单色：整排全上色会让二十几套配色互相打架。
+2. **不要用 Tailwind 的 `mask-r-from-*` / `mask-x-from-*` 做这个边缘。**
+   它们会展开成六层 `mask-image` 再用 `mask-composite: intersect` 合成，
+   在 Chromium 上合成结果恒为全透明，整个边缘层直接消失。这件事**不报错**，
+   计算样式看上去也完全正常（宽度、底色、mask 渐变全对），只是画面上什么都没有。
+   写成单层的 `[mask-image:linear-gradient(...)]` 就没有合成这一步。
+3. **带子用 `bg-card`，不能用 `bg-background`。** 浅色档里 `--muted` 与 `--background`
+   是同一个色值（都是 `#f4f4f5`），分区底色 `muted/30` 叠上去还是它自己，
+   `background` 的带子在浅色模式下完全看不见。`--card`(`#ffffff`) 是浅色档里唯一
+   与之有对比的中性面，深色档里它也比 `background` 亮一档。
+   `MarqueeFade` 的底色必须与带子**完全**一致，因此它也是 `bg-card`。
+4. **模糊必须跟着 mask 一起衰减。** 只给 `backdrop-blur` 不给 mask，会在渐变结束的
+   位置留下一条"清晰度突变"的竖线，比不加模糊更显眼。
+5. **每行要占位高度。** `react-fast-marquee` 挂载前返回 `null`（它靠测量容器宽度
+   决定复制几份），不占位的话页面会在水合那一刻整体上跳。`ROW_HEIGHT` 同时钉住
+   跑马灯容器与条目，两者必须一致。
+   同一个原因：**这一排不进服务端 HTML**，水合后才出现。
+6. **彩色版主体是白色的品牌要退回单色版**（生成器里的 `mono: true`）。
+   Kimi 的彩色标是白色字形加一个小蓝点，放在 `card` 色的带子上只剩那个点，
+   看起来像图裂了。单色版走 `currentColor`，两种主题都成立。
+   本身就没有彩色版的（Vercel / GitHub / Anthropic / OpenAI / Cursor / Notion）同理。
+
+`HomeSponsor.slug` 的取值由生成产物约束，拼错过不了类型检查。
+不要把 `@lobehub/icons`（React 版）装进来：它 peer 依赖 `antd` 与 `@lobehub/ui`，
+为了几个 logo 会把 antd 全家桶拖进这个项目。静态 SVG 包是零依赖的。
 
 ## 开发者门户（/developers）
 
@@ -321,10 +481,17 @@ docker build -f deploy/docker/console.Dockerfile \
 
 | 文件 | 职责 |
 |---|---|
-| `scripts/forwarded-headers.mjs` | 追加逻辑 + `withForwardedPreload()`；行为由 `pnpm test` 钉住 |
+| `scripts/forwarded-headers.mjs` | 追加逻辑 + 后端跳判定 + `withForwardedPreload()`；行为由 `pnpm test` 钉住 |
 | `scripts/forwarded-headers-preload.mjs` | `--import` 预载入口，改写 `http.createServer` |
 
-四条硬约束：
+**但追加是必要不充分的：`AEGIS_API_BACKEND` 必须指向后端的内网地址。**
+填公网域名的话，这一跳绕出公网再回来，途中的 CDN / 网关会如实写下「连接方是控制台」，
+而那是个公网地址、后端不信任它，判定就正确地停在那里 —— 全站每个用户的每个请求
+都收敛成控制台的出口地址，控制台在自己那侧写的条目在链的更左边，永远够不着。
+放宽后端 `TRUSTED_PROXIES` 不是解法（等于把伪造权发给任何能直连后端的人）。
+启动时 `describeBackendHop` 会就此打一条 warn —— 这个错误在功能上完全看不出来。
+
+五条硬约束：
 
 1. **装载点有两处，形式不同不是随手写的。** `pnpm start` 在命令行上 `--import`；
    `pnpm dev` 必须走 `NODE_OPTIONS`（`scripts/dev-with-friendly-proxy.mjs` 里的
@@ -340,6 +507,10 @@ docker build -f deploy/docker/console.Dockerfile \
 4. **`installOnServer` 钩的是 `server.emit`，不是 `prependListener('upgrade')`。**
    给一个本来没有 upgrade 监听器的 server 装上监听器，Node 就不再自动销毁升级
    连接了 —— 那会把「没人处理的 WebSocket 握手」从立刻断开变成一直挂着。
+5. **地址的解析与归类走 `ipaddr.js`**（Express 的 `trust proxy` 底下经 proxy-addr
+   用的就是它），不要手写。要判的两件事都不适合自己抄一份：IPv4 映射地址还原，
+   以及「环回 / RFC1918 / CGNAT / IPv6 ULA / 公网单播」的归类 —— 后者是一组
+   记不住的网段，抄一份的下场是它慢慢过期，而过期不会报错。
 
 启动时打的那行 `▲ 客户端 IP 透传已启用…` 是这件事**唯一的自检线索**：托管平台若
 绕过 `package.json` 的脚本直接跑 `next start`，预载不执行，而少一条转发链条目
@@ -877,6 +1048,56 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 共用一份的话，选了「仅失败」整张图就只剩失败点，看图的人会得出"这个人只在国外登录失败过"
 这种结论。会话那份则复用「活跃会话」面板的同一个 query key，不会多打一次请求。
 
+## 地图底图：多供应商 + 跟随浏览器语言
+
+五个面板（用户活动地图 / 攻击飞线图 / 地理热力 / 围栏编辑 / 轨迹回放）共用
+`components/maps/maplibre-map.tsx` 这一个底座，它们只管往上挂自己的图层，
+**底图是哪一家、什么坐标系、注记什么语言，一律不需要知道**。
+
+| 文件 | 职责 |
+|---|---|
+| `lib/geo/map-providers.ts` | **供应商目录（单一事实源）**：瓦片地址 / 坐标系 / 深色版 / 注记语言 / 密钥 / 版权，外加浏览器语言解析 |
+| `lib/geo/map-provider-store.ts` | 偏好存储（`useSyncExternalStore`），全站一份、跨标签页同步、旧键自动迁移 |
+| `lib/geo/gcj02-tiles.ts` | GCJ-02 瓦片纠偏（maplibre 自定义协议） |
+| `lib/geo/datum.ts` | WGS-84 ⇄ GCJ-02 转换与中国境内判定 |
+| `components/maps/map-provider-picker.tsx` | 选择器：自动档 + 按大区分组 + 缺密钥说明 |
+| `components/maps/maplibre-map.tsx` | 底座：矢量底衬、在线瓦片装卸、纠偏闸门、失败回退、版权署名 |
+| `scripts/map-providers.test.mjs` | 语言规则、供应商解析、坐标基准与目录完整性由 `pnpm test` 钉住 |
+
+13 家分三档：**离线**（本地矢量简图）、**全球**（CARTO / OSM / Esri 灰底 / Esri 卫星 /
+OpenTopoMap / MapTiler✱ / Stadia✱）、**中国大陆**（高德 / 高德卫星 / 腾讯 / 天地图✱ /
+天地图影像✱）。带 ✱ 的需要密钥（`NEXT_PUBLIC_MAP_*_KEY`，见 `.env.example`），
+**未配置时照常列出但不可选，并直接写出要配哪个环境变量** —— 藏起来的话，
+部署者永远不会知道自己还能多几家可选。
+
+六条硬约束：
+
+1. **供应商目录是单一事实源。** 渲染端与选择器都只读它，任何一处再抄一份，
+   就会出现「选得出来但画不上去」或者「能画但选不到」—— 与风控条件目录、
+   远程函数能力目录同源的约束。
+2. **默认跟随浏览器语言，手动选过就锁定。** 简体中文（`zh-CN` / `zh-Hans` / 裸 `zh`）
+   走境内档，其余走全球档；繁体中文要中文注记但仍归全球档 —— 走境内线路只会更慢。
+   一个人一旦发现某家在自己网络下更快，这个结论不该被自动逻辑推翻。
+3. **偏的是瓦片，不是数据。** 中国大陆的地图服务只提供 GCJ-02 偏移底图，与平台里
+   GeoIP 的 WGS-84 坐标差 300–700 米。纠偏放在瓦片管线里做（取来相邻源瓦片按偏移量
+   重绘），业务层一个坐标都不用改。另一种修法是把数据转成 GCJ-02 再画 ——
+   那要在五个面板约四十处取坐标的地方各转一次，围栏面板还得在鼠标点击时反向转回去，
+   **漏掉任何一处都不会报错，只是那一层悄悄错位**。
+4. **纠偏有闸门**：只在 `z ≥ 8` 且瓦片中心在境内时启用（低层级偏移不足半个像素），
+   退出阈值 `7.5` 形成滞回。控制台默认是全球视野，也就是说绝大多数时候这段代码不执行。
+   瓦片服务没开 CORS 时读不到像素，一次失败即全局降级为未纠偏，并在图上如实标注。
+5. **换供应商 / 换主题只增删 `aegis-tiles-*` 图层，永远不调 `setStyle`。**
+   业务面板在 `onMapReady` 里挂的 source / layer 一旦被 `setStyle` 清掉，
+   热力、围栏、轨迹会整层消失，而地图看起来完全正常。新瓦片层一律插在
+   **第一个业务图层之前**，否则底图会盖住数据。
+6. **本地矢量简图恒在最底层。** 在线瓦片被墙、超时、密钥失效时透出来的是一张配色
+   正确的世界地图，而不是纯黑画布。连续 8 次瓦片错误即判定该家不可达、收起在线图层，
+   角标可点重试（网络抖动之后没有这个入口就再也回不来了）。
+
+没有原生深色版的供应商（OSM / 高德 / 腾讯 / 天地图矢量）在深色主题下用栅格 paint
+压暗近似。这**只是近似** —— 栅格没有反相能力，压出来是「黄昏」不是真正的暗色图；
+但深色控制台里放一张纯白地图会直接晃眼，且选择器里标了原生深色的几家随时可以换过去。
+
 ## 通知铃铛与实时事件
 
 顶栏铃铛（`components/layout/topbar/notification-bell.tsx`）合并两个来源：
@@ -976,53 +1197,3 @@ Monaco 产物**自托管**在 `public/monaco/vs`，由 `scripts/sync-monaco-asse
 - `workflow-studio.tsx` — 编辑器主面板
 - `workflow-dialogs.tsx` — 节点配置弹窗
 - `workflow-helpers.ts` — dagre 自动布局工具函数
-## 地图底图：多供应商 + 跟随浏览器语言
-
-五个面板（用户活动地图 / 攻击飞线图 / 地理热力 / 围栏编辑 / 轨迹回放）共用
-`components/maps/maplibre-map.tsx` 这一个底座，它们只管往上挂自己的图层，
-**底图是哪一家、什么坐标系、注记什么语言，一律不需要知道**。
-
-| 文件 | 职责 |
-|---|---|
-| `lib/geo/map-providers.ts` | **供应商目录（单一事实源）**：瓦片地址 / 坐标系 / 深色版 / 注记语言 / 密钥 / 版权，外加浏览器语言解析 |
-| `lib/geo/map-provider-store.ts` | 偏好存储（`useSyncExternalStore`），全站一份、跨标签页同步、旧键自动迁移 |
-| `lib/geo/gcj02-tiles.ts` | GCJ-02 瓦片纠偏（maplibre 自定义协议） |
-| `lib/geo/datum.ts` | WGS-84 ⇄ GCJ-02 转换与中国境内判定 |
-| `components/maps/map-provider-picker.tsx` | 选择器：自动档 + 按大区分组 + 缺密钥说明 |
-| `components/maps/maplibre-map.tsx` | 底座：矢量底衬、在线瓦片装卸、纠偏闸门、失败回退、版权署名 |
-| `scripts/map-providers.test.mjs` | 语言规则、供应商解析、坐标基准与目录完整性由 `pnpm test` 钉住 |
-
-13 家分三档：**离线**（本地矢量简图）、**全球**（CARTO / OSM / Esri 灰底 / Esri 卫星 /
-OpenTopoMap / MapTiler✱ / Stadia✱）、**中国大陆**（高德 / 高德卫星 / 腾讯 / 天地图✱ /
-天地图影像✱）。带 ✱ 的需要密钥（`NEXT_PUBLIC_MAP_*_KEY`，见 `.env.example`），
-**未配置时照常列出但不可选，并直接写出要配哪个环境变量** —— 藏起来的话，
-部署者永远不会知道自己还能多几家可选。
-
-六条硬约束：
-
-1. **供应商目录是单一事实源。** 渲染端与选择器都只读它，任何一处再抄一份，
-   就会出现「选得出来但画不上去」或者「能画但选不到」—— 与风控条件目录、
-   远程函数能力目录同源的约束。
-2. **默认跟随浏览器语言，手动选过就锁定。** 简体中文（`zh-CN` / `zh-Hans` / 裸 `zh`）
-   走境内档，其余走全球档；繁体中文要中文注记但仍归全球档 —— 走境内线路只会更慢。
-   一个人一旦发现某家在自己网络下更快，这个结论不该被自动逻辑推翻。
-3. **偏的是瓦片，不是数据。** 中国大陆的地图服务只提供 GCJ-02 偏移底图，与平台里
-   GeoIP 的 WGS-84 坐标差 300–700 米。纠偏放在瓦片管线里做（取来相邻源瓦片按偏移量
-   重绘），业务层一个坐标都不用改。另一种修法是把数据转成 GCJ-02 再画 ——
-   那要在五个面板约四十处取坐标的地方各转一次，围栏面板还得在鼠标点击时反向转回去，
-   **漏掉任何一处都不会报错，只是那一层悄悄错位**。
-4. **纠偏有闸门**：只在 `z ≥ 8` 且瓦片中心在境内时启用（低层级偏移不足半个像素），
-   退出阈值 `7.5` 形成滞回。控制台默认是全球视野，也就是说绝大多数时候这段代码不执行。
-   瓦片服务没开 CORS 时读不到像素，一次失败即全局降级为未纠偏，并在图上如实标注。
-5. **换供应商 / 换主题只增删 `aegis-tiles-*` 图层，永远不调 `setStyle`。**
-   业务面板在 `onMapReady` 里挂的 source / layer 一旦被 `setStyle` 清掉，
-   热力、围栏、轨迹会整层消失，而地图看起来完全正常。新瓦片层一律插在
-   **第一个业务图层之前**，否则底图会盖住数据。
-6. **本地矢量简图恒在最底层。** 在线瓦片被墙、超时、密钥失效时透出来的是一张配色
-   正确的世界地图，而不是纯黑画布。连续 8 次瓦片错误即判定该家不可达、收起在线图层，
-   角标可点重试（网络抖动之后没有这个入口就再也回不来了）。
-
-没有原生深色版的供应商（OSM / 高德 / 腾讯 / 天地图矢量）在深色主题下用栅格 paint
-压暗近似。这**只是近似** —— 栅格没有反相能力，压出来是「黄昏」不是真正的暗色图；
-但深色控制台里放一张纯白地图会直接晃眼，且选择器里标了原生深色的几家随时可以换过去。
-
