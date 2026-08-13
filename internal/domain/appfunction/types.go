@@ -44,10 +44,25 @@ type Function struct {
 	RateLimitPerMin int `json:"rateLimitPerMin"`
 	// Config 函数级参数，脚本里读作 `aegis.config`。
 	// 它的价值是「改阈值不必发新版本」，因此永远不下发给接入方。
-	Config    json.RawMessage `json:"config"`
-	CreatedBy *int64          `json:"createdBy,omitempty"`
-	CreatedAt time.Time       `json:"createdAt"`
-	UpdatedAt time.Time       `json:"updatedAt"`
+	Config json.RawMessage `json:"config"`
+	// InputSchema 入参契约（JSON Schema）。`{}` 表示不约束。
+	//
+	// 与 Config 相反，它**是**要给接入方看的 —— 那是这个函数的 API 契约。
+	// 一份声明同时驱动三处：调用入口的前置校验、控制台试跑输入框的补全与校验、
+	// 以及编辑器里 `ctx.input` 的真实类型。三处各写一份的结果是它们很快就不一致，
+	// 而不一致的表现是「补全里有这个字段、调用时却说它不该存在」。
+	InputSchema json.RawMessage `json:"inputSchema"`
+	// InputTypes 由 InputSchema 生成的 TypeScript 声明，只出网不入库。
+	//
+	// 与 schema 一起下发是刻意的冗余：控制台完全可以自己把 JSON Schema
+	// 转成 TS，但那样就有了第二个转换器，而两个转换器迟早给出不同的类型 ——
+	// 表现是「补全里有这个字段、运行时却没有」。同一条约束下，
+	// 能力的类型片段也是由 Go 生成再下发的。
+	InputTypes string `json:"inputTypes,omitempty"`
+	CreatedBy  *int64 `json:"createdBy,omitempty"`
+
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // Version 是不可变的函数发布版本。
@@ -96,6 +111,7 @@ type CreateFunctionInput struct {
 	MaxConcurrency   int
 	RateLimitPerMin  int
 	Config           json.RawMessage
+	InputSchema      json.RawMessage
 	CreatedBy        *int64
 }
 
@@ -109,6 +125,7 @@ type UpdateFunctionInput struct {
 	MaxConcurrency   *int
 	RateLimitPerMin  *int
 	Config           json.RawMessage
+	InputSchema      json.RawMessage
 }
 
 type CreateVersionInput struct {
@@ -297,16 +314,72 @@ type TestRequest struct {
 	TimeoutMs int
 }
 
+// LogEntry 是脚本写下的一行日志。
+//
+// 结构化而不是一个拼好的字符串：控制台要按级别着色、按级别过滤，
+// 而「从 "warn 内容" 里把级别切出来」这种解析在消息本身以 warn 开头时就会出错。
+// ElapsedMs 是相对本次执行起点的毫秒数 —— 脚本里没有计时器，
+// 「哪一步慢」只能靠日志之间的间隔看出来。
+type LogEntry struct {
+	Level     string  `json:"level"`
+	Message   string  `json:"message"`
+	ElapsedMs float64 `json:"elapsedMs"`
+}
+
+// 诊断级别。error 会挡住发布，warning / info 只提示。
+const (
+	DiagnosticError   = "error"
+	DiagnosticWarning = "warning"
+	DiagnosticInfo    = "info"
+)
+
+// Diagnostic 是发布前静态检查的一条结论。
+//
+// 带行列位置是刚需：编辑器要把它标在出问题的那一行上。一句
+// 「脚本里用了没声明的能力」而不说是哪一行，在两百行的脚本里等于没说。
+type Diagnostic struct {
+	Severity string `json:"severity"`
+	// Rule 规则标识（capability / unknown-member / forbidden-global / …），
+	// 控制台据此决定要不要给「一键修复」。
+	Rule    string `json:"rule"`
+	Message string `json:"message"`
+	// Line / Column 从 1 起算，与编辑器一致
+	Line      int `json:"line"`
+	Column    int `json:"column"`
+	EndColumn int `json:"endColumn,omitempty"`
+	// Capabilities 缺失的能力键：任意一项被声明即可满足。
+	// 控制台拿它渲染「补上这项能力」按钮。
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// AnalysisResult 静态检查的完整结论。
+type AnalysisResult struct {
+	OK          bool         `json:"ok"`
+	Diagnostics []Diagnostic `json:"diagnostics"`
+	// UsedCapabilities 脚本实际用到的能力，控制台据此提示「勾了却没用到」
+	UsedCapabilities []string `json:"usedCapabilities"`
+	SourceBytes      int      `json:"sourceBytes"`
+}
+
 // TestResult 试跑结果。日志与副作用一并回传 —— 试跑的价值就在于看得见过程。
 type TestResult struct {
 	OK         bool            `json:"ok"`
 	DurationMs float64         `json:"durationMs"`
 	Output     json.RawMessage `json:"output,omitempty"`
 	Effects    []Effect        `json:"effects"`
-	Logs       []string        `json:"logs"`
+	Logs       []LogEntry      `json:"logs"`
 	// Error 执行失败时的原因；BusinessCode 非 0 表示脚本自己调了 aegis.fail()
 	Error        string `json:"error,omitempty"`
 	BusinessCode int    `json:"businessCode,omitempty"`
+	// ErrorLine / ErrorColumn 抛错位置。没有它作者只能对着一句
+	// 「TypeError: Cannot read property 'x' of null」在两百行里找那个 null。
+	ErrorLine   int `json:"errorLine,omitempty"`
+	ErrorColumn int `json:"errorColumn,omitempty"`
+	// Stack 调用栈（已剥离宿主帧）
+	Stack []string `json:"stack,omitempty"`
+	// Diagnostics 与发布门禁同一套静态检查，在试跑时顺带回一份 ——
+	// 作者的下一步动作十有八九就是发布。
+	Diagnostics []Diagnostic `json:"diagnostics"`
 	// SDKCalls 本次用掉的额度，作者据此判断离上限还有多远
 	SDKCalls     int `json:"sdkCalls"`
 	SDKMutations int `json:"sdkMutations"`

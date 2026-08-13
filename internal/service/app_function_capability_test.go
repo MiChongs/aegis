@@ -76,10 +76,13 @@ func TestNoCapabilityBindsNothingExtra(t *testing.T) {
 	if err := json.Unmarshal(output, &keys); err != nil {
 		t.Fatalf("返回值不是 JSON: %v", err)
 	}
-	want := []string{"config", "crypto", "fail", "log", "time"}
+	// 与 domain 的 BaseSDKMembers 是同一份清单：一边加了成员另一边没加，
+	// 静态分析器会把一个真实存在的成员报成「SDK 上没有」。
+	want := append([]string{}, functiondomain.BaseSDKMembers()...)
+	sort.Strings(want)
 	sort.Strings(keys)
 	if strings.Join(keys, ",") != strings.Join(want, ",") {
-		t.Errorf("零声明时 aegis 上应只有免声明能力 %v，实际 %v", want, keys)
+		t.Errorf("零声明时 aegis 上应只有免声明成员 %v，实际 %v", want, keys)
 	}
 }
 
@@ -107,11 +110,16 @@ func TestConsoleIsBoundAsLogAlias(t *testing.T) {
 		t.Fatalf("应收集到 2 行日志，实际 %d 行：%v", len(logs), logs)
 	}
 	// 对象要序列化成 JSON 而不是 [object Object]，否则日志里什么也读不出来
-	if !strings.Contains(logs[0], `{"a":1}`) {
-		t.Errorf("对象参数应被序列化，实际 %q", logs[0])
+	if !strings.Contains(logs[0].Message, `{"a":1}`) {
+		t.Errorf("对象参数应被序列化，实际 %q", logs[0].Message)
 	}
-	if !strings.HasPrefix(logs[1], "warn ") {
-		t.Errorf("console.warn 应记为 warn 级别，实际 %q", logs[1])
+	// 级别是结构化字段而不是消息前缀：靠 "warn " 前缀切级别，
+	// 在消息本身以 warn 开头时就会切错。
+	if logs[1].Level != "warn" {
+		t.Errorf("console.warn 应记为 warn 级别，实际 %q", logs[1].Level)
+	}
+	if strings.HasPrefix(logs[1].Message, "warn ") {
+		t.Errorf("级别不该再被拼进消息里，实际 %q", logs[1].Message)
 	}
 }
 

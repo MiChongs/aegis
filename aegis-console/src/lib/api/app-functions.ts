@@ -24,6 +24,20 @@ export type AppFunction = {
   rateLimitPerMin: number;
   /** 函数级参数，脚本里读作 aegis.config；改它不需要发新版本 */
   config: Record<string, unknown>;
+  /**
+   * 入参契约（JSON Schema），`{}` 表示不约束。
+   *
+   * 一份声明驱动三处：调用入口的前置校验、试跑输入框的补全与校验、
+   * 以及编辑器里 ctx.input 的真实类型。
+   */
+  inputSchema: Record<string, unknown>;
+  /**
+   * 由 inputSchema 生成的 TypeScript 声明，**后端生成**，只出网不入库。
+   *
+   * 前端不做这个转换：再写一个转换器就有了第二份真相，
+   * 而两份类型不一致的表现是「补全里有这个字段、运行时却没有」。
+   */
+  inputTypes?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -114,15 +128,60 @@ export type AppFunctionStats = {
   buckets: Array<{ at: string; success: number; failed: number }>;
 };
 
+/**
+ * 脚本日志是结构化的，不是拼好的字符串。
+ *
+ * 级别要着色、要能过滤，而「从 "warn 内容" 里把级别切出来」
+ * 在消息本身以 warn 开头时就会切错。elapsedMs 是相对执行起点的毫秒数：
+ * 沙箱里没有计时器，「哪一步慢」只能靠日志之间的间隔看出来。
+ */
+export type AppFunctionLogEntry = {
+  level: string;
+  message: string;
+  elapsedMs: number;
+};
+
+export type AppFunctionDiagnosticSeverity = "error" | "warning" | "info";
+
+/**
+ * 静态检查的一条结论。行列从 1 起算，可直接喂给 Monaco 的 marker。
+ *
+ * `capabilities` 非空时表示「补上这项声明就好了」，控制台据此给一键修复 ——
+ * 否则作者要自己从错误文案里把能力键抄到设置页去。
+ */
+export type AppFunctionDiagnostic = {
+  severity: AppFunctionDiagnosticSeverity;
+  rule: string;
+  message: string;
+  line: number;
+  column: number;
+  endColumn?: number;
+  capabilities?: string[];
+};
+
+export type AppFunctionAnalysis = {
+  ok: boolean;
+  diagnostics: AppFunctionDiagnostic[];
+  /** 脚本实际用到的能力 */
+  usedCapabilities: string[];
+  sourceBytes: number;
+};
+
 export type AppFunctionTestResult = {
   ok: boolean;
   durationMs: number;
   output?: unknown;
   effects: AppFunctionEffect[];
-  logs: string[];
+  logs: AppFunctionLogEntry[];
   error?: string;
   /** 非 0 表示脚本自己调了 aegis.fail()，属于业务判定而不是崩溃 */
   businessCode?: number;
+  /** 抛错位置，用来在编辑器上直接标红那一行 */
+  errorLine?: number;
+  errorColumn?: number;
+  stack?: string[];
+  /** 与发布门禁同一套检查，试跑时顺带回一份 */
+  diagnostics: AppFunctionDiagnostic[];
   sdkCalls: number;
   sdkMutations: number;
   sdkFetches: number;
@@ -164,6 +223,8 @@ export type FunctionCapability = {
   deprecated?: boolean;
   replacedBy?: string;
   namespace?: string;
+  /** 这项能力贡献的成员名，服务端静态分析器据此反查「这行需要哪项能力」 */
+  members?: string[];
   /** 注入编辑器类型的成员声明，由 buildAegisSDKTypes 拼装 */
   declaration?: string;
   interfaces?: string;
@@ -180,6 +241,8 @@ export type FunctionRuntimeLimits = {
   maxConfigBytes: number;
   maxTimeoutMs: number;
   maxConcurrency: number;
+  maxLogLines: number;
+  maxLockSeconds: number;
 };
 
 export type FunctionScriptTemplate = {
@@ -197,6 +260,8 @@ export type FunctionCatalog = {
   /** 与能力无关、永远存在的那部分 .d.ts（AegisContext / AegisUser / AegisCrypto…） */
   baseTypes: string;
   runtimeDefault: AppFunctionRuntime;
+  /** 入参契约的起步骨架，比对着空编辑器回忆 JSON Schema 关键字强 */
+  inputSchemaTemplate: string;
 };
 
 /** 能力分组的展示名。分组键由后端定义，这里只负责翻译。 */
@@ -206,6 +271,7 @@ export const CAPABILITY_GROUP_LABELS: Record<string, string> = {
   state: "服务端状态",
   reach: "触达",
   audit: "留痕",
+  intel: "情报",
   egress: "出网",
   legacy: "旧能力（仅兼容存量）"
 };
@@ -242,6 +308,7 @@ export function createAppFunction(
     maxConcurrency?: number;
     rateLimitPerMin?: number;
     config?: Record<string, unknown>;
+    inputSchema?: Record<string, unknown>;
   }
 ) {
   return apiRequest<AppFunction>(`${appPath(appKey)}/functions`, {
@@ -263,6 +330,7 @@ export type AppFunctionUpdate = Partial<
     | "maxConcurrency"
     | "rateLimitPerMin"
     | "config"
+    | "inputSchema"
   >
 >;
 
@@ -370,6 +438,26 @@ export function testAppFunction(
     method: "POST",
     token,
     body: JSON.stringify(payload)
+  });
+}
+
+/**
+ * 静态检查：不执行任何代码，只回诊断。
+ *
+ * 与试跑分开是因为两者回答的不是同一个问题：试跑要用户身份、要真实读库、
+ * 要几百毫秒；而作者敲代码时想知道的只是「我现在这份能不能发出去」。
+ * 后端走的是与发布门禁**同一套**判定，因此不会出现「这里全绿、发布被拦」。
+ */
+export function analyzeAppFunction(
+  token: string,
+  appKey: string,
+  name: string,
+  source: string
+) {
+  return apiRequest<AppFunctionAnalysis>(`${functionPath(appKey, name)}/analyze`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ source })
   });
 }
 

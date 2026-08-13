@@ -75,7 +75,18 @@ export type SDKTypeSource = {
  * 旧能力名（user.profile.read）的映射由目录里的 `replacedBy` 负责，
  * 在前端再写一遍映射表就是第二份真相。
  */
-export function buildAegisSDKTypes(declaredKeys: string[], source?: SDKTypeSource): string {
+export function buildAegisSDKTypes(
+  declaredKeys: string[],
+  source?: SDKTypeSource,
+  /**
+   * 由入参 JSON Schema 生成的 `declare interface AegisInput {...}`。
+   *
+   * **也是后端生成的**，与能力片段同一条约束：在前端再写一个
+   * JSON Schema → TypeScript 的转换器，就有了第二份真相，
+   * 而两份类型不一致的表现是「补全里有这个字段、运行时却没有」。
+   */
+  inputTypes?: string
+): string {
   const catalog = source?.capabilities ?? [];
   const declared = new Set(declaredKeys);
   for (const capability of catalog) {
@@ -121,6 +132,12 @@ export function buildAegisSDKTypes(declaredKeys: string[], source?: SDKTypeSourc
 
   return [
     (source?.baseTypes || FALLBACK_BASE).trim(),
+    "",
+    // AegisContext.input 引用了这个名字，因此它必须**恒定存在** ——
+    // 没配 schema 时也要给一个 any 别名，否则整份声明引用不到类型而失效。
+    inputTypes?.trim()
+      ? inputTypes.trim()
+      : "/** 未配置入参 schema，因此这里是 any */\ndeclare type AegisInput = any;",
     "",
     ...(interfaces.length ? [interfaces.join("\n\n"), ""] : []),
     SDK_HEAD,

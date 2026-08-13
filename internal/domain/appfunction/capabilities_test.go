@@ -15,7 +15,8 @@ func TestCapabilityCatalogIsWellFormed(t *testing.T) {
 
 	validGroups := map[string]struct{}{
 		CapGroupIdentity: {}, CapGroupAsset: {}, CapGroupState: {},
-		CapGroupReach: {}, CapGroupAudit: {}, CapGroupEgress: {}, CapGroupLegacy: {},
+		CapGroupReach: {}, CapGroupAudit: {}, CapGroupIntel: {},
+		CapGroupEgress: {}, CapGroupLegacy: {},
 	}
 	validRisks := map[string]struct{}{RiskLow: {}, RiskMedium: {}, RiskHigh: {}}
 
@@ -52,6 +53,87 @@ func TestCapabilityCatalogIsWellFormed(t *testing.T) {
 				t.Errorf("%s 指向的替代能力 %s 不存在", capability.Key, capability.ReplacedBy)
 			}
 		}
+	}
+}
+
+// Members 是静态分析器反查「这行代码需要哪项能力」的唯一依据。
+//
+// 它与 Declaration 是同一件事的两种写法（一份给编译器、一份给人看），
+// 两者漂移的表现极难发现：分析器认不出 `aegis.points.add`，于是
+// 「没声明 points.write」这条错误再也不会被报出来，发布照过、调用时 TypeError。
+func TestCapabilityMembersAppearInDeclaration(t *testing.T) {
+	t.Parallel()
+
+	for _, capability := range CapabilityCatalog() {
+		if capability.Deprecated {
+			continue
+		}
+		if len(capability.Members) == 0 {
+			t.Errorf("%s 没有登记 Members —— 静态分析器认不出用到它的代码", capability.Key)
+			continue
+		}
+		for _, member := range capability.Members {
+			// 命名空间成员在声明里长成 `get(` / `ban(`；
+			// 根成员长成 `kv: AegisKV` / `fetch(url`。
+			if strings.Contains(capability.Declaration, member+"(") ||
+				strings.Contains(capability.Declaration, member+":") ||
+				strings.Contains(capability.Declaration, member+"<") {
+				continue
+			}
+			t.Errorf("%s 登记了成员 %q，但类型声明里找不到它", capability.Key, member)
+		}
+	}
+}
+
+// 反查表的两个方向都要对：认得出需要哪项能力，也认得出「这个成员不存在」。
+func TestCapabilitiesForMemberResolvesBothDirections(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		root, member string
+		wantKnown    bool
+		wantNeeded   []string
+	}{
+		{"points", "add", true, []string{CapPointsWrite}},
+		{"user", "get", true, []string{CapUserRead}},
+		{"user", "ban", true, []string{CapUserWrite}},
+		// 裸取命名空间无从判断要读还是要写，两项都算数
+		{"user", "", true, []string{CapUserRead, CapUserWrite}},
+		{"kv", "", true, []string{CapKVRead, CapKVWrite}},
+		{"fetch", "", true, []string{CapHTTPFetch}},
+		// 免声明成员：认得，但不需要任何能力
+		{"crypto", "sha256", true, nil},
+		{"decimal", "add", true, nil},
+		// 命名空间对但成员名拼错：算「不认识」，由调用方按成员报错
+		{"points", "increase", false, nil},
+		{"nosuch", "", false, nil},
+	}
+
+	for _, testCase := range cases {
+		needed, known := CapabilitiesForMember(testCase.root, testCase.member)
+		if known != testCase.wantKnown {
+			t.Errorf("aegis.%s.%s known=%v，期望 %v",
+				testCase.root, testCase.member, known, testCase.wantKnown)
+		}
+		if strings.Join(needed, ",") != strings.Join(testCase.wantNeeded, ",") {
+			t.Errorf("aegis.%s.%s 需要 %v，期望 %v",
+				testCase.root, testCase.member, needed, testCase.wantNeeded)
+		}
+	}
+}
+
+// 免声明成员的清单必须与 SDKDeclaration 的 AegisSDK 头部一致：
+// 少一项，静态分析器会把一个真实存在的成员报成「SDK 上没有」。
+func TestBaseSDKMembersMatchDeclaration(t *testing.T) {
+	t.Parallel()
+
+	declaration := SDKDeclaration(nil)
+	for _, member := range BaseSDKMembers() {
+		if strings.Contains(declaration, "\n  "+member+"(") ||
+			strings.Contains(declaration, "\n  "+member+":") {
+			continue
+		}
+		t.Errorf("免声明成员 %q 不在零能力时生成的类型里", member)
 	}
 }
 

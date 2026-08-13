@@ -409,6 +409,10 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Wallet:        walletService,
 		Email:         emailService,
 		Bans:          accountBanService,
+		Realtime:      realtimeService,
+		Location:      locationService,
+		Redis:         redisClient,
+		KeyPrefix:     cfg.Redis.KeyPrefix,
 	})
 	if err := pluginService.Initialize(ctx); err != nil {
 		log.Warn("插件系统初始化失败（非致命）", zap.Error(err))

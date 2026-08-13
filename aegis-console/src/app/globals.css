@@ -1399,6 +1399,73 @@
   color: var(--destructive);
 }
 
+/* ─────────────────────────────────────────────────────────────────
+   Monaco 编辑器（远程函数脚本 / JSON 契约）
+
+   配色走 `lib/monaco/aegis-theme.ts`（它把设计令牌读出来喂给
+   monaco.editor.defineTheme），这里只补 Monaco 的选项表达不了的两件事：
+   插入符的形状，以及浮层的出场。
+
+   两者都只在 `prefers-reduced-motion: no-preference` 下生效 ——
+   一个持续呼吸的光标正是这条偏好要挡的东西。
+   ───────────────────────────────────────────────────────────────── */
+.aegis-code-editor .monaco-editor .cursor {
+  /* 直角插入符在 2px 宽度下显得很硬。1px 圆角是 macOS 的做法，
+     肉眼说不出哪里不同，但并排一看就是它更贴。 */
+  border-radius: 1px;
+}
+
+/* 编辑器不参与全局那条 280ms 的颜色过渡：主题切换时 Monaco 自己会重绘
+   一整棵 DOM，再叠一层 transition 等于让上千个节点同时补间，那一下明显卡顿。
+
+   **刻意不加 `!important`**：这条的特指度是 (0,1,0)，压得过全局那条 `*`，
+   但压不过 Monaco 自己那条 (0,3,0) 的
+   `.cursors-layer.cursor-smooth-caret-animation>.cursor{transition:all 80ms}` ——
+   而那正是插入符滑动的实现。加了 `!important` 就把要开的功能一起关掉了。 */
+.aegis-code-editor * {
+  transition-property: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* 呼吸光标。
+     Monaco 的 `phase` 档本身就是 `.5s ease-in-out alternate`，一个完整
+     呼吸周期正好 1s —— 与 macOS 插入符的节奏一致，**不要去改它的时长**。
+
+     要改的是次数：默认写的是 `20`，也就是空闲十秒后停在常亮。VS Code 这么做
+     是为了省电，但那不是 macOS 的行为 —— 原生输入框只要还聚焦就一直在呼吸。
+     这里是一个 2px 元素的 opacity 动画，合成层上跑，代价可以忽略。 */
+  .aegis-code-editor .monaco-editor .cursor-phase,
+  .aegis-code-editor .monaco-editor .cursor-smooth {
+    animation-iteration-count: infinite;
+  }
+
+  /* 插入符滑动的缓动换成控制台通用的那条曲线（与全站颜色过渡同一条），
+     默认的 ease 收尾偏软，跳转时会有一点"飘过去"的拖影感。 */
+  .aegis-code-editor .monaco-editor .cursors-layer.cursor-smooth-caret-animation > .cursor {
+    transition: all 90ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  /* 补全、悬浮、参数提示三种浮层的出场。
+     它们原本是"啪"地出现在光标旁边，位移只有几像素但对比度很高，
+     余光里像闪了一下。2px 的位移 + 90ms 的淡入足以把这一下抹平。 */
+  .aegis-code-editor .monaco-editor .suggest-widget,
+  .aegis-code-editor .monaco-editor .parameter-hints-widget,
+  .aegis-code-editor .monaco-hover {
+    animation: aegis-editor-widget-in 90ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+}
+
+@keyframes aegis-editor-widget-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ==================================================================== */
 /*  深浅色切换 —— 扩散动画                                              */
 /*  逻辑在 src/lib/theme-transition.tsx，这里只放它需要的样式底座。      */

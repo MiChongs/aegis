@@ -120,6 +120,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/function-keys"):                                        createAppFunctionKeyRequest{},            // AdminCreateAppFunctionKey
 		routeKey("POST", "/api/admin/apps/{appkey}/functions"):                                            createAppFunctionRequest{},               // AdminCreateAppFunction
 		routeKey("PUT", "/api/admin/apps/{appkey}/functions/{functionName}"):                              updateAppFunctionRequest{},               // AdminUpdateAppFunction
+		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/analyze"):                     analyzeAppFunctionRequest{},              // AdminAnalyzeAppFunction
 		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/invoke"):                      invokeAppFunctionRequest{},               // AdminInvokeAppFunction
 		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/test"):                        testAppFunctionRequest{},                 // AdminTestAppFunction
 		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/versions"):                    createAppFunctionVersionRequest{},        // AdminCreateAppFunctionVersion

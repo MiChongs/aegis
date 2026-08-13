@@ -25,6 +25,7 @@ type createAppFunctionRequest struct {
 	MaxConcurrency   int             `json:"maxConcurrency"`
 	RateLimitPerMin  int             `json:"rateLimitPerMin"`
 	Config           json.RawMessage `json:"config"`
+	InputSchema      json.RawMessage `json:"inputSchema"`
 }
 
 type updateAppFunctionRequest struct {
@@ -37,6 +38,7 @@ type updateAppFunctionRequest struct {
 	MaxConcurrency   *int            `json:"maxConcurrency"`
 	RateLimitPerMin  *int            `json:"rateLimitPerMin"`
 	Config           json.RawMessage `json:"config"`
+	InputSchema      json.RawMessage `json:"inputSchema"`
 }
 
 type createAppFunctionVersionRequest struct {
@@ -59,6 +61,14 @@ type testAppFunctionRequest struct {
 	Config    json.RawMessage `json:"config"`
 	AsUserID  int64           `json:"asUserId"`
 	TimeoutMs int             `json:"timeoutMs"`
+}
+
+// analyzeAppFunctionRequest 静态检查。
+//
+// 与试跑刻意分开：试跑要用户身份、要真实读库、要几百毫秒，而编辑器需要的
+// 只是「这份现在能不能发出去」—— 那件事不该有任何副作用，也不该那么贵。
+type analyzeAppFunctionRequest struct {
+	Source string `json:"source" binding:"required"`
 }
 
 type invokeAppFunctionRequest struct {
@@ -99,8 +109,9 @@ func (h *Handler) AdminCreateAppFunction(c *gin.Context) {
 		Capabilities: req.Capabilities, TimeoutMs: req.TimeoutMs,
 		MaxRequestBytes: req.MaxRequestBytes, MaxResponseBytes: req.MaxResponseBytes,
 		MaxConcurrency: req.MaxConcurrency, RateLimitPerMin: req.RateLimitPerMin,
-		Config:    req.Config,
-		CreatedBy: currentAdminID(c),
+		Config:      req.Config,
+		InputSchema: req.InputSchema,
+		CreatedBy:   currentAdminID(c),
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -151,6 +162,7 @@ func (h *Handler) AdminUpdateAppFunction(c *gin.Context) {
 			TimeoutMs: req.TimeoutMs, MaxRequestBytes: req.MaxRequestBytes,
 			MaxResponseBytes: req.MaxResponseBytes, MaxConcurrency: req.MaxConcurrency,
 			RateLimitPerMin: req.RateLimitPerMin, Config: req.Config,
+			InputSchema: req.InputSchema,
 		})
 	if err != nil {
 		h.writeError(c, err)
@@ -351,6 +363,29 @@ func (h *Handler) AdminTestAppFunction(c *gin.Context) {
 		return
 	}
 	response.Success(c, 200, "试跑完成", result)
+}
+
+// AdminAnalyzeAppFunction 静态检查：不执行任何代码，只回诊断。
+//
+// 它与发布走的是**同一套判定**（`AnalyzeFunctionScript`），因此
+// 「这里全绿、发布却被拦」这种最让人费解的情形不会发生。
+func (h *Handler) AdminAnalyzeAppFunction(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	var req analyzeAppFunctionRequest
+	if err := bindLimitedJSON(c, &req, 1<<20); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	result, err := h.appFunction.AnalyzeScript(c.Request.Context(), appID,
+		c.Param("functionName"), req.Source)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "ok", result)
 }
 
 // AdminAppFunctionStats 运行状况：成功率、耗时分位、Top 错误、按小时分桶。

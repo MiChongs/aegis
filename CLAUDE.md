@@ -85,7 +85,7 @@ graph TD
 | `internal/authz/` | **授权引擎**：Casbin 模型 + 权限词汇 + 内置角色 + 路由规则表 + 策略存储 | [CLAUDE.md](internal/authz/CLAUDE.md) |
 | `internal/domain/` | 所有领域类型定义 | [CLAUDE.md](internal/domain/CLAUDE.md) |
 | `internal/domain/organization/` | **组织架构**：租户边界、UUID 对外标识、内置角色与权限目录 | [docs](docs/organization.md) |
-| `internal/domain/appfunction/` | **远程函数能力目录**：能力键 / 风险档 / TS 声明 / 内置模板，一份目录同时驱动服务端校验、SDK 绑定、控制台勾选框与编辑器提示 | [docs](docs/app-functions.md) |
+| `internal/domain/appfunction/` | **远程函数能力目录**：能力键 / 风险档 / TS 声明 / 内置模板，一份目录同时驱动服务端校验、SDK 绑定、控制台勾选框与编辑器提示；另有入参契约（JSON Schema → TypeScript）的唯一转换实现 | [docs](docs/app-functions.md) |
 | `internal/event/` | NATS 事件主题常量 | — |
 | `internal/middleware/` | Gin 中间件（防火墙/认证/加密/限流） | [CLAUDE.md](internal/middleware/CLAUDE.md) |
 | `internal/repository/` | Postgres / Redis / LegacyMySQL 数据访问 | [CLAUDE.md](internal/repository/CLAUDE.md) |
@@ -104,12 +104,12 @@ graph TD
 | **交易与凭证** | 订单与钱包流水**两类主体**都能出凭证；同一笔钱只出一份（挂着订单的流水由订单出具） | [docs](docs/payment-receipt.md#两类凭证主体) |
 | **会员与试用** | 会员判定收成一个入口（是不是会员 / 还剩多久 / 是不是**试用** / 试用还能不能领）；试用是套餐的一种，一人一次由唯一约束保证 | [service](internal/service/CLAUDE.md#会员判定与试用期会员) |
 | **卡密** | 一张卡两种形态：**授权卡**（卡即登录凭证，绑设备、有授权期）与**兑换卡**（发会员/积分/经验/余额/抽奖次数/设备位）。七档权益由目录驱动，一码一用由三道保证叠出来 | [docs](docs/card-key.md) |
-| **远程函数** | 接入方把自定义 API 逻辑放进服务端 JS 沙箱；**试跑读真写假**、版本正文取得回、能力/闸门/配置随时可改 | [docs](docs/app-functions.md) |
+| **远程函数** | 接入方把自定义 API 逻辑放进服务端 JS 沙箱；**试跑读真写假**、版本正文取得回、能力/闸门/配置随时可改；**发布前静态门禁**说出「第几行缺哪项能力」；**入参契约**一份 JSON Schema 同时驱动调用校验、试跑补全与 `ctx.input` 的类型 | [docs](docs/app-functions.md) |
 | **服务端会员校验** | 接入方后端用应用密钥直接问「这个用户是不是会员」，可细到**功能标识**（`export` / `ai.chat`）；套餐改名不影响判定 | [service](internal/service/CLAUDE.md#服务端会员校验与功能标识) |
 | `pkg/i18n/` | **通用国际化**：语言协商 + CLDR 复数 + 定点金额/日期格式化 | [docs](docs/payment-receipt.md#语言协商) |
 | `pkg/fontkit/` | **字体归一化**：TTC 拆分成独立 sfnt + 字符覆盖度查询 | [docs](docs/payment-receipt.md#中日韩字体) |
 | `pkg/` | 共享工具包（errors/logger/response/tracing） | — |
-| `migrations/postgres/` | 顺序 SQL 迁移文件（000001–000080） | — |
+| `migrations/postgres/` | 顺序 SQL 迁移文件（000001–000082） | — |
 | `sql/queries/` | **sqlc 查询源**：迁移目录即 schema，可空性由生成器算出（含 LEFT JOIN 污染的那些列），产物落 `internal/repository/postgres/sqlcgen` | [docs](docs/sqlc.md) |
 | `scripts/docsgen/` | **OpenAPI 请求模型生成器**：运行时路由表 × `x/tools` 静态分析，推出每条路由的请求类型。gin 的 handler 签名擦掉了类型，没有哪个 OpenAPI 库能代劳 | [transport/http](internal/transport/http/CLAUDE.md#第-1-层为什么必须由生成器产出) |
 | `sdk/kotlin/` | **官方 Kotlin/Java 客户端**：三档 transport 适配器 + 全量 API，Android 与 JVM 服务端共用 | [README](sdk/kotlin/README.md) |

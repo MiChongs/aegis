@@ -12,10 +12,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -27,8 +29,10 @@ import (
 	vipdomain "aegis/internal/domain/vip"
 	pgrepo "aegis/internal/repository/postgres"
 
+	"github.com/bsm/redislock"
 	"github.com/dop251/goja"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
@@ -46,9 +50,12 @@ const (
 	CapWalletWrite      = functiondomain.CapWalletWrite
 	CapKVRead           = functiondomain.CapKVRead
 	CapKVWrite          = functiondomain.CapKVWrite
+	CapLockAcquire      = functiondomain.CapLockAcquire
 	CapNotificationSend = functiondomain.CapNotificationSend
+	CapRealtimePush     = functiondomain.CapRealtimePush
 	CapEmailSend        = functiondomain.CapEmailSend
 	CapAuditWrite       = functiondomain.CapAuditWrite
+	CapGeoRead          = functiondomain.CapGeoRead
 	CapHTTPFetch        = functiondomain.CapHTTPFetch
 )
 
@@ -65,6 +72,13 @@ const (
 	// 不设上限的话，一个 for 循环里的 console.log 能把响应撑到几十兆。
 	maxScriptLogLines = 200
 	maxScriptLogBytes = 2000
+	// maxLockSeconds 单把分布式锁的最长持有时间。
+	//
+	// 锁必须自动到期：脚本可能在持锁期间被超时中断，那时没有任何代码
+	// 会去释放它。上限压在函数超时上限（30s）之上留一点余量，
+	// 再长就不是「保护临界区」而是「把这个键锁死」了。
+	maxLockSeconds     = 60
+	defaultLockSeconds = 10
 )
 
 // kvReservedPrefix 平台自用的 KV 键前缀，脚本读写不到。
@@ -88,6 +102,8 @@ func FunctionRuntimeLimits() functiondomain.RuntimeLimits {
 		MaxConfigBytes:   maxConfigBytes,
 		MaxTimeoutMs:     maxFunctionTimeoutMs,
 		MaxConcurrency:   maxFunctionConcurrency,
+		MaxLogLines:      maxScriptLogLines,
+		MaxLockSeconds:   maxLockSeconds,
 	}
 }
 
@@ -116,6 +132,12 @@ type ScriptSDKDeps struct {
 	Wallet        *WalletService
 	Email         *EmailService
 	Bans          *AccountBanService
+	// Realtime / Location / Redis 分别支撑 realtime.push / geo.read / lock.acquire。
+	// 与上面几项同一条约定：缺哪一项，对应能力在绑定时点名报错。
+	Realtime  *RealtimeService
+	Location  *LocationService
+	Redis     *redis.Client
+	KeyPrefix string
 }
 
 // ScriptSDK 是注入脚本的 `aegis` 全局对象，每次调用新建一个。
@@ -145,10 +167,18 @@ type ScriptSDK struct {
 	dryRun bool
 
 	effects   []functiondomain.Effect
-	logs      []string
+	logs      []functiondomain.LogEntry
 	calls     int
 	mutations int
 	fetches   int
+
+	// startedAt 用来给每行日志算相对耗时。脚本里没有计时器，
+	// 「哪一步慢」只能靠日志之间的间隔看出来。
+	startedAt time.Time
+
+	// heldLocks 本次调用还没归还的锁。脚本被超时中断时不会有任何代码
+	// 走到 release，因此收口处要统一释放 —— 锁自身的 TTL 只是最后一道保险。
+	heldLocks map[string]*scriptLock
 
 	// 脚本通过 aegis.fail() 主动终止时记录在这里
 	businessError *ScriptBusinessError
@@ -184,6 +214,8 @@ func newScriptSDK(
 		appID: appID, appKey: appKey, functionName: functionName,
 		eventID: eventID, caller: caller, capabilities: set,
 		config: config, dryRun: options.DryRun,
+		startedAt: time.Now(),
+		heldLocks: map[string]*scriptLock{},
 	}
 }
 
@@ -191,7 +223,22 @@ func newScriptSDK(
 func (s *ScriptSDK) Effects() []functiondomain.Effect { return s.effects }
 
 // Logs 返回脚本写下的日志（只在试跑时回传给作者）。
-func (s *ScriptSDK) Logs() []string { return s.logs }
+func (s *ScriptSDK) Logs() []functiondomain.LogEntry { return s.logs }
+
+// Release 归还本次调用还持有的锁。
+//
+// 必须由调用方在 finally 位置调用：脚本被超时中断时，它自己那句 release
+// 永远不会执行 —— 而一把要等 TTL 才自动到期的锁，会把后续每一次调用
+// 都挡在门外，表现为「这个函数忽然全部超时」。
+func (s *ScriptSDK) Release() {
+	if len(s.heldLocks) == 0 {
+		return
+	}
+	for key := range s.heldLocks {
+		s.releaseLock(key)
+	}
+	s.heldLocks = map[string]*scriptLock{}
+}
 
 // BusinessError 返回脚本主动抛出的业务错误（若有）。
 func (s *ScriptSDK) BusinessError() *ScriptBusinessError { return s.businessError }
@@ -261,16 +308,43 @@ func (s *ScriptSDK) appendLog(level string, message string) {
 		zap.String("level", level),
 		zap.Bool("dry_run", s.dryRun),
 		zap.String("message", message))
+	elapsed := float64(time.Since(s.startedAt).Microseconds()) / 1000
 	switch {
 	case len(s.logs) < maxScriptLogLines:
-		s.logs = append(s.logs, level+" "+message)
+		s.logs = append(s.logs, functiondomain.LogEntry{
+			Level: level, Message: message, ElapsedMs: elapsed,
+		})
 	case len(s.logs) == maxScriptLogLines:
-		s.logs = append(s.logs, fmt.Sprintf("warn 日志超过 %d 行，后续已丢弃", maxScriptLogLines))
+		s.logs = append(s.logs, functiondomain.LogEntry{
+			Level:     "warn",
+			Message:   fmt.Sprintf("日志超过 %d 行，后续已丢弃", maxScriptLogLines),
+			ElapsedMs: elapsed,
+		})
 	}
 }
 
 func throw(vm *goja.Runtime, err error) {
 	panic(vm.ToValue(err.Error()))
+}
+
+// rethrowScriptError 把「宿主回调里跑脚本」拿到的错误原样送回 JS 栈。
+//
+// 直接 panic(err) 是不行的：goja 的恢复逻辑只认 Value / *Exception /
+// uncatchableException 三类，别的类型会**继续向上 panic**，把整个请求
+// goroutine 带崩。三类各有各的送法：
+//   - 超时中断：原样抛，否则一次超时会被记成「锁内执行失败」
+//   - 脚本异常：抛它的值，aegis.fail 走的就是这条路，包一层会盖掉业务错误
+//   - 其余宿主错误：转成字符串异常
+func rethrowScriptError(vm *goja.Runtime, err error) any {
+	var interrupted *goja.InterruptedError
+	if errors.As(err, &interrupted) {
+		return interrupted
+	}
+	var exception *goja.Exception
+	if errors.As(err, &exception) {
+		return exception.Value()
+	}
+	return vm.ToValue(err.Error())
 }
 
 // bind 把 SDK 挂到运行时的 `aegis` 全局对象上。
@@ -288,6 +362,9 @@ func (s *ScriptSDK) bind(vm *goja.Runtime) error {
 	if err := root.Set("fail", s.bindFail(vm)); err != nil {
 		return err
 	}
+	if err := root.Set("assert", s.bindAssert(vm)); err != nil {
+		return err
+	}
 	if err := root.Set("crypto", s.bindCrypto(vm)); err != nil {
 		return err
 	}
@@ -296,6 +373,26 @@ func (s *ScriptSDK) bind(vm *goja.Runtime) error {
 	}
 	if err := root.Set("config", vm.ToValue(s.config)); err != nil {
 		return err
+	}
+
+	// 标准库：纯计算，不碰平台数据，因此不需要能力声明。
+	// 不给的话作者只能自己手写一份，而手写的 HMAC 拼串、日切、金额运算
+	// 出错时都不报错，只是悄悄给出错误结果。
+	stdlib := []struct {
+		name  string
+		build func(*goja.Runtime) *goja.Object
+	}{
+		{"text", s.bindText},
+		{"encoding", s.bindEncoding},
+		{"decimal", s.bindDecimal},
+		{"json", s.bindJSONUtil},
+		{"validate", s.bindValidate},
+		{"ua", s.bindUserAgent},
+	}
+	for _, item := range stdlib {
+		if err := root.Set(item.name, item.build(vm)); err != nil {
+			return err
+		}
 	}
 
 	// console 是 aegis.log 的别名。没有它的话，几乎每个作者的第一行
@@ -314,9 +411,12 @@ func (s *ScriptSDK) bind(vm *goja.Runtime) error {
 		{"points", s.has(CapPointsWrite), s.bindPointsNamespace},
 		{"vip", s.has(CapVipRead) || s.has(CapVipWrite), s.bindVipNamespace},
 		{"wallet", s.has(CapWalletRead) || s.has(CapWalletWrite), s.bindWalletNamespace},
+		{"lock", s.has(CapLockAcquire), s.bindLockNamespace},
 		{"notify", s.has(CapNotificationSend), s.bindNotifyNamespace},
+		{"realtime", s.has(CapRealtimePush), s.bindRealtimeNamespace},
 		{"email", s.has(CapEmailSend), s.bindEmailNamespace},
 		{"audit", s.has(CapAuditWrite), s.bindAuditNamespace},
+		{"geo", s.has(CapGeoRead), s.bindGeoNamespace},
 	}
 	for _, namespace := range namespaces {
 		if !namespace.bound {
@@ -396,6 +496,31 @@ func (s *ScriptSDK) bindFail(vm *goja.Runtime) func(goja.FunctionCall) goja.Valu
 		code := 40300
 		if len(call.Arguments) > 1 {
 			if parsed := call.Argument(1).ToInteger(); parsed > 0 {
+				code = int(parsed)
+			}
+		}
+		s.businessError = &ScriptBusinessError{Code: code, Message: message}
+		panic(vm.ToValue(message))
+	}
+}
+
+// bindAssert 是 fail 的前置判定版。
+//
+// 「校验全部走在写入之前」是这套沙箱反复强调的写法（脚本不是一个大事务），
+// 而它在代码里长成一串 `if (!x) aegis.fail(...)`。给一个断言不是省字数，
+// 是让那一串前置校验在视觉上聚成一块，从而更难被漏掉一条。
+func (s *ScriptSDK) bindAssert(vm *goja.Runtime) func(goja.FunctionCall) goja.Value {
+	return func(call goja.FunctionCall) goja.Value {
+		if call.Argument(0).ToBoolean() {
+			return goja.Undefined()
+		}
+		message := "参数校验失败"
+		if len(call.Arguments) > 1 {
+			message = call.Argument(1).String()
+		}
+		code := 40001
+		if len(call.Arguments) > 2 {
+			if parsed := call.Argument(2).ToInteger(); parsed > 0 {
 				code = int(parsed)
 			}
 		}
@@ -508,6 +633,10 @@ func (s *ScriptSDK) bindCrypto(vm *goja.Runtime) *goja.Object {
 		}
 		return vm.ToValue(subtle.ConstantTimeCompare(left, right) == 1)
 	})
+
+	// 对称加密、JWT、TOTP、口令派生：同样是纯计算，同样是「不给就得手写」。
+	// 定义在 app_function_stdlib.go，那边有逐项的取舍说明。
+	s.extendCrypto(vm, object)
 	return object
 }
 
@@ -542,6 +671,9 @@ func (s *ScriptSDK) bindTime(vm *goja.Runtime) *goja.Object {
 		s.budget(vm, false)
 		return vm.ToValue(time.Now().UTC().AddDate(0, int(call.Argument(0).ToInteger()), 0).Format("2006-01"))
 	})
+
+	// 按时区日切、格式化、cron 下一跳：见 app_function_stdlib.go
+	s.extendTime(vm, object)
 	return object
 }
 
@@ -1151,6 +1283,153 @@ func (s *ScriptSDK) kvNamespace(vm *goja.Runtime, scope string) (*goja.Object, e
 	return object, nil
 }
 
+// ── lock.acquire ────────────────────────────────────────────────────
+
+// bindLockNamespace 跨实例互斥锁。
+//
+// 「先查后写」这段临界区在单实例下靠运气也能对，多实例部署下必然出事：
+// 两个请求同时读到「还没领过」，然后各发一份。KV 的 incr 能挡住计数型
+// 的并发，但挡不住「判断 A、修改 B」这种跨键的临界区 —— 那正是发奖、
+// 兑换、抽奖这几类脚本的标准形状。
+//
+// 锁落在 Redis 而不是 app_function_kv：这里要的是「抢不到就立刻失败」，
+// 而数据库的 UPSERT 语义给不了这个（它总会成功）。SET NX PX 恰好就是它。
+func (s *ScriptSDK) bindLockNamespace(vm *goja.Runtime, object *goja.Object) error {
+	if s.deps.Redis == nil {
+		return fmt.Errorf("能力 %s 依赖的 Redis 未装配", CapLockAcquire)
+	}
+
+	if err := object.Set("acquire", func(call goja.FunctionCall) goja.Value {
+		s.budget(vm, true)
+		key := s.requireLockKey(vm, call.Argument(0))
+		token, ok := s.acquireLock(vm, key, lockSeconds(call.Argument(1)))
+		if !ok {
+			return goja.Null()
+		}
+		return vm.ToValue(token)
+	}); err != nil {
+		return err
+	}
+
+	if err := object.Set("release", func(call goja.FunctionCall) goja.Value {
+		s.budget(vm, true)
+		key := s.requireLockKey(vm, call.Argument(0))
+		if held, ok := s.heldLocks[key]; !ok || held.token != call.Argument(1).String() {
+			// 令牌对不上说明这把锁已经过期并被别人抢走了。
+			// 照删不误会把别人的临界区打开，那比锁没生效更糟。
+			return vm.ToValue(false)
+		}
+		return vm.ToValue(s.releaseLock(key))
+	}); err != nil {
+		return err
+	}
+
+	// run 是给作者用的那一个：acquire / release 成对写在脚本里，
+	// 中间任何一次 aegis.fail 都会跳过 release，而那正是最常写的分支。
+	return object.Set("run", func(call goja.FunctionCall) goja.Value {
+		s.budget(vm, true)
+		key := s.requireLockKey(vm, call.Argument(0))
+		body, ok := goja.AssertFunction(call.Argument(1))
+		if !ok {
+			panic(vm.ToValue("aegis.lock.run 的第二个参数必须是函数"))
+		}
+		if _, acquired := s.acquireLock(vm, key, lockSeconds(call.Argument(2))); !acquired {
+			panic(vm.ToValue("未能获得锁 " + key + "，请稍后重试"))
+		}
+		defer s.releaseLock(key)
+		returned, err := body(goja.Undefined())
+		if err != nil {
+			panic(rethrowScriptError(vm, err))
+		}
+		return returned
+	})
+}
+
+func lockSeconds(value goja.Value) int {
+	seconds := int(value.ToInteger())
+	if seconds <= 0 {
+		return defaultLockSeconds
+	}
+	if seconds > maxLockSeconds {
+		return maxLockSeconds
+	}
+	return seconds
+}
+
+// requireLockKey 锁键按 (应用, 函数) 加前缀。
+//
+// 不加的话两个应用用同一个键名就会互相锁住对方，而那种串扰
+// 在任何一侧都看不出来 —— 只会表现为「偶尔抢不到锁」。
+func (s *ScriptSDK) requireLockKey(vm *goja.Runtime, value goja.Value) string {
+	key := strings.TrimSpace(value.String())
+	if key == "" || len(key) > maxKVKeyLength {
+		panic(vm.ToValue(fmt.Sprintf("锁键必须非空且不超过 %d 字符", maxKVKeyLength)))
+	}
+	return key
+}
+
+// scriptLock 一把已持有的锁。dryRun 时 handle 为 nil（没有真的占锁），
+// 但令牌照发 —— 脚本里那句 release(key, token) 在试跑与真跑时行为一致。
+type scriptLock struct {
+	token  string
+	handle *redislock.Lock
+}
+
+func (s *ScriptSDK) lockRedisKey(key string) string {
+	return fmt.Sprintf("%sfunction:lock:%d:%s:%s", s.deps.KeyPrefix, s.appID, s.functionName, key)
+}
+
+func (s *ScriptSDK) acquireLock(vm *goja.Runtime, key string, seconds int) (string, bool) {
+	if existing, held := s.heldLocks[key]; held {
+		// 同一次调用里重复抢同一把锁：直接给回原令牌而不是判失败。
+		// 判失败会让「函数 A 调用的公共段里也加了同一把锁」这种写法必然死锁。
+		return existing.token, true
+	}
+	if s.dryRun {
+		// 试跑不真的占锁：占了就会把线上正在跑的那次挡在外面。
+		token := scriptUUID()
+		s.recordEffect(CapLockAcquire, map[string]any{"op": "acquire", "key": key, "ttl": seconds})
+		s.heldLocks[key] = &scriptLock{token: token}
+		return token, true
+	}
+	// 用 redislock 而不是裸 SetNX + DEL：释放必须校验持有者，否则超时之后
+	// 那一删会打开**别人**的临界区。幂等中间件出于同一个理由用的也是它，
+	// 同一件事在一个仓库里不该有两套实现。
+	lock, err := redislock.New(s.deps.Redis).Obtain(s.ctx, s.lockRedisKey(key),
+		time.Duration(seconds)*time.Second, nil)
+	if errors.Is(err, redislock.ErrNotObtained) {
+		return "", false
+	}
+	if err != nil {
+		throw(vm, fmt.Errorf("获取锁失败: %w", err))
+	}
+	s.recordEffect(CapLockAcquire, map[string]any{"op": "acquire", "key": key, "ttl": seconds})
+	s.heldLocks[key] = &scriptLock{token: lock.Token(), handle: lock}
+	return lock.Token(), true
+}
+
+func (s *ScriptSDK) releaseLock(key string) bool {
+	held, ok := s.heldLocks[key]
+	if !ok {
+		return false
+	}
+	delete(s.heldLocks, key)
+	if held.handle == nil {
+		return true
+	}
+	// 释放用不带取消的 ctx：脚本超时后 s.ctx 已经取消，而这时恰恰最需要
+	// 把锁还回去 —— 用已取消的 context 发命令会直接失败。
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), 2*time.Second)
+	defer cancel()
+	if err := held.handle.Release(ctx); err != nil {
+		s.deps.Log.Warn("释放函数锁失败（等待 TTL 自动到期）",
+			zap.Int64("app_id", s.appID), zap.String("function", s.functionName),
+			zap.String("key", key), zap.Error(err))
+		return false
+	}
+	return true
+}
+
 // ── notification.send ───────────────────────────────────────────────
 
 func (s *ScriptSDK) bindNotifyNamespace(vm *goja.Runtime, object *goja.Object) error {
@@ -1199,6 +1478,46 @@ func (s *ScriptSDK) bindNotifyNamespace(vm *goja.Runtime, object *goja.Object) e
 			return vm.ToValue(0)
 		}
 		return vm.ToValue(result.Delivered)
+	})
+}
+
+// ── realtime.push ───────────────────────────────────────────────────
+
+// bindRealtimeNamespace 给当前调用者的在线连接推一条事件。
+//
+// 与站内信的分工写在返回值里：这条**不落库、不补发**，离线即丢，
+// 因此返回 false 是正常结果而不是错误。两者混用是最常见的误解 ——
+// 「重要的通知用实时推送发出去了，用户没收到」。
+func (s *ScriptSDK) bindRealtimeNamespace(vm *goja.Runtime, object *goja.Object) error {
+	if s.deps.Realtime == nil {
+		return fmt.Errorf("能力 %s 依赖的实时服务未装配", CapRealtimePush)
+	}
+	return object.Set("send", func(call goja.FunctionCall) goja.Value {
+		s.budget(vm, true)
+		userID := s.requireUser(vm)
+		event := strings.TrimSpace(call.Argument(0).String())
+		if event == "" {
+			panic(vm.ToValue("事件名不能为空"))
+		}
+		payload := map[string]any{}
+		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Argument(1)) {
+			if exported, ok := call.Argument(1).Export().(map[string]any); ok {
+				payload = exported
+			}
+		}
+		// 事件名带命名空间：客户端要能一眼看出这条是哪个函数推的，
+		// 否则两个函数用同一个事件名时客户端无从分辨。
+		payload["function"] = s.functionName
+		s.recordEffect(CapRealtimePush, map[string]any{"userId": userID, "event": event})
+		if s.dryRun {
+			return vm.ToValue(true)
+		}
+		if err := s.deps.Realtime.PublishUserEvent(s.ctx, s.appID, userID,
+			"function."+event, payload); err != nil {
+			s.appendLog("warn", "实时推送失败："+err.Error())
+			return vm.ToValue(false)
+		}
+		return vm.ToValue(true)
 	})
 }
 
@@ -1270,6 +1589,50 @@ func (s *ScriptSDK) bindAuditNamespace(vm *goja.Runtime, object *goja.Object) er
 	})
 }
 
+// ── geo.read ────────────────────────────────────────────────────────
+
+// bindGeoNamespace IP 归属地查询。
+//
+// 查不到时返回的是一条 resolved=false 的记录而不是 null：脚本里几乎
+// 一定会接着读 .country，返回 null 会让那一行抛 TypeError，
+// 而「查不到归属地」本来是一个应当被正常处理的分支。
+func (s *ScriptSDK) bindGeoNamespace(vm *goja.Runtime, object *goja.Object) error {
+	if s.deps.Location == nil {
+		return fmt.Errorf("能力 %s 依赖的位置服务未装配", CapGeoRead)
+	}
+	return object.Set("lookup", func(call goja.FunctionCall) goja.Value {
+		s.budget(vm, false)
+		address := strings.TrimSpace(call.Argument(0).String())
+		if address == "" {
+			panic(vm.ToValue("IP 不能为空"))
+		}
+		location := s.deps.Location.Resolve(s.ctx, address)
+		payload := map[string]any{
+			"ip": location.IP,
+			// 内网地址与查不到的地址都算「没查到」：把 127.0.0.1 当成
+			// 一个有国家的地址，会让基于归属地的判定得出荒谬结论。
+			"resolved":    location.Country != "" && !location.IsPrivate,
+			"country":     location.Country,
+			"countryCode": location.CountryCode,
+			"region":      location.Region,
+			"city":        location.City,
+			"timezone":    location.Timezone,
+			"isp":         location.ISP,
+			"asn":         location.Network.ASN,
+			"private":     location.IsPrivate,
+		}
+		if location.Coordinates != nil {
+			if location.Coordinates.Latitude != nil {
+				payload["latitude"] = *location.Coordinates.Latitude
+			}
+			if location.Coordinates.Longitude != nil {
+				payload["longitude"] = *location.Coordinates.Longitude
+			}
+		}
+		return vm.ToValue(payload)
+	})
+}
+
 // ── http.fetch ──────────────────────────────────────────────────────
 
 // bindFetch 允许脚本访问外部 HTTPS 接口，复用远程函数既有的 SSRF 防护：
@@ -1311,6 +1674,22 @@ func (s *ScriptSDK) bindFetch(vm *goja.Runtime) func(goja.FunctionCall) goja.Val
 						body = encoded
 					}
 				}
+				// form 是给「对方只收 application/x-www-form-urlencoded」
+				// 那一大类接口的（易支付系、微信老接口全是）。让作者自己拼
+				// 意味着他要自己处理转义与顺序，而顺序错了签名就过不去。
+				if raw, ok := options["form"].(map[string]any); ok && len(raw) > 0 {
+					form := url.Values{}
+					for name, value := range raw {
+						form.Set(name, scriptScalarString(value))
+					}
+					body = []byte(form.Encode())
+					if _, exists := headers["Content-Type"]; !exists {
+						headers["Content-Type"] = "application/x-www-form-urlencoded"
+					}
+				}
+				if raw, ok := options["query"].(map[string]any); ok && len(raw) > 0 {
+					endpoint = appendQueryParams(vm, endpoint, raw)
+				}
 			}
 		}
 
@@ -1348,6 +1727,20 @@ func (s *ScriptSDK) bindFetch(vm *goja.Runtime) func(goja.FunctionCall) goja.Val
 		}
 		return vm.ToValue(result)
 	}
+}
+
+// appendQueryParams 把 query 选项拼到 URL 上，保留原有参数。
+func appendQueryParams(vm *goja.Runtime, endpoint string, params map[string]any) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		throw(vm, fmt.Errorf("URL 无效: %w", err))
+	}
+	values := parsed.Query()
+	for name, value := range params {
+		values.Set(name, scriptScalarString(value))
+	}
+	parsed.RawQuery = values.Encode()
+	return parsed.String()
 }
 
 // operatorLabel 是脚本产生的写操作在积分流水、审计里的操作者标识。

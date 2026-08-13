@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	functiondomain "aegis/internal/domain/appfunction"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -72,6 +74,12 @@ func testScriptDeps() ScriptSDKDeps {
 		Wallet:        &WalletService{},
 		Email:         &EmailService{},
 		Bans:          &AccountBanService{},
+		Realtime:      &RealtimeService{},
+		Location:      &LocationService{},
+		// 客户端建出来但不连：go-redis 是惰性建连的，
+		// 只要不发命令就不会有任何网络行为。
+		Redis:     redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"}),
+		KeyPrefix: "test:",
 	}
 }
 
@@ -135,9 +143,16 @@ func TestScriptExecutorInterruptsInfiniteLoop(t *testing.T) {
 }
 
 // 沙箱是 deny-by-default：宿主环境不提供任何 I/O 或模块加载。
+//
+// require 尤其要盯住：Buffer / URL 是经 goja_nodejs 的模块系统装上去的，
+// 装完必须把 require 全局删掉 —— 留着它等于给脚本开了一个按路径
+// 加载宿主文件的入口（那个库默认的加载器就是直接读磁盘）。
 func TestScriptSandboxHasNoAmbientCapabilities(t *testing.T) {
 	executor := NewAppFunctionScriptExecutor()
-	for _, global := range []string{"require", "process", "fetch", "XMLHttpRequest", "setTimeout", "globalThis.Buffer"} {
+	for _, global := range []string{
+		"require", "process", "fetch", "XMLHttpRequest", "setTimeout", "setInterval",
+		"globalThis.require", "globalThis.process",
+	} {
 		source := `function handle(ctx) { return typeof ` + global + `; }`
 		output, err := executor.Execute(context.Background(), source, scriptContext(`{}`), nil, 65536)
 		if err != nil {
@@ -147,6 +162,94 @@ func TestScriptSandboxHasNoAmbientCapabilities(t *testing.T) {
 		if string(output) != `"undefined"` {
 			t.Errorf("全局对象 %s 不应存在，实际为 %s", global, output)
 		}
+	}
+}
+
+// 反过来：标准全局必须真的在。它们是纯内存类型，与能力声明无关 ——
+// 「沙箱里没有 Node」不等于「连一个字节缓冲类型都没有」，后者纯粹是缺东西，
+// 而缺了它接第三方二进制接口就只能用字符串硬拼字节。
+func TestScriptSandboxProvidesStandardGlobals(t *testing.T) {
+	executor := NewAppFunctionScriptExecutor()
+	source := `function handle(ctx) {
+		var url = new URL("https://example.com/a/b?x=1&y=2");
+		url.searchParams.set("z", "3");
+		return {
+			buffer: Buffer.from("往返", "utf8").toString("base64"),
+			encoded: new TextEncoder().encode("ab").length,
+			decoded: new TextDecoder().decode(new TextEncoder().encode("往返")),
+			host: url.hostname,
+			query: url.searchParams.get("z"),
+			roundTrip: atob(btoa("hello"))
+		};
+	}`
+	output, err := executor.Execute(context.Background(), source, scriptContext(`{}`), nil, 65536)
+	if err != nil {
+		t.Fatalf("标准全局应可用: %v", err)
+	}
+	var decoded struct {
+		Buffer    string `json:"buffer"`
+		Encoded   int    `json:"encoded"`
+		Decoded   string `json:"decoded"`
+		Host      string `json:"host"`
+		Query     string `json:"query"`
+		RoundTrip string `json:"roundTrip"`
+	}
+	if err := json.Unmarshal(output, &decoded); err != nil {
+		t.Fatalf("返回值不是 JSON: %v", err)
+	}
+	if decoded.Buffer != base64.StdEncoding.EncodeToString([]byte("往返")) {
+		t.Errorf("Buffer base64 编码不正确：%s", decoded.Buffer)
+	}
+	if decoded.Encoded != 2 || decoded.Decoded != "往返" {
+		t.Errorf("TextEncoder/TextDecoder 往返失败：%d / %q", decoded.Encoded, decoded.Decoded)
+	}
+	if decoded.Host != "example.com" || decoded.Query != "3" {
+		t.Errorf("URL 解析不正确：%s / %s", decoded.Host, decoded.Query)
+	}
+	if decoded.RoundTrip != "hello" {
+		t.Errorf("atob(btoa()) 应还原原文，实际 %q", decoded.RoundTrip)
+	}
+}
+
+// 同一份正文只编译一次。
+//
+// 每次调用新建运行时是隔离要求，每次重新编译只是重复劳动 ——
+// 一份 200 行脚本的编译在热路径上比它自己的执行还贵。
+func TestScriptExecutorCachesCompiledPrograms(t *testing.T) {
+	executor := NewAppFunctionScriptExecutor()
+	source := `function handle(ctx) { return 1; }`
+	for i := 0; i < 5; i++ {
+		if _, err := executor.Execute(context.Background(), source, scriptContext(`{}`), nil, 65536); err != nil {
+			t.Fatalf("执行失败: %v", err)
+		}
+	}
+	if cached := executor.CachedPrograms(); cached != 1 {
+		t.Errorf("同一份正文应只留一份编译产物，实际 %d 份", cached)
+	}
+	if _, err := executor.Execute(context.Background(),
+		`function handle(ctx) { return 2; }`, scriptContext(`{}`), nil, 65536); err != nil {
+		t.Fatalf("执行失败: %v", err)
+	}
+	if cached := executor.CachedPrograms(); cached != 2 {
+		t.Errorf("不同正文应各留一份，实际 %d 份", cached)
+	}
+}
+
+// 抛错要能定位到行。只给一句 TypeError 而不说哪一行，
+// 作者只能把两百行脚本从头读一遍。
+func TestScriptErrorCarriesPosition(t *testing.T) {
+	executor := NewAppFunctionScriptExecutor()
+	source := "function handle(ctx) {\n  var missing = null;\n  return missing.value;\n}"
+	_, err := executor.Execute(context.Background(), source, scriptContext(`{}`), nil, 65536)
+	if err == nil {
+		t.Fatal("读取 null 的属性应抛错")
+	}
+	line, column, stack := scriptErrorPosition(err)
+	if line != 3 {
+		t.Errorf("抛错位置应是第 3 行，实际第 %d 行（列 %d）", line, column)
+	}
+	if len(stack) == 0 {
+		t.Error("应带调用栈")
 	}
 }
 

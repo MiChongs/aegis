@@ -1126,15 +1126,70 @@ OpenTopoMap / MapTiler✱ / Stadia✱）、**中国大陆**（高德 / 高德卫
 | `components/functions/function-manager.tsx` | 函数列表 + 四个面板的装配 |
 | `components/functions/function-create-dialog.tsx` | 新建：运行时 / 起始模板 / 能力 |
 | `components/functions/function-overview-panel.tsx` | 运行状况：成功率 / 耗时分位 / 趋势 / Top 错误 |
-| `components/functions/function-editor-panel.tsx` | 脚本工作台：写 → 试跑 → 发布 → 回滚 |
+| `components/functions/function-editor-panel.tsx` | 脚本工作台：写 → 检查 → 试跑 → 发布 → 回滚 |
 | `components/functions/function-invocations-panel.tsx` | 调用审计（筛选 + 分页 + 详情抽屉）与真实调用 |
 | `components/functions/function-settings-panel.tsx` | 能力、运行闸门、函数配置、删除 |
 | `components/functions/function-kv-panel.tsx` | KV 浏览器（脚本的服务端独占状态） |
 | `components/functions/function-shared.tsx` | 能力勾选树、风险徽标、副作用清单、格式化 |
-| `components/functions/script-editor.tsx` | Monaco + 按能力生成的 SDK 类型 |
+| `components/functions/script-editor.tsx` | Monaco：SDK 类型 + 诊断标记 + 差异视图 + 快捷键 |
+| `components/functions/json-editor.tsx` | 带 JSON Schema 的 JSON 编辑器（试跑 input / 函数配置 / 入参契约共用） |
+| `lib/monaco/aegis-language.ts` | 平台语义的 provider：悬浮 / 配置补全 / 快速修复 / Code Lens |
+| `lib/monaco/aegis-theme.ts` | 把设计令牌喂给 `defineTheme`，语法色复用 `--hljs-*` |
+| `lib/monaco/editor-motion.ts` | 动效档位（呼吸光标 / 插入符滑动 / 惯性滚动）+ 两道闸门 |
+| `lib/monaco/aegis-snippets.ts` | 代码片段（额度 / 加锁 / 验签 / 金额 / JWT 等固定写法） |
+| `lib/monaco/json-schema-meta.ts` | 入参契约编辑器自己的元 schema |
+| `lib/function-workbench-store.ts` | 本地状态：未发布草稿、试跑用例、编辑器偏好 |
 | `lib/api/app-functions.ts` / `lib/function-hooks.ts` | 远程函数域 API 与 React Query hooks |
 
-五条硬约束：
+### 「完整的 LSP 体验」具体指什么
+
+Monaco 内置的 TypeScript worker **就是 tsserver 本体**：补全、悬浮、签名帮助、
+诊断、重命名、跳转定义、引用查找、大纲、折叠本来就都在，不需要另起进程。
+所以这件事不是「接一个语言服务器」，而是两件别的事：
+
+1. **把默认没开的开关打开** —— inlay hints、语义高亮、code lens、灯泡、
+   sticky scroll、同名高亮、联动编辑。
+2. **补上 TypeScript 无从得知的平台语义**，这才是重点。TS 不知道
+   「`aegis.points` 存不存在取决于勾了哪些能力」、不知道
+   「`aegis.config.dailyQuota` 现在是多少」、也不知道「这行缺 points.write」。
+   这三类分别由 hover / completion / codeAction provider 补，
+   数据来自后端能力目录、函数配置与静态检查结论。
+
+### 编辑器的观感：主题与动效
+
+**配色接设计令牌**（`lib/monaco/aegis-theme.ts`）。内置的 `vs` / `vs-dark`
+各自带一套写死的背景（`#fffffe` / `#1e1e1e`），与控制台的 zinc 差着一档 ——
+表现是编辑器像一块从别处贴过来的白板。语法着色复用 `--hljs-*`，
+于是同一段脚本在开发者门户和在编辑器里长得一模一样。
+
+| 约束 | 理由 |
+|---|---|
+| 颜色必须规范化成 `#rrggbb`（走 canvas） | Monaco 内部是 `parseHex`，给它 `oklch()` / `color-mix()` 会**静默失效**，那一项颜色不生效也不报错 |
+| token 规则里的颜色**不带 `#`** | Monaco 自己会拼；带了会变成 `##rrggbb` |
+| `colors` 表里的颜色**必须带 `#`** | 与上一条相反，这是同一份 API 里的两套约定 |
+| 主题只有一个名字，深浅切换时就地重定义 | 令牌是从 `<html>` 现读的，读的那一刻 `.dark` 已经在了；重定义放在 `requestAnimationFrame` 里，同帧读可能还是上一套值 |
+| `inherit: true` | 内置主题有几百条我们没覆盖的规则，从零写一份的代价是某个语言的某类 token 突然变纯黑 |
+
+**动效**（`lib/monaco/editor-motion.ts`）：呼吸光标（`cursorBlinking: "phase"`）、
+插入符滑动（`cursorSmoothCaretAnimation: "explicit"`）、惯性滚动。两道闸门：
+
+- **系统级 `prefers-reduced-motion` 有否决权**。一个持续呼吸的光标正是这条偏好
+  要挡的东西，用户把开关打开也不能盖过它。
+- **用户级开关**（编辑器工具条 → 平滑动效）管的是**性能**，不是无障碍：
+  低端机上平滑插入符会掉帧，而掉帧的光标比不动的光标更难看。
+
+CSS 侧（`globals.css` 末段）只补 Monaco 选项表达不了的三件事，且都在
+`prefers-reduced-motion: no-preference` 里：光标圆角、把呼吸的
+`animation-iteration-count` 从 `20` 改成 `infinite`（默认空闲十秒就停在常亮，
+而 macOS 只要还聚焦就一直在呼吸）、以及补全 / 悬浮 / 参数提示三种浮层的淡入。
+
+**不要给 `.aegis-code-editor *` 的 `transition-property: none` 加 `!important`。**
+那条是用来免掉全局 280ms 颜色过渡的（主题切换时 Monaco 自己会重绘整棵 DOM，
+再叠一层补间会明显卡顿），特指度 (0,1,0) 压得过全局的 `*`，但压不过 Monaco 自己那条
+(0,3,0) 的 `.cursors-layer.cursor-smooth-caret-animation>.cursor{transition:all 80ms}` ——
+而那正是插入符滑动的实现。加了 `!important` 就把要开的功能一起关掉了。
+
+十条硬约束：
 
 1. **能力目录来自后端**（`GET /function-catalog`），不在前端硬编码。
    在这里另抄一份会同时招来「后端加了一项、控制台勾不上」和「控制台能勾、
@@ -1153,7 +1208,31 @@ OpenTopoMap / MapTiler✱ / Stadia✱）、**中国大陆**（高德 / 高德卫
    试跑产生的 effect 必须显示「未执行」标记，否则一份「发了 100 积分」的清单
    会被当成真的发生过。
 5. **草稿按 (应用, 函数) 绑定**，切换函数时靠 `key` 整块重挂载，不用 effect 同步 ——
-   与配置面板、门户凭据同一条约束。
+   与配置面板、门户凭据同一条约束。草稿落 localStorage（`function-workbench-store`）：
+   误刷新一次就清零半小时的改动，是这个界面上最常见也最没必要的一次损失。
+   但它**不落服务端** —— 那要回答「谁能看见、两个人同时改怎么办、什么时候清理」，
+   而它的实际寿命通常是几分钟。
+6. **静态检查跟着正文自动重跑**（防抖 600ms），不做成「点一下检查」按钮：
+   让作者主动去点，等于回到「发布被拦才知道有问题」。检查失败时**保留上一次结果**
+   而不是清空 —— 网络抖动不该在编辑器上留一片红。
+   「全绿」也要显式说出来：什么都不显示时，作者分不出「检查通过」与「检查没跑」，
+   而这两种情况下他该做的事完全相反。
+7. **zustand selector 的兜底值必须是模块级常量**（`state.testCases[scope] ?? NO_TEST_CASES`）。
+   写成 `?? []` 会让 selector 每次返回新引用，zustand v5 走 `useSyncExternalStore`，
+   直接抛「getSnapshot should be cached」并把组件打进无限重渲染。
+8. **`ctx.input` 的类型由后端从 JSON Schema 生成后下发**（`AppFunction.inputTypes`），
+   前端不做这个转换。再写一个转换器就有了第二份真相，而两份类型不一致的表现
+   仍然是那句「补全里有、运行时没有」—— 与能力片段同一条约束。
+9. **Monaco 的 provider 注册是全局的**，组件重挂载时不 dispose 会让同一个补全项
+   出现两遍、三遍。且 provider 的上下文必须传 **getter 而不是值**：回调被 Monaco
+   长期持有，闭包捕获会让它永远看到首次注册那一刻的能力与配置 ——
+   表现是勾了新能力之后，悬浮提示里它还是「未声明」。
+10. **每个 `JsonEditor` 实例必须有唯一的 model URI**（用 `useId`，不要用随机数）。
+    schema 是按 `fileMatch` 绑到 URI 上的，两个实例共用一个 URI 会让后挂载的那份
+    覆盖前一份，表现是「函数配置编辑器在按入参契约校验」。
+    另外 `setDiagnosticsOptions` 是**整体覆盖式**的，注册自己那条时必须读改写，
+    直接传一条新的会把页面上其它 JSON 编辑器的 schema 全部抹掉 —— 而那种失效
+    没有任何报错，补全只是「不出来了」。
 
 ## Monaco 编辑器（JsonViewer / 远程函数脚本 / 插件 Expr）
 

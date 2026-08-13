@@ -15,22 +15,27 @@ import (
 // 而 pgx 的表现是「Scan 位置错位」而不是编译错误。
 const appFunctionColumns = `id, appid, name, description, runtime, status, active_version, capabilities,
 timeout_ms, max_request_bytes, max_response_bytes, max_concurrency, rate_limit_per_min, config,
-created_by, created_at, updated_at`
+input_schema, created_by, created_at, updated_at`
 
 func (r *Repository) CreateAppFunction(ctx context.Context, input functiondomain.CreateFunctionInput) (*functiondomain.Function, error) {
 	capabilities, _ := json.Marshal(input.Capabilities)
-	config := input.Config
-	if len(config) == 0 {
-		config = json.RawMessage(`{}`)
-	}
 	return scanAppFunction(r.pool.QueryRow(ctx, `INSERT INTO app_functions
 (appid, name, description, runtime, capabilities, timeout_ms, max_request_bytes, max_response_bytes,
-max_concurrency, rate_limit_per_min, config, created_by)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+max_concurrency, rate_limit_per_min, config, input_schema, created_by)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 RETURNING `+appFunctionColumns,
 		input.AppID, input.Name, input.Description, input.Runtime, capabilities, input.TimeoutMs,
 		input.MaxRequestBytes, input.MaxResponseBytes, input.MaxConcurrency, input.RateLimitPerMin,
-		[]byte(config), input.CreatedBy))
+		emptyJSONObject(input.Config), emptyJSONObject(input.InputSchema), input.CreatedBy))
+}
+
+// emptyJSONObject 空值一律落成 `{}` 而不是 NULL。
+// 列上是 NOT NULL，而 `{}` 与「没配」在语义上本来就是一回事。
+func emptyJSONObject(raw json.RawMessage) []byte {
+	if len(raw) == 0 {
+		return []byte(`{}`)
+	}
+	return []byte(raw)
 }
 
 func (r *Repository) ListAppFunctions(ctx context.Context, appID int64) ([]functiondomain.Function, error) {
@@ -65,6 +70,10 @@ func (r *Repository) UpdateAppFunction(ctx context.Context, appID int64, name st
 	if len(input.Config) > 0 {
 		config = []byte(input.Config)
 	}
+	var inputSchema any
+	if len(input.InputSchema) > 0 {
+		inputSchema = []byte(input.InputSchema)
+	}
 	return scanAppFunction(r.pool.QueryRow(ctx, `UPDATE app_functions SET
 description=COALESCE($3,description), status=COALESCE($4,status),
 capabilities=CASE WHEN $5::jsonb IS NULL THEN capabilities ELSE $5::jsonb END,
@@ -72,11 +81,13 @@ timeout_ms=COALESCE($6,timeout_ms), max_request_bytes=COALESCE($7,max_request_by
 max_response_bytes=COALESCE($8,max_response_bytes),
 max_concurrency=COALESCE($9,max_concurrency), rate_limit_per_min=COALESCE($10,rate_limit_per_min),
 config=CASE WHEN $11::jsonb IS NULL THEN config ELSE $11::jsonb END,
+input_schema=CASE WHEN $12::jsonb IS NULL THEN input_schema ELSE $12::jsonb END,
 updated_at=NOW()
 WHERE appid=$1 AND name=$2
 RETURNING `+appFunctionColumns,
 		appID, name, input.Description, input.Status, capabilities, input.TimeoutMs,
-		input.MaxRequestBytes, input.MaxResponseBytes, input.MaxConcurrency, input.RateLimitPerMin, config))
+		input.MaxRequestBytes, input.MaxResponseBytes, input.MaxConcurrency, input.RateLimitPerMin,
+		config, inputSchema))
 }
 
 func (r *Repository) DeleteAppFunction(ctx context.Context, appID int64, name string) (int64, error) {
@@ -405,19 +416,18 @@ FROM app_function_invocations`
 
 func scanAppFunction(row interface{ Scan(...any) error }) (*functiondomain.Function, error) {
 	var item functiondomain.Function
-	var capabilities, config []byte
+	var capabilities, config, inputSchema []byte
 	if err := row.Scan(&item.ID, &item.AppID, &item.Name, &item.Description, &item.Runtime, &item.Status,
 		&item.ActiveVersion, &capabilities, &item.TimeoutMs, &item.MaxRequestBytes, &item.MaxResponseBytes,
-		&item.MaxConcurrency, &item.RateLimitPerMin, &config,
+		&item.MaxConcurrency, &item.RateLimitPerMin, &config, &inputSchema,
 		&item.CreatedBy, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	_ = json.Unmarshal(capabilities, &item.Capabilities)
-	if len(config) > 0 {
-		item.Config = json.RawMessage(config)
-	} else {
-		item.Config = json.RawMessage(`{}`)
-	}
+	// 两列都恒为对象出境：脚本里 `aegis.config.x` 与前端的 schema 编辑器
+	// 都假定拿到的是对象，给 null 会让它们各自多写一层判空。
+	item.Config = json.RawMessage(emptyJSONObject(config))
+	item.InputSchema = json.RawMessage(emptyJSONObject(inputSchema))
 	return &item, nil
 }
 

@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAdminToken } from "@/lib/admin-hooks";
 import {
   activateAppFunctionVersion,
+  analyzeAppFunction,
   createAppFunction,
   createAppFunctionVersion,
   deleteAppFunction,
@@ -37,6 +38,7 @@ const VERSION_KEY = "app-function-version";
 const INVOCATIONS_KEY = "app-function-invocations";
 const STATS_KEY = "app-function-stats";
 const KV_KEY = "app-function-kv";
+const ANALYSIS_KEY = "app-function-analysis";
 
 /**
  * 能力目录。它是静态的（只随后端版本变化），因此缓存放到很久 ——
@@ -218,6 +220,32 @@ export function useTestFunctionMutation(appKey?: string | null) {
   return useMutation({
     mutationFn: (variables: { name: string; payload: Parameters<typeof testAppFunction>[3] }) =>
       testAppFunction(token as string, appKey as string, variables.name, variables.payload)
+  });
+}
+
+/**
+ * 静态检查。用 query 而不是 mutation：它没有副作用，且要跟着正文变化自动重跑
+ * —— 让作者手动点一次「检查」，等于回到了「发布被拦才知道有问题」。
+ *
+ * 正文进 queryKey 意味着改一个字符就是一次新查询，因此调用方**必须**传防抖后的
+ * 正文；缓存在这里的价值是「撤销回上一版内容时不用再问一次」。
+ */
+export function useFunctionAnalysisQuery(
+  appKey?: string | null,
+  name?: string | null,
+  source?: string,
+  enabled = true
+) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ANALYSIS_KEY, token, appKey, name, source],
+    queryFn: () => analyzeAppFunction(token as string, appKey as string, name as string, source as string),
+    enabled: Boolean(enabled && token && appKey && name && source?.trim()),
+    staleTime: 5 * 60 * 1000,
+    // 检查失败不该在编辑器上留一片红：静默保留上一次结果，
+    // 让作者继续写下去 —— 网络抖动不是他的代码有问题。
+    retry: false,
+    placeholderData: (previous) => previous
   });
 }
 

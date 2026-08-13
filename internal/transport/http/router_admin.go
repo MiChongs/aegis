@@ -181,6 +181,8 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/functions/:functionName/versions/:version/activate", h.AdminActivateAppFunctionVersion)
 		// 试跑：不建版本、不写审计、写操作只记录不执行
 		admin.POST("/apps/:appkey/functions/:functionName/test", h.AdminTestAppFunction)
+		// 静态检查：不执行任何代码，编辑器每次停顿都能问一遍
+		admin.POST("/apps/:appkey/functions/:functionName/analyze", h.AdminAnalyzeAppFunction)
 		admin.POST("/apps/:appkey/functions/:functionName/invoke", h.AdminInvokeAppFunction)
 		admin.GET("/apps/:appkey/functions/:functionName/invocations", h.AdminListAppFunctionInvocations)
 		admin.GET("/apps/:appkey/functions/:functionName/stats", h.AdminAppFunctionStats)

@@ -583,6 +583,7 @@ POST	/api/admin/apps/:appkey/channels	AdminCreateVersionChannel
 POST	/api/admin/apps/:appkey/channels/:cid/users	AdminAddVersionChannelUsers
 POST	/api/admin/apps/:appkey/function-keys	AdminCreateAppFunctionKey
 POST	/api/admin/apps/:appkey/functions	AdminCreateAppFunction
+POST	/api/admin/apps/:appkey/functions/:functionName/analyze	AdminAnalyzeAppFunction
 POST	/api/admin/apps/:appkey/functions/:functionName/invoke	AdminInvokeAppFunction
 POST	/api/admin/apps/:appkey/functions/:functionName/test	AdminTestAppFunction
 POST	/api/admin/apps/:appkey/functions/:functionName/versions	AdminCreateAppFunctionVersion

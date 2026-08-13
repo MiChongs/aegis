@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { Loader2, RotateCcw, Save, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { FileJson, Loader2, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { AppFunction, FunctionCatalog } from "@/lib/api/app-functions";
 import { useDeleteFunctionMutation, useUpdateFunctionMutation } from "@/lib/function-hooks";
+import { INPUT_SCHEMA_META } from "@/lib/monaco/json-schema-meta";
+import { JsonEditor } from "@/components/functions/json-editor";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -31,6 +34,7 @@ type Form = {
   maxConcurrency: number;
   rateLimitPerMin: number;
   config: string;
+  inputSchema: string;
 };
 
 function seed(item: AppFunction): Form {
@@ -43,8 +47,18 @@ function seed(item: AppFunction): Form {
     maxResponseBytes: item.maxResponseBytes,
     maxConcurrency: item.maxConcurrency,
     rateLimitPerMin: item.rateLimitPerMin,
-    config: JSON.stringify(item.config ?? {}, null, 2)
+    config: JSON.stringify(item.config ?? {}, null, 2),
+    inputSchema: JSON.stringify(item.inputSchema ?? {}, null, 2)
   };
+}
+
+/** 解析一段必须是 JSON 对象的文本；失败时抛出可直接展示的原因。 */
+function parseJSONObject(text: string, label: string): Record<string, unknown> {
+  const parsed = JSON.parse(text || "{}");
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label}顶层必须是 JSON 对象`);
+  }
+  return parsed as Record<string, unknown>;
 }
 
 /**
@@ -79,18 +93,27 @@ export function FunctionSettingsPanel({
 
   const limits = catalog?.limits;
 
+  // 顶层字段数即「这份契约约束了什么」。解不开时按 0 处理 ——
+  // 编辑到一半的 JSON 本来就解不开，那不该让徽标闪成红色。
+  const schemaFieldCount = useMemo(() => {
+    try {
+      const parsed = JSON.parse(form.inputSchema || "{}");
+      return Object.keys(parsed?.properties ?? {}).length;
+    } catch {
+      return 0;
+    }
+  }, [form.inputSchema]);
+
   async function save() {
     let config: Record<string, unknown>;
+    let inputSchema: Record<string, unknown>;
     try {
-      const parsed = JSON.parse(form.config || "{}");
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("必须是 JSON 对象");
-      }
-      config = parsed as Record<string, unknown>;
-    } catch (error) {
       // 顶层不是对象时脚本里 aegis.config.xxx 恒为 undefined，
       // 而那种失败不会报错，只会让阈值静默变回默认值 —— 必须在这里拦住
-      toast.error(`配置不是合法 JSON 对象：${errorMessage(error)}`);
+      config = parseJSONObject(form.config, "函数配置");
+      inputSchema = parseJSONObject(form.inputSchema, "入参契约");
+    } catch (error) {
+      toast.error(errorMessage(error));
       return;
     }
     try {
@@ -105,7 +128,8 @@ export function FunctionSettingsPanel({
           maxResponseBytes: form.maxResponseBytes,
           maxConcurrency: form.maxConcurrency,
           rateLimitPerMin: form.rateLimitPerMin,
-          config
+          config,
+          inputSchema
         }
       });
       setDraft(null);
@@ -248,6 +272,64 @@ export function FunctionSettingsPanel({
 
       {selected.runtime === "script" ? (
         <Card>
+          <CardHeader className="flex-row items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2">
+                入参契约
+                {schemaFieldCount ? (
+                  <Badge variant="success" size="sm" className="gap-1">
+                    <FileJson className="size-3" />
+                    {schemaFieldCount} 个字段
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" size="sm">
+                    未配置
+                  </Badge>
+                )}
+              </CardTitle>
+              <CardDescription>
+                一份 JSON Schema，同时驱动三处：调用入口的前置校验、试跑输入框的补全与校验、
+                以及编辑器里 <code className="font-mono">ctx.input</code> 的真实类型。
+                <span className="mt-1 block">
+                  不配的话，接入方少传一个字段的表现是脚本第三行抛 TypeError，
+                  而调用方拿到的是一句 50290「应用函数执行失败」—— 既不说少了什么，
+                  也不说是自己传错了。
+                </span>
+              </CardDescription>
+            </div>
+            {catalog?.inputSchemaTemplate && !schemaFieldCount ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => patch("inputSchema", catalog.inputSchemaTemplate)}
+              >
+                <Sparkles className="size-4" />
+                从样例开始
+              </Button>
+            ) : null}
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {/* 元 schema 喂给 JSON 语言服务：关键字补全、取值枚举、
+                悬浮说明。只登记服务端真的会处理的那一批关键字 ——
+                一个能补全出来、却不起作用的关键字比补不出来更误导人。 */}
+            <JsonEditor
+              value={form.inputSchema}
+              onChange={(next) => patch("inputSchema", next)}
+              schema={INPUT_SCHEMA_META}
+              height={260}
+            />
+            <p className="text-xs text-muted-foreground">
+              留空（<code className="font-mono">{"{}"}</code>）表示不约束，与配它之前的行为一致。
+              保存时会真的编译一遍 —— 一份编译不过的 schema 在调用时的表现是「校验永远抛错」
+              或者更糟：「校验被跳过」。
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {selected.runtime === "script" ? (
+        <Card>
           <CardHeader>
             <CardTitle>函数配置</CardTitle>
             <CardDescription>
@@ -256,15 +338,16 @@ export function FunctionSettingsPanel({
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            <Textarea
-              className="min-h-40 font-mono text-xs"
+            <JsonEditor
               value={form.config}
-              onChange={(event) => patch("config", event.target.value)}
-              spellCheck={false}
+              onChange={(next) => patch("config", next)}
+              height={180}
             />
             <p className="text-xs text-muted-foreground">
               顶层必须是 JSON 对象。例如{" "}
               <code className="font-mono">{`{"dailyQuota": 100, "endpoint": "https://…"}`}</code>
+              。这里的键会出现在脚本编辑器 <code className="font-mono">aegis.config.</code>{" "}
+              的补全里，并带上当前值。
             </p>
           </CardContent>
         </Card>

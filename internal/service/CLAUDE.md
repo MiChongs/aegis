@@ -14,9 +14,11 @@
 | `app_oauth_service.go` | `AppOAuthService` | 应用级第三方登录渠道配置（CRUD/密钥加密/自检/解析） |
 | `app_oauth_catalog.go` | — | 内置渠道模板目录（微信/QQ/微博/Gitee/GitHub/Google/… 13 个） |
 | `app_service.go` | `AppService` | 多租户 App 管理、App 加密密钥 |
-| `app_function_service.go` | `AppFunctionService` | **远程函数**：函数与版本、试跑、调用与幂等、并发与频次闸门、统计（见下节） |
+| `app_function_service.go` | `AppFunctionService` | **远程函数**：函数与版本、试跑、静态检查、调用与幂等、并发与频次闸门、统计（见下节） |
 | `app_function_sdk.go` | — | 注入脚本的 `aegis` 全局对象；能力逐项绑定，试跑时写只记录不执行 |
-| `app_function_script.go` | — | goja 沙箱：编译校验、超时中断、`handle(ctx)` 调用与返回值编码 |
+| `app_function_stdlib.go` | — | 免声明的脚本标准库（text / encoding / decimal / json / validate / ua + crypto 与 time 扩展）+ Buffer / URL / TextEncoder 等沙箱全局 + JSON Schema 编译与校验的唯一入口 |
+| `app_function_analyzer.go` | — | 发布前静态检查：缺能力声明 / 禁用全局 / async handle / 死循环，带行列位置 |
+| `app_function_script.go` | — | goja 沙箱：编译产物缓存、超时中断、`handle(ctx)` 调用、错误行列与调用栈提取 |
 | `app_function_sandbox.go` | — | WASM 沙箱 + HTTP 执行器（Ed25519 双向签名、SSRF 防护、`aegis.fetch` 出口） |
 | `app_content.go` | — | 应用级内容中心：Banner 投放位与公告（挂在 `AppService` 上，见下节） |
 | `auth_service.go` | `AuthService` | 用户 JWT 认证、Token 刷新、OAuth2 |
@@ -903,6 +905,60 @@ TypeScript 声明片段也放在目录里，随 `/function-catalog` 下发。放
 | 没有试跑 | 验证一行改动的唯一方式是把半成品激活到线上，且每改一次多一条永久版本 |
 | 能力/超时/限额建好即锁死 | 想加一项能力只能删掉重建，而删除会连同全部版本与调用审计一起消失 |
 | 并发上限硬编码为 8 | 20ms 的脚本与 3s 的 HTTP 转发共用同一个闸门 |
+| 缺能力声明只在运行时暴露 | 一句 `Cannot read property 'add' of undefined`，不说缺什么也不说在哪行，且版本不可变 —— 发现时只能再发一版 |
+| 每次调用重新编译一遍正文 | 一份 200 行脚本的编译在热路径上比它自己的执行还贵 |
+
+#### 静态检查是发布门禁，不只是编辑器提示
+
+`AnalyzeFunctionScript(source, declared)` 是**唯一**的判定入口，
+`CreateVersion` 与 `POST .../analyze` 共用它 —— 两处各判一次会立刻产生
+「编辑器全绿、发布被拦」这种最让人费解的情形。
+
+只有 error 挡发布（缺能力 / 禁用全局 / async handle / 缺 handle / 语法）；
+unknown-member、eval、死循环、勾了没用到都只是提示。这条线是刻意的：
+判定走的是**词法扫描**而不是 AST（goja 这个版本的 ast 包只有节点定义、
+没有遍历器，手写一个覆盖全部节点类型的遍历器是几百行且每次升级都要跟），
+把「我拿不准」也变成硬闸门，代价是某个合法写法从此发不出去，
+而作者除了绕开检查别无办法 —— 那会让整套检查被当成障碍而不是帮助。
+
+扫描器分得清代码、字符串与注释。注释里的 `// 用法：aegis.points.add(10)`
+被报成缺声明只需要发生一次，这套检查就会被所有人绕开。
+反查「哪行需要哪项能力」的依据是能力目录的 `Members` 字段，
+`TestCapabilityMembersAppearInDeclaration` 钉住它与 TypeScript 声明一致 ——
+两者漂移的表现是分析器**认不出**那行代码，检查静默失效。
+
+#### 入参契约：一份声明驱动三处
+
+`app_functions.input_schema`（JSON Schema，`{}` = 不约束）同时是：调用入口的
+前置校验、控制台试跑输入框的补全与校验、编辑器里 `ctx.input` 的真实类型。
+
+三处各写一份的话它们很快就不一致，而不一致的表现是「补全里有这个字段、
+调用时却说它不该存在」。因此 **JSON Schema → TypeScript 的转换只有一个实现**
+（`internal/domain/appfunction/input_schema.go`），生成结果随函数一起下发 ——
+与能力的类型片段同一条约束。转换有意保守：`$ref`、认不出的 `type`、混杂的 `enum`
+一律降级成 `any`，绝不猜；猜错一个类型会让作者对着一条不存在的编译错误改代码。
+
+| 取舍 | 理由 |
+|---|---|
+| 校验排在幂等**之前** | 形状不对的请求不该占掉一个 `eventId`，否则改对参数后重试会撞上「这个 eventId 已经失败过」 |
+| 试跑也校验，且先于执行 | 放行的话作者会用一份线上进不来的 input 把脚本调通，而试跑的意义就是复现真实调用 |
+| 保存时**真的编译一遍** | 编译不过的 schema 在调用时表现为「校验永远抛错」或「校验被跳过」，两种都不在保存那一刻暴露 |
+| 编译与校验共用一条路径 | 否则会出现「保存说能用、调用说不可用」这种谁也解释不了的组合 |
+| 编译时不装 URLLoader | schema 是接入方写的，按 `$ref` 里的 URL 发请求就是一个 SSRF 入口 |
+| 错误逐条列出（≤5 条） | 只回第一条会让接入方陷入「改一处、再试一次、又冒一条」，跨团队时以天计 |
+
+#### 标准库：判据是「纯计算」
+
+`aegis.text` / `encoding` / `decimal` / `json` / `validate` / `ua` 与
+`crypto` / `time` 的扩展部分**不需要能力声明**：声明的意义是「授权访问某样东西」，
+而这些没有任何东西可授权。不给的代价不是少个便利，是作者会自己手写一份 ——
+手写的签名串拼接（对象遍历顺序不稳定）、日切（走 UTC 比东八区晚八小时）、
+金额加减（双精度浮点）出错时**都不报错**，只是悄悄给出错误结果。
+
+`Buffer` / `URL` / `TextEncoder` 由 goja_nodejs 提供，装载途径是它的模块系统，
+因此**装完立刻 `GlobalObject().Delete("require")`**：那个库默认的加载器直接读
+宿主磁盘，留着 `require` 等于开了一个文件读取入口。注册表另配一个恒定拒绝的
+加载器做纵深防御，`TestScriptSandboxHasNoAmbientCapabilities` 守住这一条。
 
 其余结构性约束：
 
@@ -918,6 +974,12 @@ TypeScript 声明片段也放在目录里，随 `/function-catalog` 下发。放
 - **频次限制走数据库原子自增**（`app_function_kv` + `__aegis:` 保留前缀），不是内存计数。
   内存计数在多实例下的表现是「配了 60/分钟，实际放行 60×实例数」，而控制台上看不出来。
   保留前缀脚本读写不到，否则脚本能把限制自己的那个计数清零。
+- **分布式锁落 Redis 而不是那张 KV 表**：`lock.acquire` 要的是「抢不到就立刻失败」，
+  而数据库的 UPSERT 语义给不了这个（它总会成功）。实现复用 `bsm/redislock`，
+  与幂等中间件同一套 —— 理由也相同：释放必须校验持有者，裸 `SetNX` + `DEL`
+  会在超时后删掉**别人**的锁。宿主另在调用收口处统一归还本次还持有的锁：
+  脚本被超时中断时它自己那句 release 永远不会执行，而一把要等 TTL 才到期的锁
+  会把后续每一次调用都挡在门外，表现为「这个函数忽然全部超时」。
 - **并发闸门记住容量**：`maxConcurrency` 可在控制台改，而 channel 容量创建时定死，
   不比对就会出现「显示 32、实际仍是 8」且无处报错。
 - **函数配置（`aegis.config`）顶层必须是对象**：数组或标量会让 `aegis.config.x`

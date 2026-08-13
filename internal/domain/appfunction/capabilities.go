@@ -1,6 +1,9 @@
 package appfunction
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // 脚本能力键。声明即授权：未声明的能力在脚本里根本不会被绑定，
 // `aegis.points` 直接是 undefined，而不是「调用时才报错」。
@@ -14,9 +17,12 @@ const (
 	CapWalletWrite      = "wallet.write"
 	CapKVRead           = "kv.read"
 	CapKVWrite          = "kv.write"
+	CapLockAcquire      = "lock.acquire"
 	CapNotificationSend = "notification.send"
+	CapRealtimePush     = "realtime.push"
 	CapEmailSend        = "email.send"
 	CapAuditWrite       = "audit.write"
+	CapGeoRead          = "geo.read"
 	CapHTTPFetch        = "http.fetch"
 )
 
@@ -36,6 +42,7 @@ const (
 	CapGroupState    = "state"
 	CapGroupReach    = "reach"
 	CapGroupAudit    = "audit"
+	CapGroupIntel    = "intel"
 	CapGroupEgress   = "egress"
 	CapGroupLegacy   = "legacy"
 )
@@ -78,6 +85,14 @@ type Capability struct {
 	// 拼 .d.ts 时会合并成同一个对象 —— 否则同一个接口里会出现两个 `user:` 成员，
 	// TypeScript 直接报重复声明，编辑器里整份类型全部失效。
 	Namespace string `json:"namespace,omitempty"`
+	// Members 这项能力贡献的成员名。有 Namespace 时是命名空间**内**的成员
+	// （user.read 出 get / entitlement），无 Namespace 时是挂在 aegis 根上的成员。
+	//
+	// 它存在的唯一理由是让**静态分析器**能反查「`aegis.points.add` 需要哪项能力」。
+	// 从 Declaration 里正则抠成员名也能凑合，但那份文本是给人看的 TypeScript，
+	// 改一次注释就可能让反查静默失灵 —— 而失灵的表现是「发布通过、调用时 TypeError」，
+	// 恰好是这套检查要拦的那件事。`TestCapabilityMembersAppearInDeclaration` 钉住两者一致。
+	Members []string `json:"members,omitempty"`
 	// Declaration 该能力贡献的成员声明（TypeScript）。
 	// 控制台把它拼进喂给 Monaco 的 .d.ts —— 补全里出现什么，运行时就绑定了什么。
 	Declaration string `json:"declaration,omitempty"`
@@ -93,6 +108,7 @@ var capabilities = []Capability{
 		Hint: "会员是否有效、是不是试用、积分、封禁状态 —— 反破解的根基",
 		Risk:      RiskLow,
 		Namespace: "user",
+		Members:   []string{"get", "entitlement"},
 		Declaration: `
     /** 读取用户状态。省略 userId 时读当前调用者；不属于本应用的用户返回 null */
     get(userId?: number): AegisUser | null;
@@ -105,6 +121,7 @@ var capabilities = []Capability{
 		Hint: "封禁落成正式封禁记录（可撤销、可申诉、有操作人），不是翻一个布尔位",
 		Risk: RiskHigh, Mutating: true, RequiresUser: true,
 		Namespace: "user",
+		Members:   []string{"ban", "unban"},
 		Declaration: `
     /** 封禁当前调用者。seconds 省略或为 0 表示永久封禁 */
     ban(reason: string, seconds?: number, options?: { scope?: string; type?: string }): { banId: number; endAt?: string };
@@ -117,6 +134,7 @@ var capabilities = []Capability{
 		Hint: "走正式积分流水，余额不足由服务端拒绝",
 		Risk: RiskMedium, Mutating: true, RequiresUser: true,
 		Namespace: "points",
+		Members:   []string{"add", "deduct"},
 		Declaration: `
     /** 增加积分，返回变更后余额 */
     add(amount: number, reason?: string): number;
@@ -129,6 +147,7 @@ var capabilities = []Capability{
 		Hint: "只要会员结论时用它；要连同积分与封禁一起读请用 user.read",
 		Risk:      RiskLow,
 		Namespace: "vip",
+		Members:   []string{"status", "hasFeature"},
 		Declaration: `
     /** 会员判定的完整结论（只读） */
     status(userId?: number): AegisEntitlement | null;
@@ -141,6 +160,7 @@ var capabilities = []Capability{
 		Hint: "按天延长会员有效期，进 vip_transactions 账本",
 		Risk: RiskHigh, Mutating: true, RequiresUser: true,
 		Namespace: "vip",
+		Members:   []string{"grant", "revoke"},
 		Declaration: `
     /** 按天延长当前调用者的会员有效期 */
     grant(days: number, reason?: string): { days: number; userId: number; expireAt?: string } | null;
@@ -153,6 +173,7 @@ var capabilities = []Capability{
 		Hint: "金额一律是字符串（服务端用定点小数），转成 number 会丢分",
 		Risk:      RiskLow,
 		Namespace: "wallet",
+		Members:   []string{"get"},
 		Declaration: `
     /** 钱包余额。金额全部是字符串 —— 不要转 number */
     get(userId?: number): AegisWallet | null;`,
@@ -172,6 +193,7 @@ declare interface AegisWallet {
 		Hint: "正数入账、负数扣减，走管理员调账流水；余额不足由服务端拒绝",
 		Risk: RiskHigh, Mutating: true, RequiresUser: true,
 		Namespace: "wallet",
+		Members:   []string{"adjust"},
 		Declaration: `
     /** 调整当前调用者余额。amount 传字符串以免丢精度；正数入账、负数扣减 */
     adjust(amount: string | number, reason?: string): AegisWallet;`,
@@ -180,7 +202,8 @@ declare interface AegisWallet {
 		Key: CapKVRead, Group: CapGroupState,
 		Label: "读取 KV", API: "aegis.kv.get / list / has",
 		Hint: "服务端独占状态，客户端读不到也伪造不了",
-		Risk: RiskLow,
+		Risk:    RiskLow,
+		Members: []string{"kv"},
 		// kv 是一个有自己接口类型的对象，两项能力贡献的是同一行成员声明，
 		// 拼装时按文本去重 —— 只勾其中一项也要有类型。
 		Declaration: `
@@ -193,10 +216,26 @@ declare interface AegisWallet {
 		Label: "写入 KV", API: "aegis.kv.set / incr / del",
 		Hint: "incr 是数据库层面的原子操作，频次限制与剩余次数依赖它",
 		Risk: RiskMedium, Mutating: true,
+		Members: []string{"kv"},
 		Declaration: `
   /** 服务端独占的键值状态，客户端既读不到也伪造不了 */
   kv: AegisKV;`,
 		Interfaces: kvInterfaces,
+	},
+	{
+		Key: CapLockAcquire, Group: CapGroupState,
+		Label: "分布式锁", API: "aegis.lock.acquire(key, ttl)",
+		Hint: "跨实例互斥。「先查后写」那段临界区没有它就挡不住并发重复领取",
+		Risk: RiskMedium, Mutating: true,
+		Namespace: "lock",
+		Members:   []string{"acquire", "release", "run"},
+		Declaration: `
+    /** 抢一把锁。抢到返回令牌，没抢到返回 null（不阻塞、不排队） */
+    acquire(key: string, ttlSeconds?: number): string | null;
+    /** 归还锁。令牌不匹配时不做任何事并返回 false —— 不会误删别人续上的那把 */
+    release(key: string, token: string): boolean;
+    /** 在锁内跑一段。抢不到锁抛错；无论正常返回还是抛错都会释放 */
+    run<T>(key: string, fn: () => T, ttlSeconds?: number): T;`,
 	},
 	{
 		Key: CapNotificationSend, Group: CapGroupReach,
@@ -204,9 +243,21 @@ declare interface AegisWallet {
 		Hint: "推送给当前调用者，进 notifications 表并实时下发",
 		Risk: RiskMedium, Mutating: true, RequiresUser: true,
 		Namespace: "notify",
+		Members:   []string{"send"},
 		Declaration: `
     /** 给当前调用者发站内信，返回投递条数 */
     send(title: string, content: string, options?: { level?: "info" | "warning" | "critical"; type?: string }): number;`,
+	},
+	{
+		Key: CapRealtimePush, Group: CapGroupReach,
+		Label: "实时推送", API: "aegis.realtime.send(event, data)",
+		Hint: "只推给当前调用者已连上的客户端，不落库、不补发 —— 掉线即丢",
+		Risk: RiskMedium, Mutating: true, RequiresUser: true,
+		Namespace: "realtime",
+		Members:   []string{"send"},
+		Declaration: `
+    /** 给当前调用者的在线连接推一条事件。离线时返回 false，不会排队等他上线 */
+    send(event: string, data?: Record<string, any>): boolean;`,
 	},
 	{
 		Key: CapEmailSend, Group: CapGroupReach,
@@ -214,6 +265,7 @@ declare interface AegisWallet {
 		Hint: "恒发往调用者账号绑定的邮箱 —— 脚本填不了收件人",
 		Risk: RiskHigh, Mutating: true, RequiresUser: true,
 		Namespace: "email",
+		Members:   []string{"send"},
 		Declaration: `
     /** 发往当前调用者绑定的邮箱。收件地址由服务端决定 */
     send(subject: string, htmlBody: string): boolean;`,
@@ -224,15 +276,45 @@ declare interface AegisWallet {
 		Hint: "留痕到平台审计，操作者记为 function:<函数名>",
 		Risk: RiskLow, Mutating: true,
 		Namespace: "audit",
+		Members:   []string{"log"},
 		Declaration: `
     /** 写入平台审计日志 */
     log(action: string, summary?: string): void;`,
+	},
+	{
+		Key: CapGeoRead, Group: CapGroupIntel,
+		Label: "IP 归属地", API: "aegis.geo.lookup(ip)",
+		Hint: "GeoIP2 + ASN，查不到时返回的是「未知」而不是 null，判断请看 resolved",
+		Risk:      RiskLow,
+		Namespace: "geo",
+		Members:   []string{"lookup"},
+		Declaration: `
+    /** 查 IP 归属地与运营商。查不到时 resolved 为 false，其余字段是空串 */
+    lookup(ip: string): AegisGeoLocation;`,
+		Interfaces: `
+declare interface AegisGeoLocation {
+  ip: string;
+  /** 查到了才是 true。内网地址与查不到的地址都是 false */
+  resolved: boolean;
+  country: string;
+  countryCode: string;
+  region: string;
+  city: string;
+  timezone: string;
+  isp: string;
+  asn: string;
+  latitude?: number;
+  longitude?: number;
+  /** 内网 / 回环 / 链路本地地址 */
+  private: boolean;
+}`,
 	},
 	{
 		Key: CapHTTPFetch, Group: CapGroupEgress,
 		Label: "出站 HTTP", API: "aegis.fetch(url, options)",
 		Hint: "仅 HTTPS、禁重定向、连接时重新解析并拒绝内网与云元数据地址",
 		Risk: RiskHigh, Mutating: true,
+		Members: []string{"fetch"},
 		Declaration: `
   /** 出站 HTTPS 请求。禁止重定向，且拒绝解析到内网 / 元数据地址的域名 */
   fetch(url: string, options?: {
@@ -240,6 +322,10 @@ declare interface AegisWallet {
     headers?: Record<string, string>;
     /** 对象会被 JSON 序列化；字符串原样发送 */
     body?: any;
+    /** 表单编码的请求体（自动带 Content-Type），与 body 二选一 */
+    form?: Record<string, string>;
+    /** 查询参数，会拼到 url 上 */
+    query?: Record<string, string>;
   }): AegisFetchResult;`,
 	},
 
@@ -320,8 +406,8 @@ declare interface AegisContext {
   version: string;
   /** 调用者身份，由服务端认定 */
   caller: AegisCaller;
-  /** 调用方传入的 input 字段 */
-  input: any;
+  /** 调用方传入的 input 字段。配了入参 schema 时这里是它生成出来的具体类型 */
+  input: AegisInput;
   /** 本次是不是控制台里的试跑（试跑不会真的写数据） */
   dryRun: boolean;
 }
@@ -386,6 +472,12 @@ declare interface AegisCrypto {
   sha1(input: string): string;
   sha256(input: string): string;
   sha512(input: string): string;
+  /** Keccak 家族的 SHA-3，与 sha256 不是同一个算法，别拿它对接 SHA-2 的签名 */
+  sha3(input: string): string;
+  /** CRC32（IEEE 多项式）十六进制。校验和不是摘要，别拿它防篡改 */
+  crc32(input: string): string;
+  hmacMd5(key: string, data: string): string;
+  hmacSha1(key: string, data: string): string;
   hmacSha256(key: string, data: string): string;
   hmacSha512(key: string, data: string): string;
   base64Encode(input: string): string;
@@ -396,11 +488,30 @@ declare interface AegisCrypto {
   hexDecode(input: string): string;
   /** size 取值 1..64，默认 16 */
   randomHex(size?: number): string;
+  /** 密码学随机字节的 base64。size 取值 1..64 */
+  randomBytes(size?: number): string;
   /** 闭区间 [min, max] 的密码学随机整数 */
   randomInt(min: number, max: number): number;
   uuid(): string;
   /** 定长比较，不会因为提前返回而泄露前缀信息 */
   timingSafeEqual(a: string, b: string): boolean;
+  /** AES-256-GCM 加密，返回 base64（nonce 已拼在密文前）。key 任意长度，内部按 SHA-256 派生 */
+  aesEncrypt(key: string, plaintext: string): string;
+  /** AES-256-GCM 解密。密文被改过会抛错而不是返回垃圾 */
+  aesDecrypt(key: string, ciphertext: string): string;
+  /** 签发 HS256/HS384/HS512 的 JWT。claims 里没有 iat 时自动补 */
+  jwtSign(secret: string, claims: Record<string, any>, options?: { alg?: "HS256" | "HS384" | "HS512"; expiresIn?: number }): string;
+  /** 校验并解出 JWT。签名不对、已过期都返回 { valid: false, error }，不抛错 */
+  jwtVerify(secret: string, token: string): { valid: boolean; claims?: Record<string, any>; error?: string };
+  /** 校验 TOTP 动态口令（RFC 6238，默认 30 秒步长，容忍前后各一个窗口） */
+  totpVerify(secret: string, code: string): boolean;
+  /** bcrypt 哈希。cost 取值 4..14，默认 10 */
+  bcryptHash(password: string, cost?: number): string;
+  bcryptVerify(hash: string, password: string): boolean;
+  /** PBKDF2-HMAC-SHA256，返回十六进制 */
+  pbkdf2(password: string, salt: string, iterations?: number, keyLength?: number): string;
+  /** HKDF-SHA256 派生，返回十六进制 */
+  hkdf(secret: string, salt: string, info: string, keyLength?: number): string;
 }
 
 declare interface AegisTime {
@@ -414,12 +525,198 @@ declare interface AegisTime {
   dayKey(offsetDays?: number): string;
   /** UTC 月键 "YYYY-MM" */
   monthKey(offsetMonths?: number): string;
+  /** ISO 周键 "YYYY-Www"（周一起算），做周榜与周额度用它 */
+  weekKey(offsetWeeks?: number): string;
+  /** 按时区取日键。做「按北京时间日切」的额度时用 "Asia/Shanghai" */
+  dayKeyIn(timezone: string, offsetDays?: number): string;
+  /** 用 Go 的参考时间布局格式化（如 "2006-01-02 15:04:05"），timezone 省略即 UTC */
+  format(layout: string, unixMillis?: number, timezone?: string): string;
+  /** 解析时间字符串为 Unix 毫秒；解析不出来返回 0 */
+  parse(value: string, layout?: string): number;
+  /** 在某个时刻上加减，返回 Unix 毫秒 */
+  add(unixMillis: number, amount: number, unit?: "second" | "minute" | "hour" | "day" | "month" | "year"): number;
+  /** 两个时刻相差多少（默认秒） */
+  diff(fromUnixMillis: number, toUnixMillis: number, unit?: "second" | "minute" | "hour" | "day"): number;
+  /** 当天零点（按时区），Unix 毫秒 */
+  startOfDay(unixMillis?: number, timezone?: string): number;
+  /** cron 表达式的下一个触发时刻（Unix 毫秒）；表达式非法抛错 */
+  cronNext(expression: string, afterUnixMillis?: number): number;
+}
+
+/** 文本处理。都是纯计算，不需要声明任何能力 */
+declare interface AegisText {
+  /** Go text/template 渲染。逻辑放模板里比在脚本里拼字符串安全（自动转义留给 sanitizeHtml） */
+  template(tpl: string, data: Record<string, any>): string;
+  /** 转成 URL 友好的短横线串 */
+  slugify(input: string): string;
+  /** 中文转拼音。style: "normal"（默认）/ "tone" / "initials" */
+  pinyin(input: string, style?: "normal" | "tone" | "initials"): string;
+  /** 遮掉邮箱本地部分：z***g@example.com */
+  maskEmail(input: string): string;
+  /** 遮掉手机号中间四位 */
+  maskPhone(input: string): string;
+  /** 按 Unicode 字符数截断（不会把汉字劈成两半），超出时补省略号 */
+  truncate(input: string, length: number, ellipsis?: string): string;
+  /** 富文本转纯文本 */
+  stripHtml(input: string): string;
+  /** 按白名单净化 HTML：放行排版标签，拒绝 style 与事件属性 */
+  sanitizeHtml(input: string): string;
+  /** 转义成可安全插进 HTML 的文本 */
+  escapeHtml(input: string): string;
+  /** Unicode 字符数（不是字节数） */
+  length(input: string): number;
+}
+
+/** 编解码。接第三方接口时最常用的那几种格式 */
+declare interface AegisEncoding {
+  yamlParse(input: string): any;
+  yamlStringify(value: any): string;
+  /** 解析 CSV，第一行为表头时返回对象数组 */
+  csvParse(input: string, options?: { header?: boolean; delimiter?: string }): any[];
+  csvStringify(rows: any[], options?: { header?: boolean; columns?: string[] }): string;
+  /** XML 转普通对象。对接老系统时省掉一整套手写解析 */
+  xmlToJson(input: string): any;
+  /** 对象转 XML，root 默认 "xml"（微信支付那套报文就是这个形状） */
+  jsonToXml(value: Record<string, any>, root?: string): string;
+  /** 解析 query string，重复键取数组 */
+  queryParse(input: string): Record<string, any>;
+  /** 拼 query string，键按字典序排列 —— 签名场景要的就是稳定顺序 */
+  queryStringify(value: Record<string, any>): string;
+  urlEncode(input: string): string;
+  urlDecode(input: string): string;
+  /** gzip 压缩，返回 base64 */
+  gzip(input: string): string;
+  /** 解 base64 gzip */
+  gunzip(base64Input: string): string;
+}
+
+/** 定点小数。钱的加减乘除一律走它 —— JS 的 number 是双精度浮点，0.1+0.2 落在钱上就是对不上账 */
+declare interface AegisDecimal {
+  add(a: string | number, b: string | number): string;
+  sub(a: string | number, b: string | number): string;
+  mul(a: string | number, b: string | number): string;
+  /** 除法必须给精度，否则 1/3 没有终止小数 */
+  div(a: string | number, b: string | number, scale?: number): string;
+  /** -1 / 0 / 1 */
+  cmp(a: string | number, b: string | number): number;
+  /** 四舍五入到指定小数位 */
+  round(value: string | number, scale?: number): string;
+  abs(value: string | number): string;
+  isZero(value: string | number): boolean;
+  /** 按千分位格式化，用于展示 */
+  format(value: string | number, scale?: number): string;
+}
+
+/** JSON 路径取值。深层可选取值不必写一串 a && a.b && a.b[0] */
+declare interface AegisJSONUtil {
+  /** 按路径取值，如 "data.items.0.name"；取不到返回 undefined */
+  get(value: any, path: string): any;
+  /** 路径是否存在（区分「不存在」与「值是 null」） */
+  exists(value: any, path: string): boolean;
+  /** 带缩进的 JSON 文本，调试用 */
+  pretty(value: any): string;
+  /** 解析失败返回 fallback 而不是抛错 */
+  parse(text: string, fallback?: any): any;
+}
+
+/** 入参校验。写在脚本第一段，把「输入不对」和「逻辑不对」分开 */
+declare interface AegisValidate {
+  /** 按 JSON Schema 校验，返回全部错误（不是遇到第一个就停） */
+  schema(schema: Record<string, any>, value: any): { valid: boolean; errors: string[] };
+  email(value: string): boolean;
+  url(value: string): boolean;
+  ip(value: string): boolean;
+  uuid(value: string): boolean;
+  /** 中国大陆手机号 */
+  phone(value: string): boolean;
+  json(value: string): boolean;
+}
+
+declare interface AegisUserAgentInfo {
+  /** 浏览器 / 客户端名 */
+  name: string;
+  version: string;
+  os: string;
+  osVersion: string;
+  /** 机型字符串，常为空 —— 要判「是不是手机」请看 kind */
+  device: string;
+  /** desktop / mobile / tablet / bot */
+  kind: "desktop" | "mobile" | "tablet" | "bot";
+  mobile: boolean;
+  tablet: boolean;
+  desktop: boolean;
+  bot: boolean;
 }
 
 /** 控制台上可随时改、不需要发新版本的函数级参数 */
 declare interface AegisConfig {
   [key: string]: any;
 }
+
+// ── 沙箱里真实存在的标准全局 ────────────────────────────────────────
+// 这里没有的东西运行时就没有。document / window / setTimeout / require
+// 一个都不存在，编辑器会如实标红。
+
+/** Node 风格的字节缓冲。纯内存类型，没有任何文件或网络能力 */
+declare interface AegisBuffer extends Uint8Array {
+  toString(encoding?: string, start?: number, end?: number): string;
+  equals(other: AegisBuffer): boolean;
+  slice(start?: number, end?: number): AegisBuffer;
+}
+
+declare const Buffer: {
+  from(value: string | ArrayBuffer | ArrayLike<number>, encoding?: string): AegisBuffer;
+  alloc(size: number, fill?: number): AegisBuffer;
+  concat(list: AegisBuffer[], totalLength?: number): AegisBuffer;
+  byteLength(value: string, encoding?: string): number;
+  isBuffer(value: any): boolean;
+};
+
+declare class URLSearchParams {
+  constructor(init?: string | Record<string, string> | URLSearchParams);
+  append(name: string, value: string): void;
+  delete(name: string): void;
+  get(name: string): string | null;
+  getAll(name: string): string[];
+  has(name: string): boolean;
+  set(name: string, value: string): void;
+  sort(): void;
+  forEach(callback: (value: string, name: string) => void): void;
+  toString(): string;
+}
+
+declare class URL {
+  constructor(input: string, base?: string);
+  hash: string;
+  host: string;
+  hostname: string;
+  href: string;
+  readonly origin: string;
+  password: string;
+  pathname: string;
+  port: string;
+  protocol: string;
+  search: string;
+  readonly searchParams: URLSearchParams;
+  username: string;
+  toString(): string;
+}
+
+declare class TextEncoder {
+  readonly encoding: string;
+  encode(input?: string): Uint8Array;
+}
+
+declare class TextDecoder {
+  constructor(label?: string);
+  readonly encoding: string;
+  decode(input?: ArrayBuffer | Uint8Array): string;
+}
+
+/** base64 → 二进制串（与浏览器同名同语义） */
+declare function atob(input: string): string;
+/** 二进制串 → base64 */
+declare function btoa(input: string): string;
 `
 
 // SDKDeclaration 按已声明的能力拼出完整 .d.ts。
@@ -427,6 +724,14 @@ declare interface AegisConfig {
 // 放在服务端而不是控制台，是为了让「编辑器提示什么」与「运行时绑定什么」
 // 只有一处定义。控制台拿到目录后原样拼接，不再自己维护一份类型。
 func SDKDeclaration(capabilityKeys []string) string {
+	return SDKDeclarationWithInput(capabilityKeys, nil)
+}
+
+// SDKDeclarationWithInput 在能力类型之外，再按入参 schema 生成 `ctx.input` 的具体类型。
+//
+// 分成两个函数而不是加一个参数：绝大多数调用方（目录下发、测试）不关心入参，
+// 而让它们全部传一个 nil 只是噪音。
+func SDKDeclarationWithInput(capabilityKeys []string, inputSchema json.RawMessage) string {
 	declared := NormalizeCapabilities(capabilityKeys)
 	set := make(map[string]struct{}, len(declared))
 	for _, key := range declared {
@@ -481,6 +786,15 @@ func SDKDeclaration(capabilityKeys []string) string {
 	var builder strings.Builder
 	builder.WriteString(strings.TrimSpace(BaseDeclaration))
 	builder.WriteString("\n\n")
+	// 入参类型：没配 schema 时退回 any，与加这项之前的行为一致。
+	// 注意它必须在 BaseDeclaration 之后 —— AegisContext 引用了它。
+	if declaration := InputSchemaDeclaration(inputSchema); declaration != "" {
+		builder.WriteString(declaration)
+		builder.WriteString("\n\n")
+	} else {
+		builder.WriteString("/** 未配置入参 schema，因此这里是 any。配好之后 ctx.input 会有真实字段 */\n")
+		builder.WriteString("declare type " + InputTypeName + " = any;\n\n")
+	}
 	for _, block := range interfaces {
 		builder.WriteString(block)
 		builder.WriteString("\n\n")
@@ -490,8 +804,18 @@ func SDKDeclaration(capabilityKeys []string) string {
   log(...args: any[]): void;
   /** 主动返回业务错误并终止本次调用（如授权过期、次数用尽） */
   fail(message: string, code?: number): never;
+  /** 断言。条件不成立即以 40001 终止，省掉一堆 if + fail */
+  assert(condition: any, message: string, code?: number): void;
   crypto: AegisCrypto;
   time: AegisTime;
+  text: AegisText;
+  encoding: AegisEncoding;
+  /** 定点小数运算，钱的加减乘除走它 */
+  decimal: AegisDecimal;
+  json: AegisJSONUtil;
+  validate: AegisValidate;
+  /** 解析 User-Agent 字符串 */
+  ua: { parse(userAgent: string): AegisUserAgentInfo };
   /** 函数级配置，控制台上可改，改完立即生效、不需要发新版本 */
   config: AegisConfig;`)
 	for _, member := range members {
@@ -514,6 +838,105 @@ declare const console: {
 };
 `)
 	return builder.String()
+}
+
+// BaseSDKMembers 是免声明即可用的那批 `aegis` 根成员。
+//
+// 静态分析器靠它区分「这个成员本来就有」与「这个成员需要声明能力」。
+// 顺序即控制台上的展示顺序，与 SDKDeclaration 里的 AegisSDK 头部一一对应。
+func BaseSDKMembers() []string {
+	return []string{
+		"log", "fail", "assert", "crypto", "time",
+		"text", "encoding", "decimal", "json", "validate", "ua", "config",
+	}
+}
+
+// SandboxGlobals 是沙箱里真实存在的全局标识符。
+//
+// 它与「禁用全局」是同一枚硬币的两面：这里没有的名字在运行时就是
+// ReferenceError，因此静态分析器可以在发布前把它说出来，而不是等一次真实调用。
+func SandboxGlobals() []string {
+	return []string{
+		"aegis", "console", "handle",
+		"Buffer", "URL", "URLSearchParams", "TextEncoder", "TextDecoder", "atob", "btoa",
+	}
+}
+
+// CapabilitiesForMember 反查「`aegis.<root>` 或 `aegis.<root>.<member>` 需要哪项能力」。
+//
+//	known  — 这个成员在目录里存在（false 表示 SDK 上压根没有它）
+//	needed — 能满足它的能力键；任意一项被声明即可（user.get 只要 user.read，
+//	         而裸取 `aegis.user` 无从判断要读还是要写，两项都算数）
+//
+// member 传空串表示只看根成员。
+func CapabilitiesForMember(root, member string) (needed []string, known bool) {
+	for _, base := range BaseSDKMembers() {
+		if base == root {
+			// 免声明成员的下级不再校验：crypto / text 这些是纯计算，
+			// 逐个函数名钉死只会让加一个工具函数变成一次跨仓库改动。
+			return nil, true
+		}
+	}
+	seen := map[string]struct{}{}
+	for _, capability := range capabilities {
+		if capability.Deprecated {
+			continue
+		}
+		if capability.Namespace != "" {
+			if capability.Namespace != root {
+				continue
+			}
+			// 命名空间对上了：没指定成员，或成员确实由这项能力贡献
+			if member != "" && !containsString(capability.Members, member) {
+				continue
+			}
+		} else if !containsString(capability.Members, root) {
+			continue
+		}
+		if _, duplicate := seen[capability.Key]; duplicate {
+			continue
+		}
+		seen[capability.Key] = struct{}{}
+		needed = append(needed, capability.Key)
+	}
+	if len(needed) > 0 {
+		return needed, true
+	}
+	// 命名空间存在但成员名拼错了（aegis.user.gett）：仍然算「知道这个命名空间」，
+	// 由调用方按成员级别报错，否则会误报成「缺少能力声明」把人带偏。
+	for _, capability := range capabilities {
+		if !capability.Deprecated && capability.Namespace == root {
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+// NamespaceExists 目录里有没有这个命名空间（不论成员名对不对）。
+func NamespaceExists(root string) bool {
+	for _, base := range BaseSDKMembers() {
+		if base == root {
+			return true
+		}
+	}
+	for _, capability := range capabilities {
+		if capability.Deprecated {
+			continue
+		}
+		if capability.Namespace == root || containsString(capability.Members, root) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(list []string, value string) bool {
+	for _, item := range list {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 // CapabilityCatalog 返回能力目录的只读快照。
@@ -581,6 +1004,11 @@ type RuntimeLimits struct {
 	MaxConfigBytes   int `json:"maxConfigBytes"`
 	MaxTimeoutMs     int `json:"maxTimeoutMs"`
 	MaxConcurrency   int `json:"maxConcurrency"`
+	// MaxLogLines 试跑回传的日志行数上限。作者会写循环打日志，
+	// 而「后面的日志去哪了」必须能在界面上答得出来。
+	MaxLogLines int `json:"maxLogLines"`
+	// MaxLockSeconds 单把分布式锁的最长持有时间
+	MaxLockSeconds int `json:"maxLockSeconds"`
 }
 
 // ScriptTemplate 控制台「从模板新建」用的示例脚本。
@@ -642,6 +1070,33 @@ func ScriptTemplates() []ScriptTemplate {
 				CapUserRead, CapKVRead, CapKVWrite, CapHTTPFetch, CapAuditWrite,
 			},
 			Source: templateProxy,
+		},
+		{
+			Key:     "jwt",
+			Title:   "签发短期访问令牌",
+			Summary: "给接入方的自有服务签一张带权益的 JWT，密钥不出服务端",
+			Capabilities: []string{
+				CapUserRead, CapVipRead, CapKVRead,
+			},
+			Source: templateJWT,
+		},
+		{
+			Key:     "lock",
+			Title:   "加锁的一次性发放",
+			Summary: "临界区加分布式锁：并发重复提交在多实例下也只发一次",
+			Capabilities: []string{
+				CapUserRead, CapKVRead, CapKVWrite, CapLockAcquire, CapPointsWrite,
+			},
+			Source: templateLock,
+		},
+		{
+			Key:     "webhook",
+			Title:   "校验第三方回调",
+			Summary: "验签 + 防重放 + 入参 schema 校验，三件事都在服务端做完",
+			Capabilities: []string{
+				CapKVRead, CapKVWrite, CapAuditWrite,
+			},
+			Source: templateWebhook,
 		},
 	}
 }
@@ -781,5 +1236,109 @@ function handle(ctx) {
   }
 
   return { ok: true, remaining: perDay - used, data: response.json };
+}
+`
+
+const templateJWT = `// 给接入方的自有服务签一张短期令牌。
+//
+// 令牌里写的是**服务端算出来的**权益，签名密钥只存在 KV 里 ——
+// 接入方的服务只需验签，不必再回头问一次「这个人是不是会员」。
+
+/** @param {AegisContext} ctx */
+function handle(ctx) {
+  const me = aegis.user.get();
+  aegis.assert(me, "需要用户身份调用", 40100);
+  aegis.assert(!me.banned, "账号不可用", 40311);
+
+  const secret = String(aegis.kv.get("jwt-secret") || "");
+  aegis.assert(secret, "服务端尚未配置签名密钥", 50001);
+
+  const ttl = Number(aegis.config.tokenTtlSeconds || 900);
+  const entitlement = aegis.vip.status();
+
+  const token = aegis.crypto.jwtSign(secret, {
+    sub: String(me.id),
+    aud: ctx.appKey,
+    vip: entitlement ? entitlement.isVip : false,
+    features: entitlement ? entitlement.features : [],
+    jti: aegis.crypto.uuid()
+  }, { alg: "HS256", expiresIn: ttl });
+
+  return { token: token, expiresIn: ttl, tokenType: "Bearer" };
+}
+`
+
+const templateLock = `// 一次性发放，临界区上锁。
+//
+// 只用 kv.has 判重挡不住并发：两个请求可能同时读到「没领过」。
+// 锁是跨实例的，因此多副本部署下同样只放行一个。
+
+/** @param {AegisContext} ctx */
+function handle(ctx) {
+  const me = aegis.user.get();
+  aegis.assert(me, "需要用户身份调用", 40100);
+
+  const task = String(ctx.input.task || "").trim();
+  aegis.assert(task, "缺少 task 参数", 40001);
+
+  const claimKey = "claim:" + task;
+
+  // run() 在锁内执行，无论正常返回还是抛错都会释放；抢不到锁直接抛错
+  return aegis.lock.run("claim:" + me.id + ":" + task, function () {
+    if (aegis.kv.user.has(claimKey)) {
+      aegis.fail("该奖励已领取", 40901);
+    }
+    const points = Number(aegis.config.rewardPoints || 100);
+    aegis.kv.user.set(claimKey, { at: aegis.time.iso() }, 0);
+    const balance = aegis.points.add(points, "一次性奖励 " + task);
+    return { ok: true, points: points, balance: balance };
+  }, 10);
+}
+`
+
+const templateWebhook = `// 校验第三方回调。
+//
+// 三件事缺一不可：报文形状对不对、签名是不是对方发的、这条是不是重放的。
+// 前两件在客户端做等于没做，第三件客户端根本做不了。
+
+/** @param {AegisContext} ctx */
+function handle(ctx) {
+  const shape = aegis.validate.schema({
+    type: "object",
+    required: ["orderNo", "amount", "timestamp", "sign"],
+    properties: {
+      orderNo: { type: "string", minLength: 1 },
+      amount: { type: "string" },
+      timestamp: { type: "number" },
+      sign: { type: "string" }
+    }
+  }, ctx.input);
+  if (!shape.valid) aegis.fail("回调报文不合法：" + shape.errors.join("; "), 40001);
+
+  // 时间戳窗口：签名合法但十天前的报文同样不该被接受
+  const skew = Math.abs(aegis.time.unix() - Number(ctx.input.timestamp));
+  if (skew > Number(aegis.config.maxSkewSeconds || 300)) {
+    aegis.fail("回调时间戳超出容忍窗口", 40002);
+  }
+
+  // 签名串按字典序拼，与对方文档一致；queryStringify 保证顺序稳定
+  const secret = String(aegis.kv.get("webhook-secret") || "");
+  aegis.assert(secret, "服务端尚未配置回调密钥", 50001);
+  const expected = aegis.crypto.hmacSha256(secret, aegis.encoding.queryStringify({
+    orderNo: ctx.input.orderNo,
+    amount: ctx.input.amount,
+    timestamp: ctx.input.timestamp
+  }));
+  if (!aegis.crypto.timingSafeEqual(expected, String(ctx.input.sign))) {
+    aegis.audit.log("webhook.bad_signature", "订单 " + ctx.input.orderNo);
+    aegis.fail("签名校验失败", 40103);
+  }
+
+  // 防重放：同一订单号只处理一次，键留 7 天
+  const seen = aegis.kv.incr("webhook:" + ctx.input.orderNo, 1, 604800);
+  if (seen > 1) return { ok: true, replayed: true };
+
+  aegis.audit.log("webhook.accepted", "订单 " + ctx.input.orderNo);
+  return { ok: true, replayed: false, orderNo: ctx.input.orderNo };
 }
 `
