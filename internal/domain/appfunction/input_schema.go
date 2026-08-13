@@ -97,6 +97,137 @@ func InputSchemaDeclaration(raw json.RawMessage) string {
 	return builder.String()
 }
 
+// InputSchemaSample 按契约造一份能通过校验的示例 input。
+//
+// 试跑输入框需要一个起点。给空对象是最糟的选择：配了契约的函数会当场
+// 被「缺少必填字段」挡回来，而作者刚建完函数、还不知道契约长什么样 ——
+// 他看到的第一件事就是一条报错。
+//
+// 只填**必填**字段：可选字段全填上去会让人以为它们是必须的，
+// 而这份样例正是很多人对这个接口的第一印象。
+func InputSchemaSample(raw json.RawMessage) string {
+	schema := decodeSchema(raw)
+	if schema == nil {
+		return ""
+	}
+	sample := sampleForObject(schema, 0)
+	if len(sample) == 0 {
+		return ""
+	}
+	encoded, err := json.MarshalIndent(sample, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+func sampleForObject(schema map[string]any, depth int) map[string]any {
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok || depth > maxSchemaDepth {
+		return nil
+	}
+	required := requiredSet(schema)
+	// 排序只为稳定：不排的话同一份契约每次生成出的样例字段顺序都不同，
+	// 而这份文本会被作者直接改，顺序跳来跳去很难用。
+	names := make([]string, 0, len(required))
+	for name := range properties {
+		if _, mandatory := required[name]; mandatory {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	sample := make(map[string]any, len(names))
+	for _, name := range names {
+		field, _ := properties[name].(map[string]any)
+		sample[name] = sampleForField(name, field, depth+1)
+	}
+	return sample
+}
+
+// sampleForField 取一个「显然是占位符、但确实合法」的值。
+//
+// 两条要求都得满足。只求"显然是占位符"（一律给空串零值）的话，
+// 一个 `minLength: 1` 的字段会让「按契约填」填出来的东西当场被校验挡回来 ——
+// 那比没有这个按钮更让人困惑。只求"合法"（编一段假数据）的话，
+// 它会被原样发出去。
+//
+// 优先用 default 与 enum 的第一项：那是契约作者自己写下的合法值，
+// 比我们编的强。
+func sampleForField(name string, field map[string]any, depth int) any {
+	if field == nil || depth > maxSchemaDepth {
+		return nil
+	}
+	if value, present := field["default"]; present {
+		return value
+	}
+	if values, ok := field["enum"].([]any); ok && len(values) > 0 {
+		return values[0]
+	}
+	switch schemaType(field) {
+	case "string":
+		return sampleString(name, field)
+	case "number", "integer":
+		return sampleNumber(field)
+	case "boolean":
+		return false
+	case "array":
+		return sampleArray(name, field, depth)
+	case "object":
+		nested := sampleForObject(field, depth)
+		if nested == nil {
+			return map[string]any{}
+		}
+		return nested
+	}
+	return nil
+}
+
+// sampleString 没有长度下限时给空串（一眼看得出要填），
+// 有下限时拿字段名当占位符并补足长度 —— 字段名同样一眼看得出是占位符。
+//
+// `pattern` / `format` 满足不了：那需要反向生成，而生成不出来的下场是
+// 一个看起来合法、实际过不了的样例。这两种约束下仍旧交出占位符，
+// 由作者自己改 —— 校验会明确告诉他哪里不匹配。
+func sampleString(name string, field map[string]any) string {
+	minimum, ok := field["minLength"].(float64)
+	if !ok || minimum <= 0 {
+		return ""
+	}
+	placeholder := name
+	if placeholder == "" {
+		placeholder = "x"
+	}
+	for len([]rune(placeholder)) < int(minimum) {
+		placeholder += "x"
+	}
+	return placeholder
+}
+
+func sampleNumber(field map[string]any) float64 {
+	// 有下界时取下界：minimum 为 1 的字段填 0 会立刻被校验挡回来
+	if low, ok := field["minimum"].(float64); ok {
+		return low
+	}
+	if low, ok := field["exclusiveMinimum"].(float64); ok {
+		return low + 1
+	}
+	return 0
+}
+
+func sampleArray(name string, field map[string]any, depth int) []any {
+	minimum, _ := field["minItems"].(float64)
+	if minimum <= 0 {
+		return []any{}
+	}
+	items, _ := field["items"].(map[string]any)
+	out := make([]any, 0, int(minimum))
+	for index := 0; index < int(minimum); index++ {
+		out = append(out, sampleForField(name, items, depth+1))
+	}
+	return out
+}
+
 // InputSchemaFieldCount 顶层字段数，控制台用它显示「入参 N 个字段」。
 func InputSchemaFieldCount(raw json.RawMessage) int {
 	schema := decodeSchema(raw)

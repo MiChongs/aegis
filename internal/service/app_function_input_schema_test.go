@@ -46,6 +46,60 @@ func TestValidateFunctionInputReportsEveryProblem(t *testing.T) {
 	}
 }
 
+// 报错是接入方排查时唯一的线索，它得是一句人话。
+//
+// 库自带的英文原文拼进中文错误里读起来是
+// 「回调报文不合法：/: missing properties 'orderNo'」—— 半中半英，
+// 开头那个 `/` 还是根对象的 JSON Pointer，对读的人毫无意义。
+func TestSchemaErrorsReadAsChinese(t *testing.T) {
+	t.Parallel()
+
+	definition := map[string]any{
+		"type":                 "object",
+		"required":             []any{"orderNo", "sign"},
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"orderNo":  map[string]any{"type": "string", "minLength": 4},
+			"sign":     map[string]any{"type": "string"},
+			"quantity": map[string]any{"type": "integer", "minimum": 1},
+			"channel":  map[string]any{"type": "string", "enum": []any{"web", "ios"}},
+			"coupon": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"code": map[string]any{"type": "string"}},
+			},
+		},
+	}
+
+	cases := []struct {
+		name  string
+		value map[string]any
+		want  string
+	}{
+		{"缺必填", map[string]any{}, `缺少必填字段 "orderNo"、"sign"`},
+		{"类型不对", map[string]any{"orderNo": 1, "sign": "s"}, "orderNo 类型应为 string，实际是 number"},
+		{"长度不足", map[string]any{"orderNo": "a", "sign": "s"}, "orderNo 长度至少 4，实际 1"},
+		{"下界", map[string]any{"orderNo": "abcd", "sign": "s", "quantity": 0}, "quantity 不能小于 1，实际 0"},
+		{"枚举", map[string]any{"orderNo": "abcd", "sign": "s", "channel": "wap"},
+			`channel 取值必须是 "web"、"ios" 之一，实际是 "wap"`},
+		{"多余字段", map[string]any{"orderNo": "abcd", "sign": "s", "extra": 1},
+			`不接受额外字段 "extra"`},
+		{"嵌套路径", map[string]any{"orderNo": "abcd", "sign": "s",
+			"coupon": map[string]any{"code": 1}}, "coupon.code 类型应为 string"},
+	}
+
+	for _, testCase := range cases {
+		problems := validateAgainstSchema(definition, testCase.value)
+		joined := strings.Join(problems, "；")
+		if !strings.Contains(joined, testCase.want) {
+			t.Errorf("%s：期望包含 %q，实际 %q", testCase.name, testCase.want, joined)
+		}
+		// 根对象的 JSON Pointer 是噪音，不该出现在给人看的文案里
+		if strings.Contains(joined, "/:") {
+			t.Errorf("%s：文案里不该有根路径前缀，实际 %q", testCase.name, joined)
+		}
+	}
+}
+
 // 没配契约时必须一律放行 —— 加这项功能本身不该改变任何存量函数的行为。
 func TestValidateFunctionInputSkipsWhenUnconstrained(t *testing.T) {
 	t.Parallel()

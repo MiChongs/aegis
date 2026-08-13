@@ -1021,6 +1021,19 @@ type ScriptTemplate struct {
 	Summary      string   `json:"summary"`
 	Capabilities []string `json:"capabilities"`
 	Source       string   `json:"source"`
+	// InputSchema 模板自带的入参契约，建函数时一并写入。
+	//
+	// 模板是大多数人第一次见到这套东西的地方，所以它得示范正确的分工：
+	// 「报文形状对不对」交给契约（平台在调用入口就挡掉，错误里逐条点名），
+	// 脚本里只留契约表达不了的部分。反过来在脚本里手写一遍形状校验，
+	// 等于教人绕开这个功能。
+	InputSchema string `json:"inputSchema,omitempty"`
+	// SampleInput 试跑输入框的预填内容。
+	//
+	// 没有它的话，从模板新建的函数第一次试跑必然失败 —— 默认输入框里那句
+	// `{"action":"ping"}` 满足不了任何一个模板的入参要求，而作者刚建完函数，
+	// 看到的第一件事就是一条报错。
+	SampleInput string `json:"sampleInput,omitempty"`
 }
 
 // ScriptTemplates 返回内置模板。
@@ -1033,7 +1046,8 @@ func ScriptTemplates() []ScriptTemplate {
 			Capabilities: []string{
 				CapUserRead,
 			},
-			Source: templateStarter,
+			Source:      templateStarter,
+			SampleInput: "{}",
 		},
 		{
 			Key:     "licence",
@@ -1042,7 +1056,8 @@ func ScriptTemplates() []ScriptTemplate {
 			Capabilities: []string{
 				CapUserRead, CapKVRead, CapKVWrite,
 			},
-			Source: templateLicence,
+			Source:      templateLicence,
+			SampleInput: "{}",
 		},
 		{
 			Key:     "reward",
@@ -1051,7 +1066,9 @@ func ScriptTemplates() []ScriptTemplate {
 			Capabilities: []string{
 				CapUserRead, CapKVRead, CapKVWrite, CapPointsWrite, CapVipWrite, CapNotificationSend,
 			},
-			Source: templateReward,
+			Source:      templateReward,
+			InputSchema: schemaReward,
+			SampleInput: "{\n  \"task\": \"daily-checkin\"\n}",
 		},
 		{
 			Key:     "signature",
@@ -1060,7 +1077,8 @@ func ScriptTemplates() []ScriptTemplate {
 			Capabilities: []string{
 				CapUserRead, CapKVRead,
 			},
-			Source: templateSignature,
+			Source:      templateSignature,
+			SampleInput: "{}",
 		},
 		{
 			Key:     "proxy",
@@ -1069,7 +1087,9 @@ func ScriptTemplates() []ScriptTemplate {
 			Capabilities: []string{
 				CapUserRead, CapKVRead, CapKVWrite, CapHTTPFetch, CapAuditWrite,
 			},
-			Source: templateProxy,
+			Source:      templateProxy,
+			InputSchema: schemaProxy,
+			SampleInput: "{\n  \"query\": \"hello\"\n}",
 		},
 		{
 			Key:     "jwt",
@@ -1078,7 +1098,8 @@ func ScriptTemplates() []ScriptTemplate {
 			Capabilities: []string{
 				CapUserRead, CapVipRead, CapKVRead,
 			},
-			Source: templateJWT,
+			Source:      templateJWT,
+			SampleInput: "{}",
 		},
 		{
 			Key:     "lock",
@@ -1087,19 +1108,72 @@ func ScriptTemplates() []ScriptTemplate {
 			Capabilities: []string{
 				CapUserRead, CapKVRead, CapKVWrite, CapLockAcquire, CapPointsWrite,
 			},
-			Source: templateLock,
+			Source:      templateLock,
+			InputSchema: schemaReward,
+			SampleInput: "{\n  \"task\": \"invite-friend\"\n}",
 		},
 		{
 			Key:     "webhook",
 			Title:   "校验第三方回调",
-			Summary: "验签 + 防重放 + 入参 schema 校验，三件事都在服务端做完",
+			Summary: "报文形状交给入参契约，脚本只管验签、时间窗与防重放",
 			Capabilities: []string{
 				CapKVRead, CapKVWrite, CapAuditWrite,
 			},
-			Source: templateWebhook,
+			Source:      templateWebhook,
+			InputSchema: schemaWebhook,
+			// 样例只保证**形状**过得去。签名与时间戳必须由作者换成真的 ——
+			// 这一步没法预填，但错误会明确停在「服务端尚未配置回调密钥」
+			// 这类下一步动作上，而不是停在一句形状不对。
+			SampleInput: "{\n  \"orderNo\": \"A20260321001\",\n  \"amount\": \"9.90\",\n" +
+				"  \"timestamp\": 1774051200,\n  \"sign\": \"替换成上游算出的签名\"\n}",
 		},
 	}
 }
+
+// 模板自带的入参契约。
+//
+// 形状校验放这里而不是脚本里，是这套东西正确的分工：契约在**调用入口**
+// 就把报文挡掉，错误里逐条点名哪个字段不对；写在脚本里则要等函数被真的
+// 调起来，而且每个作者都得自己写一遍。
+const (
+	schemaReward = `{
+  "type": "object",
+  "required": ["task"],
+  "additionalProperties": false,
+  "properties": {
+    "task": {
+      "type": "string",
+      "minLength": 1,
+      "description": "任务标识，用作发放判重的键"
+    }
+  }
+}`
+
+	schemaProxy = `{
+  "type": "object",
+  "required": ["query"],
+  "additionalProperties": false,
+  "properties": {
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "description": "转发给上游的查询内容"
+    }
+  }
+}`
+
+	schemaWebhook = `{
+  "type": "object",
+  "required": ["orderNo", "amount", "timestamp", "sign"],
+  "additionalProperties": false,
+  "properties": {
+    "orderNo": { "type": "string", "minLength": 1, "description": "上游订单号，同时是防重放的键" },
+    "amount": { "type": "string", "description": "金额，定点小数字符串" },
+    "timestamp": { "type": "integer", "description": "上游签名时的 Unix 秒" },
+    "sign": { "type": "string", "minLength": 1, "description": "上游按约定算法算出的签名" }
+  }
+}`
+)
 
 const templateStarter = `// 每次调用都是全新的运行时，没有跨请求状态。
 // 只有在 capabilities 里声明过的能力，aegis 上才会出现对应的对象。
@@ -1300,20 +1374,18 @@ const templateWebhook = `// 校验第三方回调。
 //
 // 三件事缺一不可：报文形状对不对、签名是不是对方发的、这条是不是重放的。
 // 前两件在客户端做等于没做，第三件客户端根本做不了。
+//
+// 形状那一件**不在这里**：它由函数的「入参契约」负责（设置页里那份 JSON
+// Schema，本模板已经带上）。平台在调用入口就会挡掉不合形状的报文，
+// 并逐条说明哪个字段不对 —— 比在脚本里手写一遍校验早一步，也更好读。
+// 所以下面只留契约表达不了的三件事。
 
 /** @param {AegisContext} ctx */
 function handle(ctx) {
-  const shape = aegis.validate.schema({
-    type: "object",
-    required: ["orderNo", "amount", "timestamp", "sign"],
-    properties: {
-      orderNo: { type: "string", minLength: 1 },
-      amount: { type: "string" },
-      timestamp: { type: "number" },
-      sign: { type: "string" }
-    }
-  }, ctx.input);
-  if (!shape.valid) aegis.fail("回调报文不合法：" + shape.errors.join("; "), 40001);
+  // 密钥检查放在最前面：它是"还没配好"这条路径上唯一能行动的一步，
+  // 而下面两项都要先有它才谈得上。先报时间戳不对，作者会去改时间戳。
+  const secret = String(aegis.kv.get("webhook-secret") || "");
+  aegis.assert(secret, "服务端尚未配置回调密钥：请在 KV 里写入 webhook-secret", 50001);
 
   // 时间戳窗口：签名合法但十天前的报文同样不该被接受
   const skew = Math.abs(aegis.time.unix() - Number(ctx.input.timestamp));
@@ -1322,8 +1394,6 @@ function handle(ctx) {
   }
 
   // 签名串按字典序拼，与对方文档一致；queryStringify 保证顺序稳定
-  const secret = String(aegis.kv.get("webhook-secret") || "");
-  aegis.assert(secret, "服务端尚未配置回调密钥", 50001);
   const expected = aegis.crypto.hmacSha256(secret, aegis.encoding.queryStringify({
     orderNo: ctx.input.orderNo,
     amount: ctx.input.amount,

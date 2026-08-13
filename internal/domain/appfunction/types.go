@@ -59,7 +59,10 @@ type Function struct {
 	// 表现是「补全里有这个字段、运行时却没有」。同一条约束下，
 	// 能力的类型片段也是由 Go 生成再下发的。
 	InputTypes string `json:"inputTypes,omitempty"`
-	CreatedBy  *int64 `json:"createdBy,omitempty"`
+	// InputSample 按契约造出的示例 input，控制台拿它预填试跑输入框。
+	// 与 InputTypes 同理：只出网不入库，且转换只有 Go 这一处实现。
+	InputSample string `json:"inputSample,omitempty"`
+	CreatedBy   *int64 `json:"createdBy,omitempty"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

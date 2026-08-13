@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math/big"
 	"net"
 	"net/url"
 	"regexp"
@@ -42,6 +43,7 @@ import (
 	"github.com/pquerna/otp/totp"
 	"github.com/robfig/cron/v3"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 	"github.com/shopspring/decimal"
 	"github.com/tidwall/gjson"
 	"golang.org/x/crypto/bcrypt"
@@ -1046,17 +1048,133 @@ func flattenSchemaErrors(failure *jsonschema.ValidationError) []string {
 		return nil
 	}
 	if len(failure.Causes) == 0 {
-		path := "/"
-		if len(failure.InstanceLocation) > 0 {
-			path = "/" + strings.Join(failure.InstanceLocation, "/")
-		}
-		return []string{path + ": " + failure.ErrorKind.LocalizedString(schemaErrorPrinter)}
+		return []string{describeSchemaFailure(failure)}
 	}
 	var out []string
 	for _, cause := range failure.Causes {
 		out = append(out, flattenSchemaErrors(cause)...)
 	}
 	return out
+}
+
+// describeSchemaFailure 把一条校验失败翻成一句人话。
+//
+// 库自带的 LocalizedString 只有英文，拼进中文错误里读起来是
+// 「回调报文不合法：/: missing properties 'orderNo'」—— 半中半英，
+// 开头那个 `/` 还是根路径的 JSON Pointer，对读的人毫无意义。
+// 而这句话会一路传到接入方的日志里，是他排查时唯一的线索。
+//
+// 只翻最常见的那十几种；认不出的仍旧回落到库的英文原文，
+// 那比编一句不准确的中文强。
+func describeSchemaFailure(failure *jsonschema.ValidationError) string {
+	where := describeSchemaLocation(failure.InstanceLocation)
+	detail := failure.ErrorKind.LocalizedString(schemaErrorPrinter)
+
+	switch typed := failure.ErrorKind.(type) {
+	case *kind.Required:
+		// 根对象缺字段是最常见的一条，单独措辞：说「缺少必填字段 x」
+		// 比「/ 处缺少属性 x」自然得多
+		return fmt.Sprintf("%s缺少必填字段 %s", wherePrefix(where), quoteList(typed.Missing))
+	case *kind.AdditionalProperties:
+		return fmt.Sprintf("%s不接受额外字段 %s", wherePrefix(where), quoteList(typed.Properties))
+	case *kind.Type:
+		return fmt.Sprintf("%s类型应为 %s，实际是 %s",
+			wherePrefix(where), strings.Join(typed.Want, " 或 "), typed.Got)
+	case *kind.Enum:
+		return fmt.Sprintf("%s取值必须是 %s 之一，实际是 %s",
+			wherePrefix(where), quoteAnyList(typed.Want), formatSchemaValue(typed.Got))
+	case *kind.Const:
+		return fmt.Sprintf("%s取值必须是 %s", wherePrefix(where), formatSchemaValue(typed.Want))
+	case *kind.MinLength:
+		return fmt.Sprintf("%s长度至少 %d，实际 %d", wherePrefix(where), typed.Want, typed.Got)
+	case *kind.MaxLength:
+		return fmt.Sprintf("%s长度最多 %d，实际 %d", wherePrefix(where), typed.Want, typed.Got)
+	case *kind.Minimum:
+		return fmt.Sprintf("%s不能小于 %s，实际 %s",
+			wherePrefix(where), formatRat(typed.Want), formatRat(typed.Got))
+	case *kind.Maximum:
+		return fmt.Sprintf("%s不能大于 %s，实际 %s",
+			wherePrefix(where), formatRat(typed.Want), formatRat(typed.Got))
+	case *kind.ExclusiveMinimum:
+		return fmt.Sprintf("%s必须大于 %s，实际 %s",
+			wherePrefix(where), formatRat(typed.Want), formatRat(typed.Got))
+	case *kind.ExclusiveMaximum:
+		return fmt.Sprintf("%s必须小于 %s，实际 %s",
+			wherePrefix(where), formatRat(typed.Want), formatRat(typed.Got))
+	case *kind.MinItems:
+		return fmt.Sprintf("%s至少 %d 个元素，实际 %d", wherePrefix(where), typed.Want, typed.Got)
+	case *kind.MaxItems:
+		return fmt.Sprintf("%s最多 %d 个元素，实际 %d", wherePrefix(where), typed.Want, typed.Got)
+	case *kind.Pattern:
+		return fmt.Sprintf("%s不匹配格式 %s", wherePrefix(where), typed.Want)
+	case *kind.Format:
+		return fmt.Sprintf("%s不是合法的 %s", wherePrefix(where), typed.Want)
+	}
+	if where == "" {
+		return detail
+	}
+	return fmt.Sprintf("%s%s", wherePrefix(where), detail)
+}
+
+// describeSchemaLocation 把 JSON Pointer 段拼成 `coupon.code` / `tags[0]` 这种
+// 脚本里真正会写出来的路径。根对象返回空串。
+func describeSchemaLocation(location []string) string {
+	var builder strings.Builder
+	for _, segment := range location {
+		// 纯数字段是数组下标
+		if index, err := strconv.Atoi(segment); err == nil {
+			fmt.Fprintf(&builder, "[%d]", index)
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte('.')
+		}
+		builder.WriteString(segment)
+	}
+	return builder.String()
+}
+
+func wherePrefix(where string) string {
+	if where == "" {
+		return ""
+	}
+	return where + " "
+}
+
+func quoteList(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, strconv.Quote(value))
+	}
+	return strings.Join(quoted, "、")
+}
+
+func quoteAnyList(values []any) string {
+	rendered := make([]string, 0, len(values))
+	for _, value := range values {
+		rendered = append(rendered, formatSchemaValue(value))
+	}
+	return strings.Join(rendered, "、")
+}
+
+func formatSchemaValue(value any) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprint(value)
+	}
+	return string(encoded)
+}
+
+// formatRat 边界值是 *big.Rat。直接 String() 得到的是 "3/2" 这种分数写法，
+// 而 schema 里写的是 1.5 —— 报错里出现一个作者从没写过的形式只会让人困惑。
+func formatRat(value *big.Rat) string {
+	if value == nil {
+		return "?"
+	}
+	if value.IsInt() {
+		return value.Num().String()
+	}
+	return strings.TrimRight(strings.TrimRight(value.FloatString(6), "0"), ".")
 }
 
 // ── aegis.ua ────────────────────────────────────────────────────────

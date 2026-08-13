@@ -174,11 +174,18 @@ export function CreateFunctionDialog({
             disabled={createMutation.isPending || !name.trim()}
             onClick={async () => {
               try {
+                // 模板自带的入参契约一并写入：形状校验交给平台在调用入口做，
+                // 而不是让每个作者在脚本里手写一遍
+                const template = templates.find((item) => item.key === templateKey);
                 const created = await createMutation.mutateAsync({
                   name: name.trim(),
                   description,
                   runtime,
-                  capabilities: runtime === "script" ? capabilities : []
+                  capabilities: runtime === "script" ? capabilities : [],
+                  inputSchema:
+                    runtime === "script" && template?.inputSchema
+                      ? (JSON.parse(template.inputSchema) as Record<string, unknown>)
+                      : undefined
                 });
                 onCreated(created.name, runtime === "script" ? templateKey : undefined);
                 onOpenChange(false);

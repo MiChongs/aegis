@@ -38,6 +38,8 @@ export type AppFunction = {
    * 而两份类型不一致的表现是「补全里有这个字段、运行时却没有」。
    */
   inputTypes?: string;
+  /** 按契约造出的示例 input（同样由后端生成），试跑输入框拿它预填 */
+  inputSample?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -251,6 +253,15 @@ export type FunctionScriptTemplate = {
   summary: string;
   capabilities: string[];
   source: string;
+  /** 模板自带的入参契约，建函数时一并写入 */
+  inputSchema?: string;
+  /**
+   * 试跑输入框的预填内容。
+   *
+   * 没有它的话，从模板新建的函数第一次试跑必然失败 —— 默认那句
+   * `{"action":"ping"}` 满足不了任何一个模板的入参要求。
+   */
+  sampleInput?: string;
 };
 
 export type FunctionCatalog = {

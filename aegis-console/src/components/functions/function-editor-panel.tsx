@@ -132,7 +132,18 @@ export function FunctionEditorPanel({
   const source = draft?.source ?? seeded;
   const dirty = draft != null && draft.source !== seeded;
 
-  const [testInput, setTestInput] = useState('{\n  "action": "ping"\n}');
+  // 试跑输入框的起点，按「越贴近这个函数真实收到的东西」排序：
+  // 契约造出的样例 → 模板自带的样例 → 空对象。
+  //
+  // 兜底刻意是 `{}` 而不是 `{"action":"ping"}`：后者对任何一个配了契约的
+  // 函数都通不过校验，作者建完函数点一下试跑，第一眼看到的就是报错。
+  // 这条 useState 初始化只跑一次，而面板按函数名 key 重挂载，正好对上。
+  const [testInput, setTestInput] = useState(
+    () =>
+      selected.inputSample ||
+      (catalog?.templates ?? []).find((item) => item.key === initialTemplate)?.sampleInput ||
+      "{}"
+  );
   const [asUserId, setAsUserId] = useState("");
   const [testResult, setTestResult] = useState<TestResultWithSource | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -382,6 +393,7 @@ export function FunctionEditorPanel({
           input={testInput}
           onInputChange={setTestInput}
           inputSchema={selected.inputSchema}
+          inputSample={selected.inputSample}
           asUserId={asUserId}
           onAsUserIdChange={setAsUserId}
           pending={testMutation.isPending}
@@ -697,6 +709,7 @@ function TestRunnerCard({
   input,
   onInputChange,
   inputSchema,
+  inputSample,
   asUserId,
   onAsUserIdChange,
   pending,
@@ -708,6 +721,7 @@ function TestRunnerCard({
   input: string;
   onInputChange: (value: string) => void;
   inputSchema?: Record<string, unknown>;
+  inputSample?: string;
   asUserId: string;
   onAsUserIdChange: (value: string) => void;
   pending: boolean;
@@ -776,14 +790,27 @@ function TestRunnerCard({
         ) : null}
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <Label>input</Label>
-            {hasSchema ? (
-              <Badge variant="outline" size="sm" className="gap-1 font-normal">
-                <FileJson className="size-3" />
-                按入参契约补全与校验
-              </Badge>
-            ) : null}
+            <div className="flex items-center gap-1.5">
+              {hasSchema ? (
+                <Badge variant="outline" size="sm" className="gap-1 font-normal">
+                  <FileJson className="size-3" />
+                  按入参契约补全与校验
+                </Badge>
+              ) : null}
+              {inputSample ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  title="按契约生成一份只含必填字段的样例"
+                  onClick={() => onInputChange(inputSample)}
+                >
+                  <Sparkles className="size-3" />
+                  按契约填
+                </Button>
+              ) : null}
+            </div>
           </div>
           {/* 配了契约就把它喂给 JSON 语言服务：键名补全、枚举值补全、
               必填校验、悬浮显示字段说明，全部是现成的。没配时退回纯语法检查。 */}

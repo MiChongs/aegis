@@ -121,13 +121,16 @@ func (s *AppFunctionService) SDKTypes(capabilities []string, inputSchema json.Ra
 
 // decorateFunction 补上只出网、不入库的派生字段。
 //
-// 现在只有 `inputTypes` 一项：把 JSON Schema 转成 TypeScript 这件事必须
-// 只有一个实现，而它在 Go 这边（与能力的类型片段同一条约束）。
+// 两项都是入参契约的投影：转成 TypeScript（编辑器的类型）与造一份示例
+// input（试跑输入框的预填）。两个转换都只有 Go 这一处实现 ——
+// 与能力的类型片段同一条约束，控制台再写一份就会出现「样例填出来的东西
+// 通不过校验」这种自相矛盾的状态。
 func decorateFunction(item *functiondomain.Function) *functiondomain.Function {
 	if item == nil {
 		return nil
 	}
 	item.InputTypes = functiondomain.InputSchemaDeclaration(item.InputSchema)
+	item.InputSample = functiondomain.InputSchemaSample(item.InputSchema)
 	return item
 }
 

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -244,6 +245,67 @@ func TestBuiltinTemplatesPassAnalysis(t *testing.T) {
 		result := AnalyzeFunctionScript(template.Source, template.Capabilities)
 		if !result.OK {
 			t.Errorf("模板 %s 通不过静态检查：%+v", template.Key, BlockingDiagnostics(result.Diagnostics))
+		}
+	}
+}
+
+// 同一个道理的另一半：模板自带的样例 input 必须能通过模板自带的入参契约。
+//
+// 这条是补上一次真实反馈的 —— 从「校验第三方回调」模板建出来的函数，
+// 第一次试跑撞上「缺少必填字段 orderNo、amount、timestamp、sign」，
+// 因为输入框里是默认的 `{"action":"ping"}`。模板是大多数人第一次用这套
+// 东西的地方，开箱即报错等于告诉他这功能是坏的。
+func TestBuiltinTemplateSamplesSatisfyTheirSchema(t *testing.T) {
+	t.Parallel()
+
+	for _, template := range functiondomain.ScriptTemplates() {
+		if template.SampleInput == "" {
+			t.Errorf("模板 %s 没有样例 input，从它新建的函数第一次试跑会撞上默认输入", template.Key)
+			continue
+		}
+		var sample any
+		if err := json.Unmarshal([]byte(template.SampleInput), &sample); err != nil {
+			t.Errorf("模板 %s 的样例 input 不是合法 JSON：%v", template.Key, err)
+			continue
+		}
+		if template.InputSchema == "" {
+			continue
+		}
+		normalized, err := normalizeFunctionInputSchema(json.RawMessage(template.InputSchema))
+		if err != nil {
+			t.Errorf("模板 %s 自带的入参契约保存不进去：%v", template.Key, err)
+			continue
+		}
+		if err := validateFunctionInput(normalized, json.RawMessage(template.SampleInput)); err != nil {
+			t.Errorf("模板 %s 的样例通不过它自己的契约：%v", template.Key, err)
+		}
+	}
+}
+
+// 由契约现造的样例同样要能通过契约 —— 「按契约填」那个按钮填出来的东西
+// 立刻被校验挡回来，会比没有这个按钮更让人困惑。
+func TestGeneratedSampleSatisfiesItsSchema(t *testing.T) {
+	t.Parallel()
+
+	schemas := []string{
+		functiondomain.InputSchemaTemplate,
+		`{"type":"object","required":["a","b"],"additionalProperties":false,
+          "properties":{"a":{"type":"integer","minimum":3},"b":{"type":"string","enum":["x","y"]}}}`,
+		`{"type":"object","required":["nested"],"properties":{
+          "nested":{"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}}}`,
+	}
+	for _, raw := range schemas {
+		normalized, err := normalizeFunctionInputSchema(json.RawMessage(raw))
+		if err != nil {
+			t.Fatalf("契约应可保存：%v", err)
+		}
+		sample := functiondomain.InputSchemaSample(normalized)
+		if sample == "" {
+			t.Errorf("有必填字段的契约应能造出样例：%s", raw)
+			continue
+		}
+		if err := validateFunctionInput(normalized, json.RawMessage(sample)); err != nil {
+			t.Errorf("生成的样例通不过它自己的契约：\n样例 %s\n错误 %v", sample, err)
 		}
 	}
 }
