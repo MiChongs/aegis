@@ -45,6 +45,7 @@ coverage
 docs
 scripts
 sql
+sdk
 test
 *.md
 LICENSE

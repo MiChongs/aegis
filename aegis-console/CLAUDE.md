@@ -68,15 +68,22 @@ TypeScript 7 是 Go 重写的编译器（tsgo），**不再提供 JS 版的 comp
 
 | 使用方 | 解析到 | 说明 |
 |---|---|---|
-| `pnpm typecheck`（`tsc --noEmit`） | **TS 7.0.2** | 权威类型校验 |
-| `pnpm typecheck:ts6`（`tsc6 --noEmit`） | TS 6.0.2 | 对照校验，与 build 期一致 |
+| `pnpm typecheck`（`tsc --noEmit`） | **TS 7.0.2** | 权威类型校验，`pnpm build` 的第一步就是它 |
+| `pnpm typecheck:ts6`（`tsc6 --noEmit`） | TS 6.0.2 | 对照校验 |
 | `require("typescript")`（typescript-eslint） | TS 6.0.2 | 两个包的 bin 名不冲突（`tsc` / `tsc6`） |
-| `next build` 期类型检查 | TS 6.0.2 API | 见下方 `useTypeScriptCli` |
+| `next build` 期类型检查 | **不做**（`typescript.ignoreBuildErrors`） | 见下 |
 
-**`next.config.ts` 中的 `experimental.useTypeScriptCli: false` 不可删除**：Next 16.3 该项默认为 `true`，
+**build 期不再做类型检查**：Next 内建的那一遍走 TS 6 的 JS API，而 TS 7 是 Go 重写的
+原生编译器，同一份代码实测差接近一个数量级（当时是 17s vs 2.4s）—— 两者查的是同一件事，
+留慢的那个没有意义。因此 `next.config.ts` 里 `typescript.ignoreBuildErrors: true`，
+把这道关口前移成 `build` 脚本的第一步 `tsc --noEmit`：类型不过一样构建不出来，
+而且报错来得更早（不用等 Turbopack 编译完）。**改 `build` 脚本时不要把它去掉**，
+去掉之后除了 CI 就没有任何地方在检查类型了。
+
+**`next.config.ts` 中的 `experimental.useTypeScriptCli: false` 同样不可删除**：Next 16.3 该项默认为 `true`，
 CLI 模式会去找 `typescript/bin/tsc`，而 TS 6 兼容包只提供 `bin/tsc6`，Next 会误判「typescript 未安装」
-并自动执行 `pnpm install --save-dev typescript`，把上面的 alias 覆盖掉。关闭后 Next 改用 API 模式
-（`typescript/lib/typescript.js`，该文件存在），build 期类型检查恢复正常。
+并自动执行 `pnpm install --save-dev typescript`，把上面的 alias 覆盖掉。
+`ignoreBuildErrors` 只是不做检查，Next 仍会探测这个包，所以两项要同时在。
 
 > 待 typescript-eslint 支持 TS ≥7.1 后，可移除 `@typescript/native` 别名、把 `typescript` 直接指向 7.x，
 > 并删除 `useTypeScriptCli: false` 与 `typecheck:ts6` 脚本。
@@ -239,14 +246,65 @@ components/developers/
 
 ```bash
 cd aegis-console
-pnpm dev          # 开发服务器（自动清理 .next 缓存）
-pnpm build        # 生产构建
+pnpm dev          # 开发服务器（自动清理上次产物，保留编译缓存）
+pnpm build        # 生产构建 = tsc --noEmit && next build
 pnpm start        # 生产启动
 pnpm typecheck    # tsc --noEmit
 pnpm lint         # ESLint
 pnpm test         # node --test（目前只有 scripts/ 下的启动期脚本）
-pnpm clean        # 手动清理 .next
+pnpm clean        # 清理 .next，连编译缓存一起（怀疑缓存坏了时用这个）
 ```
+
+### 构建缓存：`.next/cache` 不要删
+
+`predev` / `prebuild` 会清掉上一次的产物，但 `scripts/clean-next.mjs` **刻意跳过 `.next/cache`** ——
+那里是 Turbopack 的文件系统缓存（Next 16 起默认开启，本项目约 280MB）。
+连它一起删的代价实测是编译阶段 **2.7s → 10.8s**，而清理本来只是想要一份干净的产物，
+残留旧内容的是 `server` / `static` / `dev` 那几个目录，缓存自己带版本标记、Next 会判失效。
+
+`pnpm clean` 走 `--all`，连缓存一起删：手动清理的场景恰恰是怀疑缓存坏了。
+
+`next build` 会把各阶段耗时逐行打出来（编译 / 静态生成），`tsc` 那一步单独计时即可。
+构建变慢时先看是哪一段涨的，再决定查什么 —— 缓存被清掉表现为编译阶段成倍变长。
+
+### `turbopack.root` 只能指本目录
+
+`pnpm-lock.yaml` 与 `pnpm-workspace.yaml` 都在 `aegis-console/` 下（原因见
+`pnpm-workspace.yaml` 里的说明），所以 `next.config.ts` 里的 root 就是
+`import.meta.dirname`。曾经写成 `../../`（**仓库之外**的 `userSystem/`），
+在容器里那个相对路径会算成 `/` —— 等于告诉 Turbopack「整个文件系统都是项目」。
+
+## 容器镜像（deploy/docker/console.Dockerfile）
+
+```bash
+docker build -f deploy/docker/console.Dockerfile \
+  --build-arg AEGIS_API_BACKEND=http://aegis-server:8088 \
+  -t aegis-console aegis-console
+```
+
+**构建上下文是 `aegis-console/`，而文件放在 `deploy/docker/` 下**，两件事都是刻意的：
+前者与 Zeabur 上该服务的 RootDirectory 一致；后者是因为 zbpack 见到构建根下有
+`Dockerfile` 就会从「Next.js 自动识别」切到「docker 计划」，而那种切换在 Dashboard 上
+看不出来，一旦发生又没人传 build arg，就是下面第 1 条的事故。
+
+四条硬约束：
+
+1. **`AEGIS_API_BACKEND` 是构建期烘死的，不是运行期读的。** `rewrites()` 在 build 时
+   求值，结果序列化进 `.next/routes-manifest.json`。所以换后端地址必须重新构建镜像，
+   改容器环境变量没有任何作用；而漏传 build arg 会落到默认的 `127.0.0.1:8088` ——
+   控制台反代到它自己。它还必须填**内网**地址，理由见下一节。
+2. **`CMD` 里的 `--import=./scripts/forwarded-headers-preload.mjs` 不能省。**
+   standalone 模式跑的是 `node server.js`，不再经过 `package.json` 的 `start` 脚本，
+   预载得自己带上。少了它容器照常起、页面照常开，只是全站客户端 IP 都变成控制台自己。
+3. **那两个预载脚本和 `ipaddr.js` 要显式列进 `outputFileTracingIncludes`。**
+   文件追踪是从应用代码出发的，够不到「由 `node --import` 装载」的脚本；
+   而 `outputFileTracingIncludes` 只**复制**列出的文件、不会再追它们自己的 import，
+   所以 `ipaddr.js` 这个依赖也得手写一条。
+4. **`.next/static` 与 `public/` 要自己搬进运行阶段**，standalone 产物不含它们。
+   `public/` 里有自托管的 monaco（23MB），漏搬的表现是脚本编辑器打不开。
+
+`output: "standalone"` 由 `NEXT_OUTPUT=standalone` 开启，平时本地 build 不开 ——
+它要对整棵依赖树做文件追踪，而那份产物本地用不上。
 
 ## 同源反代与客户端 IP 透传
 

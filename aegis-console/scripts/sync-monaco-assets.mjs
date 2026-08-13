@@ -17,16 +17,33 @@ import path from "node:path";
 const rootDir = path.resolve(import.meta.dirname, "..");
 const sourceDir = path.join(rootDir, "node_modules", "monaco-editor", "min", "vs");
 const targetDir = path.join(rootDir, "public", "monaco", "vs");
+// 版本戳：predev / prebuild 每次都调这个脚本，而 monaco 只在升级时才变。
+// 没有它的话每次 dev / build 都要重写 151 个文件 / 23MB，纯属白干。
+// 放 node_modules/.cache 而不是 public/ —— public/ 下的东西一律对外可访问，
+// 且这个戳跟着依赖走：重装依赖即失效，正是该重新同步的时机。
+const stampFile = path.join(rootDir, "node_modules", ".cache", "monaco-sync-version");
 
 if (!fs.existsSync(sourceDir)) {
   console.error(`monaco assets not found: ${sourceDir}\n请先执行 pnpm install`);
   process.exit(1);
 }
 
+const version = JSON.parse(
+  fs.readFileSync(path.join(rootDir, "node_modules", "monaco-editor", "package.json"), "utf8")
+).version;
+
+const synced = fs.existsSync(stampFile) ? fs.readFileSync(stampFile, "utf8").trim() : "";
+if (synced === version && fs.existsSync(targetDir)) {
+  console.log(`monaco assets up to date: v${version}`);
+  process.exit(0);
+}
+
 // 全量替换，避免升级 monaco 后残留旧版本文件
 fs.rmSync(targetDir, { recursive: true, force: true });
 fs.mkdirSync(path.dirname(targetDir), { recursive: true });
 fs.cpSync(sourceDir, targetDir, { recursive: true });
+fs.mkdirSync(path.dirname(stampFile), { recursive: true });
+fs.writeFileSync(stampFile, `${version}\n`);
 
 function countFiles(dir) {
   let total = 0;
@@ -35,9 +52,5 @@ function countFiles(dir) {
   }
   return total;
 }
-
-const version = JSON.parse(
-  fs.readFileSync(path.join(rootDir, "node_modules", "monaco-editor", "package.json"), "utf8")
-).version;
 
 console.log(`monaco assets synced: v${version} files=${countFiles(targetDir)} → public/monaco/vs`);

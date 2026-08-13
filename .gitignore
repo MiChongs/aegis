@@ -48,6 +48,8 @@ node_modules/
 .next/
 out/
 .turbo/
+# tsc 的增量缓存：每次 typecheck 都会重写，提交它等于给每个 PR 加一份 1.6MB 的噪音 diff
+*.tsbuildinfo
 
 # Gradle output (sdk/kotlin)
 .gradle/

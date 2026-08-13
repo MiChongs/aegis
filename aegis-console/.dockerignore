@@ -1,0 +1,26 @@
+# 构建根是 aegis-console/（与 Zeabur 上 aegis-console-git 的 RootDirectory 一致）。
+# 排除得越干净，每次构建送进 daemon 的上下文越小。
+
+# 依赖与产物：镜像里由 deps / build 两个阶段自己生成
+node_modules
+.next
+out
+.turbo
+*.tsbuildinfo
+
+# 密钥绝不能进构建上下文。
+# 这一条尤其要紧：.env.local 里放的是开发机指向的后端地址，
+# 一旦被带进构建上下文，next build 会把它烘进 routes-manifest.json 的 rewrites，
+# 镜像就会把线上流量反代到那个地址上（见 Dockerfile 里 AEGIS_API_BACKEND 一节）。
+.env
+.env.*
+!.env.example
+
+# 本文件与 Dockerfile 自身不影响产物，进上下文只会让层缓存白白失效
+Dockerfile
+.dockerignore
+
+# 文档与本地工具状态
+CLAUDE.md
+AGENTS.md
+.eslintcache

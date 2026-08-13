@@ -156,10 +156,26 @@ go test ./...
 ```bash
 cd aegis-console
 pnpm dev        # 开发服务器
-pnpm build      # 生产构建
-pnpm typecheck  # 类型检查
+pnpm build      # 生产构建 = tsc --noEmit && next build（类型检查已从 next build 内部前移）
+pnpm typecheck  # 类型检查（TS 7 原生编译器）
 pnpm lint       # ESLint
 ```
+
+### 容器构建
+
+```bash
+# 后端（BuildKit cache mount 持有 GOMODCACHE + GOCACHE，改一个包不再全量重编 1800+ 个）
+docker build -f deploy/docker/Dockerfile -t aegis-server .
+docker build -f deploy/docker/Dockerfile --build-arg WITH_CJK_FONTS=0 -t aegis-server .  # 不出中日韩凭证，镜像 370MB → 197MB
+
+# 前端（构建上下文是 aegis-console/，后端地址是构建期烘死的，必须传且必须是内网地址）
+docker build -f deploy/docker/console.Dockerfile \
+  --build-arg AEGIS_API_BACKEND=http://aegis-server:8088 \
+  -t aegis-console aegis-console
+```
+
+前端镜像的四条硬约束（漏一条都是「容器起得来但功能静默失准」）见
+[aegis-console/CLAUDE.md](aegis-console/CLAUDE.md#容器镜像deploydockerconsoledockerfile)。
 
 ## 必填环境变量
 

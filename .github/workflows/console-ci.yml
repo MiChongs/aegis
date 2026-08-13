@@ -1,0 +1,96 @@
+name: Console CI
+
+# 前端此前完全没有 CI：typecheck / lint / build 全靠人记得在本地跑一遍。
+# 而 `pnpm build` 已经不做内建类型检查了（改由 tsc --noEmit 前置，见 next.config.ts），
+# 少了这道工序就真的没有任何地方在检查类型。
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "aegis-console/**"
+      - ".github/workflows/console-ci.yml"
+  pull_request:
+    paths:
+      - "aegis-console/**"
+      - ".github/workflows/console-ci.yml"
+
+defaults:
+  run:
+    working-directory: aegis-console
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 下面「只 lint 改动文件」要跟基线求 diff，浅克隆取不到基线提交
+          fetch-depth: 0
+
+      # 不写版本号：pnpm/action-setup 读 package.json 的 packageManager 字段，
+      # 那里已经钉死了 11.21.0。在这里再写一遍就是第二处配置。
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: aegis-console/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # 与 aegis-console/Dockerfile 的 NODE_VERSION 保持一致
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: aegis-console/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Turbopack 的文件系统缓存。命不中也只是慢一点，不会错。
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: aegis-console/.next/cache
+          key: next-${{ hashFiles('aegis-console/pnpm-lock.yaml') }}-${{ hashFiles('aegis-console/src/**') }}
+          restore-keys: |
+            next-${{ hashFiles('aegis-console/pnpm-lock.yaml') }}-
+
+      # 与 build 里的那一步重复，是**故意**的：闸门不该依赖 build 脚本怎么写。
+      # 哪天有人把 `tsc --noEmit &&` 从 build 里删掉，这一步仍然拦得住。成本 2 秒。
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # 全量 lint 目前有 57 个既有错误（42 个已提交文件），一步到位地当闸门只会让
+      # CI 长期红着，然后所有人学会无视它。所以这里只卡**本次改动的文件**：
+      # 新代码进不来带病的，存量按自己的节奏清。
+      # 存量清干净之后，把这一步换成 `pnpm lint` 即可。
+      - name: Lint changed files
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          base="${BASE_SHA:-}"
+          # 首次推送新分支时 github.event.before 是全零，退回与上一个提交比
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base="$(git rev-parse HEAD~1 2>/dev/null || true)"
+          fi
+          if [ -z "$base" ]; then
+            echo "取不到 diff 基线，跳过按文件 lint"
+            exit 0
+          fi
+          # --relative：输出相对 aegis-console/ 的路径，正好是 eslint 要的形式
+          # --diff-filter=ACMR：排除删除的文件，否则 eslint 会对着不存在的路径报错
+          files="$(git diff --name-only --relative --diff-filter=ACMR "$base" HEAD -- '*.ts' '*.tsx' '*.mjs')"
+          if [ -z "$files" ]; then
+            echo "本次没有改动前端源码"
+            exit 0
+          fi
+          echo "$files"
+          # shellcheck disable=SC2086
+          pnpm exec eslint --no-warn-ignored $files
+
+      - name: Build
+        run: pnpm build
