@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Chat, useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
@@ -21,7 +21,7 @@ import {
   History,
   Loader2,
   Maximize2,
-  Minimize2,
+  PanelRight,
   Plus,
   SendHorizontal,
   Settings2,
@@ -66,14 +66,22 @@ import { formatTime } from "./function-shared";
  * 函数工作台的 AI 助手：一个真正会**动手**的 Agent，而不是聊天窗。
  *
  * 后端跑的是「模型 → 工具 → 模型」的循环（见 ai_agent_service.go）：
- * 它能读函数定义与版本、查能力目录与 SDK 类型、做静态检查、试跑（读真写假），
- * 并通过 stage_source 把完整脚本放进左侧编辑器 —— 这里收到那个工具的结果后
+ * 它能读函数定义与版本、查能力目录与 SDK 类型、做静态检查、试跑，
+ * 并通过 stage_source 把完整脚本放进编辑器 —— 这里收到那个工具的结果后
  * 直接调 onApplySource 落到草稿，作者看到的是「代码自己出现在编辑器里」。
  *
- * **两种视图，一份对话**：侧栏面板适合「边写边问」，全屏对话适合长回答与回放。
- * 消息与流式状态都在组件外的 Chat 实例上（useChat 只是订阅），因此全屏开关、
- * 面板折叠都不会打断正在进行的流；两个视图渲染的是同一份 messages。
+ * **两种形态，一份会话**：
+ * - full：近全屏对话页（左侧历史会话 + 居中消息流），适合长回答与回放；
+ * - dock：编辑器右侧停靠面板，适合边写边问。
+ *
+ * 形态由父级用三态 `AssistantView` 声明式切换（closed 时本组件不渲染）。
+ * 早先的实现用面板的命令式 expand() 展开停靠面板，而 v4 里 expand()
+ * 对「从未展开过的面板」是空操作 —— 入口点了没反应，全屏按钮又在面板里，
+ * 于是整个功能像不存在。声明式渲染没有这一层可失败的机器。
  */
+
+export type AssistantView = "closed" | "dock" | "full";
+export type AssistantMode = Exclude<AssistantView, "closed">;
 
 type AgentMetadata = {
   conversationId?: number;
@@ -82,20 +90,74 @@ type AgentMetadata = {
 
 type AgentUIMessage = UIMessage<AgentMetadata>;
 
+type AgentChatHandlers = {
+  prepare: PrepareSendMessagesRequest<AgentUIMessage>;
+  finish: ChatOnFinishCallback<AgentUIMessage>;
+  notice: ChatOnDataCallback<AgentUIMessage>;
+};
+
+/**
+ * 会话档案：Chat 实例 + 发送参数，按「应用 + 函数」缓存在模块级。
+ *
+ * 组件随视图切换、面板折叠、页签离开而反复卸载，但流式对话跑在 Chat
+ * 对象上，与 React 树无关 —— 缓存在这里，卸载不掐流、重挂载不丢消息。
+ * conversationId 等参数一并放进来：丢了它，下一句话会另起一个新会话。
+ */
+type AssistantSession = {
+  chat: Chat<AgentUIMessage>;
+  handlers: { current: AgentChatHandlers | null };
+  conversationId: number;
+  modelChoice: string;
+  disableWrites: boolean;
+  input: string;
+};
+
+const sessionStore = new Map<string, AssistantSession>();
+
+function getAssistantSession(appKey: string, functionName: string): AssistantSession {
+  const key = `${appKey}::${functionName}`;
+  let session = sessionStore.get(key);
+  if (!session) {
+    // 回调经由 handlers 间接转发：Chat 只建一次，而处理函数每次渲染都是新的。
+    const handlers: AssistantSession["handlers"] = { current: null };
+    session = {
+      chat: new Chat<AgentUIMessage>({
+        transport: new DefaultChatTransport<AgentUIMessage>({
+          api: joinApiUrl(aiAgentStreamPath(appKey)),
+          prepareSendMessagesRequest: (options) => {
+            const active = handlers.current;
+            if (!active) throw new Error("AI 助手尚未就绪");
+            return active.prepare(options);
+          }
+        }),
+        onFinish: (event) => handlers.current?.finish(event),
+        onData: (part) => handlers.current?.notice(part)
+      }),
+      handlers,
+      conversationId: 0,
+      modelChoice: "auto",
+      disableWrites: false,
+      input: ""
+    };
+    sessionStore.set(key, session);
+  }
+  return session;
+}
+
 /** 内置工具的界面名。不认识的键（MCP 工具）走 toolLabel 的兜底分支。 */
 const TOOL_LABELS: Record<string, string> = {
   list_functions: "列出函数",
   get_function: "读取函数定义",
   get_function_source: "读取脚本正文",
   list_versions: "查看版本历史",
-  get_capability_catalog: "查能力目录",
-  get_sdk_reference: "查 SDK 类型",
-  list_script_templates: "查脚本模板",
+  get_capability_catalog: "查询能力目录",
+  get_sdk_reference: "查询 SDK 类型",
+  list_script_templates: "查询脚本模板",
   analyze_draft: "静态检查",
   test_draft: "试跑脚本",
-  stage_source: "更新编辑器草稿",
-  get_invocations: "查调用审计",
-  get_invocation_stats: "查运行统计",
+  stage_source: "写入编辑器草稿",
+  get_invocations: "查询调用审计",
+  get_invocation_stats: "查询运行统计",
   browse_kv: "浏览 KV 存储",
   create_function: "创建函数",
   update_function_settings: "更新函数设置",
@@ -111,7 +173,7 @@ function toolLabel(name: string): string {
   return name;
 }
 
-const SUGGESTIONS = ["解释当前脚本在做什么", "静态检查并修复所有问题", "试跑一次并解决报错"];
+const SUGGESTIONS = ["解释当前脚本的逻辑", "静态检查并修复所有问题", "试跑一次并解决报错"];
 
 /** "auto" 或 `${configId}::${model}`。 */
 function parseModelChoice(choice: string): { configId: number; model: string } {
@@ -151,28 +213,6 @@ function toUIMessages(items: AIAgentMessage[]): AgentUIMessage[] {
   return out;
 }
 
-type AgentChatHandlers = {
-  prepare: PrepareSendMessagesRequest<AgentUIMessage>;
-  finish: ChatOnFinishCallback<AgentUIMessage>;
-  notice: ChatOnDataCallback<AgentUIMessage>;
-};
-
-/**
- * Chat 实例只建一次（重建等于把正在流式的对话掐断），回调经由 ref 转发到
- * 每次渲染都会刷新的处理函数上。工厂放在组件外：渲染期不允许读写 ref
- * （react-hooks/refs），而这里的 `.current` 只会在发消息/流结束时被碰到。
- */
-function createAgentChat(appKey: string, handlersRef: RefObject<AgentChatHandlers>) {
-  return new Chat<AgentUIMessage>({
-    transport: new DefaultChatTransport<AgentUIMessage>({
-      api: joinApiUrl(aiAgentStreamPath(appKey)),
-      prepareSendMessagesRequest: (options) => handlersRef.current.prepare(options)
-    }),
-    onFinish: (event) => handlersRef.current.finish(event),
-    onData: (part) => handlersRef.current.notice(part)
-  });
-}
-
 /** 从一条助手消息里找最后一次成功的 stage_source（回放「AI 写的最终版」用）。 */
 function findStagedSource(message: AgentUIMessage): { source: string; note?: string } | null {
   for (let i = message.parts.length - 1; i >= 0; i--) {
@@ -192,7 +232,8 @@ export function FunctionAIAssistant({
   functionName,
   draftSource,
   onApplySource,
-  onCollapse
+  mode,
+  onViewChange
 }: {
   appKey: string;
   functionName: string;
@@ -200,18 +241,40 @@ export function FunctionAIAssistant({
   draftSource: string;
   /** stage_source 的落点：把 AI 交付的完整脚本写进编辑器草稿。 */
   onApplySource: (source: string, note?: string) => void;
-  onCollapse: () => void;
+  mode: AssistantMode;
+  onViewChange: (view: AssistantView) => void;
 }) {
   const token = useAdminToken();
   const queryClient = useQueryClient();
+  const session = getAssistantSession(appKey, functionName);
+  // 会话档案是模块级共享状态（组件卸载后仍在），写入一律经 ref 走：
+  // 它不是渲染期局部值，React 的不可变约定不适用于它。
+  const sessionRef = useRef(session);
 
-  const [input, setInput] = useState("");
-  const [conversationId, setConversationId] = useState(0);
-  const [modelChoice, setModelChoice] = useState("auto");
-  const [disableWrites, setDisableWrites] = useState(false);
+  // 本地状态以会话档案为初值：视图切换（dock ⇄ full）会重挂载组件，
+  // 输入到一半的文字、选定的模型、进行中的会话号都不该因此清零。
+  const [input, setInputState] = useState(session.input);
+  const [conversationId, setConversationIdState] = useState(session.conversationId);
+  const [modelChoice, setModelChoiceState] = useState(session.modelChoice);
+  const [disableWrites, setDisableWritesState] = useState(session.disableWrites);
   const [loadingConversation, setLoadingConversation] = useState(false);
-  // 全屏对话：侧栏写代码时够用，长回答/回放历史时这块面板确实太挤。
-  const [expanded, setExpanded] = useState(false);
+
+  function setInput(value: string) {
+    sessionRef.current.input = value;
+    setInputState(value);
+  }
+  function setConversationId(value: number) {
+    sessionRef.current.conversationId = value;
+    setConversationIdState(value);
+  }
+  function setModelChoice(value: string) {
+    sessionRef.current.modelChoice = value;
+    setModelChoiceState(value);
+  }
+  function setDisableWrites(value: boolean) {
+    sessionRef.current.disableWrites = value;
+    setDisableWritesState(value);
+  }
 
   const channelQuery = useAIChannelQuery({ kind: "app", appKey });
   const channel = useMemo(() => channelQuery.data ?? [], [channelQuery.data]);
@@ -221,9 +284,9 @@ export function FunctionAIAssistant({
   const conversations = conversationsQuery.data ?? [];
   const deleteConversation = useDeleteAIConversationMutation(appKey);
 
-  // 发请求那一刻要读的全部现场。Chat 只建一次（重建等于把流重置），
-  // 回调经由 ref 读最新值 —— 否则闭包里永远是首渲染的草稿与会话号。
-  // ref 的同步放在渲染后的 effect 里（渲染期写 ref 是 react-hooks/refs 禁的）。
+  // 发请求那一刻要读的全部现场。回调挂在模块级 Chat 上、经由 ref 读最新值，
+  // 否则闭包里永远是首渲染的草稿与会话号。ref 的同步放在渲染后的 effect 里
+  // （渲染期写 ref 是 react-hooks/refs 禁止的）。
   const stateRef = useRef({ token, conversationId, draftSource, functionName, modelChoice, disableWrites });
   const applyRef = useRef(onApplySource);
 
@@ -254,11 +317,12 @@ export function FunctionAIAssistant({
 
   const finish: ChatOnFinishCallback<AgentUIMessage> = ({ message }) => {
     const meta = message.metadata;
-    if (meta?.conversationId && meta.conversationId !== stateRef.current.conversationId) {
+    if (meta?.conversationId && meta.conversationId !== session.conversationId) {
       setConversationId(meta.conversationId);
     }
     void queryClient.invalidateQueries({ queryKey: ["ai", "conversations", appKey] });
     // AI 交付脚本的唯一通道：最后一次成功的 stage_source 直接落进编辑器。
+    // 落点是全局的 zustand 草稿仓，因此即便助手已被关闭，脚本也照常写入。
     const staged = findStagedSource(message);
     if (staged) {
       applyRef.current(staged.source, staged.note);
@@ -270,28 +334,22 @@ export function FunctionAIAssistant({
     if (part.type !== "data-notice") return;
     const data = part.data as { kind?: string; server?: string; error?: string; messages?: number };
     if (data?.kind === "compacted") {
-      toast.info(`历史对话较长，已自动压缩 ${data.messages ?? "部分"} 条旧消息`);
+      toast.info(`会话较长，已自动压缩 ${data.messages ?? "部分"} 条早期消息`);
     } else if (data?.kind === "mcp-unreachable") {
-      toast.warning(`MCP 服务器「${data.server ?? "?"}」连接失败，本轮不带它的工具`, {
+      toast.warning(`MCP 服务器「${data.server ?? "?"}」连接失败，本轮已跳过其工具`, {
         description: data.error
       });
     }
   };
 
-  const handlersRef = useRef<AgentChatHandlers>({ prepare, finish, notice });
-
   useEffect(() => {
     stateRef.current = { token, conversationId, draftSource, functionName, modelChoice, disableWrites };
     applyRef.current = onApplySource;
-    handlersRef.current = { prepare, finish, notice };
+    session.handlers.current = { prepare, finish, notice };
   });
 
-  // 工厂只是把 ref 存进闭包，`.current` 要到发消息/流结束才被读 —— 不在渲染期。
-  // eslint-disable-next-line react-hooks/refs
-  const chat = useMemo(() => createAgentChat(appKey, handlersRef), [appKey]);
-
   const { messages, sendMessage, regenerate, stop, status, error, setMessages, clearError } =
-    useChat<AgentUIMessage>({ chat });
+    useChat<AgentUIMessage>({ chat: session.chat });
 
   const busy = status === "submitted" || status === "streaming";
 
@@ -354,104 +412,9 @@ export function FunctionAIAssistant({
   const modelHint =
     modelChoice === "auto"
       ? channel.length
-        ? `通道链路 · 首选 ${channel[0].configName}`
+        ? `自动 · 首选 ${channel[0].configName}`
         : ""
       : modelOptions.find((option) => option.value === modelChoice)?.label ?? "";
-
-  // 头部动作在两种视图里完全一致，只差「放大 / 还原」按钮的方向。
-  const headerActions = (dense: boolean) => (
-    <>
-      <DropdownMenu>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-xs" aria-label="历史会话">
-                <History className="size-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-          </TooltipTrigger>
-          <TooltipContent>历史会话</TooltipContent>
-        </Tooltip>
-        <DropdownMenuContent align="end" className="w-72">
-          <DropdownMenuLabel>历史会话</DropdownMenuLabel>
-          {conversations.length ? (
-            conversations.map((item) => (
-              <DropdownMenuItem
-                key={item.id}
-                className={cn("gap-2", item.id === conversationId && "bg-accent")}
-                onSelect={() => void openConversation(item.id)}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs">{item.title || `会话 #${item.id}`}</span>
-                  <span className="block text-[10px] text-muted-foreground">
-                    {formatTime(item.updatedAt)}
-                    {item.compactions > 0 ? ` · 压缩 ${item.compactions} 次` : ""}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  aria-label={`删除会话 ${item.title || item.id}`}
-                  className="rounded p-0.5 text-muted-foreground hover:text-destructive"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    void removeConversation(item.id);
-                  }}
-                >
-                  <Trash2 className="size-3" />
-                </button>
-              </DropdownMenuItem>
-            ))
-          ) : (
-            <div className="px-2 py-3 text-center text-[11px] text-muted-foreground">暂无历史会话</div>
-          )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={startNewConversation}>
-            <Plus className="size-3.5" />
-            新对话
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon-xs" onClick={startNewConversation} aria-label="新对话">
-            <Plus className="size-3.5" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>新对话</TooltipContent>
-      </Tooltip>
-      <SettingsPopover
-        modelChoice={modelChoice}
-        onModelChange={setModelChoice}
-        modelOptions={modelOptions}
-        disableWrites={disableWrites}
-        onDisableWritesChange={setDisableWrites}
-      />
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => setExpanded(!dense)}
-            aria-label={dense ? "全屏对话" : "退出全屏"}
-          >
-            {dense ? <Maximize2 className="size-3.5" /> : <Minimize2 className="size-3.5" />}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{dense ? "全屏对话" : "退出全屏"}</TooltipContent>
-      </Tooltip>
-      {dense ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-xs" onClick={onCollapse} aria-label="收起 AI 助手">
-              <X className="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>收起</TooltipContent>
-        </Tooltip>
-      ) : null}
-    </>
-  );
 
   const chatBody = (dense: boolean) => (
     <ChatBody
@@ -489,56 +452,260 @@ export function FunctionAIAssistant({
     />
   );
 
-  return (
-    <>
-      {/* ── 侧栏视图 ── */}
-      <div className="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/30 px-1.5">
-        <span className="flex items-center gap-1.5 px-1 text-xs font-medium">
-          <Bot className="size-3.5" />
-          AI 助手
-        </span>
-        {disableWrites ? (
-          <Badge variant="outline" size="sm" className="gap-1 font-normal text-muted-foreground">
-            <ShieldCheck className="size-3" />
-            只读
-          </Badge>
-        ) : null}
-        <div className="ml-auto flex items-center gap-0.5">{headerActions(true)}</div>
-      </div>
-      {chatBody(true)}
-      {composer(true)}
-
-      {/* ── 全屏视图：同一个 Chat 实例的另一个投影，开关不打断流 ── */}
-      <Dialog open={expanded} onOpenChange={setExpanded}>
-        <DialogContent
-          showCloseButton={false}
-          aria-describedby={undefined}
-          className="flex h-[88vh] w-[min(1080px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none"
-        >
-          <div className="flex h-12 shrink-0 items-center gap-2 border-b bg-muted/30 px-4">
-            <DialogTitle className="flex items-center gap-2 text-sm font-medium">
-              <Bot className="size-4" />
-              AI 助手
-              <span className="font-normal text-muted-foreground">· {functionName}</span>
-            </DialogTitle>
-            {disableWrites ? (
-              <Badge variant="outline" size="sm" className="gap-1 font-normal text-muted-foreground">
-                <ShieldCheck className="size-3" />
-                只读
-              </Badge>
-            ) : null}
-            <div className="ml-auto flex items-center gap-0.5">{headerActions(false)}</div>
+  // ── 停靠形态：编辑器右侧的紧凑面板 ──
+  if (mode === "dock") {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/30 px-1.5">
+          <span className="flex items-center gap-1.5 px-1 text-xs font-medium">
+            <Bot className="size-3.5" />
+            AI 助手
+          </span>
+          {disableWrites ? (
+            <Badge variant="outline" size="sm" className="gap-1 font-normal text-muted-foreground">
+              <ShieldCheck className="size-3" />
+              只读
+            </Badge>
+          ) : null}
+          <div className="ml-auto flex items-center gap-0.5">
+            <DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon-xs" aria-label="历史会话">
+                      <History className="size-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent>历史会话</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="end" className="w-72">
+                <DropdownMenuLabel>历史会话</DropdownMenuLabel>
+                {conversations.length ? (
+                  conversations.map((item) => (
+                    <DropdownMenuItem
+                      key={item.id}
+                      className={cn("gap-2", item.id === conversationId && "bg-accent")}
+                      onSelect={() => void openConversation(item.id)}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs">{item.title || `会话 #${item.id}`}</span>
+                        <span className="block text-[10px] text-muted-foreground">
+                          {formatTime(item.updatedAt)}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`删除会话 ${item.title || item.id}`}
+                        className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void removeConversation(item.id);
+                        }}
+                      >
+                        <Trash2 className="size-3" />
+                      </button>
+                    </DropdownMenuItem>
+                  ))
+                ) : (
+                  <div className="px-2 py-3 text-center text-[11px] text-muted-foreground">
+                    暂无历史会话
+                  </div>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={startNewConversation}>
+                  <Plus className="size-3.5" />
+                  新对话
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon-xs" onClick={startNewConversation} aria-label="新对话">
+                  <Plus className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>新对话</TooltipContent>
+            </Tooltip>
+            <SettingsPopover
+              modelChoice={modelChoice}
+              onModelChange={setModelChoice}
+              modelOptions={modelOptions}
+              disableWrites={disableWrites}
+              onDisableWritesChange={setDisableWrites}
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => onViewChange("full")}
+                  aria-label="全屏对话"
+                >
+                  <Maximize2 className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>全屏对话</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => onViewChange("closed")}
+                  aria-label="关闭 AI 助手"
+                >
+                  <X className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>关闭</TooltipContent>
+            </Tooltip>
           </div>
-          {chatBody(false)}
-          {composer(false)}
-        </DialogContent>
-      </Dialog>
-    </>
+        </div>
+        {chatBody(true)}
+        {composer(true)}
+      </div>
+    );
+  }
+
+  // ── 全屏形态：近全屏对话页，左侧历史会话、右侧消息流 ──
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onViewChange("closed");
+      }}
+    >
+      <DialogContent
+        showCloseButton={false}
+        aria-describedby={undefined}
+        className="flex h-[calc(100dvh-2.5rem)] w-[calc(100vw-2.5rem)] max-w-none flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-none"
+      >
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b bg-muted/30 px-4">
+          <DialogTitle className="flex min-w-0 items-center gap-2 text-sm font-medium">
+            <Bot className="size-4 shrink-0" />
+            AI 助手
+            <span className="truncate font-mono font-normal text-muted-foreground">{functionName}</span>
+          </DialogTitle>
+          {disableWrites ? (
+            <Badge variant="outline" size="sm" className="gap-1 font-normal text-muted-foreground">
+              <ShieldCheck className="size-3" />
+              只读
+            </Badge>
+          ) : null}
+          <div className="ml-auto flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={() => onViewChange("dock")}>
+              <PanelRight className="size-4" />
+              停靠到侧栏
+            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => onViewChange("closed")}
+                  aria-label="关闭 AI 助手"
+                >
+                  <X className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>关闭（Esc）</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+
+        <div className="flex min-h-0 flex-1">
+          <ConversationRail
+            conversations={conversations}
+            loading={conversationsQuery.isLoading}
+            activeId={conversationId}
+            onOpen={(id) => void openConversation(id)}
+            onDelete={(id) => void removeConversation(id)}
+            onNew={startNewConversation}
+          />
+          <div className="flex min-w-0 flex-1 flex-col">
+            {chatBody(false)}
+            {composer(false)}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** 全屏形态的左栏：新对话 + 历史会话列表。窄屏隐藏（历史仍可通过停靠形态访问）。 */
+function ConversationRail({
+  conversations,
+  loading,
+  activeId,
+  onOpen,
+  onDelete,
+  onNew
+}: {
+  conversations: { id: number; title: string; updatedAt: string }[];
+  loading: boolean;
+  activeId: number;
+  onOpen: (id: number) => void;
+  onDelete: (id: number) => void;
+  onNew: () => void;
+}) {
+  return (
+    <div className="hidden w-64 shrink-0 flex-col border-r bg-muted/20 md:flex">
+      <div className="shrink-0 p-2">
+        <Button variant="outline" size="sm" className="w-full justify-start" onClick={onNew}>
+          <Plus className="size-4" />
+          新对话
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        <p className="px-2 py-1 text-[11px] font-medium text-muted-foreground">历史会话</p>
+        {loading ? (
+          <p className="flex items-center gap-1.5 px-2 py-3 text-[11px] text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            加载中…
+          </p>
+        ) : conversations.length ? (
+          <div className="space-y-0.5">
+            {conversations.map((item) => (
+              <div
+                key={item.id}
+                className={cn(
+                  "group flex items-center rounded-md transition-colors",
+                  item.id === activeId ? "bg-muted" : "hover:bg-muted/60"
+                )}
+              >
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 px-2 py-1.5 text-left"
+                  onClick={() => onOpen(item.id)}
+                >
+                  <span className="block truncate text-xs">{item.title || `会话 #${item.id}`}</span>
+                  <span className="block text-[10px] text-muted-foreground">
+                    {formatTime(item.updatedAt)}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`删除会话 ${item.title || item.id}`}
+                  className="mr-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                  onClick={() => onDelete(item.id)}
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="px-2 py-3 text-[11px] text-muted-foreground">暂无历史会话</p>
+        )}
+      </div>
+    </div>
   );
 }
 
 /**
- * 消息区。面板与全屏各挂一个实例（消息数据同源），滚动状态各自独立：
+ * 消息区。停靠与全屏各挂一个实例（消息数据同源），滚动状态各自独立：
  * 流式期间贴底滚动；用户往上翻过就不再打扰（离底 96px 内算贴底）。
  */
 function ChatBody({
@@ -637,8 +804,8 @@ function ChatBody({
 }
 
 /**
- * 输入区。全屏视图把模型与只读开关放到明面上（侧栏里收在设置弹层，
- * 因为那点宽度只够给输入框）。
+ * 输入区。全屏形态把模型与只读开关放到明面上；停靠形态收进设置弹层，
+ * 宽度只留给输入框。
  */
 function Composer({
   dense,
@@ -679,16 +846,14 @@ function Composer({
           onSubmit();
         }
       }}
-      placeholder={
-        disabled
-          ? "请先配置 AI 通道"
-          : "描述需求：AI 会读代码、查文档、试跑，并把脚本直接写进编辑器（Enter 发送，Shift+Enter 换行）"
-      }
+      placeholder={disabled ? "请先配置 AI 服务" : "描述需求，Enter 发送，Shift + Enter 换行"}
       disabled={disabled}
       autoFocus={!dense}
       className={cn(
         "resize-none",
-        dense ? "max-h-36 min-h-16 text-xs" : "max-h-56 min-h-24 border-0 p-0 text-sm shadow-none focus-visible:ring-0"
+        dense
+          ? "max-h-36 min-h-16 text-xs"
+          : "max-h-56 min-h-24 border-0 p-0 text-sm shadow-none focus-visible:ring-0"
       )}
     />
   );
@@ -723,11 +888,14 @@ function Composer({
         {textarea}
         <div className="mt-2 flex items-center gap-2">
           <Select value={modelChoice} onValueChange={onModelChange}>
-            <SelectTrigger size="sm" className="h-7 w-auto max-w-64 gap-1 border-0 bg-muted/50 px-2 text-xs shadow-none">
+            <SelectTrigger
+              size="sm"
+              className="h-7 w-auto max-w-64 gap-1 border-0 bg-muted/50 px-2 text-xs shadow-none"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">自动（按通道链路）</SelectItem>
+              <SelectItem value="auto">自动选择模型</SelectItem>
               {modelOptions.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
@@ -748,7 +916,7 @@ function Composer({
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              只读模式{disableWrites ? "（已开）" : ""}：关闭建函数、改设置、发版这类写操作
+              只读模式{disableWrites ? "（已开启）" : ""}：AI 不执行创建、修改设置、发布等写操作
             </TooltipContent>
           </Tooltip>
           <div className="ml-auto">{sendOrStop}</div>
@@ -758,7 +926,7 @@ function Composer({
   );
 }
 
-/** 模型与安全档位。侧栏视图的入口：那点宽度放不下明面控件。 */
+/** 模型与权限设置。停靠形态的入口：面板宽度放不下明面控件。 */
 function SettingsPopover({
   modelChoice,
   onModelChange,
@@ -792,7 +960,7 @@ function SettingsPopover({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">自动（按通道链路）</SelectItem>
+              <SelectItem value="auto">自动选择模型</SelectItem>
               {modelOptions.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
@@ -801,14 +969,14 @@ function SettingsPopover({
             </SelectContent>
           </Select>
           <p className="text-[11px] text-muted-foreground">
-            「自动」按应用的通道链路取首个可用通道；也可钉死某个通道与型号。
+            自动模式按通道顺序选用首个可用配置，也可固定使用指定模型。
           </p>
         </div>
         <label className="flex items-center justify-between gap-2 rounded-lg border p-2 text-xs">
           <span>
             只读模式
             <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">
-              关闭建函数、改设置、发版这类写操作；AI 仍可读取、检查、试跑与写草稿。
+              开启后 AI 不执行创建函数、修改设置、发布版本等写操作，仍可读取、检查与试跑。
             </span>
           </span>
           <Switch checked={disableWrites} onCheckedChange={onDisableWritesChange} />
@@ -828,13 +996,22 @@ function WelcomeHint({
   disabled: boolean;
 }) {
   return (
-    <div className={cn("flex flex-col items-center justify-center gap-3 text-center", dense ? "h-full p-4" : "py-20")}>
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center gap-3 text-center",
+        dense ? "h-full p-4" : "py-20"
+      )}
+    >
       <Bot className={cn("text-muted-foreground/40", dense ? "size-8" : "size-10")} />
       <div className="space-y-1">
-        <p className={cn("font-medium", dense ? "text-xs" : "text-sm")}>让 AI 帮你写这个函数</p>
-        <p className={cn("leading-relaxed text-muted-foreground", dense ? "text-[11px]" : "max-w-md text-xs")}>
-          它能读函数定义与历史版本、查能力目录、做静态检查、试跑验证，
-          并把完整脚本直接写进左侧编辑器草稿。
+        <p className={cn("font-medium", dense ? "text-xs" : "text-sm")}>AI 编程助手</p>
+        <p
+          className={cn(
+            "leading-relaxed text-muted-foreground",
+            dense ? "text-[11px]" : "max-w-md text-xs"
+          )}
+        >
+          描述需求，AI 将读取函数上下文、执行静态检查与试跑，并把脚本直接写入编辑器。
         </p>
       </div>
       <div className="flex flex-wrap justify-center gap-1.5">
@@ -859,13 +1036,13 @@ function EmptyChannelHint({ appKey }: { appKey: string }) {
     <div className="flex h-full flex-col items-center justify-center gap-3 p-4 py-16 text-center">
       <Bot className="size-8 text-muted-foreground/40" />
       <div className="space-y-1">
-        <p className="text-xs font-medium">尚未配置 AI 通道</p>
+        <p className="text-xs font-medium">尚未配置 AI 服务</p>
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          在应用的「AI 服务」里添加供应商配置（或由平台在系统配置中共享通道）后，这里即可使用。
+          请在应用的「AI 服务」中添加模型配置，或由平台管理员配置共享通道。
         </p>
       </div>
       <Button asChild size="xs" variant="outline">
-        <Link href={`/apps/${encodeURIComponent(appKey)}?tab=ai`}>去配置</Link>
+        <Link href={`/apps/${encodeURIComponent(appKey)}?tab=ai`}>前往配置</Link>
       </Button>
     </div>
   );
@@ -928,13 +1105,13 @@ function MessageRow({
       })}
       {usage && usage.totalTokens > 0 ? (
         <p className="text-[10px] text-muted-foreground">
-          tokens：输入 {usage.inputTokens} · 输出 {usage.outputTokens}
+          Token 用量：输入 {usage.inputTokens} · 输出 {usage.outputTokens}
         </p>
       ) : null}
     </div>
   );
 
-  // 全屏视图有富余宽度，给助手消息配一个头像列，长对话里角色一眼可辨。
+  // 全屏形态有富余宽度，给助手消息配一个头像列，长对话里角色一眼可辨。
   if (dense) return body;
   return (
     <div className="flex gap-3">
@@ -968,7 +1145,7 @@ function ReasoningView({ text, streaming }: { text: string; streaming: boolean }
   );
 }
 
-/** 工具结果里可能是长 JSON，展示前统一 stringify + 截断，别把消息区撑爆。 */
+/** 工具结果里可能是长 JSON，展示前统一 stringify + 截断，避免把消息区撑开。 */
 function JsonBlock({ title, value }: { title: string; value: unknown }) {
   const text = useMemo(() => {
     if (value === undefined) return "";
@@ -1019,7 +1196,7 @@ function ToolPartView({
             <FileCode2 className="size-3.5 shrink-0 text-primary" />
           )}
           <span className="font-medium">
-            {running ? "正在编写脚本…" : failed ? "写入草稿失败" : "已更新编辑器草稿"}
+            {running ? "正在编写脚本…" : failed ? "写入草稿失败" : "已写入编辑器草稿"}
           </span>
           {!running && !failed && source ? (
             <Button
@@ -1068,7 +1245,9 @@ function ToolPartView({
           {part.input !== undefined ? <JsonBlock title="入参" value={part.input} /> : null}
           {part.state === "output-available" ? <JsonBlock title="结果" value={part.output} /> : null}
           {failed && part.errorText ? (
-            <p className="whitespace-pre-wrap break-words text-[11px] text-destructive">{part.errorText}</p>
+            <p className="whitespace-pre-wrap break-words text-[11px] text-destructive">
+              {part.errorText}
+            </p>
           ) : null}
         </div>
       </CollapsibleContent>

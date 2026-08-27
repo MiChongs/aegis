@@ -106,7 +106,7 @@ export function CreateFunctionDialog({
             </div>
 
             <div className="space-y-2">
-              <Label>Runtime</Label>
+              <Label>运行时</Label>
               <Select value={runtime} onValueChange={(value) => setRuntime(value as AppFunctionRuntime)}>
                 <SelectTrigger>
                   <SelectValue />
@@ -151,7 +151,7 @@ export function CreateFunctionDialog({
 
             {runtime === "script" ? (
               <div className="space-y-2">
-                <Label>Capabilities</Label>
+                <Label>能力声明</Label>
                 <CapabilityPicker
                   catalog={capabilityCatalog}
                   selected={capabilities}

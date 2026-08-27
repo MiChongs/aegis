@@ -49,9 +49,22 @@ import { getAppFunctionVersion } from "@/lib/api/app-functions";
 import { useAdminToken } from "@/lib/admin-hooks";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useFunctionWorkbenchStore, type ScriptTestCase } from "@/lib/function-workbench-store";
-import { FunctionAIAssistant } from "@/components/functions/function-ai-assistant";
+import {
+  FunctionAIAssistant,
+  type AssistantView
+} from "@/components/functions/function-ai-assistant";
 import { JsonEditor } from "@/components/functions/json-editor";
 import { ScriptEditor } from "@/components/functions/script-editor";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -174,18 +187,21 @@ export function FunctionEditorPanel({
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 
-  // 三个 dock 的折叠态各自记一份布尔位：按钮图标要跟着变，
+  // 两个 dock 的折叠态各自记一份布尔位：按钮图标要跟着变，
   // 而库只在 ref 上提供 isCollapsed()，读它不会触发重渲染。
   const dockRef = usePanelRef();
   const runnerRef = usePanelRef();
-  const assistantRef = usePanelRef();
   const [dockOpen, setDockOpen] = useState(true);
   const [runnerOpen, setRunnerOpen] = useState(true);
-  const [assistantOpen, setAssistantOpen] = useState(false);
+  // AI 助手是三态：关闭 / 停靠右侧 / 全屏对话。停靠面板按需条件渲染，
+  // 不走命令式 expand() —— v4 里 expand() 对从未展开过的面板是空操作，
+  // 「按钮点了没反应」的旧病根就在那条链路上。
+  const [assistantView, setAssistantView] = useState<AssistantView>("closed");
 
-  // 布局键带 -v2：面板从两格变三格，旧存档的比例数组对不上新形状。
+  // 布局键带 -v3：助手面板改为条件渲染后，旧存档里「助手 0 宽」的比例
+  // 会让新面板一挂载就不可见。
   const shellLayout = usePanelLayout({
-    id: "aegis-function-script-shell-v2",
+    id: "aegis-function-script-shell-v3",
     panelIds: ["workspace", "runner", "assistant"]
   });
   const workspaceLayout = usePanelLayout({
@@ -309,20 +325,6 @@ export function FunctionEditorPanel({
     editorRef.current?.focus();
   }
 
-  /** AI 助手默认收起（defaultSize 0），首次展开时 expand() 无「最近尺寸」可回，兜底给 32%。 */
-  function toggleAssistant() {
-    const handle = assistantRef.current;
-    if (!handle) return;
-    if (handle.isCollapsed()) {
-      handle.expand();
-      if (handle.isCollapsed()) handle.resize("32");
-      setAssistantOpen(true);
-    } else {
-      handle.collapse();
-      setAssistantOpen(false);
-    }
-  }
-
   /** 跳到某个问题：顺手把底部 dock 切到「问题」并展开 */
   function revealDiagnostic(line: number) {
     setDockTab("problems");
@@ -399,11 +401,12 @@ export function FunctionEditorPanel({
         ) : null}
 
         <div className="ml-auto flex items-center gap-1">
+          {/* 打开即全屏对话页；停靠形态由全屏页内的「停靠到侧栏」进入 */}
           <Button
-            variant={assistantOpen ? "secondary" : "ghost"}
+            variant={assistantView !== "closed" ? "secondary" : "ghost"}
             size="sm"
-            onClick={toggleAssistant}
-            aria-pressed={assistantOpen}
+            onClick={() => setAssistantView(assistantView === "closed" ? "full" : "closed")}
+            aria-pressed={assistantView !== "closed"}
           >
             <Bot className="size-4" />
             AI 助手
@@ -587,33 +590,42 @@ export function FunctionEditorPanel({
           </ResizableGroup>
         </ResizablePanel>
 
-        <ResizableHandle />
-
-        {/* AI 助手常驻挂载、默认收起：收起时流式对话仍在后台继续，
-            卸载它等于把正在跑的 Agent 一并掐死。 */}
-        <ResizablePanel
-          id="assistant"
-          className="flex flex-col"
-          defaultSize="0"
-          minSize="20"
-          maxSize="60"
-          collapsible
-          collapsedSize={0}
-          panelRef={assistantRef}
-          onResize={(size) => setAssistantOpen(size.inPixels > 1)}
-        >
-          <FunctionAIAssistant
-            appKey={appKey}
-            functionName={selected.name}
-            draftSource={source}
-            onApplySource={(next) => {
-              saveDraft(scope, next);
-              setDiffAgainst(null);
-            }}
-            onCollapse={() => collapse(assistantRef, setAssistantOpen)}
-          />
-        </ResizablePanel>
+        {/* 停靠形态按需渲染。会话（含流式中的回复）缓存在组件外，
+            关闭或切换形态都不会打断，见 function-ai-assistant.tsx。 */}
+        {assistantView === "dock" ? (
+          <>
+            <ResizableHandle />
+            <ResizablePanel id="assistant" className="flex flex-col" defaultSize="34" minSize="24" maxSize="60">
+              <FunctionAIAssistant
+                appKey={appKey}
+                functionName={selected.name}
+                draftSource={source}
+                onApplySource={(next) => {
+                  saveDraft(scope, next);
+                  setDiffAgainst(null);
+                }}
+                mode="dock"
+                onViewChange={setAssistantView}
+              />
+            </ResizablePanel>
+          </>
+        ) : null}
       </ResizableGroup>
+
+      {/* 全屏对话页：与停靠形态共享同一份会话档案，切换无缝 */}
+      {assistantView === "full" ? (
+        <FunctionAIAssistant
+          appKey={appKey}
+          functionName={selected.name}
+          draftSource={source}
+          onApplySource={(next) => {
+            saveDraft(scope, next);
+            setDiffAgainst(null);
+          }}
+          mode="full"
+          onViewChange={setAssistantView}
+        />
+      ) : null}
 
       {/* ── 状态栏 ── */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-0.5 border-t px-2.5 py-1 text-[11px] text-muted-foreground">
@@ -626,7 +638,7 @@ export function FunctionEditorPanel({
         </span>
         {catalog ? (
           <span className="hidden lg:inline">
-            单次额度 SDK {catalog.limits.maxSdkCalls} / 写 {catalog.limits.maxSdkMutations} / 出站{" "}
+            单次调用上限 SDK {catalog.limits.maxSdkCalls} · 写 {catalog.limits.maxSdkMutations} · 出站{" "}
             {catalog.limits.maxSdkFetches}
           </span>
         ) : null}
@@ -799,13 +811,12 @@ function HelpPopover() {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 space-y-2 text-xs">
         <p>
-          脚本正文仅保存在服务端，不会下发给接入方。编辑器已按当前能力载入 SDK 类型：
-          输入 <code className="font-mono">aegis.</code> 查看可用成员，输入{" "}
+          脚本仅存储于服务端，不会下发给接入方。编辑器内输入{" "}
+          <code className="font-mono">aegis.</code> 查看可用 SDK，输入{" "}
           <code className="font-mono">aegis-</code> 插入代码片段。
         </p>
         <p className="text-muted-foreground">
-          试跑<strong>读真写假</strong>：读取真实数据，写操作仅记录不执行；
-          不创建版本，不计入调用审计。
+          试跑读取真实数据，写操作仅记录、不执行；不产生版本，不计入调用审计。
         </p>
         <p className="text-muted-foreground">
           <Kbd>⌘/Ctrl</Kbd> <Kbd>↵</Kbd> 试跑 · <Kbd>⌘/Ctrl</Kbd> <Kbd>S</Kbd> 发布 ·
@@ -1218,7 +1229,7 @@ function TestRunnerPane({
               <TooltipContent className="max-w-72">
                 {hasSchema
                   ? "已配置入参契约，提供键名补全、枚举取值与必填校验"
-                  : "未配置入参契约。在「设置 → 入参契约」中配置后，此处将提供补全与校验，编辑器内 ctx.input 同步获得字段类型"}
+                  : "未配置入参契约。在「设置 → 入参契约」配置后，此处提供补全与校验"}
               </TooltipContent>
             </Tooltip>
             {inputSample ? (
@@ -1344,7 +1355,7 @@ function TestRunnerPane({
 
         {blocking > 0 ? (
           <p className="shrink-0 text-[11px] text-amber-600 dark:text-amber-400">
-            静态检查存在 {blocking} 个错误：不影响试跑，发布将被拒绝。
+            检查发现 {blocking} 个错误：不影响试跑，修复后方可发布。
           </p>
         ) : null}
       </div>
@@ -1574,7 +1585,7 @@ function PublishDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>发版说明</Label>
+            <Label>版本说明</Label>
             <Textarea
               className="min-h-20 text-xs"
               value={notes}
@@ -1643,6 +1654,12 @@ type FunctionVersion = {
   createdAt: string;
 };
 
+const VERSION_STATUS_LABEL: Record<string, string> = {
+  active: "已激活",
+  staged: "待激活",
+  retired: "已下线"
+};
+
 function VersionTable({
   versions,
   loading,
@@ -1662,7 +1679,10 @@ function VersionTable({
   onActivate: (version: string) => void;
   onDelete: (version: string) => void;
 }) {
+  // 删除版本不可恢复，必须先确认 —— 图标按钮离「激活」只有一格，误触成本太高。
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   return (
+    <>
     <Table className="text-xs">
       <TableHeader>
         <TableRow>
@@ -1680,7 +1700,7 @@ function VersionTable({
             <TableCell className="py-1.5 font-mono">{version.version}</TableCell>
             <TableCell className="py-1.5">
               <Badge variant={version.status === "active" ? "success" : "outline"} size="sm">
-                {version.status}
+                {VERSION_STATUS_LABEL[version.status] ?? version.status}
               </Badge>
             </TableCell>
             <TableCell className="max-w-60 truncate py-1.5 text-muted-foreground">
@@ -1739,7 +1759,7 @@ function VersionTable({
                       variant="ghost"
                       title="删除此版本"
                       aria-label={`删除版本 ${version.version}`}
-                      onClick={() => onDelete(version.version)}
+                      onClick={() => setPendingDelete(version.version)}
                     >
                       <Trash2 className="size-3.5 text-destructive" />
                     </Button>
@@ -1758,6 +1778,35 @@ function VersionTable({
         ) : null}
       </TableBody>
     </Table>
+
+    <AlertDialog
+      open={pendingDelete != null}
+      onOpenChange={(open) => {
+        if (!open) setPendingDelete(null);
+      }}
+    >
+      <AlertDialogContent size="sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle>删除版本 {pendingDelete}</AlertDialogTitle>
+          <AlertDialogDescription>
+            版本删除后不可恢复，当前激活版本不受影响。
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => {
+              if (pendingDelete) onDelete(pendingDelete);
+              setPendingDelete(null);
+            }}
+          >
+            删除
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
 

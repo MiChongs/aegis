@@ -55,7 +55,7 @@ export function FunctionOverviewPanel({
             该函数<strong>当前不可被调用</strong>：
             {!selected.activeVersion
               ? "尚未激活版本，请在「脚本」页发布并激活。"
-              : `当前状态为 ${selected.status}，请在「设置」页改为 active。`}
+              : "函数未启用，请在「设置」页将状态改为「已启用」。"}
           </span>
         </div>
       ) : null}

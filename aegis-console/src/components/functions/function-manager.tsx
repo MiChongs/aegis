@@ -43,7 +43,7 @@ const STATUS_VARIANT: Record<AppFunction["status"], "success" | "warning" | "out
 };
 
 const STATUS_LABEL: Record<AppFunction["status"], string> = {
-  active: "已激活",
+  active: "已启用",
   draft: "草稿",
   disabled: "已停用"
 };
@@ -358,7 +358,7 @@ function NotCallableBadge({
       <TooltipContent>
         {!selected.activeVersion
           ? "尚未激活版本，发布并激活后方可调用"
-          : `当前状态为 ${selected.status}，请在「设置」中改为 active`}
+          : "函数未启用，请在「设置」中将状态改为「已启用」"}
       </TooltipContent>
     </Tooltip>
   );

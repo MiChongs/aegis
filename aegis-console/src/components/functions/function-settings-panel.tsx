@@ -184,14 +184,14 @@ export function FunctionSettingsPanel({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="draft">draft（未发布）</SelectItem>
-                <SelectItem value="active">active（可被调用）</SelectItem>
-                <SelectItem value="disabled">disabled（停用）</SelectItem>
+                <SelectItem value="draft">草稿 · 不可被调用</SelectItem>
+                <SelectItem value="active">已启用 · 可被调用</SelectItem>
+                <SelectItem value="disabled">已停用 · 拒绝调用</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Runtime</Label>
+            <Label>运行时</Label>
             <Input value={selected.runtime} readOnly className="font-mono" />
             <p className="text-[11px] text-muted-foreground">
               运行时决定版本产物形态，创建后不可更改。
@@ -203,7 +203,7 @@ export function FunctionSettingsPanel({
       {selected.runtime === "script" ? (
         <Card>
           <CardHeader>
-            <CardTitle>Capabilities</CardTitle>
+            <CardTitle>能力声明</CardTitle>
             <CardDescription>
               保存后对下一次调用立即生效，无需重新发布版本。移除能力前请确认脚本已不再使用，否则调用将报错。
             </CardDescription>
@@ -351,7 +351,7 @@ export function FunctionSettingsPanel({
         <CardHeader>
           <CardTitle className="text-destructive">删除函数</CardTitle>
           <CardDescription>
-            删除后全部版本与调用审计一并移除，不可恢复。如需临时停用，请将状态改为 disabled。
+            删除后全部版本与调用审计一并移除，不可恢复。如需临时停用，请将状态改为「已停用」。
           </CardDescription>
         </CardHeader>
         <CardContent>
