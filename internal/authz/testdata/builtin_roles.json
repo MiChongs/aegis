@@ -125,6 +125,8 @@
     "workflow:read"
   ],
   "platform_admin": [
+    "ai:read",
+    "ai:write",
     "app:notification:read",
     "app:notification:write",
     "app:read",

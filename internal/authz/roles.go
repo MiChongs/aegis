@@ -65,6 +65,7 @@ func BuiltinRoles() map[string]admindomain.RoleDefinition {
 				"role_application:*",
 				"points:*",
 				"email:*",
+				"ai:*",
 				"payment:*",
 				"ticket:*",
 				PermNotifyChannelRead, PermNotifyDeliveryRead,

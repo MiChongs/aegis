@@ -6803,5 +6803,221 @@
     "path": "/api/admin/system/email/stats",
     "permission": "email:read",
     "appScoped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/ai/providers",
+    "permission": "",
+    "appScoped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/ai/configs",
+    "permission": "ai:read",
+    "appScoped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/ai/configs",
+    "permission": "ai:write",
+    "appScoped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/system/ai/configs/:configId",
+    "permission": "ai:write",
+    "appScoped": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/system/ai/configs/:configId",
+    "permission": "ai:write",
+    "appScoped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/ai/configs/:configId/test",
+    "permission": "ai:write",
+    "appScoped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/ai/channel",
+    "permission": "ai:read",
+    "appScoped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/ai/skills",
+    "permission": "ai:read",
+    "appScoped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/ai/skills",
+    "permission": "ai:write",
+    "appScoped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/system/ai/skills/:skillId",
+    "permission": "ai:write",
+    "appScoped": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/system/ai/skills/:skillId",
+    "permission": "ai:write",
+    "appScoped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/ai/mcp-servers",
+    "permission": "ai:read",
+    "appScoped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/ai/mcp-servers",
+    "permission": "ai:write",
+    "appScoped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/system/ai/mcp-servers/:serverId",
+    "permission": "ai:write",
+    "appScoped": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/system/ai/mcp-servers/:serverId",
+    "permission": "ai:write",
+    "appScoped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/ai/mcp-servers/:serverId/test",
+    "permission": "ai:write",
+    "appScoped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/ai/providers",
+    "permission": "app:read",
+    "appScoped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/ai/configs",
+    "permission": "app:read",
+    "appScoped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/ai/configs",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/apps/:appkey/ai/configs/:configId",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/apps/:appkey/ai/configs/:configId",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/ai/configs/:configId/test",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/ai/channel",
+    "permission": "app:read",
+    "appScoped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/ai/skills",
+    "permission": "app:read",
+    "appScoped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/ai/skills",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/apps/:appkey/ai/skills/:skillId",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/apps/:appkey/ai/skills/:skillId",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/ai/mcp-servers",
+    "permission": "app:read",
+    "appScoped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/ai/mcp-servers",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/apps/:appkey/ai/mcp-servers/:serverId",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/apps/:appkey/ai/mcp-servers/:serverId",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/ai/mcp-servers/:serverId/test",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/ai/agent/stream",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/ai/conversations",
+    "permission": "app:read",
+    "appScoped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/ai/conversations/:conversationId",
+    "permission": "app:read",
+    "appScoped": true
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/apps/:appkey/ai/conversations/:conversationId",
+    "permission": "app:write",
+    "appScoped": true
   }
 ]

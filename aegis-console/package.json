@@ -19,6 +19,7 @@
     "typecheck:ts6": "tsc6 --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/react": "^4.0.85",
     "@deck.gl/aggregation-layers": "^9.3.9",
     "@deck.gl/core": "^9.3.9",
     "@deck.gl/layers": "^9.3.9",
@@ -39,6 +40,7 @@
     "@tiptap/starter-kit": "^3.29.2",
     "@turf/turf": "^7.4.0",
     "@xyflow/react": "^12.11.2",
+    "ai": "^7.0.82",
     "autoprefixer": "^10.5.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -72,6 +74,7 @@
     "react-dropzone": "^20.1.0",
     "react-error-boundary": "^6.1.2",
     "react-fast-marquee": "^1.6.5",
+    "react-resizable-panels": "^4.12.2",
     "recharts": "^3.10.1",
     "screenfull": "^6.0.2",
     "simple-icons": "^16.28.0",

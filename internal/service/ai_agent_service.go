@@ -1,0 +1,845 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	aidomain "aegis/internal/domain/ai"
+	pgrepo "aegis/internal/repository/postgres"
+	apperrors "aegis/pkg/errors"
+
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+)
+
+// AIAgentService Agent 会话的编排层：装配上下文（系统提示词、技能、历史、草稿）、
+// 跑「模型 → 工具 → 模型」的循环、把增量翻成 AI SDK 的界面消息流、落库、自动压缩。
+//
+// 分层约定：
+//   - 通道选择与调用在 AIProviderService（这里从不碰密钥）；
+//   - 工具的具体实现在 ai_agent_tools.go（这里只负责调度与截断）；
+//   - 消息以**界面分片**格式落库（agentUIPart），喂模型前才翻译成 ChatMessage ——
+//     界面回放要的是逐条的工具输入输出，模型格式在供应商之间转手会丢字段。
+type AIAgentService struct {
+	log       *zap.Logger
+	pg        *pgrepo.Repository
+	providers *AIProviderService
+	functions *AppFunctionService
+}
+
+func NewAIAgentService(log *zap.Logger, pg *pgrepo.Repository,
+	providers *AIProviderService, functions *AppFunctionService) *AIAgentService {
+	return &AIAgentService{log: log, pg: pg, providers: providers, functions: functions}
+}
+
+const (
+	// aiAgentMaxSteps 单轮请求里模型最多迭代多少步（每步一次 LLM 调用）。
+	aiAgentMaxSteps = 24
+	// aiAgentMaxTokens 单步输出上限。
+	aiAgentMaxTokens = 8192
+	// aiAgentToolTimeout 单个工具执行的时间上限（test_draft 之类的要留够）。
+	aiAgentToolTimeout = 120 * time.Second
+	// aiAgentMCPConnectTimeout 起跑时对每台 MCP 服务器 tools/list 的时间上限。
+	aiAgentMCPConnectTimeout = 10 * time.Second
+	// aiAgentDefaultContextChars 上下文字符预算的缺省值（约合 5 万～8 万 token）。
+	// 供应商配置里的 maxContextChars 可覆盖。超过即触发自动压缩。
+	aiAgentDefaultContextChars = 200_000
+	// aiAgentKeepRecent 压缩时保留在上下文里的最近消息条数（界面消息，不是模型消息）。
+	aiAgentKeepRecent = 6
+	// aiAgentDraftLimit 注入系统提示词的草稿截断长度。更长的部分模型可用工具读。
+	aiAgentDraftLimit = 32 << 10
+	// aiAgentTitleLimit 自动生成的会话标题长度。
+	aiAgentTitleLimit = 60
+)
+
+// AIAgentRunInput 一轮 Agent 请求。
+type AIAgentRunInput struct {
+	AppID   int64
+	AdminID int64
+	// ConversationID 为 0 时新建会话。
+	ConversationID int64
+	Scene          string
+	// Ref 场景锚点：function 场景下是函数名（新建函数的会话可为空）。
+	Ref string
+	// UserText 用户这轮说的话。
+	UserText string
+	// DraftSource 编辑器当前草稿，注入系统提示词并作为工具的缺省正文。
+	DraftSource string
+	// ConfigID 钉死某条通道（0 = 走链路回退）。Model 同理可空。
+	ConfigID int64
+	Model    string
+	// SkillKeys 本轮注入的技能；nil = 全部已启用技能。
+	SkillKeys []string
+	// DisableWrites 关掉所有落库的写工具（建函数/改设置/发版）。
+	DisableWrites bool
+}
+
+// aiAgentEmit 界面消息流的发射器：收到的是一个个 AI SDK UI chunk（可 JSON 序列化）。
+type aiAgentEmit func(chunk any) error
+
+// ── 会话管理面 ──
+
+func (s *AIAgentService) ListConversations(ctx context.Context, query aidomain.ConversationQuery) ([]aidomain.Conversation, error) {
+	return s.pg.ListAIConversations(ctx, query)
+}
+
+// ConversationMessages 界面回放：全量消息（含被压缩水位线盖过的旧消息）。
+func (s *AIAgentService) ConversationMessages(ctx context.Context, appID, adminID, id int64) (*aidomain.Conversation, []aidomain.AgentMessage, error) {
+	conversation, err := s.ownedConversation(ctx, appID, adminID, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	messages, err := s.pg.ListAIMessages(ctx, id, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conversation, messages, nil
+}
+
+func (s *AIAgentService) DeleteConversation(ctx context.Context, appID, adminID, id int64) error {
+	if _, err := s.ownedConversation(ctx, appID, adminID, id); err != nil {
+		return err
+	}
+	deleted, err := s.pg.DeleteAIConversation(ctx, appID, id)
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return apperrors.New(40517, http.StatusNotFound, "会话不存在")
+	}
+	return nil
+}
+
+// ownedConversation 会话是管理员私有的：查、删、续聊都必须是本人。
+func (s *AIAgentService) ownedConversation(ctx context.Context, appID, adminID, id int64) (*aidomain.Conversation, error) {
+	conversation, err := s.pg.GetAIConversation(ctx, appID, id)
+	if err != nil {
+		return nil, err
+	}
+	if conversation == nil || conversation.AdminID != adminID {
+		return nil, apperrors.New(40517, http.StatusNotFound, "会话不存在")
+	}
+	return conversation, nil
+}
+
+// ── Agent 主循环 ──
+
+// Run 跑一轮完整的 Agent 请求，全程通过 emit 下发 AI SDK 界面消息流。
+//
+// 返回的 error 只代表「流没能正常走完」——上游错误已经作为 error chunk
+// 发给了界面，调用方（HTTP 层）只需要记日志、补一个 [DONE]。
+func (s *AIAgentService) Run(ctx context.Context, input AIAgentRunInput, emit aiAgentEmit) error {
+	if strings.TrimSpace(input.UserText) == "" {
+		return apperrors.New(40518, http.StatusBadRequest, "消息不能为空")
+	}
+	if input.Scene == "" {
+		input.Scene = aidomain.SceneFunction
+	}
+
+	// 1. 找到或建出会话。
+	conversation, err := s.ensureConversation(ctx, input)
+	if err != nil {
+		return err
+	}
+	// 会话记住的通道与型号是缺省值，本轮显式指定的优先。
+	if input.ConfigID == 0 {
+		input.ConfigID = conversation.ProviderConfigID
+	}
+	if strings.TrimSpace(input.Model) == "" {
+		input.Model = conversation.Model
+	}
+
+	// 2. 用户消息先落库 —— 即使这轮后面全失败，界面回放也要能看到这句话。
+	userParts, _ := json.Marshal([]agentUIPart{{Type: "text", Text: input.UserText}})
+	if _, err := s.pg.AppendAIMessage(ctx, aidomain.AgentMessage{
+		ConversationID: conversation.ID, Role: aidomain.RoleUser, Parts: userParts,
+	}); err != nil {
+		return err
+	}
+
+	messageID := "msg_" + uuid.NewString()
+	if err := emit(map[string]any{"type": "start", "messageId": messageID}); err != nil {
+		return err
+	}
+
+	// 3. 装配运行态：工具、MCP、技能、历史。
+	run := &aiAgentRun{
+		AppID: input.AppID, AdminID: input.AdminID, Ref: input.Ref,
+		DraftSource: input.DraftSource,
+		functions:   s.functions, providers: s.providers,
+		mcpClients: map[string]*aiMCPClient{},
+	}
+	builtin := aiFunctionTools()
+	toolIndex := make(map[string]aiAgentTool, len(builtin))
+	for _, tool := range builtin {
+		toolIndex[tool.Name] = tool
+	}
+	mcpTools := s.connectMCPServers(ctx, input.AppID, run, emit)
+	toolList := buildAgentToolList(builtin, input.DisableWrites, mcpTools)
+
+	systemPrompt := s.buildSystemPrompt(ctx, input, conversation)
+
+	transcript, err := s.loadTranscript(ctx, conversation)
+	if err != nil {
+		return s.emitError(emit, err)
+	}
+	// 这轮的用户消息（落库在上面，但 transcript 是按水位线重读的，可能不含它）。
+	transcript = appendUserTextOnce(transcript, input.UserText)
+
+	// 4. 预检压缩：历史已经超预算的话先摘要再开跑。
+	budget := s.contextBudget(ctx, input)
+	if estimateChatChars(systemPrompt, transcript) > budget {
+		if summary, watermark, ok := s.compact(ctx, input, conversation, emit); ok {
+			conversation.CompactSummary = summary
+			conversation.CompactedBefore = watermark
+			systemPrompt = s.buildSystemPrompt(ctx, input, conversation)
+			transcript, err = s.loadTranscript(ctx, conversation)
+			if err != nil {
+				return s.emitError(emit, err)
+			}
+			transcript = appendUserTextOnce(transcript, input.UserText)
+		}
+	}
+
+	// 5. 模型 → 工具 → 模型 的循环。
+	var (
+		assistantParts []agentUIPart
+		totalUsage     aidomain.Usage
+		runErr         error
+	)
+
+steps:
+	for step := 0; step < aiAgentMaxSteps; step++ {
+		if err := emit(map[string]any{"type": "start-step"}); err != nil {
+			runErr = err
+			break
+		}
+		assistantParts = append(assistantParts, agentUIPart{Type: "step-start"})
+
+		// 超预算时先掐掉 in-flight 转录里最旧的工具结果，不动落库数据。
+		trimTranscriptInPlace(transcript, budget, systemPrompt)
+
+		response, err := s.streamOneStep(ctx, input, systemPrompt, transcript, toolList, emit, &assistantParts)
+		if err != nil {
+			runErr = err
+			_ = s.emitError(emit, err)
+			break
+		}
+		totalUsage.Add(response.Usage)
+
+		if len(response.ToolCalls) == 0 {
+			// 没有工具调用即收尾。
+			_ = emit(map[string]any{"type": "finish-step"})
+			break
+		}
+
+		// 把这步的 assistant 消息（含工具调用）接到转录里。
+		assistantMessage := aidomain.ChatMessage{Role: aidomain.RoleAssistant, ToolCalls: response.ToolCalls}
+		if response.Text != "" {
+			assistantMessage.Content = []aidomain.ContentPart{{Type: aidomain.PartText, Text: response.Text}}
+		}
+		transcript = append(transcript, assistantMessage)
+
+		// 6. 依次执行工具，结果既发给界面也接回转录。
+		for _, call := range response.ToolCalls {
+			output, execErr := s.executeToolWithTimeout(ctx, run, toolIndex, call)
+			part := agentUIPart{
+				Type: "dynamic-tool", ToolCallID: call.ID, ToolName: call.Name,
+				Input: normalizeJSON(call.Arguments),
+			}
+			if execErr != nil {
+				part.State = "output-error"
+				part.ErrorText = execErr.Error()
+				_ = emit(map[string]any{
+					"type": "tool-output-error", "toolCallId": call.ID,
+					"errorText": execErr.Error(), "dynamic": true,
+				})
+				transcript = append(transcript, toolResultMessage(call.ID, "错误："+execErr.Error()))
+			} else {
+				part.State = "output-available"
+				part.Output = jsonify(output)
+				_ = emit(map[string]any{
+					"type": "tool-output-available", "toolCallId": call.ID,
+					"output": json.RawMessage(jsonify(output)), "dynamic": true,
+				})
+				transcript = append(transcript, toolResultMessage(call.ID, output))
+			}
+			assistantParts = append(assistantParts, part)
+
+			if ctx.Err() != nil {
+				runErr = ctx.Err()
+				break steps
+			}
+		}
+		_ = emit(map[string]any{"type": "finish-step"})
+
+		if step == aiAgentMaxSteps-1 {
+			limitNote := fmt.Sprintf("已达到单轮最大步数（%d 步），请继续对话让我接着做。", aiAgentMaxSteps)
+			assistantParts = append(assistantParts, agentUIPart{Type: "text", Text: limitNote, State: "done"})
+			textID := "txt_" + uuid.NewString()
+			_ = emit(map[string]any{"type": "text-start", "id": textID})
+			_ = emit(map[string]any{"type": "text-delta", "id": textID, "delta": limitNote})
+			_ = emit(map[string]any{"type": "text-end", "id": textID})
+		}
+	}
+
+	// 7. 收尾落库：客户端断线（ctx 取消）也要把已经产生的内容存下来。
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if len(assistantParts) > 0 {
+		encoded, _ := json.Marshal(assistantParts)
+		if _, err := s.pg.AppendAIMessage(persistCtx, aidomain.AgentMessage{
+			ConversationID: conversation.ID, Role: aidomain.RoleAssistant,
+			Parts: encoded, Usage: &totalUsage,
+		}); err != nil {
+			s.log.Error("persist agent assistant message failed",
+				zap.Int64("conversation", conversation.ID), zap.Error(err))
+		}
+	}
+	title := ""
+	if conversation.Title == "" {
+		title = truncateRunes(strings.TrimSpace(input.UserText), aiAgentTitleLimit)
+	}
+	if err := s.pg.TouchAIConversation(persistCtx, conversation.ID, title,
+		input.ConfigID, input.Model, totalUsage.InputTokens, totalUsage.OutputTokens); err != nil {
+		s.log.Error("touch conversation failed", zap.Int64("conversation", conversation.ID), zap.Error(err))
+	}
+
+	if runErr != nil {
+		return runErr
+	}
+	return emit(map[string]any{"type": "finish", "messageMetadata": map[string]any{
+		"conversationId": conversation.ID,
+		"usage":          totalUsage,
+	}})
+}
+
+// streamOneStep 跑一次 LLM 调用：正文与思考逐字发给界面，工具入参聚合后
+// 以 tool-input-available 一次性交付（入参 JSON 的增量对界面没有展示价值，
+// 但 stage_source 的 source 字段例外 —— 它也会以 delta 形式流出去）。
+func (s *AIAgentService) streamOneStep(ctx context.Context, input AIAgentRunInput,
+	systemPrompt string, transcript []aidomain.ChatMessage, toolList []aidomain.Tool,
+	emit aiAgentEmit, assistantParts *[]agentUIPart) (*aidomain.ChatResponse, error) {
+
+	var (
+		textID      string
+		reasoningID string
+		textBuffer  strings.Builder
+		reasonBuf   strings.Builder
+		started     = map[string]bool{}
+	)
+	closeText := func() {
+		if textID != "" {
+			_ = emit(map[string]any{"type": "text-end", "id": textID})
+			if textBuffer.Len() > 0 {
+				*assistantParts = append(*assistantParts, agentUIPart{Type: "text", Text: textBuffer.String(), State: "done"})
+			}
+			textID = ""
+			textBuffer.Reset()
+		}
+	}
+	closeReasoning := func() {
+		if reasoningID != "" {
+			_ = emit(map[string]any{"type": "reasoning-end", "id": reasoningID})
+			if reasonBuf.Len() > 0 {
+				*assistantParts = append(*assistantParts, agentUIPart{Type: "reasoning", Text: reasonBuf.String(), State: "done"})
+			}
+			reasoningID = ""
+			reasonBuf.Reset()
+		}
+	}
+
+	response, _, err := s.providers.ChatStream(ctx, aiChatArgs{
+		AppID: input.AppID, ConfigID: input.ConfigID,
+		Request: aidomain.ChatRequest{
+			Model: input.Model, System: systemPrompt, Messages: transcript,
+			Tools: toolList, MaxTokens: aiAgentMaxTokens,
+		},
+	}, func(event aidomain.StreamEvent) error {
+		switch event.Type {
+		case aidomain.StreamText:
+			closeReasoning()
+			if textID == "" {
+				textID = "txt_" + uuid.NewString()
+				if err := emit(map[string]any{"type": "text-start", "id": textID}); err != nil {
+					return err
+				}
+			}
+			textBuffer.WriteString(event.Delta)
+			return emit(map[string]any{"type": "text-delta", "id": textID, "delta": event.Delta})
+		case aidomain.StreamReasoning:
+			closeText()
+			if reasoningID == "" {
+				reasoningID = "rsn_" + uuid.NewString()
+				if err := emit(map[string]any{"type": "reasoning-start", "id": reasoningID}); err != nil {
+					return err
+				}
+			}
+			reasonBuf.WriteString(event.Delta)
+			return emit(map[string]any{"type": "reasoning-delta", "id": reasoningID, "delta": event.Delta})
+		case aidomain.StreamToolStart:
+			closeText()
+			closeReasoning()
+			if !started[event.ToolID] {
+				started[event.ToolID] = true
+				return emit(map[string]any{
+					"type": "tool-input-start", "toolCallId": event.ToolID,
+					"toolName": event.ToolName, "dynamic": true,
+				})
+			}
+			return nil
+		case aidomain.StreamToolDelta:
+			if event.ToolID == "" || event.Delta == "" {
+				return nil
+			}
+			return emit(map[string]any{
+				"type": "tool-input-delta", "toolCallId": event.ToolID, "inputTextDelta": event.Delta,
+			})
+		}
+		return nil
+	})
+	closeText()
+	closeReasoning()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, call := range response.ToolCalls {
+		if !started[call.ID] {
+			// 非流式回退（或供应商不发工具增量）时补上 start。
+			_ = emit(map[string]any{
+				"type": "tool-input-start", "toolCallId": call.ID,
+				"toolName": call.Name, "dynamic": true,
+			})
+		}
+		_ = emit(map[string]any{
+			"type": "tool-input-available", "toolCallId": call.ID, "toolName": call.Name,
+			"input": normalizeJSON(call.Arguments), "dynamic": true,
+		})
+	}
+	return response, nil
+}
+
+// executeToolWithTimeout 单个工具的执行入口：限时 + 恐慌兜底。
+func (s *AIAgentService) executeToolWithTimeout(ctx context.Context, run *aiAgentRun,
+	tools map[string]aiAgentTool, call aidomain.ToolCall) (output string, err error) {
+	toolCtx, cancel := context.WithTimeout(ctx, aiAgentToolTimeout)
+	defer cancel()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			s.log.Error("agent tool panicked", zap.String("tool", call.Name), zap.Any("panic", recovered))
+			err = fmt.Errorf("工具内部错误：%v", recovered)
+		}
+	}()
+	arguments := call.Arguments
+	if len(arguments) == 0 {
+		arguments = json.RawMessage(`{}`)
+	}
+	return executeAgentTool(toolCtx, run, tools, call.Name, arguments)
+}
+
+// connectMCPServers 起跑时连上所有启用的 MCP 服务器并拉工具清单。
+// 连不上的只发一条瞬态提示，不拖垮整轮 —— 外部服务器挂了不该让助手闭嘴。
+func (s *AIAgentService) connectMCPServers(ctx context.Context, appID int64,
+	run *aiAgentRun, emit aiAgentEmit) map[string][]aidomain.MCPTool {
+	servers, err := s.providers.ListUsableMCPServers(ctx, appID)
+	if err != nil {
+		s.log.Warn("list mcp servers failed", zap.Int64("appid", appID), zap.Error(err))
+		return nil
+	}
+	if len(servers) == 0 {
+		return nil
+	}
+	out := make(map[string][]aidomain.MCPTool, len(servers))
+	for _, server := range servers {
+		key := sanitizeMCPServerKey(server.Name)
+		if _, taken := run.mcpClients[key]; taken {
+			key = fmt.Sprintf("%s-%d", key, server.ID)
+		}
+		client := newAIMCPClient(s.log, server)
+		listCtx, cancel := context.WithTimeout(ctx, aiAgentMCPConnectTimeout)
+		tools, err := client.ListTools(listCtx)
+		cancel()
+		if err != nil {
+			s.log.Warn("mcp tools/list failed",
+				zap.String("server", server.Name), zap.String("url", server.URL), zap.Error(err))
+			_ = emit(map[string]any{
+				"type": "data-notice", "transient": true,
+				"data": map[string]any{"kind": "mcp-unreachable", "server": server.Name, "error": err.Error()},
+			})
+			continue
+		}
+		run.mcpClients[key] = client
+		out[key] = tools
+	}
+	return out
+}
+
+// ── 上下文装配 ──
+
+func (s *AIAgentService) ensureConversation(ctx context.Context, input AIAgentRunInput) (*aidomain.Conversation, error) {
+	if input.ConversationID > 0 {
+		return s.ownedConversation(ctx, input.AppID, input.AdminID, input.ConversationID)
+	}
+	return s.pg.CreateAIConversation(ctx, aidomain.Conversation{
+		AppID: input.AppID, AdminID: input.AdminID,
+		Scene: input.Scene, Ref: input.Ref,
+		ProviderConfigID: input.ConfigID, Model: input.Model,
+	})
+}
+
+func (s *AIAgentService) buildSystemPrompt(ctx context.Context, input AIAgentRunInput, conversation *aidomain.Conversation) string {
+	var sections []string
+	sections = append(sections, aiFunctionScenePrompt)
+
+	// 当前环境。
+	var env strings.Builder
+	env.WriteString("## 当前环境\n\n")
+	if app, err := s.pg.GetAppByID(ctx, input.AppID); err == nil && app != nil {
+		fmt.Fprintf(&env, "- 应用：%s（appKey `%s`）\n", app.Name, app.AppKey)
+	}
+	if strings.TrimSpace(input.Ref) != "" {
+		fmt.Fprintf(&env, "- 当前函数：`%s`（工具的 name 参数缺省即它）\n", input.Ref)
+	} else {
+		env.WriteString("- 当前没有锚定函数：这可能是一个「从零建函数」的会话\n")
+	}
+	if limits, err := json.Marshal(FunctionRuntimeLimits()); err == nil {
+		fmt.Fprintf(&env, "- 运行时限制：`%s`\n", limits)
+	}
+	if input.DisableWrites {
+		env.WriteString("- 本轮写操作已被作者关闭：不能建函数、改设置、发版；交付代码走 stage_source\n")
+	}
+	sections = append(sections, env.String())
+
+	// 编辑器草稿。
+	draft := strings.TrimSpace(input.DraftSource)
+	if draft != "" {
+		if len(draft) > aiAgentDraftLimit {
+			draft = draft[:aiAgentDraftLimit] + fmt.Sprintf("\n// …（草稿共 %d 字节，此处截断；完整内容可用 analyze_draft / test_draft 处理）", len(input.DraftSource))
+		}
+		sections = append(sections, "## 编辑器当前草稿\n\n```javascript\n"+draft+"\n```")
+	} else {
+		sections = append(sections, "## 编辑器当前草稿\n\n（编辑器为空）")
+	}
+
+	// 压缩摘要。
+	if summary := strings.TrimSpace(conversation.CompactSummary); summary != "" {
+		sections = append(sections, "## 早前对话摘要（自动压缩）\n\n"+summary)
+	}
+
+	// 技能。
+	keys := input.SkillKeys
+	if keys == nil {
+		if skills, err := s.providers.ListSkills(ctx, input.AppID); err == nil {
+			for _, skill := range skills {
+				if skill.Enabled {
+					keys = append(keys, skill.Key)
+				}
+			}
+		}
+	}
+	sections = append(sections, s.providers.ResolveSkillContents(ctx, input.AppID, keys)...)
+
+	return strings.Join(sections, "\n\n")
+}
+
+// loadTranscript 把水位线之后的落库消息翻译成模型消息。
+func (s *AIAgentService) loadTranscript(ctx context.Context, conversation *aidomain.Conversation) ([]aidomain.ChatMessage, error) {
+	stored, err := s.pg.ListAIMessages(ctx, conversation.ID, conversation.CompactedBefore)
+	if err != nil {
+		return nil, err
+	}
+	transcript := make([]aidomain.ChatMessage, 0, len(stored)*2)
+	for _, message := range stored {
+		transcript = append(transcript, agentMessageToChat(message)...)
+	}
+	return transcript, nil
+}
+
+// appendUserTextOnce loadTranscript 已经包含刚落库的用户消息；这个函数只在
+// 转录末尾不是这句话时补上（压缩后重读的场景）。
+func appendUserTextOnce(transcript []aidomain.ChatMessage, userText string) []aidomain.ChatMessage {
+	if len(transcript) > 0 {
+		last := transcript[len(transcript)-1]
+		if last.Role == aidomain.RoleUser && last.PlainText() == userText {
+			return transcript
+		}
+	}
+	return append(transcript, aidomain.TextMessage(aidomain.RoleUser, userText))
+}
+
+// agentMessageToChat 一条落库消息 → 若干条模型消息。
+//
+// assistant 消息里可能有多步（step-start 分隔），每步的工具调用要拆成
+// 「assistant(toolCalls) + tool(结果)…」的序列，两种线上协议都要求这个形状。
+func agentMessageToChat(message aidomain.AgentMessage) []aidomain.ChatMessage {
+	var parts []agentUIPart
+	if err := json.Unmarshal(message.Parts, &parts); err != nil {
+		return nil
+	}
+	if message.Role == aidomain.RoleUser {
+		var builder strings.Builder
+		for _, part := range parts {
+			if part.Type == "text" {
+				builder.WriteString(part.Text)
+			}
+		}
+		if builder.Len() == 0 {
+			return nil
+		}
+		return []aidomain.ChatMessage{aidomain.TextMessage(aidomain.RoleUser, builder.String())}
+	}
+
+	var out []aidomain.ChatMessage
+	current := aidomain.ChatMessage{Role: aidomain.RoleAssistant}
+	var pendingResults []aidomain.ChatMessage
+	flush := func() {
+		if len(current.Content) > 0 || len(current.ToolCalls) > 0 {
+			out = append(out, current)
+			out = append(out, pendingResults...)
+		}
+		current = aidomain.ChatMessage{Role: aidomain.RoleAssistant}
+		pendingResults = nil
+	}
+	for _, part := range parts {
+		switch part.Type {
+		case "step-start":
+			if len(current.ToolCalls) > 0 || len(current.Content) > 0 {
+				flush()
+			}
+		case "text":
+			if part.Text != "" {
+				current.Content = append(current.Content, aidomain.ContentPart{Type: aidomain.PartText, Text: part.Text})
+			}
+		case "dynamic-tool":
+			arguments := part.Input
+			if len(arguments) == 0 {
+				arguments = json.RawMessage(`{}`)
+			}
+			current.ToolCalls = append(current.ToolCalls, aidomain.ToolCall{
+				ID: part.ToolCallID, Name: part.ToolName, Arguments: arguments,
+			})
+			result := part.ErrorText
+			if part.State != "output-error" {
+				result = string(part.Output)
+			}
+			if result == "" {
+				result = "(无输出)"
+			}
+			pendingResults = append(pendingResults, toolResultMessage(part.ToolCallID, result))
+			// reasoning 不回喂模型：思考块是给界面看的，跨供应商回传格式不兼容。
+		}
+	}
+	flush()
+	return out
+}
+
+func toolResultMessage(callID string, content string) aidomain.ChatMessage {
+	return aidomain.ChatMessage{
+		Role: aidomain.RoleTool, ToolCallID: callID,
+		Content: []aidomain.ContentPart{{Type: aidomain.PartText, Text: content}},
+	}
+}
+
+// ── 自动压缩 ──
+
+// contextBudget 上下文字符预算：钉死的通道读它的配置，否则读链路第一条。
+func (s *AIAgentService) contextBudget(ctx context.Context, input AIAgentRunInput) int {
+	if input.ConfigID > 0 {
+		if config, err := s.providers.loadConfig(ctx, input.AppID, input.ConfigID); err == nil {
+			return config.SettingInt(aidomain.KeyMaxContextChars, aiAgentDefaultContextChars)
+		}
+	}
+	if chain, err := s.providers.ResolveChain(ctx, input.AppID, input.Model); err == nil && len(chain) > 0 {
+		return chain[0].Config.SettingInt(aidomain.KeyMaxContextChars, aiAgentDefaultContextChars)
+	}
+	return aiAgentDefaultContextChars
+}
+
+// compact 把水位线之后的旧消息摘要成滚动总结（保留最近几条），落库并返回新状态。
+// 摘要失败不阻断本轮 —— 顶多这轮上下文长一点，比让作者的问题直接失败强。
+func (s *AIAgentService) compact(ctx context.Context, input AIAgentRunInput,
+	conversation *aidomain.Conversation, emit aiAgentEmit) (summary string, watermark int64, ok bool) {
+	stored, err := s.pg.ListAIMessages(ctx, conversation.ID, conversation.CompactedBefore)
+	if err != nil || len(stored) <= aiAgentKeepRecent {
+		return "", 0, false
+	}
+	toCompact := stored[:len(stored)-aiAgentKeepRecent]
+
+	var builder strings.Builder
+	if previous := strings.TrimSpace(conversation.CompactSummary); previous != "" {
+		builder.WriteString("【既有摘要】\n")
+		builder.WriteString(previous)
+		builder.WriteString("\n\n【新增对话】\n")
+	}
+	for _, message := range toCompact {
+		for _, chat := range agentMessageToChat(message) {
+			switch chat.Role {
+			case aidomain.RoleUser:
+				builder.WriteString("用户：" + truncateRunes(chat.PlainText(), 2000) + "\n")
+			case aidomain.RoleAssistant:
+				if text := chat.PlainText(); text != "" {
+					builder.WriteString("助手：" + truncateRunes(text, 2000) + "\n")
+				}
+				for _, call := range chat.ToolCalls {
+					builder.WriteString(fmt.Sprintf("助手调用工具 %s(%s)\n", call.Name, truncateRunes(string(call.Arguments), 400)))
+				}
+			case aidomain.RoleTool:
+				builder.WriteString("工具结果：" + truncateRunes(chat.PlainText(), 800) + "\n")
+			}
+		}
+	}
+
+	summaryCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	response, _, err := s.providers.Chat(summaryCtx, aiChatArgs{
+		AppID: input.AppID, ConfigID: input.ConfigID,
+		Request: aidomain.ChatRequest{
+			Model:  input.Model,
+			System: aiCompactionPrompt,
+			Messages: []aidomain.ChatMessage{
+				aidomain.TextMessage(aidomain.RoleUser, builder.String()),
+			},
+			MaxTokens: 2048,
+		},
+	})
+	if err != nil || strings.TrimSpace(response.Text) == "" {
+		s.log.Warn("conversation compaction failed", zap.Int64("conversation", conversation.ID), zap.Error(err))
+		return "", 0, false
+	}
+
+	summary = strings.TrimSpace(response.Text)
+	watermark = toCompact[len(toCompact)-1].ID
+	if err := s.pg.CompactAIConversation(ctx, conversation.ID, summary, watermark); err != nil {
+		s.log.Error("persist compaction failed", zap.Int64("conversation", conversation.ID), zap.Error(err))
+		return "", 0, false
+	}
+	_ = emit(map[string]any{
+		"type": "data-notice", "transient": true,
+		"data": map[string]any{"kind": "compacted", "messages": len(toCompact)},
+	})
+	return summary, watermark, true
+}
+
+// estimateChatChars 上下文的字符估算：系统提示词 + 每条消息的正文/入参/结果。
+func estimateChatChars(system string, transcript []aidomain.ChatMessage) int {
+	total := len(system)
+	for _, message := range transcript {
+		for _, part := range message.Content {
+			total += len(part.Text) + len(part.ImageURL)
+		}
+		for _, call := range message.ToolCalls {
+			total += len(call.Name) + len(call.Arguments)
+		}
+	}
+	return total
+}
+
+// trimTranscriptInPlace in-flight 转录超预算时，把最旧的工具结果替换成占位符
+// （保留最近 4 条完整）。这是压缩之外的第二道闸：循环中途历史只会越滚越长，
+// 而中途做 LLM 摘要既慢又贵 —— 掐旧工具结果是零成本的等价物。
+func trimTranscriptInPlace(transcript []aidomain.ChatMessage, budget int, system string) {
+	if estimateChatChars(system, transcript) <= budget {
+		return
+	}
+	const keepIntact = 4
+	seen := 0
+	// 从最新往回数，第 keepIntact 条之后的工具结果全部掐掉。
+	for i := len(transcript) - 1; i >= 0; i-- {
+		if transcript[i].Role != aidomain.RoleTool {
+			continue
+		}
+		seen++
+		if seen <= keepIntact {
+			continue
+		}
+		text := transcript[i].PlainText()
+		if len(text) > 200 {
+			transcript[i].Content = []aidomain.ContentPart{{
+				Type: aidomain.PartText,
+				Text: fmt.Sprintf("（结果已省略以节省上下文，原始长度 %d 字符；需要时请重新调用该工具）", len(text)),
+			}}
+		}
+	}
+}
+
+// ── 小工具 ──
+
+// agentUIPart 落库与回放共用的界面分片，形状对齐 AI SDK 的 UIMessage part。
+type agentUIPart struct {
+	Type       string          `json:"type"`
+	Text       string          `json:"text,omitempty"`
+	State      string          `json:"state,omitempty"`
+	ToolCallID string          `json:"toolCallId,omitempty"`
+	ToolName   string          `json:"toolName,omitempty"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	Output     json.RawMessage `json:"output,omitempty"`
+	ErrorText  string          `json:"errorText,omitempty"`
+	Data       json.RawMessage `json:"data,omitempty"`
+}
+
+func (s *AIAgentService) emitError(emit aiAgentEmit, err error) error {
+	message := err.Error()
+	var appErr *apperrors.AppError
+	if errors.As(err, &appErr) {
+		message = appErr.Message
+	}
+	var upstream *aiUpstreamError
+	if errors.As(err, &upstream) {
+		message = upstream.Message
+	}
+	_ = emit(map[string]any{"type": "error", "errorText": message})
+	return err
+}
+
+// normalizeJSON 保证发给界面/落库的 input 是合法 JSON（模型给的入参可能是坏的）。
+func normalizeJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	if json.Valid(raw) {
+		return raw
+	}
+	encoded, _ := json.Marshal(string(raw))
+	return encoded
+}
+
+// jsonify 工具输出（截断后的字符串）→ JSON：本身合法就原样，否则包成字符串。
+func jsonify(output string) json.RawMessage {
+	trimmed := strings.TrimSpace(output)
+	if trimmed != "" && json.Valid([]byte(trimmed)) {
+		return json.RawMessage(trimmed)
+	}
+	encoded, _ := json.Marshal(output)
+	return encoded
+}
+
+// ── 提示词 ──
+
+const aiFunctionScenePrompt = `你是 Aegis 平台的远程函数助手，帮应用管理员写、调、修跑在服务端沙箱里的 JavaScript 函数。
+
+行为准则：
+- 动手前先看清楚：读函数定义（get_function）、读现有代码（get_function_source 或编辑器草稿）、读 SDK 类型（get_sdk_reference）。补全里没有的成员，运行时同样没有。
+- 改完必须验证：analyze_draft 过静态检查，test_draft 试跑（读真写假，放心跑）。试跑失败就修，修完再跑，直到通过。
+- 交付代码只走 stage_source，并且必须是完整脚本 —— 作者的编辑器会被这份内容整体替换。回复正文里不要贴大段代码，讲清楚改了什么、为什么。
+- publish_version 只在作者明确要求发布时使用。
+- 需要能力（HTTP 出网、KV、查用户等）时先看 get_capability_catalog，未声明的能力要用 update_function_settings 补上（或提醒作者去函数设置里勾选）。
+- 回复用中文，简洁直接；解释问题时引用行号与具体报错。
+
+工具使用规范：
+- name 参数缺省就是当前函数，不必每次都传。
+- 排障顺序：get_invocations（status=error）看报错 → get_function_source 看代码 → test_draft 复现 → 修复 → stage_source。
+- 工具结果超长会被截断；需要完整内容时换更窄的查询条件。`
+
+const aiCompactionPrompt = `你是对话压缩器。把下面这段「远程函数助手」的工作对话压成一份接续用的摘要，后续对话将只携带这份摘要 + 最近几条消息。
+
+要求：
+- 保留：用户的目标与约束、当前函数名、已确认的结论（跑通了什么、报什么错、改了哪些地方）、尚未完成的事项。
+- 保留最近一版代码的**关键结构**（函数名、能力声明、主要逻辑步骤），但不要整段贴代码。
+- 丢弃：寒暄、被后续操作推翻的中间尝试、工具结果里的原始数据。
+- 用中文，600 字以内，直接输出摘要正文（不要「以下是摘要」之类的开场白）。`

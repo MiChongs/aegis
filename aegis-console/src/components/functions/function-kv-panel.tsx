@@ -70,9 +70,9 @@ export function FunctionKvPanel({ appKey }: { appKey?: string | null }) {
         </CardTitle>
         <CardDescription>
           脚本通过 <code className="font-mono">aegis.kv</code>（应用级）与{" "}
-          <code className="font-mono">aegis.kv.user</code>（按调用者隔离）读写的服务端独占状态。
-          客户端既读不到也伪造不了，正是「逻辑无法在本地复现」的依据。
-          平台自用的键（<code className="font-mono">__aegis:</code> 前缀，如频次计数器）脚本读写不到。
+          <code className="font-mono">aegis.kv.user</code>（按调用者隔离）读写的服务端状态，
+          客户端不可读取。<code className="font-mono">__aegis:</code>{" "}
+          为平台保留前缀，脚本不可读写。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

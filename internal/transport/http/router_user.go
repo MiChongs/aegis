@@ -67,6 +67,10 @@ func registerUserRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 	appServer := router.Group("/api/apps/:appkey")
 	{
 		appServer.POST("/vip/verify", h.VerifyVipMembership)
+		// OpenAI / Anthropic 兼容网关：把任意 SDK 的 baseURL 指到
+		// /api/apps/{appkey}/ai/v1，api key 填函数调用密钥即可。
+		appServer.POST("/ai/v1/chat/completions", h.AppAIChatCompletions)
+		appServer.POST("/ai/v1/messages", h.AppAIMessages)
 	}
 
 	// 用户抽奖路由

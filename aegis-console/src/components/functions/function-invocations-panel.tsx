@@ -87,8 +87,8 @@ export function FunctionInvocationsPanel({
             真实调用
           </CardTitle>
           <CardDescription>
-            以管理员身份走**完整**执行链：真实副作用会发生，并写入下方的调用审计。
-            只想验证逻辑请用「脚本」页的试跑。
+            以管理员身份执行完整调用链：副作用真实生效，并计入下方调用审计。
+            如仅需验证逻辑，请使用「脚本」页的试跑。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -303,9 +303,7 @@ export function FunctionInvocationsPanel({
                 </div>
               ) : null}
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">
-                  副作用（记录的是实际发生了什么，不是脚本的一面之词）
-                </p>
+                <p className="text-xs text-muted-foreground">副作用（以实际执行记录为准）</p>
                 <EffectList effects={detail.result?.effects ?? []} />
               </div>
             </div>

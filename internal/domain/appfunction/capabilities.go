@@ -24,6 +24,7 @@ const (
 	CapAuditWrite       = "audit.write"
 	CapGeoRead          = "geo.read"
 	CapHTTPFetch        = "http.fetch"
+	CapAIGenerate       = "ai.generate"
 )
 
 // 000056 时期的旧能力名。当时 effects 只校验不执行，声明了也没有实际作用；
@@ -327,6 +328,38 @@ declare interface AegisGeoLocation {
     /** 查询参数，会拼到 url 上 */
     query?: Record<string, string>;
   }): AegisFetchResult;`,
+	},
+	{
+		Key: CapAIGenerate, Group: CapGroupEgress,
+		Label: "AI 生成", API: "aegis.ai.generate(prompt)",
+		Hint: "走应用/平台配置的 AI 通道，按 token 计费；受函数超时约束，适合短生成",
+		Risk: RiskMedium,
+		Namespace: "ai",
+		Members:   []string{"generate"},
+		Declaration: `
+    /** 让配置好的 AI 通道生成一段文本。同步等待，受函数超时约束 —— 记得把 timeoutMs 调大 */
+    generate(prompt: string, options?: {
+      /** 型号，缺省用通道配置的默认型号 */
+      model?: string;
+      /** 系统提示词 */
+      system?: string;
+      /** 输出 token 上限，缺省 1024，上限 4096 */
+      maxTokens?: number;
+      /** 采样温度 0~2 */
+      temperature?: number;
+      /** 要求模型输出 JSON 对象，结果在返回值的 json 字段 */
+      json?: boolean;
+    }): AegisAIResult;`,
+		Interfaces: `
+declare interface AegisAIResult {
+  /** 生成的正文 */
+  text: string;
+  /** options.json 为 true 时服务端解析出的对象；解析失败为 null */
+  json: any;
+  /** 实际使用的型号 */
+  model: string;
+  usage: { inputTokens: number; outputTokens: number };
+}`,
 	},
 
 	// ── 兼容存量数据的旧能力名（不绑定任何对象） ──────────────────────

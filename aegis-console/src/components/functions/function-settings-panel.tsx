@@ -146,7 +146,7 @@ export function FunctionSettingsPanel({
           <div>
             <CardTitle>基本信息</CardTitle>
             <CardDescription>
-              状态是函数自己的开关；被停用时调用直接返回 40990，已发布的版本不受影响。
+              状态为函数级开关：停用后调用返回 40990，已发布版本不受影响。
             </CardDescription>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -194,7 +194,7 @@ export function FunctionSettingsPanel({
             <Label>Runtime</Label>
             <Input value={selected.runtime} readOnly className="font-mono" />
             <p className="text-[11px] text-muted-foreground">
-              运行时决定了版本产物的形态，建好之后不可更改。
+              运行时决定版本产物形态，创建后不可更改。
             </p>
           </div>
         </CardContent>
@@ -205,8 +205,7 @@ export function FunctionSettingsPanel({
           <CardHeader>
             <CardTitle>Capabilities</CardTitle>
             <CardDescription>
-              改动保存后立即生效于下一次调用，不需要重新发布版本 ——
-              但砍掉一项能力会让正在用它的脚本当场报错，请先确认脚本里没有用到。
+              保存后对下一次调用立即生效，无需重新发布版本。移除能力前请确认脚本已不再使用，否则调用将报错。
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -224,8 +223,7 @@ export function FunctionSettingsPanel({
         <CardHeader>
           <CardTitle>运行闸门</CardTitle>
           <CardDescription>
-            并发是「同时能跑几个」，按实例算，保护的是本进程；频次是「一分钟能跑几次」，
-            计数落在数据库上，多实例部署下仍然准确。两者管的不是同一件事。
+            并发上限按单实例统计；频次上限按分钟计数，多实例部署下依然准确。
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -235,7 +233,7 @@ export function FunctionSettingsPanel({
             min={10}
             max={limits?.maxTimeoutMs ?? 30000}
             onChange={(value) => patch("timeoutMs", value)}
-            hint="超时会中断脚本，死循环也挡得住"
+            hint="超过时限将中断执行"
           />
           <NumberField
             label="并发上限"
@@ -288,12 +286,10 @@ export function FunctionSettingsPanel({
                 )}
               </CardTitle>
               <CardDescription>
-                一份 JSON Schema，同时驱动三处：调用入口的前置校验、试跑输入框的补全与校验、
-                以及编辑器里 <code className="font-mono">ctx.input</code> 的真实类型。
+                一份 JSON Schema 同时驱动调用入口校验、试跑输入补全与编辑器内{" "}
+                <code className="font-mono">ctx.input</code> 的类型。
                 <span className="mt-1 block">
-                  不配的话，接入方少传一个字段的表现是脚本第三行抛 TypeError，
-                  而调用方拿到的是一句 50290「应用函数执行失败」—— 既不说少了什么，
-                  也不说是自己传错了。
+                  未配置时平台不校验输入，字段缺失将表现为脚本运行时错误。
                 </span>
               </CardDescription>
             </div>
@@ -320,9 +316,8 @@ export function FunctionSettingsPanel({
               height={260}
             />
             <p className="text-xs text-muted-foreground">
-              留空（<code className="font-mono">{"{}"}</code>）表示不约束，与配它之前的行为一致。
-              保存时会真的编译一遍 —— 一份编译不过的 schema 在调用时的表现是「校验永远抛错」
-              或者更糟：「校验被跳过」。
+              留空（<code className="font-mono">{"{}"}</code>）表示不约束输入。
+              保存时将编译校验，无法编译的契约会被拒绝。
             </p>
           </CardContent>
         </Card>
@@ -333,8 +328,8 @@ export function FunctionSettingsPanel({
           <CardHeader>
             <CardTitle>函数配置</CardTitle>
             <CardDescription>
-              脚本里读作 <code className="font-mono">aegis.config</code>。改一个阈值不该需要发一个
-              新版本 —— 版本不可变说的是逻辑，不是每日额度这种数字。永不下发给接入方。
+              脚本内通过 <code className="font-mono">aegis.config</code> 读取。
+              修改后立即生效，无需发布新版本；不会下发给接入方。
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -344,10 +339,9 @@ export function FunctionSettingsPanel({
               height={180}
             />
             <p className="text-xs text-muted-foreground">
-              顶层必须是 JSON 对象。例如{" "}
+              顶层必须是 JSON 对象，例如{" "}
               <code className="font-mono">{`{"dailyQuota": 100, "endpoint": "https://…"}`}</code>
-              。这里的键会出现在脚本编辑器 <code className="font-mono">aegis.config.</code>{" "}
-              的补全里，并带上当前值。
+              。键名将出现在编辑器 <code className="font-mono">aegis.config.</code> 的补全中。
             </p>
           </CardContent>
         </Card>
@@ -357,7 +351,7 @@ export function FunctionSettingsPanel({
         <CardHeader>
           <CardTitle className="text-destructive">删除函数</CardTitle>
           <CardDescription>
-            将连同全部版本与调用审计一起删除，不可恢复。只想临时停掉请把状态改成 disabled。
+            删除后全部版本与调用审计一并移除，不可恢复。如需临时停用，请将状态改为 disabled。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -379,8 +373,8 @@ export function FunctionSettingsPanel({
           <DialogHeader>
             <DialogTitle>删除函数</DialogTitle>
             <DialogDescription>
-              请输入函数名 <code className="font-mono">{selected.name}</code> 以确认。
-              删除后调用方会立即收到 40490，且历史调用记录一并消失。
+              请输入函数名 <code className="font-mono">{selected.name}</code> 确认删除。
+              删除后调用方将收到 40490，历史调用记录一并移除。
             </DialogDescription>
           </DialogHeader>
           <Input

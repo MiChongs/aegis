@@ -22,9 +22,9 @@ import { cn } from "@/lib/utils";
 import { CapabilityPicker, HighRiskNotice, errorMessage } from "./function-shared";
 
 const RUNTIME_HINT: Record<AppFunctionRuntime, string> = {
-  script: "在控制台直接写逻辑，跑在 Aegis 进程内，可读写平台数据。自定义 API 用这个。",
-  wasm: "纯计算沙箱，拿不到任何平台数据，适合确定性算法。",
-  http: "转发到你自建的 HTTPS 端点，需自行实现 Ed25519 双向签名。"
+  script: "在控制台编写逻辑，运行于 Aegis 进程内，可读写平台数据，适用于自定义 API。",
+  wasm: "纯计算沙箱，无法访问平台数据，适用于确定性算法。",
+  http: "转发至自建 HTTPS 端点，需实现 Ed25519 双向签名。"
 };
 
 /**
@@ -77,7 +77,7 @@ export function CreateFunctionDialog({
         <DialogHeader>
           <DialogTitle>创建远程函数</DialogTitle>
           <DialogDescription>
-            函数归属当前应用；创建后在「脚本」页写好逻辑，试跑通过再发布一个版本即可被调用。
+            函数归属当前应用。创建后在「脚本」页编写逻辑，发布并激活版本后即可被调用。
           </DialogDescription>
         </DialogHeader>
 
@@ -100,7 +100,7 @@ export function CreateFunctionDialog({
                 <Input
                   value={description}
                   onChange={(event) => setDescription(event.target.value)}
-                  placeholder="这个函数解决什么问题"
+                  placeholder="函数用途简述"
                 />
               </div>
             </div>
@@ -144,7 +144,7 @@ export function CreateFunctionDialog({
                   ))}
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  选中模板会自动勾上它需要的能力，脚本正文在创建后的「脚本」页里预填。
+                  选择模板将自动勾选所需能力，脚本正文在创建后预填。
                 </p>
               </div>
             ) : null}
@@ -162,8 +162,8 @@ export function CreateFunctionDialog({
             ) : (
               <p className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
                 {runtime === "wasm"
-                  ? "WASM 拿不到任何平台数据，因此不需要声明能力。"
-                  : "HTTP 端点由你自己的服务实现，平台只负责转发与双向签名，因此不需要声明能力。"}
+                  ? "WASM 运行时无法访问平台数据，无需声明能力。"
+                  : "HTTP 端点由外部服务实现，平台仅负责转发与双向签名，无需声明能力。"}
               </p>
             )}
           </div>
@@ -190,7 +190,7 @@ export function CreateFunctionDialog({
                 onCreated(created.name, runtime === "script" ? templateKey : undefined);
                 onOpenChange(false);
                 reset();
-                toast.success("函数已创建，接下来写脚本并发布一个版本");
+                toast.success("函数已创建");
               } catch (error) {
                 toast.error(errorMessage(error));
               }

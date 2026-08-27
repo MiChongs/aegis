@@ -82,6 +82,9 @@ type Handler struct {
 	governance *service.PlatformGovernanceService
 	// legal 法律文本（用户协议 / 隐私政策），公开读 + 超管写
 	legal *service.LegalService
+	// aiProvider AI 供应商通道（系统级 + 应用级）；aiAgent Agent 会话与 SSE 流。
+	aiProvider *service.AIProviderService
+	aiAgent    *service.AIAgentService
 }
 
 // NewRouter 装配整张路由表。依赖以具名字段传入，理由见 RouterDeps 的注释。

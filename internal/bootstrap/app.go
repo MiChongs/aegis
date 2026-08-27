@@ -398,6 +398,9 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 未注入时该方式直接报「未启用」而不是空指针。
 	authService.SetCardKeyService(cardKeyService)
 	appFunctionService := service.NewAppFunctionService(log, pg, cfg.JWT.Secret)
+	// AI 供应商通道（系统级 + 应用级，密钥加密落库）与 Agent 编排。
+	aiProviderService := service.NewAIProviderService(log, pg, cfg.Security.MasterKey)
+	aiAgentService := service.NewAIAgentService(log, pg, aiProviderService, appFunctionService)
 	// script 运行时的 SDK 依赖：脚本通过它们读写平台数据。
 	// 未装配的那一项对应的能力会在绑定时被拒绝并点名，
 	// 而不是绑上去等脚本调用时空指针（wasm/http 不受影响）。
@@ -413,6 +416,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Location:      locationService,
 		Redis:         redisClient,
 		KeyPrefix:     cfg.Redis.KeyPrefix,
+		AI:            aiProviderService,
 	})
 	if err := pluginService.Initialize(ctx); err != nil {
 		log.Warn("插件系统初始化失败（非致命）", zap.Error(err))
@@ -479,6 +483,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	storageService.SetGovernanceService(governanceService)         // blockStorage
 	notificationService.SetGovernanceService(governanceService)    // blockNotification（站内信）
 	emailService.SetGovernanceService(governanceService)           // blockNotification（邮件）
+	aiProviderService.SetGovernanceService(governanceService)      // blockApi（被限的应用不再消耗 AI 通道）
 	// 平台级邮件的落款主体取品牌名（应用级取应用名）。没有它的话，
 	// 一封平台通知的标题会渲染成「 账号已开通」——前面缺一个词。
 	emailService.SetPlatformSettings(systemService)
@@ -563,6 +568,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Plugin:           pluginService,
 		Template:         templateService,
 		Egress:           egressService,
+		AIProvider:       aiProviderService,
+		AIAgent:          aiAgentService,
 
 		Organization:    orgService,
 		OrgApproval:     approvalService,

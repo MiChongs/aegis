@@ -92,6 +92,14 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/app/version/update"):                                                 AdminAppVersionSaveRequest{},             // AdminVersionUpdateCompat
 		routeKey("POST", "/api/admin/apps"):                                                               AdminAppCreateRequest{},                  // CreateAdminApp
 		routeKey("PUT", "/api/admin/apps/{appkey}"):                                                       AdminAppUpsertRequest{},                  // UpdateAdminApp
+		routeKey("POST", "/api/admin/apps/{appkey}/ai/agent/stream"):                                      adminAIAgentStreamRequest{},              // AdminAppAIAgentStream
+		routeKey("POST", "/api/admin/apps/{appkey}/ai/configs"):                                           adminAIConfigSaveRequest{},               // AdminAppAIConfigCreate
+		routeKey("PUT", "/api/admin/apps/{appkey}/ai/configs/{configId}"):                                 adminAIConfigSaveRequest{},               // AdminAppAIConfigUpdate
+		routeKey("POST", "/api/admin/apps/{appkey}/ai/configs/{configId}/test"):                           adminAIConfigTestRequest{},               // AdminAppAIConfigTest
+		routeKey("POST", "/api/admin/apps/{appkey}/ai/mcp-servers"):                                       adminAIMCPServerSaveRequest{},            // AdminAppAIMCPCreate
+		routeKey("PUT", "/api/admin/apps/{appkey}/ai/mcp-servers/{serverId}"):                             adminAIMCPServerSaveRequest{},            // AdminAppAIMCPUpdate
+		routeKey("POST", "/api/admin/apps/{appkey}/ai/skills"):                                            adminAISkillSaveRequest{},                // AdminAppAISkillCreate
+		routeKey("PUT", "/api/admin/apps/{appkey}/ai/skills/{skillId}"):                                   adminAISkillSaveRequest{},                // AdminAppAISkillUpdate
 		routeKey("GET", "/api/admin/apps/{appkey}/audits/login"):                                          AdminLoginAuditQuery{},                   // AdminAppLoginAudits
 		routeKey("GET", "/api/admin/apps/{appkey}/audits/login/export"):                                   AdminLoginAuditQuery{},                   // ExportAdminAppLoginAudits
 		routeKey("GET", "/api/admin/apps/{appkey}/audits/sessions"):                                       AdminSessionAuditQuery{},                 // AdminAppSessionAudits
@@ -229,6 +237,13 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/system/admins"):                                                      AdminCreateRequest{},                     // AdminCreateAccount
 		routeKey("PUT", "/api/admin/system/admins/{adminId}/access"):                                      AdminAccessUpdateRequest{},               // AdminUpdateAccountAccess
 		routeKey("PUT", "/api/admin/system/admins/{adminId}/status"):                                      AdminStatusUpdateRequest{},               // AdminUpdateAccountStatus
+		routeKey("POST", "/api/admin/system/ai/configs"):                                                  adminAIConfigSaveRequest{},               // AdminPlatformAIConfigCreate
+		routeKey("PUT", "/api/admin/system/ai/configs/{configId}"):                                        adminAIConfigSaveRequest{},               // AdminPlatformAIConfigUpdate
+		routeKey("POST", "/api/admin/system/ai/configs/{configId}/test"):                                  adminAIConfigTestRequest{},               // AdminPlatformAIConfigTest
+		routeKey("POST", "/api/admin/system/ai/mcp-servers"):                                              adminAIMCPServerSaveRequest{},            // AdminPlatformAIMCPCreate
+		routeKey("PUT", "/api/admin/system/ai/mcp-servers/{serverId}"):                                    adminAIMCPServerSaveRequest{},            // AdminPlatformAIMCPUpdate
+		routeKey("POST", "/api/admin/system/ai/skills"):                                                   adminAISkillSaveRequest{},                // AdminPlatformAISkillCreate
+		routeKey("PUT", "/api/admin/system/ai/skills/{skillId}"):                                          adminAISkillSaveRequest{},                // AdminPlatformAISkillUpdate
 		routeKey("POST", "/api/admin/system/announcements"):                                               AnnouncementSaveRequest{},                // AdminCreateAnnouncement
 		routeKey("PUT", "/api/admin/system/announcements/{id}"):                                           AnnouncementSaveRequest{},                // AdminUpdateAnnouncement
 		routeKey("GET", "/api/admin/system/audit-logs"):                                                   AuditLogQuery{},                          // ListAuditLogs

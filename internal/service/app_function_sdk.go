@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	aidomain "aegis/internal/domain/ai"
 	functiondomain "aegis/internal/domain/appfunction"
 	notificationdomain "aegis/internal/domain/notification"
 	pointdomain "aegis/internal/domain/points"
@@ -57,6 +58,7 @@ const (
 	CapAuditWrite       = functiondomain.CapAuditWrite
 	CapGeoRead          = functiondomain.CapGeoRead
 	CapHTTPFetch        = functiondomain.CapHTTPFetch
+	CapAIGenerate       = functiondomain.CapAIGenerate
 )
 
 // 单次调用的 SDK 用量上限，避免脚本把自己变成刷接口的工具。
@@ -138,6 +140,8 @@ type ScriptSDKDeps struct {
 	Location  *LocationService
 	Redis     *redis.Client
 	KeyPrefix string
+	// AI 支撑 ai.generate：走应用/平台配置的 AI 通道（带链路回退）。
+	AI *AIProviderService
 }
 
 // ScriptSDK 是注入脚本的 `aegis` 全局对象，每次调用新建一个。
@@ -417,6 +421,7 @@ func (s *ScriptSDK) bind(vm *goja.Runtime) error {
 		{"email", s.has(CapEmailSend), s.bindEmailNamespace},
 		{"audit", s.has(CapAuditWrite), s.bindAuditNamespace},
 		{"geo", s.has(CapGeoRead), s.bindGeoNamespace},
+		{"ai", s.has(CapAIGenerate), s.bindAINamespace},
 	}
 	for _, namespace := range namespaces {
 		if !namespace.bound {
@@ -1630,6 +1635,118 @@ func (s *ScriptSDK) bindGeoNamespace(vm *goja.Runtime, object *goja.Object) erro
 			}
 		}
 		return vm.ToValue(payload)
+	})
+}
+
+// ── ai.generate ─────────────────────────────────────────────────────
+
+// bindAINamespace 让脚本调用应用/平台配置的 AI 通道生成文本。
+//
+// 与 fetch 同一档管制：计入出网次数预算（LLM 调用比普通 HTTP 更贵），
+// 每次调用记一条 effect（谁在花钱要看得见）。试跑时**真实执行** ——
+// 生成是无副作用的读，作者要在控制台里调 prompt，跳过它试跑就没有意义。
+func (s *ScriptSDK) bindAINamespace(vm *goja.Runtime, object *goja.Object) error {
+	if s.deps.AI == nil {
+		return fmt.Errorf("能力 %s 依赖的 AI 服务未装配", CapAIGenerate)
+	}
+	return object.Set("generate", func(call goja.FunctionCall) goja.Value {
+		s.budget(vm, false)
+		s.fetches++
+		if s.fetches > maxSDKFetches {
+			panic(vm.ToValue(fmt.Sprintf("单次调用的出站请求超过 %d 次上限", maxSDKFetches)))
+		}
+		prompt := strings.TrimSpace(call.Argument(0).String())
+		if prompt == "" || prompt == "undefined" {
+			panic(vm.ToValue("prompt 不能为空"))
+		}
+
+		var (
+			model       string
+			system      string
+			maxTokens   = 1024
+			jsonMode    bool
+			temperature *float64
+		)
+		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Argument(1)) {
+			if options, ok := call.Argument(1).Export().(map[string]any); ok {
+				if value, ok := options["model"].(string); ok {
+					model = strings.TrimSpace(value)
+				}
+				if value, ok := options["system"].(string); ok {
+					system = value
+				}
+				if value, ok := options["maxTokens"].(int64); ok && value > 0 {
+					maxTokens = int(value)
+				} else if value, ok := options["maxTokens"].(float64); ok && value > 0 {
+					maxTokens = int(value)
+				}
+				if value, ok := options["json"].(bool); ok {
+					jsonMode = value
+				}
+				switch value := options["temperature"].(type) {
+				case int64:
+					parsed := float64(value)
+					temperature = &parsed
+				case float64:
+					temperature = &value
+				}
+			}
+		}
+		// 上限压住：脚本受函数超时约束，超长生成只会以超时收场，
+		// 而钱在超时前就已经花出去了。
+		if maxTokens > 4096 {
+			maxTokens = 4096
+		}
+		if temperature != nil {
+			clamped := *temperature
+			if clamped < 0 {
+				clamped = 0
+			}
+			if clamped > 2 {
+				clamped = 2
+			}
+			temperature = &clamped
+		}
+
+		response, channel, err := s.deps.AI.Chat(s.ctx, aiChatArgs{
+			AppID: s.appID,
+			Request: aidomain.ChatRequest{
+				Model:       model,
+				System:      system,
+				Messages:    []aidomain.ChatMessage{aidomain.TextMessage(aidomain.RoleUser, prompt)},
+				MaxTokens:   maxTokens,
+				Temperature: temperature,
+				JSONMode:    jsonMode,
+			},
+		})
+		if err != nil {
+			var upstream *aiUpstreamError
+			if errors.As(err, &upstream) {
+				throw(vm, fmt.Errorf("AI 生成失败：%s", upstream.Message))
+			}
+			throw(vm, err)
+		}
+		s.recordEffect(CapAIGenerate, map[string]any{
+			"provider": channel.Config.Provider, "model": response.Model,
+			"inputTokens": response.Usage.InputTokens, "outputTokens": response.Usage.OutputTokens,
+		})
+
+		result := map[string]any{
+			"text":  response.Text,
+			"json":  nil,
+			"model": response.Model,
+			"usage": map[string]any{
+				"inputTokens":  response.Usage.InputTokens,
+				"outputTokens": response.Usage.OutputTokens,
+			},
+		}
+		if jsonMode {
+			var decoded any
+			if json.Unmarshal([]byte(strings.TrimSpace(response.Text)), &decoded) == nil {
+				result["json"] = decoded
+			}
+		}
+		return vm.ToValue(result)
 	})
 }
 

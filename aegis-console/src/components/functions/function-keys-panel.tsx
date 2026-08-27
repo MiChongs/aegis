@@ -54,7 +54,7 @@ function SecretDialog({
         <DialogHeader>
           <DialogTitle>函数调用密钥</DialogTitle>
           <DialogDescription>
-            密钥只返回一次，关闭后无法再次查看。服务端只保存 SHA-256 摘要。
+            密钥仅显示一次，关闭后无法再次查看；服务端仅保存 SHA-256 摘要。
           </DialogDescription>
         </DialogHeader>
         {created ? (
@@ -114,9 +114,9 @@ export function FunctionKeysPanel({ appKey }: { appKey?: string | null }) {
         <CardHeader>
           <CardTitle>函数调用密钥</CardTitle>
           <CardDescription>
-            接入应用的服务端使用 <code className="font-mono">X-Aegis-Function-Key</code> 调用远程函数。
-            密钥以 <code className="font-mono">afk_</code> 开头，只能保存在服务端或 Worker Secret，
-            不能嵌入网页、桌面端或移动端安装包。
+            接入应用的服务端通过 <code className="font-mono">X-Aegis-Function-Key</code>{" "}
+            请求头调用远程函数。密钥以 <code className="font-mono">afk_</code> 开头，
+            仅可保存在服务端或 Worker Secret，不得嵌入网页与客户端安装包。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

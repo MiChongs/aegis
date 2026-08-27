@@ -54,6 +54,8 @@ type RouterDeps struct {
 	Plugin           *service.PluginService
 	Template         *service.TemplateService
 	Egress           *service.EgressService
+	AIProvider       *service.AIProviderService
+	AIAgent          *service.AIAgentService
 
 	// ── 组织架构 ──────────────────────────────────────────────────────
 	Organization    *service.OrganizationService
@@ -177,5 +179,7 @@ func (d RouterDeps) newHandler() *Handler {
 		egress:             d.Egress,
 		governance:         d.Governance,
 		legal:              d.Legal,
+		aiProvider:         d.AIProvider,
+		aiAgent:            d.AIAgent,
 	}
 }

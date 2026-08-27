@@ -18,6 +18,7 @@
 | next-themes | ^0.4.6 |
 | Zod | ^4.4.3（表单校验） |
 | @xyflow/react | ^12.11.2（工作流画布） |
+| react-resizable-panels | ^4.12.2（可拖拽分栏，远程函数工作台用；**v4 是新 API**，见下） |
 | Recharts | ^3.10.1（图表） |
 | MapLibre GL | ^6.2.0（地图，无 default export） |
 | three | ^0.185.1 |
@@ -43,6 +44,7 @@
 | `avatar.tsx` | 图片 Blob LRU 缓存（200 条）、`evictAvatarCache()`、`preview` 点击预览 | 属业务功能：`admin-hooks.ts` 导入 `evictAvatarCache`，`console-shell` 用 `preview` |
 | `input.tsx` | `suppressHydrationWarning` | 抑制浏览器扩展注入属性导致的 React 19 水合告警 |
 | `breadcrumb` / `dialog` / `sheet` | `sr-only` 文案中文化（"更多" / "关闭"） | 无障碍文案本地化 |
+| `resizable.tsx` | 按 **react-resizable-panels v4** 手写（`Group` / `Panel` / `Separator` / `orientation` / `defaultLayout`） | 官方注册表那份仍是 v2/v3 的 `PanelGroup` / `PanelResizeHandle` / `direction` / `autoSaveId`，装进来会直接报「导出不存在」 |
 
 `src/components/ui/` 下另有 12 个**项目自有组件**（非 shadcn，CLI 不会碰）：
 `brand-icon`、`country-flag`、`data-state`、`error-boundary`、`image-dropzone`、`image-lightbox`、
@@ -83,8 +85,9 @@ TypeScript 7 是 Go 重写的编译器（tsgo），**不再提供 JS 版的 comp
 原生编译器，同一份代码实测差接近一个数量级（当时是 17s vs 2.4s）—— 两者查的是同一件事，
 留慢的那个没有意义。因此 `next.config.ts` 里 `typescript.ignoreBuildErrors: true`，
 把这道关口前移成 `build` 脚本的第一步 `tsc --noEmit`：类型不过一样构建不出来，
-而且报错来得更早（不用等 Turbopack 编译完）。**改 `build` 脚本时不要把它去掉**，
-仓库目前没有前端 CI，去掉之后就真的没有任何地方在检查类型了。
+而且报错来得更早（不用等 Turbopack 编译完）。**改 `build` 脚本时不要把它去掉** ——
+`console-ci.yml` 里那一步 `pnpm typecheck` 是**故意**与它重复的（闸门不该依赖 build
+脚本怎么写），但本地开发只跑 `pnpm build` 的人就此失去全部类型检查。
 
 **`next.config.ts` 中的 `experimental.useTypeScriptCli: false` 同样不可删除**：Next 16.3 该项默认为 `true`，
 CLI 模式会去找 `typescript/bin/tsc`，而 TS 6 兼容包只提供 `bin/tsc6`，Next 会误判「typescript 未安装」
@@ -1122,8 +1125,9 @@ OpenTopoMap / MapTiler✱ / Stadia✱）、**中国大陆**（高德 / 高德卫
 
 | 文件 | 职责 |
 |---|---|
-| `(console)/functions/page.tsx` | 页面骨架、应用选择、Tab 路由 |
-| `components/functions/function-manager.tsx` | 函数列表 + 四个面板的装配 |
+| `(console)/functions/page.tsx` | 页面骨架、应用选择、Tab 路由（**满屏**，见下） |
+| `components/functions/function-manager.tsx` | 左侧函数列表（可折叠 / 可搜索）+ 四个面板的装配 |
+| `components/ui/resizable.tsx` | 可拖拽分栏与布局记忆（`usePanelLayout`），本页全部分隔线都出自这里 |
 | `components/functions/function-create-dialog.tsx` | 新建：运行时 / 起始模板 / 能力 |
 | `components/functions/function-overview-panel.tsx` | 运行状况：成功率 / 耗时分位 / 趋势 / Top 错误 |
 | `components/functions/function-editor-panel.tsx` | 脚本工作台：写 → 检查 → 试跑 → 发布 → 回滚 |
@@ -1140,6 +1144,53 @@ OpenTopoMap / MapTiler✱ / Stadia✱）、**中国大陆**（高德 / 高德卫
 | `lib/monaco/json-schema-meta.ts` | 入参契约编辑器自己的元 schema |
 | `lib/function-workbench-store.ts` | 本地状态：未发布草稿、试跑用例、编辑器偏好 |
 | `lib/api/app-functions.ts` / `lib/function-hooks.ts` | 远程函数域 API 与 React Query hooks |
+
+### 一屏工作台：不靠滚动做完一次迭代
+
+整页高度锁在 `workbench-viewport`（`globals.css`：视口 − 顶栏 − `<main>` 留白），
+滚动条一律长在各面板自己的内容区上。**页面级滚动在这里是有害的**：编辑器一旦被
+卷出屏幕，写脚本就变成「滚下去点试跑、滚回来改代码、再滚下去看结果」，
+而屏幕右边整块是空的。旧形状正是如此 —— 编辑器写死 460px，
+下面依次堆着诊断、试跑、结果、版本四张卡片。
+
+```
+┌ 页签行（函数 / 键值存储 / 调用密钥）· 应用选择器 · 接入文档 ┐
+├──────────┬────────────────────────────────────────────────┤
+│ 函数列表  │ 函数名 · 状态 · 不可被调用 │ 脚本 概览 调用 设置 │
+│ 搜索 + 新 ├──────────────────────────┬─────────────────────┤
+│ 建 + 草稿 │ 工具条（检查 / 格式化 …）  │                     │
+│ 标记      ├──────────────────────────┤  试跑输入            │
+│          │                          │  （JSON + 身份 + 用例）│
+│          │  Monaco（占满剩余空间）    ├─────────────────────┤
+│          ├──────────────────────────┤  试跑结果            │
+│          │ 问题 │ 版本（可整块收起）  │  （返回值/日志/副作用）│
+├──────────┴──────────────────────────┴─────────────────────┤
+│ 状态栏：行列 · 能力 · 单次额度 · 正文大小 · 草稿时间 · 快捷键 │
+└───────────────────────────────────────────────────────────┘
+```
+
+六条硬约束：
+
+1. **四个面板仍然是四件事，不要合回一屏。** 一屏说的是「脚本这件事在一屏内做完」，
+   不是「把概览、调用、设置也塞进来」。默认落在**脚本**上（进来十次有九次是改逻辑），
+   而「为什么调不通」这条结论压缩成了函数名旁边那枚**不可被调用**徽标，
+   点它跳概览 —— 不是把整页图表提到前面来。
+2. **分栏尺寸落 localStorage，且只存用户拖出来的那一次**
+   （`usePanelLayout` 里 `onlySaveAfterUserInteractions: true`）。
+   窗口缩放、折叠、约束重算也会产生布局变化，一并存下来会让「我上次拖的比例」
+   被一次窗口缩放悄悄改写。
+3. **`useDefaultLayout` 必须显式传 storage。** 它的默认值是裸 `localStorage`，
+   而那个默认值在调用时求值 —— 服务端渲染那一趟直接 ReferenceError、整页白屏。
+   `resizable.tsx` 里的包装已经处理，**不要绕过 `usePanelLayout` 直接调库**。
+4. **`ResizablePanel` 的 `overflow` 只能走 `style`。** 库把 `overflow: auto`
+   写成了内联样式，类名压不过它；这里默认改成 `hidden`，需要滚动的内容自己
+   再套一层 `overflow-y-auto`。
+5. **Monaco 一律 `height="100%"` + 外层 `min-h-0 flex-1`**，不要再写死像素高度：
+   那个数字在 13 寸上太高、在 27 寸上浪费掉半屏。`automaticLayout` 已经开着，
+   拖分隔线时编辑器会自己重排。
+6. **两个 dock 可以整块收起，但收起后不能失去入口。** 工具条上那两个开关是唯一的
+   回来路径，检查徽标也可点（直接展开底部 dock 并切到「问题」）——
+   否则收起一次就再也找不到诊断了。
 
 ### 「完整的 LSP 体验」具体指什么
 
@@ -1200,9 +1251,10 @@ CSS 侧（`globals.css` 末段）只补 Monaco 选项表达不了的三件事，
    拼装时**必须合并命名空间**（`user.read` 出 `get`、`user.write` 出 `ban`，同属
    `aegis.user`）：漏了会在同一个接口里产生两个 `user:` 成员，TypeScript 报重复
    声明后整份类型静默失效，表现是补全突然什么都没有。
-3. **四个面板对应四件不同的事**，不要合回一屏：概览回答「为什么调不通」，
-   脚本负责迭代，调用负责排障，设置负责闸门。旧形状最大的问题不是拥挤，
+3. **四个面板对应四件不同的事**，不要合并：概览回答「为什么调不通」，
+   脚本负责迭代，调用负责排障，设置负责闸门。再往前一版最大的问题不是拥挤，
    是**没有试跑** —— 唯一的验证方式是把半成品激活到线上。
+   （「一屏」指的是脚本这件事在一屏内做完，见上一节，与这条不冲突。）
 4. **试跑失败不是接口错误**。后端在脚本执行失败时仍返回 200，判成功要看
    `result.ok`；按抛异常处理会把日志与副作用清单一起丢掉，而那正是要看的东西。
    试跑产生的 effect 必须显示「未执行」标记，否则一份「发了 100 积分」的清单

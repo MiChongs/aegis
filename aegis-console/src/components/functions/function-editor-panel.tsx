@@ -5,13 +5,19 @@ import type { editor } from "monaco-editor";
 import {
   AlertTriangle,
   BookOpen,
+  Bot,
   CheckCircle2,
+  ChevronDown,
   FileJson,
   FlaskConical,
   GitCompare,
   History,
   Info,
   Loader2,
+  PanelBottomClose,
+  PanelBottomOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   RotateCcw,
   Save,
@@ -43,11 +49,11 @@ import { getAppFunctionVersion } from "@/lib/api/app-functions";
 import { useAdminToken } from "@/lib/admin-hooks";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useFunctionWorkbenchStore, type ScriptTestCase } from "@/lib/function-workbench-store";
+import { FunctionAIAssistant } from "@/components/functions/function-ai-assistant";
 import { JsonEditor } from "@/components/functions/json-editor";
 import { ScriptEditor } from "@/components/functions/script-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -67,6 +73,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  ResizableGroup,
+  ResizableHandle,
+  ResizablePanel,
+  usePanelLayout,
+  usePanelRef,
+  type PanelImperativeHandle
+} from "@/components/ui/resizable";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -76,7 +91,14 @@ import { cn } from "@/lib/utils";
 import { EffectList, errorMessage, formatBytes, formatDuration, formatTime } from "./function-shared";
 
 /**
- * 脚本工作台：写 → 检查 → 试跑 → 发布 → 回滚，全部在一屏内完成。
+ * 脚本工作台：写 → 检查 → 试跑 → 发布 → 回滚，**一屏之内**完成。
+ *
+ * 形状是一个 IDE：中间编辑器、底部 dock（问题 / 版本）、右侧 dock（试跑输入 / 结果），
+ * 三条分隔线都能拖，两个 dock 都能整块折叠起来。
+ *
+ * 旧形状是竖着堆卡片：编辑器写死 460px，下面依次是诊断、试跑、结果、版本表。
+ * 于是最常做的那件事 —— 改一行、跑一次、看日志 —— 变成了「滚下去点试跑、
+ * 滚回来改代码、再滚下去看结果」。而屏幕右边整块是空的。
  *
  * 「检查」这一步是后加的，但它才是这条链路上最省时间的一环：沙箱是
  * deny-by-default 的，调了没声明的能力在运行时只是一句
@@ -148,7 +170,32 @@ export function FunctionEditorPanel({
   const [testResult, setTestResult] = useState<TestResultWithSource | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [diffAgainst, setDiffAgainst] = useState<string | null>(null);
+  const [dockTab, setDockTab] = useState<DockTab>("problems");
+  const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+
+  // 三个 dock 的折叠态各自记一份布尔位：按钮图标要跟着变，
+  // 而库只在 ref 上提供 isCollapsed()，读它不会触发重渲染。
+  const dockRef = usePanelRef();
+  const runnerRef = usePanelRef();
+  const assistantRef = usePanelRef();
+  const [dockOpen, setDockOpen] = useState(true);
+  const [runnerOpen, setRunnerOpen] = useState(true);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+
+  // 布局键带 -v2：面板从两格变三格，旧存档的比例数组对不上新形状。
+  const shellLayout = usePanelLayout({
+    id: "aegis-function-script-shell-v2",
+    panelIds: ["workspace", "runner", "assistant"]
+  });
+  const workspaceLayout = usePanelLayout({
+    id: "aegis-function-script-workspace",
+    panelIds: ["editor", "dock"]
+  });
+  const runnerLayout = usePanelLayout({
+    id: "aegis-function-script-runner",
+    panelIds: ["input", "result"]
+  });
 
   const testMutation = useTestFunctionMutation(appKey);
   const activateMutation = useActivateVersionMutation(appKey);
@@ -197,7 +244,7 @@ export function FunctionEditorPanel({
       }
       saveDraft(scope, detail.source);
       setDiffAgainst(null);
-      toast.success(`已载入版本 ${version} 的正文`);
+      toast.success(`已载入版本 ${version}`);
     } catch (error) {
       toast.error(errorMessage(error));
     }
@@ -209,9 +256,12 @@ export function FunctionEditorPanel({
     try {
       input = JSON.parse(rawInput);
     } catch {
-      toast.error("input 不是合法 JSON");
+      toast.error("输入不是合法 JSON");
       return;
     }
+    // 跑之前先把右侧 dock 打开：结果没地方显示的话，那一声 toast
+    // 就是作者唯一能拿到的信息
+    expand(runnerRef, setRunnerOpen);
     const userId = overrides?.asUserId ?? asUserId;
     try {
       const result = await testMutation.mutateAsync({
@@ -223,7 +273,7 @@ export function FunctionEditorPanel({
       // 试跑失败是正常结果，不是接口错误 —— 用 warning 而不是 error，
       // 免得作者以为是平台出了问题
       if (result.ok) toast.success(`试跑通过（${formatDuration(result.durationMs)}）`);
-      else toast.warning("试跑未通过，见下方结果");
+      else toast.warning("试跑未通过，请查看试跑结果");
     } catch (error) {
       toast.error(errorMessage(error));
     }
@@ -247,7 +297,7 @@ export function FunctionEditorPanel({
         name: selected.name,
         payload: { capabilities: remaining }
       });
-      toast.success(`已取消勾选：${keys.join("、")}`);
+      toast.success(`已移除能力：${keys.join("、")}`);
     } catch (error) {
       toast.error(errorMessage(error));
     }
@@ -257,6 +307,27 @@ export function FunctionEditorPanel({
     editorRef.current?.revealLineInCenter(line);
     editorRef.current?.setPosition({ lineNumber: line, column: 1 });
     editorRef.current?.focus();
+  }
+
+  /** AI 助手默认收起（defaultSize 0），首次展开时 expand() 无「最近尺寸」可回，兜底给 32%。 */
+  function toggleAssistant() {
+    const handle = assistantRef.current;
+    if (!handle) return;
+    if (handle.isCollapsed()) {
+      handle.expand();
+      if (handle.isCollapsed()) handle.resize("32");
+      setAssistantOpen(true);
+    } else {
+      handle.collapse();
+      setAssistantOpen(false);
+    }
+  }
+
+  /** 跳到某个问题：顺手把底部 dock 切到「问题」并展开 */
+  function revealDiagnostic(line: number) {
+    setDockTab("problems");
+    expand(dockRef, setDockOpen);
+    revealLine(line);
   }
 
   // 编辑器里那批平台语义提供者（悬浮、配置补全、快速修复、code lens）
@@ -276,158 +347,307 @@ export function FunctionEditorPanel({
 
   if (selected.runtime !== "script") {
     return (
-      <NonScriptVersionPanel
-        appKey={appKey}
-        selected={selected}
-        versions={versions}
-        loading={versionsQuery.isLoading}
-      />
+      <div className="h-full overflow-y-auto p-3">
+        <NonScriptVersionPanel
+          appKey={appKey}
+          selected={selected}
+          versions={versions}
+          loading={versionsQuery.isLoading}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader className="flex-row items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="flex items-center gap-2">
-              脚本
-              {dirty ? (
-                <Badge variant="warning" size="sm">
-                  未发布的改动
-                </Badge>
-              ) : null}
-              <AnalysisBadge
-                loading={analysisQuery.isFetching}
-                diagnostics={diagnostics}
-                enabled={Boolean(debouncedSource.trim())}
-              />
-            </CardTitle>
-            <CardDescription>
-              正文只保存在服务端，任何接口都不会下发给接入方。编辑器已按当前能力载入 SDK 类型：
-              输入 <code className="font-mono">aegis.</code> 看全部可用成员，输入{" "}
-              <code className="font-mono">aegis-</code> 取代码片段。
-              <span className="mt-1 block">
-                <Kbd>⌘/Ctrl</Kbd> + <Kbd>Enter</Kbd> 试跑 · <Kbd>⌘/Ctrl</Kbd> + <Kbd>S</Kbd> 发布
-              </span>
-            </CardDescription>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {diffAgainst != null ? (
-              <Button variant="outline" size="sm" onClick={() => setDiffAgainst(null)}>
-                <XCircle className="size-4" />
-                退出对比
-              </Button>
-            ) : null}
-            {dirty ? (
-              <Button variant="ghost" size="sm" onClick={() => dropDraft(scope)}>
-                <RotateCcw className="size-4" />
-                还原
-              </Button>
-            ) : null}
-            <EditorToolbar
-              catalog={catalog}
-              options={editorOptions}
-              onOptionChange={setEditorOption}
-              onFormat={() => editorRef.current?.getAction("editor.action.formatDocument")?.run()}
-              onInsertTemplate={(next) => {
-                saveDraft(scope, next);
-                setDiffAgainst(null);
-              }}
-              onDiffWithActive={
-                selected.activeVersion
-                  ? () => loadVersionIntoEditor(selected.activeVersion as string, "diff")
-                  : undefined
-              }
-            />
-            <Button size="sm" onClick={() => setPublishOpen(true)} disabled={!source.trim()}>
-              <UploadCloud className="size-4" />
-              发布版本
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <ScriptEditor
-            value={source}
-            onChange={(next) => saveDraft(scope, next)}
-            capabilities={selected.capabilities}
-            typeSource={typeSource}
-            inputTypes={selected.inputTypes}
-            diagnostics={diagnostics}
-            languageContext={languageContext}
-            errorMarker={errorMarker}
-            diffAgainst={diffAgainst}
-            options={editorOptions}
-            onEditorReady={(instance) => {
-              editorRef.current = instance;
-            }}
-            onSave={() => setPublishOpen(true)}
-            onRun={() => void runTest()}
-            height={460}
-          />
-          <p className="text-xs text-muted-foreground">
-            已声明能力：
-            {selected.capabilities.length ? selected.capabilities.join("、") : "无"}
-            {catalog ? (
-              <>
-                {" · "}单次调用额度：SDK {catalog.limits.maxSdkCalls} 次 / 写{" "}
-                {catalog.limits.maxSdkMutations} 次 / 出站 {catalog.limits.maxSdkFetches} 次
-              </>
-            ) : null}
-            {draft ? <> · 草稿保存于 {formatTime(new Date(draft.updatedAt).toISOString())}</> : null}
-          </p>
-        </CardContent>
-      </Card>
-
-      <DiagnosticsPanel
-        diagnostics={diagnostics}
-        loading={analysisQuery.isFetching}
-        applying={updateFunction.isPending}
-        onReveal={revealLine}
-        onGrant={grantCapabilities}
-      />
-
-      <div className="grid gap-4 xl:grid-cols-2">
-        <TestRunnerCard
-          scope={scope}
-          input={testInput}
-          onInputChange={setTestInput}
-          inputSchema={selected.inputSchema}
-          inputSample={selected.inputSample}
-          asUserId={asUserId}
-          onAsUserIdChange={setAsUserId}
-          pending={testMutation.isPending}
-          disabled={!source.trim()}
-          blocking={blocking.length}
-          onRun={runTest}
+    <div className="flex h-full min-h-0 flex-col">
+      {/* ── 工具条：一行，永远在原地 ── */}
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b px-2 py-1.5">
+        <AnalysisBadge
+          loading={analysisQuery.isFetching}
+          diagnostics={diagnostics}
+          enabled={Boolean(debouncedSource.trim())}
+          onClick={() => {
+            setDockTab("problems");
+            expand(dockRef, setDockOpen);
+          }}
         />
-        <TestResultCard result={testResult} onReveal={revealLine} />
+        {dirty ? (
+          <>
+            <Badge variant="warning" size="sm">
+              未发布的改动
+            </Badge>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => dropDraft(scope)}
+                  aria-label="还原到激活版本"
+                >
+                  <RotateCcw className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>丢弃草稿，还原为激活版本</TooltipContent>
+            </Tooltip>
+          </>
+        ) : null}
+        {diffAgainst != null ? (
+          <Button variant="outline" size="xs" onClick={() => setDiffAgainst(null)}>
+            <XCircle className="size-3" />
+            退出对比
+          </Button>
+        ) : null}
+
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            variant={assistantOpen ? "secondary" : "ghost"}
+            size="sm"
+            onClick={toggleAssistant}
+            aria-pressed={assistantOpen}
+          >
+            <Bot className="size-4" />
+            AI 助手
+          </Button>
+          <span className="mx-0.5 h-5 w-px bg-border" aria-hidden />
+          <HelpPopover />
+          <EditorToolbar
+            catalog={catalog}
+            options={editorOptions}
+            onOptionChange={setEditorOption}
+            onFormat={() => editorRef.current?.getAction("editor.action.formatDocument")?.run()}
+            onInsertTemplate={(next) => {
+              saveDraft(scope, next);
+              setDiffAgainst(null);
+            }}
+            onDiffWithActive={
+              selected.activeVersion
+                ? () => loadVersionIntoEditor(selected.activeVersion as string, "diff")
+                : undefined
+            }
+          />
+          <PanelToggle
+            open={dockOpen}
+            onToggle={() => toggle(dockRef, setDockOpen)}
+            openIcon={<PanelBottomClose className="size-4" />}
+            closedIcon={<PanelBottomOpen className="size-4" />}
+            label="问题与版本"
+          />
+          <PanelToggle
+            open={runnerOpen}
+            onToggle={() => toggle(runnerRef, setRunnerOpen)}
+            openIcon={<PanelRightClose className="size-4" />}
+            closedIcon={<PanelRightOpen className="size-4" />}
+            label="试跑面板"
+          />
+          <span className="mx-0.5 h-5 w-px bg-border" aria-hidden />
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={testMutation.isPending || !source.trim()}
+            onClick={() => void runTest()}
+          >
+            {testMutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <FlaskConical className="size-4" />
+            )}
+            试跑
+          </Button>
+          <Button size="sm" onClick={() => setPublishOpen(true)} disabled={!source.trim()}>
+            <UploadCloud className="size-4" />
+            发布
+          </Button>
+        </div>
       </div>
 
-      <VersionTable
-        versions={versions}
-        loading={versionsQuery.isLoading}
-        activeVersion={selected.activeVersion}
-        showSource
-        onLoadSource={(version) => loadVersionIntoEditor(version, "edit")}
-        onDiffSource={(version) => loadVersionIntoEditor(version, "diff")}
-        onActivate={async (version) => {
-          try {
-            await activateMutation.mutateAsync({ name: selected.name, version });
-            toast.success(`版本 ${version} 已激活`);
-          } catch (error) {
-            toast.error(errorMessage(error));
-          }
-        }}
-        onDelete={async (version) => {
-          try {
-            await deleteVersionMutation.mutateAsync({ name: selected.name, version });
-            toast.success(`版本 ${version} 已删除`);
-          } catch (error) {
-            toast.error(errorMessage(error));
-          }
-        }}
-      />
+      {/* ── 三格布局：编辑器 / 底部 dock / 右侧试跑 ── */}
+      <ResizableGroup
+        orientation="horizontal"
+        id="script-shell"
+        className="min-h-0 flex-1"
+        defaultLayout={shellLayout.defaultLayout}
+        onLayoutChanged={shellLayout.onLayoutChanged}
+      >
+        <ResizablePanel id="workspace" minSize="30" className="flex flex-col">
+          <ResizableGroup
+            orientation="vertical"
+            id="script-workspace"
+            defaultLayout={workspaceLayout.defaultLayout}
+            onLayoutChanged={workspaceLayout.onLayoutChanged}
+          >
+            <ResizablePanel id="editor" minSize="25" className="flex flex-col">
+              <ScriptEditor
+                className="min-h-0 flex-1 rounded-none border-0"
+                height="100%"
+                value={source}
+                onChange={(next) => saveDraft(scope, next)}
+                capabilities={selected.capabilities}
+                typeSource={typeSource}
+                inputTypes={selected.inputTypes}
+                diagnostics={diagnostics}
+                languageContext={languageContext}
+                errorMarker={errorMarker}
+                diffAgainst={diffAgainst}
+                options={editorOptions}
+                onEditorReady={(instance) => {
+                  editorRef.current = instance;
+                }}
+                onCursorChange={setCursor}
+                onSave={() => setPublishOpen(true)}
+                onRun={() => void runTest()}
+              />
+            </ResizablePanel>
+
+            <ResizableHandle />
+
+            <ResizablePanel
+              id="dock"
+              className="flex flex-col"
+              defaultSize="25"
+              minSize="12"
+              collapsible
+              collapsedSize={0}
+              panelRef={dockRef}
+              onResize={(size) => setDockOpen(size.inPixels > 1)}
+            >
+              <BottomDock
+                tab={dockTab}
+                onTabChange={setDockTab}
+                onCollapse={() => collapse(dockRef, setDockOpen)}
+                diagnostics={diagnostics}
+                analysing={analysisQuery.isFetching}
+                analysed={Boolean(analysisQuery.data)}
+                applying={updateFunction.isPending}
+                onReveal={revealDiagnostic}
+                onGrant={grantCapabilities}
+                versions={versions}
+                versionsLoading={versionsQuery.isLoading}
+                activeVersion={selected.activeVersion}
+                onLoadSource={(version) => loadVersionIntoEditor(version, "edit")}
+                onDiffSource={(version) => loadVersionIntoEditor(version, "diff")}
+                onActivate={async (version) => {
+                  try {
+                    await activateMutation.mutateAsync({ name: selected.name, version });
+                    toast.success(`版本 ${version} 已激活`);
+                  } catch (error) {
+                    toast.error(errorMessage(error));
+                  }
+                }}
+                onDelete={async (version) => {
+                  try {
+                    await deleteVersionMutation.mutateAsync({ name: selected.name, version });
+                    toast.success(`版本 ${version} 已删除`);
+                  } catch (error) {
+                    toast.error(errorMessage(error));
+                  }
+                }}
+              />
+            </ResizablePanel>
+          </ResizableGroup>
+        </ResizablePanel>
+
+        <ResizableHandle />
+
+        <ResizablePanel
+          id="runner"
+          className="flex flex-col"
+          defaultSize="30"
+          minSize="16"
+          maxSize="55"
+          collapsible
+          collapsedSize={0}
+          panelRef={runnerRef}
+          onResize={(size) => setRunnerOpen(size.inPixels > 1)}
+        >
+          <ResizableGroup
+            orientation="vertical"
+            id="script-runner"
+            defaultLayout={runnerLayout.defaultLayout}
+            onLayoutChanged={runnerLayout.onLayoutChanged}
+          >
+            <ResizablePanel id="input" defaultSize="55" minSize="20" className="flex flex-col">
+              <TestRunnerPane
+                scope={scope}
+                input={testInput}
+                onInputChange={setTestInput}
+                inputSchema={selected.inputSchema}
+                inputSample={selected.inputSample}
+                asUserId={asUserId}
+                onAsUserIdChange={setAsUserId}
+                pending={testMutation.isPending}
+                disabled={!source.trim()}
+                blocking={blocking.length}
+                onRun={runTest}
+              />
+            </ResizablePanel>
+            <ResizableHandle />
+            <ResizablePanel id="result" minSize="15" className="flex flex-col">
+              <TestResultPane result={testResult} onReveal={revealLine} />
+            </ResizablePanel>
+          </ResizableGroup>
+        </ResizablePanel>
+
+        <ResizableHandle />
+
+        {/* AI 助手常驻挂载、默认收起：收起时流式对话仍在后台继续，
+            卸载它等于把正在跑的 Agent 一并掐死。 */}
+        <ResizablePanel
+          id="assistant"
+          className="flex flex-col"
+          defaultSize="0"
+          minSize="20"
+          maxSize="60"
+          collapsible
+          collapsedSize={0}
+          panelRef={assistantRef}
+          onResize={(size) => setAssistantOpen(size.inPixels > 1)}
+        >
+          <FunctionAIAssistant
+            appKey={appKey}
+            functionName={selected.name}
+            draftSource={source}
+            onApplySource={(next) => {
+              saveDraft(scope, next);
+              setDiffAgainst(null);
+            }}
+            onCollapse={() => collapse(assistantRef, setAssistantOpen)}
+          />
+        </ResizablePanel>
+      </ResizableGroup>
+
+      {/* ── 状态栏 ── */}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-0.5 border-t px-2.5 py-1 text-[11px] text-muted-foreground">
+        <span className="font-mono">
+          第 {cursor.line} 行，第 {cursor.column} 列
+        </span>
+        <span>
+          能力 {selected.capabilities.length}
+          {selected.capabilities.length ? `（${selected.capabilities.join("、")}）` : "：无"}
+        </span>
+        {catalog ? (
+          <span className="hidden lg:inline">
+            单次额度 SDK {catalog.limits.maxSdkCalls} / 写 {catalog.limits.maxSdkMutations} / 出站{" "}
+            {catalog.limits.maxSdkFetches}
+          </span>
+        ) : null}
+        <span className="hidden sm:inline">
+          {formatBytes(new TextEncoder().encode(source).length)}
+        </span>
+        {draft ? (
+          <span className="hidden xl:inline">
+            草稿保存于 {formatTime(new Date(draft.updatedAt).toISOString())}
+          </span>
+        ) : null}
+        <span className="ml-auto flex items-center gap-1">
+          <Kbd>⌘/Ctrl</Kbd>
+          <Kbd>↵</Kbd>
+          试跑
+          <span className="mx-1">·</span>
+          <Kbd>⌘/Ctrl</Kbd>
+          <Kbd>S</Kbd>
+          发布
+        </span>
+      </div>
 
       <PublishDialog
         open={publishOpen}
@@ -438,6 +658,10 @@ export function FunctionEditorPanel({
         blocking={blocking}
         suggestedVersion={suggestNextVersion(versions.map((item) => item.version))}
         onPublished={() => dropDraft(scope)}
+        onShowProblems={() => {
+          setDockTab("problems");
+          expand(dockRef, setDockOpen);
+        }}
       />
     </div>
   );
@@ -446,9 +670,63 @@ export function FunctionEditorPanel({
 /** 试跑结果额外记住「跑的是哪份正文」，正文一改错误行标记就该失效 */
 type TestResultWithSource = AppFunctionTestResult & { source?: string };
 
+type DockTab = "problems" | "versions";
+
+type PanelRef = { current: PanelImperativeHandle | null };
+
+function expand(ref: PanelRef, notify: (open: boolean) => void) {
+  ref.current?.expand();
+  notify(true);
+}
+
+function collapse(ref: PanelRef, notify: (open: boolean) => void) {
+  ref.current?.collapse();
+  notify(false);
+}
+
+function toggle(ref: PanelRef, notify: (open: boolean) => void) {
+  const instance = ref.current;
+  if (!instance) return;
+  if (instance.isCollapsed()) expand(ref, notify);
+  else collapse(ref, notify);
+}
+
+function PanelToggle({
+  open,
+  onToggle,
+  openIcon,
+  closedIcon,
+  label
+}: {
+  open: boolean;
+  onToggle: () => void;
+  openIcon: React.ReactNode;
+  closedIcon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onToggle}
+          aria-label={`${open ? "收起" : "展开"}${label}`}
+        >
+          {open ? openIcon : closedIcon}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {open ? "收起" : "展开"}
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function Kbd({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="rounded border bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">
+    <kbd className="rounded border bg-muted px-1 font-mono text-[10px] text-muted-foreground">
       {children}
     </kbd>
   );
@@ -463,11 +741,13 @@ function Kbd({ children }: { children: React.ReactNode }) {
 function AnalysisBadge({
   loading,
   diagnostics,
-  enabled
+  enabled,
+  onClick
 }: {
   loading: boolean;
   diagnostics: AppFunctionDiagnostic[];
   enabled: boolean;
+  onClick: () => void;
 }) {
   if (!enabled) return null;
   if (loading) {
@@ -480,27 +760,59 @@ function AnalysisBadge({
   }
   const errors = diagnostics.filter((item) => item.severity === "error").length;
   const warnings = diagnostics.filter((item) => item.severity === "warning").length;
-  if (errors) {
-    return (
-      <Badge variant="danger" size="sm" className="gap-1">
-        <XCircle className="size-3" />
-        {errors} 处会挡住发布
-      </Badge>
-    );
-  }
-  if (warnings) {
-    return (
-      <Badge variant="warning" size="sm" className="gap-1">
-        <AlertTriangle className="size-3" />
-        {warnings} 处提示
-      </Badge>
-    );
-  }
-  return (
+  const badge = errors ? (
+    <Badge variant="danger" size="sm" className="gap-1">
+      <XCircle className="size-3" />
+      {errors} 个错误
+    </Badge>
+  ) : warnings ? (
+    <Badge variant="warning" size="sm" className="gap-1">
+      <AlertTriangle className="size-3" />
+      {warnings} 个提示
+    </Badge>
+  ) : (
     <Badge variant="success" size="sm" className="gap-1">
       <ShieldCheck className="size-3" />
       检查通过
     </Badge>
+  );
+  return (
+    <button type="button" onClick={onClick} title="查看问题列表">
+      {badge}
+    </button>
+  );
+}
+
+/**
+ * 这一屏的说明书。
+ *
+ * 旧版把它写成编辑器上方的一段常驻说明 —— 每个人都只读一次，
+ * 却永久占着三行高度。收进一个图标里，需要时点开。
+ */
+function HelpPopover() {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label="使用说明">
+          <Info className="size-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80 space-y-2 text-xs">
+        <p>
+          脚本正文仅保存在服务端，不会下发给接入方。编辑器已按当前能力载入 SDK 类型：
+          输入 <code className="font-mono">aegis.</code> 查看可用成员，输入{" "}
+          <code className="font-mono">aegis-</code> 插入代码片段。
+        </p>
+        <p className="text-muted-foreground">
+          试跑<strong>读真写假</strong>：读取真实数据，写操作仅记录不执行；
+          不创建版本，不计入调用审计。
+        </p>
+        <p className="text-muted-foreground">
+          <Kbd>⌘/Ctrl</Kbd> <Kbd>↵</Kbd> 试跑 · <Kbd>⌘/Ctrl</Kbd> <Kbd>S</Kbd> 发布 ·
+          分隔条可拖拽，双击复位；两侧面板可折叠。
+        </p>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -527,7 +839,7 @@ function EditorToolbar({
   onDiffWithActive?: () => void;
 }) {
   return (
-    <div className="flex items-center gap-1">
+    <>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button variant="ghost" size="icon-sm" onClick={onFormat} aria-label="格式化">
@@ -549,7 +861,7 @@ function EditorToolbar({
               <GitCompare className="size-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>与线上激活的那一版对比</TooltipContent>
+          <TooltipContent>与激活版本对比</TooltipContent>
         </Tooltip>
       ) : null}
 
@@ -620,7 +932,46 @@ function EditorToolbar({
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
+    </>
+  );
+}
+
+/** dock / 面板通用的小标题条：左边一组按钮，右边一个收起。 */
+function PaneHeader({
+  children,
+  action
+}: {
+  children: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/30 px-1.5">
+      {children}
+      {action ? <div className="ml-auto flex items-center gap-1">{action}</div> : null}
     </div>
+  );
+}
+
+function PaneTab({
+  active,
+  onClick,
+  children
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors",
+        active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -631,80 +982,185 @@ const SEVERITY_META = {
 } as const;
 
 /**
- * 诊断列表。
+ * 底部 dock：问题 / 版本。
  *
- * 编辑器上的波浪线只在那一行可见，而作者要的是「一共几处、分别在哪」。
- * 缺声明那一类还带一个「补上」按钮 —— 后端已经算出该补哪几项，
+ * 编辑器上的波浪线只在那一行可见，而作者要的是「一共几处、分别在哪」；
+ * 版本表则是回滚时唯一的入口。两者都属于「看一眼就回去继续写」，
+ * 因此放在编辑器正下方而不是另一页。
+ */
+function BottomDock({
+  tab,
+  onTabChange,
+  onCollapse,
+  diagnostics,
+  analysing,
+  analysed,
+  applying,
+  onReveal,
+  onGrant,
+  versions,
+  versionsLoading,
+  activeVersion,
+  onLoadSource,
+  onDiffSource,
+  onActivate,
+  onDelete
+}: {
+  tab: DockTab;
+  onTabChange: (tab: DockTab) => void;
+  onCollapse: () => void;
+  diagnostics: AppFunctionDiagnostic[];
+  analysing: boolean;
+  analysed: boolean;
+  applying: boolean;
+  onReveal: (line: number) => void;
+  onGrant: (capabilities: string[]) => void;
+  versions: FunctionVersion[];
+  versionsLoading: boolean;
+  activeVersion?: string;
+  onLoadSource: (version: string) => void;
+  onDiffSource: (version: string) => void;
+  onActivate: (version: string) => void;
+  onDelete: (version: string) => void;
+}) {
+  return (
+    <>
+      <PaneHeader
+        action={
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-xs" onClick={onCollapse} aria-label="收起">
+                <ChevronDown className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>收起面板</TooltipContent>
+          </Tooltip>
+        }
+      >
+        <PaneTab active={tab === "problems"} onClick={() => onTabChange("problems")}>
+          问题
+          {diagnostics.length ? (
+            <Badge
+              variant={diagnostics.some((item) => item.severity === "error") ? "danger" : "warning"}
+              size="sm"
+            >
+              {diagnostics.length}
+            </Badge>
+          ) : null}
+          {analysing ? <Loader2 className="size-3 animate-spin" /> : null}
+        </PaneTab>
+        <PaneTab active={tab === "versions"} onClick={() => onTabChange("versions")}>
+          版本
+          {versions.length ? (
+            <Badge variant="outline" size="sm">
+              {versions.length}
+            </Badge>
+          ) : null}
+        </PaneTab>
+      </PaneHeader>
+
+      <div className="min-h-0 flex-1 overflow-auto">
+        {tab === "problems" ? (
+          <DiagnosticsList
+            diagnostics={diagnostics}
+            analysed={analysed}
+            applying={applying}
+            onReveal={onReveal}
+            onGrant={onGrant}
+          />
+        ) : (
+          <VersionTable
+            versions={versions}
+            loading={versionsLoading}
+            activeVersion={activeVersion}
+            showSource
+            onLoadSource={onLoadSource}
+            onDiffSource={onDiffSource}
+            onActivate={onActivate}
+            onDelete={onDelete}
+          />
+        )}
+      </div>
+    </>
+  );
+}
+
+/**
+ * 问题列表。
+ *
+ * 缺声明那一类带一个「补上」按钮 —— 后端已经算出该补哪几项，
  * 让作者自己把能力键抄到设置页去纯属多余。
  */
-function DiagnosticsPanel({
+function DiagnosticsList({
   diagnostics,
-  loading,
+  analysed,
   applying,
   onReveal,
   onGrant
 }: {
   diagnostics: AppFunctionDiagnostic[];
-  loading: boolean;
+  analysed: boolean;
   applying: boolean;
   onReveal: (line: number) => void;
   onGrant: (capabilities: string[]) => void;
 }) {
-  if (!diagnostics.length) return null;
+  if (!diagnostics.length) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-1 p-4 text-xs text-muted-foreground">
+        {analysed ? (
+          <>
+            <ShieldCheck className="size-4 text-emerald-600 dark:text-emerald-400" />
+            <span>静态检查通过</span>
+          </>
+        ) : (
+          <span>编写脚本后将自动执行静态检查</span>
+        )}
+      </div>
+    );
+  }
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          静态检查
-          {loading ? <Loader2 className="size-3.5 animate-spin text-muted-foreground" /> : null}
-        </CardTitle>
-        <CardDescription>
-          与发布门禁同一套判定：这里的「错误」会挡住发布，「提示」与「建议」不会。
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-1.5">
-        {diagnostics.map((diagnostic, index) => {
-          const meta = SEVERITY_META[diagnostic.severity] ?? SEVERITY_META.info;
-          const Icon = meta.icon;
-          return (
-            <div
-              key={`${diagnostic.rule}-${index}`}
-              className="flex items-start gap-2 rounded-lg border p-2.5 text-xs"
+    <div className="divide-y">
+      {diagnostics.map((diagnostic, index) => {
+        const meta = SEVERITY_META[diagnostic.severity] ?? SEVERITY_META.info;
+        const Icon = meta.icon;
+        return (
+          <div
+            key={`${diagnostic.rule}-${index}`}
+            className="flex items-start gap-2 px-2.5 py-1.5 text-xs hover:bg-muted/40"
+          >
+            <Icon className={cn("mt-0.5 size-3.5 shrink-0", meta.tone)} />
+            <button
+              type="button"
+              className="min-w-0 flex-1 text-left hover:underline"
+              onClick={() => onReveal(diagnostic.line)}
             >
-              <Icon className={cn("mt-0.5 size-3.5 shrink-0", meta.tone)} />
-              <button
-                type="button"
-                className="min-w-0 flex-1 text-left hover:underline"
-                onClick={() => onReveal(diagnostic.line)}
+              <span className="font-mono text-[11px] text-muted-foreground">
+                第 {diagnostic.line} 行
+              </span>
+              <span className="ml-1.5">{diagnostic.message}</span>
+            </button>
+            {diagnostic.capabilities?.length ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={applying}
+                onClick={() => onGrant(diagnostic.capabilities as string[])}
               >
-                <span className="font-mono text-[11px] text-muted-foreground">
-                  第 {diagnostic.line} 行
-                </span>
-                <span className="ml-1.5">{diagnostic.message}</span>
-              </button>
-              {diagnostic.capabilities?.length ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={applying}
-                  onClick={() => onGrant(diagnostic.capabilities as string[])}
-                >
-                  {applying ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                  补上声明
-                </Button>
-              ) : null}
-            </div>
-          );
-        })}
-      </CardContent>
-    </Card>
+                {applying ? <Loader2 className="size-3 animate-spin" /> : <Plus className="size-3" />}
+                声明能力
+              </Button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
 const NO_TEST_CASES: ScriptTestCase[] = [];
 
-/** 试跑面板：input、身份、以及存下来的那几组用例。 */
-function TestRunnerCard({
+/** 试跑输入：input、身份、以及存下来的那几组用例。 */
+function TestRunnerPane({
   scope,
   input,
   onInputChange,
@@ -736,6 +1192,7 @@ function TestRunnerCard({
   const addTestCase = useFunctionWorkbenchStore((state) => state.addTestCase);
   const removeTestCase = useFunctionWorkbenchStore((state) => state.removeTestCase);
   const [caseName, setCaseName] = useState("");
+  const [caseOpen, setCaseOpen] = useState(false);
   // 空对象与「没有 properties 的对象」都不算约束 —— 后者在 JSON Schema
   // 语义下同样放行任何输入，把它当成「已配置」会让徽标撒谎。
   const hasSchema = Boolean(
@@ -743,148 +1200,159 @@ function TestRunnerCard({
   );
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <FlaskConical className="size-4" />
-          试跑
-        </CardTitle>
-        <CardDescription>
-          不创建版本、不写调用审计。读的是真实数据，写操作只记录不执行 ——
-          因此额度判断、会员判定这些分支都能测到，而不会真的发出去。
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {testCases.length ? (
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">已存用例</Label>
-            <div className="flex flex-wrap gap-1.5">
-              {testCases.map((testCase) => (
-                <span
-                  key={testCase.id}
-                  className="group flex items-center gap-1 rounded-full border py-0.5 pl-2.5 pr-1 text-xs"
+    <>
+      <PaneHeader
+        action={
+          <>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="outline"
+                  size="sm"
+                  className={cn("gap-1 font-normal", !hasSchema && "text-muted-foreground")}
                 >
-                  <button
-                    type="button"
-                    className="hover:underline"
-                    onClick={() => {
-                      onInputChange(testCase.input);
-                      onAsUserIdChange(testCase.asUserId);
-                      onRun({ input: testCase.input, asUserId: testCase.asUserId });
-                    }}
-                  >
-                    {testCase.name}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`删除用例 ${testCase.name}`}
-                    className="rounded-full p-0.5 text-muted-foreground hover:text-destructive"
-                    onClick={() => removeTestCase(scope, testCase.id)}
-                  >
-                    <XCircle className="size-3" />
-                  </button>
-                </span>
-              ))}
-            </div>
+                  <FileJson className="size-3" />
+                  {hasSchema ? "按契约校验" : "未配置契约"}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-72">
+                {hasSchema
+                  ? "已配置入参契约，提供键名补全、枚举取值与必填校验"
+                  : "未配置入参契约。在「设置 → 入参契约」中配置后，此处将提供补全与校验，编辑器内 ctx.input 同步获得字段类型"}
+              </TooltipContent>
+            </Tooltip>
+            {inputSample ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                title="按契约生成仅含必填字段的样例"
+                onClick={() => onInputChange(inputSample)}
+              >
+                <Sparkles className="size-3" />
+                生成样例
+              </Button>
+            ) : null}
+          </>
+        }
+      >
+        <span className="flex items-center gap-1.5 px-1 text-xs font-medium">
+          <FlaskConical className="size-3.5" />
+          试跑输入
+        </span>
+      </PaneHeader>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5">
+        {testCases.length ? (
+          <div className="flex shrink-0 flex-wrap gap-1">
+            {testCases.map((testCase) => (
+              <span
+                key={testCase.id}
+                className="flex items-center gap-1 rounded-full border py-0.5 pl-2 pr-1 text-[11px]"
+              >
+                <button
+                  type="button"
+                  className="hover:underline"
+                  onClick={() => {
+                    onInputChange(testCase.input);
+                    onAsUserIdChange(testCase.asUserId);
+                    onRun({ input: testCase.input, asUserId: testCase.asUserId });
+                  }}
+                >
+                  {testCase.name}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`删除用例 ${testCase.name}`}
+                  className="rounded-full text-muted-foreground hover:text-destructive"
+                  onClick={() => removeTestCase(scope, testCase.id)}
+                >
+                  <XCircle className="size-3" />
+                </button>
+              </span>
+            ))}
           </div>
         ) : null}
 
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <Label>input</Label>
-            <div className="flex items-center gap-1.5">
-              {hasSchema ? (
-                <Badge variant="outline" size="sm" className="gap-1 font-normal">
-                  <FileJson className="size-3" />
-                  按入参契约补全与校验
-                </Badge>
-              ) : null}
-              {inputSample ? (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  title="按契约生成一份只含必填字段的样例"
-                  onClick={() => onInputChange(inputSample)}
-                >
-                  <Sparkles className="size-3" />
-                  按契约填
-                </Button>
-              ) : null}
-            </div>
-          </div>
-          {/* 配了契约就把它喂给 JSON 语言服务：键名补全、枚举值补全、
-              必填校验、悬浮显示字段说明，全部是现成的。没配时退回纯语法检查。 */}
-          <JsonEditor
-            value={input}
-            onChange={onInputChange}
-            schema={hasSchema ? inputSchema : undefined}
-            height={140}
-          />
-          {!hasSchema ? (
-            <p className="text-[11px] text-muted-foreground">
-              这个函数还没有入参契约。在「设置 → 入参契约」里配一份，这里会有补全与校验，
-              编辑器里 <code className="font-mono">ctx.input</code> 也会有真实字段。
-            </p>
-          ) : null}
-        </div>
-        <div className="space-y-2">
-          <Label>以哪个用户的身份跑</Label>
-          <Input
-            value={asUserId}
-            onChange={(event) => onAsUserIdChange(event.target.value.replace(/\D/g, ""))}
-            placeholder="用户 ID，留空则以当前管理员身份"
-            inputMode="numeric"
-          />
-          <p className="text-[11px] text-muted-foreground">
-            多数脚本第一行就是 <code className="font-mono">aegis.user.get()</code>；
-            不填的话只能测到那句 fail。
-          </p>
-        </div>
+        {/* 配了契约就把它喂给 JSON 语言服务：键名补全、枚举值补全、
+            必填校验、悬浮显示字段说明，全部是现成的。没配时退回纯语法检查。 */}
+        <JsonEditor
+          className="min-h-0 flex-1"
+          height="100%"
+          value={input}
+          onChange={onInputChange}
+          schema={hasSchema ? inputSchema : undefined}
+        />
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Button disabled={pending || disabled} onClick={() => onRun()}>
-            {pending ? <Loader2 className="size-4 animate-spin" /> : <FlaskConical className="size-4" />}
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Input
+                className="h-7 flex-1 text-xs"
+                value={asUserId}
+                onChange={(event) => onAsUserIdChange(event.target.value.replace(/\D/g, ""))}
+                placeholder="以指定用户身份执行（用户 ID）"
+                inputMode="numeric"
+              />
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              未填写时，涉及用户身份的调用（如 aegis.user.get()）将失败
+            </TooltipContent>
+          </Tooltip>
+          <Popover open={caseOpen} onOpenChange={setCaseOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="icon-sm" aria-label="保存为用例">
+                <Save className="size-3.5" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-64 space-y-2">
+              <Label className="text-xs">保存为用例（仅保存在本机）</Label>
+              <Input
+                className="h-8 text-xs"
+                value={caseName}
+                onChange={(event) => setCaseName(event.target.value)}
+                placeholder="用例名称"
+              />
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={!caseName.trim()}
+                onClick={() => {
+                  addTestCase(scope, {
+                    id: `${Date.now()}`,
+                    name: caseName.trim(),
+                    input,
+                    asUserId
+                  });
+                  setCaseName("");
+                  setCaseOpen(false);
+                  toast.success("用例已保存");
+                }}
+              >
+                保存
+              </Button>
+            </PopoverContent>
+          </Popover>
+          <Button size="sm" disabled={pending || disabled} onClick={() => onRun()}>
+            {pending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <FlaskConical className="size-3.5" />
+            )}
             试跑
           </Button>
-          <div className="flex flex-1 items-center gap-1.5">
-            <Input
-              className="h-8 text-xs"
-              value={caseName}
-              onChange={(event) => setCaseName(event.target.value)}
-              placeholder="存成用例，例如「过期会员」"
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!caseName.trim()}
-              onClick={() => {
-                addTestCase(scope, {
-                  id: `${Date.now()}`,
-                  name: caseName.trim(),
-                  input,
-                  asUserId
-                });
-                setCaseName("");
-                toast.success("用例已保存到本机");
-              }}
-            >
-              <Save className="size-3.5" />
-              存
-            </Button>
-          </div>
         </div>
+
         {blocking > 0 ? (
-          <p className="text-[11px] text-amber-600 dark:text-amber-400">
-            静态检查有 {blocking} 处错误，试跑仍可进行（它跑的是你现在这份正文），
-            但发布会被挡下。
+          <p className="shrink-0 text-[11px] text-amber-600 dark:text-amber-400">
+            静态检查存在 {blocking} 个错误：不影响试跑，发布将被拒绝。
           </p>
         ) : null}
-      </CardContent>
-    </Card>
+      </div>
+    </>
   );
 }
 
-function TestResultCard({
+function TestResultPane({
   result,
   onReveal
 }: {
@@ -899,28 +1367,47 @@ function TestResultCard({
   }, [result, logLevel]);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>试跑结果</CardTitle>
-        <CardDescription>返回值、日志与本该发生的副作用</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <>
+      <PaneHeader
+        action={
+          result?.logs.length ? (
+            <Select value={logLevel} onValueChange={setLogLevel}>
+              <SelectTrigger className="h-6 w-20 text-[11px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部日志</SelectItem>
+                <SelectItem value="info">info</SelectItem>
+                <SelectItem value="warn">warn</SelectItem>
+                <SelectItem value="error">error</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : null
+        }
+      >
+        <span className="px-1 text-xs font-medium">试跑结果</span>
+        {result ? (
+          <>
+            <Badge variant={result.ok ? "success" : "danger"} size="sm">
+              {result.ok ? "通过" : result.businessCode ? "被脚本拒绝" : "执行失败"}
+            </Badge>
+            <span className="truncate text-[11px] text-muted-foreground">
+              {formatDuration(result.durationMs)} · SDK {result.sdkCalls} / 写 {result.sdkMutations}{" "}
+              / 出站 {result.sdkFetches}
+            </span>
+          </>
+        ) : null}
+      </PaneHeader>
+
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
         {!result ? (
-          <p className="py-12 text-center text-sm text-muted-foreground">还没有跑过</p>
+          <p className="py-8 text-center text-xs text-muted-foreground">
+            暂无试跑结果，按 <Kbd>⌘/Ctrl</Kbd> <Kbd>↵</Kbd> 执行试跑。
+          </p>
         ) : (
           <>
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <Badge variant={result.ok ? "success" : "danger"}>
-                {result.ok ? "通过" : result.businessCode ? "被脚本拒绝" : "执行失败"}
-              </Badge>
-              <span className="text-muted-foreground">
-                {formatDuration(result.durationMs)} · SDK {result.sdkCalls} 次 / 写{" "}
-                {result.sdkMutations} 次 / 出站 {result.sdkFetches} 次
-              </span>
-            </div>
-
             {result.error ? (
-              <div className="space-y-1.5 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs">
+              <div className="space-y-1 rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-xs">
                 <div>
                   {result.businessCode ? (
                     <span className="mr-1.5 font-mono text-[11px] text-muted-foreground">
@@ -935,7 +1422,7 @@ function TestResultCard({
                     className="font-mono text-[11px] text-muted-foreground hover:underline"
                     onClick={() => onReveal(result.errorLine as number)}
                   >
-                    跳到第 {result.errorLine} 行
+                    定位到第 {result.errorLine} 行
                   </button>
                 ) : null}
                 {result.stack?.length ? (
@@ -948,8 +1435,8 @@ function TestResultCard({
 
             {result.output !== undefined && result.output !== null ? (
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">返回值</p>
-                <pre className="max-h-48 overflow-auto rounded-lg border bg-muted/40 p-2.5 font-mono text-[11px]">
+                <p className="text-[11px] text-muted-foreground">返回值</p>
+                <pre className="overflow-auto rounded-lg border bg-muted/40 p-2 font-mono text-[11px]">
                   {JSON.stringify(result.output, null, 2)}
                 </pre>
               </div>
@@ -957,31 +1444,18 @@ function TestResultCard({
 
             {result.logs.length ? (
               <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-muted-foreground">日志（{result.logs.length} 行）</p>
-                  <Select value={logLevel} onValueChange={setLogLevel}>
-                    <SelectTrigger className="h-7 w-24 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">全部</SelectItem>
-                      <SelectItem value="info">info</SelectItem>
-                      <SelectItem value="warn">warn</SelectItem>
-                      <SelectItem value="error">error</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="max-h-40 space-y-0.5 overflow-auto rounded-lg border bg-muted/40 p-2">
+                <p className="text-[11px] text-muted-foreground">日志（{result.logs.length} 行）</p>
+                <div className="space-y-0.5 rounded-lg border bg-muted/40 p-1.5">
                   {logs.map((entry, index) => (
                     <div key={index} className="flex gap-2 font-mono text-[11px]">
                       {/* 相对耗时是脚本里唯一的计时手段：沙箱没有 timer，
                           「哪一步慢」只能靠日志之间的间隔看出来 */}
-                      <span className="w-14 shrink-0 text-right text-muted-foreground">
+                      <span className="w-12 shrink-0 text-right text-muted-foreground">
                         {entry.elapsedMs.toFixed(1)}ms
                       </span>
                       <span
                         className={cn(
-                          "w-9 shrink-0",
+                          "w-8 shrink-0",
                           entry.level === "error" && "text-destructive",
                           entry.level === "warn" && "text-amber-600 dark:text-amber-400",
                           entry.level === "info" && "text-muted-foreground"
@@ -993,8 +1467,8 @@ function TestResultCard({
                     </div>
                   ))}
                   {!logs.length ? (
-                    <p className="py-2 text-center text-[11px] text-muted-foreground">
-                      该级别没有日志
+                    <p className="py-1.5 text-center text-[11px] text-muted-foreground">
+                      当前级别无日志
                     </p>
                   ) : null}
                 </div>
@@ -1002,13 +1476,13 @@ function TestResultCard({
             ) : null}
 
             <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">副作用</p>
+              <p className="text-[11px] text-muted-foreground">副作用</p>
               <EffectList effects={result.effects} />
             </div>
           </>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </>
   );
 }
 
@@ -1033,7 +1507,8 @@ function PublishDialog({
   source,
   blocking,
   suggestedVersion,
-  onPublished
+  onPublished,
+  onShowProblems
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -1043,6 +1518,7 @@ function PublishDialog({
   blocking: AppFunctionDiagnostic[];
   suggestedVersion: string;
   onPublished: () => void;
+  onShowProblems: () => void;
 }) {
   const [version, setVersion] = useState(suggestedVersion);
   const [notes, setNotes] = useState("");
@@ -1064,13 +1540,20 @@ function PublishDialog({
         <DialogHeader>
           <DialogTitle>发布 {selected.name} 的新版本</DialogTitle>
           <DialogDescription>
-            版本记录不可修改。发布前会做语法、入口与能力声明检查，跑不起来的脚本进不了线上。
+            版本发布后不可修改。发布前将进行语法、入口与能力声明检查。
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           {blocking.length ? (
-            <div className="space-y-1 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs">
-              <p className="font-medium text-destructive">静态检查未通过，发布会被拒绝：</p>
+            <button
+              type="button"
+              className="w-full space-y-1 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-left text-xs"
+              onClick={() => {
+                onShowProblems();
+                onOpenChange(false);
+              }}
+            >
+              <p className="font-medium text-destructive">静态检查未通过，无法发布：</p>
               {blocking.slice(0, 3).map((diagnostic, index) => (
                 <p key={index} className="text-muted-foreground">
                   第 {diagnostic.line} 行：{diagnostic.message}
@@ -1079,7 +1562,8 @@ function PublishDialog({
               {blocking.length > 3 ? (
                 <p className="text-muted-foreground">…另有 {blocking.length - 3} 处</p>
               ) : null}
-            </div>
+              <p className="text-muted-foreground">查看问题列表</p>
+            </button>
           ) : null}
           <div className="space-y-2">
             <Label>版本号</Label>
@@ -1095,14 +1579,14 @@ function PublishDialog({
               className="min-h-20 text-xs"
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
-              placeholder="这一版改了什么 —— 回滚时要靠它决定滚到哪一版"
+              placeholder="描述本次变更，供回滚时参考"
             />
           </div>
           <label className="flex items-center justify-between rounded-lg border p-2.5 text-sm">
             <span>
               发布后立即激活
               <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                关掉的话这一版只是暂存，线上仍跑当前激活的版本
+                关闭后版本仅保存，线上仍运行当前激活版本
               </span>
             </span>
             <Switch checked={activate} onCheckedChange={setActivate} />
@@ -1148,6 +1632,17 @@ function PublishDialog({
   );
 }
 
+type FunctionVersion = {
+  id: number;
+  version: string;
+  status: string;
+  notes: string;
+  sourceBytes: number;
+  endpointUrl?: string;
+  artifactSha256: string;
+  createdAt: string;
+};
+
 function VersionTable({
   versions,
   loading,
@@ -1158,16 +1653,7 @@ function VersionTable({
   onActivate,
   onDelete
 }: {
-  versions: Array<{
-    id: number;
-    version: string;
-    status: string;
-    notes: string;
-    sourceBytes: number;
-    endpointUrl?: string;
-    artifactSha256: string;
-    createdAt: string;
-  }>;
+  versions: FunctionVersion[];
   loading?: boolean;
   activeVersion?: string;
   showSource?: boolean;
@@ -1177,109 +1663,101 @@ function VersionTable({
   onDelete: (version: string) => void;
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>版本</CardTitle>
-        <CardDescription>
-          版本记录不可修改：发布新功能即创建新版本并激活，回滚则重新激活旧版本。
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>版本</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>说明</TableHead>
-              <TableHead>产物</TableHead>
-              <TableHead>发布时间</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {versions.map((version) => (
-              <TableRow key={version.id}>
-                <TableCell className="font-mono">{version.version}</TableCell>
-                <TableCell>
-                  <Badge variant={version.status === "active" ? "success" : "outline"}>
-                    {version.status}
-                  </Badge>
-                </TableCell>
-                <TableCell className="max-w-60 truncate text-xs text-muted-foreground">
-                  {version.notes || "—"}
-                </TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  {version.endpointUrl
-                    ? version.endpointUrl
-                    : version.sourceBytes > 0
-                      ? formatBytes(version.sourceBytes)
-                      : "WASM"}
-                  <span className="ml-1.5 font-mono text-[10px]">
-                    {version.artifactSha256.slice(0, 8)}
-                  </span>
-                </TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  {formatTime(version.createdAt)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    {showSource && onDiffSource ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        title="与当前编辑器里的正文对比"
-                        aria-label={`对比版本 ${version.version}`}
-                        onClick={() => onDiffSource(version.version)}
-                      >
-                        <GitCompare className="size-4" />
-                      </Button>
-                    ) : null}
-                    {showSource && onLoadSource ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        title="把这一版的正文载入编辑器"
-                        aria-label={`载入版本 ${version.version}`}
-                        onClick={() => onLoadSource(version.version)}
-                      >
-                        <History className="size-4" />
-                      </Button>
-                    ) : null}
-                    {version.version !== activeVersion ? (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onActivate(version.version)}
-                        >
-                          <CheckCircle2 className="size-4" />
-                          激活
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`删除版本 ${version.version}`}
-                          onClick={() => onDelete(version.version)}
-                        >
-                          <Trash2 className="size-4 text-destructive" />
-                        </Button>
-                      </>
-                    ) : null}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            {!versions.length ? (
-              <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
-                  {loading ? "加载中…" : "暂无版本"}
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+    <Table className="text-xs">
+      <TableHeader>
+        <TableRow>
+          <TableHead className="h-8">版本</TableHead>
+          <TableHead className="h-8">状态</TableHead>
+          <TableHead className="h-8">说明</TableHead>
+          <TableHead className="h-8">产物</TableHead>
+          <TableHead className="h-8">发布时间</TableHead>
+          <TableHead className="h-8" />
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {versions.map((version) => (
+          <TableRow key={version.id}>
+            <TableCell className="py-1.5 font-mono">{version.version}</TableCell>
+            <TableCell className="py-1.5">
+              <Badge variant={version.status === "active" ? "success" : "outline"} size="sm">
+                {version.status}
+              </Badge>
+            </TableCell>
+            <TableCell className="max-w-60 truncate py-1.5 text-muted-foreground">
+              {version.notes || "—"}
+            </TableCell>
+            <TableCell className="py-1.5 text-muted-foreground">
+              {version.endpointUrl
+                ? version.endpointUrl
+                : version.sourceBytes > 0
+                  ? formatBytes(version.sourceBytes)
+                  : "WASM"}
+              <span className="ml-1.5 font-mono text-[10px]">
+                {version.artifactSha256.slice(0, 8)}
+              </span>
+            </TableCell>
+            <TableCell className="py-1.5 text-muted-foreground">
+              {formatTime(version.createdAt)}
+            </TableCell>
+            <TableCell className="py-1.5 text-right">
+              <div className="flex justify-end gap-0.5">
+                {showSource && onDiffSource ? (
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    title="与编辑器正文对比"
+                    aria-label={`对比版本 ${version.version}`}
+                    onClick={() => onDiffSource(version.version)}
+                  >
+                    <GitCompare className="size-3.5" />
+                  </Button>
+                ) : null}
+                {showSource && onLoadSource ? (
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    title="载入编辑器"
+                    aria-label={`载入版本 ${version.version}`}
+                    onClick={() => onLoadSource(version.version)}
+                  >
+                    <History className="size-3.5" />
+                  </Button>
+                ) : null}
+                {version.version !== activeVersion ? (
+                  <>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      title="激活此版本"
+                      aria-label={`激活版本 ${version.version}`}
+                      onClick={() => onActivate(version.version)}
+                    >
+                      <CheckCircle2 className="size-3.5" />
+                    </Button>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      title="删除此版本"
+                      aria-label={`删除版本 ${version.version}`}
+                      onClick={() => onDelete(version.version)}
+                    >
+                      <Trash2 className="size-3.5 text-destructive" />
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            </TableCell>
+          </TableRow>
+        ))}
+        {!versions.length ? (
+          <TableRow>
+            <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+              {loading ? "加载中…" : "暂无版本"}
+            </TableCell>
+          </TableRow>
+        ) : null}
+      </TableBody>
+    </Table>
   );
 }
 
@@ -1292,16 +1770,7 @@ function NonScriptVersionPanel({
 }: {
   appKey: string;
   selected: AppFunction;
-  versions: Array<{
-    id: number;
-    version: string;
-    status: string;
-    notes: string;
-    sourceBytes: number;
-    endpointUrl?: string;
-    artifactSha256: string;
-    createdAt: string;
-  }>;
+  versions: FunctionVersion[];
   loading: boolean;
 }) {
   const [version, setVersion] = useState("");
@@ -1317,115 +1786,115 @@ function NonScriptVersionPanel({
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>发布版本</CardTitle>
-          <CardDescription>
+      <div className="space-y-3 rounded-xl border p-4">
+        <div>
+          <h3 className="text-sm font-medium">发布版本</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
             {isHttp
               ? "Endpoint 仅允许 HTTPS，禁止重定向，并在实际连接时重新解析 IP 拒绝内网与元数据地址。"
               : "WASM 最大 2MB，每次调用独立实例，内存上限 16MB，不提供网络与文件系统。"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>版本号</Label>
-              <Input
-                value={version}
-                onChange={(event) => setVersion(event.target.value)}
-                placeholder="1.0.0"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>发版说明</Label>
-              <Input value={notes} onChange={(event) => setNotes(event.target.value)} />
-            </div>
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label>版本号</Label>
+            <Input
+              value={version}
+              onChange={(event) => setVersion(event.target.value)}
+              placeholder="1.0.0"
+            />
           </div>
-          {isHttp ? (
-            <>
-              <div className="space-y-2">
-                <Label>Endpoint URL</Label>
-                <Input
-                  value={endpointUrl}
-                  onChange={(event) => setEndpointUrl(event.target.value)}
-                  placeholder="https://functions.example.com/aegis"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>响应 Ed25519 公钥</Label>
-                <Textarea
-                  className="min-h-24 font-mono text-xs"
-                  value={responsePublicKey}
-                  onChange={(event) => setResponsePublicKey(event.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Worker 必须对响应签名，Aegis 用此公钥验签。
-                </p>
-              </div>
-            </>
-          ) : (
+          <div className="space-y-2">
+            <Label>发版说明</Label>
+            <Input value={notes} onChange={(event) => setNotes(event.target.value)} />
+          </div>
+        </div>
+        {isHttp ? (
+          <>
             <div className="space-y-2">
-              <Label>WASM Base64</Label>
-              <Textarea
-                className="min-h-48 font-mono text-xs"
-                value={wasmBase64}
-                onChange={(event) => setWasmBase64(event.target.value)}
+              <Label>Endpoint URL</Label>
+              <Input
+                value={endpointUrl}
+                onChange={(event) => setEndpointUrl(event.target.value)}
+                placeholder="https://functions.example.com/aegis"
               />
             </div>
+            <div className="space-y-2">
+              <Label>响应 Ed25519 公钥</Label>
+              <Textarea
+                className="min-h-24 font-mono text-xs"
+                value={responsePublicKey}
+                onChange={(event) => setResponsePublicKey(event.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                响应需由 Worker 签名，Aegis 使用此公钥验签。
+              </p>
+            </div>
+          </>
+        ) : (
+          <div className="space-y-2">
+            <Label>WASM Base64</Label>
+            <Textarea
+              className="min-h-48 font-mono text-xs"
+              value={wasmBase64}
+              onChange={(event) => setWasmBase64(event.target.value)}
+            />
+          </div>
+        )}
+        <Button
+          disabled={createVersion.isPending || !version.trim()}
+          onClick={async () => {
+            try {
+              await createVersion.mutateAsync({
+                name: selected.name,
+                payload: {
+                  version: version.trim(),
+                  notes,
+                  endpointUrl: isHttp ? endpointUrl : undefined,
+                  responsePublicKey: isHttp ? responsePublicKey : undefined,
+                  wasmBase64: isHttp ? undefined : wasmBase64
+                }
+              });
+              setVersion("");
+              setNotes("");
+              toast.success("版本已创建，激活后生效");
+            } catch (error) {
+              toast.error(errorMessage(error));
+            }
+          }}
+        >
+          {createVersion.isPending ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <UploadCloud className="size-4" />
           )}
-          <Button
-            disabled={createVersion.isPending || !version.trim()}
-            onClick={async () => {
-              try {
-                await createVersion.mutateAsync({
-                  name: selected.name,
-                  payload: {
-                    version: version.trim(),
-                    notes,
-                    endpointUrl: isHttp ? endpointUrl : undefined,
-                    responsePublicKey: isHttp ? responsePublicKey : undefined,
-                    wasmBase64: isHttp ? undefined : wasmBase64
-                  }
-                });
-                setVersion("");
-                setNotes("");
-                toast.success("版本已创建，激活后生效");
-              } catch (error) {
-                toast.error(errorMessage(error));
-              }
-            }}
-          >
-            {createVersion.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <UploadCloud className="size-4" />
-            )}
-            创建版本
-          </Button>
-        </CardContent>
-      </Card>
+          创建版本
+        </Button>
+      </div>
 
-      <VersionTable
-        versions={versions}
-        loading={loading}
-        activeVersion={selected.activeVersion}
-        onActivate={async (target) => {
-          try {
-            await activateVersion.mutateAsync({ name: selected.name, version: target });
-            toast.success(`版本 ${target} 已激活`);
-          } catch (error) {
-            toast.error(errorMessage(error));
-          }
-        }}
-        onDelete={async (target) => {
-          try {
-            await deleteVersion.mutateAsync({ name: selected.name, version: target });
-            toast.success(`版本 ${target} 已删除`);
-          } catch (error) {
-            toast.error(errorMessage(error));
-          }
-        }}
-      />
+      <div className="overflow-hidden rounded-xl border">
+        <VersionTable
+          versions={versions}
+          loading={loading}
+          activeVersion={selected.activeVersion}
+          onActivate={async (target) => {
+            try {
+              await activateVersion.mutateAsync({ name: selected.name, version: target });
+              toast.success(`版本 ${target} 已激活`);
+            } catch (error) {
+              toast.error(errorMessage(error));
+            }
+          }}
+          onDelete={async (target) => {
+            try {
+              await deleteVersion.mutateAsync({ name: selected.name, version: target });
+              toast.success(`版本 ${target} 已删除`);
+            } catch (error) {
+              toast.error(errorMessage(error));
+            }
+          }}
+        />
+      </div>
     </div>
   );
 }

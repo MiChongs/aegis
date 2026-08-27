@@ -80,6 +80,7 @@ func testScriptDeps() ScriptSDKDeps {
 		// 只要不发命令就不会有任何网络行为。
 		Redis:     redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"}),
 		KeyPrefix: "test:",
+		AI:        &AIProviderService{},
 	}
 }
 

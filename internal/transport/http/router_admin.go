@@ -186,6 +186,29 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/functions/:functionName/invoke", h.AdminInvokeAppFunction)
 		admin.GET("/apps/:appkey/functions/:functionName/invocations", h.AdminListAppFunctionInvocations)
 		admin.GET("/apps/:appkey/functions/:functionName/stats", h.AdminAppFunctionStats)
+		// AI 通道 / 技能 / MCP / Agent（应用作用域）。
+		// 与平台级 /api/admin/system/ai/* 走同一批服务层方法，只差 appid 来源；
+		// Agent 流式对话是控制台函数工作台的「AI 助手」面板。
+		admin.GET("/apps/:appkey/ai/providers", h.AIProviderCatalog)
+		admin.GET("/apps/:appkey/ai/configs", h.AdminAppAIConfigList)
+		admin.POST("/apps/:appkey/ai/configs", h.AdminAppAIConfigCreate)
+		admin.GET("/apps/:appkey/ai/channel", h.AdminAppAIChannel)
+		admin.PUT("/apps/:appkey/ai/configs/:configId", h.AdminAppAIConfigUpdate)
+		admin.DELETE("/apps/:appkey/ai/configs/:configId", h.AdminAppAIConfigDelete)
+		admin.POST("/apps/:appkey/ai/configs/:configId/test", h.AdminAppAIConfigTest)
+		admin.GET("/apps/:appkey/ai/skills", h.AdminAppAISkillList)
+		admin.POST("/apps/:appkey/ai/skills", h.AdminAppAISkillCreate)
+		admin.PUT("/apps/:appkey/ai/skills/:skillId", h.AdminAppAISkillUpdate)
+		admin.DELETE("/apps/:appkey/ai/skills/:skillId", h.AdminAppAISkillDelete)
+		admin.GET("/apps/:appkey/ai/mcp-servers", h.AdminAppAIMCPList)
+		admin.POST("/apps/:appkey/ai/mcp-servers", h.AdminAppAIMCPCreate)
+		admin.PUT("/apps/:appkey/ai/mcp-servers/:serverId", h.AdminAppAIMCPUpdate)
+		admin.DELETE("/apps/:appkey/ai/mcp-servers/:serverId", h.AdminAppAIMCPDelete)
+		admin.POST("/apps/:appkey/ai/mcp-servers/:serverId/test", h.AdminAppAIMCPTest)
+		admin.POST("/apps/:appkey/ai/agent/stream", h.AdminAppAIAgentStream)
+		admin.GET("/apps/:appkey/ai/conversations", h.AdminAppAIConversationList)
+		admin.GET("/apps/:appkey/ai/conversations/:conversationId", h.AdminAppAIConversationDetail)
+		admin.DELETE("/apps/:appkey/ai/conversations/:conversationId", h.AdminAppAIConversationDelete)
 		// 卡密。二级段全部是静态词（batches / codes / redemptions / catalog），
 		// 参数段只出现在第三级 —— 与 :functionName 那一层同理，静态与参数抢同一段
 		// 会让 gin 在启动时 panic，而那是启动期才炸的问题。

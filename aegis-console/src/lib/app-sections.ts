@@ -12,6 +12,7 @@ import {
   ScrollText,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   Ticket,
   type LucideIcon
 } from "lucide-react";
@@ -74,6 +75,7 @@ export const appSectionGroups: AppSectionGroup[] = [
     title: "服务能力",
     sections: [
       { key: "email", title: "邮件", summary: "发信出口与模板", icon: Mail },
+      { key: "ai", title: "AI 服务", summary: "模型通道、技能与 MCP", icon: Sparkles },
       { key: "payment", title: "支付", summary: "渠道市场与交易参数", icon: CreditCard },
       { key: "settings", title: "用户设置", summary: "资料字段与默认值", icon: SlidersHorizontal }
     ]

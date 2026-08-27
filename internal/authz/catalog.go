@@ -73,6 +73,9 @@ const (
 	PermEmailRead  = "email:read"
 	PermEmailWrite = "email:write"
 
+	PermAIRead  = "ai:read"
+	PermAIWrite = "ai:write"
+
 	PermPaymentRead  = "payment:read"
 	PermPaymentWrite = "payment:write"
 
@@ -169,6 +172,10 @@ func PermissionCatalog() []admindomain.PermissionGroup {
 		{Key: "email", Name: "邮件服务", Permissions: []admindomain.Permission{
 			{Code: PermEmailRead, Name: "邮件配置查看"},
 			{Code: PermEmailWrite, Name: "邮件配置修改"},
+		}},
+		{Key: "ai", Name: "AI 服务", Permissions: []admindomain.Permission{
+			{Code: PermAIRead, Name: "AI 配置查看", Description: "查看 AI 通道 / 技能 / MCP 配置（密钥恒不回显）"},
+			{Code: PermAIWrite, Name: "AI 配置修改", Description: "增删改 AI 通道 / 技能 / MCP，含连通性测试（会产生真实调用计费）"},
 		}},
 		{Key: "payment", Name: "支付管理", Permissions: []admindomain.Permission{
 			{Code: PermPaymentRead, Name: "支付配置查看"},

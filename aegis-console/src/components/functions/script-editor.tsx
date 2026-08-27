@@ -83,6 +83,8 @@ type ScriptEditorProps = {
   onRun?: () => void;
   /** 把实例交给工具条，用于「格式化」这类由外部按钮触发的编辑器动作 */
   onEditorReady?: (instance: editor.IStandaloneCodeEditor | null) => void;
+  /** 光标位置，喂给状态栏 —— 「诊断说第 87 行」时得知道自己现在在第几行 */
+  onCursorChange?: (position: { line: number; column: number }) => void;
   className?: string;
   height?: number | string;
   readOnly?: boolean;
@@ -114,8 +116,9 @@ export function ScriptEditor({
   onSave,
   onRun,
   onEditorReady,
+  onCursorChange,
   className,
-  height = 460,
+  height = "100%",
   readOnly = false
 }: ScriptEditorProps) {
   const { resolvedTheme } = useTheme();
@@ -128,12 +131,14 @@ export function ScriptEditor({
   const saveRef = useRef(onSave);
   const runRef = useRef(onRun);
   const readyRef = useRef(onEditorReady);
+  const cursorRef = useRef(onCursorChange);
   // 每次渲染后同步（不能在渲染期写 ref）。命令与挂载回调都发生在渲染之后，
   // 因此它们读到的一定是最新的一版。
   useEffect(() => {
     saveRef.current = onSave;
     runRef.current = onRun;
     readyRef.current = onEditorReady;
+    cursorRef.current = onCursorChange;
     contextRef.current = languageContext;
   });
 
@@ -237,6 +242,10 @@ export function ScriptEditor({
     // 每次都要把手从键盘挪到鼠标上。
     instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current?.());
     instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runRef.current?.());
+    // 监听器由编辑器实例持有，实例销毁时一并释放，不需要自己 dispose
+    instance.onDidChangeCursorPosition((event) =>
+      cursorRef.current?.({ line: event.position.lineNumber, column: event.position.column })
+    );
   }
 
   // 勾选能力后（或目录 / 入参契约到位后）立刻刷新类型，可见成员随之增减

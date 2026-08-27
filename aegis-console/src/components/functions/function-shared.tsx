@@ -180,8 +180,8 @@ export function CapabilityPicker({
       ))}
       <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
-        声明即授权：没勾选的能力在脚本里根本不存在（<code className="font-mono">aegis.points</code>{" "}
-        会是 undefined），编辑器也不会提示它。
+        声明即授权：未勾选的能力在脚本中不可用（对应对象为{" "}
+        <code className="font-mono">undefined</code>），编辑器亦不提供提示。
       </p>
     </div>
   );
@@ -195,7 +195,7 @@ export function CapabilityPicker({
  */
 export function EffectList({ effects }: { effects: AppFunctionEffect[] }) {
   if (!effects.length) {
-    return <p className="py-6 text-center text-xs text-muted-foreground">没有产生副作用</p>;
+    return <p className="py-6 text-center text-xs text-muted-foreground">无副作用</p>;
   }
   return (
     <div className="space-y-1.5">
@@ -236,9 +236,9 @@ export function HighRiskNotice({
     <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs">
       <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
       <span className="min-w-0">
-        已开启高风险能力：
+        已启用高风险能力：
         <span className="font-medium">{risky.map((item) => item.label).join("、")}</span>。
-        脚本一旦被写错，这些操作会直接作用在真实用户与真实资金上；发布前请先用试跑验证。
+        相关操作将直接作用于真实用户与资金，发布前请通过试跑验证。
       </span>
     </div>
   );

@@ -538,6 +538,21 @@
     @apply flex flex-col gap-5 pt-1;
   }
 
+  /*
+   * 满屏工作台：可用高度 = 视口 − 顶栏（h-12）− <main> 的上下留白。
+   *
+   * 给「一屏之内做完、不靠滚动」的页面用（当前是远程函数的脚本工作台）：
+   * 编辑器必须占满剩下的地方，而不是一个写死的像素高度 —— 那个数字在
+   * 13 寸上太高、在 27 寸上浪费掉半屏。
+   *
+   * 视口单位用 svh 而不是 vh：移动端地址栏收起时 vh 会比可见区域大一截，
+   * 表现是底部状态栏被浏览器 UI 压住。min-h 是矮屏的兜底 ——
+   * 高度低于它时宁可让页面滚，也不要把编辑器压成两行。
+   */
+  .workbench-viewport {
+    @apply h-[calc(100svh-5rem)] min-h-[32rem] lg:h-[calc(100svh-5.5rem)];
+  }
+
   .page-grid-2 {
     @apply grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)];
   }

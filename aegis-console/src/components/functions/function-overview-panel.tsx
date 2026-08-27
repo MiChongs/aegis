@@ -52,10 +52,10 @@ export function FunctionOverviewPanel({
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
           <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <span>
-            这个函数<strong>还不能被调用</strong>：
+            该函数<strong>当前不可被调用</strong>：
             {!selected.activeVersion
-              ? "尚未激活任何版本。请到「脚本」页发布并激活一个版本。"
-              : `当前状态是 ${selected.status}，请到「设置」页改成 active。`}
+              ? "尚未激活版本，请在「脚本」页发布并激活。"
+              : `当前状态为 ${selected.status}，请在「设置」页改为 active。`}
           </span>
         </div>
       ) : null}
@@ -64,9 +64,7 @@ export function FunctionOverviewPanel({
         <CardHeader className="flex-row items-start justify-between gap-3">
           <div>
             <CardTitle>运行状况</CardTitle>
-            <CardDescription>
-              成功率的分母只算已结束的调用 —— 把执行中的算成失败，会让刚发布的函数看起来在报错。
-            </CardDescription>
+            <CardDescription>成功率仅统计已结束的调用。</CardDescription>
           </div>
           <Select value={String(hours)} onValueChange={(value) => setHours(Number(value))}>
             <SelectTrigger className="h-8 w-28 text-xs">
@@ -87,7 +85,7 @@ export function FunctionOverviewPanel({
               label="成功率"
               value={formatRate(stats?.successRate ?? 0, stats?.total ?? 0)}
               tone={stats && stats.total > 0 && stats.successRate < 0.9 ? "danger" : "success"}
-              hint={stats?.total ? undefined : "还没有调用过"}
+              hint={stats?.total ? undefined : "暂无调用"}
             />
             <StatTile label="失败" value={String(stats?.failed ?? 0)} tone={stats?.failed ? "danger" : "default"} />
             <StatTile label="平均耗时" value={formatDuration(stats?.avgMs ?? 0)} />
@@ -128,8 +126,8 @@ export function FunctionOverviewPanel({
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>最常见的错误</CardTitle>
-            <CardDescription>排障从这里开始，而不是从翻日志开始</CardDescription>
+            <CardTitle>高频错误</CardTitle>
+            <CardDescription>所选时段内出现次数最多的失败原因</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {stats?.topErrors?.length ? (
@@ -143,7 +141,7 @@ export function FunctionOverviewPanel({
               ))
             ) : (
               <p className="py-8 text-center text-sm text-muted-foreground">
-                这段时间没有失败记录
+                所选时段内无失败记录
               </p>
             )}
           </CardContent>
@@ -152,7 +150,7 @@ export function FunctionOverviewPanel({
         <Card>
           <CardHeader>
             <CardTitle>当前配置</CardTitle>
-            <CardDescription>改这些去「设置」页；改脚本去「脚本」页</CardDescription>
+            <CardDescription>运行参数可在「设置」页调整</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2">
             <StatTile label="运行时" value={selected.runtime} />

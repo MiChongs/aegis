@@ -215,6 +215,14 @@ var adminRouteRules = []RouteRule{
 	{Methods: readMethods, Pattern: "/api/admin/system/email/*", Permission: PermEmailRead},
 	{Pattern: "/api/admin/system/email/*", Permission: PermEmailWrite},
 
+	// ── 平台级 AI 通道 ──
+	//
+	// 与平台级邮件通道逐条同构：作用域恒为全局（平台通道可共享给全部应用兜底），
+	// 单独登记是为了拒绝文案说「缺少 AI 配置权限」而不是「缺少管理员管理权限」。
+	{Pattern: "/api/admin/system/ai/providers", Note: "AI 供应商静态目录，不含租户数据与凭据"},
+	{Methods: readMethods, Pattern: "/api/admin/system/ai/*", Permission: PermAIRead},
+	{Pattern: "/api/admin/system/ai/*", Permission: PermAIWrite},
+
 	// ── 其余 /api/admin/system/*：管理员与平台运维 ──
 	//
 	// 这是一个很粗的桶（两百多条路由共用一个权限点）。保持原样是为了让这次
