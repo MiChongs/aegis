@@ -42,8 +42,29 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import { AIBrandBadge } from "./ai-brand-icon";
 import { AI_CAPABILITY_LABELS, AIProviderFields, buildDefaultAISettings } from "./ai-provider-fields";
+
+/** 连通性测试的结论。失败原因可能来自上游，防御性截断，别让一段长文撑爆弹窗。 */
+type TestOutcome = { ok: boolean; text: string };
+
+function clipText(text: string, limit = 500) {
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+function TestOutcomeNote({ outcome }: { outcome: TestOutcome }) {
+  return (
+    <p
+      className={cn(
+        "max-h-40 overflow-y-auto whitespace-pre-wrap break-all rounded-lg border px-3 py-2 text-xs leading-relaxed",
+        outcome.ok ? "bg-muted/40" : "border-destructive/40 bg-destructive/5 text-destructive"
+      )}
+    >
+      {outcome.text}
+    </p>
+  );
+}
 
 /**
  * AI 通道面板。平台级与应用级**共用同一个组件**，只差一个 scope ——
@@ -210,7 +231,7 @@ function ConfigsSection({
   const isPlatform = scope.kind === "platform";
 
   const [editing, setEditing] = useState<ConfigDraft | null>(null);
-  const [testOutcome, setTestOutcome] = useState<string | null>(null);
+  const [testOutcome, setTestOutcome] = useState<TestOutcome | null>(null);
 
   function openCreate() {
     const first = providers[0];
@@ -293,11 +314,14 @@ function ConfigsSection({
         model: editing.testModel.trim() || undefined
       });
       if (result.ok) {
-        setTestOutcome(`连通正常（${result.elapsedMs}ms，${result.model}）：${result.reply ?? ""}`);
+        setTestOutcome({
+          ok: true,
+          text: `连通正常（${result.elapsedMs}ms · ${result.model}）${result.reply ? `：${result.reply}` : ""}`
+        });
         toast.success("测试通过");
       } else {
-        setTestOutcome(`失败：${result.error ?? "未知错误"}`);
-        toast.error("测试未通过，详见弹窗底部");
+        setTestOutcome({ ok: false, text: `测试未通过：${clipText(result.error ?? "未知错误")}` });
+        toast.error("测试未通过，详情见下方");
       }
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "测试失败");
@@ -445,11 +469,9 @@ function ConfigsSection({
                     </Button>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    测试用的是**已保存**的配置，会产生一次真实调用计费；刚改过的字段要先保存再测。
+                    测试使用已保存的配置，将产生一次真实调用计费；修改配置后请先保存再测试。
                   </p>
-                  {testOutcome && (
-                    <p className="rounded-lg border bg-muted/40 px-3 py-2 text-xs leading-relaxed break-all">{testOutcome}</p>
-                  )}
+                  {testOutcome ? <TestOutcomeNote outcome={testOutcome} /> : null}
                 </>
               )}
             </form>
@@ -873,7 +895,7 @@ function MCPSection({ scope }: { scope: AIScope }) {
   const testMutation = useTestAIMCPServerMutation(scope);
 
   const [editing, setEditing] = useState<MCPDraft | null>(null);
-  const [testOutcome, setTestOutcome] = useState<string | null>(null);
+  const [testOutcome, setTestOutcome] = useState<TestOutcome | null>(null);
 
   const servers = serversQuery.data ?? [];
 
@@ -930,11 +952,14 @@ function MCPSection({ scope }: { scope: AIScope }) {
     try {
       const result = await testMutation.mutateAsync(editing.serverId);
       if (result.ok) {
-        setTestOutcome(`连通正常（${result.elapsedMs}ms），${result.count ?? result.tools?.length ?? 0} 个工具：${(result.tools ?? []).join("、")}`);
+        setTestOutcome({
+          ok: true,
+          text: `连通正常（${result.elapsedMs}ms），${result.count ?? result.tools?.length ?? 0} 个工具：${(result.tools ?? []).join("、")}`
+        });
         toast.success("测试通过");
       } else {
-        setTestOutcome(`失败：${result.error ?? "未知错误"}`);
-        toast.error("测试未通过，详见弹窗底部");
+        setTestOutcome({ ok: false, text: `测试未通过：${clipText(result.error ?? "未知错误")}` });
+        toast.error("测试未通过，详情见下方");
       }
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "测试失败");
@@ -1081,7 +1106,7 @@ function MCPSection({ scope }: { scope: AIScope }) {
                 <>
                   <Separator />
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] text-muted-foreground">测试会连到**已保存**的地址并拉取工具清单。</p>
+                    <p className="text-[11px] text-muted-foreground">测试将连接已保存的地址并拉取工具列表。</p>
                     <Button
                       type="button"
                       size="sm"
@@ -1093,9 +1118,7 @@ function MCPSection({ scope }: { scope: AIScope }) {
                       <Sparkles className="size-3.5" /> {testMutation.isPending ? "测试中…" : "连通性测试"}
                     </Button>
                   </div>
-                  {testOutcome && (
-                    <p className="rounded-lg border bg-muted/40 px-3 py-2 text-xs leading-relaxed break-all">{testOutcome}</p>
-                  )}
+                  {testOutcome ? <TestOutcomeNote outcome={testOutcome} /> : null}
                 </>
               )}
             </form>

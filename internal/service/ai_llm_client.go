@@ -134,7 +134,7 @@ func (c *aiLLMClient) doRequest(ctx context.Context, cfg aidomain.Config, meta a
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 	message := parseUpstreamErrorMessage(body)
 	if message == "" {
-		message = strings.TrimSpace(string(body))
+		message = summarizeOpaqueUpstreamBody(body, response.Status)
 	}
 	if message == "" {
 		message = response.Status
@@ -147,6 +147,32 @@ func (c *aiLLMClient) doRequest(ctx context.Context, cfg aidomain.Config, meta a
 		// 400 多半是请求本身的问题，换通道会原样复发。
 		Retryable: response.StatusCode != http.StatusBadRequest,
 	}
+}
+
+// summarizeOpaqueUpstreamBody 把无法按 API 错误信封解析的响应体收敛成一句人话。
+//
+// 反例是 Cloudflare 的「Just a moment…」挑战页：一整页 HTML 若原样进错误信息，
+// 会顺着连通性测试与对话接口灌进控制台界面。HTML 一律不外传，只报状态与
+// 拦截特征；纯文本截断到一眼能读完的长度。
+func summarizeOpaqueUpstreamBody(body []byte, status string) string {
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		return ""
+	}
+	head := strings.ToLower(text)
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	if strings.HasPrefix(head, "<!doctype") || strings.HasPrefix(head, "<html") ||
+		strings.Contains(head, "<head") {
+		lower := strings.ToLower(text)
+		if strings.Contains(lower, "cloudflare") || strings.Contains(lower, "just a moment") ||
+			strings.Contains(lower, "cf_chl") || strings.Contains(lower, "cf-ray") {
+			return fmt.Sprintf("上游返回 Cloudflare 人机验证页（HTTP %s）：服务端调用被拦截，请更换 API 地址或联系服务商关闭验证", status)
+		}
+		return fmt.Sprintf("上游返回 HTML 页面而非 API 响应（HTTP %s）：请检查 API 地址是否正确", status)
+	}
+	return truncateRunes(text, 300)
 }
 
 func parseUpstreamErrorMessage(body []byte) string {

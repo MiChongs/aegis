@@ -115,7 +115,15 @@ func (c *aiMCPClient) call(ctx context.Context, id int64, method string, params 
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 8<<10))
-		return nil, fmt.Errorf("MCP 服务器「%s」返回 %d：%s", c.server.Name, response.StatusCode, strings.TrimSpace(string(body)))
+		// 响应体可能是 HTML 拦截页或长文本，统一收敛成短消息再外传
+		detail := parseUpstreamErrorMessage(body)
+		if detail == "" {
+			detail = summarizeOpaqueUpstreamBody(body, response.Status)
+		}
+		if detail == "" {
+			detail = response.Status
+		}
+		return nil, fmt.Errorf("MCP 服务器「%s」返回 %d：%s", c.server.Name, response.StatusCode, detail)
 	}
 
 	contentType := response.Header.Get("Content-Type")
