@@ -317,7 +317,7 @@ export function FunctionAIAssistant({
 
   const finish: ChatOnFinishCallback<AgentUIMessage> = ({ message }) => {
     const meta = message.metadata;
-    if (meta?.conversationId && meta.conversationId !== session.conversationId) {
+    if (meta?.conversationId && meta.conversationId !== sessionRef.current.conversationId) {
       setConversationId(meta.conversationId);
     }
     void queryClient.invalidateQueries({ queryKey: ["ai", "conversations", appKey] });
@@ -345,7 +345,7 @@ export function FunctionAIAssistant({
   useEffect(() => {
     stateRef.current = { token, conversationId, draftSource, functionName, modelChoice, disableWrites };
     applyRef.current = onApplySource;
-    session.handlers.current = { prepare, finish, notice };
+    sessionRef.current.handlers.current = { prepare, finish, notice };
   });
 
   const { messages, sendMessage, regenerate, stop, status, error, setMessages, clearError } =
