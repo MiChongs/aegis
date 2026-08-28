@@ -15,13 +15,20 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowDown,
   ArrowUp,
-  ChevronsUpDown,
+  ArrowUpDown,
+  AtSign,
   Columns3,
+  Copy,
   Crown,
+  ExternalLink,
+  MoreHorizontal,
+  Phone,
   Rows2,
   Rows3,
-  Rows4
+  Rows4,
+  SearchX
 } from "lucide-react";
+import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,7 +37,10 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
@@ -48,16 +58,27 @@ import { cn } from "@/lib/utils";
 import { SORT_LABELS, type SortField, type UserQueryState } from "./shared";
 
 /**
- * 用户表。
+ * 用户台账表 —— 按「管理员一眼要什么」重排的信息架构，不是旧八列的换皮。
  *
- * 三件事和旧版不一样，且都是刻意的：
+ * 列的组织原则：一列回答一个问题。
+ * - **用户**：这是谁 —— 头像带启用状态点，名字旁挂会员冠，账号与 ID 在第二行。
+ * - **联系方式**：怎么找到 TA —— 邮箱、手机各占一行，带图标可扫读。
+ * - **权益**：TA 有什么 —— 积分/经验一行并排，会员到期单独一行。
+ * - **状态**：TA 能不能用 —— 药丸态 + 受限原因与解禁时间就地展示，不用进详情。
+ * - **注册**：TA 从哪来 —— 相对时间 + IP/属地合并一列（来源信息本来就是一件事）。
+ * - **操作**：就地动作 —— 查看详情与复制 ID/账号/邮箱，省去「进详情只为复制个 ID」。
  *
- * 1. **不注册 rowSortingFeature。** 排序发生在服务端 —— 点表头改的是查询参数，
- *    不是本地行序。旧版注册了客户端排序但数据是服务端分页的：点一下只排当前 20 条，
- *    翻页就乱。一个说谎的排序控件比没有排序更糟。
- * 2. **getRowId 用真实用户 ID。** 默认按行下标做 id，翻页或重新拉取之后
- *    选中状态会挪到别人身上 —— 批量封禁场景下这是会出事故的那种 bug。
- * 3. **行数多时虚拟滚动。** 每页可到 500 条，全量渲染会让滚动明显掉帧。
+ * 交互上的三个决定：
+ * 1. **排序收进工具栏**。积分/经验/会员合并成「权益」后表头排序天然歧义，
+ *    改为工具栏里一个显式的字段 + 方向选择器（服务端排序，跨页有效）；
+ *    仅在语义唯一的「用户」「注册」表头保留点击排序作为快捷方式。
+ * 2. **工具栏长在表格里**。行数、选中数、行高、列显隐都是这张表的属性，
+ *    浮在表格外面像是另一个组件的遥控器。
+ * 3. **行选中态用 data-state=selected** 走 shadcn 约定，选中行整行着色。
+ *
+ * 继承自旧版且必须保留的三个正确决定：不注册客户端排序特性（数据是服务端
+ * 分页的，本地排序是说谎）；getRowId 用真实用户 ID（下标会让选中态漂移）；
+ * 行数多时虚拟滚动（单页可到 500 条）。
  */
 
 const tableFeaturesSet = tableFeatures({ rowSelectionFeature, columnVisibilityFeature });
@@ -70,29 +91,23 @@ const VIRTUALIZE_THRESHOLD = 60;
 export type Density = "compact" | "default" | "comfortable";
 
 const DENSITY: Record<Density, { rowHeight: number; cellClass: string; icon: typeof Rows2 }> = {
-  compact: { rowHeight: 40, cellClass: "py-1.5", icon: Rows4 },
-  default: { rowHeight: 52, cellClass: "py-2.5", icon: Rows3 },
-  comfortable: { rowHeight: 64, cellClass: "py-4", icon: Rows2 }
+  compact: { rowHeight: 48, cellClass: "py-1.5", icon: Rows4 },
+  default: { rowHeight: 60, cellClass: "py-2.5", icon: Rows3 },
+  comfortable: { rowHeight: 72, cellClass: "py-3.5", icon: Rows2 }
 };
 
+/** 可显隐的列 → 菜单文案。操作列不进这个表，因此永远显示。 */
 const COLUMN_LABELS: Record<string, string> = {
   user: "用户",
   contact: "联系方式",
+  benefits: "权益",
   status: "状态",
-  integral: "积分",
-  experience: "经验",
-  vip: "会员",
-  registerIp: "注册 IP",
   register: "注册"
 };
 
-/** 可点表头排序的列 → 排序字段。没有映射的列表头不可点，也不显示排序图标。 */
-const COLUMN_SORT: Partial<Record<string, SortField>> = {
+/** 语义唯一、保留表头点击排序的列。合并列（权益/联系方式）排序有歧义，走工具栏。 */
+const HEADER_SORT: Partial<Record<string, SortField>> = {
   user: "account",
-  contact: "email",
-  integral: "integral",
-  experience: "experience",
-  vip: "vipExpireAt",
   register: "createdAt"
 };
 
@@ -114,6 +129,13 @@ function fmtTime(value?: string | null) {
   });
 }
 
+function fmtDate(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()) || date.getUTCFullYear() <= 1) return "—";
+  return date.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+}
+
 function relative(value?: string | null) {
   if (!value) return "—";
   const time = new Date(value).getTime();
@@ -124,6 +146,22 @@ function relative(value?: string | null) {
   if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)} 小时前`;
   if (diff < 86_400_000 * 30) return `${Math.round(diff / 86_400_000)} 天前`;
   return fmtTime(value).slice(0, 10);
+}
+
+function vipState(expireAt?: string | null): "none" | "active" | "expired" {
+  if (!expireAt) return "none";
+  const time = new Date(expireAt).getTime();
+  if (Number.isNaN(time) || new Date(expireAt).getUTCFullYear() <= 1) return "none";
+  return time > Date.now() ? "active" : "expired";
+}
+
+async function copyText(value: string, label: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast.success(`已复制${label}`);
+  } catch {
+    toast.error("复制失败，请手动选择复制");
+  }
 }
 
 export function AppUsersTable({
@@ -155,21 +193,38 @@ export function AppUsersTable({
         header: "用户",
         cell: ({ row }) => {
           const item = row.original;
-          const avatar = typeof item.avatar === "string" ? item.avatar : "";
+          const enabled = item.enabled !== false;
+          const vip = vipState(item.vipExpireAt);
           return (
-            <div className="flex items-center gap-2.5">
-              <Avatar className="size-7 rounded-md">
-                <AvatarImage src={avatar} />
-                <AvatarFallback className="rounded-md text-[10px]">
-                  {initials(item.nickname, item.account)}
-                </AvatarFallback>
-              </Avatar>
+            <div className="flex items-center gap-3">
+              <div className="relative shrink-0">
+                <Avatar className="size-9 border">
+                  <AvatarImage src={typeof item.avatar === "string" ? item.avatar : ""} />
+                  <AvatarFallback className="text-[11px]">
+                    {initials(item.nickname, item.account)}
+                  </AvatarFallback>
+                </Avatar>
+                {/* 状态点长在头像上：扫一列头像就能数出受限的人，不用逐行看状态列 */}
+                <span
+                  aria-hidden
+                  className={cn(
+                    "absolute -bottom-px -right-px size-2.5 rounded-full ring-2 ring-card",
+                    enabled ? "bg-emerald-500" : "bg-red-500"
+                  )}
+                />
+              </div>
               <div className="min-w-0">
-                <div className="truncate text-sm font-medium">
-                  {item.nickname || item.account || `#${item.id}`}
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-sm font-medium">
+                    {item.nickname || item.account || `用户 ${item.id}`}
+                  </span>
+                  {vip === "active" ? (
+                    <Crown aria-label="有效会员" className="size-3.5 shrink-0 text-amber-500" />
+                  ) : null}
                 </div>
                 <div className="truncate text-[11px] text-muted-foreground">
-                  {item.nickname && item.account ? item.account : `ID ${item.id}`}
+                  {item.account && item.nickname ? `@${item.account} · ` : ""}
+                  <span className="font-mono">#{item.id}</span>
                 </div>
               </div>
             </div>
@@ -181,12 +236,54 @@ export function AppUsersTable({
         header: "联系方式",
         cell: ({ row }) => {
           const { email, phone } = row.original;
-          if (!email && !phone) return <span className="text-xs text-muted-foreground">—</span>;
+          if (!email && !phone) {
+            return <span className="text-xs text-muted-foreground/60">未留联系方式</span>;
+          }
           return (
-            <div className="min-w-0">
-              {email ? <div className="truncate text-xs">{email}</div> : null}
+            <div className="min-w-0 space-y-0.5">
+              {email ? (
+                <div className="flex items-center gap-1.5 text-xs">
+                  <AtSign className="size-3 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{email}</span>
+                </div>
+              ) : null}
               {phone ? (
-                <div className="truncate text-[11px] tabular-nums text-muted-foreground">{phone}</div>
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Phone className="size-3 shrink-0" />
+                  <span className="truncate tabular-nums">{phone}</span>
+                </div>
+              ) : null}
+            </div>
+          );
+        }
+      },
+      {
+        id: "benefits",
+        header: "权益",
+        cell: ({ row }) => {
+          const item = row.original;
+          const vip = vipState(item.vipExpireAt);
+          return (
+            <div className="min-w-0 space-y-0.5">
+              <div className="flex items-baseline gap-1 text-xs">
+                <span className="text-muted-foreground">积分</span>
+                <span className="font-medium tabular-nums">
+                  {(item.integral ?? 0).toLocaleString("zh-CN")}
+                </span>
+                <span className="px-0.5 text-muted-foreground/50">·</span>
+                <span className="text-muted-foreground">经验</span>
+                <span className="font-medium tabular-nums">
+                  {(item.experience ?? 0).toLocaleString("zh-CN")}
+                </span>
+              </div>
+              {vip === "active" ? (
+                <Badge variant="warning" size="sm" className="gap-1">
+                  <Crown className="size-3" />至 {fmtDate(item.vipExpireAt)}
+                </Badge>
+              ) : vip === "expired" ? (
+                <span className="text-[11px] text-muted-foreground/70">
+                  会员已过期（{fmtDate(item.vipExpireAt)}）
+                </span>
               ) : null}
             </div>
           );
@@ -198,68 +295,32 @@ export function AppUsersTable({
         cell: ({ row }) => {
           const item = row.original;
           const enabled = item.enabled !== false;
-          return (
-            <div className="flex flex-col gap-0.5">
-              <span className="flex items-center gap-1.5 text-xs">
-                <span
-                  className={cn(
-                    "inline-block size-1.5 rounded-full",
-                    enabled ? "bg-emerald-500" : "bg-red-500"
-                  )}
-                />
-                {enabled ? "启用" : "受限"}
+          if (enabled) {
+            return (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-400">
+                <span className="size-1.5 rounded-full bg-emerald-500" />
+                正常
               </span>
-              {!enabled && item.disabledReason ? (
-                <span
-                  className="max-w-[140px] truncate text-[11px] text-muted-foreground"
+            );
+          }
+          const until = item.disabledEndTime ? fmtTime(item.disabledEndTime) : "";
+          return (
+            <div className="min-w-0 space-y-0.5">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
+                <span className="size-1.5 rounded-full bg-red-500" />
+                受限{until !== "—" && until ? ` · 至 ${until.slice(5, 11)}` : ""}
+              </span>
+              {item.disabledReason ? (
+                <div
+                  className="max-w-[150px] truncate text-[11px] text-muted-foreground"
                   title={item.disabledReason}
                 >
                   {item.disabledReason}
-                </span>
+                </div>
               ) : null}
             </div>
           );
         }
-      },
-      {
-        id: "integral",
-        header: "积分",
-        cell: ({ row }) => (
-          <span className="tabular-nums">{(row.original.integral ?? 0).toLocaleString("zh-CN")}</span>
-        )
-      },
-      {
-        id: "experience",
-        header: "经验",
-        cell: ({ row }) => (
-          <span className="tabular-nums">
-            {(row.original.experience ?? 0).toLocaleString("zh-CN")}
-          </span>
-        )
-      },
-      {
-        id: "vip",
-        header: "会员",
-        cell: ({ row }) => {
-          const expire = row.original.vipExpireAt;
-          if (!expire) return <span className="text-xs text-muted-foreground">—</span>;
-          const active = new Date(expire).getTime() > Date.now();
-          return (
-            <Badge variant={active ? "warning" : "outline"} size="sm" className="gap-1">
-              <Crown className="size-3" />
-              {active ? "有效" : "已过期"}
-            </Badge>
-          );
-        }
-      },
-      {
-        id: "registerIp",
-        header: "注册 IP",
-        cell: ({ row }) => (
-          <span className="font-mono text-[11px] text-muted-foreground">
-            {row.original.registerIP || "—"}
-          </span>
-        )
       },
       {
         id: "register",
@@ -268,22 +329,79 @@ export function AppUsersTable({
           const item = row.original;
           const location = [item.registerProvince, item.registerCity].filter(Boolean).join(" ");
           return (
-            <div className="min-w-0">
+            <div className="min-w-0 space-y-0.5">
               <div
-                className="truncate text-xs tabular-nums text-muted-foreground"
+                className="truncate text-xs tabular-nums"
                 title={fmtTime(item.registerTime || item.createdAt)}
               >
                 {relative(item.registerTime || item.createdAt)}
               </div>
-              {location ? (
-                <div className="truncate text-[11px] text-muted-foreground/80">{location}</div>
+              {item.registerIP || location ? (
+                <div className="truncate text-[11px] text-muted-foreground">
+                  {item.registerIP ? <span className="font-mono">{item.registerIP}</span> : null}
+                  {item.registerIP && location ? " · " : ""}
+                  {location}
+                </div>
               ) : null}
             </div>
           );
         }
+      },
+      {
+        id: "actions",
+        header: "",
+        cell: ({ row }) => {
+          const item = row.original;
+          return (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7 text-muted-foreground data-[state=open]:bg-accent"
+                  aria-label={`用户 ${item.account ?? item.id} 的操作`}
+                >
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem className="text-xs" onSelect={() => onRowClick(item)}>
+                  <ExternalLink className="size-3.5" />
+                  查看详情
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-xs"
+                  onSelect={() => void copyText(String(item.id), "用户 ID")}
+                >
+                  <Copy className="size-3.5" />
+                  复制用户 ID
+                </DropdownMenuItem>
+                {item.account ? (
+                  <DropdownMenuItem
+                    className="text-xs"
+                    onSelect={() => void copyText(item.account ?? "", "账号")}
+                  >
+                    <Copy className="size-3.5" />
+                    复制账号
+                  </DropdownMenuItem>
+                ) : null}
+                {item.email ? (
+                  <DropdownMenuItem
+                    className="text-xs"
+                    onSelect={() => void copyText(item.email ?? "", "邮箱")}
+                  >
+                    <Copy className="size-3.5" />
+                    复制邮箱
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          );
+        }
       }
     ],
-    []
+    [onRowClick]
   );
 
   const table = useTable({
@@ -302,7 +420,8 @@ export function AppUsersTable({
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const virtualize = rows.length > VIRTUALIZE_THRESHOLD;
   const rowHeight = DENSITY[density].rowHeight;
-  const colSpan = table.getVisibleFlatColumns().length + 1;
+  const visibleColumns = table.getVisibleFlatColumns();
+  const colSpan = visibleColumns.length + 1;
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -322,57 +441,146 @@ export function AppUsersTable({
 
   const allSelected = rows.length > 0 && rows.every((row) => row.getIsSelected());
   const someSelected = rows.some((row) => row.getIsSelected());
+  const selectedCount = rows.filter((row) => row.getIsSelected()).length;
+  const sortDefault = query.sort === "createdAt" && query.order === "desc";
 
-  function toggleSort(columnId: string) {
-    const field = COLUMN_SORT[columnId];
-    if (!field) return;
-    if (query.sort === field) {
-      onQueryChange({ ...query, order: query.order === "asc" ? "desc" : "asc", page: 1 });
-      return;
-    }
-    onQueryChange({ ...query, sort: field, order: "desc", page: 1 });
+  function applySort(field: SortField, order?: "asc" | "desc") {
+    onQueryChange({
+      ...query,
+      sort: field,
+      order: order ?? (query.sort === field ? (query.order === "asc" ? "desc" : "asc") : "desc"),
+      page: 1
+    });
   }
 
   // TooltipProvider 包住整棵子树：行高按钮的 tooltip 在工具栏里，
   // 只包表格容器会让它落在 Provider 之外（Radix 要求必须有 Provider 祖先）。
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="space-y-2">
-        <div className="flex items-center justify-end gap-1.5">
-          <DensityToggle value={density} onChange={setDensity} />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs">
-                <Columns3 className="size-3.5" />列
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuLabel className="text-xs">显示的列</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {table.getAllColumns().map((column) => (
-                <DropdownMenuCheckboxItem
-                  key={column.id}
-                  className="text-xs"
-                  checked={column.getIsVisible()}
-                  onCheckedChange={(checked) => column.toggleVisibility(Boolean(checked))}
+      <div className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {loading && !rows.length ? (
+              <span>加载中…</span>
+            ) : (
+              <span className="tabular-nums">本页 {rows.length} 人</span>
+            )}
+            {selectedCount > 0 ? (
+              <>
+                <span className="text-muted-foreground/40">|</span>
+                <span className="font-medium text-foreground tabular-nums">
+                  已选 {selectedCount}
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-1.5 text-[11px]"
+                  onClick={() => onSelectionChange({})}
                 >
-                  {COLUMN_LABELS[column.id] ?? column.id}
-                </DropdownMenuCheckboxItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  取消选择
+                </Button>
+              </>
+            ) : null}
+          </div>
+
+          <div className="ml-auto flex items-center gap-1.5">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-active={!sortDefault}
+                  className="h-8 gap-1.5 text-xs data-[active=true]:border-foreground/40"
+                >
+                  {query.order === "asc" ? (
+                    <ArrowUp className="size-3.5" />
+                  ) : (
+                    <ArrowDown className="size-3.5" />
+                  )}
+                  {SORT_LABELS[query.sort]}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuLabel className="text-xs">
+                  排序字段（服务端排序，跨页有效）
+                </DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={query.sort}
+                  onValueChange={(value) => applySort(value as SortField, query.order)}
+                >
+                  {(Object.keys(SORT_LABELS) as SortField[]).map((field) => (
+                    <DropdownMenuRadioItem key={field} value={field} className="text-xs">
+                      {SORT_LABELS[field]}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuRadioGroup
+                  value={query.order}
+                  onValueChange={(value) => applySort(query.sort, value as "asc" | "desc")}
+                >
+                  <DropdownMenuRadioItem value="desc" className="text-xs">
+                    降序（大 → 小 / 新 → 旧）
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="asc" className="text-xs">
+                    升序（小 → 大 / 旧 → 新）
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                {!sortDefault ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-xs text-muted-foreground"
+                      onSelect={() => applySort("createdAt", "desc")}
+                    >
+                      <ArrowUpDown className="size-3.5" />
+                      恢复默认（创建时间降序）
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <DensityToggle value={density} onChange={setDensity} />
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="size-8"
+                  aria-label="选择显示的列"
+                >
+                  <Columns3 className="size-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuLabel className="text-xs">显示的列</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {table
+                  .getAllColumns()
+                  .filter((column) => COLUMN_LABELS[column.id])
+                  .map((column) => (
+                    <DropdownMenuCheckboxItem
+                      key={column.id}
+                      className="text-xs"
+                      checked={column.getIsVisible()}
+                      onCheckedChange={(checked) => column.toggleVisibility(Boolean(checked))}
+                    >
+                      {COLUMN_LABELS[column.id]}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
 
         <div
           ref={scrollRef}
-          className={cn(
-            "overflow-auto rounded-xl border",
-            virtualize && "max-h-[calc(100vh-26rem)] min-h-64"
-          )}
+          className={cn("overflow-auto", virtualize && "max-h-[calc(100vh-28rem)] min-h-72")}
         >
           {/* 不用 shadcn 的 <Table> 外壳：它自带 overflow 容器，会抢走
-              virtualizer 依赖的滚动元素（scrollRef 必须落在唯一的滚动容器上）。
-              行/单元格原语照用，视觉与全站其他表格保持一致。 */}
+              virtualizer 依赖的滚动元素（scrollRef 必须落在唯一的滚动容器上）。 */}
           <table className="w-full caption-bottom text-sm">
             <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow className="hover:bg-transparent">
@@ -384,28 +592,25 @@ export function AppUsersTable({
                   />
                 </TableHead>
                 {table.getHeaderGroups()[0]?.headers.map((header) => {
-                  const field = COLUMN_SORT[header.column.id];
+                  const field = HEADER_SORT[header.column.id];
                   const active = field && query.sort === field;
                   return (
                     <TableHead
                       key={header.id}
                       className={cn(
                         "px-3 text-xs text-muted-foreground",
+                        header.column.id === "actions" && "w-12",
                         field && "cursor-pointer select-none hover:text-foreground"
                       )}
-                      onClick={() => toggleSort(header.column.id)}
+                      onClick={field ? () => applySort(field) : undefined}
                     >
                       <span className="inline-flex items-center gap-1">
                         {flexRender(header.column.columnDef.header, header.getContext())}
-                        {field ? (
-                          active ? (
-                            query.order === "asc" ? (
-                              <ArrowUp className="size-3" />
-                            ) : (
-                              <ArrowDown className="size-3" />
-                            )
+                        {active ? (
+                          query.order === "asc" ? (
+                            <ArrowUp className="size-3" />
                           ) : (
-                            <ChevronsUpDown className="size-3 opacity-30" />
+                            <ArrowDown className="size-3" />
                           )
                         ) : null}
                       </span>
@@ -416,20 +621,42 @@ export function AppUsersTable({
             </TableHeader>
             <TableBody>
               {loading && !rows.length ? (
-                Array.from({ length: 6 }).map((_, index) => (
+                Array.from({ length: 8 }).map((_, index) => (
                   <TableRow key={index} className="hover:bg-transparent">
-                    <TableCell colSpan={colSpan} className="px-3 py-2.5">
-                      <Skeleton className="h-7 w-full rounded-md" />
+                    <TableCell className="px-3">
+                      <Skeleton className="size-4 rounded" />
                     </TableCell>
+                    {visibleColumns.map((column) => (
+                      <TableCell key={column.id} className="px-3 py-3">
+                        {column.id === "user" ? (
+                          <div className="flex items-center gap-3">
+                            <Skeleton className="size-9 rounded-full" />
+                            <div className="space-y-1.5">
+                              <Skeleton className="h-3.5 w-24 rounded" />
+                              <Skeleton className="h-3 w-16 rounded" />
+                            </div>
+                          </div>
+                        ) : column.id === "actions" ? (
+                          <Skeleton className="size-7 rounded-md" />
+                        ) : (
+                          <div className="space-y-1.5">
+                            <Skeleton className="h-3.5 w-20 rounded" />
+                            <Skeleton className="h-3 w-14 rounded" />
+                          </div>
+                        )}
+                      </TableCell>
+                    ))}
                   </TableRow>
                 ))
               ) : !rows.length ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell
-                    colSpan={colSpan}
-                    className="h-40 whitespace-normal px-6 text-center text-sm text-muted-foreground"
-                  >
-                    {emptyText}
+                  <TableCell colSpan={colSpan} className="h-52 whitespace-normal">
+                    <div className="flex flex-col items-center justify-center gap-2 text-center">
+                      <div className="flex size-10 items-center justify-center rounded-full bg-muted">
+                        <SearchX className="size-5 text-muted-foreground" />
+                      </div>
+                      <p className="max-w-sm text-sm text-muted-foreground">{emptyText}</p>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : (
@@ -444,7 +671,7 @@ export function AppUsersTable({
                       key={row.id}
                       data-state={row.getIsSelected() ? "selected" : undefined}
                       style={virtualize ? { height: rowHeight } : undefined}
-                      className="cursor-pointer"
+                      className="group cursor-pointer"
                       onClick={() => onRowClick(row.original)}
                     >
                       <TableCell className="px-3" onClick={(event) => event.stopPropagation()}>
@@ -457,7 +684,12 @@ export function AppUsersTable({
                       {row.getVisibleCells().map((cell) => (
                         <TableCell
                           key={cell.id}
-                          className={cn("max-w-[220px] px-3", DENSITY[density].cellClass)}
+                          className={cn("max-w-[240px] px-3", DENSITY[density].cellClass)}
+                          onClick={
+                            cell.column.id === "actions"
+                              ? (event) => event.stopPropagation()
+                              : undefined
+                          }
                         >
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </TableCell>
@@ -474,22 +706,6 @@ export function AppUsersTable({
             </TableBody>
           </table>
         </div>
-
-        {query.sort !== "createdAt" || query.order !== "desc" ? (
-          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <span>
-              按「{SORT_LABELS[query.sort]}」{query.order === "asc" ? "升序" : "降序"}排列（服务端排序，跨页有效）
-            </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-5 px-1.5 text-[11px]"
-              onClick={() => onQueryChange({ ...query, sort: "createdAt", order: "desc", page: 1 })}
-            >
-              恢复默认
-            </Button>
-          </div>
-        ) : null}
       </div>
     </TooltipProvider>
   );
