@@ -2,7 +2,7 @@
 
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Flame, Globe, Globe2, KeyRound, Mail, Network, Palette, ShieldCheck, Sparkles } from "lucide-react";
+import { Flame, Globe, Globe2, KeyRound, Mail, Network, Palette, ShieldCheck, Sparkles, TrendingUp } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
 import { EmptyState } from "@/components/ui/data-state";
 import { SectionHeading } from "@/components/ui/section-heading";
@@ -15,6 +15,7 @@ import { OIDCConfigPanel } from "@/components/security/oidc-config-panel";
 import { SAMLConfigPanel } from "@/components/security/saml-config-panel";
 import { AdminCaptchaConfigPanel } from "@/components/security/admin-captcha-config-panel";
 import { EgressConfigPanel } from "@/components/configuration/egress-config-panel";
+import { TrafficRampPanel } from "@/components/configuration/traffic-ramp-panel";
 import { EmailChannelPanel } from "@/components/email/email-channel-panel";
 import { PLATFORM_EMAIL_SCOPE } from "@/lib/email-hooks";
 import { AIChannelPanel } from "@/components/ai/ai-channel-panel";
@@ -35,6 +36,7 @@ import { PLATFORM_AI_SCOPE } from "@/lib/api/ai";
 const TABS = [
   { value: "branding", label: "品牌与外观", icon: Palette },
   { value: "firewall", label: "防火墙与限流", icon: Flame },
+  { value: "traffic-ramp", label: "流量爬坡", icon: TrendingUp },
   { value: "egress", label: "出海代理", icon: Globe2 },
   { value: "email", label: "邮件", icon: Mail },
   { value: "ai", label: "AI 服务", icon: Sparkles },
@@ -85,8 +87,8 @@ function ConfigurationPageInner() {
           {TABS.map(({ value, label, icon: Icon }, index) => (
             <div key={value} className="flex items-center">
               {/* 认证联邦三项（LDAP/OIDC/SAML）与前面的平台防护分开 */}
-              {index === 6 && <span aria-hidden className="mx-1.5 h-4 w-px shrink-0 bg-border" />}
-              {index === 9 && <span aria-hidden className="mx-1.5 h-4 w-px shrink-0 bg-border" />}
+              {index === 7 && <span aria-hidden className="mx-1.5 h-4 w-px shrink-0 bg-border" />}
+              {index === 10 && <span aria-hidden className="mx-1.5 h-4 w-px shrink-0 bg-border" />}
               <TabsTrigger value={value}>
                 <Icon className="size-4" />
                 {label}
@@ -97,6 +99,7 @@ function ConfigurationPageInner() {
 
         <TabsContent value="branding"><BrandingPanel /></TabsContent>
         <TabsContent value="firewall"><FirewallConfigPanel /></TabsContent>
+        <TabsContent value="traffic-ramp"><TrafficRampPanel /></TabsContent>
         <TabsContent value="egress"><EgressConfigPanel /></TabsContent>
         <TabsContent value="email"><EmailChannelPanel scope={PLATFORM_EMAIL_SCOPE} /></TabsContent>
         <TabsContent value="ai"><AIChannelPanel scope={PLATFORM_AI_SCOPE} /></TabsContent>
