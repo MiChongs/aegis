@@ -68,7 +68,6 @@ import {
   getAdminAppLoginAudits,
   getAdminAppNotifications,
   getAdminProfile,
-  getAdminAppRegions,
   getAdminApps,
   getAdminAppSessionAudits,
   getAdminAppStats,
@@ -312,18 +311,6 @@ export function useAdminAppTrendQuery(appKey?: string | null, days = 7) {
   return useQuery({
     queryKey: ["admin-app-trend", token, appKey, days],
     queryFn: () => getAdminAppTrend(token as string, appKey as string, days),
-    enabled: Boolean(token && appKey)
-  });
-}
-
-export function useAdminAppRegionsQuery(
-  appKey?: string | null,
-  params?: { type?: string; limit?: number }
-) {
-  const token = useAdminToken();
-  return useQuery({
-    queryKey: ["admin-app-regions", token, appKey, params?.type, params?.limit],
-    queryFn: () => getAdminAppRegions(token as string, appKey as string, params),
     enabled: Boolean(token && appKey)
   });
 }

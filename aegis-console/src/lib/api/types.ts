@@ -1479,27 +1479,6 @@ export type UserTrend = {
   series: Array<{ date: string; count: number }>;
 };
 
-export type RegionStatItem = {
-  region?: string;
-  code?: string;
-  label?: string;
-  name?: string;
-  parent?: string;
-  parentPath?: string;
-  count?: number;
-  value?: number;
-  percentage?: number;
-  [key: string]: unknown;
-};
-
-export type RegionStatsResult = {
-  appid?: number;
-  type?: string;
-  items?: RegionStatItem[];
-  total?: number;
-  [key: string]: unknown;
-};
-
 export type AuthSourceStatItem = {
   source?: string;
   label?: string;

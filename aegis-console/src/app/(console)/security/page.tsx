@@ -2,11 +2,10 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Flame, LockKeyhole, MapPinned, ShieldCheck } from "lucide-react";
+import { Flame, LockKeyhole, MapPinned } from "lucide-react";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AccountSecurityPanel } from "@/components/security/account-security-panel";
-import { SecurityOverviewPanel } from "@/components/security/security-overview-panel";
 import { FirewallLogsPanel } from "@/components/security/firewall-logs-panel";
 import { IPBanPanel } from "@/components/security/ip-ban-panel";
 import { GeoBanPanel } from "@/components/security/geo-ban-panel";
@@ -21,11 +20,11 @@ import { GeoIntelPanel } from "@/components/security/geo-intel-panel";
  */
 const TABS = [
   { value: "account", label: "账户安全", icon: LockKeyhole },
-  { value: "overview", label: "应用概览", icon: ShieldCheck },
   { value: "firewall", label: "防火墙", icon: Flame },
   { value: "geo-intel", label: "地理风控", icon: MapPinned }
 ] as const;
 
+// 旧链接（含已下线的 ?tab=overview）落到这里会回退到默认页，不会白屏
 const VALID_TABS = new Set(TABS.map((t) => t.value as string));
 
 function SecurityPageInner() {
@@ -59,10 +58,6 @@ function SecurityPageInner() {
 
         <TabsContent value="account">
           <AccountSecurityPanel />
-        </TabsContent>
-
-        <TabsContent value="overview">
-          <SecurityOverviewPanel />
         </TabsContent>
 
         <TabsContent value="firewall">

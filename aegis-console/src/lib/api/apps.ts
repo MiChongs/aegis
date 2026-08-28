@@ -24,7 +24,6 @@ import type {
   SignInRewardPreview,
   SignInRewardPreviewInput,
   SignInRewardTemplateCatalog,
-  RegionStatsResult,
   SessionAuditItem,
   UserTrend
 } from "./types";
@@ -43,18 +42,6 @@ export function getAdminAppStats(token: string, appKey: string) {
 
 export function getAdminAppTrend(token: string, appKey: string, days = 7) {
   return apiRequest<UserTrend>(`/api/admin/apps/${appKey}/stats/user-trend?days=${days}`, { token });
-}
-
-export function getAdminAppRegions(
-  token: string,
-  appKey: string,
-  params?: { type?: string; limit?: number }
-) {
-  const query = buildQuery({
-    type: params?.type,
-    limit: params?.limit
-  });
-  return apiRequest<RegionStatsResult>(`/api/admin/apps/${appKey}/stats/regions${query}`, { token });
 }
 
 export function getAdminAppAuthSources(token: string, appKey: string) {

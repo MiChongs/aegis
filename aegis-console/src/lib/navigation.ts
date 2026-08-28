@@ -321,7 +321,6 @@ export const navigationGroups: NavigationGroup[] = [
         superAdmin: true,
         children: [
           { title: "账户安全", tab: "account" },
-          { title: "应用概览", tab: "overview" },
           { title: "防火墙", tab: "firewall" },
           { title: "地理风控", tab: "geo-intel" }
         ]
