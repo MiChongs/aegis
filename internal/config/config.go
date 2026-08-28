@@ -1318,9 +1318,12 @@ func setDefaults(cfg *Config) {
 	if cfg.ReadTimeout == 0 {
 		cfg.ReadTimeout = 5 * time.Second
 	}
-	if cfg.WriteTimeout == 0 {
-		cfg.WriteTimeout = 10 * time.Second
-	}
+	// WriteTimeout 缺省不设（0 = 不限）。它是**整个响应**的绝对期限（从读完
+	// 请求头起算），不是「两次写之间」的空闲超时 —— AI Agent 的 SSE 对话流、
+	// AI 网关的流式转发动辄跑上几分钟，任何有限缺省值都会把它们拦腰掐断，
+	// 表现为回答写到一半戛然而止（曾经的 10s 缺省正是这样被用户抓到的）。
+	// 需要上限的部署仍可用 WRITE_TIMEOUT 显式设置；慢读连接由 ReadHeaderTimeout
+	// 与 IdleTimeout 兜底，业务超时在各 handler / service 自理。
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = 10 * time.Second
 	}

@@ -686,6 +686,14 @@ func egressField(rt BannerRuntime) banner.Field {
 	return f
 }
 
+// writeTimeoutLabel 0 = 未设上限（SSE 流式必需），横幅上直说，别让 "0s" 造成误读。
+func writeTimeoutLabel(d time.Duration) string {
+	if d <= 0 {
+		return "不限（流式）"
+	}
+	return d.String()
+}
+
 func endpointSection(rt BannerRuntime) banner.Section {
 	cfg := rt.Config
 	base := listenURL(cfg)
@@ -696,7 +704,7 @@ func endpointSection(rt BannerRuntime) banner.Section {
 				Key:   "HTTP",
 				Value: base,
 				State: banner.StateOK,
-				Note:  banner.Join("读 "+cfg.ReadTimeout.String(), "写 "+cfg.WriteTimeout.String(), "关停 "+cfg.ShutdownTimeout.String()),
+				Note:  banner.Join("读 "+cfg.ReadTimeout.String(), "写 "+writeTimeoutLabel(cfg.WriteTimeout), "关停 "+cfg.ShutdownTimeout.String()),
 			},
 			{Key: "健康检查", Value: base + "/healthz", Note: "存活探针"},
 			{Key: "就绪探针", Value: base + "/readyz", Note: "依赖连通性"},

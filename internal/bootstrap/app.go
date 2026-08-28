@@ -634,8 +634,9 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Handler:           router,
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
-		WriteTimeout:      cfg.WriteTimeout,
-		IdleTimeout:       60 * time.Second,
+		// 缺省 0（不限）：SSE 对话流与流式转发的生存前提，见 config.NormalizeConfig 的说明。
+		WriteTimeout: cfg.WriteTimeout,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	app := &APIApp{

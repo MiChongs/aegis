@@ -81,6 +81,11 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true
   },
   experimental: {
+    // ── 反代长流的空闲超时（毫秒） ──
+    // AI Agent 的 SSE 对话流经 rewrites 反代到 Go 后端，代理的缺省空闲超时
+    // 只有 30s；模型思考间隙 + 长工具执行足以触发，表现为回答中途断线。
+    // 后端每 15s 发一次 SSE 心跳注释行，这里再把上限抬到 10 分钟双保险。
+    proxyTimeout: 600_000,
     // 只列 Next 内置清单里没有的桶文件包（lucide-react / recharts / date-fns 等已内置）。
     // 这几个都是"导入一个成员要先解析整包"的重灾区：simple-icons 系两个包各有
     // 3000+ 图标，radix-ui 统一包重导出 32 个 primitive，@turf/turf 汇总上百个模块。
