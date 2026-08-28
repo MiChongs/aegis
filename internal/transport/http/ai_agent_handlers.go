@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	aidomain "aegis/internal/domain/ai"
 	"aegis/internal/service"
@@ -57,7 +59,11 @@ func (h *Handler) AdminAppAIAgentStream(c *gin.Context) {
 
 	header := c.Writer.Header()
 	header.Set("Content-Type", "text/event-stream; charset=utf-8")
-	header.Set("Cache-Control", "no-cache")
+	// no-transform 是流式的生命线：控制台经 Next.js 反代访问后端，其压缩层
+	// 会把可压缩的响应攒进 gzip 缓冲区 —— SSE 事件全部憋到连接结束才一起
+	// 吐出来，「流式」退化成「一次性」。压缩中间件唯一无条件放行的信号
+	// 就是 Cache-Control 里的 no-transform（RFC 9111 §5.2.2.6）。
+	header.Set("Cache-Control", "no-cache, no-transform")
 	header.Set("Connection", "keep-alive")
 	// 反向代理的响应缓冲会把「流式」变成「憋满一批一起到」，必须显式关掉。
 	header.Set("X-Accel-Buffering", "no")
@@ -66,12 +72,42 @@ func (h *Handler) AdminAppAIAgentStream(c *gin.Context) {
 	c.Writer.WriteHeader(http.StatusOK)
 	c.Writer.Flush()
 
+	// Agent 执行长工具（试跑脚本、慢 MCP 调用）时可能几十秒没有任何输出，
+	// 空闲超时的代理会掐掉连接。按 SSE 规范发注释行（": ping"）保活 ——
+	// EventSource 与 AI SDK 的解析器都会忽略注释行。写入端只有心跳和 emit
+	// 两个，共用一把锁串行化（gin 的 ResponseWriter 不承诺并发安全）。
+	var writeMu sync.Mutex
+	heartbeatDone := make(chan struct{})
+	defer close(heartbeatDone)
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatDone:
+				return
+			case <-ticker.C:
+				writeMu.Lock()
+				_, err := c.Writer.WriteString(": ping\n\n")
+				if err == nil {
+					c.Writer.Flush()
+				}
+				writeMu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}
+	}()
+
 	wroteAny := false
 	emit := func(chunk any) error {
 		encoded, err := json.Marshal(chunk)
 		if err != nil {
 			return err
 		}
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		if _, err := c.Writer.WriteString("data: " + string(encoded) + "\n\n"); err != nil {
 			return err
 		}
@@ -101,8 +137,10 @@ func (h *Handler) AdminAppAIAgentStream(c *gin.Context) {
 		}
 		_ = c.Error(err)
 	}
+	writeMu.Lock()
 	_, _ = c.Writer.WriteString("data: [DONE]\n\n")
 	c.Writer.Flush()
+	writeMu.Unlock()
 }
 
 // AdminAppAIConversationList 列出当前管理员在该场景锚点下的会话。

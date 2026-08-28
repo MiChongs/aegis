@@ -328,7 +328,8 @@ func openAIGatewayResponse(result *aidomain.ChatResponse) gin.H {
 func (h *Handler) streamOpenAIGateway(c *gin.Context, appID int64, request aidomain.ChatRequest) {
 	header := c.Writer.Header()
 	header.Set("Content-Type", "text/event-stream; charset=utf-8")
-	header.Set("Cache-Control", "no-cache")
+	// no-transform：拦住链路上任何压缩/改写中间层的响应缓冲（详见 ai_agent_handlers.go）。
+	header.Set("Cache-Control", "no-cache, no-transform")
 	header.Set("X-Accel-Buffering", "no")
 
 	id := "chatcmpl-" + uuid.NewString()
@@ -654,7 +655,8 @@ func anthropicGatewayResponse(result *aidomain.ChatResponse) gin.H {
 func (h *Handler) streamAnthropicGateway(c *gin.Context, appID int64, request aidomain.ChatRequest) {
 	header := c.Writer.Header()
 	header.Set("Content-Type", "text/event-stream; charset=utf-8")
-	header.Set("Cache-Control", "no-cache")
+	// no-transform：拦住链路上任何压缩/改写中间层的响应缓冲（详见 ai_agent_handlers.go）。
+	header.Set("Cache-Control", "no-cache, no-transform")
 	header.Set("X-Accel-Buffering", "no")
 
 	id := "msg_" + uuid.NewString()
