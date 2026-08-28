@@ -42,6 +42,14 @@ type aiAgentTool struct {
 	Execute  func(ctx context.Context, run *aiAgentRun, args json.RawMessage) (any, error)
 }
 
+// aiToolRichResult 工具结果的双通道信封：Model 喂给模型（受截断约束、要省），
+// UI 发给界面并落库（编辑器要的全量脚本、计划清单走这里，不占模型上下文）。
+// 普通工具直接返回业务对象即可 —— 两个通道同一份。
+type aiToolRichResult struct {
+	Model any
+	UI    any
+}
+
 // aiAgentRun 一轮 Agent 对话的运行态，工具执行时可读写。
 type aiAgentRun struct {
 	AppID   int64
@@ -63,6 +71,57 @@ type aiAgentRun struct {
 // aiFunctionTools 远程函数场景的完整内置工具集。
 func aiFunctionTools() []aiAgentTool {
 	return []aiAgentTool{
+		{
+			Name: "update_plan",
+			Description: "维护本轮任务的执行计划并实时展示给作者。预计 3 步以上的任务开工前先列计划，" +
+				"每完成一步立即更新状态；items 每次都是整组替换。单步小事不用列。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{
+				"items":{"type":"array","items":{"type":"object","properties":{
+					"step":{"type":"string","description":"这一步做什么，一句话"},
+					"status":{"type":"string","enum":["pending","active","done"],"description":"pending 未开始 / active 进行中 / done 已完成"}},
+					"required":["step"]},
+					"description":"完整的计划清单（整组替换），最多 12 步"}},
+				"required":["items"]}`),
+			Execute: func(_ context.Context, _ *aiAgentRun, args json.RawMessage) (any, error) {
+				var input struct {
+					Items []struct {
+						Step   string `json:"step"`
+						Status string `json:"status"`
+					} `json:"items"`
+				}
+				if err := json.Unmarshal(args, &input); err != nil {
+					return nil, fmt.Errorf("入参不是合法 JSON：%w", err)
+				}
+				if len(input.Items) == 0 {
+					return nil, fmt.Errorf("items 不能为空")
+				}
+				if len(input.Items) > 12 {
+					return nil, fmt.Errorf("计划最多 12 步，把同类项合并一下")
+				}
+				items := make([]map[string]string, 0, len(input.Items))
+				done := 0
+				for _, item := range input.Items {
+					step := strings.TrimSpace(item.Step)
+					if step == "" {
+						return nil, fmt.Errorf("每一步都要有 step 文案")
+					}
+					status := item.Status
+					switch status {
+					case "pending", "active", "done":
+					default:
+						status = "pending"
+					}
+					if status == "done" {
+						done++
+					}
+					items = append(items, map[string]string{"step": step, "status": status})
+				}
+				return aiToolRichResult{
+					Model: map[string]any{"ok": true, "steps": len(items), "done": done},
+					UI:    map[string]any{"items": items, "done": done, "total": len(items)},
+				}, nil
+			},
+		},
 		{
 			Name:        "list_functions",
 			Description: "列出当前应用的全部远程函数（名称、状态、运行时、激活版本、能力、描述）。",
@@ -155,6 +214,69 @@ func aiFunctionTools() []aiAgentTool {
 			},
 		},
 		{
+			Name: "search_sources",
+			Description: "在全部函数的激活版本脚本（含编辑器草稿）里检索文本，返回带行号的命中行。" +
+				"跨函数排查「谁在用这个 KV 键 / 谁调了这个接口」时用它，别一个个翻。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{
+				"query":{"type":"string","description":"要找的文本（区分大小写按原样匹配，多数场景传小写即可——匹配不分大小写）"},
+				"limit":{"type":"integer","description":"命中行数上限，缺省 40，上限 100"}},
+				"required":["query"]}`),
+			Execute: func(ctx context.Context, run *aiAgentRun, args json.RawMessage) (any, error) {
+				var input struct {
+					Query string `json:"query"`
+					Limit int    `json:"limit"`
+				}
+				_ = json.Unmarshal(args, &input)
+				query := strings.TrimSpace(input.Query)
+				if query == "" {
+					return nil, fmt.Errorf("query 不能为空")
+				}
+				limit := input.Limit
+				if limit <= 0 {
+					limit = 40
+				}
+				if limit > 100 {
+					limit = 100
+				}
+				hits := make([]map[string]any, 0, 16)
+				scan := func(functionName, version, source string) {
+					for index, line := range splitScriptLines(source) {
+						if len(hits) >= limit {
+							return
+						}
+						if !strings.Contains(strings.ToLower(line), strings.ToLower(query)) {
+							continue
+						}
+						hits = append(hits, map[string]any{
+							"function": functionName, "version": version,
+							"line": index + 1, "text": truncateRunes(strings.TrimSpace(line), 200),
+						})
+					}
+				}
+				if strings.TrimSpace(run.DraftSource) != "" {
+					scan(run.refOr("(未命名)"), "（编辑器草稿）", run.DraftSource)
+				}
+				items, err := run.functions.ListFunctions(ctx, run.AppID)
+				if err != nil {
+					return nil, err
+				}
+				for _, item := range items {
+					if len(hits) >= limit {
+						break
+					}
+					if item.ActiveVersion == "" {
+						continue
+					}
+					detail, err := run.functions.GetVersionDetail(ctx, run.AppID, item.Name, item.ActiveVersion)
+					if err != nil {
+						continue
+					}
+					scan(item.Name, detail.Version.Version, detail.Source)
+				}
+				return map[string]any{"total": len(hits), "hits": hits, "truncated": len(hits) >= limit}, nil
+			},
+		},
+		{
 			Name: "get_capability_catalog",
 			Description: "读取脚本能力目录：每项能力的键、用途、风险档、调用形态，以及运行时配额与限制。" +
 				"判断「这个需求要声明哪些能力」时先看它。",
@@ -217,6 +339,47 @@ func aiFunctionTools() []aiAgentTool {
 			},
 		},
 		{
+			Name: "read_draft",
+			Description: "带行号读取编辑器当前草稿。系统提示词里的草稿是本轮开始时的快照，" +
+				"经 edit_draft / stage_source 修改后就过期了 —— 编辑前后都用它核对最新内容。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{
+				"offset":{"type":"integer","description":"起始行号（1 起算），缺省 1"},
+				"limit":{"type":"integer","description":"读取行数，缺省 400，上限 800"}}}`),
+			Execute: func(_ context.Context, run *aiAgentRun, args json.RawMessage) (any, error) {
+				var input struct {
+					Offset int `json:"offset"`
+					Limit  int `json:"limit"`
+				}
+				_ = json.Unmarshal(args, &input)
+				if strings.TrimSpace(run.DraftSource) == "" {
+					return nil, fmt.Errorf("编辑器没有草稿。函数已有代码的话用 get_function_source 读激活版本，新脚本用 stage_source 放入")
+				}
+				lines := splitScriptLines(run.DraftSource)
+				offset := input.Offset
+				if offset < 1 {
+					offset = 1
+				}
+				if offset > len(lines) {
+					return nil, fmt.Errorf("offset 超出范围：草稿共 %d 行", len(lines))
+				}
+				limit := input.Limit
+				if limit <= 0 {
+					limit = 400
+				}
+				if limit > 800 {
+					limit = 800
+				}
+				end := offset - 1 + limit
+				if end > len(lines) {
+					end = len(lines)
+				}
+				return map[string]any{
+					"totalLines": len(lines), "from": offset, "to": end,
+					"content": numberScriptLines(lines[offset-1:end], offset),
+				}, nil
+			},
+		},
+		{
 			Name: "analyze_draft",
 			Description: "对脚本做静态检查（与发布门禁同一套判定）：语法错误、未声明的能力、未知成员，" +
 				"逐条带行号。source 缺省为编辑器当前草稿。",
@@ -267,8 +430,9 @@ func aiFunctionTools() []aiAgentTool {
 		},
 		{
 			Name: "stage_source",
-			Description: "把一份完整的脚本正文放进作者的编辑器草稿（不落库、不发布）。这是把代码交给作者的唯一方式：" +
-				"正文必须是完整脚本而不是片段。之后的 analyze_draft / test_draft 缺省即作用于这份草稿。",
+			Description: "把一份完整的脚本正文放进作者的编辑器草稿（不落库、不发布）。新写脚本或整篇重构用它：" +
+				"正文必须是完整脚本而不是片段。已有草稿的小改动优先用 edit_draft。" +
+				"之后的 analyze_draft / test_draft 缺省即作用于这份草稿。",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{
 				"source":{"type":"string","description":"完整的脚本正文"},
 				"note":{"type":"string","description":"一句话说明这版改了什么"}},
@@ -290,6 +454,81 @@ func aiFunctionTools() []aiAgentTool {
 				run.DraftSource = input.Source
 				run.StagedSource = input.Source
 				return map[string]any{"ok": true, "bytes": len(input.Source), "note": input.Note}, nil
+			},
+		},
+		{
+			Name: "edit_draft",
+			Description: "对编辑器草稿做精确的字符串替换（不落库、不发布），作者的编辑器实时同步。" +
+				"oldText 必须与草稿逐字符一致（含缩进换行）且只出现一次 —— 带上下文行保证唯一，" +
+				"多处替换传 replaceAll。小到中等的改动用它，别整篇重写。",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{
+				"oldText":{"type":"string","description":"要替换的原文（逐字符一致，含缩进与换行）"},
+				"newText":{"type":"string","description":"替换后的内容"},
+				"replaceAll":{"type":"boolean","description":"替换全部匹配，缺省 false（要求唯一匹配）"},
+				"note":{"type":"string","description":"一句话说明这处改了什么"}},
+				"required":["oldText","newText"]}`),
+			Execute: func(_ context.Context, run *aiAgentRun, args json.RawMessage) (any, error) {
+				var input struct {
+					OldText    string `json:"oldText"`
+					NewText    string `json:"newText"`
+					ReplaceAll bool   `json:"replaceAll"`
+					Note       string `json:"note"`
+				}
+				if err := json.Unmarshal(args, &input); err != nil {
+					return nil, fmt.Errorf("入参不是合法 JSON：%w", err)
+				}
+				if input.OldText == "" {
+					return nil, fmt.Errorf("oldText 不能为空")
+				}
+				if input.OldText == input.NewText {
+					return nil, fmt.Errorf("oldText 与 newText 相同，没有可改的内容")
+				}
+				draft := run.DraftSource
+				if strings.TrimSpace(draft) == "" {
+					return nil, fmt.Errorf("编辑器没有草稿可编辑：先用 get_function_source 读出激活版本、stage_source 放进草稿，再做增量修改")
+				}
+				count := strings.Count(draft, input.OldText)
+				if count == 0 {
+					return nil, fmt.Errorf("草稿里没找到 oldText：它必须与草稿逐字符一致（含缩进与换行）。先用 read_draft 核对当前内容")
+				}
+				if count > 1 && !input.ReplaceAll {
+					return nil, fmt.Errorf("oldText 在草稿里出现了 %d 次：补上下文行让它唯一，或传 replaceAll=true 全部替换", count)
+				}
+				replacements := 1
+				var updated string
+				if input.ReplaceAll {
+					updated = strings.ReplaceAll(draft, input.OldText, input.NewText)
+					replacements = count
+				} else {
+					updated = strings.Replace(draft, input.OldText, input.NewText, 1)
+				}
+				if len(updated) > aiToolSourceLimit {
+					return nil, fmt.Errorf("编辑后脚本超过 %d KB 上限", aiToolSourceLimit>>10)
+				}
+				run.DraftSource = updated
+				run.StagedSource = updated
+				// 回给模型第一处改动的带行号上下文：自证改对了，不必再整读一遍。
+				firstAt := strings.Index(draft, input.OldText)
+				line := strings.Count(strings.ReplaceAll(draft[:firstAt], "\r\n", "\n"), "\n") + 1
+				lines := splitScriptLines(updated)
+				from := line - 3
+				if from < 1 {
+					from = 1
+				}
+				to := line + strings.Count(strings.ReplaceAll(input.NewText, "\r\n", "\n"), "\n") + 3
+				if to > len(lines) {
+					to = len(lines)
+				}
+				return aiToolRichResult{
+					Model: map[string]any{
+						"ok": true, "replacements": replacements, "totalLines": len(lines),
+						"snippet": numberScriptLines(lines[from-1:to], from),
+					},
+					UI: map[string]any{
+						"ok": true, "replacements": replacements,
+						"note": input.Note, "source": updated,
+					},
+				}, nil
 			},
 		},
 		{
@@ -525,6 +764,20 @@ func (run *aiAgentRun) refOr(name string) string {
 	return run.Ref
 }
 
+// splitScriptLines 脚本按行拆分（统一 \r\n，行号语义与编辑器一致）。
+func splitScriptLines(source string) []string {
+	return strings.Split(strings.ReplaceAll(source, "\r\n", "\n"), "\n")
+}
+
+// numberScriptLines 带行号拼正文，start 是首行行号（1 起算）。
+func numberScriptLines(lines []string, start int) string {
+	var builder strings.Builder
+	for index, line := range lines {
+		fmt.Fprintf(&builder, "%5d| %s\n", start+index, line)
+	}
+	return builder.String()
+}
+
 // sourceOrDraft 脚本正文参数缺省落回编辑器草稿。
 func (run *aiAgentRun) sourceOrDraft(source string) (string, error) {
 	if strings.TrimSpace(source) != "" {
@@ -540,30 +793,43 @@ func (run *aiAgentRun) sourceOrDraft(source string) (string, error) {
 }
 
 // executeAgentTool 统一的工具执行入口：内置工具查表，mcp__ 前缀转投 MCP 客户端。
-// 返回值是**已经截断**的字符串结果 —— 送进模型上下文的从来不是原始对象。
+// modelOutput 是**已经截断**的字符串结果 —— 送进模型上下文的从来不是原始对象；
+// uiOutput 只在工具返回 aiToolRichResult 时非空，是发给界面/落库的全量版本。
 func executeAgentTool(ctx context.Context, run *aiAgentRun, tools map[string]aiAgentTool,
-	name string, args json.RawMessage) (string, error) {
+	name string, args json.RawMessage) (modelOutput string, uiOutput json.RawMessage, err error) {
 	if strings.HasPrefix(name, aiMCPToolPrefix) {
-		return executeMCPTool(ctx, run, name, args)
+		output, err := executeMCPTool(ctx, run, name, args)
+		return output, nil, err
 	}
 	tool, ok := tools[name]
 	if !ok {
-		return "", fmt.Errorf("未知工具：%s", name)
+		return "", nil, fmt.Errorf("未知工具：%s", name)
 	}
 	result, err := tool.Execute(ctx, run, args)
 	if err != nil {
 		// 业务错误原样给模型 —— 「函数版本不存在」这类信息模型能自行纠正。
 		var appErr *apperrors.AppError
 		if errors.As(err, &appErr) {
-			return "", fmt.Errorf("%s", appErr.Message)
+			return "", nil, fmt.Errorf("%s", appErr.Message)
 		}
-		return "", err
+		return "", nil, err
+	}
+	if rich, isRich := result.(aiToolRichResult); isRich {
+		modelEncoded, err := json.Marshal(rich.Model)
+		if err != nil {
+			return "", nil, fmt.Errorf("工具结果序列化失败：%w", err)
+		}
+		uiEncoded, err := json.Marshal(rich.UI)
+		if err != nil {
+			return "", nil, fmt.Errorf("工具结果序列化失败：%w", err)
+		}
+		return truncateAIToolOutput(string(modelEncoded)), uiEncoded, nil
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
-		return "", fmt.Errorf("工具结果序列化失败：%w", err)
+		return "", nil, fmt.Errorf("工具结果序列化失败：%w", err)
 	}
-	return truncateAIToolOutput(string(encoded)), nil
+	return truncateAIToolOutput(string(encoded)), nil, nil
 }
 
 func executeMCPTool(ctx context.Context, run *aiAgentRun, name string, args json.RawMessage) (string, error) {

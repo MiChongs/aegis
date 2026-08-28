@@ -355,7 +355,7 @@ func (t *einoAgentTool) InvokableRun(ctx context.Context, argumentsInJSON string
 // 这类信息模型完全能救回来）；只有 ctx 取消才让整轮失败。
 func (s *einoAgentSession) executeTool(ctx context.Context, callID, name string,
 	args json.RawMessage) (string, error) {
-	output, execErr := s.service.executeToolWithTimeout(ctx, s.run, s.toolIndex, aidomain.ToolCall{
+	output, uiOutput, execErr := s.service.executeToolWithTimeout(ctx, s.run, s.toolIndex, aidomain.ToolCall{
 		ID: callID, Name: name, Arguments: args,
 	})
 	part := agentUIPart{Type: "dynamic-tool", ToolCallID: callID, ToolName: name, Input: normalizeJSON(args)}
@@ -372,11 +372,18 @@ func (s *einoAgentSession) executeTool(ctx context.Context, callID, name string,
 		}
 		return "错误：" + execErr.Error(), nil
 	}
+	// 界面与落库用全量版本（编辑器要的完整脚本、计划清单），模型只拿省流版；
+	// ModelOutput 记下省流版供后续轮次回喂 —— 整篇脚本不该反复进上下文。
+	display := jsonify(output)
 	part.State = "output-available"
-	part.Output = jsonify(output)
+	if len(uiOutput) > 0 {
+		part.ModelOutput = display
+		display = uiOutput
+	}
+	part.Output = display
 	_ = s.emitChunk(map[string]any{
 		"type": "tool-output-available", "toolCallId": callID,
-		"output": json.RawMessage(jsonify(output)), "dynamic": true,
+		"output": json.RawMessage(display), "dynamic": true,
 	})
 	s.appendPart(part)
 	return output, nil

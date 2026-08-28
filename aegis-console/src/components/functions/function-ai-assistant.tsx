@@ -19,9 +19,12 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  Circle,
   Copy,
   FileCode2,
+  FilePen,
   History,
+  ListTodo,
   Loader2,
   Maximize2,
   PanelRight,
@@ -169,10 +172,14 @@ function getAssistantSession(appKey: string, functionName: string): AssistantSes
 
 /** 内置工具的界面名。不认识的键（MCP 工具）走 toolLabel 的兜底分支。 */
 const TOOL_LABELS: Record<string, string> = {
+  update_plan: "更新计划",
   list_functions: "列出函数",
   get_function: "读取函数定义",
   get_function_source: "读取脚本正文",
   list_versions: "查看版本历史",
+  search_sources: "检索脚本",
+  read_draft: "读取草稿",
+  edit_draft: "编辑草稿",
   get_capability_catalog: "查询能力目录",
   get_sdk_reference: "查询 SDK 类型",
   list_script_templates: "查询脚本模板",
@@ -236,15 +243,25 @@ function toUIMessages(items: AIAgentMessage[]): AgentUIMessage[] {
   return out;
 }
 
-/** 从一条助手消息里找最后一次成功的 stage_source（回放「AI 写的最终版」用）。 */
+/**
+ * 从一条助手消息里找最后一次成功交付的脚本（回放「AI 写的最终版」用）。
+ * stage_source 的全文在入参里，edit_draft 的更新后全文在结果里 —— 谁靠后用谁。
+ */
 function findStagedSource(message: AgentUIMessage): { source: string; note?: string } | null {
   for (let i = message.parts.length - 1; i >= 0; i--) {
     const part = message.parts[i];
-    if (part.type !== "dynamic-tool") continue;
-    if (part.toolName !== "stage_source" || part.state !== "output-available") continue;
-    const input = part.input as { source?: string; note?: string } | undefined;
-    if (typeof input?.source === "string" && input.source.trim()) {
-      return { source: input.source, note: input.note };
+    if (part.type !== "dynamic-tool" || part.state !== "output-available") continue;
+    if (part.toolName === "stage_source") {
+      const input = part.input as { source?: string; note?: string } | undefined;
+      if (typeof input?.source === "string" && input.source.trim()) {
+        return { source: input.source, note: input.note };
+      }
+      continue;
+    }
+    if (part.toolName !== "edit_draft") continue;
+    const output = part.output as { source?: string; note?: string } | undefined;
+    if (typeof output?.source === "string" && output.source.trim()) {
+      return { source: output.source, note: output.note };
     }
   }
   return null;
@@ -1171,6 +1188,13 @@ function MessageRow({
   const lastPart = message.parts[message.parts.length - 1];
   const showCursor = streaming && lastPart?.type === "text" && Boolean(lastPart.text);
 
+  // 计划会被反复整组更新：只有最后一份展开成清单，早先的收成一行，免得刷屏。
+  const lastPlanIndex = message.parts.reduce(
+    (acc, item, itemIndex) =>
+      item.type === "dynamic-tool" && item.toolName === "update_plan" ? itemIndex : acc,
+    -1
+  );
+
   const body = (
     <div className={cn("group/message min-w-0 flex-1", dense ? "space-y-1.5" : "space-y-2")}>
       {message.parts.map((part, index) => {
@@ -1192,6 +1216,9 @@ function MessageRow({
               <ReasoningView key={index} text={part.text} streaming={part.state === "streaming"} />
             ) : null;
           case "dynamic-tool":
+            if (part.toolName === "update_plan") {
+              return <PlanCard key={index} dense={dense} part={part} compact={index !== lastPlanIndex} />;
+            }
             return <ToolPartView key={index} dense={dense} part={part} onApplySource={onApplySource} />;
           default:
             return null;
@@ -1358,6 +1385,51 @@ function ToolPartView({
     );
   }
 
+  // edit_draft 与 stage_source 同属「AI 交付代码」：成功即已同步进编辑器。
+  // 更新后的全文在结果里，「重新应用」供回放旧会话时手动取回。
+  if (part.toolName === "edit_draft") {
+    const output = part.output as
+      | { source?: string; note?: string; replacements?: number }
+      | undefined;
+    const source = typeof output?.source === "string" ? output.source : "";
+    const note = typeof output?.note === "string" ? output.note : "";
+    return (
+      <div className="rounded-lg border bg-muted/20 px-2 py-1.5">
+        <div className={cn("flex items-center gap-1.5", dense ? "text-[11px]" : "text-xs")}>
+          {running ? (
+            <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+          ) : failed ? (
+            <XCircle className="size-3.5 shrink-0 text-destructive" />
+          ) : (
+            <FilePen className="size-3.5 shrink-0 text-primary" />
+          )}
+          <span className="font-medium">
+            {running ? "正在修改草稿…" : failed ? "修改草稿失败" : "已精确修改草稿"}
+          </span>
+          {!running && !failed && (output?.replacements ?? 0) > 1 ? (
+            <span className="text-[10px] text-muted-foreground">{output?.replacements} 处</span>
+          ) : null}
+          {!running && !failed && source ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              className="ml-auto h-5 px-1.5"
+              onClick={() => onApplySource(source, note)}
+            >
+              重新应用
+            </Button>
+          ) : null}
+        </div>
+        {note ? (
+          <p className={cn("mt-0.5 text-muted-foreground", dense ? "text-[11px]" : "text-xs")}>{note}</p>
+        ) : null}
+        {failed && part.errorText ? (
+          <p className="mt-0.5 text-[11px] text-destructive">{part.errorText}</p>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <Collapsible className="rounded-lg border bg-muted/20">
       <CollapsibleTrigger asChild>
@@ -1391,5 +1463,95 @@ function ToolPartView({
         </div>
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+/**
+ * update_plan 的专属外观：Agent 的执行计划清单，作者靠它了解进度。
+ * compact = 同一条消息里更早的计划快照，收成一行摘要。
+ */
+function PlanCard({
+  dense,
+  part,
+  compact
+}: {
+  dense: boolean;
+  part: DynamicToolUIPart;
+  compact: boolean;
+}) {
+  const running = part.state === "input-streaming" || part.state === "input-available";
+  const failed = part.state === "output-error";
+  const output = part.output as { items?: { step?: string; status?: string }[] } | undefined;
+  const items = Array.isArray(output?.items) ? output.items : [];
+  const done = items.filter((item) => item.status === "done").length;
+
+  // 计划工具失败对作者没有信息量（模型会自行重试），静默降级为不展示。
+  if (failed) return null;
+  if (running || items.length === 0) {
+    return (
+      <div
+        className={cn(
+          "flex items-center gap-1.5 rounded-lg border bg-muted/20 px-2 py-1.5",
+          dense ? "text-[11px]" : "text-xs"
+        )}
+      >
+        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+        <span className="font-medium text-muted-foreground">正在整理计划…</span>
+      </div>
+    );
+  }
+  if (compact) {
+    return (
+      <div
+        className={cn(
+          "flex items-center gap-1.5 rounded-lg border border-dashed bg-muted/10 px-2 py-1 text-muted-foreground",
+          dense ? "text-[11px]" : "text-xs"
+        )}
+      >
+        <ListTodo className="size-3 shrink-0" />
+        <span>
+          计划更新 · {done}/{items.length} 完成
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-lg border bg-muted/20 px-2 py-1.5">
+      <div className={cn("flex items-center gap-1.5", dense ? "text-[11px]" : "text-xs")}>
+        <ListTodo className="size-3.5 shrink-0 text-primary" />
+        <span className="font-medium">执行计划</span>
+        <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
+          {done}/{items.length}
+        </span>
+      </div>
+      <ul className="mt-1 space-y-0.5">
+        {items.map((item, index) => (
+          <li
+            key={index}
+            className={cn("flex items-start gap-1.5", dense ? "text-[11px]" : "text-xs")}
+          >
+            {item.status === "done" ? (
+              <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            ) : item.status === "active" ? (
+              <Loader2 className="mt-0.5 size-3 shrink-0 animate-spin text-primary" />
+            ) : (
+              <Circle className="mt-0.5 size-3 shrink-0 text-muted-foreground/50" />
+            )}
+            <span
+              className={cn(
+                "min-w-0 break-words",
+                item.status === "done"
+                  ? "text-muted-foreground line-through decoration-muted-foreground/40"
+                  : item.status === "active"
+                    ? "font-medium"
+                    : "text-muted-foreground"
+              )}
+            >
+              {item.step}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

@@ -40,7 +40,9 @@ func NewAIAgentService(log *zap.Logger, pg *pgrepo.Repository,
 
 const (
 	// aiAgentMaxSteps 单轮请求里模型最多迭代多少步（每步一次 LLM 调用）。
-	aiAgentMaxSteps = 24
+	// 「读 → 计划 → 多次编辑 → 每次编辑后验证」的完整闭环在复杂任务上
+	// 很容易超过 24 步，32 给验证循环留足余量。
+	aiAgentMaxSteps = 32
 	// aiAgentMaxTokens 单步输出上限。
 	aiAgentMaxTokens = 8192
 	// aiAgentToolTimeout 单个工具执行的时间上限（test_draft 之类的要留够）。
@@ -249,8 +251,9 @@ func (s *AIAgentService) Run(ctx context.Context, input AIAgentRunInput, emit ai
 }
 
 // executeToolWithTimeout 单个工具的执行入口：限时 + 恐慌兜底。
+// uiOutput 非空时是发给界面/落库的全量版本（见 aiToolRichResult）。
 func (s *AIAgentService) executeToolWithTimeout(ctx context.Context, run *aiAgentRun,
-	tools map[string]aiAgentTool, call aidomain.ToolCall) (output string, err error) {
+	tools map[string]aiAgentTool, call aidomain.ToolCall) (output string, uiOutput json.RawMessage, err error) {
 	toolCtx, cancel := context.WithTimeout(ctx, aiAgentToolTimeout)
 	defer cancel()
 	defer func() {
@@ -449,7 +452,11 @@ func agentMessageToChat(message aidomain.AgentMessage) []aidomain.ChatMessage {
 			})
 			result := part.ErrorText
 			if part.State != "output-error" {
-				result = string(part.Output)
+				if len(part.ModelOutput) > 0 {
+					result = string(part.ModelOutput)
+				} else {
+					result = string(part.Output)
+				}
 			}
 			if result == "" {
 				result = "(无输出)"
@@ -574,8 +581,11 @@ type agentUIPart struct {
 	ToolName   string          `json:"toolName,omitempty"`
 	Input      json.RawMessage `json:"input,omitempty"`
 	Output     json.RawMessage `json:"output,omitempty"`
-	ErrorText  string          `json:"errorText,omitempty"`
-	Data       json.RawMessage `json:"data,omitempty"`
+	// ModelOutput 双通道工具（aiToolRichResult）当轮真正喂给模型的省流版；
+	// 回喂历史时优先用它 —— Output 里可能是编辑器要的整篇脚本，不该进上下文。
+	ModelOutput json.RawMessage `json:"modelOutput,omitempty"`
+	ErrorText   string          `json:"errorText,omitempty"`
+	Data        json.RawMessage `json:"data,omitempty"`
 }
 
 func (s *AIAgentService) emitError(emit aiAgentEmit, err error) error {
@@ -616,20 +626,36 @@ func jsonify(output string) json.RawMessage {
 
 // ── 提示词 ──
 
-const aiFunctionScenePrompt = `你是 Aegis 平台的远程函数助手，帮应用管理员写、调、修跑在服务端沙箱里的 JavaScript 函数。
+const aiFunctionScenePrompt = `你是 Aegis 平台的远程函数工程师 Agent，帮应用管理员在服务端沙箱里写、调、修 JavaScript 函数。你不是问答机器人：接到任务就用工具把事做完 —— 读代码、改代码、跑验证，直到拿到可交付的结果，而不是把步骤讲给作者让他自己动手。
 
-行为准则：
-- 动手前先看清楚：读函数定义（get_function）、读现有代码（get_function_source 或编辑器草稿）、读 SDK 类型（get_sdk_reference）。补全里没有的成员，运行时同样没有。
-- 改完必须验证：analyze_draft 过静态检查，test_draft 试跑（读真写假，放心跑）。试跑失败就修，修完再跑，直到通过。
-- 交付代码只走 stage_source，并且必须是完整脚本 —— 作者的编辑器会被这份内容整体替换。回复正文里不要贴大段代码，讲清楚改了什么、为什么。
-- publish_version 只在作者明确要求发布时使用。
-- 需要能力（HTTP 出网、KV、查用户等）时先看 get_capability_catalog，未声明的能力要用 update_function_settings 补上（或提醒作者去函数设置里勾选）。
-- 回复用中文，简洁直接；解释问题时引用行号与具体报错。
+# 工作流程
 
-工具使用规范：
-- name 参数缺省就是当前函数，不必每次都传。
-- 排障顺序：get_invocations（status=error）看报错 → get_function_source 看代码 → test_draft 复现 → 修复 → stage_source。
-- 工具结果超长会被截断；需要完整内容时换更窄的查询条件。`
+1. **先摸清现场**：读函数定义（get_function）、读代码（编辑器草稿 / get_function_source）、读 SDK 类型（get_sdk_reference）。补全里没有的成员，运行时同样没有。跨函数找线索用 search_sources，别一个个翻。
+2. **多步任务先列计划**：预计 3 步以上的任务，动手前用 update_plan 列出计划，每完成一步立即更新状态 —— 作者靠它了解你的进度。单步小事不用列。
+3. **动手**：小到中等的改动用 edit_draft 做精确替换（快、省、不碰无关代码）；新写脚本或整篇重构才用 stage_source 放完整正文。草稿是唯一工作副本，作者的编辑器实时同步你的每次编辑。
+4. **改完必须验证**：analyze_draft 过静态检查，test_draft 试跑（读真写假，放心跑）。失败就修，修完再验，直到通过 —— 把报错原样转述给作者不算完成任务。
+5. **交付**：回复正文讲清楚改了什么、为什么、验证结果如何（引用行号与关键输出）。不要在正文里贴大段代码 —— 代码已经在编辑器里。
+
+# 编辑纪律
+
+- 系统提示词里的草稿是本轮**开始时的快照**：经 edit_draft / stage_source 修改后就过期了，要看最新内容用 read_draft（带行号）。
+- edit_draft 的 oldText 必须与草稿逐字符一致（含缩进、换行）；不确定就先 read_draft 核对。多处匹配时补上下文行，或明确 replaceAll。
+- 编辑器为空而函数有激活版本时：先 get_function_source 读出来、stage_source 放进草稿，再做增量修改。
+
+# 边界
+
+- publish_version 只在作者明确要求发布时使用；平时交付到草稿为止。
+- 需要新能力（HTTP 出网、KV、查用户等）先看 get_capability_catalog，用 update_function_settings 补声明；写操作被关闭时提醒作者去函数设置里勾选。
+- test_draft 的写操作只记入 effects 不真正执行，不要据此宣称「已写入生产数据」。
+- 排障路径：get_invocations（status=error）看报错 → 读代码 → test_draft 复现 → 修复 → 验证。
+- 工具结果超长会被截断；要完整内容就换更窄的查询（read_draft 的 offset/limit、get_invocations 的 limit）。
+
+# 沟通
+
+- 中文、简洁、结果导向；说明问题时引用行号与具体报错。
+- 干活过程不必逐步解说，计划状态（update_plan）就是进度汇报；收尾时一次讲清结论。
+- 作者意图含糊时按最合理的理解直接做，并在回复里说明你的取舍；别把选择题原样抛回去。
+- name 参数缺省就是当前函数，不必每次都传。`
 
 const aiCompactionPrompt = `你是对话压缩器。把下面这段「远程函数助手」的工作对话压成一份接续用的摘要，后续对话将只携带这份摘要 + 最近几条消息。
 
