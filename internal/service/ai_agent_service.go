@@ -18,9 +18,10 @@ import (
 )
 
 // AIAgentService Agent 会话的编排层：装配上下文（系统提示词、技能、历史、草稿）、
-// 跑「模型 → 工具 → 模型」的循环、把增量翻成 AI SDK 的界面消息流、落库、自动压缩。
+// 驱动「模型 → 工具 → 模型」的循环、把增量翻成 AI SDK 的界面消息流、落库、自动压缩。
 //
 // 分层约定：
+//   - 循环本身由 CloudWeGo Eino 的 react agent 编排（适配层见 ai_agent_eino.go）；
 //   - 通道选择与调用在 AIProviderService（这里从不碰密钥）；
 //   - 工具的具体实现在 ai_agent_tools.go（这里只负责调度与截断）；
 //   - 消息以**界面分片**格式落库（agentUIPart），喂模型前才翻译成 ChatMessage ——
@@ -206,89 +207,17 @@ func (s *AIAgentService) Run(ctx context.Context, input AIAgentRunInput, emit ai
 		}
 	}
 
-	// 5. 模型 → 工具 → 模型 的循环。
-	var (
-		assistantParts []agentUIPart
-		totalUsage     aidomain.Usage
-		runErr         error
-	)
-
-steps:
-	for step := 0; step < aiAgentMaxSteps; step++ {
-		if err := emit(map[string]any{"type": "start-step"}); err != nil {
-			runErr = err
-			break
-		}
-		assistantParts = append(assistantParts, agentUIPart{Type: "step-start"})
-
-		// 超预算时先掐掉 in-flight 转录里最旧的工具结果，不动落库数据。
-		trimTranscriptInPlace(transcript, budget, systemPrompt)
-
-		response, err := s.streamOneStep(ctx, input, systemPrompt, transcript, toolList, emit, &assistantParts)
-		if err != nil {
-			runErr = err
-			_ = s.emitError(emit, err)
-			break
-		}
-		totalUsage.Add(response.Usage)
-
-		if len(response.ToolCalls) == 0 {
-			// 没有工具调用即收尾。
-			_ = emit(map[string]any{"type": "finish-step"})
-			break
-		}
-
-		// 把这步的 assistant 消息（含工具调用）接到转录里。
-		assistantMessage := aidomain.ChatMessage{Role: aidomain.RoleAssistant, ToolCalls: response.ToolCalls}
-		if response.Text != "" {
-			assistantMessage.Content = []aidomain.ContentPart{{Type: aidomain.PartText, Text: response.Text}}
-		}
-		transcript = append(transcript, assistantMessage)
-
-		// 6. 依次执行工具，结果既发给界面也接回转录。
-		for _, call := range response.ToolCalls {
-			output, execErr := s.executeToolWithTimeout(ctx, run, toolIndex, call)
-			part := agentUIPart{
-				Type: "dynamic-tool", ToolCallID: call.ID, ToolName: call.Name,
-				Input: normalizeJSON(call.Arguments),
-			}
-			if execErr != nil {
-				part.State = "output-error"
-				part.ErrorText = execErr.Error()
-				_ = emit(map[string]any{
-					"type": "tool-output-error", "toolCallId": call.ID,
-					"errorText": execErr.Error(), "dynamic": true,
-				})
-				transcript = append(transcript, toolResultMessage(call.ID, "错误："+execErr.Error()))
-			} else {
-				part.State = "output-available"
-				part.Output = jsonify(output)
-				_ = emit(map[string]any{
-					"type": "tool-output-available", "toolCallId": call.ID,
-					"output": json.RawMessage(jsonify(output)), "dynamic": true,
-				})
-				transcript = append(transcript, toolResultMessage(call.ID, output))
-			}
-			assistantParts = append(assistantParts, part)
-
-			if ctx.Err() != nil {
-				runErr = ctx.Err()
-				break steps
-			}
-		}
-		_ = emit(map[string]any{"type": "finish-step"})
-
-		if step == aiAgentMaxSteps-1 {
-			limitNote := fmt.Sprintf("已达到单轮最大步数（%d 步），请继续对话让我接着做。", aiAgentMaxSteps)
-			assistantParts = append(assistantParts, agentUIPart{Type: "text", Text: limitNote, State: "done"})
-			textID := "txt_" + uuid.NewString()
-			_ = emit(map[string]any{"type": "text-start", "id": textID})
-			_ = emit(map[string]any{"type": "text-delta", "id": textID, "delta": limitNote})
-			_ = emit(map[string]any{"type": "text-end", "id": textID})
-		}
+	// 5. 「模型 → 工具 → 模型」的循环交给 Eino react agent 驱动（见 ai_agent_eino.go）：
+	//    模型/工具节点由适配器实现，界面事件与落库分片在适配器内产出。
+	session := &einoAgentSession{
+		service: s, input: input, run: run,
+		toolIndex: toolIndex, toolList: toolList,
+		budget: budget, emit: emit,
 	}
+	runErr := s.runEinoAgent(ctx, session, chatToEinoMessages(systemPrompt, transcript))
+	assistantParts, totalUsage := session.snapshot()
 
-	// 7. 收尾落库：客户端断线（ctx 取消）也要把已经产生的内容存下来。
+	// 6. 收尾落库：客户端断线（ctx 取消）也要把已经产生的内容存下来。
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	if len(assistantParts) > 0 {
@@ -317,112 +246,6 @@ steps:
 		"conversationId": conversation.ID,
 		"usage":          totalUsage,
 	}})
-}
-
-// streamOneStep 跑一次 LLM 调用：正文与思考逐字发给界面，工具入参聚合后
-// 以 tool-input-available 一次性交付（入参 JSON 的增量对界面没有展示价值，
-// 但 stage_source 的 source 字段例外 —— 它也会以 delta 形式流出去）。
-func (s *AIAgentService) streamOneStep(ctx context.Context, input AIAgentRunInput,
-	systemPrompt string, transcript []aidomain.ChatMessage, toolList []aidomain.Tool,
-	emit aiAgentEmit, assistantParts *[]agentUIPart) (*aidomain.ChatResponse, error) {
-
-	var (
-		textID      string
-		reasoningID string
-		textBuffer  strings.Builder
-		reasonBuf   strings.Builder
-		started     = map[string]bool{}
-	)
-	closeText := func() {
-		if textID != "" {
-			_ = emit(map[string]any{"type": "text-end", "id": textID})
-			if textBuffer.Len() > 0 {
-				*assistantParts = append(*assistantParts, agentUIPart{Type: "text", Text: textBuffer.String(), State: "done"})
-			}
-			textID = ""
-			textBuffer.Reset()
-		}
-	}
-	closeReasoning := func() {
-		if reasoningID != "" {
-			_ = emit(map[string]any{"type": "reasoning-end", "id": reasoningID})
-			if reasonBuf.Len() > 0 {
-				*assistantParts = append(*assistantParts, agentUIPart{Type: "reasoning", Text: reasonBuf.String(), State: "done"})
-			}
-			reasoningID = ""
-			reasonBuf.Reset()
-		}
-	}
-
-	response, _, err := s.providers.ChatStream(ctx, aiChatArgs{
-		AppID: input.AppID, ConfigID: input.ConfigID,
-		Request: aidomain.ChatRequest{
-			Model: input.Model, System: systemPrompt, Messages: transcript,
-			Tools: toolList, MaxTokens: aiAgentMaxTokens,
-		},
-	}, func(event aidomain.StreamEvent) error {
-		switch event.Type {
-		case aidomain.StreamText:
-			closeReasoning()
-			if textID == "" {
-				textID = "txt_" + uuid.NewString()
-				if err := emit(map[string]any{"type": "text-start", "id": textID}); err != nil {
-					return err
-				}
-			}
-			textBuffer.WriteString(event.Delta)
-			return emit(map[string]any{"type": "text-delta", "id": textID, "delta": event.Delta})
-		case aidomain.StreamReasoning:
-			closeText()
-			if reasoningID == "" {
-				reasoningID = "rsn_" + uuid.NewString()
-				if err := emit(map[string]any{"type": "reasoning-start", "id": reasoningID}); err != nil {
-					return err
-				}
-			}
-			reasonBuf.WriteString(event.Delta)
-			return emit(map[string]any{"type": "reasoning-delta", "id": reasoningID, "delta": event.Delta})
-		case aidomain.StreamToolStart:
-			closeText()
-			closeReasoning()
-			if !started[event.ToolID] {
-				started[event.ToolID] = true
-				return emit(map[string]any{
-					"type": "tool-input-start", "toolCallId": event.ToolID,
-					"toolName": event.ToolName, "dynamic": true,
-				})
-			}
-			return nil
-		case aidomain.StreamToolDelta:
-			if event.ToolID == "" || event.Delta == "" {
-				return nil
-			}
-			return emit(map[string]any{
-				"type": "tool-input-delta", "toolCallId": event.ToolID, "inputTextDelta": event.Delta,
-			})
-		}
-		return nil
-	})
-	closeText()
-	closeReasoning()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, call := range response.ToolCalls {
-		if !started[call.ID] {
-			// 非流式回退（或供应商不发工具增量）时补上 start。
-			_ = emit(map[string]any{
-				"type": "tool-input-start", "toolCallId": call.ID,
-				"toolName": call.Name, "dynamic": true,
-			})
-		}
-		_ = emit(map[string]any{
-			"type": "tool-input-available", "toolCallId": call.ID, "toolName": call.Name,
-			"input": normalizeJSON(call.Arguments), "dynamic": true,
-		})
-	}
-	return response, nil
 }
 
 // executeToolWithTimeout 单个工具的执行入口：限时 + 恐慌兜底。
@@ -738,34 +561,6 @@ func estimateChatChars(system string, transcript []aidomain.ChatMessage) int {
 		}
 	}
 	return total
-}
-
-// trimTranscriptInPlace in-flight 转录超预算时，把最旧的工具结果替换成占位符
-// （保留最近 4 条完整）。这是压缩之外的第二道闸：循环中途历史只会越滚越长，
-// 而中途做 LLM 摘要既慢又贵 —— 掐旧工具结果是零成本的等价物。
-func trimTranscriptInPlace(transcript []aidomain.ChatMessage, budget int, system string) {
-	if estimateChatChars(system, transcript) <= budget {
-		return
-	}
-	const keepIntact = 4
-	seen := 0
-	// 从最新往回数，第 keepIntact 条之后的工具结果全部掐掉。
-	for i := len(transcript) - 1; i >= 0; i-- {
-		if transcript[i].Role != aidomain.RoleTool {
-			continue
-		}
-		seen++
-		if seen <= keepIntact {
-			continue
-		}
-		text := transcript[i].PlainText()
-		if len(text) > 200 {
-			transcript[i].Content = []aidomain.ContentPart{{
-				Type: aidomain.PartText,
-				Text: fmt.Sprintf("（结果已省略以节省上下文，原始长度 %d 字符；需要时请重新调用该工具）", len(text)),
-			}}
-		}
-	}
 }
 
 // ── 小工具 ──
