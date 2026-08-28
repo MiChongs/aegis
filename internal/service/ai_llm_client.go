@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -97,12 +98,66 @@ func (c *aiLLMClient) ChatStream(ctx context.Context, cfg aidomain.Config, req a
 // baseURL 端点根地址：通道配置优先，留空回落到目录默认值。
 // 语义与供应商目录的帮助文案一致 —— OpenAI 协议在其后拼 /chat/completions，
 // Anthropic 协议拼 /messages，Azure 拼部署路径。
+//
+// 站点地址容错：NewAPI / OneAPI 这类聚合分发站的用户习惯只填站点根地址
+// （https://api.example.com），线上端点却挂在 /v1/… 下 —— 缺失的版本段在这里
+// 自动补全（规则见 normalizeAIBaseURL）。两类供应商不做补全：
+//   - custom-*：它们的契约就是「按原样拼接端点段」，老配置可能依赖任意挂载前缀；
+//   - Azure：路径形状完全不同（/openai/deployments/…），由调用方单独拼。
 func (c *aiLLMClient) baseURL(cfg aidomain.Config, meta aidomain.ProviderMeta) string {
 	base := cfg.Setting(aidomain.KeyBaseURL)
 	if base == "" {
 		base = meta.DefaultBaseURL
 	}
-	return strings.TrimRight(base, "/")
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	switch cfg.Provider {
+	case aidomain.ProviderAzureOpenAI, aidomain.ProviderCustomOpenAI, aidomain.ProviderCustomAnthropic:
+		return base
+	}
+	return normalizeAIBaseURL(base)
+}
+
+// normalizeAIBaseURL 把「站点地址」归一成「端点根地址」：
+//   - 粘贴了完整端点（…/chat/completions、…/messages）→ 掐掉端点段，其余原样使用
+//     （这是表达任意挂载形状的出口，掐完不再补版本段）；
+//   - 路径里已有版本段（/v1、/v4、/v1beta …，位置不限）→ 原样使用；
+//   - 其余 → 补 /v1。OpenAI 兼容生态（NewAPI / OneAPI / vLLM / LM Studio /
+//     Ollama …）的端点一律挂在 /v1 下，裸站点地址补 /v1 恒为正确形状。
+func normalizeAIBaseURL(base string) string {
+	if base == "" {
+		return base
+	}
+	lower := strings.ToLower(base)
+	for _, suffix := range []string{"/chat/completions", "/messages"} {
+		if strings.HasSuffix(lower, suffix) {
+			return base[:len(base)-len(suffix)]
+		}
+	}
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Host == "" {
+		return base
+	}
+	for _, segment := range strings.Split(strings.Trim(parsed.Path, "/"), "/") {
+		if aiVersionSegment(segment) {
+			return base
+		}
+	}
+	return base + "/v1"
+}
+
+// aiVersionSegment 形如 v1 / v3 / v1beta 的路径段。
+func aiVersionSegment(segment string) bool {
+	segment = strings.ToLower(segment)
+	if len(segment) < 2 || segment[0] != 'v' || segment[1] < '0' || segment[1] > '9' {
+		return false
+	}
+	for i := 2; i < len(segment); i++ {
+		ch := segment[i]
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 // upstreamErrorMiddleware 在 SDK 的请求链路里把非 2xx 就地收敛成 aiUpstreamError。

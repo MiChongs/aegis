@@ -37,6 +37,9 @@ const (
 	ProviderXAI         = "xai"
 	ProviderSiliconFlow = "siliconflow"
 	ProviderOllama      = "ollama"
+	// ProviderNewAPI NewAPI / OneAPI 系自托管聚合网关：站长自建的分发站，
+	// 对外是标准 OpenAI 兼容面（{站点}/v1/chat/completions）。
+	ProviderNewAPI = "new-api"
 	// ProviderCustomOpenAI / ProviderCustomAnthropic 自建或未收录的兼容端点。
 	// 目录永远追不上市场上的每一家，这两档保证「追不上」不等于「接不了」。
 	ProviderCustomOpenAI    = "custom-openai"
@@ -222,7 +225,7 @@ var providers = []ProviderMeta{
 		DocURL:         "https://platform.openai.com/docs/api-reference",
 		DefaultBaseURL: "https://api.openai.com/v1",
 		Capabilities:   ProviderCapabilities{Streaming: true, ToolCalls: true, Vision: true, JSONMode: true},
-		Fields:         commonFields(true, "留空使用 https://api.openai.com/v1；走代理网关时填代理地址"),
+		Fields:         commonFields(true, "留空使用 https://api.openai.com/v1；走代理网关时只填站点地址即可（/v1 自动补全）"),
 		SuggestedModels: []string{
 			"gpt-5.2", "gpt-5.2-mini", "gpt-5.1", "gpt-4.1", "gpt-4o",
 		},
@@ -235,7 +238,7 @@ var providers = []ProviderMeta{
 		DocURL:         "https://docs.anthropic.com/en/api/messages",
 		DefaultBaseURL: "https://api.anthropic.com/v1",
 		Capabilities:   ProviderCapabilities{Streaming: true, ToolCalls: true, Vision: true, Reasoning: true},
-		Fields:         commonFields(true, "留空使用 https://api.anthropic.com/v1"),
+		Fields:         commonFields(true, "留空使用 https://api.anthropic.com/v1；代理站点只填根地址即可（/v1 自动补全）"),
 		SuggestedModels: []string{
 			"claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5",
 		},
@@ -348,6 +351,21 @@ var providers = []ProviderMeta{
 		},
 	},
 	{
+		Provider: ProviderNewAPI, Name: "NewAPI / OneAPI",
+		Description: "自托管聚合分发站（new-api、one-api 及同类网关）",
+		Category:    CategoryAggregator, Protocol: ProtocolOpenAI,
+		BrandColor:  "#059669",
+		DocURL:      "https://docs.newapi.pro",
+		// 分发站代理什么模型就有什么能力 —— 目录按「网关本身不设限」如实声明。
+		Capabilities: ProviderCapabilities{Streaming: true, ToolCalls: true, Vision: true, JSONMode: true, Reasoning: true},
+		Fields: withRequiredBaseURL(commonFields(true,
+			"只填站点地址即可（如 https://api.example.com），/v1 与端点路径自动补全")),
+		Notes: []string{
+			"端点地址只需站点根地址，带不带 /v1 都可以 —— 系统自动补全成 /v1/chat/completions。",
+			"API Key 在站点后台「令牌」页创建（sk- 开头）；可用型号取决于站点配置的渠道。",
+		},
+	},
+	{
 		Provider: ProviderGroq, Name: "Groq",
 		Description: "LPU 高速推理云",
 		Category:    CategoryAggregator, Protocol: ProtocolOpenAI,
@@ -394,7 +412,7 @@ var providers = []ProviderMeta{
 		DocURL:         "https://github.com/ollama/ollama/blob/main/docs/openai.md",
 		DefaultBaseURL: "http://127.0.0.1:11434/v1",
 		Capabilities:   ProviderCapabilities{Streaming: true, ToolCalls: true, JSONMode: true},
-		Fields:         commonFields(false, "Ollama 服务地址（含 /v1），如 http://10.0.0.8:11434/v1"),
+		Fields:         commonFields(false, "Ollama 服务地址，如 http://10.0.0.8:11434（/v1 可省略，自动补全）"),
 		SuggestedModels: []string{
 			"qwen3.5", "llama4", "deepseek-v3.2",
 		},
@@ -406,7 +424,8 @@ var providers = []ProviderMeta{
 		Category:    CategoryCustom, Protocol: ProtocolOpenAI,
 		Icon: "openai", BrandColor: "#64748B",
 		Capabilities: ProviderCapabilities{Streaming: true, ToolCalls: true, Vision: true, JSONMode: true},
-		Fields:       withRequiredBaseURL(commonFields(false, "端点根地址（不含 /chat/completions）")),
+		Fields: withRequiredBaseURL(commonFields(false,
+			"端点根地址，按原样拼接 /chat/completions（不自动补 /v1；NewAPI 等分发站请选「NewAPI / OneAPI」）")),
 	},
 	{
 		Provider: ProviderCustomAnthropic, Name: "自定义（Anthropic 兼容）",
@@ -414,7 +433,8 @@ var providers = []ProviderMeta{
 		Category:    CategoryCustom, Protocol: ProtocolAnthropic,
 		Icon: "anthropic", BrandColor: "#64748B",
 		Capabilities: ProviderCapabilities{Streaming: true, ToolCalls: true, Vision: true, Reasoning: true},
-		Fields:       withRequiredBaseURL(commonFields(false, "端点根地址（不含 /messages）")),
+		Fields: withRequiredBaseURL(commonFields(false,
+			"端点根地址，按原样拼接 /messages（不自动补 /v1）")),
 	},
 }
 

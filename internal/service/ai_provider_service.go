@@ -208,6 +208,11 @@ func (s *AIProviderService) Save(ctx context.Context, mutation aidomain.ConfigMu
 		}
 	}
 	if base := item.Setting(aidomain.KeyBaseURL); base != "" {
+		// 「只填站点地址」也接受：缺协议头按 https 补全后落库（内网 http 需显式写明）。
+		if !strings.Contains(base, "://") {
+			base = "https://" + base
+			item.Settings[aidomain.KeyBaseURL] = base
+		}
 		parsed, err := url.Parse(base)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 			return nil, apperrors.New(40512, http.StatusBadRequest, "端点地址必须是完整的 http(s) URL")
