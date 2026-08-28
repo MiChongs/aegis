@@ -313,6 +313,9 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		postgres.Close()
 		return nil, err
 	}
+	// 突发流量爬坡：单实例自适应准入，挂在 Firewall 之后整形合法洪峰。
+	// 持久化配置由 systemService.Initialize 热加载覆盖。
+	trafficRamp := middleware.NewTrafficRamp(cfg.TrafficRamp, log)
 	ldapService := service.NewLDAPService(log, cfg.JWT.Secret)
 	adminService.SetLDAPService(ldapService)
 	oidcService := service.NewOIDCService(log, cfg.JWT.Secret)
@@ -323,6 +326,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 供 /api/admin/system/admins 超管视图标注"账号可能无法登录"，N 账号共享一次探测
 	authProviderHealthService := service.NewAuthProviderHealthService(log, ldapService, oidcService, samlService)
 	systemService := service.NewPlatformSettingsService(cfg, log, pg, firewall, securityService, ldapService, oidcService, samlService)
+	systemService.SetTrafficRamp(trafficRamp)
 	// 自助注册开关与自助建应用配额存在平台设置里，权限层要读它们
 	adminService.SetPlatformSettings(systemService)
 	// 出海网关管理面：数据库里的配置覆盖 .env 基线
@@ -611,6 +615,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		DatabaseManager: databaseManager,
 
 		Firewall:      firewall,
+		TrafficRamp:   trafficRamp,
 		ReplayGuard:   replayGuard,
 		CrashLog:      cl,
 		Logger:        log,

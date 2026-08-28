@@ -869,6 +869,20 @@
   },
   {
     "method": "GET",
+    "path": "/api/admin/system/traffic-ramp",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/traffic-ramp/stats",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
     "path": "/api/admin/apps",
     "permission": "app:read",
     "appScoped": false,
@@ -4026,6 +4040,13 @@
   },
   {
     "method": "POST",
+    "path": "/api/admin/system/traffic-ramp/reset-stats",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
     "path": "/api/admin/system/temp-permissions",
     "permission": "system:admin:manage",
     "appScoped": false,
@@ -6393,6 +6414,13 @@
   {
     "method": "PUT",
     "path": "/api/admin/system/egress",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/system/traffic-ramp",
     "permission": "system:admin:manage",
     "appScoped": false,
     "unmapped": false

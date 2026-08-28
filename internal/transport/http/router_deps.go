@@ -102,7 +102,10 @@ type RouterDeps struct {
 	DatabaseManager *service.DatabaseManager
 
 	// ── 基础设施 ──────────────────────────────────────────────────────
-	Firewall    *middleware.Firewall
+	Firewall *middleware.Firewall
+	// TrafficRamp 突发流量爬坡（自适应准入），挂在 Firewall 之后：
+	// 先由防火墙拒掉恶意流量，剩下的合法洪峰再整形。nil 时中间件直通。
+	TrafficRamp *middleware.TrafficRamp
 	ReplayGuard *middleware.ReplayGuard
 	CrashLog    *crashlog.Logger
 	Logger      *zap.Logger

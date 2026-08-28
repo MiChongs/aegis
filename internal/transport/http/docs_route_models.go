@@ -348,6 +348,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/system/templates"):                                                   CreateTemplateRequest{},                  // CreateTemplate
 		routeKey("PUT", "/api/admin/system/templates/{code}"):                                             UpdateTemplateRequest{},                  // UpdateTemplate
 		routeKey("POST", "/api/admin/system/templates/{code}/preview"):                                    PreviewTemplateRequest{},                 // PreviewTemplate
+		routeKey("PUT", "/api/admin/system/traffic-ramp"):                                                 AdminTrafficRampUpdateRequest{},          // AdminUpdateTrafficRamp
+		routeKey("GET", "/api/admin/system/traffic-ramp/stats"):                                           AdminTrafficRampStatsQuery{},             // AdminTrafficRampStats
 		routeKey("GET", "/api/admin/system/user-master/appeals"):                                          AppealListQuery{},                        // AdminListAppeals
 		routeKey("POST", "/api/admin/system/user-master/appeals"):                                         CreateAppealRequest{},                    // AdminCreateAppeal
 		routeKey("PUT", "/api/admin/system/user-master/appeals/{id}"):                                     ReviewAppealRequest{},                    // AdminReviewAppeal

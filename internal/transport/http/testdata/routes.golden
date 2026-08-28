@@ -355,6 +355,8 @@ GET	/api/admin/system/storage/usage/history	GetStorageUsageHistory
 GET	/api/admin/system/temp-permissions	ListTempPermissions
 GET	/api/admin/system/templates	ListTemplates
 GET	/api/admin/system/templates/:code	GetTemplate
+GET	/api/admin/system/traffic-ramp	AdminGetTrafficRamp
+GET	/api/admin/system/traffic-ramp/stats	AdminTrafficRampStats
 GET	/api/admin/system/user-master/appeals	AdminListAppeals
 GET	/api/admin/system/user-master/deactivations	AdminListDeactivations
 GET	/api/admin/system/user-master/identities	AdminListIdentities
@@ -768,6 +770,7 @@ POST	/api/admin/system/temp-permissions	GrantTempPermission
 POST	/api/admin/system/temp-permissions/:permId/revoke	RevokeTempPermission
 POST	/api/admin/system/templates	CreateTemplate
 POST	/api/admin/system/templates/:code/preview	PreviewTemplate
+POST	/api/admin/system/traffic-ramp/reset-stats	AdminResetTrafficRampStats
 POST	/api/admin/system/user-master/appeals	AdminCreateAppeal
 POST	/api/admin/system/user-master/deactivations	AdminCreateDeactivation
 POST	/api/admin/system/user-master/deactivations/:id/cancel	AdminCancelDeactivation
@@ -1046,6 +1049,7 @@ PUT	/api/admin/system/settings	AdminUpdateSystemSettings
 PUT	/api/admin/system/storage/cdn/:configId	UpsertCDNConfig
 PUT	/api/admin/system/storage/rules/:ruleId	UpdateStorageRule
 PUT	/api/admin/system/templates/:code	UpdateTemplate
+PUT	/api/admin/system/traffic-ramp	AdminUpdateTrafficRamp
 PUT	/api/admin/system/user-master/appeals/:id	AdminReviewAppeal
 PUT	/api/admin/system/user-master/identities/:id/lifecycle	AdminUpdateIdentityLifecycle
 PUT	/api/admin/system/user-master/identities/:id/risk	AdminUpdateIdentityRisk

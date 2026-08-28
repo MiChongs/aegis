@@ -80,6 +80,11 @@ func registerAdminSystemRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		adminSystem.POST("/egress/test", h.AdminTestEgress)
 		adminSystem.POST("/egress/explain", h.AdminExplainEgress)
 		adminSystem.POST("/egress/probe", h.AdminProbeEgress)
+		// 突发流量爬坡：自适应准入的热配置与运行态统计（仅超管）
+		adminSystem.GET("/traffic-ramp", h.AdminGetTrafficRamp)
+		adminSystem.PUT("/traffic-ramp", h.AdminUpdateTrafficRamp)
+		adminSystem.GET("/traffic-ramp/stats", h.AdminTrafficRampStats)
+		adminSystem.POST("/traffic-ramp/reset-stats", h.AdminResetTrafficRampStats)
 		// 平台级邮件通道：管理员通知 / 平台告警的出口，也可显式共享给应用兜底。
 		// 与 /api/admin/app/email-config/* 的分工是作用域，不是能力 ——
 		// 两边走的是同一批服务层方法，只差一个 appid。

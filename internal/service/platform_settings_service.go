@@ -36,6 +36,9 @@ type PlatformSettingsService struct {
 	oidc     *OIDCService
 	saml     *SAMLService
 	plugin   *PluginService
+	// trafficRamp 突发流量爬坡运行时（bootstrap 经 SetTrafficRamp 注入）。
+	// 配置面在 traffic_ramp_settings.go，读写走独立的 /traffic-ramp 端点。
+	trafficRamp trafficRampRuntime
 }
 
 // SetPluginService 注入插件服务
@@ -156,6 +159,9 @@ func (s *PlatformSettingsService) Initialize(ctx context.Context) error {
 				}
 			}
 		}
+	}
+	if err := s.initializeTrafficRamp(ctx); err != nil {
+		return err
 	}
 	return nil
 }

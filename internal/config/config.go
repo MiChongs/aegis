@@ -56,6 +56,7 @@ type Config struct {
 	CORS             CORSConfig
 	JWT              JWTConfig
 	Firewall         FirewallConfig
+	TrafficRamp      TrafficRampConfig
 	LoginGuard       LoginGuardConfig
 	Postgres         PostgresConfig
 	Database         DatabaseConfig
@@ -833,6 +834,20 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 			TarpitDelayMs:          v.GetInt("FIREWALL_TARPIT_DELAY_MS"),
 			BanRedirectURL:         v.GetString("FIREWALL_BAN_REDIRECT_URL"),
 			AutoBanRules:           v.GetString("FIREWALL_AUTO_BAN_RULES"),
+		},
+		TrafficRamp: TrafficRampConfig{
+			Enabled:            getBool(v, "TRAFFIC_RAMP_ENABLED", false),
+			BaselineRPS:        v.GetInt("TRAFFIC_RAMP_BASELINE_RPS"),
+			MaxRPS:             v.GetInt("TRAFFIC_RAMP_MAX_RPS"),
+			RampStepPct:        v.GetInt("TRAFFIC_RAMP_STEP_PCT"),
+			RampIntervalMs:     v.GetInt("TRAFFIC_RAMP_INTERVAL_MS"),
+			CooldownSeconds:    v.GetInt("TRAFFIC_RAMP_COOLDOWN_SECONDS"),
+			QueueSize:          v.GetInt("TRAFFIC_RAMP_QUEUE_SIZE"),
+			QueueTimeoutMs:     v.GetInt("TRAFFIC_RAMP_QUEUE_TIMEOUT_MS"),
+			MaxConcurrent:      v.GetInt("TRAFFIC_RAMP_MAX_CONCURRENT"),
+			ExemptPathPrefixes: csvList(v.GetString("TRAFFIC_RAMP_EXEMPT_PATH_PREFIXES")),
+			ExemptAdmin:        getBool(v, "TRAFFIC_RAMP_EXEMPT_ADMIN", true),
+			RetryAfterSeconds:  v.GetInt("TRAFFIC_RAMP_RETRY_AFTER_SECONDS"),
 		},
 		LoginGuard: LoginGuardConfig{
 			Enabled:          getBool(v, "LOGIN_GUARD_ENABLED", true),

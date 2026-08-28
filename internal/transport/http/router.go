@@ -103,6 +103,7 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		locationService     = deps.Location
 		authProtocolService = deps.AuthProtocol
 		firewall            = deps.Firewall
+		trafficRamp         = deps.TrafficRamp
 		replayGuard         = deps.ReplayGuard
 		cl                  = deps.CrashLog
 		log                 = deps.Logger
@@ -147,6 +148,9 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		// 与平台其余部分的结构化输出混在一起，采集端每条都解析失败。见 access_log.go。
 		middleware.AccessLog(log, middleware.AccessLogSkipPaths()...),
 		firewall.Handler(),
+		// 突发流量爬坡：必须在 Firewall 之后（先拒恶意，再整形合法洪峰）、
+		// ReplayGuard 之前（被整形掉的请求不该消耗 Nonce / 幂等键占位）。
+		trafficRamp.Handler(),
 		replayGuard.Handler(),
 		middleware.AppGateway(authProtocolService),
 		middleware.AppEncryption(appService),
