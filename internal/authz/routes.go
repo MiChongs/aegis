@@ -354,6 +354,11 @@ var adminRouteRules = []RouteRule{
 	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/governance/*", Permission: PermAppRead, Scope: ScopeApp},
 	{Pattern: "/api/admin/apps/:appkey/governance/*", Permission: PermAppWrite, Scope: ScopeApp},
 
+	// AI Agent 的 WebSocket 对话通道：握手是 GET，但一轮对话可执行建函数、
+	// 改设置、发版等写操作，权限必须对齐 SSE 流（app:write）——
+	// 不能落进下面 readMethods 的 app:read 兜底。
+	{Pattern: "/api/admin/apps/:appkey/ai/agent/ws", Permission: PermAppWrite, Scope: ScopeApp},
+
 	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/*", Permission: PermAppRead, Scope: ScopeApp},
 	{Pattern: "/api/admin/apps/:appkey/*", Permission: PermAppWrite, Scope: ScopeApp},
 }

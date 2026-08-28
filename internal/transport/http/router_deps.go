@@ -181,5 +181,6 @@ func (d RouterDeps) newHandler() *Handler {
 		legal:              d.Legal,
 		aiProvider:         d.AIProvider,
 		aiAgent:            d.AIAgent,
+		aiAgentWSOrigin:    service.WebSocketOriginChecker(d.CORS.AllowOrigins),
 	}
 }

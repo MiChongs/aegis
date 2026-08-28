@@ -7004,6 +7004,12 @@
   },
   {
     "method": "GET",
+    "path": "/api/admin/apps/:appkey/ai/agent/ws",
+    "permission": "app:write",
+    "appScoped": true
+  },
+  {
+    "method": "GET",
     "path": "/api/admin/apps/:appkey/ai/conversations",
     "permission": "app:read",
     "appScoped": true

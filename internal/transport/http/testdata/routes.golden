@@ -97,6 +97,7 @@ GET	/	Homepage
 GET	/announcements	AnnouncementsPage
 GET	/api/admin/apps	AdminApps
 GET	/api/admin/apps/:appkey	AdminApp
+GET	/api/admin/apps/:appkey/ai/agent/ws	AdminAppAIAgentWS
 GET	/api/admin/apps/:appkey/ai/channel	AdminAppAIChannel
 GET	/api/admin/apps/:appkey/ai/configs	AdminAppAIConfigList
 GET	/api/admin/apps/:appkey/ai/conversations	AdminAppAIConversationList

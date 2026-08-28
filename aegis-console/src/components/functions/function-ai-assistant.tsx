@@ -37,8 +37,14 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { aiAgentStreamPath, getAIConversationDetail, type AIAgentMessage } from "@/lib/api/ai";
+import {
+  aiAgentSocketPath,
+  aiAgentStreamPath,
+  getAIConversationDetail,
+  type AIAgentMessage
+} from "@/lib/api/ai";
 import { joinApiUrl } from "@/lib/api/client";
+import { AgentSocketTransport, type AgentSocketRequest } from "@/lib/ai-agent-socket";
 import {
   useAIChannelQuery,
   useAIConversationsQuery,
@@ -97,6 +103,8 @@ type AgentUIMessage = UIMessage<AgentMetadata>;
 
 type AgentChatHandlers = {
   prepare: PrepareSendMessagesRequest<AgentUIMessage>;
+  /** WebSocket 传输的取参口：run 帧载荷与 SSE 请求体同构，令牌走子协议。 */
+  socket: (options: { messages: AgentUIMessage[] }) => AgentSocketRequest;
   finish: ChatOnFinishCallback<AgentUIMessage>;
   notice: ChatOnDataCallback<AgentUIMessage>;
 };
@@ -125,15 +133,25 @@ function getAssistantSession(appKey: string, functionName: string): AssistantSes
   if (!session) {
     // 回调经由 handlers 间接转发：Chat 只建一次，而处理函数每次渲染都是新的。
     const handlers: AssistantSession["handlers"] = { current: null };
+    // 首选 WebSocket（长对话不受响应级超时/缓冲摆布，喊停是一个 cancel 帧），
+    // 建连失败自动退回 SSE —— 两条通道承载同一套 UI Message Stream。
     session = {
       chat: new Chat<AgentUIMessage>({
-        transport: new DefaultChatTransport<AgentUIMessage>({
-          api: joinApiUrl(aiAgentStreamPath(appKey)),
-          prepareSendMessagesRequest: (options) => {
+        transport: new AgentSocketTransport<AgentUIMessage>({
+          socketPath: () => joinApiUrl(aiAgentSocketPath(appKey)),
+          request: (options) => {
             const active = handlers.current;
             if (!active) throw new Error("AI 助手尚未就绪");
-            return active.prepare(options);
-          }
+            return active.socket(options);
+          },
+          fallback: new DefaultChatTransport<AgentUIMessage>({
+            api: joinApiUrl(aiAgentStreamPath(appKey)),
+            prepareSendMessagesRequest: (options) => {
+              const active = handlers.current;
+              if (!active) throw new Error("AI 助手尚未就绪");
+              return active.prepare(options);
+            }
+          })
         }),
         onFinish: (event) => handlers.current?.finish(event),
         onData: (part) => handlers.current?.notice(part)
@@ -295,7 +313,9 @@ export function FunctionAIAssistant({
   const stateRef = useRef({ token, conversationId, draftSource, functionName, modelChoice, disableWrites });
   const applyRef = useRef(onApplySource);
 
-  const prepare: PrepareSendMessagesRequest<AgentUIMessage> = ({ messages }) => {
+  // 两条传输共用一份载荷：WS 的 run 帧 payload 与 SSE 请求体同构，
+  // 区别只在令牌的携带方式（WS 走子协议，SSE 走请求头）。
+  const buildRun = (messages: AgentUIMessage[]): AgentSocketRequest => {
     const current = stateRef.current;
     const last = messages[messages.length - 1];
     const text = (last?.parts ?? [])
@@ -304,9 +324,8 @@ export function FunctionAIAssistant({
       .join("\n");
     const choice = parseModelChoice(current.modelChoice);
     return {
-      headers: current.token
-        ? { Authorization: `Bearer ${current.token}`, "X-Admin-Token": current.token }
-        : undefined,
+      // null = 未登录：约定为传空串，发送入口（submitText）已挡住这种情况
+      token: current.token ?? "",
       body: {
         conversationId: current.conversationId,
         scene: "function",
@@ -317,6 +336,16 @@ export function FunctionAIAssistant({
         model: choice.model,
         disableWrites: current.disableWrites
       }
+    };
+  };
+
+  const socket: AgentChatHandlers["socket"] = ({ messages }) => buildRun(messages);
+
+  const prepare: PrepareSendMessagesRequest<AgentUIMessage> = ({ messages }) => {
+    const { token: bearer, body } = buildRun(messages);
+    return {
+      headers: bearer ? { Authorization: `Bearer ${bearer}`, "X-Admin-Token": bearer } : undefined,
+      body
     };
   };
 
@@ -350,7 +379,7 @@ export function FunctionAIAssistant({
   useEffect(() => {
     stateRef.current = { token, conversationId, draftSource, functionName, modelChoice, disableWrites };
     applyRef.current = onApplySource;
-    sessionRef.current.handlers.current = { prepare, finish, notice };
+    sessionRef.current.handlers.current = { prepare, socket, finish, notice };
   });
 
   // throttle：流式期间把 UI 刷新限到 ~16fps。每个 text-delta 都触发一次

@@ -16,6 +16,7 @@ import (
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/response"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
 func AdminAuth(adminService *service.AdminService) gin.HandlerFunc {
@@ -183,7 +184,21 @@ func adminBearerToken(c *gin.Context) string {
 	if token != "" {
 		return token
 	}
-	return bearerToken(c.GetHeader("Authorization"))
+	if token := bearerToken(c.GetHeader("Authorization")); token != "" {
+		return token
+	}
+	// WebSocket 升级请求：浏览器无法给握手加自定义头，令牌按平台既有约定
+	// 借 Sec-WebSocket-Protocol 携带（"aegis.jwt.<token>"，与 /api/ws 同一套，
+	// 见 realtime_service.go）。仅升级请求解析，普通请求不看这个头。
+	if websocket.IsWebSocketUpgrade(c.Request) {
+		const prefix = "aegis.jwt."
+		for _, protocol := range websocket.Subprotocols(c.Request) {
+			if strings.HasPrefix(protocol, prefix) {
+				return strings.TrimSpace(strings.TrimPrefix(protocol, prefix))
+			}
+		}
+	}
+	return ""
 }
 
 // writeAdminError 把服务层的业务错误原样交给客户端。

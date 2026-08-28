@@ -206,6 +206,7 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.DELETE("/apps/:appkey/ai/mcp-servers/:serverId", h.AdminAppAIMCPDelete)
 		admin.POST("/apps/:appkey/ai/mcp-servers/:serverId/test", h.AdminAppAIMCPTest)
 		admin.POST("/apps/:appkey/ai/agent/stream", h.AdminAppAIAgentStream)
+		admin.GET("/apps/:appkey/ai/agent/ws", h.AdminAppAIAgentWS)
 		admin.GET("/apps/:appkey/ai/conversations", h.AdminAppAIConversationList)
 		admin.GET("/apps/:appkey/ai/conversations/:conversationId", h.AdminAppAIConversationDetail)
 		admin.DELETE("/apps/:appkey/ai/conversations/:conversationId", h.AdminAppAIConversationDelete)

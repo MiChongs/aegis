@@ -25,7 +25,7 @@ func TestExtractRealtimeToken(t *testing.T) {
 }
 
 func TestWebSocketOriginChecker(t *testing.T) {
-	check := websocketOriginChecker([]string{"https://console.example.com"})
+	check := WebSocketOriginChecker([]string{"https://console.example.com"})
 
 	sameHost := httptest.NewRequest("GET", "https://api.example.com/api/ws", nil)
 	sameHost.Header.Set("Origin", "https://api.example.com")

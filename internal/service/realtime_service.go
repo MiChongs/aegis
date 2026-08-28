@@ -82,7 +82,7 @@ func NewRealtimeService(log *zap.Logger, auth *AuthService, repository *redisrep
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  2048,
 			WriteBufferSize: 2048,
-			CheckOrigin:     websocketOriginChecker(allowedOrigins),
+			CheckOrigin:     WebSocketOriginChecker(allowedOrigins),
 			// 必须声明并回显子协议，否则浏览器会直接判握手失败：
 			// Chromium 的要求是「客户端请求了子协议，响应就必须带 Sec-WebSocket-Protocol」，
 			// 缺这个头会以 close code 1006 断开，且不产生任何服务端错误日志 —— 极难排查。
@@ -541,7 +541,10 @@ func extractRealtimeToken(req *http.Request) string {
 	return ""
 }
 
-func websocketOriginChecker(allowedOrigins []string) func(*http.Request) bool {
+// WebSocketOriginChecker 生成 WebSocket 升级的 Origin 闸门：允许无 Origin
+// （非浏览器客户端）、同 Host 请求，以及 CORS 白名单中的来源。
+// 除 /api/ws 外，管理端的 AI Agent 对话通道也复用同一套判定。
+func WebSocketOriginChecker(allowedOrigins []string) func(*http.Request) bool {
 	allowed := make(map[string]struct{}, len(allowedOrigins))
 	for _, raw := range allowedOrigins {
 		if normalized := normalizeWebSocketOrigin(raw); normalized != "" {

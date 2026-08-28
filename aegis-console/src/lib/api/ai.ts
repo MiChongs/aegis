@@ -346,3 +346,8 @@ export function deleteAIConversation(token: string, appKey: string, conversation
 export function aiAgentStreamPath(appKey: string) {
   return `/api/admin/apps/${encodeURIComponent(appKey)}/ai/agent/stream`;
 }
+
+/** Agent 对话的 WebSocket 端点——首选传输，建连失败退回上面的 SSE（见 ai-agent-socket.ts）。 */
+export function aiAgentSocketPath(appKey: string) {
+  return `/api/admin/apps/${encodeURIComponent(appKey)}/ai/agent/ws`;
+}
