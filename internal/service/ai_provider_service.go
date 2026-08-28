@@ -835,6 +835,7 @@ func (s *AIProviderService) TestMCPServer(ctx context.Context, appID int64, id i
 	defer cancel()
 	started := time.Now()
 	client := newAIMCPClient(s.log, *item)
+	defer client.Close()
 	tools, err := client.ListTools(testCtx)
 	elapsed := time.Since(started).Milliseconds()
 	if err != nil {

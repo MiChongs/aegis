@@ -177,6 +177,8 @@ func (s *AIAgentService) Run(ctx context.Context, input AIAgentRunInput, emit ai
 		functions:   s.functions, providers: s.providers,
 		mcpClients: map[string]*aiMCPClient{},
 	}
+	// MCP 会话与一轮对话同寿命：SDK 的会话握着真连接，不收会泄漏。
+	defer run.closeMCPClients()
 	builtin := aiFunctionTools()
 	toolIndex := make(map[string]aiAgentTool, len(builtin))
 	for _, tool := range builtin {
