@@ -102,6 +102,32 @@ type VersionDetail struct {
 	Source string `json:"source"`
 }
 
+// Contract 面向接入方的函数契约视图。
+//
+// 它是 Function 的投影而不是别名，字段逐个挑过：
+//   - Config 永不出现 —— 里面是阈值与密钥，与脚本正文同级；
+//   - Capabilities、内部 ID、审计字段不给 —— 接入方要的是「怎么调」，不是「怎么管」；
+//   - InputSchema / InputSample / InputTypes 给全 —— 那正是这个函数的 API 契约，
+//     调用入口按它做前置校验，接入方照它拼请求体。
+type Contract struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Version 当前激活版本号。接入方无法选版本（调用永远落在激活版上），
+	// 给它是为了让调用方的缓存与排障对得上号。
+	Version string `json:"version"`
+	// InputSchema 入参契约（JSON Schema），`{}` 表示不约束。
+	InputSchema json.RawMessage `json:"inputSchema"`
+	// InputTypes 由契约生成的 TypeScript 声明，TS 接入方可直接落地为类型文件。
+	InputTypes string `json:"inputTypes,omitempty"`
+	// InputSample 按契约生成、保证能通过校验的示例 input。
+	InputSample      string `json:"inputSample,omitempty"`
+	TimeoutMs        int    `json:"timeoutMs"`
+	MaxRequestBytes  int    `json:"maxRequestBytes"`
+	MaxResponseBytes int    `json:"maxResponseBytes"`
+	// RateLimitPerMin 每分钟调用上限，0 表示不限。
+	RateLimitPerMin int `json:"rateLimitPerMin"`
+}
+
 type CreateFunctionInput struct {
 	AppID            int64
 	Name             string

@@ -246,6 +246,62 @@ func (s *AppFunctionService) GetFunction(ctx context.Context, appID int64, name 
 	return decorateFunction(item), nil
 }
 
+// contractOf 把内部 Function 投影成接入方可见的契约。
+//
+// 只挑不敏感且调用时确实需要的字段。集中在这一处做投影，
+// 而不是在 handler 里现挑 —— 那样每加一个下发点都要重新决定一次
+// 「Config 给不给」，漏一次就是一次泄漏。
+func contractOf(item *functiondomain.Function) functiondomain.Contract {
+	return functiondomain.Contract{
+		Name:             item.Name,
+		Description:      item.Description,
+		Version:          item.ActiveVersion,
+		InputSchema:      item.InputSchema,
+		InputTypes:       item.InputTypes,
+		InputSample:      item.InputSample,
+		TimeoutMs:        item.TimeoutMs,
+		MaxRequestBytes:  item.MaxRequestBytes,
+		MaxResponseBytes: item.MaxResponseBytes,
+		RateLimitPerMin:  item.RateLimitPerMin,
+	}
+}
+
+// ListContracts 返回接入方可调用的函数契约。
+//
+// 只含已启用且有激活版本的函数：草稿与停用状态对接入方而言不存在 ——
+// 列出一个调了必回 40990 的名字，比不列它更误导人。
+func (s *AppFunctionService) ListContracts(ctx context.Context, appID int64) ([]functiondomain.Contract, error) {
+	items, err := s.ListFunctions(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	contracts := make([]functiondomain.Contract, 0, len(items))
+	for index := range items {
+		item := &items[index]
+		if item.Status != functiondomain.StatusActive || item.ActiveVersion == "" {
+			continue
+		}
+		contracts = append(contracts, contractOf(item))
+	}
+	return contracts, nil
+}
+
+// GetContract 单个函数的调用契约。
+//
+// 未激活的函数返回 40990 而不是 404：调用方拿到的错误要与 invoke
+// 的行为一致 —— 同一个名字，「查契约说不存在、调用说未激活」只会让人困惑。
+func (s *AppFunctionService) GetContract(ctx context.Context, appID int64, name string) (*functiondomain.Contract, error) {
+	item, err := s.GetFunction(ctx, appID, name)
+	if err != nil {
+		return nil, err
+	}
+	if item.Status != functiondomain.StatusActive || item.ActiveVersion == "" {
+		return nil, apperrors.New(40990, http.StatusConflict, "应用函数尚未激活")
+	}
+	contract := contractOf(item)
+	return &contract, nil
+}
+
 func (s *AppFunctionService) UpdateFunction(ctx context.Context, appID int64, name string, input functiondomain.UpdateFunctionInput) (*functiondomain.Function, error) {
 	if input.Status != nil && *input.Status != functiondomain.StatusDraft &&
 		*input.Status != functiondomain.StatusActive && *input.Status != functiondomain.StatusDisabled {

@@ -59,6 +59,10 @@ func registerUserRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 
 	appFunctions := router.Group("/api/apps/:appkey/functions")
 	{
+		// 契约发现：接入方在写调用代码之前先拿到入参 schema / 示例 / 限额，
+		// 鉴权与 invoke 同一套（用户令牌或 X-Aegis-Function-Key）。
+		appFunctions.GET("", h.ListAppFunctionContracts)
+		appFunctions.GET("/:functionName", h.GetAppFunctionContract)
 		appFunctions.POST("/:functionName/invoke", h.InvokeAppFunction)
 	}
 

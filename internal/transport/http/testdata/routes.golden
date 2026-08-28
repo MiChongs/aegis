@@ -384,6 +384,8 @@ GET	/api/admin/user-settings/stats	AdminUserSettingsStats
 GET	/api/admin/user-settings/user	AdminUserSettings
 GET	/api/app/password-policy/templates	PasswordPolicyTemplates
 GET	/api/app/public	AppPublic
+GET	/api/apps/:appkey/functions	ListAppFunctionContracts
+GET	/api/apps/:appkey/functions/:functionName	GetAppFunctionContract
 GET	/api/auth/oauth2/bindings	ListMyOAuthBindings
 GET	/api/auth/oauth2/callback	OAuthCallback
 GET	/api/auth/oauth2/providers	AppOAuthPublicProviders

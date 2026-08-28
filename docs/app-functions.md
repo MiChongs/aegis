@@ -530,10 +530,25 @@ return aegis.lock.run("claim:" + me.id + ":" + task, function () {
 | `GET` `POST` | `/function-keys` | 调用密钥列表 / 创建 |
 | `DELETE` | `/function-keys/:keyId` | 撤销密钥 |
 
+接入方（`/api/apps/:appkey/functions`，凭据为该应用用户的 `Bearer` Token 或服务端的 `X-Aegis-Function-Key`）：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/functions` | **契约发现**：列出可调用的函数（仅已启用且有激活版本） |
+| `GET` | `/functions/:name` | 单个函数契约：入参 schema / TypeScript 类型 / 示例 input / 限额 |
+| `POST` | `/functions/:name/invoke` | 调用 |
+
+契约是 Function 的投影而不是全量下发：`config`（阈值与密钥）、能力清单、
+内部 ID 一概不出现。发现接口与 invoke 走同一套鉴权 —— 契约里有入参 schema
+与示例，属于「接入方可见」而非「公开」，匿名可拉的话任何人都能枚举
+一个应用暴露了哪些服务端入口。
+
+未激活的函数在发现接口上与 invoke 行为一致（列表里不出现、单查返回 `40990`）：
+同一个名字「查契约说不存在、调用说未激活」只会让人困惑。
+
 其余：
 
-- `GET /api/functions/signing-key`：获取 Aegis 请求签名公钥（http runtime 用）
-- `POST /api/apps/:appkey/functions/:functionName/invoke`：接入应用调用
+- `GET /api/functions/signing-key`：获取 Aegis 请求签名公钥（http runtime 用，免鉴权）
 
 调用体：
 

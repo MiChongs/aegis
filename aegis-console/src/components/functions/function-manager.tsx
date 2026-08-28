@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  BookOpenText,
   Code2,
   FileCode2,
   Loader2,
@@ -31,6 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { CreateFunctionDialog } from "./function-create-dialog";
+import { FunctionDocsPanel } from "./function-docs-panel";
 import { FunctionEditorPanel } from "./function-editor-panel";
 import { FunctionInvocationsPanel } from "./function-invocations-panel";
 import { FunctionOverviewPanel } from "./function-overview-panel";
@@ -258,6 +260,10 @@ export function FunctionManager({ appKey }: { appKey?: string | null }) {
                       <ScrollText className="size-3.5" />
                       调用
                     </TabsTrigger>
+                    <TabsTrigger value="docs" className="text-xs">
+                      <BookOpenText className="size-3.5" />
+                      接入
+                    </TabsTrigger>
                     <TabsTrigger value="settings" className="text-xs">
                       <Settings2 className="size-3.5" />
                       设置
@@ -283,6 +289,9 @@ export function FunctionManager({ appKey }: { appKey?: string | null }) {
                 </TabsContent>
                 <TabsContent value="invocations" className="min-h-0 flex-1 overflow-y-auto p-3">
                   <FunctionInvocationsPanel key={selected.name} appKey={appKey} selected={selected} />
+                </TabsContent>
+                <TabsContent value="docs" className="min-h-0 flex-1 overflow-y-auto p-3">
+                  <FunctionDocsPanel key={selected.name} appKey={appKey} selected={selected} />
                 </TabsContent>
                 <TabsContent value="settings" className="min-h-0 flex-1 overflow-y-auto p-3">
                   <FunctionSettingsPanel

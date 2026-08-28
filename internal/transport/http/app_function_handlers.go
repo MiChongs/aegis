@@ -495,6 +495,44 @@ func (h *Handler) AdminRevokeAppFunctionKey(c *gin.Context) {
 	response.Success(c, 200, "函数密钥已撤销", gin.H{"revoked": true})
 }
 
+// ListAppFunctionContracts 接入方发现可调用的函数。
+//
+// 鉴权与 invoke 同一套（用户令牌或函数密钥）：契约里有入参 schema 与示例，
+// 属于「接入方可见」而非「公开」—— 匿名可拉的话，任何人都能枚举一个应用
+// 暴露了哪些服务端入口。
+func (h *Handler) ListAppFunctionContracts(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	if _, ok := h.resolveAppFunctionCaller(c, appID); !ok {
+		return
+	}
+	items, err := h.appFunction.ListContracts(c.Request.Context(), appID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "ok", items)
+}
+
+// GetAppFunctionContract 单个函数的调用契约（入参 schema、示例、限额）。
+func (h *Handler) GetAppFunctionContract(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	if _, ok := h.resolveAppFunctionCaller(c, appID); !ok {
+		return
+	}
+	item, err := h.appFunction.GetContract(c.Request.Context(), appID, c.Param("functionName"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "ok", item)
+}
+
 // InvokeAppFunction 供已登录的接入应用用户调用，只允许调用自身 App 下的函数。
 func (h *Handler) InvokeAppFunction(c *gin.Context) {
 	appID, ok := resolveAppID(c, h.app)
