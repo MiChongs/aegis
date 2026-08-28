@@ -1,10 +1,10 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   AlertTriangle, Ban, BookUser, CheckCircle2, FileWarning, Fingerprint, Globe2,
-  KeyRound, Loader2, Plus, Search, ShieldAlert, ShieldCheck, Tag, Trash2, Users, UserX, Wifi, X, XCircle
+  KeyRound, Loader2, Plus, Search, ShieldAlert, ShieldCheck, Tag, Trash2, UserX, Wifi, X, XCircle
 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api/client";
@@ -22,7 +22,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AdminPanel } from "@/components/users/admin-panel";
-import { AppUsersPanel } from "@/components/users/app-users/panel";
 import { OnlinePanel } from "@/components/users/online-panel";
 import { RolePermissionsPanel } from "@/components/users/role-permissions-panel";
 import {
@@ -44,6 +43,21 @@ function UsersPageInner() {
   const router = useRouter();
   const tab = searchParams.get("tab") || "admins";
 
+  // 应用用户已独立成 /app-users。旧链接（书签、分享、审计记录）照常可用：
+  // 带着除 tab 以外的全部参数原样转过去，筛选状态不丢。
+  const isLegacyAppUsers = tab === "app-users";
+  useEffect(() => {
+    if (!isLegacyAppUsers) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("tab");
+    const query = params.toString();
+    router.replace(query ? `/app-users?${query}` : "/app-users");
+  }, [isLegacyAppUsers, router, searchParams]);
+
+  if (isLegacyAppUsers) {
+    return <LoadingState title="正在打开应用用户…" />;
+  }
+
   return (
     <div className="page-stack">
       <SectionHeading eyebrow="控制台" title="用户与身份中心" />
@@ -51,7 +65,6 @@ function UsersPageInner() {
       <Tabs value={tab} onValueChange={(v) => router.replace(`/users?tab=${v}`, { scroll: false })} className="space-y-6">
         <TabsList className="flex-wrap">
           <TabsTrigger value="admins"><ShieldCheck className="size-3.5" />管理员</TabsTrigger>
-          <TabsTrigger value="app-users"><Users className="size-3.5" />应用用户</TabsTrigger>
           <TabsTrigger value="online"><Wifi className="size-3.5" />在线会话</TabsTrigger>
           <TabsTrigger value="roles"><KeyRound className="size-3.5" />角色权限</TabsTrigger>
           <TabsTrigger value="identities"><Fingerprint className="size-3.5" />用户主档</TabsTrigger>
@@ -64,7 +77,6 @@ function UsersPageInner() {
         </TabsList>
 
         <TabsContent value="admins"><AdminPanel /></TabsContent>
-        <TabsContent value="app-users"><AppUsersPanel /></TabsContent>
         <TabsContent value="online"><OnlinePanel /></TabsContent>
         <TabsContent value="roles"><RolePermissionsPanel /></TabsContent>
         <TabsContent value="identities"><IdentitiesPanel /></TabsContent>

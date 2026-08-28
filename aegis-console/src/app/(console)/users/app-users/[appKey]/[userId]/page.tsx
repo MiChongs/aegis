@@ -1,30 +1,34 @@
 "use client";
 
-import { Suspense } from "react";
-import { useParams, useSearchParams } from "next/navigation";
-import { AppUserDetailPage } from "@/components/users/detail/app-user-detail-page";
+import { Suspense, useEffect } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 
-function AppUserDetailRouteInner() {
+/**
+ * 旧地址 /users/app-users/{appKey}/{userId} → /app-users/{appKey}/{userId}。
+ *
+ * 应用用户已从 /users 的页签独立成一级页面。这条重定向保住所有存量入口：
+ * 浏览器书签、聊天里分享过的链接、审计记录里的跳转地址。
+ */
+function LegacyAppUserDetailRedirectInner() {
   const params = useParams<{ appKey: string; userId: string }>();
   const searchParams = useSearchParams();
+  const router = useRouter();
 
-  const appKey = params.appKey;
-  const userId = Number(params.userId);
-  const fromHref = searchParams.get("from") || undefined;
+  useEffect(() => {
+    if (!params.appKey || !params.userId) return;
+    const query = searchParams.toString();
+    router.replace(
+      `/app-users/${params.appKey}/${params.userId}${query ? `?${query}` : ""}`
+    );
+  }, [params.appKey, params.userId, router, searchParams]);
 
-  if (!appKey || !Number.isFinite(userId)) {
-    return null;
-  }
-
-  return <AppUserDetailPage appKey={appKey} userId={userId} fromHref={fromHref} />;
+  return null;
 }
 
-export default function AppUserDetailRoutePage() {
-  // 详情页读 `?tab=` 与 `?from=`，useSearchParams 必须包在 Suspense 边界内，
-  // 否则 next build 会报错并把整页退化为客户端渲染。
+export default function LegacyAppUserDetailRedirect() {
   return (
     <Suspense>
-      <AppUserDetailRouteInner />
+      <LegacyAppUserDetailRedirectInner />
     </Suspense>
   );
 }

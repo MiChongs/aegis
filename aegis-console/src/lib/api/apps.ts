@@ -2,6 +2,7 @@ import { apiRequest, buildQuery } from "./client";
 import type {
   AdminAppUserDetail,
   AdminAppUserItem,
+  AdminAppUserProfile,
   AppCommerceSettings,
   AppDetail,
   AppLoginBaseline,
@@ -69,6 +70,7 @@ export function getAdminAppAuthSources(token: string, appKey: string) {
  * 「按注册 IP 找同源小号」用 keyword 会把 UA 里含该串的行也捞进来。
  */
 export type AdminAppUserListParams = {
+  /** 全字段模糊；`#123` 形态按用户 ID 直达 */
   keyword?: string;
   account?: string;
   nickname?: string;
@@ -76,6 +78,8 @@ export type AdminAppUserListParams = {
   phone?: string;
   inviteCode?: string;
   registerIp?: string;
+  markcode?: string;
+  customId?: string;
   userId?: number;
   enabled?: boolean;
   /** YYYY-MM-DD 或 RFC3339；只给日期时后端把 createdTo 补到当天 23:59:59.999 */
@@ -117,17 +121,58 @@ export function updateAdminAppUserStatus(
   });
 }
 
+/**
+ * 管理员编辑用户资料，按字段 PATCH：
+ * 不带的字段不动，带空串 = 清空。birthday 传 YYYY-MM-DD，清空生日用 clearBirthday。
+ * avatar 只收外部 http(s) 链接；上传图片文件走 uploadAdminAppUserAvatar。
+ */
+export type AdminAppUserProfilePatch = {
+  nickname?: string;
+  email?: string;
+  phone?: string;
+  avatar?: string;
+  birthday?: string;
+  clearBirthday?: boolean;
+  bio?: string;
+};
+
 export function updateAdminAppUserProfile(
   token: string,
   appKey: string,
   userId: number | string,
-  payload: { nickname?: string; email?: string }
+  payload: AdminAppUserProfilePatch
 ) {
-  return apiRequest<void>(`/api/admin/apps/${appKey}/users/${userId}/profile`, {
-    method: "PUT",
-    token,
-    body: JSON.stringify(payload)
-  });
+  return apiRequest<{ profile?: AdminAppUserProfile }>(
+    `/api/admin/apps/${appKey}/users/${userId}/profile`,
+    {
+      method: "PUT",
+      token,
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+/** 管理员替用户上传头像（multipart），返回更新后的档案与上传结果。 */
+export function uploadAdminAppUserAvatar(
+  token: string,
+  appKey: string,
+  userId: number | string,
+  file: File
+) {
+  const form = new FormData();
+  form.append("file", file);
+  return apiRequest<{ profile?: AdminAppUserProfile; upload?: { avatarUrl?: string } }>(
+    `/api/admin/apps/${encodeURIComponent(appKey)}/users/${userId}/avatar`,
+    { method: "POST", token, body: form }
+  );
+}
+
+/** 管理员移除用户自定义头像，回到服务端默认头像。 */
+export function removeAdminAppUserAvatar(token: string, appKey: string, userId: number | string) {
+  return apiRequest<{ profile?: AdminAppUserProfile; avatar?: { url?: string } }>(
+    `/api/admin/apps/${encodeURIComponent(appKey)}/users/${userId}/avatar`,
+    { method: "DELETE", token }
+  );
 }
 
 export function resetAdminAppUserPassword(

@@ -30,6 +30,8 @@ export type UserQueryState = {
   phone: string;
   inviteCode: string;
   registerIp: string;
+  markcode: string;
+  customId: string;
   /** YYYY-MM-DD */
   createdFrom: string;
   createdTo: string;
@@ -49,6 +51,8 @@ export const DEFAULT_QUERY: UserQueryState = {
   phone: "",
   inviteCode: "",
   registerIp: "",
+  markcode: "",
+  customId: "",
   createdFrom: "",
   createdTo: "",
   sort: "createdAt",
@@ -64,7 +68,9 @@ export const PRECISE_FIELDS = [
   { key: "email", label: "邮箱", placeholder: "user@example.com" },
   { key: "phone", label: "手机", placeholder: "13800000000" },
   { key: "inviteCode", label: "邀请码", placeholder: "查这个码拉了谁" },
-  { key: "registerIp", label: "注册 IP", placeholder: "找同源批量注册" }
+  { key: "registerIp", label: "注册 IP", placeholder: "找同源批量注册" },
+  { key: "markcode", label: "标识码", placeholder: "设备/机器标识码" },
+  { key: "customId", label: "自定义 ID", placeholder: "用户自定义 ID" }
 ] as const satisfies ReadonlyArray<{
   key: keyof UserQueryState;
   label: string;
@@ -108,6 +114,8 @@ export function parseQuery(params: URLSearchParams): UserQueryState {
     phone: text("phone"),
     inviteCode: text("inviteCode"),
     registerIp: text("registerIp"),
+    markcode: text("markcode"),
+    customId: text("customId"),
     createdFrom: text("createdFrom"),
     createdTo: text("createdTo"),
     sort: rawSort && SORT_FIELDS.has(rawSort) ? (rawSort as SortField) : "createdAt",
@@ -123,7 +131,6 @@ export function parseQuery(params: URLSearchParams): UserQueryState {
  */
 export function serializeQuery(state: UserQueryState, extra?: Record<string, string>) {
   const params = new URLSearchParams();
-  params.set("tab", "app-users");
   if (state.appKey) params.set("app", state.appKey);
 
   const put = (key: string, value: string) => {
@@ -140,7 +147,8 @@ export function serializeQuery(state: UserQueryState, extra?: Record<string, str
   if (state.limit !== DEFAULT_QUERY.limit) params.set("limit", String(state.limit));
 
   for (const [key, value] of Object.entries(extra ?? {})) params.set(key, value);
-  return `/users?${params.toString()}`;
+  const query = params.toString();
+  return query ? `/app-users?${query}` : "/app-users";
 }
 
 /** 转成 API 参数。空串一律省略，不要发 `?account=` —— 那会被后端当成有条件。 */
@@ -154,6 +162,8 @@ export function toListParams(state: UserQueryState) {
     phone: trim(state.phone),
     inviteCode: trim(state.inviteCode),
     registerIp: trim(state.registerIp),
+    markcode: trim(state.markcode),
+    customId: trim(state.customId),
     enabled: state.status === "all" ? undefined : state.status === "enabled",
     createdFrom: trim(state.createdFrom),
     createdTo: trim(state.createdTo),

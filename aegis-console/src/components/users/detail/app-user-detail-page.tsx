@@ -114,7 +114,7 @@ export function AppUserDetailPage({ appKey, userId, fromHref }: Props) {
 
   const rawTab = searchParams.get("tab");
   const tab = rawTab && TAB_VALUES.has(rawTab) ? rawTab : "overview";
-  const backHref = fromHref || `/users?tab=app-users&app=${encodeURIComponent(appKey)}`;
+  const backHref = fromHref || `/app-users?app=${encodeURIComponent(appKey)}`;
 
   const signals = useMemo(() => deriveUserSignals(user, activeBan), [user, activeBan]);
 
@@ -146,11 +146,11 @@ export function AppUserDetailPage({ appKey, userId, fromHref }: Props) {
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem>
-                <BreadcrumbLink href="/users?tab=app-users">用户与身份中心</BreadcrumbLink>
+                <BreadcrumbLink href="/app-users">应用用户</BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
-                <BreadcrumbLink href={backHref}>{app?.name || "应用用户"}</BreadcrumbLink>
+                <BreadcrumbLink href={backHref}>{app?.name || "用户列表"}</BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>

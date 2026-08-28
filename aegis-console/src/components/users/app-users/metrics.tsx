@@ -86,7 +86,7 @@ export function AppUsersMetrics({
             data-active={status === card.key}
             onClick={() => onStatusChange(card.key)}
             className={cn(
-              "rounded-2xl border px-4 py-3 text-left transition-colors",
+              "rounded-xl border bg-card px-4 py-3 text-left text-card-foreground shadow-sm transition-colors",
               "hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               card.tone
             )}
@@ -107,7 +107,7 @@ export function AppUsersMetrics({
 
         {/* 今日新增不是筛选项 —— 后端没有「按注册日期精确到今天」以外的语义，
             点它等于设一次日期范围，与左边三张卡的「切换状态」不是一类动作。 */}
-        <div className="rounded-2xl border px-4 py-3">
+        <div className="rounded-xl border bg-card px-4 py-3 text-card-foreground shadow-sm">
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <TrendingUp className="size-3.5" />
             今日新增
@@ -125,7 +125,7 @@ export function AppUsersMetrics({
         </div>
       </div>
 
-      <div className="rounded-2xl border px-4 py-3">
+      <div className="rounded-xl border bg-card px-4 py-3 text-card-foreground shadow-sm">
         <div className="flex items-baseline justify-between">
           <span className="text-xs text-muted-foreground">近 30 天新增</span>
           <span className="text-xs tabular-nums text-muted-foreground">

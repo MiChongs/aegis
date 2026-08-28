@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   Smartphone,
   Users2,
+  UsersRound,
   Wallet,
   Workflow
 } from "lucide-react";
@@ -204,13 +205,22 @@ export const navigationGroups: NavigationGroup[] = [
     summary: "账号、组织与授权",
     items: [
       {
+        // 面向单个应用的终端用户运营：列表在 /app-users，
+        // 详情在 /app-users/{appKey}/{userId}。它承载指标、筛选、批量处置、
+        // 导出与逐用户档案，量级是一整个域 —— 塞在 /users 的页签里时，
+        // 列表是个 Tab、详情却挂在下级路由，层级对不上，侧边栏也无法直达。
+        title: "应用用户",
+        href: "/app-users",
+        icon: UsersRound,
+        summary: "应用终端用户管理"
+      },
+      {
         title: "用户",
         href: "/users",
         icon: Users2,
         summary: "账号权限",
         children: [
           { title: "管理员", tab: "admins" },
-          { title: "应用用户", tab: "app-users" },
           { title: "在线会话", tab: "online" },
           { title: "角色权限", tab: "roles" },
           { title: "用户主档", tab: "identities" },

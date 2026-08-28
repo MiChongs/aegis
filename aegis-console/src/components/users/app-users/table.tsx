@@ -35,6 +35,13 @@ import {
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AdminAppUserItem } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -363,24 +370,27 @@ export function AppUsersTable({
             virtualize && "max-h-[calc(100vh-26rem)] min-h-64"
           )}
         >
+          {/* 不用 shadcn 的 <Table> 外壳：它自带 overflow 容器，会抢走
+              virtualizer 依赖的滚动元素（scrollRef 必须落在唯一的滚动容器上）。
+              行/单元格原语照用，视觉与全站其他表格保持一致。 */}
           <table className="w-full caption-bottom text-sm">
-            <thead className="sticky top-0 z-10 bg-card">
-              <tr className="border-b">
-                <th className="w-10 px-3 py-2 text-left">
+            <TableHeader className="sticky top-0 z-10 bg-card">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-10 px-3">
                   <Checkbox
                     checked={allSelected ? true : someSelected ? "indeterminate" : false}
                     aria-label="全选本页"
                     onCheckedChange={(checked) => table.toggleAllRowsSelected(Boolean(checked))}
                   />
-                </th>
+                </TableHead>
                 {table.getHeaderGroups()[0]?.headers.map((header) => {
                   const field = COLUMN_SORT[header.column.id];
                   const active = field && query.sort === field;
                   return (
-                    <th
+                    <TableHead
                       key={header.id}
                       className={cn(
-                        "px-3 py-2 text-left text-xs font-medium text-muted-foreground",
+                        "px-3 text-xs text-muted-foreground",
                         field && "cursor-pointer select-none hover:text-foreground"
                       )}
                       onClick={() => toggleSort(header.column.id)}
@@ -399,26 +409,29 @@ export function AppUsersTable({
                           )
                         ) : null}
                       </span>
-                    </th>
+                    </TableHead>
                   );
                 })}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {loading && !rows.length ? (
                 Array.from({ length: 6 }).map((_, index) => (
-                  <tr key={index} className="border-b last:border-b-0">
-                    <td colSpan={colSpan} className="px-3 py-2.5">
+                  <TableRow key={index} className="hover:bg-transparent">
+                    <TableCell colSpan={colSpan} className="px-3 py-2.5">
                       <Skeleton className="h-7 w-full rounded-md" />
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))
               ) : !rows.length ? (
-                <tr>
-                  <td colSpan={colSpan} className="h-40 px-6 text-center text-sm text-muted-foreground">
+                <TableRow className="hover:bg-transparent">
+                  <TableCell
+                    colSpan={colSpan}
+                    className="h-40 whitespace-normal px-6 text-center text-sm text-muted-foreground"
+                  >
                     {emptyText}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ) : (
                 <>
                   {paddingTop > 0 ? (
@@ -427,32 +440,29 @@ export function AppUsersTable({
                     </tr>
                   ) : null}
                   {visibleRows.map((row) => (
-                    <tr
+                    <TableRow
                       key={row.id}
-                      data-selected={row.getIsSelected()}
+                      data-state={row.getIsSelected() ? "selected" : undefined}
                       style={virtualize ? { height: rowHeight } : undefined}
-                      className={cn(
-                        "cursor-pointer border-b transition-colors last:border-b-0",
-                        "hover:bg-muted/40 data-[selected=true]:bg-accent/50"
-                      )}
+                      className="cursor-pointer"
                       onClick={() => onRowClick(row.original)}
                     >
-                      <td className="px-3" onClick={(event) => event.stopPropagation()}>
+                      <TableCell className="px-3" onClick={(event) => event.stopPropagation()}>
                         <Checkbox
                           checked={row.getIsSelected()}
                           aria-label={`选择 ${row.original.account ?? row.original.id}`}
                           onCheckedChange={(checked) => row.toggleSelected(Boolean(checked))}
                         />
-                      </td>
+                      </TableCell>
                       {row.getVisibleCells().map((cell) => (
-                        <td
+                        <TableCell
                           key={cell.id}
-                          className={cn("max-w-[220px] px-3 align-middle", DENSITY[density].cellClass)}
+                          className={cn("max-w-[220px] px-3", DENSITY[density].cellClass)}
                         >
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
+                        </TableCell>
                       ))}
-                    </tr>
+                    </TableRow>
                   ))}
                   {paddingBottom > 0 ? (
                     <tr aria-hidden>
@@ -461,7 +471,7 @@ export function AppUsersTable({
                   ) : null}
                 </>
               )}
-            </tbody>
+            </TableBody>
           </table>
         </div>
 

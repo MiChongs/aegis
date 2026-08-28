@@ -8,7 +8,6 @@ import {
   ChevronDown,
   Download,
   Loader2,
-  Search,
   SlidersHorizontal,
   Star,
   Trash2,
@@ -30,6 +29,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { useUserViewStore, type SavedUserView } from "@/lib/app-users-view-store";
+import type { AdminAppUserItem } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import {
   DATE_PRESETS,
@@ -42,6 +42,7 @@ import {
   toDateInput,
   type UserQueryState
 } from "./shared";
+import { SmartUserSearch } from "./smart-search";
 
 /**
  * 筛选区：一行常用 + 一个抽屉装剩下的 + 一排「已筛」胶囊。
@@ -58,13 +59,15 @@ export function AppUsersFilters({
   onChange,
   onExport,
   exporting,
-  total
+  total,
+  onOpenUser
 }: {
   state: UserQueryState;
   onChange: (next: UserQueryState) => void;
   onExport: () => void;
   exporting: boolean;
   total: number;
+  onOpenUser: (user: AdminAppUserItem) => void;
 }) {
   const filters = activeFilters(state);
   const patch = (partial: Partial<UserQueryState>) => onChange({ ...state, ...partial, page: 1 });
@@ -72,25 +75,12 @@ export function AppUsersFilters({
   return (
     <div className="space-y-2.5">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={state.keyword}
-            placeholder="搜索账号 / 昵称 / 邮箱 / 手机"
-            className="h-8 pl-8 text-xs"
-            onChange={(event) => patch({ keyword: event.target.value })}
-          />
-          {state.keyword ? (
-            <button
-              type="button"
-              aria-label="清空搜索"
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              onClick={() => patch({ keyword: "" })}
-            >
-              <X className="size-3.5" />
-            </button>
-          ) : null}
-        </div>
+        <SmartUserSearch
+          appKey={state.appKey}
+          state={state}
+          onChange={onChange}
+          onOpenUser={onOpenUser}
+        />
 
         <DateRangeFilter
           from={state.createdFrom}
@@ -457,6 +447,8 @@ function paramsToPatch(params: URLSearchParams): Partial<UserQueryState> {
     phone: text("phone"),
     inviteCode: text("inviteCode"),
     registerIp: text("registerIp"),
+    markcode: text("markcode"),
+    customId: text("customId"),
     createdFrom: text("createdFrom"),
     createdTo: text("createdTo")
   };

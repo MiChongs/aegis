@@ -100,7 +100,7 @@ export function AppCardGrid({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Link
-                    href={`/users?tab=app-users&app=${encodeURIComponent(app.appKey)}`}
+                    href={`/app-users?app=${encodeURIComponent(app.appKey)}`}
                     className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   >
                     <Users2 className="size-3.5" />

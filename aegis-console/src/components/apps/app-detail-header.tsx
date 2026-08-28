@@ -94,7 +94,7 @@ export function AppDetailHeader({
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-3">
         <AppStatusBadges app={app} governance={governanceState} size="default" />
         <div className="flex flex-wrap items-center gap-1">
-          <RelatedLink href={`/users?tab=app-users&app=${encodeURIComponent(app.appKey)}`} label="用户" />
+          <RelatedLink href={`/app-users?app=${encodeURIComponent(app.appKey)}`} label="用户" />
           <RelatedLink href={`/content?app=${encodeURIComponent(app.appKey)}`} label="内容" />
           <RelatedLink href={`/storage?tab=app&app=${encodeURIComponent(app.appKey)}`} label="存储" />
           <RelatedLink href="/releases" label="发布" />

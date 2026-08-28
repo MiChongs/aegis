@@ -76,7 +76,7 @@ export function AppRowActions({
           <Settings2 className="size-3.5" />
           进入配置
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => router.push(`/users?tab=app-users&app=${encodeURIComponent(app.appKey)}`)}>
+        <DropdownMenuItem onSelect={() => router.push(`/app-users?app=${encodeURIComponent(app.appKey)}`)}>
           <Users2 className="size-3.5" />
           查看用户
         </DropdownMenuItem>

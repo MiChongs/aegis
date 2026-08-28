@@ -161,6 +161,8 @@ import {
   updateAdminProfile,
   updateAdminAppUserStatus,
   updateAdminAppUserProfile,
+  uploadAdminAppUserAvatar,
+  removeAdminAppUserAvatar,
   resetAdminAppUserPassword,
   revokeAdminAppUserSessions,
   getAdminUserSessions,
@@ -2324,8 +2326,38 @@ export function useUpdateAdminAppUserProfileMutation(appKey?: string | null, use
   const token = useAdminToken();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { nickname?: string; email?: string }) =>
+    mutationFn: (payload: Parameters<typeof updateAdminAppUserProfile>[3]) =>
       updateAdminAppUserProfile(token as string, appKey as string, userId as string | number, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["admin-app-users"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-app-user"] })
+      ]);
+    }
+  });
+}
+
+export function useUploadAdminAppUserAvatarMutation(appKey?: string | null, userId?: number | string | null) {
+  const token = useAdminToken();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) =>
+      uploadAdminAppUserAvatar(token as string, appKey as string, userId as string | number, file),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["admin-app-users"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-app-user"] })
+      ]);
+    }
+  });
+}
+
+export function useRemoveAdminAppUserAvatarMutation(appKey?: string | null, userId?: number | string | null) {
+  const token = useAdminToken();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      removeAdminAppUserAvatar(token as string, appKey as string, userId as string | number),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["admin-app-users"] }),
