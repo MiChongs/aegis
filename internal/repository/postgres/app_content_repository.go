@@ -143,6 +143,12 @@ func (r *Repository) GetBannerByID(ctx context.Context, appID int64, bannerID in
 	return scanBannerRow(r.pool.QueryRow(ctx, query, appID, bannerID))
 }
 
+// UpsertBanner 新建或更新。
+//
+// header / content / url 一律原样写入空串，**不要**再套 nullableString：
+// 000084 之后这三列是 NOT NULL DEFAULT ''，把 '' 转成 NULL 会直接撞 23502。
+// 「没填」在这个模块里只有空串一种表示法，读取端的 COALESCE 只是为了兼容
+// 迁移尚未落地的库。
 func (r *Repository) UpsertBanner(ctx context.Context, appID int64, item appdomain.Banner) (*appdomain.Banner, error) {
 	if item.ID > 0 {
 		query := `UPDATE banners
@@ -159,14 +165,14 @@ SET header = $3,
 WHERE appid = $1 AND id = $2
 RETURNING ` + bannerColumns
 		// 更新匹配不到行 → (nil, nil)：那条 Banner 已被别人删掉，由 service 转成 404。
-		return scanBannerRow(r.pool.QueryRow(ctx, query, appID, item.ID, nullableString(item.Header), item.Title, nullableString(item.Content), nullableString(item.URL), item.Type, item.Position, item.Status, item.StartTime, item.EndTime))
+		return scanBannerRow(r.pool.QueryRow(ctx, query, appID, item.ID, item.Header, item.Title, item.Content, item.URL, item.Type, item.Position, item.Status, item.StartTime, item.EndTime))
 	}
 
 	// 新建时若未指定顺序，落到当前末位之后，而不是与既有 Banner 抢 position=0。
 	query := `INSERT INTO banners (appid, header, title, content, url, type, position, status, start_time, end_time, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
 RETURNING ` + bannerColumns
-	return scanBanner(r.pool.QueryRow(ctx, query, appID, nullableString(item.Header), item.Title, nullableString(item.Content), nullableString(item.URL), item.Type, item.Position, item.Status, item.StartTime, item.EndTime))
+	return scanBanner(r.pool.QueryRow(ctx, query, appID, item.Header, item.Title, item.Content, item.URL, item.Type, item.Position, item.Status, item.StartTime, item.EndTime))
 }
 
 // NextBannerPosition 返回该应用当前最大 position + 1。
@@ -364,14 +370,14 @@ SET title = $3,
 	updated_at = NOW()
 WHERE appid = $1 AND id = $2
 RETURNING ` + noticeColumns
-		return scanNoticeRow(r.pool.QueryRow(ctx, query, appID, item.ID, nullableString(item.Title), item.Content, item.Summary,
+		return scanNoticeRow(r.pool.QueryRow(ctx, query, appID, item.ID, item.Title, item.Content, item.Summary,
 			item.Type, item.Level, item.Status, item.Pinned, item.StartTime, item.EndTime, item.PublishedAt))
 	}
 
 	query := `INSERT INTO notices (appid, title, content, summary, type, level, status, pinned, start_time, end_time, published_at, created_by, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
 RETURNING ` + noticeColumns
-	return scanNotice(r.pool.QueryRow(ctx, query, appID, nullableString(item.Title), item.Content, item.Summary,
+	return scanNotice(r.pool.QueryRow(ctx, query, appID, item.Title, item.Content, item.Summary,
 		item.Type, item.Level, item.Status, item.Pinned, item.StartTime, item.EndTime, item.PublishedAt, item.CreatedBy))
 }
 
