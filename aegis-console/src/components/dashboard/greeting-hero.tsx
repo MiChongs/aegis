@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { GrainGradient } from "@paper-design/shaders-react";
+import { useReducedMotion } from "motion/react";
 import {
   Activity,
   ArrowUpRight,
@@ -9,6 +11,7 @@ import {
   LayoutGrid,
   LogIn,
   Moon,
+  ShieldCheck,
   Sun,
   Sunrise,
   Sunset,
@@ -17,7 +20,7 @@ import {
 } from "lucide-react";
 import { useAdminDashboardQuery } from "@/lib/admin-hooks";
 import { useAuthStore } from "@/lib/auth-store";
-import { Card, CardContent } from "@/components/ui/card";
+import { useBranding } from "@/lib/branding-provider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -54,65 +57,6 @@ const periodIcons: Record<Period, React.ComponentType<{ className?: string }>> =
   evening:   Sunset,
   night:     Moon,
 };
-
-/**
- * 时段光晕配色。
- * 只在 hero 内部作为极低透明度的径向渐变出现，深浅两套主题共用同一组色相，
- * 靠 `opacity` 分档，避免浅色模式被染色。
- */
-const periodGlow: Record<Period, string> = {
-  dawn:      "#f59e0b",
-  morning:   "#38bdf8",
-  noon:      "#0ea5e9",
-  afternoon: "#6366f1",
-  evening:   "#f97316",
-  night:     "#8b5cf6",
-};
-
-/* ------------------------------------------------------------------ */
-/*  短语                                                                */
-/* ------------------------------------------------------------------ */
-
-const mottos: Record<Period, string[]> = {
-  dawn: [
-    "清晨的代码总是格外清醒",
-    "新的一天，新的版本号",
-    "日出而作，bug 无所遁形",
-  ],
-  morning: [
-    "上午效率最高，值得好好利用",
-    "系统运行平稳，适合推进工作",
-    "把最难的任务留给精力最好的时候",
-  ],
-  noon: [
-    "午间小憩，下午更有精神",
-    "记得补充能量再继续",
-    "中场休息也是生产力的一部分",
-  ],
-  afternoon: [
-    "下午茶时间到了，别忘了喝水",
-    "保持节奏，离下班又近了一步",
-    "专注模式开启中",
-  ],
-  evening: [
-    "今天辛苦了，收尾后好好休息",
-    "傍晚适合回顾，不适合大改",
-    "明天的你会感谢现在收工的你",
-  ],
-  night: [
-    "深夜值班辛苦了，注意身体",
-    "夜猫子模式，记得明天补觉",
-    "安静的夜晚适合思考架构",
-  ],
-};
-
-function pickMotto(period: Period): string {
-  const pool = mottos[period];
-  const seed = new Date().toDateString();
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
-  return pool[Math.abs(hash) % pool.length];
-}
 
 /* ------------------------------------------------------------------ */
 /*  实时时钟                                                            */
@@ -198,21 +142,28 @@ function fmtNum(n: number): string {
 }
 
 /* ------------------------------------------------------------------ */
-/*  组件                                                                */
+/*  首屏主视觉                                                          */
+/*                                                                     */
+/*  深色 GrainGradient 着色器背景（@paper-design/shaders-react），        */
+/*  两套主题共用同一深色画面，文字恒为白色，无需分主题调色。               */
+/*  prefers-reduced-motion 下动画速度归零，画面退化为静态渐变。           */
 /* ------------------------------------------------------------------ */
+
+const HERO_COLORS = ["#7300ff", "#eba8ff", "#00bfff", "#2b00ff"];
 
 export function GreetingHero() {
   const operator = useAuthStore((s) => s.operator);
   const accessToken = useAuthStore((s) => s.accessToken);
+  const branding = useBranding();
   const dashQuery = useAdminDashboardQuery();
   const stats = dashQuery.data?.stats;
   const now = useClock();
   const onlineDuration = useOnlineDuration(accessToken);
+  const reducedMotion = useReducedMotion();
 
   const period = getPeriod(now.getHours());
   const PeriodIcon = periodIcons[period];
   const displayName = operator?.displayName || operator?.account || "管理员";
-  const motto = useMemo(() => pickMotto(period), [period]);
   const roleLabel = operator?.isSuperAdmin
     ? "超级管理员"
     : operator?.role || operator?.assignments?.[0]?.roleKey || "管理员";
@@ -239,43 +190,52 @@ export function GreetingHero() {
   ];
 
   return (
-    <Card className="relative h-full overflow-hidden py-0">
-      {/* 时段光晕：右上角单点径向渐变，浅色模式压到 6% 以免染脏白底 */}
-      <div
+    <section
+      aria-label="平台概览"
+      className="relative overflow-hidden rounded-xl border border-black/40 bg-[#050505] text-white dark:border-white/10"
+    >
+      {/* 着色器背景：canvas 初始化前由容器底色兜底，文字始终可读 */}
+      <GrainGradient
         aria-hidden
-        className="pointer-events-none absolute -top-24 -right-16 size-72 rounded-full opacity-[0.06] blur-3xl dark:opacity-[0.14]"
-        style={{ background: periodGlow[period] }}
+        className="absolute inset-0"
+        width="100%"
+        height="100%"
+        colors={HERO_COLORS}
+        colorBack="#000000"
+        softness={0.5}
+        intensity={0.5}
+        noise={0.25}
+        shape="corners"
+        speed={reducedMotion ? 0 : 1}
       />
-      {/* 细网格底纹，给纯色卡面一点材质 */}
+      {/* 可读性压暗层：非装饰，保证白字在亮色色带上的对比度 */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.035] dark:opacity-[0.05]"
-        style={{
-          backgroundImage:
-            "linear-gradient(to right, currentColor 1px, transparent 1px), linear-gradient(to bottom, currentColor 1px, transparent 1px)",
-          backgroundSize: "28px 28px",
-          maskImage: "radial-gradient(120% 90% at 85% 0%, #000 0%, transparent 70%)",
-        }}
+        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/55 via-black/15 to-black/25"
       />
 
-      <CardContent className="relative flex h-full flex-col gap-5 p-6">
+      <div className="relative flex min-h-[320px] flex-col gap-6 p-6 md:min-h-[360px] md:p-8">
         {/* ── 问候 + 时钟 ── */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0 space-y-2">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="min-w-0 space-y-2.5">
+            <div className="flex items-center gap-2 text-xs text-white/60">
               <PeriodIcon className="size-3.5" />
               <span>{dateStr}</span>
             </div>
-            <h1 className="truncate text-2xl font-semibold tracking-tight text-foreground">
+            <h1 className="truncate text-2xl font-semibold tracking-tight md:text-3xl">
               {greetings[period]}，{displayName}
             </h1>
-            <p className="text-sm text-muted-foreground">{motto}</p>
-            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-              <span className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+            <p className="max-w-2xl text-sm leading-relaxed text-white/70">
+              欢迎使用 {branding.platformName} {branding.consoleName}
+              ，统一管理应用接入、用户账户、权限与安全策略。
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/85">
+                <ShieldCheck className="size-3" />
                 {roleLabel}
               </span>
               {onlineDuration ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                <span className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/10 px-2 py-0.5 text-[11px] text-white/85">
                   <Timer className="size-3" />
                   本次在线 {onlineDuration}
                 </span>
@@ -284,14 +244,14 @@ export function GreetingHero() {
           </div>
 
           <div className="shrink-0 sm:text-right">
-            <p className="font-data text-4xl leading-none font-semibold tabular-nums tracking-tight text-foreground">
+            <p className="font-data text-4xl leading-none font-semibold tabular-nums tracking-tight md:text-5xl">
               {timeStr}
             </p>
           </div>
         </div>
 
         {/* ── 平台指标 ── */}
-        <div className="mt-auto grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-border lg:grid-cols-4">
+        <div className="mt-auto grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-white/15 bg-white/15 lg:grid-cols-4">
           {metrics.map((m) => (
             <MetricSlot
               key={m.label}
@@ -303,13 +263,14 @@ export function GreetingHero() {
             />
           ))}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  指标格子 —— 1px 描边网格里的一格，整格可点击跳转到对应明细页            */
+/*  指标格子 —— 深色玻璃底，整格可点击跳转到对应明细页                     */
+/*  刻意不用 backdrop-blur：着色器画布每帧都在变，背景模糊会成倍放大合成开销 */
 /* ------------------------------------------------------------------ */
 
 function MetricSlot({ icon: Icon, label, value, href, loading }: {
@@ -323,19 +284,19 @@ function MetricSlot({ icon: Icon, label, value, href, loading }: {
     <Link
       href={href}
       className={cn(
-        "group/metric relative flex flex-col gap-1.5 bg-card px-4 py-3 transition-colors",
-        "hover:bg-muted/60"
+        "group/metric relative flex flex-col gap-1.5 bg-black/45 px-4 py-3 transition-colors",
+        "hover:bg-black/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/50"
       )}
     >
-      <span className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-muted-foreground">
+      <span className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-white/65">
         <Icon className="size-3.5" />
         {label}
-        <ArrowUpRight className="ml-auto size-3 opacity-0 transition-opacity group-hover/metric:opacity-60" />
+        <ArrowUpRight className="ml-auto size-3 opacity-0 transition-opacity group-hover/metric:opacity-70" />
       </span>
       {loading ? (
-        <Skeleton className="h-7 w-12" />
+        <Skeleton className="h-7 w-12 bg-white/15" />
       ) : (
-        <span className="font-data text-2xl leading-none font-semibold tabular-nums text-foreground">
+        <span className="font-data text-2xl leading-none font-semibold tabular-nums text-white">
           {value ?? "--"}
         </span>
       )}

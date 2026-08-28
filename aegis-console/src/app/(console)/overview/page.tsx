@@ -20,23 +20,21 @@ export default function OverviewPage() {
   const bannersQuery = useActivePlatformBannersQuery();
   const isSuperAdmin = useIsSuperAdmin();
 
-  // 没有横幅时 carousel 内部返回 null，若仍保留两列栅格，右侧 60% 会空掉；
-  // 这里按数据决定栅格，让问候区在无横幅时铺满整行
   const hasBanners = (bannersQuery.data?.length ?? 0) > 0;
 
   return (
     <div className="space-y-6">
-      {/* ── 首屏主视觉：横幅（有则占左 40%）+ 问候与平台指标 ── */}
+      {/* ── 首屏主视觉：全宽着色器问候区 + 平台指标 ── */}
+      <GreetingHero />
+
+      {/* ── 平台横幅：独立成行，无数据时整行不渲染 ── */}
       {hasBanners ? (
-        <div className="grid gap-6 lg:grid-cols-[2fr_3fr] lg:items-stretch">
-          <WidgetBoundary title="平台横幅加载失败">
+        <WidgetBoundary title="平台横幅加载失败">
+          <div className="lg:h-[240px]">
             <PlatformBannerCarousel />
-          </WidgetBoundary>
-          <GreetingHero />
-        </div>
-      ) : (
-        <GreetingHero />
-      )}
+          </div>
+        </WidgetBoundary>
+      ) : null}
 
       {/* ── 快捷入口 ── */}
       <QuickActions />
