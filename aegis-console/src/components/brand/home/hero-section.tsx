@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { GrainGradient } from "@paper-design/shaders-react";
 import { useTheme } from "next-themes";
 import { Activity, ArrowRight, ShieldCheck, Users } from "lucide-react";
-import { m, useReducedMotion } from "motion/react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { Area, AreaChart } from "recharts";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { hero } from "@/components/brand/home/home-content";
 import { SECTION_CONTAINER } from "@/components/brand/home/section";
 import { MaskLine, TEXT_EASE } from "@/components/brand/home/visuals";
 import { useAuthStore } from "@/lib/auth-store";
+import { cn } from "@/lib/utils";
 
 /* ── 首屏着色器底色 ──
    淡紫双色 GrainGradient 静帧（speed=0，本身不动画）：浅紫贴边、中心留白，
@@ -49,15 +50,95 @@ function useThemeBackdrop() {
   return { probeRef, color };
 }
 
+/* ── 标题第二行：轮播打字机 ──
+   逐字入场（自下而上 + 模糊聚焦）构成打字节奏，打完停留数秒，
+   整行向上模糊退场后换下一条。全部短语等长（八字），轮换零位移。 */
+
+/** 每字入场间隔（秒）—— 打字机的「击键」节奏 */
+const TYPE_STAGGER = 0.055;
+/** 单字从模糊到聚焦的时长（秒） */
+const TYPE_CHAR_DURATION = 0.45;
+/** 整行打完后的停留时长（秒） */
+const TYPE_HOLD = 2.6;
+/** 首次入场前的静默（等标题第一行升起），与后续轮换前的静默（秒） */
+const TYPE_FIRST_LEAD = 0.5;
+const TYPE_CYCLE_LEAD = 0.15;
+
+function RotatingTypewriter({
+  phrases,
+  className,
+}: {
+  phrases: readonly string[];
+  className?: string;
+}) {
+  const reduced = useReducedMotion();
+  // 只增不减的轮次计数：短语下标取模得出，同时兼作 AnimatePresence 的 key
+  const [round, setRound] = useState(0);
+
+  const text = phrases[round % phrases.length];
+  const chars = useMemo(() => Array.from(text), [text]);
+  // 首轮要给标题第一行让出入场时间，此后轮换只留一小拍静默
+  const lead = round === 0 ? TYPE_FIRST_LEAD : TYPE_CYCLE_LEAD;
+
+  useEffect(() => {
+    if (reduced || phrases.length <= 1) return;
+    const typedAt = lead + chars.length * TYPE_STAGGER + TYPE_CHAR_DURATION;
+    const timer = setTimeout(
+      () => setRound((current) => current + 1),
+      (typedAt + TYPE_HOLD) * 1000
+    );
+    return () => clearTimeout(timer);
+  }, [round, lead, chars.length, reduced, phrases.length]);
+
+  if (reduced) return <span className={cn("block", className)}>{phrases[0]}</span>;
+
+  return (
+    <span className={cn("block", className)}>
+      <AnimatePresence mode="wait" initial={false}>
+        <m.span
+          key={round}
+          className="block"
+          aria-label={text}
+          exit={{
+            opacity: 0,
+            y: "-0.18em",
+            filter: "blur(8px)",
+            transition: { duration: 0.32, ease: "easeIn" },
+          }}
+        >
+          {chars.map((char, charIndex) => (
+            <m.span
+              key={`${round}-${charIndex}`}
+              aria-hidden
+              className="inline-block"
+              initial={{ opacity: 0, y: "0.45em", filter: "blur(10px)" }}
+              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+              transition={{
+                duration: TYPE_CHAR_DURATION,
+                ease: TEXT_EASE,
+                delay: lead + charIndex * TYPE_STAGGER,
+              }}
+            >
+              {char === " " ? "\u00A0" : char}
+            </m.span>
+          ))}
+        </m.span>
+      </AnimatePresence>
+    </span>
+  );
+}
+
 /**
- * 首屏。
+ * 首屏。全高全宽：着色器背景铺满整个视口，内容在视口内垂直居中。
  *
- * 版面只保留四样东西：一行定位、两行标题（第二行用品牌紫）、一段说明、
- * 两个入口，右侧是控制台预览卡。元信息条、能力域三列、脚注与技术栈
- * 跑马灯全部移出 —— 它们的信息在下方分区各有正式位置。
+ * 版面只保留四样东西：一行定位、两行标题（第二行是品牌紫的轮播
+ * 打字机短语）、一段说明、两个入口，右侧是控制台预览卡。元信息条、
+ * 能力域三列、脚注与技术栈跑马灯全部移出 —— 它们的信息在下方分区
+ * 各有正式位置。
  *
- * 背景是一张 GrainGradient 静帧：淡紫色贴边、版心留白，colorBack 实时
- * 跟随主题背景色，底部渐变融回页面，不与正文抢对比度。
+ * 文字一律自下而上入场（标题走 MaskLine 从行内下沿升起，其余走
+ * 淡入上移）；轮播短语额外带逐字模糊聚焦。全部动效由 motion 驱动，
+ * `prefers-reduced-motion` 下静止呈现第一条短语。
  */
 export function HeroSection() {
   const reduced = useReducedMotion();
@@ -66,11 +147,12 @@ export function HeroSection() {
   const accessToken = useAuthStore((state) => state.accessToken);
   const authenticated = hydrated && Boolean(accessToken);
 
-  const fade = (delay: number) =>
+  // 统一的自下而上入场：淡入 + 上移
+  const rise = (delay: number) =>
     reduced
       ? {}
       : {
-          initial: { opacity: 0, y: 14 },
+          initial: { opacity: 0, y: 24 },
           animate: { opacity: 1, y: 0 },
           transition: { duration: 0.7, ease: TEXT_EASE, delay },
         };
@@ -107,33 +189,37 @@ export function HeroSection() {
         className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-background to-transparent md:h-56"
       />
 
-      <div className={`${SECTION_CONTAINER} relative pt-36 pb-20 md:pt-44 md:pb-28`}>
-        <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,25rem)] lg:gap-14 xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
+      {/* 全高：内容在视口内垂直居中，短视口下由上下内边距兜底 */}
+      <div
+        className={`${SECTION_CONTAINER} relative flex min-h-svh items-center pt-28 pb-24 md:pt-32 md:pb-32`}
+      >
+        <div className="grid w-full items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,25rem)] lg:gap-14 xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
           <div>
             <m.p
-              {...fade(0.05)}
+              {...rise(0.05)}
               className="text-sm font-medium tracking-wide text-muted-foreground"
             >
               {hero.eyebrow}
             </m.p>
 
-            {/* 标题逐行从自己那一行的下沿升上来，像被印出来的；
-                淡入加位移做不出这个效果，那只是元素在飘。 */}
-            <h1 className="mt-4 text-[clamp(2.4rem,5.6vw,4.25rem)] leading-[1.12] font-semibold tracking-tight">
+            {/* 第一行从自己那一行的下沿升上来，像被印出来的；
+                第二行是轮播打字机：逐字模糊聚焦入场，打完停留后换下一条。 */}
+            <h1 className="mt-4 text-[clamp(2.5rem,5.8vw,4.5rem)] leading-[1.12] font-semibold tracking-tight">
               <MaskLine delay={0.15}>{hero.title}</MaskLine>
-              <MaskLine delay={0.28} className="text-violet-600 dark:text-violet-400">
-                {hero.titleAccent}
-              </MaskLine>
+              <RotatingTypewriter
+                phrases={hero.titleAccents}
+                className="text-violet-600 dark:text-violet-400"
+              />
             </h1>
 
             <m.p
-              {...fade(0.5)}
+              {...rise(0.5)}
               className="mt-6 max-w-xl text-sm leading-relaxed text-pretty text-muted-foreground md:text-base"
             >
               {hero.description}
             </m.p>
 
-            <m.div {...fade(0.65)} className="mt-8 flex flex-wrap gap-3 max-sm:flex-col">
+            <m.div {...rise(0.65)} className="mt-8 flex flex-wrap gap-3 max-sm:flex-col">
               <Button asChild size="lg" className="rounded-full">
                 <Link href={authenticated ? "/overview" : "/login"}>
                   {authenticated ? hero.primary.authed : hero.primary.guest}
@@ -146,7 +232,7 @@ export function HeroSection() {
             </m.div>
           </div>
 
-          <m.div {...fade(0.8)} className="max-lg:-mx-1">
+          <m.div {...rise(0.8)} className="max-lg:-mx-1">
             <ConsolePreview />
           </m.div>
         </div>
