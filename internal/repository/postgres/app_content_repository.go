@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -16,6 +17,12 @@ import (
 // 两张表的查询原本散在 repository.go 里，随公告补上生命周期之后列数翻了一倍，
 // 单独成文件是为了让「展示端看到什么」与「管理端看到什么」这两条链路挨在一起 ——
 // 它们的过滤条件必须互为镜像，隔着三千行代码对不上。
+//
+// **单行查询一律用「查不到 = (nil, nil)」表达**，与本包其余仓储一致（见
+// repository.go 的 GetAppCreator / normalizeNotFound）。把 pgx.ErrNoRows 原样
+// 抛给上层会绕过 service 的 `item == nil` 分支，最后由 writeError 当成 500
+// 把驱动的英文错误串直接画到管理员的提示条上（"no rows in result set"）——
+// 那句话既不说明是哪条记录，也不告诉管理员该怎么办。
 
 const bannerColumns = `id, COALESCE(header, ''), title, COALESCE(content, ''), COALESCE(url, ''), type, position, status, start_time, end_time, view_count, click_count, created_at, updated_at`
 
@@ -35,6 +42,26 @@ func scanNotice(row interface{ Scan(dest ...any) error }) (*appdomain.Notice, er
 		return nil, err
 	}
 	return &item, nil
+}
+
+// scanBannerRow / scanNoticeRow 是单行查询专用：查不到返回 (nil, nil)。
+//
+// 用在 `UPDATE … RETURNING` 上同样成立 —— 匹配不到行意味着「要改的那条已经
+// 不在了」，这是一个 404，不是一次数据库故障。
+func scanBannerRow(row pgx.Row) (*appdomain.Banner, error) {
+	item, err := scanBanner(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return item, err
+}
+
+func scanNoticeRow(row pgx.Row) (*appdomain.Notice, error) {
+	item, err := scanNotice(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return item, err
 }
 
 /* ───────────────────────── Banner ───────────────────────── */
@@ -110,9 +137,10 @@ func (r *Repository) ListBanners(ctx context.Context, appID int64, filter appdom
 	return items, rows.Err()
 }
 
+// GetBannerByID 查不到返回 (nil, nil)。
 func (r *Repository) GetBannerByID(ctx context.Context, appID int64, bannerID int64) (*appdomain.Banner, error) {
 	query := `SELECT ` + bannerColumns + ` FROM banners WHERE appid = $1 AND id = $2 LIMIT 1`
-	return scanBanner(r.pool.QueryRow(ctx, query, appID, bannerID))
+	return scanBannerRow(r.pool.QueryRow(ctx, query, appID, bannerID))
 }
 
 func (r *Repository) UpsertBanner(ctx context.Context, appID int64, item appdomain.Banner) (*appdomain.Banner, error) {
@@ -130,7 +158,8 @@ SET header = $3,
 	updated_at = NOW()
 WHERE appid = $1 AND id = $2
 RETURNING ` + bannerColumns
-		return scanBanner(r.pool.QueryRow(ctx, query, appID, item.ID, nullableString(item.Header), item.Title, nullableString(item.Content), nullableString(item.URL), item.Type, item.Position, item.Status, item.StartTime, item.EndTime))
+		// 更新匹配不到行 → (nil, nil)：那条 Banner 已被别人删掉，由 service 转成 404。
+		return scanBannerRow(r.pool.QueryRow(ctx, query, appID, item.ID, nullableString(item.Header), item.Title, nullableString(item.Content), nullableString(item.URL), item.Type, item.Position, item.Status, item.StartTime, item.EndTime))
 	}
 
 	// 新建时若未指定顺序，落到当前末位之后，而不是与既有 Banner 抢 position=0。
@@ -313,9 +342,10 @@ func (r *Repository) ListNotices(ctx context.Context, appID int64, filter appdom
 	return items, total, rows.Err()
 }
 
+// GetNoticeByID 查不到返回 (nil, nil)。
 func (r *Repository) GetNoticeByID(ctx context.Context, appID int64, noticeID int64) (*appdomain.Notice, error) {
 	query := `SELECT ` + noticeColumns + ` FROM notices WHERE appid = $1 AND id = $2 LIMIT 1`
-	return scanNotice(r.pool.QueryRow(ctx, query, appID, noticeID))
+	return scanNoticeRow(r.pool.QueryRow(ctx, query, appID, noticeID))
 }
 
 func (r *Repository) UpsertNotice(ctx context.Context, appID int64, item appdomain.Notice) (*appdomain.Notice, error) {
@@ -334,7 +364,7 @@ SET title = $3,
 	updated_at = NOW()
 WHERE appid = $1 AND id = $2
 RETURNING ` + noticeColumns
-		return scanNotice(r.pool.QueryRow(ctx, query, appID, item.ID, nullableString(item.Title), item.Content, item.Summary,
+		return scanNoticeRow(r.pool.QueryRow(ctx, query, appID, item.ID, nullableString(item.Title), item.Content, item.Summary,
 			item.Type, item.Level, item.Status, item.Pinned, item.StartTime, item.EndTime, item.PublishedAt))
 	}
 

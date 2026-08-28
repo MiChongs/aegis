@@ -198,12 +198,18 @@ func (s *AppService) SaveBanner(ctx context.Context, appID int64, mutation appdo
 	if _, err := s.GetApp(ctx, appID); err != nil {
 		return nil, err
 	}
-	current, err := s.pg.GetBannerByID(ctx, appID, mutation.ID)
-	if err != nil {
-		return nil, err
-	}
-	if mutation.ID > 0 && current == nil {
-		return nil, apperrors.New(40411, http.StatusNotFound, "Banner 不存在")
+	// 只有更新才需要先读一次。新建时 mutation.ID 为 0，去查 `id = 0`
+	// 必然一行都匹配不到 —— 这一步曾经把「新建」整条链路变成一个 500。
+	var current *appdomain.Banner
+	if mutation.ID > 0 {
+		existing, err := s.pg.GetBannerByID(ctx, appID, mutation.ID)
+		if err != nil {
+			return nil, err
+		}
+		if existing == nil {
+			return nil, apperrors.New(40411, http.StatusNotFound, "Banner 不存在")
+		}
+		current = existing
 	}
 
 	item := appdomain.Banner{
@@ -272,6 +278,10 @@ func (s *AppService) SaveBanner(ctx context.Context, appID int64, mutation appdo
 	if err != nil {
 		return nil, err
 	}
+	// 读到写之间那条 Banner 被别人删掉了：更新匹配不到行。
+	if saved == nil {
+		return nil, apperrors.New(40411, http.StatusNotFound, "Banner 不存在")
+	}
 	s.invalidateBannerCache(ctx, appID)
 	s.ResolveBannerImage(ctx, saved)
 	return saved, nil
@@ -337,12 +347,17 @@ func (s *AppService) SaveNotice(ctx context.Context, appID int64, mutation appdo
 	if _, err := s.GetApp(ctx, appID); err != nil {
 		return nil, err
 	}
-	current, err := s.pg.GetNoticeByID(ctx, appID, mutation.ID)
-	if err != nil {
-		return nil, err
-	}
-	if mutation.ID > 0 && current == nil {
-		return nil, apperrors.New(40412, http.StatusNotFound, "公告不存在")
+	// 同 SaveBanner：新建时不去查 `id = 0`。
+	var current *appdomain.Notice
+	if mutation.ID > 0 {
+		existing, err := s.pg.GetNoticeByID(ctx, appID, mutation.ID)
+		if err != nil {
+			return nil, err
+		}
+		if existing == nil {
+			return nil, apperrors.New(40412, http.StatusNotFound, "公告不存在")
+		}
+		current = existing
 	}
 
 	item := appdomain.Notice{
@@ -424,6 +439,9 @@ func (s *AppService) SaveNotice(ctx context.Context, appID int64, mutation appdo
 	saved, err := s.pg.UpsertNotice(ctx, appID, item)
 	if err != nil {
 		return nil, err
+	}
+	if saved == nil {
+		return nil, apperrors.New(40412, http.StatusNotFound, "公告不存在")
 	}
 	s.invalidateNoticeCache(ctx, appID)
 	return saved, nil

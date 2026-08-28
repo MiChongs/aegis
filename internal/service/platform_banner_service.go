@@ -155,6 +155,10 @@ func (s *PlatformBannerService) Save(ctx context.Context, mutation systemdomain.
 	if err != nil {
 		return nil, err
 	}
+	// 读到写之间这条横幅被删掉了：更新匹配不到行。
+	if saved == nil {
+		return nil, apperrors.New(40410, http.StatusNotFound, "Banner 不存在")
+	}
 	s.invalidateCache(ctx)
 	return saved, nil
 }

@@ -2,11 +2,14 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	systemdomain "aegis/internal/domain/system"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // scanPlatformBanner 统一扫描 platform_banners 表一行。
@@ -41,6 +44,19 @@ func scanPlatformBanner(row interface{ Scan(dest ...any) error }) (*systemdomain
 	item.EndTime = et
 	item.CreatedBy = createdBy
 	return item, nil
+}
+
+// scanPlatformBannerRow 单行查询专用：查不到返回 (nil, nil)。
+//
+// 与应用级内容仓储同一约定。返回原始的 pgx.ErrNoRows 会让 service 里
+// `item == nil` 那个 404 分支永远走不到，管理员看到的是驱动的英文错误串
+// "no rows in result set"，而真实情况只是「这条横幅已经被删了」。
+func scanPlatformBannerRow(row pgx.Row) (*systemdomain.PlatformBanner, error) {
+	item, err := scanPlatformBanner(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return item, err
 }
 
 const platformBannerColumns = `id, title, COALESCE(description, ''), image_url, COALESCE(click_url, ''), type, position, status, start_time, end_time, created_by, view_count, click_count, created_at, updated_at`
@@ -137,10 +153,10 @@ func (r *Repository) ListPlatformBanners(ctx context.Context, filter systemdomai
 	return items, total, rows.Err()
 }
 
-// GetPlatformBannerByID 单条查询。
+// GetPlatformBannerByID 单条查询；查不到返回 (nil, nil)。
 func (r *Repository) GetPlatformBannerByID(ctx context.Context, id int64) (*systemdomain.PlatformBanner, error) {
 	query := `SELECT ` + platformBannerColumns + ` FROM platform_banners WHERE id = $1 LIMIT 1`
-	return scanPlatformBanner(r.pool.QueryRow(ctx, query, id))
+	return scanPlatformBannerRow(r.pool.QueryRow(ctx, query, id))
 }
 
 // UpsertPlatformBanner 新建或更新。item.ID > 0 视为更新。
@@ -159,7 +175,8 @@ SET title = $2,
     updated_at = NOW()
 WHERE id = $1
 RETURNING ` + platformBannerColumns
-		return scanPlatformBanner(r.pool.QueryRow(ctx, query,
+		// 更新匹配不到行 → (nil, nil)：由 service 转成 404。
+		return scanPlatformBannerRow(r.pool.QueryRow(ctx, query,
 			item.ID,
 			item.Title,
 			item.Description,
