@@ -197,14 +197,16 @@ export function HeroSection() {
           <div>
             <m.p
               {...rise(0.05)}
-              className="text-sm font-medium tracking-wide text-muted-foreground"
+              className="text-sm font-medium tracking-[0.08em] text-muted-foreground"
             >
               {hero.eyebrow}
             </m.p>
 
             {/* 第一行从自己那一行的下沿升上来，像被印出来的；
-                第二行是轮播打字机：逐字模糊聚焦入场，打完停留后换下一条。 */}
-            <h1 className="mt-4 text-[clamp(2.5rem,5.8vw,4.5rem)] leading-[1.12] font-semibold tracking-tight">
+                第二行是轮播打字机：逐字模糊聚焦入场，打完停留后换下一条。
+                中文大标题不收紧字距：tracking-tight 是给拉丁字形留的，
+                汉字方块字挤在一起只会糊成一版，这里给一点正字距透气。 */}
+            <h1 className="mt-4 text-[clamp(2.5rem,5.8vw,4.5rem)] leading-[1.18] font-semibold tracking-[0.02em]">
               <MaskLine delay={0.15}>{hero.title}</MaskLine>
               <RotatingTypewriter
                 phrases={hero.titleAccents}
@@ -214,7 +216,7 @@ export function HeroSection() {
 
             <m.p
               {...rise(0.5)}
-              className="mt-6 max-w-xl text-sm leading-relaxed text-pretty text-muted-foreground md:text-base"
+              className="mt-6 max-w-xl text-sm leading-relaxed tracking-[0.01em] text-pretty text-muted-foreground md:text-base"
             >
               {hero.description}
             </m.p>
