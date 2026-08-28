@@ -269,6 +269,8 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/users/:userId/bans/:banId/revoke", h.RevokeAdminAppUserBan)
 		admin.PUT("/apps/:appkey/users/:userId/status", h.UpdateAdminAppUserStatus)
 		admin.PUT("/apps/:appkey/users/:userId/profile", h.AdminUpdateUserProfile)
+		admin.POST("/apps/:appkey/users/:userId/avatar", h.AdminUploadAppUserAvatar)
+		admin.DELETE("/apps/:appkey/users/:userId/avatar", h.AdminRemoveAppUserAvatar)
 		admin.POST("/apps/:appkey/users/:userId/reset-password", h.AdminResetUserPassword)
 		admin.GET("/apps/:appkey/users/:userId/audits/login", h.AdminAppUserLoginAudits)
 		admin.GET("/apps/:appkey/users/:userId/audits/sessions", h.AdminAppUserSessionAudits)

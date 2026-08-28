@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"sort"
 	"strconv"
 	"strings"
@@ -1958,25 +1959,91 @@ func mapSessionAuditItems(items []appdomain.SessionAuditItem) []userdomain.Sessi
 // 管理员用户控制
 // ──────────────────────────────────────
 
-// AdminUpdateUserProfile 管理员编辑用户资料（昵称、邮箱）
-func (s *UserService) AdminUpdateUserProfile(ctx context.Context, appID int64, userID int64, nickname string, email string) error {
+// AdminUpdateUserProfile 管理员编辑用户资料。
+//
+// 按字段 PATCH：patch 里 nil 的字段一概不动。旧实现拿只有昵称和邮箱的
+// Profile 整份 Upsert，头像、手机、生日、签名、联系方式全部被 NULL 覆盖 ——
+// 管理员改一次昵称，用户头像就没了。
+func (s *UserService) AdminUpdateUserProfile(ctx context.Context, appID int64, userID int64, patch userdomain.AdminUserProfilePatch) (*userdomain.Profile, error) {
+	if patch.IsEmpty() {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "没有需要修改的字段")
+	}
+	if err := validateAdminUserProfilePatch(&patch); err != nil {
+		return nil, err
+	}
 	user, err := s.pg.GetAdminUserByApp(ctx, appID, userID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if user == nil {
-		return apperrors.New(40401, http.StatusNotFound, "用户不存在")
+		return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
 	}
-	if err := s.pg.UpsertUserProfile(ctx, userdomain.Profile{
-		UserID:   userID,
-		Nickname: strings.TrimSpace(nickname),
-		Email:    strings.TrimSpace(email),
-	}); err != nil {
-		return fmt.Errorf("更新用户资料失败: %w", err)
+	// 头像走与用户自助改资料同一道闸：只收外部 http(s) 链接，
+	// 自家展示地址判回「不修改」，storage:// 引用直接拒绝。
+	if patch.Avatar != nil && strings.TrimSpace(*patch.Avatar) != "" {
+		current := ""
+		if profile, err := s.pg.GetUserProfileByUserID(ctx, userID); err == nil && profile != nil {
+			current = profile.Avatar
+		}
+		normalized, err := NormalizeAvatarInput(*patch.Avatar, current)
+		if err != nil {
+			return nil, err
+		}
+		if normalized == strings.TrimSpace(current) {
+			patch.Avatar = nil
+		} else {
+			patch.Avatar = &normalized
+		}
+	}
+	if err := s.pg.PatchUserProfileFields(ctx, userID, patch); err != nil {
+		return nil, fmt.Errorf("更新用户资料失败: %w", err)
 	}
 	s.invalidateAdminUserCaches(ctx, appID, userID)
 	s.syncAdminUserSearch(appID, userID)
 	s.log.Info("管理员更新用户资料", zap.Int64("appid", appID), zap.Int64("userId", userID))
+	profile, err := s.pg.GetUserProfileByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if profile == nil {
+		profile = &userdomain.Profile{UserID: userID, Extra: map[string]any{}}
+	}
+	return profile, nil
+}
+
+// validateAdminUserProfilePatch 长度与格式校验，限额与用户自助改资料一致。
+func validateAdminUserProfilePatch(patch *userdomain.AdminUserProfilePatch) error {
+	check := func(label string, value *string, limit int) error {
+		if value == nil {
+			return nil
+		}
+		return ensureFieldLength(label, *value, limit)
+	}
+	if err := check("昵称", patch.Nickname, profileNicknameMaxLen); err != nil {
+		return err
+	}
+	if err := check("邮箱", patch.Email, profileEmailMaxLen); err != nil {
+		return err
+	}
+	if err := check("手机号", patch.Phone, profilePhoneMaxLen); err != nil {
+		return err
+	}
+	if err := check("头像地址", patch.Avatar, profileAvatarMaxLen); err != nil {
+		return err
+	}
+	if err := check("个人简介", patch.Bio, profileBioMaxLen); err != nil {
+		return err
+	}
+	if patch.Email != nil {
+		if email := strings.TrimSpace(*patch.Email); email != "" {
+			if _, err := mail.ParseAddress(email); err != nil {
+				return apperrors.New(40000, http.StatusBadRequest, "邮箱格式不正确")
+			}
+		}
+	}
+	if patch.Birthday != nil && patch.Birthday.After(time.Now().Add(24*time.Hour)) {
+		return apperrors.New(40000, http.StatusBadRequest, "生日不能是未来的日期")
+	}
 	return nil
 }
 
@@ -2210,6 +2277,14 @@ func shouldUseAdminUserSearch(query userdomain.AdminUserQuery) bool {
 	// 让排序请求经过它，结果是**参数被静默丢弃**：界面上箭头切了、列表没动。
 	// 这比不支持排序糟得多 —— 宁可放弃这一次的搜索加速，也不能让控件说谎。
 	if strings.TrimSpace(query.Sort) != "" {
+		return false
+	}
+	// 标识码 / 自定义 ID 不在索引里；`#123` 直达是 Postgres 侧的语义。
+	// 这些条件经过 Bleve 会被静默丢弃，宁可放弃加速也不能丢条件。
+	if strings.TrimSpace(query.MarkCode) != "" || strings.TrimSpace(query.CustomID) != "" {
+		return false
+	}
+	if strings.HasPrefix(strings.TrimSpace(query.Keyword), "#") {
 		return false
 	}
 	return strings.TrimSpace(query.Keyword) != "" ||

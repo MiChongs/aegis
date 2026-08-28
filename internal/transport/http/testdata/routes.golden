@@ -23,6 +23,7 @@ DELETE	/api/admin/apps/:appkey/notifications	DeleteAdminAppNotifications
 DELETE	/api/admin/apps/:appkey/oauth-bindings	AdminDeleteAppOAuthBinding
 DELETE	/api/admin/apps/:appkey/oauth-providers/:provider	AdminDeleteAppOAuthProvider
 DELETE	/api/admin/apps/:appkey/users/:userId	AdminDeleteUser
+DELETE	/api/admin/apps/:appkey/users/:userId/avatar	AdminRemoveAppUserAvatar
 DELETE	/api/admin/apps/:appkey/users/:userId/sessions/:tokenHash	AdminRevokeUserSession
 DELETE	/api/admin/apps/:appkey/versions/:vid	AdminDeleteVersion
 DELETE	/api/admin/apps/:appkey/vip/features/:tag	AdminDeleteAppVipFeature
@@ -630,6 +631,7 @@ POST	/api/admin/apps/:appkey/password-policy/reset	ResetAdminAppPasswordPolicy
 POST	/api/admin/apps/:appkey/password-policy/test	TestAdminAppPasswordPolicy
 POST	/api/admin/apps/:appkey/signin-reward/reset	ResetAdminAppSignInReward
 POST	/api/admin/apps/:appkey/signin-reward/test	TestAdminAppSignInReward
+POST	/api/admin/apps/:appkey/users/:userId/avatar	AdminUploadAppUserAvatar
 POST	/api/admin/apps/:appkey/users/:userId/bans	CreateAdminAppUserBan
 POST	/api/admin/apps/:appkey/users/:userId/bans/:banId/revoke	RevokeAdminAppUserBan
 POST	/api/admin/apps/:appkey/users/:userId/reset-password	AdminResetUserPassword

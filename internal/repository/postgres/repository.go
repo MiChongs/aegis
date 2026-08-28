@@ -1487,9 +1487,23 @@ func isAdminUserFastPath(adminQuery userdomain.AdminUserQuery) bool {
 		strings.TrimSpace(adminQuery.Phone) == "" &&
 		strings.TrimSpace(adminQuery.InviteCode) == "" &&
 		strings.TrimSpace(adminQuery.RegisterIP) == "" &&
+		strings.TrimSpace(adminQuery.MarkCode) == "" &&
+		strings.TrimSpace(adminQuery.CustomID) == "" &&
 		adminQuery.UserID == nil &&
 		adminQuery.CreatedFrom == nil &&
 		adminQuery.CreatedTo == nil
+}
+
+// parseAdminUserDirectID 识别 `#123` 形态的「按 ID 直达」关键字。
+func parseAdminUserDirectID(keyword string) (int64, bool) {
+	if !strings.HasPrefix(keyword, "#") {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(keyword[1:]), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 func buildAdminUserListBaseQuery(appID int64, adminQuery userdomain.AdminUserQuery) (string, []any) {
@@ -1508,6 +1522,13 @@ WHERE u.appid = $1`
 	}
 
 	keyword := strings.TrimSpace(adminQuery.Keyword)
+	// `#123` 是「按用户 ID 直达」的显式写法：搜索框里粘一个带井号的 ID，
+	// 意图只可能是找这一个人，不该再去模糊撞昵称里的数字。
+	if directID, ok := parseAdminUserDirectID(keyword); ok {
+		baseQuery += fmt.Sprintf(" AND u.id = $%d", len(args)+1)
+		args = append(args, directID)
+		keyword = ""
+	}
 	if keyword != "" {
 		baseQuery += fmt.Sprintf(`
   AND (
@@ -1517,8 +1538,10 @@ WHERE u.appid = $1`
     OR COALESCE(p.phone, '') ILIKE $%d
     OR COALESCE(p.invite_code, COALESCE(p.extra->>'invite_code', '')) ILIKE $%d
     OR COALESCE(p.register_ip, COALESCE(p.extra->>'register_ip', '')) ILIKE $%d
+    OR COALESCE(p.mark_code, COALESCE(p.extra->>'markcode', '')) ILIKE $%d
+    OR COALESCE(p.custom_id, COALESCE(p.extra->>'custom_id', '')) ILIKE $%d
     OR CAST(u.id AS TEXT) ILIKE $%d
-  )`, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1)
+  )`, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1)
 		args = append(args, "%"+keyword+"%")
 	}
 
@@ -1528,6 +1551,8 @@ WHERE u.appid = $1`
 	appendLike("COALESCE(p.phone, '')", adminQuery.Phone)
 	appendLike("COALESCE(p.invite_code, COALESCE(p.extra->>'invite_code', ''))", adminQuery.InviteCode)
 	appendLike("COALESCE(p.register_ip, COALESCE(p.extra->>'register_ip', ''))", adminQuery.RegisterIP)
+	appendLike("COALESCE(p.mark_code, COALESCE(p.extra->>'markcode', ''))", adminQuery.MarkCode)
+	appendLike("COALESCE(p.custom_id, COALESCE(p.extra->>'custom_id', ''))", adminQuery.CustomID)
 
 	if adminQuery.UserID != nil && *adminQuery.UserID > 0 {
 		baseQuery += fmt.Sprintf(" AND u.id = $%d", len(args)+1)
@@ -2136,6 +2161,64 @@ ON CONFLICT (user_id) DO UPDATE SET
 		extraJSON,
 	)
 	return err
+}
+
+// PatchUserProfileFields 只更新 patch 里带了的列，其余列一概不动。
+//
+// 与 UpsertUserProfile 的区别是语义级的：那个方法把 nickname/avatar/email/phone/
+// birthday/bio 全部按传入值覆盖（没传 = NULL 覆盖），适合「整份档案回写」；
+// 管理员编辑走的是「改哪项写哪项」，用它会把没出现在表单里的字段清掉 ——
+// 改个昵称丢了头像就是这么来的。
+func (r *Repository) PatchUserProfileFields(ctx context.Context, userID int64, patch userdomain.AdminUserProfilePatch) error {
+	sets := make([]string, 0, 8)
+	args := []any{userID}
+	add := func(column string, value any) {
+		args = append(args, value)
+		sets = append(sets, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	if patch.Nickname != nil {
+		add("nickname", nullableString(strings.TrimSpace(*patch.Nickname)))
+	}
+	if patch.Email != nil {
+		add("email", nullableString(strings.TrimSpace(*patch.Email)))
+	}
+	if patch.Phone != nil {
+		add("phone", strings.TrimSpace(*patch.Phone))
+	}
+	if patch.Avatar != nil {
+		add("avatar", nullableString(strings.TrimSpace(*patch.Avatar)))
+	}
+	if patch.ClearBirthday {
+		add("birthday", nil)
+	} else if patch.Birthday != nil {
+		add("birthday", *patch.Birthday)
+	}
+	if patch.Bio != nil {
+		add("bio", strings.TrimSpace(*patch.Bio))
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+
+	// 先保证行存在再 UPDATE：老用户可能从没写过档案行。
+	// 两步放进一个事务，避免并发下 INSERT 与 UPDATE 之间被删行。
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO user_profiles (user_id, updated_at) VALUES ($1, NOW())
+ON CONFLICT (user_id) DO NOTHING`, userID); err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`UPDATE user_profiles SET %s, updated_at = NOW() WHERE user_id = $1`,
+		strings.Join(sets, ", "))
+	if _, err := tx.Exec(ctx, query, args...); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *Repository) PatchUserProfileExtra(ctx context.Context, userID int64, extra map[string]any) error {

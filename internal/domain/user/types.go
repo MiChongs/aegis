@@ -417,6 +417,8 @@ type AdminUserQuery struct {
 	Phone       string     `json:"phone"`
 	InviteCode  string     `json:"inviteCode"`
 	RegisterIP  string     `json:"registerIp"`
+	MarkCode    string     `json:"markcode"`
+	CustomID    string     `json:"customId"`
 	UserID      *int64     `json:"userId,omitempty"`
 	Enabled     *bool      `json:"enabled,omitempty"`
 	CreatedFrom *time.Time `json:"createdFrom,omitempty"`
@@ -436,6 +438,30 @@ type AdminUserStatusMutation struct {
 	DisabledEndTime      *time.Time `json:"disabledEndTime,omitempty"`
 	ClearDisabledEndTime bool       `json:"clearDisabledEndTime"`
 	DisabledReason       *string    `json:"disabledReason,omitempty"`
+}
+
+// AdminUserProfilePatch 管理员编辑用户资料的字段集。
+//
+// 全部指针：nil = 这一项不动，指向空串 = 把这一项清空。
+// 这与用户自助改资料（ProfileUpdate，空值 = 不修改）刻意不同 ——
+// 管理员的编辑表单里「删掉再保存」就是要清空，不能被静默当成没改。
+// 生日是日期没有"空串"形态，清空走 ClearBirthday。
+type AdminUserProfilePatch struct {
+	Nickname *string `json:"nickname,omitempty"`
+	Email    *string `json:"email,omitempty"`
+	Phone    *string `json:"phone,omitempty"`
+	// Avatar 只接受外部 http(s) 链接或空串（回到服务端默认头像）。
+	// storage:// 引用只能由上传接口生成，这里不收。
+	Avatar        *string    `json:"avatar,omitempty"`
+	Birthday      *time.Time `json:"birthday,omitempty"`
+	ClearBirthday bool       `json:"clearBirthday"`
+	Bio           *string    `json:"bio,omitempty"`
+}
+
+// IsEmpty 一个字段都没带 —— 这是一次空请求，直接拒绝比落一次空 UPDATE 诚实。
+func (p AdminUserProfilePatch) IsEmpty() bool {
+	return p.Nickname == nil && p.Email == nil && p.Phone == nil &&
+		p.Avatar == nil && p.Birthday == nil && !p.ClearBirthday && p.Bio == nil
 }
 
 type AdminUserBatchStatusMutation struct {

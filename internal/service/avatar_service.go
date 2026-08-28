@@ -170,6 +170,21 @@ func (s *AvatarService) UserAvatarView(ctx context.Context, baseURL string, appI
 	return s.view(ctx, baseURL, avatardomain.Owner{Type: avatardomain.OwnerUser, AppID: appID, ID: userID}, rawAvatar, identity)
 }
 
+// AttachAdminUserAvatars 把管理端用户列表的 avatar 列翻译成出网地址。
+//
+// 库里那一列存的是 storage:// 引用或空串，直接下发给控制台没法渲染 ——
+// 空串画不出默认头像，引用则被 <img> 当成坏链接。view() 只做令牌编码
+// 不碰存储，几百行的列表也只是纯 CPU 工作，放在列表链路上是安全的。
+func (s *AvatarService) AttachAdminUserAvatars(ctx context.Context, baseURL string, appID int64, items []userdomain.AdminUserView) {
+	if s == nil {
+		return
+	}
+	for i := range items {
+		item := &items[i]
+		item.Avatar = s.ResolveUserAvatar(ctx, baseURL, appID, item.ID, item.Avatar, item.Email, item.Account)
+	}
+}
+
 // AdminAvatarView 管理员头像的完整视图。
 func (s *AvatarService) AdminAvatarView(ctx context.Context, baseURL string, adminID int64, rawAvatar string, identity AvatarIdentity) avatardomain.View {
 	return s.view(ctx, baseURL, avatardomain.Owner{Type: avatardomain.OwnerAdmin, ID: adminID}, rawAvatar, identity)
@@ -659,6 +674,85 @@ func (s *AvatarService) UploadUserAvatar(ctx context.Context, baseURL string, se
 	result.Reference = ref
 	result.Asset = asset
 	return profile, result, nil
+}
+
+// AdminUploadAppUserAvatar 管理员替应用用户上传头像。
+//
+// 与 UploadUserAvatar 是同一条存储链路，差别有两处且都是刻意的：
+//  1. 归属校验走「用户在这个应用下存在」而不是会话，管理端没有用户会话；
+//  2. 不经过 GetProfile 的 loadActiveUser —— 被禁用的账号也允许管理员修头像，
+//     处置违规头像恰恰常发生在账号已被限制之后。
+func (s *AvatarService) AdminUploadAppUserAvatar(ctx context.Context, baseURL string, appID int64, userID int64, input AvatarUploadInput) (*userdomain.Profile, *AvatarUploadResult, error) {
+	user, err := s.pg.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if user == nil || user.AppID != appID {
+		return nil, nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
+	}
+	owner := avatardomain.Owner{Type: avatardomain.OwnerUser, AppID: appID, ID: userID}
+	if err := s.ensureUploadQuota(ctx, owner); err != nil {
+		return nil, nil, err
+	}
+	asset, result, err := s.store(ctx, owner, appID, avatarObjectKeyForUser(appID, userID), input)
+	if err != nil {
+		return nil, nil, err
+	}
+	ref := buildStorageReference(asset.ConfigID, asset.BaseKey)
+	if err := s.pg.SetUserProfileAvatar(ctx, userID, ref); err != nil {
+		return nil, nil, err
+	}
+	s.user.InvalidateProfileCache(ctx, appID, userID)
+
+	profile, err := s.pg.GetUserProfileByUserID(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if profile == nil {
+		profile = &userdomain.Profile{UserID: userID, Extra: map[string]any{}}
+	}
+	identity := AvatarIdentity{Label: firstNonEmptyAvatarString(profile.Nickname, user.Account),
+		Identifiers: []string{profile.Email, user.Account}}
+	view := s.view(ctx, baseURL, owner, ref, identity)
+	profile.Avatar = view.URL
+
+	result.View = view
+	result.AvatarURL = view.URL
+	result.Reference = ref
+	result.Asset = asset
+	return profile, result, nil
+}
+
+// AdminRemoveAppUserAvatar 管理员移除应用用户的自定义头像，回到服务端默认头像。
+func (s *AvatarService) AdminRemoveAppUserAvatar(ctx context.Context, baseURL string, appID int64, userID int64) (*userdomain.Profile, *avatardomain.View, error) {
+	user, err := s.pg.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if user == nil || user.AppID != appID {
+		return nil, nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
+	}
+	owner := avatardomain.Owner{Type: avatardomain.OwnerUser, AppID: appID, ID: userID}
+	if err := s.pg.ClearActiveAvatarAsset(ctx, owner); err != nil {
+		return nil, nil, err
+	}
+	if err := s.pg.SetUserProfileAvatar(ctx, userID, ""); err != nil {
+		return nil, nil, err
+	}
+	s.user.InvalidateProfileCache(ctx, appID, userID)
+	profile, err := s.pg.GetUserProfileByUserID(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if profile == nil {
+		profile = &userdomain.Profile{UserID: userID, Extra: map[string]any{}}
+	}
+	view := s.view(ctx, baseURL, owner, "", AvatarIdentity{
+		Label:       firstNonEmptyAvatarString(profile.Nickname, user.Account),
+		Identifiers: []string{profile.Email, user.Account},
+	})
+	profile.Avatar = view.URL
+	return profile, &view, nil
 }
 
 // UploadAdminAvatar 管理员上传头像。

@@ -491,6 +491,8 @@ func (h *Handler) AdminAppUsers(c *gin.Context) {
 		Phone:       query.Phone,
 		InviteCode:  query.InviteCode,
 		RegisterIP:  query.RegisterIP,
+		MarkCode:    query.MarkCode,
+		CustomID:    query.CustomID,
 		UserID:      query.UserID,
 		Enabled:     query.Enabled,
 		CreatedFrom: createdFrom,
@@ -503,6 +505,11 @@ func (h *Handler) AdminAppUsers(c *gin.Context) {
 	if err != nil {
 		h.writeError(c, err)
 		return
+	}
+	// 头像列在库里是 storage:// 引用或空串，控制台没法直接渲染；
+	// 统一翻译成永久地址（含服务端自绘的默认头像）。
+	if h.avatar != nil {
+		h.avatar.AttachAdminUserAvatars(c.Request.Context(), requestBaseURL(c.Request), appID, items.Items)
 	}
 	response.Success(c, 200, "获取成功", items)
 }
@@ -540,6 +547,8 @@ func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
 		Phone:       query.Phone,
 		InviteCode:  query.InviteCode,
 		RegisterIP:  query.RegisterIP,
+		MarkCode:    query.MarkCode,
+		CustomID:    query.CustomID,
 		UserID:      query.UserID,
 		Enabled:     query.Enabled,
 		CreatedFrom: createdFrom,
@@ -552,6 +561,10 @@ func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	// 导出的 avatar 列给永久地址：storage:// 引用离开平台就是死链。
+	if h.avatar != nil {
+		h.avatar.AttachAdminUserAvatars(c.Request.Context(), requestBaseURL(c.Request), appID, items)
+	}
 
 	filename := "app_users_" + strconv.FormatInt(appID, 10) + ".csv"
 	c.Header("Content-Type", "text/csv; charset=utf-8")
@@ -559,7 +572,7 @@ func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
 	writer := csv.NewWriter(c.Writer)
 	defer writer.Flush()
 
-	_ = writer.Write([]string{"id", "appid", "account", "nickname", "email", "phone", "enabled", "integral", "experience", "register_ip", "register_time", "register_province", "register_city", "vip_expire_at"})
+	_ = writer.Write([]string{"id", "appid", "account", "nickname", "avatar", "email", "phone", "enabled", "integral", "experience", "invite_code", "markcode", "register_ip", "register_time", "register_province", "register_city", "register_isp", "vip_expire_at", "disabled_reason", "created_at"})
 	for _, item := range items {
 		registerTime := ""
 		if item.RegisterTime != nil {
@@ -574,16 +587,22 @@ func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
 			strconv.FormatInt(item.AppID, 10),
 			item.Account,
 			item.Nickname,
+			item.Avatar,
 			item.Email,
 			item.Phone,
 			strconv.FormatBool(item.Enabled),
 			strconv.FormatInt(item.Integral, 10),
 			strconv.FormatInt(item.Experience, 10),
+			item.InviteCode,
+			item.MarkCode,
 			item.RegisterIP,
 			registerTime,
 			item.RegisterProvince,
 			item.RegisterCity,
+			item.RegisterISP,
 			vipExpireAt,
+			item.DisabledReason,
+			item.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 }
@@ -606,6 +625,14 @@ func (h *Handler) AdminAppUser(c *gin.Context) {
 	if err != nil {
 		h.writeError(c, err)
 		return
+	}
+	if h.avatar != nil {
+		resolved := h.avatar.ResolveUserAvatar(c.Request.Context(), requestBaseURL(c.Request),
+			appID, userID, item.Avatar, item.Email, item.Account)
+		item.Avatar = resolved
+		if item.Profile != nil {
+			item.Profile.Avatar = resolved
+		}
 	}
 	response.Success(c, 200, "获取成功", item)
 }
@@ -689,11 +716,105 @@ func (h *Handler) AdminUpdateUserProfile(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	if err := h.user.AdminUpdateUserProfile(c.Request.Context(), appID, userID, req.Nickname, req.Email); err != nil {
+	patch := userdomain.AdminUserProfilePatch{
+		Nickname:      req.Nickname,
+		Email:         req.Email,
+		Phone:         req.Phone,
+		Avatar:        req.Avatar,
+		ClearBirthday: req.ClearBirthday,
+		Bio:           req.Bio,
+	}
+	if req.Birthday != nil {
+		if raw := strings.TrimSpace(*req.Birthday); raw != "" {
+			birthday, err := time.Parse("2006-01-02", raw)
+			if err != nil {
+				response.Error(c, http.StatusBadRequest, 40000, "birthday 格式应为 YYYY-MM-DD")
+				return
+			}
+			patch.Birthday = &birthday
+		} else {
+			// 显式传空串与 clearBirthday 同义：表单里删掉生日再保存就是要清空。
+			patch.ClearBirthday = true
+		}
+	}
+	profile, err := h.user.AdminUpdateUserProfile(c.Request.Context(), appID, userID, patch)
+	if err != nil {
 		h.writeError(c, err)
 		return
 	}
-	response.Success(c, 200, "用户资料已更新", nil)
+	if h.avatar != nil && profile != nil {
+		profile.Avatar = h.avatar.ResolveUserAvatar(c.Request.Context(), requestBaseURL(c.Request),
+			appID, userID, profile.Avatar, profile.Email)
+	}
+	response.Success(c, 200, "用户资料已更新", gin.H{"profile": profile})
+}
+
+// AdminUploadAppUserAvatar 管理员替应用用户上传头像。
+func (h *Handler) AdminUploadAppUserAvatar(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	userID, err := pathInt64(c, "userId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的用户标识")
+		return
+	}
+	if h.avatar == nil {
+		response.Error(c, http.StatusServiceUnavailable, 50380, "头像服务暂不可用")
+		return
+	}
+	file, err := c.FormFile("file")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "缺少上传文件")
+		return
+	}
+	opened, err := file.Open()
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "读取上传文件失败")
+		return
+	}
+	defer opened.Close()
+
+	adminID, _ := adminActor(c)
+	profile, upload, err := h.avatar.AdminUploadAppUserAvatar(c.Request.Context(), requestBaseURL(c.Request), appID, userID, service.AvatarUploadInput{
+		ConfigName:    strings.TrimSpace(c.PostForm("config_name")),
+		FileName:      file.Filename,
+		ContentType:   strings.TrimSpace(file.Header.Get("Content-Type")),
+		ContentLength: file.Size,
+		Content:       opened,
+		UploadedBy:    &adminID,
+		UploaderType:  "admin",
+		Options:       avatarUploadOptions(c),
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "上传成功", gin.H{"profile": profile, "upload": upload})
+}
+
+// AdminRemoveAppUserAvatar 管理员移除应用用户的自定义头像。
+func (h *Handler) AdminRemoveAppUserAvatar(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	userID, err := pathInt64(c, "userId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的用户标识")
+		return
+	}
+	if h.avatar == nil {
+		response.Error(c, http.StatusServiceUnavailable, 50380, "头像服务暂不可用")
+		return
+	}
+	profile, view, err := h.avatar.AdminRemoveAppUserAvatar(c.Request.Context(), requestBaseURL(c.Request), appID, userID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "已移除头像", gin.H{"profile": profile, "avatar": view})
 }
 
 func (h *Handler) AdminResetUserPassword(c *gin.Context) {

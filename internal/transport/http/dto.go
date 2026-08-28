@@ -320,6 +320,8 @@ type AdminUserListQuery struct {
 	Phone       string `form:"phone"`
 	InviteCode  string `form:"inviteCode"`
 	RegisterIP  string `form:"registerIp"`
+	MarkCode    string `form:"markcode"`
+	CustomID    string `form:"customId"`
 	UserID      *int64 `form:"userId"`
 	Enabled     *bool  `form:"enabled"`
 	CreatedFrom string `form:"createdFrom"`
@@ -346,9 +348,19 @@ type AdminUserBatchStatusRequest struct {
 	AdminUserStatusRequest
 }
 
+// AdminUpdateUserProfileRequest 管理员编辑用户资料。
+//
+// 指针字段：不带 = 不修改，带空串 = 清空。birthday 是 YYYY-MM-DD，
+// 清空生日走 clearBirthday（JSON 里 null 与缺省在指针上无法区分）。
 type AdminUpdateUserProfileRequest struct {
-	Nickname string `json:"nickname"`
-	Email    string `json:"email"`
+	Nickname *string `json:"nickname"`
+	Email    *string `json:"email"`
+	Phone    *string `json:"phone"`
+	// Avatar 外部 http(s) 链接；空串 = 回到默认头像。上传文件走 POST .../avatar。
+	Avatar        *string `json:"avatar"`
+	Birthday      *string `json:"birthday"`
+	ClearBirthday bool    `json:"clearBirthday"`
+	Bio           *string `json:"bio"`
 }
 
 type AdminResetUserPasswordRequest struct {
