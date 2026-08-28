@@ -1,6 +1,9 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { GrainGradient } from "@paper-design/shaders-react";
+import { useTheme } from "next-themes";
 import { Activity, ArrowRight, BookOpen, ShieldCheck, Users } from "lucide-react";
 import {
   SiGin,
@@ -52,6 +55,41 @@ const STACK_ICONS: Record<string, React.ComponentType<{ className?: string }>> =
   "Tailwind CSS 4": SiTailwindcss,
 };
 
+/* ── 首屏着色器底色 ──
+   品牌紫 → 浅紫的双色 GrainGradient 静帧（speed=0，本身不动画）。
+   colorBack 跟随主题背景色，使色带边缘与页面底色无缝衔接，
+   深浅两套主题各自成立。 */
+const HERO_SHADER_COLORS = ["#7300ff", "#eba8ff"];
+
+/** colorBack 兜底常量：与 globals.css 的 --background 保持一致 */
+const HERO_SHADER_BACK = { light: "#f4f4f5", dark: "#09090b" } as const;
+
+/**
+ * 取当前主题下 `--background` 的实际渲染色。
+ *
+ * 不直接读 CSS 变量原文：着色器只解析 #hex / rgb() / hsl()，而令牌将来
+ * 可能改成 oklch 等写法。改为量一个挂了 `bg-background` 的探针元素 ——
+ * 浏览器把计算值序列化成 rgb()，主题切换、品牌自定义 CSS 全都自动生效。
+ */
+function useThemeBackdrop() {
+  const { resolvedTheme } = useTheme();
+  const probeRef = useRef<HTMLDivElement>(null);
+  const [color, setColor] = useState<string | null>(null);
+
+  useEffect(() => {
+    const probe = probeRef.current;
+    if (!probe) return;
+    const measured = getComputedStyle(probe).backgroundColor;
+    setColor(
+      /^(#|rgb|hsl)/i.test(measured)
+        ? measured
+        : HERO_SHADER_BACK[resolvedTheme === "dark" ? "dark" : "light"]
+    );
+  }, [resolvedTheme]);
+
+  return { probeRef, color };
+}
+
 /**
  * 首屏。
  *
@@ -62,11 +100,12 @@ const STACK_ICONS: Record<string, React.ComponentType<{ className?: string }>> =
  *   （编号 / 产品名 / 协议版本），像仪器面板的标签条，而不是一枚装饰徽章。
  * - 版面中央是**三个问句**，与冷开场逐字打出来的是同样三行。开场落幕、
  *   首屏接住，读者会认出这是同一件事的延续；它们同时又是三个能力域的名字。
- * - 蓝紫渐变字与大团发光全部删除 —— 那是生成式配色最容易被认出来的两样东西。
- *   现在只有墨色、一档暖铜强调，以及一层几乎看不见的胶片颗粒。
+ * - 底层是一张 GrainGradient 静帧：品牌紫双色、corners 形态，colorBack
+ *   实时跟随主题背景色；它给版面一层安静的色彩纵深，但不是动画。
  */
 export function HeroSection() {
   const reduced = useReducedMotion();
+  const { probeRef, color: shaderBack } = useThemeBackdrop();
   const hydrated = useAuthStore((state) => state.hydrated);
   const accessToken = useAuthStore((state) => state.accessToken);
   const authenticated = hydrated && Boolean(accessToken);
@@ -84,6 +123,28 @@ export function HeroSection() {
     // -mt-16 把首屏拉到顶栏底下：顶栏在顶部是透明的，不这样做的话底纹从
     // 顶栏下沿才开始，页面最上方会横着一道没有网格的空带，像渲染缺了一块。
     <section className="relative -mt-16 overflow-hidden border-b">
+      {/* 主题背景色探针：着色器 colorBack 的取值来源 */}
+      <div
+        ref={probeRef}
+        aria-hidden
+        className="pointer-events-none absolute size-px bg-background opacity-0"
+      />
+      {/* 着色器底层：等探针量到主题色再挂载，SSR 输出与首帧一致，挂载后淡入 */}
+      {shaderBack ? (
+        <GrainGradient
+          aria-hidden
+          className="pointer-events-none absolute inset-0 animate-in fade-in duration-1000"
+          colors={HERO_SHADER_COLORS}
+          colorBack={shaderBack}
+          softness={0.51}
+          intensity={0.5}
+          noise={0.25}
+          shape="corners"
+          speed={0}
+          scale={1.04}
+          rotation={184}
+        />
+      ) : null}
       <Pattern
         size={64}
         mask="linear-gradient(180deg, #000 0%, #000 55%, transparent 92%)"
