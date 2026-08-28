@@ -85,49 +85,20 @@ export const intro = {
 
 /* ─────────────────────────── 首屏 ─────────────────────────── */
 
+/**
+ * 首屏只保留四样东西：一行定位、两行标题、一段说明、两个入口。
+ * 元信息条、能力域三列、脚注与技术栈跑马灯全部移出首屏 ——
+ * 它们承载的信息在下方分区（数字 / 核心能力 / 架构）都有正式位置。
+ */
 export const hero = {
-  /** 顶部那行等宽元信息，替代原来那颗胶囊徽章 */
-  meta: {
-    index: "01",
-    label: "AEGIS · IDENTITY PLATFORM",
-    version: "Auth Protocol v2",
-  },
-  title: "多租户用户系统平台",
-  subtitle: "统一承载认证、授权、组织、资产与风控",
-  /** 三个能力域，与冷开场的三拍一一对应 */
-  pillars: [
-    { label: "认证与账号", items: "登录 / 多因子 / 会话" },
-    { label: "授权与组织", items: "策略 / 部门 / 审批" },
-    { label: "资产与风控", items: "账本 / 会员 / 实时判定" },
-  ],
+  eyebrow: "自托管 · 多租户用户系统",
+  title: "统一用户系统平台，",
+  titleAccent: "承载每一个应用。",
   description:
-    "Aegis 是一套自托管的多租户用户系统平台。每个接入应用拥有独立的用户库、认证策略与配置空间，客户端仅需对接单一命名空间，其余能力通过管理控制台配置。",
+    "以统一、标准的接口协议接入。每个应用拥有独立的用户库与配置空间，认证、授权、组织、资产与风控由平台统一承载。",
   primary: { authed: "进入控制台", guest: "登录控制台" },
   secondary: { label: "查看接入文档", href: "/developers" },
-  footnote: "自托管部署，数据存储于自有 PostgreSQL 实例",
 } as const;
-
-/**
- * 首屏底部跑马灯的技术栈标记。
- *
- * 说清这套系统真实跑在什么之上，比任何形容词都短。图标在
- * `hero-section.tsx` 里登记，此处只保留可读名称与顺序。
- */
-export const heroStack = [
-  "Go 1.26",
-  "Gin",
-  "PostgreSQL",
-  "Redis",
-  "NATS JetStream",
-  "Temporal",
-  "OpenTelemetry",
-  "Coraza WAF",
-  "JWT / Passkey",
-  "Stripe",
-  "Next.js 16",
-  "React 19",
-  "Tailwind CSS 4",
-] as const;
 
 /* ─────────────────────────── 数字 ─────────────────────────── */
 

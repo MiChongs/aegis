@@ -4,62 +4,21 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { GrainGradient } from "@paper-design/shaders-react";
 import { useTheme } from "next-themes";
-import { Activity, ArrowRight, BookOpen, ShieldCheck, Users } from "lucide-react";
-import {
-  SiGin,
-  SiGo,
-  SiJsonwebtokens,
-  SiNatsdotio,
-  SiNextdotjs,
-  SiOpentelemetry,
-  SiOwasp,
-  SiPostgresql,
-  SiReact,
-  SiRedis,
-  SiStripe,
-  SiTailwindcss,
-  SiTemporal,
-} from "@icons-pack/react-simple-icons";
+import { Activity, ArrowRight, ShieldCheck, Users } from "lucide-react";
 import { m, useReducedMotion } from "motion/react";
 import { Area, AreaChart } from "recharts";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Button } from "@/components/ui/button";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
-import { hero, heroStack } from "@/components/brand/home/home-content";
+import { hero } from "@/components/brand/home/home-content";
 import { SECTION_CONTAINER } from "@/components/brand/home/section";
-import {
-  Grain,
-  Marquee,
-  MaskLine,
-  Pattern,
-  TEXT_EASE,
-  Typewriter,
-  Vignette,
-} from "@/components/brand/home/visuals";
+import { MaskLine, TEXT_EASE } from "@/components/brand/home/visuals";
 import { useAuthStore } from "@/lib/auth-store";
 
-/** 跑马灯图标：与 `heroStack` 按名称对应，缺图标的条目退化为纯文字 */
-const STACK_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  "Go 1.26": SiGo,
-  Gin: SiGin,
-  PostgreSQL: SiPostgresql,
-  Redis: SiRedis,
-  "NATS JetStream": SiNatsdotio,
-  Temporal: SiTemporal,
-  OpenTelemetry: SiOpentelemetry,
-  "Coraza WAF": SiOwasp,
-  "JWT / Passkey": SiJsonwebtokens,
-  Stripe: SiStripe,
-  "Next.js 16": SiNextdotjs,
-  "React 19": SiReact,
-  "Tailwind CSS 4": SiTailwindcss,
-};
-
 /* ── 首屏着色器底色 ──
-   品牌紫 → 浅紫的双色 GrainGradient 静帧（speed=0，本身不动画）。
-   colorBack 跟随主题背景色，使色带边缘与页面底色无缝衔接，
-   深浅两套主题各自成立。 */
-const HERO_SHADER_COLORS = ["#7300ff", "#eba8ff"];
+   淡紫双色 GrainGradient 静帧（speed=0，本身不动画）：浅紫贴边、中心留白，
+   底部再以一层渐变融回页面背景。colorBack 跟随主题背景色，深浅两套各自成立。 */
+const HERO_SHADER_COLORS = ["#a78bfa", "#e9d5ff"];
 
 /** colorBack 兜底常量：与 globals.css 的 --background 保持一致 */
 const HERO_SHADER_BACK = { light: "#f4f4f5", dark: "#09090b" } as const;
@@ -93,15 +52,12 @@ function useThemeBackdrop() {
 /**
  * 首屏。
  *
- * 这一版换掉的是**结构**，不只是配色：
+ * 版面只保留四样东西：一行定位、两行标题（第二行用品牌紫）、一段说明、
+ * 两个入口，右侧是控制台预览卡。元信息条、能力域三列、脚注与技术栈
+ * 跑马灯全部移出 —— 它们的信息在下方分区各有正式位置。
  *
- * - 旧的「胶囊徽章 + 一句定位 + 一句副标题」是每个 SaaS 落地页都长的样子，
- *   它把最贵的那块版面用在了一句谁都能写的话上。现在顶部是一行等宽元信息
- *   （编号 / 产品名 / 协议版本），像仪器面板的标签条，而不是一枚装饰徽章。
- * - 版面中央是**三个问句**，与冷开场逐字打出来的是同样三行。开场落幕、
- *   首屏接住，读者会认出这是同一件事的延续；它们同时又是三个能力域的名字。
- * - 底层是一张 GrainGradient 静帧：品牌紫双色、corners 形态，colorBack
- *   实时跟随主题背景色；它给版面一层安静的色彩纵深，但不是动画。
+ * 背景是一张 GrainGradient 静帧：淡紫色贴边、版心留白，colorBack 实时
+ * 跟随主题背景色，底部渐变融回页面，不与正文抢对比度。
  */
 export function HeroSection() {
   const reduced = useReducedMotion();
@@ -120,9 +76,9 @@ export function HeroSection() {
         };
 
   return (
-    // -mt-16 把首屏拉到顶栏底下：顶栏在顶部是透明的，不这样做的话底纹从
-    // 顶栏下沿才开始，页面最上方会横着一道没有网格的空带，像渲染缺了一块。
-    <section className="relative -mt-16 overflow-hidden border-b">
+    // -mt-16 把首屏拉到顶栏底下：顶栏在顶部是透明的，着色器背景应当
+    // 从页面最上沿开始，而不是从顶栏下沿开始。
+    <section className="relative -mt-16 overflow-hidden">
       {/* 主题背景色探针：着色器 colorBack 的取值来源 */}
       <div
         ref={probeRef}
@@ -145,113 +101,55 @@ export function HeroSection() {
           rotation={184}
         />
       ) : null}
-      <Pattern
-        size={64}
-        mask="linear-gradient(180deg, #000 0%, #000 55%, transparent 92%)"
-        className="opacity-70"
+      {/* 底部融回页面背景：首屏与下一分区之间不留硬边 */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-background to-transparent md:h-56"
       />
-      <Vignette size="82% 76%" />
-      <Grain />
 
-      <div className={`${SECTION_CONTAINER} relative pt-28 pb-12 md:pt-36 md:pb-16`}>
-        {/* 元信息条：编号 / 产品 / 版本，两侧压细线，像仪器面板的标签 */}
-        <m.div
-          {...fade(0.05)}
-          className="flex items-center gap-3 border-y py-2.5 font-mono text-[10px] tracking-[0.24em] text-muted-foreground uppercase md:text-[11px]"
-        >
-          <span style={{ color: "var(--home-accent)" }}>{hero.meta.index}</span>
-          <span className="h-3 w-px bg-border" aria-hidden />
-          <Typewriter text={hero.meta.label} delay={0.35} duration={1.1} className="min-w-0" />
-          <span className="ml-auto hidden shrink-0 sm:inline">{hero.meta.version}</span>
-        </m.div>
-
-        <div className="mt-10 grid gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,25rem)] lg:gap-14 xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
+      <div className={`${SECTION_CONTAINER} relative pt-36 pb-20 md:pt-44 md:pb-28`}>
+        <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,25rem)] lg:gap-14 xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
           <div>
+            <m.p
+              {...fade(0.05)}
+              className="text-sm font-medium tracking-wide text-muted-foreground"
+            >
+              {hero.eyebrow}
+            </m.p>
+
             {/* 标题逐行从自己那一行的下沿升上来，像被印出来的；
                 淡入加位移做不出这个效果，那只是元素在飘。 */}
-            <h1 className="text-[clamp(2.3rem,6.2vw,4.5rem)] leading-[1.06] font-semibold tracking-tight">
-              <MaskLine delay={0.25}>{hero.title}</MaskLine>
-              <MaskLine
-                delay={0.36}
-                className="mt-1 text-[0.52em] leading-snug font-normal text-muted-foreground"
-              >
-                {hero.subtitle}
+            <h1 className="mt-4 text-[clamp(2.4rem,5.6vw,4.25rem)] leading-[1.12] font-semibold tracking-tight">
+              <MaskLine delay={0.15}>{hero.title}</MaskLine>
+              <MaskLine delay={0.28} className="text-violet-600 dark:text-violet-400">
+                {hero.titleAccent}
               </MaskLine>
             </h1>
 
-            <m.div {...fade(0.6)} className="mt-8 max-w-xl">
-              <p className="text-sm leading-relaxed text-pretty text-muted-foreground">
-                {hero.description}
-              </p>
-            </m.div>
+            <m.p
+              {...fade(0.5)}
+              className="mt-6 max-w-xl text-sm leading-relaxed text-pretty text-muted-foreground md:text-base"
+            >
+              {hero.description}
+            </m.p>
 
-            {/* 三个能力域：与冷开场的三拍一一对应，读者会认出这是同一份目录 */}
-            <dl className="mt-8 grid grid-cols-1 border-t sm:grid-cols-3">
-              {hero.pillars.map((pillar, index) => (
-                <m.div
-                  key={pillar.label}
-                  {...fade(0.66 + index * 0.08)}
-                  className="border-b py-3 sm:border-b-0 sm:pr-5 sm:not-first:border-l sm:not-first:pl-5"
-                >
-                  <dt className="flex items-center gap-2 text-sm font-medium">
-                    <span
-                      className="size-1.5 shrink-0"
-                      style={{ background: "var(--home-accent)" }}
-                      aria-hidden
-                    />
-                    {pillar.label}
-                  </dt>
-                  <dd className="mt-1.5 font-mono text-[11px] tracking-wide text-muted-foreground">
-                    {pillar.items}
-                  </dd>
-                </m.div>
-              ))}
-            </dl>
-
-            {/* 两个 CTA 是并列的两件事，不是一个分段控件，因此用间距分开 */}
-            <m.div {...fade(0.9)} className="mt-9 flex flex-col gap-4">
-              <div className="flex flex-wrap gap-3 max-sm:flex-col">
-                <Button asChild size="lg" className="rounded-none">
-                  <Link href={authenticated ? "/overview" : "/login"}>
-                    {authenticated ? hero.primary.authed : hero.primary.guest}
-                    <ArrowRight />
-                  </Link>
-                </Button>
-                <Button asChild size="lg" variant="outline" className="rounded-none">
-                  <Link href={hero.secondary.href}>
-                    <BookOpen />
-                    {hero.secondary.label}
-                  </Link>
-                </Button>
-              </div>
-              <p className="font-mono text-[11px] tracking-wide text-muted-foreground">
-                {hero.footnote}
-              </p>
+            <m.div {...fade(0.65)} className="mt-8 flex flex-wrap gap-3 max-sm:flex-col">
+              <Button asChild size="lg" className="rounded-full">
+                <Link href={authenticated ? "/overview" : "/login"}>
+                  {authenticated ? hero.primary.authed : hero.primary.guest}
+                  <ArrowRight />
+                </Link>
+              </Button>
+              <Button asChild size="lg" variant="outline" className="rounded-full">
+                <Link href={hero.secondary.href}>{hero.secondary.label}</Link>
+              </Button>
             </m.div>
           </div>
 
-          <m.div {...fade(1)} className="max-lg:-mx-1">
+          <m.div {...fade(0.8)} className="max-lg:-mx-1">
             <ConsolePreview />
           </m.div>
         </div>
-      </div>
-
-      {/* 技术栈跑马灯：说清这东西真实由什么构成，比一行形容词更有说服力 */}
-      <div className="relative border-t py-4">
-        <Marquee duration={52}>
-          {heroStack.map((name) => {
-            const Icon = STACK_ICONS[name];
-            return (
-              <span
-                key={name}
-                className="mx-5 flex items-center gap-2 font-mono text-xs tracking-wide whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground md:mx-7"
-              >
-                {Icon ? <Icon className="size-3.5 shrink-0" /> : null}
-                {name}
-              </span>
-            );
-          })}
-        </Marquee>
       </div>
     </section>
   );
@@ -289,9 +187,9 @@ const previewEvents = [
 
 function ConsolePreview() {
   return (
-    // 直角 + 实边框，不用圆角卡和投影：投影与大圆角是"漂浮玻璃卡"那一套的底座，
-    // 而这一页要的是印刷品的硬边。
-    <div className="overflow-hidden border bg-card">
+    // 圆角与柔和投影：首屏底色是柔和的淡紫渐变，硬边直角卡在这里
+    // 会显得像贴错了页面；圆角卡与药丸按钮属于同一套形状语言。
+    <div className="overflow-hidden rounded-2xl border bg-card shadow-[0_8px_32px_-12px_rgb(0_0_0/0.18)]">
       <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-2">
         <span className="flex gap-1.5" aria-hidden>
           <span className="size-2 rounded-full bg-border" />
@@ -314,7 +212,7 @@ function ConsolePreview() {
       <div className="space-y-2.5 p-2.5">
         <div className="grid grid-cols-3 gap-2">
           {previewTiles.map((tile) => (
-            <div key={tile.label} className="border bg-background/60 p-2.5">
+            <div key={tile.label} className="rounded-lg border bg-background/60 p-2.5">
               <tile.icon className="size-3.5 text-muted-foreground" strokeWidth={1.75} />
               <p
                 className="mt-2 text-sm font-semibold tracking-tight tabular-nums"
@@ -338,7 +236,7 @@ function ConsolePreview() {
         </div>
 
         {/* 趋势图：用 AspectRatio 固定比例，卡片宽度变化时图不会被压扁 */}
-        <div className="border bg-background/60 p-2">
+        <div className="rounded-lg border bg-background/60 p-2">
           <AspectRatio ratio={16 / 7}>
             <ChartContainer config={previewChartConfig} className="aspect-auto size-full">
               <AreaChart data={previewChartData} margin={{ top: 6, right: 4, bottom: 0, left: 4 }}>
@@ -374,10 +272,10 @@ function ConsolePreview() {
           {previewEvents.map((event) => (
             <li
               key={event.text}
-              className="flex items-center gap-2 border bg-background/60 px-2.5 py-1.5"
+              className="flex items-center gap-2 rounded-lg border bg-background/60 px-2.5 py-1.5"
             >
               <span
-                className="size-1.5 shrink-0"
+                className="size-1.5 shrink-0 rounded-full"
                 style={{
                   background:
                     event.tone === "warn"
