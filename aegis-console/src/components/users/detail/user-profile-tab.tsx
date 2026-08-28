@@ -153,7 +153,7 @@ export function UserProfileTab({
         <Panel
           title="编辑资料"
           icon={<UserRound className="size-4" />}
-          description="改哪项存哪项：清空输入框再保存即清空该字段，没动过的字段不会被触碰。"
+          description="仅提交修改过的字段；清空后保存即清除该字段。"
           action={
             dirty ? (
               <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setDraft(null)}>
@@ -243,7 +243,7 @@ export function UserProfileTab({
         <Panel
           title="附加字段"
           icon={<Layers className="size-4" />}
-          description="user_profiles.extra 里的自由结构，由接入方写入。"
+          description="由接入方写入的扩展数据。"
         >
           <ValueTree value={profile?.extra} />
         </Panel>
@@ -252,7 +252,7 @@ export function UserProfileTab({
       <Panel
         title="用户端设置"
         icon={<Settings2 className="size-4" />}
-        description="用户在客户端里自己配的偏好。管理端只读——改这里等于替用户做决定。"
+        description="用户客户端偏好，管理端只读。"
         action={
           <div className="flex items-center gap-1.5">
             <Badge variant="outline" size="sm">
@@ -387,7 +387,7 @@ function AvatarEditor({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="text-xs font-medium">头像</div>
           <p className="text-[11px] leading-4 text-muted-foreground">
-            上传后立即生效，全端共用同一个永久地址；移除则回到服务端生成的默认头像。
+            上传即时生效；移除后恢复默认头像。
           </p>
         </div>
       </div>
@@ -464,9 +464,9 @@ function AvatarEditor({
       <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>移除这个用户的头像？</AlertDialogTitle>
+            <AlertDialogTitle>移除头像</AlertDialogTitle>
             <AlertDialogDescription>
-              自定义头像会被清除，回到服务端按昵称生成的默认头像。此操作立即对所有端生效。
+              移除后恢复为默认头像，即时生效。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

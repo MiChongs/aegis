@@ -1209,6 +1209,11 @@ export type VipPlan = {
   id: number;
   appid: number;
   name: string;
+  /** paid（付费）/ trial（试用） */
+  kind?: string;
+  trialDeviceLimited?: boolean;
+  /** 套餐包含的权益标识（引用会员功能目录 tag） */
+  features?: string[];
   durationDays: number;
   price: string;
   originalPrice?: string | null;
@@ -1227,6 +1232,7 @@ export type VipTransaction = {
   appid: number;
   planId?: number | null;
   planName: string;
+  features?: string[];
   durationDays: number;
   payChannel: string;
   payAmount: string;
@@ -1236,6 +1242,56 @@ export type VipTransaction = {
   expireAfter: string;
   operator?: string;
   createdAt: string;
+};
+
+/** 会员功能目录条目 */
+export type VipFeature = {
+  id: number;
+  appid: number;
+  tag: string;
+  name: string;
+  description?: string;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type VipTrialState = {
+  active: boolean;
+  claimedAt: string;
+  endsAt: string;
+  durationDays: number;
+  planId?: number | null;
+  planName: string;
+  remainingSeconds: number;
+};
+
+export type VipTrialOffer = {
+  available: boolean;
+  reason: string;
+  message: string;
+  planId?: number;
+  planName?: string;
+  durationDays?: number;
+  bonusIntegral?: number;
+  deviceLimited?: boolean;
+  description?: string;
+};
+
+/** 会员权益判定结果，与用户端 /vip/status 同源 */
+export type VipEntitlement = {
+  isVip: boolean;
+  isTrial: boolean;
+  /** none / unknown / trial / wallet / payment_order / admin_grant */
+  source: string;
+  planName?: string;
+  expireAt?: string | null;
+  remainingSeconds: number;
+  remainingDays: number;
+  features: string[];
+  trial?: VipTrialState | null;
+  trialOffer: VipTrialOffer;
 };
 
 export type VersionItem = {

@@ -24,7 +24,15 @@ import {
   getAdminUserWalletTransactions,
   revokeAdminUserBan
 } from "@/lib/api/app-users";
-import { grantAdminVip, getAdminVipTransactions } from "@/lib/api/configuration";
+import {
+  claimAdminVipTrial,
+  getAdminVipEntitlement,
+  getAdminVipFeatures,
+  getAdminVipPlans,
+  getAdminVipTransactions,
+  grantAdminVip,
+  resetAdminVipTrial
+} from "@/lib/api/configuration";
 import type { AdminAppUserListParams } from "@/lib/api/apps";
 import type { AdminUserBanCreateInput } from "@/lib/api/types";
 
@@ -171,24 +179,83 @@ export function useAdminUserVipTransactionsQuery(
   });
 }
 
+/** 会员权益判定（与用户端 /vip/status 同一判定入口）。 */
+export function useAdminUserVipEntitlementQuery(appKey?: Key, userId?: Id) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: ["admin-user-vip-entitlement", token, appKey, userId],
+    queryFn: () => getAdminVipEntitlement(token as string, appKey as string, Number(userId)),
+    enabled: ready(token, appKey, userId)
+  });
+}
+
+export function useAdminVipPlansQuery(appKey?: Key) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: ["admin-vip-plans", token, appKey],
+    queryFn: () => getAdminVipPlans(token as string, appKey as string),
+    enabled: Boolean(token && appKey)
+  });
+}
+
+export function useAdminVipFeaturesQuery(appKey?: Key) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: ["admin-vip-features", token, appKey],
+    queryFn: () => getAdminVipFeatures(token as string, appKey as string),
+    enabled: Boolean(token && appKey)
+  });
+}
+
+/** 发放会员后需要一起刷新的查询：记录、权益判定、详情、列表。 */
+const VIP_SCOPE_KEYS = [
+  ["admin-user-vip-txns"],
+  ["admin-user-vip-entitlement"],
+  ["admin-app-user"],
+  ["admin-app-users"]
+] as const;
+
+function useInvalidateVipScope() {
+  const queryClient = useQueryClient();
+  return () =>
+    Promise.all(VIP_SCOPE_KEYS.map((queryKey) => queryClient.invalidateQueries({ queryKey })));
+}
+
 export function useGrantAdminUserVipMutation(appKey?: Key, userId?: Id) {
   const token = useAdminToken();
-  const queryClient = useQueryClient();
+  const invalidate = useInvalidateVipScope();
   return useMutation({
-    mutationFn: (payload: { days: number; reason?: string; bonusIntegral?: number }) =>
+    mutationFn: (payload: {
+      planId?: number;
+      quantity?: number;
+      days?: number;
+      features?: string[];
+      reason?: string;
+      bonusIntegral?: number;
+    }) =>
       grantAdminVip(token as string, appKey as string, {
         userId: Number(userId),
-        days: payload.days,
-        reason: payload.reason,
-        bonusIntegral: payload.bonusIntegral
+        ...payload
       }),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["admin-user-vip-txns"] }),
-        queryClient.invalidateQueries({ queryKey: ["admin-app-user"] }),
-        queryClient.invalidateQueries({ queryKey: ["admin-app-users"] })
-      ]);
-    }
+    onSuccess: invalidate
+  });
+}
+
+export function useClaimAdminVipTrialMutation(appKey?: Key, userId?: Id) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateVipScope();
+  return useMutation({
+    mutationFn: () => claimAdminVipTrial(token as string, appKey as string, Number(userId)),
+    onSuccess: invalidate
+  });
+}
+
+export function useResetAdminVipTrialMutation(appKey?: Key, userId?: Id) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateVipScope();
+  return useMutation({
+    mutationFn: () => resetAdminVipTrial(token as string, appKey as string, Number(userId)),
+    onSuccess: invalidate
   });
 }
 

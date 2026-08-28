@@ -12,6 +12,8 @@ import type {
   SettingsIntegrityResult,
   SettingsInitializeResult,
   UserSettingsStats,
+  VipEntitlement,
+  VipFeature,
   VipPlan,
   VipTransaction
 } from "./types";
@@ -80,15 +82,53 @@ export function deleteAdminVipPlan(token: string, appId: number | string, planId
   });
 }
 
+/**
+ * 发放会员。planId > 0 按套餐发放（时长/权益取自套餐 × quantity，days/features 忽略）；
+ * 否则按 days 自定义发放，可附带已登记的权益标识。
+ */
 export function grantAdminVip(
   token: string,
   appId: number | string,
-  payload: { userId: number; days: number; reason?: string; bonusIntegral?: number }
+  payload: {
+    userId: number;
+    planId?: number;
+    quantity?: number;
+    days?: number;
+    features?: string[];
+    reason?: string;
+    bonusIntegral?: number;
+  }
 ) {
   return apiRequest<VipTransaction>(`/api/admin/apps/${appId}/vip/grant`, {
     method: "POST",
     token,
     body: JSON.stringify(payload)
+  });
+}
+
+export function getAdminVipEntitlement(token: string, appId: number | string, userId: number) {
+  return apiRequest<VipEntitlement>(
+    `/api/admin/apps/${appId}/vip/entitlement?userId=${userId}`,
+    { token }
+  );
+}
+
+export function getAdminVipFeatures(token: string, appId: number | string) {
+  return apiRequest<VipFeature[]>(`/api/admin/apps/${appId}/vip/features`, { token });
+}
+
+export function claimAdminVipTrial(token: string, appId: number | string, userId: number) {
+  return apiRequest<unknown>(`/api/admin/apps/${appId}/vip/trial/claims`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ userId })
+  });
+}
+
+export function resetAdminVipTrial(token: string, appId: number | string, userId: number) {
+  return apiRequest<{ reset: boolean }>(`/api/admin/apps/${appId}/vip/trial/claims/${userId}`, {
+    method: "DELETE",
+    token
   });
 }
 
