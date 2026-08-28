@@ -221,32 +221,91 @@ func (s *VipService) AdminDeletePlan(ctx context.Context, appID int64, planID in
 	return nil
 }
 
-// AdminGrantVip 管理员直接授予 VIP 天数（不动钱包，可附赠积分）
-func (s *VipService) AdminGrantVip(ctx context.Context, userID int64, appID int64, days int, reason string, bonusIntegral int64, operator string) (*vipdomain.Transaction, error) {
-	if userID <= 0 || appID <= 0 {
+// AdminVipGrantInput 管理员发放会员的输入。
+//
+// 两种发放方式，二选一：
+//   - PlanID > 0：按套餐发放。时长/赠送积分/权益快照全部取自套餐 × Quantity，
+//     Days 与 Features 忽略 —— 套餐是运营定好的商品，发放时不允许现场改配置。
+//   - PlanID == 0：自定义发放。Days 为必填时长，Features 为附带的权益标识
+//     （必须已登记在会员功能目录，防止拼错的标识悄悄进账本）。
+type AdminVipGrantInput struct {
+	UserID        int64
+	AppID         int64
+	PlanID        int64
+	Quantity      int
+	Days          int
+	Features      []string
+	Reason        string
+	BonusIntegral int64
+	Operator      string
+}
+
+// AdminGrantVip 管理员发放会员（不动钱包，可附赠积分；到期时间只增不减）。
+func (s *VipService) AdminGrantVip(ctx context.Context, in AdminVipGrantInput) (*vipdomain.Transaction, error) {
+	if in.UserID <= 0 || in.AppID <= 0 {
 		return nil, apperrors.New(40000, http.StatusBadRequest, "用户ID与应用ID不能为空")
 	}
-	if days <= 0 {
-		return nil, apperrors.New(40086, http.StatusBadRequest, "授予天数必须大于 0")
-	}
-	if bonusIntegral < 0 {
+	if in.BonusIntegral < 0 {
 		return nil, apperrors.New(40088, http.StatusBadRequest, "赠送积分不能为负")
 	}
-	planName := strings.TrimSpace(reason)
-	if planName == "" {
-		planName = "管理员授予"
+	reason := strings.TrimSpace(in.Reason)
+
+	grant := vipdomain.Grant{
+		UserID:     in.UserID,
+		AppID:      in.AppID,
+		PayChannel: vipdomain.ChannelAdminGrant,
+		PayAmount:  decimal.Zero,
+		Operator:   in.Operator,
+		Metadata:   map[string]any{"reason": reason},
 	}
-	txn, err := s.pg.GrantVip(ctx, vipdomain.Grant{
-		UserID:        userID,
-		AppID:         appID,
-		PlanName:      planName,
-		DurationDays:  days,
-		PayChannel:    vipdomain.ChannelAdminGrant,
-		PayAmount:     decimal.Zero,
-		BonusIntegral: bonusIntegral,
-		Operator:      operator,
-		Metadata:      map[string]any{"reason": reason},
-	})
+
+	if in.PlanID > 0 {
+		quantity := in.Quantity
+		if quantity <= 0 {
+			quantity = 1
+		}
+		if quantity > 100 {
+			return nil, apperrors.New(40086, http.StatusBadRequest, "单次发放数量不能超过 100")
+		}
+		plan, err := s.pg.GetVipPlan(ctx, in.AppID, in.PlanID)
+		if err != nil {
+			return nil, err
+		}
+		if plan == nil {
+			return nil, apperrors.New(40480, http.StatusNotFound, "套餐不存在")
+		}
+		// 试用是资格制的（一人一次、可能限设备），走发放入口会绕开全部资格判定，
+		// 且不落 trial claims 账本 —— 之后没人说得清这个人的试用资格用没用过。
+		if plan.IsTrial() {
+			return nil, apperrors.New(errCodeTrialPlanNotPurchase, http.StatusForbidden,
+				"试用套餐请通过「代领试用」发放")
+		}
+		grant.PlanID = &plan.ID
+		grant.PlanName = plan.Name
+		grant.Features = plan.Features
+		grant.DurationDays = plan.DurationDays * quantity
+		grant.BonusIntegral = plan.BonusIntegral*int64(quantity) + in.BonusIntegral
+		grant.Metadata["quantity"] = quantity
+	} else {
+		if in.Days <= 0 {
+			return nil, apperrors.New(40086, http.StatusBadRequest, "发放天数必须大于 0")
+		}
+		features := vipdomain.NormalizeFeatureTags(in.Features)
+		if len(features) > 0 {
+			if err := s.EnsureFeatureTagsRegistered(ctx, in.AppID, features); err != nil {
+				return nil, err
+			}
+		}
+		grant.PlanName = reason
+		if grant.PlanName == "" {
+			grant.PlanName = "管理员授予"
+		}
+		grant.Features = features
+		grant.DurationDays = in.Days
+		grant.BonusIntegral = in.BonusIntegral
+	}
+
+	txn, err := s.pg.GrantVip(ctx, grant)
 	if err != nil {
 		if errors.Is(err, pgrepo.ErrUserNotFound) {
 			return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")

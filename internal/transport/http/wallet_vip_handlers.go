@@ -7,6 +7,7 @@ import (
 
 	vipdomain "aegis/internal/domain/vip"
 	walletdomain "aegis/internal/domain/wallet"
+	"aegis/internal/service"
 	"aegis/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -63,11 +64,18 @@ type AdminVipTrialClaimRequest struct {
 	UserID int64 `json:"userId" binding:"required"`
 }
 
+// AdminVipGrantRequest 管理员发放会员。
+//
+// 两种方式二选一：planId > 0 按套餐发放（days/features 忽略，时长与权益取自
+// 套餐 × quantity）；否则按 days 自定义发放，可附带已登记的权益标识。
 type AdminVipGrantRequest struct {
-	UserID        int64  `json:"userId" binding:"required"`
-	Days          int    `json:"days" binding:"required"`
-	Reason        string `json:"reason"`
-	BonusIntegral int64  `json:"bonusIntegral"`
+	UserID        int64    `json:"userId" binding:"required"`
+	PlanID        int64    `json:"planId"`
+	Quantity      int      `json:"quantity"`
+	Days          int      `json:"days"`
+	Features      []string `json:"features"`
+	Reason        string   `json:"reason"`
+	BonusIntegral int64    `json:"bonusIntegral"`
 }
 
 // ── 用户端：钱包 ──
@@ -328,12 +336,22 @@ func (h *Handler) AdminGrantAppUserVip(c *gin.Context) {
 		return
 	}
 	_, operator := adminAccount(c)
-	txn, err := h.vip.AdminGrantVip(c.Request.Context(), req.UserID, appID, req.Days, req.Reason, req.BonusIntegral, operator)
+	txn, err := h.vip.AdminGrantVip(c.Request.Context(), service.AdminVipGrantInput{
+		UserID:        req.UserID,
+		AppID:         appID,
+		PlanID:        req.PlanID,
+		Quantity:      req.Quantity,
+		Days:          req.Days,
+		Features:      req.Features,
+		Reason:        req.Reason,
+		BonusIntegral: req.BonusIntegral,
+		Operator:      operator,
+	})
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
-	response.Success(c, 200, "授予 VIP 成功", txn)
+	response.Success(c, 200, "会员发放成功", txn)
 }
 
 // AdminAppVipTransactions GET /api/admin/apps/:appkey/vip/transactions

@@ -997,7 +997,13 @@ func (s *ScriptSDK) bindVipNamespace(vm *goja.Runtime, object *goja.Object) erro
 		if s.dryRun {
 			return vm.ToValue(map[string]any{"days": sign * days, "userId": userID, "simulated": true})
 		}
-		if _, err := s.deps.Vip.AdminGrantVip(s.ctx, userID, s.appID, sign*days, reason, 0, s.operatorLabel()); err != nil {
+		if _, err := s.deps.Vip.AdminGrantVip(s.ctx, AdminVipGrantInput{
+			UserID:   userID,
+			AppID:    s.appID,
+			Days:     sign * days,
+			Reason:   reason,
+			Operator: s.operatorLabel(),
+		}); err != nil {
 			throw(vm, err)
 		}
 		result := map[string]any{"days": sign * days, "userId": userID}
