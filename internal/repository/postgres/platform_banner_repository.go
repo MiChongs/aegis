@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -46,17 +45,15 @@ func scanPlatformBanner(row interface{ Scan(dest ...any) error }) (*systemdomain
 	return item, nil
 }
 
-// scanPlatformBannerRow 单行查询专用：查不到返回 (nil, nil)。
+// scanPlatformBannerRow 单行查询专用：查不到返回 (nil, nil)，
+// 与本包其余仓储共用 normalizeNotFound 这一个口径。
 //
-// 与应用级内容仓储同一约定。返回原始的 pgx.ErrNoRows 会让 service 里
-// `item == nil` 那个 404 分支永远走不到，管理员看到的是驱动的英文错误串
-// "no rows in result set"，而真实情况只是「这条横幅已经被删了」。
+// 返回原始的 pgx.ErrNoRows 会让 service 里 `item == nil` 那个 404 分支永远
+// 走不到，管理员看到的是驱动的英文错误串 "no rows in result set"，
+// 而真实情况只是「这条横幅已经被删了」。
 func scanPlatformBannerRow(row pgx.Row) (*systemdomain.PlatformBanner, error) {
 	item, err := scanPlatformBanner(row)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return item, err
+	return item, normalizeNotFound(err)
 }
 
 const platformBannerColumns = `id, title, COALESCE(description, ''), image_url, COALESCE(click_url, ''), type, position, status, start_time, end_time, created_by, view_count, click_count, created_at, updated_at`

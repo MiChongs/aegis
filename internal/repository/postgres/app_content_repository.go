@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -44,24 +43,23 @@ func scanNotice(row interface{ Scan(dest ...any) error }) (*appdomain.Notice, er
 	return &item, nil
 }
 
-// scanBannerRow / scanNoticeRow 是单行查询专用：查不到返回 (nil, nil)。
+// scanBannerRow / scanNoticeRow 是单行查询专用：查不到返回 (nil, nil)，
+// 与本包其余仓储共用 normalizeNotFound 这一个口径。
+//
+// 单独包一层而不是把 normalizeNotFound 塞进 scanBanner / scanNotice：
+// 那两个还要喂给 rows.Next() 循环，在那里把错误抹成 nil 会让紧接着的
+// `*item` 变成空指针解引用。
 //
 // 用在 `UPDATE … RETURNING` 上同样成立 —— 匹配不到行意味着「要改的那条已经
 // 不在了」，这是一个 404，不是一次数据库故障。
 func scanBannerRow(row pgx.Row) (*appdomain.Banner, error) {
 	item, err := scanBanner(row)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return item, err
+	return item, normalizeNotFound(err)
 }
 
 func scanNoticeRow(row pgx.Row) (*appdomain.Notice, error) {
 	item, err := scanNotice(row)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return item, err
+	return item, normalizeNotFound(err)
 }
 
 /* ───────────────────────── Banner ───────────────────────── */
