@@ -39,7 +39,10 @@ type aiAgentTool struct {
 	InputSchema json.RawMessage
 	// Mutating 会落库的写操作，可被请求整体关闭。
 	Mutating bool
-	Execute  func(ctx context.Context, run *aiAgentRun, args json.RawMessage) (any, error)
+	// Timeout 单次执行的时间上限；0 用默认值（aiAgentToolTimeout）。
+	// run_subagent 这类「里面还要跑一整个循环」的工具要自带更大的预算。
+	Timeout time.Duration
+	Execute func(ctx context.Context, run *aiAgentRun, args json.RawMessage) (any, error)
 }
 
 // aiToolRichResult 工具结果的双通道信封：Model 喂给模型（受截断约束、要省），
@@ -66,6 +69,9 @@ type aiAgentRun struct {
 	providers *AIProviderService
 	// mcpClients 本轮已建立的 MCP 客户端，键为服务器名。
 	mcpClients map[string]*aiMCPClient
+	// session 本轮的 Eino 会话现场，Run 装配完注入。
+	// run_subagent 经它派生子会话（工具执行签名只有 run，够不到会话）。
+	session *einoAgentSession
 }
 
 // aiFunctionTools 远程函数场景的完整内置工具集。

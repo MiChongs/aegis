@@ -50,6 +50,8 @@ type einoAgentSession struct {
 	toolList  []aidomain.Tool
 	// budget 上下文字符预算，超出即触发 trimEinoMessages。
 	budget int
+	// maxSteps 本会话的步数预算；0 用默认值（aiAgentMaxSteps）。子代理更小。
+	maxSteps int
 	// chatStream 可注入的流式调用面（单测替身用）；nil 走真实通道链。
 	chatStream func(ctx context.Context, args aiChatArgs,
 		onEvent func(aidomain.StreamEvent) error) (*aidomain.ChatResponse, *resolvedChannel, error)
@@ -86,6 +88,13 @@ func (s *einoAgentSession) snapshot() ([]agentUIPart, aidomain.Usage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.parts, s.totalUsage
+}
+
+func (s *einoAgentSession) effectiveMaxSteps() int {
+	if s.maxSteps > 0 {
+		return s.maxSteps
+	}
+	return aiAgentMaxSteps
 }
 
 // beginStep 在每次模型调用前对齐界面的步边界。
@@ -142,7 +151,7 @@ func (s *AIAgentService) runEinoAgent(ctx context.Context, session *einoAgentSes
 			return trimEinoMessages(messages, session.budget)
 		},
 		// Eino 的步数按图节点执行数计：一轮迭代 = 模型 + 工具两步。
-		MaxStep:   aiAgentMaxSteps * 2,
+		MaxStep:   session.effectiveMaxSteps() * 2,
 		GraphName: "AegisFunctionAgent",
 	})
 	if err != nil {
@@ -165,7 +174,7 @@ func (s *AIAgentService) runEinoAgent(ctx context.Context, session *einoAgentSes
 
 // emitLimitNote 触达单轮步数上限时给界面的提示语（与落库分片同步）。
 func (s *einoAgentSession) emitLimitNote() {
-	note := fmt.Sprintf("已达到单轮最大步数（%d 步），请继续对话让我接着做。", aiAgentMaxSteps)
+	note := fmt.Sprintf("已达到单轮最大步数（%d 步），请继续对话让我接着做。", s.effectiveMaxSteps())
 	s.appendPart(agentUIPart{Type: "text", Text: note, State: "done"})
 	textID := "txt_" + uuid.NewString()
 	_ = s.emitChunk(map[string]any{"type": "text-start", "id": textID})
@@ -355,6 +364,8 @@ func (t *einoAgentTool) InvokableRun(ctx context.Context, argumentsInJSON string
 // 这类信息模型完全能救回来）；只有 ctx 取消才让整轮失败。
 func (s *einoAgentSession) executeTool(ctx context.Context, callID, name string,
 	args json.RawMessage) (string, error) {
+	// callID 入 ctx：run_subagent 的直播事件靠它与界面上的工具卡对上号。
+	ctx = withToolCallID(ctx, callID)
 	output, uiOutput, execErr := s.service.executeToolWithTimeout(ctx, s.run, s.toolIndex, aidomain.ToolCall{
 		ID: callID, Name: name, Arguments: args,
 	})

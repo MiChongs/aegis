@@ -33,8 +33,10 @@ import {
   SendHorizontal,
   Settings2,
   ShieldCheck,
+  Sparkles,
   Square,
   Trash2,
+  Users,
   X,
   XCircle
 } from "lucide-react";
@@ -170,8 +172,27 @@ function getAssistantSession(appKey: string, functionName: string): AssistantSes
   return session;
 }
 
+/** 子代理角色的界面名（与后端 aiSubagentProfiles 对齐）。 */
+const SUBAGENT_LABELS: Record<string, string> = {
+  general: "通用执行者",
+  researcher: "调研员",
+  coder: "编码专家",
+  reviewer: "审查员",
+  tester: "测试员"
+};
+
+/** 子代理的一条直播事件（瞬态 data-subagent 分片，不落库）。 */
+type SubagentEvent = {
+  kind?: string;
+  tool?: string;
+  state?: string;
+  text?: string;
+  detail?: string;
+};
+
 /** 内置工具的界面名。不认识的键（MCP 工具）走 toolLabel 的兜底分支。 */
 const TOOL_LABELS: Record<string, string> = {
+  run_subagent: "派遣子代理",
   update_plan: "更新计划",
   list_functions: "列出函数",
   get_function: "读取函数定义",
@@ -258,6 +279,14 @@ function findStagedSource(message: AgentUIMessage): { source: string; note?: str
       }
       continue;
     }
+    if (part.toolName === "run_subagent") {
+      // 子代理（coder 等）改过草稿时，最终全文随工具结果带回。
+      const output = part.output as { source?: string; note?: string } | undefined;
+      if (typeof output?.source === "string" && output.source.trim()) {
+        return { source: output.source, note: output.note };
+      }
+      continue;
+    }
     if (part.toolName !== "edit_draft") continue;
     const output = part.output as { source?: string; note?: string } | undefined;
     if (typeof output?.source === "string" && output.source.trim()) {
@@ -298,6 +327,9 @@ export function FunctionAIAssistant({
   const [modelChoice, setModelChoiceState] = useState(session.modelChoice);
   const [disableWrites, setDisableWritesState] = useState(session.disableWrites);
   const [loadingConversation, setLoadingConversation] = useState(false);
+  // 子代理活动直播，键为 run_subagent 的 toolCallId。瞬态数据：不落库，
+  // 换会话即清；回放旧会话时卡片只有报告没有过程，这是有意的取舍。
+  const [subagentFeed, setSubagentFeed] = useState<Record<string, SubagentEvent[]>>({});
 
   function setInput(value: string) {
     sessionRef.current.input = value;
@@ -382,6 +414,19 @@ export function FunctionAIAssistant({
   };
 
   const notice: ChatOnDataCallback<AgentUIMessage> = (part) => {
+    // 子代理的活动直播：按工具卡（toolCallId）归档，供 SubagentCard 滚动展示。
+    if (part.type === "data-subagent") {
+      const data = part.data as (SubagentEvent & { id?: string }) | undefined;
+      if (data?.id) {
+        const id = data.id;
+        setSubagentFeed((prev) => {
+          const list = prev[id] ? [...prev[id], data] : [data];
+          if (list.length > 40) list.splice(0, list.length - 40);
+          return { ...prev, [id]: list };
+        });
+      }
+      return;
+    }
     // 会话号开跑即到（不等 finish）：流中途断掉（网络、报错、手动停）也不会
     // 丢会话 —— 丢了它，下一句话会另起新会话，历史就碎成一句一条。
     if (part.type === "data-conversation") {
@@ -427,6 +472,7 @@ export function FunctionAIAssistant({
     void stop();
     setMessages([]);
     setConversationId(0);
+    setSubagentFeed({});
     clearError();
   }
 
@@ -438,6 +484,7 @@ export function FunctionAIAssistant({
       const detail = await getAIConversationDetail(token, appKey, id);
       setMessages(toUIMessages(detail.messages));
       setConversationId(id);
+      setSubagentFeed({});
       clearError();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "载入会话失败");
@@ -490,6 +537,7 @@ export function FunctionAIAssistant({
       noChannel={noChannel}
       channelReady={channelQuery.isSuccess}
       busy={busy}
+      subagentFeed={subagentFeed}
       onPickSuggestion={submitText}
       onApplySource={(source, note) => applyRef.current(source, note)}
       onRegenerate={() => void regenerate()}
@@ -782,6 +830,7 @@ function ChatBody({
   noChannel,
   channelReady,
   busy,
+  subagentFeed,
   onPickSuggestion,
   onApplySource,
   onRegenerate,
@@ -796,6 +845,7 @@ function ChatBody({
   noChannel: boolean;
   channelReady: boolean;
   busy: boolean;
+  subagentFeed: Record<string, SubagentEvent[]>;
   onPickSuggestion: (text: string) => void;
   onApplySource: (source: string, note?: string) => void;
   onRegenerate: () => void;
@@ -861,6 +911,7 @@ function ChatBody({
               message={message}
               streaming={message.id === streamingMessageId}
               canRegenerate={!busy && message.id === lastAssistantId}
+              subagentFeed={subagentFeed}
               onApplySource={onApplySource}
               onRegenerate={onRegenerate}
             />
@@ -869,11 +920,15 @@ function ChatBody({
           {status === "submitted" ? (
             <div
               className={cn(
-                "flex items-center gap-1.5 text-muted-foreground",
+                "flex items-center gap-2 text-muted-foreground",
                 dense ? "text-[11px]" : "text-xs"
               )}
             >
-              <Loader2 className="size-3 animate-spin" />
+              <span className="flex items-center gap-1" aria-hidden>
+                <span className="size-1.5 animate-bounce rounded-full bg-primary/60" />
+                <span className="size-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:120ms]" />
+                <span className="size-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:240ms]" />
+              </span>
               正在思考…
             </div>
           ) : null}
@@ -989,7 +1044,7 @@ function Composer({
 
   return (
     <div className="shrink-0 border-t px-4 py-3">
-      <div className="mx-auto w-full max-w-3xl rounded-xl border bg-background p-3 shadow-sm focus-within:border-ring">
+      <div className="mx-auto w-full max-w-3xl rounded-xl border bg-background p-3 shadow-sm transition-[box-shadow,border-color] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
         {textarea}
         <div className="mt-2 flex items-center gap-2">
           <Select value={modelChoice} onValueChange={onModelChange}>
@@ -1107,7 +1162,14 @@ function WelcomeHint({
         dense ? "h-full p-4" : "py-20"
       )}
     >
-      <Bot className={cn("text-muted-foreground/40", dense ? "size-8" : "size-10")} />
+      <span
+        className={cn(
+          "flex items-center justify-center rounded-2xl border bg-gradient-to-br from-primary/15 via-primary/5 to-transparent",
+          dense ? "size-11" : "size-14"
+        )}
+      >
+        <Sparkles className={cn("text-primary", dense ? "size-5" : "size-6")} />
+      </span>
       <div className="space-y-1">
         <p className={cn("font-medium", dense ? "text-xs" : "text-sm")}>AI 编程助手</p>
         <p
@@ -1117,7 +1179,14 @@ function WelcomeHint({
           )}
         >
           描述需求，AI 将读取函数上下文、执行静态检查与试跑，并把脚本直接写入编辑器。
+          复杂任务会派遣专职子代理协作完成。
         </p>
+        {!dense ? (
+          <p className="flex items-center justify-center gap-1 text-[11px] text-muted-foreground/70">
+            <Users className="size-3" />
+            内置团队：调研员 · 编码专家 · 审查员 · 测试员
+          </p>
+        ) : null}
       </div>
       <div className="flex flex-wrap justify-center gap-1.5">
         {SUGGESTIONS.map((text) => (
@@ -1158,6 +1227,7 @@ function MessageRow({
   message,
   streaming,
   canRegenerate,
+  subagentFeed,
   onApplySource,
   onRegenerate
 }: {
@@ -1167,6 +1237,7 @@ function MessageRow({
   streaming: boolean;
   /** 是否提供「重新生成」（最后一条助手消息且当前空闲）。 */
   canRegenerate: boolean;
+  subagentFeed: Record<string, SubagentEvent[]>;
   onApplySource: (source: string, note?: string) => void;
   onRegenerate: () => void;
 }) {
@@ -1179,8 +1250,8 @@ function MessageRow({
       <div className="flex justify-end">
         <div
           className={cn(
-            "whitespace-pre-wrap break-words rounded-lg bg-primary/10",
-            dense ? "max-w-[88%] px-2.5 py-1.5 text-xs" : "max-w-[76%] rounded-xl px-3.5 py-2 text-sm"
+            "whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-primary text-primary-foreground shadow-sm",
+            dense ? "max-w-[88%] px-3 py-1.5 text-xs" : "max-w-[76%] px-4 py-2 text-sm"
           )}
         >
           {text}
@@ -1229,6 +1300,17 @@ function MessageRow({
             if (part.toolName === "update_plan") {
               return <PlanCard key={index} dense={dense} part={part} compact={index !== lastPlanIndex} />;
             }
+            if (part.toolName === "run_subagent") {
+              return (
+                <SubagentCard
+                  key={index}
+                  dense={dense}
+                  part={part}
+                  feed={subagentFeed[part.toolCallId] ?? []}
+                  onApplySource={onApplySource}
+                />
+              );
+            }
             return <ToolPartView key={index} dense={dense} part={part} onApplySource={onApplySource} />;
           default:
             return null;
@@ -1263,8 +1345,8 @@ function MessageRow({
   if (dense) return body;
   return (
     <div className="flex gap-3">
-      <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border bg-muted/50">
-        <Bot className="size-3.5 text-muted-foreground" />
+      <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border bg-gradient-to-br from-primary/15 to-primary/5">
+        <Sparkles className="size-3.5 text-primary" />
       </span>
       {body}
     </div>
@@ -1341,6 +1423,131 @@ function JsonBlock({ title, value }: { title: string; value: unknown }) {
       </pre>
     </div>
   );
+}
+
+/**
+ * run_subagent 的专属外观：主代理派出的专职子代理（Agent 团队成员）。
+ * 运行中直播活动（工具启停、阶段结论；瞬态事件，不落库），
+ * 完成后展示结果报告（Markdown）与开销统计；子代理改过草稿时提供「重新应用」。
+ */
+function SubagentCard({
+  dense,
+  part,
+  feed,
+  onApplySource
+}: {
+  dense: boolean;
+  part: DynamicToolUIPart;
+  feed: SubagentEvent[];
+  onApplySource: (source: string, note?: string) => void;
+}) {
+  const running = part.state === "input-streaming" || part.state === "input-available";
+  const failed = part.state === "output-error";
+  const input = part.input as { agentType?: string; task?: string } | undefined;
+  const output = part.output as
+    | {
+        label?: string;
+        report?: string;
+        steps?: number;
+        toolCalls?: number;
+        usage?: { totalTokens?: number };
+        source?: string;
+        note?: string;
+      }
+    | undefined;
+  const label =
+    output?.label ?? SUBAGENT_LABELS[input?.agentType ?? ""] ?? input?.agentType ?? "子代理";
+  const task = typeof input?.task === "string" ? input.task : "";
+  const deliveredSource = typeof output?.source === "string" ? output.source : "";
+  const deliveredNote = typeof output?.note === "string" ? output.note : undefined;
+  const recent = feed.slice(-5);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-primary/25 bg-primary/[0.03]">
+      <div className={cn("flex items-center gap-1.5 px-2 py-1.5", dense ? "text-[11px]" : "text-xs")}>
+        {running ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
+        ) : failed ? (
+          <XCircle className="size-3.5 shrink-0 text-destructive" />
+        ) : (
+          <Users className="size-3.5 shrink-0 text-primary" />
+        )}
+        <span className="font-medium">子代理 · {label}</span>
+        <span className="text-[10px] text-muted-foreground">
+          {running
+            ? "执行中"
+            : failed
+              ? "已中止"
+              : `${output?.steps ?? 0} 步 · ${output?.toolCalls ?? 0} 次工具`}
+        </span>
+        {!running && !failed && deliveredSource ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            className="ml-auto h-5 px-1.5"
+            onClick={() => onApplySource(deliveredSource, deliveredNote)}
+          >
+            重新应用
+          </Button>
+        ) : null}
+      </div>
+      {task ? (
+        <p
+          className={cn(
+            "border-t border-primary/10 px-2 py-1 text-muted-foreground",
+            dense ? "text-[11px]" : "text-xs"
+          )}
+        >
+          {task}
+        </p>
+      ) : null}
+      {running && recent.length ? (
+        <div className="space-y-0.5 border-t border-primary/10 px-2 py-1.5">
+          {recent.map((event, index) => (
+            <SubagentEventLine key={`${feed.length}-${index}`} event={event} />
+          ))}
+        </div>
+      ) : null}
+      {failed && part.errorText ? (
+        <p className="border-t border-primary/10 px-2 py-1.5 text-[11px] text-destructive">
+          {part.errorText}
+        </p>
+      ) : null}
+      {!running && !failed && output?.report ? (
+        <div className={cn("border-t border-primary/10 px-2.5 py-2", dense ? "text-xs" : "text-sm")}>
+          <Markdown text={output.report} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** 子代理直播里的一行：工具启停 / 阶段结论 / 错误。 */
+function SubagentEventLine({ event }: { event: SubagentEvent }) {
+  if (event.kind === "tool") {
+    return (
+      <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        {event.state === "run" ? (
+          <Loader2 className="size-3 shrink-0 animate-spin" />
+        ) : event.state === "error" ? (
+          <XCircle className="size-3 shrink-0 text-destructive" />
+        ) : (
+          <CheckCircle2 className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
+        )}
+        <span className="truncate">{toolLabel(event.tool ?? "")}</span>
+        {event.state === "error" && event.detail ? (
+          <span className="truncate text-destructive">{event.detail}</span>
+        ) : null}
+      </p>
+    );
+  }
+  if (event.kind === "text" && event.text) {
+    return <p className="truncate pl-[18px] text-[11px] italic text-muted-foreground">{event.text}</p>;
+  }
+  if (event.kind === "error" && event.detail) {
+    return <p className="truncate text-[11px] text-destructive">{event.detail}</p>;
+  }
+  return null;
 }
 
 function ToolPartView({
