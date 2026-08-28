@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -283,3 +284,59 @@ func (c *aiMCPClient) CallTool(ctx context.Context, name string, arguments json.
 	}
 	return text, nil
 }
+
+// ── SSE 事件读取 ──
+//
+// MCP 的 Streamable HTTP 响应可能是事件流，这里手写一个最小读取器：
+// 按空行切事件，聚合 event: 与多行 data:。（LLM 侧的流式解码已交给官方 SDK，
+// 这个读取器只服务于 MCP。）
+
+type sseEvent struct {
+	Event string
+	Data  string
+}
+
+func readSSE(body io.Reader, onEvent func(sseEvent) error) error {
+	scanner := bufio.NewScanner(body)
+	// 单条 data 行可能带整段 JSON（工具入参、长正文），默认 64KB 不够。
+	scanner.Buffer(make([]byte, 0, 64<<10), 4<<20)
+
+	var event sseEvent
+	var dataLines []string
+	flush := func() error {
+		if len(dataLines) == 0 && event.Event == "" {
+			return nil
+		}
+		event.Data = strings.Join(dataLines, "\n")
+		err := onEvent(event)
+		event = sseEvent{}
+		dataLines = nil
+		return err
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if err := flush(); err != nil {
+				return err
+			}
+			continue
+		}
+		if strings.HasPrefix(line, ":") {
+			continue // 注释/心跳
+		}
+		if value, ok := strings.CutPrefix(line, "event:"); ok {
+			event.Event = strings.TrimSpace(value)
+			continue
+		}
+		if value, ok := strings.CutPrefix(line, "data:"); ok {
+			dataLines = append(dataLines, strings.TrimPrefix(value, " "))
+		}
+	}
+	if err := flush(); err != nil {
+		return err
+	}
+	return scanner.Err()
+}
+
+// errStopStream 消费方主动停止（例如已等到目标响应）。
+var errStopStream = errors.New("stop stream")
