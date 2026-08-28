@@ -51,7 +51,9 @@ func matchedRules(t *testing.T, waf coraza.WAF, method string) map[int]bool {
 
 func newTestWAF(t *testing.T) coraza.WAF {
 	t.Helper()
-	waf, err := newCorazaWAF(config.FirewallConfig{CorazaEnabled: true}, zap.NewNop())
+	// 生产路径在配置装载时统一走 NormalizeFirewallConfig 补默认值（请求体限额等），
+	// 测试也必须走同一步 —— 裸零值会被 Coraza 以 request body limit 非法拒绝。
+	waf, err := newCorazaWAF(config.NormalizeFirewallConfig(config.FirewallConfig{CorazaEnabled: true}), zap.NewNop())
 	if err != nil {
 		t.Fatalf("初始化 Coraza 失败: %v", err)
 	}
