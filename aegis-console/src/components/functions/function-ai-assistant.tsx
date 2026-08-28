@@ -13,16 +13,20 @@ import type {
   UIMessage
 } from "ai";
 import {
+  ArrowDown,
   Bot,
   Brain,
+  Check,
   CheckCircle2,
   ChevronDown,
+  Copy,
   FileCode2,
   History,
   Loader2,
   Maximize2,
   PanelRight,
   Plus,
+  RefreshCw,
   SendHorizontal,
   Settings2,
   ShieldCheck,
@@ -59,6 +63,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Markdown } from "@/components/ai/markdown";
 import { cn } from "@/lib/utils";
 import { formatTime } from "./function-shared";
 
@@ -348,8 +353,10 @@ export function FunctionAIAssistant({
     sessionRef.current.handlers.current = { prepare, finish, notice };
   });
 
+  // throttle：流式期间把 UI 刷新限到 ~16fps。每个 text-delta 都触发一次
+  // Markdown 重解析，不限频的话长回答后段每秒几十次全量解析，输入框都会卡。
   const { messages, sendMessage, regenerate, stop, status, error, setMessages, clearError } =
-    useChat<AgentUIMessage>({ chat: session.chat });
+    useChat<AgentUIMessage>({ chat: session.chat, throttle: 60 });
 
   const busy = status === "submitted" || status === "streaming";
 
@@ -706,7 +713,8 @@ function ConversationRail({
 
 /**
  * 消息区。停靠与全屏各挂一个实例（消息数据同源），滚动状态各自独立：
- * 流式期间贴底滚动；用户往上翻过就不再打扰（离底 96px 内算贴底）。
+ * 流式期间贴底滚动；用户往上翻过就不再打扰（离底 96px 内算贴底），
+ * 此时浮出「回到底部」按钮，点击即恢复跟随。
  */
 function ChatBody({
   dense,
@@ -739,66 +747,107 @@ function ChatBody({
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
+  // 贴底与否同时存 ref（滚动效果读）与 state（浮动按钮渲染用）
+  const [stuck, setStuck] = useState(true);
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [messages, status]);
 
+  function scrollToBottom() {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickRef.current = true;
+    setStuck(true);
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }
+
+  const lastMessage = messages[messages.length - 1];
+  // 正在生成的那条助手消息：光标与操作栏的显隐都以它为准
+  const streamingMessageId =
+    (status === "streaming" || status === "submitted") && lastMessage?.role === "assistant"
+      ? lastMessage.id
+      : undefined;
+  const lastAssistantId = [...messages].reverse().find((item) => item.role === "assistant")?.id;
+
   return (
-    <div
-      ref={scrollRef}
-      className={cn("min-h-0 flex-1 overflow-y-auto", dense ? "px-2.5 py-2" : "px-4 py-4")}
-      onScroll={(event) => {
-        const el = event.currentTarget;
-        stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
-      }}
-    >
-      <div className={cn("space-y-3", !dense && "mx-auto w-full max-w-3xl space-y-4")}>
-        {loadingConversation ? (
-          <div className="flex items-center gap-1.5 py-8 text-[11px] text-muted-foreground">
-            <Loader2 className="size-3 animate-spin" />
-            正在载入会话…
-          </div>
-        ) : null}
-
-        {!loadingConversation && messages.length === 0 ? (
-          noChannel ? (
-            <EmptyChannelHint appKey={appKey} />
-          ) : (
-            <WelcomeHint dense={dense} onPick={onPickSuggestion} disabled={busy || !channelReady} />
-          )
-        ) : null}
-
-        {messages.map((message) => (
-          <MessageRow key={message.id} dense={dense} message={message} onApplySource={onApplySource} />
-        ))}
-
-        {status === "submitted" ? (
-          <div
-            className={cn(
-              "flex items-center gap-1.5 text-muted-foreground",
-              dense ? "text-[11px]" : "text-xs"
-            )}
-          >
-            <Loader2 className="size-3 animate-spin" />
-            正在思考…
-          </div>
-        ) : null}
-
-        {error ? (
-          <div className="space-y-1 rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-[11px]">
-            <p className="text-destructive">{chatErrorText(error)}</p>
-            <div className="flex gap-1">
-              <Button size="xs" variant="outline" onClick={onRegenerate}>
-                重试
-              </Button>
-              <Button size="xs" variant="ghost" onClick={onClearError}>
-                忽略
-              </Button>
+    <div className="relative min-h-0 flex-1">
+      <div
+        ref={scrollRef}
+        className={cn("h-full overflow-y-auto", dense ? "px-2.5 py-2" : "px-4 py-4")}
+        onScroll={(event) => {
+          const el = event.currentTarget;
+          const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+          stickRef.current = atBottom;
+          setStuck(atBottom);
+        }}
+      >
+        <div className={cn("space-y-3", !dense && "mx-auto w-full max-w-3xl space-y-4")}>
+          {loadingConversation ? (
+            <div className="flex items-center gap-1.5 py-8 text-[11px] text-muted-foreground">
+              <Loader2 className="size-3 animate-spin" />
+              正在载入会话…
             </div>
-          </div>
-        ) : null}
+          ) : null}
+
+          {!loadingConversation && messages.length === 0 ? (
+            noChannel ? (
+              <EmptyChannelHint appKey={appKey} />
+            ) : (
+              <WelcomeHint dense={dense} onPick={onPickSuggestion} disabled={busy || !channelReady} />
+            )
+          ) : null}
+
+          {messages.map((message) => (
+            <MessageRow
+              key={message.id}
+              dense={dense}
+              message={message}
+              streaming={message.id === streamingMessageId}
+              canRegenerate={!busy && message.id === lastAssistantId}
+              onApplySource={onApplySource}
+              onRegenerate={onRegenerate}
+            />
+          ))}
+
+          {status === "submitted" ? (
+            <div
+              className={cn(
+                "flex items-center gap-1.5 text-muted-foreground",
+                dense ? "text-[11px]" : "text-xs"
+              )}
+            >
+              <Loader2 className="size-3 animate-spin" />
+              正在思考…
+            </div>
+          ) : null}
+
+          {error ? (
+            <div className="space-y-1 rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-[11px]">
+              <p className="text-destructive">{chatErrorText(error)}</p>
+              <div className="flex gap-1">
+                <Button size="xs" variant="outline" onClick={onRegenerate}>
+                  重试
+                </Button>
+                <Button size="xs" variant="ghost" onClick={onClearError}>
+                  忽略
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
+
+      {!stuck && messages.length > 0 ? (
+        <button
+          type="button"
+          onClick={scrollToBottom}
+          aria-label="回到底部"
+          className="absolute bottom-3 left-1/2 z-10 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border bg-background/95 text-muted-foreground shadow-md backdrop-blur transition-colors hover:text-foreground"
+        >
+          <ArrowDown className="size-4" />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1051,11 +1100,19 @@ function EmptyChannelHint({ appKey }: { appKey: string }) {
 function MessageRow({
   dense,
   message,
-  onApplySource
+  streaming,
+  canRegenerate,
+  onApplySource,
+  onRegenerate
 }: {
   dense: boolean;
   message: AgentUIMessage;
+  /** 该条消息正处于流式生成中（只可能是最后一条助手消息）。 */
+  streaming: boolean;
+  /** 是否提供「重新生成」（最后一条助手消息且当前空闲）。 */
+  canRegenerate: boolean;
   onApplySource: (source: string, note?: string) => void;
+  onRegenerate: () => void;
 }) {
   if (message.role === "user") {
     const text = message.parts
@@ -1077,20 +1134,28 @@ function MessageRow({
   }
 
   const usage = message.metadata?.usage;
+  const plainText = message.parts
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .filter(Boolean)
+    .join("\n\n");
+  // 打字光标只接在正在增长的文本尾部；收尾工具调用时由工具卡的转圈表达进行中
+  const lastPart = message.parts[message.parts.length - 1];
+  const showCursor = streaming && lastPart?.type === "text" && Boolean(lastPart.text);
+
   const body = (
-    <div className={cn("min-w-0 flex-1", dense ? "space-y-1.5" : "space-y-2")}>
+    <div className={cn("group/message min-w-0 flex-1", dense ? "space-y-1.5" : "space-y-2")}>
       {message.parts.map((part, index) => {
         switch (part.type) {
           case "text":
             return part.text ? (
-              <div
-                key={index}
-                className={cn(
-                  "whitespace-pre-wrap break-words leading-relaxed",
-                  dense ? "text-xs" : "text-sm"
-                )}
-              >
-                {part.text}
+              <div key={index} className={dense ? "text-xs" : "text-sm"}>
+                <Markdown text={part.text} />
+                {showCursor && index === message.parts.length - 1 ? (
+                  <span
+                    aria-hidden
+                    className="mt-0.5 inline-block h-3.5 w-0.5 animate-pulse rounded-full bg-foreground/60"
+                  />
+                ) : null}
               </div>
             ) : null;
           case "reasoning":
@@ -1103,10 +1168,27 @@ function MessageRow({
             return null;
         }
       })}
-      {usage && usage.totalTokens > 0 ? (
-        <p className="text-[10px] text-muted-foreground">
-          Token 用量：输入 {usage.inputTokens} · 输出 {usage.outputTokens}
-        </p>
+      {!streaming ? (
+        <div className="flex h-6 items-center gap-0.5">
+          <span className="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/message:opacity-100">
+            {plainText ? <CopyMessageButton text={plainText} /> : null}
+            {canRegenerate ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon-xs" aria-label="重新生成" onClick={onRegenerate}>
+                    <RefreshCw className="size-3" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>重新生成</TooltipContent>
+              </Tooltip>
+            ) : null}
+          </span>
+          {usage && usage.totalTokens > 0 ? (
+            <span className="text-[10px] text-muted-foreground">
+              输入 {usage.inputTokens} · 输出 {usage.outputTokens} tokens
+            </span>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
@@ -1120,6 +1202,34 @@ function MessageRow({
       </span>
       {body}
     </div>
+  );
+}
+
+/** 复制整条助手回复（拼接全部文本分片的 Markdown 原文）。 */
+function CopyMessageButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label="复制回复"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(text);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1600);
+            } catch {
+              // 剪贴板不可用（非安全上下文）时静默失败
+            }
+          }}
+        >
+          {copied ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{copied ? "已复制" : "复制回复"}</TooltipContent>
+    </Tooltip>
   );
 }
 
