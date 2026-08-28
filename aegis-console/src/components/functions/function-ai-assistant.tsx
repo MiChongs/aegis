@@ -382,6 +382,16 @@ export function FunctionAIAssistant({
   };
 
   const notice: ChatOnDataCallback<AgentUIMessage> = (part) => {
+    // 会话号开跑即到（不等 finish）：流中途断掉（网络、报错、手动停）也不会
+    // 丢会话 —— 丢了它，下一句话会另起新会话，历史就碎成一句一条。
+    if (part.type === "data-conversation") {
+      const data = part.data as { id?: number };
+      if (data?.id && data.id !== sessionRef.current.conversationId) {
+        setConversationId(data.id);
+        void queryClient.invalidateQueries({ queryKey: ["ai", "conversations", appKey] });
+      }
+      return;
+    }
     if (part.type !== "data-notice") return;
     const data = part.data as { kind?: string; server?: string; error?: string; messages?: number };
     if (data?.kind === "compacted") {

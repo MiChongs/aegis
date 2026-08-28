@@ -165,10 +165,21 @@ func (s *AIAgentService) Run(ctx context.Context, input AIAgentRunInput, emit ai
 		return err
 	}
 
+	// 会话号必须开跑即下发，不能等 finish：流一旦中途断掉（网络、报错、手动停），
+	// 界面拿不到会话号，下一句话就会另起新会话 —— 「一句话一个会话」的病根。
+	// start 的 messageMetadata 会立刻并进消息元数据（onFinish 在 abort/error 时
+	// 也能读到），瞬态 data-conversation 则让界面在流式进行中即可绑定会话。
 	messageID := "msg_" + uuid.NewString()
-	if err := emit(map[string]any{"type": "start", "messageId": messageID}); err != nil {
+	if err := emit(map[string]any{
+		"type": "start", "messageId": messageID,
+		"messageMetadata": map[string]any{"conversationId": conversation.ID},
+	}); err != nil {
 		return err
 	}
+	_ = emit(map[string]any{
+		"type": "data-conversation", "transient": true,
+		"data": map[string]any{"id": conversation.ID, "title": conversation.Title},
+	})
 
 	// 3. 装配运行态：工具、MCP、技能、历史。
 	run := &aiAgentRun{
