@@ -19,6 +19,8 @@ const (
 	ProtocolOpenAI = "openai"
 	// ProtocolAnthropic Anthropic Messages（/messages）
 	ProtocolAnthropic = "anthropic"
+	// ProtocolGemini Google Gemini 原生 GenerateContent（官方 genai SDK）
+	ProtocolGemini = "gemini"
 )
 
 // ── 供应商标识 ──
@@ -261,13 +263,13 @@ var providers = []ProviderMeta{
 	},
 	{
 		Provider: ProviderGemini, Name: "Google Gemini",
-		Description: "Gemini 系列（OpenAI 兼容端点）",
-		Category:    CategoryFrontier, Protocol: ProtocolOpenAI,
+		Description: "Gemini 系列官方 API（原生协议）",
+		Category:    CategoryFrontier, Protocol: ProtocolGemini,
 		Icon: "googlegemini", BrandColor: "#4285F4",
-		DocURL:         "https://ai.google.dev/gemini-api/docs/openai",
-		DefaultBaseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
-		Capabilities:   ProviderCapabilities{Streaming: true, ToolCalls: true, Vision: true, JSONMode: true},
-		Fields:         commonFields(true, "留空使用官方 OpenAI 兼容端点"),
+		DocURL:       "https://ai.google.dev/gemini-api/docs",
+		Capabilities: ProviderCapabilities{Streaming: true, ToolCalls: true, Vision: true, JSONMode: true, Reasoning: true},
+		Fields: commonFields(true,
+			"留空使用官方端点；代理站点只填根地址即可（版本段自动处理，旧的 /v1beta/openai 兼容地址也能识别）"),
 		SuggestedModels: []string{
 			"gemini-3-pro", "gemini-3-flash", "gemini-2.5-pro", "gemini-2.5-flash",
 		},

@@ -127,9 +127,11 @@ require (
 	golang.org/x/time v0.15.0
 	golang.org/x/tools v0.47.0
 	google.golang.org/api v0.292.0
+	google.golang.org/genai v1.70.0
 )
 
 require (
+	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.22.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
@@ -230,6 +232,7 @@ require (
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/golang/snappy v1.0.1-0.20260716114414-9ae09f520e93 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/pprof v0.0.0-20240727154555-813a5fbdbec8 // indirect

@@ -16,13 +16,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// aiLLMClient 是两种线上协议（OpenAI Chat Completions / Anthropic Messages）的
-// 完整客户端。所有供应商都归一到这两种协议之一，客户端因此只有两条代码路径 ——
-// 新增供应商不新增代码。
+// aiLLMClient 是三种线上协议（OpenAI Chat Completions / Anthropic Messages /
+// Gemini GenerateContent）的完整客户端。所有供应商都归一到这三种协议之一，
+// 客户端因此只有三条代码路径 —— 新增供应商不新增代码。
 //
-// 协议实现基于官方 SDK（openai-go / anthropic-sdk-go），请求编排、SSE 解码、
-// 类型安全交给 SDK；端点语义、鉴权行为、错误收敛必须与既有配置兼容，
-// 这些差异全部在 ai_llm_openai.go / ai_llm_anthropic.go 的客户端组装处消化。
+// 协议实现基于官方 SDK（openai-go / anthropic-sdk-go / google.golang.org/genai），
+// 请求编排、SSE 解码、类型安全交给 SDK；端点语义、鉴权行为、错误收敛必须与
+// 既有配置兼容，这些差异全部在 ai_llm_openai.go / ai_llm_anthropic.go /
+// ai_llm_gemini.go 的客户端组装处消化。
 //
 // 出网走 egress 网关：配好境外线路后，OpenAI / Anthropic 的调用与
 // 支付、OAuth 走同一张路由表，不必单独给 AI 配代理。
@@ -70,6 +71,8 @@ func (c *aiLLMClient) Chat(ctx context.Context, cfg aidomain.Config, req aidomai
 	switch meta.Protocol {
 	case aidomain.ProtocolAnthropic:
 		return c.anthropicChat(ctx, cfg, meta, req, nil)
+	case aidomain.ProtocolGemini:
+		return c.geminiChat(ctx, cfg, meta, req, nil)
 	default:
 		return c.openAIChat(ctx, cfg, meta, req, nil)
 	}
@@ -88,6 +91,8 @@ func (c *aiLLMClient) ChatStream(ctx context.Context, cfg aidomain.Config, req a
 	switch meta.Protocol {
 	case aidomain.ProtocolAnthropic:
 		return c.anthropicChat(ctx, cfg, meta, req, onEvent)
+	case aidomain.ProtocolGemini:
+		return c.geminiChat(ctx, cfg, meta, req, onEvent)
 	default:
 		return c.openAIChat(ctx, cfg, meta, req, onEvent)
 	}
