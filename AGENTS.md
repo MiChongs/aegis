@@ -124,10 +124,10 @@ go test ./...
 
 ```bash
 cd aegis-console
-pnpm dev        # 开发服务器
-pnpm build      # 生产构建
-pnpm typecheck  # 类型检查
-pnpm lint       # ESLint
+bun run dev         # 开发服务器
+bun run build       # 生产构建
+bun run typecheck   # 类型检查
+bun run lint        # ESLint
 ```
 
 ## 必填环境变量

@@ -176,10 +176,10 @@ sqlc diff       # 产物是否与当前 schema/queries 一致；CI 跑的就是 
 
 ```bash
 cd aegis-console
-pnpm dev        # 开发服务器
-pnpm build      # 生产构建 = tsc --noEmit && next build（类型检查已从 next build 内部前移）
-pnpm typecheck  # 类型检查（TS 7 原生编译器）
-pnpm lint       # ESLint
+bun run dev         # 开发服务器
+bun run build       # 生产构建 = tsc --noEmit && next build（类型检查已从 next build 内部前移）
+bun run typecheck   # 类型检查（TS 7 原生编译器）
+bun run lint        # ESLint
 ```
 
 ### 容器构建

@@ -135,7 +135,7 @@ if [ "$MODE" = "app" ]; then
   echo -e "  超管密码      $(get_env ADMIN_BOOTSTRAP_PASSWORD)"
   echo -e "  Admin Token   $(get_env ADMIN_API_TOKEN)"
   echo ""
-  echo -e "  管理前端      cd aegis-console && pnpm install && pnpm dev"
+  echo -e "  管理前端      cd aegis-console && bun install && bun run dev"
 else
   echo -e "  PostgreSQL    localhost:$(get_env AEGIS_DB_PORT || echo 15432)"
   echo -e "  Redis         localhost:6379    NATS  localhost:4222"

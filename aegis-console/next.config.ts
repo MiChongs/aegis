@@ -3,8 +3,8 @@ import { resolve } from "node:path";
 import type { NextConfig } from "next";
 
 // ── 项目根：就是本目录 ──
-// pnpm-lock.yaml 与 pnpm-workspace.yaml 都在 aegis-console/ 下（见 pnpm-workspace.yaml
-// 里的说明），所以这里不能往上指。曾经写成 `../../`（仓库之外的 userSystem/），
+// package.json、bun.lock 与 bunfig.toml 都在 aegis-console/ 下，这里就是依赖树的根，
+// 所以不能往上指。曾经写成 `../../`（仓库之外的 userSystem/），
 // 两个后果：Turbopack 的解析与追踪边界莫名其妙地覆盖了整个仓库同级目录；
 // 而在容器里这个相对路径会算成 `/`，等于告诉 Turbopack "整个文件系统都是项目"。
 const projectRoot = import.meta.dirname;
@@ -61,7 +61,7 @@ const nextConfig: NextConfig = {
   // ── 类型检查交给 `tsc --noEmit`（TS 7），不在 build 里做 ──
   // build 期那一遍走 TS 6 的 JS API（见下方 useTypeScriptCli），而 TS 7 是 Go 重写的
   // 原生编译器：同一份代码实测差**接近一个数量级**，查的却是同一件事，留慢的那个没有意义。
-  // 关掉不等于不检查：`pnpm build` 的第一步就是 `tsc --noEmit`，类型不过一样构建不出来，
+  // 关掉不等于不检查：`bun run build` 的第一步就是 `tsc --noEmit`，类型不过一样构建不出来，
   // 而且报错来得更早 —— 不用等 Turbopack 先编译完。
   typescript: {
     ignoreBuildErrors: true
@@ -84,7 +84,7 @@ const nextConfig: NextConfig = {
     // ── TypeScript 7 / 6 并存所必需（默认为 true，此处必须显式关闭） ──
     // 本项目按 TS 7 官方方案做 side-by-side：包名 `typescript` 别名到
     // @typescript/typescript6（提供 TS 6 的 JS API，供 typescript-eslint 使用），
-    // 真正的 TS 7 由 @typescript/native 提供 `tsc` 二进制（pnpm typecheck 走它）。
+    // 真正的 TS 7 由 @typescript/native 提供 `tsc` 二进制（bun run typecheck 走它）。
     //
     // useTypeScriptCli=true 时 Next 走 CLI 模式，要找 `typescript/bin/tsc`，
     // 而 TS 6 兼容包只提供 `bin/tsc6`，会误报「typescript 未安装」并触发自动安装

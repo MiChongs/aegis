@@ -1,0 +1,11 @@
+# aegis-console 的包管理器配置。bun 版本的唯一事实源是 package.json 的 packageManager 字段。
+
+[install]
+# 平铺式 node_modules（与 npm 同一种布局），显式写出来，不依赖 bun 按项目形态推断的默认值。
+# 隔离式会多一层 node_modules/.bun 下的符号链接；Next 的 standalone 文件追踪、Turbopack 的解析
+# 以及 scripts/ 里直接读 node_modules/<包名> 的同步脚本，都不需要这一层。
+linker = "hoisted"
+
+# 新发布的版本至少放一天再装（单位：秒），沿用迁移前 pnpm 的设置（1440 分钟）。
+# 供应链投毒的版本通常在发布后几小时内就被发现并撤下，这一天就是留给它的窗口。
+minimumReleaseAge = 86400

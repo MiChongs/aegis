@@ -12,7 +12,7 @@ import path from "node:path";
  *   - 本项目走 Turbopack，没有配 svgr，`import logo from "*.svg"` 拿到的是 URL 而不是组件；
  *   - 放 public/ 用 <img> 又会丢掉 `currentColor` —— 单色字标在深色模式下会直接消失。
  *
- * 产物需要一起提交。换版本或加赞助商后跑 `pnpm logos:sync`。
+ * 产物需要一起提交。换版本或加赞助商后跑 `bun run logos:sync`。
  */
 
 /**
@@ -158,7 +158,7 @@ const colored = entries.filter((entry) => entry.colored).length;
 
 const output = `// 本文件由 scripts/sync-brand-logos.mjs 生成，请勿手工编辑。
 // 数据源：@lobehub/icons-static-svg@${version}（商标归各自所有者所有）
-// 重新生成：pnpm logos:sync
+// 重新生成：bun run logos:sync
 
 export type BrandGlyph = {
   viewBox: string;

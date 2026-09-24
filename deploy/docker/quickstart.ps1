@@ -150,7 +150,7 @@ if (-not $Infra) {
     Write-Host "  超管密码      $(Get-EnvValue 'ADMIN_BOOTSTRAP_PASSWORD' '')"
     Write-Host "  Admin Token   $(Get-EnvValue 'ADMIN_API_TOKEN' '')"
     Write-Host ""
-    Write-Host "  管理前端      cd aegis-console; pnpm install; pnpm dev"
+    Write-Host "  管理前端      cd aegis-console; bun install; bun run dev"
 } else {
     Write-Host "  PostgreSQL    localhost:$(Get-EnvValue 'AEGIS_DB_PORT' '15432')"
     Write-Host "  Redis         localhost:6379    NATS  localhost:4222"

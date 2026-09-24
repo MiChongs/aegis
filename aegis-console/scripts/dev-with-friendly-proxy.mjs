@@ -23,7 +23,7 @@ const nextBin = join(consoleRoot, "node_modules", "next", "dist", "bin", "next")
 
 if (!existsSync(nextBin)) {
   console.error(`未找到 Next.js 可执行文件: ${nextBin}`);
-  console.error("请先在 aegis-console 根目录执行 pnpm install。");
+  console.error("请先在 aegis-console 根目录执行 bun install。");
   process.exit(1);
 }
 

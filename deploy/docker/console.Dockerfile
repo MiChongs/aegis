@@ -17,23 +17,26 @@
 ARG NODE_VERSION=24-alpine
 
 # ── 公共底座 ──
+# bun 只管装依赖和跑脚本；next build / tsc / eslint 的 bin 都以 node 为解释器，
+# 运行时也是 node，所以底座仍是 node 镜像，bun 装在它上面。
 FROM node:${NODE_VERSION} AS base
-# pnpm 版本的唯一事实源是 package.json 的 packageManager 字段，corepack 直接读它。
-# 在这里再钉一个版本号就会有两处配置，而它们迟早对不上。
-ENV PNPM_HOME=/pnpm \
-    PATH=/pnpm:$PATH \
-    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
-    NEXT_TELEMETRY_DISABLED=1
-RUN corepack enable pnpm
+ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
+# bun 版本的唯一事实源是 package.json 的 packageManager 字段（"bun@x.y.z"）。
+# corepack 不认 bun，这里读出那个字段原样交给 npm 装；再钉一个 BUN_VERSION
+# 就会有两处配置，而它们迟早对不上。npm 的 bun 包按平台挑二进制，含 Alpine 的 musl 版。
+COPY package.json ./
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm install -g "$(node -p 'require("./package.json").packageManager')"
 
 # ── 依赖 ──
-# 单独一层：源码改动不触发重装。pnpm store 挂 cache mount，
-# 连 lockfile 变了也只下增量的那几个包。
+# 单独一层：源码改动不触发重装。bun 的下载缓存挂 cache mount，
+# 连 lockfile 变了也只下增量的那几个包。bunfig.toml 必须一起进来：
+# 平铺式布局（linker = "hoisted"）写在它里面。
 FROM base AS deps
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN --mount=type=cache,target=/pnpm/store,sharing=locked \
-    pnpm install --frozen-lockfile
+COPY package.json bun.lock bunfig.toml ./
+RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
+    bun install --frozen-lockfile
 
 # ── 构建 ──
 FROM base AS build
@@ -57,10 +60,10 @@ COPY . .
 # Turbopack 的文件系统缓存挂成 cache mount：重复构建镜像时编译阶段不必从零开始。
 # prebuild 里的 clean-next.mjs 刻意跳过 .next/cache，两者配合才有效。
 RUN --mount=type=cache,target=/app/.next/cache,sharing=locked \
-    pnpm build
+    bun run build
 
 # ── 运行 ──
-# 刻意不从 base 起：那一层装了 corepack / pnpm，而运行时镜像里不该有包管理器。
+# 刻意不从 base 起：那一层装了 bun，而运行时镜像里不该有包管理器。
 FROM node:${NODE_VERSION} AS runner
 WORKDIR /app
 # node 镜像自带 uid 1000 的 node 用户，直接用，不必再造一个账号多加一层。

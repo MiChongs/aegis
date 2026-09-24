@@ -6,7 +6,7 @@
 // 而它们要的只是"产物是干净的" —— 会残留旧内容的是 manifest / server / static /
 // dev 这些目录，缓存本身带版本标记，Next 自己会判失效。
 //
-// `pnpm clean` 是另一回事：手动清理的场景恰恰是怀疑缓存坏了，所以它走 --all。
+// `bun run clean` 是另一回事：手动清理的场景恰恰是怀疑缓存坏了，所以它走 --all。
 
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";

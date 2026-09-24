@@ -109,7 +109,7 @@ export function JsonEditor({
         )}
         style={{ height }}
       >
-        编辑器加载失败：请确认 /monaco/vs 已同步（pnpm monaco:sync）
+        编辑器加载失败：请确认 /monaco/vs 已同步（bun run monaco:sync）
       </div>
     );
   }

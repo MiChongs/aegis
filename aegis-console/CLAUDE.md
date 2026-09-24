@@ -32,7 +32,7 @@
 | screenfull | ^6.0.2（顶栏全屏开关；跨浏览器前缀差异交给它，见下方顶栏一节） |
 | auto-skeleton-react | ^1.0.5（自动骨架屏，按子树真实 DOM 量出骨架；**只经 `components/ui/auto-skeleton.tsx` 使用**，见下方骨架屏一节） |
 | ESLint | ^9.39.5 |
-| pnpm | 11.21.0 |
+| bun | 1.4.1（包管理与脚本运行；运行时仍是 Node，见下方「包管理：bun」） |
 
 ### shadcn/ui 组件与项目扩展
 
@@ -51,7 +51,7 @@
 `auto-skeleton`、`brand-icon`、`country-flag`、`data-state`、`error-boundary`、`image-dropzone`、`image-lightbox`、
 `json-viewer`、`rich-editor`、`section-heading`、`surface-card`、`toast-detail`、`virtual-list`。
 
-补装组件用 `pnpm dlx shadcn@latest add <name>`，**永远不要带 `--overwrite`** ——
+补装组件用 `bunx shadcn@latest add <name>`，**永远不要带 `--overwrite`** ——
 上表四项扩展会被一次性抹掉，而覆盖是静默的。CLI 对已存在且内容一致的文件会自己跳过。
 
 > `ui/` 里不留没有任何页面用到的组件。官方注册表有 63 个 UI 项，装进来的判据是
@@ -63,7 +63,7 @@
 ### TypeScript 7 / 6 并存（side-by-side）
 
 TypeScript 7 是 Go 重写的编译器（tsgo），**不再提供 JS 版的 compiler API**，而 `typescript-eslint@8.66.0`
-仍需要该 API，直接装 TS 7 会让它抛错、`pnpm lint` 完全不可用
+仍需要该 API，直接装 TS 7 会让它抛错、`bun run lint` 完全不可用
 （见 [typescript-eslint#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940)）。
 
 因此采用 TS 官方的 side-by-side 方案，靠 npm alias 把「包名」和「二进制」分开路由：
@@ -77,8 +77,8 @@ TypeScript 7 是 Go 重写的编译器（tsgo），**不再提供 JS 版的 comp
 
 | 使用方 | 解析到 | 说明 |
 |---|---|---|
-| `pnpm typecheck`（`tsc --noEmit`） | **TS 7.0.2** | 权威类型校验，`pnpm build` 的第一步就是它 |
-| `pnpm typecheck:ts6`（`tsc6 --noEmit`） | TS 6.0.2 | 对照校验 |
+| `bun run typecheck`（`tsc --noEmit`） | **TS 7.0.2** | 权威类型校验，`bun run build` 的第一步就是它 |
+| `bun run typecheck:ts6`（`tsc6 --noEmit`） | TS 6.0.2 | 对照校验 |
 | `require("typescript")`（typescript-eslint） | TS 6.0.2 | 两个包的 bin 名不冲突（`tsc` / `tsc6`） |
 | `next build` 期类型检查 | **不做**（`typescript.ignoreBuildErrors`） | 见下 |
 
@@ -87,12 +87,12 @@ TypeScript 7 是 Go 重写的编译器（tsgo），**不再提供 JS 版的 comp
 留慢的那个没有意义。因此 `next.config.ts` 里 `typescript.ignoreBuildErrors: true`，
 把这道关口前移成 `build` 脚本的第一步 `tsc --noEmit`：类型不过一样构建不出来，
 而且报错来得更早（不用等 Turbopack 编译完）。**改 `build` 脚本时不要把它去掉** ——
-`console-ci.yml` 里那一步 `pnpm typecheck` 是**故意**与它重复的（闸门不该依赖 build
-脚本怎么写），但本地开发只跑 `pnpm build` 的人就此失去全部类型检查。
+`console-ci.yml` 里那一步 `bun run typecheck` 是**故意**与它重复的（闸门不该依赖 build
+脚本怎么写），但本地开发只跑 `bun run build` 的人就此失去全部类型检查。
 
 **`next.config.ts` 中的 `experimental.useTypeScriptCli: false` 同样不可删除**：Next 16.3 该项默认为 `true`，
 CLI 模式会去找 `typescript/bin/tsc`，而 TS 6 兼容包只提供 `bin/tsc6`，Next 会误判「typescript 未安装」
-并自动执行 `pnpm install --save-dev typescript`，把上面的 alias 覆盖掉。
+并自动用当前包管理器装一份 `typescript`，把上面的 alias 覆盖掉。
 `ignoreBuildErrors` 只是不做检查，Next 仍会探测这个包，所以两项要同时在。
 
 > 待 typescript-eslint 支持 TS ≥7.1 后，可移除 `@typescript/native` 别名、把 `typescript` 直接指向 7.x，
@@ -104,8 +104,8 @@ CLI 模式会去找 `typescript/bin/tsc`，而 TS 6 兼容包只提供 `bin/tsc6
   `eslint-plugin-react`(≤7.37.5)、`eslint-plugin-jsx-a11y`(6.10.2)、`eslint-plugin-import`(2.32.0)
   peer 上限均为 `^9`，实测 ESLint 10 下 lint 直接崩溃（`scopeManager.addGlobals is not a function`）。
 
-> 本目录存在独立的 `pnpm-workspace.yaml`：上级 `userSystem/` 是旧 Node.js 系统的 workspace 根，
-> 缺少该文件会导致 pnpm 把依赖装到上级目录。请勿删除。
+> 原先本目录有一份 `pnpm-workspace.yaml`，用来挡住上级 `userSystem/` 那个旧 Node.js 系统的
+> pnpm workspace 根。那个根已经不在了，迁到 bun 时这份文件随 pnpm 一起删除。
 
 ## 目录结构
 
@@ -194,7 +194,7 @@ src/
 | `brand/home/*-section.tsx` | 各分区，只排版不写文案 |
 | `brand/home/sponsors-section.tsx` | 赞助商跑马灯（`kibo-ui/marquee`，两行反向 + 渐变边缘） |
 | `brand/sponsors/brand-logo.tsx` | 品牌标识渲染：图形标 + 字标，尺寸由字号决定，颜色走 `currentColor` |
-| `brand/sponsors/brand-logos.generated.ts` | **生成产物**，由 `pnpm logos:sync` 从 `@lobehub/icons-static-svg` 抽出 |
+| `brand/sponsors/brand-logos.generated.ts` | **生成产物**，由 `bun run logos:sync` 从 `@lobehub/icons-static-svg` 抽出 |
 | `brand/public-header.tsx` | 公开顶栏（首页与状态页共用），`NavigationMenu` + 主题开关 + 移动端抽屉 |
 | `brand/site-footer.tsx` | 公开页脚（三栏导航 + 版权），法律条款入口在这里 |
 | `brand/public-entry-actions.tsx` | 「进控制台 / 次操作」一对入口 |
@@ -275,7 +275,7 @@ src/
 |---|---|
 | 跑马灯 | shadcn 注册表 `@kibo-ui/marquee`（底层 `react-fast-marquee`，`autoFill` 自动按容器宽度补足份数），三行逐行反向、行速互不相同 |
 | 边缘处理 | `MarqueeFade` + 单层 arbitrary `mask-image` |
-| 品牌标识 | `@lobehub/icons-static-svg`（零依赖 SVG 资源包）经 `pnpm logos:sync` 抽成内联标记 |
+| 品牌标识 | `@lobehub/icons-static-svg`（零依赖 SVG 资源包）经 `bun run logos:sync` 抽成内联标记 |
 | 单条目 | shadcn `Item` + `Tooltip`（品牌名 + 领域，已内置适配的另说明它在 Aegis 里承担什么） |
 
 五条约束，每一条都是踩过的坑：
@@ -383,14 +383,38 @@ components/developers/
 
 ```bash
 cd aegis-console
-pnpm dev          # 开发服务器（自动清理上次产物，保留编译缓存）
-pnpm build        # 生产构建 = tsc --noEmit && next build
-pnpm start        # 生产启动
-pnpm typecheck    # tsc --noEmit
-pnpm lint         # ESLint
-pnpm test         # node --test（启动期脚本 + 底图供应商目录与坐标基准）
-pnpm clean        # 清理 .next，连编译缓存一起（怀疑缓存坏了时用这个）
+bun install           # 装依赖（按 bun.lock；CI 与镜像里是 bun install --frozen-lockfile）
+bun run dev           # 开发服务器（自动清理上次产物，保留编译缓存）
+bun run build         # 生产构建 = tsc --noEmit && next build
+bun run start         # 生产启动
+bun run typecheck     # tsc --noEmit
+bun run lint          # ESLint
+bun run test          # node --test（底图供应商目录与坐标基准）
+bun run clean         # 清理 .next，连编译缓存一起（怀疑缓存坏了时用这个）
 ```
+
+### 包管理：bun（运行时仍是 Node）
+
+bun 只负责**装依赖和跑脚本**。`next`、`tsc`、`eslint` 的 bin 都以 node 为解释器，
+`bun run` 遵从这个 shebang，所以 dev / build / start 实际仍跑在 Node 上，镜像的运行阶段
+也是 `node server.js`。不要给脚本加 `--bun` 让 Next 跑在 bun 运行时上，那是另一件事。
+
+| 文件 | 管什么 |
+|---|---|
+| `package.json` 的 `packageManager` | bun 版本的**唯一事实源**：CI（setup-bun）与镜像（npm 装）都读它 |
+| `bun.lock` | 文本锁文件，要提交。由 `pnpm-lock.yaml` 迁移而来，解析出的 1051 个包版本逐一相同 |
+| `bunfig.toml` | 平铺式 `node_modules`（`linker = "hoisted"`）+ 新版本冷静期（`minimumReleaseAge`，一天） |
+| `package.json` 的 `trustedDependencies` | 允许跑 postinstall 的依赖。bun 默认只信任自带白名单，其余的安装脚本**静默跳过** |
+
+四条容易踩的：
+
+1. **`bun run test`，不是 `bun test`。** 后者是 bun 自带的测试运行器，会绕开 `test` 脚本、
+   用 bun 的语义去跑 `*.test.mjs`；这里的测试写的是 `node:test`。
+2. **新增带安装脚本的依赖要看一眼 `bun pm untrusted`。** 被跳过不会报错，
+   要放行就加进 `trustedDependencies`（现在只有 `unrs-resolver`，eslint-config-next 的原生解析器）。
+3. **补装 shadcn 组件用 `bunx shadcn@latest add <name>`**，同样永远不带 `--overwrite`。
+4. **Zeabur 的 zbpack 不读 `packageManager` 里的版本号**：它从这个字段认出 bun，
+   但装的是 `bun@latest`，再跑 `bun install`（不带 `--frozen-lockfile`）。版本以 CI 与镜像为准。
 
 ### 构建缓存：`.next/cache` 不要删
 
@@ -399,16 +423,15 @@ pnpm clean        # 清理 .next，连编译缓存一起（怀疑缓存坏了时
 连它一起删的代价实测是编译阶段 **2.7s → 10.8s**，而清理本来只是想要一份干净的产物，
 残留旧内容的是 `server` / `static` / `dev` 那几个目录，缓存自己带版本标记、Next 会判失效。
 
-`pnpm clean` 走 `--all`，连缓存一起删：手动清理的场景恰恰是怀疑缓存坏了。
+`bun run clean` 走 `--all`，连缓存一起删：手动清理的场景恰恰是怀疑缓存坏了。
 
 `next build` 会把各阶段耗时逐行打出来（编译 / 静态生成），`tsc` 那一步单独计时即可。
 构建变慢时先看是哪一段涨的，再决定查什么 —— 缓存被清掉表现为编译阶段成倍变长。
 
 ### `turbopack.root` 只能指本目录
 
-`pnpm-lock.yaml` 与 `pnpm-workspace.yaml` 都在 `aegis-console/` 下（原因见
-`pnpm-workspace.yaml` 里的说明），所以 `next.config.ts` 里的 root 就是
-`import.meta.dirname`。曾经写成 `../../`（**仓库之外**的 `userSystem/`），
+`package.json`、`bun.lock` 与 `bunfig.toml` 都在 `aegis-console/` 下，这里就是依赖树的根，
+所以 `next.config.ts` 里的 root 就是 `import.meta.dirname`。曾经写成 `../../`（**仓库之外**的 `userSystem/`），
 在容器里那个相对路径会算成 `/` —— 等于告诉 Turbopack「整个文件系统都是项目」。
 
 ## 容器镜像（deploy/docker/console.Dockerfile）
@@ -1035,7 +1058,7 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 | `lib/geo/datum.ts` | WGS-84 ⇄ GCJ-02 转换与中国境内判定 |
 | `components/maps/map-provider-picker.tsx` | 选择器：自动档 + 按大区分组 + 缺密钥说明 |
 | `components/maps/maplibre-map.tsx` | 底座：矢量底衬、在线瓦片装卸、纠偏闸门、失败回退、版权署名 |
-| `scripts/map-providers.test.mjs` | 语言规则、供应商解析、坐标基准与目录完整性由 `pnpm test` 钉住 |
+| `scripts/map-providers.test.mjs` | 语言规则、供应商解析、坐标基准与目录完整性由 `bun run test` 钉住 |
 
 13 家分三档：**离线**（本地矢量简图）、**全球**（CARTO / OSM / Esri 灰底 / Esri 卫星 /
 OpenTopoMap / MapTiler✱ / Stadia✱）、**中国大陆**（高德 / 高德卫星 / 腾讯 / 天地图✱ /
@@ -1259,7 +1282,7 @@ CSS 侧（`globals.css` 末段）只补 Monaco 选项表达不了的三件事，
 ## Monaco 编辑器（JsonViewer / 远程函数脚本 / 插件 Expr）
 
 Monaco 产物**自托管**在 `public/monaco/vs`，由 `scripts/sync-monaco-assets.mjs`
-从 `node_modules/monaco-editor` 同步（`predev` / `prebuild` 自动执行，也可 `pnpm monaco:sync`）。
+从 `node_modules/monaco-editor` 同步（`predev` / `prebuild` 自动执行，也可 `bun run monaco:sync`）。
 以下三条都是踩过坑之后的硬约束，改动前务必读完：
 
 1. **加载入口只有 `src/app/layout.tsx` `<head>` 里的那段内联引导脚本**

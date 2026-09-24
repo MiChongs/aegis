@@ -1,6 +1,6 @@
 // 本文件由 scripts/sync-brand-logos.mjs 生成，请勿手工编辑。
 // 数据源：@lobehub/icons-static-svg@1.94.0（商标归各自所有者所有）
-// 重新生成：pnpm logos:sync
+// 重新生成：bun run logos:sync
 
 export type BrandGlyph = {
   viewBox: string;

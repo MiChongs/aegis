@@ -486,9 +486,9 @@ go run ./cmd/server                                        # API + Worker
 
 ```bash
 cd aegis-console
-pnpm install
-pnpm dev        # 开发服务器，默认 3000，/api 同源反代到后端
-pnpm build      # 生产构建 = tsc --noEmit && next build
+bun install
+bun run dev         # 开发服务器，默认 3000，/api 同源反代到后端
+bun run build       # 生产构建 = tsc --noEmit && next build
 ```
 
 `aegis-console/.env.local` 需要 `NEXT_PUBLIC_API_BASE_URL`；容器构建时后端地址是
@@ -643,11 +643,11 @@ Go 侧不再有手写 HTML 文档页。OpenAPI 由 `kin-openapi` 从**运行时�
 ## 测试与 CI
 
 ```bash
-go test ./...                                                   # 后端
-cd aegis-console && pnpm typecheck && pnpm build && pnpm test   # 前端
+go test ./...                                                            # 后端
+cd aegis-console && bun run typecheck && bun run build && bun run test   # 前端
 ```
 
-前端全量 `pnpm lint` 目前仍有存量告警，因此 CI 只卡**本次改动的文件**：
+前端全量 `bun run lint` 目前仍有存量告警，因此 CI 只卡**本次改动的文件**：
 新代码进不来带病的，存量按自己的节奏清。
 
 GitHub Actions 当前执行：
@@ -655,7 +655,7 @@ GitHub Actions 当前执行：
 | 工作流 | 检查 |
 | --- | --- |
 | [`go-ci.yml`](.github/workflows/go-ci.yml) | `go test ./...`；`sqlc vet` + `sqlc diff`（生成代码是否与 schema 一致）；`docsgen -check`（请求模型映射表是否过期） |
-| [`console-ci.yml`](.github/workflows/console-ci.yml) | `pnpm typecheck`、对**本次改动文件**的 ESLint、`pnpm build` |
+| [`console-ci.yml`](.github/workflows/console-ci.yml) | `bun run typecheck`、对**本次改动文件**的 ESLint、`bun run build` |
 
 若干关键不变量由测试直接钉住，改动时它们会先红：接口目录与真实路由双向一致、
 `/api/admin/platform/*` 恒按全局作用域鉴权、组织路由注册顺序不产生前缀树冲突、

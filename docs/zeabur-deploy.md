@@ -21,9 +21,11 @@
 
 1. `.dockerignore` 排除 `aegis-console`、`node_modules`、`.next`——
    Dockerfile 里的 `COPY . .` 因此看不到前端源码。
-2. 后端 Dockerfile 只有 Go 构建阶段，没有任何 `npm` / `pnpm` 调用。
+2. 后端 Dockerfile 只有 Go 构建阶段，没有任何 `npm` / `bun` 调用。
 
-前端由 `aegis-console-git` 独立构建，产物也独立。
+前端由 `aegis-console-git` 独立构建，产物也独立。它的包管理是 bun：zbpack 从
+`package.json` 的 `packageManager` 字段认出来，但装的是 `bun@latest` 而不是那里钉的版本，
+然后跑 `bun install` 与 `bun run build`；运行时仍是 Node。
 
 ## 客户端 IP：不用配
 

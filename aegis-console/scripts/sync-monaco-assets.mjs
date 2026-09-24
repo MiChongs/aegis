@@ -24,7 +24,7 @@ const targetDir = path.join(rootDir, "public", "monaco", "vs");
 const stampFile = path.join(rootDir, "node_modules", ".cache", "monaco-sync-version");
 
 if (!fs.existsSync(sourceDir)) {
-  console.error(`monaco assets not found: ${sourceDir}\n请先执行 pnpm install`);
+  console.error(`monaco assets not found: ${sourceDir}\n请先执行 bun install`);
   process.exit(1);
 }
 
