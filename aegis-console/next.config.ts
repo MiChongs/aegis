@@ -52,24 +52,10 @@ const nextConfig: NextConfig = {
   // ── 容器镜像用的自包含产物 ──
   // 只在 Docker 构建时开（NEXT_OUTPUT=standalone）：它要对整棵依赖树做文件追踪，
   // 平时本地 build 用不上这份产物，白等这一段没有意义。
-  //
-  // 追踪是从应用代码出发的，因此**够不到客户端 IP 预载那两个脚本**（没有任何页面
-  // 引用它们，它们由 node --import 装载），也够不到它们依赖的 ipaddr.js。
-  // 漏掉的表现极其隐蔽：容器照常起、页面照常开，只是全站请求的客户端 IP 都变成
-  // 控制台自己的地址，限流 / 封禁 / 地理风控 / 审计集体失准，功能上完全看不出来。
   ...(process.env.NEXT_OUTPUT === "standalone"
     ? {
         output: "standalone" as const,
-        outputFileTracingRoot: projectRoot,
-        outputFileTracingIncludes: {
-          // 注意 ipaddr.js 那一条：outputFileTracingIncludes 只**复制**列出的文件，
-          // 不会再去追它们自己的 import，所以依赖得手写。
-          "/**": [
-            "./scripts/forwarded-headers.mjs",
-            "./scripts/forwarded-headers-preload.mjs",
-            "./node_modules/ipaddr.js/**"
-          ]
-        }
+        outputFileTracingRoot: projectRoot
       }
     : {}),
   // ── 类型检查交给 `tsc --noEmit`（TS 7），不在 build 里做 ──

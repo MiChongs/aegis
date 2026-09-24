@@ -2,7 +2,7 @@
 
 import { metrics } from "@/components/brand/home/home-content";
 import { Reveal, SECTION_CONTAINER } from "@/components/brand/home/section";
-import { CountUp, Grain, Pattern } from "@/components/brand/home/visuals";
+import { CountUp, Pattern } from "@/components/brand/home/visuals";
 
 /**
  * 数字带。
@@ -21,7 +21,6 @@ export function MetricsSection() {
         variant="dots"
         mask="linear-gradient(90deg, transparent, #000 20%, #000 80%, transparent)"
       />
-      <Grain />
 
       <div className={`${SECTION_CONTAINER} relative`}>
         {/* 刻意不用 divide-x：多列网格上它按 DOM 顺序给「除第一个以外」全部

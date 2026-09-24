@@ -38,9 +38,8 @@ import { cn } from "@/lib/utils";
  *    深色档里它也比 `background` 亮一档，两边都成立。
  *    带子还顺带解决了边缘渐变的取色：`MarqueeFade` 的底色必须与身下的底色**完全**一致，
  *    而半透明的 `muted/30` 合成出来的颜色，用任何单一色值都对不上。
- * 3. **边缘处理是「渐变 + 模糊」两层。** 只盖一层同色渐变的话，logo 会在完全清晰的
- *    状态下突然被色块吞掉；加了 backdrop 模糊之后是先虚化再淡出。模糊本身也必须
- *    跟着 mask 一起衰减，不衰减就会在渐变结束的位置留下一条"清晰度突变"的竖线。
+ * 3. **边缘只有实色渐变，不叠 backdrop 模糊。** 模糊压在一条始终在滚动的
+ *    跑马灯上，每一帧都要对身后重新采样，首页会因此持续掉帧。
  * 4. **三行逐行反向。** 同向多行会被读成一整块在平移；反向才看得出这是一份在滚动的名单。
  *    行速也各不相同，速度一致的话反向的两行会保持固定相对位移，同样露出"整块"的破绽。
  *
@@ -49,14 +48,14 @@ import { cn } from "@/lib/utils";
  */
 
 /**
- * 两侧边缘：实色打底 + backdrop 模糊，整体由 mask 线性衰减到全透明。
+ * 两侧边缘：实色打底，由 mask 线性衰减到全透明。
  *
  * 遮罩写成 arbitrary property 而不是 Tailwind 的 `mask-r-from-*`：后者会展开成
  * 六层 `mask-image` 再用 `mask-composite: intersect` 合成，在 Chromium 上合成结果
  * 恒为全透明，整个边缘层直接消失（表现是"渐变没生效"，而不是报错）。
  * 单层遮罩没有合成这一步。
  */
-const FADE = "w-12 bg-none bg-card backdrop-blur-[3px] sm:w-28 lg:w-44";
+const FADE = "w-12 bg-none bg-card sm:w-28 lg:w-44";
 /** 前 30% 保持不透明再开始衰减：纯线性的话最边上那个 logo 仍有一半可读，像是被裁掉而不是淡出 */
 const FADE_MASK = {
   left: "[mask-image:linear-gradient(to_right,#000_30%,transparent)]",

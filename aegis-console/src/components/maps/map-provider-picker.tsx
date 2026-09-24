@@ -107,7 +107,7 @@ export function MapProviderPicker() {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="flex items-center gap-1.5 rounded-lg border border-border bg-card/95 px-2 py-1 text-[11px] font-medium backdrop-blur-sm transition-colors hover:bg-muted"
+          className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2 py-1 text-[11px] font-medium transition-colors hover:bg-muted"
           title="切换底图供应商"
         >
           <Layers className="size-3" />

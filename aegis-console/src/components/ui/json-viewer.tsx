@@ -354,9 +354,9 @@ export function JsonViewer({
                 forceMount
               >
                 <m.div
-                  initial={{ opacity: 0, backdropFilter: "blur(0px)" }}
-                  animate={{ opacity: 1, backdropFilter: "blur(6px)" }}
-                  exit={{ opacity: 0, backdropFilter: "blur(0px)" }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
                   transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                   className="fixed inset-0 z-[300] bg-black/55 dark:bg-black/70"
                 />

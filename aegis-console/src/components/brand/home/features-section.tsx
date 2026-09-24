@@ -11,7 +11,7 @@ import {
 } from "@/components/brand/home/feature-visuals";
 import { features, type HomeFeatureVisual } from "@/components/brand/home/home-content";
 import { Reveal, Section, SectionHeading } from "@/components/brand/home/section";
-import { Grain, Pattern, SpotlightCard } from "@/components/brand/home/visuals";
+import { Pattern, SpotlightCard } from "@/components/brand/home/visuals";
 import { cn } from "@/lib/utils";
 
 const VISUALS: Record<HomeFeatureVisual, () => React.ReactElement> = {
@@ -40,7 +40,6 @@ export function FeaturesSection() {
         variant="dots"
         mask="radial-gradient(ellipse 60% 50% at 50% 40%, #000, transparent 78%)"
       />
-      <Grain />
 
       <div className="relative">
         <SectionHeading

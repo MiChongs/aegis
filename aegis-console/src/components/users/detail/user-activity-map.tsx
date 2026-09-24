@@ -696,21 +696,21 @@ export function UserActivityMap({ appKey, userId }: { appKey: string; userId: nu
       <BaseMap className="h-[380px] xl:h-[440px]" zoom={1.5} onMapReady={handleMapReady}>
         {isEmpty && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-            <span className="rounded-full border border-border bg-card/95 px-4 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
+            <span className="rounded-full border border-border bg-card px-4 py-1.5 text-xs text-muted-foreground">
               {totalEvents > 0 ? "这些活动都没有可用坐标" : "没有可展示的活动"}
             </span>
           </div>
         )}
         {loginsQuery.isFetching && !loading && (
           <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
-            <span className="flex items-center gap-1.5 rounded-full border border-border bg-card/95 px-3 py-1 text-[11px] text-muted-foreground backdrop-blur-sm">
+            <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-[11px] text-muted-foreground">
               <Loader2 className="size-3 animate-spin" />
               正在刷新
             </span>
           </div>
         )}
         {/* 图例 */}
-        <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg border border-border bg-card/95 px-2.5 py-1.5 backdrop-blur-sm">
+        <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg border border-border bg-card px-2.5 py-1.5">
           {DOMINANCE.map((s) => (
             <span key={s} className="flex items-center gap-1 text-[10.5px] text-muted-foreground">
               <span className="size-2 rounded-full" style={{ backgroundColor: STATUS_META[s].css }} />

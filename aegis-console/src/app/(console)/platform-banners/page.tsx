@@ -317,7 +317,7 @@ function PlatformBannersInner() {
             </div>
 
             {/* 底部操作条，sticky 固定；移动端端按钮铺满 */}
-            <div className="flex flex-col-reverse gap-2 border-t bg-background/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:flex-row sm:items-center sm:justify-end">
+            <div className="flex flex-col-reverse gap-2 border-t bg-background px-6 py-3 sm:flex-row sm:items-center sm:justify-end">
               <Button type="button" variant="outline" onClick={() => setSheetOpen(false)} className="sm:min-w-[88px]">
                 取消
               </Button>

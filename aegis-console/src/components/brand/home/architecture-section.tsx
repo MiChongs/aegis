@@ -2,7 +2,7 @@
 
 import { archLayers } from "@/components/brand/home/home-content";
 import { Reveal, Section, SectionHeading } from "@/components/brand/home/section";
-import { Grain, Pattern, SpotlightCard } from "@/components/brand/home/visuals";
+import { Pattern, SpotlightCard } from "@/components/brand/home/visuals";
 
 /**
  * 架构分层。
@@ -21,7 +21,6 @@ export function ArchitectureSection() {
         size={72}
         mask="radial-gradient(ellipse 70% 60% at 50% 50%, #000, transparent 80%)"
       />
-      <Grain />
 
       <div className="relative grid gap-10 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:gap-16">
         <div className="lg:sticky lg:top-24 lg:self-start">

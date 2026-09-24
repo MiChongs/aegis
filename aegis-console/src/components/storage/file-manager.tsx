@@ -625,7 +625,7 @@ function GridView({
                 checked={isSelected}
                 onCheckedChange={() => onToggle(object.id)}
                 aria-label={`选择 ${object.fileName || object.objectKey}`}
-                className="bg-background/90 backdrop-blur"
+                className="bg-background"
               />
             </div>
             <button type="button" onClick={() => onOpen(object)} className="block w-full text-left">

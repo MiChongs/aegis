@@ -72,7 +72,7 @@ export function PublicHeader({ current, navLabel = "公开导航" }: PublicHeade
   const authenticated = hydrated && Boolean(accessToken);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // 顶到最上面时栏是透明的，让首屏从整块画面开始；往下滚一点才落下毛玻璃
+  // 顶到最上面时栏是透明的，让首屏从整块画面开始；往下滚一点才落下底色
   // 和分隔线。布尔值只在跨过阈值时翻转 —— 每一帧都 setState 会把整棵
   // 导航树重渲一次，与控制台顶栏同一条约束。
   const { scrollY } = useScroll();
@@ -87,7 +87,7 @@ export function PublicHeader({ current, navLabel = "公开导航" }: PublicHeade
       className={cn(
         "sticky top-0 z-50 w-full border-b transition-colors duration-200",
         scrolled
-          ? "border-border bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/70"
+          ? "border-border bg-background"
           : "border-transparent bg-transparent"
       )}
     >

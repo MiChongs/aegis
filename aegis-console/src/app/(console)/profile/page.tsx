@@ -13,8 +13,8 @@ import {
   useUploadAdminAvatarMutation
 } from "@/lib/admin-hooks";
 import { useOperatorIdentity } from "@/lib/operator";
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import type { AdminAccount } from "@/lib/api/types";
+import { AutoSkeleton } from "@/components/ui/auto-skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { ProfileAccessPanel } from "@/components/profile/profile-access-panel";
@@ -30,6 +30,23 @@ import {
   validateForm,
   type ProfileForm
 } from "@/components/profile/profile-shared";
+
+/**
+ * 加载期间给骨架量尺寸用的占位账号。
+ *
+ * 骨架照着真实布局量出来，这份数据只负责把布局撑开：字段取接近真实值的长度，
+ * 量出来的文字条才不会过长或过短。它在加载期间被渲染，但始终不可见
+ * （见 components/ui/auto-skeleton.tsx）。
+ */
+const PLACEHOLDER_ACCOUNT: AdminAccount = {
+  id: 0,
+  account: "administrator",
+  displayName: "Administrator",
+  status: "active",
+  authSource: "password",
+  createdAt: "2026-01-01T00:00:00Z",
+  lastLoginAt: "2026-01-01T00:00:00Z"
+};
 
 export default function ProfilePage() {
   const profileQuery = useAdminProfileQuery();
@@ -93,59 +110,67 @@ export default function ProfilePage() {
     [uploadMutation]
   );
 
-  if (profileQuery.isLoading || !account) return <ProfileSkeleton />;
+  // 加载期间照常渲染真实布局（喂占位账号），骨架由 AutoSkeleton 照着它量出来。
+  // 不再手写一份「长得像」的骨架：那份和真实布局迟早对不上。
+  const loading = profileQuery.isLoading || !account;
+  const shown = account ?? PLACEHOLDER_ACCOUNT;
 
   return (
     <div className="page-stack pb-4">
       <SectionHeading eyebrow="控制台" title="个人资料" />
 
-      <ProfileIdentityCard
-        account={account}
-        avatarSrc={operator.avatarSrc}
-        uploading={uploadMutation.isPending}
-        onUpload={handleUpload}
-      />
-
-      <Tabs defaultValue="profile" className="gap-4">
-        <TabsList>
-          <TabsTrigger value="profile" className="gap-1.5 text-xs">
-            <IdCard className="size-3.5" />
-            资料
-            {dirty ? <span className="size-1.5 rounded-full bg-amber-500" aria-label="有未保存改动" /> : null}
-          </TabsTrigger>
-          <TabsTrigger value="access" className="gap-1.5 text-xs">
-            <KeyRound className="size-3.5" />
-            角色与权限
-          </TabsTrigger>
-          <TabsTrigger value="account" className="gap-1.5 text-xs">
-            <ShieldCheck className="size-3.5" />
-            账户与会话
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="profile" className="space-y-4">
-          <BasicInfoPanel form={form} issues={issues} patch={patch} />
-          <ContactsPanel form={form} issues={issues} patch={patch} />
-        </TabsContent>
-
-        <TabsContent value="access">
-          <ProfileAccessPanel
-            isSuperAdmin={Boolean(account.isSuperAdmin)}
-            assignments={assignments}
-            roleTree={roleTreeQuery.data}
-            loading={roleTreeQuery.isLoading}
+      <AutoSkeleton loading={loading}>
+        {/* 间距要写在包进来的这一层：page-stack 的 gap 只作用于它的直接子元素 */}
+        <div className="flex flex-col gap-5">
+          <ProfileIdentityCard
+            account={shown}
+            avatarSrc={operator.avatarSrc}
+            uploading={uploadMutation.isPending}
+            onUpload={handleUpload}
           />
-        </TabsContent>
 
-        <TabsContent value="account">
-          <ProfileAccountPanel
-            account={account}
-            session={sessionQuery.data}
-            sessionLoading={sessionQuery.isLoading}
-            loginAvailability={profileQuery.data?.loginAvailability}
-          />
-        </TabsContent>
-      </Tabs>
+          <Tabs defaultValue="profile" className="gap-4">
+            <TabsList>
+              <TabsTrigger value="profile" className="gap-1.5 text-xs">
+                <IdCard className="size-3.5" />
+                资料
+                {dirty ? <span className="size-1.5 rounded-full bg-amber-500" aria-label="有未保存改动" /> : null}
+              </TabsTrigger>
+              <TabsTrigger value="access" className="gap-1.5 text-xs">
+                <KeyRound className="size-3.5" />
+                角色与权限
+              </TabsTrigger>
+              <TabsTrigger value="account" className="gap-1.5 text-xs">
+                <ShieldCheck className="size-3.5" />
+                账户与会话
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="profile" className="space-y-4">
+              <BasicInfoPanel form={form} issues={issues} patch={patch} />
+              <ContactsPanel form={form} issues={issues} patch={patch} />
+            </TabsContent>
+
+            <TabsContent value="access">
+              <ProfileAccessPanel
+                isSuperAdmin={Boolean(shown.isSuperAdmin)}
+                assignments={assignments}
+                roleTree={roleTreeQuery.data}
+                loading={roleTreeQuery.isLoading}
+              />
+            </TabsContent>
+
+            <TabsContent value="account">
+              <ProfileAccountPanel
+                account={shown}
+                session={sessionQuery.data}
+                sessionLoading={sessionQuery.isLoading}
+                loginAvailability={profileQuery.data?.loginAvailability}
+              />
+            </TabsContent>
+          </Tabs>
+        </div>
+      </AutoSkeleton>
 
       <ProfileSaveBar
         visible={dirty}
@@ -155,41 +180,6 @@ export default function ProfilePage() {
         onSave={handleSave}
         onDiscard={() => setDraft(null)}
       />
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  骨架屏：按真实布局排，避免加载完成时整页跳一下                          */
-/* ------------------------------------------------------------------ */
-
-function ProfileSkeleton() {
-  return (
-    <div className="page-stack">
-      <SectionHeading eyebrow="控制台" title="个人资料" />
-      <Card className="py-0">
-        <CardContent className="flex items-center gap-5 p-5">
-          <Skeleton className="size-20 shrink-0 rounded-2xl" />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-6 w-48" />
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-4 w-72" />
-          </div>
-        </CardContent>
-      </Card>
-      <Skeleton className="h-9 w-72 rounded-lg" />
-      <Card className="py-0">
-        <CardContent className="space-y-4 p-5">
-          <Skeleton className="h-5 w-24" />
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Skeleton className="h-14" />
-            <Skeleton className="h-14" />
-            <Skeleton className="h-14" />
-            <Skeleton className="h-14" />
-          </div>
-          <Skeleton className="h-20" />
-        </CardContent>
-      </Card>
     </div>
   );
 }

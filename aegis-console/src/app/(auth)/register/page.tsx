@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { copyrightNotice } from "@/components/brand/home/home-content";
 import { AuthMotionProvider } from "@/components/auth/auth-motion";
 import { LoginRedirectGuard } from "@/components/auth/login-redirect-guard";
 import { LoginThemeToggle } from "@/components/auth/login-theme-toggle";
@@ -32,7 +33,7 @@ export default function RegisterPage() {
           <RegisterForm />
 
           <p className="text-center text-[11px] leading-5 text-muted-foreground/60">
-            &copy; {new Date().getFullYear()} Aegis Identity Fabric
+            &copy; {new Date().getFullYear()} {copyrightNotice}
           </p>
         </div>
       </main>

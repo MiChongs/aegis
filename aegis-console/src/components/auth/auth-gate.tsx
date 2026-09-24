@@ -310,7 +310,7 @@ function AuthGateStage({
         aria-busy={busy}
         className={cn(
           "relative w-full max-w-[27rem] overflow-hidden rounded-xl border",
-          "bg-card/85 text-card-foreground backdrop-blur-xl",
+          "bg-card text-card-foreground",
           "shadow-[var(--shadow-medium)]",
         )}
       >

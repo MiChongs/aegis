@@ -49,7 +49,7 @@ export function ProfileSaveBar({
     <div className="sticky bottom-4 z-20 mx-auto w-full max-w-3xl animate-in fade-in-0 slide-in-from-bottom-2">
       <div
         className={cn(
-          "flex flex-wrap items-center gap-3 rounded-xl border bg-popover/95 px-4 py-3 shadow-lg backdrop-blur",
+          "flex flex-wrap items-center gap-3 rounded-xl border bg-popover px-4 py-3 shadow-lg",
           blocked && "border-destructive/40"
         )}
       >

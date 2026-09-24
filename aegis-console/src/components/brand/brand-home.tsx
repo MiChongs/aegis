@@ -10,7 +10,6 @@ import { FaqSection } from "@/components/brand/home/faq-section";
 import { FeaturesSection } from "@/components/brand/home/features-section";
 import { HeroSection } from "@/components/brand/home/hero-section";
 import { IntegrationSection } from "@/components/brand/home/integration-section";
-import { IntroOverlay } from "@/components/brand/home/intro-overlay";
 import { MetricsSection } from "@/components/brand/home/metrics-section";
 import { SponsorsSection } from "@/components/brand/home/sponsors-section";
 
@@ -43,10 +42,6 @@ import { SponsorsSection } from "@/components/brand/home/sponsors-section";
 export function BrandHome() {
   return (
     <LazyMotion features={domAnimation}>
-      {/* 冷开场盖在整页之上，页面内容始终在 DOM 里 ——
-          爬虫与读屏软件看到的是完整首页，不受这一层影响。 */}
-      <IntroOverlay />
-
       <div className="flex min-h-screen flex-col bg-background text-foreground">
         <PublicHeader current="home" navLabel="主页导航" />
 

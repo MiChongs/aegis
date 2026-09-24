@@ -351,7 +351,7 @@ export function WorkflowStudio() {
     : "workflow-designer-stage";
   const designerLayoutClass = isDesignerFullscreen
     ? [
-        "grid h-full min-h-0 gap-3 overflow-hidden rounded-[30px] border border-border/80 bg-background/95 p-3 shadow-[0_36px_120px_-40px_rgba(15,23,42,0.26)] backdrop-blur-xl dark:bg-background/88 dark:shadow-[0_36px_120px_-40px_rgba(2,6,23,0.84)]",
+        "grid h-full min-h-0 gap-3 overflow-hidden rounded-[30px] border border-border/80 bg-background p-3 shadow-[0_36px_120px_-40px_rgba(15,23,42,0.26)] dark:shadow-[0_36px_120px_-40px_rgba(2,6,23,0.84)]",
         showLeftPanel && showRightPanel
           ? "grid-cols-1 grid-rows-[auto_auto_auto] lg:grid-cols-[220px_minmax(0,2fr)_300px] lg:grid-rows-[auto_minmax(0,1fr)]"
           : showLeftPanel
@@ -770,7 +770,7 @@ export function WorkflowStudio() {
       </SurfaceCard>
 
       <div ref={designerViewportRef} className={designerViewportClass}>
-      {isDesignerFullscreen && !isNativeDesignerFullscreen ? <div className="fixed inset-0 z-40 bg-slate-950/45 backdrop-blur-sm dark:bg-slate-950/72" /> : null}
+      {isDesignerFullscreen && !isNativeDesignerFullscreen ? <div className="fixed inset-0 z-40 bg-slate-950/45 dark:bg-slate-950/72" /> : null}
 
       <section className={designerLayoutClass}>
         {isDesignerFullscreen ? (

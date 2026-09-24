@@ -44,7 +44,7 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b bg-background">
         <div className="mx-auto flex h-14 w-full max-w-[1400px] items-center gap-4 px-4 md:px-6">
           <Link href="/developers" className="flex shrink-0 items-center gap-2.5" aria-label="Aegis 开发者">
             <AegisMark className="size-5" />

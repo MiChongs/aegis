@@ -149,7 +149,7 @@ export function ImageDropzone({
             <div
               className={cn(
                 "absolute inset-0 flex items-center justify-center gap-2",
-                "bg-background/70 opacity-0 backdrop-blur-sm transition-opacity",
+                "bg-background/80 opacity-0 transition-opacity",
                 "group-hover:opacity-100 focus-within:opacity-100",
                 isDragActive && "opacity-100"
               )}

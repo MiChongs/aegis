@@ -5,7 +5,7 @@ import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { closing } from "@/components/brand/home/home-content";
 import { Reveal, Section } from "@/components/brand/home/section";
-import { Grain, Pattern } from "@/components/brand/home/visuals";
+import { Pattern } from "@/components/brand/home/visuals";
 import { useAuthStore } from "@/lib/auth-store";
 
 export function ClosingSection() {
@@ -15,7 +15,6 @@ export function ClosingSection() {
 
   return (
     <Section bordered className="relative overflow-hidden bg-muted/30">
-      <Grain />
 
       <Reveal>
         {/* home-beam-frame 让一段强调色沿边框跑一圈：整页到这里只剩一个动作，

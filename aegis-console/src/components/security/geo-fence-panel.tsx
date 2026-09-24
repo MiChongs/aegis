@@ -1030,7 +1030,7 @@ export function GeoFencePanel() {
         >
           <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-1.5">
             {drawMode === "idle" ? (
-              <div className="flex items-center gap-0.5 rounded-lg border border-border bg-card/95 p-0.5 backdrop-blur-sm">
+              <div className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5">
                 <button
                   type="button"
                   onClick={startPolygon}
@@ -1049,7 +1049,7 @@ export function GeoFencePanel() {
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-card/95 px-2.5 py-1.5 backdrop-blur-sm">
+              <div className="flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-card px-2.5 py-1.5">
                 <Spline className="size-3.5 text-indigo-500" />
                 <span className="text-[11px] font-medium text-foreground">{drawHint}</span>
                 {drawMode === "polygon" && (
@@ -1079,7 +1079,7 @@ export function GeoFencePanel() {
           </div>
 
           {/* 图例 */}
-          <div className="absolute bottom-3 right-3 z-10 flex items-center gap-2.5 rounded-lg border border-border bg-card/95 px-2.5 py-1.5 backdrop-blur-sm">
+          <div className="absolute bottom-3 right-3 z-10 flex items-center gap-2.5 rounded-lg border border-border bg-card px-2.5 py-1.5">
             {ALL_FENCE_MODES.map((mode) => (
               <span key={mode} className="flex items-center gap-1 text-[10.5px] text-muted-foreground">
                 <span className="size-2 rounded-sm" style={{ backgroundColor: FENCE_MODE_META[mode].color }} />

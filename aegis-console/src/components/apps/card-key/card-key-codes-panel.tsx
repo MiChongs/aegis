@@ -338,7 +338,7 @@ export function CardKeyCodesPanel({
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 16, opacity: 0 }}
             transition={{ duration: 0.16, ease: "easeOut" }}
-            className="sticky bottom-4 z-20 mx-auto flex w-fit max-w-full flex-wrap items-center gap-1.5 rounded-full border bg-popover/95 px-3 py-2 shadow-lg backdrop-blur"
+            className="sticky bottom-4 z-20 mx-auto flex w-fit max-w-full flex-wrap items-center gap-1.5 rounded-full border bg-popover px-3 py-2 shadow-lg"
           >
             <span className="px-1 text-xs tabular-nums text-muted-foreground">
               已选 <span className="font-semibold text-foreground">{selected.size}</span> 张

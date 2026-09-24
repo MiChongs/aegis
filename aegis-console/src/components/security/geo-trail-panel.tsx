@@ -452,7 +452,7 @@ export function GeoTrailPanel() {
           <BaseMap className="h-[440px] xl:h-[500px]" onMapReady={handleMapReady}>
             {isInitial && (
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-                <div className="rounded-xl border border-border bg-card/95 px-5 py-4 text-center backdrop-blur-sm">
+                <div className="rounded-xl border border-border bg-card px-5 py-4 text-center">
                   <Route className="mx-auto size-5 text-muted-foreground" />
                   <p className="mt-2 text-xs font-medium text-foreground">选择应用并输入用户 ID</p>
                   <p className="mt-0.5 text-[11px] text-muted-foreground">查询后即可回放该用户的登录轨迹</p>
@@ -461,7 +461,7 @@ export function GeoTrailPanel() {
             )}
             {trailQuery.isLoading && (
               <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
-                <span className="flex items-center gap-1.5 rounded-full border border-border bg-card/95 px-3 py-1 text-[11px] text-muted-foreground backdrop-blur-sm">
+                <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-[11px] text-muted-foreground">
                   <Loader2 className="size-3 animate-spin" />
                   正在加载轨迹...
                 </span>
@@ -469,7 +469,7 @@ export function GeoTrailPanel() {
             )}
             {isEmpty && (
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-                <span className="rounded-full border border-border bg-card/95 px-4 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
+                <span className="rounded-full border border-border bg-card px-4 py-1.5 text-xs text-muted-foreground">
                   {rawTotal > 0 ? "该用户的登录事件均无坐标信息" : "未找到该用户的登录轨迹"}
                 </span>
               </div>

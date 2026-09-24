@@ -153,7 +153,7 @@ export function ImageLightbox({
                   imageClassName,
                 )}
               />
-              <div className="pointer-events-none absolute right-3 top-3 inline-flex items-center gap-1 rounded-full border bg-background/90 px-2.5 py-1 text-[10px] font-medium text-muted-foreground backdrop-blur">
+              <div className="pointer-events-none absolute right-3 top-3 inline-flex items-center gap-1 rounded-full border bg-background px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
                 <ZoomIn className="size-3" />
                 预览
               </div>

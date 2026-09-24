@@ -195,7 +195,7 @@ docker build -f deploy/docker/console.Dockerfile \
   -t aegis-console aegis-console
 ```
 
-前端镜像的四条硬约束（漏一条都是「容器起得来但功能静默失准」）见
+前端镜像的两条硬约束（漏一条都是「容器起得来但功能静默失准」）见
 [aegis-console/CLAUDE.md](aegis-console/CLAUDE.md#容器镜像deploydockerconsoledockerfile)。
 
 ## 必填环境变量

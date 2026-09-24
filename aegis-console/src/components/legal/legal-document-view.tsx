@@ -68,7 +68,7 @@ export function LegalDocumentView({
     <LazyMotion features={domAnimation}>
       <div className="min-h-svh bg-background">
         {/* 顶栏：打印时隐藏 —— 打印出来的条款上不该有一排按钮 */}
-        <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur print:hidden">
+        <header className="sticky top-0 z-30 border-b bg-background print:hidden">
           <div className="mx-auto flex h-14 w-full max-w-4xl items-center gap-3 px-5 sm:px-8">
             <Link href="/" className="flex shrink-0 items-center gap-2" aria-label="Aegis">
               <AegisMark className="size-5 text-foreground" />

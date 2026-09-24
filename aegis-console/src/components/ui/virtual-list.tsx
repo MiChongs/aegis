@@ -270,7 +270,7 @@ export function VirtualList<T>({
                   ref={virtualizer.measureElement}
                   role="listitem"
                   className={cn(
-                    isActiveSticky && "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+                    isActiveSticky && "bg-background"
                   )}
                   style={style}
                 >

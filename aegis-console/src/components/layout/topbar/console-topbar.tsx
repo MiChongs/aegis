@@ -67,12 +67,10 @@ export function ConsoleTopbar({ pathname, onOpenPalette, onLogout }: ConsoleTopb
       data-scrolled={scrolled ? "true" : "false"}
       className={cn(
         "@container/topbar sticky top-0 z-30 h-12 shrink-0",
-        "border-b border-border/50 bg-background/70 backdrop-blur-xl backdrop-saturate-150",
-        "transition-[background-color,border-color,box-shadow] duration-200 ease-out",
-        "data-[scrolled=true]:border-border data-[scrolled=true]:bg-background/85",
-        "data-[scrolled=true]:shadow-[0_6px_20px_-18px_rgb(0_0_0/0.6)]",
-        // 不支持 backdrop-filter 时退回不透明底色，否则内容会从顶栏底下透出来
-        "supports-[backdrop-filter]:bg-background/70 supports-[backdrop-filter]:data-[scrolled=true]:bg-background/80"
+        "border-b border-border/50 bg-background",
+        "transition-[border-color,box-shadow] duration-200 ease-out",
+        "data-[scrolled=true]:border-border",
+        "data-[scrolled=true]:shadow-[0_6px_20px_-18px_rgb(0_0_0/0.6)]"
       )}
     >
       <div className="flex h-full items-center gap-1.5 px-3 lg:px-4">

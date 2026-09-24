@@ -954,7 +954,7 @@ function ChatBody({
           type="button"
           onClick={scrollToBottom}
           aria-label="回到底部"
-          className="absolute bottom-3 left-1/2 z-10 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border bg-background/95 text-muted-foreground shadow-md backdrop-blur transition-colors hover:text-foreground"
+          className="absolute bottom-3 left-1/2 z-10 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-md transition-colors hover:text-foreground"
         >
           <ArrowDown className="size-4" />
         </button>

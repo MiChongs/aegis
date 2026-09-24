@@ -30,6 +30,7 @@
 | cmdk | ^1.1.1（命令面板 `⌘K` 的底座，shadcn `command` 组件依赖它） |
 | pinyin-pro | ^3.28.2（命令面板的拼音检索，**动态 import 按需加载**，见下方侧边栏一节） |
 | screenfull | ^6.0.2（顶栏全屏开关；跨浏览器前缀差异交给它，见下方顶栏一节） |
+| auto-skeleton-react | ^1.0.5（自动骨架屏，按子树真实 DOM 量出骨架；**只经 `components/ui/auto-skeleton.tsx` 使用**，见下方骨架屏一节） |
 | ESLint | ^9.39.5 |
 | pnpm | 11.21.0 |
 
@@ -46,8 +47,8 @@
 | `breadcrumb` / `dialog` / `sheet` | `sr-only` 文案中文化（"更多" / "关闭"） | 无障碍文案本地化 |
 | `resizable.tsx` | 按 **react-resizable-panels v4** 手写（`Group` / `Panel` / `Separator` / `orientation` / `defaultLayout`） | 官方注册表那份仍是 v2/v3 的 `PanelGroup` / `PanelResizeHandle` / `direction` / `autoSaveId`，装进来会直接报「导出不存在」 |
 
-`src/components/ui/` 下另有 12 个**项目自有组件**（非 shadcn，CLI 不会碰）：
-`brand-icon`、`country-flag`、`data-state`、`error-boundary`、`image-dropzone`、`image-lightbox`、
+`src/components/ui/` 下另有 13 个**项目自有组件**（非 shadcn，CLI 不会碰）：
+`auto-skeleton`、`brand-icon`、`country-flag`、`data-state`、`error-boundary`、`image-dropzone`、`image-lightbox`、
 `json-viewer`、`rich-editor`、`section-heading`、`surface-card`、`toast-detail`、`virtual-list`。
 
 补装组件用 `pnpm dlx shadcn@latest add <name>`，**永远不要带 `--overwrite`** ——
@@ -191,7 +192,7 @@ src/
 | `brand/home/visuals.tsx` | 视觉原语：底纹 `Pattern`、光晕 `AuroraOrbs`、聚光卡 `SpotlightCard`、跑马灯 `Marquee`、数字滚动 `CountUp` |
 | `brand/home/feature-visuals.tsx` | 六张能力卡各自的配图（两张走 recharts，四张纯 CSS） |
 | `brand/home/*-section.tsx` | 各分区，只排版不写文案 |
-| `brand/home/sponsors-section.tsx` | 赞助商跑马灯（`kibo-ui/marquee`，两行反向 + 渐变模糊边缘） |
+| `brand/home/sponsors-section.tsx` | 赞助商跑马灯（`kibo-ui/marquee`，两行反向 + 渐变边缘） |
 | `brand/sponsors/brand-logo.tsx` | 品牌标识渲染：图形标 + 字标，尺寸由字号决定，颜色走 `currentColor` |
 | `brand/sponsors/brand-logos.generated.ts` | **生成产物**，由 `pnpm logos:sync` 从 `@lobehub/icons-static-svg` 抽出 |
 | `brand/public-header.tsx` | 公开顶栏（首页与状态页共用），`NavigationMenu` + 主题开关 + 移动端抽屉 |
@@ -238,17 +239,15 @@ src/
 | `--home-accent-alt` | 中性石灰 | 图表第二序列。**不给第二种色相**，墨色加一个暖色永远比蓝配紫耐看 |
 | `--home-accent-warm` | 暗酒红 | 出项 / 告警，与暖铜同色系但明显更沉，一眼分得出进项出项 |
 | `--home-spotlight` / `--home-beam` | 由强调色 `color-mix` 派生 | 鼠标聚光、收尾 CTA 的描边流光 |
-| `--home-vignette` / `--home-grain-opacity` | 中性 | 暗角与胶片颗粒，**取代**了原来的发光球 |
-| `--home-intro-*` | 墨底 / 纸白 / 暖铜 | 冷开场专用，不随主题切换（见下） |
+| `--home-vignette` | 中性 | 暗角，**取代**了原来的发光球 |
 
 | 原语（`home/visuals.tsx`） | 用在哪 |
 |---|---|
 | `Pattern` | 网格 / 点阵底纹，靠 mask 在边缘溶解 |
-| `Grain` | 胶片颗粒（内联 SVG `feTurbulence`，不额外请求图片） |
 | `Vignette` | 中性暗角，把视线压回版心 |
 | `SpotlightCard` | 鼠标跟随高光（能力卡、架构卡、全景条目） |
 | `Marquee` | 首屏底部的技术栈跑马灯（与赞助商那套是两回事，见下节） |
-| `MaskLine` / `SplitChars` / `Typewriter` | 文字动画：遮罩逐行揭示 / 逐字入场 / 打字机 |
+| `MaskLine` / `Typewriter` | 文字动画：遮罩逐行揭示 / 打字机 |
 | `CountUp` | 数字带进入视口时从 0 滚上来 |
 
 五条约束：
@@ -266,29 +265,6 @@ src/
 5. **`CountUp` 的静态值必须留在 SSR 输出里**（滚动只是覆盖 `textContent`），
    否则没有 JS 或 reduce 档下，页面上会是一排 0。
 
-### 冷开场（`home/intro-overlay.tsx`）
-
-一块墨底压在整页之上，三拍报出三个能力域，落版是产品定位，然后整层淡出露出首屏。
-三拍与首屏的三列能力域**是同一份目录**，所以这段动画是内容的一部分，
-而不是内容前面的一段广告。
-
-一个每次进站都要看完的开场，第二次就变成了阻塞。四条闸门缺一不可：
-
-1. **每个会话只播一次**（`sessionStorage`）。第二次进来直接是首屏。
-2. **随时可跳过**：任意键 / 点击 / 滚动 / 触摸，外加一个始终可见的跳过按钮。
-3. **进度条必须看得见。** 等待可以忍受的前提是知道还剩多久；
-   一个不知道什么时候结束的黑屏，第三秒就会被当成页面挂了。
-4. **`prefers-reduced-motion` 下根本不挂载。**
-
-三条实现约束：
-
-- **首屏内容始终在 DOM 里**，这一层只是盖在上面。爬虫与读屏软件看到的是完整页面。
-- **"本会话是否播过"用惰性 `useState` 初始化器读取**（纯读，StrictMode 双调用返回同值），
-  写入放在 effect 里。渲染期写存储会在 StrictMode 下执行两次。
-  组件整体由 `useIsClient()` 把关，水合时两端都渲染 `null`，因此没有水合不一致。
-- **推进节拍的 `setState` 在 `setTimeout` 回调里**（异步），不是 effect 体内的同步调用 ——
-  后者过不了 `react-hooks/set-state-in-effect`，与全站同一条约束。
-
 ### 赞助商跑马灯
 
 第 3 条（动效只有一种）在这里有唯一一处例外：跑马灯本身就是这个分区的形态。
@@ -302,7 +278,7 @@ src/
 | 品牌标识 | `@lobehub/icons-static-svg`（零依赖 SVG 资源包）经 `pnpm logos:sync` 抽成内联标记 |
 | 单条目 | shadcn `Item` + `Tooltip`（品牌名 + 领域，已内置适配的另说明它在 Aegis 里承担什么） |
 
-六条约束，每一条都是踩过的坑：
+五条约束，每一条都是踩过的坑：
 
 1. **字标是品牌自有字体的轮廓，不是排出来的文字。** 用 `font-semibold` 打一行
    "Cloudflare" 单看像回事，二十几个 logo 摆在一起就会发现只有它是 Geist。
@@ -317,13 +293,11 @@ src/
    `background` 的带子在浅色模式下完全看不见。`--card`(`#ffffff`) 是浅色档里唯一
    与之有对比的中性面，深色档里它也比 `background` 亮一档。
    `MarqueeFade` 的底色必须与带子**完全**一致，因此它也是 `bg-card`。
-4. **模糊必须跟着 mask 一起衰减。** 只给 `backdrop-blur` 不给 mask，会在渐变结束的
-   位置留下一条"清晰度突变"的竖线，比不加模糊更显眼。
-5. **每行要占位高度。** `react-fast-marquee` 挂载前返回 `null`（它靠测量容器宽度
+4. **每行要占位高度。** `react-fast-marquee` 挂载前返回 `null`（它靠测量容器宽度
    决定复制几份），不占位的话页面会在水合那一刻整体上跳。`ROW_HEIGHT` 同时钉住
    跑马灯容器与条目，两者必须一致。
    同一个原因：**这一排不进服务端 HTML**，水合后才出现。
-6. **彩色版主体是白色的品牌要退回单色版**（生成器里的 `mono: true`）。
+5. **彩色版主体是白色的品牌要退回单色版**（生成器里的 `mono: true`）。
    Kimi 的彩色标是白色字形加一个小蓝点，放在 `card` 色的带子上只剩那个点，
    看起来像图裂了。单色版走 `currentColor`，两种主题都成立。
    本身就没有彩色版的（Vercel / GitHub / Anthropic / OpenAI / Cursor / Notion）同理。
@@ -450,74 +424,35 @@ docker build -f deploy/docker/console.Dockerfile \
 `Dockerfile` 就会从「Next.js 自动识别」切到「docker 计划」，而那种切换在 Dashboard 上
 看不出来，一旦发生又没人传 build arg，就是下面第 1 条的事故。
 
-四条硬约束：
+两条硬约束：
 
 1. **`AEGIS_API_BACKEND` 是构建期烘死的，不是运行期读的。** `rewrites()` 在 build 时
    求值，结果序列化进 `.next/routes-manifest.json`。所以换后端地址必须重新构建镜像，
    改容器环境变量没有任何作用；而漏传 build arg 会落到默认的 `127.0.0.1:8088` ——
    控制台反代到它自己。它还必须填**内网**地址，理由见下一节。
-2. **`CMD` 里的 `--import=./scripts/forwarded-headers-preload.mjs` 不能省。**
-   standalone 模式跑的是 `node server.js`，不再经过 `package.json` 的 `start` 脚本，
-   预载得自己带上。少了它容器照常起、页面照常开，只是全站客户端 IP 都变成控制台自己。
-3. **那两个预载脚本和 `ipaddr.js` 要显式列进 `outputFileTracingIncludes`。**
-   文件追踪是从应用代码出发的，够不到「由 `node --import` 装载」的脚本；
-   而 `outputFileTracingIncludes` 只**复制**列出的文件、不会再追它们自己的 import，
-   所以 `ipaddr.js` 这个依赖也得手写一条。
-4. **`.next/static` 与 `public/` 要自己搬进运行阶段**，standalone 产物不含它们。
+2. **`.next/static` 与 `public/` 要自己搬进运行阶段**，standalone 产物不含它们。
    `public/` 里有自托管的 monaco（23MB），漏搬的表现是脚本编辑器打不开。
 
 `output: "standalone"` 由 `NEXT_OUTPUT=standalone` 开启，平时本地 build 不开 ——
 它要对整棵依赖树做文件追踪，而那份产物本地用不上。
 
-## 同源反代与客户端 IP 透传
+## 同源反代
 
 `/api/*`、`/openapi.json`、`/healthz`、`/readyz` 由 `next.config.ts` 的 rewrites
 同源反代到 `AEGIS_API_BACKEND`。浏览器只看到相对路径，后端 host 不外露。
 
 代价是链路上多了一跳，而 **Next 内置的那个代理不追加转发头**
-（`proxy-request.js` 只手工塞了 `x-forwarded-host`，httpxy 的 `xfwd` 没开）。
-后端的限流 / 封禁 / 地理风控 / 审计全部建立在客户端 IP 上，缺了这一跳的事实，
-本机开发时全站请求都是 `127.0.0.1`，线上则完全押在入口反代写的那条 XFF 上。
+（`proxy-request.js` 只手工塞了 `x-forwarded-host`，httpxy 的 `xfwd` 没开），
+控制台自己也不补。后端看到的直连对端是控制台，转发链原样是入站请求带来的那条：
+前面有入口反代时就是入口写的 XFF；没有入口反代时（本机开发 / 自建单机）
+链要么为空、退回控制台地址，要么是客户端自己写的。
 
-因此启动时会预载一段逻辑，在**自己的 HTTP 服务器边界**把「本进程看到的直连对端」
-追加到 `X-Forwarded-For` 末尾（上游用了 `Forwarded` 就一并续写）：
-
-| 文件 | 职责 |
-|---|---|
-| `scripts/forwarded-headers.mjs` | 追加逻辑 + 后端跳判定 + `withForwardedPreload()`；行为由 `pnpm test` 钉住 |
-| `scripts/forwarded-headers-preload.mjs` | `--import` 预载入口，改写 `http.createServer` |
-
-**但追加是必要不充分的：`AEGIS_API_BACKEND` 必须指向后端的内网地址。**
+**`AEGIS_API_BACKEND` 必须指向后端的内网地址。**
 填公网域名的话，这一跳绕出公网再回来，途中的 CDN / 网关会如实写下「连接方是控制台」，
 而那是个公网地址、后端不信任它，判定就正确地停在那里 —— 全站每个用户的每个请求
-都收敛成控制台的出口地址，控制台在自己那侧写的条目在链的更左边，永远够不着。
-放宽后端 `TRUSTED_PROXIES` 不是解法（等于把伪造权发给任何能直连后端的人）。
-启动时 `describeBackendHop` 会就此打一条 warn —— 这个错误在功能上完全看不出来。
-
-五条硬约束：
-
-1. **装载点有两处，形式不同不是随手写的。** `pnpm start` 在命令行上 `--import`；
-   `pnpm dev` 必须走 `NODE_OPTIONS`（`scripts/dev-with-friendly-proxy.mjs` 里的
-   `withForwardedPreload`）—— `next dev` 会 fork 出真正的服务器进程，且那一层的
-   `execArgv` 由它自己按 `NODE_OPTIONS` 重拼，命令行上的 `--import` 传不过去。
-2. **只追加，不判断谁可信，也不加任何环境变量。** 受信网段只有后端
-   `TRUSTED_PROXIES` 一个入口；这里再配一份，「到底谁说了算」就没有答案了。
-   追加而非覆盖也是刻意的：客户端伪造的条目留在链的左边，后端从右往左走时
-   先遇到我们写的这条真事实。
-3. **不要改成中间件（`proxy.ts`）或 Route Handler。** 它们拿到的是 Web `Request`，
-   看不到 socket（`NextRequest.ip` 在 Next 15 已移除），没有对端地址可写。
-   而那个 `http.Server` 由 Next 自己创建并持有，外部拿不到实例。
-4. **`installOnServer` 钩的是 `server.emit`，不是 `prependListener('upgrade')`。**
-   给一个本来没有 upgrade 监听器的 server 装上监听器，Node 就不再自动销毁升级
-   连接了 —— 那会把「没人处理的 WebSocket 握手」从立刻断开变成一直挂着。
-5. **地址的解析与归类走 `ipaddr.js`**（Express 的 `trust proxy` 底下经 proxy-addr
-   用的就是它），不要手写。要判的两件事都不适合自己抄一份：IPv4 映射地址还原，
-   以及「环回 / RFC1918 / CGNAT / IPv6 ULA / 公网单播」的归类 —— 后者是一组
-   记不住的网段，抄一份的下场是它慢慢过期，而过期不会报错。
-
-启动时打的那行 `▲ 客户端 IP 透传已启用…` 是这件事**唯一的自检线索**：托管平台若
-绕过 `package.json` 的脚本直接跑 `next start`，预载不执行，而少一条转发链条目
-在功能上完全看不出来。完整说明见 [docs/client-ip.md](../docs/client-ip.md#控制台反代这一跳)。
+都收敛成控制台的出口地址。放宽后端 `TRUSTED_PROXIES` 不是解法
+（等于把伪造权发给任何能直连后端的人）。这个错误在功能上完全看不出来。
+完整说明见 [docs/client-ip.md](../docs/client-ip.md#控制台反代这一跳)。
 
 ## 环境变量
 
@@ -534,6 +469,41 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8088
 - **状态管理**：Zustand（认证 + 侧边栏），服务端状态用 React Query
 - **API 调用**：所有 API 调用通过 `src/lib/api/` 模块，禁止在组件中直接 fetch
 - **路由保护**：`AuthGate` 组件在 console layout 中守卫，未登录跳转 `/login`
+- **不用毛玻璃**：不写 `backdrop-filter`（`backdrop-blur-*`），大面积或带动画的元素上也不用
+  `filter: blur()` 与 `mix-blend-mode`。三者都要在身后内容每次变化时重新采样合成，
+  压在滚动内容、地图、跑马灯上就是持续掉帧。吸顶栏与浮层一律用实色底
+  （`bg-background` / `bg-card` / `bg-popover`）：半透明底色没了模糊，文字会压在内容上读不清
+
+## 骨架屏：`<AutoSkeleton>` 与手写 `<Skeleton>`
+
+`components/ui/auto-skeleton.tsx` 包装 auto-skeleton-react：加载期间照常渲染真实布局，
+骨架从渲染出来的 DOM 量出来，不再另写一份「长得像」的占位组件。手写的那份迟早和真实布局
+对不上，而且不会有任何报错提示。首个接入点是 `/profile`（原来的 `ProfileSkeleton` 已删除）。
+
+| 场景 | 用哪个 |
+|---|---|
+| 表单、资料页、详情卡片这类静态结构 | `<AutoSkeleton>`，加载期间喂占位数据 |
+| 列表 / 表格 | 先构造占位行再用 `<AutoSkeleton>`；没有占位行就量不出任何东西 |
+| 图表、地图、Monaco、虚拟列表、WebGL | 手写 `<Skeleton>`：子树会被多挂一份，上游也写明这几类量不准 |
+
+五条硬约束：
+
+1. **不要直接从 `auto-skeleton-react` 导入。** 上游的配色是写死的 `#e0e0e0`，深色模式下是一排
+   亮灰条；换成 `<Skeleton>` 用的 `--accent` 也不行，浅色档它与 `--background` 同为 `#f4f4f5`，
+   而上游画卡片时不带底色，骨架条落在页面底色上完全看不见。包装层改走 `--color-input`，
+   另外补了 reduce 档关动效、加载期间整块 `inert`、首帧不闪、绝对 / 固定定位元素不进骨架、
+   按钮 / 标签页 / 徽标 / 头像预先标好 `data-skeleton-role`（上游会把带字的按钮按
+   「高度 ÷ 行高」拆成两行字条）。
+2. **加载期间要喂占位数据。** 骨架量的是渲染出来的东西，`data?.map()` 在没数据时什么都不渲染，
+   量出来也是空的。占位值的长度要接近真实值，文字条宽度由它决定；内容本身始终不可见。
+3. **间距容器不能拆开包。** 包装层会多出几层 div，`page-stack` 的 `gap` 只作用于直接子元素，
+   包进去的那几块要自己再套一层 `flex flex-col gap-*`（见 `/profile`）。
+4. **包装层不开放 config。** 它是上游量尺寸那个 effect 的依赖，调用处每次渲染传一个新对象，
+   就会每次渲染都重新量一遍；包装层用的是模块级常量。
+5. **升级 auto-skeleton-react 后核对 `globals.css` 末尾那两条规则。** 「首帧不闪」与「卡片补底色」
+   都靠库的内部 DOM 结构与内联样式识别，结构一变会静默失效（退回首帧闪烁 / 卡片无底色）。
+
+上游只量一次、用固定像素宽度：加载期间改变窗口宽度或折叠侧边栏，骨架不会跟着重排。
 
 ## 侧边栏导航
 

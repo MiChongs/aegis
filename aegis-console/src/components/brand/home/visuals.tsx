@@ -59,17 +59,6 @@ export function Pattern({ variant = "grid", size, mask, className }: PatternProp
   );
 }
 
-/**
- * 胶片颗粒。
- *
- * 取代此前那两团大面积彩色光晕：发光球是生成式视觉最容易被认出来的特征之一，
- * 而且在浅色模式下只会把底色拖灰。颗粒给的是质感不是光 —— 一层极淡的静态噪声，
- * 把纯色平面变成纸面，看不见但感觉得到。
- */
-export function Grain({ className }: { className?: string }) {
-  return <div aria-hidden className={cn("home-grain", className)} />;
-}
-
 /** 中性暗角，把视线压回版心。不带色相，因此不会和强调色打架。 */
 export function Vignette({ size, className }: { size?: string; className?: string }) {
   return (
@@ -208,46 +197,6 @@ export function MaskLine({
       >
         {children}
       </m.span>
-    </span>
-  );
-}
-
-/**
- * 逐字入场。
- *
- * 空格必须渲染成 `&nbsp;`：`inline-block` 会把纯空格折叠掉，
- * 拆完字之后整句会粘成一团。
- */
-export function SplitChars({
-  text,
-  delay = 0,
-  stagger = 0.035,
-  className,
-}: {
-  text: string;
-  delay?: number;
-  stagger?: number;
-  className?: string;
-}) {
-  const reduced = useReducedMotion();
-  const chars = useMemo(() => Array.from(text), [text]);
-
-  if (reduced) return <span className={className}>{text}</span>;
-
-  return (
-    <span className={className} aria-label={text}>
-      {chars.map((char, index) => (
-        <m.span
-          key={`${char}-${index}`}
-          aria-hidden
-          className="inline-block"
-          initial={{ opacity: 0, y: "0.4em", filter: "blur(4px)" }}
-          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-          transition={{ duration: 0.55, ease: TEXT_EASE, delay: delay + index * stagger }}
-        >
-          {char === " " ? "\u00A0" : char}
-        </m.span>
-      ))}
     </span>
   );
 }

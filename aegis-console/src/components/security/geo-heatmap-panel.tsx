@@ -394,7 +394,7 @@ export function GeoHeatmapPanel() {
         <BaseMap className="h-[460px] xl:h-[540px]" onMapReady={handleMapReady}>
           {/* 聚类叠加开关（仅拦截类别） */}
           {kind === "block" && (
-            <label className="absolute top-3 left-3 z-10 flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card/95 px-2.5 py-1.5 backdrop-blur-sm">
+            <label className="absolute top-3 left-3 z-10 flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5">
               <Crosshair className="size-3.5 text-red-500" />
               <span className="text-[11px] font-medium">攻击聚类</span>
               <Switch checked={showClusters} onCheckedChange={setShowClusters} className="scale-90" />
@@ -407,7 +407,7 @@ export function GeoHeatmapPanel() {
             <button
               type="button"
               onClick={() => setCountry("")}
-              className="absolute top-3 right-12 z-10 flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-[11px] font-medium text-primary backdrop-blur-sm transition-colors hover:bg-primary/15"
+              className="absolute top-3 right-12 z-10 flex items-center gap-1.5 rounded-lg border border-primary/40 bg-card px-2.5 py-1.5 text-[11px] font-medium text-primary transition-colors hover:bg-muted"
             >
               <CountryFlag code={country} size={14} /> {countryName(country)}
               <X className="size-3" />
@@ -417,7 +417,7 @@ export function GeoHeatmapPanel() {
           {/* 加载 / 空态浮层 */}
           {isLoading && (
             <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
-              <span className="flex items-center gap-1.5 rounded-full border border-border bg-card/95 px-3 py-1 text-[11px] text-muted-foreground backdrop-blur-sm">
+              <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-[11px] text-muted-foreground">
                 <Loader2 className="size-3 animate-spin" />
                 正在加载热力数据...
               </span>
@@ -425,7 +425,7 @@ export function GeoHeatmapPanel() {
           )}
           {isEmpty && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-              <span className="rounded-full border border-border bg-card/95 px-4 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
+              <span className="rounded-full border border-border bg-card px-4 py-1.5 text-xs text-muted-foreground">
                 当前窗口内没有{KIND_META[kind].label}数据
               </span>
             </div>

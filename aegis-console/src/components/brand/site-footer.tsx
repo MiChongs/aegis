@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { AegisMark } from "@/components/brand/aegis-mark";
-import { footerColumns } from "@/components/brand/home/home-content";
+import { copyrightNotice, footerColumns } from "@/components/brand/home/home-content";
 import { SECTION_CONTAINER } from "@/components/brand/home/section";
 import { appConfig } from "@/lib/env";
 
@@ -61,7 +61,7 @@ export function SiteFooter() {
 
         <div className="mt-12 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t pt-6 text-xs text-muted-foreground">
           <span>
-            &copy; {new Date().getFullYear()} {appConfig.platformName}. All rights reserved.
+            &copy; {new Date().getFullYear()} {copyrightNotice}
           </span>
           <span className="font-mono">{appConfig.environment}</span>
         </div>

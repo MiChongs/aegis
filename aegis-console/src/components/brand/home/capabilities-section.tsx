@@ -11,7 +11,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { capabilityGroups } from "@/components/brand/home/home-content";
 import { Reveal, Section, SectionHeading } from "@/components/brand/home/section";
-import { Grain, Pattern, SpotlightCard } from "@/components/brand/home/visuals";
+import { Pattern, SpotlightCard } from "@/components/brand/home/visuals";
 
 /**
  * 能力全景。
@@ -27,7 +27,6 @@ export function CapabilitiesSection() {
         size={64}
         mask="radial-gradient(ellipse 65% 55% at 50% 45%, #000, transparent 82%)"
       />
-      <Grain />
 
       <div className="relative">
         <SectionHeading
@@ -41,7 +40,7 @@ export function CapabilitiesSection() {
             {/* 用默认的填充式页签而不是 line 变体：后者的选中下划线画在
                 trigger 之外（bottom: -5px），放进横向滚动容器里会被裁掉。 */}
             <div className="overflow-x-auto">
-              <TabsList className="w-max bg-background/70 backdrop-blur">
+              <TabsList className="w-max bg-background">
                 {capabilityGroups.map((group) => (
                   <TabsTrigger key={group.key} value={group.key} className="px-3">
                     <group.icon aria-hidden />

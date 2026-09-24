@@ -755,7 +755,6 @@
       transparent 420px,
       transparent var(--stripe-period)
     );
-    filter: blur(42px);
     opacity: 0.55;
   }
 
@@ -878,8 +877,8 @@
 
 /* ── 设计 Token 映射 ── */
 :root {
-  /* 背景 — 匹配 Dialog overlay（bg-black/40 + 毛玻璃）*/
-  --yarl__container_background_color: rgba(0, 0, 0, 0.40);
+  /* 背景：不用毛玻璃，靠不透明度把身后的页面压下去 */
+  --yarl__container_background_color: rgba(0, 0, 0, 0.8);
   /* 按钮颜色 — ghost 风格 */
   --yarl__color_button: var(--muted-foreground);
   --yarl__color_button_active: var(--foreground);
@@ -899,16 +898,10 @@
 }
 
 .dark {
-  --yarl__container_background_color: rgba(0, 0, 0, 0.60);
+  --yarl__container_background_color: rgba(0, 0, 0, 0.85);
 }
 
-/* ── 容器 — 毛玻璃背景 ── */
-.yarl__container {
-  backdrop-filter: blur(16px) saturate(1.2);
-  -webkit-backdrop-filter: blur(16px) saturate(1.2);
-}
-
-/* ── 工具栏 — 浮岛式 frosted pill ── */
+/* ── 工具栏 — 浮岛式 pill ── */
 .yarl__toolbar {
   display: flex;
   align-items: center;
@@ -917,13 +910,11 @@
   margin: 0.75rem;
   border-radius: calc(var(--radius) - 2px);
   border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-  background: color-mix(in srgb, var(--background) 72%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--background);
 }
 
 .dark .yarl__toolbar {
-  background: color-mix(in srgb, var(--card) 60%, transparent);
+  background: var(--card);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
 }
 
@@ -963,7 +954,7 @@
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
 }
 
-/* ── 导航按钮 — 独立 frosted outline 风格 ── */
+/* ── 导航按钮 — 独立 outline 风格 ── */
 .yarl__navigation_prev,
 .yarl__navigation_next {
   padding-inline: 0.5rem;
@@ -971,16 +962,14 @@
 
 .yarl__navigation_prev .yarl__button,
 .yarl__navigation_next .yarl__button {
-  background: color-mix(in srgb, var(--background) 72%, transparent);
+  background: var(--background);
   border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   border-radius: calc(var(--radius) - 2px);
 }
 
 .dark .yarl__navigation_prev .yarl__button,
 .dark .yarl__navigation_next .yarl__button {
-  background: color-mix(in srgb, var(--card) 60%, transparent);
+  background: var(--card);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
@@ -1585,13 +1574,19 @@
   --home-beam: color-mix(in srgb, var(--home-accent) 42%, transparent);
   --home-grid: color-mix(in srgb, var(--foreground) 8%, transparent);
   --home-vignette: color-mix(in srgb, var(--foreground) 7%, transparent);
-  --home-grain-opacity: 0.05;
 
-  /* 冷开场：无论深浅主题都是同一块墨底。电影片头没有"浅色版本"，
-     真按主题切两套，深色用户会先被闪一下白。 */
-  --home-intro-ink: #0a0a0b;
-  --home-intro-paper: #f5f3ef;
-  --home-intro-accent: #d97706;
+  /* 首屏着色器（GrainGradient）的两档色块，底色直接取 --background。
+     ring 是色块外缘（颗粒散开的那一圈），core 是贴角的色块中心。
+     深浅两套是同一个结构：外缘最显眼，中心贴近底色。深色曾沿用浅色这两档，
+     近黑底上贴角的两大块淡紫亮过了前景字，说明文字与顶栏右侧按钮整段看不清。 */
+  --home-hero-ring: #b8a2fb;
+  --home-hero-core: #ede4ff;
+  /* 标题第二行的轮播短语 */
+  --home-hero-ink: #6d28d9;
+  /* 首屏说明文字。muted-foreground 压在浅色外缘上最差只剩约 3:1，
+     这里由前景色与底色混出一档：浅色约为 zinc-600，深色与 muted-foreground
+     几乎相同，所以 .dark 里不必再写一份（两处 var() 跟着主题各自取值）。 */
+  --home-hero-muted: color-mix(in oklab, var(--foreground) 70%, var(--background));
 }
 
 .dark {
@@ -1605,7 +1600,10 @@
   --home-beam: color-mix(in srgb, var(--home-accent) 50%, transparent);
   --home-grid: color-mix(in srgb, var(--foreground) 10%, transparent);
   --home-vignette: color-mix(in srgb, #000 55%, transparent);
-  --home-grain-opacity: 0.07;
+
+  --home-hero-ring: #5b21b6;
+  --home-hero-core: #2e1065;
+  --home-hero-ink: #c4b5fd;
 }
 
 /* ── 底纹：网格 / 点阵，靠 mask 在边缘自然溶解 ── */
@@ -1623,26 +1621,6 @@
   background-size: 18px 18px;
   -webkit-mask-image: var(--home-grid-mask, radial-gradient(ellipse 70% 70% at 50% 50%, #000, transparent 75%));
   mask-image: var(--home-grid-mask, radial-gradient(ellipse 70% 70% at 50% 50%, #000, transparent 75%));
-}
-
-/* ── 胶片颗粒 ──
-   取代原来那两团大面积彩色光晕。发光球是生成式视觉的另一个显著特征，
-   而且它在浅色模式下只会让整块底发灰。颗粒给的是"质感"而不是"光"：
-   一层极淡的静态噪声，把纯色平面变成印刷纸面，缩略图上几乎看不见，
-   全屏时能明显感到画面不是塑料的。
-
-   噪声用内联 SVG feTurbulence 生成，不额外请求一张图。 */
-.home-grain {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: var(--home-grain-opacity);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  mix-blend-mode: overlay;
-}
-
-.dark .home-grain {
-  mix-blend-mode: soft-light;
 }
 
 /* ── 暗角：把视线压回版心。中性色，不带任何色相 ── */
@@ -1791,62 +1769,9 @@
   animation: home-tile-pulse 3.2s ease-in-out infinite;
 }
 
-/* ── 冷开场（IntroOverlay）──
-   整块墨底压在页面之上，几段字依次出现，末了整层淡出露出首屏。
-   它**只在每个会话的第一次访问**播放一次，任何键 / 点击 / 滚动都能跳过，
-   `prefers-reduced-motion` 下根本不挂载。这几条是它可以存在的前提：
-   一个每次进站都要看完的开场动画，第二次就变成了阻塞。 */
-.home-intro {
-  position: fixed;
-  inset: 0;
-  z-index: 2147483001; /* 压过 NextTopLoader 的 2147483000 */
-  background: var(--home-intro-ink);
-  color: var(--home-intro-paper);
-  overscroll-behavior: contain;
-}
-
-/* 开场自带扫描线，强化"这是一段影像"的暗示；密度很低，不影响读字 */
-.home-intro__scan {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.035) 0px,
-    rgba(255, 255, 255, 0.035) 1px,
-    transparent 1px,
-    transparent 4px
-  );
-}
-
-.home-intro__grain {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.16;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  animation: home-intro-grain 0.6s steps(3) infinite;
-}
-
-@keyframes home-intro-grain {
-  0% {
-    transform: translate3d(0, 0, 0);
-  }
-  33% {
-    transform: translate3d(-2%, 1%, 0);
-  }
-  66% {
-    transform: translate3d(1%, -2%, 0);
-  }
-  100% {
-    transform: translate3d(0, 0, 0);
-  }
-}
-
 /* 首页的装饰动效一律在 reduce 档下停掉。它们都是"锦上添花"层，
    停掉之后信息一条不少 —— 这也是它们只做 transform / opacity 的原因。 */
 @media (prefers-reduced-motion: reduce) {
-  .home-intro__grain,
   .home-marquee,
   .home-beam-frame::before,
   .home-shimmer::after,
@@ -1994,4 +1919,24 @@
   .legal-prose table {
     break-inside: avoid;
   }
+}
+
+/* ==================================================================== */
+/*  自动骨架屏（components/ui/auto-skeleton.tsx）                       */
+/* ==================================================================== */
+
+/* 加载期间把真实内容那一层压成透明。底层库要等下一帧量完尺寸才设透明，
+   这一帧里占位数据会原样闪一下。选择器依赖库的内部结构：根节点下第一个 div
+   是内容层，其后依次是骨架层与量尺寸用的隐藏副本。升级 auto-skeleton-react
+   之后要回来核对这条。 */
+[data-slot="auto-skeleton"][aria-busy="true"] > div > div.auto-skeleton-fade:first-of-type {
+  opacity: 0 !important;
+}
+
+/* 骨架层里带边框的容器（卡片）补回卡片底色。上游只保留容器的边框与内边距、不保留背景，
+   骨架条于是直接落在页面底色上：浅色档卡片变成灰底空框，淡入真实内容时整块由灰变白。
+   按内联样式里的 border 识别，同样依赖库的输出格式。不要求 aria-busy：加载结束后
+   骨架层还要淡出 300ms，这期间底色不能先没。 */
+[data-slot="auto-skeleton"] > div > div.auto-skeleton-fade + div.auto-skeleton-fade div[style*="border: 1px"] {
+  background-color: var(--card);
 }

@@ -7,7 +7,7 @@ export default function PreviewUserMenuPage() {
   return (
     <TooltipProvider delayDuration={180}>
       <div className="flex min-h-screen flex-col">
-        <header className="@container/topbar sticky top-0 z-30 flex h-12 shrink-0 items-center justify-end gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-md">
+        <header className="@container/topbar sticky top-0 z-30 flex h-12 shrink-0 items-center justify-end gap-3 border-b border-border bg-background px-4">
           <UserMenu
             operator={{
               name: "张三丰运营中心内容审核负责人",

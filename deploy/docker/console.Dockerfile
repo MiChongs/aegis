@@ -79,8 +79,4 @@ COPY --from=build --chown=node:node /app/public ./public
 USER node
 EXPOSE 3000
 
-# --import 这一段不是可选的：它在本进程的 HTTP 服务器边界把直连对端追加进
-# X-Forwarded-For，后端的限流 / 封禁 / 地理风控 / 审计全建立在那个地址上。
-# 少了它容器照样起、页面照样开，只是全站客户端 IP 都变成控制台自己 —— 功能上看不出来。
-# 启动日志里那行「▲ 客户端 IP 透传已启用」是唯一的自检线索。
-CMD ["node", "--import=./scripts/forwarded-headers-preload.mjs", "server.js"]
+CMD ["node", "server.js"]

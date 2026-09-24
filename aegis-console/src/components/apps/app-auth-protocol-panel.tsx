@@ -688,7 +688,7 @@ function IntegrationEditor({
       */}
       {policy.allowLegacy ? <AppTransportEncryptionPanel appKey={appKey} /> : null}
 
-      <div className="sticky bottom-4 flex items-center gap-3 rounded-lg border bg-background/95 p-3 backdrop-blur">
+      <div className="sticky bottom-4 flex items-center gap-3 rounded-lg border bg-background p-3">
         <Button onClick={() => void save()} disabled={saving || !dirty}>
           {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
           保存

@@ -351,13 +351,11 @@ export function MapLibreMap({
             onClick={() => setFailedSignature(null)}
             title={notice.tone === "danger" ? `${notice.title}；点此重试` : notice.title}
             className={cn(
-              "flex items-center gap-1 rounded-lg border px-1.5 py-1 text-[10px] font-medium backdrop-blur-sm",
+              "flex items-center gap-1 rounded-lg border bg-card px-1.5 py-1 text-[10px] font-medium",
               notice.tone === "danger" &&
-                "cursor-pointer border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20",
-              notice.tone === "warn" &&
-                "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-              notice.tone === "ok" &&
-                "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                "cursor-pointer border-destructive/40 text-destructive hover:bg-muted",
+              notice.tone === "warn" && "border-amber-500/40 text-amber-600 dark:text-amber-400",
+              notice.tone === "ok" && "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
             )}
           >
             {notice.tone === "ok" ? <ShieldCheck className="size-3" /> : <TriangleAlert className="size-3" />}
