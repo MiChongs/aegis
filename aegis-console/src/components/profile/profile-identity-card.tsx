@@ -53,8 +53,8 @@ export function ProfileIdentityCard({
         return;
       }
       if (file.size > SOFT_MAX_BYTES) {
-        toast.error("文件太大了", {
-          description: `${(file.size / 1024 / 1024).toFixed(1)}MB，建议压到 5MB 以内再上传`
+        toast.error("文件不能超过 5MB", {
+          description: `${(file.size / 1024 / 1024).toFixed(1)}MB`
         });
         return;
       }
@@ -153,7 +153,7 @@ export function ProfileIdentityCard({
           </div>
 
           <p className={cn("text-sm leading-6", account.bio ? "text-muted-foreground" : "text-muted-foreground/60")}>
-            {account.bio || "还没有个人简介 —— 在下面写一句，同事在成员列表里就能认出你。"}
+            {account.bio || "暂无简介"}
           </p>
         </div>
 

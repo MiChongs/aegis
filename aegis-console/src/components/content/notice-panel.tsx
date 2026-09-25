@@ -176,10 +176,7 @@ export function NoticePanel({ appId }: { appId?: number | null }) {
           ))}
         </div>
       ) : !items.length ? (
-        <EmptyState
-          title={filterActive ? "没有匹配的公告" : "还没有公告"}
-          description={filterActive ? "换个筛选条件试试" : "公告发布后会随客户端的公告接口下发。"}
-        />
+        <EmptyState title={filterActive ? "暂无匹配公告" : "暂无公告"} />
       ) : (
         <div className="flex flex-col gap-2">
           {items.map((item) => (
@@ -358,7 +355,7 @@ function NoticeRow({
                 <AlertDialogHeader>
                   <AlertDialogTitle>删除「{item.title || "未命名"}」</AlertDialogTitle>
                   <AlertDialogDescription>
-                    删除后无法恢复。只是想让它不再展示的话，归档更合适。
+                    删除后无法恢复。
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

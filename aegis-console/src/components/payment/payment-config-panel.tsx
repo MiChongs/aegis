@@ -143,8 +143,7 @@ function PaymentChannelsPanel({ appId }: { appId?: number | null }) {
           className="flex w-full flex-col items-center gap-2 rounded-xl border border-dashed py-12 text-center transition-colors hover:border-foreground/30 hover:bg-muted/40"
         >
           <Plus className="size-5 text-muted-foreground" />
-          <span className="text-sm font-medium">尚未接入任何支付渠道</span>
-          <span className="text-xs text-muted-foreground">从 {methods.length} 种支持的支付方式中选择一个开始</span>
+          <span className="text-sm font-medium">暂无支付渠道</span>
         </button>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -304,7 +303,7 @@ function ChannelCatalogDialog({
             ))}
           </div>
         ) : groups.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">没有匹配的支付渠道</p>
+          <p className="py-10 text-center text-sm text-muted-foreground">暂无匹配渠道</p>
         ) : (
           <div className="space-y-4">
             {groups.map((group) => (

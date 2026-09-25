@@ -43,7 +43,7 @@ type FormPhase = "login" | "mfa" | "success";
 
 /** 三态的抬头文案。集中一处，省得三个分支各写一遍 `phase === ...`。 */
 const PHASE_COPY: Record<FormPhase, { title: string; desc: string }> = {
-  login: { title: "登录 Aegis", desc: "使用管理员账号进入控制台" },
+  login: { title: "登录 Aegis", desc: "" },
   mfa: { title: "两步验证", desc: "输入认证器中的验证码" },
   success: { title: "登录成功", desc: "正在进入控制台" }
 };
@@ -186,7 +186,7 @@ export function LoginForm() {
                 className="flex flex-col gap-1.5"
               >
                 <CardTitle className="text-xl font-semibold tracking-tight">{copy.title}</CardTitle>
-                <CardDescription className="text-[13px]">{copy.desc}</CardDescription>
+                {copy.desc ? <CardDescription className="text-[13px]">{copy.desc}</CardDescription> : null}
               </m.div>
             </AnimatePresence>
           </CardHeader>

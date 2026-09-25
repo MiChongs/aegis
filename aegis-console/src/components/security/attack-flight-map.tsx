@@ -578,14 +578,14 @@ export function AttackFlightMap({ timeRange }: AttackFlightMapProps) {
           <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
             <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-[11px] text-muted-foreground">
               <Loader2 className="size-3 animate-spin" />
-              正在加载攻击数据...
+              加载中...
             </span>
           </div>
         )}
         {isEmpty && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
             <span className="rounded-full border border-border bg-card px-4 py-1.5 text-xs text-muted-foreground">
-              当前时间窗内没有拦截记录
+              暂无拦截记录
             </span>
           </div>
         )}
@@ -612,7 +612,7 @@ export function AttackFlightMap({ timeRange }: AttackFlightMapProps) {
         open={showSettings}
         onOpenChange={setShowSettings}
         value={server}
-        description="攻击弧线的汇聚目标；无坐标的本地流量也会散布在该位置附近"
+        description="攻击弧线汇聚点"
         onSaved={() => {
           fitPendingRef.current = true;
         }}

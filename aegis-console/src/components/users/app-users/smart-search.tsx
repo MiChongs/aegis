@@ -57,7 +57,7 @@ export function detectIntents(raw: string): SearchIntent[] {
       {
         key: "keyword",
         label: "按用户 ID 直达",
-        description: `只匹配 ID = ${value.replace(/\D/g, "")} 的用户`,
+        description: `ID = ${value.replace(/\D/g, "")}`,
         icon: Hash
       }
     ];
@@ -68,7 +68,7 @@ export function detectIntents(raw: string): SearchIntent[] {
     intents.push({
       key: "email",
       label: "只搜邮箱",
-      description: "在邮箱字段里模糊匹配",
+      description: "",
       icon: AtSign
     });
   }
@@ -76,7 +76,7 @@ export function detectIntents(raw: string): SearchIntent[] {
     intents.push({
       key: "registerIp",
       label: "只搜注册 IP",
-      description: "找同源批量注册",
+      description: "",
       icon: Globe2
     });
   }
@@ -84,21 +84,21 @@ export function detectIntents(raw: string): SearchIntent[] {
     intents.push({
       key: "phone",
       label: "只搜手机号",
-      description: "在手机字段里模糊匹配",
+      description: "",
       icon: Phone
     });
   }
   intents.push({
     key: "keyword",
     label: "全字段搜索",
-    description: "账号 / 昵称 / 邮箱 / 手机 / 邀请码 / IP / 标识码 / 自定义 ID",
+    description: "",
     icon: Search
   });
   if (!value.includes("@") && /^[A-Za-z][\w.-]*$/.test(value)) {
     intents.push({
       key: "account",
       label: "只搜账号",
-      description: "在账号字段里模糊匹配",
+      description: "",
       icon: UserRound
     });
   }
@@ -256,7 +256,7 @@ export function SmartUserSearch({
           }}
           onFocus={() => setOpen(true)}
           onBlur={closeWithoutApply}
-          placeholder="搜索账号 / 昵称 / 邮箱 / 手机 / IP，# + ID 直达"
+          placeholder="搜索用户，#ID 直达"
           className={cn(
             "h-8 w-full rounded-md border border-input bg-transparent pl-8 pr-14 text-xs shadow-xs outline-none transition-[color,box-shadow]",
             "placeholder:text-muted-foreground",
@@ -311,7 +311,9 @@ export function SmartUserSearch({
                 >
                   <intent.icon className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="shrink-0 font-medium">{intent.label}</span>
-                  <span className="truncate text-muted-foreground">{intent.description}</span>
+                  {intent.description ? (
+                    <span className="truncate text-muted-foreground">{intent.description}</span>
+                  ) : null}
                   <CornerDownLeft className="ml-auto size-3 shrink-0 opacity-0 data-[selected=true]:opacity-40" />
                 </CommandPrimitive.Item>
               ))}
@@ -322,7 +324,7 @@ export function SmartUserSearch({
                 heading={
                   previewQuery.isLoading
                     ? "匹配的用户"
-                    : `匹配的用户${previewTotal ? `（共 ${previewTotal.toLocaleString("zh-CN")} 个，预览前 ${Math.min(previewItems.length, 6)} 个）` : ""}`
+                    : `匹配的用户${previewTotal ? `（共 ${previewTotal.toLocaleString("zh-CN")} 个）` : ""}`
                 }
                 className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:text-muted-foreground"
               >
@@ -377,7 +379,7 @@ export function SmartUserSearch({
                   })
                 ) : (
                   <div className="px-2 py-3 text-xs text-muted-foreground">
-                    没有匹配的用户，换个关键字或检索方式试试
+                    暂无匹配用户
                   </div>
                 )}
               </CommandPrimitive.Group>

@@ -6,7 +6,6 @@ import {
   CircleAlert,
   Eye,
   EyeOff,
-  Info,
   KeyRound,
   Lock,
   RefreshCw,
@@ -131,7 +130,7 @@ export function AppTransportEncryptionPanel({ appKey }: { appKey?: string | null
   if (!appKey) return null;
   if (query.isLoading) {
     return (
-      <SectionCard icon={<Lock className="size-4" />} title="传输加密（旧命名空间）" description="加载中">
+      <SectionCard icon={<Lock className="size-4" />} title="传输加密（旧命名空间）">
         <Skeleton className="h-32 w-full" />
       </SectionCard>
     );
@@ -141,7 +140,6 @@ export function AppTransportEncryptionPanel({ appKey }: { appKey?: string | null
     <SectionCard
       icon={<Lock className="size-4" />}
       title="传输加密（旧命名空间）"
-      description="仅作用于 /api/auth 与 /api/user；新接入网关的加密由上方「安全等级」控制。"
       aside={<StatusDot active={enabled} labelActive="已启用" labelInactive="未启用" />}
     >
       <div className="space-y-6">
@@ -149,13 +147,11 @@ export function AppTransportEncryptionPanel({ appKey }: { appKey?: string | null
           <div className="grid gap-2.5 sm:grid-cols-2">
             <SwitchRow
               label="启用传输加密"
-              hint="开启后请求数据必须加密"
               checked={enabled}
               onChange={(v) => patch("enabled", v)}
             />
             <SwitchRow
               label="加密响应数据"
-              hint="服务端返回值也加密"
               checked={responseEncryption}
               onChange={(v) => patch("responseEncryption", v)}
               disabled={!enabled}
@@ -178,7 +174,7 @@ export function AppTransportEncryptionPanel({ appKey }: { appKey?: string | null
                 value="lenient"
                 active={mode === "lenient"}
                 title="宽松模式"
-                description="兼容未加密的遗留客户端"
+                description="兼容明文请求"
                 icon={<CircleAlert className="size-4" />}
                 disabled={!enabled}
               />
@@ -190,7 +186,6 @@ export function AppTransportEncryptionPanel({ appKey }: { appKey?: string | null
           <div className="space-y-4">
             <AlgoGroup
               title="对称加密"
-              description="基于预共享密钥，性能最优"
               disabled={!enabled}
               algos={SYMMETRIC_ALGOS}
               selected={selectedAlgos}
@@ -198,7 +193,6 @@ export function AppTransportEncryptionPanel({ appKey }: { appKey?: string | null
             />
             <AlgoGroup
               title="混合加密"
-              description="公钥信封 + 对称加密，支持超大数据"
               disabled={!enabled}
               algos={HYBRID_ALGOS}
               selected={selectedAlgos}
@@ -207,13 +201,13 @@ export function AppTransportEncryptionPanel({ appKey }: { appKey?: string | null
           </div>
         </FieldGroup>
 
-        <FieldGroup label="对称密钥" hint={data?.secretHint ? `当前指纹：${data.secretHint}` : "用于预共享密钥场景"}>
+        <FieldGroup label="对称密钥" hint={data?.secretHint ? `当前指纹：${data.secretHint}` : undefined}>
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
               <Input
                 type={showSecret ? "text" : "password"}
                 className="pr-9 font-mono text-xs"
-                placeholder={data?.hasSecret ? "留空保持不变" : "输入密钥或点击生成"}
+                placeholder={data?.hasSecret ? "留空不修改" : "输入密钥或点击生成"}
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
               />
@@ -233,12 +227,9 @@ export function AppTransportEncryptionPanel({ appKey }: { appKey?: string | null
               生成随机密钥
             </Button>
           </div>
-          {data?.hasSecret && !secret && (
-            <p className="mt-1.5 text-[11px] text-muted-foreground">密钥已设置。保存时不修改此字段即保留原密钥。</p>
-          )}
         </FieldGroup>
 
-        <FieldGroup label="非对称密钥对" hint="用于混合加密算法">
+        <FieldGroup label="非对称密钥对">
           <div className="grid gap-3 sm:grid-cols-2">
             <KeyPairCard
               title="RSA 密钥对"
@@ -259,16 +250,6 @@ export function AppTransportEncryptionPanel({ appKey }: { appKey?: string | null
           </div>
         </FieldGroup>
 
-        <div className="rounded-xl bg-muted p-3">
-          <div className="flex gap-2 text-[11px] leading-relaxed text-muted-foreground">
-            <Info className="mt-0.5 size-3.5 shrink-0" />
-            <p>
-              混合加密流程：客户端用公钥加密随机会话密钥 → 用会话密钥流式加密数据体 →
-              服务端用私钥解密会话密钥 → 流式解密数据体。支持无上限的数据体大小。
-            </p>
-          </div>
-        </div>
-
         <div className="flex justify-end">
           <Button size="sm" disabled={mutation.isPending} onClick={handleSave}>
             <Save className="size-3.5" />
@@ -282,14 +263,12 @@ export function AppTransportEncryptionPanel({ appKey }: { appKey?: string | null
 
 function AlgoGroup({
   title,
-  description,
   algos,
   selected,
   disabled,
   onToggle
 }: {
   title: string;
-  description: string;
   algos: AlgoItem[];
   selected: string[];
   disabled?: boolean;
@@ -299,7 +278,6 @@ function AlgoGroup({
     <div className="space-y-2">
       <div className="flex items-baseline justify-between">
         <div className="text-xs font-medium">{title}</div>
-        <div className="text-[10px] text-muted-foreground">{description}</div>
       </div>
       <ToggleGroup
         type="multiple"
@@ -385,7 +363,7 @@ function KeyPairCard({
               <AlertDialogHeader>
                 <AlertDialogTitle>确认重新生成 {title}？</AlertDialogTitle>
                 <AlertDialogDescription>
-                  旧密钥对将立即失效，使用旧公钥加密的在途数据将无法解密。建议先通知所有客户端更新公钥后再操作。
+                  旧密钥对立即失效，在途数据将无法解密。
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -431,14 +409,14 @@ const SYMMETRIC_ALGOS: AlgoItem[] = [
     value: "XChaCha20Poly1305",
     label: "XChaCha20-Poly1305",
     kind: "对称",
-    description: "现代流密码，AEAD 模式。高性能、抗侧信道攻击，推荐移动端使用。",
+    description: "AEAD 流密码，移动端首选",
     recommended: true
   },
   {
     value: "AES-256-GCM",
     label: "AES-256-GCM",
     kind: "对称",
-    description: "工业标准对称加密。硬件加速广泛支持，适合服务端大数据量场景。"
+    description: "硬件加速，适合服务端"
   }
 ];
 
@@ -447,25 +425,25 @@ const HYBRID_ALGOS: AlgoItem[] = [
     value: "hybrid-rsa-xchacha20",
     label: "RSA + XChaCha20",
     kind: "混合",
-    description: "RSA-2048 加密会话密钥 + XChaCha20 流式加密数据体。兼容性最好。"
+    description: "兼容性最好"
   },
   {
     value: "hybrid-rsa-aes256gcm",
     label: "RSA + AES-256-GCM",
     kind: "混合",
-    description: "RSA-2048 加密会话密钥 + AES-256-GCM 加密数据体。"
+    description: "RSA-2048 信封"
   },
   {
     value: "hybrid-ecdh-xchacha20",
     label: "ECDH + XChaCha20",
     kind: "混合",
-    description: "ECDH P-256 协商密钥 + XChaCha20 加密数据体。更小的密钥尺寸。",
+    description: "密钥尺寸更小",
     recommended: true
   },
   {
     value: "hybrid-ecdh-aes256gcm",
     label: "ECDH + AES-256-GCM",
     kind: "混合",
-    description: "ECDH P-256 协商密钥 + AES-256-GCM 加密数据体。"
+    description: "ECDH P-256 协商"
   }
 ];

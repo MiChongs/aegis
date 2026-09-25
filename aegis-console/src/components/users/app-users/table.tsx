@@ -160,7 +160,7 @@ async function copyText(value: string, label: string) {
     await navigator.clipboard.writeText(value);
     toast.success(`已复制${label}`);
   } catch {
-    toast.error("复制失败，请手动选择复制");
+    toast.error("复制失败");
   }
 }
 
@@ -237,7 +237,7 @@ export function AppUsersTable({
         cell: ({ row }) => {
           const { email, phone } = row.original;
           if (!email && !phone) {
-            return <span className="text-xs text-muted-foreground/60">未留联系方式</span>;
+            return <span className="text-xs text-muted-foreground/60">无联系方式</span>;
           }
           return (
             <div className="min-w-0 space-y-0.5">
@@ -501,9 +501,7 @@ export function AppUsersTable({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuLabel className="text-xs">
-                  排序字段（服务端排序，跨页有效）
-                </DropdownMenuLabel>
+                <DropdownMenuLabel className="text-xs">排序字段</DropdownMenuLabel>
                 <DropdownMenuRadioGroup
                   value={query.sort}
                   onValueChange={(value) => applySort(value as SortField, query.order)}
@@ -520,10 +518,10 @@ export function AppUsersTable({
                   onValueChange={(value) => applySort(query.sort, value as "asc" | "desc")}
                 >
                   <DropdownMenuRadioItem value="desc" className="text-xs">
-                    降序（大 → 小 / 新 → 旧）
+                    降序
                   </DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value="asc" className="text-xs">
-                    升序（小 → 大 / 旧 → 新）
+                    升序
                   </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
                 {!sortDefault ? (
@@ -534,7 +532,7 @@ export function AppUsersTable({
                       onSelect={() => applySort("createdAt", "desc")}
                     >
                       <ArrowUpDown className="size-3.5" />
-                      恢复默认（创建时间降序）
+                      恢复默认
                     </DropdownMenuItem>
                   </>
                 ) : null}

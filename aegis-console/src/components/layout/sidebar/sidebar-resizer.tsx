@@ -38,7 +38,7 @@ export function SidebarResizer({ onResizingChange }: { onResizingChange: (resizi
       aria-valuemin={SIDEBAR_MIN_WIDTH}
       aria-valuemax={SIDEBAR_MAX_WIDTH}
       tabIndex={0}
-      title="拖动调整宽度，双击恢复默认"
+      title="拖动调整宽度，双击复位"
       onDoubleClick={resetWidth}
       onPointerDown={(event) => {
         if (event.button !== 0) return;

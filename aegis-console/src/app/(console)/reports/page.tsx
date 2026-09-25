@@ -101,7 +101,7 @@ function ReportsPageInner() {
         </TabsList>
 
         <div className="mt-4">
-          {!ready ? <EmptyState title="请选择应用和日期范围" description="" /> : (<>
+          {!ready ? <EmptyState title="请选择应用和日期范围" /> : (<>
             <TabsContent value="registration"><RegistrationTab appKey={appKey} start={start} end={end} /></TabsContent>
             <TabsContent value="login"><LoginTab appKey={appKey} start={start} end={end} /></TabsContent>
             <TabsContent value="retention"><RetentionTab appKey={appKey} start={start} end={end} /></TabsContent>
@@ -370,7 +370,6 @@ function ExportTab({ appKey, start, end }: TP) {
         </div>
         <Button size="sm" onClick={handleExport}><Download className="size-3.5" />导出 CSV</Button>
       </div>
-      <p className="text-xs text-muted-foreground">导出将使用当前选择的应用和日期范围。</p>
     </CardContent></Card>
   );
 }

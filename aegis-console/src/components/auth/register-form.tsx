@@ -193,9 +193,7 @@ export function RegisterForm() {
                 <CardTitle className="text-xl font-semibold tracking-tight">
                   {done ? "账号已创建" : "创建管理员账号"}
                 </CardTitle>
-                <CardDescription className="text-[13px]">
-                  {done ? "正在进入控制台" : "注册后即可创建应用并获得管理权限"}
-                </CardDescription>
+                {done ? <CardDescription className="text-[13px]">正在进入控制台</CardDescription> : null}
               </m.div>
             </AnimatePresence>
           </CardHeader>
@@ -297,9 +295,6 @@ export function RegisterForm() {
                               {strength.label}
                             </span>
                           </div>
-                          <p className="pt-1 text-[11px] text-muted-foreground/70">
-                            按长度与字符组成估算，最终强度以服务端判定为准
-                          </p>
                         </m.div>
                       ) : null}
                     </AnimatePresence>
@@ -354,7 +349,6 @@ export function RegisterForm() {
                     <Input
                       id="displayName"
                       name="displayName"
-                      placeholder="控制台里显示的名字"
                       value={form.displayName}
                       onChange={(event) => patch("displayName", event.target.value)}
                       aria-invalid={Boolean(fieldErrors.displayName)}
@@ -368,7 +362,6 @@ export function RegisterForm() {
                       name="email"
                       type="email"
                       autoComplete="email"
-                      placeholder="用于接收通知与凭证"
                       value={form.email}
                       onChange={(event) => patch("email", event.target.value)}
                       aria-invalid={Boolean(fieldErrors.email)}

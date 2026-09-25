@@ -140,19 +140,19 @@ export function ConditionHint({ catalog, providerReady, redisReady }: {
   if (!catalog) return null;
   const missingProvider = catalog.requiresProvider && providerReady === false;
   const missingRedis = catalog.requiresRedis && redisReady === false;
+  if (!missingProvider && !missingRedis) return null;
   return (
     <div className="space-y-1.5 rounded-lg border bg-muted/30 px-3 py-2">
-      <p className="text-xs leading-relaxed text-muted-foreground">{catalog.description}</p>
       {missingProvider && (
         <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
           <AlertTriangle className="mt-0.5 size-3 shrink-0" />
-          未配置 IP 情报源，此条件不会命中
+          未配置 IP 情报源
         </p>
       )}
       {missingRedis && (
         <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
           <AlertTriangle className="mt-0.5 size-3 shrink-0" />
-          未启用频率限流，相关计数恒为 0
+          未启用频率限流
         </p>
       )}
     </div>
@@ -166,7 +166,7 @@ export function ConditionFields({ catalog, value, onChange }: {
 }) {
   const fields = catalog?.fields ?? [];
   if (fields.length === 0) {
-    return <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">无需额外参数</p>;
+    return <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">无参数</p>;
   }
   const patch = (key: string, next: unknown) => onChange({ ...value, [key]: next });
 
@@ -190,7 +190,6 @@ function ConditionField({ field, value, onChange }: {
         {field.required && <span className="text-rose-500">*</span>}
       </Label>
       {renderControl(field, value, onChange)}
-      {field.help && <p className="text-[10px] text-muted-foreground">{field.help}</p>}
     </div>
   );
 }
@@ -232,7 +231,7 @@ function renderControl(field: RiskFieldSchema, value: unknown, onChange: (v: unk
       return (
         <Textarea rows={2} className="font-mono text-xs"
           value={Array.isArray(value) ? value.join(", ") : String(value ?? "")}
-          placeholder={field.placeholder ?? "多项用逗号或换行分隔"}
+          placeholder={field.placeholder ?? "逗号或换行分隔"}
           onChange={(e) => onChange(e.target.value)} />
       );
     case "time":

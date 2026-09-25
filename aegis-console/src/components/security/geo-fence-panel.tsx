@@ -470,7 +470,7 @@ export function GeoFencePanel() {
         return null;
       }
       if (!Number.isFinite(radius) || radius <= 0) {
-        toast.error("半径必须大于 0（单位：米）");
+        toast.error("半径必须大于 0");
         return null;
       }
       payload.centerLat = lat;
@@ -479,7 +479,7 @@ export function GeoFencePanel() {
       return payload;
     }
 
-    toast.error("缺少围栏几何，请先在地图上绘制");
+    toast.error("请先在地图上绘制");
     return null;
   }, [fName, fApp, fMode, fBanMode, fReason, fEnabled, fExpires, pendingGeometry, editingFence, fCircleLat, fCircleLng, fCircleRadius]);
 
@@ -583,7 +583,7 @@ export function GeoFencePanel() {
     (fence: GeoFenceEntry) => {
       const ring = editableRing(fence);
       if (!ring) {
-        toast.error("该围栏为圆形或复杂多面几何，请通过「编辑」对话框调整参数");
+        toast.error("该围栏不支持顶点编辑");
         return;
       }
       resetDraw();
@@ -747,7 +747,7 @@ export function GeoFencePanel() {
         const radiusM =
           haversineKm(d.circleCenter[1], d.circleCenter[0], e.lngLat.lat, e.lngLat.lng) * 1000;
         if (radiusM < 50) {
-          toast.error("半径过小（至少 50 米），请把光标移远后再点击");
+          toast.error("半径至少 50 米");
           return;
         }
         d.circleRadiusM = radiusM;
@@ -951,7 +951,7 @@ export function GeoFencePanel() {
 
   const handleDelete = useCallback(
     (fence: GeoFenceEntry) => {
-      if (!confirm(`确认删除围栏「${fence.name}」？删除后立即停止匹配。`)) return;
+      if (!confirm(`确认删除围栏「${fence.name}」？`)) return;
       deleteMutation.mutate(fence.id);
     },
     [deleteMutation]
@@ -978,7 +978,7 @@ export function GeoFencePanel() {
   const drawHint = (() => {
     switch (drawMode) {
       case "polygon":
-        return `已 ${vertexCount} 点 · 单击加点 · Enter / 双击完成 · Backspace 撤销 · Esc 取消`;
+        return `${vertexCount} 点 · 双击 / Enter 完成 · Backspace 撤销 · Esc 取消`;
       case "circle":
         return radiusPreview != null
           ? `半径 ${fmtRadius(radiusPreview)} · 再次单击确定 · Esc 取消`
@@ -1003,8 +1003,8 @@ export function GeoFencePanel() {
           <div className="flex flex-col">
             <span className="text-sm font-semibold leading-tight">地理围栏</span>
             <span className="text-[11px] leading-tight text-muted-foreground">
-              共 <span className="font-medium text-foreground">{fences.length}</span> 条规则，
-              {activeCount} 条生效中 · 拦截 / 白名单 / 观察三种模式
+              共 <span className="font-medium text-foreground">{fences.length}</span> 条，
+              {activeCount} 条生效中
             </span>
           </div>
         </div>
@@ -1101,7 +1101,6 @@ export function GeoFencePanel() {
         <div className="flex max-h-[560px] min-h-[320px] flex-col rounded-xl border border-border bg-card">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <span className="text-xs font-semibold">围栏规则</span>
-            <span className="text-[10.5px] text-muted-foreground">在地图上绘制以新建</span>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {fencesQuery.isLoading ? (
@@ -1112,10 +1111,6 @@ export function GeoFencePanel() {
             ) : fences.length === 0 ? (
               <div className="px-3 py-8 text-center">
                 <p className="text-xs font-medium text-foreground">暂无地理围栏</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                  点击地图左上角「绘制多边形 / 圆形」框选区域，
-                  即可创建拦截、白名单或观察规则
-                </p>
                 <Button size="sm" className="mt-3 h-7 gap-1 text-[11px]" onClick={startPolygon}>
                   <Plus className="size-3" />
                   开始绘制
@@ -1235,7 +1230,6 @@ export function GeoFencePanel() {
                   : pendingGeometry?.kind === "circle"
                     ? `圆形围栏 · 半径 ${fmtRadius(pendingGeometry.radiusM)}`
                     : `多边形围栏 · ${pendingGeometry?.ring.length ?? 0} 顶点`}
-                ，保存后实时生效
               </DialogDescription>
             </div>
           </DialogHeader>
@@ -1328,7 +1322,7 @@ export function GeoFencePanel() {
               )}
 
               <div className="grid grid-cols-2 gap-3">
-                <FormField label="响应模式" hint="命中后的处置方式">
+                <FormField label="响应模式">
                   <Select value={fBanMode} onValueChange={setFBanMode}>
                     <SelectTrigger className="h-9 text-sm">
                       <SelectValue />
@@ -1345,7 +1339,7 @@ export function GeoFencePanel() {
                     </SelectContent>
                   </Select>
                 </FormField>
-                <FormField label="过期时间" hint="留空 = 永久">
+                <FormField label="过期时间" hint="留空为永久">
                   <Input
                     type="datetime-local"
                     className="h-9 text-sm"
@@ -1360,15 +1354,12 @@ export function GeoFencePanel() {
                   className="h-9 text-sm"
                   value={fReason}
                   onChange={(e) => setFReason(e.target.value)}
-                  placeholder="可选，将写入审计日志并用于拦截提示"
+                  placeholder="可选"
                 />
               </FormField>
 
               <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border bg-muted/40 px-3 py-2.5">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[12px] font-medium">立即启用</span>
-                  <span className="text-[10.5px] text-muted-foreground">关闭后保留规则但不参与匹配</span>
-                </div>
+                <span className="text-[12px] font-medium">立即启用</span>
                 <Switch checked={fEnabled} onCheckedChange={setFEnabled} />
               </label>
 
@@ -1413,11 +1404,7 @@ export function GeoFencePanel() {
                       </div>
                     ))}
                   </div>
-                ) : (
-                  <p className="text-[10.5px] leading-relaxed text-muted-foreground">
-                    用过去窗口内的真实登录 / 拦截数据评估该围栏的影响范围，建议上线 deny 围栏前先回测
-                  </p>
-                )}
+                ) : null}
               </div>
             </div>
           </div>

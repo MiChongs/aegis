@@ -13,6 +13,14 @@ const (
 	ChannelAdminGrant   = "admin_grant"   // 管理员授予
 	ChannelTrial        = "trial"         // 领取试用
 	ChannelCardKey      = "card_key"      // 卡密核销
+	// ChannelAdminRevoke 扣减天数（管理员 / 远程函数 vip.revoke）。
+	// 它是账本里的一条负时长记录，不是一段会员期：不贡献功能，也不会成为「当前套餐」。
+	ChannelAdminRevoke = "admin_revoke"
+)
+
+// 开通记录的作废原因
+const (
+	RevokeReasonRefund = "refund" // 订单全额退款，履约冲正
 )
 
 // 套餐种类。
@@ -75,8 +83,10 @@ type Grant struct {
 	AppID    int64
 	PlanID   *int64
 	PlanName string
-	// Features 开通那一刻套餐包含的功能标识，**按值快照**落进账本。
-	// 不存快照的话，运营明天把某个功能从套餐里拿掉，已经卖出去的会员当场少一项权益。
+	// Features 开通那一刻套餐包含的功能标识，落进账本留档。
+	//
+	// 它**不是**判定依据：套餐还在时权益按套餐当前配置算（见 Segment），
+	// 快照只在两种情况下生效 —— 这笔不是按套餐开的（自定义发放），或套餐已被删除。
 	Features       []string
 	DurationDays   int
 	PayChannel     string
@@ -105,7 +115,23 @@ type Transaction struct {
 	ExpireAfter    time.Time       `json:"expireAfter"`
 	Operator       string          `json:"operator,omitempty"`
 	Metadata       map[string]any  `json:"metadata,omitempty"`
-	CreatedAt      time.Time       `json:"createdAt"`
+	// RevokedAt / RevokeReason 这笔开通已被作废（目前只有退款冲正一种）。
+	// 作废的记录仍留在账本里，但不再贡献任何权益。
+	RevokedAt    *time.Time `json:"revokedAt,omitempty"`
+	RevokeReason string     `json:"revokeReason,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+}
+
+// Revoke 一次扣减会员天数的指令（仓储层单事务执行：锁用户 → 从链尾截断 → 记账）。
+//
+// 扣减从到期时间往回截，截过当前时刻即视为会员立即结束，不会把到期时间推到过去。
+type Revoke struct {
+	UserID   int64
+	AppID    int64
+	Days     int
+	Reason   string
+	Operator string
+	Metadata map[string]any
 }
 
 // Status 用户 VIP 状态

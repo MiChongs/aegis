@@ -386,9 +386,6 @@ export function WorkflowCanvas({
             自动整理
           </Button>
         </Panel>
-        <Panel className="!m-3 rounded-2xl border border-border/80 bg-background/90 px-3 py-2 text-xs text-muted-foreground shadow-sm dark:bg-background/80" position="bottom-left">
-          拖动节点排版，按住节点连接锚点即可快速连线。
-        </Panel>
       </ReactFlow>
     </div>
   );

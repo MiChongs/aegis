@@ -132,14 +132,14 @@ export function EmailChannelPanel({ scope }: { scope: EmailScope }) {
     }
     try {
       await testMutation.mutateAsync({ configId: editing.configId, testEmail: target });
-      toast.success("测试邮件已发送，可在「投递记录」里核对结果");
+      toast.success("测试邮件已发送");
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "测试失败");
     }
   }
 
   if (scope.kind === "app" && scope.appId <= 0) {
-    return <EmptyState title="请先选择应用" description="选择应用后可管理它的邮件通道。" />;
+    return <EmptyState title="请先选择应用" />;
   }
 
   const activeMeta = providers.find((p) => p.provider === editing?.provider);
@@ -147,21 +147,13 @@ export function EmailChannelPanel({ scope }: { scope: EmailScope }) {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">{isPlatform ? "平台邮件通道" : "邮件通道"}</h2>
-          <p className="text-sm text-muted-foreground">
-            {isPlatform
-              ? "管理员通知与平台告警的发信出口；打开「共享」后还能作为应用的兜底通道。"
-              : "该应用的验证码、密码重置、欢迎信与凭证邮件都从这里发出。"}
-          </p>
-        </div>
+        <h2 className="text-lg font-semibold">{isPlatform ? "平台邮件通道" : "邮件通道"}</h2>
         <Button size="sm" onClick={openCreate} disabled={!providers.length}>
           <Plus className="size-3.5" /> 新建通道
         </Button>
       </div>
 
       <ChannelStatusBand
-        scope={scope}
         resolution={channelQuery.data ?? null}
         loading={channelQuery.isLoading}
         providers={providers}
@@ -176,14 +168,7 @@ export function EmailChannelPanel({ scope }: { scope: EmailScope }) {
 
         <TabsContent value="configs" className="mt-4">
           {configs.length === 0 ? (
-            <EmptyState
-              title="还没有邮件通道"
-              description={
-                isPlatform
-                  ? "新建一条通道后，管理员通知与平台告警才发得出去。"
-                  : "新建一条通道；也可以让平台管理员把平台通道设为共享，本应用即可直接借用。"
-              }
-            />
+            <EmptyState title="暂无邮件通道" />
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {configs.map((config) => (
@@ -223,9 +208,6 @@ export function EmailChannelPanel({ scope }: { scope: EmailScope }) {
                     onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                     required
                   />
-                  <p className="text-[11px] text-muted-foreground">
-                    业务侧按名字指定通道（如给凭证单独配一条），留空的调用走默认通道。
-                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">服务商</Label>
@@ -271,13 +253,11 @@ export function EmailChannelPanel({ scope }: { scope: EmailScope }) {
               <div className="grid gap-3 sm:grid-cols-2">
                 <SwitchRow
                   label="启用"
-                  help="关掉之后这条通道不会被任何发信选中"
                   checked={editing.enabled}
                   onCheckedChange={(v) => setEditing({ ...editing, enabled: v })}
                 />
                 <SwitchRow
                   label="设为默认"
-                  help="没有指名通道的发信都走它"
                   checked={editing.isDefault}
                   onCheckedChange={(v) => setEditing({ ...editing, isDefault: v })}
                 />
@@ -286,7 +266,6 @@ export function EmailChannelPanel({ scope }: { scope: EmailScope }) {
               {isPlatform && (
                 <SwitchRow
                   label="共享给应用作为兜底"
-                  help="应用自己一条通道都没有时，它的信会用这条通道发出去 —— 收件人看到的是平台的发件人身份。默认关闭。"
                   checked={editing.shared}
                   onCheckedChange={(v) => setEditing({ ...editing, shared: v })}
                 />
@@ -316,9 +295,6 @@ export function EmailChannelPanel({ scope }: { scope: EmailScope }) {
                       <Send className="size-3.5" /> {testMutation.isPending ? "发送中…" : "发送测试"}
                     </Button>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    试发用的是**已保存**的配置：刚改过的字段要先保存再测，否则测的还是上一版。
-                  </p>
                 </>
               )}
             </form>
@@ -382,13 +358,11 @@ type EmailDraft = {
  * 不显式说出来的话，管理员会对着一个空列表纳闷验证码是怎么发出去的。
  */
 function ChannelStatusBand({
-  scope,
   resolution,
   loading,
   providers,
   stats
 }: {
-  scope: EmailScope;
   resolution: ReturnType<typeof useEmailChannelQuery>["data"];
   loading: boolean;
   providers: EmailProviderMeta[];
@@ -403,11 +377,6 @@ function ChannelStatusBand({
         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <div className="min-w-0 text-sm">
           <p className="font-medium">当前没有可用的邮件通道</p>
-          <p className="text-xs text-muted-foreground">
-            {scope.kind === "platform"
-              ? "管理员通知与平台告警现在发不出去。"
-              : "验证码、密码重置、凭证邮件现在都发不出去。"}
-          </p>
         </div>
       </div>
     );
@@ -426,7 +395,7 @@ function ChannelStatusBand({
             </Badge>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            {resolution.attachments ? "支持附件，凭证 PDF 直接随信寄出" : "不支持附件，凭证会改发签名下载链接"}
+            {resolution.attachments ? "支持附件" : "不支持附件"}
           </p>
         </div>
       </div>
@@ -434,7 +403,7 @@ function ChannelStatusBand({
       {resolution.inherited && (
         <div className="flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/5 px-2.5 py-1.5 text-[11px] text-sky-600 dark:text-sky-400">
           <Share2 className="size-3.5 shrink-0" />
-          <span>本应用没有自己的通道，正在借用平台共享通道 —— 发件人身份是平台的</span>
+          <span>正在使用平台共享通道</span>
         </div>
       )}
 
@@ -578,12 +547,10 @@ function ProviderPicker({
 
 function SwitchRow({
   label,
-  help,
   checked,
   onCheckedChange
 }: {
   label: string;
-  help?: string;
   checked: boolean;
   onCheckedChange: (value: boolean) => void;
 }) {
@@ -591,7 +558,6 @@ function SwitchRow({
     <label className="flex cursor-pointer items-start justify-between gap-3 rounded-xl border px-4 py-3">
       <span className="min-w-0 space-y-0.5">
         <span className="block text-sm">{label}</span>
-        {help && <span className="block text-[11px] leading-relaxed text-muted-foreground">{help}</span>}
       </span>
       <Switch checked={checked} onCheckedChange={onCheckedChange} className="mt-0.5 shrink-0" />
     </label>

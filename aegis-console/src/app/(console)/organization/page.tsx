@@ -45,7 +45,7 @@ import { StatusBadge } from "@/components/organization/org-shared";
  */
 export default function OrganizationPage() {
   return (
-    <Suspense fallback={<LoadingState title="加载组织" description="" />}>
+    <Suspense fallback={<LoadingState title="加载组织" />}>
       <OrganizationCenter />
     </Suspense>
   );
@@ -81,7 +81,7 @@ function OrganizationCenter() {
     router.replace(`?${params.toString()}`, { scroll: false });
   };
 
-  if (orgsQuery.isLoading) return <LoadingState title="加载组织" description="" />;
+  if (orgsQuery.isLoading) return <LoadingState title="加载组织" />;
 
   return (
     <div className="page-stack">
@@ -94,10 +94,7 @@ function OrganizationCenter() {
       </div>
 
       {organizations.length === 0 ? (
-        <EmptyState
-          title="还没有组织"
-          description="创建第一个组织后，就可以在这里管理部门、成员、岗位与权限"
-        />
+        <EmptyState title="暂无组织" />
       ) : (
         <>
           <OrgSwitcher
@@ -107,7 +104,7 @@ function OrganizationCenter() {
           />
 
           {detailQuery.isLoading || !org ? (
-            <LoadingState title="加载组织详情" description="" />
+            <LoadingState title="加载组织详情" />
           ) : (
             <>
               <OrgHeader org={org} />
@@ -345,10 +342,6 @@ function CreateOrgDialog({
             <Label className="text-xs">简介</Label>
             <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
           </div>
-          <p className="text-[10px] text-muted-foreground">
-            创建顶级组织需要平台管理员权限；创建下级组织只需在上级组织中拥有管理权限。
-            你将自动成为新组织的所有者。
-          </p>
           <Button className="w-full" onClick={submit} disabled={mutation.isPending}>
             {mutation.isPending && <Loader2 className="size-3.5 animate-spin" />} 创建组织
           </Button>

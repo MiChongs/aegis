@@ -60,7 +60,7 @@ export function VipTrialPanel({ appKey }: { appKey: string }) {
       const result = await claimMutation.mutateAsync(grantTarget.id);
       toast.success(
         result.replayed
-          ? `${grantTarget.account ?? grantTarget.id} 此前已在试用中，未重复发放`
+          ? `${grantTarget.account ?? grantTarget.id} 已在试用中`
           : `已为 ${grantTarget.account ?? grantTarget.id} 开通试用`
       );
       setGrantTarget(null);
@@ -88,25 +88,20 @@ export function VipTrialPanel({ appKey }: { appKey: string }) {
         description={
           activeTrialPlan
             ? `当前试用套餐：${activeTrialPlan.name}（${activeTrialPlan.durationDays} 天${activeTrialPlan.trialDeviceLimited ? "，限设备" : ""}）`
-            : "当前没有启用中的试用套餐 —— 客户端的试用入口不存在"
+            : "无启用中的试用套餐"
         }
       >
         <div className="grid gap-3 sm:grid-cols-4">
-          <StatTile label="累计领取" value={summary.total} hint="一人一次，这就是领过的人数" />
-          <StatTile label="试用中" value={summary.active} hint="仍在试用期内" />
-          <StatTile label="已转化" value={summary.converted} hint="领取之后发生过付费开通" />
-          <StatTile
-            label="转化率"
-            value={formatConversion(summary.converted, summary.total)}
-            hint={summary.total === 0 ? "还没有人领过" : "已转化 / 累计领取"}
-          />
+          <StatTile label="累计领取" value={summary.total} />
+          <StatTile label="试用中" value={summary.active} />
+          <StatTile label="已转化" value={summary.converted} />
+          <StatTile label="转化率" value={formatConversion(summary.converted, summary.total)} />
         </div>
       </SectionCard>
 
       <SectionCard
         icon={<Gift className="size-4" />}
         title="领取记录"
-        description="一人一次由数据库唯一约束保证，这里是那份资格账本"
       >
         {/* 代领控件放在卡内而不是卡头：UserPicker 的触发器是 w-full，
             塞进 shrink-0 的 aside 会把旁边的按钮顶出卡片（SectionCard 是 overflow-hidden） */}
@@ -125,14 +120,9 @@ export function VipTrialPanel({ appKey }: { appKey: string }) {
               代领试用
             </Button>
             {!activeTrialPlan ? (
-              <span className="text-[11px] text-muted-foreground">没有启用中的试用套餐，无法代领</span>
+              <span className="text-[11px] text-muted-foreground">无启用中的试用套餐</span>
             ) : null}
           </div>
-          <p className="text-[11px] leading-snug text-muted-foreground">
-            代领走与用户自助<b>完全相同</b>的资格判定：已领过、已是会员都会被拒。
-            要跳过资格直接送时长请用「会员查询」里的授予 —— 那会如实记成管理员授予，
-            不会污染这里的转化率。
-          </p>
         </div>
 
         {claimsQuery.isLoading ? (
@@ -143,7 +133,7 @@ export function VipTrialPanel({ appKey }: { appKey: string }) {
           </div>
         ) : items.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
-            还没有人领过试用。
+            暂无领取记录
           </p>
         ) : (
           <>
@@ -244,9 +234,7 @@ export function VipTrialPanel({ appKey }: { appKey: string }) {
               恢复「{pendingReset?.account || `#${pendingReset?.userId}`}」的试用资格？
             </AlertDialogTitle>
             <AlertDialogDescription>
-              只删这条资格记录，<b>不收回已经发放的会员时长</b> —— 那是两件事：资格是「还能不能领」，
-              时长是「已经给出去的东西」。他仍在试用期内时也领不了第二次（会被判成「已是会员」），
-              要等这段试用结束。
+              不收回已发放的会员时长。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -262,12 +250,11 @@ export function VipTrialPanel({ appKey }: { appKey: string }) {
   );
 }
 
-function StatTile({ label, value, hint }: { label: string; value: number | string; hint: string }) {
+function StatTile({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-xl border border-border bg-muted/30 p-3">
       <div className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
       <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
-      <div className="mt-0.5 text-[10px] leading-snug text-muted-foreground">{hint}</div>
     </div>
   );
 }

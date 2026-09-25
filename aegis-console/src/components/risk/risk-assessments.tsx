@@ -154,8 +154,7 @@ export function RiskAssessmentsPanel({ presetIP, presetDevice, onClearPreset }: 
           <div key={i} className="h-11 animate-pulse rounded-lg bg-muted/50" />
         ))}</div>
       ) : items.length === 0 ? (
-        <EmptyState title="没有匹配的评估记录"
-          description="登录、注册等场景发生时才会产生记录，也可能是筛选条件过窄" />
+        <EmptyState title="暂无评估记录" />
       ) : (
         <>
           <div className="overflow-x-auto rounded-xl border">
@@ -223,8 +222,7 @@ export function RiskAssessmentsPanel({ presetIP, presetDevice, onClearPreset }: 
           <AlertDialogHeader>
             <AlertDialogTitle>清理历史评估记录</AlertDialogTitle>
             <AlertDialogDescription>
-              这张表随登录量持续增长，需要定期清理。删除后无法恢复，
-              规则命中计数与 IP、设备档案不受影响。
+              删除后无法恢复。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-1">
@@ -322,7 +320,7 @@ export function AssessmentDetailSheet({ id, onClose }: { id: number; onClose: ()
     try {
       const result = await replayMut.mutateAsync(id);
       setReplay(result);
-      toast.success("已用当前规则集重跑");
+      toast.success("已重放");
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "重放失败");
     }
@@ -348,7 +346,7 @@ export function AssessmentDetailSheet({ id, onClose }: { id: number; onClose: ()
             <Eye className="size-4" />评估记录 #{id}
           </SheetTitle>
           <SheetDescription>
-            判定当时的全部事实，以及同 IP、设备、账号的近期行为
+            判定详情
           </SheetDescription>
         </SheetHeader>
 
@@ -396,9 +394,6 @@ export function AssessmentDetailSheet({ id, onClose }: { id: number; onClose: ()
 
               <section className="space-y-2">
                 <SectionTitle>环境快照</SectionTitle>
-                <p className="text-[10px] text-muted-foreground">
-                  评估时读到的全部变量，不受后续规则修改影响
-                </p>
                 <EvalContextGrid context={assessment.evalContext} />
               </section>
 
@@ -410,9 +405,6 @@ export function AssessmentDetailSheet({ id, onClose }: { id: number; onClose: ()
                     <Repeat className={cn("size-3.5", replayMut.isPending && "animate-spin")} />重放
                   </Button>
                 </div>
-                <p className="text-[10px] text-muted-foreground">
-                  用当前规则集重新计算，查看调整规则后的结果
-                </p>
                 {replay && (
                   <Card><CardContent className="space-y-2 p-3">
                     <div className="flex items-center gap-2 text-xs">
@@ -458,7 +450,7 @@ export function AssessmentDetailSheet({ id, onClose }: { id: number; onClose: ()
                   </CardContent></Card>
                 ) : needsReview ? (
                   <div className="space-y-2">
-                    <Textarea rows={2} className="text-xs" value={comment} placeholder="复核备注，可留空"
+                    <Textarea rows={2} className="text-xs" value={comment} placeholder="复核备注（选填）"
                       onChange={(e) => setComment(e.target.value)} />
                     <div className="flex items-center gap-2">
                       <Button size="sm" disabled={reviewMut.isPending} onClick={() => submitReview("approved")}>
@@ -468,13 +460,10 @@ export function AssessmentDetailSheet({ id, onClose }: { id: number; onClose: ()
                         <XCircle className="size-3.5" />拒绝并封禁
                       </Button>
                     </div>
-                    <p className="text-[10px] text-muted-foreground">
-                      拒绝会把该 IP 与设备标记为封禁，标记来源记为人工，不会被情报刷新覆盖
-                    </p>
                   </div>
                 ) : (
                   <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                    处置动作不是人工复核，无需处理
+                    无需复核
                   </p>
                 )}
               </section>
@@ -513,7 +502,7 @@ function RuleEvaluationList({ rules, showMisses }: { rules: RiskRuleEvaluation[]
   if (list.length === 0) {
     return (
       <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        未命中任何规则，总分 0
+        未命中任何规则
       </p>
     );
   }
@@ -568,7 +557,7 @@ function EvalContextGrid({ context }: { context?: Record<string, unknown> | null
   if (grouped.length === 0) {
     return (
       <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        这条记录没有环境快照
+        暂无环境快照
       </p>
     );
   }
@@ -619,7 +608,7 @@ function EntitySummaryCard({ title, icon: Icon, summary, subject }: {
     return (
       <Card><CardContent className="p-3">
         <h5 className="flex items-center gap-1.5 text-xs font-medium"><Icon className="size-3.5" />{title}</h5>
-        <p className="mt-2 text-[11px] text-muted-foreground">本次请求未携带该维度。</p>
+        <p className="mt-2 text-[11px] text-muted-foreground">未上报</p>
       </CardContent></Card>
     );
   }

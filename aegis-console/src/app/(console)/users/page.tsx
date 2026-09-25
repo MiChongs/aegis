@@ -255,7 +255,7 @@ function TagsPanel() {
           <Button size="sm" variant="ghost" onClick={() => setCreating(false)}>取消</Button>
         </div>
       )}
-      {tags.length === 0 ? <EmptyState title="暂无标签" description="" /> : (
+      {tags.length === 0 ? <EmptyState title="暂无标签" /> : (
         <div className="flex flex-wrap gap-2">{tags.map((t) => (
           <div key={t.id} className="flex items-center gap-1.5 rounded-full border px-3 py-1 group" style={{ borderColor: t.color + "40" }}>
             <span className="size-2.5 rounded-full" style={{ backgroundColor: t.color }} />
@@ -298,7 +298,7 @@ function SegmentsPanel() {
           }}>创建</Button>
         </div>
       )}
-      {segments.length === 0 ? <EmptyState title="暂无分群" description="" /> : (
+      {segments.length === 0 ? <EmptyState title="暂无分群" /> : (
         <div className="space-y-2">{segments.map((s) => (
           <div key={s.id} className="flex items-center gap-3 rounded-lg border px-3 py-2 group">
             <div className="flex-1"><span className="text-sm font-medium">{s.name}</span>
@@ -357,7 +357,7 @@ function ListsPanel() {
           }}>添加</Button>
         </div>
       )}
-      {items.length === 0 ? <EmptyState title="暂无记录" description="" /> : (
+      {items.length === 0 ? <EmptyState title="暂无记录" /> : (
         <div className="space-y-1.5">{items.map((e) => (
           <div key={e.id} className="flex items-center gap-3 rounded-lg border px-3 py-2 text-xs group">
             <div className="flex-1"><span className="font-medium font-mono">{e.email || e.phone || e.ip || `ID #${e.identityId}`}</span>
@@ -386,7 +386,7 @@ function RiskPanel() {
   return (
     <Card><CardContent className="p-4 space-y-4">
       <h3 className="text-sm font-semibold flex items-center gap-2"><ShieldAlert className="size-4" />风险用户池</h3>
-      {items.length === 0 ? <EmptyState title="暂无风险用户" description="风险等级为 high 或 critical 的用户将出现在此处" /> : (
+      {items.length === 0 ? <EmptyState title="暂无风险用户" /> : (
         <div className="space-y-2">{items.map((item) => (
           <div key={item.id} className="flex items-center gap-3 rounded-lg border px-3 py-2 text-xs">
             <AlertTriangle className="size-4 text-orange-500 shrink-0" />
@@ -427,7 +427,7 @@ function AppealsPanel() {
           <SelectContent><SelectItem value="pending">待审核</SelectItem><SelectItem value="approved">已通过</SelectItem><SelectItem value="rejected">已拒绝</SelectItem></SelectContent>
         </Select>
       </div>
-      {items.length === 0 ? <EmptyState title="暂无申诉" description="" /> : (
+      {items.length === 0 ? <EmptyState title="暂无申诉" /> : (
         <div className="space-y-2">{items.map((a) => (
           <div key={a.id} className="flex items-center gap-3 rounded-lg border px-3 py-2 text-xs">
             <div className="flex-1 min-w-0">
@@ -466,7 +466,7 @@ function DeactivationPanel() {
   return (
     <Card><CardContent className="p-4 space-y-4">
       <h3 className="text-sm font-semibold flex items-center gap-2"><UserX className="size-4" />注销请求</h3>
-      {items.length === 0 ? <EmptyState title="暂无注销请求" description="" /> : (
+      {items.length === 0 ? <EmptyState title="暂无注销请求" /> : (
         <div className="space-y-2">{items.map((d) => (
           <div key={d.id} className="flex items-center gap-3 rounded-lg border px-3 py-2 text-xs">
             <div className="flex-1 min-w-0">

@@ -135,7 +135,7 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
         <SheetHeader className="shrink-0 border-b px-6 py-4">
           <SheetTitle>{plan ? "编辑套餐" : "新建套餐"}</SheetTitle>
           <SheetDescription>
-            {isTrial ? "试用套餐：0 元、一人一次，由「领取」入口发放" : "付费套餐：出现在客户端的购买列表里"}
+            {isTrial ? "试用套餐" : "付费套餐"}
           </SheetDescription>
         </SheetHeader>
 
@@ -158,17 +158,11 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
                     )}
                   >
                     <div className="text-xs font-medium">{kind === "paid" ? "付费套餐" : "试用套餐"}</div>
-                    <div className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
-                      {kind === "paid" ? "余额或在线支付购买，可重复续费" : "一人一次，不能购买"}
-                    </div>
                   </button>
                 ))}
               </div>
               {trialConflict ? (
-                <p className="text-[11px] text-destructive">
-                  该应用已有一个启用中的试用套餐。每个应用至多一个 —— 多于一个时「点领取到底领哪个」没有答案。
-                  请先停用原来那个，或把这个存为停用。
-                </p>
+                <p className="text-[11px] text-destructive">已有启用中的试用套餐</p>
               ) : null}
             </div>
 
@@ -200,19 +194,16 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
                   onChange={(event) => patch("price", event.target.value)}
                   placeholder="0.00"
                 />
-                {isTrial ? (
-                  <p className="text-[10px] text-muted-foreground">试用恒为 0 元：定价大于 0 等于开了一个可反复触发的免费入口</p>
-                ) : null}
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs">原价（划线价，可空）</Label>
+                <Label className="text-xs">原价（划线价）</Label>
                 <Input
                   inputMode="decimal"
                   value={form.originalPrice}
                   disabled={isTrial}
                   onChange={(event) => patch("originalPrice", event.target.value)}
-                  placeholder="仅用于展示折扣"
+                  placeholder="选填"
                 />
               </div>
 
@@ -240,7 +231,7 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
                   rows={2}
                   value={form.description}
                   onChange={(event) => patch("description", event.target.value)}
-                  placeholder="客户端上展示给用户的一句话"
+                  placeholder="选填"
                 />
               </div>
             </div>
@@ -255,8 +246,7 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
               </div>
               {features.length === 0 ? (
                 <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground">
-                  还没有功能标识。不勾任何一项也能卖 —— 那就是「只是会员」，
-                  服务端校验只回答是不是会员。要按能力细分请先去「功能标识」建目录。
+                  暂无功能标识
                 </p>
               ) : (
                 <div className="space-y-1.5 rounded-xl border border-border p-2">
@@ -289,19 +279,12 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
                   ))}
                 </div>
               )}
-              <p className="text-[10px] leading-snug text-muted-foreground">
-                开通时会把这份清单<b>快照</b>进账本：之后改套餐配置，已经卖出去的会员不会当场少一项权益。
-              </p>
             </div>
 
             {isTrial ? (
               <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-muted px-3 py-2.5">
                 <div className="min-w-0 space-y-0.5">
                   <div className="text-xs font-medium">同一设备只能领一次</div>
-                  <div className="text-[10px] leading-snug text-muted-foreground">
-                    防注册小号反复领。开启后请求必须带设备标识，否则<b>拒领</b>而不是放行 ——
-                    放行等于这个开关不存在。
-                  </div>
                 </div>
                 <Switch
                   checked={form.trialDeviceLimited}
@@ -313,9 +296,6 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
             <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-muted px-3 py-2.5">
               <div className="min-w-0 space-y-0.5">
                 <div className="text-xs font-medium">启用</div>
-                <div className="text-[10px] leading-snug text-muted-foreground">
-                  {isTrial ? "停用后客户端的试用入口会整个消失" : "停用后不再出现在购买列表里，已购买的不受影响"}
-                </div>
               </div>
               <Switch checked={form.isActive} onCheckedChange={(value) => patch("isActive", value)} />
             </label>

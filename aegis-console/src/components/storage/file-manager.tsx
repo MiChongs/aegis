@@ -178,7 +178,7 @@ export function FileManagerPanel({
       // 对象时，两者不相等，报请求数等于在撒谎。
       toast.success(
         `已${verb} ${result.affected} 个文件`,
-        result.skipped > 0 ? { description: `另有 ${result.skipped} 个状态不满足条件，已跳过` } : undefined,
+        result.skipped > 0 ? { description: `跳过 ${result.skipped} 个` } : undefined,
       );
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "批量操作失败");
@@ -270,9 +270,7 @@ export function FileManagerPanel({
       {folderView ? (
         <FolderBreadcrumb folder={folder} onNavigate={enterFolder} />
       ) : (
-        <p className="text-xs text-muted-foreground">
-          搜索结果跨全部目录，共 {total} 个匹配文件
-        </p>
+        <p className="text-xs text-muted-foreground">共 {total} 个匹配文件</p>
       )}
 
       {/* ── 批量操作条 ── */}
@@ -319,9 +317,7 @@ export function FileManagerPanel({
       {/* ── 回收站清理 ── */}
       {filters.status === "deleted" && canPurge && total > 0 ? (
         <div className="flex items-center justify-between rounded-lg border border-dashed px-3 py-2 text-xs">
-          <span className="text-muted-foreground">
-            回收站里的文件仍占用存储空间，清理后不可恢复
-          </span>
+          <span className="text-muted-foreground">清理后不可恢复</span>
           <Button
             variant="outline" size="sm" className="h-7 gap-1"
             disabled={cleanupMutation.isPending}
@@ -762,10 +758,7 @@ function EmptyBrowser({ hasFilters, folder }: { hasFilters: boolean; folder: str
     <div className="flex flex-col items-center justify-center gap-1.5 py-20 text-center">
       {hasFilters ? <Filter className="size-8 text-muted-foreground/30" /> : <FolderOpen className="size-8 text-muted-foreground/30" />}
       <p className="text-sm font-medium text-muted-foreground">
-        {hasFilters ? "没有匹配的文件" : folder ? "这个目录是空的" : "还没有任何文件"}
-      </p>
-      <p className="text-xs text-muted-foreground/60">
-        {hasFilters ? "调整筛选条件或清空搜索关键字" : "应用上传文件后会自动索引到这里"}
+        {hasFilters ? "暂无匹配文件" : folder ? "空目录" : "暂无文件"}
       </p>
     </div>
   );

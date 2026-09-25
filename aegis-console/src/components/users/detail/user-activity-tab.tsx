@@ -111,7 +111,6 @@ export function UserActivityTab({
       <Panel
         title="活动地图"
         icon={<MapIcon className="size-4" />}
-        description="活跃会话与登录记录的空间分布；按时间相连的位移超过民航速度会标红。内网与回环地址没有地理位置，统一归到服务器端点。"
       >
         <UserActivityMap appKey={appKey} userId={userId} />
       </Panel>
@@ -119,7 +118,6 @@ export function UserActivityTab({
       <Panel
         title="活跃会话"
         icon={<MonitorSmartphone className="size-4" />}
-        description="当前有效的登录令牌。撤销后该设备立刻掉线。"
       >
         <UserSessionsPanel appKey={appKey} userId={userId} />
       </Panel>
@@ -127,7 +125,6 @@ export function UserActivityTab({
       <Panel
         title="登录记录"
         icon={<LogIn className="size-4" />}
-        description="按用户精确过滤，不是按关键字搜出来的。"
         action={
           <div className="flex items-center gap-2">
             <Badge variant="outline" size="sm">
@@ -156,7 +153,7 @@ export function UserActivityTab({
             ))}
           </div>
         ) : !loginItems.length ? (
-          <EmptyRow text={loginStatus === "all" ? "没有登录记录" : "该筛选下没有记录"} />
+          <EmptyRow text={loginStatus === "all" ? "暂无登录记录" : "暂无匹配记录"} />
         ) : (
           <TooltipProvider delayDuration={150}>
             <div className="overflow-x-auto">
@@ -228,7 +225,6 @@ export function UserActivityTab({
         <Panel
           title="会话事件"
           icon={<FileClock className="size-4" />}
-          description="令牌的签发、刷新与撤销轨迹。"
           action={
             <Badge variant="outline" size="sm">
               共 {sessionAuditQuery.data?.total ?? 0} 条
@@ -242,7 +238,7 @@ export function UserActivityTab({
               ))}
             </div>
           ) : !eventItems.length ? (
-            <EmptyRow text="没有会话事件" />
+            <EmptyRow text="暂无会话事件" />
           ) : (
             <ol className="relative space-y-3 border-l pl-4">
               {eventItems.map((event) => (
@@ -295,7 +291,6 @@ function UserRiskPanel({ account }: { account?: string }) {
     <Panel
       title="风控评估"
       icon={<Radar className="size-4" />}
-      description="引擎在登录 / 注册链路上对这个账号打过的分。"
       action={
         <Button asChild size="sm" variant="ghost" className="h-7 text-xs">
           <Link href={`/risk-control?tab=assessments`}>
@@ -306,7 +301,7 @@ function UserRiskPanel({ account }: { account?: string }) {
       }
     >
       {!account ? (
-        <EmptyRow text="该用户没有账号标识，无法关联风控记录" />
+        <EmptyRow text="无账号标识" />
       ) : query.isLoading ? (
         <div className="space-y-2">
           {[0, 1, 2].map((i) => (
@@ -316,7 +311,7 @@ function UserRiskPanel({ account }: { account?: string }) {
       ) : !items.length ? (
         <div className="py-10 text-center text-sm text-muted-foreground">
           <Activity className="mx-auto mb-2 size-5 opacity-40" />
-          没有评估记录。可能是风控未对该场景配置规则，也可能这个账号从未触发过评估。
+          暂无评估记录
         </div>
       ) : (
         <div className="space-y-2">

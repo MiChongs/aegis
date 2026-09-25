@@ -9,7 +9,7 @@ import { useAdminToken } from "@/lib/admin-hooks";
 import { useFunctionInvalidator, useFunctionInvocationsQuery } from "@/lib/function-hooks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -86,10 +86,6 @@ export function FunctionInvocationsPanel({
             <Play className="size-4" />
             真实调用
           </CardTitle>
-          <CardDescription>
-            以管理员身份执行完整调用链：副作用真实生效，并计入下方调用审计。
-            如仅需验证逻辑，请使用「脚本」页的试跑。
-          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <Textarea
@@ -128,9 +124,7 @@ export function FunctionInvocationsPanel({
               执行
             </Button>
             {selected.status !== "active" || !selected.activeVersion ? (
-              <span className="text-xs text-muted-foreground">
-                函数尚未激活，调用会返回 40990
-              </span>
+              <span className="text-xs text-muted-foreground">函数未激活</span>
             ) : null}
           </div>
           {invokeResult ? (
@@ -146,9 +140,6 @@ export function FunctionInvocationsPanel({
       <Card>
         <CardHeader>
           <CardTitle>调用审计</CardTitle>
-          <CardDescription>
-            相同 eventId 重复提交会直接返回既有成功结果，不会二次执行副作用。
-          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-3">
@@ -236,7 +227,7 @@ export function FunctionInvocationsPanel({
               {!list.length ? (
                 <TableRow>
                   <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
-                    {invocationsQuery.isLoading ? "加载中…" : "没有符合条件的调用记录"}
+                    {invocationsQuery.isLoading ? "加载中…" : "暂无调用记录"}
                   </TableCell>
                 </TableRow>
               ) : null}
@@ -303,7 +294,7 @@ export function FunctionInvocationsPanel({
                 </div>
               ) : null}
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">副作用（以实际执行记录为准）</p>
+                <p className="text-xs text-muted-foreground">副作用</p>
                 <EffectList effects={detail.result?.effects ?? []} />
               </div>
             </div>

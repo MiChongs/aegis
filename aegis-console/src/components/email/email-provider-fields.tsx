@@ -24,10 +24,10 @@ import { Textarea } from "@/components/ui/textarea";
 type ChangeHandler = (key: string, value: string) => void;
 
 /** 分区顺序即渲染顺序；后端字段的 group 落在这里，未知 group 归入「其他」。 */
-const GROUPS: Array<{ key: string; title: string; hint?: string }> = [
-  { key: "credential", title: "服务商凭据", hint: "仅存于服务端，加密落库、永不回传" },
+const GROUPS: Array<{ key: string; title: string }> = [
+  { key: "credential", title: "服务商凭据" },
   { key: "sender", title: "发件人身份" },
-  { key: "webhook", title: "投递回执", hint: "回填送达 / 退信 / 投诉状态" },
+  { key: "webhook", title: "投递回执" },
   { key: "advanced", title: "高级选项" },
   { key: "other", title: "其他" }
 ];
@@ -40,7 +40,6 @@ function FieldShell({ field, children }: { field: EmailConfigField; children: Re
         {field.required && <span className="text-destructive"> *</span>}
       </Label>
       {children}
-      {field.help && <p className="text-[11px] leading-relaxed text-muted-foreground">{field.help}</p>}
     </div>
   );
 }
@@ -68,7 +67,7 @@ function SecretInput({
       <Input
         type={show ? "text" : "password"}
         className="h-8 font-mono text-xs"
-        placeholder={configured ? "已配置，留空即不修改" : field.placeholder}
+        placeholder={configured ? "留空不修改" : field.placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -159,7 +158,6 @@ function DynamicField({
           />
           <span className="min-w-0 space-y-0.5">
             <span className="block text-xs">{field.label}</span>
-            {field.help && <span className="block text-[11px] leading-relaxed text-muted-foreground">{field.help}</span>}
           </span>
         </label>
       );
@@ -251,7 +249,7 @@ function CopyButton({ value }: { value: string }) {
 }
 
 /** 回调令牌未填时的占位文案。留一个中文占位比留空好：留空的地址看起来是完整的。 */
-const TOKEN_PLACEHOLDER = "<在下面填写回调令牌>";
+const TOKEN_PLACEHOLDER = "<回调令牌>";
 
 /**
  * 把后端下发的 webhookPath 模板拼成完整地址。
@@ -309,31 +307,11 @@ function WebhookCard({
       {needsToken && (
         <p className="flex gap-1.5 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
           <ShieldAlert className="mt-0.5 size-3 shrink-0" />
-          <span>
-            这家不对回执签名，**地址本身就是凭据**，请当密钥保管、不要贴进工单或聊天群。
-            {ready
-              ? "令牌只在本次编辑时显示，重新打开这个弹窗会退回占位符 —— 服务端从不回传密钥。"
-              : "先在下面填好「回调令牌」，这里就会显示可直接复制的完整地址。"}
-          </span>
+          <span>{ready ? "地址即凭据，请勿外泄" : "请先填写回调令牌"}</span>
         </p>
       )}
       {meta.webhookNote && <p className="text-[11px] leading-relaxed text-muted-foreground">{meta.webhookNote}</p>}
     </div>
-  );
-}
-
-/** 接入注意事项。这些是「配了却发不出去」的高频原因，值得摆在表单顶部而不是文档里。 */
-function ProviderNotes({ meta }: { meta: EmailProviderMeta }) {
-  if (!meta.notes?.length) return null;
-  return (
-    <ul className="space-y-1 rounded-lg border bg-muted/30 px-3 py-2.5">
-      {meta.notes.map((note) => (
-        <li key={note} className="flex gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
-          <Info className="mt-0.5 size-3 shrink-0" />
-          <span>{note}</span>
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -375,14 +353,13 @@ export function EmailProviderFields({
   }, [meta]);
 
   if (!meta) {
-    return <p className="text-xs text-muted-foreground">正在加载服务商配置项…</p>;
+    return <p className="text-xs text-muted-foreground">加载中…</p>;
   }
 
   return (
     // 分栏跟随抽屉宽度（@container/form），不跟随视口：视口断点会在窄窗口里
     // 把抽屉也排成两列，每列只剩 200 余像素，标签与提示全被挤到换行
     <div className="@container/form space-y-4">
-      <ProviderNotes meta={meta} />
       <WebhookCard
         meta={meta}
         scopeSegment={scopeSegment}
@@ -397,7 +374,6 @@ export function EmailProviderFields({
           <div key={group.key} className="space-y-2.5">
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
               <h5 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{group.title}</h5>
-              {group.hint && <span className="text-[10px] text-muted-foreground/70">{group.hint}</span>}
             </div>
             <div className="grid gap-3 @xl/form:grid-cols-2">
               {list.map((field) => (
@@ -454,7 +430,7 @@ export function EmailProviderFields({
           className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
           <ExternalLink className="size-3" />
-          查看 {meta.name} 官方接入文档
+          官方文档
         </a>
       )}
     </div>

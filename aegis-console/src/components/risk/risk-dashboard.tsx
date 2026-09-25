@@ -127,7 +127,7 @@ function EngineStatusCard({ data, rangeKey, onRangeChange }: {
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  <p className="text-xs">这些场景没有启用的规则：{uncovered.map(sceneLabel).join("、")}</p>
+                  <p className="text-xs">{uncovered.map(sceneLabel).join("、")}</p>
                 </TooltipContent>
               </Tooltip>
             )}
@@ -135,7 +135,7 @@ function EngineStatusCard({ data, rangeKey, onRangeChange }: {
             {(noRules || noActions) && (
               <span className="flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400">
                 <AlertTriangle className="size-3" />
-                {noRules ? "无启用规则，所有请求得分为 0" : "无启用策略，命中后不执行任何动作"}
+                {noRules ? "无启用规则" : "无启用策略"}
               </span>
             )}
           </>
@@ -194,8 +194,7 @@ function SummaryCards({ data, loading }: { data?: RiskDashboard; loading: boolea
         footer={<Sub>最高 {s.maxScore} 分</Sub>} />
       <StatCard label="独立 IP" icon={Users} value={fmtNumber(s.distinctIps)}
         footer={<Sub>设备 {fmtNumber(s.distinctDevices)}，账号 {fmtNumber(s.distinctAccounts)}</Sub>} />
-      <StatCard label="判定耗时" icon={Timer} value={`${s.avgLatencyMs.toFixed(1)} ms`}
-        footer={<Sub>登录链路平均开销</Sub>} />
+      <StatCard label="判定耗时" icon={Timer} value={`${s.avgLatencyMs.toFixed(1)} ms`} />
     </div>
   );
 }
@@ -278,7 +277,7 @@ function TrendCard({ data, loading }: { data?: RiskDashboard; loading: boolean }
         </div>
 
         {loading && chartData.length === 0 ? <ChartSkeleton height={260} />
-          : !hasData ? <InlineEmpty text="该区间内没有评估记录" height={260} />
+          : !hasData ? <InlineEmpty text="暂无评估记录" height={260} />
           : (
             <ChartContainer config={config} className="h-[260px] w-full">
               {view === "rate" ? (
@@ -362,7 +361,7 @@ function LevelDonutCard({ data, loading }: { data?: RiskDashboard; loading: bool
   return (
     <CardShell title="风险等级分布">
       {loading && items.length === 0 ? <ChartSkeleton height={220} />
-        : total === 0 ? <InlineEmpty text="该区间内没有评估记录" height={220} />
+        : total === 0 ? <InlineEmpty text="暂无评估记录" height={220} />
         : (
           <>
             <ChartContainer config={config} className="mx-auto h-[220px] w-full">
@@ -407,7 +406,7 @@ function ActionBarCard({ data, loading }: { data?: RiskDashboard; loading: boole
   return (
     <CardShell title="处置动作分布">
       {loading && items.length === 0 ? <ChartSkeleton height={220} />
-        : total === 0 ? <InlineEmpty text="该区间内没有评估记录" height={220} />
+        : total === 0 ? <InlineEmpty text="暂无评估记录" height={220} />
         : (
           <ChartContainer config={config} className="h-[220px] w-full">
             <BarChart data={items} layout="vertical" margin={{ top: 4, right: 24, bottom: 4, left: 4 }}>
@@ -441,7 +440,7 @@ function ScoreHistogramCard({ data, loading }: { data?: RiskDashboard; loading: 
   return (
     <CardShell title="分数分布">
       {loading && items.length === 0 ? <ChartSkeleton height={220} />
-        : total === 0 ? <InlineEmpty text="该区间内没有评估记录" height={220} />
+        : total === 0 ? <InlineEmpty text="暂无评估记录" height={220} />
         : (
           <ChartContainer config={config} className="h-[220px] w-full">
             <BarChart data={items} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
@@ -479,7 +478,7 @@ function SceneCard({ data, loading }: { data?: RiskDashboard; loading: boolean }
   return (
     <CardShell title="场景分布">
       {loading && items.length === 0 ? <ChartSkeleton height={200} />
-        : items.length === 0 ? <InlineEmpty text="该区间内没有评估记录" height={200} />
+        : items.length === 0 ? <InlineEmpty text="暂无评估记录" height={200} />
         : (
           <>
             <ChartContainer config={config} className="h-[200px] w-full">
@@ -539,7 +538,7 @@ function TopRulesCard({ data, loading, onInspect }: {
   return (
     <CardShell title="命中最多的规则">
       {loading && items.length === 0 ? <ChartSkeleton height={200} />
-        : items.length === 0 ? <InlineEmpty text="没有规则被命中，可能是阈值偏高" height={200} />
+        : items.length === 0 ? <InlineEmpty text="暂无命中" height={200} />
         : (
           <div className="space-y-1.5">
             {items.map((rule) => (
@@ -572,7 +571,7 @@ function TopIPsCard({ data, loading, onInspect }: {
   return (
     <CardShell title="高频 IP">
       {loading && items.length === 0 ? <ChartSkeleton height={200} />
-        : items.length === 0 ? <InlineEmpty text="该区间内没有评估记录" height={200} />
+        : items.length === 0 ? <InlineEmpty text="暂无评估记录" height={200} />
         : (
           <div className="space-y-1">
             {items.map((item) => (
@@ -598,7 +597,7 @@ function TopDevicesCard({ data, loading, onInspect }: {
   return (
     <CardShell title="高频设备">
       {loading && items.length === 0 ? <ChartSkeleton height={200} />
-        : items.length === 0 ? <InlineEmpty text="客户端未上报设备标识时不会有记录" height={200} />
+        : items.length === 0 ? <InlineEmpty text="暂无设备" height={200} />
         : (
           <div className="space-y-1">
             {items.map((item) => (

@@ -36,11 +36,7 @@ function SecurityPageInner() {
 
   return (
     <div className="page-stack">
-      <SectionHeading
-        eyebrow="控制台"
-        title="安全"
-        description="安全运行态与留痕。平台安全配置在「平台运维 → 配置」。"
-      />
+      <SectionHeading eyebrow="控制台" title="安全" />
 
       <Tabs
         value={tab}

@@ -27,7 +27,7 @@ export function UserDeleteDialog({ open, onOpenChange, userName, onConfirm, isPe
             删除用户
           </DialogTitle>
           <DialogDescription>
-            即将永久删除用户 <span className="font-semibold text-foreground">{userName || "未知"}</span>，此操作不可撤销。用户的所有数据（资料、设置、安全凭证、会话）将被清除。
+            永久删除用户 <span className="font-semibold text-foreground">{userName || "未知"}</span> 及其全部数据，不可撤销。
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 py-1">

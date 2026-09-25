@@ -195,7 +195,7 @@ function RulesPanel() {
           </div>
         </div>
       )}
-      {rules.length === 0 ? <EmptyState title="暂无规则" description="创建上传规则以限制文件大小、类型等" /> : (
+      {rules.length === 0 ? <EmptyState title="暂无规则" /> : (
         <div className="space-y-2">{rules.map((r) => (
           <div key={r.id} className="flex items-center gap-3 rounded-lg border px-3 py-2 group">
             <div className="flex-1 min-w-0">
@@ -304,7 +304,7 @@ function CDNPanel({ allConfigs, selectedConfigId, onSelectConfig }: {
           {/* 右列：签名 URL */}
           <div className="space-y-3 rounded-lg border p-3">
             <h4 className="text-xs font-semibold text-muted-foreground">签名 URL</h4>
-            <div className="flex items-center gap-2 text-xs"><Switch checked={signEnabled} onCheckedChange={setSignEnabled} /><span>启用签名 URL（私有文件防盗链）</span></div>
+            <div className="flex items-center gap-2 text-xs"><Switch checked={signEnabled} onCheckedChange={setSignEnabled} /><span>启用签名 URL</span></div>
             {signEnabled && (<>
               <div className="space-y-1.5"><Label className="text-xs">签名密钥</Label><Input type="password" value={signSecret} onChange={(e) => setSignSecret(e.target.value)} placeholder="签名密钥" className="h-8 text-xs font-mono" /></div>
               <div className="space-y-1.5"><Label className="text-xs">签名有效期（秒）</Label><Input value={signTtl} onChange={(e) => setSignTtl(e.target.value.replace(/[^\d]/g, ""))} className="h-8 text-xs font-mono" /></div>
@@ -313,19 +313,19 @@ function CDNPanel({ allConfigs, selectedConfigId, onSelectConfig }: {
 
           {/* Referer 白名单 */}
           <div className="space-y-1.5">
-            <Label className="text-xs">Referer 白名单（每行一个域名）</Label>
+            <Label className="text-xs">Referer 白名单（每行一个）</Label>
             <Textarea value={refWhitelist} onChange={(e) => setRefWhitelist(e.target.value)} rows={3} className="text-xs font-mono" placeholder="example.com&#10;*.example.com" />
           </div>
 
           {/* Referer 黑名单 */}
           <div className="space-y-1.5">
-            <Label className="text-xs">Referer 黑名单（每行一个域名）</Label>
+            <Label className="text-xs">Referer 黑名单（每行一个）</Label>
             <Textarea value={refBlacklist} onChange={(e) => setRefBlacklist(e.target.value)} rows={3} className="text-xs font-mono" placeholder="bad-site.com" />
           </div>
 
           {/* IP 白名单 */}
           <div className="space-y-1.5 lg:col-span-2">
-            <Label className="text-xs">IP 白名单（每行一个 IP 或 CIDR）</Label>
+            <Label className="text-xs">IP 白名单（每行一个）</Label>
             <Textarea value={ipWhitelist} onChange={(e) => setIpWhitelist(e.target.value)} rows={2} className="text-xs font-mono" placeholder="10.0.0.0/8&#10;192.168.1.100" />
           </div>
 
@@ -355,7 +355,7 @@ function UsagePanel() {
   return (
     <Card><CardContent className="p-4 space-y-4">
       <h3 className="text-sm font-semibold flex items-center gap-2"><BarChart3 className="size-4" />存储用量</h3>
-      {!stats ? <EmptyState title="暂无统计" description="上传文件后将显示用量数据" /> : (
+      {!stats ? <EmptyState title="暂无统计" /> : (
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-4">
             <StatCard label="文件总数" value={String(stats.totalFiles)} />

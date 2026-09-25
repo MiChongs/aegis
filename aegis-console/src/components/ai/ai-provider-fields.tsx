@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 type ChangeHandler = (key: string, value: string) => void;
 
 const GROUPS: Array<{ key: string; title: string; hint?: string }> = [
-  { key: "credential", title: "服务商凭据", hint: "仅存于服务端，加密落库、永不回传" },
+  { key: "credential", title: "服务商凭据" },
   { key: "endpoint", title: "端点与模型" },
   { key: "advanced", title: "高级选项" },
   { key: "other", title: "其他" }
@@ -35,7 +35,6 @@ function FieldShell({ field, children }: { field: AIConfigField; children: React
         {field.required && <span className="text-destructive"> *</span>}
       </Label>
       {children}
-      {field.help && <p className="text-[11px] leading-relaxed text-muted-foreground">{field.help}</p>}
     </div>
   );
 }
@@ -57,7 +56,7 @@ function SecretInput({
       <Input
         type={show ? "text" : "password"}
         className="h-8 font-mono text-xs"
-        placeholder={configured ? "已配置，留空即不修改" : field.placeholder}
+        placeholder={configured ? "留空不修改" : field.placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -147,7 +146,6 @@ function DynamicField({
           />
           <span className="min-w-0 space-y-0.5">
             <span className="block text-xs">{field.label}</span>
-            {field.help && <span className="block text-[11px] leading-relaxed text-muted-foreground">{field.help}</span>}
           </span>
         </label>
       );
@@ -214,20 +212,6 @@ function DynamicField({
   }
 }
 
-function ProviderNotes({ meta }: { meta: AIProviderMeta }) {
-  if (!meta.notes?.length) return null;
-  return (
-    <ul className="space-y-1 rounded-lg border bg-muted/30 px-3 py-2.5">
-      {meta.notes.map((note) => (
-        <li key={note} className="flex gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
-          <Info className="mt-0.5 size-3 shrink-0" />
-          <span>{note}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 export function AIProviderFields({
   meta,
   settings,
@@ -260,12 +244,11 @@ export function AIProviderFields({
   }, [meta]);
 
   if (!meta) {
-    return <p className="text-xs text-muted-foreground">正在加载供应商配置项…</p>;
+    return <p className="text-xs text-muted-foreground">加载中…</p>;
   }
 
   return (
     <div className="@container/form space-y-4">
-      <ProviderNotes meta={meta} />
 
       {GROUPS.map((group) => {
         const list = grouped.get(group.key);
@@ -337,7 +320,7 @@ export function AIProviderFields({
           className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
           <ExternalLink className="size-3" />
-          查看 {meta.name} 官方接入文档
+          {meta.name} 官方文档
         </a>
       )}
     </div>

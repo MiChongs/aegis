@@ -205,7 +205,7 @@ function BulkBanDialog({
       });
       const failed = result.failed ?? 0;
       toast.success(`已封禁 ${result.created ?? selectedIds.length} 个账号`, {
-        description: failed ? `${failed} 个失败，可在各自详情页查看` : undefined
+        description: failed ? `${failed} 个失败` : undefined
       });
       setReason("");
       setEndAt("");
@@ -221,10 +221,7 @@ function BulkBanDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="text-sm">批量封禁 {selectedIds.length} 个账号</DialogTitle>
-          <DialogDescription>
-            会为每个账号各建一条封禁记录（有起止、有操作人、可撤销、可申诉）。
-            已有生效封禁的账号会叠加一条，不会被替换。
-          </DialogDescription>
+          <DialogDescription>为每个账号新增一条封禁记录。</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -237,18 +234,15 @@ function BulkBanDialog({
                 className="gap-1.5"
               >
                 {[
-                  { value: "temporary", label: "临时", hint: "到期自动解除" },
-                  { value: "permanent", label: "永久", hint: "需人工撤销" }
+                  { value: "temporary", label: "临时" },
+                  { value: "permanent", label: "永久" }
                 ].map((option) => (
                   <label
                     key={option.value}
                     className="flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5"
                   >
                     <RadioGroupItem value={option.value} />
-                    <span className="text-xs">
-                      {option.label}
-                      <span className="ml-1 text-muted-foreground">{option.hint}</span>
-                    </span>
+                    <span className="text-xs">{option.label}</span>
                   </label>
                 ))}
               </RadioGroup>
@@ -296,7 +290,7 @@ function BulkBanDialog({
             <Textarea
               rows={3}
               value={reason}
-              placeholder="例如：同一注册 IP 批量注册小号"
+              placeholder="例如：批量注册小号"
               onChange={(event) => setReason(event.target.value)}
             />
           </div>
@@ -368,9 +362,7 @@ function BulkNotifyDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="text-sm">给 {selectedIds.length} 个用户发站内信</DialogTitle>
-          <DialogDescription>
-            写入应用用户的站内信收件箱，用户在客户端里可见。这不是管理员通知，也不走邮件。
-          </DialogDescription>
+          <DialogDescription>发送到用户站内信收件箱。</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">

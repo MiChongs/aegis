@@ -21,12 +21,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { cn } from "@/lib/utils";
 import { CapabilityPicker, HighRiskNotice, errorMessage } from "./function-shared";
 
-const RUNTIME_HINT: Record<AppFunctionRuntime, string> = {
-  script: "在控制台编写逻辑，运行于 Aegis 进程内，可读写平台数据，适用于自定义 API。",
-  wasm: "纯计算沙箱，无法访问平台数据，适用于确定性算法。",
-  http: "转发至自建 HTTPS 端点，需实现 Ed25519 双向签名。"
-};
-
 /**
  * 创建远程函数。
  *
@@ -76,9 +70,7 @@ export function CreateFunctionDialog({
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>创建远程函数</DialogTitle>
-          <DialogDescription>
-            函数归属当前应用。创建后在「脚本」页编写逻辑，发布并激活版本后即可被调用。
-          </DialogDescription>
+          <DialogDescription>函数归属当前应用</DialogDescription>
         </DialogHeader>
 
         <ScrollArea className="-mx-6 max-h-[60vh] px-6">
@@ -92,7 +84,7 @@ export function CreateFunctionDialog({
                   placeholder="sync-user-profile"
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  小写字母开头，可含数字与 <code className="font-mono">. _ -</code>
+                  小写开头，可含 <code className="font-mono">. _ -</code>
                 </p>
               </div>
               <div className="space-y-2">
@@ -117,7 +109,6 @@ export function CreateFunctionDialog({
                   <SelectItem value="http">HTTP 端点（自建服务）</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">{RUNTIME_HINT[runtime]}</p>
             </div>
 
             {runtime === "script" && templates.length ? (
@@ -137,15 +128,9 @@ export function CreateFunctionDialog({
                       )}
                     >
                       <span className="font-medium">{template.title}</span>
-                      <span className="mt-0.5 block leading-snug text-muted-foreground">
-                        {template.summary}
-                      </span>
                     </button>
                   ))}
                 </div>
-                <p className="text-[11px] text-muted-foreground">
-                  选择模板将自动勾选所需能力，脚本正文在创建后预填。
-                </p>
               </div>
             ) : null}
 
@@ -161,9 +146,7 @@ export function CreateFunctionDialog({
               </div>
             ) : (
               <p className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                {runtime === "wasm"
-                  ? "WASM 运行时无法访问平台数据，无需声明能力。"
-                  : "HTTP 端点由外部服务实现，平台仅负责转发与双向签名，无需声明能力。"}
+                无需声明能力
               </p>
             )}
           </div>

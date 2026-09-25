@@ -136,7 +136,7 @@ export function OrgSettingsPanel({
                 </SelectContent>
               </Select>
               {status === "archived" && (
-                <p className="text-[10px] text-warning">归档后组织变为只读，所有写操作都会被拒绝</p>
+                <p className="text-[10px] text-warning">归档后只读</p>
               )}
             </div>
             <div className="space-y-1.5">
@@ -175,9 +175,6 @@ export function OrgSettingsPanel({
 
           <div className="space-y-2">
             <Label className="text-xs font-semibold">配额（0 表示不限）</Label>
-            {!isPlatform && (
-              <p className="text-[10px] text-muted-foreground">配额由平台管理员设定，组织内无法自行调整。</p>
-            )}
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">成员上限</Label>
@@ -225,7 +222,7 @@ export function OrgSettingsPanel({
                     <Crown className="size-3.5" />转让所有权
                   </div>
                   <p className="text-[10px] text-muted-foreground">
-                    当前所有者：{org.ownerName || "未设置"}。转让后你会降为管理员。
+                    当前所有者：{org.ownerName || "未设置"}
                   </p>
                 </div>
                 <Button size="sm" variant="outline" onClick={() => setTransferring(true)}>转让</Button>
@@ -238,9 +235,6 @@ export function OrgSettingsPanel({
                   <div className="flex items-center gap-1.5 text-sm font-medium">
                     <Trash2 className="size-3.5" />删除组织
                   </div>
-                  <p className="text-[10px] text-muted-foreground">
-                    部门、成员关系、角色与审批记录会一并销毁，不可恢复。若只是暂停使用，改用「停用」或「归档」。
-                  </p>
                 </div>
                 <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => setDeleting(true)}>
                   删除
@@ -266,9 +260,6 @@ function TransferDialog({ org, onClose }: { org: Organization; onClose: () => vo
       <DialogContent>
         <DialogHeader><DialogTitle>转让组织所有权</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            新所有者必须已经是本组织的在职成员。转让完成后，你的角色会变成「管理员」。
-          </p>
           <AdminPicker orgId={org.id} selected={picked} onChange={(next) => setPicked(next.slice(-1))} placeholder="搜索组织成员" />
           <Button
             className="w-full" disabled={mutation.isPending || picked.length === 0}
@@ -300,13 +291,12 @@ function DeleteOrgDialog({ org, onClose, onDeleted }: { org: Organization; onClo
           <AlertDialogDescription asChild>
             <div className="space-y-3">
               <p>
-                将永久删除 <strong>{org.stats.deptCount}</strong> 个部门、
-                <strong>{org.stats.memberCount}</strong> 条成员关系，以及全部角色、审批与操作记录。
-                此操作不可撤销。
+                永久删除 <strong>{org.stats.deptCount}</strong> 个部门、
+                <strong>{org.stats.memberCount}</strong> 条成员关系，不可撤销。
               </p>
               {org.stats.childCount > 0 && (
                 <p className="text-destructive">
-                  该组织下还有 {org.stats.childCount} 个下级组织，需要先处理它们。
+                  还有 {org.stats.childCount} 个下级组织
                 </p>
               )}
               <div className="space-y-1.5 text-left">
@@ -362,7 +352,7 @@ export function OrgDataPanel({ orgId, access }: { orgId: string; access?: OrgAcc
       if (dryRun) {
         const fatal = res.issues.filter((i) => i.fatal).length;
         if (fatal > 0) toast.error(`校验发现 ${fatal} 个阻断性问题`);
-        else toast.success("校验通过，可以正式导入");
+        else toast.success("校验通过");
       } else {
         toast.success(`导入完成：新增 ${res.memberAdded} 人、更新 ${res.memberUpdated} 人、新建 ${res.deptCreated} 个部门`);
       }
@@ -385,9 +375,6 @@ export function OrgDataPanel({ orgId, access }: { orgId: string; access?: OrgAcc
           <h3 className="flex items-center gap-2 text-sm font-semibold">
             <Download className="size-4" />导出
           </h3>
-          <p className="text-[11px] text-muted-foreground">
-            导出的文件与导入模板同构，改完可以直接导回来。
-          </p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={!canExport || busy} onClick={() => download(() => exportOrg(orgId), "导出完成")}>
               <FileSpreadsheet className="size-3.5" />导出组织架构
@@ -405,12 +392,9 @@ export function OrgDataPanel({ orgId, access }: { orgId: string; access?: OrgAcc
       <Card>
         <CardContent className="space-y-3 p-4">
           <h3 className="flex items-center gap-2 text-sm font-semibold"><Upload className="size-4" />导入</h3>
-          <p className="text-[11px] text-muted-foreground">
-            建议先「仅校验」跑一遍：它会把所有问题一次列出来，而不是导到一半失败留下半个组织。
-          </p>
 
           {!canImport ? (
-            <p className="py-4 text-center text-xs text-muted-foreground">你没有导入权限</p>
+            <p className="py-4 text-center text-xs text-muted-foreground">无导入权限</p>
           ) : (
             <>
               <input
@@ -452,7 +436,7 @@ export function OrgDataPanel({ orgId, access }: { orgId: string; access?: OrgAcc
                 )}
               </div>
               {result.issues.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground">没有发现问题。</p>
+                <p className="text-[11px] text-muted-foreground">无问题</p>
               ) : (
                 <div className="max-h-48 space-y-1 overflow-y-auto">
                   {result.issues.map((issue, i) => (
@@ -487,7 +471,7 @@ export function OrgActivityPanel({ orgId, access }: { orgId: string; access?: Or
   const query = useOrgActivityQuery(orgId, { page, limit: 30 });
 
   if (!can("org:activity:read")) {
-    return <EmptyState title="无权查看操作日志" description="需要「查看操作日志」权限" />;
+    return <EmptyState title="无权查看操作日志" />;
   }
 
   const items = query.data?.items ?? [];
@@ -500,7 +484,7 @@ export function OrgActivityPanel({ orgId, access }: { orgId: string; access?: Or
         {query.isLoading ? (
           <div className="py-10 text-center text-xs text-muted-foreground">加载中…</div>
         ) : items.length === 0 ? (
-          <EmptyState title="暂无操作记录" description="" />
+          <EmptyState title="暂无操作记录" />
         ) : (
           <div className="space-y-1.5">
             {items.map((log, i) => (
@@ -551,7 +535,7 @@ export function OrgOverviewCards({ stats, roleBreakdown }: {
         <StatTile label="岗位" value={stats.positionTotal} />
         <StatTile label="绑定应用" value={stats.appTotal} />
         <StatTile label="待处理邀请" value={stats.pendingInvites} />
-        <StatTile label="未分配部门" value={stats.unassignedMembers} hint="已入组织但未进任何部门" />
+        <StatTile label="未分配部门" value={stats.unassignedMembers} />
         <StatTile label="下级组织" value={stats.childOrgs} />
         <StatTile
           label="角色分布"

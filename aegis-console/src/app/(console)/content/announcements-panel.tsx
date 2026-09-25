@@ -160,7 +160,7 @@ function AnnouncementDialog({
       <SheetContent side="right" className="w-[92vw] max-w-2xl p-0 flex flex-col">
         <SheetHeader className="shrink-0 border-b px-6 py-4">
           <SheetTitle>{mode === "edit" ? "编辑公告" : "创建公告"}</SheetTitle>
-          <SheetDescription>{mode === "edit" ? "修改公告内容" : "创建系统公告，发布后所有管理员可见。"}</SheetDescription>
+          <SheetDescription>{mode === "edit" ? "修改公告内容" : "发布后所有管理员可见"}</SheetDescription>
         </SheetHeader>
 
         <ScrollArea className="flex-1">
@@ -211,11 +211,11 @@ function AnnouncementDialog({
 
             {/* 富文本内容 — 主编辑区 */}
             <div className="space-y-1.5">
-              <Label className="text-xs">内容（支持富文本，可全屏编辑）</Label>
+              <Label className="text-xs">内容</Label>
               <RichEditor
                 value={form.content}
                 onChange={(html) => set("content", html)}
-                placeholder="在此编写公告正文，支持标题、列表、引用、链接等格式..."
+                placeholder="输入正文"
                 fullscreenable
               />
             </div>
@@ -343,7 +343,7 @@ export function AnnouncementsPanel() {
       </div>
 
       {!items.length ? (
-        <EmptyState title="暂无公告" description="点击「创建」发布第一条系统公告。" />
+        <EmptyState title="暂无公告" />
       ) : (
         <div className="grid gap-3">
           {items.map((a) => (

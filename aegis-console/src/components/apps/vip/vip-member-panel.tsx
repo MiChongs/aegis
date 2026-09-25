@@ -72,7 +72,6 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
       <SectionCard
         icon={<Search className="size-4" />}
         title="会员查询"
-        description="与用户端 /vip/status、接入方服务端校验读的是同一份判定结论"
         // UserPicker 的触发器是 w-full，必须给它一个定宽容器才不会撑破卡头
         aside={
           <div className="w-64 min-w-0">
@@ -82,7 +81,7 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
       >
         {!user ? (
           <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
-            选一个用户，看他现在是不是会员、凭什么是、还剩多久、有哪些功能权益。
+            请选择用户
           </p>
         ) : entitlementQuery.isLoading ? (
           <Skeleton className="h-32 w-full rounded-xl" />
@@ -101,11 +100,7 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
               <Fact
                 label="剩余"
                 value={entitlement.isVip ? formatRemaining(entitlement.remainingSeconds) : "—"}
-                hint={
-                  entitlement.isVip
-                    ? `按天口径 ${entitlement.remainingDays} 天`
-                    : "不是会员"
-                }
+                hint={entitlement.isVip ? `${entitlement.remainingDays} 天` : "非会员"}
               />
               <Fact
                 label="功能权益"
@@ -113,7 +108,7 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
                   <FeatureTagList
                     tags={entitlement.features}
                     catalog={features}
-                    emptyHint={entitlement.isVip ? "只是会员，无细分权益" : "—"}
+                    emptyHint={entitlement.isVip ? "无细分权益" : "—"}
                   />
                 }
               />
@@ -148,16 +143,15 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
               ) : null}
 
               <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2">
-                <span className="text-[11px] text-muted-foreground">现在能不能领：</span>
+                <span className="text-[11px] text-muted-foreground">试用资格：</span>
                 <Badge variant={entitlement.trialOffer.available ? "success" : "secondary"} size="sm">
                   {offerMeta?.label ?? entitlement.trialOffer.reason}
                 </Badge>
-                <span className="text-[10px] text-muted-foreground">{offerMeta?.hint}</span>
               </div>
             </div>
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">查不到该用户的会员状态。</p>
+          <p className="text-xs text-muted-foreground">暂无会员状态</p>
         )}
       </SectionCard>
 
@@ -165,7 +159,6 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
         <SectionCard
           icon={<ShieldCheck className="size-4" />}
           title="授予会员"
-          description="不动钱包、不走套餐，直接延长到期时间；如实记成「管理员授予」"
         >
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
@@ -178,7 +171,7 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
               />
             </div>
             <div className="min-w-52 flex-1 space-y-1.5">
-              <Label className="text-xs">理由（会写进账本）</Label>
+              <Label className="text-xs">理由</Label>
               <Input
                 value={grantReason}
                 onChange={(event) => setGrantReason(event.target.value)}
@@ -197,10 +190,6 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
               </Button>
             ))}
           </div>
-          <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
-            续期是<b>顺延</b>的：还在会员期内时从原到期时间往后加，不会把已有时长吃掉。
-            授予不带任何功能标识 —— 要给细分权益请让用户走套餐，或先把功能勾进一个套餐再授予。
-          </p>
         </SectionCard>
       ) : null}
 
@@ -208,13 +197,12 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
         <SectionCard
           icon={<CalendarClock className="size-4" />}
           title="开通记录"
-          description="这个用户的每一段会员从哪来、发到什么时候"
         >
           {transactionsQuery.isLoading ? (
             <Skeleton className="h-24 w-full" />
           ) : transactions.length === 0 ? (
             <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
-              这个用户还没有任何开通记录。
+              暂无开通记录
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -227,7 +215,7 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
                     <TableHead>金额</TableHead>
                     <TableHead>时长</TableHead>
                     <TableHead>发到</TableHead>
-                    <TableHead>功能</TableHead>
+                    <TableHead>开通时功能</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -236,7 +224,14 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
                       <TableCell className="text-xs">{formatVipDate(item.createdAt)}</TableCell>
                       <TableCell className="text-xs">{item.planName}</TableCell>
                       <TableCell>
-                        <VipSourceBadge source={item.payChannel} />
+                        <div className="flex items-center gap-1">
+                          <VipSourceBadge source={item.payChannel} />
+                          {item.revokedAt ? (
+                            <Badge variant="danger" size="sm">
+                              已作废
+                            </Badge>
+                          ) : null}
+                        </div>
                       </TableCell>
                       <TableCell className="text-xs tabular-nums">{formatVipPrice(item.payAmount)}</TableCell>
                       <TableCell className="text-xs">{item.durationDays} 天</TableCell>
@@ -250,10 +245,6 @@ export function VipMemberPanel({ appKey }: { appKey: string }) {
               </Table>
             </div>
           )}
-          <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
-            功能一列是<b>开通那一刻的快照</b>：之后改套餐配置不会改写它，
-            所以这里可能与套餐现在的配置不同 —— 那是对的。
-          </p>
         </SectionCard>
       ) : null}
     </div>

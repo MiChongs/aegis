@@ -72,13 +72,11 @@ export function UserOverviewTab({
           label="积分"
           value={numberText(user.integral)}
           icon={<Coins className="size-3.5" />}
-          hint="可在「资产」页签调整"
         />
         <StatTile
           label="经验"
           value={numberText(user.experience)}
           icon={<Sparkles className="size-3.5" />}
-          hint="等级由经验推导"
         />
         <StatTile
           label="钱包余额"
@@ -169,7 +167,6 @@ export function UserOverviewTab({
           <Panel
             title="登录方式"
             icon={<KeyRound className="size-4" />}
-            description="任一项可用即可登录；全部缺失时账号本人也进不来。"
             action={
               <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onNavigate("security")}>
                 安全详情
@@ -187,7 +184,7 @@ export function UserOverviewTab({
             ) : (
               <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
                 <Fingerprint className="size-4" />
-                没有任何可用的登录凭据
+                无可用登录凭据
               </div>
             )}
             {security?.oauth2Providers?.length ? (

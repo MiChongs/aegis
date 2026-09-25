@@ -101,14 +101,14 @@ export function CurrencySelect({
       <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
         <Command shouldFilter={false}>
           <CommandInput
-            placeholder="搜索代码或中文名，如 USD / 美元"
+            placeholder="搜索币种"
             value={keyword}
             onValueChange={setKeyword}
             className="text-xs"
           />
           <CommandList>
             {filtered.length === 0 && !custom ? (
-              <CommandEmpty className="py-6 text-xs">没有匹配的币种，输入 3 位 ISO 4217 代码可直接使用</CommandEmpty>
+              <CommandEmpty className="py-6 text-xs">暂无匹配币种</CommandEmpty>
             ) : null}
             {custom ? (
               <CommandGroup heading="自定义">
@@ -122,7 +122,7 @@ export function CurrencySelect({
                 >
                   <Check className={cn("size-3.5", value === custom ? "opacity-100" : "opacity-0")} />
                   <span className="font-mono">{custom}</span>
-                  <span className="text-muted-foreground">直接使用这个代码</span>
+                  <span className="text-muted-foreground">直接使用</span>
                 </CommandItem>
               </CommandGroup>
             ) : null}

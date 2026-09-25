@@ -421,7 +421,7 @@ export function FirewallLogsPanel() {
             </div>
           </SurfaceCard>
         ) : !logData?.items?.length ? (
-          <EmptyState title="暂无日志" description="当前时间范围与过滤条件下没有防火墙拦截记录" />
+          <EmptyState title="暂无日志" />
         ) : (
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
@@ -528,7 +528,7 @@ export function FirewallLogsPanel() {
           <DialogContent className="max-w-sm">
             <DialogHeader>
               <DialogTitle className="text-sm">清理防火墙日志</DialogTitle>
-              <DialogDescription>删除指定时间之前的拦截日志，此操作不可撤销。</DialogDescription>
+              <DialogDescription>删除后不可恢复。</DialogDescription>
             </DialogHeader>
             <Select value={String(cleanupDays)} onValueChange={(v) => setCleanupDays(Number(v))}>
               <SelectTrigger><SelectValue /></SelectTrigger>

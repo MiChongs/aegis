@@ -102,8 +102,7 @@ export function RiskDevicesPanel({ onQueryAssessments }: { onQueryAssessments?: 
           <div key={i} className="h-11 animate-pulse rounded-lg bg-muted/50" />
         ))}</div>
       ) : items.length === 0 ? (
-        <EmptyState title="没有匹配的设备"
-          description="设备档案在每次风险评估时自动写入，客户端未上报设备标识则不会有记录" />
+        <EmptyState title="暂无设备" />
       ) : (
         <>
           <div className="overflow-x-auto rounded-xl border">
@@ -226,8 +225,7 @@ export function RiskIPsPanel({ onQueryAssessments }: { onQueryAssessments?: (ip:
           <div key={i} className="h-11 animate-pulse rounded-lg bg-muted/50" />
         ))}</div>
       ) : items.length === 0 ? (
-        <EmptyState title="没有匹配的 IP"
-          description="IP 档案在风险评估时自动写入，未配置情报源时只有本地归属地与计数" />
+        <EmptyState title="暂无 IP" />
       ) : (
         <>
           <div className="overflow-x-auto rounded-xl border">
@@ -378,14 +376,14 @@ function IPDetailSheet({ ip, onClose }: { ip: string; onClose: () => void }) {
   const refresh = async () => {
     try {
       await refreshMut.mutateAsync(ip);
-      toast.success("已向情报源重新拉取");
+      toast.success("已重新拉取");
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "刷新失败");
     }
   };
 
   const applyTag = async (next: string) => {
-    if (!detail?.record.id) { toast.error("该 IP 尚无档案，无法标记"); return; }
+    if (!detail?.record.id) { toast.error("该 IP 暂无档案"); return; }
     try {
       await tagMut.mutateAsync({ id: detail.record.id, tag: next, note: note.trim() || undefined });
       toast.success("标记已更新");
@@ -455,10 +453,7 @@ function IPDetailSheet({ ip, onClose }: { ip: string; onClose: () => void }) {
 
               <section className="space-y-2">
                 <SectionTitle>人工处置</SectionTitle>
-                <p className="text-[10px] text-muted-foreground">
-                  人工标注的来源记为 manual，不会被后续的情报刷新覆盖。
-                </p>
-                <Textarea rows={2} className="text-xs" value={note} placeholder="备注，可留空"
+                <Textarea rows={2} className="text-xs" value={note} placeholder="备注（选填）"
                   onChange={(e) => setNote(e.target.value)} />
                 <div className="flex flex-wrap gap-1.5">
                   {ipTags.map((t) => (

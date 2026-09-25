@@ -82,7 +82,7 @@ export function AIChannelPanel({ scope }: { scope: AIScope }) {
   const isPlatform = scope.kind === "platform";
 
   if (scope.kind === "app" && !scope.appKey) {
-    return <EmptyState title="请先选择应用" description="选择应用后可管理它的 AI 通道。" />;
+    return <EmptyState title="请先选择应用" />;
   }
 
   return (
@@ -90,11 +90,6 @@ export function AIChannelPanel({ scope }: { scope: AIScope }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">{isPlatform ? "平台 AI 通道" : "AI 通道"}</h2>
-          <p className="text-sm text-muted-foreground">
-            {isPlatform
-              ? "平台自身的 AI 出口；打开「共享」后还能作为应用的兜底通道。"
-              : "该应用的 AI 助手、aegis.ai 脚本调用与 OpenAI/Anthropic 兼容网关都从这里出。"}
-          </p>
         </div>
       </div>
 
@@ -156,11 +151,6 @@ function ChannelChainBand({
         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <div className="min-w-0 text-sm">
           <p className="font-medium">当前没有可用的 AI 通道</p>
-          <p className="text-xs text-muted-foreground">
-            {isPlatform
-              ? "新建一条通道后，平台与共享兜底能力才可用。"
-              : "AI 助手、aegis.ai 脚本与兼容网关现在都调不通。新建一条通道，或请平台管理员共享平台通道。"}
-          </p>
         </div>
       </div>
     );
@@ -193,7 +183,7 @@ function ChannelChainBand({
       {!isPlatform && inheritedOnly && (
         <p className="flex items-center gap-1.5 text-[11px] text-sky-600 dark:text-sky-400">
           <Share2 className="size-3.5 shrink-0" />
-          本应用没有自己的通道，正在借用平台共享通道 —— 调用计费落在平台头上。
+          正在借用平台共享通道
         </p>
       )}
     </div>
@@ -321,7 +311,7 @@ function ConfigsSection({
         toast.success("测试通过");
       } else {
         setTestOutcome({ ok: false, text: `测试未通过：${clipText(result.error ?? "未知错误")}` });
-        toast.error("测试未通过，详情见下方");
+        toast.error("测试未通过");
       }
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "测试失败");
@@ -339,14 +329,7 @@ function ConfigsSection({
       </div>
 
       {configs.length === 0 ? (
-        <EmptyState
-          title="还没有 AI 通道"
-          description={
-            isPlatform
-              ? "新建一条通道并打开「共享」，应用即可零配置借用。"
-              : "新建一条通道；也可以让平台管理员把平台通道设为共享，本应用即可直接借用。"
-          }
-        />
+        <EmptyState title="暂无 AI 通道" />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {configs.map((config) => (
@@ -380,7 +363,6 @@ function ConfigsSection({
                     onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                     required
                   />
-                  <p className="text-[11px] text-muted-foreground">同一作用域内唯一；链路按优先级 + 默认位排序。</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">供应商</Label>
@@ -423,13 +405,11 @@ function ConfigsSection({
               <div className="grid gap-3 sm:grid-cols-2">
                 <SwitchRow
                   label="启用"
-                  help="关掉之后这条通道不会出现在任何链路里"
                   checked={editing.enabled}
                   onCheckedChange={(v) => setEditing({ ...editing, enabled: v })}
                 />
                 <SwitchRow
                   label="设为默认"
-                  help="没有指名通道的调用都先走它"
                   checked={editing.isDefault}
                   onCheckedChange={(v) => setEditing({ ...editing, isDefault: v })}
                 />
@@ -438,7 +418,6 @@ function ConfigsSection({
               {isPlatform && (
                 <SwitchRow
                   label="共享给应用作为兜底"
-                  help="应用自己一条通道都没有时，它的 AI 调用会走这条通道 —— 计费落在平台头上。默认关闭。"
                   checked={editing.shared}
                   onCheckedChange={(v) => setEditing({ ...editing, shared: v })}
                 />
@@ -449,10 +428,10 @@ function ConfigsSection({
                   <Separator />
                   <div className="flex items-end gap-2">
                     <div className="flex-1 space-y-1.5">
-                      <Label className="text-xs">测试型号（留空用默认型号）</Label>
+                      <Label className="text-xs">测试型号</Label>
                       <Input
                         className="h-8 font-mono text-xs"
-                        placeholder={activeMeta?.suggestedModels?.[0] ?? ""}
+                        placeholder="留空用默认型号"
                         value={editing.testModel}
                         onChange={(e) => setEditing({ ...editing, testModel: e.target.value })}
                       />
@@ -468,9 +447,6 @@ function ConfigsSection({
                       <Sparkles className="size-3.5" /> {testMutation.isPending ? "测试中…" : "连通性测试"}
                     </Button>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    测试使用已保存的配置，将产生一次真实调用计费；修改配置后请先保存再测试。
-                  </p>
                   {testOutcome ? <TestOutcomeNote outcome={testOutcome} /> : null}
                 </>
               )}
@@ -703,10 +679,7 @@ function SkillsSection({ scope }: { scope: AIScope }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
-          技能是可复用的提示词包：领域约定、代码风格、排错清单。启用的技能会注入 Agent 的系统提示词。
-        </p>
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <Button
           size="sm"
           onClick={() =>
@@ -718,7 +691,7 @@ function SkillsSection({ scope }: { scope: AIScope }) {
       </div>
 
       {skills.length === 0 && !skillsQuery.isLoading ? (
-        <EmptyState title="还没有技能" description="内置技能由平台提供；也可以把团队约定写成自定义技能。" />
+        <EmptyState title="暂无技能" />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {skills.map((skill) => (
@@ -800,13 +773,9 @@ function SkillsSection({ scope }: { scope: AIScope }) {
                   readOnly={editing.builtin}
                   required={!editing.builtin}
                 />
-                {editing.builtin && (
-                  <p className="text-[11px] text-muted-foreground">内置技能的正文随平台版本更新，这里只读。</p>
-                )}
               </div>
               <SwitchRow
                 label="启用"
-                help="启用的技能会注入到 Agent 的系统提示词里"
                 checked={editing.enabled}
                 onCheckedChange={(v) => setEditing({ ...editing, enabled: v })}
               />
@@ -959,7 +928,7 @@ function MCPSection({ scope }: { scope: AIScope }) {
         toast.success("测试通过");
       } else {
         setTestOutcome({ ok: false, text: `测试未通过：${clipText(result.error ?? "未知错误")}` });
-        toast.error("测试未通过，详情见下方");
+        toast.error("测试未通过");
       }
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "测试失败");
@@ -968,10 +937,7 @@ function MCPSection({ scope }: { scope: AIScope }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
-          外接的 MCP 工具服务器（Streamable HTTP）。启用后其工具自动出现在 Agent 的工具清单里。
-        </p>
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <Button
           size="sm"
           onClick={() => {
@@ -992,7 +958,7 @@ function MCPSection({ scope }: { scope: AIScope }) {
       </div>
 
       {servers.length === 0 && !serversQuery.isLoading ? (
-        <EmptyState title="还没有 MCP 服务器" description="接入内部工具平台或第三方 MCP 服务，扩展 Agent 的能力。" />
+        <EmptyState title="暂无 MCP 服务器" />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {servers.map((server) => (
@@ -1063,20 +1029,17 @@ function MCPSection({ scope }: { scope: AIScope }) {
                   onChange={(e) => setEditing({ ...editing, url: e.target.value })}
                   required
                 />
-                <p className="text-[11px] text-muted-foreground">Streamable HTTP 端点；出站走平台的统一出网通道。</p>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">鉴权请求头</Label>
                 <Textarea
                   className="font-mono text-xs"
                   rows={3}
-                  placeholder={editing.headersSet ? "已配置，留空即不修改" : "Authorization=Bearer sk-…\nX-API-Key=…"}
+                  placeholder={editing.headersSet ? "留空不修改" : "Authorization=Bearer sk-…\nX-API-Key=…"}
                   value={editing.headersText}
                   onChange={(e) => setEditing({ ...editing, headersText: e.target.value })}
                 />
-                <p className="text-[11px] text-muted-foreground">
-                  每行一条「键=值」。整体加密存放、永不回显{editing.headersSet ? "；当前已配置" : ""}。
-                </p>
+                <p className="text-[11px] text-muted-foreground">每行一条「键=值」</p>
                 {editing.headersSet && (
                   <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                     <Switch
@@ -1097,7 +1060,6 @@ function MCPSection({ scope }: { scope: AIScope }) {
               </div>
               <SwitchRow
                 label="启用"
-                help="启用后其工具清单会并入 Agent 可调用的工具"
                 checked={editing.enabled}
                 onCheckedChange={(v) => setEditing({ ...editing, enabled: v })}
               />
@@ -1105,8 +1067,7 @@ function MCPSection({ scope }: { scope: AIScope }) {
               {editing.serverId && (
                 <>
                   <Separator />
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] text-muted-foreground">测试将连接已保存的地址并拉取工具列表。</p>
+                  <div className="flex items-center justify-end gap-2">
                     <Button
                       type="button"
                       size="sm"

@@ -50,9 +50,6 @@ export function RiskReviewsPanel() {
         <Clock className="size-4 text-muted-foreground" />
         <h3 className="text-sm font-semibold">待复核队列</h3>
         <Badge variant={total > 0 ? "warning" : "outline"} size="sm">{total}</Badge>
-        <span className="text-xs text-muted-foreground">
-          处置动作为人工复核且尚未裁决的记录
-        </span>
       </div>
 
       {query.isLoading && items.length === 0 ? (
@@ -60,8 +57,7 @@ export function RiskReviewsPanel() {
           <div key={i} className="h-20 animate-pulse rounded-xl bg-muted/50" />
         ))}</div>
       ) : items.length === 0 ? (
-        <EmptyState title="队列已清空"
-          description="把某段分数的处置动作设为人工复核后，命中的请求会进入这里" />
+        <EmptyState title="暂无待复核记录" />
       ) : (
         <>
           <div className="space-y-2">

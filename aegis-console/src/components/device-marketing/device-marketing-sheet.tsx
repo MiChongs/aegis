@@ -151,9 +151,7 @@ export function DeviceMarketingSheet({
             {mode === "create" ? "新增设备营销名称" : record?.marketingName}
           </SheetTitle>
           <SheetDescription className="text-xs">
-            {mode === "create"
-              ? "将机器标识码（如 iPhone14,3 / SM-G998B）映射为人类可读名称，并关联厂商与产品图"
-              : "修改该条映射，或从字典中删除"}
+            {mode === "create" ? "新增字典映射" : "编辑字典映射"}
           </SheetDescription>
         </SheetHeader>
 
@@ -221,7 +219,7 @@ export function DeviceMarketingSheet({
 
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground uppercase tracking-widest">
-                标识符（iOS machine id 或 Android Build.MODEL）
+                标识符
               </Label>
               <Input
                 className="h-9 font-mono"
@@ -276,7 +274,7 @@ export function DeviceMarketingSheet({
                 rows={3}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="（可选）人工补录说明"
+                placeholder="可选"
               />
             </div>
 

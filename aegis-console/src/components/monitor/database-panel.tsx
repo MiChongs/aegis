@@ -137,7 +137,7 @@ export function DatabasePanel() {
   if (snapshotQuery.isError) {
     return (
       <div className="rounded-lg border border-dashed py-10 text-center text-xs text-muted-foreground">
-        无法获取数据库监控数据（需要超级管理员权限）
+        无法获取数据库监控数据
       </div>
     );
   }
@@ -361,9 +361,6 @@ function LeakSection({ snapshot }: { snapshot?: import("@/lib/api/database").Dat
         )}
         <div>
           <div className="font-medium">{leak.summary}</div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground">
-            检测覆盖：连接持有 / 事务 / 快照 / WAL / 两阶段事务 / 存储 / 连接池水位，外加指标趋势。
-          </div>
         </div>
       </div>
 
@@ -378,7 +375,7 @@ function LeakSection({ snapshot }: { snapshot?: import("@/lib/api/database").Dat
       {leak.trends.length > 0 && (
         <div className="rounded-lg border">
           <div className="border-b px-3 py-2 text-[11px] font-medium text-muted-foreground">
-            指标趋势（滑动窗口）
+            指标趋势
           </div>
           <div className="divide-y">
             {leak.trends.map((trend) => (
@@ -471,7 +468,7 @@ function SessionsSection() {
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <Switch checked={onlyProblematic} onCheckedChange={setOnlyProblematic} aria-label="只看异常会话" />
-          只看活跃 / 事务挂起 / 被锁阻塞
+          只看异常会话
         </label>
         <Button
           size="sm"
@@ -493,7 +490,7 @@ function SessionsSection() {
         <Skeleton className="h-32 w-full" />
       ) : items.length === 0 ? (
         <div className="rounded-lg border border-dashed py-10 text-center text-xs text-muted-foreground">
-          没有符合条件的会话
+          暂无会话
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border">
@@ -598,8 +595,8 @@ function SessionsSection() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pending?.mode === "terminate"
-                ? "会话将被断开，其未提交的事务全部回滚。若该会话属于业务进程，对应请求会收到连接错误。"
-                : "只中止当前正在执行的语句，连接与事务保留。若语句本身是长事务的一部分，事务仍会挂起。"}
+                ? "会话将被断开，未提交事务全部回滚。"
+                : "只中止当前语句，连接与事务保留。"}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -666,7 +663,7 @@ function MaintenanceSection() {
     <div className="grid gap-3 lg:grid-cols-2">
       <div className="rounded-lg border">
         <div className="border-b px-3 py-2 text-[11px] font-medium text-muted-foreground">
-          死元组占比高的表（VACUUM 未跟上）
+          死元组占比高的表
         </div>
         {bloated.length === 0 ? (
           <div className="py-8 text-center text-xs text-muted-foreground">无</div>
@@ -698,7 +695,7 @@ function MaintenanceSection() {
 
       <div className="rounded-lg border">
         <div className="border-b px-3 py-2 text-[11px] font-medium text-muted-foreground">
-          从未被扫描的索引（占空间、拖慢写入）
+          未使用的索引
         </div>
         {unused.length === 0 ? (
           <div className="py-8 text-center text-xs text-muted-foreground">无</div>
@@ -743,7 +740,7 @@ function LifecycleSection({ snapshot }: { snapshot?: import("@/lib/api/database"
     ["连接持有告警阈值", lifecycle.connHoldThreshold],
     ["idle in tx 告警阈值", lifecycle.idleInTxThreshold],
     ["长语句告警阈值", lifecycle.longQueryThreshold],
-    ["获取连接抓调用栈", lifecycle.trackAcquireStack ? "开启" : "关闭（无法定位到代码行）"],
+    ["获取连接抓调用栈", lifecycle.trackAcquireStack ? "开启" : "关闭"],
     [
       "自动终止 idle in tx",
       lifecycle.autoTerminateIdleInTx ? `开启（${lifecycle.autoTerminateAfter}）` : "关闭"
@@ -754,7 +751,7 @@ function LifecycleSection({ snapshot }: { snapshot?: import("@/lib/api/database"
     <div className="grid gap-3 lg:grid-cols-2">
       <div className="rounded-lg border">
         <div className="border-b px-3 py-2 text-[11px] font-medium text-muted-foreground">
-          生命周期参数（当前生效值）
+          生命周期参数
         </div>
         <div className="divide-y">
           {rows.map(([label, value]) => (
@@ -767,7 +764,7 @@ function LifecycleSection({ snapshot }: { snapshot?: import("@/lib/api/database"
       </div>
       <div className="rounded-lg border">
         <div className="border-b px-3 py-2 text-[11px] font-medium text-muted-foreground">
-          会话级参数（随每条连接下发到服务端）
+          会话级参数
         </div>
         <div className="divide-y">
           {sessionSettings.map(([key, value]) => (

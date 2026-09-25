@@ -79,7 +79,7 @@ export function passkeyRegistrationSupported() {
 export function passkeySecureContextIssue(): string | null {
   if (typeof window === "undefined") return null;
   if (window.isSecureContext) return null;
-  return `当前地址 ${window.location.origin} 不是安全上下文，浏览器不会提供 Passkey。请改用 HTTPS，或从 http://localhost / http://127.0.0.1 打开控制台。`;
+  return "Passkey 需在 HTTPS 或 localhost 下使用";
 }
 
 /**
@@ -90,23 +90,22 @@ export function passkeySecureContextIssue(): string | null {
  * RP ID 跟不上访问域名时，每一次绑定都会停在这一句上。
  */
 export function describePasskeyError(error: unknown): string {
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
   const host = typeof window !== "undefined" ? window.location.hostname : "";
   const name = error instanceof DOMException ? error.name : "";
 
   switch (name) {
     case "SecurityError":
-      return `Passkey 的 RP ID 与当前访问地址不匹配（当前域名 ${host}）。请到「平台配置 · 系统安全 · Passkey」把 RP ID 留空（留空即跟随访问域名）或填成 ${host}，并确认允许来源里有 ${origin}。`;
+      return `Passkey RP ID 与当前域名 ${host} 不匹配`;
     case "NotAllowedError":
-      return "已取消，或等待超时。请重新点击并在弹窗里完成指纹 / 面容 / PIN 验证。";
+      return "已取消或已超时";
     case "InvalidStateError":
-      return "这台设备上已经为该账号绑定过 Passkey，不能重复绑定。";
+      return "该设备已绑定过 Passkey";
     case "NotSupportedError":
-      return "当前设备或浏览器不支持所要求的 Passkey 参数。";
+      return "当前设备不支持该 Passkey 参数";
     case "AbortError":
-      return "操作已被中断。";
+      return "操作已中断";
     case "ConstraintError":
-      return "当前认证器不满足要求（多为要求可发现凭据或用户验证但设备不支持）。";
+      return "认证器不满足要求";
     default:
       break;
   }

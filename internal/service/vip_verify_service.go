@@ -87,6 +87,7 @@ func (s *VipService) AdminSaveFeature(ctx context.Context, mutation vipdomain.Fe
 //
 // 不级联清理套餐里的引用：删功能是运营动作，不该被"还有套餐在用"卡住；
 // 而残留的引用会在校验入口明确报「未登记的功能标识」，比静默改写一批套餐配置好排查。
+// 删除即对所有在期会员生效（功能权益只在启用中的目录里取，见 vipdomain.Evaluate），
 // 因此这里把「还有几个套餐在用」一并返回，让控制台能在删之前说清后果。
 func (s *VipService) AdminDeleteFeature(ctx context.Context, appID int64, tag string) (int64, error) {
 	if appID <= 0 {

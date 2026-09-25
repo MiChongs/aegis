@@ -125,7 +125,7 @@ export function RewardSummary({
   catalog: CardKeyRewardSpec[];
 }) {
   if (!rewards.length) {
-    return <span className="text-xs text-muted-foreground">不带权益（卡本身即授权）</span>;
+    return <span className="text-xs text-muted-foreground">无权益</span>;
   }
   return (
     <div className="flex flex-wrap gap-1">

@@ -153,7 +153,6 @@ export function UserProfileTab({
         <Panel
           title="编辑资料"
           icon={<UserRound className="size-4" />}
-          description="仅提交修改过的字段；清空后保存即清除该字段。"
           action={
             dirty ? (
               <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setDraft(null)}>
@@ -243,7 +242,6 @@ export function UserProfileTab({
         <Panel
           title="附加字段"
           icon={<Layers className="size-4" />}
-          description="由接入方写入的扩展数据。"
         >
           <ValueTree value={profile?.extra} />
         </Panel>
@@ -252,7 +250,6 @@ export function UserProfileTab({
       <Panel
         title="用户端设置"
         icon={<Settings2 className="size-4" />}
-        description="用户客户端偏好，管理端只读。"
         action={
           <div className="flex items-center gap-1.5">
             <Badge variant="outline" size="sm">
@@ -300,7 +297,7 @@ export function UserProfileTab({
                       </div>
                     ) : (
                       <div className="text-sm text-muted-foreground">
-                        该分类没有落库记录，用户端读到的是默认值。
+                        暂无记录
                       </div>
                     )}
                   </AccordionContent>
@@ -386,9 +383,6 @@ function AvatarEditor({
         </Avatar>
         <div className="min-w-0 flex-1 space-y-1">
           <div className="text-xs font-medium">头像</div>
-          <p className="text-[11px] leading-4 text-muted-foreground">
-            上传即时生效；移除后恢复默认头像。
-          </p>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -466,7 +460,7 @@ function AvatarEditor({
           <AlertDialogHeader>
             <AlertDialogTitle>移除头像</AlertDialogTitle>
             <AlertDialogDescription>
-              移除后恢复为默认头像，即时生效。
+              移除后恢复为默认头像。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

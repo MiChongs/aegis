@@ -166,7 +166,6 @@ export function PinCurrentPage({
   return (
     <TopbarButton
       label={pinned ? "取消收藏本页" : "收藏本页"}
-      hint="收藏会置顶在侧边栏"
       aria-pressed={pinned}
       active={pinned}
       onClick={toggle}

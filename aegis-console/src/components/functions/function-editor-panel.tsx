@@ -289,7 +289,7 @@ export function FunctionEditorPanel({
       // 试跑失败是正常结果，不是接口错误 —— 用 warning 而不是 error，
       // 免得作者以为是平台出了问题
       if (result.ok) toast.success(`试跑通过（${formatDuration(result.durationMs)}）`);
-      else toast.warning("试跑未通过，请查看试跑结果");
+      else toast.warning("试跑未通过");
     } catch (error) {
       toast.error(errorMessage(error));
     }
@@ -412,7 +412,6 @@ export function FunctionEditorPanel({
             AI 助手
           </Button>
           <span className="mx-0.5 h-5 w-px bg-border" aria-hidden />
-          <HelpPopover />
           <EditorToolbar
             catalog={catalog}
             options={editorOptions}
@@ -795,38 +794,6 @@ function AnalysisBadge({
   );
 }
 
-/**
- * 这一屏的说明书。
- *
- * 旧版把它写成编辑器上方的一段常驻说明 —— 每个人都只读一次，
- * 却永久占着三行高度。收进一个图标里，需要时点开。
- */
-function HelpPopover() {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label="使用说明">
-          <Info className="size-4" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 space-y-2 text-xs">
-        <p>
-          脚本仅存储于服务端，不会下发给接入方。编辑器内输入{" "}
-          <code className="font-mono">aegis.</code> 查看可用 SDK，输入{" "}
-          <code className="font-mono">aegis-</code> 插入代码片段。
-        </p>
-        <p className="text-muted-foreground">
-          试跑读取真实数据，写操作仅记录、不执行；不产生版本，不计入调用审计。
-        </p>
-        <p className="text-muted-foreground">
-          <Kbd>⌘/Ctrl</Kbd> <Kbd>↵</Kbd> 试跑 · <Kbd>⌘/Ctrl</Kbd> <Kbd>S</Kbd> 发布 ·
-          分隔条可拖拽，双击复位；两侧面板可折叠。
-        </p>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
 type EditorPreferences = {
   fontSize: number;
   wordWrap: boolean;
@@ -887,10 +854,7 @@ function EditorToolbar({
           {(catalog?.templates ?? []).map((template) => (
             <DropdownMenuItem key={template.key} onClick={() => onInsertTemplate(template.source)}>
               <BookOpen className="size-4" />
-              <span className="min-w-0">
-                <span className="block">{template.title}</span>
-                <span className="block text-[11px] text-muted-foreground">{template.summary}</span>
-              </span>
+              <span className="min-w-0">{template.title}</span>
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
@@ -911,12 +875,7 @@ function EditorToolbar({
             checked={options.smoothAnimation}
             onCheckedChange={(next) => onOptionChange("smoothAnimation", next === true)}
           >
-            <span className="min-w-0">
-              <span className="block">平滑动效</span>
-              <span className="block text-[11px] text-muted-foreground">
-                呼吸光标 · 插入符滑动 · 惯性滚动
-              </span>
-            </span>
+            平滑动效
           </DropdownMenuCheckboxItem>
           <DropdownMenuSeparator />
           <div className="flex items-center justify-between px-2 py-1.5 text-sm">
@@ -1124,7 +1083,7 @@ function DiagnosticsList({
             <span>静态检查通过</span>
           </>
         ) : (
-          <span>编写脚本后将自动执行静态检查</span>
+          <span>尚未检查</span>
         )}
       </div>
     );
@@ -1215,28 +1174,19 @@ function TestRunnerPane({
       <PaneHeader
         action={
           <>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant="outline"
-                  size="sm"
-                  className={cn("gap-1 font-normal", !hasSchema && "text-muted-foreground")}
-                >
-                  <FileJson className="size-3" />
-                  {hasSchema ? "按契约校验" : "未配置契约"}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-72">
-                {hasSchema
-                  ? "已配置入参契约，提供键名补全、枚举取值与必填校验"
-                  : "未配置入参契约。在「设置 → 入参契约」配置后，此处提供补全与校验"}
-              </TooltipContent>
-            </Tooltip>
+            <Badge
+              variant="outline"
+              size="sm"
+              className={cn("gap-1 font-normal", !hasSchema && "text-muted-foreground")}
+            >
+              <FileJson className="size-3" />
+              {hasSchema ? "按契约校验" : "未配置契约"}
+            </Badge>
             {inputSample ? (
               <Button
                 size="xs"
                 variant="ghost"
-                title="按契约生成仅含必填字段的样例"
+                title="仅含必填字段"
                 onClick={() => onInputChange(inputSample)}
               >
                 <Sparkles className="size-3" />
@@ -1295,20 +1245,13 @@ function TestRunnerPane({
         />
 
         <div className="flex shrink-0 items-center gap-1.5">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Input
-                className="h-7 flex-1 text-xs"
-                value={asUserId}
-                onChange={(event) => onAsUserIdChange(event.target.value.replace(/\D/g, ""))}
-                placeholder="以指定用户身份执行（用户 ID）"
-                inputMode="numeric"
-              />
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              未填写时，涉及用户身份的调用（如 aegis.user.get()）将失败
-            </TooltipContent>
-          </Tooltip>
+          <Input
+            className="h-7 flex-1 text-xs"
+            value={asUserId}
+            onChange={(event) => onAsUserIdChange(event.target.value.replace(/\D/g, ""))}
+            placeholder="以用户身份执行（ID）"
+            inputMode="numeric"
+          />
           <Popover open={caseOpen} onOpenChange={setCaseOpen}>
             <PopoverTrigger asChild>
               <Button variant="outline" size="icon-sm" aria-label="保存为用例">
@@ -1316,7 +1259,7 @@ function TestRunnerPane({
               </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-64 space-y-2">
-              <Label className="text-xs">保存为用例（仅保存在本机）</Label>
+              <Label className="text-xs">保存为用例</Label>
               <Input
                 className="h-8 text-xs"
                 value={caseName}
@@ -1355,7 +1298,7 @@ function TestRunnerPane({
 
         {blocking > 0 ? (
           <p className="shrink-0 text-[11px] text-amber-600 dark:text-amber-400">
-            检查发现 {blocking} 个错误：不影响试跑，修复后方可发布。
+            {blocking} 个错误，暂不可发布
           </p>
         ) : null}
       </div>
@@ -1412,9 +1355,7 @@ function TestResultPane({
 
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
         {!result ? (
-          <p className="py-8 text-center text-xs text-muted-foreground">
-            暂无试跑结果，按 <Kbd>⌘/Ctrl</Kbd> <Kbd>↵</Kbd> 执行试跑。
-          </p>
+          <p className="py-8 text-center text-xs text-muted-foreground">暂无试跑结果</p>
         ) : (
           <>
             {result.error ? (
@@ -1550,9 +1491,7 @@ function PublishDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>发布 {selected.name} 的新版本</DialogTitle>
-          <DialogDescription>
-            版本发布后不可修改。发布前将进行语法、入口与能力声明检查。
-          </DialogDescription>
+          <DialogDescription>版本发布后不可修改。</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           {blocking.length ? (
@@ -1590,16 +1529,11 @@ function PublishDialog({
               className="min-h-20 text-xs"
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
-              placeholder="描述本次变更，供回滚时参考"
+              placeholder="本次变更"
             />
           </div>
           <label className="flex items-center justify-between rounded-lg border p-2.5 text-sm">
-            <span>
-              发布后立即激活
-              <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                关闭后版本仅保存，线上仍运行当前激活版本
-              </span>
-            </span>
+            <span>发布后立即激活</span>
             <Switch checked={activate} onCheckedChange={setActivate} />
           </label>
           <p className="text-xs text-muted-foreground">
@@ -1788,9 +1722,7 @@ function VersionTable({
       <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogTitle>删除版本 {pendingDelete}</AlertDialogTitle>
-          <AlertDialogDescription>
-            版本删除后不可恢复，当前激活版本不受影响。
-          </AlertDialogDescription>
+          <AlertDialogDescription>版本删除后不可恢复。</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>取消</AlertDialogCancel>
@@ -1838,11 +1770,6 @@ function NonScriptVersionPanel({
       <div className="space-y-3 rounded-xl border p-4">
         <div>
           <h3 className="text-sm font-medium">发布版本</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {isHttp
-              ? "Endpoint 仅允许 HTTPS，禁止重定向，并在实际连接时重新解析 IP 拒绝内网与元数据地址。"
-              : "WASM 最大 2MB，每次调用独立实例，内存上限 16MB，不提供网络与文件系统。"}
-          </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-2">
@@ -1875,9 +1802,6 @@ function NonScriptVersionPanel({
                 value={responsePublicKey}
                 onChange={(event) => setResponsePublicKey(event.target.value)}
               />
-              <p className="text-xs text-muted-foreground">
-                响应需由 Worker 签名，Aegis 使用此公钥验签。
-              </p>
             </div>
           </>
         ) : (
@@ -1906,7 +1830,7 @@ function NonScriptVersionPanel({
               });
               setVersion("");
               setNotes("");
-              toast.success("版本已创建，激活后生效");
+              toast.success("版本已创建");
             } catch (error) {
               toast.error(errorMessage(error));
             }

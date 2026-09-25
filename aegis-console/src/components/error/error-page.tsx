@@ -101,9 +101,9 @@ export function ErrorPage({
             <h1 className="text-xl font-semibold tracking-tight text-foreground">
               {title ?? "页面加载失败"}
             </h1>
-            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              {description ?? "页面在渲染过程中出现问题，您可以尝试重新加载或返回上一页。"}
-            </p>
+            {description ? (
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
+            ) : null}
           </div>
 
           {/* 操作按钮 */}
@@ -192,7 +192,6 @@ export function ErrorPage({
 
         {/* 底部辅助链接 */}
         <div className="mt-6 flex items-center justify-center gap-1 text-xs text-muted-foreground/70">
-          <span>问题反复出现？</span>
           <a href="/" className="font-medium text-foreground hover:underline underline-offset-2">
             返回首页
           </a>

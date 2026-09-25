@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useDeleteFunctionKvMutation, useFunctionKvQuery } from "@/lib/function-hooks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -68,12 +68,6 @@ export function FunctionKvPanel({ appKey }: { appKey?: string | null }) {
           <Database className="size-4" />
           键值存储
         </CardTitle>
-        <CardDescription>
-          脚本通过 <code className="font-mono">aegis.kv</code>（应用级）与{" "}
-          <code className="font-mono">aegis.kv.user</code>（按调用者隔离）读写的服务端状态，
-          客户端不可读取。<code className="font-mono">__aegis:</code>{" "}
-          为平台保留前缀，脚本不可读写。
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-3">
@@ -189,7 +183,7 @@ export function FunctionKvPanel({ appKey }: { appKey?: string | null }) {
             {!list.length ? (
               <TableRow>
                 <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
-                  {kvQuery.isLoading ? "加载中…" : "没有符合条件的键"}
+                  {kvQuery.isLoading ? "加载中…" : "暂无数据"}
                 </TableCell>
               </TableRow>
             ) : null}

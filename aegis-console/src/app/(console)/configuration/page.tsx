@@ -63,8 +63,7 @@ function ConfigurationPageInner() {
       <div className="page-stack">
         <SectionHeading eyebrow="Configuration" title="配置" />
         <EmptyState
-          title="需要超级管理员权限"
-          description="平台级配置对整个平台的所有应用生效，仅超级管理员可见。应用自身的配置请前往「应用与内容 → 应用」。"
+          title="需要超级管理员权限" 
         />
       </div>
     );
@@ -72,11 +71,7 @@ function ConfigurationPageInner() {
 
   return (
     <div className="page-stack">
-      <SectionHeading
-        eyebrow="Configuration"
-        title="配置"
-        description="对整个平台生效的配置。单个应用的策略、邮件、支付等配置在「应用与内容 → 应用」。"
-      />
+      <SectionHeading eyebrow="Configuration" title="配置" />
 
       <Tabs
         value={tab}

@@ -133,7 +133,7 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
     }
     try {
       const txn = await grantMutation.mutateAsync({ userId, days, reason: grantReason.trim() || undefined });
-      toast.success(`已授予用户 ${userId} 共 ${days} 天 VIP，到期：${new Date(txn.expireAfter).toLocaleString("zh-CN", { hour12: false })}`);
+      toast.success(`已授予，到期 ${new Date(txn.expireAfter).toLocaleString("zh-CN", { hour12: false })}`);
       setGrantUserId("");
       setGrantReason("");
     } catch (err) {
@@ -148,7 +148,7 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <span className="text-xs tabular-nums text-muted-foreground">{plans.length} 个套餐（用户购买时以服务端价格为准，下单即锁价）</span>
+        <span className="text-xs tabular-nums text-muted-foreground">{plans.length} 个套餐</span>
         <div className="flex gap-1.5">
           <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => void plansQuery.refetch()}>
             <RefreshCw className="size-3" />刷新
@@ -160,9 +160,7 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
       </div>
 
       {plans.length === 0 ? (
-        <div className="py-12 text-center text-sm text-muted-foreground">
-          暂无套餐 —— 创建后用户即可在应用内通过余额或在线支付购买 VIP
-        </div>
+        <div className="py-12 text-center text-sm text-muted-foreground">暂无套餐</div>
       ) : (
         <div className="overflow-hidden rounded-xl border">
           <Table>
@@ -209,7 +207,7 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
       )}
 
       <div className="rounded-xl border px-4 py-3">
-        <p className="mb-2.5 text-xs font-medium">手动授予 VIP（人工补偿 / 活动发放）</p>
+        <p className="mb-2.5 text-xs font-medium">手动授予 VIP</p>
         <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">用户 ID</Label>
@@ -220,7 +218,7 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
             <Input className="h-8 w-24 text-xs" type="number" value={grantDays} onChange={(e) => setGrantDays(e.target.value)} />
           </div>
           <div className="min-w-44 flex-1 space-y-1">
-            <Label className="text-xs text-muted-foreground">原因（计入授予记录）</Label>
+            <Label className="text-xs text-muted-foreground">原因</Label>
             <Input className="h-8 text-xs" placeholder="例如：活动补偿" value={grantReason} onChange={(e) => setGrantReason(e.target.value)} />
           </div>
           <Button size="sm" className="h-8 text-xs" disabled={grantMutation.isPending} onClick={() => void handleGrant()}>授予</Button>
@@ -261,11 +259,11 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">套餐说明</Label>
-              <Textarea className="text-xs" rows={3} placeholder="展示给用户的套餐权益说明" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+              <Textarea className="text-xs" rows={3} placeholder="选填" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
             </div>
             <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5">
               <Checkbox checked={draft.isActive} onCheckedChange={(v) => setDraft({ ...draft, isActive: v === true })} />
-              <span className="text-xs">上架在售（下架后用户不可购买，已购不受影响）</span>
+              <span className="text-xs">上架在售</span>
             </label>
             <div className="flex justify-end gap-2 pt-2">
               <Button size="sm" variant="outline" className="text-xs" onClick={() => setEditorOpen(false)}>取消</Button>

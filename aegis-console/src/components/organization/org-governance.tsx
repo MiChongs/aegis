@@ -58,9 +58,6 @@ export function OrgRolesPanel({ orgId, access }: { orgId: string; access?: OrgAc
       <Card>
         <CardContent className="space-y-3 p-4">
           <h3 className="flex items-center gap-2 text-sm font-semibold"><Shield className="size-4" />内置角色</h3>
-          <p className="text-[11px] text-muted-foreground">
-            内置角色由平台定义、全组织一致，不可修改。需要更细的划分请创建自定义角色。
-          </p>
           <div className="space-y-2">
             {builtins.map((r) => (
               <div key={r.key} className="rounded-lg border px-3 py-2">
@@ -84,7 +81,7 @@ export function OrgRolesPanel({ orgId, access }: { orgId: string; access?: OrgAc
           </div>
 
           {roles.length === 0 ? (
-            <EmptyState title="暂无自定义角色" description="自定义角色可精确到权限点，并按部门限定管理范围" />
+            <EmptyState title="暂无自定义角色" />
           ) : (
             <div className="space-y-2">
               {roles.map((r) => (
@@ -188,9 +185,6 @@ function RoleDialog({
           <Separator />
           <div className="space-y-2">
             <Label className="text-xs font-semibold">权限（{permissions.length} 项）</Label>
-            <p className="text-[10px] text-muted-foreground">
-              只能授予你自己具备的权限 —— 否则可以造一个超出自身权限的角色再授给自己。
-            </p>
             {/* 可授予范围就是自己的权限集，与服务端的校验同一份依据 */}
             <PermissionPicker value={permissions} onChange={setPermissions} available={access?.permissions} />
           </div>
@@ -231,9 +225,6 @@ function GrantRoleDialog({ orgId, role, onClose }: { orgId: string; role: OrgRol
                 {options.map((o) => <SelectItem key={o.id} value={o.id}>{o.label} 及其子部门</SelectItem>)}
               </SelectContent>
             </Select>
-            <p className="text-[10px] text-muted-foreground">
-              限定到部门后，该角色的权限只在这棵子树内生效
-            </p>
           </div>
 
           <Button
@@ -258,7 +249,7 @@ function GrantRoleDialog({ orgId, role, onClose }: { orgId: string; role: OrgRol
           <div className="space-y-1.5">
             <Label className="text-xs font-semibold">已授予（{grants.length}）</Label>
             {grants.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">尚未授予任何人</p>
+              <p className="py-4 text-center text-xs text-muted-foreground">暂无授予</p>
             ) : (
               <div className="max-h-48 space-y-1 overflow-y-auto">
                 {grants.map((g) => (
@@ -317,7 +308,7 @@ export function PositionsPanel({ orgId, access }: { orgId: string; access?: OrgA
         </div>
 
         {positions.length === 0 ? (
-          <EmptyState title="暂无岗位" description="岗位用于标记成员在部门中的职级，可在部门成员详情里分配" />
+          <EmptyState title="暂无岗位" />
         ) : (
           <div className="space-y-2">
             {positions.map((p) => (
@@ -344,7 +335,7 @@ export function PositionsPanel({ orgId, access }: { orgId: string; access?: OrgA
                       onClick={async () => {
                         try {
                           await deleteMutation.mutateAsync({ orgId, posId: p.id });
-                          toast.success("岗位已删除，持有该岗位的成员会自动解除");
+                          toast.success("岗位已删除");
                         } catch (e) { toast.error(errMsg(e, "删除失败")); }
                       }}
                     >
@@ -451,12 +442,9 @@ export function ApprovalsPanel({ orgId, access }: { orgId: string; access?: OrgA
             <h3 className="flex items-center gap-2 text-sm font-semibold"><ClipboardCheck className="size-4" />审批链</h3>
             {canManage && <Button size="sm" onClick={() => setCreating(true)}><Plus className="size-3.5" />新建</Button>}
           </div>
-          <p className="text-[11px] text-muted-foreground">
-            同一触发场景只能有一条启用中的审批链，避免「哪条生效」取决于查询顺序。
-          </p>
 
           {chains.length === 0 ? (
-            <EmptyState title="暂无审批链" description="为成员加入、部门变更等场景配置审批流程" />
+            <EmptyState title="暂无审批链" />
           ) : (
             <div className="space-y-2">
               {chains.map((c) => (
@@ -687,9 +675,6 @@ function ApprovalChainDialog({ orgId, onClose }: { orgId: string; onClose: () =>
                 )}
               </div>
             ))}
-            <p className="text-[10px] text-muted-foreground">
-              「部门负责人」按申请人所在部门动态解析，无需指定具体的人。
-            </p>
           </div>
 
           <Button className="w-full" onClick={submit} disabled={mutation.isPending}>
@@ -738,12 +723,9 @@ function PermTemplateCard({ orgId, canWrite }: { orgId: string; canWrite: boolea
           <h3 className="flex items-center gap-2 text-sm font-semibold"><Shield className="size-4" />权限模板</h3>
           {canWrite && <Button size="sm" onClick={() => setCreating(true)}><Plus className="size-3.5" />新建</Button>}
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          套用模板会生成一个同名组织角色并授予选中的成员 —— 模板本身不直接持有权限。
-        </p>
 
         {templates.length === 0 ? (
-          <EmptyState title="暂无模板" description="把常用的权限组合存为模板，批量授予时省去逐项勾选" />
+          <EmptyState title="暂无模板" />
         ) : (
           <div className="space-y-2">
             {templates.map((t) => (
@@ -847,9 +829,6 @@ function OrgAppsCard({ orgId, canBind, isPlatform }: { orgId: string; canBind: b
     <Card>
       <CardContent className="space-y-3 p-4">
         <h3 className="flex items-center gap-2 text-sm font-semibold"><Link2 className="size-4" />应用资源</h3>
-        <p className="text-[11px] text-muted-foreground">
-          「归属」表示应用属于该组织；「授权」只是允许访问，可跨组织共享。归属只能由平台管理员调整。
-        </p>
 
         {canBind && (
           <div className="flex flex-wrap items-center gap-2">
@@ -938,7 +917,7 @@ function CollabGroupsCard({ orgId, canWrite }: { orgId: string; canWrite: boolea
         </div>
 
         {groups.length === 0 ? (
-          <EmptyState title="暂无协作组" description="把多个部门编成一组，用于跨部门的临时项目协作" />
+          <EmptyState title="暂无协作组" />
         ) : (
           <div className="grid gap-2 md:grid-cols-2">
             {groups.map((g) => (

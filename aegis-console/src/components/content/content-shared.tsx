@@ -35,18 +35,17 @@ import { cn } from "@/lib/utils";
 export type BannerSlotMeta = {
   value: string;
   label: string;
-  hint: string;
   icon: LucideIcon;
   /** 预览用的画布比例，贴近该位在客户端上的真实形状 */
   aspect: string;
 };
 
 export const BANNER_SLOTS: BannerSlotMeta[] = [
-  { value: "hero", label: "首页轮播", hint: "首屏顶部横幅", icon: LayoutPanelTop, aspect: "16 / 6" },
-  { value: "popup", label: "启动弹窗", hint: "进入应用后弹出", icon: MonitorPlay, aspect: "3 / 4" },
-  { value: "splash", label: "开屏", hint: "冷启动全屏展示", icon: PanelTop, aspect: "9 / 16" },
-  { value: "notice", label: "通知条", hint: "顶部细条提示", icon: Radio, aspect: "16 / 3" },
-  { value: "card", label: "卡片位", hint: "列表内嵌推广卡", icon: ImageIcon, aspect: "4 / 3" }
+  { value: "hero", label: "首页轮播", icon: LayoutPanelTop, aspect: "16 / 6" },
+  { value: "popup", label: "启动弹窗", icon: MonitorPlay, aspect: "3 / 4" },
+  { value: "splash", label: "开屏", icon: PanelTop, aspect: "9 / 16" },
+  { value: "notice", label: "通知条", icon: Radio, aspect: "16 / 3" },
+  { value: "card", label: "卡片位", icon: ImageIcon, aspect: "4 / 3" }
 ];
 
 export function bannerSlot(value?: string | null): BannerSlotMeta {

@@ -7,7 +7,6 @@ import { FieldGroup, NumberField } from "@/components/apps/app-config-primitives
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -148,7 +147,7 @@ export function CardKeyBatchEditor({
     }
     const rewards = buildRewards();
     if (form.kind === "redeem" && rewards.length === 0) {
-      toast.error("兑换卡至少要配置一项权益，否则是一张废卡");
+      toast.error("兑换卡至少配置一项权益");
       return;
     }
     if (form.validityMode === "fixed_until" && !form.validUntil) {
@@ -171,7 +170,7 @@ export function CardKeyBatchEditor({
         validityDays: Number(form.validityDays) || 0,
         validUntil: form.validUntil ? new Date(form.validUntil).toISOString() : null
       });
-      toast.success(`已生成 ${batch.total} 张卡密，可在批次上导出 CSV`);
+      toast.success(`已生成 ${batch.total} 张卡密`);
       setDraft(null);
       onOpenChange(false);
     } catch (error) {
@@ -191,15 +190,13 @@ export function CardKeyBatchEditor({
         <SheetHeader className="shrink-0 border-b px-6 py-4">
           <SheetTitle>生成卡密</SheetTitle>
           <SheetDescription>
-            {form.kind === "login"
-              ? "授权卡：卡就是登录凭证，首次使用自动建号并绑定，可限制绑定设备数"
-              : "兑换卡：给已登录用户发权益，核销一次即作废"}
+            {form.kind === "login" ? "授权卡" : "兑换卡"}
           </SheetDescription>
         </SheetHeader>
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-5 px-6 py-5">
-            <FieldGroup label="批次名称" hint="只在控制台展示，用于区分几批卡（如「618 活动」）">
+            <FieldGroup label="批次名称">
               <Input
                 value={form.name}
                 onChange={(event) => patch("name", event.target.value)}
@@ -207,7 +204,7 @@ export function CardKeyBatchEditor({
               />
             </FieldGroup>
 
-            <FieldGroup label="卡密类型" hint="这一项生成后不可更改">
+            <FieldGroup label="卡密类型" hint="生成后不可更改">
               <Select
                 value={form.kind}
                 onValueChange={(value) => patch("kind", value as CardKeyKind)}
@@ -216,8 +213,8 @@ export function CardKeyBatchEditor({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="redeem">兑换卡 · 给已登录用户发权益</SelectItem>
-                  <SelectItem value="login">授权卡 · 卡即登录凭证</SelectItem>
+                  <SelectItem value="redeem">兑换卡</SelectItem>
+                  <SelectItem value="login">授权卡</SelectItem>
                 </SelectContent>
               </Select>
             </FieldGroup>
@@ -231,7 +228,7 @@ export function CardKeyBatchEditor({
                 max={10000}
                 unit="张"
               />
-              <FieldGroup label="卡面前缀" hint="留空即无前缀。可用 A–Z 与 0–9">
+              <FieldGroup label="卡面前缀" hint="仅 A–Z 与 0–9">
                 <Input
                   value={form.codePrefix}
                   onChange={(event) => patch("codePrefix", event.target.value.toUpperCase())}
@@ -254,14 +251,10 @@ export function CardKeyBatchEditor({
                 min={3}
                 max={12}
                 unit="位"
-                hint="字符集已剔除易混的 I / O / 0 / 1"
               />
             </div>
 
-            <FieldGroup
-              label="有效期"
-              hint="「激活即计时」是卡密的常态：卖出去到被使用之间的时间不该算进用户的授权期"
-            >
+            <FieldGroup label="有效期">
               <Select
                 value={form.validityMode}
                 onValueChange={(value) => patch("validityMode", value as CardKeyValidityMode)}
@@ -306,20 +299,15 @@ export function CardKeyBatchEditor({
                 min={1}
                 max={64}
                 unit="台"
-                hint="超出后新设备登录被拒；管理员可在卡上解绑，用户换电脑时靠它"
               />
             ) : null}
 
             <FieldGroup
               label="随卡发放的权益"
-              hint={
-                form.kind === "login"
-                  ? "授权卡可以不带权益（能登录本身就是权益）；带的话在首次激活时发放"
-                  : `兑换卡至少配一项，最多 ${maxRewards} 项`
-              }
+              hint={form.kind === "login" ? `最多 ${maxRewards} 项` : `至少 1 项，最多 ${maxRewards} 项`}
             >
               {catalogQuery.isLoading ? (
-                <p className="text-xs text-muted-foreground">正在读取权益目录…</p>
+                <p className="text-xs text-muted-foreground">加载中…</p>
               ) : (
                 <div className="space-y-2">
                   {catalog.map((spec) => {
@@ -333,7 +321,6 @@ export function CardKeyBatchEditor({
                           />
                           <span className="min-w-0 space-y-0.5">
                             <span className="block text-xs font-medium">{spec.label}</span>
-                            <span className="block text-xs text-muted-foreground">{spec.hint}</span>
                           </span>
                         </label>
 
@@ -374,9 +361,7 @@ export function CardKeyBatchEditor({
 
                             {spec.value === "ref" ? (
                               plans.length === 0 ? (
-                                <p className="text-xs text-muted-foreground">
-                                  该应用还没有会员套餐，请先在「会员」区块创建。
-                                </p>
+                                <p className="text-xs text-muted-foreground">暂无会员套餐</p>
                               ) : (
                                 <Select
                                   value={String(value.refId || plans[0].id)}
@@ -400,7 +385,7 @@ export function CardKeyBatchEditor({
 
                             {spec.needsLoginCard ? (
                               <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-500">
-                                领取人名下必须有仍在授权期内的授权卡，否则整张卡兑换失败。
+                                需持有有效授权卡
                               </p>
                             ) : null}
                           </div>
@@ -412,7 +397,7 @@ export function CardKeyBatchEditor({
               )}
             </FieldGroup>
 
-            <FieldGroup label="备注" hint="只在控制台可见">
+            <FieldGroup label="备注">
               <Textarea
                 value={form.remark}
                 onChange={(event) => patch("remark", event.target.value)}
@@ -420,13 +405,6 @@ export function CardKeyBatchEditor({
               />
             </FieldGroup>
 
-            <p className="rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-              <Label className="text-xs font-medium">生成之后</Label>
-              <span className="mt-1 block">
-                卡面在批次上导出 CSV。授权卡还需要在「接入」区块把 <b>卡密</b> 勾进登录方式，
-                否则客户端调 <code className="font-mono">/auth/login</code> 会被拒。
-              </span>
-            </p>
           </div>
         </ScrollArea>
 

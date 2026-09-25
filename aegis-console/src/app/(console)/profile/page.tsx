@@ -94,7 +94,7 @@ export default function ProfilePage() {
         description: changes.length ? `已更新：${changes.join("、")}` : undefined
       });
     } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : "保存失败，请稍后重试");
+      toast.error(error instanceof ApiError ? error.message : "保存失败");
     }
   }, [form, changes, updateMutation]);
 

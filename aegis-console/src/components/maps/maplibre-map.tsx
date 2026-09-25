@@ -308,21 +308,21 @@ export function MapLibreMap({
       return {
         tone: "danger" as const,
         text: `${provider.short}瓦片不可达`,
-        title: "在线瓦片连续加载失败，已退回本地矢量简图；可在左侧切换其它供应商"
+        title: "已退回本地简图"
       };
     }
     if (provider.datum === "gcj02" && zoomHigh && correctionUnsupported) {
       return {
         tone: "warn" as const,
         text: "未纠偏 · 约 500m",
-        title: "该瓦片服务未开放跨域读取，无法纠偏；底图与数据点存在 GCJ-02 固有偏移"
+        title: "瓦片不支持跨域，无法纠偏"
       };
     }
     if (corrected) {
       return {
         tone: "ok" as const,
         text: "GCJ-02 已纠偏",
-        title: "底图瓦片已按 GCJ-02 偏移量重新对齐到 WGS-84，与数据点位置一致"
+        title: "已对齐 WGS-84"
       };
     }
     return null;

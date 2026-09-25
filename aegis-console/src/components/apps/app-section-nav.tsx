@@ -94,7 +94,6 @@ export function AppSectionTitle({ section }: { section: string }) {
     <div className="flex items-center gap-2">
       <Icon className="size-4 text-muted-foreground" />
       <h2 className="text-sm font-semibold tracking-tight">{meta.title}</h2>
-      <span className="truncate text-xs text-muted-foreground">{meta.summary}</span>
     </div>
   );
 }

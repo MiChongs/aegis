@@ -211,9 +211,6 @@ function DateRangeFilter({
             })
           }
         />
-        <p className="border-t px-3 py-2 text-[11px] leading-4 text-muted-foreground">
-          按注册时间筛选，含起止当天。只选起始日即「从这天到现在」。
-        </p>
       </PopoverContent>
     </Popover>
   );
@@ -260,9 +257,6 @@ function MoreFiltersPopover({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[340px] p-3">
-        <div className="mb-2 text-xs text-muted-foreground">
-          精确字段走等值 / 前缀匹配，与上面的关键字全字段模糊搜不是一回事。
-        </div>
         <div className="grid gap-2.5">
           {PRECISE_FIELDS.map((field) => (
             <div key={field.key} className="grid grid-cols-[64px_minmax(0,1fr)] items-center gap-2">
@@ -385,14 +379,14 @@ function SavedViews({
           ))
         ) : (
           <div className="px-2 py-3 text-center text-xs text-muted-foreground">
-            还没有保存的视图
+            暂无视图
           </div>
         )}
         <DropdownMenuSeparator />
         <div className="flex items-center gap-1.5 p-1.5">
           <Input
             value={name}
-            placeholder="给当前筛选起个名"
+            placeholder="视图名称"
             className="h-7 text-xs"
             onChange={(event) => setName(event.target.value)}
             onKeyDown={(event) => {

@@ -20,9 +20,6 @@ export default function PublicStatusPage() {
         <section className="border-b">
           <div className="mx-auto w-full max-w-7xl px-5 py-12 md:px-8 md:py-16">
             <h1 className="text-3xl font-semibold tracking-tight md:text-5xl">服务状态</h1>
-            <p className="mt-3 max-w-xl text-sm text-muted-foreground md:text-base">
-              系统组件与各应用的实时可用性。数据取自运行中的实例，不经缓存。
-            </p>
             <div className="mt-8">
               <PublicEntryActions secondaryHref="/" secondaryLabel="返回首页" />
             </div>

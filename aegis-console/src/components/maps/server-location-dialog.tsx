@@ -103,9 +103,6 @@ function LocationForm({
             />
           </div>
         </div>
-        <p className="text-[11px] leading-4 text-muted-foreground">
-          该位置在「攻击飞线图」与「用户活动地图」之间共享，改一处两处都会变。
-        </p>
       </div>
       <DialogFooter>
         <Button variant="ghost" size="sm" onClick={onCancel}>

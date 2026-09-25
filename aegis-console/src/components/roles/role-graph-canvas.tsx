@@ -98,8 +98,8 @@ export function RoleGraphCanvas() {
     setEdges(initialEdges);
   }, [initialNodes, initialEdges, setNodes, setEdges]);
 
-  if (isLoading) return <LoadingState title="加载关系图" description="" />;
-  if (!graph) return <EmptyState title="无数据" description="" />;
+  if (isLoading) return <LoadingState title="加载关系图" />;
+  if (!graph) return <EmptyState title="暂无数据" />;
 
   return (
     <div className="h-[600px] rounded-xl border bg-card overflow-hidden">

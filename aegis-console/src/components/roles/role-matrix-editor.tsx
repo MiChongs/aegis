@@ -24,8 +24,8 @@ export function RoleMatrixEditor() {
     return groups;
   }, [matrix]);
 
-  if (isLoading) return <LoadingState title="加载权限矩阵" description="" />;
-  if (!matrix) return <EmptyState title="无数据" description="" />;
+  if (isLoading) return <LoadingState title="加载权限矩阵" />;
+  if (!matrix) return <EmptyState title="暂无数据" />;
 
   const roles = matrix.roles;
 

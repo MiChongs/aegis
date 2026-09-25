@@ -93,7 +93,7 @@ export function UserPicker({
               </div>
             ) : users.length === 0 ? (
               <CommandEmpty className="py-6 text-xs">
-                {debounced ? "没有匹配的用户" : "输入账号、昵称或邮箱开始搜索"}
+                {debounced ? "暂无匹配用户" : "暂无用户"}
               </CommandEmpty>
             ) : (
               <CommandGroup>

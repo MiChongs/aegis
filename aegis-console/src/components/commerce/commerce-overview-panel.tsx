@@ -83,7 +83,7 @@ export function CommerceOverviewPanel({
   const data = query.data;
 
   if (!appKey) {
-    return <EmptyState title="未选择应用" description="交易数据按应用隔离，请先在顶部选择一个应用。" />;
+    return <EmptyState title="未选择应用" />;
   }
   if (query.isLoading) {
     return (
@@ -98,7 +98,7 @@ export function CommerceOverviewPanel({
     );
   }
   if (query.isError || !data) {
-    return <EmptyState title="加载失败" description="无法获取交易概览，请稍后重试。" />;
+    return <EmptyState title="加载失败" />;
   }
 
   const { orders, wallet, trend, receipt } = data;
@@ -112,27 +112,26 @@ export function CommerceOverviewPanel({
             icon={<Coins className="size-4" />}
             label="已支付金额"
             value={formatMoney(orders.paidAmount)}
-            hint={`${orders.paidOrders} 笔 · ${orders.payerCount} 位付费用户 · 按到账时间`}
+            hint={`${orders.paidOrders} 笔 · ${orders.payerCount} 位付费用户`}
           />
           <StatTile
             icon={<Undo2 className="size-4" />}
             label="已退款金额"
             value={formatMoney(orders.refundedAmount)}
-            hint={`${orders.refundCount} 笔已成功退款 · 按退款成功时间`}
+            hint={`${orders.refundCount} 笔`}
             tone="warning"
           />
           <StatTile
             icon={<BadgeCheck className="size-4" />}
             label="实收净额"
             value={formatMoney(orders.netAmount)}
-            hint="已支付 − 已成功退款"
             tone="positive"
           />
           <StatTile
             icon={<FileText className="size-4" />}
             label="待支付"
             value={formatMoney(orders.pendingAmount)}
-            hint={`${orders.pendingOrders} 笔待支付 / 共 ${orders.totalOrders} 笔下单`}
+            hint={`${orders.pendingOrders} 笔 / 共 ${orders.totalOrders} 笔`}
           />
         </div>
       </section>
@@ -146,26 +145,23 @@ export function CommerceOverviewPanel({
             icon={<ArrowUpRight className="size-4" />}
             label="入账合计"
             value={formatMoney(wallet.totalIn, walletCurrency)}
-            hint="充值 / 退款 / 调增"
             tone="positive"
           />
           <StatTile
             icon={<ArrowDownRight className="size-4" />}
             label="出账合计"
             value={formatMoney(wallet.totalOut, walletCurrency)}
-            hint="消费 / 订单支付 / 会员开通"
           />
           <StatTile
             icon={<Users className="size-4" />}
             label="流水笔数"
             value={String(wallet.count)}
-            hint={`${wallet.userCount} 位用户发生过资金往来`}
+            hint={`${wallet.userCount} 位用户`}
           />
           <StatTile
             icon={<Landmark className="size-4" />}
             label="余额合计"
             value={formatMoney(wallet.balance, walletCurrency)}
-            hint="平台此刻的待兑付负债（不受时间窗影响）"
             tone="warning"
           />
         </div>
@@ -237,10 +233,10 @@ function TrendChart({ trend, loading }: { trend?: CommerceTrend; loading?: boole
   return (
     <ChartCard
       title="交易趋势"
-      description={`${bucketLabels[bucket] ?? "按天"}分桶 · 实收按到账时间、退款按退款成功时间、钱包按流水时间`}
+      description={bucketLabels[bucket] ?? "按天"}
       loading={loading}
       empty={rows.length === 0 || allZero}
-      emptyText={rows.length === 0 ? "该时间窗内没有资金记录" : "该时间窗内金额均为 0"}
+      emptyText={rows.length === 0 ? "暂无资金记录" : "金额均为 0"}
       height={300}
       action={
         <ToggleGroup
@@ -312,7 +308,7 @@ function OrderStatusDonut({ items }: { items: OrderGroupStat[] }) {
   const paidShare = total > 0 ? (rows.find((item) => item.key === "paid")?.count ?? 0) / total : 0;
 
   return (
-    <ChartCard title="订单状态分布" description="按下单时间统计" empty={total === 0} height={220}>
+    <ChartCard title="订单状态分布" empty={total === 0} height={220}>
       <>
         <ChartContainer config={config} className="mx-auto h-[220px] w-full">
           <PieChart>
@@ -369,7 +365,7 @@ function MethodBars({
   const config = useMemo(() => buildChartConfig([{ key: "amount", label: "金额" }]), []);
 
   return (
-    <ChartCard title="支付渠道分布" description="按下单金额排序" empty={rows.length === 0} height={220}>
+    <ChartCard title="支付渠道分布" empty={rows.length === 0} height={220}>
       <ChartContainer config={config} className="h-[220px] w-full">
         <BarChart data={rows} layout="vertical" margin={{ left: 8, right: 12 }}>
           <CartesianGrid horizontal={false} strokeDasharray="3 3" />
@@ -405,7 +401,7 @@ function WalletTypeBars({ items, currency }: { items: WalletTypeStat[]; currency
   return (
     <ChartCard
       title="钱包流水分布"
-      description={currency ? `金额取绝对值 · ${currency}` : "金额取绝对值"}
+      description={currency}
       empty={rows.length === 0}
       height={220}
     >
@@ -520,8 +516,7 @@ function ReceiptCapabilityCard({
           <div className="flex gap-2 rounded-lg bg-amber-500/10 p-2.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             <p>
-              当前环境没有中日韩字体，中文 / 日文 / 韩文凭证会降级成英文。
-              配置 <code className="font-mono">PAYMENT_RECEIPT_FONT_PATH</code> 或在镜像里安装一份中文字体即可。
+              中日韩凭证将降级为英文，需配置 <code className="font-mono">PAYMENT_RECEIPT_FONT_PATH</code>
             </p>
           </div>
         ) : null}

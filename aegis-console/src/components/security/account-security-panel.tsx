@@ -157,8 +157,8 @@ export function AccountSecurityPanel() {
   // ── 渲染 ──
 
   if (sessionQ.isLoading || (!fallback && statusQ.isLoading && !status)) return <LoadingState title="加载账户安全" />;
-  if (fallback) return <EmptyState title="当前会话不可管理" description="静态令牌会话不支持账户安全操作。" />;
-  if (!status) return <EmptyState title="账户安全不可用" description="当前管理员安全状态未返回。" />;
+  if (fallback) return <EmptyState title="当前会话不可管理" description="静态令牌会话不支持" />;
+  if (!status) return <EmptyState title="账户安全不可用" description="状态未返回" />;
 
   const recoveryItems = recoverySummary?.items || [];
   const passkeyItems = passkeySummary?.items || [];
@@ -191,12 +191,12 @@ export function AccountSecurityPanel() {
           </AccordionTrigger>
           <AccordionContent className="pb-4">
             {!totpOk ? (
-              <p className="text-sm text-muted-foreground">TOTP 模块未在平台安全中启用。</p>
+              <p className="text-sm text-muted-foreground">TOTP 模块未启用</p>
             ) : !status.twoFactorEnabled ? (
               <div className="space-y-4">
                 {!enrollment ? (
                   <div className="flex items-center justify-between rounded-xl border border-dashed px-4 py-6">
-                    <p className="text-sm text-muted-foreground">点击开始配置双因子认证</p>
+                    <p className="text-sm text-muted-foreground">未配置</p>
                     <Button size="sm" onClick={() => void handleBeginEnroll()} disabled={beginEnroll.isPending}>
                       {beginEnroll.isPending ? "生成中..." : "开始配置"}
                     </Button>
@@ -208,7 +208,7 @@ export function AccountSecurityPanel() {
                       <div className="rounded-xl border bg-white p-3">
                         <QRCodeSVG value={enrollment.provisioningUri} size={160} level="M" />
                       </div>
-                      <p className="text-[10px] text-muted-foreground">使用认证器 App 扫码</p>
+                      <p className="text-[10px] text-muted-foreground">认证器扫码</p>
                     </div>
                     {/* 右侧：密钥 + 验证 */}
                     <div className="flex-1 space-y-3">
@@ -255,7 +255,7 @@ export function AccountSecurityPanel() {
           </AccordionTrigger>
           <AccordionContent className="pb-4 space-y-4">
             {!recoveryOk ? (
-              <p className="text-sm text-muted-foreground">恢复码模块未在平台安全中启用。</p>
+              <p className="text-sm text-muted-foreground">恢复码模块未启用</p>
             ) : (
               <>
                 {/* 已有恢复码列表 */}
@@ -325,12 +325,12 @@ export function AccountSecurityPanel() {
           </AccordionTrigger>
           <AccordionContent className="pb-4 space-y-4">
             {!passkeyOk ? (
-              <p className="text-sm text-muted-foreground">Passkey 模块未在平台安全中启用。</p>
+              <p className="text-sm text-muted-foreground">Passkey 模块未启用</p>
             ) : (
               <>
                 {/* 注册新 Passkey */}
                 <div className="flex items-center gap-3">
-                  <Input className="h-8 text-sm flex-1" placeholder="设备名称（如：工作电脑）" value={passkeyName} onChange={e => setPasskeyName(e.target.value)} />
+                  <Input className="h-8 text-sm flex-1" placeholder="设备名称" value={passkeyName} onChange={e => setPasskeyName(e.target.value)} />
                   <Button size="sm" onClick={() => void handleRegisterPasskey()} disabled={beginPasskey.isPending || finishPasskey.isPending || !passkeySupport}>
                     {beginPasskey.isPending || finishPasskey.isPending ? "处理中..." : "注册 Passkey"}
                   </Button>

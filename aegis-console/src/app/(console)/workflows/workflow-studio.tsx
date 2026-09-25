@@ -326,14 +326,14 @@ export function WorkflowStudio() {
   }, [isDesignerFullscreen]);
 
   if (appsQuery.isLoading || engineStatusQuery.isLoading) {
-    return <LoadingState title="正在加载工作流" description="正在读取控制台工作流资源。" />;
+    return <LoadingState title="正在加载工作流" />;
   }
 
   if (!selectedApp) {
     return (
       <div className="page-stack">
         <SectionHeading eyebrow="Workflow" title="工作流" description="当前没有可用应用。" />
-        <EmptyState title="暂无应用" description="请先创建应用，再继续配置工作流。" />
+        <EmptyState title="暂无应用" />
       </div>
     );
   }
@@ -777,10 +777,6 @@ export function WorkflowStudio() {
           <div className="col-span-full flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-border/80 bg-background/90 px-3 py-2 dark:bg-background/82">
             <div className="min-w-0">
               <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">全屏设计模式</div>
-              <div className="mt-1 text-sm text-foreground">
-                {isNativeDesignerFullscreen ? "浏览器全屏已启用，Esc 可退出。" : "已切换至工作台全屏模式。"}
-                {" "}Ctrl/Cmd + S 可直接保存。
-              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -825,9 +821,9 @@ export function WorkflowStudio() {
               <ScrollArea className={`mt-5 pr-4 ${isDesignerFullscreen ? "h-[calc(100dvh-11rem)]" : "h-[760px] max-h-[calc(100vh-16rem)]"}`}>
                 <div className="space-y-5">
                   {workflowListQuery.isLoading ? (
-                    <LoadingState title="正在加载列表" description="正在读取工作流目录。" />
+                    <LoadingState title="正在加载列表" />
                   ) : workflows.length === 0 ? (
-                    <EmptyState title="暂无工作流" description="当前筛选条件下没有工作流。" />
+                    <EmptyState title="暂无工作流" />
                   ) : (
                     <div className="space-y-2">
                       {workflows.map((item) => (
@@ -863,7 +859,7 @@ export function WorkflowStudio() {
                       <Badge variant="outline">{templates.length} 个</Badge>
                     </div>
                     {templates.length === 0 ? (
-                      <div className="rounded-2xl border border-dashed border-border/80 p-4 text-sm text-muted-foreground">当前应用暂无模板。</div>
+                      <div className="rounded-2xl border border-dashed border-border/80 p-4 text-sm text-muted-foreground">暂无模板</div>
                     ) : (
                       <div className="space-y-2">
                         {templates.map((item) => {
@@ -906,7 +902,7 @@ export function WorkflowStudio() {
                           <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
                               <div className="font-medium">{item.label}</div>
-                              <div className="mt-1 text-xs opacity-80">{item.type} · 可拖入画布</div>
+                              <div className="mt-1 text-xs opacity-80">{item.type}</div>
                             </div>
                             <Plus className="size-4 shrink-0" />
                           </div>
@@ -1036,7 +1032,7 @@ export function WorkflowStudio() {
                 </TabsContent>
                 <TabsContent value="node" className="space-y-4">
                   {!selectedNode ? (
-                    <EmptyState title="未选择节点" description="点击中间画布中的节点后，可在这里编辑节点属性。" />
+                    <EmptyState title="未选择节点" />
                   ) : (
                     <>
                       <div className="flex items-center justify-between">
@@ -1099,7 +1095,7 @@ export function WorkflowStudio() {
               <Table>
                 <TableHeader><TableRow><TableHead>实例</TableHead><TableHead>状态</TableHead><TableHead>优先级</TableHead><TableHead>开始时间</TableHead></TableRow></TableHeader>
                 <TableBody>
-                  {instances.length === 0 ? <TableRow><TableCell colSpan={4} className="py-10 text-center text-muted-foreground">当前没有实例记录。</TableCell></TableRow> : instances.map((item) => {
+                  {instances.length === 0 ? <TableRow><TableCell colSpan={4} className="py-10 text-center text-muted-foreground">暂无实例</TableCell></TableRow> : instances.map((item) => {
                     const record = item as Record<string, unknown>;
                     return <TableRow key={item.id} className="cursor-pointer" data-state={item.id === selectedInstanceId ? "selected" : undefined} onClick={() => setSelectedInstanceId(item.id)}><TableCell><div className="font-semibold text-foreground">{toText(readString(record, "instanceName", "instance_name", "workflowName"), `实例 ${item.id}`)}</div></TableCell><TableCell><Badge variant={statusBadgeVariant(readString(record, "status"))}>{toText(readString(record, "status"), "unknown")}</Badge></TableCell><TableCell>{String(record.priority ?? "-")}</TableCell><TableCell className="text-muted-foreground">{formatDate(readString(record, "startedAt", "started_at", "createdAt"))}</TableCell></TableRow>;
                   })}
@@ -1118,7 +1114,7 @@ export function WorkflowStudio() {
               <Table>
                 <TableHeader><TableRow><TableHead>任务</TableHead><TableHead>状态</TableHead><TableHead>优先级</TableHead><TableHead>更新时间</TableHead></TableRow></TableHeader>
                 <TableBody>
-                  {tasks.length === 0 ? <TableRow><TableCell colSpan={4} className="py-10 text-center text-muted-foreground">当前没有任务记录。</TableCell></TableRow> : tasks.map((item) => {
+                  {tasks.length === 0 ? <TableRow><TableCell colSpan={4} className="py-10 text-center text-muted-foreground">暂无任务</TableCell></TableRow> : tasks.map((item) => {
                     const record = item as Record<string, unknown>;
                     return <TableRow key={item.id} className="cursor-pointer" data-state={item.id === selectedTaskId ? "selected" : undefined} onClick={() => setSelectedTaskId(item.id)}><TableCell><div className="font-semibold text-foreground">{toText(readString(record, "name"), `任务 ${item.id}`)}</div></TableCell><TableCell><Badge variant={statusBadgeVariant(readString(record, "status"))}>{toText(readString(record, "status"), "unknown")}</Badge></TableCell><TableCell>{String(record.priority ?? "-")}</TableCell><TableCell className="text-muted-foreground">{formatDate(readString(record, "updatedAt", "completed_at", "createdAt"))}</TableCell></TableRow>;
                   })}
@@ -1132,7 +1128,7 @@ export function WorkflowStudio() {
           <TabsContent value="logs" className="table-shell">
             <Table>
               <TableHeader><TableRow><TableHead>消息</TableHead><TableHead>事件</TableHead><TableHead>级别</TableHead><TableHead>时间</TableHead></TableRow></TableHeader>
-              <TableBody>{logs.length === 0 ? <TableRow><TableCell colSpan={4} className="py-10 text-center text-muted-foreground">当前没有日志记录。</TableCell></TableRow> : logs.map((entry, index) => { const record = entry as Record<string, unknown>; return <TableRow key={`${record.id ?? index}`}><TableCell className="font-medium text-foreground">{toText(readString(record, "message"), `日志 ${index + 1}`)}</TableCell><TableCell>{toText(readString(record, "event"), "-")}</TableCell><TableCell><Badge variant={statusBadgeVariant(readString(record, "level"))}>{toText(readString(record, "level"), "info")}</Badge></TableCell><TableCell className="text-muted-foreground">{formatDate(readString(record, "createdAt", "timestamp"))}</TableCell></TableRow>; })}</TableBody>
+              <TableBody>{logs.length === 0 ? <TableRow><TableCell colSpan={4} className="py-10 text-center text-muted-foreground">暂无日志</TableCell></TableRow> : logs.map((entry, index) => { const record = entry as Record<string, unknown>; return <TableRow key={`${record.id ?? index}`}><TableCell className="font-medium text-foreground">{toText(readString(record, "message"), `日志 ${index + 1}`)}</TableCell><TableCell>{toText(readString(record, "event"), "-")}</TableCell><TableCell><Badge variant={statusBadgeVariant(readString(record, "level"))}>{toText(readString(record, "level"), "info")}</Badge></TableCell><TableCell className="text-muted-foreground">{formatDate(readString(record, "createdAt", "timestamp"))}</TableCell></TableRow>; })}</TableBody>
             </Table>
           </TabsContent>
 

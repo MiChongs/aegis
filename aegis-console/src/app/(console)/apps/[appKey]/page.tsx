@@ -92,7 +92,7 @@ function AppDetailInner() {
     if (appsQuery.isLoading || detailQuery.isLoading) return <LoadingState title="加载应用" />;
     return (
       <div className="page-stack">
-        <EmptyState title="应用不存在" description={`没有找到 AppKey 为 ${appKey || "（空）"} 的应用，它可能已被删除。`} />
+        <EmptyState title="应用不存在" />
         <Button asChild size="sm" variant="outline" className="h-8 w-fit text-xs">
           <Link href="/apps">返回应用列表</Link>
         </Button>

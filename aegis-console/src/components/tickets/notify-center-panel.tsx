@@ -170,7 +170,7 @@ function ChannelsSection({ canWrite }: { canWrite: boolean }) {
       const latency = Number(result?.latencyMs);
       const title = Number.isFinite(latency) ? `测试消息已发送（${latency}ms）` : "测试消息已发送";
       notify.success(title, {
-        description: result?.responseSnippet?.slice(0, 120) || "请到对应群聊或收件箱确认是否收到"
+        description: result?.responseSnippet?.slice(0, 120)
       });
     } catch (error) {
       reportError(error, "测试发送失败");
@@ -181,10 +181,7 @@ function ChannelsSection({ canWrite }: { canWrite: boolean }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          一行 = 一个可投递的目标。飞书 / 钉钉 / 企微 / Slack / Webhook / 邮件 / 站内信 / 实时推送共用同一套出口
-        </p>
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {canWrite ? (
           <Button size="sm" onClick={openCreate}>
             <Plus className="mr-1 size-3.5" />
@@ -195,15 +192,12 @@ function ChannelsSection({ canWrite }: { canWrite: boolean }) {
 
       {!canWrite ? (
         <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
-          渠道中存有 IM 凭据，属平台级敏感资源：只有超级管理员可以新建、修改与测试发送。
+          仅超级管理员可编辑
         </p>
       ) : null}
 
       {channels.length === 0 ? (
-        <EmptyState
-          title="尚未配置通知渠道"
-          description="新建一个飞书群机器人，工单创建 / SLA 超时等事件就会自动推送到群里。"
-        />
+        <EmptyState title="暂无通知渠道" />
       ) : (
         <div className="grid gap-2 md:grid-cols-2">
           {channels.map((channel) => {
@@ -364,11 +358,8 @@ function ChannelsSection({ canWrite }: { canWrite: boolean }) {
                   type="password"
                   value={form.secret}
                   onChange={(event) => setForm((prev) => ({ ...prev, secret: event.target.value }))}
-                  placeholder={editing?.secretSet ? "留空保持不变，填 - 清空" : "请输入密钥"}
+                  placeholder={editing?.secretSet ? "留空不修改，- 清空" : "请输入密钥"}
                 />
-                <p className="text-[11px] text-muted-foreground">
-                  密钥以 AES-GCM 落库，任何接口都不会回传明文
-                </p>
               </div>
             ) : null}
 
@@ -448,7 +439,6 @@ function ConfigFieldInput({
         {field.label}
         {field.required ? <span className="ml-0.5 text-destructive">*</span> : null}
       </Label>
-      {field.help ? <p className="text-[11px] text-muted-foreground">{field.help}</p> : null}
     </div>
   );
 
@@ -570,10 +560,7 @@ function SubscriptionsSection({ canWrite }: { canWrite: boolean }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          决定「哪个事件投到哪个渠道」。支持按优先级过滤与静默窗口；critical 事件会穿透静默
-        </p>
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {canWrite ? (
           <Button
             size="sm"
@@ -600,10 +587,7 @@ function SubscriptionsSection({ canWrite }: { canWrite: boolean }) {
       </div>
 
       {subs.length === 0 ? (
-        <EmptyState
-          title="尚未配置事件订阅"
-          description="渠道建好后还需要订阅事件，工单动态才会真正推送出去。"
-        />
+        <EmptyState title="暂无事件订阅" />
       ) : (
         <div className="space-y-2">
           {subs.map((sub) => {
@@ -788,9 +772,6 @@ function SubscriptionsSection({ canWrite }: { canWrite: boolean }) {
                   />
                 </div>
               ) : null}
-              <p className="text-[11px] text-muted-foreground">
-                静默期内普通事件不投递；SLA 超时等 critical 事件仍会穿透送达
-              </p>
             </div>
             <div className="flex items-center gap-2">
               <Switch
@@ -903,10 +884,7 @@ function TemplatesSection({ canWrite }: { canWrite: boolean }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          自定义标题与正文，支持 <code className="rounded bg-muted px-1">{"{{.TicketNo}}"}</code> 之类的变量占位
-        </p>
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {canWrite ? (
           <Button
             size="sm"
@@ -932,10 +910,7 @@ function TemplatesSection({ canWrite }: { canWrite: boolean }) {
       </div>
 
       {templates.length === 0 ? (
-        <EmptyState
-          title="暂无自定义模板"
-          description="不配模板也能用：出口会按事件自动生成飞书卡片 / Markdown / 邮件排版。"
-        />
+        <EmptyState title="暂无自定义模板" />
       ) : (
         <div className="grid gap-2 md:grid-cols-2">
           {templates.map((template) => (
@@ -1178,7 +1153,7 @@ function DeliveriesSection({ canWrite }: { canWrite: boolean }) {
             onClick={async () => {
               try {
                 const result = await purgeMut.mutateAsync(30);
-                notify.success(`已清理 ${result.deleted} 条 30 天前的记录`);
+                notify.success(`已清理 ${result.deleted} 条`);
               } catch (error) {
                 reportError(error, "清理失败");
               }
@@ -1191,7 +1166,7 @@ function DeliveriesSection({ canWrite }: { canWrite: boolean }) {
       </div>
 
       {!page1?.items.length ? (
-        <EmptyState title="暂无投递记录" description="工单产生动态后，每一次投递尝试都会记录在这里，便于排障。" />
+        <EmptyState title="暂无投递记录" />
       ) : (
         <div className="space-y-1">
           {page1.items.map((delivery) => (

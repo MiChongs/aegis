@@ -38,17 +38,11 @@ export function ProfileAccountPanel({
       {loginAvailability && !loginAvailability.available ? (
         <Alert variant="destructive">
           <ShieldAlert />
-          <AlertTitle>你的登录方式当前不可用</AlertTitle>
+          <AlertTitle>登录方式不可用</AlertTitle>
           <AlertDescription>
-            <p>
-              账号绑定在 {authSourceLabel(loginAvailability.source)} 上，平台探测到它连不通
-              {loginAvailability.reason ? `：${loginAvailability.reason}` : "。"}
-            </p>
-            <p className="text-xs">
-              当前会话不受影响，但<strong className="font-semibold">退出后可能登不回来</strong>。
-              请在会话过期前联系另一位超级管理员，或到「平台配置」修好该认证源。
-              {loginAvailability.checkedAt ? `（探测于 ${formatTime(loginAvailability.checkedAt)}）` : null}
-            </p>
+            {authSourceLabel(loginAvailability.source)} 连接失败
+            {loginAvailability.reason ? `：${loginAvailability.reason}` : null}
+            {loginAvailability.checkedAt ? `（${formatTime(loginAvailability.checkedAt)}）` : null}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -57,18 +51,12 @@ export function ProfileAccountPanel({
         <Alert>
           <TriangleAlert />
           <AlertTitle>当前会话来自静态管理令牌</AlertTitle>
-          <AlertDescription>
-            这条会话由 <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">ADMIN_API_TOKEN</code>{" "}
-            直接签发，不对应任何管理员账号，因此没有角色、没有操作留痕、也无法被单独吊销。
-            它是给自动化与救急用的，日常操作请用自己的账号登录。
-          </AlertDescription>
         </Alert>
       ) : null}
 
       <Panel
         title="账户信息"
         icon={<IdCard className="size-4" />}
-        description="账号与认证方式由平台管理员分配，这里只能看，改不了。"
         bodyClassName="px-5 py-2"
       >
         <Facts>
@@ -78,7 +66,6 @@ export function ProfileAccountPanel({
             label="认证方式"
             icon={<Lock className="size-3" />}
             value={<Badge variant="outline" size="sm">{authSourceLabel(account.authSource)}</Badge>}
-            hint={account.authSource && account.authSource !== "password" ? "密码由外部身份源托管，控制台改不了" : undefined}
           />
           <Fact
             label="账号状态"
@@ -107,7 +94,6 @@ export function ProfileAccountPanel({
       <Panel
         title="当前会话"
         icon={<Fingerprint className="size-4" />}
-        description="你现在这一次登录。要看所有设备上的会话并逐个下线，去账户安全页。"
         action={
           <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" asChild>
             <Link href="/security" prefetch>
@@ -135,11 +121,10 @@ export function ProfileAccountPanel({
             <Fact
               label="会话标识"
               value={session.tokenId ? <CopyableValue value={session.tokenId} /> : EMPTY}
-              hint="排查登录问题时把它发给平台管理员"
             />
           </Facts>
         ) : (
-          <p className="py-6 text-center text-sm text-muted-foreground">拿不到会话信息</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">暂无会话信息</p>
         )}
       </Panel>
     </div>

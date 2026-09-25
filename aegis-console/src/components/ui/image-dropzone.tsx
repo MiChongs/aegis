@@ -65,7 +65,7 @@ export function ImageDropzone({
   maxSize = 10 * 1024 * 1024,
   aspect = "3 / 1",
   allowUrlInput = true,
-  description = "拖拽图片到此处，或点击选择文件（支持 JPG / PNG / GIF / WEBP / SVG，≤10 MB）",
+  description = "拖拽或点击上传，≤10 MB",
   disabled = false,
   className
 }: ImageDropzoneProps) {

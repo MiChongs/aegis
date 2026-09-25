@@ -107,10 +107,7 @@ export default function PlatformBannersPage() {
     <RequirePermission
       superAdmin
       fallback={
-        <EmptyState
-          title="需要超级管理员权限"
-          description="平台横幅仅限超级管理员管理，请联系超管或切换账号。"
-        />
+        <EmptyState title="需要超级管理员权限" />
       }
     >
       <WidgetBoundary title="平台横幅加载失败">
@@ -276,7 +273,7 @@ function PlatformBannersInner() {
 
       {/* 列表 */}
       {listQuery.isLoading ? (
-        <LoadingState title="加载中" description="正在获取平台 Banner" />
+        <LoadingState title="加载中" />
       ) : items.length === 0 ? (
         <EmptyBannersState onCreate={openCreate} hasFilter={hasAnyFilter} onReset={resetFilters} />
       ) : (
@@ -306,9 +303,7 @@ function PlatformBannersInner() {
           <form onSubmit={handleSubmit} className="flex h-full min-h-0 flex-col">
             <SheetHeader className="space-y-1 border-b px-6 py-5">
               <SheetTitle>{editing ? "编辑平台横幅" : "新建平台横幅"}</SheetTitle>
-              <SheetDescription className="text-xs">
-                超级管理员维护；Banner 展示于总览页顶部轮播。
-              </SheetDescription>
+              <SheetDescription className="text-xs">展示于总览页顶部轮播</SheetDescription>
             </SheetHeader>
 
             {/* 可滚动主体 */}
@@ -354,11 +349,8 @@ function EmptyBannersState({
       </div>
       <div className="space-y-0.5">
         <h3 className="text-sm font-semibold text-foreground">
-          {hasFilter ? "没有符合条件的 Banner" : "暂无平台横幅"}
+          {hasFilter ? "暂无匹配横幅" : "暂无平台横幅"}
         </h3>
-        <p className="text-xs text-muted-foreground">
-          {hasFilter ? "尝试调整筛选条件，或新建一条 Banner。" : "新建第一条后，会立刻出现在所有管理员的总览顶部。"}
-        </p>
       </div>
       <div className="flex items-center gap-2 pt-1">
         {hasFilter ? (
@@ -404,7 +396,7 @@ function FormSections({
             });
           }}
           onUpload={onUpload}
-          description="拖放或点击上传到对象存储（OSS/S3/...），也可直接粘贴外链 URL"
+          description="拖放、点击上传或粘贴 URL"
         />
       </section>
 
@@ -431,7 +423,7 @@ function FormSections({
               rows={3}
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="可选：展示在标题下方的一句话说明"
+              placeholder="可选"
             />
           </div>
           <div className="space-y-1 sm:col-span-2">
@@ -497,7 +489,6 @@ function FormSections({
         <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 px-3 py-2.5">
           <div className="min-w-0 space-y-0.5">
             <Label htmlFor="status" className="cursor-pointer">启用 Banner</Label>
-            <p className="text-[11px] text-muted-foreground">关闭后该 Banner 不会出现在任何管理员的轮播中</p>
           </div>
           <Switch id="status" checked={form.status} onCheckedChange={(v) => setForm({ ...form, status: v })} />
         </div>

@@ -13,6 +13,19 @@ import (
 
 func ptr(t time.Time) *time.Time { return &t }
 
+// segment 造一段不挂套餐的会员期（功能即快照）。
+func segment(id int64, channel string, name string, from time.Time, until time.Time, features ...string) Segment {
+	return Segment{
+		ID:            id,
+		TransactionNo: "VIP" + channel,
+		Channel:       channel,
+		PlanName:      name,
+		Features:      features,
+		ActiveFrom:    from,
+		ActiveUntil:   until,
+	}
+}
+
 func TestEvaluateMembership(t *testing.T) {
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	trialPlan := &TrialPlanRef{ID: 7, Name: "7 天试用", DurationDays: 7}
@@ -53,10 +66,9 @@ func TestEvaluateMembership(t *testing.T) {
 		{
 			name: "付费会员：不是试用，且不能再领试用",
 			in: EvalInput{
-				ExpireAt:     ptr(now.Add(240 * time.Hour)),
-				LastChannel:  ChannelWallet,
-				LastPlanName: "月度会员",
-				TrialPlan:    trialPlan,
+				ExpireAt:  ptr(now.Add(240 * time.Hour)),
+				Segments:  []Segment{segment(1, ChannelWallet, "月度会员", now.Add(-24*time.Hour), now.Add(240*time.Hour))},
+				TrialPlan: trialPlan,
 			},
 			wantVIP:     true,
 			wantSource:  SourceWallet,
@@ -66,11 +78,10 @@ func TestEvaluateMembership(t *testing.T) {
 		{
 			name: "试用会员：到期时间恰好是试用发到的那一刻",
 			in: EvalInput{
-				ExpireAt:     ptr(trialEnds),
-				LastChannel:  ChannelTrial,
-				LastPlanName: "7 天试用",
-				Claim:        activeTrialClaim,
-				TrialPlan:    trialPlan,
+				ExpireAt:  ptr(trialEnds),
+				Segments:  []Segment{segment(1, ChannelTrial, "7 天试用", activeTrialClaim.CreatedAt, trialEnds)},
+				Claim:     activeTrialClaim,
+				TrialPlan: trialPlan,
 			},
 			wantVIP:     true,
 			wantTrial:   true,
@@ -82,11 +93,13 @@ func TestEvaluateMembership(t *testing.T) {
 			name: "试用期内又买了付费：不再算试用，也不再是 trial 来源",
 			in: EvalInput{
 				// 续期是顺延的，到期时间被推到试用之后 —— 判定据此自动切换
-				ExpireAt:     ptr(trialEnds.Add(720 * time.Hour)),
-				LastChannel:  ChannelPaymentOrder,
-				LastPlanName: "月度会员",
-				Claim:        activeTrialClaim,
-				TrialPlan:    trialPlan,
+				ExpireAt: ptr(trialEnds.Add(720 * time.Hour)),
+				Segments: []Segment{
+					segment(1, ChannelTrial, "7 天试用", activeTrialClaim.CreatedAt, trialEnds),
+					segment(2, ChannelPaymentOrder, "月度会员", trialEnds, trialEnds.Add(720*time.Hour)),
+				},
+				Claim:     activeTrialClaim,
+				TrialPlan: trialPlan,
 			},
 			wantVIP:     true,
 			wantTrial:   false,
@@ -97,10 +110,10 @@ func TestEvaluateMembership(t *testing.T) {
 		{
 			name: "试用已过期且没续：不是会员，资格也不会回来",
 			in: EvalInput{
-				ExpireAt:    ptr(now.Add(-24 * time.Hour)),
-				LastChannel: ChannelTrial,
-				Claim:       expiredTrialClaim,
-				TrialPlan:   trialPlan,
+				ExpireAt:  ptr(now.Add(-24 * time.Hour)),
+				Segments:  []Segment{segment(1, ChannelTrial, "7 天试用", expiredTrialClaim.CreatedAt, expiredTrialClaim.TrialEndsAt)},
+				Claim:     expiredTrialClaim,
+				TrialPlan: trialPlan,
 			},
 			wantSource: SourceNone,
 			wantReason: TrialReasonAlreadyClaimed,

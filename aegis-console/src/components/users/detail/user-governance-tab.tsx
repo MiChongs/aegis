@@ -116,7 +116,6 @@ export function UserGovernanceTab({
       <Panel
         title="封禁历史"
         icon={<History className="size-4" />}
-        description="到期的封禁会自动转为「已到期」，不需要人工撤销；撤销用于提前解除。"
         action={
           <Badge variant="outline" size="sm">
             共 {bansQuery.data?.total ?? 0} 条
@@ -131,7 +130,7 @@ export function UserGovernanceTab({
             ))}
           </div>
         ) : !bans.length ? (
-          <EmptyRow text="这个账号从未被封禁过" />
+          <EmptyRow text="暂无封禁记录" />
         ) : (
           <div className="overflow-x-auto">
             <Table>
@@ -158,7 +157,6 @@ export function UserGovernanceTab({
       <Panel
         title="危险操作"
         icon={<Trash2 className="size-4" />}
-        description="删除是物理删除：资料、设置、安全凭证、会话全部清除，无法恢复。绝大多数场景应该用封禁而不是删除。"
         className="border-destructive/40"
       >
         <Button size="sm" variant="destructive" disabled={deletePending} onClick={onDelete}>
@@ -206,7 +204,6 @@ function AccountSwitchPanel({
     <Panel
       title="账号开关"
       icon={enabled ? <CircleCheck className="size-4" /> : <ShieldAlert className="size-4" />}
-      description="users.enabled 上的一个布尔位，改了立刻生效但不留处置记录。需要追责或申诉时请用封禁。"
       action={
         <Badge variant={enabled ? "success" : "danger"} size="sm">
           {enabled ? "正常" : "已限制"}
@@ -262,13 +259,13 @@ function AccountSwitchPanel({
 // ── 新建封禁 ──────────────────────────
 
 const BAN_TYPES: Array<{ value: AccountBanType; title: string; detail: string }> = [
-  { value: "temporary", title: "临时", detail: "到期自动解除" },
-  { value: "permanent", title: "永久", detail: "只能人工撤销" }
+  { value: "temporary", title: "临时", detail: "" },
+  { value: "permanent", title: "永久", detail: "" }
 ];
 
 const BAN_SCOPES: Array<{ value: AccountBanScope; title: string; detail: string }> = [
-  { value: "login", title: "仅登录", detail: "已签发的会话仍然有效" },
-  { value: "all", title: "全部访问", detail: "同时踢掉现有会话" }
+  { value: "login", title: "仅登录", detail: "现有会话保留" },
+  { value: "all", title: "全部访问", detail: "同时踢下线" }
 ];
 
 function CreateBanPanel({
@@ -313,7 +310,6 @@ function CreateBanPanel({
     <Panel
       title="新建封禁"
       icon={<Gavel className="size-4" />}
-      description="留痕的处置记录：有类型、有范围、有起止、有操作人，可撤销、可申诉。"
       action={
         activeBan ? (
           <Badge variant="danger" size="sm">
@@ -332,9 +328,6 @@ function CreateBanPanel({
             <div className="mt-0.5 text-muted-foreground">
               {textValue(activeBan.reason, "未填写原因")}
               {activeBan.endAt ? ` · 到期 ${formatTime(activeBan.endAt)}` : " · 永久"}
-            </div>
-            <div className="mt-1 text-muted-foreground">
-              再建一条会叠加，不会替换现有封禁。要解除请到下方历史里撤销。
             </div>
           </div>
         ) : null}
@@ -366,11 +359,11 @@ function CreateBanPanel({
         ) : null}
 
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">封禁原因（必填，会展示在申诉记录里）</Label>
+          <Label className="text-xs text-muted-foreground">封禁原因（必填）</Label>
           <Textarea
             rows={3}
             value={reason}
-            placeholder="例如：批量注册小号，关联 12 个账号"
+            placeholder="例如：批量注册小号"
             onChange={(event) => setReason(event.target.value)}
           />
         </div>
@@ -415,7 +408,9 @@ function ChoiceGroup({
             <RadioGroupItem value={option.value} className="mt-0.5" />
             <span className="min-w-0">
               <span className="block text-sm font-medium">{option.title}</span>
-              <span className="block text-[11px] text-muted-foreground">{option.detail}</span>
+              {option.detail ? (
+                <span className="block text-[11px] text-muted-foreground">{option.detail}</span>
+              ) : null}
             </span>
           </label>
         ))}
@@ -500,7 +495,7 @@ function BanRow({ appKey, userId, ban }: { appKey: string; userId: number; ban: 
           <DialogHeader>
             <DialogTitle className="text-sm">撤销封禁</DialogTitle>
             <DialogDescription>
-              撤销后该封禁立即失效。原记录会保留，状态转为「已撤销」并记下撤销人。
+              撤销后该封禁立即失效。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">

@@ -365,9 +365,7 @@ function NotCallableBadge({
         </button>
       </TooltipTrigger>
       <TooltipContent>
-        {!selected.activeVersion
-          ? "尚未激活版本，发布并激活后方可调用"
-          : "函数未启用，请在「设置」中将状态改为「已启用」"}
+        {!selected.activeVersion ? "未激活版本" : "函数未启用"}
       </TooltipContent>
     </Tooltip>
   );

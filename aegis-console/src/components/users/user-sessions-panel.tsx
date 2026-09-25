@@ -125,7 +125,7 @@ export function UserSessionsPanel({ appKey, userId }: { appKey?: string | null; 
       </div>
 
       {sessions.length === 0 ? (
-        <div className="py-8 text-center text-sm text-muted-foreground">无活跃会话</div>
+        <div className="py-8 text-center text-sm text-muted-foreground">暂无活跃会话</div>
       ) : (<>
         <TooltipProvider delayDuration={120}>
           <div className="overflow-hidden rounded-xl border">

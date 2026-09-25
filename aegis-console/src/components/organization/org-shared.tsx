@@ -111,7 +111,7 @@ export function AdminPicker({
         <div className="p-1">
           {(candidates ?? []).length === 0 ? (
             <p className="py-6 text-center text-xs text-muted-foreground">
-              {keyword ? "没有匹配的管理员" : "输入关键词搜索管理员"}
+              {keyword ? "无匹配结果" : "输入关键词搜索"}
             </p>
           ) : (
             (candidates ?? []).map((m) => {

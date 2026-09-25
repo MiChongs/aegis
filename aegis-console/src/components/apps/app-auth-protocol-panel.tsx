@@ -43,7 +43,7 @@ import {
 import { AppTransportEncryptionPanel } from "@/components/apps/app-transport-encryption-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
@@ -76,9 +76,9 @@ function formatTime(value?: string) {
 
 /** 三档安全等级。文案只写"客户端要多做什么"，其余留给文档。 */
 const LEVELS: { level: SecurityLevel; title: string; work: string; icon: typeof Zap }[] = [
-  { level: "standard", title: "标准", work: "无需密钥，一次 fetch 即可接入", icon: Zap },
-  { level: "signed", title: "签名", work: "每个请求加一个 HMAC 头", icon: ShieldCheck },
-  { level: "sealed", title: "加密", work: "签名之上再叠端到端加密载荷", icon: Lock }
+  { level: "standard", title: "标准", work: "无需密钥", icon: Zap },
+  { level: "signed", title: "签名", work: "HMAC 请求签名", icon: ShieldCheck },
+  { level: "sealed", title: "加密", work: "签名 + 端到端加密", icon: Lock }
 ];
 
 const IDENTIFIER_OPTIONS = [
@@ -119,7 +119,7 @@ function CopyButton({ value, label = "复制" }: { value: string; label?: string
           setCopied(true);
           window.setTimeout(() => setCopied(false), 1600);
         } catch {
-          toast.error("剪贴板不可用，请手动选中复制");
+          toast.error("剪贴板不可用");
         }
       }}
     >
@@ -171,7 +171,7 @@ function IntegrationCard({
       const rotated = await rotateSigningSecret(token, appKey);
       setRevealed(rotated.appSecret);
       await onSecretRotated();
-      toast.success("应用密钥已轮换", { description: "明文仅此一次可见，请立即保存" });
+      toast.success("应用密钥已轮换");
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -186,7 +186,7 @@ function IntegrationCard({
       const outcome = await runIntegrationSelfTest(token, appKey, baseUrl);
       setResult(outcome);
       if (outcome.ok) toast.success("接入链路全部通过");
-      else toast.error("自检发现问题，请查看失败步骤");
+      else toast.error("自检未通过");
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -199,7 +199,6 @@ function IntegrationCard({
       <CardHeader className="flex-row items-start justify-between gap-3">
         <div>
           <CardTitle>接入信息</CardTitle>
-          <CardDescription>把这几项填进接入方配置即可开始对接。</CardDescription>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <CopyButton
@@ -214,7 +213,7 @@ function IntegrationCard({
       </CardHeader>
       <CardContent className="space-y-3">
         <div>
-          <CredentialRow label="Base URL" value={baseUrl || "（未配置，使用当前站点）"} />
+          <CredentialRow label="Base URL" value={baseUrl || "（当前站点）"} />
           <CredentialRow label="App Key" value={appKey} />
           {needsSecret ? (
             <div className="flex items-center justify-between gap-3 border-b py-1.5 last:border-b-0">
@@ -242,7 +241,7 @@ function IntegrationCard({
           <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
             <p className="flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
               <AlertTriangle className="size-3.5" />
-              明文仅此一次可见，离开本页后无法再取回
+              明文仅显示一次
             </p>
             <div className="flex items-center gap-2">
               <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1.5 font-mono text-xs">
@@ -304,9 +303,6 @@ function SecurityLevelCard({
     <Card>
       <CardHeader>
         <CardTitle>安全等级</CardTitle>
-        <CardDescription>
-          只改变请求的包装方式；三档共用同一批路径与 JSON 结构，换档不必改业务代码。
-        </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2 sm:grid-cols-3">
         {LEVELS.map((item) => {
@@ -444,10 +440,6 @@ function RegistrationSchemaEditor({
           </TableBody>
         </Table>
       </div>
-      <p className="text-xs text-muted-foreground">
-        account / password / nickname 是内置列，名称不可改；
-        只有勾选「客户端可写」的自定义字段允许通过 profile 提交。
-      </p>
     </div>
   );
 }
@@ -584,7 +576,6 @@ function IntegrationEditor({
         <CardHeader className="flex-row items-start justify-between gap-3">
           <div>
             <CardTitle>代码示例</CardTitle>
-            <CardDescription>已填入真实 App Key 与服务地址，复制即可运行。</CardDescription>
           </div>
           <Button asChild size="sm" variant="outline">
             <Link href="/developers" target="_blank">
@@ -610,7 +601,6 @@ function IntegrationEditor({
             <CardHeader className="cursor-pointer flex-row items-center justify-between">
               <div>
                 <CardTitle>认证策略</CardTitle>
-                <CardDescription>登录标识、认证方式与注册字段。默认值适用于多数应用。</CardDescription>
               </div>
               <ChevronDown
                 className={cn("size-4 shrink-0 transition-transform", advancedOpen && "rotate-180")}
@@ -621,7 +611,7 @@ function IntegrationEditor({
             <CardContent className="space-y-4">
               <CheckboxGroup
                 label="登录标识"
-                hint="允许用户拿哪些字段当账号；启用短信时必须包含手机号"
+                hint="启用短信需含手机号"
                 options={IDENTIFIER_OPTIONS}
                 value={policy.identifiers}
                 onChange={(identifiers) => setPolicy({ ...policy, identifiers })}
@@ -629,14 +619,12 @@ function IntegrationEditor({
               <div className="grid gap-4 sm:grid-cols-2">
                 <CheckboxGroup
                   label="登录方式"
-                  hint="第三方渠道在「第三方登录」页配置；卡密在「卡密」区块生成"
                   options={LOGIN_METHODS}
                   value={policy.loginMethods}
                   onChange={(loginMethods) => setPolicy({ ...policy, loginMethods })}
                 />
                 <CheckboxGroup
                   label="注册方式"
-                  hint="第三方能否自动建号由各渠道自己的开关决定，不在这里配"
                   options={REGISTER_METHODS}
                   value={policy.registerMethods}
                   onChange={(registerMethods) => setPolicy({ ...policy, registerMethods })}
@@ -644,20 +632,18 @@ function IntegrationEditor({
               </div>
               {smsOn ? (
                 <p className="rounded-lg border border-amber-500/35 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
-                  短信认证依赖「验证码」页配置好的短信服务商，未配置时取码接口直接报错。
+                  需在「验证码」页配置短信服务商
                 </p>
               ) : null}
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <SwitchField
                   label="登录/注册要求验证码"
-                  hint="开启后客户端必须先调 /captcha"
                   checked={policy.requireCaptcha}
                   onChange={(requireCaptcha) => setPolicy({ ...policy, requireCaptcha })}
                 />
                 <SwitchField
                   label="注册后自动登录"
-                  hint="关闭后注册只返回用户标识，不签发令牌"
                   checked={policy.autoLoginAfterRegister}
                   onChange={(autoLoginAfterRegister) =>
                     setPolicy({ ...policy, autoLoginAfterRegister })
@@ -665,7 +651,6 @@ function IntegrationEditor({
                 />
                 <SwitchField
                   label="保留旧 /api/auth/* 接口"
-                  hint="与安全等级互不影响；全部迁移完成后可关闭"
                   checked={policy.allowLegacy}
                   onChange={(allowLegacy) => setPolicy({ ...policy, allowLegacy })}
                 />
@@ -696,7 +681,7 @@ function IntegrationEditor({
         <p className="text-xs text-muted-foreground">
           {dirty ? "有未保存的改动" : "已与服务端一致"}
           {policy.securityLevel !== "standard" && !policy.signingSecretSet
-            ? " · 保存后会自动签发一把应用密钥"
+            ? " · 保存后自动签发密钥"
             : ""}
         </p>
       </div>
@@ -720,9 +705,6 @@ function TransportKeysCard({ appKey }: { appKey: string }) {
       <CardHeader className="flex-row items-center justify-between">
         <div>
           <CardTitle>Transport 密钥</CardTitle>
-          <CardDescription>
-            X25519 公钥；轮换期间 active 与 retiring 并存，旧密钥最多保留 24 小时。
-          </CardDescription>
         </div>
         <Button
           variant="outline"

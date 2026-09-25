@@ -14,7 +14,7 @@ import {
   type ChartConfig
 } from "@/components/ui/chart";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatTile, formatDuration, formatRate, formatTime } from "./function-shared";
 
@@ -52,10 +52,8 @@ export function FunctionOverviewPanel({
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
           <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <span>
-            该函数<strong>当前不可被调用</strong>：
-            {!selected.activeVersion
-              ? "尚未激活版本，请在「脚本」页发布并激活。"
-              : "函数未启用，请在「设置」页将状态改为「已启用」。"}
+            <strong>当前不可被调用</strong>：
+            {!selected.activeVersion ? "未激活版本" : "函数未启用"}
           </span>
         </div>
       ) : null}
@@ -64,7 +62,6 @@ export function FunctionOverviewPanel({
         <CardHeader className="flex-row items-start justify-between gap-3">
           <div>
             <CardTitle>运行状况</CardTitle>
-            <CardDescription>成功率仅统计已结束的调用。</CardDescription>
           </div>
           <Select value={String(hours)} onValueChange={(value) => setHours(Number(value))}>
             <SelectTrigger className="h-8 w-28 text-xs">
@@ -127,7 +124,6 @@ export function FunctionOverviewPanel({
         <Card>
           <CardHeader>
             <CardTitle>高频错误</CardTitle>
-            <CardDescription>所选时段内出现次数最多的失败原因</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {stats?.topErrors?.length ? (
@@ -140,9 +136,7 @@ export function FunctionOverviewPanel({
                 </div>
               ))
             ) : (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                所选时段内无失败记录
-              </p>
+              <p className="py-8 text-center text-sm text-muted-foreground">暂无失败记录</p>
             )}
           </CardContent>
         </Card>
@@ -150,7 +144,6 @@ export function FunctionOverviewPanel({
         <Card>
           <CardHeader>
             <CardTitle>当前配置</CardTitle>
-            <CardDescription>运行参数可在「设置」页调整</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2">
             <StatTile label="运行时" value={selected.runtime} />
@@ -160,7 +153,6 @@ export function FunctionOverviewPanel({
             <StatTile
               label="频次上限"
               value={selected.rateLimitPerMin ? `${selected.rateLimitPerMin}/分钟` : "不限"}
-              hint={selected.rateLimitPerMin ? "跨实例准确" : undefined}
             />
             <StatTile
               label="已声明能力"

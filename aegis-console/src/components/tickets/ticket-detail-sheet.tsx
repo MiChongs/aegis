@@ -205,7 +205,7 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
       <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-3xl">
         {detailQuery.isLoading || !ticket ? (
           <div className="p-6">
-            <LoadingState title="加载工单" description="正在拉取工单会话与时间线..." />
+            <LoadingState title="加载工单" />
           </div>
         ) : (
           <div className="flex h-full flex-col">
@@ -321,7 +321,7 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
                       rows={3}
                       value={replyContent}
                       onChange={(event) => setReplyContent(event.target.value)}
-                      placeholder={internal ? "内部备注仅处理人可见，提单人看不到" : "回复内容将展示给提单人"}
+                      placeholder={internal ? "仅处理人可见" : "提单人可见"}
                     />
                     {pendingFiles.length > 0 ? (
                       <div className="mt-2 flex flex-wrap gap-2">
@@ -380,7 +380,7 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
                   </div>
                 ) : (
                   <div className="border-t px-6 py-3 text-xs text-muted-foreground">
-                    {ticket.locked ? "工单已关闭并锁定，无法继续回复。" : "你没有回复该工单的权限。"}
+                    {ticket.locked ? "工单已锁定" : "无回复权限"}
                   </div>
                 )}
               </TabsContent>
@@ -495,7 +495,7 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
                                   id: ticket.id,
                                   payload: { groupId: ticket.groupId, autoPick: true }
                                 });
-                                notify.success("已按处理组策略自动分派");
+                                notify.success("已自动分派");
                               } catch (error) {
                                 handleError(error, "自动分派失败");
                               }
@@ -554,7 +554,7 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
                   <Input
                     value={resolveSolution}
                     onChange={(event) => setResolveSolution(event.target.value)}
-                    placeholder="解决方案（可选，会作为回复发给提单人）"
+                    placeholder="解决方案（选填）"
                     className="h-8 flex-1 text-xs"
                   />
                   <Button size="sm" onClick={() => handleStatus("resolved", resolveSolution.trim() || undefined)}>
@@ -581,7 +581,7 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
                   onClick={async () => {
                     try {
                       await watchMut.mutateAsync({ id: ticket.id, watch: true });
-                      notify.success("已关注该工单，后续动态会通知你");
+                      notify.success("已关注");
                     } catch (error) {
                       handleError(error, "关注失败");
                     }

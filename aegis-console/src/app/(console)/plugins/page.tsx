@@ -178,7 +178,7 @@ allow()`,
   {
     name: "IP 白名单（多网段）",
     category: "安全",
-    description: "仅允许内网 + 指定公网 IP 段访问，其余全部拒绝",
+    description: "仅放行内网与指定网段",
     code: `// ═══════════════════════════════════════════════════
 // IP 白名单策略 — 绑定到 auth.onPreLogin (before)
 // ═══════════════════════════════════════════════════
@@ -202,7 +202,7 @@ matchCIDR(ip, "10.0.0.0/8")
   {
     name: "IP 黑名单（动态封禁）",
     category: "安全",
-    description: "拦截指定 IP/网段，支持多条规则",
+    description: "拦截指定 IP/网段",
     code: `// ═══════════════════════════════════════════════════
 // IP 黑名单策略 — 绑定到 auth.onPreLogin (before)
 // ═══════════════════════════════════════════════════
@@ -217,7 +217,7 @@ matchCIDR(ip, "203.0.113.0/24")     // 示例：某 IDC 段
   {
     name: "User-Agent 安全过滤",
     category: "安全",
-    description: "拦截已知攻击工具、爬虫和扫描器的 UA",
+    description: "拦截扫描器与爬虫 UA",
     code: `// ═══════════════════════════════════════════════════
 // User-Agent 安全过滤 — 绑定到 auth.onPreLogin (before)
 // ═══════════════════════════════════════════════════
@@ -238,7 +238,7 @@ userAgent contains "sqlmap"      // SQL 注入工具
   {
     name: "禁止特定账号登录",
     category: "安全",
-    description: "黑名单账号列表，拦截测试/临时/通用账号",
+    description: "拦截测试与通用账号",
     code: `// ═══════════════════════════════════════════════════
 // 账号黑名单 — 绑定到 auth.onPreLogin (before)
 // ═══════════════════════════════════════════════════
@@ -255,7 +255,7 @@ account == "test" || account == "demo" || account == "guest"
   {
     name: "工作时间访问控制",
     category: "访问控制",
-    description: "工作日 9:00-18:00 + 周六上午半天",
+    description: "工作日 9:00-18:00",
     code: `// ═══════════════════════════════════════════════════
 // 工作时间策略 — 绑定到 auth.onPreLogin (before)
 // ═══════════════════════════════════════════════════
@@ -272,7 +272,7 @@ account == "test" || account == "demo" || account == "guest"
   {
     name: "节假日黑名单",
     category: "访问控制",
-    description: "中国法定节假日禁止登录（2025-2026）",
+    description: "法定节假日禁止登录",
     code: `// ═══════════════════════════════════════════════════
 // 节假日策略 — 绑定到 auth.onPreLogin (before)
 // ═══════════════════════════════════════════════════
@@ -301,7 +301,7 @@ date() == "01-01"
   {
     name: "夜间禁止登录",
     category: "访问控制",
-    description: "0:00-6:00 深夜禁止所有登录操作",
+    description: "0:00-6:00 禁止登录",
     code: `// ═══════════════════════════════════════════════════
 // 夜间封锁策略 — 绑定到 auth.onPreLogin (before)
 // ═══════════════════════════════════════════════════
@@ -329,7 +329,7 @@ account endsWith "@company.com"
   {
     name: "综合登录安全策略",
     category: "安全",
-    description: "IP + 时间 + UA + 账号的多维度组合检查",
+    description: "多维度组合检查",
     code: `// ═══════════════════════════════════════════════════
 // 综合登录安全策略 — 绑定到 auth.onPreLogin (before)
 // 多维度组合检查，任一维度命中即拒绝
@@ -357,7 +357,7 @@ matchCIDR(ip, "0.0.0.0/8")  // 保留地址
   {
     name: "登录失败详细告警",
     category: "审计",
-    description: "登录失败时记录完整上下文（绑定到 auth.onLoginFailed）",
+    description: "记录登录失败上下文",
     code: `// ═══════════════════════════════════════════════════
 // 登录失败告警 — 绑定到 auth.onLoginFailed (after)
 // ═══════════════════════════════════════════════════
@@ -371,7 +371,7 @@ allow()`,
   {
     name: "用户注册通知",
     category: "审计",
-    description: "新用户注册后记录详细日志（绑定到 user.onRegistered）",
+    description: "记录新用户注册",
     code: `// ═══════════════════════════════════════════════════
 // 注册审计 — 绑定到 user.onRegistered (after)
 // ═══════════════════════════════════════════════════
@@ -383,7 +383,7 @@ allow()`,
   {
     name: "管理员操作审计",
     category: "审计",
-    description: "记录管理员创建/状态变更/权限修改",
+    description: "记录管理员变更",
     code: `// ═══════════════════════════════════════════════════
 // 管理员操作审计 — 绑定到 admin.onCreated / admin.onStatusChanged / admin.onAccessUpdated (after)
 // ═══════════════════════════════════════════════════
@@ -407,7 +407,7 @@ allow()`,
   {
     name: "系统启动通知",
     category: "监控",
-    description: "系统启动完成后记录日志（绑定到 system.onStartup）",
+    description: "记录系统启动",
     code: `// ═══════════════════════════════════════════════════
 // 启动通知 — 绑定到 system.onStartup (after)
 // ═══════════════════════════════════════════════════
@@ -419,7 +419,7 @@ allow()`,
   {
     name: "设置变更告警",
     category: "监控",
-    description: "平台设置修改后记录告警（绑定到 system.onSettingsUpdated）",
+    description: "记录平台设置变更",
     code: `// ═══════════════════════════════════════════════════
 // 设置变更告警 — 绑定到 system.onSettingsUpdated (after)
 // ═══════════════════════════════════════════════════
@@ -563,7 +563,7 @@ export default function PluginsPage() {
             <PluginCreateSheet token={token} onCreated={() => qc.invalidateQueries({ queryKey: ["plugins"] })} />
           </div>
 
-          {pluginsQuery.isLoading ? <LoadingState title="加载中" description="" /> : !data?.items.length ? <EmptyState title="暂无插件" description="点击右上角新建按钮创建第一个插件" /> : (
+          {pluginsQuery.isLoading ? <LoadingState title="加载中" /> : !data?.items.length ? <EmptyState title="暂无插件" /> : (
             <div className="space-y-2">
               {data.items.map((p) => (
                 <Card key={p.id}>
@@ -607,7 +607,7 @@ export default function PluginsPage() {
 
         {/* ── 钩子注册表 ── */}
         <TabsContent value="hooks" className="space-y-4">
-          {!registry ? <LoadingState title="加载中" description="" /> : (
+          {!registry ? <LoadingState title="加载中" /> : (
             <Accordion type="multiple" className="space-y-2">
               {Object.entries(
                 registry.hooks.reduce((acc, h) => {
@@ -649,7 +649,7 @@ export default function PluginsPage() {
 
         {/* ── 执行日志 ── */}
         <TabsContent value="logs" className="space-y-4">
-          {!executions ? <LoadingState title="加载中" description="" /> : !executions.items.length ? <EmptyState title="暂无执行日志" description="启用插件并触发钩子后将在此显示" /> : (
+          {!executions ? <LoadingState title="加载中" /> : !executions.items.length ? <EmptyState title="暂无执行日志" /> : (
             <div className="space-y-1.5">
               {executions.items.map((e) => (
                 <div key={e.id} className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-xs">
@@ -768,7 +768,7 @@ function PluginCreateSheet({ token, onCreated }: { token: string; onCreated: () 
           )}
           {/* 钩子绑定 */}
           <div className="space-y-2">
-            <Label className="text-xs">绑定钩子（至少选择一个）</Label>
+            <Label className="text-xs">绑定钩子</Label>
             <Accordion type="multiple" className="space-y-1">
               {Object.entries(
                 GetAllHookDefinitions().reduce((acc, h) => {
@@ -918,10 +918,6 @@ function ExprScriptEditor({ value, onChange }: { value: string; onChange: (v: st
           }}
         />
       </div>
-      <p className="text-[10px] text-muted-foreground">
-        内置函数：<code className="text-[9px] bg-muted px-1 rounded">allow()</code> <code className="text-[9px] bg-muted px-1 rounded">deny(&quot;原因&quot;)</code> <code className="text-[9px] bg-muted px-1 rounded">matchCIDR(ip, cidr)</code> <code className="text-[9px] bg-muted px-1 rounded">hour()</code> <code className="text-[9px] bg-muted px-1 rounded">weekday()</code> <code className="text-[9px] bg-muted px-1 rounded">date()</code> <code className="text-[9px] bg-muted px-1 rounded">now()</code>
-        &nbsp;·&nbsp;变量：<code className="text-[9px] bg-muted px-1 rounded">ip</code> <code className="text-[9px] bg-muted px-1 rounded">userAgent</code> <code className="text-[9px] bg-muted px-1 rounded">hookName</code> <code className="text-[9px] bg-muted px-1 rounded">account</code>
-      </p>
     </div>
   );
 }

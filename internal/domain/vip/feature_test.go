@@ -46,18 +46,19 @@ func TestFeatureTagPattern(t *testing.T) {
 
 // 功能权益必须以「是不是会员」为前提。
 //
-// 过期用户的功能快照仍留在账本里 —— 只按标签命中会让一个到期三个月的用户
+// 过期用户的开通记录仍留在账本里 —— 只按标签命中会让一个到期三个月的用户
 // 继续用着高级功能，而这正是这套判定要防的事。
 func TestHasFeatureRequiresActiveMembership(t *testing.T) {
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	catalog := []string{"export", "ai.chat", "hd_video"}
 
 	member := Evaluate(EvalInput{
-		ExpireAt:    ptr(now.Add(48 * time.Hour)),
-		LastChannel: ChannelWallet,
-		Features:    []string{"export", "ai.chat"},
+		ExpireAt:       ptr(now.Add(48 * time.Hour)),
+		Segments:       []Segment{segment(1, ChannelWallet, "高级版", now, now.Add(48*time.Hour), "export", "ai.chat")},
+		FeatureCatalog: catalog,
 	}, now)
 	if !member.HasFeature("export") {
-		t.Error("会员应当拥有快照里的 export")
+		t.Error("会员应当拥有这段开通带来的 export")
 	}
 	if !member.HasFeature(" EXPORT ") {
 		t.Error("功能标识判定应当忽略大小写与空白")
@@ -66,10 +67,12 @@ func TestHasFeatureRequiresActiveMembership(t *testing.T) {
 		t.Error("不该凭空多出没买过的功能")
 	}
 
+	// 到期时间已过，但仓储给了一段还"没结束"的段（比如退款把到期时间减掉了）——
+	// 结论仍以到期时间为准，段只决定会员期内有哪些功能
 	expired := Evaluate(EvalInput{
-		ExpireAt:    ptr(now.Add(-time.Hour)),
-		LastChannel: ChannelWallet,
-		Features:    []string{"export"},
+		ExpireAt:       ptr(now.Add(-time.Hour)),
+		Segments:       []Segment{segment(1, ChannelWallet, "高级版", now.Add(-time.Hour), now.Add(time.Hour), "export")},
+		FeatureCatalog: catalog,
 	}, now)
 	if expired.HasFeature("export") {
 		t.Error("已过期的用户不该还拥有功能权益")
@@ -83,7 +86,11 @@ func TestHasFeatureRequiresActiveMembership(t *testing.T) {
 // 那两件事的结论可能正好相反。
 func TestHasFeatureRejectsEmptyTag(t *testing.T) {
 	now := time.Now()
-	member := Evaluate(EvalInput{ExpireAt: ptr(now.Add(time.Hour)), Features: []string{"export"}}, now)
+	member := Evaluate(EvalInput{
+		ExpireAt:       ptr(now.Add(time.Hour)),
+		Segments:       []Segment{segment(1, ChannelWallet, "高级版", now, now.Add(time.Hour), "export")},
+		FeatureCatalog: []string{"export"},
+	}, now)
 	if member.HasFeature("") || member.HasFeature("   ") {
 		t.Error("空功能标识必须判不通过")
 	}
@@ -94,10 +101,9 @@ func TestHasFeatureRejectsEmptyTag(t *testing.T) {
 func TestViewProjectsEntitlement(t *testing.T) {
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	entitlement := Evaluate(EvalInput{
-		ExpireAt:     ptr(now.Add(72 * time.Hour)),
-		LastChannel:  ChannelPaymentOrder,
-		LastPlanName: "高级版",
-		Features:     []string{"export"},
+		ExpireAt:       ptr(now.Add(72 * time.Hour)),
+		Segments:       []Segment{segment(1, ChannelPaymentOrder, "高级版", now, now.Add(72*time.Hour), "export")},
+		FeatureCatalog: []string{"export"},
 	}, now)
 
 	view := entitlement.View()

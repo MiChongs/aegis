@@ -88,7 +88,7 @@ export function CrashLogPanel() {
   }
 
   if (!operator?.isSuperAdmin) {
-    return <EmptyState title="No access" description="Only super admins can view crash logs." />;
+    return <EmptyState title="No access" description="Super admin only" />;
   }
 
   if (filesQuery.isLoading) {
@@ -112,7 +112,7 @@ export function CrashLogPanel() {
 
           {files.length === 0 ? (
             <div className="rounded-xl border border-dashed px-6 py-10 text-center text-sm text-muted-foreground">
-              No crash logs found. System is healthy.
+              No crash logs
             </div>
           ) : (
             <div className="space-y-2">

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -18,7 +19,7 @@ COALESCE(description, ''), is_active, sort_order, created_at, updated_at`
 
 const vipTxnColumns = `id, transaction_no, user_id, appid, plan_id, plan_name, features, duration_days, pay_channel,
 pay_amount, COALESCE(related_order_no, ''), bonus_integral, expire_before, expire_after,
-COALESCE(operator, ''), COALESCE(metadata, '{}'::jsonb), created_at`
+COALESCE(operator, ''), COALESCE(metadata, '{}'::jsonb), revoked_at, COALESCE(revoke_reason, ''), created_at`
 
 // ── 套餐管理 ──
 
@@ -146,11 +147,39 @@ RETURNING `+vipPlanColumns,
 		nullableString(current.Description), current.IsActive, current.SortOrder))
 }
 
+// DeleteVipPlan 删除套餐，并把仍在期内的开通记录的功能定格成套餐最后的配置。
+//
+// 权益跟随套餐的当前配置（见 vipdomain.Segment），套餐一删就没有"当前配置"了，
+// 读取端只能回落到开通时的快照。不在这里定格的话会出现一个反直觉的结果：
+// 运营先把 export 从套餐里拿掉（老用户随之失去它），再删掉套餐 ——
+// 老用户的 export 反而回来了，因为开通时的快照里有它。
+// 删除是整理商品目录，不是改权益；要改权益请改套餐配置，要停售请下架。
+//
+// 已经结束的记录不动：它们的快照是「当时卖出去的是什么」的留档。
 func (r *Repository) DeleteVipPlan(ctx context.Context, appID int64, planID int64) (bool, error) {
-	result, err := r.pool.Exec(ctx, `DELETE FROM vip_plans WHERE appid = $1 AND id = $2`, appID, planID)
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, err
 	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if _, err := tx.Exec(ctx, `UPDATE vip_transactions AS vt SET features = p.features
+FROM vip_plans p
+WHERE p.appid = $1 AND p.id = $2 AND vt.appid = p.appid AND vt.plan_id = p.id
+  AND `+vipSegmentScopeSQL+` AND `+vipSegmentUntilSQL+` > NOW()`, appID, planID); err != nil {
+		return false, err
+	}
+	result, err := tx.Exec(ctx, `DELETE FROM vip_plans WHERE appid = $1 AND id = $2`, appID, planID)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	tx = nil
 	return result.RowsAffected() > 0, nil
 }
 
@@ -256,12 +285,12 @@ func extendUserVipTx(ctx context.Context, tx pgx.Tx, grant vipdomain.Grant) (*vi
 	}
 
 	txn := vipdomain.Transaction{
-		TransactionNo:  generateTransactionNo("VIP"),
-		UserID:         grant.UserID,
-		AppID:          grant.AppID,
-		PlanID:   grant.PlanID,
-		PlanName: grant.PlanName,
-		// 功能快照：套餐配置随时会改，已经卖出去的权益不该被追溯改写
+		TransactionNo: generateTransactionNo("VIP"),
+		UserID:        grant.UserID,
+		AppID:         grant.AppID,
+		PlanID:        grant.PlanID,
+		PlanName:      truncateColumn(strings.TrimSpace(grant.PlanName), vipPlanNameMaxRunes),
+		// 功能留档：套餐还在时权益跟随套餐当前配置，这份只在套餐被删 / 非套餐发放时生效
 		Features:       vipdomain.NormalizeFeatureTags(grant.Features),
 		DurationDays:   grant.DurationDays,
 		PayChannel:     grant.PayChannel,
@@ -274,14 +303,16 @@ func extendUserVipTx(ctx context.Context, tx pgx.Tx, grant vipdomain.Grant) (*vi
 		Metadata:       grant.Metadata,
 	}
 	metaJSON, _ := json.Marshal(grant.Metadata)
+	// active_from / active_until 这段会员期在链上的位置：顺延时接在旧到期时间之后，否则从此刻起
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO vip_transactions (transaction_no, user_id, appid, plan_id, plan_name, features, duration_days, pay_channel,
-pay_amount, related_order_no, bonus_integral, expire_before, expire_after, operator, metadata, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+pay_amount, related_order_no, bonus_integral, expire_before, expire_after, operator, metadata,
+active_from, active_until, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $13, NOW())
 RETURNING id, created_at`,
 		txn.TransactionNo, txn.UserID, txn.AppID, txn.PlanID, txn.PlanName, txn.Features, txn.DurationDays,
 		txn.PayChannel, txn.PayAmount.StringFixed(2), nullableString(txn.RelatedOrderNo), txn.BonusIntegral,
-		txn.ExpireBefore, txn.ExpireAfter, nullableString(txn.Operator), metaJSON).
+		txn.ExpireBefore, txn.ExpireAfter, nullableString(txn.Operator), metaJSON, base).
 		Scan(&txn.ID, &txn.CreatedAt); err != nil {
 		return nil, err
 	}
@@ -294,6 +325,106 @@ RETURNING id, created_at`,
 			return nil, err
 		}
 	}
+	return &txn, nil
+}
+
+// ErrVipNotActive 扣减天数时该用户当前不是会员（没有可扣的时长）
+var ErrVipNotActive = errors.New("postgres: vip not active")
+
+// vipPlanNameMaxRunes vip_transactions.plan_name 的列宽（VARCHAR(64)）。
+// 自定义发放 / 扣减把「原因」写进这一列，原因是自由文本，不截断会让发放直接报 22001。
+const vipPlanNameMaxRunes = 64
+
+// RevokeVipDays 扣减会员天数（单事务）：锁用户 → 从到期时间往回截 → 截断会员段 → 记账。
+//
+// 截过当前时刻即视为会员立即结束（到期时间落在此刻），不会被推到过去 ——
+// 推到过去并不会让下一次开通少给（开通从此刻起算），只是账上多了一段说不清的负数。
+//
+// 账本记一条负时长的 admin_revoke 记录：它不是一段会员期（不贡献功能、不成为当前套餐），
+// 只是让「到期时间为什么变早了」在账上有据可查。
+func (r *Repository) RevokeVipDays(ctx context.Context, revoke vipdomain.Revoke) (*vipdomain.Transaction, error) {
+	if revoke.Days <= 0 {
+		return nil, fmt.Errorf("vip revoke days must be positive")
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	var expireBefore *time.Time
+	if err := tx.QueryRow(ctx, `SELECT vip_expire_at FROM users WHERE id = $1 AND appid = $2 FOR UPDATE`,
+		revoke.UserID, revoke.AppID).Scan(&expireBefore); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	now := time.Now().UTC()
+	if expireBefore == nil || !expireBefore.After(now) {
+		return nil, ErrVipNotActive
+	}
+	expireAfter := expireBefore.UTC().AddDate(0, 0, -revoke.Days)
+	clamped := false
+	if expireAfter.Before(now) {
+		expireAfter = now
+		clamped = true
+	}
+	if _, err := tx.Exec(ctx, `UPDATE users SET vip_expire_at = $1, updated_at = NOW() WHERE id = $2 AND appid = $3`,
+		expireAfter, revoke.UserID, revoke.AppID); err != nil {
+		return nil, err
+	}
+	if err := truncateVipSegmentsTx(ctx, tx, revoke.AppID, revoke.UserID, expireAfter); err != nil {
+		return nil, err
+	}
+
+	planName := truncateColumn(strings.TrimSpace(revoke.Reason), vipPlanNameMaxRunes)
+	if planName == "" {
+		planName = "扣减会员天数"
+	}
+	metadata := make(map[string]any, len(revoke.Metadata)+2)
+	for key, value := range revoke.Metadata {
+		metadata[key] = value
+	}
+	metadata["reason"] = strings.TrimSpace(revoke.Reason)
+	if clamped {
+		// 剩余时长不足扣：实际扣掉的比请求的少，到期时间落在此刻
+		metadata["clamped"] = true
+	}
+	txn := vipdomain.Transaction{
+		TransactionNo: generateTransactionNo("VIP"),
+		UserID:        revoke.UserID,
+		AppID:         revoke.AppID,
+		PlanName:      planName,
+		Features:      []string{},
+		DurationDays:  -revoke.Days,
+		PayChannel:    vipdomain.ChannelAdminRevoke,
+		PayAmount:     decimal.Zero,
+		ExpireBefore:  expireBefore,
+		ExpireAfter:   expireAfter,
+		Operator:      revoke.Operator,
+		Metadata:      metadata,
+	}
+	metaJSON, _ := json.Marshal(metadata)
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO vip_transactions (transaction_no, user_id, appid, plan_id, plan_name, features, duration_days, pay_channel,
+pay_amount, related_order_no, bonus_integral, expire_before, expire_after, operator, metadata, created_at)
+VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8, NULL, 0, $9, $10, $11, $12, NOW())
+RETURNING id, created_at`,
+		txn.TransactionNo, txn.UserID, txn.AppID, txn.PlanName, txn.Features, txn.DurationDays,
+		txn.PayChannel, txn.PayAmount.StringFixed(2), txn.ExpireBefore, txn.ExpireAfter,
+		nullableString(txn.Operator), metaJSON).
+		Scan(&txn.ID, &txn.CreatedAt); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	tx = nil
 	return &txn, nil
 }
 
@@ -491,7 +622,7 @@ func scanVipTxn(row interface{ Scan(dest ...any) error }) (*vipdomain.Transactio
 	var meta []byte
 	if err := row.Scan(&t.ID, &t.TransactionNo, &t.UserID, &t.AppID, &t.PlanID, &t.PlanName, &t.Features,
 		&t.DurationDays, &t.PayChannel, &payAmount, &t.RelatedOrderNo, &t.BonusIntegral, &t.ExpireBefore,
-		&t.ExpireAfter, &t.Operator, &meta, &t.CreatedAt); err != nil {
+		&t.ExpireAfter, &t.Operator, &meta, &t.RevokedAt, &t.RevokeReason, &t.CreatedAt); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	t.PayAmount = decimal.RequireFromString(payAmount)

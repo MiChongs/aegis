@@ -45,7 +45,7 @@ function FunctionsPageInner() {
   if (!apps.length) {
     return (
       <div className="rounded-xl border py-16 text-center text-sm text-muted-foreground">
-        请先在「应用」中创建应用。
+        暂无应用
       </div>
     );
   }

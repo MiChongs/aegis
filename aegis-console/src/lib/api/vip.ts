@@ -72,8 +72,19 @@ export type VipFeaturePayload = {
   sortOrder?: number;
 };
 
-/** 会员来源：凭什么是会员 */
-export type VipSource = "none" | "trial" | "wallet" | "payment_order" | "admin_grant" | "unknown";
+/**
+ * 会员来源：凭什么是会员。开通记录的渠道（payChannel）也用这组值，
+ * 另多一档 `admin_revoke`（扣减天数）—— 它只出现在记录里，不会成为会员来源。
+ */
+export type VipSource =
+  | "none"
+  | "trial"
+  | "wallet"
+  | "payment_order"
+  | "admin_grant"
+  | "card_key"
+  | "admin_revoke"
+  | "unknown";
 
 export type VipTrialState = {
   active: boolean;
@@ -169,6 +180,9 @@ export type VipTransaction = {
   expireAfter: string;
   operator?: string;
   metadata?: Record<string, unknown>;
+  /** 这笔开通已作废（目前只有退款冲正），不再贡献任何权益 */
+  revokedAt?: string;
+  revokeReason?: string;
   createdAt: string;
 };
 

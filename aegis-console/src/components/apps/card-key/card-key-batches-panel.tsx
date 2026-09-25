@@ -105,7 +105,6 @@ export function CardKeyBatchesPanel({
       <SectionCard
         icon={<Layers className="size-4" />}
         title="卡密批次"
-        description="卡密是批量生成的，一批共用同一份权益、有效期与卡面格式"
         aside={
           <Button size="sm" onClick={() => setEditorOpen(true)}>
             <Plus className="size-3.5" /> 生成卡密
@@ -114,9 +113,7 @@ export function CardKeyBatchesPanel({
       >
         {batches.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
-            还没有生成过卡密。生成后可导出 CSV 发给渠道，用户在客户端调
-            <code className="mx-1 font-mono">/card-keys/redeem</code>兑换，
-            授权卡则直接用它登录。
+            暂无卡密批次
           </p>
         ) : (
           <div className="space-y-3">
@@ -202,14 +199,7 @@ export function CardKeyBatchesPanel({
           <AlertDialogHeader>
             <AlertDialogTitle>删除批次「{pendingDelete?.name}」？</AlertDialogTitle>
             <AlertDialogDescription>
-              这一批的 <b>{pendingDelete?.stats?.total ?? pendingDelete?.total ?? 0}</b> 张卡与它们的核销记录会
-              <b>一并删除</b>，已经发出去的卡当场失效。
-              {(pendingDelete?.stats?.unused ?? 0) > 0 ? (
-                <>
-                  {" "}其中还有 <b>{pendingDelete?.stats?.unused}</b> 张没被使用。
-                </>
-              ) : null}
-              {" "}只是想停止发放的话，用上面的开关停用批次即可 —— 那不会动任何已有的卡。
+              {pendingDelete?.stats?.total ?? pendingDelete?.total ?? 0} 张卡及核销记录将一并删除。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

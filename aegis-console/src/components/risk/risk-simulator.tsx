@@ -183,9 +183,6 @@ export function RiskSimulatorPanel() {
                     {showAllVariables ? "只看常用" : "更多变量"}
                   </button>
                 </div>
-                <p className="text-[10px] text-muted-foreground">
-                  留空使用真实解析结果，填值则直接覆盖。
-                </p>
                 <OverrideEditor
                   variables={metadata?.variables ?? []}
                   showAll={showAllVariables}
@@ -309,10 +306,7 @@ function SimulationResult({ result, pending }: { result: RiskEvalResult | null; 
       <Card>
         <CardContent className="flex h-full min-h-[320px] flex-col items-center justify-center gap-2 p-4 text-center">
           <FlaskConical className={cn("size-8 text-muted-foreground/40", pending && "animate-pulse")} />
-          <p className="text-sm text-muted-foreground">执行模拟后在此显示逐条判据</p>
-          <p className="max-w-xs text-xs text-muted-foreground/80">
-            结果包含全部参评规则与判据，未命中的也会列出
-          </p>
+          <p className="text-sm text-muted-foreground">暂无模拟结果</p>
         </CardContent>
       </Card>
     );
@@ -351,7 +345,7 @@ function SimulationResult({ result, pending }: { result: RiskEvalResult | null; 
 
         {errored.length > 0 && (
           <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
-            {errored.length} 条规则评估出错，按未命中处理
+            {errored.length} 条规则评估出错
           </p>
         )}
 

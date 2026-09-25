@@ -186,15 +186,7 @@ export function WalletAdjustDialog({
               value={amount}
               onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ""))}
             />
-            {overdraft ? (
-              <p className="text-[11px] text-destructive">
-                扣减额超过当前余额。后端会直接拒绝 —— 余额不会被扣成负数。
-              </p>
-            ) : (
-              <p className="text-[11px] text-muted-foreground">
-                只填正数，充入还是扣减由上面的开关决定。
-              </p>
-            )}
+            {overdraft ? <p className="text-[11px] text-destructive">超过当前余额</p> : null}
           </div>
 
           <div className="space-y-1.5">
@@ -216,13 +208,10 @@ export function WalletAdjustDialog({
             <Textarea
               id="wallet-adjust-reason"
               className="min-h-14 text-xs"
-              placeholder="选一个常用理由，或补充具体说明（如工单号）"
+              placeholder="必填"
               value={reason}
               onChange={(event) => setReason(event.target.value)}
             />
-            <p className="text-[11px] text-muted-foreground">
-              理由会随经办人一起写进流水，并出现在这笔调账的凭证上。
-            </p>
           </div>
 
           <div className="flex justify-end gap-2">

@@ -110,7 +110,7 @@ export function PendingTasks() {
             <Skeleton className="h-10 rounded-lg" />
           </div>
         ) : todos.length === 0 ? (
-          <PanelEmpty icon={CheckCircle2} title="暂无待办事项" hint="邀请与角色申请都已处理完" />
+          <PanelEmpty icon={CheckCircle2} title="暂无待办事项" />
         ) : (
           <div className="flex flex-col gap-2">
             {todos.map((t) => (
@@ -161,7 +161,7 @@ export function RecentActivity() {
             {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-7 rounded-md" />)}
           </div>
         ) : logs.length === 0 ? (
-          <PanelEmpty icon={ClipboardList} title="暂无操作记录" hint="你的管理操作会实时记录在这里" />
+          <PanelEmpty icon={ClipboardList} title="暂无操作记录" />
         ) : (
           <ul className="flex flex-col">
             {logs.map((log, i) => {

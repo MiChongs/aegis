@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { AlertTriangle, ShieldAlert, ShieldCheck, User } from "lucide-react";
+import { AlertTriangle, ShieldAlert, User } from "lucide-react";
 import { ApiError } from "@/lib/api/client";
 import {
   CAPABILITY_GROUP_LABELS,
@@ -168,9 +168,6 @@ export function CapabilityPicker({
                     <code className="mt-1 block font-mono text-[10px] text-muted-foreground">
                       {item.api}
                     </code>
-                    <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
-                      {item.hint}
-                    </span>
                   </span>
                 </label>
               );
@@ -178,11 +175,6 @@ export function CapabilityPicker({
           </div>
         </div>
       ))}
-      <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-        <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
-        声明即授权：未勾选的能力在脚本中不可用（对应对象为{" "}
-        <code className="font-mono">undefined</code>），编辑器亦不提供提示。
-      </p>
     </div>
   );
 }
@@ -237,8 +229,7 @@ export function HighRiskNotice({
       <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
       <span className="min-w-0">
         已启用高风险能力：
-        <span className="font-medium">{risky.map((item) => item.label).join("、")}</span>。
-        相关操作将直接作用于真实用户与资金，发布前请通过试跑验证。
+        <span className="font-medium">{risky.map((item) => item.label).join("、")}</span>
       </span>
     </div>
   );

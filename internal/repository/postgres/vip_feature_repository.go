@@ -93,7 +93,8 @@ func (r *Repository) DeleteVipFeature(ctx context.Context, appID int64, tag stri
 // CountVipPlansUsingFeature 有多少个套餐还挂着这个功能标识。
 //
 // 删除前用它给出提示：删掉之后那些套餐的这一项会变成悬空引用，
-// 新开通的用户就不再拿到这个权益了 —— 这件事必须在删之前说出来。
+// 而功能权益只在启用中的目录里取 —— **所有**在期会员会同时失去这个权益，
+// 这件事必须在删之前说出来。
 func (r *Repository) CountVipPlansUsingFeature(ctx context.Context, appID int64, tag string) (int64, error) {
 	var count int64
 	err := r.pool.QueryRow(ctx,

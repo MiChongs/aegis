@@ -257,7 +257,7 @@ export function MasqueradeBadge({ metadata }: { metadata: Record<string, unknown
           类型不符
         </Badge>
       </TooltipTrigger>
-      <TooltipContent>上传时声明为 {declared}，实际内容按魔数判定为另一类</TooltipContent>
+      <TooltipContent>声明为 {declared}</TooltipContent>
     </Tooltip>
   );
 }

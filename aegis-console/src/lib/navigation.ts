@@ -118,7 +118,7 @@ export const navigationGroups: NavigationGroup[] = [
         title: "应用",
         href: "/apps",
         icon: AppWindow,
-        summary: "应用列表与全部配置",
+        summary: "应用列表与配置",
         // 子项直接由区块目录派生，避免「侧边栏有这一项、详情页没这个区块」的漂移。
         // 链接是不带 appKey 的 `/apps?tab=xxx`，由列表页转交给最近打开的那个应用。
         children: appSections.map((section) => ({ title: section.title, tab: section.key })),
@@ -128,7 +128,7 @@ export const navigationGroups: NavigationGroup[] = [
         title: "内容",
         href: "/content",
         icon: BellDot,
-        summary: "Banner、公告与法律文本",
+        summary: "Banner 与公告",
         // 首项必须是该页默认 Tab，否则无 `?tab=` 时高亮会错位
         children: [
           { title: "Banner", tab: "banners" },
@@ -163,7 +163,7 @@ export const navigationGroups: NavigationGroup[] = [
         title: "交易",
         href: "/commerce",
         icon: Wallet,
-        summary: "订单、退款、钱包与凭证",
+        summary: "订单与流水",
         children: [
           { title: "概览", tab: "overview" },
           { title: "订单", tab: "orders" },
@@ -183,7 +183,7 @@ export const navigationGroups: NavigationGroup[] = [
         title: "远程函数",
         href: "/functions",
         icon: Code2,
-        summary: "服务端脚本、版本与调用密钥",
+        summary: "服务端脚本",
         children: [
           { title: "函数", tab: "functions" },
           { title: "键值存储", tab: "kv" },
@@ -195,7 +195,7 @@ export const navigationGroups: NavigationGroup[] = [
         title: "开发者门户",
         href: "/developers",
         icon: CloudCog,
-        summary: "快速接入与接口文档"
+        summary: "接入文档"
       }
     ]
   },
@@ -238,7 +238,7 @@ export const navigationGroups: NavigationGroup[] = [
         title: "组织",
         href: "/organization",
         icon: Building2,
-        summary: "组织 / 部门 / 成员 / 权限",
+        summary: "组织与成员",
         children: [
           { title: "概览", tab: "overview" },
           { title: "组织结构", tab: "structure" },
@@ -406,7 +406,7 @@ export const navigationGroups: NavigationGroup[] = [
         title: "设备字典",
         href: "/device-marketing",
         icon: Smartphone,
-        summary: "iOS/Android 标识 → 营销名",
+        summary: "机型营销名",
         superAdmin: true
       }
     ]

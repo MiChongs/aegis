@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Coins, CreditCard, Info, Mail, Save, Wallet } from "lucide-react";
+import { Coins, CreditCard, Mail, Save } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -86,7 +86,7 @@ function CommerceSettingsCard({ appId, appKey }: { appId: number; appKey: string
       return;
     }
     if (!currencyValid) {
-      toast.error("钱包币种必须是 3 位 ISO 4217 代码，如 CNY / USD");
+      toast.error("钱包币种需为 3 位 ISO 4217 代码");
       return;
     }
     const payload: AppCommerceSettings = {
@@ -107,7 +107,6 @@ function CommerceSettingsCard({ appId, appKey }: { appId: number; appKey: string
     <SectionCard
       icon={<Coins className="size-4" />}
       title="交易设置"
-      description="积分兑换率、钱包记账币种与凭证自动寄送。四项一并保存。"
     >
       {query.isLoading ? (
         <Skeleton className="h-64 w-full rounded-xl" />
@@ -140,15 +139,6 @@ function CommerceSettingsCard({ appId, appKey }: { appId: number; appKey: string
                   ))}
                 </div>
               </div>
-              <div className="rounded-xl bg-muted p-3">
-                <div className="flex gap-2 text-[11px] leading-relaxed text-muted-foreground">
-                  <Info className="mt-0.5 size-3.5 shrink-0" />
-                  <p>
-                    仅作用于 <code className="font-mono">purpose=integral_purchase</code> 的订单。
-                    金额过小导致算出 0 积分时下单会被直接拒绝，不会产生「付了钱没积分」的订单。
-                  </p>
-                </div>
-              </div>
             </div>
           </FieldGroup>
 
@@ -160,18 +150,9 @@ function CommerceSettingsCard({ appId, appKey }: { appId: number; appKey: string
                   value={current.walletCurrency}
                   onChange={(code) => patch({ walletCurrency: code })}
                 />
-                <p className="text-[10px] leading-snug text-muted-foreground">
-                  {currencyValid ? "钱包流水凭证上的金额单位" : "请选择或输入 3 位 ISO 4217 代码"}
-                </p>
-              </div>
-              <div className="rounded-xl bg-muted p-3">
-                <div className="flex gap-2 text-[11px] leading-relaxed text-muted-foreground">
-                  <Wallet className="mt-0.5 size-3.5 shrink-0" />
-                  <p>
-                    钱包余额本身没有币种列（余额只是一个数）。这一项决定钱包流水凭证上
-                    印的是哪国钱 —— 一份只有数字的凭证既不能报销也不能对账。
-                  </p>
-                </div>
+                {!currencyValid && (
+                  <p className="text-[10px] leading-snug text-muted-foreground">需 3 位 ISO 4217 代码</p>
+                )}
               </div>
             </div>
           </FieldGroup>
@@ -181,7 +162,6 @@ function CommerceSettingsCard({ appId, appKey }: { appId: number; appKey: string
               <SwitchRow
                 icon={<Mail className="size-3.5" />}
                 label="支付成功后自动寄送凭证"
-                hint="寄到下单用户绑定的邮箱；未绑邮箱时静默跳过，不会阻断支付"
                 checked={current.receiptEmailOnPaid}
                 onChange={(value) => patch({ receiptEmailOnPaid: value })}
               />
@@ -200,26 +180,11 @@ function CommerceSettingsCard({ appId, appKey }: { appId: number; appKey: string
                       {locales.map((locale) => (
                         <SelectItem key={locale.tag} value={locale.tag}>
                           {locale.nativeName}
-                          {locale.available ? "" : "（当前环境缺字体，会降级成英文）"}
+                          {locale.available ? "" : "（缺字体，降为英文）"}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-[10px] leading-snug text-muted-foreground">
-                    留空则按「用户设置 → 请求头 → 平台默认」协商
-                  </p>
-                </div>
-                <div className="rounded-xl bg-muted p-3">
-                  <div className="flex gap-2 text-[11px] leading-relaxed text-muted-foreground">
-                    <Info className="mt-0.5 size-3.5 shrink-0" />
-                    <p>
-                      同一个开关也管余额直购会员：用钱包付的钱与用支付宝付的钱，
-                      收不收得到收据不该有区别。
-                      {capabilityQuery.data && !capabilityQuery.data.supportsCJK
-                        ? "当前环境没有中日韩字体，选中文 / 日文 / 韩文会被降级成英文。"
-                        : null}
-                    </p>
-                  </div>
                 </div>
               </div>
             </div>

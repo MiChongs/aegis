@@ -113,9 +113,7 @@ export default function DeviceMarketingPage() {
   const handleReseed = async () => {
     try {
       const stats = await reseedMutation.mutateAsync();
-      toast.success(
-        `重新种子完成：解析 ${stats.parsed}，影响 ${stats.inserted}（耗时 ${stats.elapsedMs}ms）`,
-      );
+      toast.success(`重新种子完成，影响 ${stats.inserted} 条`);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "重新种子失败");
     }
@@ -139,7 +137,6 @@ export default function DeviceMarketingPage() {
       <SectionHeading
         eyebrow="平台字典"
         title="设备营销名称字典"
-        description="将 iOS 的 machine identifier 与 Android 的 Build.MODEL 翻译为人类可读名称，关联厂商与产品图。"
       />
 
       {/* 过滤 & 操作 */}
@@ -149,7 +146,7 @@ export default function DeviceMarketingPage() {
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input
               className="h-8 pl-8 text-xs"
-              placeholder='模糊搜索：支持 "17 Pro Max" / "17promax" / "SM-G998B" / "华为"...'
+              placeholder="搜索型号、标识或厂商"
               value={keywordInput}
               onChange={(e) => setKeywordInput(e.target.value)}
             />
@@ -248,12 +245,12 @@ export default function DeviceMarketingPage() {
 
       {/* 表格 —— 卡片化单行布局：左侧设备图 + 中段核心信息 + 右侧元数据 */}
       {listQuery.isLoading ? (
-        <LoadingState title="加载中" description="正在读取字典数据" />
+        <LoadingState title="加载中" />
       ) : (data?.items?.length ?? 0) === 0 ? (
         <div className="rounded-xl border bg-card px-6 py-16 text-center text-muted-foreground">
           <div className="inline-flex flex-col items-center gap-2">
             <Filter className="size-6 opacity-40" />
-            <span className="text-sm">暂无符合条件的字典记录</span>
+            <span className="text-sm">暂无记录</span>
           </div>
         </div>
       ) : (

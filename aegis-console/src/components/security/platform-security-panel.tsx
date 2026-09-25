@@ -109,7 +109,6 @@ export function PlatformSecurityPanel() {
   // Passkey 的两个值只有对照「此刻是从哪个地址打开的控制台」才有意义，
   // 所以把浏览器的真实来源摆在表单旁边，而不是让人另开一个标签页去确认。
   const browserOrigin = useOrigin();
-  const browserHost = browserOrigin ? browserOrigin.replace(/^https?:\/\//, "").split(":")[0] : "";
   const originAllowed = useMemo(() => {
     if (!browserOrigin || !draft) return true;
     return textToList(draft.passkeyOrigins).some((item) => item.trim().toLowerCase() === browserOrigin.toLowerCase());
@@ -127,13 +126,13 @@ export function PlatformSecurityPanel() {
           passkey: { enabled: draft.passkeyRuntimeEnabled, rpDisplayName: draft.passkeyDisplayName.trim(), rpId: draft.passkeyRPID.trim(), rpOrigins: textToList(draft.passkeyOrigins), rpTopOrigins: textToList(draft.passkeyTopOrigins), challengeTTLSeconds: Number(draft.passkeyChallengeTTLSeconds || 0), userVerification: draft.passkeyUserVerification },
         },
       });
-      toast.success("平台安全策略已更新");
+      toast.success("已保存");
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "更新失败");
     }
   }
 
-  if (!operator?.isSuperAdmin) return <EmptyState title="无访问权限" description="仅超级管理员可调整平台安全策略。" />;
+  if (!operator?.isSuperAdmin) return <EmptyState title="无访问权限" description="仅超级管理员可配置" />;
   if (settingsQuery.isLoading || !draft || !security) return <LoadingState title="加载安全配置" />;
 
   return (
@@ -167,10 +166,7 @@ export function PlatformSecurityPanel() {
 
       {/* ── 配置表单 ── */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">安全策略配置</h2>
-          <p className="text-sm text-muted-foreground">保存后立即生效</p>
-        </div>
+        <h2 className="text-lg font-semibold">安全策略配置</h2>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => { setDraft(seed); setSyncedKey(seedKey); }} disabled={updateMutation.isPending}>
             <RotateCcw className="size-3.5" /> 重置
@@ -255,23 +251,15 @@ export function PlatformSecurityPanel() {
                 <Input className="h-8 text-sm" placeholder="Aegis" value={draft.passkeyDisplayName} onChange={(e) => set("passkeyDisplayName", e.target.value)} />
               </Row>
               <Row label="RP ID">
-                <Input className="h-8 text-sm" placeholder={`留空 = 跟随访问域名${browserHost ? `（当前 ${browserHost}）` : ""}`} value={draft.passkeyRPID} onChange={(e) => set("passkeyRPID", e.target.value)} />
+                <Input className="h-8 text-sm" placeholder="留空跟随访问域名" value={draft.passkeyRPID} onChange={(e) => set("passkeyRPID", e.target.value)} />
               </Row>
             </div>
-            {/* RP ID 必须等于访问域名或它的可注册后缀，否则浏览器在弹窗之前就拒绝，
-                报「relying party ID is not a registrable domain suffix」。
-                填错的代价全部落在使用者身上，所以这里直接把判据和当前值写出来。 */}
-            <p className="text-[11px] leading-5 text-muted-foreground">
-              RP ID 决定 Passkey 绑在哪个域名上，只能填访问域名本身或它的父域
-              （如访问 <code className="font-data">console.example.com</code> 可填 <code className="font-data">example.com</code>，让同一批凭据跨子域通用）。
-              <strong className="font-medium text-foreground">留空即跟随每次访问的域名</strong>，多域部署建议留空。改动会让已绑定的 Passkey 失效。
-            </p>
             <Row label="来源 Origins（每行一个）">
               <Textarea className="text-sm" rows={3} placeholder="https://example.com" value={draft.passkeyOrigins} onChange={(e) => set("passkeyOrigins", e.target.value)} />
             </Row>
             {browserOrigin ? (
               <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                <span>你正在访问 <code className="font-data text-foreground">{browserOrigin}</code>{originAllowed ? "，已在列表内。" : "，尚未在列表内 —— 从这里绑定 Passkey 会被拒绝。"}</span>
+                <span>当前来源 <code className="font-data text-foreground">{browserOrigin}</code>{originAllowed ? "，已在列表" : "，不在列表"}</span>
                 {originAllowed ? null : (
                   <Button type="button" variant="outline" size="xs" onClick={() => set("passkeyOrigins", [draft.passkeyOrigins.trim(), browserOrigin].filter(Boolean).join("\n"))}>
                     加入当前来源

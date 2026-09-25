@@ -152,7 +152,7 @@ export function NoticeEditor({
         <SheetHeader className="shrink-0 border-b px-6 py-4">
           <SheetTitle>{item ? "编辑公告" : "新建公告"}</SheetTitle>
           <SheetDescription>
-            {published ? "已发布的公告，保存后立即对客户端生效" : "草稿不会下发到客户端"}
+            {published ? "已发布" : "草稿"}
           </SheetDescription>
         </SheetHeader>
 
@@ -209,7 +209,6 @@ export function NoticeEditor({
                 className="h-10 text-base font-medium"
                 value={form.title}
                 onChange={(event) => patch("title", event.target.value)}
-                placeholder="一句话说清这条公告讲什么"
               />
               {errors.title ? <p className="text-xs text-destructive">{errors.title}</p> : null}
             </div>
@@ -219,13 +218,10 @@ export function NoticeEditor({
               <RichEditor
                 value={form.content}
                 onChange={(html) => patch("content", html)}
-                placeholder="支持标题、列表、引用、链接，可全屏编辑"
+                placeholder="输入正文"
                 fullscreenable
               />
               {errors.content ? <p className="text-xs text-destructive">{errors.content}</p> : null}
-              <p className="text-[11px] text-muted-foreground">
-                保存时服务端会净化脚本与内联样式，并提取纯文本摘要供列表与推送使用
-              </p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -252,10 +248,7 @@ export function NoticeEditor({
 
             <div className="flex items-center gap-2 rounded-lg border px-3 py-2.5">
               <Pin className="size-3.5 text-muted-foreground" />
-              <div className="flex-1">
-                <div className="text-sm">置顶</div>
-                <div className="text-[11px] text-muted-foreground">排在其它公告之前</div>
-              </div>
+              <div className="flex-1 text-sm">置顶</div>
               <Switch checked={form.pinned} onCheckedChange={(value) => patch("pinned", value)} />
             </div>
           </div>

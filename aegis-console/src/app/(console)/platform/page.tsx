@@ -247,9 +247,9 @@ function PlatformGovernanceContent() {
           </div>
 
           {appsQuery.isLoading ? (
-            <LoadingState title="正在加载全站应用" description="正在汇总治理状态与用量指标。" />
+            <LoadingState title="加载中" />
           ) : items.length === 0 ? (
-            <EmptyState title="没有匹配的应用" description="换个关键词或状态筛选试试。" />
+            <EmptyState title="暂无匹配应用" />
           ) : (
             <SurfaceCard className="p-0">
               <Table>
@@ -474,9 +474,7 @@ function GovernanceActionSheet({
           <SheetTitle>
             {target?.batch ? `批量治理 ${target.apps.length} 个应用` : `治理「${target?.apps[0]?.name ?? ""}」`}
           </SheetTitle>
-          <SheetDescription>
-            治理结论由平台强制执行，应用管理员无法自行撤销；每一次动作都会写入流水并可被申诉。
-          </SheetDescription>
+          <SheetDescription>平台强制执行，应用管理员无法撤销</SheetDescription>
         </SheetHeader>
 
         <div className="space-y-5 px-4 pb-6">
@@ -510,7 +508,6 @@ function GovernanceActionSheet({
                       </span>
                     ) : null}
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground">{item.description}</div>
                 </button>
               ))}
             </div>
@@ -531,13 +528,7 @@ function GovernanceActionSheet({
                         setRestrictions((prev) => ({ ...prev, [capability.field]: checked === true }))
                       }
                     />
-                    <span>
-                      <span className="font-medium text-foreground">{capability.name}</span>
-                      <span className="block text-xs text-muted-foreground">{capability.description}</span>
-                      <span className="block text-[11px] text-muted-foreground/70">
-                        执行点：{capability.enforcement}
-                      </span>
-                    </span>
+                    <span className="font-medium text-foreground">{capability.name}</span>
                   </label>
                 ))}
               </div>
@@ -570,9 +561,6 @@ function GovernanceActionSheet({
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                到期后自动恢复为正常；选「不设期限」则需要人工解除。
-              </p>
             </div>
           ) : null}
 
@@ -585,7 +573,7 @@ function GovernanceActionSheet({
               value={reason}
               onChange={(event) => setReason(event.target.value)}
               rows={3}
-              placeholder="写清楚触发治理的事实与依据，这段话会展示给被治理方"
+              placeholder="将展示给被治理方"
             />
           </div>
 
@@ -636,14 +624,14 @@ function GovernanceDetailSheet({ appKey, onClose }: { appKey: string | null; onC
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>{detail?.governance.appName || "应用治理详情"}</SheetTitle>
-          <SheetDescription>当前治理结论、最近动作与待审申诉。</SheetDescription>
+          <SheetDescription>治理详情</SheetDescription>
         </SheetHeader>
 
         <div className="space-y-5 px-4 pb-6">
           {detailQuery.isLoading ? (
-            <LoadingState title="加载中" description="正在读取治理详情。" />
+            <LoadingState title="加载中" />
           ) : !detail ? (
-            <EmptyState title="没有数据" description="未能读取该应用的治理详情。" />
+            <EmptyState title="暂无数据" />
           ) : (
             <>
               <div className="space-y-2 rounded-lg border border-border p-4">
@@ -681,7 +669,7 @@ function GovernanceDetailSheet({ appKey, onClose }: { appKey: string | null; onC
               <div className="space-y-2">
                 <div className="text-sm font-medium text-foreground">最近动作</div>
                 {detail.recentActions.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">暂无治理记录。</p>
+                  <p className="text-xs text-muted-foreground">暂无治理记录</p>
                 ) : (
                   <ol className="space-y-2">
                     {detail.recentActions.map((record) => (
@@ -742,9 +730,9 @@ function AppealsPanel() {
       </Select>
 
       {appealsQuery.isLoading ? (
-        <LoadingState title="正在加载申诉" description="正在读取治理申诉队列。" />
+        <LoadingState title="加载中" />
       ) : items.length === 0 ? (
-        <EmptyState title="没有申诉" description="当前筛选条件下没有申诉记录。" />
+        <EmptyState title="暂无申诉" />
       ) : (
         <div className="space-y-3">
           {items.map((appeal) => (
@@ -801,10 +789,10 @@ function ActionsPanel() {
   const items = actionsQuery.data?.items ?? [];
 
   if (actionsQuery.isLoading) {
-    return <LoadingState title="正在加载流水" description="正在读取全站治理动作记录。" />;
+    return <LoadingState title="加载中" />;
   }
   if (items.length === 0) {
-    return <EmptyState title="没有治理记录" description="平台还没有对任何应用执行过治理动作。" />;
+    return <EmptyState title="暂无治理记录" />;
   }
 
   return (

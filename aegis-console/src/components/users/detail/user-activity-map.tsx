@@ -341,7 +341,7 @@ function segmentTooltip(d: TrailSegment) {
       <div style="opacity:.75">折合 ${fmtSpeed(d)}</div>
       ${
         d.impossible
-          ? `<div style="color:${STATUS_META.blocked.css};font-weight:600">超过民航速度，位移说不通</div>`
+          ? `<div style="color:${STATUS_META.blocked.css};font-weight:600">不可能位移</div>`
           : ""
       }
       <div style="opacity:.6">${fmtTime(d.at)}</div>
@@ -682,7 +682,7 @@ export function UserActivityMap({ appKey, userId }: { appKey: string; userId: nu
           </button>
           {impossibleCount > 0 && (
             <span className="flex items-center gap-1 rounded-lg border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-xs font-medium text-destructive">
-              {impossibleCount} 段位移说不通
+              {impossibleCount} 段不可能位移
             </span>
           )}
         </div>
@@ -697,7 +697,7 @@ export function UserActivityMap({ appKey, userId }: { appKey: string; userId: nu
         {isEmpty && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
             <span className="rounded-full border border-border bg-card px-4 py-1.5 text-xs text-muted-foreground">
-              {totalEvents > 0 ? "这些活动都没有可用坐标" : "没有可展示的活动"}
+              {totalEvents > 0 ? "暂无可用坐标" : "暂无活动"}
             </span>
           </div>
         )}
@@ -732,18 +732,17 @@ export function UserActivityMap({ appKey, userId }: { appKey: string; userId: nu
         {serverHits > 0 && (
           <span className="flex items-center gap-1">
             <Server className="size-3" style={{ color: SERVER_CSS }} />
-            {fmtCount(serverHits)} 次来自内网 / 回环，已归到「{server.name}」
+            内网 / 回环 {fmtCount(serverHits)} 次
           </span>
         )}
-        {unlocated > 0 && <span>{fmtCount(unlocated)} 次的 IP 无法定位，未画在图上</span>}
-        {trail.length > 0 && <span>轨迹取最近 {fmtCount(trail.length)} 段位移</span>}
+        {unlocated > 0 && <span>无法定位 {fmtCount(unlocated)} 次</span>}
       </div>
 
       <ServerLocationDialog
         open={showSettings}
         onOpenChange={setShowSettings}
         value={server}
-        description="内网 / 回环来源没有地理位置，统一画在这个点上；该配置与攻击飞线图共用。"
+        description="内网与回环地址统一标在此处。"
         onSaved={() => {
           fitSignatureRef.current = "";
         }}

@@ -66,7 +66,7 @@ export function VipFeaturesPanel({ appKey }: { appKey: string }) {
   const create = async () => {
     const tag = form.tag.trim().toLowerCase();
     if (!tagValid) {
-      toast.error("功能标识只能是小写字母开头、含数字与 . _ - 的 2~64 位短标识");
+      toast.error("标识格式不正确");
       return;
     }
     if (!form.name.trim()) {
@@ -91,7 +91,7 @@ export function VipFeaturesPanel({ appKey }: { appKey: string }) {
   const toggleActive = async (feature: VipFeature, isActive: boolean) => {
     try {
       await saveMutation.mutateAsync({ tag: feature.tag, isActive });
-      toast.success(isActive ? `已启用「${feature.name}」` : `已停用「${feature.name}」：校验一律判不通过`);
+      toast.success(isActive ? `已启用「${feature.name}」` : `已停用「${feature.name}」`);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "操作失败");
     }
@@ -100,12 +100,8 @@ export function VipFeaturesPanel({ appKey }: { appKey: string }) {
   const confirmDelete = async () => {
     if (!pendingDelete) return;
     try {
-      const result = await deleteMutation.mutateAsync(pendingDelete.tag);
-      toast.success(
-        result.affectedPlans > 0
-          ? `已删除；${result.affectedPlans} 个套餐从此不再发放这项权益`
-          : "已删除"
-      );
+      await deleteMutation.mutateAsync(pendingDelete.tag);
+      toast.success("已删除");
       setPendingDelete(null);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "删除失败");
@@ -117,7 +113,6 @@ export function VipFeaturesPanel({ appKey }: { appKey: string }) {
       <SectionCard
         icon={<Puzzle className="size-4" />}
         title="功能标识"
-        description="接入方服务端按标识校验权益：verify(token, feature) —— 套餐改名不影响判定"
         aside={
           <Button size="sm" variant={creating ? "ghost" : "default"} onClick={() => setCreating((prev) => !prev)}>
             {creating ? "取消" : <><Plus className="size-3.5" /> 新建标识</>}
@@ -145,7 +140,7 @@ export function VipFeaturesPanel({ appKey }: { appKey: string }) {
                     ? "只能小写字母开头，含数字与 . _ -，2~64 位"
                     : tagTaken
                       ? "该标识已存在"
-                      : "创建后不可改名 —— 它会被写进接入方的代码与每一条开通记录的快照里"}
+                      : "创建后不可改名"}
                 </p>
               </div>
               <div className="space-y-1.5">
@@ -157,12 +152,12 @@ export function VipFeaturesPanel({ appKey }: { appKey: string }) {
                 />
               </div>
               <div className="space-y-1.5 sm:col-span-2">
-                <Label className="text-xs">说明（可空）</Label>
+                <Label className="text-xs">说明</Label>
                 <Textarea
                   rows={2}
                   value={form.description}
                   onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
-                  placeholder="这项能力解锁了什么，给运营与客服看"
+                  placeholder="选填"
                 />
               </div>
             </div>
@@ -183,13 +178,7 @@ export function VipFeaturesPanel({ appKey }: { appKey: string }) {
           </div>
         ) : features.length === 0 ? (
           <div className="space-y-2 rounded-xl border border-dashed border-border px-4 py-8 text-center">
-            <p className="text-xs text-muted-foreground">
-              还没有功能标识。此时会员只有一个维度：是或不是。
-            </p>
-            <p className="text-[11px] text-muted-foreground">
-              有两档会员（基础版能导出、高级版还能用 AI）时才需要它 —— 建标识、勾进套餐，
-              接入方后端就能问「他能不能用导出」而不是猜套餐名。
-            </p>
+            <p className="text-xs text-muted-foreground">暂无功能标识</p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -222,7 +211,7 @@ export function VipFeaturesPanel({ appKey }: { appKey: string }) {
                       {used.length > 0 ? (
                         <>被 {used.length} 个套餐使用：{used.map((plan) => plan.name).join("、")}</>
                       ) : (
-                        <>还没有套餐使用它 —— 没有任何用户会拿到这项权益</>
+                        <>未被套餐使用</>
                       )}
                     </p>
                   </div>
@@ -255,13 +244,9 @@ export function VipFeaturesPanel({ appKey }: { appKey: string }) {
             <AlertDialogTitle>删除功能标识「{pendingDelete?.name}」？</AlertDialogTitle>
             <AlertDialogDescription>
               {pendingDelete && plansUsing(pendingDelete.tag).length > 0 ? (
-                <>
-                  还有 {plansUsing(pendingDelete.tag).length} 个套餐挂着它。删除后那些套餐
-                  <b>新开通</b>的用户不再拿到这项权益，而接入方调 verify 传这个标识会收到
-                  「未登记的功能标识」而不是静默的 false。已经开通的用户不受影响（他们拿的是账本快照）。
-                </>
+                <>删除后所有会员立即失去这项功能。</>
               ) : (
-                <>没有套餐在使用它，删除不影响任何用户。</>
+                <>不影响任何用户。</>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>

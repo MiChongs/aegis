@@ -8,7 +8,6 @@ import {
   PlayCircle,
   Search,
   SlidersHorizontal,
-  TriangleAlert,
   UserCog,
   Wrench
 } from "lucide-react";
@@ -67,7 +66,7 @@ export function AppUserSettingsPanel({ appId }: { appId?: number | null }) {
     try {
       const result = await batchInitMutation.mutateAsync({ appid: appId });
       toast.success(
-        `批量初始化完成：处理 ${result.processedUsers} 个用户，新建 ${result.initializedCategories} 项，跳过已存在 ${result.skippedExisting} 项`
+        `已初始化：${result.processedUsers} 用户 / 新建 ${result.initializedCategories} / 跳过 ${result.skippedExisting}`
       );
       await statsQuery.refetch();
     } catch (err) {
@@ -81,7 +80,7 @@ export function AppUserSettingsPanel({ appId }: { appId?: number | null }) {
       const result = await integrityMutation.mutateAsync({ appid: appId, autoRepair });
       setIntegrityResult(result);
       if (result.totalIssues === 0) {
-        toast.success("完整性检查通过，没有缺失的默认键");
+        toast.success("检查通过");
       } else if (autoRepair) {
         toast.success(`已修复 ${result.repairs.length} 条记录`);
       } else {
@@ -100,7 +99,7 @@ export function AppUserSettingsPanel({ appId }: { appId?: number | null }) {
       if (result.foundInvalid === 0) {
         toast.success("没有发现失效记录");
       } else if (dryRun) {
-        toast.warning(`预检发现 ${result.foundInvalid} 条失效记录，执行清理才会真正删除`);
+        toast.warning(`预检发现 ${result.foundInvalid} 条失效记录`);
       } else {
         toast.success(`已清理 ${result.cleaned} 条失效记录`);
       }
@@ -118,7 +117,6 @@ export function AppUserSettingsPanel({ appId }: { appId?: number | null }) {
         <SectionCard
           icon={<SlidersHorizontal className="size-4" />}
           title="设置覆盖率"
-          description="每个设置分类有多少用户已经落库。缺失的分类会在用户首次读取时按默认值补齐。"
           aside={
             stats ? (
               <Badge variant="outline" className="text-[10px]">
@@ -135,7 +133,7 @@ export function AppUserSettingsPanel({ appId }: { appId?: number | null }) {
             </div>
           ) : !stats || stats.totalUsers === 0 ? (
             <div className="rounded-xl bg-muted p-4 text-center text-xs text-muted-foreground">
-              该应用还没有用户，暂无设置数据。
+              暂无用户
             </div>
           ) : (
             <div className="space-y-4">
@@ -145,7 +143,7 @@ export function AppUserSettingsPanel({ appId }: { appId?: number | null }) {
               </div>
               <div className="space-y-3">
                 {categories.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground">尚未定义任何设置分类。</p>
+                  <p className="text-[11px] text-muted-foreground">暂无设置分类</p>
                 ) : (
                   categories.map(([category, stat]) => (
                     <div key={category} className="space-y-1.5">
@@ -179,7 +177,6 @@ export function AppUserSettingsPanel({ appId }: { appId?: number | null }) {
         <SectionCard
           icon={<Wrench className="size-4" />}
           title="运维动作"
-          description="批量补齐、完整性校验与失效记录清理。"
         >
           <div className="space-y-4">
             <div className="flex flex-wrap gap-2">
@@ -267,7 +264,7 @@ export function AppUserSettingsPanel({ appId }: { appId?: number | null }) {
                         <AlertDialogHeader>
                           <AlertDialogTitle>删除 {cleanupResult.foundInvalid} 条失效设置记录？</AlertDialogTitle>
                           <AlertDialogDescription>
-                            这些记录已被标记失效，删除后不可恢复。用户下次读取设置时会按默认值重新落库。
+                            删除后不可恢复。
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
@@ -283,12 +280,6 @@ export function AppUserSettingsPanel({ appId }: { appId?: number | null }) {
                     </AlertDialog>
                   ) : null}
                 </div>
-                {cleanupResult.dryRun && cleanupResult.foundInvalid > 0 ? (
-                  <p className="flex items-center gap-1.5 text-[10px] text-amber-600 dark:text-amber-400">
-                    <TriangleAlert className="size-3" />
-                    预检不会删除任何数据
-                  </p>
-                ) : null}
               </div>
             ) : null}
           </div>
@@ -357,7 +348,6 @@ function SingleUserCard({ appId }: { appId: number }) {
     <SectionCard
       icon={<UserCog className="size-4" />}
       title="单用户设置"
-      description="按用户 ID 查看各分类的实际取值与版本。"
     >
       <div className="space-y-4">
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -376,14 +366,10 @@ function SingleUserCard({ appId }: { appId: number }) {
           </Button>
         </div>
 
-        {userId === null ? (
-          <div className="rounded-xl bg-muted p-4 text-center text-xs text-muted-foreground">
-            输入用户 ID 后可查看该用户的分类设置。
-          </div>
-        ) : settingsQuery.isLoading ? (
+        {userId === null ? null : settingsQuery.isLoading ? (
           <Skeleton className="h-64 w-full rounded-xl" />
         ) : !view ? (
-          <div className="rounded-xl bg-muted p-4 text-center text-xs text-muted-foreground">未找到该用户。</div>
+          <div className="rounded-xl bg-muted p-4 text-center text-xs text-muted-foreground">未找到该用户</div>
         ) : (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3 rounded-xl bg-muted px-3 py-2.5">
@@ -424,7 +410,7 @@ function SingleUserCard({ appId }: { appId: number }) {
                   </div>
                 ))}
                 {Object.keys(view.settings ?? {}).length === 0 ? (
-                  <p className="py-6 text-center text-[11px] text-muted-foreground">该用户还没有任何设置记录。</p>
+                  <p className="py-6 text-center text-[11px] text-muted-foreground">暂无设置记录</p>
                 ) : null}
               </div>
             </ScrollArea>

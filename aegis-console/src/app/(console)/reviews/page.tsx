@@ -56,14 +56,14 @@ export default function ReviewsPage() {
   const reviewRoleMutation = useReviewAdminRoleApplicationMutation();
 
   if (appsQuery.isLoading) {
-    return <LoadingState title="正在加载审核模块" description="正在读取站点与角色申请数据。" />;
+    return <LoadingState title="加载中" />;
   }
 
   if (!selectedApp) {
     return (
       <div className="page-stack">
-        <SectionHeading eyebrow="Reviews" title="审核" description="当前没有可管理的应用。" />
-        <EmptyState title="暂无应用" description="请先创建应用。" />
+        <SectionHeading eyebrow="Reviews" title="审核" />
+        <EmptyState title="暂无应用" />
       </div>
     );
   }
@@ -73,7 +73,6 @@ export default function ReviewsPage() {
       <SectionHeading
         eyebrow="Reviews"
         title="审核"
-        description="站点审核与角色申请审核。"
         action={
           <Select value={String(resolvedAppId)} onValueChange={(value) => setSelectedAppId(Number(value))}>
             <SelectTrigger className="w-[240px]"><SelectValue placeholder="选择应用" /></SelectTrigger>
@@ -112,7 +111,7 @@ export default function ReviewsPage() {
               </Select>
             </div>
             {!siteAuditsQuery.data?.list?.length ? (
-              <EmptyState title="暂无站点记录" description="当前筛选条件下没有站点审核记录。" />
+              <EmptyState title="暂无站点记录" />
             ) : (
               <div className="table-shell">
                 <Table>
@@ -159,7 +158,7 @@ export default function ReviewsPage() {
               </Select>
             </div>
             {!roleAppsQuery.data?.items?.length ? (
-              <EmptyState title="暂无角色申请" description="当前筛选条件下没有角色申请记录。" />
+              <EmptyState title="暂无角色申请" />
             ) : (
               <div className="table-shell">
                 <Table>

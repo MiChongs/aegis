@@ -153,10 +153,7 @@ export function BannerPanel({ appId }: { appId?: number | null }) {
           ))}
         </div>
       ) : !ordered.length ? (
-        <EmptyState
-          title={`${bannerSlot(slot).label}还没有素材`}
-          description={keyword ? "没有匹配的 Banner，换个关键词试试" : `${bannerSlot(slot).hint}。点「新建」放一条上去。`}
-        />
+        <EmptyState title={keyword ? "暂无匹配素材" : "暂无素材"} />
       ) : (
         <Reorder.Group
           as="div"
@@ -296,9 +293,7 @@ function BannerRow({
           </div>
         </TooltipTrigger>
         <TooltipContent>
-          {rate
-            ? `点击率 ${rate}`
-            : "还没有曝光，点击率无从计算"}
+          {rate ? `点击率 ${rate}` : "暂无曝光"}
         </TooltipContent>
       </Tooltip>
 
@@ -321,7 +316,7 @@ function BannerRow({
             <AlertDialogHeader>
               <AlertDialogTitle>删除「{item.title || "未命名"}」</AlertDialogTitle>
               <AlertDialogDescription>
-                删除后客户端将不再拉到这条 Banner，曝光与点击记录一并消失。
+                曝光与点击记录将一并删除。
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

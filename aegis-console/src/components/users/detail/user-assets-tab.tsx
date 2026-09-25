@@ -67,7 +67,6 @@ import {
   hasWallet,
   isNegativeAmount,
   isPast,
-  isZeroTime,
   numberText,
   relativeTime,
   textValue
@@ -82,7 +81,7 @@ const AMOUNT_RE = /^-?\d+(\.\d{1,2})?$/;
  * 四种资产分属四条完全不同的账：
  *   积分 / 经验  —— points_service，整数，无小数
  *   钱包余额     —— wallet，decimal 字符串，带流水与幂等
- *   会员          —— vip，套餐 / 天数发放，权益快照落账本
+ *   会员          —— vip，套餐 / 天数发放，功能权益跟随套餐当前配置
  * 放在一页是因为管理员的问题是"这人有什么"，而不是"平台有几张表"；
  * 但调整入口各自独立，绝不做成一个统一的"调整资产"表单 —— 那会掩盖它们不同的结算语义。
  */
@@ -266,14 +265,13 @@ function PointsPanel({ appId, userId }: { appId?: number; userId: number }) {
     <Panel
       title="积分与经验"
       icon={<Coins className="size-4" />}
-      description="正数增加，负数扣减，调整计入流水。"
     >
       <div className="space-y-3">
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">调整原因（选填）</Label>
           <Input
             value={reason}
-            placeholder="将写入流水备注"
+            placeholder="流水备注"
             onChange={(event) => setReason(event.target.value)}
           />
         </div>
@@ -358,7 +356,7 @@ function WalletPanel({
 
   async function handleAdjust() {
     if (!valid) {
-      toast.error("金额格式无效", { description: "最多两位小数，负数为扣款" });
+      toast.error("金额格式无效");
       return;
     }
     try {
@@ -379,7 +377,6 @@ function WalletPanel({
     <Panel
       title="钱包"
       icon={<Wallet className="size-4" />}
-      description="调整即时入账并计入流水。"
     >
       {loading ? (
         <Skeleton className="h-32 w-full rounded-xl" />
@@ -390,16 +387,7 @@ function WalletPanel({
             <Fact label="冻结" value={`¥ ${formatMoney(wallet?.frozen)}`} tone="muted" />
             <Fact label="累计充值" value={`¥ ${formatMoney(wallet?.totalRecharged)}`} tone="muted" />
             <Fact label="累计消费" value={`¥ ${formatMoney(wallet?.totalConsumed)}`} tone="muted" />
-            <Fact
-              label="开户时间"
-              value={formatTime(wallet?.createdAt)}
-              hint={
-                // 后端不为只读请求建行：没有钱包行时返回零值钱包，createdAt 是 Go 零值时间
-                isZeroTime(wallet?.createdAt) || !wallet?.createdAt
-                  ? "首次入账时自动开户"
-                  : undefined
-              }
-            />
+            <Fact label="开户时间" value={formatTime(wallet?.createdAt)} />
           </Facts>
           <div className="space-y-2 border-t pt-3">
             <div className="space-y-1.5">
@@ -423,7 +411,7 @@ function WalletPanel({
             </div>
             <Input
               value={reason}
-              placeholder="调整原因（选填，写入流水备注）"
+              placeholder="调整原因（选填）"
               onChange={(event) => setReason(event.target.value)}
             />
           </div>
@@ -442,7 +430,8 @@ const VIP_SOURCE_LABEL: Record<string, string> = {
   trial: "试用",
   wallet: "余额购买",
   payment_order: "在线支付",
-  admin_grant: "管理员发放"
+  admin_grant: "管理员发放",
+  card_key: "卡密核销"
 };
 
 /** 自定义发放的快捷时长档位。 */
@@ -685,9 +674,7 @@ function GrantSection({
 
         <TabsContent value="plan" className="mt-3 space-y-3">
           {grantablePlans.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              当前应用暂无在售套餐，可在「配置 → 会员套餐」中创建，或使用自定义发放。
-            </p>
+            <p className="text-xs text-muted-foreground">暂无在售套餐</p>
           ) : (
             <>
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
@@ -743,7 +730,7 @@ function GrantSection({
               </div>
               <Input
                 value={planReason}
-                placeholder="发放原因（选填，计入记录）"
+                placeholder="发放原因（选填）"
                 className="h-8 text-xs"
                 onChange={(event) => setPlanReason(event.target.value)}
               />
@@ -755,7 +742,7 @@ function GrantSection({
                         ? ` · 附赠 ${(plan.bonusIntegral * quantity).toLocaleString("zh-CN")} 积分`
                         : "") +
                       (plan.features?.length ? ` · 含 ${plan.features.length} 项权益` : "")
-                    : "选择套餐后显示发放内容"}
+                    : ""}
                 </p>
                 <Button size="sm" disabled={!plan || grant.isPending} onClick={grantPlan}>
                   {grant.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Crown className="size-3.5" />}
@@ -838,7 +825,7 @@ function GrantSection({
 
           <Input
             value={customReason}
-            placeholder="发放原因（选填，计入记录）"
+            placeholder="发放原因（选填）"
             className="h-8 text-xs"
             onChange={(event) => setCustomReason(event.target.value)}
           />
@@ -850,7 +837,7 @@ function GrantSection({
                     ? ` · 附赠 ${Number.parseInt(bonus, 10).toLocaleString("zh-CN")} 积分`
                     : "") +
                   (selectedFeatures.length ? ` · 含 ${selectedFeatures.length} 项权益` : "")
-                : "时长按当前到期时间顺延，到期时间只增不减"}
+                : ""}
             </p>
             <Button size="sm" disabled={!customValid || grant.isPending} onClick={grantCustom}>
               {grant.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Crown className="size-3.5" />}
@@ -914,7 +901,7 @@ function TrialSection({
         {!trial && offer.planName ? (
           <span className="text-muted-foreground/70">
             {" "}
-            — {offer.planName} · {offer.durationDays} 天
+            · {offer.planName} · {offer.durationDays} 天
           </span>
         ) : null}
       </div>

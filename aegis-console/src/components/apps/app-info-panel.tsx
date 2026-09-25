@@ -111,7 +111,6 @@ export function AppInfoPanel({ appKey }: { appKey?: string | null }) {
       <SectionCard
         icon={<Fingerprint className="size-4" />}
         title="应用标识"
-        description="AppKey 由后端生成，创建后不可更改；接入方所有请求都靠它定位应用。"
       >
         <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
           <InfoCell label="应用 ID" value={String(app.id)} mono />
@@ -129,7 +128,6 @@ export function AppInfoPanel({ appKey }: { appKey?: string | null }) {
       <SectionCard
         icon={<Power className="size-4" />}
         title="基本信息与开关"
-        description="三个开关互相独立：应用停用时登录与注册一并不可用，单独关闭注册不影响老用户登录。"
         footer={
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] text-muted-foreground">
@@ -156,7 +154,7 @@ export function AppInfoPanel({ appKey }: { appKey?: string | null }) {
         }
       >
         <div className="space-y-4">
-          <FieldGroup label="应用名称" hint="展示给管理员与终端用户">
+          <FieldGroup label="应用名称">
             <Input
               className="h-9 text-sm"
               value={form.name}
@@ -169,21 +167,18 @@ export function AppInfoPanel({ appKey }: { appKey?: string | null }) {
             <div className="grid gap-2 lg:grid-cols-3">
               <SwitchRow
                 label="应用启用"
-                hint="关闭后该应用的全部接口停止服务"
                 icon={<Power className="size-3.5" />}
                 checked={form.status}
                 onChange={(value) => patch("status", value)}
               />
               <SwitchRow
                 label="开放注册"
-                hint="关闭后新用户无法注册"
                 icon={<UserPlus className="size-3.5" />}
                 checked={form.registerStatus}
                 onChange={(value) => patch("registerStatus", value)}
               />
               <SwitchRow
                 label="开放登录"
-                hint="关闭后已有用户也无法登录"
                 icon={<LogIn className="size-3.5" />}
                 checked={form.loginStatus}
                 onChange={(value) => patch("loginStatus", value)}
@@ -192,7 +187,7 @@ export function AppInfoPanel({ appKey }: { appKey?: string | null }) {
           </FieldGroup>
 
           {(!form.status || !form.registerStatus || !form.loginStatus) && (
-            <FieldGroup label="关闭说明" hint="会随拒绝响应返回给客户端">
+            <FieldGroup label="关闭说明">
               <div className="grid gap-2 lg:grid-cols-3">
                 {!form.status && (
                   <ReasonField

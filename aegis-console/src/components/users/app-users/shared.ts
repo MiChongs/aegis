@@ -67,8 +67,8 @@ export const PRECISE_FIELDS = [
   { key: "nickname", label: "昵称", placeholder: "精确/前缀匹配" },
   { key: "email", label: "邮箱", placeholder: "user@example.com" },
   { key: "phone", label: "手机", placeholder: "13800000000" },
-  { key: "inviteCode", label: "邀请码", placeholder: "查这个码拉了谁" },
-  { key: "registerIp", label: "注册 IP", placeholder: "找同源批量注册" },
+  { key: "inviteCode", label: "邀请码", placeholder: "邀请码" },
+  { key: "registerIp", label: "注册 IP", placeholder: "IP 地址" },
   { key: "markcode", label: "标识码", placeholder: "设备/机器标识码" },
   { key: "customId", label: "自定义 ID", placeholder: "用户自定义 ID" }
 ] as const satisfies ReadonlyArray<{

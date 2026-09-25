@@ -87,8 +87,9 @@ const (
 	MetaKeyVipBonus       = "vipBonusIntegral"
 	// MetaKeyVipFeatures 下单那一刻套餐包含的功能标识。
 	//
-	// 与天数、价格一样是**快照**：从下单到支付成功可能过去几分钟甚至几天，
-	// 期间运营改了套餐配置的话，用户拿到的必须是他下单时看到的那一份。
+	// 天数与价格是快照（用户付的就是下单时看到的那一份），功能**不是**：
+	// 权益跟随套餐的当前配置（见 vipdomain.Segment）。这一份随履约落进账本留档，
+	// 只在下单之后套餐被删除的那种订单上才会被用到。
 	MetaKeyVipFeatures    = "vipFeatures"
 	MetaKeyIntegralAmount = "integralAmount"
 )

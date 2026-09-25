@@ -114,7 +114,6 @@ function PinnedSection({ pathname, activeTab, onNavigate, scope = "desktop" }: N
       <div className="mb-1 flex items-center gap-1.5 px-3 py-0.5 text-[11px] font-medium tracking-wide text-muted-foreground">
         <Star className="size-3 fill-amber-400 text-amber-500" />
         <span>收藏</span>
-        <span className="ml-auto text-[10px] text-muted-foreground/60">拖动排序</span>
       </div>
       <LayoutGroup id={`${scope}-pins`}>
         <Reorder.Group

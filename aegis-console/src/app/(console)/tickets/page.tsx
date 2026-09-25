@@ -64,7 +64,7 @@ import { cn } from "@/lib/utils";
 
 export default function TicketsPage() {
   return (
-    <Suspense fallback={<LoadingState title="加载工单中心" description="正在初始化..." />}>
+    <Suspense fallback={<LoadingState title="加载工单中心" />}>
       <WidgetBoundary title="工单中心加载失败">
         <TicketsPageInner />
       </WidgetBoundary>
@@ -372,12 +372,9 @@ function TicketBoard({ onOpen, mineOnly }: { onOpen: (id: number) => void; mineO
       ) : null}
 
       {listQuery.isLoading ? (
-        <LoadingState title="加载工单" description="正在按你的可见范围拉取工单..." />
+        <LoadingState title="加载工单" />
       ) : items.length === 0 ? (
-        <EmptyState
-          title="没有符合条件的工单"
-          description={mineOnly ? "当前没有指派给你的待办工单。" : "调整筛选条件，或新建一条工单试试。"}
-        />
+        <EmptyState title="暂无工单" />
       ) : (
         <div className="space-y-1">
           {items.map((ticket) => {
@@ -550,7 +547,6 @@ function CreateTicketDialog({
             <Input
               value={form.title}
               onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
-              placeholder="一句话描述问题"
             />
           </div>
           <div className="space-y-1">
@@ -619,7 +615,7 @@ function AnalyticsPanel() {
   const maxTrend = Math.max(1, ...trend.map((point) => Math.max(point.created, point.resolved)));
 
   if (statsQuery.isLoading) {
-    return <LoadingState title="加载统计" description="正在聚合工单指标..." />;
+    return <LoadingState title="加载统计" />;
   }
 
   return (
@@ -748,7 +744,7 @@ function SettingsTab() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="0">平台级（对所有应用生效）</SelectItem>
+            <SelectItem value="0">平台级</SelectItem>
             {(appsQuery.data ?? []).map((app) => (
               <SelectItem key={app.id} value={String(app.id)}>
                 {app.name}
@@ -758,7 +754,7 @@ function SettingsTab() {
         </Select>
         {appId === "0" ? (
           <Badge variant="secondary" size="sm">
-            平台级配置仅超级管理员可修改
+            仅超级管理员可修改
           </Badge>
         ) : null}
       </div>

@@ -23,7 +23,7 @@ export function AppDeleteDialog({ open, onOpenChange, appName, onConfirm, isPend
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm text-destructive"><AlertTriangle className="size-4" />删除应用</DialogTitle>
           <DialogDescription>
-            即将永久删除应用 <span className="font-semibold text-foreground">{appName}</span> 及其所有用户、Banner、公告、审计数据。此操作不可撤销。
+            将永久删除 <span className="font-semibold text-foreground">{appName}</span> 及其全部数据，不可撤销。
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 py-1">

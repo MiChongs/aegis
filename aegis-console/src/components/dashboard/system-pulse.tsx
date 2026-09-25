@@ -90,7 +90,6 @@ export function SystemPulse() {
           <div className="flex flex-1 flex-col items-center justify-center gap-1.5 py-4 text-center">
             <ServerCog className="size-7 text-muted-foreground/30" />
             <p className="text-xs text-muted-foreground">监测数据不可用</p>
-            <p className="text-[10px] text-muted-foreground/70">接口未返回状态数据</p>
           </div>
         ) : (
           <>

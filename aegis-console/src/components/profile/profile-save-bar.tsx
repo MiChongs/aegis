@@ -61,10 +61,10 @@ export function ProfileSaveBar({
 
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">
-            {blocked ? "有字段填得不对" : changes.length ? `${changes.length} 处未保存的改动` : "有未保存的改动"}
+            {blocked ? "表单有误" : changes.length ? `${changes.length} 处未保存的改动` : "有未保存的改动"}
           </p>
           <p className="truncate text-xs text-muted-foreground">
-            {blocked ? "修正标红的字段后才能保存" : changes.length ? changes.join("、") : "联系方式有调整"}
+            {blocked ? "请修正标红字段" : changes.length ? changes.join("、") : "联系方式有调整"}
           </p>
         </div>
 
@@ -79,8 +79,7 @@ export function ProfileSaveBar({
             <AlertDialogHeader>
               <AlertDialogTitle>放弃这些改动？</AlertDialogTitle>
               <AlertDialogDescription>
-                {changes.length ? `${changes.join("、")}将恢复成保存前的样子。` : "表单会恢复成保存前的样子。"}
-                这一步不能撤销。
+                未保存的改动将丢失，不可撤销。
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

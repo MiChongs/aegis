@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import { useAdminDashboardQuery } from "@/lib/admin-hooks";
 import { useAuthStore } from "@/lib/auth-store";
-import { useBranding } from "@/lib/branding-provider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -154,7 +153,6 @@ const HERO_COLORS = ["#7300ff", "#eba8ff", "#00bfff", "#2b00ff"];
 export function GreetingHero() {
   const operator = useAuthStore((s) => s.operator);
   const accessToken = useAuthStore((s) => s.accessToken);
-  const branding = useBranding();
   const dashQuery = useAdminDashboardQuery();
   const stats = dashQuery.data?.stats;
   const now = useClock();
@@ -225,10 +223,6 @@ export function GreetingHero() {
             <h1 className="truncate text-2xl font-semibold tracking-tight md:text-3xl">
               {greetings[period]}，{displayName}
             </h1>
-            <p className="max-w-2xl text-sm leading-relaxed text-white/70">
-              欢迎使用 {branding.platformName} {branding.consoleName}
-              ，统一管理应用接入、用户账户、权限与安全策略。
-            </p>
             <div className="flex flex-wrap items-center gap-1.5 pt-1">
               <span className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/85">
                 <ShieldCheck className="size-3" />

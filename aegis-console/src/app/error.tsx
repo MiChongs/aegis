@@ -25,7 +25,6 @@ export default function RouteError({
     <ErrorPage
       variant="error"
       title="页面加载失败"
-      description="当前页面在渲染过程中出现异常。您可以尝试重新加载；若问题持续，请联系管理员并附上错误 ID。"
       digest={error.digest}
       message={error.message}
       stack={error.stack}

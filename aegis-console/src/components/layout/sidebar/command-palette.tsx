@@ -292,7 +292,7 @@ export function CommandPalette({
       <CommandInput
         value={search}
         onValueChange={setSearch}
-        placeholder="搜索页面、面板或操作…（支持拼音首字母，如 yhgl）"
+        placeholder="搜索页面、面板或操作…"
       />
       <CommandList className="max-h-[min(70vh,420px)]">
         <CommandEmpty>

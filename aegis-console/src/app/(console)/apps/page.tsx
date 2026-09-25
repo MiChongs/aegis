@@ -146,7 +146,7 @@ function AppsPageInner() {
     }
   }, [deleteTarget, deleteMutation]);
 
-  if (redirecting) return <LoadingState title="打开应用配置" description="正在跳转到最近使用的应用..." />;
+  if (redirecting) return <LoadingState title="打开应用配置" description="正在跳转..." />;
 
   return (
     <div className="page-stack">
@@ -221,11 +221,11 @@ function AppsPageInner() {
       {appsQuery.isLoading ? (
         <AppListSkeleton view={listView} />
       ) : appsQuery.isError ? (
-        <EmptyState title="应用列表加载失败" description="请检查后端服务状态后重试。" />
+        <EmptyState title="应用列表加载失败" />
       ) : apps.length === 0 ? (
-        <EmptyState title="还没有应用" description="创建第一个应用后，它的认证、支付、运营配置都会在这里。" />
+        <EmptyState title="暂无应用" />
       ) : rows.length === 0 ? (
-        <EmptyState title="没有匹配的应用" description="调整搜索关键词或筛选条件后再试。" />
+        <EmptyState title="暂无匹配应用" />
       ) : listView === "grid" ? (
         <AppCardGrid rows={rows} onDelete={setDeleteTarget} hasMetrics={hasMetrics} />
       ) : (

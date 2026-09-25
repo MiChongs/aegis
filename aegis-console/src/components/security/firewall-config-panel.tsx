@@ -115,13 +115,13 @@ export function FirewallConfigPanel() {
           tarpitDelayMs: Number(draft.tarpitDelayMs || 5000),
         },
       });
-      toast.success("防火墙配置已保存");
+      toast.success("已保存");
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "保存失败");
     }
   }
 
-  if (!operator?.isSuperAdmin) return <EmptyState title="无访问权限" description="仅超级管理员可配置防火墙。" />;
+  if (!operator?.isSuperAdmin) return <EmptyState title="无访问权限" description="仅超级管理员可配置" />;
   if (settingsQ.isLoading || !draft || !fw) return <LoadingState title="加载防火墙配置" />;
 
   return (
@@ -138,10 +138,7 @@ export function FirewallConfigPanel() {
 
       {/* 操作栏 */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">防火墙配置</h2>
-          <p className="text-sm text-muted-foreground">保存后热重载生效</p>
-        </div>
+        <h2 className="text-lg font-semibold">防火墙配置</h2>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => { setDraft(seed); setSyncedKey(seedKey); }} disabled={updateMut.isPending}>
             重置
@@ -168,7 +165,7 @@ export function FirewallConfigPanel() {
               <Field label="认证限流"><Input className="h-8 text-sm font-mono" value={draft.authRate} onChange={e => set("authRate", e.target.value)} placeholder="180-M" /></Field>
               <Field label="管理限流"><Input className="h-8 text-sm font-mono" value={draft.adminRate} onChange={e => set("adminRate", e.target.value)} placeholder="360-M" /></Field>
             </div>
-            <p className="text-[10px] text-muted-foreground">格式: 次数-周期（M=分钟, H=小时, D=天）</p>
+            <p className="text-[10px] text-muted-foreground">格式：次数-M/H/D</p>
           </AccordionContent>
         </AccordionItem>
 
@@ -199,7 +196,7 @@ export function FirewallConfigPanel() {
         {/* ── IP 封禁响应模式 ── */}
         <AccordionItem value="ban" className="rounded-xl border px-4">
           <AccordionTrigger className="py-3 text-sm font-semibold hover:no-underline">
-            IP 封禁响应模式（平台级全局默认）
+            IP 封禁响应模式
           </AccordionTrigger>
           <AccordionContent className="pb-4 space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -229,10 +226,6 @@ export function FirewallConfigPanel() {
                 />
               </Field>
             </div>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              封禁单个 IP 时可覆盖此默认；未显式指定的封禁均使用这里配置的全局模式。
-              「完全不响应」会在 TCP 层直接关闭连接，客户端感知为连接超时 / 重置。
-            </p>
           </AccordionContent>
         </AccordionItem>
 

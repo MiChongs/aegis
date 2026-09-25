@@ -85,7 +85,7 @@ export const appSectionGroups: AppSectionGroup[] = [
     title: "用户运营",
     sections: [
       { key: "vip", title: "会员", summary: "套餐、试用与功能权益", icon: Crown },
-      { key: "card-key", title: "卡密", summary: "授权卡与兑换卡的生成、作废与核销", icon: Ticket },
+      { key: "card-key", title: "卡密", summary: "授权卡与兑换卡", icon: Ticket },
       { key: "signin-reward", title: "签到奖励", summary: "连签规则与奖励发放", icon: Gift },
       { key: "lottery", title: "抽奖", summary: "奖池、概率与限次", icon: Dices }
     ]

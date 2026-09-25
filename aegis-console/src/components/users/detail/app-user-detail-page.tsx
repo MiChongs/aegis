@@ -371,7 +371,7 @@ function CopyChip({
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
     } catch {
-      toast.error("复制失败，请手动选中");
+      toast.error("复制失败");
     }
   }
 
@@ -428,7 +428,9 @@ function SignalRail({
           <span className={cn("mt-0.5 shrink-0", TONE_ICON[signal.tone])}>{signal.icon}</span>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium">{signal.title}</div>
-            <div className="mt-0.5 text-xs leading-5 opacity-80">{signal.detail}</div>
+            {signal.detail ? (
+              <div className="mt-0.5 text-xs leading-5 opacity-80">{signal.detail}</div>
+            ) : null}
           </div>
           {signal.tab ? (
             <Button

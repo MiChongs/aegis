@@ -102,7 +102,7 @@ export function EmailDeliveryTable({
       <div className="flex flex-wrap items-center gap-2">
         <Input
           className="h-8 w-56 text-sm"
-          placeholder="按收件地址或主题筛选"
+          placeholder="收件地址 / 主题"
           value={keyword}
           onChange={(e) => resetPage(setKeyword)(e.target.value)}
         />
@@ -146,10 +146,7 @@ export function EmailDeliveryTable({
       </div>
 
       {items.length === 0 ? (
-        <EmptyState
-          title="暂无投递记录"
-          description="发出的每一封信都会在这里留痕；除 SMTP 外的服务商都会把送达 / 退信 / 投诉状态经回执回填进来。"
-        />
+        <EmptyState title="暂无投递记录" />
       ) : (
         <>
           <div className="overflow-x-auto rounded-xl border">

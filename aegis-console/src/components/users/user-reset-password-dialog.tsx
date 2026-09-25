@@ -33,7 +33,7 @@ export function UserResetPasswordDialog({ open, onOpenChange, appKey, userId }: 
     }
     try {
       await mutation.mutateAsync({ newPassword: password });
-      toast.success("密码已重置，用户需要重新登录");
+      toast.success("密码已重置");
       setPassword("");
       setConfirm("");
       onOpenChange(false);
@@ -47,7 +47,7 @@ export function UserResetPasswordDialog({ open, onOpenChange, appKey, userId }: 
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle className="text-sm">重置用户密码</DialogTitle>
-          <DialogDescription>重置后用户的所有会话将被踢出，需使用新密码重新登录。</DialogDescription>
+          <DialogDescription>重置后该用户所有会话将下线。</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-1">
           <div className="space-y-1.5">

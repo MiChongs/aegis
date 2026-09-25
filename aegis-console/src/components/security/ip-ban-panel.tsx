@@ -225,9 +225,9 @@ export function IPBanPanel() {
               <span className="text-sm font-semibold leading-tight">IP 封禁管理</span>
               <span className="text-[11px] leading-tight text-muted-foreground">
                 {activeBans !== null && activeBans > 0 ? (
-                  <>当前有 <span className="font-medium text-destructive">{activeBans}</span> 个 IP 处于封禁状态</>
+                  <><span className="font-medium text-destructive">{activeBans}</span> 个 IP 封禁中</>
                 ) : activeBans !== null ? (
-                  <>当前没有 IP 处于封禁状态</>
+                  <>暂无生效封禁</>
                 ) : (
                   <>&nbsp;</>
                 )}
@@ -291,7 +291,7 @@ export function IPBanPanel() {
             </div>
           </SurfaceCard>
         ) : !banData?.items?.length ? (
-          <EmptyState title="暂无封禁记录" description="当前过滤条件下没有 IP 封禁记录" />
+          <EmptyState title="暂无封禁记录" />
         ) : (
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
@@ -492,7 +492,7 @@ export function IPBanPanel() {
 
                 <FormRow label="封禁原因">
                   <Input
-                    placeholder="可选，将写入审计日志"
+                    placeholder="可选"
                     className="h-9 text-sm"
                     value={banReason}
                     onChange={(e) => setBanReason(e.target.value)}
@@ -531,31 +531,9 @@ export function IPBanPanel() {
                   </FormRow>
                 </div>
 
-                {/* 当前模式描述（独立一行，不再塞进 Select Item） */}
-                {(() => {
-                  if (banMode === "__default__") {
-                    return (
-                      <p className="flex items-start gap-1.5 rounded-md border border-border/60 bg-muted/40 px-2.5 py-2 text-[11.5px] leading-relaxed text-muted-foreground">
-                        <span className="mt-0.5 inline-block size-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
-                        沿用平台默认模式；可在「平台设置 / 防火墙」中修改全局默认
-                      </p>
-                    );
-                  }
-                  const desc = modes.find((m) => m.value === banMode)?.description;
-                  if (!desc) return null;
-                  return (
-                    <p className="flex items-start gap-1.5 rounded-md border border-border/60 bg-muted/40 px-2.5 py-2 text-[11.5px] leading-relaxed text-muted-foreground">
-                      <span className="mt-0.5 inline-block size-1.5 shrink-0 rounded-full bg-destructive/60" />
-                      {desc}
-                    </p>
-                  );
-                })()}
 
                 {banMode === "tarpit" && (
-                  <FormRow
-                    label="Tarpit 延迟"
-                    hint="0 = 使用平台默认，最大 30000"
-                  >
+                  <FormRow label="Tarpit 延迟">
                     <div className="flex items-center gap-2">
                       <Input
                         type="number"
@@ -563,7 +541,7 @@ export function IPBanPanel() {
                         max={30000}
                         step={500}
                         className="h-9 text-sm"
-                        placeholder="5000"
+                        placeholder="留空为平台默认"
                         value={banTarpitMs || ""}
                         onChange={(e) => setBanTarpitMs(Number(e.target.value) || 0)}
                       />
@@ -590,7 +568,7 @@ export function IPBanPanel() {
             <DialogHeader>
               <DialogTitle className="text-sm">确认解封</DialogTitle>
               <DialogDescription>
-                确定要解封 IP <span className="font-mono font-semibold text-foreground">{showUnbanDialog?.ip}</span> 吗？解封后该 IP 将可以正常访问。
+                解封后 <span className="font-mono font-semibold text-foreground">{showUnbanDialog?.ip}</span> 可正常访问。
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
@@ -620,12 +598,10 @@ function FilterField({ label, children }: { label: string; children: React.React
 function FormRow({
   label,
   required,
-  hint,
   children
 }: {
   label: string;
   required?: boolean;
-  hint?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -635,7 +611,6 @@ function FormRow({
           {label}
           {required && <span className="ml-1 text-destructive">*</span>}
         </Label>
-        {hint && <span className="text-[10.5px] text-muted-foreground/80">{hint}</span>}
       </div>
       {children}
     </div>

@@ -47,7 +47,7 @@ export function ReceiptLocaleSelect({
                 <SelectItem key={locale.tag} value={locale.tag} className="text-xs">
                   {locale.nativeName}
                   {locale.available ? null : (
-                    <span className="ml-1 text-[10px] text-amber-600">（缺字体，会出英文）</span>
+                    <span className="ml-1 text-[10px] text-amber-600">（缺字体）</span>
                   )}
                 </SelectItem>
               ))}
@@ -56,8 +56,7 @@ export function ReceiptLocaleSelect({
         </span>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-64 text-[11px] leading-relaxed">
-        下载与寄送凭证时使用的语言。
-        {degraded ? "当前环境缺少该语言所需的字体，出具时会降级为英文。" : null}
+        {degraded ? "缺字体，将降级为英文" : "凭证语言"}
       </TooltipContent>
     </Tooltip>
   );

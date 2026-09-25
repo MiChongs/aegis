@@ -79,7 +79,7 @@ export function ChartCard({
   action,
   loading,
   empty,
-  emptyText = "该时间窗内没有记录",
+  emptyText = "暂无记录",
   height = 240,
   children
 }: {

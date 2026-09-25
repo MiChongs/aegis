@@ -1012,7 +1012,7 @@ export function AppSignInRewardPanel({ appKey }: Props) {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>重置签到奖励</DialogTitle>
-            <DialogDescription>会覆盖当前未保存的本地修改，并恢复服务端默认模板。</DialogDescription>
+            <DialogDescription>未保存的修改将丢失，恢复默认策略。</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setResetOpen(false)}>

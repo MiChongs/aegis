@@ -476,10 +476,10 @@ export function deriveUserSignals(
       id: "ban-active",
       tone: "danger",
       icon: <Ban className="size-4" />,
-      title: `账号处于封禁中（${BAN_SCOPE_LABEL[activeBan.banScope] ?? activeBan.banScope}）`,
+      title: `封禁中（${BAN_SCOPE_LABEL[activeBan.banScope] ?? activeBan.banScope}）`,
       detail: [
-        textValue(activeBan.reason, "未填写封禁原因"),
-        permanent ? "永久封禁，需人工撤销" : `到期时间 ${formatTime(activeBan.endAt)}`,
+        textValue(activeBan.reason, "无原因"),
+        permanent ? "永久" : `至 ${formatTime(activeBan.endAt)}`,
         activeBan.bannedByAdminName ? `操作人 ${activeBan.bannedByAdminName}` : ""
       ]
         .filter(Boolean)
@@ -494,10 +494,10 @@ export function deriveUserSignals(
       id: "disabled",
       tone: "danger",
       icon: <ShieldAlert className="size-4" />,
-      title: "账号已被限制",
+      title: "账号已限制",
       detail: [
-        textValue(user.disabledReason, "未填写限制原因"),
-        user.disabledEndTime ? `解除时间 ${formatTime(user.disabledEndTime)}` : "未设置解除时间"
+        textValue(user.disabledReason, "无原因"),
+        user.disabledEndTime ? `至 ${formatTime(user.disabledEndTime)}` : "无解除时间"
       ].join(" · "),
       tab: "governance",
       tabLabel: "去处置"
@@ -511,8 +511,8 @@ export function deriveUserSignals(
       id: "no-credential",
       tone: "danger",
       icon: <KeyRound className="size-4" />,
-      title: "该账号没有任何可用的登录方式",
-      detail: "既未设置密码，也没有 Passkey 与第三方绑定。需要管理员重置密码后才能登录。",
+      title: "无可用登录方式",
+      detail: "",
       tab: "security",
       tabLabel: "去安全"
     });
@@ -524,7 +524,7 @@ export function deriveUserSignals(
       tone: "warning",
       icon: <TriangleAlert className="size-4" />,
       title: "密码已过期",
-      detail: `过期于 ${formatTime(security.passwordExpiresAt)}，下次登录会被要求改密。`,
+      detail: `过期于 ${formatTime(security.passwordExpiresAt)}`,
       tab: "security",
       tabLabel: "去安全"
     });
@@ -533,8 +533,8 @@ export function deriveUserSignals(
       id: "password-change-required",
       tone: "warning",
       icon: <TriangleAlert className="size-4" />,
-      title: "已标记为必须修改密码",
-      detail: "用户下次登录时会被强制进入改密流程。",
+      title: "需修改密码",
+      detail: "",
       tab: "security",
       tabLabel: "去安全"
     });
@@ -547,7 +547,7 @@ export function deriveUserSignals(
       tone: "warning",
       icon: <CircleAlert className="size-4" />,
       title: `密码强度偏低（${score} 分）`,
-      detail: `低于默认策略门槛 ${WEAK_PASSWORD_SCORE} 分。分值是设置密码时算的，策略调严不会追溯已有密码。`,
+      detail: "",
       tab: "security",
       tabLabel: "去安全"
     });
@@ -558,8 +558,8 @@ export function deriveUserSignals(
       id: "2fa-pending",
       tone: "warning",
       icon: <Fingerprint className="size-4" />,
-      title: "二次验证配置未完成",
-      detail: "已生成密钥但从未验证成功，这个状态下 2FA 并未真正生效。",
+      title: "二次验证未完成配置",
+      detail: "",
       tab: "security",
       tabLabel: "去安全"
     });
@@ -572,7 +572,7 @@ export function deriveUserSignals(
       tone: "warning",
       icon: <CircleAlert className="size-4" />,
       title: `恢复码仅剩 ${codes.remaining} 个`,
-      detail: "用尽后若同时丢失二次验证设备，账号将无法自助找回。",
+      detail: "",
       tab: "security",
       tabLabel: "去安全"
     });

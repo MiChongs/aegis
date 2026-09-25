@@ -77,9 +77,6 @@ export function RiskActionsPanel() {
             {scenes.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
           </SelectContent>
         </Select>
-        <span className="text-xs text-muted-foreground">
-          总分落入哪个区间就执行对应动作，未被覆盖的分数按放行处理
-        </span>
         <Button size="sm" className="ml-auto" onClick={() => setEditing("new")}>
           <Plus className="size-3.5" />新建策略
         </Button>
@@ -92,8 +89,7 @@ export function RiskActionsPanel() {
           <div key={i} className="h-16 animate-pulse rounded-xl bg-muted/50" />
         ))}</div>
       ) : actions.length === 0 ? (
-        <EmptyState title="暂无处置策略"
-          description="没有策略时命中规则也不会拦截，风控只会记录" />
+        <EmptyState title="暂无处置策略" />
       ) : (
         <div className="space-y-2">
           {actions.map((action) => (
@@ -142,7 +138,7 @@ export function RiskActionsPanel() {
           <AlertDialogHeader>
             <AlertDialogTitle>删除这条处置策略？</AlertDialogTitle>
             <AlertDialogDescription>
-              删除后这段分数不再有策略覆盖，落入的请求按放行处理。
+              删除后该分数段按放行处理。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -192,7 +188,7 @@ function CoverageBar({ actions, levels }: { actions: RiskAction[]; levels: RiskL
         {gaps.length > 0 && (
           <span className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
             <AlertTriangle className="size-3" />
-            {gaps.map((g) => `${g.from}-${g.to}`).join("、")} 分无策略覆盖，按放行处理
+            {gaps.map((g) => `${g.from}-${g.to}`).join("、")} 分无策略覆盖
           </span>
         )}
       </div>
@@ -267,7 +263,7 @@ function ActionEditorDialog({ action, defaultScene, onClose }: {
     if (needsDuration && banDuration <= 0) {
       // 后端也会拒绝：封禁 0 秒等于没封，让它存进去只会制造一条
       // 看起来生效、实际不生效的策略。这里提前拦下少一次往返。
-      toast.error("封禁动作必须指定大于 0 的封禁时长"); return;
+      toast.error("封禁时长须大于 0"); return;
     }
 
     const payload = {
@@ -308,7 +304,6 @@ function ActionEditorDialog({ action, defaultScene, onClose }: {
                 {scenes.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
               </SelectContent>
             </Select>
-            {action && <p className="text-[10px] text-muted-foreground">场景不可修改，换场景请新建</p>}
           </div>
           <div className="space-y-1">
             <Label className="text-xs">处置动作</Label>
@@ -342,7 +337,7 @@ function ActionEditorDialog({ action, defaultScene, onClose }: {
           )}
           <div className={cn("space-y-1", needsDuration ? "" : "sm:col-span-2")}>
             <Label className="text-xs">说明</Label>
-            <Input className="h-8 text-xs" value={form.description} placeholder="会显示在评估记录的处置详情里"
+            <Input className="h-8 text-xs" value={form.description} placeholder="选填"
               onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </div>
         </div>

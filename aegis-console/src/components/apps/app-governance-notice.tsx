@@ -75,7 +75,7 @@ export function AppGovernanceNotice({ appKey }: { appKey?: string | null }) {
   const submit = async () => {
     try {
       await submitMutation.mutateAsync({ appKey, content });
-      toast.success("申诉已提交，等待平台审核");
+      toast.success("申诉已提交");
       setContent("");
       setAppealOpen(false);
     } catch (error) {
@@ -113,7 +113,7 @@ export function AppGovernanceNotice({ appKey }: { appKey?: string | null }) {
 
       {pendingAppeal ? (
         <div className="rounded-md bg-background/60 p-3 text-xs text-muted-foreground">
-          已于 {formatDateTime(pendingAppeal.createdAt)} 提交申诉，等待平台处理。
+          申诉待处理 · {formatDateTime(pendingAppeal.createdAt)}
           <Button
             size="sm"
             variant="ghost"
@@ -130,7 +130,7 @@ export function AppGovernanceNotice({ appKey }: { appKey?: string | null }) {
             rows={3}
             value={content}
             onChange={(event) => setContent(event.target.value)}
-            placeholder="说明情况与已采取的整改措施（不少于 10 个字）"
+            placeholder="申诉理由（至少 10 字）"
           />
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => setAppealOpen(false)}>

@@ -205,7 +205,7 @@ data class AegisMembership(
     @SerialName("isVip") val isVip: Boolean = false,
     /** 当前这段会员期是不是试用给的 —— 决定该引导"升级"还是"续费" */
     @SerialName("isTrial") val isTrial: Boolean = false,
-    /** none / trial / wallet / payment_order / admin_grant / unknown */
+    /** none / trial / wallet / payment_order / admin_grant / card_key / unknown */
     val source: String = "none",
     val planName: String = "",
     val expireAt: String? = null,

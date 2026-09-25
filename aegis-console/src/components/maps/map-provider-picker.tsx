@@ -42,7 +42,7 @@ function DatumChip({ provider }: { provider: MapProvider }) {
   return (
     <span
       className="rounded border border-amber-500/40 bg-amber-500/10 px-1 text-[9.5px] leading-4 font-medium text-amber-600 dark:text-amber-400"
-      title="该供应商为 GCJ-02 偏移坐标系；放大到街道层级后前端会自动把瓦片纠偏对齐 WGS-84"
+      title="放大后自动纠偏"
     >
       GCJ-02
     </span>
@@ -78,7 +78,7 @@ function ProviderRow({
           {provider.langs.length > 1 && (
             <span
               className="flex items-center gap-0.5 rounded border border-border px-1 text-[9.5px] leading-4 text-muted-foreground"
-              title="注记语言随浏览器语言切换"
+              title="注记随浏览器语言"
             >
               <Languages className="size-2.5" />
               中 / EN
@@ -121,7 +121,7 @@ export function MapProviderPicker() {
           <p className="text-xs font-semibold">底图供应商</p>
           <p className="mt-0.5 text-[10.5px] leading-snug text-muted-foreground">
             浏览器语言 <span className="font-mono">{locale.tag || "未知"}</span> · 注记
-            {lang === "zh-CN" ? "中文" : "英文"} · 该选择对全站地图生效
+            {lang === "zh-CN" ? "中文" : "英文"}
           </p>
         </div>
 
@@ -137,7 +137,7 @@ export function MapProviderPicker() {
           <span className="min-w-0 flex-1">
             <span className="text-xs font-medium">自动</span>
             <span className="mt-0.5 block text-[10.5px] leading-snug text-muted-foreground">
-              跟随浏览器语言，当前解析为「{autoTarget.name}」
+              当前：{autoTarget.name}
             </span>
           </span>
         </button>

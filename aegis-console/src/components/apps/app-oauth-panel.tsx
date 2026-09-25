@@ -112,15 +112,15 @@ const mappingFields: Array<{ key: string; label: string; placeholder: string }> 
   { key: "unionId", label: "UnionID", placeholder: "unionid" }
 ];
 
-const tokenAuthStyleOptions: Array<{ value: TokenAuthStyle; label: string; hint: string }> = [
-  { value: "auto", label: "自动（推荐）", hint: "先用表单参数，被拒绝时自动改用 Basic 重试" },
-  { value: "params", label: "表单参数", hint: "client_id / client_secret 放在请求体" },
-  { value: "basic", label: "HTTP Basic", hint: "凭据放在 Authorization 头" }
+const tokenAuthStyleOptions: Array<{ value: TokenAuthStyle; label: string }> = [
+  { value: "auto", label: "自动（推荐）" },
+  { value: "params", label: "表单参数" },
+  { value: "basic", label: "HTTP Basic" }
 ];
 
-const userInfoAuthStyleOptions: Array<{ value: UserInfoAuthStyle; label: string; hint: string }> = [
-  { value: "header", label: "Bearer 头（推荐）", hint: "Authorization: Bearer {access_token}" },
-  { value: "query", label: "查询参数", hint: "?access_token={access_token}" }
+const userInfoAuthStyleOptions: Array<{ value: UserInfoAuthStyle; label: string }> = [
+  { value: "header", label: "Bearer 头（推荐）" },
+  { value: "query", label: "查询参数" }
 ];
 
 function emptyDraft(): ProviderDraft {
@@ -238,7 +238,7 @@ async function copyText(value: string, message: string) {
     await navigator.clipboard.writeText(value);
     toast.success(message);
   } catch {
-    toast.error("复制失败，请手动选择复制");
+    toast.error("复制失败");
   }
 }
 
@@ -460,8 +460,7 @@ export function AppOAuthPanel({ appKey }: Props) {
           <AlertDialogHeader>
             <AlertDialogTitle>删除渠道「{pendingDelete?.displayName}」？</AlertDialogTitle>
             <AlertDialogDescription>
-              删除后该渠道立即从登录页消失。已产生的 {pendingDelete?.bindings ?? 0} 条用户绑定会保留，
-              重新配置同名渠道后可继续使用。
+              该渠道将从登录页移除，绑定记录保留。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -486,7 +485,6 @@ function CallbackHint({ prefix }: { prefix: string }) {
         {prefix}
         <span className="text-muted-foreground">{"{渠道标识}"}</span>
       </code>
-      <span className="text-muted-foreground">需原样登记到服务商开发者后台</span>
       <Button
         size="sm"
         variant="ghost"
@@ -504,10 +502,7 @@ function EmptyProviders({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="rounded-lg border border-dashed py-12 text-center">
       <Link2 className="mx-auto size-8 text-muted-foreground/60" />
-      <div className="mt-3 text-sm font-medium">还没有配置第三方登录</div>
-      <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
-        从渠道市场挑一个模板，端点与 scope 会自动填好，只需再补 ClientID 与 ClientSecret 即可上线。
-      </p>
+      <div className="mt-3 text-sm font-medium">暂无渠道</div>
       <Button size="sm" className="mt-4 h-8 gap-1 text-xs" onClick={onAdd}>
         <Plus className="size-3" />
         添加渠道
@@ -596,11 +591,6 @@ function ProviderCard({
           {item.warnings && item.warnings.length > 0 && (
             <div className="text-[11px] text-muted-foreground">{item.warnings.join("；")}</div>
           )}
-          {isPlatform && (
-            <div className="text-[11px] text-muted-foreground">
-              当前沿用平台级 .env 配置，编辑保存后即成为该应用独立的配置
-            </div>
-          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-0.5">
@@ -628,7 +618,7 @@ function ProviderCard({
             size="sm"
             variant="ghost"
             className="size-7 p-0"
-            title="复制该渠道的回调地址"
+            title="复制回调地址"
             onClick={() => void copyText(item.redirectUrl || `${callbackPrefix}${item.provider}`, "回调地址已复制")}
           >
             <Copy className="size-3" />
@@ -712,9 +702,7 @@ function ProviderMarket({
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>添加第三方登录渠道</DialogTitle>
-          <DialogDescription>
-            选择模板后端点、scope、品牌信息会自动填好；只需补上服务商给的 ClientID 与 ClientSecret。
-          </DialogDescription>
+          <DialogDescription>选择服务商模板</DialogDescription>
         </DialogHeader>
         <ScrollArea className="max-h-[60vh] pr-3">
           {loading ? (
@@ -761,9 +749,6 @@ function ProviderMarket({
                                   需填端点
                                 </Badge>
                               )}
-                            </span>
-                            <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
-                              {template.description}
                             </span>
                           </span>
                         </button>
@@ -826,9 +811,7 @@ function ProviderEditor({
       <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
         <SheetHeader className="border-b px-5 py-4">
           <SheetTitle>{mode === "create" ? "添加渠道" : `配置「${draft.displayName || draft.provider}」`}</SheetTitle>
-          <SheetDescription>
-            凭据加密存储，保存后不再回显；留空即保持原值不变。
-          </SheetDescription>
+          <SheetDescription>第三方登录渠道</SheetDescription>
         </SheetHeader>
 
         <ScrollArea className="flex-1">
@@ -837,7 +820,7 @@ function ProviderEditor({
             <section className="space-y-3">
               <SectionTitle title="基础信息" />
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="展示名称" hint="登录页按钮上显示的文字">
+                <Field label="展示名称">
                   <Input
                     className="h-8 text-sm"
                     value={draft.displayName}
@@ -845,7 +828,7 @@ function ProviderEditor({
                     onChange={(event) => set("displayName", event.target.value)}
                   />
                 </Field>
-                <Field label="渠道标识" hint={mode === "update" ? "创建后不可修改" : "小写字母/数字/-/_，2-32 位"}>
+                <Field label="渠道标识" hint={mode === "update" ? undefined : "a-z 0-9 - _，2-32 位"}>
                   <Input
                     className="h-8 font-mono text-sm"
                     value={draft.provider}
@@ -854,7 +837,7 @@ function ProviderEditor({
                     onChange={(event) => set("provider", event.target.value.toLowerCase())}
                   />
                 </Field>
-                <Field label="图标" hint="Simple Icons 的 slug，如 github / wechat / openid">
+                <Field label="图标" hint="Simple Icons slug">
                   <div className="flex items-center gap-2">
                     <span
                       className="flex size-8 shrink-0 items-center justify-center rounded-full"
@@ -873,7 +856,7 @@ function ProviderEditor({
                     />
                   </div>
                 </Field>
-                <Field label="品牌色" hint="留空则使用 Simple Icons 的官方品牌色">
+                <Field label="品牌色" hint="留空用官方品牌色">
                   <div className="flex items-center gap-2">
                     <Input
                       type="color"
@@ -889,7 +872,7 @@ function ProviderEditor({
                     />
                   </div>
                 </Field>
-                <Field label="协议适配器" hint="决定 token 与用户信息的解析方式">
+                <Field label="协议适配器">
                   <Select value={draft.kind} onValueChange={(value) => set("kind", value as ProviderDraft["kind"])}>
                     <SelectTrigger className="h-8 text-sm">
                       <SelectValue />
@@ -911,7 +894,7 @@ function ProviderEditor({
 
             {/* 凭据 */}
             <section className="space-y-3">
-              <SectionTitle title="应用凭据" description="在服务商开发者后台创建应用后获得" />
+              <SectionTitle title="应用凭据" />
               <Field label="ClientID / AppID">
                 <Input
                   className="h-8 font-mono text-sm"
@@ -922,14 +905,14 @@ function ProviderEditor({
               </Field>
               <Field
                 label="ClientSecret / AppSecret"
-                hint={draft.clientSecretSet ? "已配置，留空即保持不变" : "必填，加密存储"}
+                hint={draft.clientSecretSet ? undefined : "必填"}
               >
                 <div className="flex items-center gap-1.5">
                   <Input
                     className="h-8 flex-1 font-mono text-sm"
                     type={showSecret ? "text" : "password"}
                     value={draft.clientSecret}
-                    placeholder={draft.clientSecretSet ? "••••••••（留空保持不变）" : "粘贴 Secret"}
+                    placeholder={draft.clientSecretSet ? "••••••••（留空不修改）" : "粘贴 Secret"}
                     onChange={(event) => {
                       set("clientSecret", event.target.value);
                       if (event.target.value) set("clearClientSecret", false);
@@ -960,10 +943,10 @@ function ProviderEditor({
                   )}
                 </div>
                 {draft.clearClientSecret && (
-                  <p className="text-[11px] text-destructive">保存后将清空已存储的密钥，该渠道会自动变为待完善状态</p>
+                  <p className="text-[11px] text-destructive">保存后将清空密钥</p>
                 )}
               </Field>
-              <Field label="回调地址" hint="必须与服务商后台登记的地址完全一致">
+              <Field label="回调地址" hint="须与服务商后台一致">
                 <div className="flex items-center gap-1.5">
                   <Input
                     className="h-8 flex-1 font-mono text-sm"
@@ -1004,25 +987,21 @@ function ProviderEditor({
               <SectionTitle title="行为策略" />
               <ToggleRow
                 label="允许直接登录"
-                description="关闭后该渠道只出现在账号绑定入口，不在登录页展示"
                 checked={draft.allowLogin}
                 onChange={(value) => set("allowLogin", value)}
               />
               <ToggleRow
                 label="允许自动注册"
-                description="首次使用该渠道且未绑定过的用户，自动创建账号；关闭则必须先用已有账号绑定"
                 checked={draft.allowRegister}
                 onChange={(value) => set("allowRegister", value)}
               />
               <ToggleRow
                 label="允许账号绑定"
-                description="已登录用户可在个人中心把该渠道绑定到当前账号"
                 checked={draft.allowBind}
                 onChange={(value) => set("allowBind", value)}
               />
               <ToggleRow
                 label="启用该渠道"
-                description="配置完整时才能启用；缺项会在保存时明确提示"
                 checked={draft.enabled}
                 onChange={(value) => set("enabled", value)}
               />
@@ -1055,7 +1034,7 @@ function ProviderEditor({
                       onChange={(event) => set("userInfoUrl", event.target.value)}
                     />
                   </Field>
-                  <Field label="授权范围 scope" hint="回车添加，点击标签删除">
+                  <Field label="授权范围 scope" hint="回车添加">
                     <div className="space-y-1.5">
                       <Input
                         className="h-8 font-mono text-sm"
@@ -1087,10 +1066,7 @@ function ProviderEditor({
                     </div>
                   </Field>
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <Field
-                      label="令牌端点凭据方式"
-                      hint={tokenAuthStyleOptions.find((item) => item.value === draft.tokenAuthStyle)?.hint}
-                    >
+                    <Field label="令牌端点凭据方式">
                       <Select
                         value={draft.tokenAuthStyle}
                         onValueChange={(value) => set("tokenAuthStyle", value as TokenAuthStyle)}
@@ -1107,10 +1083,7 @@ function ProviderEditor({
                         </SelectContent>
                       </Select>
                     </Field>
-                    <Field
-                      label="用户信息凭据方式"
-                      hint={userInfoAuthStyleOptions.find((item) => item.value === draft.userInfoAuthStyle)?.hint}
-                    >
+                    <Field label="用户信息凭据方式">
                       <Select
                         value={draft.userInfoAuthStyle}
                         onValueChange={(value) => set("userInfoAuthStyle", value as UserInfoAuthStyle)}
@@ -1134,9 +1107,6 @@ function ProviderEditor({
               <AccordionItem value="mapping">
                 <AccordionTrigger className="text-xs">用户字段映射</AccordionTrigger>
                 <AccordionContent className="space-y-3 pt-1">
-                  <p className="text-[11px] text-muted-foreground">
-                    留空时使用内置识别规则；返回结构非标准时可填 JSON 路径（支持 data.user.id 这样的点号写法）。
-                  </p>
                   {mappingFields.map((field) => (
                     <Field key={field.key} label={field.label}>
                       <Input
@@ -1155,9 +1125,6 @@ function ProviderEditor({
               <AccordionItem value="advanced">
                 <AccordionTrigger className="text-xs">附加授权参数与备注</AccordionTrigger>
                 <AccordionContent className="space-y-3 pt-1">
-                  <p className="text-[11px] text-muted-foreground">
-                    追加到授权链接的额外参数，例如 Google 的 access_type=offline、prompt=consent。
-                  </p>
                   <div className="space-y-1.5">
                     {draft.extraAuthParams.map((pair, index) => (
                       <div key={index} className="flex items-center gap-1.5">
@@ -1207,7 +1174,7 @@ function ProviderEditor({
                     <Input
                       className="h-8 text-sm"
                       value={draft.remark}
-                      placeholder="例如：由张三在服务商后台申请，账号 xxx"
+                      placeholder="申请人、账号等"
                       onChange={(event) => set("remark", event.target.value)}
                     />
                   </Field>
@@ -1254,7 +1221,7 @@ function TestResultDialog({
               </Badge>
             )}
           </DialogTitle>
-          <DialogDescription>检查配置完整性与端点可达性，不会真正发起授权。</DialogDescription>
+          <DialogDescription>检查配置与端点可达性</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -1314,9 +1281,6 @@ function TestResultDialog({
                   </a>
                 </Button>
               </div>
-              <p className="text-[10px] text-muted-foreground">
-                点开后若能正常显示服务商授权页，说明 ClientID 与回调地址登记无误。
-              </p>
             </div>
           )}
         </div>
@@ -1523,7 +1487,7 @@ function BindingsSection({ appKey, providers }: { appKey: string; providers: App
           <AlertDialogHeader>
             <AlertDialogTitle>解绑「{pendingUnbind?.account || pendingUnbind?.userId}」的第三方账号？</AlertDialogTitle>
             <AlertDialogDescription>
-              解绑后该用户将无法再用此第三方账号登录。若该账号没有设置密码且这是唯一登录方式，解绑会导致其无法登录。
+              解绑后该用户无法再用此第三方账号登录。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1567,12 +1531,10 @@ function Field({
 
 function ToggleRow({
   label,
-  description,
   checked,
   onChange
 }: {
   label: string;
-  description: string;
   checked: boolean;
   onChange: (value: boolean) => void;
 }) {
@@ -1580,7 +1542,6 @@ function ToggleRow({
     <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
       <div className="min-w-0">
         <div className="text-xs font-medium">{label}</div>
-        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{description}</p>
       </div>
       <Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
     </div>

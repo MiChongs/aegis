@@ -139,7 +139,7 @@ export function UserSecurityTab({
   async function handleResetBaseline() {
     try {
       await resetBaseline.mutateAsync(userId);
-      toast.success("登录绑定已重置", { description: "用户下次登录会重新建立基线。" });
+      toast.success("登录绑定已重置");
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "重置失败");
     }
@@ -151,7 +151,6 @@ export function UserSecurityTab({
         <Panel
           title="凭据矩阵"
           icon={<KeyRound className="size-4" />}
-          description="亮起的即为当前可用的登录方式。四项全暗时账号本人也登不进来。"
           action={
             <Button size="sm" variant="outline" onClick={() => setShowResetPassword(true)}>
               <KeyRound className="size-3.5" />
@@ -202,10 +201,6 @@ export function UserSecurityTab({
                   value={Math.max(0, Math.min(100, numberValue(security?.passwordStrengthScore)))}
                   className="mt-2 h-1.5"
                 />
-                <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
-                  分值在设置密码时算一次并落库。把应用的策略门槛调严不会追溯已有密码，
-                  只有用户下次改密才会重算。
-                </p>
               </div>
               <Facts>
                 <Fact
@@ -224,7 +219,7 @@ export function UserSecurityTab({
                   hint={
                     security?.passwordExpiresAt
                       ? passwordExpired
-                        ? "已过期，下次登录强制改密"
+                        ? "已过期"
                         : relativeTime(security.passwordExpiresAt)
                       : undefined
                   }
@@ -299,7 +294,6 @@ export function UserSecurityTab({
           <Panel
             title="登录绑定基线"
             icon={<MonitorSmartphone className="size-4" />}
-            description="开启设备 / IP / 属地强绑定后，判定依据是这个用户上一次被放行的登录指纹。"
             action={
               baseline?.bound ? (
                 <Button
@@ -324,21 +318,19 @@ export function UserSecurityTab({
               <div className="flex items-start gap-2 rounded-xl border border-dashed bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
                 <Unlock className="mt-0.5 size-4 shrink-0" />
                 <span>
-                  该应用未开启任何强绑定策略（设备 / IP / 属地），登录不受基线约束，
-                  这里也不会有数据。策略在{" "}
+                  未开启强绑定策略 ·{" "}
                   <Link
                     href={`/apps/${encodeURIComponent(appKey)}?tab=policy`}
                     className="text-foreground underline underline-offset-2"
                   >
                     应用 · 认证与会话
-                  </Link>{" "}
-                  里配置。
+                  </Link>
                 </span>
               </div>
             ) : !baseline?.bound ? (
               <div className="flex items-start gap-2 rounded-xl border border-dashed bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
                 <CircleAlert className="mt-0.5 size-4 shrink-0" />
-                <span>尚未建立基线。用户下一次成功登录时会写入，之后即以那次为准。</span>
+                <span>尚未建立基线</span>
               </div>
             ) : (
               <>
@@ -366,9 +358,6 @@ export function UserSecurityTab({
                   <Fact label="设备绑定时间" value={formatTime(baseline.baseline?.deviceBoundAt)} />
                   <Fact label="基线更新时间" value={formatTime(baseline.baseline?.updatedAt)} />
                 </Facts>
-                <p className="mt-3 border-t pt-3 text-[11px] leading-4 text-muted-foreground">
-                  重置是唯一的解绑出口。用户换宽带 / 换手机后登不上，处理方式就是在这里重置一次。
-                </p>
               </>
             )}
           </Panel>
@@ -407,7 +396,7 @@ export function UserSecurityTab({
                 ))}
               </div>
             ) : (
-              <div className="py-6 text-center text-sm text-muted-foreground">未注册任何 Passkey</div>
+              <div className="py-6 text-center text-sm text-muted-foreground">暂无 Passkey</div>
             )}
           </Panel>
         </div>
@@ -416,7 +405,6 @@ export function UserSecurityTab({
           <Panel
             title="认证模块运行态"
             icon={<BadgeCheck className="size-4" />}
-            description="平台侧能力开关。「已启用但未就绪」意味着配置不全，该方式实际不可用。"
           >
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
               {security.modules.map((module) => {

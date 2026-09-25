@@ -69,14 +69,14 @@ function ContentPageInner() {
   }
 
   if (appsQuery.isLoading) {
-    return <LoadingState title="内容中心" description="正在读取应用列表" />;
+    return <LoadingState title="内容中心" />;
   }
 
   if (!apps.length) {
     return (
       <div className="page-stack">
         <SectionHeading eyebrow="控制台" title="内容中心" />
-        <EmptyState title="还没有应用" description="先创建一个应用，才能给它投放 Banner 与公告。" />
+        <EmptyState title="暂无应用" />
       </div>
     );
   }
@@ -136,16 +136,12 @@ function ContentPageInner() {
         </TabsContent>
 
         <TabsContent value="announcements" className="mt-4 space-y-3">
-          <p className="text-xs text-muted-foreground">
-            平台级广播，发给控制台的全体管理员，不随上方应用切换
-          </p>
+          <p className="text-xs text-muted-foreground">平台级，不随应用切换</p>
           <AnnouncementsPanel />
         </TabsContent>
 
         <TabsContent value="legal" className="mt-4 space-y-3">
-          <p className="text-xs text-muted-foreground">
-            用户协议与隐私政策。平台级，与上方应用切换无关；未自定义的语言对外发送系统内置全文
-          </p>
+          <p className="text-xs text-muted-foreground">平台级，不随应用切换</p>
           <LegalAdminPanel />
         </TabsContent>
       </Tabs>
@@ -194,7 +190,7 @@ function ContentOverviewStrip({
         label="曝光与点击"
         icon={MousePointerClick}
         value={formatCount(data.bannerViews)}
-        hint={rate ? `点击 ${formatCount(data.bannerClicks)} · 点击率 ${rate}` : "还没有曝光"}
+        hint={rate ? `点击 ${formatCount(data.bannerClicks)} · 点击率 ${rate}` : "暂无曝光"}
       />
       <StatTile
         label="已发布公告"
@@ -221,7 +217,7 @@ function ContentOverviewStrip({
 // `useSearchParams()` 必须处在 Suspense 边界内，否则 next build 报错、整页退化为客户端渲染
 export default function ContentPage() {
   return (
-    <Suspense fallback={<LoadingState title="内容中心" description="正在读取应用列表" />}>
+    <Suspense fallback={<LoadingState title="内容中心" />}>
       <ContentPageInner />
     </Suspense>
   );

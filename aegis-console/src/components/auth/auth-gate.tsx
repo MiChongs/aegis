@@ -24,9 +24,9 @@ const TICK_MS = 250;
 // 阶段文案。会话查询 retry: false，所以措辞不能许诺"系统会持续重试"——
 // 慢只是还没返回，真正的重试入口在超时后的按钮上。
 const PHASE_COPY: Record<Phase, { title: string; hint: string }> = {
-  verifying: { title: "正在验证管理员会话", hint: "正在与服务端确认令牌有效性与权限作用域" },
-  slow: { title: "仍在验证管理员会话", hint: "服务端响应较慢，连接保持中，无需刷新页面" },
-  timeout: { title: "会话验证耗时较长", hint: "可以继续等待，也可以手动重试或返回登录页" },
+  verifying: { title: "正在验证管理员会话", hint: "" },
+  slow: { title: "仍在验证管理员会话", hint: "服务端响应较慢" },
+  timeout: { title: "会话验证耗时较长", hint: "" },
 };
 
 const STEP_STATE_LABEL: Record<StepState, string> = {
@@ -43,19 +43,16 @@ function buildSteps(credentialReady: boolean, sessionReady: boolean) {
     {
       key: "credential",
       label: "本地凭据",
-      detail: "读取浏览器内保存的会话令牌",
       state: (credentialReady ? "done" : "active") as StepState,
     },
     {
       key: "session",
       label: "会话校验",
-      detail: "服务端确认令牌未过期、未被吊销",
       state: (!credentialReady ? "pending" : sessionReady ? "done" : "active") as StepState,
     },
     {
       key: "scope",
       label: "权限上下文",
-      detail: "同步角色、应用作用域与权限点",
       state: (sessionReady ? "active" : "pending") as StepState,
     },
   ];
@@ -175,7 +172,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           tone="danger"
           scanning={false}
           title="无法验证会话"
-          hint="服务端没有给出有效回应，控制台暂不放行。"
+          hint=""
         />
 
         <div className="px-7 pb-5">
@@ -245,9 +242,6 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                       {STEP_STATE_LABEL[step.state]}
                     </span>
                   </div>
-                  <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground/80">
-                    {step.detail}
-                  </p>
                 </div>
               </li>
             ))}
@@ -270,7 +264,6 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           <footer className="flex items-center justify-between gap-3 border-t px-7 py-3.5">
             <span className="flex items-center gap-2 text-muted-foreground">
               <ShieldCheck className="size-3.5 shrink-0" />
-              <span className="text-[11.5px]">校验通过后自动进入控制台</span>
             </span>
             <span className="font-data text-[11px] tabular-nums text-muted-foreground/70">
               {seconds}s
@@ -368,7 +361,9 @@ function AuthGateHeader({
 
       <div className="space-y-2">
         <h1 className="text-[15px] font-semibold tracking-tight text-foreground">{title}</h1>
-        <p className="mx-auto max-w-[19rem] text-[13px] leading-relaxed text-muted-foreground">{hint}</p>
+        {hint ? (
+          <p className="mx-auto max-w-[19rem] text-[13px] leading-relaxed text-muted-foreground">{hint}</p>
+        ) : null}
       </div>
     </div>
   );

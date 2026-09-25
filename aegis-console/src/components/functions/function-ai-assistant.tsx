@@ -440,9 +440,9 @@ export function FunctionAIAssistant({
     if (part.type !== "data-notice") return;
     const data = part.data as { kind?: string; server?: string; error?: string; messages?: number };
     if (data?.kind === "compacted") {
-      toast.info(`会话较长，已自动压缩 ${data.messages ?? "部分"} 条早期消息`);
+      toast.info(`已压缩 ${data.messages ?? "部分"} 条早期消息`);
     } else if (data?.kind === "mcp-unreachable") {
-      toast.warning(`MCP 服务器「${data.server ?? "?"}」连接失败，本轮已跳过其工具`, {
+      toast.warning(`MCP「${data.server ?? "?"}」连接失败`, {
         description: data.error
       });
     }
@@ -1006,7 +1006,7 @@ function Composer({
           onSubmit();
         }
       }}
-      placeholder={disabled ? "请先配置 AI 服务" : "描述需求，Enter 发送，Shift + Enter 换行"}
+      placeholder={disabled ? "请先配置 AI 服务" : "描述需求"}
       disabled={disabled}
       autoFocus={!dense}
       className={cn(
@@ -1076,7 +1076,7 @@ function Composer({
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              只读模式{disableWrites ? "（已开启）" : ""}：AI 不执行创建、修改设置、发布等写操作
+              只读模式{disableWrites ? "（已开启）" : ""}
             </TooltipContent>
           </Tooltip>
           <div className="ml-auto">{sendOrStop}</div>
@@ -1128,17 +1128,9 @@ function SettingsPopover({
               ))}
             </SelectContent>
           </Select>
-          <p className="text-[11px] text-muted-foreground">
-            自动模式按通道顺序选用首个可用配置，也可固定使用指定模型。
-          </p>
         </div>
         <label className="flex items-center justify-between gap-2 rounded-lg border p-2 text-xs">
-          <span>
-            只读模式
-            <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">
-              开启后 AI 不执行创建函数、修改设置、发布版本等写操作，仍可读取、检查与试跑。
-            </span>
-          </span>
+          <span>只读模式</span>
           <Switch checked={disableWrites} onCheckedChange={onDisableWritesChange} />
         </label>
       </PopoverContent>
@@ -1172,21 +1164,6 @@ function WelcomeHint({
       </span>
       <div className="space-y-1">
         <p className={cn("font-medium", dense ? "text-xs" : "text-sm")}>AI 编程助手</p>
-        <p
-          className={cn(
-            "leading-relaxed text-muted-foreground",
-            dense ? "text-[11px]" : "max-w-md text-xs"
-          )}
-        >
-          描述需求，AI 将读取函数上下文、执行静态检查与试跑，并把脚本直接写入编辑器。
-          复杂任务会派遣专职子代理协作完成。
-        </p>
-        {!dense ? (
-          <p className="flex items-center justify-center gap-1 text-[11px] text-muted-foreground/70">
-            <Users className="size-3" />
-            内置团队：调研员 · 编码专家 · 审查员 · 测试员
-          </p>
-        ) : null}
       </div>
       <div className="flex flex-wrap justify-center gap-1.5">
         {SUGGESTIONS.map((text) => (
@@ -1211,9 +1188,6 @@ function EmptyChannelHint({ appKey }: { appKey: string }) {
       <Bot className="size-8 text-muted-foreground/40" />
       <div className="space-y-1">
         <p className="text-xs font-medium">尚未配置 AI 服务</p>
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          请在应用的「AI 服务」中添加模型配置，或由平台管理员配置共享通道。
-        </p>
       </div>
       <Button asChild size="xs" variant="outline">
         <Link href={`/apps/${encodeURIComponent(appKey)}?tab=ai`}>前往配置</Link>

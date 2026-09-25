@@ -1283,7 +1283,7 @@ export type VipTrialOffer = {
 export type VipEntitlement = {
   isVip: boolean;
   isTrial: boolean;
-  /** none / unknown / trial / wallet / payment_order / admin_grant */
+  /** none / unknown / trial / wallet / payment_order / admin_grant / card_key */
   source: string;
   planName?: string;
   expireAt?: string | null;

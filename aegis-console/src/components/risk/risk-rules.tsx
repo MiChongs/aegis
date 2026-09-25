@@ -69,7 +69,7 @@ export function RiskRulesPanel({ focusRuleId, onFocusHandled }: {
   focusRuleId?: number | null;
   onFocusHandled?: () => void;
 }) {
-  const { scenes, conditions, conditionLabel } = useRiskCatalog();
+  const { scenes, conditionLabel } = useRiskCatalog();
   const [sceneFilter, setSceneFilter] = useState("");
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState<RiskRule | "new" | null>(null);
@@ -127,10 +127,7 @@ export function RiskRulesPanel({ focusRuleId, onFocusHandled }: {
           <div key={i} className="h-16 animate-pulse rounded-xl bg-muted/50" />
         ))}</div>
       ) : rules.length === 0 ? (
-        <EmptyState title="暂无规则"
-          description={conditions.length === 0
-            ? "目录加载中"
-            : "没有规则时所有请求得分为 0，风控不会生效"} />
+        <EmptyState title="暂无规则" />
       ) : (
         <div className="space-y-2">
           {rules.map((rule) => (
@@ -156,7 +153,7 @@ export function RiskRulesPanel({ focusRuleId, onFocusHandled }: {
           <AlertDialogHeader>
             <AlertDialogTitle>删除规则 {pendingDelete?.name}</AlertDialogTitle>
             <AlertDialogDescription>
-删除后不再参与评估，历史记录中的命中留痕会保留
+删除后不再参与评估。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -321,7 +318,7 @@ function RuleEditorSheet({ rule, onClose }: { rule: RiskRule | null; onClose: ()
         <SheetHeader className="border-b px-5 py-4">
           <SheetTitle>{rule ? `编辑规则 ${rule.name}` : "新建风险规则"}</SheetTitle>
           <SheetDescription>
-保存前校验场景、条件参数与表达式语法，不通过不会写入
+保存前自动校验
           </SheetDescription>
         </SheetHeader>
 
@@ -337,7 +334,7 @@ function RuleEditorSheet({ rule, onClose }: { rule: RiskRule | null; onClose: ()
                 </div>
                 <div className="space-y-1 sm:col-span-2">
                   <Label className="text-xs">说明</Label>
-                  <Input className="h-8 text-xs" value={form.description} placeholder="给同事看的一句话解释"
+                  <Input className="h-8 text-xs" value={form.description} placeholder="选填"
                     onChange={(e) => setForm({ ...form, description: e.target.value })} />
                 </div>
                 <div className="space-y-1">
@@ -357,7 +354,6 @@ function RuleEditorSheet({ rule, onClose }: { rule: RiskRule | null; onClose: ()
                   <Label className="text-xs">命中得分</Label>
                   <Input type="number" min={1} className="h-8 font-mono text-xs" value={form.score}
                     onChange={(e) => setForm({ ...form, score: e.target.value })} />
-                  <p className="text-[10px] text-muted-foreground">命中后累加到总分</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">优先级</Label>
@@ -480,7 +476,7 @@ function RuleDetailSheet({ ruleId, onClose }: { ruleId: number; onClose: () => v
               <section className="space-y-2">
                 <h4 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">命中趋势</h4>
                 {series.length === 0 ? (
-                  <InlineEmpty text="该区间内没有命中，可能是阈值偏高" />
+                  <InlineEmpty text="暂无命中" />
                 ) : (
                   <ChartContainer config={HIT_CHART_CONFIG} className="h-[180px] w-full">
                     <BarChart data={series} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>

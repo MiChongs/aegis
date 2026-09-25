@@ -151,7 +151,7 @@ export function NotificationBell() {
         <TooltipContent side="bottom" sideOffset={6}>
           <p>通知</p>
           <p className="text-[10px] text-background/70">
-            {realtimeDown ? "实时连接已断开，可能延迟" : totalUnread > 0 ? `${totalUnread} 条未读` : "没有未读"}
+            {realtimeDown ? "实时连接已断开" : totalUnread > 0 ? `${totalUnread} 条未读` : "没有未读"}
           </p>
         </TooltipContent>
       </Tooltip>
@@ -225,7 +225,7 @@ export function NotificationBell() {
               {realtimeDown ? (
                 <div className="flex shrink-0 items-center gap-1.5 border-b bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
                   <WifiOff className="size-3 shrink-0" />
-                  实时连接已断开，通知最长延迟 1 分钟
+                  实时连接已断开
                 </div>
               ) : null}
 
@@ -450,7 +450,7 @@ function AnnouncementDetail({ item, onBack }: { item: SystemAnnouncement; onBack
         {item.content ? (
           <RichContent html={item.content} className="text-xs" />
         ) : (
-          <p className="text-xs text-muted-foreground">无正文内容。</p>
+          <p className="text-xs text-muted-foreground">无正文</p>
         )}
       </div>
     </>

@@ -9,8 +9,8 @@ import (
 
 // 会员判定事实那条 SQL 的可空侧必须逐列兜住 NULL。
 //
-// 它的两个 LEFT JOIN 对**绝大多数用户都不命中**：没领过试用（`c`）、
-// 还没有过任何一次开通（`t`）。不命中时那一侧的每一列都是 NULL，
+// 它的 LEFT JOIN 对**绝大多数用户都不命中**：没领过试用（`c`）。
+// 不命中时那一侧的每一列都是 NULL，
 // 漏兜一列的表现是运行期 `cannot scan NULL into *string` ——
 // 而这条链路同时是 `/vip/status`、管理端 `/vip/entitlement` 与远程函数
 // `aegis.user.get()` 的唯一入口，一列没兜住等于这三处对新用户全部报错。
@@ -26,8 +26,6 @@ func TestVipEntitlementFactsNullableColumnsAreNullSafe(t *testing.T) {
 		"c.plan_id":       true, // *int64
 		"c.trial_ends_at": true, // *time.Time
 		"c.created_at":    true, // *time.Time
-		"t.pay_channel":   true, // *string
-		"t.plan_name":     true, // *string
 	}
 
 	cases := []struct {
@@ -39,14 +37,17 @@ func TestVipEntitlementFactsNullableColumnsAreNullSafe(t *testing.T) {
 		{
 			name:           "GetVipEntitlementFacts",
 			sql:            vipEntitlementFactsSQL,
-			nullableAlias:  []string{"c", "t"},
-			expectPointers: []string{"c.created_at", "c.id", "c.plan_id", "c.trial_ends_at", "t.pay_channel", "t.plan_name"},
+			nullableAlias:  []string{"c"},
+			expectPointers: []string{"c.created_at", "c.id", "c.plan_id", "c.trial_ends_at"},
 		},
 		{
+			// 事务内那份没有 LEFT JOIN；会员段里关联套餐的 `p` 一侧同样可空，
+			// 但它只出现在 jsonb_build_object 里（NULL 变成 JSON null），
+			// 这里钉住的是它**不能**漏到顶层被直接 Scan。
 			name:           "entitlementFactsTx",
 			sql:            vipEntitlementFactsTxSQL,
-			nullableAlias:  []string{"t"},
-			expectPointers: []string{"t.pay_channel", "t.plan_name"},
+			nullableAlias:  []string{"p", "vt"},
+			expectPointers: nil,
 		},
 	}
 

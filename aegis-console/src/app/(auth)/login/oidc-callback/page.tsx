@@ -107,7 +107,6 @@ function OIDCCallbackContent() {
               </div>
               <div className="text-center space-y-1">
                 <p className="text-sm font-medium">正在完成 SSO 认证</p>
-                <p className="text-xs text-muted-foreground">请稍候，正在验证身份信息...</p>
               </div>
               {/* 进度条模拟 */}
               <div className="w-full h-1 rounded-full bg-muted overflow-hidden">

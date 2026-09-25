@@ -3,7 +3,7 @@
 import * as React from "react";
 import { ChevronDown, KeyRound, Layers, ShieldUser, Sparkles } from "lucide-react";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -71,22 +71,17 @@ export function ProfileAccessPanel({
         <Alert>
           <ShieldUser />
           <AlertTitle>超级管理员</AlertTitle>
-          <AlertDescription>
-            你的权限不来自角色分配，而是账号上的超管标志本身 —— 平台、应用、组织三个作用域下的
-            全部权限点默认放行，包括后续新增的。撤销它需要另一位超级管理员操作。
-          </AlertDescription>
         </Alert>
       ) : null}
 
       <Panel
         title="我的角色"
         icon={<KeyRound className="size-4" />}
-        description="角色决定你能进哪些页面、能改哪些数据。要调整只能由有权限的管理员在「用户与权限」里改。"
         bodyClassName="space-y-4 px-5 py-5"
       >
         <div className="grid gap-3 sm:grid-cols-3">
-          <StatTile label="角色" value={isSuperAdmin ? "—" : assignments.length} hint={isSuperAdmin ? "超管不经过角色" : "已分配"} icon={<KeyRound className="size-3.5" />} />
-          <StatTile label="权限组" value={loading ? "…" : groups.length} hint="覆盖的功能域" icon={<Layers className="size-3.5" />} />
+          <StatTile label="角色" value={isSuperAdmin ? "—" : assignments.length} icon={<KeyRound className="size-3.5" />} />
+          <StatTile label="权限组" value={loading ? "…" : groups.length} icon={<Layers className="size-3.5" />} />
           <StatTile
             label="已授予权限"
             value={loading ? "…" : granted}
@@ -103,9 +98,7 @@ export function ProfileAccessPanel({
           </div>
         ) : assignments.length === 0 ? (
           <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-            {isSuperAdmin
-              ? "没有角色分配 —— 超级管理员本来就不需要。"
-              : "还没有分配任何角色，因此除了自助能力之外，你看不到其它管理页面。"}
+            暂无角色分配
           </p>
         ) : (
           <div className="space-y-1.5">
@@ -139,7 +132,6 @@ export function ProfileAccessPanel({
           <Panel
             title="权限明细"
             icon={<Layers className="size-4" />}
-            description="按功能域列出你实际生效的权限点。多个角色叠加时，任一角色授予即为授予。"
             action={
               <CollapsibleTrigger asChild>
                 <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">

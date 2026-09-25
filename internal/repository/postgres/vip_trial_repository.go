@@ -17,7 +17,7 @@ import (
 //
 // 「会员判定」与「试用发放」都收在这个文件里，因为它们读的是同一批事实：
 // users.vip_expire_at（还是不是会员）、vip_trial_claims（领没领过、领到什么时候）、
-// vip_transactions（凭什么是会员）。分开取就必然出现两次查询之间状态变了的窗口。
+// vip_transactions + vip_plans（凭什么是会员、此刻解锁了哪些功能）。分开取就必然出现两次查询之间状态变了的窗口。
 
 var (
 	// ErrTrialAlreadyClaimed 该用户已经领过试用（一人一次由唯一约束保证）
@@ -30,19 +30,6 @@ var (
 
 const vipTrialClaimColumns = `id, appid, user_id, plan_id, plan_name, duration_days, trial_ends_at,
 transaction_no, COALESCE(device_id, ''), device_locked, COALESCE(client_ip, ''), COALESCE(operator, ''), created_at`
-
-// activeFeatureUnionSQL 当前生效的功能标识：**尚未到期**的每一段开通所带功能的并集。
-//
-// 取并集而不是「最近一次开通那份」：会员期是顺延的，先买基础版再买高级版时两段
-// 都还没到期，用户理所当然认为两边的功能现在都能用。已经用完的那几段
-// （expire_after 已过）自然落在集合之外，权益随时间自己收敛，不需要任何清理任务。
-//
-// 逐行 UNNEST 而不是 `array_agg(features)`：后者要求所有数组维度一致，
-// 两个套餐功能数不同时 Postgres 会直接报 "cannot accumulate arrays of different dimensionality"。
-const activeFeatureUnionSQL = `ARRAY(
-    SELECT DISTINCT tag FROM vip_transactions vt, UNNEST(vt.features) AS tag
-    WHERE vt.appid = u.appid AND vt.user_id = u.id AND vt.expire_after > NOW()
-)`
 
 // GetActiveTrialPlan 当前启用中的试用套餐。
 //
@@ -77,26 +64,23 @@ func (r *Repository) TrialDeviceClaimed(ctx context.Context, appID int64, device
 
 // vipEntitlementFactsSQL 会员判定事实的唯一查询。
 //
-// 两个 LEFT JOIN 对绝大多数用户都**不命中**（没领过试用、还没开通过会员），
+// 试用资格表的 LEFT JOIN 对绝大多数用户都**不命中**（没领过试用），
 // 此时那一侧的每一列都是 NULL。因此可空侧的列一律不能直接扫进值类型：
 // 定长列用 COALESCE 兜住，两个时间戳没有像样的默认值（补 epoch 会让
 // "领过但早已过期"和"没领过"在下游长得一样），改用指针接。
+// 会员段与功能目录是子查询，各自兜成空数组，不参与这条约束。
 //
 // 提成常量是为了让 TestVipEntitlementFactsNullableColumnsAreNullSafe 直接读它 ——
 // 漏兜一列的表现是运行期 `cannot scan NULL into *string`，且只出现在
 // 没领过试用的用户身上，而开发机上随手建的账号往往恰好领过。
 const vipEntitlementFactsSQL = `SELECT u.vip_expire_at,
-       t.pay_channel, t.plan_name,
        c.id, c.plan_id, COALESCE(c.plan_name, ''), COALESCE(c.duration_days, 0),
        c.trial_ends_at, COALESCE(c.transaction_no, ''),
        COALESCE(c.device_id, ''), COALESCE(c.device_locked, FALSE), c.created_at,
-       ` + activeFeatureUnionSQL + `
+       ` + vipLiveSegmentsSQL + `,
+       ` + vipFeatureCatalogSQL + `
 FROM users u
 LEFT JOIN vip_trial_claims c ON c.appid = u.appid AND c.user_id = u.id
-LEFT JOIN LATERAL (
-    SELECT pay_channel, plan_name FROM vip_transactions
-    WHERE appid = u.appid AND user_id = u.id ORDER BY id DESC LIMIT 1
-) t ON TRUE
 WHERE u.id = $1 AND u.appid = $2 LIMIT 1`
 
 // GetVipEntitlementFacts 一次取齐会员判定所需的全部事实。
@@ -106,29 +90,25 @@ WHERE u.id = $1 AND u.appid = $2 LIMIT 1`
 func (r *Repository) GetVipEntitlementFacts(ctx context.Context, appID int64, userID int64) (*vipdomain.EvalInput, error) {
 	var (
 		facts        vipdomain.EvalInput
-		lastChannel  *string
-		lastPlanName *string
+		segmentsRaw  []byte
 		claimID      *int64
 		claimEndsAt  *time.Time
 		claimCreated *time.Time
 	)
 	claim := vipdomain.TrialClaim{AppID: appID, UserID: userID}
 	err := r.pool.QueryRow(ctx, vipEntitlementFactsSQL, userID, appID).
-		Scan(&facts.ExpireAt, &lastChannel, &lastPlanName,
+		Scan(&facts.ExpireAt,
 			&claimID, &claim.PlanID, &claim.PlanName, &claim.DurationDays, &claimEndsAt,
 			&claim.TransactionNo, &claim.DeviceID, &claim.DeviceLocked, &claimCreated,
-			&facts.Features)
+			&segmentsRaw, &facts.FeatureCatalog)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
 		}
 		return nil, err
 	}
-	if lastChannel != nil {
-		facts.LastChannel = *lastChannel
-	}
-	if lastPlanName != nil {
-		facts.LastPlanName = *lastPlanName
+	if facts.Segments, err = decodeVipSegments(segmentsRaw); err != nil {
+		return nil, err
 	}
 	// claim.id 是主键，非空即"这个人领过" —— 只有此时那批列才有意义
 	if claimID != nil {
@@ -292,32 +272,28 @@ RETURNING `+vipTrialClaimColumns,
 }
 
 // vipEntitlementFactsTxSQL 事务内那份（试用记录由调用方给出，因此不 JOIN 资格表）。
-// `t` 一侧同样可空 —— 第一次开通尚未落账时它整行是 NULL，两列都用指针接。
-const vipEntitlementFactsTxSQL = `SELECT u.vip_expire_at, t.pay_channel, t.plan_name, ` + activeFeatureUnionSQL + `
+const vipEntitlementFactsTxSQL = `SELECT u.vip_expire_at,
+       ` + vipLiveSegmentsSQL + `,
+       ` + vipFeatureCatalogSQL + `
 FROM users u
-LEFT JOIN LATERAL (
-    SELECT pay_channel, plan_name FROM vip_transactions
-    WHERE appid = u.appid AND user_id = u.id ORDER BY id DESC LIMIT 1
-) t ON TRUE
 WHERE u.id = $1 AND u.appid = $2 LIMIT 1`
 
 // entitlementFactsTx 事务内取判定事实（试用记录由调用方给出，避免重复查一次）。
 func entitlementFactsTx(ctx context.Context, tx pgx.Tx, appID int64, userID int64, claim *vipdomain.TrialClaim) (*vipdomain.EvalInput, error) {
 	facts := vipdomain.EvalInput{Claim: claim}
-	var lastChannel, lastPlanName *string
+	var segmentsRaw []byte
 	if err := tx.QueryRow(ctx, vipEntitlementFactsTxSQL, userID, appID).
-		Scan(&facts.ExpireAt, &lastChannel, &lastPlanName, &facts.Features); err != nil {
+		Scan(&facts.ExpireAt, &segmentsRaw, &facts.FeatureCatalog); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
 		}
 		return nil, err
 	}
-	if lastChannel != nil {
-		facts.LastChannel = *lastChannel
+	segments, err := decodeVipSegments(segmentsRaw)
+	if err != nil {
+		return nil, err
 	}
-	if lastPlanName != nil {
-		facts.LastPlanName = *lastPlanName
-	}
+	facts.Segments = segments
 	return &facts, nil
 }
 

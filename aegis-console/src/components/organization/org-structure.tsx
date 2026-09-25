@@ -66,7 +66,7 @@ export function OrgStructurePanel({ orgId, access }: { orgId: string; access?: O
             <DeptDetail orgId={orgId} deptId={selectedDept} access={access} tree={tree} />
           ) : (
             <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-              选择左侧部门查看成员与详情
+              未选择部门
             </div>
           )}
         </CardContent>
@@ -133,7 +133,7 @@ function DeptTree({
             dropTarget === "__root__" ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground",
           )}
         >
-          拖到这里移动为顶级部门
+          移为顶级部门
         </div>
       )}
 
@@ -334,7 +334,7 @@ function DeptDetail({
   const canWrite = can("org:dept:write");
   const canMember = can("org:member:write");
 
-  if (!dept) return <div className="py-10 text-center text-sm text-muted-foreground">部门不存在或已被移除</div>;
+  if (!dept) return <div className="py-10 text-center text-sm text-muted-foreground">部门不存在</div>;
 
   return (
     <div className="space-y-4">
@@ -375,7 +375,7 @@ function DeptDetail({
       </div>
 
       {members.length === 0 ? (
-        <EmptyState title="该部门暂无成员" description="在「成员」标签页中把组织成员分配到这里" />
+        <EmptyState title="该部门暂无成员" />
       ) : (
         <div className="space-y-2">
           {members.map((m) => (
@@ -412,7 +412,7 @@ function DeptDetail({
                     onClick={async () => {
                       try {
                         await removeMutation.mutateAsync({ orgId, deptId, adminId: m.adminId });
-                        toast.success("已移出部门（仍保留组织成员身份）");
+                        toast.success("已移出部门");
                       } catch (e) { toast.error(errMsg(e, "移出失败")); }
                     }}
                   >
@@ -495,7 +495,7 @@ function EditDeptSheet({
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-[10px] text-muted-foreground">负责人须先是该部门成员</p>
+            <p className="text-[10px] text-muted-foreground">须为部门成员</p>
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">状态</Label>
@@ -540,7 +540,7 @@ function DeleteDeptDialog({ orgId, dept, onClose }: { orgId: string; dept: Depar
               <p>
                 {hasChildren && <>该部门下还有 <strong>{dept.childCount}</strong> 个子部门。</>}
                 {hasMembers && <>该部门有 <strong>{dept.memberCount}</strong> 名成员。</>}
-                {!hasChildren && !hasMembers && "该部门为空，可直接删除。"}
+                {!hasChildren && !hasMembers && "该部门为空。"}
               </p>
               <div className="space-y-1.5 text-left">
                 <Label className="text-xs">子部门与成员的处置方式</Label>
@@ -554,7 +554,7 @@ function DeleteDeptDialog({ orgId, dept, onClose }: { orgId: string; dept: Depar
                 </Select>
                 {strategy === "cascade" && (
                   <p className="text-[10px] text-destructive">
-                    整棵子树将被删除，成员退回组织但保留组织成员身份。此操作不可撤销。
+                    将删除整棵子树，不可撤销。
                   </p>
                 )}
               </div>
@@ -628,10 +628,7 @@ function DeptMemberSheet({
         <SheetHeader><SheetTitle>{member.displayName || member.account}</SheetTitle></SheetHeader>
         <div className="mt-4 space-y-4 px-4">
           <div className="flex items-center justify-between rounded-lg border px-3 py-2">
-            <div>
-              <Label className="text-xs font-semibold">部门负责人</Label>
-              <p className="text-[10px] text-muted-foreground">一个部门只能有一位负责人</p>
-            </div>
+            <Label className="text-xs font-semibold">部门负责人</Label>
             <Switch checked={isLeader} onCheckedChange={setIsLeader} />
           </div>
 
@@ -648,7 +645,7 @@ function DeptMemberSheet({
             </Select>
             <Input
               value={jobTitle} onChange={(e) => setJobTitle(e.target.value)}
-              placeholder="职位名称，如：高级工程师" className="h-8 text-xs"
+              placeholder="职位名称" className="h-8 text-xs"
             />
           </div>
 
@@ -663,7 +660,6 @@ function DeptMemberSheet({
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-[10px] text-muted-foreground">上级须为同部门成员；成环的设置会被后端拒绝</p>
           </div>
 
           <div className="space-y-1.5">

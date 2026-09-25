@@ -247,7 +247,7 @@ export default function AuditPage() {
 
   return (
     <div className="page-stack">
-      <SectionHeading eyebrow="控制台" title="审计日志" description="完整记录管理员操作，包含请求追踪、地理信息、响应摘要与严重度分级。" />
+      <SectionHeading eyebrow="控制台" title="审计日志" />
 
       {/* 统计卡片（局部兜底：单个 StatCard 的某个字段异常不影响页面其余） */}
       {stats && (
@@ -286,7 +286,7 @@ export default function AuditPage() {
             <Input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
-              placeholder="搜索管理员/摘要/路径/IP/错误信息/变更内容..."
+              placeholder="搜索管理员、路径、IP"
               className="h-8 pl-8 text-xs"
             />
           </div>
@@ -336,7 +336,6 @@ export default function AuditPage() {
       {/* 日志列表（虚拟化 + 无限滚动 + 局部兜底 + resetKeys 跟随筛选） */}
       <WidgetBoundary
         title="列表加载失败"
-        description="审计日志拉取或渲染出错，可点击重试。"
         resetKeys={[action, category, severity, status, keyword, startTime, endTime]}
       >
       <div className="rounded-xl border bg-card overflow-hidden flex flex-col">
@@ -381,13 +380,13 @@ export default function AuditPage() {
               empty={
                 <div className="inline-flex flex-col items-center gap-2 py-12 text-muted-foreground">
                   <Filter className="size-5 opacity-40" />
-                  <span className="text-xs">暂无符合条件的审计记录</span>
+                  <span className="text-xs">暂无审计记录</span>
                 </div>
               }
               loader={
                 <span className="inline-flex items-center gap-2">
                   <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/60" />
-                  {isFetchingMore ? "加载更多…" : "滚动触底自动加载"}
+                  {isFetchingMore ? "加载更多…" : "滚动加载更多"}
                 </span>
               }
               renderItem={(log) => (
@@ -465,7 +464,7 @@ export default function AuditPage() {
               共 <span className="font-semibold text-foreground">{total}</span> 条 · 已加载
               <span className="font-semibold text-foreground"> {logs.length}</span>
             </span>
-            {hasMore ? <span className="text-[11px]">滚动到底部自动加载更多</span> : <span className="text-[11px]">已全部加载</span>}
+            {hasMore ? <span className="text-[11px]">滚动加载更多</span> : <span className="text-[11px]">已全部加载</span>}
           </div>
         )}
       </div>
@@ -635,7 +634,7 @@ function AuditDetailSheet({ log, onClose }: { log: AuditLog | null; onClose: () 
                     )}
                     {log.responseSnippet && (
                       <FieldBlock label="响应摘要">
-                        <WidgetBoundary title="JSON 渲染失败" description="响应内容可能超长或非法，切换到原文重试。">
+                        <WidgetBoundary title="JSON 渲染失败" >
                           <JsonViewer value={log.responseSnippet} height={220} />
                         </WidgetBoundary>
                       </FieldBlock>
@@ -667,7 +666,7 @@ function AuditDetailSheet({ log, onClose }: { log: AuditLog | null; onClose: () 
                 {/* 上下文 JSON */}
                 {log.changes && Object.keys(log.changes).length > 0 && (
                   <Section icon={<Layers className="size-3.5" />} title="请求上下文">
-                    <WidgetBoundary title="JSON 渲染失败" description="数据结构可能超深/含循环引用，点击重试即可。">
+                    <WidgetBoundary title="JSON 渲染失败" >
                       <JsonViewer value={JSON.stringify(log.changes, null, 2)} height={420} />
                     </WidgetBoundary>
                   </Section>

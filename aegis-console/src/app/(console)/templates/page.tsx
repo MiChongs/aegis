@@ -35,14 +35,13 @@ export default function TemplatesPage() {
   const [editing, setEditing] = useState<MessageTemplate | null>(null);
   const [creating, setCreating] = useState(false);
 
-  if (templatesQuery.isLoading) return <LoadingState title="加载模板" description="" />;
+  if (templatesQuery.isLoading) return <LoadingState title="加载模板" />;
   const templates = templatesQuery.data || [];
 
   return (
     <div className="page-stack">
       <SectionHeading eyebrow="控制台" title="消息模板" />
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">管理邮件、短信模板，支持变量插入和实时预览</p>
+      <div className="flex items-center justify-end">
         <Button size="sm" onClick={() => setCreating(true)}><Plus className="size-3.5" />创建模板</Button>
       </div>
 

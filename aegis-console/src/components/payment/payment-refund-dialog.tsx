@@ -65,7 +65,7 @@ export function PaymentRefundDialog({
       if (refund.status === "success") {
         toast.success(`退款成功，退款单 ${refund.refund_no}`);
       } else if (refund.status === "processing") {
-        toast.info(`退款已受理，等待上游确认（${refund.refund_no}）`);
+        toast.info(`退款已受理（${refund.refund_no}）`);
       } else {
         toast.warning(`退款未完成：${refund.error_message || refund.status}`);
       }
@@ -111,12 +111,12 @@ export function PaymentRefundDialog({
               <>
                 <div className="space-y-1">
                   <Label className="text-xs">
-                    退款金额{!partialAllowed && <span className="ml-1 text-muted-foreground">（该渠道仅支持整单退）</span>}
+                    退款金额{!partialAllowed && <span className="ml-1 text-muted-foreground">（仅整单退）</span>}
                   </Label>
                   <Input
                     className="h-8 text-sm"
                     inputMode="decimal"
-                    placeholder={`留空表示全额退款 ${info.refundable}`}
+                    placeholder="留空全额退款"
                     value={partialAllowed ? amount : info.refundable}
                     disabled={!partialAllowed}
                     onChange={(e) => setAmount(e.target.value)}
@@ -131,7 +131,7 @@ export function PaymentRefundDialog({
                   <Textarea
                     className="text-xs"
                     rows={2}
-                    placeholder="将随退款请求提交给支付渠道，并留存在退款单中"
+                    placeholder="选填"
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
                   />
@@ -139,13 +139,7 @@ export function PaymentRefundDialog({
 
                 <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5">
                   <Switch checked={reverse} onCheckedChange={setReverse} className="mt-0.5" />
-                  <span className="space-y-0.5">
-                    <span className="block text-xs">同时回收已发放的权益</span>
-                    <span className="block text-[11px] leading-relaxed text-muted-foreground">
-                      扣回充值余额 / 回收积分 / 撤销会员时长。关闭则只退钱不收回，请谨慎。
-                      会员与积分仅在全额退款时回收，部分退款需人工处理。
-                    </span>
-                  </span>
+                  <span className="block text-xs">同时回收已发放的权益</span>
                 </label>
               </>
             )}

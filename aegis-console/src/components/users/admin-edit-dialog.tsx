@@ -95,10 +95,7 @@ export function AdminEditDialog({ open, onOpenChange, admin }: Props) {
           {/* 超管开关 */}
           <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5">
             <Checkbox checked={isSuperAdmin} onCheckedChange={(v) => setIsSuperAdmin(v === true)} />
-            <div>
-              <span className="text-xs font-medium">超级管理员</span>
-              <p className="text-[10px] text-muted-foreground">拥有所有权限，无需分配角色</p>
-            </div>
+            <span className="text-xs font-medium">超级管理员</span>
           </label>
 
           {!isSuperAdmin && (
@@ -115,7 +112,7 @@ export function AdminEditDialog({ open, onOpenChange, admin }: Props) {
                 </div>
 
                 {assignments.length === 0 && (
-                  <p className="py-4 text-center text-xs text-muted-foreground">暂无角色分配，点击"添加"</p>
+                  <p className="py-4 text-center text-xs text-muted-foreground">暂无角色分配</p>
                 )}
 
                 {assignments.map((row, i) => {

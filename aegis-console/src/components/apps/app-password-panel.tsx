@@ -6,13 +6,11 @@ import {
   Eye,
   EyeOff,
   FlaskConical,
-  History,
   KeyRound,
   Loader2,
   RotateCcw,
   Save,
   ShieldCheck,
-  Timer,
   XCircle
 } from "lucide-react";
 import { toast } from "sonner";
@@ -152,7 +150,7 @@ export function AppPasswordPanel({ appKey }: { appKey?: string | null }) {
     const template = templates[key];
     if (!template) return;
     setDraft({ scope, value: seed(template), templateKey: key });
-    toast.success(`已套用「${template.name || TEMPLATE_LABELS[key] || key}」模板，保存后生效`);
+    toast.success(`已套用「${template.name || TEMPLATE_LABELS[key] || key}」，待保存`);
   }
 
   async function handleSave() {
@@ -217,7 +215,6 @@ export function AppPasswordPanel({ appKey }: { appKey?: string | null }) {
       <SectionCard
         icon={<KeyRound className="size-4" />}
         title="密码策略"
-        description="强度、长度与生命周期。所有字段在注册、改密、管理员重置三条链路上统一生效。"
         aside={
           view?.policy?.isDefault ? (
             <Badge variant="outline" className="text-[10px]">使用平台默认</Badge>
@@ -242,8 +239,7 @@ export function AppPasswordPanel({ appKey }: { appKey?: string | null }) {
                   <AlertDialogHeader>
                     <AlertDialogTitle>恢复为平台默认密码策略？</AlertDialogTitle>
                     <AlertDialogDescription>
-                      当前应用的自定义密码策略会被清除，改为跟随平台默认值。已注册用户的密码不受影响，
-                      但下次改密时按新策略校验。
+                      自定义策略将被清除，改用平台默认。
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -289,7 +285,7 @@ export function AppPasswordPanel({ appKey }: { appKey?: string | null }) {
               value={form.description}
               onChange={(e) => patch("description", e.target.value)}
               rows={2}
-              placeholder="这条策略的适用范围与来源，便于后续接手的人判断能否调整"
+              placeholder="适用范围与来源"
             />
           </div>
 
@@ -320,14 +316,14 @@ export function AppPasswordPanel({ appKey }: { appKey?: string | null }) {
 
           <FieldGroup label="字符复杂度">
             <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-              <SwitchRow label="大写字母" hint="A-Z" checked={form.requireUppercase} onChange={(v) => patch("requireUppercase", v)} />
-              <SwitchRow label="小写字母" hint="a-z" checked={form.requireLowercase} onChange={(v) => patch("requireLowercase", v)} />
-              <SwitchRow label="数字" hint="0-9" checked={form.requireNumbers} onChange={(v) => patch("requireNumbers", v)} />
+              <SwitchRow label="大写字母" checked={form.requireUppercase} onChange={(v) => patch("requireUppercase", v)} />
+              <SwitchRow label="小写字母" checked={form.requireLowercase} onChange={(v) => patch("requireLowercase", v)} />
+              <SwitchRow label="数字" checked={form.requireNumbers} onChange={(v) => patch("requireNumbers", v)} />
               <SwitchRow label="特殊字符" hint="!@#$% 等" checked={form.requireSpecialChars} onChange={(v) => patch("requireSpecialChars", v)} />
             </div>
           </FieldGroup>
 
-          <FieldGroup label="强度门槛" hint="与右侧测试器同一套评分">
+          <FieldGroup label="强度门槛">
             <SliderField
               label="最低强度分"
               value={form.minScore}
@@ -335,12 +331,11 @@ export function AppPasswordPanel({ appKey }: { appKey?: string | null }) {
               max={100}
               step={5}
               valueLabel={form.minScore === 0 ? "不校验强度" : `${form.minScore} 分 · ${scoreTier(form.minScore).label}`}
-              hint="0-100 分制"
               onChange={(v) => patch("minScore", v)}
             />
           </FieldGroup>
 
-          <FieldGroup label="生命周期" hint="0 均表示关闭该项约束">
+          <FieldGroup label="生命周期">
             <div className="grid gap-4 sm:grid-cols-2">
               <SliderField
                 label="密码有效期"
@@ -349,7 +344,6 @@ export function AppPasswordPanel({ appKey }: { appKey?: string | null }) {
                 max={730}
                 step={5}
                 valueLabel={form.maxAge === 0 ? "永不过期" : `${form.maxAge} 天`}
-                hint="到期后登录返回「须改密」"
                 onChange={(v) => patch("maxAge", v)}
               />
               <SliderField
@@ -358,42 +352,19 @@ export function AppPasswordPanel({ appKey }: { appKey?: string | null }) {
                 min={0}
                 max={20}
                 valueLabel={form.preventReuse === 0 ? "不限制" : `最近 ${form.preventReuse} 个`}
-                hint="逐条 bcrypt 比对，上限 20"
                 onChange={(v) => patch("preventReuse", v)}
               />
             </div>
           </FieldGroup>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <LifecycleNote
-              icon={<Timer className="size-3.5" />}
-              title={form.maxAge === 0 ? "密码永不过期" : `密码 ${form.maxAge} 天后过期`}
-              body={
-                form.maxAge === 0
-                  ? "已存在的过期时间会在下次改密时被清除。"
-                  : "过期判定在登录时现算，不依赖定时任务；到期用户登录仍成功，但结果里带 passwordChangeRequired。"
-              }
-            />
-            <LifecycleNote
-              icon={<History className="size-3.5" />}
-              title={form.preventReuse === 0 ? "不限制密码重用" : `禁止重用最近 ${form.preventReuse} 个密码`}
-              body={
-                form.preventReuse === 0
-                  ? "设为 0 会同时清空该用户已积累的历史密码记录。"
-                  : "历史只存哈希；改密与管理员重置都会写入并裁剪到该条数。"
-              }
-            />
-          </div>
         </div>
       </SectionCard>
 
       <div className="space-y-5">
-        <ComplianceCard stats={view?.stats} minScore={form.minScore} />
+        <ComplianceCard stats={view?.stats} />
 
         <SectionCard
           icon={<FlaskConical className="size-4" />}
           title="策略测试"
-          description="用当前已保存的策略校验一个候选密码。"
         >
           <div className="space-y-4">
             <div className="flex gap-2">
@@ -424,9 +395,7 @@ export function AppPasswordPanel({ appKey }: { appKey?: string | null }) {
                 测试
               </Button>
             </div>
-            <p className="text-[10px] text-muted-foreground">
-              测试走服务端评分，密码不会被记录（响应里只回掩码）。未保存的改动不参与本次校验。
-            </p>
+            <p className="text-[10px] text-muted-foreground">按已保存策略校验</p>
             {testMutation.data ? <TestResultView result={testMutation.data} /> : null}
           </div>
         </SectionCard>
@@ -435,39 +404,26 @@ export function AppPasswordPanel({ appKey }: { appKey?: string | null }) {
   );
 }
 
-function LifecycleNote({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
-  return (
-    <div className="rounded-xl bg-muted p-3">
-      <div className="flex items-center gap-1.5 text-xs font-medium">
-        <span className="text-muted-foreground">{icon}</span>
-        {title}
-      </div>
-      <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{body}</p>
-    </div>
-  );
-}
-
 /**
  * 合规看板。取代原先直接把 stats 对象 JSON.stringify 打屏的做法 ——
  * 那种展示方式让「达标率 0%」和「还没有用户」看起来完全一样。
  */
-function ComplianceCard({ stats, minScore }: { stats?: PasswordPolicyStats; minScore: number }) {
+function ComplianceCard({ stats }: { stats?: PasswordPolicyStats }) {
   const hasUsers = (stats?.totalUsers ?? 0) > 0;
   return (
     <SectionCard
       icon={<ShieldCheck className="size-4" />}
       title="合规概况"
-      description={`按当前生效策略的最低强度分（${minScore}）统计。`}
     >
       {!stats || !hasUsers ? (
         <div className="rounded-xl bg-muted p-4 text-center text-xs text-muted-foreground">
-          该应用还没有用户，暂无合规数据。
+          暂无用户
         </div>
       ) : (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Metric label="总用户" value={stats.totalUsers} />
-            <Metric label="密码用户" value={stats.passwordUsers} hint="其余为纯第三方登录" />
+            <Metric label="密码用户" value={stats.passwordUsers} />
           </div>
           <div className="space-y-2">
             <div className="flex items-baseline justify-between text-xs">
@@ -488,9 +444,6 @@ function ComplianceCard({ stats, minScore }: { stats?: PasswordPolicyStats; minS
               </span>
             </div>
             <Progress value={stats.needChangeRate} className="h-1.5" />
-            <p className="text-[10px] text-muted-foreground">
-              含被管理员标记的强制改密，以及密码已超过有效期的用户。
-            </p>
           </div>
         </div>
       )}
@@ -575,7 +528,7 @@ function TestResultView({ result }: { result: PasswordPolicyTestResult }) {
         </div>
         {/* 破解时长比分数更能让人理解「这个密码到底有多弱」 */}
         <div className="col-span-2 rounded-lg bg-card px-2.5 py-1.5">
-          <span className="text-muted-foreground">离线破解（bcrypt 量级）约需 </span>
+          <span className="text-muted-foreground">离线破解约需 </span>
           <span className="font-mono">{analysis?.crackTime ?? "—"}</span>
         </div>
       </div>

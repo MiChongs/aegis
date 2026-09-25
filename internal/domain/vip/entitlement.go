@@ -27,6 +27,7 @@ const (
 	SourceWallet       = ChannelWallet
 	SourcePaymentOrder = ChannelPaymentOrder
 	SourceAdminGrant   = ChannelAdminGrant
+	SourceCardKey      = ChannelCardKey
 )
 
 // 试用资格判据。客户端按 reason 分支，不要匹配 message —— 后者会随文案调整变化。
@@ -142,8 +143,9 @@ type Entitlement struct {
 	ExpireAt         *time.Time `json:"expireAt,omitempty"`
 	RemainingSeconds int64      `json:"remainingSeconds"`
 	RemainingDays    int        `json:"remainingDays"`
-	// Features 当前生效的功能标识（尚未到期的开通记录的并集，见 EvalInput.Features）。
-	// 不是会员时恒为空数组 —— 过期用户的功能快照仍在账本里，但权益已经不在了。
+	// Features 当前生效的功能标识：仍生效的各段按套餐**当前**配置取并集，
+	// 再与启用中的功能目录取交集（见 resolveFeatures）。
+	// 不是会员时恒为空数组 —— 过期用户的开通记录仍在账本里，但权益已经不在了。
 	Features   []string    `json:"features"`
 	Trial      *TrialState `json:"trial,omitempty"`
 	TrialOffer TrialOffer  `json:"trialOffer"`
@@ -152,9 +154,12 @@ type Entitlement struct {
 // EvalInput 判定所需的全部事实，由仓储一次查询取齐。
 type EvalInput struct {
 	ExpireAt *time.Time
-	// LastChannel / LastPlanName 最近一条 vip_transactions 的渠道与套餐名
-	LastChannel  string
-	LastPlanName string
+	// Segments 尚未结束、未被作废的各段会员期（含所引用套餐的当前配置）。
+	// 「当前套餐」「会员来源」取最近开通的那段，功能取各段的并集。
+	Segments []Segment
+	// FeatureCatalog 本应用**启用中**的功能标识。功能权益只在这个集合里取，
+	// 停用 / 删除一个标识即对所有人同时生效。
+	FeatureCatalog []string
 	// Claim 该用户在本应用的试用领取记录，没领过为 nil
 	Claim *TrialClaim
 	// TrialPlan 当前启用中的试用套餐，未配置为 nil
@@ -163,28 +168,32 @@ type EvalInput struct {
 	DeviceClaimed bool
 	// DeviceMissing 开启了设备去重，但这次请求没带设备标识
 	DeviceMissing bool
-	// Features 尚未到期的开通记录携带的功能标识并集。
-	//
-	// 取并集而不是"最近一次开通的那份"：会员期是顺延的，先买基础版再买高级版时
-	// 两段都还没到期，用户理所当然认为两边的功能现在都能用。已经用完的那几段
-	// （expire_after 已过）自然落在集合之外，权益随时间自己收敛。
-	Features []string
 }
 
 // Evaluate 判定会员权益。纯函数：同样的输入永远得到同样的结论。
+//
+// 功能取**仍生效的各段的并集**而不是"最近一次开通的那份"：会员期是顺延的，
+// 先买基础版再买高级版时两段都还没结束，用户理所当然认为两边的功能现在都能用；
+// 反过来先买高级版再买基础版（降级），高级版那段用完就自然出局，只剩基础版。
 func Evaluate(in EvalInput, now time.Time) Entitlement {
 	entitlement := Entitlement{Source: SourceNone, ExpireAt: in.ExpireAt, Features: []string{}}
 
+	var current *Segment
 	if in.ExpireAt != nil && in.ExpireAt.After(now) {
 		remaining := in.ExpireAt.Sub(now)
+		live := liveSegments(in.Segments, now)
 		entitlement.IsVIP = true
-		entitlement.Features = NormalizeFeatureTags(in.Features)
+		entitlement.Features = resolveFeatures(live, in.FeatureCatalog)
 		entitlement.RemainingSeconds = int64(remaining.Seconds())
 		// 天数沿用旧口径（向下取整）：控制台与客户端上已有的"还剩 N 天"都是这么算的，
 		// 精确到秒的需求由 remainingSeconds 满足。
 		entitlement.RemainingDays = int(remaining.Hours() / 24)
-		entitlement.PlanName = in.LastPlanName
-		entitlement.Source = normalizeSource(in.LastChannel)
+		// 是会员却找不到任何一段仍生效的开通：老系统直接写进 users 的到期时间就是这样
+		entitlement.Source = SourceUnknown
+		if current = latestSegment(live); current != nil {
+			entitlement.Source = normalizeSource(current.Channel)
+			entitlement.PlanName = current.EffectivePlanName()
+		}
 	}
 
 	if in.Claim != nil {
@@ -201,13 +210,18 @@ func Evaluate(in EvalInput, now time.Time) Entitlement {
 		}
 		entitlement.Trial = state
 
-		// 「当前这段会员期是不是试用给的」= 到期时间恰好就是试用发到的那一刻。
-		// 用户后来买了付费，到期时间被推远，这里自然不再相等 ——
+		// 「当前这段会员期是不是试用给的」有两种说法，任一成立即是：
+		//   1. 到期时间恰好就是试用发到的那一刻（之后没有任何开通把它推远）；
+		//   2. 最近一段仍生效的开通就是试用 —— 被扣减过天数后 1 不再成立，2 仍成立。
+		// 用户后来买了付费，到期时间被推远、最近一段也换成了付费那段，两者同时失效 ——
 		// 不需要任何状态迁移，也不会出现"买了付费还显示试用中"。
-		if entitlement.IsVIP && state.Active && in.ExpireAt.Equal(in.Claim.TrialEndsAt) {
+		currentIsTrial := current != nil && current.Channel == ChannelTrial
+		if entitlement.IsVIP && state.Active && (in.ExpireAt.Equal(in.Claim.TrialEndsAt) || currentIsTrial) {
 			entitlement.IsTrial = true
 			entitlement.Source = SourceTrial
-			entitlement.PlanName = in.Claim.PlanName
+			if !currentIsTrial {
+				entitlement.PlanName = in.Claim.PlanName
+			}
 		}
 	}
 
@@ -249,7 +263,7 @@ func evaluateTrialOffer(in EvalInput, entitlement Entitlement) TrialOffer {
 // normalizeSource 把账本里的渠道翻成会员来源，未登记的渠道一律算"说不清"。
 func normalizeSource(channel string) string {
 	switch channel {
-	case ChannelTrial, ChannelWallet, ChannelPaymentOrder, ChannelAdminGrant:
+	case ChannelTrial, ChannelWallet, ChannelPaymentOrder, ChannelAdminGrant, ChannelCardKey:
 		return channel
 	default:
 		return SourceUnknown

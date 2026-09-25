@@ -206,9 +206,7 @@ export function PayResultView() {
             <Alert>
               <TriangleAlert aria-hidden />
               <AlertTitle>缺少回跳参数</AlertTitle>
-              <AlertDescription>
-                这个地址由支付渠道跳转时生成。请回到应用内查看订单状态。
-              </AlertDescription>
+              <AlertDescription>请回到应用内查看订单状态</AlertDescription>
             </Alert>
           ) : null}
 
@@ -230,10 +228,7 @@ export function PayResultView() {
                 刷新订单状态
               </Button>
               {gaveUp ? (
-                <p className="text-center text-xs leading-5 text-muted-foreground">
-                  已等待约 2 分钟仍未收到到账通知。若确认已扣款，回到应用查看订单或联系客服，
-                  重复支付不会加快到账。
-                </p>
+                <p className="text-center text-xs leading-5 text-muted-foreground">若已扣款，请勿重复支付</p>
               ) : null}
             </CardFooter>
           </>
@@ -343,7 +338,7 @@ function CopyableOrderNo({ value }: { value: string }) {
       toast.success("订单号已复制");
       setTimeout(() => setCopied(false), 2_000);
     } catch {
-      toast.error("复制失败，请手动选中订单号");
+      toast.error("复制失败");
     }
   }
 
@@ -446,8 +441,7 @@ function resolveTone({
     return {
       ...failed,
       key: "error",
-      title: "无法确认支付结果",
-      description: "没能从服务端取到这笔订单的状态，稍后重试或回到应用查看。"
+      title: "无法确认支付结果"
     };
   }
   if (fetched.status === "loading") {
@@ -459,8 +453,7 @@ function resolveTone({
       ringClass: "ring-muted/50",
       badgeVariant: "secondary",
       badgeLabel: "查询中",
-      title: "正在查询订单",
-      description: "正在向服务端确认这笔交易的状态。"
+      title: "正在查询订单"
     };
   }
 
@@ -475,7 +468,7 @@ function resolveTone({
         badgeVariant: "success",
         badgeLabel: "已支付",
         title: "支付成功",
-        description: "款项已确认到账，可以关闭本页回到应用。"
+        description: "款项已到账，可关闭本页"
       };
     case "expired":
       return {
@@ -487,7 +480,7 @@ function resolveTone({
         badgeVariant: "warning",
         badgeLabel: "已关闭",
         title: "订单已过期",
-        description: "这笔订单超过有效期已自动关闭，请回到应用重新发起支付。"
+        description: "请回到应用重新支付"
       };
     case "failed":
       return {
@@ -495,7 +488,7 @@ function resolveTone({
         key: "failed",
         badgeLabel: "已失败",
         title: "支付失败",
-        description: "渠道未能完成这笔交易，请回到应用重新发起支付。"
+        description: "请回到应用重新支付"
       };
     default:
       return gaveUp
@@ -508,7 +501,7 @@ function resolveTone({
             badgeVariant: "warning",
             badgeLabel: "待确认",
             title: "还没等到到账通知",
-            description: "渠道的通知迟迟没有到达，可以手动刷新，或回到应用查看订单。"
+            description: "可手动刷新或回到应用查看"
           }
         : {
             key: "pending",
@@ -519,7 +512,7 @@ function resolveTone({
             badgeVariant: "secondary",
             badgeLabel: "确认中",
             title: "正在确认到账",
-            description: "渠道的服务器通知通常比页面跳转晚几秒，本页会自动确认。已扣款请稍候。"
+            description: "已扣款请稍候，勿重复支付"
           };
   }
 }
@@ -529,7 +522,7 @@ export function PayResultNote() {
   return (
     <p className="flex items-start justify-center gap-1.5 px-2 text-center text-xs leading-5 text-muted-foreground">
       <ShieldCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-      <span>本页只展示订单状态，可以安全关闭。权益由服务端在收到渠道通知后发放。</span>
+      <span>本页可安全关闭</span>
     </p>
   );
 }

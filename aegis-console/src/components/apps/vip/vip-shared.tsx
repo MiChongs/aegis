@@ -20,6 +20,9 @@ const SOURCE_META: Record<VipSource, { label: string; variant: "success" | "info
   wallet: { label: "余额购买", variant: "success" },
   payment_order: { label: "在线支付", variant: "success" },
   admin_grant: { label: "管理员授予", variant: "info" },
+  card_key: { label: "卡密核销", variant: "info" },
+  // 只出现在开通记录里：扣减天数是一条负时长的账，不是一段会员期
+  admin_revoke: { label: "扣减天数", variant: "warning" },
   // 老系统迁移进来的用户：到期时间是直接写进 users 的，账本里没有对应流水。
   // 谎报成某个具体渠道比说"不知道"更糟 —— 那会让对账的人去找一笔不存在的钱。
   unknown: { label: "来源未知", variant: "secondary" }
@@ -38,14 +41,14 @@ export function VipSourceBadge({ source }: { source?: VipSource }) {
   );
 }
 
-/** 试用资格判据 → 说明 + 该怎么办 */
-export const TRIAL_REASON_META: Record<VipTrialReason, { label: string; hint: string }> = {
-  eligible: { label: "可领取", hint: "当前满足全部资格条件" },
-  not_configured: { label: "未开放", hint: "该应用没有启用中的试用套餐，客户端应当整个隐藏入口" },
-  already_claimed: { label: "已领过", hint: "试用一人一次；确需再给一次走「恢复资格」" },
-  member_active: { label: "已是会员", hint: "会员期内领试用只是把到期时间再往后推，那不是试用" },
-  device_claimed: { label: "设备已用", hint: "该套餐开了设备维度去重，这台设备已经有人领过" },
-  device_required: { label: "缺设备标识", hint: "开了设备去重，但请求没带设备标识 —— 放行等于这个开关不存在" }
+/** 试用资格判据 → 展示名 */
+export const TRIAL_REASON_META: Record<VipTrialReason, { label: string }> = {
+  eligible: { label: "可领取" },
+  not_configured: { label: "未开放" },
+  already_claimed: { label: "已领过" },
+  member_active: { label: "已是会员" },
+  device_claimed: { label: "设备已用" },
+  device_required: { label: "缺设备标识" }
 };
 
 /** 会员状态徽标：是不是会员 / 是不是试用，一眼分清 */
@@ -105,7 +108,6 @@ export function FeatureTag({
         {dangling ? (
           <>
             <p className="font-medium">未登记的功能标识</p>
-            <p className="text-[10px] text-background/70">目录里没有它，新开通的用户不会拿到这项权益</p>
           </>
         ) : (
           <>
@@ -113,7 +115,7 @@ export function FeatureTag({
             {feature?.description ? (
               <p className="max-w-56 text-[10px] text-background/70">{feature.description}</p>
             ) : null}
-            {disabled ? <p className="text-[10px] text-background/70">已停用：校验一律判不通过</p> : null}
+            {disabled ? <p className="text-[10px] text-background/70">已停用</p> : null}
           </>
         )}
       </TooltipContent>

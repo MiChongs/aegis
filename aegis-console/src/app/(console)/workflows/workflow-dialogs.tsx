@@ -39,7 +39,7 @@ export function WorkflowStartDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>启动工作流</DialogTitle>
-          <DialogDescription>创建新的工作流实例，并传入启动参数。</DialogDescription>
+          <DialogDescription>传入启动参数</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
           <div className="space-y-2">
@@ -106,7 +106,7 @@ export function WorkflowSaveTemplateDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>保存为模板</DialogTitle>
-          <DialogDescription>将当前工作流定义保存为可复用模板。</DialogDescription>
+          <DialogDescription>保存为可复用模板</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
           <div className="space-y-2">
@@ -187,7 +187,7 @@ export function WorkflowFromTemplateDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>从模板创建工作流</DialogTitle>
-          <DialogDescription>选择已有模板，快速生成新的工作流定义。</DialogDescription>
+          <DialogDescription>选择模板生成工作流</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
           <div className="space-y-2">
@@ -211,7 +211,7 @@ export function WorkflowFromTemplateDialog({
           </div>
           {selectedTemplate ? (
             <div className="rounded-2xl border border-border/80 bg-muted/40 p-3 text-sm text-muted-foreground">
-              {toText(selectedTemplate.description, "模板未填写说明。")}
+              {toText(selectedTemplate.description, "无说明")}
             </div>
           ) : null}
           <div className="space-y-2">

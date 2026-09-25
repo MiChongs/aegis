@@ -12,19 +12,19 @@ export const FENCE_MODE_META: Record<
 > = {
   deny: {
     label: "拦截",
-    description: "落在区域内的登录 / 请求将被拦截",
+    description: "区域内拦截",
     color: "#ef4444",
     badgeVariant: "danger"
   },
   allow: {
     label: "白名单",
-    description: "存在任一白名单围栏时，区域之外全部拦截",
+    description: "区域外全部拦截",
     color: "#10b981",
     badgeVariant: "success"
   },
   review: {
     label: "观察",
-    description: "仅记录命中，不拦截（用于灰度评估）",
+    description: "只记录，不拦截",
     color: "#f59e0b",
     badgeVariant: "warning"
   }

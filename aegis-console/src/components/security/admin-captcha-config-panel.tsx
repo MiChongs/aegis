@@ -76,14 +76,14 @@ export function AdminCaptchaConfigPanel() {
           dynamic: draft.dynamic
         }
       });
-      toast.success("管理员验证码配置已保存");
+      toast.success("已保存");
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "保存失败");
     }
   }
 
   if (!operator?.isSuperAdmin) {
-    return <EmptyState title="无访问权限" description="仅超级管理员可配置管理员验证码。" />;
+    return <EmptyState title="无访问权限" description="仅超级管理员可配置" />;
   }
 
   if (settingsQuery.isLoading) {
@@ -93,10 +93,7 @@ export function AdminCaptchaConfigPanel() {
   return (
     <SurfaceCard>
       <div className="space-y-5">
-        <div className="space-y-1">
-          <h2 className="text-lg font-semibold text-foreground">管理员验证码</h2>
-          <p className="text-sm text-muted-foreground">全局配置，适用于管理员登录和注册页面。</p>
-        </div>
+        <h2 className="text-lg font-semibold text-foreground">管理员验证码</h2>
 
         <div className="space-y-4">
           <Row label="启用验证码">
@@ -136,18 +133,13 @@ export function AdminCaptchaConfigPanel() {
         {/* 只在选中动态图片时出现 */}
         {draft.type === "dynamic" ? (
           <div className="space-y-3 border-t pt-5">
-            <div className="space-y-1">
-              <h3 className="text-sm font-semibold text-foreground">动态验证码外观</h3>
-              <p className="text-xs text-muted-foreground">
-                只作用于管理控制台登录页；各应用的外观在 /apps/&#123;appKey&#125; 里单独配置。
-              </p>
-            </div>
+            <h3 className="text-sm font-semibold text-foreground">动态验证码外观</h3>
             <DynamicCaptchaDesigner
               scope="platform"
               value={draft.dynamic}
               onChange={(next) => setDraft((s) => ({ ...s, dynamic: next }))}
               enabled={draft.enabled}
-              disabledHint="管理员验证码总开关当前是关的，这里调的外观不会出现在登录页上。"
+              disabledHint="验证码未启用"
             />
           </div>
         ) : null}

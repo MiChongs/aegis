@@ -91,7 +91,7 @@ function FileDetailBody({ object, onOpenChange, onMutated, canPurge, configLabel
       await navigator.clipboard.writeText(value);
       toast.success(`${label}已复制`);
     } catch {
-      toast.error("复制失败，请手动选择");
+      toast.error("复制失败");
     }
   };
 

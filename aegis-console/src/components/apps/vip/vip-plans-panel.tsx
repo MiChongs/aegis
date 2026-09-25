@@ -116,7 +116,7 @@ export function VipPlansPanel({ appKey }: { appKey: string }) {
           <p className="text-[11px] leading-snug text-muted-foreground">{plan.description}</p>
         ) : null}
 
-        <FeatureTagList tags={plan.features} catalog={features} emptyHint="不含细分权益（只是会员）" />
+        <FeatureTagList tags={plan.features} catalog={features} emptyHint="无细分权益" />
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
@@ -157,7 +157,6 @@ export function VipPlansPanel({ appKey }: { appKey: string }) {
       <SectionCard
         icon={<Crown className="size-4" />}
         title="付费套餐"
-        description="出现在客户端的购买列表里，可用余额或在线支付购买"
         aside={
           <Button size="sm" onClick={() => setEditing({ open: true, plan: null })}>
             <Plus className="size-3.5" /> 新建套餐
@@ -166,7 +165,7 @@ export function VipPlansPanel({ appKey }: { appKey: string }) {
       >
         {paidPlans.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
-            还没有付费套餐。客户端调 <code className="font-mono">/vip/plans</code> 会拿到空列表。
+            暂无付费套餐
           </p>
         ) : (
           <div className="space-y-3">{paidPlans.map(renderPlan)}</div>
@@ -176,14 +175,10 @@ export function VipPlansPanel({ appKey }: { appKey: string }) {
       <SectionCard
         icon={<Gift className="size-4" />}
         title="试用套餐"
-        description="一人一次，由「领取」入口发放；每个应用至多一个启用中的试用"
       >
         {trialPlans.length === 0 ? (
           <div className="space-y-2 rounded-xl border border-dashed border-border px-4 py-6 text-center">
-            <p className="text-xs text-muted-foreground">
-              还没有试用套餐。客户端的 <code className="font-mono">trialOffer.reason</code> 会是
-              <code className="ml-1 font-mono">not_configured</code>，试用入口应当整个隐藏。
-            </p>
+            <p className="text-xs text-muted-foreground">暂无试用套餐</p>
             <Button
               size="sm"
               variant="outline"
@@ -196,9 +191,7 @@ export function VipPlansPanel({ appKey }: { appKey: string }) {
           <div className="space-y-3">{trialPlans.map(renderPlan)}</div>
         )}
         {trialPlans.length > 1 && !activeTrial ? (
-          <p className="mt-3 text-[11px] text-muted-foreground">
-            当前没有启用中的试用套餐，试用入口对客户端不存在。
-          </p>
+          <p className="mt-3 text-[11px] text-muted-foreground">无启用中的试用套餐</p>
         ) : null}
       </SectionCard>
 
@@ -216,8 +209,7 @@ export function VipPlansPanel({ appKey }: { appKey: string }) {
           <AlertDialogHeader>
             <AlertDialogTitle>删除套餐「{pendingDelete?.name}」？</AlertDialogTitle>
             <AlertDialogDescription>
-              删除的是<b>售卖入口</b>，不影响已经开通的会员 —— 他们的时长与功能权益来自开通时的账本快照，
-              不会因为套餐消失而失效。
+              已开通的会员不受影响。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

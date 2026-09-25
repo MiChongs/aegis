@@ -156,7 +156,7 @@ export function CardKeyCodesPanel({
       await navigator.clipboard.writeText(code);
       toast.success("卡密已复制");
     } catch {
-      toast.error("复制失败，请手动选择");
+      toast.error("复制失败");
     }
   };
 
@@ -165,7 +165,6 @@ export function CardKeyCodesPanel({
       <SectionCard
         icon={<Ticket className="size-4" />}
         title="卡密"
-        description="逐张查看状态、绑定关系与设备；作废后立刻失效，已核销的卡不受影响"
       >
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Input
@@ -215,9 +214,7 @@ export function CardKeyCodesPanel({
           </div>
         ) : items.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
-            {keyword || status !== "all" || batchId
-              ? "当前筛选条件下没有卡密。"
-              : "这个应用还没有生成过卡密。"}
+            {keyword || status !== "all" || batchId ? "暂无匹配卡密" : "暂无卡密"}
           </p>
         ) : (
           <Table>
@@ -366,16 +363,14 @@ export function CardKeyCodesPanel({
           <AlertDialogHeader>
             <AlertDialogTitle>作废选中的 {selected.size} 张卡密？</AlertDialogTitle>
             <AlertDialogDescription>
-              作废后这些卡立刻失效：兑换会被拒，授权卡也登不进去。
-              <b>已核销的卡不受影响</b> —— 那笔权益已经发出去了，改它的状态只会让核销记录与卡状态自相矛盾。
-              作废是可撤销的，用「恢复」放回未使用。
+              作废后立即失效，已核销的卡不受影响。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="px-1">
             <Input
               value={reason}
               onChange={(event) => setReason(event.target.value)}
-              placeholder="作废原因（可选，会显示在卡上）"
+              placeholder="作废原因（选填）"
             />
           </div>
           <AlertDialogFooter>
@@ -420,7 +415,7 @@ function CardDevicesSheet({
     if (!card) return;
     try {
       await unbindMutation.mutateAsync({ cardId: card.id, deviceId });
-      toast.success("已解绑，名额已释放");
+      toast.success("已解绑");
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "解绑失败");
     }
@@ -442,7 +437,7 @@ function CardDevicesSheet({
             <Skeleton className="h-16 w-full" />
           ) : devices.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
-              这张卡还没有在任何设备上使用过。
+              暂无绑定设备
             </p>
           ) : (
             devices.map((device) => (

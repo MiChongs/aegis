@@ -68,25 +68,21 @@ function seedDraft(oidc?: OIDCSettings): Draft {
   };
 }
 
-function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
       <Label className="text-xs font-medium">{label}</Label>
       {children}
-      {hint && <p className="text-[10px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }
 
-function SwitchRow({ label, hint, checked, onCheckedChange }: {
-  label: string; hint?: string; checked: boolean; onCheckedChange: (v: boolean) => void;
+function SwitchRow({ label, checked, onCheckedChange }: {
+  label: string; checked: boolean; onCheckedChange: (v: boolean) => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-4 py-1">
-      <div>
-        <span className="text-xs font-medium">{label}</span>
-        {hint && <p className="text-[10px] text-muted-foreground">{hint}</p>}
-      </div>
+      <span className="text-xs font-medium">{label}</span>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>
   );
@@ -149,7 +145,7 @@ export function OIDCConfigPanel() {
       };
       if (draft.clientSecret) payload.clientSecret = draft.clientSecret;
       await updateMutation.mutateAsync({ oidc: payload as never });
-      toast.success("OIDC 配置已保存并热重载");
+      toast.success("已保存");
       patch("clientSecret", "");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "保存失败");
@@ -171,10 +167,7 @@ export function OIDCConfigPanel() {
       <Separator />
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h3 className="text-sm font-semibold">OIDC 认证配置</h3>
-          <p className="text-xs text-muted-foreground">配置 OpenID Connect 统一身份认证（仅管理员层级）</p>
-        </div>
+        <h3 className="text-sm font-semibold">OIDC 认证配置</h3>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => setDraft(seedDraft(oidc))} disabled={updateMutation.isPending}>
             <RotateCcw className="size-3.5" /> 重置
@@ -193,7 +186,7 @@ export function OIDCConfigPanel() {
             <div className="flex items-center gap-2"><Globe className="size-4 text-muted-foreground" /><span className="text-sm font-medium">提供商配置</span></div>
           </AccordionTrigger>
           <AccordionContent className="px-4 pb-4 space-y-4">
-            <SwitchRow label="启用 OIDC 认证" hint="启用后登录页显示 SSO 按钮" checked={draft.enabled} onCheckedChange={(v) => patch("enabled", v)} />
+            <SwitchRow label="启用 OIDC 认证" checked={draft.enabled} onCheckedChange={(v) => patch("enabled", v)} />
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs text-muted-foreground">快速填充：</span>
               {Object.entries(PRESETS).map(([k, v]) => (
@@ -201,13 +194,13 @@ export function OIDCConfigPanel() {
                   onClick={() => patch("issuerURL", v.issuer)}>{v.label}</Button>
               ))}
             </div>
-            <Row label="Issuer URL" hint="OIDC Discovery 端点（/.well-known/openid-configuration）"><Input value={draft.issuerURL} onChange={(e) => patch("issuerURL", e.target.value)} placeholder="https://auth.example.com/realms/master" /></Row>
+            <Row label="Issuer URL"><Input value={draft.issuerURL} onChange={(e) => patch("issuerURL", e.target.value)} placeholder="https://auth.example.com/realms/master" /></Row>
             <div className="grid gap-4 sm:grid-cols-2">
               <Row label="Client ID"><Input value={draft.clientID} onChange={(e) => patch("clientID", e.target.value)} placeholder="aegis-admin" /></Row>
-              <Row label="Client Secret" hint={oidc?.hasClientSecret ? "已设置，留空不修改" : ""}><Input type="password" value={draft.clientSecret} onChange={(e) => patch("clientSecret", e.target.value)} placeholder={oidc?.hasClientSecret ? "******（已设置）" : "输入密钥"} /></Row>
+              <Row label="Client Secret"><Input type="password" value={draft.clientSecret} onChange={(e) => patch("clientSecret", e.target.value)} placeholder={oidc?.hasClientSecret ? "留空不修改" : "输入密钥"} /></Row>
             </div>
-            <Row label="Redirect URL" hint="后端 OIDC 回调地址"><Input value={draft.redirectURL} onChange={(e) => patch("redirectURL", e.target.value)} placeholder="http://localhost:8088/api/admin/auth/oidc/callback" /></Row>
-            <Row label="前端 Callback URL" hint="OIDC 认证完成后跳转的前端地址"><Input value={draft.frontendCallbackURL} onChange={(e) => patch("frontendCallbackURL", e.target.value)} placeholder="http://localhost:3000/login/oidc-callback" /></Row>
+            <Row label="Redirect URL"><Input value={draft.redirectURL} onChange={(e) => patch("redirectURL", e.target.value)} placeholder="http://localhost:8088/api/admin/auth/oidc/callback" /></Row>
+            <Row label="前端 Callback URL"><Input value={draft.frontendCallbackURL} onChange={(e) => patch("frontendCallbackURL", e.target.value)} placeholder="http://localhost:3000/login/oidc-callback" /></Row>
           </AccordionContent>
         </AccordionItem>
 
@@ -217,7 +210,7 @@ export function OIDCConfigPanel() {
             <div className="flex items-center gap-2"><Lock className="size-4 text-muted-foreground" /><span className="text-sm font-medium">授权范围</span></div>
           </AccordionTrigger>
           <AccordionContent className="px-4 pb-4">
-            <Row label="Scopes" hint="逗号或空格分隔"><Input value={draft.scopes} onChange={(e) => patch("scopes", e.target.value)} placeholder="openid profile email" /></Row>
+            <Row label="Scopes"><Input value={draft.scopes} onChange={(e) => patch("scopes", e.target.value)} placeholder="openid profile email" /></Row>
           </AccordionContent>
         </AccordionItem>
 
@@ -227,10 +220,10 @@ export function OIDCConfigPanel() {
             <div className="flex items-center gap-2"><Users className="size-4 text-muted-foreground" /><span className="text-sm font-medium">访问控制</span></div>
           </AccordionTrigger>
           <AccordionContent className="px-4 pb-4 space-y-4">
-            <Row label="允许的邮箱域名" hint="每行一个，为空则不限制"><Textarea value={draft.allowedDomains} onChange={(e) => patch("allowedDomains", e.target.value)} placeholder="example.com" rows={3} /></Row>
+            <Row label="允许的邮箱域名"><Textarea value={draft.allowedDomains} onChange={(e) => patch("allowedDomains", e.target.value)} placeholder="每行一个，留空不限" rows={3} /></Row>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Row label="管理员组 Claim" hint="ID Token 中的 claim 字段名"><Input value={draft.adminGroupClaim} onChange={(e) => patch("adminGroupClaim", e.target.value)} placeholder="groups" /></Row>
-              <Row label="管理员组值" hint="必须匹配的 claim 值"><Input value={draft.adminGroupValue} onChange={(e) => patch("adminGroupValue", e.target.value)} placeholder="aegis-admin" /></Row>
+              <Row label="管理员组 Claim"><Input value={draft.adminGroupClaim} onChange={(e) => patch("adminGroupClaim", e.target.value)} placeholder="groups" /></Row>
+              <Row label="管理员组值"><Input value={draft.adminGroupValue} onChange={(e) => patch("adminGroupValue", e.target.value)} placeholder="aegis-admin" /></Row>
             </div>
           </AccordionContent>
         </AccordionItem>
@@ -256,7 +249,7 @@ export function OIDCConfigPanel() {
             <div className="flex items-center gap-2"><Shield className="size-4 text-muted-foreground" /><span className="text-sm font-medium">回退策略</span></div>
           </AccordionTrigger>
           <AccordionContent className="px-4 pb-4">
-            <SwitchRow label="OIDC 失败时回退本地密码" hint="启用后，OIDC 服务不可用时仍可使用本地密码登录"
+            <SwitchRow label="OIDC 失败时回退本地密码"
               checked={draft.fallbackToLocal} onCheckedChange={(v) => patch("fallbackToLocal", v)} />
           </AccordionContent>
         </AccordionItem>

@@ -50,11 +50,11 @@ const scopeLabels: Record<GeoBanScope, string> = {
 };
 
 const scopePlaceholders: Record<GeoBanScope, string> = {
-  country: "ISO 2 位代码，如 CN / US / RU",
-  region: "格式 国-省，如 CN-BJ / US-CA",
-  city: "城市名称，如 Shanghai",
-  asn: "AS 编号，如 AS15169",
-  isp: "ISP 子串匹配，如 Amazon / Alibaba"
+  country: "如 CN / US",
+  region: "如 CN-BJ",
+  city: "如 Shanghai",
+  asn: "如 AS15169",
+  isp: "如 Amazon"
 };
 
 const commonCountries = [
@@ -123,12 +123,10 @@ function fmtTime(iso?: string | null) {
 function FormField({
   label,
   required,
-  hint,
   children
 }: {
   label: string;
   required?: boolean;
-  hint?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -138,7 +136,6 @@ function FormField({
           {label}
           {required && <span className="ml-1 text-destructive">*</span>}
         </Label>
-        {hint && <span className="text-[10.5px] text-muted-foreground/80 truncate">{hint}</span>}
       </div>
       {children}
     </div>
@@ -243,11 +240,8 @@ export function GeoBanPanel() {
                     {countryCount > 0 && <>（{countryCount} 个国家）</>}
                   </>
                 ) : (
-                  <>暂无生效中的地域封禁规则</>
+                  <>暂无生效规则</>
                 )}
-                <span className="ml-2 border-l border-border pl-2 text-muted-foreground/80">
-                  优先级：<span className="font-medium text-foreground">IP 精确封禁</span> → 地域规则
-                </span>
               </span>
             </div>
           </div>
@@ -274,7 +268,6 @@ export function GeoBanPanel() {
           <div className="space-y-3">
             <EmptyState
               title="暂无地域封禁规则"
-              description="添加规则可按国家、省份、城市、ASN 或 ISP 封禁整片网络来源"
             />
             <div className="flex justify-center">
               <Button size="sm" onClick={openCreate}><Plus className="size-3.5" />新增规则</Button>
@@ -393,7 +386,7 @@ export function GeoBanPanel() {
                   {editing ? "编辑地域封禁" : "新增地域封禁"}
                 </DialogTitle>
                 <DialogDescription className="text-xs leading-relaxed">
-                  按国家、省份、城市、ASN 或 ISP 封禁整片网络来源；IP 精确封禁优先生效
+                  按地域或网络来源封禁
                 </DialogDescription>
               </div>
             </DialogHeader>
@@ -438,7 +431,7 @@ export function GeoBanPanel() {
                   </FormField>
                 </div>
 
-                <FormField label="作用域值" required hint={scopePlaceholders[scopeType]}>
+                <FormField label="作用域值" required>
                   <Input
                     className="h-9 font-mono text-sm"
                     value={scopeValue}
@@ -493,15 +486,12 @@ export function GeoBanPanel() {
                     className="h-9 text-sm"
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
-                    placeholder="可选，将写入审计日志"
+                    placeholder="可选"
                   />
                 </FormField>
 
                 <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border bg-muted/40 px-3 py-2.5">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-[12px] font-medium">立即启用</span>
-                    <span className="text-[10.5px] text-muted-foreground">关闭后可保留规则但不参与匹配</span>
-                  </div>
+                  <span className="text-[12px] font-medium">立即启用</span>
                   <Switch checked={enabled} onCheckedChange={setEnabled} />
                 </label>
               </div>

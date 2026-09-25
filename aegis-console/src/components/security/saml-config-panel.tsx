@@ -70,10 +70,10 @@ type Draft = {
 
 /** NameID 格式：SAML 规范里这几个是 IdP 侧真正常见的取值 */
 const NAMEID_FORMATS: Array<{ value: string; label: string }> = [
-  { value: "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified", label: "unspecified（默认，兼容性最好）" },
+  { value: "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified", label: "unspecified（默认）" },
   { value: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress", label: "emailAddress（邮箱）" },
-  { value: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent", label: "persistent（IdP 侧稳定标识）" },
-  { value: "urn:oasis:names:tc:SAML:2.0:nameid-format:transient", label: "transient（一次性标识）" }
+  { value: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent", label: "persistent（持久）" },
+  { value: "urn:oasis:names:tc:SAML:2.0:nameid-format:transient", label: "transient（一次性）" }
 ];
 
 function seedDraft(saml?: SAMLSettings): Draft {
@@ -115,21 +115,16 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
 
 function SwitchRow({
   label,
-  hint,
   checked,
   onCheckedChange
 }: {
   label: string;
-  hint?: string;
   checked: boolean;
   onCheckedChange: (v: boolean) => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-4 py-1">
-      <div>
-        <span className="text-xs font-medium">{label}</span>
-        {hint && <p className="text-[10px] text-muted-foreground">{hint}</p>}
-      </div>
+      <span className="text-xs font-medium">{label}</span>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>
   );
@@ -154,7 +149,7 @@ export function SAMLConfigPanel() {
   async function handleTest() {
     if (!token) return;
     if (!draft.idpMetadataURL.trim() && !draft.idpMetadataXML.trim()) {
-      toast.error("请填写 IdP 元数据 URL 或粘贴元数据 XML");
+      toast.error("请填写元数据 URL 或 XML");
       return;
     }
     setTesting(true);
@@ -205,7 +200,7 @@ export function SAMLConfigPanel() {
       if (draft.idpMetadataXML.trim()) payload.idpMetadataXML = draft.idpMetadataXML.trim();
       if (draft.spPrivateKey.trim()) payload.spPrivateKey = draft.spPrivateKey.trim();
       await updateMutation.mutateAsync({ saml: payload as never });
-      toast.success("SAML 配置已保存并热重载");
+      toast.success("已保存");
       // 清空草稿：重新从服务端派生，密钥/XML 输入框回到空白（两者都不回显）
       setLocalDraft(null);
     } catch (e) {
@@ -219,7 +214,7 @@ export function SAMLConfigPanel() {
       await navigator.clipboard.writeText(value);
       toast.success(`${label}已复制`);
     } catch {
-      toast.error("复制失败，请手动选择");
+      toast.error("复制失败");
     }
   }
 
@@ -248,12 +243,7 @@ export function SAMLConfigPanel() {
       <Separator />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold">SAML 2.0 认证配置</h3>
-          <p className="text-xs text-muted-foreground">
-            配置管理员单点登录（仅管理员层级；应用用户的第三方登录在「应用 → 第三方登录」）
-          </p>
-        </div>
+        <h3 className="text-sm font-semibold">SAML 2.0 认证配置</h3>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => setLocalDraft(null)} disabled={updateMutation.isPending}>
             <RotateCcw className="size-3.5" /> 重置
@@ -276,34 +266,26 @@ export function SAMLConfigPanel() {
           <AccordionContent className="space-y-4 px-4 pb-4">
             <SwitchRow
               label="启用 SAML 认证"
-              hint="启用后登录页显示 SAML SSO 按钮"
               checked={draft.enabled}
               onCheckedChange={(v) => patch("enabled", v)}
             />
-            <Row label="IdP 元数据 URL" hint="填 URL 时服务端会定期拉取；与下方 XML 二选一">
+            <Row label="IdP 元数据 URL" hint="与 XML 二选一">
               <Input
                 value={draft.idpMetadataURL}
                 onChange={(e) => patch("idpMetadataURL", e.target.value)}
                 placeholder="https://idp.example.com/app/exk.../sso/saml/metadata"
               />
             </Row>
-            <Row
-              label="IdP 元数据 XML"
-              hint={
-                saml?.hasIdpMetadataXML
-                  ? "已保存 XML，留空表示不修改。IdP 不提供公开元数据 URL 时用这里粘贴。"
-                  : "IdP 不提供公开元数据 URL 时，把 XML 全文粘在这里"
-              }
-            >
+            <Row label="IdP 元数据 XML">
               <Textarea
                 value={draft.idpMetadataXML}
                 onChange={(e) => patch("idpMetadataXML", e.target.value)}
                 rows={5}
                 className="font-mono text-[10px]"
-                placeholder={saml?.hasIdpMetadataXML ? "******（已保存，留空不修改）" : "<EntityDescriptor ...>"}
+                placeholder={saml?.hasIdpMetadataXML ? "留空不修改" : "<EntityDescriptor ...>"}
               />
             </Row>
-            <Row label="NameID 格式" hint="必须与 IdP 侧配置一致，否则断言里取不到账号">
+            <Row label="NameID 格式" hint="须与 IdP 一致">
               <Select value={draft.nameIDFormat} onValueChange={(v) => patch("nameIDFormat", v)}>
                 <SelectTrigger>
                   <SelectValue placeholder="选择 NameID 格式" />
@@ -322,15 +304,11 @@ export function SAMLConfigPanel() {
           <AccordionTrigger className="px-4 py-3 hover:no-underline">
             <div className="flex items-center gap-2">
               <Fingerprint className="size-4 text-muted-foreground" />
-              <span className="text-sm font-medium">服务提供方（SP，即本平台）</span>
+              <span className="text-sm font-medium">服务提供方（SP）</span>
             </div>
           </AccordionTrigger>
           <AccordionContent className="space-y-4 px-4 pb-4">
-            <div className="rounded-lg bg-muted p-3 text-[10px] leading-relaxed text-muted-foreground">
-              下面三项要填进 IdP 的应用配置里。留空时后端会按 ACS / 元数据地址互相推导
-              （<code className="font-mono">/callback</code> ↔ <code className="font-mono">/metadata</code>），Entity ID 默认取元数据地址。
-            </div>
-            <Row label="Entity ID" hint="本平台的 SAML 实体标识">
+            <Row label="Entity ID">
               <div className="flex gap-2">
                 <Input value={draft.entityID} onChange={(e) => patch("entityID", e.target.value)} placeholder="http://localhost:8088/api/admin/auth/saml/metadata" />
                 <Button variant="outline" size="sm" onClick={() => copy(draft.entityID, "Entity ID")} disabled={!draft.entityID}>
@@ -338,7 +316,7 @@ export function SAMLConfigPanel() {
                 </Button>
               </div>
             </Row>
-            <Row label="ACS URL" hint="断言消费地址，IdP 认证后 POST 到这里">
+            <Row label="ACS URL">
               <div className="flex gap-2">
                 <Input value={draft.acsURL} onChange={(e) => patch("acsURL", e.target.value)} placeholder="http://localhost:8088/api/admin/auth/saml/callback" />
                 <Button variant="outline" size="sm" onClick={() => copy(draft.acsURL, "ACS URL")} disabled={!draft.acsURL}>
@@ -346,7 +324,7 @@ export function SAMLConfigPanel() {
                 </Button>
               </div>
             </Row>
-            <Row label="SP 元数据 URL" hint="供 IdP 反向拉取本平台元数据">
+            <Row label="SP 元数据 URL">
               <div className="flex gap-2">
                 <Input value={draft.metadataURL} onChange={(e) => patch("metadataURL", e.target.value)} placeholder="http://localhost:8088/api/admin/auth/saml/metadata" />
                 <Button variant="outline" size="sm" onClick={() => copy(draft.metadataURL, "元数据 URL")} disabled={!draft.metadataURL}>
@@ -354,7 +332,7 @@ export function SAMLConfigPanel() {
                 </Button>
               </div>
             </Row>
-            <Row label="前端 Callback URL" hint="SAML 认证完成后跳转的控制台地址">
+            <Row label="前端 Callback URL">
               <Input
                 value={draft.frontendCallbackURL}
                 onChange={(e) => patch("frontendCallbackURL", e.target.value)}
@@ -374,28 +352,25 @@ export function SAMLConfigPanel() {
           <AccordionContent className="space-y-4 px-4 pb-4">
             <SwitchRow
               label="签名 AuthnRequest"
-              hint="开启后必须同时配好 SP 证书与私钥，否则 IdP 会拒绝请求"
               checked={draft.signAuthnRequests}
               onCheckedChange={(v) => patch("signAuthnRequests", v)}
             />
             <SwitchRow
               label="强制重新认证（ForceAuthn）"
-              hint="每次登录都要求 IdP 重新验证身份，忽略 IdP 侧已有会话"
               checked={draft.forceAuthn}
               onCheckedChange={(v) => patch("forceAuthn", v)}
             />
             <SwitchRow
               label="允许 IdP 发起的登录"
-              hint="允许从 IdP 门户直接进入控制台（无 SP 侧 AuthnRequest）"
               checked={draft.allowIdpInitiated}
               onCheckedChange={(v) => patch("allowIdpInitiated", v)}
             />
             {draft.signAuthnRequests && !draft.spCertificate.trim() && !saml?.hasSpPrivateKey ? (
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[10px] text-amber-700 dark:text-amber-400">
-                已开启签名但尚未配置 SP 证书与私钥，保存后 SAML 登录会失败。
+                未配置 SP 证书与私钥
               </div>
             ) : null}
-            <Row label="SP 证书（PEM）" hint="公钥证书，同时提供给 IdP 验签">
+            <Row label="SP 证书（PEM）">
               <Textarea
                 value={draft.spCertificate}
                 onChange={(e) => patch("spCertificate", e.target.value)}
@@ -404,16 +379,13 @@ export function SAMLConfigPanel() {
                 placeholder="-----BEGIN CERTIFICATE-----"
               />
             </Row>
-            <Row
-              label="SP 私钥（PEM）"
-              hint={saml?.hasSpPrivateKey ? "已设置（AES-GCM 加密存储），留空不修改" : "AES-GCM 加密存储，永不回显"}
-            >
+            <Row label="SP 私钥（PEM）">
               <Textarea
                 value={draft.spPrivateKey}
                 onChange={(e) => patch("spPrivateKey", e.target.value)}
                 rows={4}
                 className="font-mono text-[10px]"
-                placeholder={saml?.hasSpPrivateKey ? "******（已设置，留空不修改）" : "-----BEGIN PRIVATE KEY-----"}
+                placeholder={saml?.hasSpPrivateKey ? "留空不修改" : "-----BEGIN PRIVATE KEY-----"}
               />
             </Row>
           </AccordionContent>
@@ -427,19 +399,19 @@ export function SAMLConfigPanel() {
             </div>
           </AccordionTrigger>
           <AccordionContent className="space-y-4 px-4 pb-4">
-            <Row label="允许的邮箱域名" hint="每行一个，为空则不限制">
+            <Row label="允许的邮箱域名">
               <Textarea
                 value={draft.allowedDomains}
                 onChange={(e) => patch("allowedDomains", e.target.value)}
                 rows={3}
-                placeholder="example.com"
+                placeholder="每行一个，留空不限"
               />
             </Row>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Row label="管理员组属性名" hint="断言中承载组信息的属性">
+              <Row label="管理员组属性名">
                 <Input value={draft.adminGroupAttribute} onChange={(e) => patch("adminGroupAttribute", e.target.value)} placeholder="groups" />
               </Row>
-              <Row label="管理员组值" hint="必须匹配的属性值">
+              <Row label="管理员组值">
                 <Input value={draft.adminGroupValue} onChange={(e) => patch("adminGroupValue", e.target.value)} placeholder="aegis-admin" />
               </Row>
             </div>
@@ -474,7 +446,6 @@ export function SAMLConfigPanel() {
           <AccordionContent className="px-4 pb-4">
             <SwitchRow
               label="SAML 失败时回退本地密码"
-              hint="关闭后 IdP 不可用将没有任何登录入口 —— 除非你确实需要强制 SSO，否则保持开启"
               checked={draft.fallbackToLocal}
               onCheckedChange={(v) => patch("fallbackToLocal", v)}
             />
@@ -493,9 +464,6 @@ export function SAMLConfigPanel() {
               {testing ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
               解析 IdP 元数据
             </Button>
-            <p className="text-[10px] text-muted-foreground">
-              用当前表单里的 URL / XML 解析，不依赖已保存的配置 —— 保存前就能确认 IdP 侧填对了。
-            </p>
             {(testing || testResult) && (
               <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
                 <div className="flex items-center gap-2 text-xs">

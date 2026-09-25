@@ -62,7 +62,7 @@ export function BannerPreview({ items, slot }: { items: BannerItem[]; slot: stri
         className="flex items-center justify-center rounded-xl border border-dashed bg-muted/30 text-sm text-muted-foreground"
         style={{ aspectRatio: meta.aspect, maxHeight: 260 }}
       >
-        {meta.label}当前没有生效的素材
+        暂无投放中素材
       </div>
     );
   }

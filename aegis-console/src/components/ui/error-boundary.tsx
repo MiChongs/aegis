@@ -60,7 +60,7 @@ export function ErrorFallback({
 }: FallbackUIProps) {
   const message = error instanceof Error ? error.message : String(error ?? "未知错误");
   const defaultTitle = title ?? (variant === "full" ? "页面出错了" : "加载失败");
-  const defaultDescription = description ?? "已被错误边界捕获，不影响其它模块。你可以重试，或稍后再试。";
+  const defaultDescription = description;
 
   const copyDiagnostics = async () => {
     try {
@@ -111,7 +111,7 @@ export function ErrorFallback({
         </div>
         <div className="space-y-1">
           <div className="text-sm font-semibold text-foreground">{defaultTitle}</div>
-          <p className="text-xs text-muted-foreground">{defaultDescription}</p>
+          {defaultDescription ? <p className="text-xs text-muted-foreground">{defaultDescription}</p> : null}
         </div>
         {message ? (
           <pre className="mt-1 max-h-32 w-full overflow-auto rounded-md border bg-muted/40 px-3 py-2 text-left text-[11px] font-mono leading-5 text-muted-foreground whitespace-pre-wrap break-words">

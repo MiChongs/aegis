@@ -209,7 +209,7 @@ export function PaymentConfigForm({
                 )}
               </div>
               <SheetDescription className="line-clamp-2 text-[11px] leading-relaxed">
-                {meta?.description || (isEdit ? "调整该渠道的接入参数与启用状态" : "填写商户凭据后即可接入")}
+                {meta?.description || ""}
               </SheetDescription>
             </div>
           </div>
@@ -248,9 +248,6 @@ export function PaymentConfigForm({
                     value={form.configName}
                     onChange={(e) => set("configName", e.target.value)}
                   />
-                  <p className="text-[11px] leading-relaxed text-muted-foreground">
-                    同一渠道可建多套配置，下单时按名称选取
-                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">描述</Label>
@@ -260,19 +257,16 @@ export function PaymentConfigForm({
                     value={form.description}
                     onChange={(e) => set("description", e.target.value)}
                   />
-                  <p className="text-[11px] leading-relaxed text-muted-foreground">仅在控制台展示，便于区分多套配置</p>
                 </div>
               </div>
               <div className="grid gap-3 @xl/form:grid-cols-2">
                 <ToggleField
                   label="启用该渠道"
-                  hint="停用后用户端不再可见"
                   checked={form.enabled}
                   onChange={(v) => set("enabled", v)}
                 />
                 <ToggleField
                   label="设为默认配置"
-                  hint="下单未指定配置名时使用"
                   checked={form.isDefault}
                   onChange={(v) => set("isDefault", v)}
                 />
@@ -328,7 +322,7 @@ export function PaymentConfigForm({
             <AlertDialogHeader>
               <AlertDialogTitle>删除配置「{form.configName || "—"}」？</AlertDialogTitle>
               <AlertDialogDescription>
-                删除后该配置立即从下单可选项中消失，已产生的订单与退款记录保留。商户凭据不可恢复，需要时请重新填写。
+                删除后不可再用于下单，凭据不可恢复。
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -371,7 +365,7 @@ function TestResultPanel({ result, onDismiss }: { result: Record<string, unknown
           <XCircle className="size-4 shrink-0 text-amber-500" />
         )}
         <span className="text-xs font-medium">
-          {ok ? "连通正常，凭据有效" : configValid ? "配置格式有效，但上游不可达" : "配置校验未通过"}
+          {ok ? "连通正常" : configValid ? "上游不可达" : "配置校验未通过"}
         </span>
         <Button
           type="button"
@@ -414,12 +408,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function ToggleField({
   label,
-  hint,
   checked,
   onChange
 }: {
   label: string;
-  hint?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
@@ -428,7 +420,6 @@ function ToggleField({
       <Switch checked={checked} onCheckedChange={onChange} className="mt-0.5 shrink-0" />
       <span className="min-w-0 space-y-0.5">
         <span className="block text-xs">{label}</span>
-        {hint && <span className="block text-[11px] leading-relaxed text-muted-foreground">{hint}</span>}
       </span>
     </label>
   );

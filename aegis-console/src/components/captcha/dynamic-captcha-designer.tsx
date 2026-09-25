@@ -35,9 +35,9 @@ type Props = {
 };
 
 const MODE_OPTIONS = [
-  { value: "alnum", label: "字母 + 数字", hint: "可选空间最大" },
-  { value: "alpha", label: "纯字母", hint: "适合语音播报场景" },
-  { value: "digit", label: "纯数字", hint: "键盘友好，可选空间最小" }
+  { value: "alnum", label: "字母 + 数字" },
+  { value: "alpha", label: "纯字母" },
+  { value: "digit", label: "纯数字" }
 ] as const;
 
 /** 预设：一次给一整套自洽参数 */
@@ -57,7 +57,7 @@ const PRESETS: Array<{ key: string; label: string; hint: string; value: CaptchaD
   {
     key: "strong",
     label: "强对抗",
-    hint: "字符更多、干扰更密，识别更难",
+    hint: "字符多、干扰密",
     value: { length: 6, width: 300, height: 96, frames: 18, frameDelayMs: 70, mode: "alnum", noise: 78, wobble: 80 }
   },
   {
@@ -133,7 +133,7 @@ export function DynamicCaptchaDesigner({ value, onChange, scope, appKey, enabled
       {!enabled ? (
         <div className="flex items-start gap-2.5 rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <span>{disabledHint ?? "动态验证码当前未启用，这里的调整不会有人看到。"}</span>
+          <span>{disabledHint ?? "动态验证码未启用"}</span>
         </div>
       ) : null}
 
@@ -193,7 +193,6 @@ export function DynamicCaptchaDesigner({ value, onChange, scope, appKey, enabled
               min={3}
               max={8}
               suffix=" 位"
-              hint={value.length <= 4 ? "好认，可猜空间小" : value.length >= 7 ? "更难猜，输入更长" : "常规选择"}
               onChange={(next) => patch({ length: next })}
             />
             <SliderField
@@ -220,7 +219,6 @@ export function DynamicCaptchaDesigner({ value, onChange, scope, appKey, enabled
               min={4}
               max={40}
               suffix=" 帧"
-              hint="帧越多越流畅，体积越大"
               onChange={(next) => patch({ frames: next })}
             />
             <SliderField
@@ -242,7 +240,6 @@ export function DynamicCaptchaDesigner({ value, onChange, scope, appKey, enabled
               max={640}
               step={10}
               suffix=" px"
-              hint={`当前 ${value.width} × ${value.height}`}
               onChange={(next) => patch({ width: next })}
             />
             <SliderField
@@ -252,7 +249,6 @@ export function DynamicCaptchaDesigner({ value, onChange, scope, appKey, enabled
               max={240}
               step={4}
               suffix=" px"
-              hint="过矮会让字形挤在一起"
               onChange={(next) => patch({ height: next })}
             />
             <div className="space-y-2">
@@ -271,9 +267,6 @@ export function DynamicCaptchaDesigner({ value, onChange, scope, appKey, enabled
                   </ToggleGroupItem>
                 ))}
               </ToggleGroup>
-              <p className="text-[11px] text-muted-foreground">
-                {MODE_OPTIONS.find((option) => option.value === value.mode)?.hint ?? "已剔除易混字符"}
-              </p>
             </div>
           </div>
 
@@ -354,9 +347,7 @@ function PreviewPane({
             <Metric label={formatBytes(preview.byteSize)} tone={preview.byteSize > 150_000 ? "warn" : "muted"} />
           </div>
           {preview.byteSize > 150_000 ? (
-            <p className="text-[11px] text-amber-700 dark:text-amber-300">
-              体积偏大，弱网加载慢，可减少帧数或缩小画布。
-            </p>
+            <p className="text-[11px] text-amber-700 dark:text-amber-300">体积偏大</p>
           ) : null}
         </div>
       ) : null}
@@ -429,18 +420,18 @@ function SliderField({
 // ── 文案与格式化 ──
 
 function describeNoise(value: number) {
-  if (value === 0) return "无噪点与干扰线";
-  if (value < 25) return "少量噪点";
+  if (value === 0) return "无";
+  if (value < 25) return "少量";
   if (value < 60) return "适中";
   if (value < 85) return "偏强";
-  return "很强，建议配合较大画布";
+  return "很强";
 }
 
 function describeWobble(value: number) {
-  if (value === 0) return "字形不动，仅逐帧变色";
-  if (value < 30) return "轻微浮动";
+  if (value === 0) return "静止";
+  if (value < 30) return "轻微";
   if (value < 65) return "适中";
-  return "很强，辨识度下降";
+  return "很强";
 }
 
 function formatDuration(ms: number) {

@@ -59,7 +59,6 @@ export function CardKeyRedemptionsPanel({ appKey }: { appKey: string }) {
     <SectionCard
       icon={<ReceiptText className="size-4" />}
       title="核销记录"
-      description="谁在什么时候用了哪张卡，以及实际发放的结果"
     >
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input
@@ -100,7 +99,7 @@ export function CardKeyRedemptionsPanel({ appKey }: { appKey: string }) {
         </div>
       ) : items.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
-          {keyword || batchId ? "当前筛选条件下没有核销记录。" : "还没有人使用过卡密。"}
+          {keyword || batchId ? "暂无匹配记录" : "暂无核销记录"}
         </p>
       ) : (
         <Table>
@@ -125,7 +124,7 @@ export function CardKeyRedemptionsPanel({ appKey }: { appKey: string }) {
                 <TableCell className="text-xs">{item.account || `#${item.userId}`}</TableCell>
                 <TableCell>
                   {item.results.length === 0 ? (
-                    <span className="text-xs text-muted-foreground">无权益（仅授权）</span>
+                    <span className="text-xs text-muted-foreground">无权益</span>
                   ) : (
                     <div className="flex flex-wrap gap-1">
                       {item.results.map((result) => (

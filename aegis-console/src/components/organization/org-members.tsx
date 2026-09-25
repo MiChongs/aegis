@@ -124,7 +124,7 @@ export function OrgMembersPanel({ orgId, access }: { orgId: string; access?: Org
         {membersQuery.isLoading ? (
           <div className="py-10 text-center text-xs text-muted-foreground">加载中…</div>
         ) : members.length === 0 ? (
-          <EmptyState title="没有匹配的成员" description="调整筛选条件，或把管理员加入这个组织" />
+          <EmptyState title="暂无成员" />
         ) : (
           <div className="space-y-2">
             {members.map((m) => (
@@ -225,9 +225,6 @@ function AddMemberDialog({ orgId, tree, onClose }: { orgId: string; tree: Depart
       <DialogContent className="sm:max-w-lg">
         <DialogHeader><DialogTitle>直接添加成员</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            直接添加会跳过邀请确认，被加入者立即成为组织成员。若希望对方自行确认，请改用「邀请」。
-          </p>
           <AdminPicker orgId={orgId} selected={picked} onChange={setPicked} />
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -289,7 +286,7 @@ function InviteDialog({ orgId, tree, onClose }: { orgId: string; tree: Departmen
       const skipped = result.requested - result.created;
       toast.success(
         skipped > 0
-          ? `已发出 ${result.created} 份邀请，${skipped} 人已在组织中或已有待处理邀请`
+          ? `已发出 ${result.created} 份邀请，跳过 ${skipped} 人`
           : `已发出 ${result.created} 份邀请`,
       );
       onClose();
@@ -390,7 +387,7 @@ function MemberSheet({
         <div className="mt-4 space-y-4 px-4">
           {isOwner && (
             <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-[11px]">
-              所有者的角色不能在这里修改，需要通过「组织设置 → 转让所有权」完成。
+              所有者角色不可修改
             </p>
           )}
 
@@ -436,7 +433,7 @@ function MemberSheet({
             <Label className="text-xs font-semibold">部门归属</Label>
             <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border p-2">
               {options.length === 0 ? (
-                <p className="py-4 text-center text-[10px] text-muted-foreground">该组织还没有部门</p>
+                <p className="py-4 text-center text-[10px] text-muted-foreground">暂无部门</p>
               ) : options.map((o) => (
                 <label key={o.id} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-muted/50">
                   <input

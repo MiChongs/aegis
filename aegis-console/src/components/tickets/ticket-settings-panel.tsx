@@ -143,8 +143,7 @@ function CategoriesSection({ appId }: { appId: number }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">分类决定默认优先级、默认处理组与 SLA 策略</p>
+      <div className="flex items-center justify-end">
         <Button size="sm" onClick={openCreate}>
           <Plus className="mr-1 size-3.5" />
           新建分类
@@ -152,7 +151,7 @@ function CategoriesSection({ appId }: { appId: number }) {
       </div>
 
       {items.length === 0 ? (
-        <EmptyState title="暂无分类" description="创建分类后，提单表单才能按业务归类并自动套用 SLA。" />
+        <EmptyState title="暂无分类" />
       ) : (
         <div className="grid gap-2 md:grid-cols-2">
           {items.map((item) => (
@@ -398,10 +397,7 @@ function GroupsSection({ appId }: { appId: number }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          把「特定人员」编进处理组：组员无需全局工单权限，也能处理指派到本组的工单
-        </p>
+      <div className="flex items-center justify-end">
         <Button
           size="sm"
           onClick={() => {
@@ -416,7 +412,7 @@ function GroupsSection({ appId }: { appId: number }) {
       </div>
 
       {items.length === 0 ? (
-        <EmptyState title="暂无处理组" description="创建处理组后即可把工单指派给一组人，并按策略自动分派。" />
+        <EmptyState title="暂无处理组" />
       ) : (
         <div className="grid gap-2 md:grid-cols-2">
           {items.map((group) => (
@@ -545,9 +541,6 @@ function GroupsSection({ appId }: { appId: number }) {
                   <SelectItem value="least_open">最少待办优先</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-[11px] text-muted-foreground">
-                非手动策略下，新工单落到本组时会自动挑一名成员作为受理人
-              </p>
             </div>
             <div className="flex items-center gap-2">
               <Switch
@@ -603,9 +596,6 @@ function GroupMembersDialog({ group, onClose }: { group: TicketGroup | null; onC
         <DialogHeader>
           <DialogTitle>{group?.name} · 成员</DialogTitle>
         </DialogHeader>
-        <p className="text-xs text-muted-foreground">
-          组负责人（leader）可以处理并转派组内全部工单；普通成员只能处理指派给自己或本组的工单。
-        </p>
         <ScrollArea className="max-h-80">
           <div className="space-y-1 pr-3">
             {admins.map((admin) => {
@@ -713,10 +703,7 @@ function SLASection({ appId }: { appId: number }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          按优先级设置首响与解决时限；Worker 每分钟巡检，接近或超出时限时通过统一通知出口告警
-        </p>
+      <div className="flex items-center justify-end">
         <Button
           size="sm"
           onClick={() => {
@@ -730,7 +717,7 @@ function SLASection({ appId }: { appId: number }) {
       </div>
 
       {items.length === 0 ? (
-        <EmptyState title="暂无 SLA 策略" description="创建策略并绑定到分类，工单就会自动带上响应与解决时限。" />
+        <EmptyState title="暂无 SLA 策略" />
       ) : (
         <div className="space-y-2">
           {items.map((policy) => (
@@ -867,7 +854,7 @@ function SLASection({ appId }: { appId: number }) {
                   </div>
                 ))}
               </div>
-              <p className="text-[11px] text-muted-foreground">左侧为首次响应时限，右侧为解决时限</p>
+              <p className="text-[11px] text-muted-foreground">左首响，右解决</p>
             </div>
             <div className="flex items-center gap-3">
               <Label className="text-xs">预警阈值</Label>
@@ -880,7 +867,7 @@ function SLASection({ appId }: { appId: number }) {
                 value={form.warnRatio}
                 onChange={(event) => setForm((prev) => ({ ...prev, warnRatio: Number(event.target.value) }))}
               />
-              <span className="text-[11px] text-muted-foreground">消耗掉该比例时限后触发 SLA 预警</span>
+              <span className="text-[11px] text-muted-foreground">时限消耗比例</span>
             </div>
             <div className="space-y-2 rounded-lg border p-3">
               <div className="flex items-center gap-2">
@@ -1009,7 +996,7 @@ function QuickRepliesSection({ appId }: { appId: number }) {
       </Card>
 
       {items.length === 0 ? (
-        <EmptyState title="暂无快捷回复" description="常用话术存下来，回复工单时一键插入。" />
+        <EmptyState title="暂无快捷回复" />
       ) : (
         <div className="grid gap-2 md:grid-cols-2">
           {items.map((item) => (

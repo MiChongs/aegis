@@ -228,7 +228,7 @@ function VersionDialog({
         <DialogHeader>
           <DialogTitle>{mode === "edit" ? "编辑版本" : "创建版本"}</DialogTitle>
           <DialogDescription>
-            {mode === "edit" ? `版本 ${item?.version || item?.id}` : "填写版本信息，创建后可随时发布。"}
+            {mode === "edit" ? `版本 ${item?.version || item?.id}` : "填写版本信息"}
           </DialogDescription>
         </DialogHeader>
 
@@ -684,7 +684,7 @@ function ChannelDialog({
         <DialogHeader>
           <DialogTitle>{mode === "edit" ? "编辑渠道" : "创建渠道"}</DialogTitle>
           <DialogDescription>
-            {mode === "edit" ? `渠道 ${item?.name || item?.code}` : "多维度配置发布渠道，支持灰度分发规则。"}
+            {mode === "edit" ? `渠道 ${item?.name || item?.code}` : "配置发布渠道"}
           </DialogDescription>
         </DialogHeader>
 
@@ -828,7 +828,7 @@ function ChannelDialog({
             </AccordionTrigger>
             <AccordionContent className="px-4 pb-4 space-y-3">
               {form.rules.length === 0 && (
-                <p className="text-xs text-muted-foreground py-2">暂无规则，所有用户均可匹配此渠道。</p>
+                <p className="text-xs text-muted-foreground py-2">暂无规则</p>
               )}
               {form.rules.map((rule, i) => (
                 <RuleRow key={i} rule={rule} index={i} onChange={updateRule} onRemove={removeRule} />
@@ -836,7 +836,6 @@ function ChannelDialog({
               <Button variant="outline" size="sm" onClick={addRule} className="w-full">
                 <CirclePlus className="size-3.5 mr-1.5" />添加规则
               </Button>
-              <p className="text-[10px] text-muted-foreground">多条规则之间为 AND 关系，全部满足才匹配。</p>
             </AccordionContent>
           </AccordionItem>
 
@@ -872,7 +871,7 @@ function ChannelDialog({
               ) : (
                 <>
                   {form.audience.length === 0 && (
-                    <p className="text-xs text-muted-foreground py-2">暂无条件，不限制目标人群。</p>
+                    <p className="text-xs text-muted-foreground py-2">暂无条件</p>
                   )}
                   {form.audience.map((cond, i) => (
                     <AudienceRow key={i} cond={cond} index={i} onChange={updateAudience} onRemove={removeAudience} />
@@ -882,7 +881,6 @@ function ChannelDialog({
                   </Button>
                 </>
               )}
-              <p className="text-[10px] text-muted-foreground">多个条件之间为 AND 关系。可视化模式与 JSON 模式可互相切换。</p>
             </AccordionContent>
           </AccordionItem>
         </Accordion>
@@ -1182,13 +1180,13 @@ export default function ReleasesPage() {
   const [channelDialog, setChannelDialog] = useState<{ open: boolean; mode: "create" | "edit"; item?: VersionChannel | null }>({ open: false, mode: "create" });
 
   if (appsQuery.isLoading) {
-    return <LoadingState title="正在加载发布模块" description="正在读取版本与渠道信息。" />;
+    return <LoadingState title="正在加载发布模块" />;
   }
   if (!resolvedApp) {
     return (
       <div className="page-stack">
         <SectionHeading eyebrow="Releases" title="发布" description="当前没有可管理的应用。" />
-        <EmptyState title="暂无应用" description="请先创建应用。" />
+        <EmptyState title="暂无应用" />
       </div>
     );
   }
@@ -1268,9 +1266,9 @@ export default function ReleasesPage() {
           </div>
 
           {versionsQuery.isLoading ? (
-            <LoadingState title="加载版本" description="" />
+            <LoadingState title="加载版本" />
           ) : !versions.length ? (
-            <EmptyState title="暂无版本" description="点击「创建版本」添加第一个版本。" />
+            <EmptyState title="暂无版本" />
           ) : (
             <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
               {versions.map((v) => (
@@ -1307,7 +1305,7 @@ export default function ReleasesPage() {
           </div>
 
           {!channels.length ? (
-            <EmptyState title="暂无渠道" description="系统会自动创建默认渠道。" />
+            <EmptyState title="暂无渠道" />
           ) : (
             <div className="grid gap-3 lg:grid-cols-2">
               {channels.map((ch) => (

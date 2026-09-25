@@ -12,7 +12,6 @@ export default function NotFound() {
     <ErrorPage
       variant="notfound"
       title="找不到此页面"
-      description="您访问的路径可能已被移除、重命名，或暂不可用。请检查链接或返回控制台首页。"
       icon={<Compass className="size-6" strokeWidth={1.75} />}
       primaryAction={{
         label: "返回首页",

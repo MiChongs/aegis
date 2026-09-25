@@ -9,6 +9,7 @@ import (
 	"time"
 
 	paymentdomain "aegis/internal/domain/payment"
+	vipdomain "aegis/internal/domain/vip"
 	walletdomain "aegis/internal/domain/wallet"
 
 	"github.com/jackc/pgx/v5"
@@ -284,6 +285,12 @@ RETURNING vip_expire_at`,
 				return paymentdomain.ReversalFailed, "用户当前无会员有效期，无法回收时长"
 			}
 			return paymentdomain.ReversalFailed, "回收会员时长失败：" + err.Error()
+		}
+		// 作废这笔开通。只扣时长不作废的话，账上还有别的会员时长的用户
+		// 会一直带着退掉那个套餐的功能 —— 功能按「仍生效的各段」取并集。
+		if _, err := revokeVipSegmentForOrderTx(ctx, tx, order.AppID, userID, order.OrderNo,
+			reverse.VipDays, vipdomain.RevokeReasonRefund); err != nil {
+			return paymentdomain.ReversalFailed, "作废会员开通记录失败：" + err.Error()
 		}
 		// 赠送积分一并回收；不足则只记警告，不阻断（时长已回收成功）
 		if reverse.VipBonus > 0 {

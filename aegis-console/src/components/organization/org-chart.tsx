@@ -186,7 +186,7 @@ function DeptChart({ tree, loading }: { tree: DepartmentNode[]; loading: boolean
 
   if (loading) return <div className="py-24 text-center text-xs text-muted-foreground">加载中…</div>;
   if (nodes.length === 0) {
-    return <div className="p-6"><EmptyState title="暂无部门" description="先在「组织结构」里建立部门，这里会自动画出架构图" /></div>;
+    return <div className="p-6"><EmptyState title="暂无部门" /></div>;
   }
 
   return (
@@ -279,15 +279,14 @@ function ReportingChart({ orgId, tree }: { orgId: string; tree: DepartmentNode[]
               {options.map((o) => <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>)}
             </SelectContent>
           </Select>
-          <span className="text-[10px] text-muted-foreground">汇报关系按部门查看</span>
         </div>
 
         {!deptId ? (
-          <EmptyState title="请先选择部门" description="" />
+          <EmptyState title="请先选择部门" />
         ) : membersQuery.isLoading ? (
           <div className="py-20 text-center text-xs text-muted-foreground">加载中…</div>
         ) : nodes.length === 0 ? (
-          <EmptyState title="该部门暂无成员" description="" />
+          <EmptyState title="该部门暂无成员" />
         ) : (
           <div className="h-[500px] w-full rounded-lg border">
             <ReactFlow

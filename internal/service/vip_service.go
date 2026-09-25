@@ -14,8 +14,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// VipService 会员系统：套餐管理 / 状态查询 / 余额购买 / 管理端授予。
-// VIP 到期时间只增不减（续期顺延），所有变更落 vip_transactions 账本。
+// VipService 会员系统：套餐管理 / 状态查询 / 余额购买 / 管理端授予与扣减。
+// 开通一律顺延；到期时间只在退款冲正与扣减（AdminRevokeVip）时变早。
+// 所有变更落 vip_transactions 账本。
+//
+// 功能权益跟随套餐的**当前**配置：改套餐即对所有在期会员生效，包括拿掉功能（降级）。
+// 判定规则见 internal/domain/vip/segment.go。
 type VipService struct {
 	log *zap.Logger
 	pg  *pgrepo.Repository
@@ -224,10 +228,11 @@ func (s *VipService) AdminDeletePlan(ctx context.Context, appID int64, planID in
 // AdminVipGrantInput 管理员发放会员的输入。
 //
 // 两种发放方式，二选一：
-//   - PlanID > 0：按套餐发放。时长/赠送积分/权益快照全部取自套餐 × Quantity，
+//   - PlanID > 0：按套餐发放。时长/赠送积分取自套餐 × Quantity，功能跟随套餐当前配置；
 //     Days 与 Features 忽略 —— 套餐是运营定好的商品，发放时不允许现场改配置。
 //   - PlanID == 0：自定义发放。Days 为必填时长，Features 为附带的权益标识
-//     （必须已登记在会员功能目录，防止拼错的标识悄悄进账本）。
+//     （必须已登记在会员功能目录，防止拼错的标识悄悄进账本）。它不挂任何套餐，
+//     功能就是这里给的这一份，改哪个套餐都影响不到它。
 type AdminVipGrantInput struct {
 	UserID        int64
 	AppID         int64
@@ -312,6 +317,63 @@ func (s *VipService) AdminGrantVip(ctx context.Context, in AdminVipGrantInput) (
 		}
 		return nil, err
 	}
+	return txn, nil
+}
+
+// errCodeVipNotActive 扣减天数时该用户当前不是会员
+const errCodeVipNotActive = 40377 // 403
+
+// vipRevokeMaxDays 单次扣减的上限。扣减本来就会在「此刻」截住，
+// 这个上限只是不让一个离谱的数字（脚本里算错的毫秒数）进到日期运算里溢出。
+const vipRevokeMaxDays = 36500
+
+// AdminVipRevokeInput 扣减会员天数的输入。
+type AdminVipRevokeInput struct {
+	UserID   int64
+	AppID    int64
+	Days     int
+	Reason   string
+	Operator string
+}
+
+// AdminRevokeVip 扣减会员天数（远程函数 `aegis.vip.revoke`）。
+//
+// 从到期时间往回截，截过此刻即会员立即结束；排在截断点之后的会员段整段失效，
+// 因此扣掉的恰好是后买的高级版那段时，高级版的功能会一并收回（见 truncateVipSegmentsTx）。
+//
+// 不是会员时报错而不是静默成功：脚本作者以为扣掉了、实际什么也没发生，
+// 是比报错更难查的结果。
+func (s *VipService) AdminRevokeVip(ctx context.Context, in AdminVipRevokeInput) (*vipdomain.Transaction, error) {
+	if in.UserID <= 0 || in.AppID <= 0 {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "用户ID与应用ID不能为空")
+	}
+	if in.Days <= 0 {
+		return nil, apperrors.New(40086, http.StatusBadRequest, "扣减天数必须大于 0")
+	}
+	if in.Days > vipRevokeMaxDays {
+		in.Days = vipRevokeMaxDays
+	}
+	reason := strings.TrimSpace(in.Reason)
+	txn, err := s.pg.RevokeVipDays(ctx, vipdomain.Revoke{
+		UserID:   in.UserID,
+		AppID:    in.AppID,
+		Days:     in.Days,
+		Reason:   reason,
+		Operator: in.Operator,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, pgrepo.ErrUserNotFound):
+			return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
+		case errors.Is(err, pgrepo.ErrVipNotActive):
+			return nil, apperrors.New(errCodeVipNotActive, http.StatusForbidden, "该用户当前不是会员，没有可扣减的时长")
+		default:
+			return nil, err
+		}
+	}
+	s.log.Info("vip days revoked",
+		zap.Int64("appid", in.AppID), zap.Int64("userId", in.UserID),
+		zap.Int("days", in.Days), zap.String("operator", in.Operator), zap.String("reason", reason))
 	return txn, nil
 }
 

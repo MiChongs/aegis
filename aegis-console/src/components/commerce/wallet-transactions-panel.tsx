@@ -244,7 +244,7 @@ export function WalletTransactionsPanel({
         </div>
       ) : items.length === 0 ? (
         <div className="space-y-2 py-12 text-center">
-          <p className="text-sm text-muted-foreground">{filtered ? "该条件下没有钱包流水" : "还没有钱包流水"}</p>
+          <p className="text-sm text-muted-foreground">{filtered ? "暂无匹配流水" : "暂无钱包流水"}</p>
           {filtered ? (
             <Button
               size="sm"
@@ -327,8 +327,7 @@ export function WalletTransactionsPanel({
                           </span>
                         </TooltipTrigger>
                         <TooltipContent side="top" className="max-w-64 text-[11px] leading-relaxed">
-                          同一笔钱只出一份凭证。这条流水的凭证由订单 {item.relatedOrderNo} 出具，
-                          与在订单页下载到的是同一份文件。
+                          凭证由该订单出具
                         </TooltipContent>
                       </Tooltip>
                     ) : (

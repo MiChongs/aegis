@@ -179,7 +179,7 @@ export function EgressConfigPanel() {
   const settings = settingsQ.data;
 
   if (!isSuperAdmin) {
-    return <EmptyState title="无访问权限" description="出海代理网关决定平台所有对外调用的线路，仅超级管理员可配置。" />;
+    return <EmptyState title="无访问权限" />;
   }
   if (settingsQ.isLoading || !settings) {
     return <LoadingState title="加载出海网关配置" />;
@@ -223,7 +223,7 @@ function EgressEditor({ settings }: { settings: EgressSettings }) {
         endpoints: draft.endpoints,
         rules: draft.rules,
       });
-      toast.success("出海网关配置已保存并热生效");
+      toast.success("已保存");
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "保存失败");
     }
@@ -287,12 +287,7 @@ function EgressEditor({ settings }: { settings: EgressSettings }) {
       <Separator />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">出海代理网关</h2>
-          <p className="text-sm text-muted-foreground">
-            按目标域名后缀决定出站流量走直连还是境外线路，保存后热重载生效
-          </p>
-        </div>
+        <h2 className="text-lg font-semibold">出海代理网关</h2>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={() => void handleProbe()} disabled={probeMut.isPending}>
             <RefreshCw className={`size-3.5 ${probeMut.isPending ? "animate-spin" : ""}`} /> 立即探测
@@ -321,12 +316,11 @@ function EgressEditor({ settings }: { settings: EgressSettings }) {
           <AccordionContent className="space-y-4 pb-4">
             <SwitchRow
               label="启用出海网关"
-              hint="关闭时所有出站一律直连，并继续尊重 HTTP_PROXY 等环境变量"
               checked={draft.enabled}
               onCheckedChange={(v) => set("enabled", v)}
             />
             <div className="grid gap-3 sm:grid-cols-3">
-              <Field label="未命中规则时" hint="direct = 白名单出海（推荐）">
+              <Field label="未命中规则时">
                 <Select value={draft.defaultAction} onValueChange={(v) => set("defaultAction", v as EgressAction)}>
                   <SelectTrigger className="h-8 text-sm">
                     <SelectValue />
@@ -354,7 +348,7 @@ function EgressEditor({ settings }: { settings: EgressSettings }) {
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="默认端点" hint="仅当默认动作为「走代理」时使用">
+              <Field label="默认端点">
                 <EndpointPicker
                   available={endpointNames}
                   selected={draft.defaultEndpoints}
@@ -372,7 +366,7 @@ function EgressEditor({ settings }: { settings: EgressSettings }) {
           </AccordionTrigger>
           <AccordionContent className="space-y-3 pb-4">
             {draft.endpoints.length === 0 ? (
-              <p className="text-sm text-muted-foreground">还没有端点。先加一条线路，再在下面写规则把域名指过来。</p>
+              <p className="text-sm text-muted-foreground">暂无端点</p>
             ) : null}
             {draft.endpoints.map((endpoint, index) => (
               <EndpointEditor
@@ -407,11 +401,6 @@ function EgressEditor({ settings }: { settings: EgressSettings }) {
             路由规则（{draft.rules.length}）
           </AccordionTrigger>
           <AccordionContent className="space-y-3 pb-4">
-            <p className="text-xs text-muted-foreground">
-              按 priority 升序匹配，先命中先生效。域名后缀按标签边界匹配：
-              <code className="mx-1 rounded bg-muted px-1">google.com</code>
-              命中 www.google.com，不命中 notgoogle.com。
-            </p>
             {draft.rules.map((rule, index) => (
               <RuleEditor
                 key={index}
@@ -447,7 +436,6 @@ function EgressEditor({ settings }: { settings: EgressSettings }) {
               />
               <SwitchRow
                 label="被动熔断"
-                hint="拨号失败即计数，达到阈值后进入冷却"
                 checked={draft.health.passiveEnabled}
                 onCheckedChange={(v) => set("health", { ...draft.health, passiveEnabled: v })}
               />
@@ -491,7 +479,6 @@ function EgressEditor({ settings }: { settings: EgressSettings }) {
             </div>
             <SwitchRow
               label="全部不健康时仍然尝试"
-              hint="关掉意味着一次探测误判就会切断整条出海链路"
               checked={draft.health.allowUnhealthy !== false}
               onCheckedChange={(v) => set("health", { ...draft.health, allowUnhealthy: v })}
             />
@@ -622,12 +609,12 @@ function EndpointEditor({
             <Input className="h-8 text-sm" value={endpoint.username || ""} onChange={(e) => onChange({ username: e.target.value })} />
           </Field>
         )}
-        <Field label="口令" hint={endpoint.passwordSet ? "已配置，留空保持不变" : undefined}>
+        <Field label="口令">
           <Input
             className="h-8 text-sm"
             type="password"
             value={protocol === "shadowsocks" ? endpoint.shadowsocks.password || "" : endpoint.password || ""}
-            placeholder={endpoint.passwordSet ? "••••••" : ""}
+            placeholder={endpoint.passwordSet ? "留空不修改" : ""}
             onChange={(e) =>
               protocol === "shadowsocks"
                 ? onChange({ shadowsocks: { ...endpoint.shadowsocks, password: e.target.value } })
@@ -635,7 +622,7 @@ function EndpointEditor({
             }
           />
         </Field>
-        <Field label="上一跳 via" hint="经另一个端点连出去">
+        <Field label="上一跳 via">
           <Select value={endpoint.via || "__none__"} onValueChange={(v) => onChange({ via: v === "__none__" ? "" : v })}>
             <SelectTrigger className="h-8 text-sm">
               <SelectValue />
@@ -692,11 +679,11 @@ function EndpointEditor({
       ) : null}
 
       {protocol === "ssh" ? (
-        <Field label="SSH 私钥 PEM" hint={endpoint.privateKeySet ? "已配置，留空保持不变" : "留空则用口令认证"}>
+        <Field label="SSH 私钥 PEM">
           <Textarea
             className="min-h-20 font-mono text-xs"
             value={endpoint.ssh.privateKeyPem || ""}
-            placeholder={endpoint.privateKeySet ? "已配置（留空保持不变）" : "-----BEGIN OPENSSH PRIVATE KEY-----"}
+            placeholder={endpoint.privateKeySet ? "留空不修改" : "-----BEGIN OPENSSH PRIVATE KEY-----"}
             onChange={(e) => onChange({ ssh: { ...endpoint.ssh, privateKeyPem: e.target.value } })}
           />
         </Field>
@@ -725,10 +712,11 @@ function EndpointEditor({
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <Field label="探测地址" hint="留空用全局；纯内网跳板可填 - 退化为 TCP 探测">
+        <Field label="探测地址">
           <Input
             className="h-8 font-mono text-xs"
             value={endpoint.probeUrl || ""}
+            placeholder="留空用全局"
             onChange={(e) => onChange({ probeUrl: e.target.value })}
           />
         </Field>
@@ -737,7 +725,6 @@ function EndpointEditor({
         </Field>
         <SwitchRow
           label="清除已存密钥"
-          hint="保存时把该端点的口令与私钥清空"
           checked={Boolean(endpoint.clearSecrets)}
           onCheckedChange={(v) => onChange({ clearSecrets: v })}
         />
@@ -746,7 +733,6 @@ function EndpointEditor({
       {protocol === "http" ? (
         <SwitchRow
           label="明文请求用 absolute-URI 转发"
-          hint="仅当代理禁止 CONNECT 到 80 端口时才需要"
           checked={Boolean(endpoint.httpForwardMode)}
           onCheckedChange={(v) => onChange({ httpForwardMode: v })}
         />
@@ -840,7 +826,7 @@ function RuleEditor({
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="域名后缀" hint="每行一条，*. 前缀可省略">
+        <Field label="域名后缀">
           <Textarea
             className="min-h-24 font-mono text-xs"
             value={joinList(rule.match.domainSuffixes)}
@@ -848,7 +834,7 @@ function RuleEditor({
             onChange={(e) => onChange({ match: { ...rule.match, domainSuffixes: parseList(e.target.value) } })}
           />
         </Field>
-        <Field label="例外后缀" hint="优先于上面的匹配">
+        <Field label="例外后缀">
           <Textarea
             className="min-h-24 font-mono text-xs"
             value={joinList(rule.match.excludeDomainSuffixes)}
@@ -858,16 +844,18 @@ function RuleEditor({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <Field label="调用方 profile" hint="如 payment.* ；与域名条件是「与」">
+        <Field label="调用方 profile">
           <Input
             className="h-8 font-mono text-xs"
+            placeholder="payment.*"
             value={(rule.match.profiles || []).join(",")}
             onChange={(e) => onChange({ match: { ...rule.match, profiles: parseList(e.target.value) } })}
           />
         </Field>
-        <Field label="端口" hint="留空不限；与域名条件是「与」">
+        <Field label="端口">
           <Input
             className="h-8 font-mono text-xs"
+            placeholder="留空不限"
             value={(rule.match.ports || []).join(",")}
             onChange={(e) =>
               onChange({
@@ -881,7 +869,7 @@ function RuleEditor({
             }
           />
         </Field>
-        <Field label="目标 CIDR" hint="目标是字面 IP 时生效">
+        <Field label="目标 CIDR">
           <Input
             className="h-8 font-mono text-xs"
             value={(rule.match.cidrs || []).join(",")}
@@ -898,7 +886,7 @@ function RuleEditor({
 function RuntimeTable({ settings }: { settings: EgressSettings }) {
   const rows = settings.runtime.endpoints;
   if (rows.length === 0) {
-    return <p className="text-sm text-muted-foreground">还没有端点，运行态为空。</p>;
+    return <p className="text-sm text-muted-foreground">暂无端点</p>;
   }
   return (
     <div className="overflow-x-auto">
@@ -977,9 +965,6 @@ function TestCard({ endpointNames, defaultUrl }: { endpointNames: string[]; defa
       <div className="flex items-center gap-2 text-sm font-semibold">
         <Activity className="size-4" /> 连通性自测
       </div>
-      <p className="text-xs text-muted-foreground">
-        走的是与业务完全相同的路径。把地址指向「查询出口 IP」类服务，可以直接确认落地是否在境外。
-      </p>
       <Input className="h-8 font-mono text-xs" placeholder={defaultUrl} value={url} onChange={(e) => setUrl(e.target.value)} />
       <div className="grid grid-cols-2 gap-2">
         <Select value={endpoint} onValueChange={setEndpoint}>
@@ -1051,7 +1036,6 @@ function ExplainCard() {
       <div className="flex items-center gap-2 text-sm font-semibold">
         <Route className="size-4" /> 路由解释
       </div>
-      <p className="text-xs text-muted-foreground">不发起真实连接，只回答「这个域名会走哪条线、为什么」。</p>
       <div className="grid grid-cols-2 gap-2">
         <Input
           className="h-8 font-mono text-xs"
@@ -1116,7 +1100,7 @@ function EndpointPicker({
   onChange: (next: string[]) => void;
 }) {
   if (available.length === 0) {
-    return <p className="text-xs text-muted-foreground">先添加端点</p>;
+    return <p className="text-xs text-muted-foreground">暂无端点</p>;
   }
   return (
     <div className="flex flex-wrap gap-1.5">
@@ -1140,12 +1124,11 @@ function EndpointPicker({
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1">
       <Label className="text-xs text-muted-foreground">{label}</Label>
       {children}
-      {hint ? <p className="text-[10px] text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
@@ -1166,21 +1149,16 @@ function NumberField({ label, value, onChange }: { label: string; value?: number
 
 function SwitchRow({
   label,
-  hint,
   checked,
   onCheckedChange,
 }: {
   label: string;
-  hint?: string;
   checked: boolean;
   onCheckedChange: (v: boolean) => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-      <div>
-        <div className="text-sm">{label}</div>
-        {hint ? <div className="text-[10px] text-muted-foreground">{hint}</div> : null}
-      </div>
+      <div className="text-sm">{label}</div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>
   );

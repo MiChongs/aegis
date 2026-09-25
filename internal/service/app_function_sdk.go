@@ -997,13 +997,27 @@ func (s *ScriptSDK) bindVipNamespace(vm *goja.Runtime, object *goja.Object) erro
 		if s.dryRun {
 			return vm.ToValue(map[string]any{"days": sign * days, "userId": userID, "simulated": true})
 		}
-		if _, err := s.deps.Vip.AdminGrantVip(s.ctx, AdminVipGrantInput{
-			UserID:   userID,
-			AppID:    s.appID,
-			Days:     sign * days,
-			Reason:   reason,
-			Operator: s.operatorLabel(),
-		}); err != nil {
+		// 收回走独立的扣减入口：发放入口只接受正数天数，
+		// 把负数塞给它的结果是 revoke 永远报「发放天数必须大于 0」。
+		var err error
+		if sign > 0 {
+			_, err = s.deps.Vip.AdminGrantVip(s.ctx, AdminVipGrantInput{
+				UserID:   userID,
+				AppID:    s.appID,
+				Days:     days,
+				Reason:   reason,
+				Operator: s.operatorLabel(),
+			})
+		} else {
+			_, err = s.deps.Vip.AdminRevokeVip(s.ctx, AdminVipRevokeInput{
+				UserID:   userID,
+				AppID:    s.appID,
+				Days:     days,
+				Reason:   reason,
+				Operator: s.operatorLabel(),
+			})
+		}
+		if err != nil {
 			throw(vm, err)
 		}
 		result := map[string]any{"days": sign * days, "userId": userID}

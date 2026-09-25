@@ -114,10 +114,7 @@ export function AppUsersPanel() {
     return (
       <div className="space-y-6">
         <SectionHeading eyebrow="控制台" title="应用用户" />
-        <EmptyState
-          title="还没有应用"
-          description="应用用户按应用隔离，先在「应用」里创建一个应用，这里才会有用户可管理。"
-        />
+        <EmptyState title="暂无应用" />
       </div>
     );
   }
@@ -132,9 +129,6 @@ export function AppUsersPanel() {
             {usersQuery.isFetching ? (
               <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
             ) : null}
-            <span className="hidden text-[11px] text-muted-foreground sm:inline">
-              用户按应用隔离，换应用即换一套用户库
-            </span>
             <Select
               value={appKey ?? ""}
               onValueChange={(value) => applyQuery({ ...query, appKey: value, page: 1 })}
@@ -180,7 +174,7 @@ export function AppUsersPanel() {
         onRowClick={openDetail}
         emptyText={
           total === 0 && items.length === 0
-            ? "没有命中任何用户。检查一下上面的筛选条件，或清空全部重来。"
+            ? "暂无匹配用户"
             : "暂无用户"
         }
       />

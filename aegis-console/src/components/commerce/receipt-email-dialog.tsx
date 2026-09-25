@@ -122,10 +122,6 @@ export function ReceiptEmailDialog({
               onChange={(event) => setTo(event.target.value)}
               onKeyDown={(event) => event.key === "Enter" && valid && void handleSubmit()}
             />
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              邮件里同时带 PDF 附件与一条签名下载链接。通道不支持附件时只发链接，
-              不会静默把附件丢掉再把信发出去。
-            </p>
           </div>
 
           <div className="flex justify-end gap-2">

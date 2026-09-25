@@ -12,7 +12,10 @@ import { formatMoney, formatTime } from "./commerce-format";
 const channelLabels: Record<string, string> = {
   wallet: "余额直购",
   payment_order: "支付订单",
-  admin_grant: "管理员授予"
+  admin_grant: "管理员授予",
+  trial: "领取试用",
+  card_key: "卡密核销",
+  admin_revoke: "扣减天数"
 };
 
 /**

@@ -212,7 +212,7 @@ export function LDAPConfigPanel() {
       };
       if (draft.bindPassword) payload.bindPassword = draft.bindPassword;
       await updateMutation.mutateAsync({ ldap: payload as never });
-      toast.success("LDAP 配置已保存并热重载");
+      toast.success("已保存");
       patch("bindPassword", "");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "保存失败");
@@ -235,10 +235,7 @@ export function LDAPConfigPanel() {
 
       {/* 操作栏 */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h3 className="text-sm font-semibold">LDAP 认证配置</h3>
-          <p className="text-xs text-muted-foreground">配置 LDAP/Active Directory 统一身份认证（仅管理员层级）</p>
-        </div>
+        <h3 className="text-sm font-semibold">LDAP 认证配置</h3>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => setDraft(seedDraft(ldap))} disabled={updateMutation.isPending}>
             <RotateCcw className="size-3.5" /> 重置
@@ -260,7 +257,7 @@ export function LDAPConfigPanel() {
             </div>
           </AccordionTrigger>
           <AccordionContent className="px-4 pb-4 space-y-4">
-            <SwitchRow label="启用 LDAP 认证" hint="启用后管理员登录优先使用 LDAP 验证" checked={draft.enabled} onCheckedChange={(v) => patch("enabled", v)} />
+            <SwitchRow label="启用 LDAP 认证" checked={draft.enabled} onCheckedChange={(v) => patch("enabled", v)} />
             <div className="grid gap-4 sm:grid-cols-2">
               <Row label="服务器地址"><Input value={draft.server} onChange={(e) => patch("server", e.target.value)} placeholder="ldap.example.com" /></Row>
               <Row label="端口"><Input value={draft.port} onChange={(e) => patch("port", e.target.value.replace(/\D/g, ""))} placeholder="389" /></Row>
@@ -278,9 +275,9 @@ export function LDAPConfigPanel() {
             </div>
           </AccordionTrigger>
           <AccordionContent className="px-4 pb-4 space-y-3">
-            <SwitchRow label="LDAPS (TLS)" hint="使用 ldaps:// 加密连接（端口 636）" checked={draft.useTLS} onCheckedChange={(v) => patch("useTLS", v)} />
-            <SwitchRow label="StartTLS" hint="在普通连接上升级为 TLS（与 LDAPS 互斥）" checked={draft.useStartTLS} onCheckedChange={(v) => patch("useStartTLS", v)} />
-            <SwitchRow label="跳过证书验证" hint="仅用于开发环境，生产环境请使用有效证书" checked={draft.skipTLSVerify} onCheckedChange={(v) => patch("skipTLSVerify", v)} />
+            <SwitchRow label="LDAPS (TLS)" checked={draft.useTLS} onCheckedChange={(v) => patch("useTLS", v)} />
+            <SwitchRow label="StartTLS" hint="与 LDAPS 互斥" checked={draft.useStartTLS} onCheckedChange={(v) => patch("useStartTLS", v)} />
+            <SwitchRow label="跳过证书验证" hint="仅限开发环境" checked={draft.skipTLSVerify} onCheckedChange={(v) => patch("skipTLSVerify", v)} />
           </AccordionContent>
         </AccordionItem>
 
@@ -293,8 +290,8 @@ export function LDAPConfigPanel() {
             </div>
           </AccordionTrigger>
           <AccordionContent className="px-4 pb-4 space-y-4">
-            <Row label="绑定 DN" hint="用于搜索用户的服务账号"><Input value={draft.bindDN} onChange={(e) => patch("bindDN", e.target.value)} placeholder="cn=admin,dc=example,dc=com" /></Row>
-            <Row label="绑定密码" hint={ldap?.hasBindPassword ? "已设置，留空不修改" : ""}><Input type="password" value={draft.bindPassword} onChange={(e) => patch("bindPassword", e.target.value)} placeholder={ldap?.hasBindPassword ? "******（已设置）" : "输入密码"} /></Row>
+            <Row label="绑定 DN"><Input value={draft.bindDN} onChange={(e) => patch("bindDN", e.target.value)} placeholder="cn=admin,dc=example,dc=com" /></Row>
+            <Row label="绑定密码"><Input type="password" value={draft.bindPassword} onChange={(e) => patch("bindPassword", e.target.value)} placeholder={ldap?.hasBindPassword ? "留空不修改" : "输入密码"} /></Row>
             <Separator />
             <div className="space-y-3">
               <div className="flex items-end gap-2">
@@ -327,7 +324,7 @@ export function LDAPConfigPanel() {
             </div>
           </AccordionTrigger>
           <AccordionContent className="px-4 pb-4 space-y-4">
-            <Row label="Base DN" hint="用户搜索的根目录"><Input value={draft.baseDN} onChange={(e) => patch("baseDN", e.target.value)} placeholder="dc=example,dc=com" /></Row>
+            <Row label="Base DN"><Input value={draft.baseDN} onChange={(e) => patch("baseDN", e.target.value)} placeholder="dc=example,dc=com" /></Row>
             <div className="grid gap-4 sm:grid-cols-2">
               <Row label="过滤器预设">
                 <Select value={draft.userFilterPreset} onValueChange={handlePresetChange}>
@@ -340,7 +337,7 @@ export function LDAPConfigPanel() {
               <Row label="用户属性"><Input value={draft.userAttribute} onChange={(e) => patch("userAttribute", e.target.value)} placeholder="sAMAccountName" /></Row>
             </div>
             {draft.userFilterPreset === "custom" && (
-              <Row label="自定义过滤器" hint="%s 将替换为用户名"><Input value={draft.userFilter} onChange={(e) => patch("userFilter", e.target.value)} placeholder="(uid=%s)" /></Row>
+              <Row label="自定义过滤器" hint="%s 替换为用户名"><Input value={draft.userFilter} onChange={(e) => patch("userFilter", e.target.value)} placeholder="(uid=%s)" /></Row>
             )}
             <Row label="搜索超时（秒）"><Input value={draft.searchTimeoutSeconds} onChange={(e) => patch("searchTimeoutSeconds", e.target.value.replace(/\D/g, ""))} placeholder="15" className="w-32" /></Row>
           </AccordionContent>
@@ -360,7 +357,7 @@ export function LDAPConfigPanel() {
               <Row label="组过滤器" hint="%s 替换为用户 DN"><Input value={draft.groupFilter} onChange={(e) => patch("groupFilter", e.target.value)} placeholder="(member=%s)" /></Row>
               <Row label="组属性"><Input value={draft.groupAttribute} onChange={(e) => patch("groupAttribute", e.target.value)} placeholder="cn" /></Row>
             </div>
-            <Row label="管理员组 DN" hint="仅此组成员可登录管理台"><Input value={draft.adminGroupDN} onChange={(e) => patch("adminGroupDN", e.target.value)} placeholder="cn=admins,ou=groups,dc=example,dc=com" /></Row>
+            <Row label="管理员组 DN"><Input value={draft.adminGroupDN} onChange={(e) => patch("adminGroupDN", e.target.value)} placeholder="cn=admins,ou=groups,dc=example,dc=com" /></Row>
           </AccordionContent>
         </AccordionItem>
 
@@ -393,7 +390,6 @@ export function LDAPConfigPanel() {
           <AccordionContent className="px-4 pb-4">
             <SwitchRow
               label="LDAP 失败时回退本地密码"
-              hint="启用后，当 LDAP 服务不可用或未找到用户时，将尝试本地密码验证"
               checked={draft.fallbackToLocal}
               onCheckedChange={(v) => patch("fallbackToLocal", v)}
             />

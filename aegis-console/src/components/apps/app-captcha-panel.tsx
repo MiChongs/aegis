@@ -321,7 +321,6 @@ export function AppCaptchaPanel({ appKey }: Props) {
       <div className="flex flex-col gap-3 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
           <h3 className="text-base font-semibold">应用验证码与短信配置</h3>
-          <p className="text-sm text-muted-foreground">对接后端验证码配置、短信模板和测试发送接口。</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={resetDraft} disabled={!dirty && !configQuery.isFetching}>
@@ -378,15 +377,11 @@ export function AppCaptchaPanel({ appKey }: Props) {
           value={currentDraft.dynamic}
           onChange={(next) => patchDraft("dynamic", next)}
           enabled={currentDraft.dynamicEnabled}
-          disabledHint="「动态图片」当前未启用，这里调的外观不会出现在登录页上。"
+          disabledHint="「动态图片」未启用"
         />
       </PanelSection>
 
       <PanelSection title="场景策略">
-        <p className="text-xs text-muted-foreground">
-          默认登录 / 注册都要求验证码（需先在"验证码能力"中至少启用一种类型）。
-          可按需关闭某一场景，比如只在注册时要求验证码、登录跳过。
-        </p>
         <div className="grid gap-3 md:grid-cols-2">
           <SwitchField
             label="登录时要求验证码"
@@ -522,7 +517,7 @@ export function AppCaptchaPanel({ appKey }: Props) {
       >
         {currentDraft.sms.templates.length === 0 ? (
           <div className="rounded-2xl border border-dashed px-4 py-8 text-sm text-muted-foreground">
-            未配置用途模板时，短信发送会回退到默认签名和默认模板。
+            暂无用途模板
           </div>
         ) : (
           <ScrollArea className="max-h-[36rem] rounded-2xl border">
@@ -567,7 +562,7 @@ export function AppCaptchaPanel({ appKey }: Props) {
                         <Input
                           className="h-9"
                           value={template.signName}
-                          placeholder="为空时使用默认签名"
+                          placeholder="留空用默认签名"
                           onChange={(event) => patchTemplate(index, { signName: event.target.value })}
                         />
                       </Field>

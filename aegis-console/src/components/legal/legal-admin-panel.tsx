@@ -61,16 +61,14 @@ import { cn } from "@/lib/utils";
 
 const EASE: [number, number, number, number] = [0.32, 0.72, 0, 1];
 
-const DOC_META: Record<LegalDocType, { title: string; icon: typeof FileText; hint: string }> = {
+const DOC_META: Record<LegalDocType, { title: string; icon: typeof FileText }> = {
   terms: {
     title: "用户服务协议",
     icon: FileText,
-    hint: "约束使用方式、责任边界与争议解决",
   },
   privacy: {
     title: "隐私政策",
     icon: ShieldCheck,
-    hint: "说明收集什么、为什么、共享给谁、存多久",
   },
 };
 
@@ -150,7 +148,7 @@ export function LegalAdminPanel() {
         published: input.published,
       }),
     onSuccess: () => {
-      toast.success("已保存，公开页立即生效");
+      toast.success("已保存");
       setDraft(null);
       invalidate();
     },
@@ -199,13 +197,13 @@ export function LegalAdminPanel() {
     [guard]
   );
 
-  if (!token) return <EmptyState title="未认证" description="请重新登录后再试。" />;
+  if (!token) return <EmptyState title="未认证" />;
   if (query.isPending) return <LoadingState title="加载法律文本" />;
   if (query.isError || !query.data) {
     // 服务端的错误原文往往已经说清了该做什么（缺哪个权限点、去找谁授权），
     // 用一句「读取失败」盖掉它，等于把唯一有用的信息扔了。
     const message =
-      query.error instanceof Error ? query.error.message : "服务端未返回法律文本清单。";
+      query.error instanceof Error ? query.error.message : "读取失败";
     const denied = query.error instanceof ApiError && query.error.status === 403;
     return (
       <Alert variant={denied ? "default" : "destructive"}>
@@ -236,8 +234,7 @@ export function LegalAdminPanel() {
         <Alert>
           <Info />
           <AlertDescription>
-            尚未配置法律联系邮箱（<code className="font-data">LEGAL_CONTACT_EMAIL</code>）。
-            内置文本的「联系我们」一节会显示占位文字，请在部署环境变量中补上。
+            未配置 <code className="font-data">LEGAL_CONTACT_EMAIL</code>
           </AlertDescription>
         </Alert>
       )}
@@ -250,7 +247,6 @@ export function LegalAdminPanel() {
               <Icon className="size-4 text-muted-foreground" />
               <div className="min-w-0">
                 <h3 className="text-sm font-semibold">{DOC_META[group.docType].title}</h3>
-                <p className="text-[11px] text-muted-foreground">{DOC_META[group.docType].hint}</p>
               </div>
 
               <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -474,8 +470,7 @@ export function LegalAdminPanel() {
           <AlertDialogHeader>
             <AlertDialogTitle>恢复内置版本？</AlertDialogTitle>
             <AlertDialogDescription>
-              将删除 <span className="font-data">{confirmReset?.locale}</span> 的自定义文本，
-              该语言随即回到系统内置全文。<strong>此操作不可撤销</strong>，请先自行留存副本。
+              将删除 <span className="font-data">{confirmReset?.locale}</span> 的自定义文本，不可撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -496,7 +491,7 @@ export function LegalAdminPanel() {
           <AlertDialogHeader>
             <AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle>
             <AlertDialogDescription>
-              当前有一份没有保存的草稿，继续操作会丢弃它。
+              未保存的修改将丢失。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -567,7 +562,7 @@ function AddLocaleForm({
           ) : null}
           <Input
             className="h-8 text-sm"
-            placeholder="或直接填 BCP 47：ja / zh-Hant / fr"
+            placeholder="或填 BCP 47 代码"
             value={locale}
             onChange={(event) => onLocaleChange(event.target.value)}
             aria-invalid={duplicate}
@@ -594,10 +589,6 @@ function AddLocaleForm({
               ))}
             </SelectContent>
           </Select>
-          {/* 从零起草一份两万字的条款没人会做，在写好的基础上改才可行 */}
-          <p className="text-[11px] text-muted-foreground/80">
-            正文会复制过来供你翻译改写，不会自动翻译
-          </p>
         </div>
       </div>
 

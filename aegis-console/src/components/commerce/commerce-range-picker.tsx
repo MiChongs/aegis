@@ -126,9 +126,6 @@ export function CommerceRangePicker({
             onChange(rangeOf(range.from, range.to ?? range.from));
           }}
         />
-        <p className="border-t px-3 py-2 text-[11px] leading-4 text-muted-foreground">
-          含起止当天。实收按到账时间、退款按退款成功时间、钱包按流水时间统计。
-        </p>
       </PopoverContent>
     </Popover>
   );

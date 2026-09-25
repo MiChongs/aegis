@@ -384,13 +384,13 @@ export function validateForm(form: ProfileForm, server: ProfileForm): ProfileIss
   }
   const digits = form.phone.replace(/[^\d]/g, "");
   if (form.phone.trim() && (digits.length < 5 || digits.length > 15)) {
-    errors.phone = "号码位数看起来不对（5–15 位）";
+    errors.phone = "应为 5–15 位数字";
   }
   if (form.birthday) {
     const date = fromDateInput(form.birthday);
     if (!date) errors.birthday = "日期格式不正确";
     else if (date.getTime() > Date.now()) errors.birthday = "出生日期不能晚于今天";
-    else if (date.getFullYear() < 1900) errors.birthday = "年份看起来不对";
+    else if (date.getFullYear() < 1900) errors.birthday = "年份无效";
   }
   if (form.bio.trim().length > BIO_MAX) {
     errors.bio = `不能超过 ${BIO_MAX} 个字符`;
@@ -406,7 +406,7 @@ export function validateForm(form: ProfileForm, server: ProfileForm): ProfileIss
   ];
   for (const [key, label] of clearable) {
     if (!form[key].trim() && server[key].trim()) {
-      notices[key] = `留空不会清除已有的${label}，保存后仍是原值`;
+      notices[key] = "留空将保留原值";
     }
   }
 
@@ -414,7 +414,7 @@ export function validateForm(form: ProfileForm, server: ProfileForm): ProfileIss
   for (const item of form.contacts) {
     const value = item.value.trim();
     if (!value) {
-      contactErrors[item.uid] = "留空的这条在保存时会被删除";
+      contactErrors[item.uid] = "保存时将删除";
       continue;
     }
     const dedupeKey = `${item.platform}:${value.toLowerCase()}`;

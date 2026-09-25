@@ -165,7 +165,7 @@ export function TrafficRampPanel() {
         exemptAdmin: draft.exemptAdmin,
         retryAfterSeconds: Number(draft.retryAfterSeconds || 3),
       });
-      toast.success("流量爬坡配置已保存，即刻生效");
+      toast.success("已保存");
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "保存失败");
     }
@@ -180,7 +180,7 @@ export function TrafficRampPanel() {
     }
   }
 
-  if (!isSuperAdmin) return <EmptyState title="无访问权限" description="仅超级管理员可查看与配置流量爬坡。" />;
+  if (!isSuperAdmin) return <EmptyState title="无访问权限" />;
   if (settingsQ.isLoading || !draft || !settings) return <LoadingState title="加载流量爬坡配置" />;
 
   const stateMeta = stats ? STATE_META[stats.state] ?? STATE_META.stable : STATE_META.stable;
@@ -239,7 +239,7 @@ export function TrafficRampPanel() {
               <TrendingUp className="size-4 text-muted-foreground" />
               <h3 className="text-sm font-semibold">每秒流量与准入上限</h3>
               {stats?.enabled === false && (
-                <Badge variant="outline" className="text-[10px]">未启用 · 无整形数据</Badge>
+                <Badge variant="outline" className="text-[10px]">未启用</Badge>
               )}
             </div>
             <div className="flex items-center gap-2">
@@ -335,12 +335,7 @@ export function TrafficRampPanel() {
 
       {/* ── 配置表单 ── */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">爬坡配置</h2>
-          <p className="text-sm text-muted-foreground">
-            保存后热重载即刻生效并持久化；所有速率均为单实例口径。
-          </p>
-        </div>
+        <h2 className="text-lg font-semibold">爬坡配置</h2>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => { setDraft(seed); setSyncedKey(seedKey); }} disabled={updateMut.isPending}>
             重置
@@ -354,13 +349,11 @@ export function TrafficRampPanel() {
       <div className="grid gap-3 sm:grid-cols-2">
         <SwitchRow
           label="启用流量爬坡"
-          description="突发洪峰从基线速率逐步放行，超出部分排队削峰或拒绝"
           checked={draft.enabled}
           onCheckedChange={(v) => set("enabled", v)}
         />
         <SwitchRow
           label="管理端豁免"
-          description="洪峰时管理员仍可进入控制台查看统计、调整参数（建议开启）"
           checked={draft.exemptAdmin}
           onCheckedChange={(v) => set("exemptAdmin", v)}
         />
@@ -387,10 +380,6 @@ export function TrafficRampPanel() {
                 <Input className="h-8 text-sm" type="number" min={1} max={3600} value={draft.cooldownSeconds} onChange={(e) => set("cooldownSeconds", e.target.value)} />
               </Field>
             </div>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              需求逼近当前上限时，每个周期把上限抬高「基线 × 每步抬升%」，直至爬坡上限；
-              需求持续低于基线超过冷静期后按同样步长回落。多副本部署时集群吞吐 = 副本数 × 上限。
-            </p>
           </AccordionContent>
         </AccordionItem>
 
@@ -411,11 +400,6 @@ export function TrafficRampPanel() {
                 <Input className="h-8 text-sm" type="number" min={1} max={600} value={draft.retryAfterSeconds} onChange={(e) => set("retryAfterSeconds", e.target.value)} />
               </Field>
             </div>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              超出准入上限的请求先进入等待队列（削峰填谷），等到令牌即放行；
-              队列已满或等待超时回 429 并携带 Retry-After。并发上限是第二道闸门：
-              慢接口堆积时进入速率正常也可能拖垮进程。
-            </p>
           </AccordionContent>
         </AccordionItem>
 
@@ -427,9 +411,6 @@ export function TrafficRampPanel() {
               onChange={(v) => set("exemptPathPrefixes", v)}
               placeholder="/api/v1/apps/critical-app"
             />
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              命中这些前缀的请求不参与整形（/healthz、/readyz、/api/ws 恒免，无需登记）。
-            </p>
           </AccordionContent>
         </AccordionItem>
       </Accordion>
@@ -497,9 +478,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <div className="space-y-1.5"><Label className="text-xs">{label}</Label>{children}</div>;
 }
 
-function SwitchRow({ label, description, checked, onCheckedChange }: {
+function SwitchRow({ label, checked, onCheckedChange }: {
   label: string;
-  description?: string;
   checked: boolean;
   onCheckedChange: (v: boolean) => void;
 }) {
@@ -507,7 +487,6 @@ function SwitchRow({ label, description, checked, onCheckedChange }: {
     <div className="flex items-center justify-between gap-3 rounded-xl border px-4 py-3">
       <div className="min-w-0">
         <Label className="text-sm cursor-pointer">{label}</Label>
-        {description && <p className="mt-0.5 text-[11px] text-muted-foreground">{description}</p>}
       </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>

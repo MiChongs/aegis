@@ -92,7 +92,7 @@ function CountryCombobox({ value, onChange }: { value: string; onChange: (id: st
             className="text-xs"
           />
           <CommandList>
-            {filtered.length === 0 ? <CommandEmpty className="py-6 text-xs">没有匹配的国家或地区</CommandEmpty> : null}
+            {filtered.length === 0 ? <CommandEmpty className="py-6 text-xs">无匹配结果</CommandEmpty> : null}
             <CommandGroup>
               {filtered.map((item) => (
                 <CommandItem
@@ -233,7 +233,6 @@ export function BasicInfoPanel({
     <Panel
       title="基本信息"
       icon={<UserRound className="size-4" />}
-      description="显示名称和简介会出现在成员列表、审批记录与操作日志里，其他人靠它认出你。"
       bodyClassName="space-y-5 px-5 py-5"
     >
       <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
@@ -243,7 +242,6 @@ export function BasicInfoPanel({
           icon={<IdCard className="size-3" />}
           error={issues.errors.displayName}
           notice={issues.notices.displayName}
-          hint="留空时别人只能看到你的登录账号"
           counter={
             <span className="text-[11px] tabular-nums text-muted-foreground">
               {form.displayName.trim().length}/{DISPLAY_NAME_MAX}
@@ -266,7 +264,6 @@ export function BasicInfoPanel({
           icon={<Mail className="size-3" />}
           error={issues.errors.email}
           notice={issues.notices.email}
-          hint="用于接收系统通知与找回入口"
         >
           <Input
             id="profile-email"
@@ -285,7 +282,6 @@ export function BasicInfoPanel({
           icon={<Phone className="size-3" />}
           error={issues.errors.phone}
           notice={issues.notices.phone}
-          hint="区号可搜中文名或拼音"
         >
           <div className="flex gap-2">
             <CountryCombobox value={form.countryId} onChange={(id) => patch("countryId", id)} />
@@ -305,7 +301,6 @@ export function BasicInfoPanel({
           label="出生日期"
           error={issues.errors.birthday}
           notice={issues.notices.birthday}
-          hint="只用于生日提醒，不参与任何风控判定"
         >
           <BirthdayPicker
             value={form.birthday}
@@ -337,7 +332,7 @@ export function BasicInfoPanel({
           className="resize-none text-sm"
           value={form.bio}
           aria-invalid={Boolean(issues.errors.bio)}
-          placeholder="一句话说清你负责什么，比如：负责支付与对账，工作日 10:00–19:00 在线。"
+          placeholder="一句话简介"
           onChange={(event) => patch("bio", event.target.value)}
         />
       </Field>
@@ -380,7 +375,6 @@ export function ContactsPanel({
     <Panel
       title="联系方式"
       icon={<Mail className="size-4" />}
-      description="出事时同事怎么找到你。这一段是唯一可以真正删空的 —— 其余字段留空只会保留原值。"
       action={
         form.contacts.length > 0 ? (
           <Badge variant="secondary" size="sm">
@@ -392,10 +386,7 @@ export function ContactsPanel({
     >
       {form.contacts.length === 0 ? (
         <div className="rounded-lg border border-dashed px-4 py-8 text-center">
-          <p className="text-sm text-muted-foreground">还没有留下任何联系方式</p>
-          <p className="mt-1 text-xs text-muted-foreground/80">
-            值班、告警升级、跨组协作时，同事只能靠这里找到你。
-          </p>
+          <p className="text-sm text-muted-foreground">暂无联系方式</p>
           <Button variant="outline" size="sm" className="mt-3 h-8 gap-1.5 text-xs" onClick={add}>
             <Plus className="size-3.5" />
             添加第一条
@@ -406,7 +397,7 @@ export function ContactsPanel({
           {form.contacts.map((contact) => {
             const platform = contactPlatformOf(contact.platform);
             const error = issues.contactErrors[contact.uid];
-            const dropping = error === "留空的这条在保存时会被删除";
+            const dropping = error === "保存时将删除";
 
             return (
               <div key={contact.uid} className="space-y-1">

@@ -360,12 +360,7 @@ export function GeoTrailPanel() {
           <div className="flex size-8 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
             <Route className="size-4" />
           </div>
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold leading-tight">登录轨迹回放</span>
-            <span className="text-[11px] leading-tight text-muted-foreground">
-              按时间顺序回放用户登录位置，自动标注「不可能旅行」异常段
-            </span>
-          </div>
+          <span className="text-sm font-semibold leading-tight">登录轨迹回放</span>
         </div>
 
         <form className="flex flex-wrap items-center gap-2" onSubmit={handleSubmit}>
@@ -455,7 +450,6 @@ export function GeoTrailPanel() {
                 <div className="rounded-xl border border-border bg-card px-5 py-4 text-center">
                   <Route className="mx-auto size-5 text-muted-foreground" />
                   <p className="mt-2 text-xs font-medium text-foreground">选择应用并输入用户 ID</p>
-                  <p className="mt-0.5 text-[11px] text-muted-foreground">查询后即可回放该用户的登录轨迹</p>
                 </div>
               </div>
             )}
@@ -463,14 +457,14 @@ export function GeoTrailPanel() {
               <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
                 <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-[11px] text-muted-foreground">
                   <Loader2 className="size-3 animate-spin" />
-                  正在加载轨迹...
+                  加载中...
                 </span>
               </div>
             )}
             {isEmpty && (
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
                 <span className="rounded-full border border-border bg-card px-4 py-1.5 text-xs text-muted-foreground">
-                  {rawTotal > 0 ? "该用户的登录事件均无坐标信息" : "未找到该用户的登录轨迹"}
+                  {rawTotal > 0 ? "暂无坐标数据" : "暂无登录轨迹"}
                 </span>
               </div>
             )}
@@ -561,7 +555,7 @@ export function GeoTrailPanel() {
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {points.length === 0 ? (
               <p className="px-2 py-10 text-center text-xs text-muted-foreground">
-                {isInitial ? "等待查询" : "暂无可回放的轨迹点"}
+                {isInitial ? "等待查询" : "暂无轨迹点"}
               </p>
             ) : (
               <ul className="space-y-0.5">

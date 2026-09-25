@@ -14,7 +14,7 @@ import {
 } from "@/lib/api/app-functions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -53,9 +53,7 @@ function SecretDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>函数调用密钥</DialogTitle>
-          <DialogDescription>
-            密钥仅显示一次，关闭后无法再次查看；服务端仅保存 SHA-256 摘要。
-          </DialogDescription>
+          <DialogDescription>密钥仅显示一次，请立即保存。</DialogDescription>
         </DialogHeader>
         {created ? (
           <div className="overflow-x-auto rounded-lg border bg-muted/40 p-3">
@@ -71,7 +69,7 @@ function SecretDialog({
                 setCopied(true);
                 toast.success("已复制到剪贴板");
               } catch {
-                toast.error("剪贴板不可用，请手动选中复制");
+                toast.error("复制失败");
               }
             }}
           >
@@ -113,11 +111,6 @@ export function FunctionKeysPanel({ appKey }: { appKey?: string | null }) {
       <Card>
         <CardHeader>
           <CardTitle>函数调用密钥</CardTitle>
-          <CardDescription>
-            接入应用的服务端通过 <code className="font-mono">X-Aegis-Function-Key</code>{" "}
-            请求头调用远程函数。密钥以 <code className="font-mono">afk_</code> 开头，
-            仅可保存在服务端或 Worker Secret，不得嵌入网页与客户端安装包。
-          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex max-w-lg gap-2">

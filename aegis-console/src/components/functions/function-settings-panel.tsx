@@ -9,7 +9,7 @@ import { INPUT_SCHEMA_META } from "@/lib/monaco/json-schema-meta";
 import { JsonEditor } from "@/components/functions/json-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -145,9 +145,6 @@ export function FunctionSettingsPanel({
         <CardHeader className="flex-row items-start justify-between gap-3">
           <div>
             <CardTitle>基本信息</CardTitle>
-            <CardDescription>
-              状态为函数级开关：停用后调用返回 40990，已发布版本不受影响。
-            </CardDescription>
           </div>
           <div className="flex shrink-0 gap-2">
             {draft?.scope === scope ? (
@@ -193,9 +190,6 @@ export function FunctionSettingsPanel({
           <div className="space-y-2">
             <Label>运行时</Label>
             <Input value={selected.runtime} readOnly className="font-mono" />
-            <p className="text-[11px] text-muted-foreground">
-              运行时决定版本产物形态，创建后不可更改。
-            </p>
           </div>
         </CardContent>
       </Card>
@@ -204,9 +198,6 @@ export function FunctionSettingsPanel({
         <Card>
           <CardHeader>
             <CardTitle>能力声明</CardTitle>
-            <CardDescription>
-              保存后对下一次调用立即生效，无需重新发布版本。移除能力前请确认脚本已不再使用，否则调用将报错。
-            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <CapabilityPicker
@@ -222,9 +213,6 @@ export function FunctionSettingsPanel({
       <Card>
         <CardHeader>
           <CardTitle>运行闸门</CardTitle>
-          <CardDescription>
-            并发上限按单实例统计；频次上限按分钟计数，多实例部署下依然准确。
-          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <NumberField
@@ -233,7 +221,6 @@ export function FunctionSettingsPanel({
             min={10}
             max={limits?.maxTimeoutMs ?? 30000}
             onChange={(value) => patch("timeoutMs", value)}
-            hint="超过时限将中断执行"
           />
           <NumberField
             label="并发上限"
@@ -241,7 +228,7 @@ export function FunctionSettingsPanel({
             min={1}
             max={limits?.maxConcurrency ?? 64}
             onChange={(value) => patch("maxConcurrency", value)}
-            hint="单实例同时执行数，超出返回 42990"
+            hint="单实例"
           />
           <NumberField
             label="频次上限 (次/分钟)"
@@ -249,7 +236,7 @@ export function FunctionSettingsPanel({
             min={0}
             max={600000}
             onChange={(value) => patch("rateLimitPerMin", value)}
-            hint="0 表示不限；超出返回 42991"
+            hint="0 表示不限"
           />
           <NumberField
             label="请求上限 (字节)"
@@ -285,13 +272,6 @@ export function FunctionSettingsPanel({
                   </Badge>
                 )}
               </CardTitle>
-              <CardDescription>
-                一份 JSON Schema 同时驱动调用入口校验、试跑输入补全与编辑器内{" "}
-                <code className="font-mono">ctx.input</code> 的类型。
-                <span className="mt-1 block">
-                  未配置时平台不校验输入，字段缺失将表现为脚本运行时错误。
-                </span>
-              </CardDescription>
             </div>
             {catalog?.inputSchemaTemplate && !schemaFieldCount ? (
               <Button
@@ -315,10 +295,6 @@ export function FunctionSettingsPanel({
               schema={INPUT_SCHEMA_META}
               height={260}
             />
-            <p className="text-xs text-muted-foreground">
-              留空（<code className="font-mono">{"{}"}</code>）表示不约束输入。
-              保存时将编译校验，无法编译的契约会被拒绝。
-            </p>
           </CardContent>
         </Card>
       ) : null}
@@ -327,10 +303,6 @@ export function FunctionSettingsPanel({
         <Card>
           <CardHeader>
             <CardTitle>函数配置</CardTitle>
-            <CardDescription>
-              脚本内通过 <code className="font-mono">aegis.config</code> 读取。
-              修改后立即生效，无需发布新版本；不会下发给接入方。
-            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             <JsonEditor
@@ -338,11 +310,6 @@ export function FunctionSettingsPanel({
               onChange={(next) => patch("config", next)}
               height={180}
             />
-            <p className="text-xs text-muted-foreground">
-              顶层必须是 JSON 对象，例如{" "}
-              <code className="font-mono">{`{"dailyQuota": 100, "endpoint": "https://…"}`}</code>
-              。键名将出现在编辑器 <code className="font-mono">aegis.config.</code> 的补全中。
-            </p>
           </CardContent>
         </Card>
       ) : null}
@@ -350,9 +317,6 @@ export function FunctionSettingsPanel({
       <Card className="border-destructive/40">
         <CardHeader>
           <CardTitle className="text-destructive">删除函数</CardTitle>
-          <CardDescription>
-            删除后全部版本与调用审计一并移除，不可恢复。如需临时停用，请将状态改为「已停用」。
-          </CardDescription>
         </CardHeader>
         <CardContent>
           <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
@@ -373,8 +337,7 @@ export function FunctionSettingsPanel({
           <DialogHeader>
             <DialogTitle>删除函数</DialogTitle>
             <DialogDescription>
-              请输入函数名 <code className="font-mono">{selected.name}</code> 确认删除。
-              删除后调用方将收到 40490，历史调用记录一并移除。
+              输入 <code className="font-mono">{selected.name}</code> 确认删除，不可恢复。
             </DialogDescription>
           </DialogHeader>
           <Input

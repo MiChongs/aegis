@@ -149,7 +149,7 @@ export function BannerEditor({
       <SheetContent side="right" className="flex w-[92vw] max-w-xl flex-col p-0">
         <SheetHeader className="shrink-0 border-b px-6 py-4">
           <SheetTitle>{item ? "编辑 Banner" : "新建 Banner"}</SheetTitle>
-          <SheetDescription>{slot.label} · {slot.hint}</SheetDescription>
+          <SheetDescription>{slot.label}</SheetDescription>
         </SheetHeader>
 
         <ScrollArea className="flex-1">
@@ -159,7 +159,7 @@ export function BannerEditor({
               <ImageDropzone
                 value={preview}
                 aspect={slot.aspect}
-                description="JPG / PNG / GIF / WEBP / SVG，10 MB 以内"
+                description="10 MB 以内"
                 onUpload={async (file) => {
                   const result = await uploadMutation.mutateAsync(file);
                   return { url: result.url, reference: result.reference };
@@ -210,7 +210,6 @@ export function BannerEditor({
                 className="h-9"
                 value={form.title}
                 onChange={(event) => patch("title", event.target.value)}
-                placeholder="展示在素材上的主文案"
               />
               {errors.title ? <p className="text-xs text-destructive">{errors.title}</p> : null}
             </div>
@@ -221,7 +220,7 @@ export function BannerEditor({
                 rows={2}
                 value={form.content}
                 onChange={(event) => patch("content", event.target.value)}
-                placeholder="一行说明，可留空"
+                placeholder="选填"
               />
             </div>
 
@@ -233,7 +232,7 @@ export function BannerEditor({
                   className="h-9 pl-8"
                   value={form.url}
                   onChange={(event) => patch("url", event.target.value)}
-                  placeholder="https://  或应用内路径 /activity/618"
+                  placeholder="https:// 或 /path"
                 />
               </div>
               {errors.url ? <p className="text-xs text-destructive">{errors.url}</p> : null}
@@ -260,7 +259,6 @@ export function BannerEditor({
                 {errors.endTime ? <p className="text-xs text-destructive">{errors.endTime}</p> : null}
               </div>
             </div>
-            <p className="text-[11px] text-muted-foreground">两端留空即长期投放</p>
           </div>
         </ScrollArea>
 

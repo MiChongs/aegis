@@ -20,9 +20,9 @@ type ChangeHandler = (key: string, value: unknown) => void;
 // 顺序即渲染顺序；后端字段的 group 落在这里，未知 group 归入「其他」
 
 const GROUPS: Array<{ key: string; title: string; hint?: string }> = [
-  { key: "credential", title: "商户凭据", hint: "来自支付平台后台，仅存于服务端" },
+  { key: "credential", title: "商户凭据" },
   { key: "gateway", title: "网关与回调" },
-  { key: "limit", title: "交易限额", hint: "由网关层统一强制执行，0 表示不限制" },
+  { key: "limit", title: "交易限额", hint: "0 表示不限" },
   { key: "other", title: "其他" }
 ];
 
@@ -42,7 +42,6 @@ function FieldShell({
         {field.required && <span className="text-destructive"> *</span>}
       </Label>
       {children}
-      {field.help && <p className="text-[11px] leading-relaxed text-muted-foreground">{field.help}</p>}
     </div>
   );
 }
@@ -85,7 +84,6 @@ function DynamicField({
           <Switch checked={checked} onCheckedChange={(v) => onChange(field.key, v)} className="mt-0.5 shrink-0" />
           <span className="min-w-0 space-y-0.5">
             <span className="block text-xs">{field.label}</span>
-            {field.help && <span className="block text-[11px] leading-relaxed text-muted-foreground">{field.help}</span>}
           </span>
         </label>
       );
@@ -289,7 +287,7 @@ export function PaymentProviderFields({
   }, [meta]);
 
   if (!meta) {
-    return <p className="text-xs text-muted-foreground">正在加载渠道配置项…</p>;
+    return <p className="text-xs text-muted-foreground">加载中…</p>;
   }
 
   if (!meta.fields?.length) {
@@ -360,7 +358,7 @@ export function PaymentProviderFields({
           className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
           <ExternalLink className="size-3" />
-          查看 {meta.name} 官方接入文档
+          官方文档
         </a>
       )}
     </div>

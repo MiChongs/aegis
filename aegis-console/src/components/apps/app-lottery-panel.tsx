@@ -405,7 +405,7 @@ function ActivityFormDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{isEdit ? "编辑活动" : "创建抽奖活动"}</DialogTitle>
-          <DialogDescription>{isEdit ? "修改活动配置" : "设置抽奖活动的基本信息和规则"}</DialogDescription>
+          <DialogDescription>{isEdit ? "修改活动配置" : "新建抽奖活动"}</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3 sm:grid-cols-2">
@@ -562,7 +562,7 @@ function PrizeTab({ appKey }: { appKey: string }) {
           <Skeleton className="h-10 w-full" />
         </div>
       ) : prizes.length === 0 ? (
-        <div className="py-12 text-center text-sm text-muted-foreground">暂无奖品，请添加</div>
+        <div className="py-12 text-center text-sm text-muted-foreground">暂无奖品</div>
       ) : (
         <Table>
           <TableHeader>
@@ -753,7 +753,7 @@ function PrizeFormDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>{isEdit ? "编辑奖品" : "添加奖品"}</DialogTitle>
-          <DialogDescription>{isEdit ? "修改奖品信息" : "为活动添加一个新奖品"}</DialogDescription>
+          <DialogDescription>{isEdit ? "修改奖品信息" : "新建奖品"}</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3 sm:grid-cols-2">
