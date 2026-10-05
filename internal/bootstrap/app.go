@@ -401,6 +401,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 卡密即登录凭证：注入后 loginMethods 里的 cardkey 一档才真正可用，
 	// 未注入时该方式直接报「未启用」而不是空指针。
 	authService.SetCardKeyService(cardKeyService)
+	rewardedAdService := service.NewRewardedAdService(log, pg, cfg)
 	appFunctionService := service.NewAppFunctionService(log, pg, cfg.JWT.Secret)
 	// AI 供应商通道（系统级 + 应用级，密钥加密落库）与 Agent 编排。
 	aiProviderService := service.NewAIProviderService(log, pg, cfg.Security.MasterKey)
@@ -563,6 +564,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		App:              appService,
 		AppFunction:      appFunctionService,
 		CardKey:          cardKeyService,
+		RewardedAd:       rewardedAdService,
 		Site:             siteService,
 		Version:          versionService,
 		PlatformSettings: systemService,

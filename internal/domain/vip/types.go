@@ -13,6 +13,7 @@ const (
 	ChannelAdminGrant   = "admin_grant"   // 管理员授予
 	ChannelTrial        = "trial"         // 领取试用
 	ChannelCardKey      = "card_key"      // 卡密核销
+	ChannelAdReward     = "ad_reward"     // 看激励广告领取
 	// ChannelAdminRevoke 扣减天数（管理员 / 远程函数 vip.revoke）。
 	// 它是账本里的一条负时长记录，不是一段会员期：不贡献功能，也不会成为「当前套餐」。
 	ChannelAdminRevoke = "admin_revoke"

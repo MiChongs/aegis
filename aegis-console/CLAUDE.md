@@ -703,6 +703,8 @@ Shell 挂载 1.5s 后预热一次，面板打开时再兜底触发一次
 | `components/apps/vip/` | 会员区块：套餐 / 功能标识 / 试用 / 会员查询（见下节） |
 | `components/apps/card-key/` | 卡密区块：批次 / 卡密 / 核销记录（权益表单由后端目录驱动） |
 | `lib/api/card-key.ts` / `lib/card-key-hooks.ts` | 卡密域 API 与 React Query hooks |
+| `components/apps/rewarded-ad/` | 激励广告区块：概览 / 记录 / 配置（见下节） |
+| `lib/api/rewarded-ad.ts` / `lib/rewarded-ad-hooks.ts` | 激励广告域 API 与 React Query hooks |
 | `lib/api/vip.ts` / `lib/vip-hooks.ts` | 会员域 API 与 React Query hooks |
 
 四条硬约束：
@@ -922,6 +924,26 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 
 会员时长与功能权益的语义（顺延、并集、跟随套餐当前配置）全部由后端决定，控制台只展示；
 判定入口在 [internal/service](../internal/service/CLAUDE.md#会员判定与试用期会员)。
+
+## 激励广告区块（/apps/{appKey}?tab=rewarded-ad）
+
+| 文件 | 职责 |
+|---|---|
+| `components/apps/rewarded-ad/app-rewarded-ad-panel.tsx` | 骨架 + 概览 / 记录 / 配置三个视图的内部切换 |
+| `components/apps/rewarded-ad/rewarded-ad-overview-panel.tsx` | 今日观看 / 发放 / 人数 / 待确认 + 趋势图 + 各场景的窗口内表现 |
+| `components/apps/rewarded-ad/rewarded-ad-views-panel.tsx` | 观看记录：两方（回调 / 上报）各自到没到、原因、补发 |
+| `components/apps/rewarded-ad/rewarded-ad-config-panel.tsx` | 接入（平台、应用 ID、Security Key、回调地址）+ 校验模式与总限额 + 奖励场景 |
+| `components/apps/rewarded-ad/rewarded-ad-shared.tsx` | 状态徽标、拒发原因、校验模式文案、权益摘要 |
+
+三条硬约束：
+
+1. **权益表单由后端目录驱动**（配置接口随附 `catalog`，是卡密目录的子集）。前端另抄一份，
+   就会出现「控制台能勾、保存时报激励广告不能发放该权益」。
+2. **Security Key 留空即不修改**，与其它密钥字段一致；后端只回 `hasSecurityKey` 与末 4 位提示。
+3. **记录表必须同时展示「回调」与「上报」两列。** 用户投诉没到账时，第一个问题永远是
+   「哪一方没来」—— 回调没来查平台与签名，上报没来查客户端，只看最终状态回答不了。
+
+结算语义（两方确认、限额、补发）全部由后端决定，见 [docs/rewarded-ads.md](../docs/rewarded-ads.md)。
 
 ## 内容中心（/content）
 

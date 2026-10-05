@@ -93,6 +93,10 @@ func gatewayRequestModels() map[string]any {
 		"notificationReadBatch": NotificationReadBatchRequest{},
 		"notificationClear":     NotificationClearRequest{},
 
+		// 激励广告
+		"rewardedAdClaim":   RewardedAdClaimRequest{},
+		"rewardedAdRecords": PaginationQuery{},
+
 		// 钱包 / 会员 / 支付
 		"walletTransactions": WalletTransactionsQuery{},
 		"walletConsume":      WalletConsumeRequest{},

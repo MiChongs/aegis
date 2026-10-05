@@ -83,6 +83,7 @@ export type VipSource =
   | "payment_order"
   | "admin_grant"
   | "card_key"
+  | "ad_reward"
   | "admin_revoke"
   | "unknown";
 

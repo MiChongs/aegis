@@ -431,7 +431,8 @@ const VIP_SOURCE_LABEL: Record<string, string> = {
   wallet: "余额购买",
   payment_order: "在线支付",
   admin_grant: "管理员发放",
-  card_key: "卡密核销"
+  card_key: "卡密核销",
+  ad_reward: "看广告领取"
 };
 
 /** 自定义发放的快捷时长档位。 */

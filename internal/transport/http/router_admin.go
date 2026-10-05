@@ -225,6 +225,12 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.GET("/apps/:appkey/card-keys/codes/:cardId/devices", h.AdminListCardKeyDevices)
 		admin.DELETE("/apps/:appkey/card-keys/codes/:cardId/devices/:deviceId", h.AdminUnbindCardKeyDevice)
 		admin.GET("/apps/:appkey/card-keys/redemptions", h.AdminListCardKeyRedemptions)
+		// 激励广告。与卡密同理：二级段全是静态词（config / views / stats），参数段只在第三级。
+		admin.GET("/apps/:appkey/rewarded-ads/config", h.AdminRewardedAdConfig)
+		admin.PUT("/apps/:appkey/rewarded-ads/config", h.AdminSaveRewardedAdConfig)
+		admin.GET("/apps/:appkey/rewarded-ads/views", h.AdminListRewardedAdViews)
+		admin.POST("/apps/:appkey/rewarded-ads/views/:viewId/grant", h.AdminGrantRewardedAdView)
+		admin.GET("/apps/:appkey/rewarded-ads/stats", h.AdminRewardedAdStats)
 		// 应用级第三方登录渠道（配置 + 自检 + 绑定治理）
 		admin.GET("/oauth-providers/templates", h.AdminOAuthProviderTemplates)
 		admin.GET("/apps/:appkey/oauth-providers", h.AdminListAppOAuthProviders)

@@ -28,6 +28,7 @@ const (
 	SourcePaymentOrder = ChannelPaymentOrder
 	SourceAdminGrant   = ChannelAdminGrant
 	SourceCardKey      = ChannelCardKey
+	SourceAdReward     = ChannelAdReward
 )
 
 // 试用资格判据。客户端按 reason 分支，不要匹配 message —— 后者会随文案调整变化。
@@ -263,7 +264,8 @@ func evaluateTrialOffer(in EvalInput, entitlement Entitlement) TrialOffer {
 // normalizeSource 把账本里的渠道翻成会员来源，未登记的渠道一律算"说不清"。
 func normalizeSource(channel string) string {
 	switch channel {
-	case ChannelTrial, ChannelWallet, ChannelPaymentOrder, ChannelAdminGrant, ChannelCardKey:
+	case ChannelTrial, ChannelWallet, ChannelPaymentOrder, ChannelAdminGrant, ChannelCardKey,
+		ChannelAdReward:
 		return channel
 	default:
 		return SourceUnknown

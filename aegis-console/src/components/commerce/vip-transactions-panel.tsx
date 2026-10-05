@@ -15,6 +15,7 @@ const channelLabels: Record<string, string> = {
   admin_grant: "管理员授予",
   trial: "领取试用",
   card_key: "卡密核销",
+  ad_reward: "看广告领取",
   admin_revoke: "扣减天数"
 };
 

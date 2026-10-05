@@ -8,6 +8,7 @@ import {
   Info,
   KeyRound,
   Mail,
+  MonitorPlay,
   PlugZap,
   ScrollText,
   ShieldCheck,
@@ -87,7 +88,8 @@ export const appSectionGroups: AppSectionGroup[] = [
       { key: "vip", title: "会员", summary: "套餐、试用与功能权益", icon: Crown },
       { key: "card-key", title: "卡密", summary: "授权卡与兑换卡", icon: Ticket },
       { key: "signin-reward", title: "签到奖励", summary: "连签规则与奖励发放", icon: Gift },
-      { key: "lottery", title: "抽奖", summary: "奖池、概率与限次", icon: Dices }
+      { key: "lottery", title: "抽奖", summary: "奖池、概率与限次", icon: Dices },
+      { key: "rewarded-ad", title: "激励广告", summary: "看广告领奖励、回调验签与限次", icon: MonitorPlay }
     ]
   }
 ];

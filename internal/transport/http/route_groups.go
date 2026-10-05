@@ -120,6 +120,10 @@ var routeGroups = []routeGroup{
 	// 两种鉴权 → 两个分组，理由同「网关-认证回跳」。
 	{Realm: realmAppCompat, Title: "应用函数-公钥", Tag: tagAPI, Auth: authPublic,
 		Exact: []string{"/api/functions/signing-key"}},
+	// 广告平台的服务端回调：平台服务器发起，没有任何令牌可带，凭回调签名鉴别。
+	// 必须排在「应用函数-调用」之前，否则会被那条宽泛前缀标成需要用户令牌。
+	{Realm: realmAppCompat, Title: "激励广告-平台回调", Tag: tagAPI, Auth: authPublic,
+		Prefix: "/api/apps/*/ads/"},
 	{Realm: realmAppCompat, Title: "应用函数-调用", Tag: tagAPI, Auth: authBearer,
 		Prefix: "/api/apps/"},
 	{Realm: realmAppCompat, Title: "应用兼容其他", Tag: tagAppCompat, Auth: authAdminRBAC,

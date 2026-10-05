@@ -55,6 +55,7 @@ type Handler struct {
 	plugin          *service.PluginService
 	appFunction     *service.AppFunctionService
 	cardKey         *service.CardKeyService
+	rewardedAd      *service.RewardedAdService
 	authProtocol    *service.AuthProtocolService
 	dashboard       *service.DashboardService
 	orgApproval     *service.OrgApprovalService

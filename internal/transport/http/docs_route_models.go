@@ -170,6 +170,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/admin/apps/{appkey}/reports/registration"):                                  ReportQueryParams{},                      // ReportRegistration
 		routeKey("GET", "/api/admin/apps/{appkey}/reports/retention"):                                     ReportQueryParams{},                      // ReportRetention
 		routeKey("GET", "/api/admin/apps/{appkey}/reports/risk"):                                          ReportQueryParams{},                      // ReportRisk
+		routeKey("PUT", "/api/admin/apps/{appkey}/rewarded-ads/config"):                                   SaveRewardedAdConfigRequest{},            // AdminSaveRewardedAdConfig
+		routeKey("POST", "/api/admin/apps/{appkey}/rewarded-ads/views/{viewId}/grant"):                    GrantRewardedAdViewRequest{},             // AdminGrantRewardedAdView
 		routeKey("PUT", "/api/admin/apps/{appkey}/signin-reward"):                                         AdminSignInRewardPolicyUpdateRequest{},   // UpdateAdminAppSignInReward
 		routeKey("POST", "/api/admin/apps/{appkey}/signin-reward/test"):                                   AdminSignInRewardTestRequest{},           // TestAdminAppSignInReward
 		routeKey("GET", "/api/admin/apps/{appkey}/signin/records"):                                        AdminAppSignInRecordQuery{},              // AdminAppSignInRecords
@@ -531,6 +533,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/user/two-factor/recovery-codes"):                                           RecoveryCodesRegenerateRequest{},         // GenerateRecoveryCodes
 		routeKey("POST", "/api/user/two-factor/recovery-codes/regenerate"):                                RecoveryCodesRegenerateRequest{},         // RegenerateRecoveryCodes
 		routeKey("PUT", "/api/user/update-site"):                                                          SiteUpdateRequest{},                      // UpdateSite
+		routeKey("POST", "/api/v1/apps/{appkey}/ads/rewarded/claim"):                                      RewardedAdClaimRequest{},                 // AppClaimRewardedAd
+		routeKey("GET", "/api/v1/apps/{appkey}/ads/rewarded/records"):                                     PaginationQuery{},                        // AppRewardedAdRecords
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/2fa/verify"):                                         SecondFactorVerifyRequest{},              // AppSecondFactor
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/login"):                                              authprotocol.LoginInput{},                // AppLogin
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/oauth/bind/url"):                                     OAuthBindURLRequest{},                    // OAuthBindURL

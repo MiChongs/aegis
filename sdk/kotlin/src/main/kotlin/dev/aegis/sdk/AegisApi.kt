@@ -474,6 +474,57 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
     fun leaderboardSignIn(type: String): JsonElement =
         client.call("GET", "/leaderboard/signin/$type", requireAuth = true)
 
+    // ── 激励广告 ──
+
+    /**
+     * 激励广告状态：各奖励场景、今日剩余次数与冷却，以及传给广告 SDK 的 `userId`。
+     *
+     * 加载广告前先调这个：`enabled = false` 时整个入口应当隐藏；某个场景 `available = false`
+     * 时不要让用户去看 —— 看完也领不到。`userId` 必须原样传给广告 SDK 的请求对象，
+     * 平台回调靠它认出是谁看的，客户端不要自己拼。
+     */
+    @Throws(IOException::class)
+    fun rewardedAdStatus(): JsonElement = client.call("GET", "/ads/rewarded", requireAuth = true)
+
+    /**
+     * 上报一次看完的激励广告并领取奖励。
+     *
+     * [transId] 是 SDK 在 `onVideoRewarded` 里给的那一个。返回体的 `status`：
+     * `granted` 已到账；`rejected` 看了但不发（`reason` 说明原因，如 `daily_limit`）；
+     * `pending` 还在等广告平台的服务端回调 —— 隔一两秒用同一个 [transId] 再调一次即可，
+     * 重复上报是安全的，奖励只会发一次。
+     *
+     * [verified] / [errorCode] 是 SDK 自己的奖励校验结论（`HJRewardVerify`），
+     * 只在服务端配置为客户端校验模式时作数。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun claimRewardedAd(
+        scene: String,
+        transId: String,
+        placementId: String? = null,
+        verified: Boolean? = null,
+        errorCode: String? = null,
+        deviceId: String? = null,
+    ): JsonElement = client.call(
+        "POST", "/ads/rewarded/claim",
+        mapOf(
+            "scene" to scene,
+            "transId" to transId,
+            "placementId" to placementId,
+            "verified" to verified,
+            "errorCode" to errorCode,
+            "deviceId" to deviceId,
+        ),
+        requireAuth = true,
+    )
+
+    /** 我的激励广告观看与领奖记录。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun rewardedAdRecords(page: Int = 1, limit: Int = 20): JsonElement =
+        client.call("GET", "/ads/rewarded/records", query = pageQuery(page, limit), requireAuth = true)
+
     // ── 站内信 ──
 
     @Throws(IOException::class)

@@ -60,6 +60,18 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "cardKeyMine", Method: "GET", Path: "/card-keys/mine", Auth: true,
 		Summary: "我名下的授权卡：授权到期时间与已绑定设备数"},
 
+	// ── 激励广告 ──
+	//
+	// 一次观看由两方确认：广告平台的服务端回调（不在网关里）与这里的上报，靠 transId 对上。
+	// 先拉状态拿到 userId 与各场景的剩余次数，再加载广告；看完后带 transId 上报，
+	// 结果是 pending 时用同一个 transId 再报一次即可轮询。
+	{Key: "rewardedAdStatus", Method: "GET", Path: "/ads/rewarded", Auth: true,
+		Summary: "激励广告状态：各奖励场景、今日剩余次数、冷却，以及传给广告 SDK 的用户标识"},
+	{Key: "rewardedAdClaim", Method: "POST", Path: "/ads/rewarded/claim", Auth: true,
+		Summary: "上报一次看完的激励广告并领取奖励（同一 transId 可重复上报以轮询结果）"},
+	{Key: "rewardedAdRecords", Method: "GET", Path: "/ads/rewarded/records", Auth: true,
+		Summary: "我的激励广告观看与领奖记录"},
+
 	// ── 当前用户 ──
 	{Key: "me", Method: "GET", Path: "/me", Auth: true, Summary: "当前登录用户资料"},
 	{Key: "profile", Method: "GET", Path: "/me/profile", Auth: true, Summary: "个人资料详情"},
@@ -230,6 +242,15 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 		Recovery: authprotocol.RecoveryNone, Hint: "授权卡走 /auth/login 的 cardkey 方式，兑换卡走 /card-keys/redeem"},
 	{Code: 40346, Name: "CARD_KEY_NO_LOGIN_CARD", Message: "名下没有可加设备位的授权卡",
 		Recovery: authprotocol.RecoveryNone},
+	// ── 激励广告 ──
+	// 只有「这次上报本身不成立」才是错误；限额、冷却等「看了但不发」的结论
+	// 在 /ads/rewarded/claim 的返回体里（status=rejected + reason），不走错误码。
+	{Code: 40350, Name: "REWARDED_AD_DISABLED", Message: "激励广告暂未开放",
+		Recovery: authprotocol.RecoveryNone, Hint: "管理员没有启用激励广告，入口应当整个隐藏"},
+	{Code: 40351, Name: "REWARDED_AD_SCENE_UNAVAILABLE", Message: "奖励场景不存在或已停用",
+		Recovery: authprotocol.RecoveryNone, Hint: "重新拉一次 /ads/rewarded，按最新的场景列表展示"},
+	{Code: 40352, Name: "REWARDED_AD_USER_MISMATCH", Message: "这次观看不属于当前账号",
+		Recovery: authprotocol.RecoveryNone, Hint: "SDK 的 userId 必须用 /ads/rewarded 下发的那一个；切换账号后要重建广告对象"},
 	{Code: 40441, Name: "CARD_KEY_NOT_FOUND", Message: "卡密不存在",
 		Recovery: authprotocol.RecoveryNone, Hint: "服务端已忽略大小写与分隔符差异，走到这里就是真的没有这张卡"},
 	{Code: 40910, Name: "CARD_KEY_REDEEMING", Message: "该卡密正在被核销",

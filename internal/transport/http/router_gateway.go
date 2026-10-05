@@ -72,6 +72,12 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.POST("/card-keys/redeem", h.AppRedeemCardKey)
 		appGatewayAuthed.GET("/card-keys/mine", h.AppMyCardKeys)
 
+		// 激励广告：状态（含传给 SDK 的用户标识）、看完上报、我的记录。
+		// 平台的服务端回调不在这里 —— 它没有用户令牌可带，走 /api/apps/:appkey/ads/*。
+		appGatewayAuthed.GET("/ads/rewarded", h.AppRewardedAdStatus)
+		appGatewayAuthed.POST("/ads/rewarded/claim", h.AppClaimRewardedAd)
+		appGatewayAuthed.GET("/ads/rewarded/records", h.AppRewardedAdRecords)
+
 		// 当前用户：资料 / 设置 / 安全概览
 		appGatewayAuthed.GET("/me", h.AppMe)
 		appGatewayAuthed.GET("/me/profile", h.Profile)

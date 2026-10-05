@@ -17,6 +17,7 @@ import { AppAuthSessionPanel } from "@/components/apps/app-auth-session-panel";
 import { AppCaptchaPanel } from "@/components/apps/app-captcha-panel";
 import { AppInfoPanel } from "@/components/apps/app-info-panel";
 import { AppLotteryPanel } from "@/components/apps/app-lottery-panel";
+import { AppRewardedAdPanel } from "@/components/apps/rewarded-ad/app-rewarded-ad-panel";
 import { AppOAuthPanel } from "@/components/apps/app-oauth-panel";
 import { AppPasswordPanel } from "@/components/apps/app-password-panel";
 import { AppPaymentPanel } from "@/components/apps/app-payment-panel";
@@ -173,6 +174,8 @@ function AppSectionPanel({ section, app }: { section: string; app: AppSummary })
       return <AppSignInRewardPanel appKey={app.appKey} />;
     case "lottery":
       return <AppLotteryPanel appKey={app.appKey} />;
+    case "rewarded-ad":
+      return <AppRewardedAdPanel appKey={app.appKey} />;
     default:
       return <AppInfoPanel appKey={app.appKey} />;
   }

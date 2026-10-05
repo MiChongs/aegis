@@ -167,6 +167,9 @@ GET	/api/admin/apps/:appkey/reports/region	ReportRegion
 GET	/api/admin/apps/:appkey/reports/registration	ReportRegistration
 GET	/api/admin/apps/:appkey/reports/retention	ReportRetention
 GET	/api/admin/apps/:appkey/reports/risk	ReportRisk
+GET	/api/admin/apps/:appkey/rewarded-ads/config	AdminRewardedAdConfig
+GET	/api/admin/apps/:appkey/rewarded-ads/stats	AdminRewardedAdStats
+GET	/api/admin/apps/:appkey/rewarded-ads/views	AdminListRewardedAdViews
 GET	/api/admin/apps/:appkey/signin-reward	AdminAppSignInReward
 GET	/api/admin/apps/:appkey/signin/records	AdminAppSignInRecords
 GET	/api/admin/apps/:appkey/signin/stats	AdminAppSignInStats
@@ -386,6 +389,7 @@ GET	/api/admin/user-settings/stats	AdminUserSettingsStats
 GET	/api/admin/user-settings/user	AdminUserSettings
 GET	/api/app/password-policy/templates	PasswordPolicyTemplates
 GET	/api/app/public	AppPublic
+GET	/api/apps/:appkey/ads/huijing/callback	RewardedAdHuijingCallback
 GET	/api/apps/:appkey/functions	ListAppFunctionContracts
 GET	/api/apps/:appkey/functions/:functionName	GetAppFunctionContract
 GET	/api/auth/oauth2/bindings	ListMyOAuthBindings
@@ -466,6 +470,8 @@ GET	/api/user/tickets	UserListTickets
 GET	/api/user/tickets/:ticketId	UserGetTicket
 GET	/api/user/tickets/categories	UserListTicketCategories
 GET	/api/user/two-factor/recovery-codes	ListRecoveryCodes
+GET	/api/v1/apps/:appkey/ads/rewarded	AppRewardedAdStatus
+GET	/api/v1/apps/:appkey/ads/rewarded/records	AppRewardedAdRecords
 GET	/api/v1/apps/:appkey/auth/oauth/bindings	ListMyOAuthBindings
 GET	/api/v1/apps/:appkey/auth/oauth/callback	AppOAuthCallback
 GET	/api/v1/apps/:appkey/banners	AppBanners
@@ -633,6 +639,7 @@ POST	/api/admin/apps/:appkey/oauth-providers/:provider/test	AdminTestAppOAuthPro
 POST	/api/admin/apps/:appkey/oauth-providers/reorder	AdminReorderAppOAuthProviders
 POST	/api/admin/apps/:appkey/password-policy/reset	ResetAdminAppPasswordPolicy
 POST	/api/admin/apps/:appkey/password-policy/test	TestAdminAppPasswordPolicy
+POST	/api/admin/apps/:appkey/rewarded-ads/views/:viewId/grant	AdminGrantRewardedAdView
 POST	/api/admin/apps/:appkey/signin-reward/reset	ResetAdminAppSignInReward
 POST	/api/admin/apps/:appkey/signin-reward/test	TestAdminAppSignInReward
 POST	/api/admin/apps/:appkey/users/:userId/avatar	AdminUploadAppUserAvatar
@@ -933,6 +940,7 @@ POST	/api/user/two-factor/enable	EnableTOTP
 POST	/api/user/two-factor/enroll	BeginTOTPEnrollment
 POST	/api/user/two-factor/recovery-codes	GenerateRecoveryCodes
 POST	/api/user/two-factor/recovery-codes/regenerate	RegenerateRecoveryCodes
+POST	/api/v1/apps/:appkey/ads/rewarded/claim	AppClaimRewardedAd
 POST	/api/v1/apps/:appkey/auth/2fa/verify	AppSecondFactor
 POST	/api/v1/apps/:appkey/auth/email/code	AppEmailCode
 POST	/api/v1/apps/:appkey/auth/email/verify	AppEmailVerify
@@ -1005,6 +1013,7 @@ PUT	/api/admin/apps/:appkey/oauth-providers/:provider	AdminUpdateAppOAuthProvide
 PUT	/api/admin/apps/:appkey/oauth-providers/:provider/enabled	AdminSetAppOAuthProviderEnabled
 PUT	/api/admin/apps/:appkey/password-policy	UpdateAdminAppPasswordPolicy
 PUT	/api/admin/apps/:appkey/policy	UpdateAdminAppPolicy
+PUT	/api/admin/apps/:appkey/rewarded-ads/config	AdminSaveRewardedAdConfig
 PUT	/api/admin/apps/:appkey/signin-reward	UpdateAdminAppSignInReward
 PUT	/api/admin/apps/:appkey/users/:userId/profile	AdminUpdateUserProfile
 PUT	/api/admin/apps/:appkey/users/:userId/status	UpdateAdminAppUserStatus

@@ -21,6 +21,7 @@ const SOURCE_META: Record<VipSource, { label: string; variant: "success" | "info
   payment_order: { label: "在线支付", variant: "success" },
   admin_grant: { label: "管理员授予", variant: "info" },
   card_key: { label: "卡密核销", variant: "info" },
+  ad_reward: { label: "看广告领取", variant: "info" },
   // 只出现在开通记录里：扣减天数是一条负时长的账，不是一段会员期
   admin_revoke: { label: "扣减天数", variant: "warning" },
   // 老系统迁移进来的用户：到期时间是直接写进 users 的，账本里没有对应流水。
