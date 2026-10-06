@@ -779,6 +779,204 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
     )
 }
 
+/**
+ * 用户云存储：每个用户一块私有空间，按「命名空间 / 键」存放任意文档 ——
+ * 收藏夹、偏好设置、草稿、存档，由接入方自己决定怎么分。
+ *
+ * 命名空间与键直接出现在路径里，SDK 不做转义：命名空间限小写字母、数字与 `. _ -`，
+ * 键限字母、数字与 `. _ -`（都不含斜杠），不合规的值服务端回 42260 / 42261。
+ *
+ * **并发写入靠修订号。** 读到的 `revision` 原样作为 `ifRevision` 写回；期间若有别的设备
+ * 写过，服务端回 40965（CLOUD_REVISION_CONFLICT）—— 重新读取、与本地合并之后再写。
+ * 不带 `ifRevision` 等于无条件覆盖，只适合「这个键只有一台设备在写」的场景。
+ *
+ * 每次写入留一个修订（保留数由管理员配置），可回滚；删除默认进回收站，保留期内可恢复。
+ */
+class AegisCloudApi internal constructor(private val client: AegisClient) {
+
+    /**
+     * 状态：是否开放、是否可写、用量与配额、各命名空间用量与限制。
+     * `enabled = false` 时整个入口应当隐藏；`writable = false`（被冻结）时只读。
+     */
+    @Throws(IOException::class)
+    fun status(): JsonElement = client.call("GET", "/cloud", requireAuth = true)
+
+    /** 我的条目（不含内容）。[status] 取 `active`（默认）/ `deleted`（回收站）/ `all`。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun items(
+        namespace: String? = null,
+        status: String? = null,
+        keyword: String? = null,
+        page: Int = 1,
+        limit: Int = 50,
+    ): JsonElement = client.call(
+        "GET", "/cloud/items",
+        query = buildQuery(
+            "namespace" to namespace,
+            "status" to status,
+            "keyword" to keyword,
+            "page" to page.toString(),
+            "limit" to limit.toString(),
+        ),
+        requireAuth = true,
+    )
+
+    /**
+     * 读取条目与内容。[revision] 为 null 读当前修订，否则读那个历史修订。
+     *
+     * 内容超过 `limits.inlineContentBytes` 时响应里 `contentOmitted = true`、没有 `content`，
+     * 改用 [link] 下载。条目在回收站里时回 40465。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun item(namespace: String, key: String, revision: Long? = null): JsonElement = client.call(
+        "GET", "/cloud/items/$namespace/$key",
+        query = buildQuery("revision" to revision?.toString()),
+        requireAuth = true,
+    )
+
+    /**
+     * 写入条目。
+     *
+     * [content] 的形态由 [encoding] 决定：`json` 时是任意 JSON 值（Map / List / JsonElement /
+     * 字符串 / 数字），原样落盘、原样读回；`text` 时是字符串；`base64` 时是 base64 字符串
+     * （二进制请用 [putBytes]）。
+     *
+     * [ifRevision]：null 无条件覆盖；`0` 只在条目不存在时创建；其余值必须等于服务端当前修订。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun put(
+        namespace: String,
+        key: String,
+        content: Any,
+        ifRevision: Long? = null,
+        encoding: String = ENCODING_JSON,
+        contentType: String? = null,
+        metadata: Map<String, Any?>? = null,
+        deviceId: String? = null,
+    ): JsonElement = client.call(
+        "PUT", "/cloud/items/$namespace/$key",
+        buildBody(
+            "content" to content,
+            "encoding" to encoding,
+            "contentType" to contentType,
+            "metadata" to metadata,
+            "ifRevision" to ifRevision,
+            "deviceId" to deviceId,
+        ),
+        requireAuth = true,
+    )
+
+    /** 写入一段文本（`text` 编码）。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun putText(
+        namespace: String,
+        key: String,
+        text: String,
+        ifRevision: Long? = null,
+        contentType: String? = null,
+    ): JsonElement = put(namespace, key, text, ifRevision, ENCODING_TEXT, contentType)
+
+    /**
+     * 写入二进制（`base64` 编码，JSON 请求体）。超过 `limits.jsonWriteBytes` 的内容请用 [upload]：
+     * JSON 请求体有 8 MiB 上限，base64 又会膨胀三分之一。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun putBytes(
+        namespace: String,
+        key: String,
+        bytes: ByteArray,
+        ifRevision: Long? = null,
+        contentType: String? = null,
+    ): JsonElement = put(namespace, key, AegisCrypto.encodeBase64Url(bytes), ifRevision, ENCODING_BASE64, contentType)
+
+    /**
+     * 以文件上传写入条目（multipart，上限 `limits.maxItemBytes`）。
+     * [encoding] 默认 `base64`，即按原始字节存取；上传的是 JSON / 文本文件时可声明为 `json` / `text`，
+     * 读取时就按那种形态交回。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun upload(
+        namespace: String,
+        key: String,
+        file: File,
+        ifRevision: Long? = null,
+        encoding: String? = null,
+        contentType: String? = null,
+        deviceId: String? = null,
+    ): JsonElement = client.upload(
+        "/cloud/items/$namespace/$key/upload", file,
+        fields = buildQuery(
+            "ifRevision" to ifRevision?.toString(),
+            "encoding" to encoding,
+            "contentType" to contentType,
+            "deviceId" to deviceId,
+        ),
+    )
+
+    /**
+     * 删除条目：默认移入回收站（保留期见 `limits.trashRetentionDays`），[permanent] 为真时直接清除。
+     * [ifRevision] 非 null 时，只在服务端当前修订与之相等时才删。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun delete(namespace: String, key: String, ifRevision: Long? = null, permanent: Boolean = false): JsonElement =
+        client.call(
+            "DELETE", "/cloud/items/$namespace/$key",
+            query = buildQuery(
+                "ifRevision" to ifRevision?.toString(),
+                "permanent" to if (permanent) "true" else null,
+            ),
+            requireAuth = true,
+        )
+
+    /** 从回收站恢复条目。 */
+    @Throws(IOException::class)
+    fun restore(namespace: String, key: String): JsonElement =
+        client.call("POST", "/cloud/items/$namespace/$key/restore", requireAuth = true)
+
+    /** 条目的留存修订，新的在前（`items` 数组）。 */
+    @Throws(IOException::class)
+    fun revisions(namespace: String, key: String): JsonElement =
+        client.call("GET", "/cloud/items/$namespace/$key/revisions", requireAuth = true)
+
+    /** 回滚到 [revision]：以那个修订的内容生成一个新修订，历史不改写。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun rollback(
+        namespace: String,
+        key: String,
+        revision: Long,
+        ifRevision: Long? = null,
+        deviceId: String? = null,
+    ): JsonElement = client.call(
+        "POST", "/cloud/items/$namespace/$key/rollback",
+        buildBody("revision" to revision, "ifRevision" to ifRevision, "deviceId" to deviceId),
+        requireAuth = true,
+    )
+
+    /** 换取内容的短时下载地址（大内容不内联时用）。[revision] 为 null 取当前修订。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun link(namespace: String, key: String, revision: Long? = null, download: Boolean = false): JsonElement =
+        client.call(
+            "POST", "/cloud/items/$namespace/$key/link",
+            buildBody("revision" to revision, "download" to download),
+            requireAuth = true,
+        )
+
+    companion object {
+        const val ENCODING_JSON = "json"
+        const val ENCODING_TEXT = "text"
+        const val ENCODING_BASE64 = "base64"
+    }
+}
+
 /** 免登录内容：轮播图、公告、版本检查。 */
 class AegisContentApi internal constructor(private val client: AegisClient) {
 

@@ -74,6 +74,12 @@ FROM app_rewarded_ad_views v WHERE v.appid = $1 AND v.trans_id = $2 FOR UPDATE`,
 			}
 		}
 	}
+	// 平台回调里的 userId 是我们签发的那一个才算数；认不出时这次观看谁都不发，
+	// 否则任何拿到这个 transId 的人都能来认领它。
+	if input.Side == rewardedad.SideServer && input.UserID == 0 && view.Status == rewardedad.StatusPending {
+		view.Status = rewardedad.StatusRejected
+		view.Reason = rewardedad.ReasonUserNotFound
+	}
 	if view.UserID == 0 {
 		view.UserID = input.UserID
 	}

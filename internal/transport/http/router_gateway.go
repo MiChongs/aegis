@@ -152,6 +152,19 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.POST("/storage/upload", h.StorageUpload)
 		appGatewayAuthed.POST("/storage/object-link", h.StorageObjectLink)
 
+		// 用户云存储：按「命名空间 / 键」存放任意文档，修订可回滚、删除先进回收站。
+		// 键不含斜杠（见 cloudstorage.ValidKey），所以 :key 之后的静态段不会与键本身混淆。
+		appGatewayAuthed.GET("/cloud", h.AppCloudStatus)
+		appGatewayAuthed.GET("/cloud/items", h.AppCloudItems)
+		appGatewayAuthed.GET("/cloud/items/:namespace/:key", h.AppCloudItem)
+		appGatewayAuthed.PUT("/cloud/items/:namespace/:key", h.AppPutCloudItem)
+		appGatewayAuthed.DELETE("/cloud/items/:namespace/:key", h.AppDeleteCloudItem)
+		appGatewayAuthed.POST("/cloud/items/:namespace/:key/upload", h.AppUploadCloudItem)
+		appGatewayAuthed.POST("/cloud/items/:namespace/:key/restore", h.AppRestoreCloudItem)
+		appGatewayAuthed.GET("/cloud/items/:namespace/:key/revisions", h.AppCloudItemRevisions)
+		appGatewayAuthed.POST("/cloud/items/:namespace/:key/rollback", h.AppRollbackCloudItem)
+		appGatewayAuthed.POST("/cloud/items/:namespace/:key/link", h.AppCloudItemLink)
+
 		// 工单（用户自助）
 		appGatewayAuthed.GET("/tickets", h.UserListTickets)
 		appGatewayAuthed.POST("/tickets", h.UserCreateTicket)

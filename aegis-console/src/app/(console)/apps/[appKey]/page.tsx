@@ -18,6 +18,7 @@ import { AppCaptchaPanel } from "@/components/apps/app-captcha-panel";
 import { AppInfoPanel } from "@/components/apps/app-info-panel";
 import { AppLotteryPanel } from "@/components/apps/app-lottery-panel";
 import { AppRewardedAdPanel } from "@/components/apps/rewarded-ad/app-rewarded-ad-panel";
+import { AppCloudStoragePanel } from "@/components/apps/cloud-storage/app-cloud-storage-panel";
 import { AppOAuthPanel } from "@/components/apps/app-oauth-panel";
 import { AppPasswordPanel } from "@/components/apps/app-password-panel";
 import { AppPaymentPanel } from "@/components/apps/app-payment-panel";
@@ -164,6 +165,8 @@ function AppSectionPanel({ section, app }: { section: string; app: AppSummary })
       return <AIChannelPanel scope={{ kind: "app", appKey: app.appKey }} />;
     case "payment":
       return <AppPaymentPanel appId={app.id} appKey={app.appKey} />;
+    case "cloud-storage":
+      return <AppCloudStoragePanel appKey={app.appKey} />;
     case "settings":
       return <AppUserSettingsPanel appId={app.id} />;
     case "vip":

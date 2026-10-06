@@ -56,6 +56,7 @@ type Handler struct {
 	appFunction     *service.AppFunctionService
 	cardKey         *service.CardKeyService
 	rewardedAd      *service.RewardedAdService
+	cloudStorage    *service.CloudStorageService
 	authProtocol    *service.AuthProtocolService
 	dashboard       *service.DashboardService
 	orgApproval     *service.OrgApprovalService

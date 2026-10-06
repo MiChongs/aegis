@@ -705,6 +705,8 @@ Shell 挂载 1.5s 后预热一次，面板打开时再兜底触发一次
 | `lib/api/card-key.ts` / `lib/card-key-hooks.ts` | 卡密域 API 与 React Query hooks |
 | `components/apps/rewarded-ad/` | 激励广告区块：概览 / 记录 / 配置（见下节） |
 | `lib/api/rewarded-ad.ts` / `lib/rewarded-ad-hooks.ts` | 激励广告域 API 与 React Query hooks |
+| `components/apps/cloud-storage/` | 用户云存储区块：概览 / 用户 / 配置（见下节） |
+| `lib/api/cloud-storage.ts` / `lib/cloud-storage-hooks.ts` | 用户云存储域 API 与 React Query hooks |
 | `lib/api/vip.ts` / `lib/vip-hooks.ts` | 会员域 API 与 React Query hooks |
 
 四条硬约束：
@@ -944,6 +946,28 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
    「哪一方没来」—— 回调没来查平台与签名，上报没来查客户端，只看最终状态回答不了。
 
 结算语义（两方确认、限额、补发）全部由后端决定，见 [docs/rewarded-ads.md](../docs/rewarded-ads.md)。
+
+## 用户云存储区块（/apps/{appKey}?tab=cloud-storage）
+
+| 文件 | 职责 |
+|---|---|
+| `components/apps/cloud-storage/app-cloud-storage-panel.tsx` | 骨架 + 概览 / 用户 / 配置三个视图的内部切换 |
+| `components/apps/cloud-storage/cloud-storage-overview-panel.tsx` | 人数 / 已用空间 / 条目 / 今日写入 + 写入位置 + 写入趋势 + 命名空间占用 + 用量最高的用户 |
+| `components/apps/cloud-storage/cloud-storage-users-panel.tsx` | 用过云存储的用户：用量条、条目 / 回收站、冻结；点进用户详情的「云存储」页签 |
+| `components/apps/cloud-storage/cloud-storage-config-panel.tsx` | 开关与存储配置 + 配额与限制 + 命名空间目录 + 手动清理过期回收站 |
+| `components/apps/cloud-storage/cloud-storage-shared.tsx` | 字节格式化（1024 进位）、配额条、提供商名称、编码与修订来源文案 |
+| `components/users/detail/user-cloud-tab.tsx` | 用户详情「云存储」页签：配额覆盖 / 冻结 / 备注、条目浏览、内容与修订、回滚 / 删除 / 恢复、清空 |
+
+三条硬约束：
+
+1. **单个用户的管理只在用户详情里。** 区块里的「用户」视图只列人和用量，条目与修订在
+   `/app-users/{appKey}/{userId}?tab=cloud`。管理员处理一个人的问题时，资料、钱包、云存储在同一页。
+2. **字节一律按 1024 进位。** 后端的默认配额与上限都是 2 的幂，按 1000 进位会把「20 MB」显示成 20.97 MB。
+   表单里的配额以 MB 输入，提交前换算成字节。
+3. **存储配置下拉按名称去重。** 后端按名称解析（应用级优先于平台级），同名的两项是同一个选择；
+   目标存储是公开访问时，概览与配置两处都要提示。
+
+写入、修订、配额与回收站的语义全部由后端决定，见 [docs/cloud-storage.md](../docs/cloud-storage.md)。
 
 ## 内容中心（/content）
 

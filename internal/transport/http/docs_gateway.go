@@ -107,6 +107,14 @@ func gatewayRequestModels() map[string]any {
 		// 存储
 		"storageObjectLink": StorageObjectLinkRequest{},
 
+		// 用户云存储
+		"cloudItems":        CloudItemListQuery{},
+		"cloudItem":         CloudItemReadQuery{},
+		"cloudItemPut":      CloudItemPutRequest{},
+		"cloudItemDelete":   CloudItemDeleteQuery{},
+		"cloudItemRollback": CloudItemRollbackRequest{},
+		"cloudItemLink":     CloudItemLinkRequest{},
+
 		// 工单
 		"tickets":      TicketListQuery{},
 		"ticketCreate": TicketCreateRequest{},

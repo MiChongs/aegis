@@ -24,6 +24,8 @@ DELETE	/api/admin/apps/:appkey/oauth-bindings	AdminDeleteAppOAuthBinding
 DELETE	/api/admin/apps/:appkey/oauth-providers/:provider	AdminDeleteAppOAuthProvider
 DELETE	/api/admin/apps/:appkey/users/:userId	AdminDeleteUser
 DELETE	/api/admin/apps/:appkey/users/:userId/avatar	AdminRemoveAppUserAvatar
+DELETE	/api/admin/apps/:appkey/users/:userId/cloud-storage	AdminPurgeCloudStorageUser
+DELETE	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId	AdminDeleteCloudStorageUserItem
 DELETE	/api/admin/apps/:appkey/users/:userId/sessions/:tokenHash	AdminRevokeUserSession
 DELETE	/api/admin/apps/:appkey/versions/:vid	AdminDeleteVersion
 DELETE	/api/admin/apps/:appkey/vip/features/:tag	AdminDeleteAppVipFeature
@@ -90,6 +92,7 @@ DELETE	/api/user/passkey/:credentialId	DeletePasskey
 DELETE	/api/user/profile/avatar	RemoveUserAvatar
 DELETE	/api/user/sessions/:tokenHash	RevokeUserSession
 DELETE	/api/v1/apps/:appkey/auth/oauth/bindings/:provider	UnbindMyOAuthProvider
+DELETE	/api/v1/apps/:appkey/cloud/items/:namespace/:key	AppDeleteCloudItem
 DELETE	/api/v1/apps/:appkey/me/avatar	RemoveUserAvatar
 DELETE	/api/v1/apps/:appkey/me/passkeys/:credentialId	DeletePasskey
 DELETE	/api/v1/apps/:appkey/me/sessions/:tokenHash	RevokeUserSession
@@ -124,6 +127,9 @@ GET	/api/admin/apps/:appkey/card-keys/redemptions	AdminListCardKeyRedemptions
 GET	/api/admin/apps/:appkey/channels	AdminListVersionChannels
 GET	/api/admin/apps/:appkey/channels/:cid	AdminGetVersionChannel
 GET	/api/admin/apps/:appkey/channels/:cid/users	AdminListVersionChannelUsers
+GET	/api/admin/apps/:appkey/cloud-storage/config	AdminCloudStorageConfig
+GET	/api/admin/apps/:appkey/cloud-storage/stats	AdminCloudStorageStats
+GET	/api/admin/apps/:appkey/cloud-storage/users	AdminCloudStorageUsers
 GET	/api/admin/apps/:appkey/commerce	AdminAppCommerceSettings
 GET	/api/admin/apps/:appkey/commerce/overview	AdminAppCommerceOverview
 GET	/api/admin/apps/:appkey/content/overview	AdminContentOverview
@@ -183,6 +189,10 @@ GET	/api/admin/apps/:appkey/users/:userId/audits/login	AdminAppUserLoginAudits
 GET	/api/admin/apps/:appkey/users/:userId/audits/sessions	AdminAppUserSessionAudits
 GET	/api/admin/apps/:appkey/users/:userId/bans	AdminAppUserBans
 GET	/api/admin/apps/:appkey/users/:userId/bans/active	AdminAppUserActiveBan
+GET	/api/admin/apps/:appkey/users/:userId/cloud-storage	AdminCloudStorageUser
+GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items	AdminCloudStorageUserItems
+GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId	AdminCloudStorageUserItem
+GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/revisions	AdminCloudStorageUserItemRevisions
 GET	/api/admin/apps/:appkey/users/:userId/sessions	AdminListUserSessions
 GET	/api/admin/apps/:appkey/users/:userId/wallet	AdminAppUserWallet
 GET	/api/admin/apps/:appkey/users/:userId/wallet/transactions	AdminAppUserWalletTransactions
@@ -476,6 +486,10 @@ GET	/api/v1/apps/:appkey/auth/oauth/bindings	ListMyOAuthBindings
 GET	/api/v1/apps/:appkey/auth/oauth/callback	AppOAuthCallback
 GET	/api/v1/apps/:appkey/banners	AppBanners
 GET	/api/v1/apps/:appkey/card-keys/mine	AppMyCardKeys
+GET	/api/v1/apps/:appkey/cloud	AppCloudStatus
+GET	/api/v1/apps/:appkey/cloud/items	AppCloudItems
+GET	/api/v1/apps/:appkey/cloud/items/:namespace/:key	AppCloudItem
+GET	/api/v1/apps/:appkey/cloud/items/:namespace/:key/revisions	AppCloudItemRevisions
 GET	/api/v1/apps/:appkey/config	AppConfig
 GET	/api/v1/apps/:appkey/leaderboard/me	LeaderboardMe
 GET	/api/v1/apps/:appkey/leaderboard/points/:type	LeaderboardPoints
@@ -618,6 +632,7 @@ POST	/api/admin/apps/:appkey/card-keys/codes/disable	AdminDisableCardKeys
 POST	/api/admin/apps/:appkey/card-keys/codes/restore	AdminRestoreCardKeys
 POST	/api/admin/apps/:appkey/channels	AdminCreateVersionChannel
 POST	/api/admin/apps/:appkey/channels/:cid/users	AdminAddVersionChannelUsers
+POST	/api/admin/apps/:appkey/cloud-storage/purge-expired	AdminPurgeExpiredCloudTrash
 POST	/api/admin/apps/:appkey/function-keys	AdminCreateAppFunctionKey
 POST	/api/admin/apps/:appkey/functions	AdminCreateAppFunction
 POST	/api/admin/apps/:appkey/functions/:functionName/analyze	AdminAnalyzeAppFunction
@@ -645,6 +660,9 @@ POST	/api/admin/apps/:appkey/signin-reward/test	TestAdminAppSignInReward
 POST	/api/admin/apps/:appkey/users/:userId/avatar	AdminUploadAppUserAvatar
 POST	/api/admin/apps/:appkey/users/:userId/bans	CreateAdminAppUserBan
 POST	/api/admin/apps/:appkey/users/:userId/bans/:banId/revoke	RevokeAdminAppUserBan
+POST	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/link	AdminCloudStorageUserItemLink
+POST	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/restore	AdminRestoreCloudStorageUserItem
+POST	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/rollback	AdminRollbackCloudStorageUserItem
 POST	/api/admin/apps/:appkey/users/:userId/reset-password	AdminResetUserPassword
 POST	/api/admin/apps/:appkey/users/:userId/revoke-sessions	AdminRevokeUserSessions
 POST	/api/admin/apps/:appkey/users/:userId/sessions/revoke-batch	AdminRevokeUserSessionsBatch
@@ -961,6 +979,10 @@ POST	/api/v1/apps/:appkey/auth/sms/code	AppSMSCode
 POST	/api/v1/apps/:appkey/banners/:bannerId/click	AppBannerClick
 POST	/api/v1/apps/:appkey/captcha	AppCaptcha
 POST	/api/v1/apps/:appkey/card-keys/redeem	AppRedeemCardKey
+POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/link	AppCloudItemLink
+POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/restore	AppRestoreCloudItem
+POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/rollback	AppRollbackCloudItem
+POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/upload	AppUploadCloudItem
 POST	/api/v1/apps/:appkey/me/2fa/recovery-codes	GenerateRecoveryCodes
 POST	/api/v1/apps/:appkey/me/2fa/recovery-codes/regenerate	RegenerateRecoveryCodes
 POST	/api/v1/apps/:appkey/me/2fa/totp/disable	DisableTOTP
@@ -1003,6 +1025,7 @@ PUT	/api/admin/apps/:appkey/banners/order	ReorderAdminBanners
 PUT	/api/admin/apps/:appkey/captcha-config	AdminUpdateCaptchaConfig
 PUT	/api/admin/apps/:appkey/card-keys/batches/:batchId/status	AdminSetCardKeyBatchStatus
 PUT	/api/admin/apps/:appkey/channels/:cid	AdminUpdateVersionChannel
+PUT	/api/admin/apps/:appkey/cloud-storage/config	AdminSaveCloudStorageConfig
 PUT	/api/admin/apps/:appkey/commerce	UpdateAdminAppCommerceSettings
 PUT	/api/admin/apps/:appkey/encryption	UpdateAdminAppEncryption
 PUT	/api/admin/apps/:appkey/functions/:functionName	AdminUpdateAppFunction
@@ -1015,6 +1038,7 @@ PUT	/api/admin/apps/:appkey/password-policy	UpdateAdminAppPasswordPolicy
 PUT	/api/admin/apps/:appkey/policy	UpdateAdminAppPolicy
 PUT	/api/admin/apps/:appkey/rewarded-ads/config	AdminSaveRewardedAdConfig
 PUT	/api/admin/apps/:appkey/signin-reward	UpdateAdminAppSignInReward
+PUT	/api/admin/apps/:appkey/users/:userId/cloud-storage	AdminSaveCloudStorageUser
 PUT	/api/admin/apps/:appkey/users/:userId/profile	AdminUpdateUserProfile
 PUT	/api/admin/apps/:appkey/users/:userId/status	UpdateAdminAppUserStatus
 PUT	/api/admin/apps/:appkey/users/status/batch	BatchUpdateAdminAppUserStatus
@@ -1074,5 +1098,6 @@ PUT	/api/user/profile	UpdateProfile
 PUT	/api/user/role/applications/:applicationId/cancel	CancelRoleApplication
 PUT	/api/user/settings	UpdateSettings
 PUT	/api/user/update-site	UpdateSite
+PUT	/api/v1/apps/:appkey/cloud/items/:namespace/:key	AppPutCloudItem
 PUT	/api/v1/apps/:appkey/me/profile	UpdateProfile
 PUT	/api/v1/apps/:appkey/me/settings	UpdateSettings

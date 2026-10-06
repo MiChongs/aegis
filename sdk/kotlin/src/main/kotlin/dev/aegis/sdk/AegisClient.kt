@@ -88,6 +88,9 @@ class AegisClient private constructor(
     val commerce: AegisCommerceApi = AegisCommerceApi(this)
     val engagement: AegisEngagementApi = AegisEngagementApi(this)
 
+    /** 用户云存储：按「命名空间 / 键」存放任意文档，带修订与回收站。见 [AegisCloudApi]。 */
+    val cloud: AegisCloudApi = AegisCloudApi(this)
+
     // ── /config ───────────────────────────────────────────────────────
 
     /**

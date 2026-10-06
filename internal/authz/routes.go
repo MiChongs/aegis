@@ -348,6 +348,13 @@ var adminRouteRules = []RouteRule{
 	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/notices/*", Permission: PermContentNoticeRead, Scope: ScopeApp},
 	{Pattern: "/api/admin/apps/:appkey/notices/*", Permission: PermContentNoticeWrite, Scope: ScopeApp},
 
+	// 用户云存储的应用级部分（配置 / 概览 / 用户列表 / 清理回收站）归存储权限：
+	// 配置决定内容写到哪个存储配置、占多少配额，与存储配置本身是同一类决定。
+	// 某个用户的条目在 users/:userId/cloud-storage 下，由上面的用户数据规则判定。
+	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/cloud-storage/*", Permission: PermStorageRead, Scope: ScopeApp,
+		Note: "云存储应用级视图与存储配置同属存储权限"},
+	{Pattern: "/api/admin/apps/:appkey/cloud-storage/*", Permission: PermStorageWrite, Scope: ScopeApp},
+
 	// 应用自己的治理视图：看自己被怎么了、以及提交申诉。
 	// 只读用 app:read、申诉用 app:write，都留在应用作用域 ——
 	// 应用管理员在这里改不了治理结论，改结论要走 /api/admin/platform/*。

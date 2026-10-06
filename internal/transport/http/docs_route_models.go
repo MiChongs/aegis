@@ -122,6 +122,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/apps/{appkey}/channels/{cid}"):                                        AdminVersionChannelSaveRequest{},         // AdminUpdateVersionChannel
 		routeKey("DELETE", "/api/admin/apps/{appkey}/channels/{cid}/users"):                               VersionChannelUsersRequest{},             // AdminRemoveVersionChannelUsers
 		routeKey("POST", "/api/admin/apps/{appkey}/channels/{cid}/users"):                                 VersionChannelUsersRequest{},             // AdminAddVersionChannelUsers
+		routeKey("PUT", "/api/admin/apps/{appkey}/cloud-storage/config"):                                  SaveCloudStorageConfigRequest{},          // AdminSaveCloudStorageConfig
+		routeKey("GET", "/api/admin/apps/{appkey}/cloud-storage/users"):                                   CloudStorageUserListQuery{},              // AdminCloudStorageUsers
 		routeKey("PUT", "/api/admin/apps/{appkey}/commerce"):                                              app.CommerceSettings{},                   // UpdateAdminAppCommerceSettings
 		routeKey("GET", "/api/admin/apps/{appkey}/commerce/overview"):                                     AdminWalletStatsQuery{},                  // AdminAppCommerceOverview
 		routeKey("PUT", "/api/admin/apps/{appkey}/encryption"):                                            app.TransportEncryptionUpdate{},          // UpdateAdminAppEncryption
@@ -187,6 +189,12 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/admin/apps/{appkey}/users/{userId}/bans"):                                   AdminUserBanListQuery{},                  // AdminAppUserBans
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/bans"):                                  AdminUserBanCreateRequest{},              // CreateAdminAppUserBan
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/bans/{banId}/revoke"):                   AdminUserBanRevokeRequest{},              // RevokeAdminAppUserBan
+		routeKey("PUT", "/api/admin/apps/{appkey}/users/{userId}/cloud-storage"):                          SaveCloudStorageUserRequest{},            // AdminSaveCloudStorageUser
+		routeKey("GET", "/api/admin/apps/{appkey}/users/{userId}/cloud-storage/items"):                    CloudItemListQuery{},                     // AdminCloudStorageUserItems
+		routeKey("DELETE", "/api/admin/apps/{appkey}/users/{userId}/cloud-storage/items/{itemId}"):        AdminCloudItemDeleteQuery{},              // AdminDeleteCloudStorageUserItem
+		routeKey("GET", "/api/admin/apps/{appkey}/users/{userId}/cloud-storage/items/{itemId}"):           CloudItemReadQuery{},                     // AdminCloudStorageUserItem
+		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/cloud-storage/items/{itemId}/link"):     CloudItemLinkRequest{},                   // AdminCloudStorageUserItemLink
+		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/cloud-storage/items/{itemId}/rollback"): AdminCloudRollbackRequest{},              // AdminRollbackCloudStorageUserItem
 		routeKey("PUT", "/api/admin/apps/{appkey}/users/{userId}/profile"):                                AdminUpdateUserProfileRequest{},          // AdminUpdateUserProfile
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/reset-password"):                        AdminResetUserPasswordRequest{},          // AdminResetUserPassword
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/sessions/revoke-batch"):                 AdminSessionRevokeBatchRequest{},         // AdminRevokeUserSessionsBatch
@@ -544,6 +552,12 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/register"):                                           authprotocol.RegisterInput{},             // AppRegister
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/sms/code"):                                           authprotocol.SMSCodeInput{},              // AppSMSCode
 		routeKey("POST", "/api/v1/apps/{appkey}/card-keys/redeem"):                                        RedeemCardKeyRequest{},                   // AppRedeemCardKey
+		routeKey("GET", "/api/v1/apps/{appkey}/cloud/items"):                                              CloudItemListQuery{},                     // AppCloudItems
+		routeKey("DELETE", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}"):                         CloudItemDeleteQuery{},                   // AppDeleteCloudItem
+		routeKey("GET", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}"):                            CloudItemReadQuery{},                     // AppCloudItem
+		routeKey("PUT", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}"):                            CloudItemPutRequest{},                    // AppPutCloudItem
+		routeKey("POST", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}/link"):                      CloudItemLinkRequest{},                   // AppCloudItemLink
+		routeKey("POST", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}/rollback"):                  CloudItemRollbackRequest{},               // AppRollbackCloudItem
 		routeKey("GET", "/api/v1/apps/{appkey}/leaderboard/points/{type}"):                                LeaderboardListQuery{},                   // LeaderboardPoints
 		routeKey("GET", "/api/v1/apps/{appkey}/leaderboard/signin/{type}"):                                LeaderboardListQuery{},                   // LeaderboardSignIn
 		routeKey("POST", "/api/v1/apps/{appkey}/me/2fa/recovery-codes"):                                   RecoveryCodesRegenerateRequest{},         // GenerateRecoveryCodes

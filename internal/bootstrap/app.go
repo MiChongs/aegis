@@ -62,6 +62,8 @@ type APIApp struct {
 	Risk     *service.RiskService
 	// Governance 平台治理：后台循环负责到期解冻与跨实例快照收敛，退出时必须 Stop
 	Governance *service.PlatformGovernanceService
+	// CloudStorage 用户云存储：后台循环清理过期回收站，退出时必须 Stop
+	CloudStorage *service.CloudStorageService
 	// AuthProviderHealth 后台 30s 轮询 LDAP/OIDC/SAML 可用性；进程退出时必须 Close() 避免 goroutine 泄漏
 	AuthProviderHealth *service.AuthProviderHealthService
 	// Egress 出海代理网关管理面；EgressGateway 是进程级单例，
@@ -402,6 +404,9 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 未注入时该方式直接报「未启用」而不是空指针。
 	authService.SetCardKeyService(cardKeyService)
 	rewardedAdService := service.NewRewardedAdService(log, pg, cfg)
+	// 用户云存储：内容走 storageService 解析出的存储配置，治理闸门（blockStorage）
+	// 也随之生效 —— 写入经 UploadForApp，那里是所有上传的收口。
+	cloudStorageService := service.NewCloudStorageService(log, pg, storageService)
 	appFunctionService := service.NewAppFunctionService(log, pg, cfg.JWT.Secret)
 	// AI 供应商通道（系统级 + 应用级，密钥加密落库）与 Agent 编排。
 	aiProviderService := service.NewAIProviderService(log, pg, cfg.Security.MasterKey)
@@ -565,6 +570,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		AppFunction:      appFunctionService,
 		CardKey:          cardKeyService,
 		RewardedAd:       rewardedAdService,
+		CloudStorage:     cloudStorageService,
 		Site:             siteService,
 		Version:          versionService,
 		PlatformSettings: systemService,
@@ -671,6 +677,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Security:           securityService,
 		Risk:               riskService,
 		Governance:         governanceService,
+		CloudStorage:       cloudStorageService,
 		AuthProviderHealth: authProviderHealthService,
 		Egress:             egressService,
 		EgressGateway:      egressGateway,
@@ -699,6 +706,9 @@ func (a *APIApp) Start(ctx context.Context) error {
 	if a.Governance != nil {
 		a.Governance.Start(ctx)
 	}
+	if a.CloudStorage != nil {
+		a.CloudStorage.Start(ctx)
+	}
 	if a.OwnsEgress && a.EgressGateway != nil {
 		a.EgressGateway.Start(ctx)
 	}
@@ -724,6 +734,9 @@ func (a *APIApp) Start(ctx context.Context) error {
 func (a *APIApp) Close(ctx context.Context) {
 	if a.Governance != nil {
 		a.Governance.Stop()
+	}
+	if a.CloudStorage != nil {
+		a.CloudStorage.Stop()
 	}
 	if a.Database != nil {
 		a.Database.Stop()

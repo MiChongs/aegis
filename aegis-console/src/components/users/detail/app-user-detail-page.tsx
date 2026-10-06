@@ -10,6 +10,7 @@ import {
   Ban,
   Check,
   ChevronRight,
+  Cloud,
   Copy,
   Crown,
   Gavel,
@@ -48,6 +49,7 @@ import { cn } from "@/lib/utils";
 import { UserDeleteDialog } from "../user-delete-dialog";
 import { UserActivityTab } from "./user-activity-tab";
 import { UserAssetsTab } from "./user-assets-tab";
+import { UserCloudTab } from "./user-cloud-tab";
 import {
   BAN_SCOPE_LABEL,
   deriveUserSignals,
@@ -75,6 +77,7 @@ const TABS = [
   { value: "profile", label: "资料", icon: UserRound },
   { value: "security", label: "安全", icon: ShieldCheck },
   { value: "assets", label: "资产", icon: Wallet },
+  { value: "cloud", label: "云存储", icon: Cloud },
   { value: "activity", label: "活动", icon: Activity },
   { value: "governance", label: "处置", icon: Gavel }
 ];
@@ -88,7 +91,7 @@ const TAB_VALUES = new Set(TABS.map((item) => item.value));
  *
  *   身份栏   这是谁（不变的事实：账号、ID、所属应用、当前状态）
  *   信号带   现在有什么问题（从散落字段里推导出来的结论，可点进去处理）
- *   页签区   我要做的那件事（六个互不重叠的工作面）
+ *   页签区   我要做的那件事（七个互不重叠的工作面）
  *
  * 页签同步到 `?tab=`，与控制台其余页面一致 —— 深链能直接落到「处置」页，
  * 而不是每次都从概览点两下。`from` 参数原样保留，返回时回到来源列表的筛选态。
@@ -221,6 +224,9 @@ export function AppUserDetailPage({ appKey, userId, fromHref }: Props) {
               </TabsContent>
               <TabsContent value="assets">
                 <UserAssetsTab appKey={appKey} userId={userId} user={user} />
+              </TabsContent>
+              <TabsContent value="cloud">
+                <UserCloudTab appKey={appKey} userId={userId} />
               </TabsContent>
               <TabsContent value="activity">
                 <UserActivityTab appKey={appKey} userId={userId} user={user} />
