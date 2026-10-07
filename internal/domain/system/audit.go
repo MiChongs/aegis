@@ -154,6 +154,7 @@ type AuditFilter struct {
 	Country    string `json:"country"`
 	RequestID  string `json:"requestId"`
 	TraceID    string `json:"traceId"`
+	SessionID  string `json:"sessionId"` // 同一次登录会话里的全部操作
 	Keyword    string `json:"keyword"`
 	StartTime  string `json:"startTime"`
 	EndTime    string `json:"endTime"`

@@ -214,7 +214,7 @@ func filterFromQuery(q AuditLogQuery) systemdomain.AuditFilter {
 		Kind: strings.TrimSpace(q.Kind), AppID: q.AppID,
 		Action: q.Action, Resource: q.Resource, Category: q.Category, Severity: q.Severity,
 		Status: q.Status, StatusCode: q.StatusCode, AdminID: q.AdminID,
-		IP: q.IP, Country: q.Country, RequestID: q.RequestID, TraceID: q.TraceID,
+		IP: q.IP, Country: q.Country, RequestID: q.RequestID, TraceID: q.TraceID, SessionID: strings.TrimSpace(q.SessionID),
 		Keyword: q.Keyword, StartTime: q.StartTime, EndTime: q.EndTime,
 		Page: q.Page, Limit: q.Limit,
 	}

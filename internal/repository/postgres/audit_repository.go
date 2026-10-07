@@ -375,6 +375,11 @@ func buildAuditWhere(filter systemdomain.AuditFilter, startIdx int) ([]string, [
 		args = append(args, filter.RequestID)
 		idx++
 	}
+	if filter.SessionID != "" {
+		conditions = append(conditions, fmt.Sprintf("session_id = $%d", idx))
+		args = append(args, filter.SessionID)
+		idx++
+	}
 	if filter.TraceID != "" {
 		conditions = append(conditions, fmt.Sprintf("trace_id = $%d", idx))
 		args = append(args, filter.TraceID)

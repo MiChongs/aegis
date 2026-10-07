@@ -15,6 +15,7 @@ type AuditLogQuery struct {
 	Country    string `form:"country"`
 	RequestID  string `form:"requestId"`
 	TraceID    string `form:"traceId"`
+	SessionID  string `form:"sessionId"`
 	Keyword    string `form:"keyword"`
 	StartTime  string `form:"startTime"`
 	EndTime    string `form:"endTime"`
