@@ -13,6 +13,7 @@ import (
 	walletdomain "aegis/internal/domain/wallet"
 	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
@@ -190,6 +191,9 @@ func (s *WalletService) AdminAdjust(ctx context.Context, userID int64, appID int
 	if amount.IsZero() {
 		return nil, apperrors.New(40080, http.StatusBadRequest, "调整金额不能为 0")
 	}
+	if err := validateAdjustAmount(amount); err != nil {
+		return nil, err
+	}
 	title := "管理员余额调整"
 	if strings.TrimSpace(reason) == "" {
 		reason = title
@@ -268,9 +272,32 @@ func (s *WalletService) translateWalletError(result *walletdomain.ChangeResult, 
 		return nil, apperrors.New(40083, http.StatusBadRequest, "余额不足")
 	case errors.Is(err, pgrepo.ErrUserNotFound):
 		return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
+	case isNumericOverflow(err):
+		// 余额与累计金额是 NUMERIC(18,2)：变动后超出范围时数据库报 22003，原样透出只会让人看到一句 SQL 报错
+		return nil, apperrors.New(40086, http.StatusBadRequest, "金额超出允许范围")
 	default:
 		return nil, err
 	}
+}
+
+// 单次人工调整的上限。余额列能存下 16 位整数，但人工调整动辄上亿几乎一定是多打了几个 0。
+var maxAdjustAmount = decimal.NewFromInt(100_000_000)
+
+// validateAdjustAmount 人工调整金额：最多两位小数，绝对值不超过 1 亿。
+// 第三位小数会被数据库静默四舍五入，账面与操作者输入的数对不上，因此直接拒绝。
+func validateAdjustAmount(amount decimal.Decimal) error {
+	if amount.Exponent() < -2 && !amount.Equal(amount.Round(2)) {
+		return apperrors.New(40086, http.StatusBadRequest, "调整金额最多保留两位小数")
+	}
+	if amount.Abs().GreaterThan(maxAdjustAmount) {
+		return apperrors.New(40086, http.StatusBadRequest, "单次调整金额不能超过 100,000,000")
+	}
+	return nil
+}
+
+func isNumericOverflow(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "22003"
 }
 
 func walletIdemKey(appID int64, userID int64, key string) string {
