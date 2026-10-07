@@ -219,7 +219,7 @@ func (h *Handler) AdminCreateVersionChannel(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req AdminVersionChannelSaveRequest
+	var req AdminVersionChannelBody
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
@@ -279,7 +279,7 @@ func (h *Handler) AdminUpdateVersionChannel(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, "渠道 ID 无效")
 		return
 	}
-	var req AdminVersionChannelSaveRequest
+	var req AdminVersionChannelBody
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return

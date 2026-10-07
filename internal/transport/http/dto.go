@@ -636,9 +636,16 @@ type AdminVersionChannelDetailRequest struct {
 	ChannelID int64 `json:"channel_id" form:"channel_id" binding:"required"`
 }
 
+// AdminVersionChannelSaveRequest 兼容接口（/api/admin/app/version/channel/*）的请求体：应用与渠道由请求体指定。
 type AdminVersionChannelSaveRequest struct {
-	AppID          int64                   `json:"appid" form:"appid" binding:"required"`
-	ChannelID      int64                   `json:"channel_id" form:"channel_id"`
+	AppID     int64 `json:"appid" form:"appid" binding:"required"`
+	ChannelID int64 `json:"channel_id" form:"channel_id"`
+	AdminVersionChannelBody
+}
+
+// AdminVersionChannelBody 渠道的可写字段。路径式接口（/api/admin/apps/:appkey/channels）只绑定这一部分 ——
+// 应用已经在路径上，再要求请求体带 appid 只会让新控制台的每次保存都被 required 校验拦下。
+type AdminVersionChannelBody struct {
 	Name           string                  `json:"name" form:"name"`
 	Code           string                  `json:"code" form:"code"`
 	Description    string                  `json:"description" form:"description"`

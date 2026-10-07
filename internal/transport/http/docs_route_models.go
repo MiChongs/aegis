@@ -116,8 +116,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/apps/{appkey}/card-keys/batches/{batchId}/status"):                    CardKeyBatchStatusRequest{},              // AdminSetCardKeyBatchStatus
 		routeKey("POST", "/api/admin/apps/{appkey}/card-keys/codes/disable"):                              CardKeyIDsRequest{},                      // AdminDisableCardKeys
 		routeKey("POST", "/api/admin/apps/{appkey}/card-keys/codes/restore"):                              CardKeyIDsRequest{},                      // AdminRestoreCardKeys
-		routeKey("POST", "/api/admin/apps/{appkey}/channels"):                                             AdminVersionChannelSaveRequest{},         // AdminCreateVersionChannel
-		routeKey("PUT", "/api/admin/apps/{appkey}/channels/{cid}"):                                        AdminVersionChannelSaveRequest{},         // AdminUpdateVersionChannel
+		routeKey("POST", "/api/admin/apps/{appkey}/channels"):                                             AdminVersionChannelBody{},                // AdminCreateVersionChannel
+		routeKey("PUT", "/api/admin/apps/{appkey}/channels/{cid}"):                                        AdminVersionChannelBody{},                // AdminUpdateVersionChannel
 		routeKey("DELETE", "/api/admin/apps/{appkey}/channels/{cid}/users"):                               VersionChannelUsersRequest{},             // AdminRemoveVersionChannelUsers
 		routeKey("POST", "/api/admin/apps/{appkey}/channels/{cid}/users"):                                 VersionChannelUsersRequest{},             // AdminAddVersionChannelUsers
 		routeKey("PUT", "/api/admin/apps/{appkey}/cloud-storage/config"):                                  SaveCloudStorageConfigRequest{},          // AdminSaveCloudStorageConfig

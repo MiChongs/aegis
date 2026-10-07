@@ -63,3 +63,29 @@ func TestBindContentUpsertRejectsMalformedBody(t *testing.T) {
 		t.Fatalf("expected 400, got %d", recorder.Code)
 	}
 }
+
+// 路径式渠道接口不再要求请求体带 appid；兼容接口经嵌入仍读得到渠道字段。
+func TestVersionChannelBodiesBind(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := `{"name":"Beta","code":"beta","self_join":true}`
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/admin/apps/10000/channels", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	var pathReq AdminVersionChannelBody
+	if err := ctx.ShouldBindJSON(&pathReq); err != nil {
+		t.Fatalf("path body without appid should bind: %v", err)
+	}
+	if pathReq.Name != "Beta" || pathReq.SelfJoin == nil || !*pathReq.SelfJoin {
+		t.Fatalf("unexpected path body: %+v", pathReq)
+	}
+
+	ctx, _ = gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/admin/app/version/channel/create",
+		strings.NewReader(`{"appid":10000,"name":"Beta","code":"beta"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	var compat AdminVersionChannelSaveRequest
+	if err := ctx.ShouldBindJSON(&compat); err != nil || compat.AppID != 10000 || compat.Code != "beta" {
+		t.Fatalf("compat request should still bind embedded fields: %+v %v", compat, err)
+	}
+}
