@@ -1,172 +1,66 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, Check, KeyRound, Link2, Loader2, Lock, Search } from "lucide-react";
-import { CodeBlock } from "@/components/developers/code-block";
-import { ApiConsole } from "@/components/developers/api-console";
-import { SchemaView } from "@/components/developers/schema-view";
+import { AlertCircle, FileJson, KeyRound, ListTree, RotateCw } from "lucide-react";
+import { OperationDetail } from "@/components/developers/operation-detail";
+import { OperationNav } from "@/components/developers/operation-nav";
 import {
   flattenOperations,
   getOpenAPISpec,
   groupByTag,
   resolveTagName,
   type FlatOperation,
-  type OpenAPISecurityScheme,
   type OpenAPISpec
 } from "@/lib/api/openapi";
-import {
-  CREDENTIAL_FIELDS,
-  describeScheme,
-  securitySchemeNames,
-  type Credentials
-} from "@/lib/api/openapi-request";
+import { CREDENTIAL_FIELDS, securitySchemeNames } from "@/lib/api/openapi-request";
 import { useCredentials, updateCredentials } from "@/lib/developer-credentials";
 import { appConfig } from "@/lib/env";
 import { useOrigin } from "@/lib/use-client-value";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle
+} from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 
-const METHOD_STYLES: Record<string, string> = {
-  GET: "bg-sky-500/12 text-sky-700 dark:text-sky-300",
-  POST: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
-  PUT: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
-  PATCH: "bg-violet-500/12 text-violet-700 dark:text-violet-300",
-  DELETE: "bg-red-500/12 text-red-700 dark:text-red-300"
-};
-
-function MethodBadge({ method, className }: { method: string; className?: string }) {
+function Stat({ value, label }: { value: string | number; label: string }) {
   return (
-    <span
-      className={cn(
-        "inline-flex w-[52px] shrink-0 justify-center rounded px-1.5 py-0.5 font-mono text-[10px] font-bold tracking-wide",
-        METHOD_STYLES[method] || "bg-muted text-muted-foreground",
-        className
-      )}
-    >
-      {method}
-    </span>
+    <div className="flex items-baseline gap-1.5">
+      <span className="font-mono text-[15px] font-semibold tabular-nums">{value}</span>
+      <span className="text-[12.5px] text-muted-foreground">{label}</span>
+    </div>
   );
 }
 
-function CopyLinkButton({ operationKey }: { operationKey: string }) {
-  const [copied, setCopied] = useState(false);
+/** 与真实布局同尺寸的骨架，规范拉取期间页面不跳动 */
+function ReferenceSkeleton() {
   return (
-    <Button
-      size="sm"
-      variant="ghost"
-      className="h-7 px-2 text-xs"
-      onClick={async () => {
-        const url = new URL(window.location.href);
-        url.searchParams.set("op", operationKey);
-        try {
-          await navigator.clipboard.writeText(url.toString());
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1600);
-        } catch {
-          // 剪贴板不可用时静默降级
-        }
-      }}
-    >
-      {copied ? <Check className="size-3.5" /> : <Link2 className="size-3.5" />}
-      {copied ? "已复制" : "复制链接"}
-    </Button>
-  );
-}
-
-/** 单个接口的完整页面：说明、认证、参数、结构、调试台、代码示例 */
-function OperationDetail({
-  operation,
-  baseUrl,
-  credentials,
-  securitySchemes
-}: {
-  operation: FlatOperation;
-  baseUrl: string;
-  credentials: Credentials;
-  securitySchemes: Record<string, OpenAPISecurityScheme>;
-}) {
-  const schemes = securitySchemeNames(operation);
-  const jsonBody = operation.requestBody?.content?.["application/json"];
-  const responses = Object.entries(operation.responses || {}).sort(([a], [b]) => a.localeCompare(b));
-
-  return (
-    <div className="min-w-0 space-y-5">
-      <div>
-        <div className="flex flex-wrap items-center gap-2">
-          <MethodBadge method={operation.method} />
-          <code className="min-w-0 break-all font-mono text-[13.5px]">{operation.path}</code>
-          {operation.deprecated ? (
-            <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
-              已废弃
-            </span>
-          ) : null}
-          <CopyLinkButton operationKey={operation.key} />
-        </div>
-        {operation.summary ? (
-          <h2 className="mt-2 text-lg font-semibold tracking-tight">{operation.summary}</h2>
-        ) : null}
-        {operation.description ? (
-          <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-            {operation.description}
-          </p>
-        ) : null}
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
-          {operation.operationId ? (
-            <span className="font-mono">{operation.operationId}</span>
-          ) : null}
-          {schemes.length ? (
-            <span className="inline-flex items-center gap-1.5">
-              <Lock className="size-3.5" />
-              {schemes.map((name) => describeScheme(name, securitySchemes[name])).join(" 或 ")}
-            </span>
-          ) : (
-            <span>无需认证</span>
-          )}
-        </div>
+    <div className="mx-auto w-full max-w-[1680px] px-4 md:px-6" aria-busy aria-label="正在加载接口文档">
+      <div className="space-y-3 border-b py-8">
+        <Skeleton className="h-3.5 w-28" />
+        <Skeleton className="h-8 w-44" />
+        <Skeleton className="h-4 w-80 max-w-full" />
       </div>
-
-      {/* 宽屏时左文档右调试，两边各自滚动；窄屏顺序堆叠 */}
-      <div className="gap-6 xl:grid xl:grid-cols-2">
-        <div className="min-w-0 space-y-5">
-          {jsonBody ? (
-            <section className="space-y-2">
-              <h3 className="text-[13px] font-medium">
-                请求体结构
-                {operation.requestBody?.required ? (
-                  <span className="ml-2 text-[11px] font-normal text-amber-600 dark:text-amber-400">
-                    必填
-                  </span>
-                ) : null}
-              </h3>
-              <SchemaView schema={jsonBody.schema} />
-            </section>
-          ) : null}
-
-          {responses.length ? (
-            <section className="space-y-2">
-              <h3 className="text-[13px] font-medium">响应</h3>
-              {responses.map(([status, response]) => {
-                const media =
-                  response.content?.["application/json"] || Object.values(response.content || {})[0];
-                return (
-                  <div key={status} className="space-y-1.5">
-                    <p className="flex items-baseline gap-2 text-[12.5px]">
-                      <code className="font-mono font-medium">{status}</code>
-                      <span className="text-muted-foreground">{response.description || ""}</span>
-                    </p>
-                    {media?.schema ? <SchemaView schema={media.schema} /> : null}
-                  </div>
-                );
-              })}
-            </section>
-          ) : null}
+      <div className="gap-10 py-8 xl:grid xl:grid-cols-[264px_minmax(0,1fr)]">
+        <div className="space-y-3 max-xl:hidden">
+          <Skeleton className="h-9 w-full" />
+          {Array.from({ length: 9 }, (_, index) => (
+            <Skeleton key={index} className="h-7" style={{ width: `${88 - (index % 4) * 12}%` }} />
+          ))}
         </div>
-
-        <div className="mt-5 min-w-0 xl:mt-0">
-          <ApiConsole operation={operation} baseUrl={baseUrl} credentials={credentials} />
+        <div className="space-y-5">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-8 w-72 max-w-full" />
+          <Skeleton className="h-12 w-full max-w-3xl" />
+          <Skeleton className="h-4 w-full max-w-2xl" />
+          <Skeleton className="h-4 w-2/3 max-w-xl" />
+          <Skeleton className="mt-8 h-40 w-full max-w-3xl" />
         </div>
       </div>
     </div>
@@ -179,8 +73,10 @@ function ApiReferenceInner() {
   const tagParam = searchParams.get("tag") || "";
   const opParam = searchParams.get("op") || "";
   const [keyword, setKeyword] = useState("");
-  const credentials = useCredentials();
   const [credentialsOpen, setCredentialsOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const credentials = useCredentials();
+  const searchRef = useRef<HTMLInputElement>(null);
 
   // 同源部署时 apiBaseUrl 为空串，回落到当前页面 origin（服务端渲染阶段为空）
   const pageOrigin = useOrigin();
@@ -195,7 +91,14 @@ function ApiReferenceInner() {
 
   const operations = useMemo(() => flattenOperations(specQuery.data ?? null), [specQuery.data]);
   const groups = useMemo(() => groupByTag(operations), [operations]);
+  // 上一个 / 下一个按目录的展示顺序走，而不是规范里的原始顺序
+  const ordered = useMemo(() => groups.flatMap((group) => group.items), [groups]);
   const securitySchemes = specQuery.data?.components?.securitySchemes || {};
+  const securedCount = useMemo(
+    () => operations.filter((operation) => securitySchemeNames(operation).length > 0).length,
+    [operations]
+  );
+  const filledCredentials = CREDENTIAL_FIELDS.filter((field) => credentials[field.key]).length;
 
   // tagParam 可能来自后端 /docs/tags/:slug 的 302，形如 admin-system，需按 slug 反查
   const activeTag = useMemo(() => {
@@ -203,223 +106,231 @@ function ApiReferenceInner() {
     return resolveTagName(tagParam, names) || names[0] || "";
   }, [tagParam, groups]);
 
-  const normalizedKeyword = keyword.trim().toLowerCase();
-
-  // 有关键词时跨全部分组检索，否则只列当前分组
-  const listed = useMemo(() => {
-    if (!normalizedKeyword) {
-      return operations.filter((operation) => operation.tag === activeTag);
-    }
-    return operations.filter((operation) =>
-      `${operation.method} ${operation.path} ${operation.summary || ""} ${operation.operationId || ""} ${operation.tag}`
-        .toLowerCase()
-        .includes(normalizedKeyword)
-    );
-  }, [operations, activeTag, normalizedKeyword]);
-
-  // ?op= 指向的接口优先；它可能不在当前分组里（分享链接的场景）
+  // ?op= 指向的接口优先（分享链接），否则取当前分组第一个
   const selected = useMemo(() => {
     const byParam = operations.find((operation) => operation.key === opParam);
     if (byParam) return byParam;
-    return listed[0] ?? null;
-  }, [operations, opParam, listed]);
+    return groups.find((group) => group.name === activeTag)?.items[0] ?? null;
+  }, [operations, opParam, groups, activeTag]);
 
-  function selectTag(name: string) {
-    const params = new URLSearchParams();
-    params.set("tag", name);
-    setKeyword("");
-    router.replace(`/developers/api?${params.toString()}`, { scroll: false });
-  }
+  const selectedIndex = selected ? ordered.findIndex((item) => item.key === selected.key) : -1;
+
+  // 「/」聚焦搜索，与多数文档站一致；输入框内按下时不拦截
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable=true]")) return;
+      event.preventDefault();
+      if (window.matchMedia("(min-width: 1280px)").matches) searchRef.current?.focus();
+      else setNavOpen(true);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   function selectOperation(operation: FlatOperation) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("op", operation.key);
     params.set("tag", operation.tag);
     router.replace(`/developers/api?${params.toString()}`, { scroll: false });
+    setNavOpen(false);
+    // 已滚动到正文下方时回到接口标题处，目录侧栏本身是吸顶的不受影响
+    const anchor = document.getElementById("operation-top");
+    if (anchor && anchor.getBoundingClientRect().top < 0) {
+      anchor.scrollIntoView({ block: "start" });
+    }
   }
 
-  if (specQuery.isLoading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" /> 正在加载 OpenAPI 规范
-      </div>
-    );
-  }
+  if (specQuery.isLoading) return <ReferenceSkeleton />;
 
   if (specQuery.isError) {
     return (
-      <div className="mx-auto max-w-lg px-4 py-20 text-center">
-        <AlertCircle className="mx-auto size-8 text-destructive" />
-        <h2 className="mt-3 text-lg font-semibold">无法加载接口文档</h2>
+      <div className="mx-auto flex max-w-md flex-col items-center px-4 py-24 text-center">
+        <span className="inline-flex size-12 items-center justify-center rounded-full bg-destructive/10">
+          <AlertCircle className="size-6 text-destructive" />
+        </span>
+        <h2 className="mt-4 text-lg font-semibold">无法加载接口文档</h2>
         <p className="mt-1.5 text-sm text-muted-foreground">
           拉取 <code className="font-mono">/openapi.json</code> 失败，请确认后端服务可达。
         </p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-5"
+          disabled={specQuery.isFetching}
+          onClick={() => void specQuery.refetch()}
+        >
+          <RotateCw className={specQuery.isFetching ? "animate-spin" : undefined} />
+          重试
+        </Button>
       </div>
     );
   }
 
+  // 搜索框的 ref 只交给常驻侧栏：抽屉里的实例卸载时会把 ref 置空
+  const renderNav = (withSearchRef: boolean) => (
+    <OperationNav
+      groups={groups}
+      activeTag={selected?.tag || activeTag}
+      selectedKey={selected?.key}
+      keyword={keyword}
+      onKeywordChange={setKeyword}
+      onSelect={selectOperation}
+      searchRef={withSearchRef ? searchRef : undefined}
+      className="h-full"
+    />
+  );
+
   return (
-    <div className="mx-auto w-full max-w-[1600px] px-4 py-8 md:px-6">
-      <div className="flex flex-col gap-3 border-b pb-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="mx-auto w-full max-w-[1680px] px-4 md:px-6">
+      <div className="flex flex-col gap-5 border-b py-8 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
             {specQuery.data?.info?.title || "OpenAPI"}
           </p>
-          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight">接口文档</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            版本 {specQuery.data?.info?.version || "—"} · {operations.length} 个端点 ·{" "}
-            {groups.length} 个分组 · 由后端路由实时生成
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight">接口文档</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            由后端路由实时生成，可直接在页面中调试。
           </p>
+          <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2">
+            <Stat value={specQuery.data?.info?.version || "—"} label="版本" />
+            <Stat value={operations.length} label="个端点" />
+            <Stat value={groups.length} label="个分组" />
+            <Stat value={securedCount} label="个需认证" />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full sm:w-72">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="pl-9"
-              value={keyword}
-              onChange={(event) => setKeyword(event.target.value)}
-              placeholder="搜索路径、方法、摘要或分组"
-            />
-          </div>
-          <Button
-            variant={credentialsOpen ? "default" : "outline"}
-            size="sm"
-            onClick={() => setCredentialsOpen((value) => !value)}
-          >
-            <KeyRound className="size-4" />
+          <Button variant="outline" size="sm" className="xl:hidden" onClick={() => setNavOpen(true)}>
+            <ListTree />
+            接口目录
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <a href={`${appConfig.apiBaseUrl}/openapi.json`} target="_blank" rel="noreferrer">
+              <FileJson />
+              openapi.json
+            </a>
+          </Button>
+          <Button size="sm" onClick={() => setCredentialsOpen(true)}>
+            <KeyRound />
             调试凭据
+            {filledCredentials ? (
+              <span className="ml-0.5 rounded-full bg-primary-foreground/20 px-1.5 font-mono text-[10.5px] tabular-nums">
+                {filledCredentials}
+              </span>
+            ) : null}
           </Button>
         </div>
       </div>
 
-      {credentialsOpen ? (
-        <div className="mt-4 space-y-3 rounded-xl border bg-muted/20 p-4">
-          <p className="text-[13px] text-muted-foreground">
-            填入后会按每个接口声明的认证方式自动附加到请求头，并保存在本浏览器的
-            localStorage 中。这里只用于调试，请勿填入生产环境的长期凭据。
-          </p>
-          <div className="grid gap-3 lg:grid-cols-2">
-            <div>
-              <label className="text-[12.5px] font-medium" htmlFor="cred-base">
+      <div className="gap-10 xl:grid xl:grid-cols-[264px_minmax(0,1fr)]">
+        <nav aria-label="接口目录" className="max-xl:hidden">
+          <div className="sticky top-14 h-[calc(100vh-3.5rem)] py-6">{renderNav(true)}</div>
+        </nav>
+
+        <div id="operation-top" className="min-w-0 scroll-mt-20 py-8">
+          {selected ? (
+            <OperationDetail
+              // key 保证切换接口时调试面板的表单与响应完全重置
+              key={selected.key}
+              operation={selected}
+              baseUrl={effectiveBase}
+              credentials={credentials}
+              securitySchemes={securitySchemes}
+              previous={selectedIndex > 0 ? ordered[selectedIndex - 1] : undefined}
+              next={selectedIndex >= 0 ? ordered[selectedIndex + 1] : undefined}
+              onSelect={selectOperation}
+            />
+          ) : (
+            <div className="rounded-xl border border-dashed py-24 text-center text-sm text-muted-foreground">
+              当前规范中没有可展示的接口
+            </div>
+          )}
+        </div>
+      </div>
+
+      <Sheet open={navOpen} onOpenChange={setNavOpen}>
+        <SheetContent side="left" className="w-[320px] gap-0 p-0 sm:max-w-[320px]">
+          <SheetHeader className="border-b">
+            <SheetTitle>接口目录</SheetTitle>
+            <SheetDescription className="sr-only">按分组浏览或搜索全部接口</SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 p-4">{renderNav(false)}</div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={credentialsOpen} onOpenChange={setCredentialsOpen}>
+        <SheetContent side="right" className="w-full gap-0 sm:max-w-md">
+          <SheetHeader className="border-b">
+            <SheetTitle>调试凭据</SheetTitle>
+            <SheetDescription>
+              按各接口声明的认证方式自动附加到请求头，仅保存在本浏览器中。请勿填入生产环境的长期凭据。
+            </SheetDescription>
+          </SheetHeader>
+          <div className="flex-1 space-y-5 overflow-y-auto p-4">
+            <div className="space-y-1.5">
+              <label className="text-[13px] font-medium" htmlFor="cred-base">
                 Base URL
               </label>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                留空则使用当前站点（经同源代理转发到后端），跨域时需要目标服务允许本页来源。
-              </p>
               <Input
                 id="cred-base"
                 value={baseUrl}
                 placeholder={appConfig.apiBaseUrl || pageOrigin || "https://api.example.com"}
-                className="mt-1.5 font-mono text-xs"
+                className="font-mono text-xs"
                 onChange={(event) => setBaseUrl(event.target.value.trim())}
               />
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                留空则使用当前站点，经同源代理转发到后端。跨域时需要目标服务允许本页来源。
+              </p>
             </div>
             {CREDENTIAL_FIELDS.map((field) => (
-              <div key={field.key}>
-                <label className="text-[12.5px] font-medium" htmlFor={`cred-${field.key}`}>
+              <div key={field.key} className="space-y-1.5">
+                <label
+                  className="flex items-center gap-2 text-[13px] font-medium"
+                  htmlFor={`cred-${field.key}`}
+                >
                   {field.label}
+                  {credentials[field.key] ? (
+                    <span className="size-1.5 rounded-full bg-emerald-500" aria-label="已填写" />
+                  ) : null}
                 </label>
-                <p className="mt-0.5 text-xs text-muted-foreground">{field.hint}</p>
                 <Input
                   id={`cred-${field.key}`}
                   type="password"
+                  autoComplete="off"
                   value={credentials[field.key]}
-                  className="mt-1.5 font-mono text-xs"
+                  className="font-mono text-xs"
                   onChange={(event) => updateCredentials({ [field.key]: event.target.value })}
                 />
+                <p className="text-xs leading-relaxed text-muted-foreground">{field.hint}</p>
               </div>
             ))}
           </div>
-        </div>
-      ) : null}
-
-      <div className="mt-6 gap-6 xl:grid xl:grid-cols-[300px_minmax(0,1fr)]">
-        <nav className="mb-6 xl:mb-0" aria-label="接口列表">
-          <div className="sticky top-20 flex max-h-[calc(100vh-6rem)] flex-col gap-3">
-            {!normalizedKeyword ? (
-              <select
-                aria-label="接口分组"
-                value={activeTag}
-                onChange={(event) => selectTag(event.target.value)}
-                className="h-9 w-full rounded-md border bg-background px-2.5 text-sm"
+          {filledCredentials ? (
+            <div className="border-t p-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full text-muted-foreground"
+                onClick={() =>
+                  updateCredentials(
+                    Object.fromEntries(CREDENTIAL_FIELDS.map((field) => [field.key, ""]))
+                  )
+                }
               >
-                {groups.map((group) => (
-                  <option key={group.name} value={group.name}>
-                    {group.name}（{group.items.length}）
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <p className="text-[12.5px] text-muted-foreground">
-                检索到 {listed.length} 个端点
-              </p>
-            )}
-
-            <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1">
-              {listed.map((operation) => {
-                const active = operation.key === selected?.key;
-                return (
-                  <li key={operation.key}>
-                    <button
-                      type="button"
-                      onClick={() => selectOperation(operation)}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                        active ? "bg-muted" : "hover:bg-muted/60"
-                      )}
-                    >
-                      <MethodBadge method={operation.method} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-mono text-[11.5px]">
-                          {operation.path}
-                        </span>
-                        {operation.summary ? (
-                          <span className="block truncate text-[11.5px] text-muted-foreground">
-                            {operation.summary}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-              {!listed.length ? (
-                <li className="px-2 py-8 text-center text-sm text-muted-foreground">
-                  没有匹配的端点
-                </li>
-              ) : null}
-            </ul>
-          </div>
-        </nav>
-
-        {selected ? (
-          <OperationDetail
-            // key 保证切换接口时调试面板的表单与响应完全重置
-            key={selected.key}
-            operation={selected}
-            baseUrl={effectiveBase}
-            credentials={credentials}
-            securitySchemes={securitySchemes}
-          />
-        ) : (
-          <div className="rounded-lg border py-20 text-center text-sm text-muted-foreground">
-            从左侧选择一个接口
-          </div>
-        )}
-      </div>
+                清空全部凭据
+              </Button>
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
 
 export default function ApiReferencePage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex min-h-[60vh] items-center justify-center">
-          <Loader2 className="size-5 animate-spin text-muted-foreground" />
-        </div>
-      }
-    >
+    <Suspense fallback={<ReferenceSkeleton />}>
       <ApiReferenceInner />
     </Suspense>
   );

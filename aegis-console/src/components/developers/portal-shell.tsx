@@ -41,11 +41,13 @@ function ThemeToggle() {
  */
 export function PortalShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  // 接口文档是目录、正文、调试台三栏，需要比快速接入页更宽的版心
+  const containerWidth = pathname.startsWith("/developers/api") ? "max-w-[1680px]" : "max-w-[1400px]";
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <header className="sticky top-0 z-40 border-b bg-background">
-        <div className="mx-auto flex h-14 w-full max-w-[1400px] items-center gap-4 px-4 md:px-6">
+        <div className={cn("mx-auto flex h-14 w-full items-center gap-4 px-4 md:px-6", containerWidth)}>
           <Link href="/developers" className="flex shrink-0 items-center gap-2.5" aria-label="Aegis 开发者">
             <AegisMark className="size-5" />
             <span className="flex items-baseline gap-2">
@@ -104,7 +106,7 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
       <main className="flex-1">{children}</main>
 
       <footer className="border-t py-6">
-        <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-3 px-4 text-xs text-muted-foreground md:px-6">
+        <div className={cn("mx-auto flex w-full flex-wrap items-center justify-between gap-3 px-4 text-xs text-muted-foreground md:px-6", containerWidth)}>
           <span>{appConfig.platformName} 开放接口 · Auth Protocol v2</span>
           <span className="font-mono">{appConfig.environment}</span>
         </div>

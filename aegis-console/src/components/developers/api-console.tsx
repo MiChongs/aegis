@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Loader2, Play, RotateCcw } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { AlertCircle, ChevronRight, KeyRound, Loader2, Play, RotateCcw, Terminal } from "lucide-react";
 import { CodeBlock } from "@/components/developers/code-block";
+import { MethodBadge } from "@/components/developers/method-badge";
 import { CodeLanguageIcon, codeLanguage } from "@/lib/code-languages";
 import type { FlatOperation, OpenAPIParameter } from "@/lib/api/openapi";
 import {
@@ -42,6 +43,15 @@ function statusTone(status: number) {
   return "bg-muted text-muted-foreground";
 }
 
+function PanelSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="space-y-2.5 border-t px-4 py-3.5">
+      <p className="text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">{title}</p>
+      {children}
+    </div>
+  );
+}
+
 function ParamInputs({
   title,
   parameters,
@@ -55,19 +65,16 @@ function ParamInputs({
 }) {
   if (!parameters.length) return null;
   return (
-    <div className="space-y-2">
-      <p className="text-[13px] font-medium">{title}</p>
+    <PanelSection title={title}>
       <div className="space-y-2">
         {parameters.map((parameter) => (
-          <div key={parameter.name} className="grid gap-1.5 sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center">
+          <div key={parameter.name} className="grid gap-1.5 sm:grid-cols-[140px_minmax(0,1fr)] sm:items-center">
             <label
-              className="flex items-baseline gap-1.5 text-[12.5px]"
+              className="flex min-w-0 items-baseline gap-1.5 text-[12.5px]"
               htmlFor={`param-${parameter.in}-${parameter.name}`}
             >
-              <code className="font-mono">{parameter.name}</code>
-              {parameter.required ? (
-                <span className="text-[11px] text-amber-600 dark:text-amber-400">必填</span>
-              ) : null}
+              <code className="truncate font-mono">{parameter.name}</code>
+              {parameter.required ? <span className="text-amber-600 dark:text-amber-400">*</span> : null}
             </label>
             <Input
               id={`param-${parameter.in}-${parameter.name}`}
@@ -79,7 +86,7 @@ function ParamInputs({
           </div>
         ))}
       </div>
-    </div>
+    </PanelSection>
   );
 }
 
@@ -161,38 +168,61 @@ export function ApiConsole({
     }
   }
 
+
   return (
     <div className="space-y-4">
-      <div className="space-y-3 rounded-lg border p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[13px] font-medium">调试</span>
-          <code className="min-w-0 flex-1 truncate rounded bg-muted/60 px-2 py-1 font-mono text-[11.5px]">
-            {request.method} {request.pathWithQuery}
+      <div className="overflow-hidden rounded-xl border bg-card">
+        <div className="flex items-center gap-2 px-4 py-3">
+          <Terminal className="size-4 text-muted-foreground" />
+          <span className="text-[13px] font-semibold">在线调试</span>
+          <Button
+            size="xs"
+            variant="ghost"
+            className="ml-auto text-muted-foreground"
+            onClick={() => {
+              setValues(initialValues(operation));
+              setResponse(null);
+              setError("");
+            }}
+          >
+            <RotateCcw />
+            重置
+          </Button>
+        </div>
+
+        <div className="flex items-center gap-2 border-t bg-muted/30 px-3 py-2.5">
+          <MethodBadge method={request.method} />
+          <code
+            className="min-w-0 flex-1 truncate font-mono text-[12px]"
+            title={request.pathWithQuery}
+          >
+            {request.pathWithQuery}
           </code>
           <Button
             size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            onClick={() => setValues(initialValues(operation))}
+            disabled={sending || request.missingPath.length > 0}
+            onClick={() => void send()}
           >
-            <RotateCcw className="size-3.5" />
-            重置
-          </Button>
-          <Button size="sm" disabled={sending || request.missingPath.length > 0} onClick={() => void send()}>
-            {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+            {sending ? <Loader2 className="animate-spin" /> : <Play />}
             发送
           </Button>
         </div>
 
-        {request.missingPath.length ? (
-          <p className="text-[12.5px] text-amber-600 dark:text-amber-400">
-            请先填写路径参数：{request.missingPath.join("、")}
-          </p>
-        ) : null}
-        {missingCredential ? (
-          <p className="text-[12.5px] text-amber-600 dark:text-amber-400">
-            该接口需要认证，请在页面顶部填入对应令牌，否则会返回 401。
-          </p>
+        {request.missingPath.length || missingCredential ? (
+          <div className="space-y-1.5 border-t bg-amber-500/6 px-4 py-2.5 text-[12.5px] text-amber-700 dark:text-amber-300">
+            {request.missingPath.length ? (
+              <p className="flex items-start gap-2">
+                <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                请先填写路径参数：{request.missingPath.join("、")}
+              </p>
+            ) : null}
+            {missingCredential ? (
+              <p className="flex items-start gap-2">
+                <KeyRound className="mt-0.5 size-3.5 shrink-0" />
+                该接口需要认证，请在「调试凭据」中填入对应令牌。
+              </p>
+            ) : null}
+          </div>
         ) : null}
 
         <ParamInputs
@@ -215,79 +245,83 @@ export function ApiConsole({
         />
 
         {jsonBody ? (
-          <div className="space-y-1.5">
-            <p className="text-[13px] font-medium">
-              请求体
-              {operation.requestBody?.required ? (
-                <span className="ml-2 text-[11px] font-normal text-amber-600 dark:text-amber-400">
-                  必填
-                </span>
-              ) : null}
-            </p>
+          <PanelSection title={operation.requestBody?.required ? "请求体（必填）" : "请求体"}>
             <Textarea
               value={values.body}
               spellCheck={false}
-              className="min-h-40 font-mono text-xs"
+              className="min-h-40 bg-background font-mono text-xs leading-relaxed"
               onChange={(event) => setValues((current) => ({ ...current, body: event.target.value }))}
             />
+          </PanelSection>
+        ) : null}
+
+        {error ? (
+          <div className="flex items-start gap-2 border-t bg-destructive/5 px-4 py-3 text-[12.5px] text-destructive">
+            <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+            <span className="min-w-0 break-words">{error}</span>
+          </div>
+        ) : null}
+
+        {sending && !response ? (
+          <div className="space-y-2 border-t px-4 py-3.5" aria-busy>
+            <div className="h-5 w-40 animate-pulse rounded bg-muted" />
+            <div className="h-28 animate-pulse rounded-lg bg-muted/70" />
+          </div>
+        ) : null}
+
+        {response ? (
+          <div className="space-y-2.5 border-t px-4 py-3.5">
+            <div className="flex flex-wrap items-center gap-2 text-[12px]">
+              <span
+                className={cn(
+                  "rounded-md px-2 py-0.5 font-mono text-[11.5px] font-semibold",
+                  statusTone(response.status)
+                )}
+              >
+                {response.status} {response.statusText}
+              </span>
+              <span className="font-mono text-muted-foreground tabular-nums">{response.durationMs} ms</span>
+              <span className="font-mono text-muted-foreground tabular-nums">{formatBytes(response.sizeBytes)}</span>
+            </div>
+            <CodeBlock
+              language={response.isJson ? "json" : "text"}
+              title="响应体"
+              code={response.body || "（空）"}
+              maxHeight={360}
+            />
+            <details className="group text-[12.5px]">
+              <summary className="flex cursor-pointer list-none items-center gap-1 text-muted-foreground hover:text-foreground">
+                <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
+                响应头（{response.headers.length}）
+              </summary>
+              <div className="mt-2 overflow-x-auto rounded-lg border bg-background">
+                <table className="w-full text-[12px]">
+                  <tbody className="divide-y">
+                    {response.headers.map(([name, value]) => (
+                      <tr key={name}>
+                        <td className="px-3 py-1.5 font-mono whitespace-nowrap text-muted-foreground">
+                          {name}
+                        </td>
+                        <td className="px-3 py-1.5 font-mono break-all">{value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           </div>
         ) : null}
       </div>
 
-      {error ? (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-[12.5px] text-destructive">
-          {error}
-        </div>
-      ) : null}
-
-      {response ? (
-        <div className="space-y-2 rounded-lg border p-3">
-          <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
-            <span
-              className={cn(
-                "rounded px-2 py-0.5 font-mono text-[11.5px] font-medium",
-                statusTone(response.status)
-              )}
-            >
-              {response.status} {response.statusText}
-            </span>
-            <span className="text-muted-foreground">{response.durationMs} ms</span>
-            <span className="text-muted-foreground">{formatBytes(response.sizeBytes)}</span>
-          </div>
-          <CodeBlock
-            language={response.isJson ? "json" : "text"}
-            title="响应体"
-            code={response.body || "（空）"}
-            maxHeight={360}
-          />
-          <details className="text-[12.5px]">
-            <summary className="cursor-pointer text-muted-foreground">响应头</summary>
-            <div className="mt-1.5 overflow-x-auto rounded-lg border bg-background">
-              <table className="w-full text-[12px]">
-                <tbody className="divide-y">
-                  {response.headers.map(([name, value]) => (
-                    <tr key={name}>
-                      <td className="whitespace-nowrap px-3 py-1 font-mono text-muted-foreground">
-                        {name}
-                      </td>
-                      <td className="px-3 py-1 font-mono break-all">{value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
-        </div>
-      ) : null}
-
-      <div className="space-y-2">
-        <div className="flex flex-wrap gap-1.5">
+      <div className="space-y-2.5">
+        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="示例语言">
           {SAMPLE_LANGUAGES.map((id) => (
             <button
               key={id}
               type="button"
+              role="tab"
               onClick={() => setLanguage(id)}
-              aria-pressed={id === language}
+              aria-selected={id === language}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
                 id === language
