@@ -1294,43 +1294,193 @@ export type VipEntitlement = {
   trialOffer: VipTrialOffer;
 };
 
-export type VersionItem = {
-  id: number;
-  appid: number;
-  channel_id?: number | null;
-  channel_name?: string;
-  version?: string;
-  version_code?: number;
-  description?: string;
-  release_notes?: string;
-  download_url?: string;
-  file_size?: number;
-  file_hash?: string;
-  force_update?: boolean;
-  update_type?: string;
-  platform?: string;
-  min_os_version?: string;
-  status?: string;
-  download_count?: number;
-  metadata?: Record<string, unknown>;
-  createdAt?: string;
-  updatedAt?: string;
+/* ───────────────────────── 发布中心 ───────────────────────── */
+
+export type ReleaseStatus = "draft" | "scheduled" | "published" | "paused" | "revoked";
+export type ReleaseVisibility = "public" | "signed_in" | "testers";
+export type ReleaseUpdateType = "optional" | "recommended" | "force";
+
+export type ReleaseTargeting = {
+  testerUserIds?: number[];
+  testerDeviceIds?: string[];
+  excludeUserIds?: number[];
+  excludeDeviceIds?: string[];
+  regions?: string[];
+  locales?: string[];
+  deviceModels?: string[];
+  abis?: string[];
+  minOsVersion?: number;
+  maxOsVersion?: number;
+  minSourceVersionCode?: number;
+  maxSourceVersionCode?: number;
 };
 
-export type VersionListResult = {
-  items: VersionItem[];
+export type ReleaseAsset = {
+  id: number;
+  abi: string;
+  label?: string;
+  /** 落库值：外链或 storage:// 引用 */
+  url?: string;
+  /** 解析后的可访问地址 */
+  downloadUrl: string;
+  fileSize: number;
+  sha256?: string;
+  position: number;
+  downloadCount: number;
+};
+
+export type ReleaseChannelRef = {
+  id: number;
+  code: string;
+  name: string;
+  level?: string;
+  color?: string;
+};
+
+export type Release = {
+  id: number;
+  appid: number;
+  version: string;
+  versionCode: number;
+  title?: string;
+  notes: string;
+  summary?: string;
+  platform: string;
+  minOsVersion?: string;
+  updateType: ReleaseUpdateType;
+  minSupportedCode: number;
+  status: ReleaseStatus;
+  effectiveStatus: ReleaseStatus;
+  visibility: ReleaseVisibility;
+  targeting: ReleaseTargeting;
+  rolloutPct: number;
+  channel?: ReleaseChannelRef | null;
+  assets: ReleaseAsset[];
+  publishAt?: string | null;
+  publishedAt?: string | null;
+  downloadCount: number;
+  createdBy?: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ReleaseListResult = {
+  items: Release[];
   page: number;
   limit: number;
   total: number;
   totalPages: number;
 };
 
-export type ChannelRule = {
-  field: string;   // platform / os_version / user_id / region / tag ...
-  op: string;      // eq / neq / in / not_in / gt / lt / gte / lte / regex / contains
-  value: unknown;  // 字符串 / 数字 / 数组
+export type ReleaseAssetInput = {
+  id?: number;
+  abi: string;
+  label?: string;
+  url: string;
+  fileSize?: number;
+  sha256?: string;
 };
 
+export type ReleaseSavePayload = {
+  version?: string;
+  versionCode?: number;
+  title?: string;
+  notes?: string;
+  platform?: string;
+  minOsVersion?: string;
+  updateType?: ReleaseUpdateType;
+  minSupportedCode?: number;
+  visibility?: ReleaseVisibility;
+  targeting?: ReleaseTargeting;
+  rolloutPct?: number;
+  channelId?: number | null;
+  assets?: ReleaseAssetInput[];
+};
+
+export type ReleaseFunnel = {
+  offered: number;
+  downloaded: number;
+  installed: number;
+  failed: number;
+  dismissed: number;
+};
+
+export type ReleaseStats = {
+  releaseId: number;
+  total: ReleaseFunnel;
+  daily: Array<ReleaseFunnel & { day: string }>;
+};
+
+export type ReleaseOverview = {
+  total: number;
+  draft: number;
+  scheduled: number;
+  live: number;
+  paused: number;
+  revoked: number;
+  rollingOut: number;
+  latest: Release[];
+  last14d: ReleaseFunnel;
+};
+
+export type ReleaseAssetUploadResult = {
+  reference: string;
+  downloadUrl: string;
+  fileName: string;
+  fileSize: number;
+  sha256: string;
+  abi: string;
+};
+
+export type ReleaseSimulateInput = {
+  versionCode: number;
+  platform?: string;
+  userId?: number;
+  deviceId?: string;
+  abis?: string[];
+  osVersion?: number;
+  deviceModel?: string;
+  locale?: string;
+  region?: string;
+};
+
+export type ReleaseChangelogEntry = {
+  version: string;
+  versionCode: number;
+  title?: string;
+  summary?: string;
+  notes: string;
+  updateType: ReleaseUpdateType;
+  publishedAt?: string | null;
+};
+
+export type ReleaseCheckResult = {
+  hasUpdate: boolean;
+  currentVersionCode: number;
+  updateType?: ReleaseUpdateType;
+  forceReason?: "release" | "skipped" | "unsupported";
+  release?: Omit<Release, "status" | "effectiveStatus" | "visibility" | "targeting" | "rolloutPct" | "minSupportedCode" | "downloadCount" | "createdAt" | "updatedAt" | "appid"> | null;
+  asset?: ReleaseAsset | null;
+  changelog?: ReleaseChangelogEntry[];
+  checkedAt: string;
+  nextCheckAfter: number;
+};
+
+export type ReleaseDecision = {
+  releaseId: number;
+  version: string;
+  versionCode: number;
+  eligible: boolean;
+  reason: string;
+  bucket?: number;
+};
+
+export type ReleaseSimulation = {
+  result: ReleaseCheckResult;
+  decisions: ReleaseDecision[];
+};
+
+/** 发布渠道。旧的 rollout_pct / rules / platforms / min/max_version_code 不参与新的检测。 */
 export type VersionChannel = {
   id: number;
   appid: number;
@@ -1342,23 +1492,10 @@ export type VersionChannel = {
   priority?: number;
   color?: string;
   level?: string;
-  rollout_pct?: number;
-  platforms?: string[];
-  min_version_code?: number;
-  max_version_code?: number;
-  rules?: ChannelRule[];
-  targetAudience?: Record<string, unknown>;
+  self_join?: boolean;
   userCount?: number;
   createdAt?: string;
   updatedAt?: string;
-};
-
-export type VersionStats = {
-  appid: number;
-  totalVersions?: number;
-  publishedCount?: number;
-  channelCount?: number;
-  platformCounts?: Record<string, number>;
 };
 
 export type SystemAnnouncement = {

@@ -35,16 +35,12 @@ import {
   getAdminVipTransactions,
   grantAdminVip,
   saveAdminVipPlan,
-  createAdminVersion,
-  createAdminVersionChannel,
   createAppStorageConfig,
   createGlobalStorageConfig,
   createWorkflow,
   createWorkflowFromTemplate,
   deleteAdminPaymentConfig,
   deleteAdminSite,
-  deleteAdminVersion,
-  deleteAdminVersionChannel,
   deleteAppStorageConfig,
   deleteGlobalStorageConfig,
   deleteWorkflow,
@@ -81,9 +77,6 @@ import {
   getAdminSites,
   getAdminUserSettings,
   getAdminUserSettingsStats,
-  getAdminVersionChannels,
-  getAdminVersionStats,
-  getAdminVersions,
   getAdminMe,
   getAdminRoles,
   getAdminRolePermissionTree,
@@ -130,9 +123,6 @@ import {
   getPasswordPolicyTemplates,
   getSignInRewardTemplates,
   pauseWorkflowInstance,
-  previewVersionChannelMatch,
-  publishAdminVersion,
-  revokeAdminVersion,
   resetAdminAppLoginBaseline,
   resetAdminAppPasswordPolicy,
   resetAdminAppSignInReward,
@@ -179,8 +169,6 @@ import {
   adjustUserExperience,
   updateAdminPaymentConfig,
   updateAdminSite,
-  updateAdminVersion,
-  updateAdminVersionChannel,
   updateAppStorageConfig,
   updateGlobalStorageConfig,
   updateWorkflow,
@@ -1830,164 +1818,6 @@ export function useInitEpayPaymentConfigMutation() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["admin-payment-configs"] });
     }
-  });
-}
-
-export function useAdminVersionsQuery(
-  appKey?: string | null,
-  params?: { page?: number; limit?: number; status?: string; platform?: string; channel_id?: number }
-) {
-  const token = useAdminToken();
-  return useQuery({
-    queryKey: ["admin-versions", token, appKey, params?.page, params?.limit, params?.status, params?.platform, params?.channel_id],
-    queryFn: () => getAdminVersions(token as string, appKey as string, params),
-    enabled: Boolean(token && appKey)
-  });
-}
-
-export function useAdminVersionChannelsQuery(appKey?: string | null) {
-  const token = useAdminToken();
-  return useQuery({
-    queryKey: ["admin-version-channels", token, appKey],
-    queryFn: () => getAdminVersionChannels(token as string, appKey as string),
-    enabled: Boolean(token && appKey)
-  });
-}
-
-export function useAdminVersionStatsQuery(appKey?: string | null) {
-  const token = useAdminToken();
-  return useQuery({
-    queryKey: ["admin-version-stats", token, appKey],
-    queryFn: () => getAdminVersionStats(token as string, appKey as string),
-    enabled: Boolean(token && appKey)
-  });
-}
-
-export function useCreateAdminVersionMutation() {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (p: { appKey: string; payload: Record<string, unknown> }) =>
-      createAdminVersion(token as string, p.appKey, p.payload),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["admin-versions"] }),
-        queryClient.invalidateQueries({ queryKey: ["admin-version-stats"] })
-      ]);
-    }
-  });
-}
-
-export function useUpdateAdminVersionMutation() {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (p: { appKey: string; versionId: number; payload: Record<string, unknown> }) =>
-      updateAdminVersion(token as string, p.appKey, p.versionId, p.payload),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["admin-versions"] }),
-        queryClient.invalidateQueries({ queryKey: ["admin-version-stats"] })
-      ]);
-    }
-  });
-}
-
-export function useDeleteAdminVersionMutation() {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (p: { appKey: string; versionId: number }) =>
-      deleteAdminVersion(token as string, p.appKey, p.versionId),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["admin-versions"] }),
-        queryClient.invalidateQueries({ queryKey: ["admin-version-stats"] })
-      ]);
-    }
-  });
-}
-
-export function usePublishAdminVersionMutation() {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (p: { appKey: string; versionId: number }) =>
-      publishAdminVersion(token as string, p.appKey, p.versionId),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["admin-versions"] }),
-        queryClient.invalidateQueries({ queryKey: ["admin-version-stats"] })
-      ]);
-    }
-  });
-}
-
-export function useRevokeAdminVersionMutation() {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (p: { appKey: string; versionId: number }) =>
-      revokeAdminVersion(token as string, p.appKey, p.versionId),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["admin-versions"] }),
-        queryClient.invalidateQueries({ queryKey: ["admin-version-stats"] })
-      ]);
-    }
-  });
-}
-
-export function useCreateAdminVersionChannelMutation() {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (p: { appKey: string; payload: Record<string, unknown> }) =>
-      createAdminVersionChannel(token as string, p.appKey, p.payload),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["admin-version-channels"] }),
-        queryClient.invalidateQueries({ queryKey: ["admin-version-stats"] })
-      ]);
-    }
-  });
-}
-
-export function useUpdateAdminVersionChannelMutation() {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (p: { appKey: string; channelId: number; payload: Record<string, unknown> }) =>
-      updateAdminVersionChannel(token as string, p.appKey, p.channelId, p.payload),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["admin-version-channels"] }),
-        queryClient.invalidateQueries({ queryKey: ["admin-version-stats"] })
-      ]);
-    }
-  });
-}
-
-export function useDeleteAdminVersionChannelMutation() {
-  const token = useAdminToken();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (p: { appKey: string; channelId: number }) =>
-      deleteAdminVersionChannel(token as string, p.appKey, p.channelId),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["admin-version-channels"] }),
-        queryClient.invalidateQueries({ queryKey: ["admin-version-stats"] })
-      ]);
-    }
-  });
-}
-
-export function usePreviewVersionChannelMatchMutation() {
-  const token = useAdminToken();
-  return useMutation({
-    mutationFn: (payload: Parameters<typeof previewVersionChannelMatch>[1]) =>
-      previewVersionChannelMatch(token as string, payload)
   });
 }
 
