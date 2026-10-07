@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { ChevronRight, Search, X } from "lucide-react";
 import { MethodText } from "@/components/developers/method-badge";
-import type { FlatOperation } from "@/lib/api/openapi";
+import { readableSummary, type FlatOperation } from "@/lib/api/openapi";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -18,9 +18,11 @@ function OperationLink({
   active: boolean;
   onSelect: (operation: FlatOperation) => void;
 }) {
+  const summary = readableSummary(operation);
   return (
     <button
       type="button"
+      title={summary ? `${summary}\n${operation.path}` : operation.path}
       data-op-key={operation.key}
       onClick={() => onSelect(operation)}
       aria-current={active ? "true" : undefined}
@@ -36,10 +38,15 @@ function OperationLink({
       ) : null}
       <MethodText method={operation.method} />
       <span className="min-w-0 flex-1">
-        <span className={cn("block truncate text-[12.5px]", active && "font-medium")}>
-          {operation.summary || operation.path}
-        </span>
-        {operation.summary ? (
+        {summary ? (
+          <span className={cn("block truncate text-[12.5px]", active && "font-medium")}>{summary}</span>
+        ) : (
+          <span className={cn("block truncate font-mono text-[11.5px]", active && "font-medium")} dir="rtl">
+            {/* 路径从左截断：同组路径前缀相同，有区分度的是尾部 */}
+            <bdi>{operation.path}</bdi>
+          </span>
+        )}
+        {summary ? (
           <span className="block truncate font-mono text-[10.5px] text-muted-foreground/80">
             {operation.path}
           </span>
@@ -105,10 +112,17 @@ export function OperationNav({
   // 选中项滚入可视区，分享链接打开时也能在目录里看到它
   useEffect(() => {
     if (!selectedKey) return;
-    const node = listRef.current?.querySelector<HTMLElement>(
-      `[data-op-key="${CSS.escape(selectedKey)}"]`
-    );
-    node?.scrollIntoView({ block: "nearest" });
+    const list = listRef.current;
+    const node = list?.querySelector<HTMLElement>(`[data-op-key="${CSS.escape(selectedKey)}"]`);
+    if (!list || !node) return;
+    // 只滚动目录自身；scrollIntoView 会连带滚动窗口，分享链接打开时页面会跳过页头
+    const listRect = list.getBoundingClientRect();
+    const nodeRect = node.getBoundingClientRect();
+    if (nodeRect.top < listRect.top) {
+      list.scrollTop -= listRect.top - nodeRect.top + 8;
+    } else if (nodeRect.bottom > listRect.bottom) {
+      list.scrollTop += nodeRect.bottom - listRect.bottom + 8;
+    }
   }, [selectedKey]);
 
   function toggle(name: string) {

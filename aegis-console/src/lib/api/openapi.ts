@@ -120,6 +120,25 @@ export function flattenOperations(spec: OpenAPISpec | null): FlatOperation[] {
 }
 
 /** 按 tag 分组，分组内保持 path 顺序；分组按操作数降序 */
+/**
+ * 人写的摘要；后端为未标注的路由自动生成的「POST Api Admin …」视为没有。
+ * 这类摘要只是把方法和路径换了个写法，放进目录里会全部截断成同一串前缀。
+ */
+export function readableSummary(operation: FlatOperation): string | undefined {
+  const summary = operation.summary?.trim();
+  if (!summary) return undefined;
+  const upper = summary.toUpperCase();
+  if (upper === operation.method || upper.startsWith(`${operation.method} `)) return undefined;
+  return summary;
+}
+
+/** 人写的说明；「Auto-generated reference for …」同理视为没有 */
+export function readableDescription(operation: FlatOperation): string | undefined {
+  const description = operation.description?.trim();
+  if (!description || description.startsWith("Auto-generated")) return undefined;
+  return description;
+}
+
 export function groupByTag(operations: FlatOperation[]) {
   const groups = new Map<string, FlatOperation[]>();
   for (const operation of operations) {

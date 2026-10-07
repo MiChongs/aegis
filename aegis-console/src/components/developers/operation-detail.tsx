@@ -7,6 +7,8 @@ import { CodeBlock } from "@/components/developers/code-block";
 import { MethodBadge, PathText } from "@/components/developers/method-badge";
 import { SchemaView } from "@/components/developers/schema-view";
 import {
+  readableDescription,
+  readableSummary,
   sampleFromSchema,
   schemaHint,
   type FlatOperation,
@@ -175,9 +177,11 @@ function SiblingLink({
         {prev ? "上一个" : "下一个"}
         {prev ? null : <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />}
       </span>
-      <span className="w-full truncate text-[13px] font-medium">
-        {operation.summary || operation.path}
-      </span>
+      {readableSummary(operation) ? (
+        <span className="w-full truncate text-[13px] font-medium">{readableSummary(operation)}</span>
+      ) : (
+        <span className="w-full truncate font-mono text-[12.5px] font-medium">{operation.path}</span>
+      )}
     </button>
   );
 }
@@ -201,6 +205,8 @@ export function OperationDetail({
   onSelect: (operation: FlatOperation) => void;
 }) {
   const schemes = securitySchemeNames(operation);
+  const summary = readableSummary(operation);
+  const description = readableDescription(operation);
   const parameters = operation.parameters || [];
   const jsonBody = operation.requestBody?.content?.["application/json"];
   const pathCopy = useCopy();
@@ -211,19 +217,13 @@ export function OperationDetail({
       <div className="min-w-0 space-y-8">
         <header className="space-y-4">
           <div className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
-            <span>{operation.tag}</span>
+            <span className="shrink-0">{operation.tag}</span>
             {operation.operationId ? (
               <>
                 <span className="text-muted-foreground/50">/</span>
-                <span className="truncate font-mono">{operation.operationId}</span>
+                <span className="min-w-0 truncate font-mono">{operation.operationId}</span>
               </>
             ) : null}
-          </div>
-
-          <div className="flex flex-wrap items-start gap-3">
-            <h2 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight">
-              {operation.summary || operation.path}
-            </h2>
             <button
               type="button"
               onClick={() => {
@@ -232,12 +232,15 @@ export function OperationDetail({
                 url.searchParams.set("tag", operation.tag);
                 void linkCopy.copy(url.toString());
               }}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors hover:bg-muted hover:text-foreground"
             >
               {linkCopy.copied ? <Check className="size-3.5 text-emerald-500" /> : <Link2 className="size-3.5" />}
               {linkCopy.copied ? "已复制" : "复制链接"}
             </button>
           </div>
+
+          {/* 没有人写的摘要时不重复展示路径，下方的端点栏就是标题 */}
+          {summary ? <h2 className="text-2xl font-semibold tracking-tight">{summary}</h2> : null}
 
           <div className="flex items-center gap-3 rounded-xl border bg-muted/40 py-2 pr-2 pl-2.5">
             <MethodBadge method={operation.method} size="md" />
@@ -276,8 +279,8 @@ export function OperationDetail({
             ) : null}
           </div>
 
-          {operation.description ? (
-            <p className="max-w-3xl text-[14px] leading-7 text-muted-foreground">{operation.description}</p>
+          {description ? (
+            <p className="max-w-3xl text-[14px] leading-7 text-muted-foreground">{description}</p>
           ) : null}
         </header>
 
