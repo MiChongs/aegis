@@ -1741,30 +1741,40 @@ export type CustomRole = {
 };
 
 // ── 审计日志 ──
+// 与后端 internal/domain/system/audit.go 对应。operationName / moduleLabel / targetLabel / browser / os / location
+// 由后端按操作目录在读取时推导，前端直接展示，不再自行翻译 action 或路径。
+
+export type AuditKind = "read" | "write" | "export" | "auth";
+export type AuditStatus = "success" | "failed" | "denied" | "blocked";
+export type AuditSeverity = "info" | "low" | "medium" | "high" | "critical";
 
 export type AuditLog = {
   id: number;
+  createdAt: string;
 
-  // 身份
   adminId: number;
   adminName: string;
   adminRole?: string;
   sessionId?: string;
 
-  // 分类
-  action: string;
+  operationName: string;
   category?: string;
-  severity?: string;
+  moduleLabel: string;
+  kind: AuditKind | string;
+  severity?: AuditSeverity | string;
+  action: string;
 
-  // 目标
+  targetType?: string;
+  targetLabel?: string;
+  targetName?: string;
+  appId?: number;
+  appName?: string;
+
   resource: string;
   resourceId: string;
-
-  // 可读文本
   summary?: string;
   detail: string;
 
-  // 请求追踪
   requestId?: string;
   traceId?: string;
   method?: string;
@@ -1772,28 +1782,25 @@ export type AuditLog = {
   route?: string;
   statusCode?: number;
   latencyMs?: number;
-
-  // 流量
   requestSize?: number;
   responseSize?: number;
   responseSnippet?: string;
 
-  // 网络
   ip: string;
   country?: string;
   region?: string;
   city?: string;
   isp?: string;
+  location?: string;
   userAgent: string;
+  browser?: string;
+  os?: string;
 
-  // 结果
-  status: string; // success / failed / denied / blocked
+  status: AuditStatus | string;
   errorCode?: string;
   errorMessage?: string;
 
-  // 上下文
   changes?: Record<string, unknown>;
-  createdAt: string;
 };
 
 export type AuditPage = {
@@ -1805,16 +1812,24 @@ export type AuditPage = {
 
 export type AuditStatItem = { key: string; label: string; count: number };
 
-export type AuditStats = {
-  todayCount: number;
-  weekCount: number;
-  failedToday?: number;
-  criticalToday?: number;
-  avgLatencyMs?: number;
+export type AuditTrendDay = { day: string; operations: number; failed: number; highRisk: number };
+
+export type AuditOverview = {
+  todayOperations: number;
+  todayFailed: number;
+  todayHighRisk: number;
+  todayReads: number;
+  weekOperations: number;
+  activeAdmins: number;
+  trend: AuditTrendDay[];
   topAdmins: AuditStatItem[];
-  topActions: AuditStatItem[];
-  topCategories?: AuditStatItem[];
-  severityBuckets?: AuditStatItem[];
+  topModules: AuditStatItem[];
+};
+
+export type AuditFacets = {
+  modules: AuditStatItem[];
+  admins: AuditStatItem[];
+  apps: AuditStatItem[];
 };
 
 // ── 消息模板 ──

@@ -1,6 +1,6 @@
 "use client";
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { evictAvatarCache } from "@/components/ui/avatar";
 import * as appOAuth from "@/lib/api/app-oauth";
 import * as database from "@/lib/api/database";
@@ -86,8 +86,6 @@ import {
   createCustomRole,
   updateCustomRole,
   deleteCustomRole,
-  listAuditLogs,
-  getAuditStats,
   listMessageTemplates,
   createMessageTemplate,
   updateMessageTemplate,
@@ -510,41 +508,6 @@ export function useDeleteCustomRoleMutation() {
       qc.invalidateQueries({ queryKey: ["role-graph"] });
     }
   });
-}
-
-// ── 审计日志 ──
-
-export function useAuditLogsQuery(params: Parameters<typeof listAuditLogs>[1]) {
-  const token = useAdminToken();
-  return useQuery({ queryKey: ["audit-logs", params, token], queryFn: () => listAuditLogs(token as string, params), enabled: Boolean(token) });
-}
-
-/**
- * 审计日志无限滚动版本——供虚拟化列表使用。
- * 以 page 为分页游标，从 1 开始；根据当前累计条数与 total 比较得到 hasMore。
- */
-export function useAuditLogsInfiniteQuery(
-  params: Omit<Parameters<typeof listAuditLogs>[1], "page">,
-  limit = 50
-) {
-  const token = useAdminToken();
-  return useInfiniteQuery({
-    queryKey: ["audit-logs-infinite", params, limit, token],
-    initialPageParam: 1,
-    enabled: Boolean(token),
-    queryFn: ({ pageParam }) =>
-      listAuditLogs(token as string, { ...params, limit, page: pageParam as number }),
-    getNextPageParam: (lastPage, allPages) => {
-      const loaded = allPages.reduce((sum, p) => sum + p.items.length, 0);
-      if (loaded >= lastPage.total) return undefined;
-      return (lastPage.page ?? allPages.length) + 1;
-    }
-  });
-}
-
-export function useAuditStatsQuery() {
-  const token = useAdminToken();
-  return useQuery({ queryKey: ["audit-stats", token], queryFn: () => getAuditStats(token as string), enabled: Boolean(token) });
 }
 
 // ── 消息模板 ──

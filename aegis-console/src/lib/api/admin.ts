@@ -4,8 +4,6 @@ import type {
   AdminAvatarUploadResponse,
   AdminContactInfo,
   AdminProfile,
-  AuditPage,
-  AuditStats,
   CustomRole,
   AdminDashboard,
   ImpactPreview,
@@ -211,28 +209,3 @@ export function previewMessageTemplate(token: string, code: string, data: Record
 
 // ── 审计日志 ──
 
-export function listAuditLogs(token: string, params: {
-  action?: string;
-  resource?: string;
-  category?: string;
-  severity?: string;
-  status?: string;
-  statusCode?: number;
-  adminId?: number;
-  ip?: string;
-  country?: string;
-  requestId?: string;
-  traceId?: string;
-  keyword?: string;
-  startTime?: string;
-  endTime?: string;
-  page?: number;
-  limit?: number;
-}) {
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) { if (v !== undefined && v !== "") q.set(k, String(v)); }
-  return apiRequest<AuditPage>(`/api/admin/system/audit-logs?${q.toString()}`, { token });
-}
-export function getAuditStats(token: string) {
-  return apiRequest<AuditStats>("/api/admin/system/audit-logs/stats", { token });
-}
