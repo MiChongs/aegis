@@ -81,6 +81,10 @@ VALUES (1, 'superadmin', 'app.channels.users.delete', 'app', 'DELETE', '/api/adm
 		t.Fatalf("module filter after backfill should find 2 operations, got %d", page.Total)
 	}
 
+	if page, _ := svc.ListLogs(ctx, systemdomain.AuditFilter{Severity: "low,high", Limit: 20}); page.Total != 1 {
+		t.Fatalf("multi-value severity should match the low upload only, got %d", page.Total)
+	}
+
 	overview, err := svc.Overview(ctx)
 	if err != nil {
 		t.Fatal(err)

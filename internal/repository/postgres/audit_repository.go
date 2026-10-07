@@ -341,8 +341,15 @@ func buildAuditWhere(filter systemdomain.AuditFilter, startIdx int) ([]string, [
 		idx++
 	}
 	if filter.Severity != "" {
-		conditions = append(conditions, fmt.Sprintf("severity = $%d", idx))
-		args = append(args, filter.Severity)
+		// 逗号分隔多个等级：控制台「高风险」= high,critical
+		levels := []string{}
+		for _, level := range strings.Split(filter.Severity, ",") {
+			if level = strings.TrimSpace(level); level != "" {
+				levels = append(levels, level)
+			}
+		}
+		conditions = append(conditions, fmt.Sprintf("severity = ANY($%d)", idx))
+		args = append(args, levels)
 		idx++
 	}
 	if filter.Status != "" {
