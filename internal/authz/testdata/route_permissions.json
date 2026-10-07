@@ -7158,5 +7158,152 @@
     "path": "/api/admin/apps/:appkey/ai/conversations/:conversationId",
     "permission": "app:write",
     "appScoped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/releases",
+    "permission": "version:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/releases",
+    "permission": "version:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/releases/overview",
+    "permission": "version:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/releases/assets",
+    "permission": "version:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/releases/simulate",
+    "permission": "version:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/releases/:rid",
+    "permission": "version:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/apps/:appkey/releases/:rid",
+    "permission": "version:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/apps/:appkey/releases/:rid",
+    "permission": "version:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/releases/:rid/publish",
+    "permission": "version:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/releases/:rid/pause",
+    "permission": "version:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/releases/:rid/resume",
+    "permission": "version:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/releases/:rid/revoke",
+    "permission": "version:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/apps/:appkey/releases/:rid/rollout",
+    "permission": "version:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/releases/:rid/stats",
+    "permission": "version:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/apps/:appkey/releases",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/apps/:appkey/releases/check",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/apps/:appkey/releases/latest",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/apps/:appkey/releases/events",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/apps/:appkey/releases/channels",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/apps/:appkey/releases/channels/:code/join",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/apps/:appkey/releases/channels/:code/leave",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
   }
 ]

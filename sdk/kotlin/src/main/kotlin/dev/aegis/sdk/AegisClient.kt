@@ -85,6 +85,9 @@ class AegisClient private constructor(
      */
     val realtime: AegisRealtimeApi = AegisRealtimeApi(this, http)
     val content: AegisContentApi = AegisContentApi(this)
+
+    /** 发布中心：检测更新、最新版本、版本历史、漏斗上报与渠道自助加入。见 [AegisReleaseApi]。 */
+    val releases: AegisReleaseApi = AegisReleaseApi(this)
     val commerce: AegisCommerceApi = AegisCommerceApi(this)
     val engagement: AegisEngagementApi = AegisEngagementApi(this)
 
@@ -134,8 +137,9 @@ class AegisClient private constructor(
         body: Any? = null,
         query: Map<String, String> = emptyMap(),
         requireAuth: Boolean = false,
+        optionalAuth: Boolean = false,
     ): JsonElement {
-        return execute(buildRequest(method, path, body, query), requireAuth, allowRetry = true)
+        return execute(buildRequest(method, path, body, query), requireAuth, allowRetry = true, optionalAuth = optionalAuth)
     }
 
     /**
@@ -275,11 +279,19 @@ class AegisClient private constructor(
      *   2. 访问令牌过期（40100）→ 用 refreshToken 换新令牌再发一次。
      * 无限重试只会把一个明确的失败拖成一串超时。
      */
-    private fun execute(request: Request, requireAuth: Boolean, allowRetry: Boolean): JsonElement {
+    private fun execute(
+        request: Request,
+        requireAuth: Boolean,
+        allowRetry: Boolean,
+        optionalAuth: Boolean = false,
+    ): JsonElement {
         val prepared = if (requireAuth) {
             val token = tokens.accessToken()
                 ?: throw AegisException.fromCode(40100, "尚未登录：没有可用的访问令牌")
             request.newBuilder().header("Authorization", "Bearer $token").build()
+        } else if (optionalAuth) {
+            // 免登录接口：已登录就带上令牌，服务端据此按用户定向；令牌失效时服务端按未登录处理
+            tokens.accessToken()?.let { request.newBuilder().header("Authorization", "Bearer $it").build() } ?: request
         } else {
             request
         }
@@ -308,7 +320,7 @@ class AegisClient private constructor(
 
         if (failure.isRetryableAfterConfigRefresh) {
             config(forceRefresh = true)
-            return execute(request, requireAuth, allowRetry = false)
+            return execute(request, requireAuth, allowRetry = false, optionalAuth = optionalAuth)
         }
         if (failure.isRetryableWithRefresh && requireAuth && tokens.refreshToken() != null) {
             auth.refresh()

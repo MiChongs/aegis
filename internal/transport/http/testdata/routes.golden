@@ -22,6 +22,7 @@ DELETE	/api/admin/apps/:appkey/notices/:noticeId	DeleteAdminNotice
 DELETE	/api/admin/apps/:appkey/notifications	DeleteAdminAppNotifications
 DELETE	/api/admin/apps/:appkey/oauth-bindings	AdminDeleteAppOAuthBinding
 DELETE	/api/admin/apps/:appkey/oauth-providers/:provider	AdminDeleteAppOAuthProvider
+DELETE	/api/admin/apps/:appkey/releases/:rid	AdminDeleteRelease
 DELETE	/api/admin/apps/:appkey/users/:userId	AdminDeleteUser
 DELETE	/api/admin/apps/:appkey/users/:userId/avatar	AdminRemoveAppUserAvatar
 DELETE	/api/admin/apps/:appkey/users/:userId/cloud-storage	AdminPurgeCloudStorageUser
@@ -160,6 +161,10 @@ GET	/api/admin/apps/:appkey/oauth-providers	AdminListAppOAuthProviders
 GET	/api/admin/apps/:appkey/oauth-providers/:provider	AdminGetAppOAuthProvider
 GET	/api/admin/apps/:appkey/password-policy	AdminAppPasswordPolicy
 GET	/api/admin/apps/:appkey/policy	AdminAppPolicy
+GET	/api/admin/apps/:appkey/releases	AdminListReleases
+GET	/api/admin/apps/:appkey/releases/:rid	AdminGetRelease
+GET	/api/admin/apps/:appkey/releases/:rid/stats	AdminReleaseStats
+GET	/api/admin/apps/:appkey/releases/overview	AdminReleaseOverview
 GET	/api/admin/apps/:appkey/reports/active	ReportActive
 GET	/api/admin/apps/:appkey/reports/activity	ReportActivity
 GET	/api/admin/apps/:appkey/reports/channel	ReportChannel
@@ -515,6 +520,10 @@ GET	/api/v1/apps/:appkey/points/integral-transactions	IntegralTransactions
 GET	/api/v1/apps/:appkey/points/level	MyLevel
 GET	/api/v1/apps/:appkey/points/levels	PointsLevels
 GET	/api/v1/apps/:appkey/points/overview	PointsOverview
+GET	/api/v1/apps/:appkey/releases	AppReleaseHistory
+GET	/api/v1/apps/:appkey/releases/channels	AppReleaseChannels
+GET	/api/v1/apps/:appkey/releases/check	AppReleaseCheck
+GET	/api/v1/apps/:appkey/releases/latest	AppReleaseLatest
 GET	/api/v1/apps/:appkey/signin/history	SignInHistory
 GET	/api/v1/apps/:appkey/signin/status	SignInStatus
 GET	/api/v1/apps/:appkey/tickets	UserListTickets
@@ -654,6 +663,13 @@ POST	/api/admin/apps/:appkey/oauth-providers/:provider/test	AdminTestAppOAuthPro
 POST	/api/admin/apps/:appkey/oauth-providers/reorder	AdminReorderAppOAuthProviders
 POST	/api/admin/apps/:appkey/password-policy/reset	ResetAdminAppPasswordPolicy
 POST	/api/admin/apps/:appkey/password-policy/test	TestAdminAppPasswordPolicy
+POST	/api/admin/apps/:appkey/releases	AdminCreateRelease
+POST	/api/admin/apps/:appkey/releases/:rid/pause	AdminPauseRelease
+POST	/api/admin/apps/:appkey/releases/:rid/publish	AdminPublishRelease
+POST	/api/admin/apps/:appkey/releases/:rid/resume	AdminResumeRelease
+POST	/api/admin/apps/:appkey/releases/:rid/revoke	AdminRevokeRelease
+POST	/api/admin/apps/:appkey/releases/assets	AdminUploadReleaseAsset
+POST	/api/admin/apps/:appkey/releases/simulate	AdminSimulateRelease
 POST	/api/admin/apps/:appkey/rewarded-ads/views/:viewId/grant	AdminGrantRewardedAdView
 POST	/api/admin/apps/:appkey/signin-reward/reset	ResetAdminAppSignInReward
 POST	/api/admin/apps/:appkey/signin-reward/test	TestAdminAppSignInReward
@@ -1004,6 +1020,9 @@ POST	/api/v1/apps/:appkey/notifications/read	ReadNotification
 POST	/api/v1/apps/:appkey/notifications/read-all	ReadAllNotifications
 POST	/api/v1/apps/:appkey/notifications/read-batch	ReadNotificationsBatch
 POST	/api/v1/apps/:appkey/pay/orders	CreatePaymentOrder
+POST	/api/v1/apps/:appkey/releases/channels/:code/join	AppReleaseChannelJoin
+POST	/api/v1/apps/:appkey/releases/channels/:code/leave	AppReleaseChannelLeave
+POST	/api/v1/apps/:appkey/releases/events	AppReleaseEvent
 POST	/api/v1/apps/:appkey/signin	SignIn
 POST	/api/v1/apps/:appkey/storage/object-link	StorageObjectLink
 POST	/api/v1/apps/:appkey/storage/upload	StorageUpload
@@ -1041,6 +1060,8 @@ PUT	/api/admin/apps/:appkey/oauth-providers/:provider	AdminUpdateAppOAuthProvide
 PUT	/api/admin/apps/:appkey/oauth-providers/:provider/enabled	AdminSetAppOAuthProviderEnabled
 PUT	/api/admin/apps/:appkey/password-policy	UpdateAdminAppPasswordPolicy
 PUT	/api/admin/apps/:appkey/policy	UpdateAdminAppPolicy
+PUT	/api/admin/apps/:appkey/releases/:rid	AdminUpdateRelease
+PUT	/api/admin/apps/:appkey/releases/:rid/rollout	AdminSetReleaseRollout
 PUT	/api/admin/apps/:appkey/rewarded-ads/config	AdminSaveRewardedAdConfig
 PUT	/api/admin/apps/:appkey/signin-reward	UpdateAdminAppSignInReward
 PUT	/api/admin/apps/:appkey/users/:userId/cloud-storage	AdminSaveCloudStorageUser

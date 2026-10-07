@@ -249,6 +249,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	notificationService := service.NewNotificationService(log, pg, sessions, realtimeService)
 	siteService := service.NewSiteService(pg)
 	versionService := service.NewVersionService(pg)
+	releaseService := service.NewReleaseService(log, pg, redisClient, nil)
+	releaseService.SetAppEventPublisher(realtimeService)
 	roleApplicationService := service.NewRoleApplicationService(pg)
 	emailService := service.NewEmailService(log, pg, redisClient, cfg.Redis.KeyPrefix, cfg.Security.MasterKey)
 	paymentService := service.NewPaymentService(log, pg, cfg.PaymentReceipt)
@@ -443,6 +445,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	systemService.SetPluginService(pluginService)
 	// Banner 图片落到该应用自己的对象存储，落库的是 storage:// 引用
 	appService.SetStorageService(storageService)
+	releaseService.SetStorageService(storageService)
 	// 凭证：抬头的品牌名来自平台设置，寄送走邮件出口，是否自动寄送读应用级交易设置
 	paymentService.SetPlatformSettingsService(systemService)
 	paymentService.SetEmailService(emailService)
@@ -574,6 +577,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		CloudStorage:     cloudStorageService,
 		Site:             siteService,
 		Version:          versionService,
+		Release:          releaseService,
 		PlatformSettings: systemService,
 		PlatformBanner:   platformBannerService,
 		Governance:       governanceService,

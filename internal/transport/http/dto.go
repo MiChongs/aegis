@@ -653,6 +653,7 @@ type AdminVersionChannelSaveRequest struct {
 	MaxVersionCode *int64                  `json:"max_version_code"`
 	Rules          []appdomain.ChannelRule `json:"rules"`
 	TargetAudience map[string]any          `json:"targetAudience"`
+	SelfJoin       *bool                   `json:"self_join"`
 }
 
 type AdminVersionChannelUsersRequest struct {

@@ -1047,6 +1047,91 @@ class AegisContentApi internal constructor(private val client: AegisClient) {
     )
 }
 
+/**
+ * 发布中心。
+ *
+ * 检测、最新版本、历史与上报免登录；已登录时自动带上令牌，服务端据此按用户的渠道、
+ * 内测名单与灰度定向。渠道的自助加入与退出需要登录。
+ */
+class AegisReleaseApi internal constructor(private val client: AegisClient) {
+
+    /**
+     * 检测更新。始终返回 200：`hasUpdate` 为假表示已是最新。
+     *
+     * [abis] 按偏好顺序传设备支持的 ABI（Android 为 `Build.SUPPORTED_ABIS`），服务端据此挑安装包；
+     * [deviceId] 用于未登录时的灰度分桶与内测名单，应在同一台设备上保持不变。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun check(
+        versionCode: Long,
+        platform: String = "android",
+        abis: List<String> = emptyList(),
+        osVersion: Int? = null,
+        deviceId: String? = null,
+        model: String? = null,
+        locale: String? = null,
+        region: String? = null,
+    ): JsonElement = client.call(
+        "GET", "/releases/check",
+        query = buildQuery(
+            "versionCode" to versionCode.toString(),
+            "platform" to platform,
+            "abis" to abis.takeIf { it.isNotEmpty() }?.joinToString(","),
+            "osVersion" to osVersion?.toString(),
+            "deviceId" to deviceId,
+            "model" to model,
+            "locale" to locale,
+            "region" to region,
+        ),
+        optionalAuth = true,
+    )
+
+    /** 当前可获取的最新版本；没有时 data 为 null。未登录只看得到公开且已全量的版本。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun latest(platform: String = "android", deviceId: String? = null): JsonElement = client.call(
+        "GET", "/releases/latest",
+        query = buildQuery("platform" to platform, "deviceId" to deviceId),
+        optionalAuth = true,
+    )
+
+    /** 可见的版本历史，按版本码倒序。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun history(page: Int = 1, limit: Int = 10, platform: String = "android", deviceId: String? = null): JsonElement =
+        client.call(
+            "GET", "/releases",
+            query = pageQuery(page, limit) + buildQuery("platform" to platform, "deviceId" to deviceId),
+            optionalAuth = true,
+        )
+
+    /**
+     * 更新漏斗上报。[event] 取 `downloaded` / `installed` / `failed` / `dismissed`；
+     * 「下发」由服务端在检测时自己计，不必上报。同一设备同一天同一事件只计一次。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun reportEvent(releaseId: Long, event: String, assetId: Long? = null, deviceId: String? = null): JsonElement =
+        client.call(
+            "POST", "/releases/events",
+            buildBody("releaseId" to releaseId, "event" to event, "assetId" to assetId, "deviceId" to deviceId),
+            optionalAuth = true,
+        )
+
+    /** 可自助加入的发布渠道，以及当前用户已在的渠道。 */
+    @Throws(IOException::class)
+    fun channels(): JsonElement = client.call("GET", "/releases/channels", requireAuth = true)
+
+    @Throws(IOException::class)
+    fun joinChannel(code: String): JsonElement =
+        client.call("POST", "/releases/channels/$code/join", requireAuth = true)
+
+    @Throws(IOException::class)
+    fun leaveChannel(code: String): JsonElement =
+        client.call("POST", "/releases/channels/$code/leave", requireAuth = true)
+}
+
 @kotlinx.serialization.Serializable
 internal data class OAuthUrl(val url: String = "")
 

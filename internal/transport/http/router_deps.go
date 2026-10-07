@@ -49,6 +49,7 @@ type RouterDeps struct {
 	CloudStorage     *service.CloudStorageService
 	Site             *service.SiteService
 	Version          *service.VersionService
+	Release          *service.ReleaseService
 	PlatformSettings *service.PlatformSettingsService
 	PlatformBanner   *service.PlatformBannerService
 	Governance       *service.PlatformGovernanceService
@@ -135,6 +136,7 @@ func (d RouterDeps) newHandler() *Handler {
 		app:                d.App,
 		site:               d.Site,
 		version:            d.Version,
+		release:            d.Release,
 		roleApp:            d.RoleApplication,
 		email:              d.Email,
 		payment:            d.Payment,

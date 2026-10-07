@@ -345,6 +345,10 @@ var adminRouteRules = []RouteRule{
 	{Pattern: "/api/admin/apps/:appkey/notifications/*", Permission: PermAppNotifWrite, Scope: ScopeApp},
 	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/banners/*", Permission: PermContentBannerRead, Scope: ScopeApp},
 	{Pattern: "/api/admin/apps/:appkey/banners/*", Permission: PermContentBannerWrite, Scope: ScopeApp},
+	// 发布中心。模拟检测只读不写，按查看权限放行
+	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/releases/*", Permission: PermVersionRead, Scope: ScopeApp},
+	{Methods: []string{"POST"}, Pattern: "/api/admin/apps/:appkey/releases/simulate", Permission: PermVersionRead, Scope: ScopeApp},
+	{Pattern: "/api/admin/apps/:appkey/releases/*", Permission: PermVersionWrite, Scope: ScopeApp},
 	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/notices/*", Permission: PermContentNoticeRead, Scope: ScopeApp},
 	{Pattern: "/api/admin/apps/:appkey/notices/*", Permission: PermContentNoticeWrite, Scope: ScopeApp},
 

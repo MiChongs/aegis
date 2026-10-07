@@ -67,6 +67,17 @@ func (s *VersionService) Detail(ctx context.Context, versionID int64, appID int6
 }
 
 func (s *VersionService) Save(ctx context.Context, mutation appdomain.AppVersionMutation) (*appdomain.AppVersion, error) {
+	// 取值与发布中心的库约束一致（000088）：越界值在这里以 400 拒绝，而不是落到数据库报 500
+	if mutation.Status != nil {
+		if _, ok := appdomain.ValidReleaseStatuses[*mutation.Status]; !ok {
+			return nil, apperrors.New(40045, http.StatusBadRequest, "状态只能是 draft、scheduled、published、paused 或 revoked")
+		}
+	}
+	if mutation.UpdateType != nil {
+		if _, ok := appdomain.ValidReleaseUpdateTypes[*mutation.UpdateType]; !ok {
+			return nil, apperrors.New(40045, http.StatusBadRequest, "更新类型只能是 optional、recommended 或 force")
+		}
+	}
 	if err := s.ensureDefaultChannel(ctx, mutation.AppID); err != nil {
 		return nil, err
 	}

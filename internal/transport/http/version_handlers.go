@@ -240,6 +240,7 @@ func (h *Handler) AdminCreateVersionChannel(c *gin.Context) {
 		MaxVersionCode: req.MaxVersionCode,
 		Rules:          req.Rules,
 		TargetAudience: req.TargetAudience,
+		SelfJoin:       req.SelfJoin,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -300,6 +301,7 @@ func (h *Handler) AdminUpdateVersionChannel(c *gin.Context) {
 		MaxVersionCode: req.MaxVersionCode,
 		Rules:          req.Rules,
 		TargetAudience: req.TargetAudience,
+		SelfJoin:       req.SelfJoin,
 	})
 	if err != nil {
 		h.writeError(c, err)

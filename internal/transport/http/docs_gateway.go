@@ -128,7 +128,11 @@ func gatewayRequestModels() map[string]any {
 		"ticketCancel": TicketCancelRequest{},
 
 		// 内容与版本
-		"versionCheck": VersionCheckQuery{},
+		"versionCheck":   VersionCheckQuery{},
+		"releaseCheck":   AppReleaseCheckQuery{},
+		"releaseLatest":  AppReleaseLatestQuery{},
+		"releaseHistory": AppReleaseHistoryQuery{},
+		"releaseEvent":   AppReleaseEventRequest{},
 	}
 }
 

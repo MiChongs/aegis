@@ -236,7 +236,9 @@ Content-Type: application/json
 |---|---|---|
 | `GET` | `/banners`、`/notices` | 轮播图与公告 |
 | `POST` | `/banners/{bannerId}/click` | 轮播图点击上报 |
-| `GET` | `/version/check` | 版本检查（`versionCode` + `platform`） |
+| `GET` | `/version/check` | 版本检查（旧形状，新接入请用 `/releases/check`） |
+| `GET` | `/releases/check`、`/releases/latest`、`/releases` | 发布中心：检测更新、最新版本、版本历史，详见 [releases.md](releases.md) |
+| `POST` | `/releases/events` | 更新漏斗上报 |
 
 `/notices` 只返回**已发布且处于投放窗口内**的公告（置顶优先，再按发布时间倒序），
 正文是净化过的 HTML，`summary` 是服务端提取的纯文本摘要。结果有 2 分钟缓存，

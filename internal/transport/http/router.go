@@ -24,6 +24,7 @@ type Handler struct {
 	app             *service.AppService
 	site            *service.SiteService
 	version         *service.VersionService
+	release         *service.ReleaseService
 	roleApp         *service.RoleApplicationService
 	email           *service.EmailService
 	payment         *service.PaymentService

@@ -52,6 +52,17 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGateway.GET("/version/check", h.AppVersionCheck)
 	}
 
+	// 发布中心：免登录可用，带令牌时按用户定向（渠道、内测名单、灰度）。
+	// 令牌无效按未登录处理，令牌属于别的应用则拒绝（与 Bearer 组同一口径）。
+	appGatewayOptional := router.Group("/api/v1/apps/:appkey")
+	appGatewayOptional.Use(middleware.OptionalAuth(authService), middleware.AppGatewayTokenScope())
+	{
+		appGatewayOptional.GET("/releases", h.AppReleaseHistory)
+		appGatewayOptional.GET("/releases/check", h.AppReleaseCheck)
+		appGatewayOptional.GET("/releases/latest", h.AppReleaseLatest)
+		appGatewayOptional.POST("/releases/events", h.AppReleaseEvent)
+	}
+
 	// 网关内需要 Bearer 令牌的部分。
 	//
 	// AppGatewayTokenScope 挂在 Auth 之后：Auth 证明令牌有效，它证明令牌是**这个应用**的 ——
@@ -64,6 +75,10 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 	appGatewayAuthed.Use(middleware.Auth(authService), middleware.AppGatewayTokenScope())
 	{
 		appGatewayAuthed.POST("/auth/logout", h.AppLogout)
+		// 发布渠道的自助加入与退出（如 Beta 体验计划）
+		appGatewayAuthed.GET("/releases/channels", h.AppReleaseChannels)
+		appGatewayAuthed.POST("/releases/channels/:code/join", h.AppReleaseChannelJoin)
+		appGatewayAuthed.POST("/releases/channels/:code/leave", h.AppReleaseChannelLeave)
 		appGatewayAuthed.POST("/auth/password/verify", h.VerifyPassword)
 		appGatewayAuthed.POST("/auth/password/change", h.ChangePassword)
 		appGatewayAuthed.POST("/auth/oauth/bind/url", h.OAuthBindURL)

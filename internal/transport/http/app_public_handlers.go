@@ -82,6 +82,11 @@ func (h *Handler) CheckVersion(c *gin.Context) {
 	if value, ok := c.Get("auth.session"); ok {
 		session, _ = value.(*authdomain.Session)
 	}
+	// 发布中心启用后，旧接口改走同一套检测引擎（定向、灰度、多安装包），只把结果折回旧形状
+	if h.release != nil {
+		h.checkVersionViaRelease(c, query, session)
+		return
+	}
 	result, err := h.version.CheckForUpdate(c.Request.Context(), query.AppID, query.VersionCode, query.Platform, session)
 	if err != nil {
 		h.writeError(c, err)

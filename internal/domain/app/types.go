@@ -824,7 +824,9 @@ type AppVersionChannel struct {
 	MaxVersionCode int64          `json:"max_version_code"`
 	Rules          []ChannelRule  `json:"rules,omitempty"`
 	TargetAudience map[string]any `json:"targetAudience,omitempty"`
-	UserCount      int64          `json:"userCount,omitempty"`
+	// SelfJoin 允许登录用户在客户端自助加入（如 Beta 体验计划）
+	SelfJoin  bool  `json:"self_join"`
+	UserCount int64 `json:"userCount,omitempty"`
 	CreatedAt      time.Time      `json:"createdAt"`
 	UpdatedAt      time.Time      `json:"updatedAt"`
 }
@@ -853,6 +855,7 @@ type AppVersionChannelMutation struct {
 	MaxVersionCode *int64
 	Rules          []ChannelRule
 	TargetAudience map[string]any
+	SelfJoin       *bool
 }
 
 type AppVersionCheckResult struct {

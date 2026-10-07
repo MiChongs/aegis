@@ -108,9 +108,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/auth-protocol/selftest"):                               AppIntegrationSelfTestRequest{},          // AdminAppIntegrationSelfTest
 		routeKey("DELETE", "/api/admin/apps/{appkey}/banners"):                                            AdminBatchIDsRequest{},                   // DeleteAdminBanners
 		routeKey("GET", "/api/admin/apps/{appkey}/banners"):                                               AdminBannerListQuery{},                   // AdminBanners
-		routeKey("POST", "/api/admin/apps/{appkey}/banners"):                                              AdminBannerUpsertRequest{},               // CreateAdminBanner
 		routeKey("PUT", "/api/admin/apps/{appkey}/banners/order"):                                         AdminBannerReorderRequest{},              // ReorderAdminBanners
-		routeKey("PUT", "/api/admin/apps/{appkey}/banners/{bannerId}"):                                    AdminBannerUpsertRequest{},               // UpdateAdminBanner
 		routeKey("PUT", "/api/admin/apps/{appkey}/captcha-config"):                                        AdminCaptchaConfigUpdateRequest{},        // AdminUpdateCaptchaConfig
 		routeKey("POST", "/api/admin/apps/{appkey}/captcha-config/preview"):                               AdminCaptchaDynamicPreviewRequest{},      // AdminPreviewDynamicCaptcha
 		routeKey("POST", "/api/admin/apps/{appkey}/captcha-config/test-sms"):                              AdminTestSMSRequest{},                    // AdminTestSMS
@@ -143,8 +141,6 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/apps/{appkey}/lottery/prizes/{id}"):                                   LotteryPrizeUpdateRequest{},              // AdminUpdateLotteryPrize
 		routeKey("DELETE", "/api/admin/apps/{appkey}/notices"):                                            AdminBatchIDsRequest{},                   // DeleteAdminNotices
 		routeKey("GET", "/api/admin/apps/{appkey}/notices"):                                               AdminNoticeListQuery{},                   // AdminNotices
-		routeKey("POST", "/api/admin/apps/{appkey}/notices"):                                              AdminNoticeUpsertRequest{},               // CreateAdminNotice
-		routeKey("PUT", "/api/admin/apps/{appkey}/notices/{noticeId}"):                                    AdminNoticeUpsertRequest{},               // UpdateAdminNotice
 		routeKey("DELETE", "/api/admin/apps/{appkey}/notifications"):                                      AdminNotificationDeleteRequest{},         // DeleteAdminAppNotifications
 		routeKey("GET", "/api/admin/apps/{appkey}/notifications"):                                         AdminNotificationListQuery{},             // AdminAppNotifications
 		routeKey("POST", "/api/admin/apps/{appkey}/notifications/bulk"):                                   AdminBulkNotificationRequest{},           // AdminBulkNotifyUsers
@@ -159,6 +155,11 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/apps/{appkey}/password-policy"):                                       AdminPasswordPolicyUpdateRequest{},       // UpdateAdminAppPasswordPolicy
 		routeKey("POST", "/api/admin/apps/{appkey}/password-policy/test"):                                 AdminPasswordPolicyTestRequest{},         // TestAdminAppPasswordPolicy
 		routeKey("PUT", "/api/admin/apps/{appkey}/policy"):                                                AdminAppPolicyRequest{},                  // UpdateAdminAppPolicy
+		routeKey("POST", "/api/admin/apps/{appkey}/releases"):                                             AdminReleaseSaveRequest{},                // AdminCreateRelease
+		routeKey("POST", "/api/admin/apps/{appkey}/releases/simulate"):                                    AdminReleaseSimulateRequest{},            // AdminSimulateRelease
+		routeKey("PUT", "/api/admin/apps/{appkey}/releases/{rid}"):                                        AdminReleaseSaveRequest{},                // AdminUpdateRelease
+		routeKey("POST", "/api/admin/apps/{appkey}/releases/{rid}/publish"):                               AdminReleasePublishRequest{},             // AdminPublishRelease
+		routeKey("PUT", "/api/admin/apps/{appkey}/releases/{rid}/rollout"):                                AdminReleaseRolloutRequest{},             // AdminSetReleaseRollout
 		routeKey("GET", "/api/admin/apps/{appkey}/reports/active"):                                        ReportQueryParams{},                      // ReportActive
 		routeKey("GET", "/api/admin/apps/{appkey}/reports/activity"):                                      ReportQueryParams{},                      // ReportActivity
 		routeKey("GET", "/api/admin/apps/{appkey}/reports/channel"):                                       ReportQueryParams{},                      // ReportChannel
@@ -585,6 +586,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/v1/apps/{appkey}/pay/orders"):                                              CreatePaymentOrderRequest{},              // CreatePaymentOrder
 		routeKey("GET", "/api/v1/apps/{appkey}/points/experience-transactions"):                           PaginationQuery{},                        // ExperienceTransactions
 		routeKey("GET", "/api/v1/apps/{appkey}/points/integral-transactions"):                             PaginationQuery{},                        // IntegralTransactions
+		routeKey("POST", "/api/v1/apps/{appkey}/releases/events"):                                         AppReleaseEventRequest{},                 // AppReleaseEvent
 		routeKey("POST", "/api/v1/apps/{appkey}/signin"):                                                  SignInRequest{},                          // SignIn
 		routeKey("GET", "/api/v1/apps/{appkey}/signin/history"):                                           PaginationQuery{},                        // SignInHistory
 		routeKey("POST", "/api/v1/apps/{appkey}/storage/object-link"):                                     StorageObjectLinkRequest{},               // StorageObjectLink

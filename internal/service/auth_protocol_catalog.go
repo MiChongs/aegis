@@ -193,7 +193,16 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "banners", Method: "GET", Path: "/banners", Summary: "轮播图"},
 	{Key: "bannerClick", Method: "POST", Path: "/banners/{bannerId}/click", Summary: "轮播图点击上报"},
 	{Key: "notices", Method: "GET", Path: "/notices", Summary: "公告"},
-	{Key: "versionCheck", Method: "GET", Path: "/version/check", Summary: "版本检查与更新"},
+	{Key: "versionCheck", Method: "GET", Path: "/version/check", Summary: "版本检查与更新（旧形状，新接入请用 releaseCheck）"},
+
+	// ── 发布中心（免登录；带令牌时按用户定向）──
+	{Key: "releaseCheck", Method: "GET", Path: "/releases/check", Summary: "检测更新：定向、灰度、按 ABI 选包、跨版本合并说明"},
+	{Key: "releaseLatest", Method: "GET", Path: "/releases/latest", Summary: "当前可获取的最新版本（未登录仅公开且已全量的版本）"},
+	{Key: "releaseHistory", Method: "GET", Path: "/releases", Summary: "可见的版本历史"},
+	{Key: "releaseEvent", Method: "POST", Path: "/releases/events", Summary: "更新漏斗上报：downloaded / installed / failed / dismissed"},
+	{Key: "releaseChannels", Method: "GET", Path: "/releases/channels", Auth: true, Summary: "可自助加入的发布渠道"},
+	{Key: "releaseChannelJoin", Method: "POST", Path: "/releases/channels/{code}/join", Auth: true, Summary: "加入发布渠道"},
+	{Key: "releaseChannelLeave", Method: "POST", Path: "/releases/channels/{code}/leave", Auth: true, Summary: "退出发布渠道"},
 }
 
 // gatewayErrors 机器可读的错误码目录。
