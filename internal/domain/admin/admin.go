@@ -25,6 +25,41 @@ type Account struct {
 	LastLoginAt  *time.Time    `json:"lastLoginAt,omitempty"`
 	CreatedAt    time.Time     `json:"createdAt"`
 	UpdatedAt    time.Time     `json:"updatedAt"`
+	// PreviousAccount 改名前的账号，未改过名时为空。旧名永久保留，不能被他人占用。
+	PreviousAccount string `json:"previousAccount,omitempty"`
+	// AccountChangedAt 改名时间。非空即唯一一次改名机会已用掉。
+	AccountChangedAt *time.Time `json:"accountChangedAt,omitempty"`
+	// PasswordChangedAt 最近一次自助修改密码的时间。
+	PasswordChangedAt *time.Time `json:"passwordChangedAt,omitempty"`
+	// CanChangeAccount 当前是否还能改名：本地密码账号且从未改过名。
+	// 由服务端算好下发，控制台不必自己复刻这条规则。
+	CanChangeAccount bool `json:"canChangeAccount"`
+	// CanChangePassword 是否能在本平台修改密码。LDAP / OIDC / SAML 账号的密码归外部身份源管理。
+	CanChangePassword bool `json:"canChangePassword"`
+}
+
+// FillSelfServiceFlags 依据持久化字段推导 CanChangeAccount / CanChangePassword。
+func (a *Account) FillSelfServiceFlags() {
+	local := a.AuthSource == "" || a.AuthSource == "password"
+	a.CanChangePassword = local
+	a.CanChangeAccount = local && a.AccountChangedAt == nil
+}
+
+// AccountAvailability 新用户名的可用性检查结果。
+type AccountAvailability struct {
+	Account   string `json:"account"`
+	Available bool   `json:"available"`
+	// Reason 不可用时的机器可读原因：invalid / reserved / same / taken
+	Reason string `json:"reason,omitempty"`
+	// Message 不可用时的人类可读说明
+	Message string `json:"message,omitempty"`
+}
+
+// PasswordChangeResult 修改密码的结果。
+type PasswordChangeResult struct {
+	PasswordChangedAt time.Time `json:"passwordChangedAt"`
+	// RevokedSessions 随之下线的其他会话数
+	RevokedSessions int64 `json:"revokedSessions"`
 }
 
 type Assignment struct {

@@ -1660,6 +1660,27 @@
   },
   {
     "method": "GET",
+    "path": "/api/admin/profile/account/availability",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/profile/account",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/profile/password",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "GET",
     "path": "/api/admin/profile/two-factor/recovery-codes",
     "permission": "",
     "appScoped": false,

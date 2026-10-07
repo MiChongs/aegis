@@ -64,6 +64,10 @@ func registerAdminAuthRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		adminProfile.POST("/upload-avatar", h.UploadAdminAvatar)
 		adminProfile.DELETE("/avatar", h.RemoveAdminAvatar)
 		adminProfile.GET("/security", h.AdminSecurity)
+		// 账号自助：用户名注册后永久只能改一次；密码可随时修改，默认同时下线其他设备
+		adminProfile.GET("/account/availability", h.AdminAccountAvailability)
+		adminProfile.POST("/account", h.ChangeAdminAccount)
+		adminProfile.POST("/password", h.ChangeAdminPassword)
 		adminProfile.POST("/two-factor/enroll", h.BeginAdminTOTPEnrollment)
 		adminProfile.POST("/two-factor/enable", h.EnableAdminTOTP)
 		adminProfile.POST("/two-factor/disable", h.DisableAdminTOTP)

@@ -798,7 +798,11 @@ func (s *AdminService) validateCreateInput(input admindomain.CreateInput) error 
 	if len(input.Account) < 3 || len(input.Account) > 64 {
 		return apperrors.New(40052, http.StatusBadRequest, "管理员账号长度必须在 3 到 64 个字符之间")
 	}
-	if err := validateAdminPassword(input.Password); err != nil {
+	// 新账号与改名走同一套规则（格式、保留名、密码强度），见 admin_account_self_service.go
+	if err := validateAdminAccountName(input.Account); err != nil {
+		return err
+	}
+	if err := validateAdminPasswordStrength(input.Account, input.Password); err != nil {
 		return err
 	}
 	return nil

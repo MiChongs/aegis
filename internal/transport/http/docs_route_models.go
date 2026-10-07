@@ -240,7 +240,10 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/platform/storage-config/test"):                                       AdminStorageConfigDetailRequest{},        // AdminGlobalStorageConfigTest
 		routeKey("POST", "/api/admin/platform/storage-config/update"):                                     AdminStorageConfigSaveRequest{},          // AdminGlobalStorageConfigUpdate
 		routeKey("PUT", "/api/admin/profile"):                                                             AdminProfileUpdateRequest{},              // UpdateAdminProfile
+		routeKey("POST", "/api/admin/profile/account"):                                                    AdminAccountChangeRequest{},              // ChangeAdminAccount
+		routeKey("GET", "/api/admin/profile/account/availability"):                                        AdminAccountAvailabilityQuery{},          // AdminAccountAvailability
 		routeKey("POST", "/api/admin/profile/passkey/register"):                                           PasskeyRegistrationFinishRequest{},       // FinishAdminPasskeyRegistration
+		routeKey("POST", "/api/admin/profile/password"):                                                   AdminPasswordChangeRequest{},             // ChangeAdminPassword
 		routeKey("POST", "/api/admin/profile/two-factor/disable"):                                         TOTPDisableRequest{},                     // DisableAdminTOTP
 		routeKey("POST", "/api/admin/profile/two-factor/enable"):                                          TOTPEnableRequest{},                      // EnableAdminTOTP
 		routeKey("POST", "/api/admin/profile/two-factor/recovery-codes"):                                  RecoveryCodesRegenerateRequest{},         // GenerateAdminRecoveryCodes

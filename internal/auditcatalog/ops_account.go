@@ -7,6 +7,11 @@ func init() {
 		View("GET /api/admin/profile", "查看个人资料", ""),
 		Write("PUT /api/admin/profile", "修改个人资料", "", SeverityLow),
 		View("GET /api/admin/profile/security", "查看账号安全状态", ""),
+
+		// 账号自助
+		View("GET /api/admin/profile/account/availability", "检查用户名可用性", ""),
+		Auth("POST /api/admin/profile/account", "修改用户名", SeverityHigh),
+		Auth("POST /api/admin/profile/password", "修改密码", SeverityHigh),
 		View("GET /api/admin/profile/roles", "查看我的角色", ""),
 		View("GET /api/admin/profile/roles/permissions", "查看我的权限", ""),
 

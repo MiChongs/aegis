@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EMPTY, Fact, Facts, Panel, formatTime, isPast, relativeTime } from "@/components/users/detail/user-detail-shared";
 import { CopyableValue, authSourceLabel } from "@/components/profile/profile-shared";
+import { ChangeAccountDialog } from "@/components/profile/change-account-dialog";
 import type { AdminAccount, AdminLoginAvailability, AdminSession } from "@/lib/api/types";
 
 /**
@@ -31,6 +32,14 @@ export function ProfileAccountPanel({
 }) {
   const active = account.status === "active" || !account.status;
   const expired = isPast(session?.expiresAt);
+  // 改名规则由服务端判定后下发（canChangeAccount），这里只负责说清楚现在是哪种情况
+  const accountHint = account.accountChangedAt
+    ? `已于 ${formatTime(account.accountChangedAt)} 修改${account.previousAccount ? `，原用户名 ${account.previousAccount}` : ""}`
+    : account.canChangeAccount
+      ? "可修改一次"
+      : account.canChangePassword === false
+        ? "由外部身份源管理"
+        : undefined;
 
   return (
     <div className="space-y-4">
@@ -61,7 +70,16 @@ export function ProfileAccountPanel({
       >
         <Facts>
           <Fact label="账号 ID" value={<CopyableValue value={String(account.id)} />} />
-          <Fact label="登录账号" value={<CopyableValue value={account.account} />} />
+          <Fact
+            label="登录账号"
+            value={
+              <span className="inline-flex items-center justify-end gap-2">
+                <CopyableValue value={account.account} />
+                {account.canChangeAccount ? <ChangeAccountDialog currentAccount={account.account} /> : null}
+              </span>
+            }
+            hint={accountHint}
+          />
           <Fact
             label="认证方式"
             icon={<Lock className="size-3" />}

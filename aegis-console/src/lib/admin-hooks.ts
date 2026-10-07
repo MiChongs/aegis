@@ -64,6 +64,9 @@ import {
   getAdminAppLoginAudits,
   getAdminAppNotifications,
   getAdminProfile,
+  changeAdminAccount,
+  changeAdminPassword,
+  checkAdminAccountAvailability,
   getAdminApps,
   getAdminAppSessionAudits,
   getAdminAppStats,
@@ -1054,6 +1057,58 @@ export function useUpdateAdminProfileMutation() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["admin-profile"] }),
         queryClient.invalidateQueries({ queryKey: ["admin-accounts"] })
+      ]);
+    }
+  });
+}
+
+/**
+ * 新用户名可用性。value 应是已去抖、且已通过本地格式校验的值，为空时不发请求。
+ * 结果短暂缓存：同一个名字来回改不重复打后端，但也不会长期沿用过期的「可用」。
+ */
+export function useAdminAccountAvailabilityQuery(value: string) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: ["admin-account-availability", token, value],
+    queryFn: ({ signal }) => checkAdminAccountAvailability(token as string, value, signal),
+    enabled: Boolean(token && value),
+    staleTime: 10_000,
+    retry: false
+  });
+}
+
+/** 使用唯一一次改名机会。成功后同步本地会话里的账号名，并刷新资料与会话 */
+export function useChangeAdminAccountMutation() {
+  const token = useAdminToken();
+  const queryClient = useQueryClient();
+  const patchOperator = useAuthStore((state) => state.patchOperator);
+  return useMutation({
+    mutationFn: (payload: Parameters<typeof changeAdminAccount>[1]) => changeAdminAccount(token as string, payload),
+    onSuccess: async (profile) => {
+      patchOperator({ account: profile.account?.account });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["admin-profile"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-session"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-accounts"] }),
+        queryClient.removeQueries({ queryKey: ["admin-account-availability"] })
+      ]);
+    }
+  });
+}
+
+/** 修改密码。其他会话可能随之下线，所以会话列表一并刷新 */
+export function useChangeAdminPasswordMutation() {
+  const token = useAdminToken();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Parameters<typeof changeAdminPassword>[1]) => changeAdminPassword(token as string, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["admin-profile"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-security"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["all-sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["online-admins"] })
       ]);
     }
   });

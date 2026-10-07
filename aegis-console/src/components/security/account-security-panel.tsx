@@ -10,6 +10,7 @@ import {
   useBeginAdminPasskeyRegistrationMutation, useBeginAdminTOTPEnrollmentMutation,
   useDeleteAdminPasskeyMutation, useDisableAdminTOTPMutation, useEnableAdminTOTPMutation,
   useFinishAdminPasskeyRegistrationMutation, useGenerateAdminRecoveryCodesMutation, useRegenerateAdminRecoveryCodesMutation,
+  useAdminProfileQuery,
 } from "@/lib/admin-hooks";
 import type { RecoveryCodeIssueResult, TOTPEnrollment } from "@/lib/api/types";
 import { createPasskeyRegistrationCredential, passkeyRegistrationSupported, passkeySecureContextIssue } from "@/lib/webauthn";
@@ -20,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { ChangePasswordSection } from "@/components/security/change-password-section";
 
 // ── 工具 ──
 
@@ -62,6 +64,8 @@ export function AccountSecurityPanel() {
   const statusQ = useAdminSecurityStatusQuery(!fallback);
   const recoveryQ = useAdminRecoveryCodesQuery(!fallback);
   const passkeysQ = useAdminPasskeysQuery(!fallback);
+  const profileQ = useAdminProfileQuery();
+  const passwordChangedAt = profileQ.data?.account?.passwordChangedAt;
 
   const beginEnroll = useBeginAdminTOTPEnrollmentMutation();
   const enableTOTP = useEnableAdminTOTPMutation();
@@ -170,13 +174,16 @@ export function AccountSecurityPanel() {
         <StatusCard icon={LockKeyhole} label="双因子" value={status.twoFactorEnabled ? "已启用" : "未启用"} ok={status.twoFactorEnabled} sub={status.twoFactor.accountName || undefined} />
         <StatusCard icon={Smartphone} label="Passkey" value={status.passkeyEnabled ? `${passkeySummary?.count || 0} 个` : "未绑定"} ok={status.passkeyEnabled} />
         <StatusCard icon={KeyRound} label="恢复码" value={`${recoverySummary?.remaining || 0} / ${recoverySummary?.total || 0}`} ok={Boolean(recoverySummary?.enabled)} sub={fmtDate(recoverySummary?.generatedAt)} />
-        <StatusCard icon={ShieldCheck} label="密码" value={status.hasPassword ? "已设置" : "未设置"} ok={status.hasPassword} sub={fmtDate(status.lastLoginAt)} />
+        <StatusCard icon={ShieldCheck} label="密码" value={status.hasPassword ? "已设置" : "未设置"} ok={status.hasPassword} sub={passwordChangedAt ? `修改于 ${fmtDate(passwordChangedAt)}` : undefined} />
       </div>
 
       <Separator />
 
       {/* ── 配置区 ── */}
       <Accordion type="multiple" defaultValue={["totp"]} className="space-y-3">
+
+        {/* ━━ 登录密码 ━━ */}
+        <ChangePasswordSection />
 
         {/* ━━ TOTP ━━ */}
         <AccordionItem value="totp" className="rounded-xl border px-4">

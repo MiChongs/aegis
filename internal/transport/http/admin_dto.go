@@ -62,12 +62,31 @@ type AdminRegisterRequest struct {
 	CaptchaAnswer string `json:"captchaAnswer"`
 }
 
+// AdminAccountAvailabilityQuery 新用户名可用性检查。
+type AdminAccountAvailabilityQuery struct {
+	Account string `form:"account" binding:"required"`
+}
+
+// AdminAccountChangeRequest 使用唯一一次改名机会，需验证当前密码。
+type AdminAccountChangeRequest struct {
+	Account         string `json:"account" binding:"required"`
+	CurrentPassword string `json:"currentPassword" binding:"required"`
+}
+
+// AdminPasswordChangeRequest 修改自己的密码。
+type AdminPasswordChangeRequest struct {
+	CurrentPassword string `json:"currentPassword" binding:"required"`
+	NewPassword     string `json:"newPassword" binding:"required"`
+	// SignOutOthers 是否同时下线其他设备上的会话，缺省为是。
+	SignOutOthers *bool `json:"signOutOthers"`
+}
+
 type AdminProfileUpdateRequest struct {
-	DisplayName string                     `json:"displayName" form:"displayName"`
-	Email       string                     `json:"email" form:"email"`
-	Avatar      string                     `json:"avatar" form:"avatar"`
-	Phone       string                     `json:"phone" form:"phone"`
-	Birthday    string                     `json:"birthday" form:"birthday"`
-	Bio         string                     `json:"bio" form:"bio"`
-	Contacts    []admindomain.ContactInfo  `json:"contacts"`
+	DisplayName string                    `json:"displayName" form:"displayName"`
+	Email       string                    `json:"email" form:"email"`
+	Avatar      string                    `json:"avatar" form:"avatar"`
+	Phone       string                    `json:"phone" form:"phone"`
+	Birthday    string                    `json:"birthday" form:"birthday"`
+	Bio         string                    `json:"bio" form:"bio"`
+	Contacts    []admindomain.ContactInfo `json:"contacts"`
 }

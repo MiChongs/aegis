@@ -243,6 +243,7 @@ GET	/api/admin/platform/governance/actions	AdminPlatformGovernanceActions
 GET	/api/admin/platform/governance/appeals	AdminPlatformListAppeals
 GET	/api/admin/platform/overview	AdminPlatformOverview
 GET	/api/admin/profile	AdminProfile
+GET	/api/admin/profile/account/availability	AdminAccountAvailability
 GET	/api/admin/profile/passkey	ListAdminPasskeys
 GET	/api/admin/profile/roles	AdminRoleCatalog
 GET	/api/admin/profile/roles/permissions	AdminRolePermissionTree
@@ -724,9 +725,11 @@ POST	/api/admin/platform/storage-config/detail	AdminGlobalStorageConfigDetail
 POST	/api/admin/platform/storage-config/list	AdminGlobalStorageConfigList
 POST	/api/admin/platform/storage-config/test	AdminGlobalStorageConfigTest
 POST	/api/admin/platform/storage-config/update	AdminGlobalStorageConfigUpdate
+POST	/api/admin/profile/account	ChangeAdminAccount
 POST	/api/admin/profile/avatar	UploadAdminAvatar
 POST	/api/admin/profile/passkey/register	FinishAdminPasskeyRegistration
 POST	/api/admin/profile/passkey/register/options	BeginAdminPasskeyRegistration
+POST	/api/admin/profile/password	ChangeAdminPassword
 POST	/api/admin/profile/two-factor/disable	DisableAdminTOTP
 POST	/api/admin/profile/two-factor/enable	EnableAdminTOTP
 POST	/api/admin/profile/two-factor/enroll	BeginAdminTOTPEnrollment

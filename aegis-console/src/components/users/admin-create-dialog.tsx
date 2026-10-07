@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { useAdminAppsQuery, useAdminRolesQuery, useCreateAdminAccountMutation } from "@/lib/admin-hooks";
+import { adminAccountNameError, adminPasswordError } from "@/lib/admin-account-rules";
 
 type AssignmentRow = { roleKey: string; appid: string };
 
@@ -44,6 +45,13 @@ export function AdminCreateDialog() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+
+    // 与后端同一套规则，提交前先拦一道，见 lib/admin-account-rules.ts
+    const ruleError = adminAccountNameError(account) || adminPasswordError(password, account);
+    if (ruleError) {
+      setError(ruleError);
+      return;
+    }
 
     // 超管不需要角色分配
     const finalAssignments = isSuperAdmin ? [] : assignments
@@ -80,10 +88,10 @@ export function AdminCreateDialog() {
         <form className="space-y-4" onSubmit={handleSubmit}>
           {/* 基本信息 */}
           <div className="grid gap-3 sm:grid-cols-2">
-            <F label="账号" required><Input className="h-8 text-sm" placeholder="operator_a" value={account} onChange={(e) => setAccount(e.target.value)} required /></F>
+            <F label="账号" required><Input className="h-8 text-sm" placeholder="字母开头，3–32 位" value={account} onChange={(e) => setAccount(e.target.value)} required /></F>
             <F label="显示名称"><Input className="h-8 text-sm" placeholder="运营管理员" value={displayName} onChange={(e) => setDisplayName(e.target.value)} /></F>
             <F label="邮箱"><Input className="h-8 text-sm" placeholder="op@example.com" value={email} onChange={(e) => setEmail(e.target.value)} /></F>
-            <F label="密码" required><Input className="h-8 text-sm" type="password" placeholder="初始密码" value={password} onChange={(e) => setPassword(e.target.value)} required /></F>
+            <F label="密码" required><Input className="h-8 text-sm" type="password" placeholder="至少 8 位，含字母和数字" value={password} onChange={(e) => setPassword(e.target.value)} required /></F>
           </div>
 
           <Separator />

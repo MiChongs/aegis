@@ -1655,6 +1655,30 @@ export type AdminAccount = {
   lastLoginAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
+  /** 改名前的用户名，未改过名时缺省。旧名永久保留，不能被他人使用 */
+  previousAccount?: string;
+  /** 改名时间；非空即唯一一次改名机会已用掉 */
+  accountChangedAt?: string | null;
+  /** 最近一次修改密码的时间 */
+  passwordChangedAt?: string | null;
+  /** 当前是否还能改名（本地账号且从未改过名），由服务端判定 */
+  canChangeAccount?: boolean;
+  /** 能否在本平台改密码；LDAP / OIDC / SAML 账号由外部身份源管理 */
+  canChangePassword?: boolean;
+};
+
+/** 新用户名可用性检查结果 */
+export type AdminAccountAvailability = {
+  account: string;
+  available: boolean;
+  reason?: "invalid" | "reserved" | "same" | "taken";
+  message?: string;
+};
+
+export type AdminPasswordChangeResult = {
+  passwordChangedAt: string;
+  /** 随之下线的其他会话数 */
+  revokedSessions: number;
 };
 
 export type AdminProfile = {

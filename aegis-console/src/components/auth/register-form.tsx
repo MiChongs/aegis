@@ -21,20 +21,32 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { ADMIN_ACCOUNT_RULE_TEXT, adminAccountNameError, adminPasswordError, passwordScore } from "@/lib/admin-account-rules";
 
 const registerSchema = z
   .object({
-    account: z.string().min(3, "账号至少 3 个字符").max(64, "账号最多 64 个字符"),
-    password: z.string().min(8, "密码至少 8 个字符").max(72, "密码最多 72 个字符"),
+    // 规则与后端 validateAdminAccountName / validateAdminPasswordStrength 一致，见 lib/admin-account-rules.ts
+    account: z.string().superRefine((value, ctx) => {
+      const message = adminAccountNameError(value);
+      if (message) ctx.addIssue({ code: "custom", message });
+    }),
+    password: z.string(),
     confirmPassword: z.string(),
     displayName: z.string().max(64, "显示名称最多 64 个字符").optional(),
     // zod v4：字符串格式校验改为顶层函数（z.string().email() 已废弃，顶层写法可被 tree-shake）
     email: z.email("邮箱格式不正确").optional().or(z.literal(""))
   })
+  .superRefine((data, ctx) => {
+    const message = adminPasswordError(data.password, data.account);
+    if (message) ctx.addIssue({ code: "custom", message, path: ["password"] });
+  })
   .refine((data) => data.password === data.confirmPassword, {
     message: "两次输入的密码不一致",
     path: ["confirmPassword"]
   });
+
+/** 用户名注册后只能修改一次，注册时就要把规则说清楚 */
+const ACCOUNT_HINT = `${ADMIN_ACCOUNT_RULE_TEXT}。注册后仅可修改一次。`;
 
 type FieldName = "account" | "password" | "confirmPassword" | "displayName" | "email";
 type FieldErrors = Partial<Record<FieldName, string>>;
@@ -46,31 +58,6 @@ const EMPTY_FORM: Record<FieldName, string> = {
   displayName: "",
   email: ""
 };
-
-/**
- * 密码强度：只用**这个表单自己能验证的东西**算分。
- *
- * 服务端用的是 zxcvbn（猜测次数估算 + 中文语境弱口令表），前端不复刻那一套：
- * 复刻一份必然和服务端算出不同的分，于是会出现「这里显示很强、提交后被拒」——
- * 那比没有强度提示更糟。这里画的是长度与字符多样性，措辞也只说"长度 / 组成"，
- * 不冒充最终判定。真正的裁决在服务端，被拒时错误会原样显示在上方。
- */
-function passwordScore(value: string): { percent: number; label: string; tone: string } {
-  if (!value) return { percent: 0, label: "", tone: "" };
-
-  const variety =
-    Number(/[a-z]/.test(value)) +
-    Number(/[A-Z]/.test(value)) +
-    Number(/\d/.test(value)) +
-    Number(/[^\w\s]/.test(value));
-  const lengthScore = Math.min(value.length / 16, 1);
-  const percent = Math.round(Math.min(lengthScore * 0.6 + (variety / 4) * 0.4, 1) * 100);
-
-  if (value.length < 8) return { percent: Math.max(percent, 8), label: "太短", tone: "text-destructive" };
-  if (percent < 45) return { percent, label: "偏弱", tone: "text-amber-600 dark:text-amber-400" };
-  if (percent < 75) return { percent, label: "一般", tone: "text-amber-600 dark:text-amber-400" };
-  return { percent, label: "较强", tone: "text-emerald-600 dark:text-emerald-400" };
-}
 
 /**
  * 管理员注册表单。
@@ -239,18 +226,22 @@ export function RegisterForm() {
                   className="flex flex-col gap-4"
                   noValidate
                 >
-                  <Field label="账号" htmlFor="account" error={fieldErrors.account} reduced={reduced}>
+                  <Field label="用户名" htmlFor="account" error={fieldErrors.account} reduced={reduced}>
                     <Input
                       id="account"
                       name="account"
                       autoComplete="username"
-                      placeholder="3–64 个字符"
+                      placeholder="字母开头，3–32 位"
                       value={form.account}
                       onChange={(event) => patch("account", event.target.value)}
                       aria-invalid={Boolean(fieldErrors.account)}
+                      aria-describedby="account-hint"
                       className="h-10"
                       autoFocus
                     />
+                    {!fieldErrors.account ? (
+                      <p id="account-hint" className="text-[12px] text-muted-foreground">{ACCOUNT_HINT}</p>
+                    ) : null}
                   </Field>
 
                   <Field label="密码" htmlFor="password" error={fieldErrors.password} reduced={reduced}>
@@ -260,7 +251,7 @@ export function RegisterForm() {
                         name="password"
                         type={showPassword ? "text" : "password"}
                         autoComplete="new-password"
-                        placeholder="至少 8 个字符"
+                        placeholder="至少 8 位，含字母和数字"
                         value={form.password}
                         onChange={(event) => patch("password", event.target.value)}
                         aria-invalid={Boolean(fieldErrors.password)}

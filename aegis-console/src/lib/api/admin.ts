@@ -1,6 +1,8 @@
 import { ApiError, apiRequest, buildQuery } from "./client";
 import type {
   AdminAccount,
+  AdminAccountAvailability,
+  AdminPasswordChangeResult,
   AdminAvatarUploadResponse,
   AdminContactInfo,
   AdminProfile,
@@ -47,6 +49,35 @@ export function updateAdminProfile(
 ) {
   return apiRequest<AdminProfile>("/api/admin/profile", {
     method: "PUT",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+/** 检查新用户名是否可用；不可用时同样 200，原因在 reason / message */
+export function checkAdminAccountAvailability(token: string, account: string, signal?: AbortSignal) {
+  return apiRequest<AdminAccountAvailability>(
+    `/api/admin/profile/account/availability${buildQuery({ account })}`,
+    { token, signal }
+  );
+}
+
+/** 使用唯一一次改名机会，需验证当前密码 */
+export function changeAdminAccount(token: string, payload: { account: string; currentPassword: string }) {
+  return apiRequest<AdminProfile>("/api/admin/profile/account", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+/** 修改自己的密码；signOutOthers 缺省为 true，同时下线其他设备 */
+export function changeAdminPassword(
+  token: string,
+  payload: { currentPassword: string; newPassword: string; signOutOthers?: boolean }
+) {
+  return apiRequest<AdminPasswordChangeResult>("/api/admin/profile/password", {
+    method: "POST",
     token,
     body: JSON.stringify(payload)
   });
