@@ -303,6 +303,14 @@ func (r *Repository) DeleteRelease(ctx context.Context, appID int64, releaseID i
 	return tag.RowsAffected() > 0, nil
 }
 
+// CountDeliverableReleasesInChannel 渠道名下处于下发中、定时或暂停状态的版本数（暂停的随时可能恢复）。
+func (r *Repository) CountDeliverableReleasesInChannel(ctx context.Context, appID int64, channelID int64) (int64, error) {
+	var count int64
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM app_versions
+WHERE appid = $1 AND channel_id = $2 AND status IN ('published', 'scheduled', 'paused')`, appID, channelID).Scan(&count)
+	return count, err
+}
+
 /* ───────────────────── 渠道成员 ───────────────────── */
 
 // ReleaseUserChannelIDs 用户所在的渠道（显式加入的，不含默认渠道）。

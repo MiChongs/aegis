@@ -121,6 +121,15 @@ func (s *VersionService) SaveChannel(ctx context.Context, mutation appdomain.App
 }
 
 func (s *VersionService) DeleteChannel(ctx context.Context, appID int64, channelID int64) error {
+	// 外键是 ON DELETE SET NULL：删掉渠道，它名下的版本会变成「不限渠道」，
+	// 一个只给 Beta 成员的版本就此推给所有人。下发中或待发布的版本还在时不允许删除。
+	live, err := s.pg.CountDeliverableReleasesInChannel(ctx, appID, channelID)
+	if err != nil {
+		return err
+	}
+	if live > 0 {
+		return apperrors.New(40939, http.StatusConflict, "该渠道还有下发中或待发布的版本，请先撤回或改挂其他渠道")
+	}
 	affected, err := s.pg.DeleteVersionChannel(ctx, channelID, appID)
 	if err != nil {
 		return err
