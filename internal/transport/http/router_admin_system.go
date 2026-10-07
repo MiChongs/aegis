@@ -157,6 +157,8 @@ func registerAdminSystemRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		adminSystem.POST("/templates/:code/preview", h.PreviewTemplate)
 		adminSystem.GET("/audit-logs", h.ListAuditLogs)
 		adminSystem.GET("/audit-logs/stats", h.GetAuditStats)
+		adminSystem.GET("/audit-logs/overview", h.GetAuditOverview)
+		adminSystem.GET("/audit-logs/facets", h.GetAuditFacets)
 		adminSystem.GET("/audit-logs/export", h.ExportAuditLogs)
 		adminSystem.GET("/audit-logs/:id", h.GetAuditLog)
 

@@ -7305,5 +7305,19 @@
     "permission": "",
     "appScoped": false,
     "unmapped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/audit-logs/overview",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/audit-logs/facets",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
   }
 ]

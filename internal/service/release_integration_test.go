@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -32,25 +30,7 @@ func TestReleaseCenterIntegration(t *testing.T) {
 	}
 	defer pool.Close()
 
-	if _, err := pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public;`); err != nil {
-		t.Fatal(err)
-	}
-	files, _ := filepath.Glob("../../migrations/postgres/*.up.sql")
-	sort.Strings(files)
-	for round := 0; round < 2; round++ {
-		for _, file := range files {
-			content, _ := os.ReadFile(file)
-			if sql := strings.TrimSpace(string(content)); sql != "" {
-				if _, err := pool.Exec(ctx, sql); err != nil {
-					// 便携版 Postgres 不带 pgvector / PostGIS：AI 与地理模块的迁移与发布中心无关，跳过
-					if msg := err.Error(); strings.Contains(msg, "vector") || strings.Contains(msg, "postgis") || strings.Contains(msg, "geography") || strings.Contains(msg, "geometry") {
-						continue
-					}
-					t.Fatalf("round %d apply %s: %v", round+1, filepath.Base(file), err)
-				}
-			}
-		}
-	}
+	resetTestDatabase(t, ctx, pool)
 
 	pg := pgrepo.New(pool)
 	const appID = int64(10000)

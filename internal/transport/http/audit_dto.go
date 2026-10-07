@@ -1,6 +1,9 @@
 package httptransport
 
 type AuditLogQuery struct {
+	// Kind：operation（默认视图，不含查看）/ read / write / export / auth；空表示全部
+	Kind       string `form:"kind"`
+	AppID      *int64 `form:"appId"`
 	Action     string `form:"action"`
 	Resource   string `form:"resource"`
 	Category   string `form:"category"`

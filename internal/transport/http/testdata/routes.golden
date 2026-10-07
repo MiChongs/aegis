@@ -261,6 +261,8 @@ GET	/api/admin/system/announcements/:id	AdminGetAnnouncement
 GET	/api/admin/system/audit-logs	ListAuditLogs
 GET	/api/admin/system/audit-logs/:id	GetAuditLog
 GET	/api/admin/system/audit-logs/export	ExportAuditLogs
+GET	/api/admin/system/audit-logs/facets	GetAuditFacets
+GET	/api/admin/system/audit-logs/overview	GetAuditOverview
 GET	/api/admin/system/audit-logs/stats	GetAuditStats
 GET	/api/admin/system/authz/model	AdminAuthzModel
 GET	/api/admin/system/authz/policies	AdminAuthzPolicies

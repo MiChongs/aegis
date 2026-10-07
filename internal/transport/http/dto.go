@@ -907,11 +907,13 @@ func resolveAppID(c *gin.Context, appService appIDResolver) (int64, bool) {
 	if appService != nil {
 		app, err := appService.GetAppByKey(c.Request.Context(), appKey)
 		if err == nil && app != nil {
+			c.Set(auditmiddleware.AuditAppContextKey, app)
 			return app.ID, true
 		}
 		if appID, err := strconv.ParseInt(appKey, 10, 64); err == nil && appID > 0 {
 			app, getErr := appService.GetApp(c.Request.Context(), appID)
 			if getErr == nil && app != nil {
+				c.Set(auditmiddleware.AuditAppContextKey, app)
 				return app.ID, true
 			}
 		}

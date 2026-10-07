@@ -94,6 +94,32 @@ func (h *Handler) GetAuditStats(c *gin.Context) {
 	response.Success(c, 200, "ok", stats)
 }
 
+// GetAuditOverview GET /api/admin/system/audit-logs/overview
+func (h *Handler) GetAuditOverview(c *gin.Context) {
+	if _, ok := h.requireAuditReader(c); !ok {
+		return
+	}
+	overview, err := h.audit.Overview(c.Request.Context())
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "ok", overview)
+}
+
+// GetAuditFacets GET /api/admin/system/audit-logs/facets
+func (h *Handler) GetAuditFacets(c *gin.Context) {
+	if _, ok := h.requireAuditReader(c); !ok {
+		return
+	}
+	facets, err := h.audit.Facets(c.Request.Context())
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "ok", facets)
+}
+
 func (h *Handler) ExportAuditLogs(c *gin.Context) {
 	if _, ok := h.requireAuditReader(c); !ok {
 		return
@@ -112,19 +138,13 @@ func (h *Handler) ExportAuditLogs(c *gin.Context) {
 
 	var sb strings.Builder
 	sb.WriteString("\xEF\xBB\xBF")
-	// 列顺序与内容保持与 AuditLog 一致，便于二次分析
+	// 前半是给人读的列（与控制台列表一致），后半是排查用的原始字段
 	sb.WriteString(strings.Join([]string{
-		"ID", "时间",
-		"管理员ID", "管理员", "角色", "会话ID",
-		"类别", "严重度", "动作", "资源", "资源ID",
-		"摘要", "描述",
-		"请求ID", "TraceID", "方法", "路径", "路由模板", "状态码", "耗时(ms)",
-		"请求字节", "响应字节", "响应摘要",
-		"IP", "国家", "地区", "城市", "ISP", "UA",
-		"状态", "错误码", "错误信息", "变更详情",
+		"时间", "操作者", "角色", "模块", "操作", "对象", "应用", "结果", "失败原因", "风险",
+		"IP", "地点", "浏览器", "系统", "耗时(ms)",
+		"方法", "路径", "状态码", "请求ID", "会话ID", "变更详情",
 	}, ","))
 	sb.WriteString("\n")
-
 	for _, l := range logs {
 		changesJSON := ""
 		if len(l.Changes) > 0 {
@@ -133,38 +153,26 @@ func (h *Handler) ExportAuditLogs(c *gin.Context) {
 			}
 		}
 		row := []string{
-			strconv.FormatInt(l.ID, 10),
 			l.CreatedAt.Format("2006-01-02 15:04:05"),
-			strconv.FormatInt(l.AdminID, 10),
 			quoteCSV(l.AdminName),
-			quoteCSV(l.AdminRole),
-			quoteCSV(l.SessionID),
-			quoteCSV(l.Category),
-			quoteCSV(l.Severity),
-			quoteCSV(l.Action),
-			quoteCSV(l.Resource),
-			quoteCSV(l.ResourceID),
-			quoteCSV(l.Summary),
-			quoteCSV(l.Detail),
-			quoteCSV(l.RequestID),
-			quoteCSV(l.TraceID),
-			quoteCSV(l.Method),
-			quoteCSV(l.Path),
-			quoteCSV(l.Route),
-			strconv.Itoa(l.StatusCode),
-			strconv.Itoa(l.LatencyMs),
-			strconv.Itoa(l.RequestSize),
-			strconv.Itoa(l.ResponseSize),
-			quoteCSV(l.ResponseSnippet),
-			quoteCSV(l.IP),
-			quoteCSV(l.Country),
-			quoteCSV(l.Region),
-			quoteCSV(l.City),
-			quoteCSV(l.ISP),
-			quoteCSV(l.UserAgent),
-			quoteCSV(l.Status),
-			quoteCSV(l.ErrorCode),
+			quoteCSV(auditRoleLabel(l.AdminRole)),
+			quoteCSV(l.ModuleLabel),
+			quoteCSV(l.OperationName),
+			quoteCSV(strings.TrimSpace(l.TargetType + " " + l.TargetLabel)),
+			quoteCSV(l.AppName),
+			auditStatusLabel(l.Status),
 			quoteCSV(l.ErrorMessage),
+			auditSeverityLabel(l.Severity),
+			l.IP,
+			quoteCSV(l.Location),
+			quoteCSV(l.Browser),
+			quoteCSV(l.OS),
+			strconv.Itoa(l.LatencyMs),
+			l.Method,
+			quoteCSV(l.Path),
+			strconv.Itoa(l.StatusCode),
+			l.RequestID,
+			l.SessionID,
 			quoteCSV(changesJSON),
 		}
 		sb.WriteString(strings.Join(row, ","))
@@ -173,8 +181,37 @@ func (h *Handler) ExportAuditLogs(c *gin.Context) {
 	c.String(200, sb.String())
 }
 
+func auditStatusLabel(status string) string {
+	switch status {
+	case systemdomain.AuditStatusSuccess:
+		return "成功"
+	case systemdomain.AuditStatusDenied:
+		return "已拒绝"
+	case systemdomain.AuditStatusBlocked:
+		return "已拦截"
+	default:
+		return "失败"
+	}
+}
+
+func auditSeverityLabel(severity string) string {
+	return map[string]string{
+		systemdomain.AuditSeverityInfo: "普通", systemdomain.AuditSeverityLow: "低",
+		systemdomain.AuditSeverityMedium: "中", systemdomain.AuditSeverityHigh: "高",
+		systemdomain.AuditSeverityCritical: "严重",
+	}[severity]
+}
+
+func auditRoleLabel(role string) string {
+	if role == "super_admin" {
+		return "超级管理员"
+	}
+	return role
+}
+
 func filterFromQuery(q AuditLogQuery) systemdomain.AuditFilter {
 	return systemdomain.AuditFilter{
+		Kind: strings.TrimSpace(q.Kind), AppID: q.AppID,
 		Action: q.Action, Resource: q.Resource, Category: q.Category, Severity: q.Severity,
 		Status: q.Status, StatusCode: q.StatusCode, AdminID: q.AdminID,
 		IP: q.IP, Country: q.Country, RequestID: q.RequestID, TraceID: q.TraceID,
@@ -244,6 +281,7 @@ func auditEntryFromContext(c *gin.Context, action, resource, resourceID, detail 
 	entry.Region = loc.Region
 	entry.City = loc.City
 	entry.ISP = loc.ISP
+	auditmiddleware.ApplyAuditCatalog(c, &entry, false)
 	return entry
 }
 

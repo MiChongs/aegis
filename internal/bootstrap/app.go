@@ -400,6 +400,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	orgService.SetApprovalService(approvalService)
 	templateService := service.NewTemplateService(log, pg)
 	auditService := service.NewAuditService(log, pg)
+	// 目录改版后把历史审计的模块与类型对齐到新目录（只处理版本落后的行）
+	go auditService.BackfillCatalog(context.Background())
 	dashboardService := service.NewDashboardService(log, pg)
 	pluginService := service.NewPluginService(log, pg)
 	cardKeyService := service.NewCardKeyService(log, pg)

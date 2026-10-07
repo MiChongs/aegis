@@ -1,0 +1,56 @@
+package auditcatalog
+
+// 发布中心：版本发布、安装包、灰度与渠道。旧版版本接口（/versions、/app/version/*）一并登记，
+// 说法与新接口保持一致，便于在同一份审计里对照。
+func init() {
+	Register("release",
+		View("GET /api/admin/apps/:appkey/releases", "查看版本列表", ""),
+		View("GET /api/admin/apps/:appkey/releases/overview", "查看发布总览", ""),
+		View("GET /api/admin/apps/:appkey/releases/:rid", "查看版本详情", "版本"),
+		View("GET /api/admin/apps/:appkey/releases/:rid/stats", "查看更新漏斗", "版本"),
+		Write("POST /api/admin/apps/:appkey/releases", "新建版本", "版本", SeverityLow),
+		Write("PUT /api/admin/apps/:appkey/releases/:rid", "编辑版本", "版本", SeverityMedium),
+		Write("DELETE /api/admin/apps/:appkey/releases/:rid", "删除版本", "版本", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/releases/assets", "上传安装包", "安装包", SeverityLow),
+		View("POST /api/admin/apps/:appkey/releases/simulate", "模拟检测更新", ""),
+		Write("POST /api/admin/apps/:appkey/releases/:rid/publish", "发布版本", "版本", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/releases/:rid/pause", "暂停下发", "版本", SeverityMedium),
+		Write("POST /api/admin/apps/:appkey/releases/:rid/resume", "恢复下发", "版本", SeverityMedium),
+		Write("POST /api/admin/apps/:appkey/releases/:rid/revoke", "撤回版本", "版本", SeverityHigh),
+		Write("PUT /api/admin/apps/:appkey/releases/:rid/rollout", "调整灰度比例", "版本", SeverityMedium),
+
+		View("GET /api/admin/apps/:appkey/channels", "查看发布渠道", ""),
+		View("GET /api/admin/apps/:appkey/channels/:cid", "查看渠道详情", "渠道"),
+		View("GET /api/admin/apps/:appkey/channels/:cid/users", "查看渠道成员", "渠道"),
+		Write("POST /api/admin/apps/:appkey/channels", "新建发布渠道", "渠道", SeverityLow),
+		Write("PUT /api/admin/apps/:appkey/channels/:cid", "编辑发布渠道", "渠道", SeverityMedium),
+		Write("DELETE /api/admin/apps/:appkey/channels/:cid", "删除发布渠道", "渠道", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/channels/:cid/users", "添加渠道成员", "渠道", SeverityLow),
+		Write("DELETE /api/admin/apps/:appkey/channels/:cid/users", "移除渠道成员", "渠道", SeverityMedium),
+
+		// 旧版版本接口
+		View("GET /api/admin/apps/:appkey/versions", "查看版本列表（旧版）", ""),
+		View("GET /api/admin/apps/:appkey/versions/stats", "查看版本统计（旧版）", ""),
+		View("GET /api/admin/apps/:appkey/versions/:vid", "查看版本详情（旧版）", "版本"),
+		Write("POST /api/admin/apps/:appkey/versions", "新建版本（旧版）", "版本", SeverityLow),
+		Write("PUT /api/admin/apps/:appkey/versions/:vid", "编辑版本（旧版）", "版本", SeverityMedium),
+		Write("DELETE /api/admin/apps/:appkey/versions/:vid", "删除版本（旧版）", "版本", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/versions/:vid/publish", "发布版本（旧版）", "版本", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/versions/:vid/revoke", "撤回版本（旧版）", "版本", SeverityHigh),
+		View("POST /api/admin/app/version/list", "查看版本列表（兼容接口）", ""),
+		View("POST /api/admin/app/version/detail", "查看版本详情（兼容接口）", "版本"),
+		View("POST /api/admin/app/version/stats", "查看版本统计（兼容接口）", ""),
+		Write("POST /api/admin/app/version/create", "新建版本（兼容接口）", "版本", SeverityLow),
+		Write("POST /api/admin/app/version/update", "编辑版本（兼容接口）", "版本", SeverityMedium),
+		Write("POST /api/admin/app/version/delete", "删除版本（兼容接口）", "版本", SeverityHigh),
+		View("POST /api/admin/app/version/channel/list", "查看发布渠道（兼容接口）", ""),
+		View("POST /api/admin/app/version/channel/detail", "查看渠道详情（兼容接口）", "渠道"),
+		View("POST /api/admin/app/version/channel/users", "查看渠道成员（兼容接口）", "渠道"),
+		View("POST /api/admin/app/version/channel/preview-match", "预览渠道匹配（兼容接口）", "渠道"),
+		Write("POST /api/admin/app/version/channel/create", "新建发布渠道（兼容接口）", "渠道", SeverityLow),
+		Write("POST /api/admin/app/version/channel/update", "编辑发布渠道（兼容接口）", "渠道", SeverityMedium),
+		Write("POST /api/admin/app/version/channel/delete", "删除发布渠道（兼容接口）", "渠道", SeverityHigh),
+		Write("POST /api/admin/app/version/channel/add-users", "添加渠道成员（兼容接口）", "渠道", SeverityLow),
+		Write("POST /api/admin/app/version/channel/remove-users", "移除渠道成员（兼容接口）", "渠道", SeverityMedium),
+	)
+}

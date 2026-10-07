@@ -351,11 +351,13 @@ func AuditMiddleware(auditSvc *service.AuditService) gin.HandlerFunc {
 			}
 		}
 
-		// summary 默认由推断生成，handler 可覆盖
+		// summary 默认由推断生成，handler 可覆盖；目录登记过的接口再由 ApplyAuditCatalog 改写成「操作名 + 对象」
 		summary := BuildAuditSummary(method, route, resource, resourceID, statusCode)
+		explicitSummary := false
 		if v, ok := c.Get(auditContextSummaryKey); ok {
 			if s, _ := v.(string); s != "" {
 				summary = s
+				explicitSummary = true
 			}
 		}
 
@@ -453,6 +455,7 @@ func AuditMiddleware(auditSvc *service.AuditService) gin.HandlerFunc {
 
 			Changes: GetAuditContextChanges(c),
 		}
+		ApplyAuditCatalog(c, &entry, explicitSummary)
 		auditSvc.Record(entry)
 		// 标记已记录，防止嵌套 / 重复绑定 AuditMiddleware 时产生两条审计
 		MarkAuditRecorded(c)
