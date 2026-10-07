@@ -30,6 +30,13 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "secondFactor", Method: "POST", Path: "/auth/2fa/verify", Summary: "完成登录返回的二次认证挑战"},
 	{Key: "logout", Method: "POST", Path: "/auth/logout", Auth: true, Summary: "注销当前会话"},
 
+	// ── 网页扫码登录 ──
+	{Key: "qrLoginCreate", Method: "POST", Path: "/auth/qr/create", Summary: "网页申请扫码登录票据（由网站服务端代为调用）"},
+	{Key: "qrLoginPoll", Method: "POST", Path: "/auth/qr/poll", Summary: "网页轮询扫码状态，确认后领取会话"},
+	{Key: "qrLoginScan", Method: "POST", Path: "/auth/qr/scan", Auth: true, Summary: "移动端扫码，返回发起端设备信息"},
+	{Key: "qrLoginConfirm", Method: "POST", Path: "/auth/qr/confirm", Auth: true, Summary: "移动端确认网页登录"},
+	{Key: "qrLoginCancel", Method: "POST", Path: "/auth/qr/cancel", Auth: true, Summary: "移动端拒绝网页登录"},
+
 	// ── 第三方登录 ──
 	{Key: "oauthURL", Method: "POST", Path: "/auth/oauth/url", Summary: "取第三方登录授权地址"},
 	{Key: "oauthCallback", Method: "GET", Path: "/auth/oauth/callback", Unwrapped: true,
@@ -310,6 +317,16 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 	{Code: 40910, Name: "CARD_KEY_REDEEMING", Message: "该卡密正在被核销",
 		Recovery: authprotocol.RecoveryNone},
 	{Code: 40470, Name: "APP_NOT_FOUND", Message: "应用不存在或已停用", Recovery: authprotocol.RecoveryNone},
+	{Code: errCodeQRLoginTicketInvalid, Name: "QR_LOGIN_TICKET_INVALID", Message: "登录二维码无效",
+		Recovery: authprotocol.RecoveryNone, Hint: "票据不存在，或网页轮询时 pollToken 与票据不符"},
+	{Code: errCodeQRLoginScannedByOther, Name: "QR_LOGIN_SCANNED_BY_OTHER", Message: "该二维码已被其他账号扫描",
+		Recovery: authprotocol.RecoveryNone},
+	{Code: errCodeQRLoginNotScanned, Name: "QR_LOGIN_NOT_SCANNED", Message: "请先扫描网页上的登录二维码",
+		Recovery: authprotocol.RecoveryNone, Hint: "确认与拒绝之前必须先调 /auth/qr/scan"},
+	{Code: errCodeQRLoginTicketUsed, Name: "QR_LOGIN_TICKET_USED", Message: "该二维码已失效，请在网页上刷新后重新扫描",
+		Recovery: authprotocol.RecoveryNone, Hint: "票据已确认、已拒绝或已被网页领取"},
+	{Code: errCodeQRLoginTicketExpired, Name: "QR_LOGIN_TICKET_EXPIRED", Message: "登录二维码已过期，请在网页上刷新后重新扫描",
+		Recovery: authprotocol.RecoveryNone, Hint: "票据两分钟有效"},
 	{Code: 40484, Name: "TRIAL_NOT_AVAILABLE", Message: "当前应用未开放试用",
 		Recovery: authprotocol.RecoveryNone, Hint: "管理员没有配置启用中的试用套餐，入口应当整个隐藏"},
 	{Code: 40970, Name: "NONCE_REPLAYED", Message: "请求 nonce 已使用", Recovery: authprotocol.RecoveryNewNonce},

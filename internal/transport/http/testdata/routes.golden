@@ -973,6 +973,11 @@ POST	/api/v1/apps/:appkey/auth/password/change	ChangePassword
 POST	/api/v1/apps/:appkey/auth/password/forgot	AppPasswordForgot
 POST	/api/v1/apps/:appkey/auth/password/reset/verify	AppPasswordResetVerify
 POST	/api/v1/apps/:appkey/auth/password/verify	VerifyPassword
+POST	/api/v1/apps/:appkey/auth/qr/cancel	AppQRLoginCancel
+POST	/api/v1/apps/:appkey/auth/qr/confirm	AppQRLoginConfirm
+POST	/api/v1/apps/:appkey/auth/qr/create	AppQRLoginCreate
+POST	/api/v1/apps/:appkey/auth/qr/poll	AppQRLoginPoll
+POST	/api/v1/apps/:appkey/auth/qr/scan	AppQRLoginScan
 POST	/api/v1/apps/:appkey/auth/refresh	AppRefresh
 POST	/api/v1/apps/:appkey/auth/register	AppRegister
 POST	/api/v1/apps/:appkey/auth/sms/code	AppSMSCode

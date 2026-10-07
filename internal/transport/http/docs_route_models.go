@@ -549,6 +549,11 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/oauth/exchange"):                                     OAuthMobileLoginRequest{},                // AppOAuthExchange
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/password/change"):                                    ChangePasswordRequest{},                  // ChangePassword
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/password/verify"):                                    VerifyPasswordRequest{},                  // VerifyPassword
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/qr/cancel"):                                          AppQRLoginTicketRequest{},                // AppQRLoginCancel
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/qr/confirm"):                                         AppQRLoginTicketRequest{},                // AppQRLoginConfirm
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/qr/create"):                                          AppQRLoginCreateRequest{},                // AppQRLoginCreate
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/qr/poll"):                                            AppQRLoginPollRequest{},                  // AppQRLoginPoll
+		routeKey("POST", "/api/v1/apps/{appkey}/auth/qr/scan"):                                            AppQRLoginTicketRequest{},                // AppQRLoginScan
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/register"):                                           authprotocol.RegisterInput{},             // AppRegister
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/sms/code"):                                           authprotocol.SMSCodeInput{},              // AppSMSCode
 		routeKey("POST", "/api/v1/apps/{appkey}/card-keys/redeem"):                                        RedeemCardKeyRequest{},                   // AppRedeemCardKey

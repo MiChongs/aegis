@@ -28,6 +28,9 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGateway.POST("/auth/login", h.AppLogin)
 		appGateway.POST("/auth/refresh", h.AppRefresh)
 		appGateway.POST("/auth/2fa/verify", h.AppSecondFactor)
+		// 网页扫码登录：网页发码与轮询（网站服务端代为调用），扫码与确认在 Bearer 组
+		appGateway.POST("/auth/qr/create", h.AppQRLoginCreate)
+		appGateway.POST("/auth/qr/poll", h.AppQRLoginPoll)
 		appGateway.POST("/auth/oauth/url", h.AppOAuthURL)
 		// 回跳由第三方平台重定向浏览器发起，客户端无法给它签名或加密，
 		// 因此 AppGateway 对该路径放行（详见 AppOAuthCallback 的注释）
@@ -109,6 +112,11 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/me/sessions", h.UserSessions)
 		appGatewayAuthed.DELETE("/me/sessions/:tokenHash", h.RevokeUserSession)
 		appGatewayAuthed.POST("/me/sessions/revoke-all", h.RevokeAllUserSessions)
+
+		// 网页扫码登录：移动端扫码、确认与拒绝
+		appGatewayAuthed.POST("/auth/qr/scan", h.AppQRLoginScan)
+		appGatewayAuthed.POST("/auth/qr/confirm", h.AppQRLoginConfirm)
+		appGatewayAuthed.POST("/auth/qr/cancel", h.AppQRLoginCancel)
 		appGatewayAuthed.GET("/me/audits/login", h.UserLoginAudits)
 		appGatewayAuthed.GET("/me/audits/sessions", h.UserSessionAudits)
 

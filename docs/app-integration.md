@@ -70,6 +70,8 @@ val profile = client.me.profile()
 | `POST` | `/auth/password/forgot`、`/auth/password/reset/verify` | 找回密码 |
 | `POST` | `/auth/password/verify`、`/auth/password/change` | 校验 / 修改密码（Bearer） |
 | `POST` | `/auth/passkey/options`、`/auth/passkey/login` | Passkey 登录 |
+| `POST` | `/auth/qr/create`、`/auth/qr/poll` | 网页扫码登录：网页申请票据、轮询并领取会话（见 1.8） |
+| `POST` | `/auth/qr/scan`、`/auth/qr/confirm`、`/auth/qr/cancel` | 网页扫码登录：移动端扫码、确认、拒绝（Bearer） |
 
 ### 当前用户（均需 Bearer）
 
@@ -399,6 +401,31 @@ POST /api/v1/apps/{appKey}/auth/login
 首次登录能否自动建号 = 渠道的 `allowLogin` ∧ `allowRegister`；
 关闭时返回 `40393`，此时应引导用户先用已有账号登录再绑定。
 
+## 1.8 网页扫码登录
+
+已在移动端登录的用户扫描网页上的二维码并确认，网页即获得一份**属于它自己的**新会话；
+移动端的令牌从不离开移动端。
+
+```text
+网页（网站服务端） ── POST /auth/qr/create ──▶ { ticketId, pollToken, expiresAt, interval }
+                     把 ticketId 画成二维码（内容由接入方决定，如 voyage://auth/qr?ticket=…）
+移动端（Bearer）   ── POST /auth/qr/scan     { ticketId } ─▶ 发起端的设备、IP、位置与有效期
+                  ── POST /auth/qr/confirm  { ticketId }      或 /auth/qr/cancel
+网页（网站服务端） ── POST /auth/qr/poll    { ticketId, pollToken }
+                     ─▶ { status: pending | scanned | confirmed | cancelled | expired, scanner?, session? }
+```
+
+- **create / poll 由网站服务端代为调用。** 它们不需要登录，但在 signed / sealed 档下与其他网关接口一样
+  必须签名与加密，浏览器拿不到 `appSecret`。`ticketId` 是公开的（印在二维码上），`pollToken` 只留在
+  发起端（例如写进 httpOnly cookie），领取会话必须两者同时出示。
+- **确认时不签发令牌。** confirm 只记下「谁确认了」；网页下一次 poll 读到 `confirmed` 时才经统一的登录收口
+  签发会话，绑定网页的 `deviceId`、IP 与 UA，`session` 与 `/auth/login` 的结果同形，且**只出现一次**。
+  移动端会话已通过密码与二次认证，与 Passkey 同理不再叠加二次认证；登录一致性检查与设备数上限照常生效。
+- **票据两分钟有效**，建议按 `interval` 秒轮询。票据不存在、已过期或已被领取时 poll 返回 `expired`，
+  `pollToken` 不符返回 `40405`。`scanned` 状态附带扫码人的 `scanner.nickname` 与 `scanner.avatar`。
+- **扫码幂等，归属唯一。** 同一用户重复扫码返回同一结果；已被他人扫过的票据返回 `40906`；
+  确认与拒绝只接受扫码人本人。
+
 ## 2. standard 档
 
 除 HTTPS 外没有任何额外要求。`X-Aegis-App-Key` 头是可选的，
@@ -593,8 +620,13 @@ aegis-transport-v2
 | `40391` | 该渠道仅开放绑定，未开放直接登录 | 在渠道配置里打开「允许登录」 |
 | `40393` | 第三方账号未绑定且渠道未开放自动注册 | 引导用户先用已有账号登录再绑定 |
 | `40394` | 手机号尚未注册且应用未开放短信注册 | 在注册方式里勾选短信，或引导改用其他方式 |
+| `40405` | 登录二维码无效 | 票据不存在，或轮询时 `pollToken` 与票据不符 |
 | `40470` | 应用不存在或已停用 | 核对 appKey 与应用状态 |
+| `40906` | 该二维码已被其他账号扫描 | 提示用户在网页上刷新二维码 |
+| `40907` | 尚未扫码 | 确认与拒绝之前先调 `/auth/qr/scan` |
+| `40908` | 二维码已失效 | 票据已确认、已拒绝或已被领取，在网页上刷新 |
 | `40970` | nonce 已使用 | 每个请求换一个新的随机 nonce |
+| `41005` | 登录二维码已过期 | 票据两分钟有效，在网页上刷新后重新扫描 |
 | `42670` | 该应用要求加密载荷 | 应用处于 sealed 档，不能发明文 |
 | `50372` | 尚未签发应用密钥 | 让管理员在控制台轮换一次密钥 |
 

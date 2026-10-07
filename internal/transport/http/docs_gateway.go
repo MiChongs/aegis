@@ -37,12 +37,17 @@ const gatewayOpenAPIPrefix = "/api/v1/apps/{appkey}"
 func gatewayRequestModels() map[string]any {
 	return map[string]any{
 		// 认证生命周期
-		"captcha":      AppCaptchaRequest{},
-		"smsCode":      authprotocol.SMSCodeInput{},
-		"register":     authprotocol.RegisterInput{},
-		"login":        authprotocol.LoginInput{},
-		"refresh":      AppRefreshRequest{},
-		"secondFactor": SecondFactorVerifyRequest{},
+		"captcha":        AppCaptchaRequest{},
+		"smsCode":        authprotocol.SMSCodeInput{},
+		"register":       authprotocol.RegisterInput{},
+		"login":          authprotocol.LoginInput{},
+		"refresh":        AppRefreshRequest{},
+		"secondFactor":   SecondFactorVerifyRequest{},
+		"qrLoginCreate":  AppQRLoginCreateRequest{},
+		"qrLoginPoll":    AppQRLoginPollRequest{},
+		"qrLoginScan":    AppQRLoginTicketRequest{},
+		"qrLoginConfirm": AppQRLoginTicketRequest{},
+		"qrLoginCancel":  AppQRLoginTicketRequest{},
 
 		// 第三方登录
 		"oauthURL":      AppOAuthURLRequest{},
@@ -208,6 +213,24 @@ func gatewayOperationDescription(operation authprotocol.Operation) string {
 // 这些请求体原本以匿名 struct 写在 handler 里，规范里就只能是一个空对象，
 // 生成出来的客户端方法没有任何参数。提成具名类型之后它们才进得了 schema。
 // ─────────────────────────────────────────────────────────────────────
+
+// 网页扫码登录（见 service/auth_qr.go）
+
+type AppQRLoginCreateRequest struct {
+	// DeviceID 发起登录的浏览器的设备标识，确认后签发的会话绑定在它上面
+	DeviceID string `json:"deviceId" form:"deviceId"`
+	// Device 设备描述，如「Chrome（Windows）」，展示在移动端确认页上
+	Device string `json:"device" form:"device"`
+}
+
+type AppQRLoginPollRequest struct {
+	TicketID  string `json:"ticketId" form:"ticketId" binding:"required"`
+	PollToken string `json:"pollToken" form:"pollToken" binding:"required"`
+}
+
+type AppQRLoginTicketRequest struct {
+	TicketID string `json:"ticketId" form:"ticketId" binding:"required"`
+}
 
 type AppCaptchaRequest struct {
 	// Purpose 验证码用途：login | register

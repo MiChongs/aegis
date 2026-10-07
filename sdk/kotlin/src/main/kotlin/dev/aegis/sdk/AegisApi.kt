@@ -242,6 +242,46 @@ class AegisAuthApi internal constructor(private val client: AegisClient) {
     fun passkeyLogin(credential: Map<String, Any?>, sessionId: String? = null): AegisSession =
         login(buildBody("credential" to credential, "sessionId" to sessionId), path = "/auth/passkey/login")
 
+    // ── 网页扫码登录 ──
+
+    /**
+     * 网页（BFF）一侧：申请一张扫码登录票据。
+     *
+     * 返回 `ticketId`（画进二维码，公开）、`pollToken`（只留在发起端，换取会话时必须出示）、
+     * `expiresAt` 与建议的轮询间隔 `interval`。[deviceId] / [device] 描述发起登录的浏览器，
+     * 会展示在扫码确认页上，确认后签发的会话也绑定在这台设备上。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun qrLoginCreate(deviceId: String? = null, device: String? = null): JsonElement =
+        client.call("POST", "/auth/qr/create", buildBody("deviceId" to deviceId, "device" to device))
+
+    /**
+     * 网页（BFF）一侧：轮询票据状态。`status` 为 pending / scanned / confirmed / cancelled / expired；
+     * 第一次读到 confirmed 时附带 `session`（与登录结果同形），票据随即作废。
+     */
+    @Throws(IOException::class)
+    fun qrLoginPoll(ticketId: String, pollToken: String): JsonElement =
+        client.call("POST", "/auth/qr/poll", mapOf("ticketId" to ticketId, "pollToken" to pollToken))
+
+    /**
+     * 应用一侧：扫到网页登录二维码后登记「已扫码」，返回发起端的设备、IP、位置与有效期，
+     * 供用户确认。同一用户重复扫码是幂等的；已被他人扫过的票据会被拒绝。
+     */
+    @Throws(IOException::class)
+    fun qrLoginScan(ticketId: String): JsonElement =
+        client.call("POST", "/auth/qr/scan", mapOf("ticketId" to ticketId), requireAuth = true)
+
+    /** 应用一侧：确认网页登录。网页端下一次轮询时拿到属于它自己的新会话。 */
+    @Throws(IOException::class)
+    fun qrLoginConfirm(ticketId: String): JsonElement =
+        client.call("POST", "/auth/qr/confirm", mapOf("ticketId" to ticketId), requireAuth = true)
+
+    /** 应用一侧：拒绝本次网页登录，票据作废。 */
+    @Throws(IOException::class)
+    fun qrLoginCancel(ticketId: String): JsonElement =
+        client.call("POST", "/auth/qr/cancel", mapOf("ticketId" to ticketId), requireAuth = true)
+
     /** 登录类接口的公共收口：解析会话并写进 tokenStore。 */
     private fun login(body: Map<String, Any?>, path: String = "/auth/login"): AegisSession {
         val session = client.decodeAs(client.call("POST", path, body), AegisSession.serializer())
