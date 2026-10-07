@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -144,5 +145,21 @@ func TestBuildCorazaDirectivesAnomalyThreshold(t *testing.T) {
 	directives := buildCorazaDirectives(config.FirewallConfig{CorazaAnomalyThreshold: 25})
 	if !strings.Contains(directives, "tx.inbound_anomaly_score_threshold=25") {
 		t.Fatalf("expected custom anomaly threshold 25, got: %s", directives)
+	}
+}
+
+// 超出检查上限的文件上传放行且请求体完整：安装包上传曾因请求体被读走一截而在下游报「缺少上传文件」。
+func TestFirewallSnapshotRequestBodySkipsOversizeUpload(t *testing.T) {
+	firewall := &Firewall{state: firewallState{cfg: config.FirewallConfig{RequestBodyLimit: 4}}}
+	payload := "--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.apk\"\r\n\r\n0123456789\r\n--b--\r\n"
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/apps/1/releases/assets", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "multipart/form-data; boundary=b")
+
+	if _, err := firewall.snapshotRequestBody(request); !errors.Is(err, errSkipBodyInspection) {
+		t.Fatalf("expected skip, got %v", err)
+	}
+	restored, err := io.ReadAll(request.Body)
+	if err != nil || string(restored) != payload {
+		t.Fatalf("upload body must reach the handler intact, got %q (%v)", restored, err)
 	}
 }

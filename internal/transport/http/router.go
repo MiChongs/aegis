@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"aegis/internal/middleware"
 	redisrepo "aegis/internal/repository/redis"
@@ -142,6 +143,8 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		// 必须是第一个：它之后的每一环（访问日志、防火墙限流与封禁、WAF、追踪、
 		// 地理定位）都要取客户端 IP，排在它前面的那些取到的会是反代地址。
 		middleware.ClientIP(clientIPResolver, log),
+		// 文件上传放宽读超时：要排在防火墙与 WAF 读请求体之前，见 upload_deadline.go
+		middleware.UploadReadDeadline(30*time.Minute),
 		middleware.RequestID(),
 		middleware.RequestOrigin(),
 		middleware.CrashRecovery(log, cl),

@@ -7,6 +7,7 @@ import (
 	"aegis/pkg/response"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -508,6 +509,9 @@ func (f *Firewall) inspectRequest(state firewallState, c *gin.Context, clientIP 
 
 	if tx.IsRequestBodyAccessible() && c.Request.Body != nil && c.Request.Body != http.NoBody {
 		body, err := f.snapshotRequestBody(c.Request)
+		if errors.Is(err, errSkipBodyInspection) {
+			return nil, nil
+		}
 		if err != nil {
 			return nil, fmt.Errorf("snapshot request body: %w", err)
 		}
@@ -526,6 +530,14 @@ func (f *Firewall) inspectRequest(state firewallState, c *gin.Context, clientIP 
 		return nil, fmt.Errorf("process request body: %w", err)
 	}
 	return interrupted, nil
+}
+
+// errSkipBodyInspection 请求体超出检查上限但属于文件上传：放行，只是不做请求体检查。
+var errSkipBodyInspection = errors.New("request body inspection skipped")
+
+func isFileUploadContentType(contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	return strings.HasPrefix(contentType, "multipart/form-data") || strings.HasPrefix(contentType, "application/octet-stream")
 }
 
 func (f *Firewall) snapshotRequestBody(req *http.Request) ([]byte, error) {
@@ -551,6 +563,16 @@ func (f *Firewall) snapshotRequestBody(req *http.Request) ([]byte, error) {
 			return nil, err
 		}
 		if int64(len(body)) > limit {
+			// 超限的文件上传（安装包动辄上百 MB）：已读的前缀接回原流，交给下游完整读取，
+			// 本次只检查请求头与 URI。截断的 multipart 喂给 WAF 只会解析失败，
+			// 而直接报错会把每一次大文件上传都变成一个 503。其余类型超限仍然拒绝。
+			if isFileUploadContentType(req.Header.Get("Content-Type")) {
+				req.Body = struct {
+					io.Reader
+					io.Closer
+				}{io.MultiReader(bytes.NewReader(body), req.Body), req.Body}
+				return nil, errSkipBodyInspection
+			}
 			return nil, fmt.Errorf("request body exceeds configured limit")
 		}
 	} else {

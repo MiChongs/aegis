@@ -72,6 +72,10 @@ const nextConfig: NextConfig = {
     // 只有 30s；模型思考间隙 + 长工具执行足以触发，表现为回答中途断线。
     // 后端每 15s 发一次 SSE 心跳注释行，这里再把上限抬到 10 分钟双保险。
     proxyTimeout: 600_000,
+    // ── 反代请求体上限 ──
+    // rewrites 转发时请求体先按这个上限缓冲，缺省 10MB，超出部分直接丢弃：
+    // 安装包上传因此到后端只剩半个 multipart，报「缺少上传文件」。与发布中心编辑器的 1GB 校验一致。
+    proxyClientMaxBodySize: "1gb",
     // 只列 Next 内置清单里没有的桶文件包（lucide-react / recharts / date-fns 等已内置）。
     // 这几个都是"导入一个成员要先解析整包"的重灾区：simple-icons 系两个包各有
     // 3000+ 图标，radix-ui 统一包重导出 32 个 primitive，@turf/turf 汇总上百个模块。

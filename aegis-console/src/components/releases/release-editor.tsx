@@ -131,6 +131,9 @@ const toInt = (value: string) => {
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
 };
 
+// 与 next.config.ts 的 proxyClientMaxBodySize 一致：超出部分会被同源反代截掉，后端只会报缺少上传文件
+const MAX_ASSET_BYTES = 1024 * 1024 * 1024;
+
 export function ReleaseEditor({
   appKey,
   item,
@@ -172,6 +175,10 @@ export function ReleaseEditor({
   async function handleFiles(files: FileList | null) {
     if (!files?.length) return;
     for (const file of Array.from(files)) {
+      if (file.size > MAX_ASSET_BYTES) {
+        toast.error(`${file.name} 超过 1 GB，无法上传`);
+        continue;
+      }
       setUploading((n) => n + 1);
       try {
         const result = await upload.mutateAsync(file);
