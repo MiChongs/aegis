@@ -32,9 +32,14 @@ type AppService struct {
 	// storage Banner 图片的落地通道。构造期还没有 StorageService，
 	// 与 plugin / governance 一样走 setter 注入。为空时上传接口如实报「存储未启用」。
 	storage *StorageService
+	// appEvents 应用级实时广播（公告变更时通知在线客户端刷新）。为空时只是不推送。
+	appEvents AppEventPublisher
 }
 
 func (s *AppService) SetPluginService(p *PluginService) { s.plugin = p }
+
+// SetAppEventPublisher 注入应用级实时广播（bootstrap 中调用，RealtimeService 构造晚于 AppService）。
+func (s *AppService) SetAppEventPublisher(p AppEventPublisher) { s.appEvents = p }
 
 // SetStorageService 注入存储服务（bootstrap 中调用，避免构造期循环依赖）。
 func (s *AppService) SetStorageService(st *StorageService) { s.storage = st }

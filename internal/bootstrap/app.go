@@ -245,6 +245,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	realtimeService.SetAdminService(adminService)
 	// 管理端在线用户表要把 userId 翻成账号名，presence 本身不碰数据库。
 	realtimeService.SetIdentityRepository(pg)
+	appService.SetAppEventPublisher(realtimeService)
 	notificationService := service.NewNotificationService(log, pg, sessions, realtimeService)
 	siteService := service.NewSiteService(pg)
 	versionService := service.NewVersionService(pg)

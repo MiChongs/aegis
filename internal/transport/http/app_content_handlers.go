@@ -1,7 +1,9 @@
 package httptransport
 
 import (
+	"bytes"
 	"encoding/csv"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -104,8 +106,7 @@ func (h *Handler) CreateAdminBanner(c *gin.Context) {
 		return
 	}
 	var req AdminBannerUpsertRequest
-	if err := bind(c, &req); err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+	if !bindContentUpsert(c, &req, &req.StartTime, &req.EndTime) {
 		return
 	}
 	h.saveAdminBanner(c, appID, 0, req)
@@ -123,8 +124,7 @@ func (h *Handler) UpdateAdminBanner(c *gin.Context) {
 		return
 	}
 	var req AdminBannerUpsertRequest
-	if err := bind(c, &req); err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+	if !bindContentUpsert(c, &req, &req.StartTime, &req.EndTime) {
 		return
 	}
 	h.saveAdminBanner(c, appID, bannerID, req)
@@ -327,8 +327,7 @@ func (h *Handler) CreateAdminNotice(c *gin.Context) {
 		return
 	}
 	var req AdminNoticeUpsertRequest
-	if err := bind(c, &req); err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+	if !bindContentUpsert(c, &req, &req.StartTime, &req.EndTime) {
 		return
 	}
 	h.saveAdminNotice(c, appID, 0, req)
@@ -346,8 +345,7 @@ func (h *Handler) UpdateAdminNotice(c *gin.Context) {
 		return
 	}
 	var req AdminNoticeUpsertRequest
-	if err := bind(c, &req); err != nil {
-		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+	if !bindContentUpsert(c, &req, &req.StartTime, &req.EndTime) {
 		return
 	}
 	h.saveAdminNotice(c, appID, noticeID, req)
@@ -411,6 +409,46 @@ func (h *Handler) DeleteAdminNotices(c *gin.Context) {
 }
 
 /* ───────────────────────── 小工具 ───────────────────────── */
+
+// bindContentUpsert 绑定 Banner / 公告的新建与更新请求，并保留「显式清空投放窗口」的意图。
+//
+// 控制台清空时间输入框时发的是 `"endTime": null`，而 encoding/json 把 null 解成 nil 指针，
+// 与「请求里没有这个字段」无从区分，service 便当成「不修改」。后果是一条过期公告即使在
+// 控制台上清掉了结束时间、重新发布，库里仍是原来的结束时间：展示端接口照样把它滤掉，
+// 管理端却显示「已发布」，从哪一端都看不出问题在哪。
+//
+// 这里把显式 null 翻译成零值时间；service 的 normalizeContentTime 会把零值落成 NULL。
+// 字段缺省仍是「不修改」，部分更新的语义不变。
+func bindContentUpsert(c *gin.Context, target any, start **time.Time, end **time.Time) bool {
+	raw, _ := snapshotRequestBody(c)
+	if err := bind(c, target); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return false
+	}
+	nulls := explicitNullFields(raw, "startTime", "endTime")
+	if nulls["startTime"] {
+		*start = &time.Time{}
+	}
+	if nulls["endTime"] {
+		*end = &time.Time{}
+	}
+	return true
+}
+
+// explicitNullFields 找出 JSON 对象里值为 null 的那些键。请求体不是 JSON 对象时返回空。
+func explicitNullFields(raw []byte, keys ...string) map[string]bool {
+	result := make(map[string]bool, len(keys))
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return result
+	}
+	for _, key := range keys {
+		if value, ok := payload[key]; ok && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			result[key] = true
+		}
+	}
+	return result
+}
 
 func bannerFilterFrom(query AdminBannerListQuery) appdomain.BannerFilter {
 	filter := appdomain.BannerFilter{

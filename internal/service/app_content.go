@@ -434,7 +434,6 @@ func (s *AppService) SaveNotice(ctx context.Context, appID int64, mutation appdo
 		now := time.Now().In(s.location)
 		item.PublishedAt = &now
 	}
-	_ = previousStatus
 
 	saved, err := s.pg.UpsertNotice(ctx, appID, item)
 	if err != nil {
@@ -444,10 +443,23 @@ func (s *AppService) SaveNotice(ctx context.Context, appID int64, mutation appdo
 		return nil, apperrors.New(40412, http.StatusNotFound, "公告不存在")
 	}
 	s.invalidateNoticeCache(ctx, appID)
+	// 只有展示端看得见的变化才推送：草稿改来改去不该让所有在线客户端跟着刷新。
+	if saved.Status == appdomain.NoticeStatusPublished || previousStatus == appdomain.NoticeStatusPublished {
+		action := "updated"
+		switch {
+		case saved.Status == appdomain.NoticeStatusPublished && previousStatus != appdomain.NoticeStatusPublished:
+			action = "published"
+		case saved.Status != appdomain.NoticeStatusPublished:
+			action = "withdrawn"
+		}
+		s.publishNoticeChanged(ctx, appID, action, saved)
+	}
 	return saved, nil
 }
 
 func (s *AppService) DeleteNotice(ctx context.Context, appID int64, noticeID int64) error {
+	// 先读一次状态：删掉的是草稿时不必惊动在线客户端。读失败不拦删除，按已发布处理。
+	existing, _ := s.pg.GetNoticeByID(ctx, appID, noticeID)
 	deleted, err := s.pg.DeleteNotice(ctx, appID, noticeID)
 	if err != nil {
 		return err
@@ -456,6 +468,9 @@ func (s *AppService) DeleteNotice(ctx context.Context, appID int64, noticeID int
 		return apperrors.New(40412, http.StatusNotFound, "公告不存在")
 	}
 	s.invalidateNoticeCache(ctx, appID)
+	if existing == nil || existing.Status == appdomain.NoticeStatusPublished {
+		s.publishNoticeChanged(ctx, appID, "deleted", &appdomain.Notice{ID: noticeID})
+	}
 	return nil
 }
 
@@ -472,6 +487,9 @@ func (s *AppService) DeleteNotices(ctx context.Context, appID int64, noticeIDs [
 		return 0, nil, err
 	}
 	s.invalidateNoticeCache(ctx, appID)
+	if deleted > 0 {
+		s.publishNoticeChanged(ctx, appID, "deleted", nil)
+	}
 	return deleted, ids, nil
 }
 
@@ -608,6 +626,28 @@ func (s *AppService) invalidateBannerCache(ctx context.Context, appID int64) {
 	}
 	if err := s.sessions.DeleteBanners(ctx, appID); err != nil {
 		s.log.Warn("delete banner cache failed", zap.Int64("appid", appID), zap.Error(err))
+	}
+}
+
+// publishNoticeChanged 推送 notice.changed，客户端据此重拉 /notices。
+//
+// 事件只携带定位信息，不携带正文：正文以 /notices 为准（含投放窗口过滤），
+// 推一份正文过去等于让客户端维护第二套过滤规则。item 为空表示批量变更。
+func (s *AppService) publishNoticeChanged(ctx context.Context, appID int64, action string, item *appdomain.Notice) {
+	if s.appEvents == nil {
+		return
+	}
+	data := map[string]any{"action": action}
+	if item != nil {
+		data["noticeId"] = item.ID
+		if item.Status != "" {
+			data["status"] = item.Status
+			data["level"] = item.Level
+			data["title"] = item.Title
+		}
+	}
+	if err := s.appEvents.PublishAppEvent(ctx, appID, "notice.changed", data); err != nil {
+		s.log.Warn("publish notice event failed", zap.Int64("appid", appID), zap.Error(err))
 	}
 }
 

@@ -238,6 +238,13 @@ Content-Type: application/json
 | `POST` | `/banners/{bannerId}/click` | 轮播图点击上报 |
 | `GET` | `/version/check` | 版本检查（`versionCode` + `platform`） |
 
+`/notices` 只返回**已发布且处于投放窗口内**的公告（置顶优先，再按发布时间倒序），
+正文是净化过的 HTML，`summary` 是服务端提取的纯文本摘要。结果有 2 分钟缓存，
+管理端保存后立即失效。已发布公告发生变化（发布、修改、撤回、删除）时，
+该应用下所有在线的实时连接会收到一条 `notice.changed` 事件
+（`data.action` 为 `published` / `updated` / `withdrawn` / `deleted`），
+客户端收到后重拉 `/notices` 即可，事件本身不携带正文。
+
 > 曝光由服务端在下发 `/banners` 时自己累加，**点击只有客户端知道**：
 > 用户点开一条 Banner 时要显式调一次上报口。不调的表现是控制台上点击率恒为 0，
 > 而那个数字是运营调整投放的唯一依据。

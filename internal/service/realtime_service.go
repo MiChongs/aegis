@@ -26,6 +26,11 @@ type UserEventPublisher interface {
 	PublishUserEvent(ctx context.Context, appID int64, userID int64, eventType string, data map[string]any) error
 }
 
+// AppEventPublisher 向某个应用下的全部在线连接广播事件（不区分用户）。
+type AppEventPublisher interface {
+	PublishAppEvent(ctx context.Context, appID int64, eventType string, data map[string]any) error
+}
+
 // RealtimeSubprotocol 是服务端唯一会协商并回显的 WebSocket 子协议。
 //
 // 客户端握手时须提供两个子协议：
@@ -161,6 +166,28 @@ func (s *RealtimeService) PublishUserEvent(ctx context.Context, appID int64, use
 	return nil
 }
 
+// PublishAppEvent 应用级广播：信封与用户事件相同，userId 为 0。
+func (s *RealtimeService) PublishAppEvent(ctx context.Context, appID int64, eventType string, data map[string]any) error {
+	if s == nil {
+		return nil
+	}
+	payload, err := json.Marshal(realtimedomain.Event{
+		ID:        uuid.NewString(),
+		Type:      strings.TrimSpace(eventType),
+		AppID:     appID,
+		Timestamp: time.Now().UTC(),
+		Data:      data,
+	})
+	if err != nil {
+		return err
+	}
+	if s.natsConn != nil && s.natsConn.IsConnected() {
+		return s.natsConn.Publish(event.SubjectRealtimeApp(appID), payload)
+	}
+	s.dispatchApp(appID, payload)
+	return nil
+}
+
 func (s *RealtimeService) OnlineStats(ctx context.Context) (*realtimedomain.OnlineStats, error) {
 	if s == nil || s.repository == nil {
 		return nil, apperrors.New(50300, http.StatusServiceUnavailable, "实时服务暂不可用")
@@ -243,6 +270,17 @@ func (s *RealtimeService) subscribe() error {
 		return err
 	}
 	s.sub = sub
+
+	// 订阅应用级广播事件（应用公告变更等），转发给该应用下的所有连接
+	if _, err := s.natsConn.Subscribe(event.SubjectRealtimeAppPrefix+".*", func(msg *nats.Msg) {
+		appID, ok := event.MatchRealtimeAppSubject(msg.Subject)
+		if !ok {
+			return
+		}
+		s.dispatchApp(appID, msg.Data)
+	}); err != nil {
+		return err
+	}
 
 	// 订阅全局广播事件（系统公告等），转发给所有已连接客户端
 	_, err = s.natsConn.Subscribe(event.SubjectSystemAnnouncement, func(msg *nats.Msg) {
@@ -414,6 +452,25 @@ func (s *RealtimeService) dispatchLocal(appID int64, userID int64, payload []byt
 		case client.send <- append([]byte(nil), payload...):
 		default:
 			s.log.Debug("drop realtime message due to backpressure", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.String("connectionId", client.connectionID))
+		}
+	}
+}
+
+// dispatchApp 投递给某个应用下的全部本机连接。
+func (s *RealtimeService) dispatchApp(appID int64, payload []byte) {
+	s.mu.RLock()
+	var targets []*realtimeClient
+	for _, userClients := range s.clients[appID] {
+		for _, client := range userClients {
+			targets = append(targets, client)
+		}
+	}
+	s.mu.RUnlock()
+	for _, client := range targets {
+		select {
+		case client.send <- append([]byte(nil), payload...):
+		default:
+			s.log.Debug("drop realtime app message due to backpressure", zap.Int64("appid", appID), zap.String("connectionId", client.connectionID))
 		}
 	}
 }

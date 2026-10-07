@@ -15,6 +15,8 @@ const (
 	SubjectUserAutoSignSync        = "user.autosign.sync.requested"
 	SubjectFirewallBlocked         = "firewall.blocked"
 	SubjectRealtimeUserPrefix      = "realtime.user"
+	// SubjectRealtimeAppPrefix 应用级广播：该应用下所有在线连接都会收到（如应用公告变更）
+	SubjectRealtimeAppPrefix = "realtime.app"
 
 	// 系统公告事件
 	SubjectSystemAnnouncement = "system.announcement"
@@ -48,4 +50,23 @@ func MatchRealtimeUserSubject(subject string) (int64, int64, bool) {
 		return 0, 0, false
 	}
 	return appID, userID, true
+}
+
+func SubjectRealtimeApp(appID int64) string {
+	return fmt.Sprintf("%s.%d", SubjectRealtimeAppPrefix, appID)
+}
+
+func MatchRealtimeAppSubject(subject string) (int64, bool) {
+	parts := strings.Split(strings.TrimSpace(subject), ".")
+	if len(parts) != 3 {
+		return 0, false
+	}
+	if strings.Join(parts[:2], ".") != SubjectRealtimeAppPrefix {
+		return 0, false
+	}
+	appID, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return appID, true
 }
