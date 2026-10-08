@@ -192,35 +192,6 @@
   }
 }
 
-/* 会话校验屏 · 雷达回波
-   ------------------------------------------------------------------
-   两圈涟漪从徽标向外扩散，第二圈延迟半个周期，视觉上首尾相接成连续脉冲。
-   末段 70%→100% 保持全透明，让每次回波之间留出一段安静的间隔，
-   否则连成一片就成了"闪烁"而不是"扫描"。 */
-@keyframes auth-gate-halo {
-  0% {
-    transform: scale(0.78);
-    opacity: 0.5;
-  }
-  70% {
-    transform: scale(1.55);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1.55);
-    opacity: 0;
-  }
-}
-
-/* 会话校验屏 · 环形扫描
-   一段 conic 扇形整圈旋转，再被 radial mask 削成 1.5px 的细环，
-   于是看到的是一道沿圆环跑动的高光，而不是一整块转动的色扇。 */
-@keyframes auth-gate-sweep {
-  to {
-    transform: rotate(1turn);
-  }
-}
-
 /* shadcn `input-otp` 的假光标 —— 原生 input 被隐藏在槽位之后，
    焦点槽里这根竖线是唯一的"我在这一位"提示，不闪就看不出是活动位。 */
 @keyframes caret-blink {
@@ -769,103 +740,6 @@
     .login-stripes__band,
     .login-stripes__sheen {
       animation: none;
-    }
-  }
-
-  /* ── 会话校验屏（AuthGate）─────────────────────────────────────
-     控制台入口的"握手"画面：网格底纹 → 中心辉光 → 雷达徽标 → 校验清单。
-
-     强调色只有一个入口：`.auth-gate` 上的 `--auth-gate-accent`，
-     由 `data-tone` 切换（默认走 zinc 单色，超时转琥珀，失败转 destructive）。
-     卡片里每个着色元素都继承它，不再各写各的 amber-500 / red-500 ——
-     换一档语义色只改这一行，不会漏掉某个角落。 */
-  .auth-gate {
-    --auth-gate-accent: var(--foreground);
-  }
-
-  .auth-gate[data-tone="warning"] {
-    --auth-gate-accent: #f59e0b;
-  }
-
-  .auth-gate[data-tone="danger"] {
-    --auth-gate-accent: var(--destructive);
-  }
-
-  /* 底纹：44px 网格，用径向 mask 只保留中央一片，边缘自然溶解 */
-  .auth-gate__grid {
-    background-image:
-      linear-gradient(to right, color-mix(in srgb, var(--foreground) 7%, transparent) 1px, transparent 1px),
-      linear-gradient(to bottom, color-mix(in srgb, var(--foreground) 7%, transparent) 1px, transparent 1px);
-    background-size: 44px 44px;
-    -webkit-mask-image: radial-gradient(ellipse 62% 52% at 50% 46%, #000 0%, transparent 78%);
-    mask-image: radial-gradient(ellipse 62% 52% at 50% 46%, #000 0%, transparent 78%);
-  }
-
-  /* 中心辉光：跟随 tone，给卡片背后垫一层纵深 */
-  .auth-gate__glow {
-    background: radial-gradient(
-      ellipse 46% 38% at 50% 44%,
-      color-mix(in srgb, var(--auth-gate-accent) 12%, transparent) 0%,
-      transparent 72%
-    );
-  }
-
-  .auth-gate__halo {
-    border: 1px solid color-mix(in srgb, var(--auth-gate-accent) 32%, transparent);
-    animation: auth-gate-halo 3.4s ease-out infinite;
-  }
-
-  .auth-gate__halo--lag {
-    animation-delay: 1.7s;
-  }
-
-  .auth-gate__sweep {
-    background: conic-gradient(
-      from 0deg,
-      transparent 0deg,
-      color-mix(in srgb, var(--auth-gate-accent) 55%, transparent) 52deg,
-      transparent 96deg
-    );
-    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px));
-    mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px));
-    animation: auth-gate-sweep 2.8s linear infinite;
-  }
-
-  /* 进度：卡片上沿的 2px 流光。不确定进度条本来就说不出"还剩多久"，
-     与其占掉正文一行高度，不如退回边框上，把版面留给校验清单。 */
-  .auth-gate__beam {
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      color-mix(in srgb, var(--auth-gate-accent) 78%, transparent) 50%,
-      transparent 100%
-    );
-  }
-
-  .auth-gate__accent {
-    color: var(--auth-gate-accent);
-  }
-
-  /* 步骤标记：done 实心底、active 只描边、pending 保持静默 */
-  .auth-gate__marker[data-state="done"] {
-    border-color: color-mix(in srgb, var(--auth-gate-accent) 34%, transparent);
-    background: color-mix(in srgb, var(--auth-gate-accent) 12%, transparent);
-    color: var(--auth-gate-accent);
-  }
-
-  .auth-gate__marker[data-state="active"] {
-    border-color: color-mix(in srgb, var(--auth-gate-accent) 45%, transparent);
-    color: var(--auth-gate-accent);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .auth-gate__halo,
-    .auth-gate__sweep {
-      animation: none;
-    }
-
-    .auth-gate__halo {
-      opacity: 0.3;
     }
   }
 }
