@@ -1,6 +1,10 @@
 package auth
 
-import "time"
+import (
+	"time"
+
+	devicedomain "aegis/internal/domain/device"
+)
 
 type Claims struct {
 	UserID         int64  `json:"uid"`
@@ -11,23 +15,25 @@ type Claims struct {
 }
 
 type Session struct {
-	UserID          int64     `json:"user_id"`
-	AppID           int64     `json:"appid"`
-	Account         string    `json:"account"`
-	TokenID         string    `json:"token_id"`
-	RefreshFamilyID string    `json:"refresh_family_id,omitempty"`
-	SessionVersion  int64     `json:"session_version"`
-	DeviceID        string    `json:"device_id,omitempty"` // 设备唯一识别码（UUID/指纹）
-	Device          string    `json:"device,omitempty"`    // 设备可读名称（Chrome on Windows 等）
+	UserID          int64  `json:"user_id"`
+	AppID           int64  `json:"appid"`
+	Account         string `json:"account"`
+	TokenID         string `json:"token_id"`
+	RefreshFamilyID string `json:"refresh_family_id,omitempty"`
+	SessionVersion  int64  `json:"session_version"`
+	DeviceID        string `json:"device_id,omitempty"` // 设备唯一识别码（UUID/指纹）
+	Device          string `json:"device,omitempty"`    // 设备可读名称（Chrome on Windows 等）
 	// DeviceModel / DevicePlatform 客户端上报的原始型号与平台。对外接口的 deviceInfo
 	// 按它们读取时现查设备字典；Device 只是签发那一刻翻译出的名字
 	DeviceModel    string `json:"device_model,omitempty"`
 	DevicePlatform string `json:"device_platform,omitempty"`
-	IP              string    `json:"ip,omitempty"`
-	UserAgent       string    `json:"user_agent,omitempty"`
-	ExpiresAt       time.Time `json:"expires_at"`
-	IssuedAt        time.Time `json:"issued_at"`
-	Provider        string    `json:"provider,omitempty"`
+	// DeviceExtra 客户端上报的厂商、品牌、代号、系统与 App 版本（旧会话没有）
+	DeviceExtra *devicedomain.Extra `json:"device_extra,omitempty"`
+	IP          string              `json:"ip,omitempty"`
+	UserAgent   string              `json:"user_agent,omitempty"`
+	ExpiresAt   time.Time           `json:"expires_at"`
+	IssuedAt    time.Time           `json:"issued_at"`
+	Provider    string              `json:"provider,omitempty"`
 }
 
 type IndexedSession struct {
@@ -52,24 +58,25 @@ type ProviderProfile struct {
 }
 
 type RefreshSession struct {
-	UserID          int64      `json:"user_id"`
-	AppID           int64      `json:"appid"`
-	Account         string     `json:"account"`
-	TokenID         string     `json:"token_id"`
-	FamilyID        string     `json:"family_id"`
-	SessionVersion  int64      `json:"session_version"`
-	DeviceID        string     `json:"device_id,omitempty"`
-	Device          string     `json:"device,omitempty"`
-	DeviceModel     string     `json:"device_model,omitempty"`
-	DevicePlatform  string     `json:"device_platform,omitempty"`
-	IP              string     `json:"ip,omitempty"`
-	UserAgent       string     `json:"user_agent,omitempty"`
-	Provider        string     `json:"provider,omitempty"`
-	ExpiresAt       time.Time  `json:"expires_at"`
-	IssuedAt        time.Time  `json:"issued_at"`
-	UsedAt          *time.Time `json:"used_at,omitempty"`
-	RotatedAt       *time.Time `json:"rotated_at,omitempty"`
-	ReplacedByToken string     `json:"replaced_by_token,omitempty"`
+	UserID          int64               `json:"user_id"`
+	AppID           int64               `json:"appid"`
+	Account         string              `json:"account"`
+	TokenID         string              `json:"token_id"`
+	FamilyID        string              `json:"family_id"`
+	SessionVersion  int64               `json:"session_version"`
+	DeviceID        string              `json:"device_id,omitempty"`
+	Device          string              `json:"device,omitempty"`
+	DeviceModel     string              `json:"device_model,omitempty"`
+	DevicePlatform  string              `json:"device_platform,omitempty"`
+	DeviceExtra     *devicedomain.Extra `json:"device_extra,omitempty"`
+	IP              string              `json:"ip,omitempty"`
+	UserAgent       string              `json:"user_agent,omitempty"`
+	Provider        string              `json:"provider,omitempty"`
+	ExpiresAt       time.Time           `json:"expires_at"`
+	IssuedAt        time.Time           `json:"issued_at"`
+	UsedAt          *time.Time          `json:"used_at,omitempty"`
+	RotatedAt       *time.Time          `json:"rotated_at,omitempty"`
+	ReplacedByToken string              `json:"replaced_by_token,omitempty"`
 }
 
 // FirstDevice 用户首次登录/注册使用的设备记录

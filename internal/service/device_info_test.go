@@ -38,6 +38,14 @@ func TestDescribeFallbacksWithoutDictionary(t *testing.T) {
 		{"只有 UA", devicedomain.DescribeInput{UserAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/130"},
 			devicedomain.Info{Name: "Chrome on Windows", Platform: "windows", Source: "user_agent"}},
 		{"什么都没有", devicedomain.DescribeInput{}, devicedomain.Info{Source: "unknown"}},
+		{"没收录的型号带上厂商", devicedomain.DescribeInput{Model: "2312DRA50C", Platform: "android",
+			Extra: devicedomain.Extra{Manufacturer: "Xiaomi", Brand: "Redmi", OS: "Android", OSVersion: "15", AppVersion: "2.3.0"}},
+			devicedomain.Info{Name: "Xiaomi 2312DRA50C", Identifier: "2312DRA50C", Platform: "android", Manufacturer: "Xiaomi",
+				Brand: "Redmi", OS: "Android", OSVersion: "15", AppVersion: "2.3.0", Source: "client"}},
+		{"型号前补厂商", devicedomain.DescribeInput{Model: "Pixel 9", Extra: devicedomain.Extra{Manufacturer: "Google"}},
+			devicedomain.Info{Name: "Google Pixel 9", Identifier: "Pixel 9", Manufacturer: "Google", Source: "client"}},
+		{"型号已含厂商不重复", devicedomain.DescribeInput{Model: "Xiaomi 13", Extra: devicedomain.Extra{Manufacturer: "xiaomi"}},
+			devicedomain.Info{Name: "Xiaomi 13", Identifier: "Xiaomi 13", Manufacturer: "xiaomi", Source: "client"}},
 	}
 	for _, tc := range cases {
 		if got := devices.Describe(ctx, tc.in); got != tc.want {
@@ -128,7 +136,8 @@ func TestDeviceInfoIntegration(t *testing.T) {
 	}
 
 	// 登录入口会把原始型号与平台挂到上下文上（见 transport/http enrichDeviceFromDict）
-	loginCtx := devicedomain.WithClient(ctx, devicedomain.Client{Model: "AEGIS-T1", Platform: "android"})
+	extra := devicedomain.Extra{Manufacturer: "samsung", Brand: "samsung", Codename: "t1s", OS: "Android", OSVersion: "15", AppVersion: "2.3.0"}
+	loginCtx := devicedomain.WithClient(ctx, devicedomain.Client{Model: "AEGIS-T1", Platform: "android", Extra: extra})
 	result, err := auth.PasswordLogin(loginCtx, app.ID, "dora", "Passw0rd!", "dev-1", entry.DisplayName(), "127.0.0.1", "okhttp/4.12")
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +154,8 @@ func TestDeviceInfoIntegration(t *testing.T) {
 		t.Helper()
 		if info == nil || !info.Matched || info.Name != wantName || info.Identifier != "AEGIS-T1" ||
 			info.Manufacturer != "Samsung" || info.ManufacturerIconURL == "" || info.DeviceImageURL == "" ||
-			info.DictionaryID != entry.ID || info.Source != devicedomain.InfoSourceDictionary || info.Platform != "android" {
+			info.DictionaryID != entry.ID || info.Source != devicedomain.InfoSourceDictionary || info.Platform != "android" ||
+			info.Brand != "samsung" || info.Codename != "t1s" || info.OS != "Android" || info.OSVersion != "15" || info.AppVersion != "2.3.0" {
 			t.Fatalf("%s 的 deviceInfo 不对：%+v", where, info)
 		}
 	}
@@ -203,7 +213,7 @@ func TestDeviceInfoIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.DeviceModel != "AEGIS-T1" || next.DevicePlatform != "android" {
+	if next.DeviceModel != "AEGIS-T1" || next.DevicePlatform != "android" || next.DeviceExtra.Value() != extra {
 		t.Fatalf("刷新后的会话应沿用原始型号：%+v", next)
 	}
 
@@ -217,5 +227,14 @@ func TestDeviceInfoIntegration(t *testing.T) {
 	}
 	if hit := devices.Describe(ctx, devicedomain.DescribeInput{Model: "AEGIS-T2", Platform: "android"}); !hit.Matched || hit.Name != "Xiaomi Redmi Test" {
 		t.Fatalf("补录后应立即命中：%+v", hit)
+	}
+
+	// 型号对不上、设备代号对得上：代号作为第二个查询键
+	if _, err := devices.Create(ctx, devicedomain.CreateInput{Platform: "android", Identifier: "houji", MarketingName: "Xiaomi 14", Manufacturer: "Xiaomi"}); err != nil {
+		t.Fatal(err)
+	}
+	byCode := devices.Describe(ctx, devicedomain.DescribeInput{Model: "23127PN0CC", Platform: "android", Extra: devicedomain.Extra{Codename: "houji"}})
+	if !byCode.Matched || byCode.Name != "Xiaomi 14" || byCode.Codename != "houji" {
+		t.Fatalf("应按设备代号命中：%+v", byCode)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
@@ -132,6 +133,7 @@ func (s *AuthService) CreateQRLogin(ctx context.Context, input QRLoginCreateInpu
 		Device:         strings.TrimSpace(input.Device),
 		DeviceModel:    client.Model,
 		DevicePlatform: client.Platform,
+		DeviceExtra:    encodeDeviceExtra(client.Extra),
 		IP:             input.IP,
 		UserAgent:      input.UserAgent,
 		Location:       input.Location,
@@ -224,7 +226,7 @@ func (s *AuthService) ScanQRLogin(ctx context.Context, session *authdomain.Sessi
 		Requester: QRLoginRequester{
 			DeviceInfo: s.devices.DescribeRef(ctx, devicedomain.DescribeInput{
 				Model: ticket.DeviceModel, Platform: ticket.DevicePlatform, DeviceID: ticket.DeviceID,
-				Name: ticket.Device, UserAgent: ticket.UserAgent,
+				Name: ticket.Device, UserAgent: ticket.UserAgent, Extra: decodeDeviceExtra(ticket.DeviceExtra),
 			}),
 			Device:    ticket.Device,
 			IP:        ticket.IP,
@@ -347,4 +349,25 @@ func randomURLToken(size int) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// encodeDeviceExtra / decodeDeviceExtra 票据存在 Redis 哈希里，补充信息以一个 JSON 字段存放。
+func encodeDeviceExtra(extra devicedomain.Extra) string {
+	ref := extra.Ref()
+	if ref == nil {
+		return ""
+	}
+	raw, err := json.Marshal(ref)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func decodeDeviceExtra(raw string) devicedomain.Extra {
+	var extra devicedomain.Extra
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &extra)
+	}
+	return extra
 }

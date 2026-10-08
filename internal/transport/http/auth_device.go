@@ -2,7 +2,9 @@ package httptransport
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	captchadomain "aegis/internal/domain/captcha"
 	devicedomain "aegis/internal/domain/device"
@@ -29,7 +31,7 @@ import (
 func resolveClientDevice(c *gin.Context, bodyDeviceID, bodyDevice, legacyMarkCode string) (deviceID, device string) {
 	deviceID = strings.TrimSpace(bodyDeviceID)
 	if deviceID == "" {
-		deviceID = strings.TrimSpace(c.GetHeader("X-Device-Id"))
+		deviceID = deviceHeader(c, "X-Device-Id")
 	}
 	if deviceID == "" {
 		deviceID = strings.TrimSpace(legacyMarkCode)
@@ -37,7 +39,7 @@ func resolveClientDevice(c *gin.Context, bodyDeviceID, bodyDevice, legacyMarkCod
 
 	device = strings.TrimSpace(bodyDevice)
 	if device == "" {
-		device = strings.TrimSpace(c.GetHeader("X-Device-Name"))
+		device = deviceHeader(c, "X-Device-Name")
 	}
 	return
 }
@@ -115,17 +117,52 @@ func (h *Handler) enrichDeviceFromDict(c *gin.Context, deviceID, clientDevice st
 	// 原始型号与平台挂到请求上下文，会话签发时随会话保存：
 	// 用户接口里的 deviceInfo 是读取时按字典现查的，不能只留一个翻译过的名字
 	platform := resolveDevicePlatform(c)
+	extra := deviceExtraFromHeaders(c)
 	c.Request = c.Request.WithContext(devicedomain.WithClient(c.Request.Context(), devicedomain.Client{
-		Model: clientDevice, Platform: platform,
+		Model: clientDevice, Platform: platform, Extra: extra,
 	}))
 	if h == nil || h.deviceMarketing == nil {
 		return clientDevice
 	}
-	if item := h.deviceMarketing.Match(c.Request.Context(), platform, clientDevice, deviceID); item != nil {
+	if item := h.deviceMarketing.Match(c.Request.Context(), platform, clientDevice, extra.Codename, deviceID); item != nil {
 		return item.DisplayName()
 	}
 	// 未命中：**优先使用前端传入的原值**，不做任何覆盖
 	return clientDevice
+}
+
+// 设备补充信息的请求头。都可选，只用于展示与区分设备，见 devicedomain.Extra。
+const (
+	headerDeviceManufacturer = "X-Device-Manufacturer"
+	headerDeviceBrand        = "X-Device-Brand"
+	headerDeviceCodename     = "X-Device-Codename"
+	headerDeviceOS           = "X-Device-OS"
+	headerDeviceOSVersion    = "X-Device-OS-Version"
+	headerAppVersion         = "X-App-Version"
+)
+
+// deviceExtraFromHeaders 读取设备补充信息。
+func deviceExtraFromHeaders(c *gin.Context) devicedomain.Extra {
+	return devicedomain.Extra{
+		Manufacturer: deviceHeader(c, headerDeviceManufacturer),
+		Brand:        deviceHeader(c, headerDeviceBrand),
+		Codename:     deviceHeader(c, headerDeviceCodename),
+		OS:           deviceHeader(c, headerDeviceOS),
+		OSVersion:    deviceHeader(c, headerDeviceOSVersion),
+		AppVersion:   deviceHeader(c, headerAppVersion),
+	}.Normalize()
+}
+
+// deviceHeader 读取一个设备请求头。HTTP 头只能放 ASCII，带中文的型号与品牌（部分国产机型就是）
+// 由客户端按 UTF-8 百分号编码后发送（官方 SDK 自动处理），这里解码回来；解不开就用原值。
+func deviceHeader(c *gin.Context, name string) string {
+	value := strings.TrimSpace(c.GetHeader(name))
+	if strings.Contains(value, "%") {
+		if decoded, err := url.PathUnescape(value); err == nil && utf8.ValidString(decoded) {
+			value = strings.TrimSpace(decoded)
+		}
+	}
+	return value
 }
 
 // resolveDevicePlatform 客户端显式声明（X-Device-Platform）优先，其次按 UA 推断；都没有时为空，

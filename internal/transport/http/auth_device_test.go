@@ -48,6 +48,12 @@ func TestEnrichDeviceKeepsRawModelOnContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := httptest.NewRequest(http.MethodPost, "/x", nil)
 	r.Header.Set("X-Device-Platform", "android")
+	r.Header.Set("X-Device-Manufacturer", "samsung")
+	r.Header.Set("X-Device-Brand", "%E4%B8%89%E6%98%9F") // 「三星」，按 UTF-8 百分号编码
+	r.Header.Set("X-Device-Codename", "p3s")
+	r.Header.Set("X-Device-OS", "Android")
+	r.Header.Set("X-Device-OS-Version", "15")
+	r.Header.Set("X-App-Version", " 2.3.0 ")
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = r
 
@@ -58,5 +64,9 @@ func TestEnrichDeviceKeepsRawModelOnContext(t *testing.T) {
 	client := devicedomain.ClientFrom(ctx.Request.Context())
 	if client.Model != "SM-G998B" || client.Platform != "android" {
 		t.Fatalf("原始设备信息未挂到上下文：%+v", client)
+	}
+	want := devicedomain.Extra{Manufacturer: "samsung", Brand: "三星", Codename: "p3s", OS: "Android", OSVersion: "15", AppVersion: "2.3.0"}
+	if client.Extra != want {
+		t.Fatalf("补充信息不对：%+v", client.Extra)
 	}
 }

@@ -24,14 +24,16 @@ type QRLoginTicket struct {
 	// DeviceModel / DevicePlatform 发起端上报的原始型号与平台，扫码页按设备字典展示
 	DeviceModel    string
 	DevicePlatform string
-	IP             string
-	UserAgent      string
-	Location       string
-	UserID         int64
-	ScannerName    string
-	ScannerAvatar  string
-	CreatedAt      time.Time
-	ExpiresAt      time.Time
+	// DeviceExtra 发起端上报的补充信息（JSON），见 devicedomain.Extra
+	DeviceExtra   string
+	IP            string
+	UserAgent     string
+	Location      string
+	UserID        int64
+	ScannerName   string
+	ScannerAvatar string
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
 }
 
 // 票据状态。consumed 是 confirmed 被网页领走会话之后的终态，对外按 expired 呈现。
@@ -127,6 +129,7 @@ func (r *SessionRepository) CreateQRLoginTicket(ctx context.Context, ticket QRLo
 		"device":         ticket.Device,
 		"deviceModel":    ticket.DeviceModel,
 		"devicePlatform": ticket.DevicePlatform,
+		"deviceExtra":    ticket.DeviceExtra,
 		"ip":             ticket.IP,
 		"userAgent":      ticket.UserAgent,
 		"location":       ticket.Location,
@@ -160,6 +163,7 @@ func (r *SessionRepository) GetQRLoginTicket(ctx context.Context, appID int64, t
 		Device:         values["device"],
 		DeviceModel:    values["deviceModel"],
 		DevicePlatform: values["devicePlatform"],
+		DeviceExtra:    values["deviceExtra"],
 		IP:             values["ip"],
 		UserAgent:      values["userAgent"],
 		Location:       values["location"],

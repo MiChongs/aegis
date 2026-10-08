@@ -162,6 +162,7 @@ func (s *UserService) describeSession(ctx context.Context, session authdomain.Se
 		DeviceID:  session.DeviceID,
 		Name:      session.Device,
 		UserAgent: session.UserAgent,
+		Extra:     session.DeviceExtra.Value(),
 	})
 }
 

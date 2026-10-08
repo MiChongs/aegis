@@ -800,8 +800,10 @@ func (s *AuthService) Refresh(ctx context.Context, token, deviceID, ip, userAgen
 		return nil, err
 	}
 	// 刷新请求自己没带设备信息时沿用旧会话的原始型号与平台
-	if current := devicedomain.ClientFrom(ctx); current.Model == "" && current.Platform == "" {
-		ctx = devicedomain.WithClient(ctx, devicedomain.Client{Model: refreshSession.DeviceModel, Platform: refreshSession.DevicePlatform})
+	if current := devicedomain.ClientFrom(ctx); current.Model == "" && current.Platform == "" && current.Extra.IsZero() {
+		ctx = devicedomain.WithClient(ctx, devicedomain.Client{
+			Model: refreshSession.DeviceModel, Platform: refreshSession.DevicePlatform, Extra: refreshSession.DeviceExtra.Value(),
+		})
 	}
 	bundle, err := s.issueSessionBundle(ctx, app, user, refreshSession.Provider, "refresh", deviceID, refreshSession.Device, ip, userAgent, refreshSession.FamilyID)
 	if err != nil {
@@ -1281,6 +1283,7 @@ func (s *AuthService) issueSessionBundle(ctx context.Context, app *appdomain.App
 		Device:          device,
 		DeviceModel:     client.Model,
 		DevicePlatform:  client.Platform,
+		DeviceExtra:     client.Extra.Ref(),
 		IP:              ip,
 		UserAgent:       userAgent,
 		ExpiresAt:       accessExpiresAt,
@@ -1298,6 +1301,7 @@ func (s *AuthService) issueSessionBundle(ctx context.Context, app *appdomain.App
 		Device:         device,
 		DeviceModel:    client.Model,
 		DevicePlatform: client.Platform,
+		DeviceExtra:    client.Extra.Ref(),
 		IP:             ip,
 		UserAgent:      userAgent,
 		Provider:       provider,
@@ -1333,6 +1337,7 @@ func (s *AuthService) issueSessionBundle(ctx context.Context, app *appdomain.App
 		"device":          device,
 		"device_model":    client.Model,
 		"device_platform": client.Platform,
+		"device_extra":    client.Extra.Ref(),
 	})
 	_ = s.publisher.PublishJSON(ctx, event.SubjectSessionAuditRequested, map[string]any{
 		"user_id":    user.ID,

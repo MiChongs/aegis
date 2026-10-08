@@ -21,6 +21,13 @@ type Info struct {
 	Manufacturer        string `json:"manufacturer,omitempty"`
 	ManufacturerIconURL string `json:"manufacturerIconUrl,omitempty"`
 	DeviceImageURL      string `json:"deviceImageUrl,omitempty"`
+	// Brand / Codename / OS / OSVersion / AppVersion 客户端上报的补充信息，原样给出。
+	// Manufacturer 在命中字典时取字典，未命中时取客户端上报
+	Brand      string `json:"brand,omitempty"`
+	Codename   string `json:"codename,omitempty"`
+	OS         string `json:"os,omitempty"`
+	OSVersion  string `json:"osVersion,omitempty"`
+	AppVersion string `json:"appVersion,omitempty"`
 	// DictionaryID 命中的字典条目，控制台据此直达编辑
 	DictionaryID int64 `json:"dictionaryId,omitempty"`
 	// Matched 是否命中设备字典
@@ -47,21 +54,88 @@ type DescribeInput struct {
 	// Name 已保存的设备名（旧会话里是登录时翻译过的名称，也可能就是原始型号）
 	Name      string
 	UserAgent string
+	// Extra 客户端上报的补充信息（厂商、品牌、代号、系统、App 版本），旧会话没有
+	Extra Extra
 }
 
 // Client 登录请求里客户端上报的原始设备信息，经请求上下文从传输层带到会话签发处。
 type Client struct {
 	Model    string
 	Platform string
+	Extra    Extra
+}
+
+// Extra 型号与平台之外的设备信息。都来自客户端自报，只用于展示与区分设备，不参与任何安全判定。
+//
+// 请求头（均可选）：X-Device-Manufacturer / X-Device-Brand / X-Device-Codename /
+// X-Device-OS / X-Device-OS-Version / X-App-Version。
+type Extra struct {
+	// Manufacturer 厂商（Android Build.MANUFACTURER，如 Xiaomi）
+	Manufacturer string `json:"manufacturer,omitempty"`
+	// Brand 品牌（Android Build.BRAND，如 Redmi），同一厂商下的子品牌靠它区分
+	Brand string `json:"brand,omitempty"`
+	// Codename 设备代号（Android Build.DEVICE，如 houji），也作为字典的第二个查询键
+	Codename string `json:"codename,omitempty"`
+	// OS 系统名（Android / iOS / HarmonyOS / Windows …）
+	OS string `json:"os,omitempty"`
+	// OSVersion 系统版本（Android Build.VERSION.RELEASE，如 15）
+	OSVersion string `json:"osVersion,omitempty"`
+	// AppVersion 客户端应用版本
+	AppVersion string `json:"appVersion,omitempty"`
+}
+
+// extraFieldLimit 单个字段的长度上限。都是客户端自报的展示信息，截断比拒绝请求合适
+const extraFieldLimit = 64
+
+func clip(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > extraFieldLimit {
+		// 按字节截断后回退到合法的 UTF-8 边界
+		value = strings.ToValidUTF8(value[:extraFieldLimit], "")
+	}
+	return value
+}
+
+// Normalize 去空白、截断超长值。
+func (e Extra) Normalize() Extra {
+	return Extra{
+		Manufacturer: clip(e.Manufacturer),
+		Brand:        clip(e.Brand),
+		Codename:     clip(e.Codename),
+		OS:           clip(e.OS),
+		OSVersion:    clip(e.OSVersion),
+		AppVersion:   clip(e.AppVersion),
+	}
+}
+
+// IsZero 一项都没有。
+func (e Extra) IsZero() bool { return e == Extra{} }
+
+// Ref 有内容时返回指针，便于挂到 omitempty 的可选字段上。
+func (e Extra) Ref() *Extra {
+	e = e.Normalize()
+	if e.IsZero() {
+		return nil
+	}
+	return &e
+}
+
+// Value 从可选指针取值，nil 为零值。
+func (e *Extra) Value() Extra {
+	if e == nil {
+		return Extra{}
+	}
+	return *e
 }
 
 type clientKey struct{}
 
 // WithClient 把原始设备信息挂到上下文上。空值不覆盖已有的。
 func WithClient(ctx context.Context, client Client) context.Context {
-	client.Model = strings.TrimSpace(client.Model)
+	client.Model = clip(client.Model)
 	client.Platform = NormalizePlatform(client.Platform)
-	if client.Model == "" && client.Platform == "" {
+	client.Extra = client.Extra.Normalize()
+	if client.Model == "" && client.Platform == "" && client.Extra.IsZero() {
 		return ctx
 	}
 	return context.WithValue(ctx, clientKey{}, client)

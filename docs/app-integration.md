@@ -454,6 +454,17 @@ POST /api/v1/apps/{appKey}/auth/login
 | 设备唯一码 | `deviceId` | `X-Device-Id` | 开启「登录设备检查」时必填 |
 | 原始型号 | `device` | `X-Device-Name` | **报原始型号而不是营销名**：Android 用 `Build.MODEL`（如 `SM-G998B`），iOS 用机器标识（如 `iPhone14,3`） |
 | 平台 | — | `X-Device-Platform` | `android` / `ios` / `harmonyos` / `windows` / `macos` / `linux` / `web`；不报时按 UA 推断 |
+| 厂商 | — | `X-Device-Manufacturer` | Android `Build.MANUFACTURER`；字典未命中时展示名为「厂商 型号」 |
+| 品牌 | — | `X-Device-Brand` | Android `Build.BRAND`，区分同一厂商的子品牌（如 Xiaomi 与 Redmi） |
+| 设备代号 | — | `X-Device-Codename` | Android `Build.DEVICE`（如 `houji`），型号查不到时作为字典的第二个查询键 |
+| 系统 | — | `X-Device-OS` | 如 `Android`、`iOS`、`HarmonyOS`、`Windows` |
+| 系统版本 | — | `X-Device-OS-Version` | Android `Build.VERSION.RELEASE`，iOS `UIDevice.systemVersion` |
+| 应用版本 | — | `X-App-Version` | 客户端自己的版本号 |
+
+后六项都可选、只用于展示，单项超过 64 字节截断，不参与任何安全判定。HTTP 头只能放 ASCII：
+带中文等字符的值（部分国产机型的型号与品牌）按 UTF-8 百分号编码后发送，服务端会解码。它们默认在 CORS 允许的请求头里，
+浏览器客户端跨域也能发送。官方 Kotlin SDK 用 `AegisClient.builder(…).device(AegisDevice(…))` 统一附加
+到每个请求上，Android 可以直接用 `AegisDevice.android(deviceId, appVersion)`。
 
 ```json
 "deviceInfo": {
@@ -464,12 +475,18 @@ POST /api/v1/apps/{appKey}/auth/login
   "manufacturer": "Samsung",
   "manufacturerIconUrl": "https://…",
   "deviceImageUrl": "https://…",
+  "brand": "samsung",
+  "codename": "p3s",
+  "os": "Android",
+  "osVersion": "15",
+  "appVersion": "2.3.0",
   "dictionaryId": 1024,
   "matched": true,
   "source": "dictionary"
 }
 ```
 
+- `manufacturer` 命中字典时取字典，未命中时取客户端上报；其余补充字段原样给出客户端上报的值。
 - `source` 说明 `name` 的来由：`dictionary` 命中字典；`client` 未命中，用客户端上报的原值；
   `user_agent` 什么都没报，按 UA 推断（如 `Chrome on Windows`）；`unknown` 无从判断。
 - 会话与登录记录只保存客户端上报的**原始型号与平台**，`deviceInfo` 在读取时按字典现查：

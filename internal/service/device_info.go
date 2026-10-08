@@ -134,21 +134,36 @@ func (s *DeviceMarketingService) Match(ctx context.Context, platform string, key
 
 // Describe 把一台设备的原始信息映射成对外的 Info。s 为 nil 时只做不查字典的兜底，
 // 调用方因此不必判空。
+//
+// 字典依次以原始型号、设备代号、已保存的名称、设备 ID 为键查询。客户端上报的补充信息
+// （品牌、系统、App 版本等）原样给出；厂商在命中字典时以字典为准。
 func (s *DeviceMarketingService) Describe(ctx context.Context, in devicedomain.DescribeInput) devicedomain.Info {
 	model := strings.TrimSpace(in.Model)
 	name := strings.TrimSpace(in.Name)
+	extra := in.Extra.Normalize()
 	platform := devicedomain.NormalizePlatform(in.Platform)
 	if platform == "" {
 		platform = devicedomain.PlatformFromUserAgent(in.UserAgent)
 	}
-	info := devicedomain.Info{Identifier: model, Platform: platform}
+	info := devicedomain.Info{
+		Identifier:   model,
+		Platform:     platform,
+		Manufacturer: extra.Manufacturer,
+		Brand:        extra.Brand,
+		Codename:     extra.Codename,
+		OS:           extra.OS,
+		OSVersion:    extra.OSVersion,
+		AppVersion:   extra.AppVersion,
+	}
 
-	if item := s.Match(ctx, platform, model, name, in.DeviceID); item != nil {
+	if item := s.Match(ctx, platform, model, extra.Codename, name, in.DeviceID); item != nil {
 		info.Name = item.DisplayName()
 		info.Identifier = item.Identifier
 		info.Platform = item.Platform
 		info.MarketingName = item.MarketingName
-		info.Manufacturer = item.Manufacturer
+		if strings.TrimSpace(item.Manufacturer) != "" {
+			info.Manufacturer = item.Manufacturer
+		}
 		info.ManufacturerIconURL = item.ManufacturerIconURL
 		info.DeviceImageURL = item.DeviceImageURL
 		info.DictionaryID = item.ID
@@ -157,11 +172,12 @@ func (s *DeviceMarketingService) Describe(ctx context.Context, in devicedomain.D
 		return info
 	}
 	switch {
+	case model != "" && (name == "" || name == model):
+		// 没收录的型号：带上厂商，「Xiaomi 2312DRA50C」比一串型号码好认
+		info.Name = withManufacturer(extra.Manufacturer, model)
+		info.Source = devicedomain.InfoSourceClient
 	case name != "":
 		info.Name = name
-		info.Source = devicedomain.InfoSourceClient
-	case model != "":
-		info.Name = model
 		info.Source = devicedomain.InfoSourceClient
 	default:
 		if guess := devicedomain.GuessFromUserAgent(in.UserAgent); guess != "" {
@@ -172,6 +188,15 @@ func (s *DeviceMarketingService) Describe(ctx context.Context, in devicedomain.D
 		}
 	}
 	return info
+}
+
+// withManufacturer 「厂商 型号」，型号里已含厂商时不重复。
+func withManufacturer(manufacturer, model string) string {
+	manufacturer = strings.TrimSpace(manufacturer)
+	if manufacturer == "" || strings.HasPrefix(strings.ToLower(model), strings.ToLower(manufacturer)) {
+		return model
+	}
+	return manufacturer + " " + model
 }
 
 // DescribeRef 同 Describe，返回指针，便于直接挂到可选字段上。
@@ -189,11 +214,23 @@ func (s *DeviceMarketingService) describeFromMetadata(ctx context.Context, metad
 		}
 		return ""
 	}
+	var extra devicedomain.Extra
+	if raw, ok := metadata["device_extra"].(map[string]any); ok {
+		field := func(key string) string {
+			v, _ := raw[key].(string)
+			return v
+		}
+		extra = devicedomain.Extra{
+			Manufacturer: field("manufacturer"), Brand: field("brand"), Codename: field("codename"),
+			OS: field("os"), OSVersion: field("osVersion"), AppVersion: field("appVersion"),
+		}
+	}
 	return s.DescribeRef(ctx, devicedomain.DescribeInput{
 		Model:     text("device_model"),
 		Platform:  text("device_platform"),
 		DeviceID:  firstNonEmpty(deviceID, text("device_id")),
 		Name:      text("device"),
 		UserAgent: firstNonEmpty(userAgent, text("user_agent")),
+		Extra:     extra,
 	})
 }
