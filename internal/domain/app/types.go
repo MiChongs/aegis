@@ -1,6 +1,10 @@
 package app
 
-import "time"
+import (
+	"time"
+
+	devicedomain "aegis/internal/domain/device"
+)
 
 type App struct {
 	ID                     int64          `json:"id"`
@@ -190,6 +194,8 @@ type LoginAuditItem struct {
 	Status    string         `json:"status"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedAt time.Time      `json:"createdAt"`
+	// DeviceInfo 登录所用设备，查询时按设备字典现查（不落库）
+	DeviceInfo *devicedomain.Info `json:"deviceInfo,omitempty"`
 }
 
 type LoginAuditListResult struct {
@@ -359,20 +365,20 @@ type BannerFilter struct {
 // ContentOverview 内容中心总览。一次取齐 Banner 与公告两侧的计数，
 // 分开拉会出现「Banner 已刷新、公告还是上一次」的自相矛盾画面。
 type ContentOverview struct {
-	BannerTotal      int64 `json:"bannerTotal"`
-	BannerLive       int64 `json:"bannerLive"`      // 启用且在投放窗口内
-	BannerScheduled  int64 `json:"bannerScheduled"` // 启用但还没开始
-	BannerExpired    int64 `json:"bannerExpired"`   // 启用但已过期
-	BannerDisabled   int64 `json:"bannerDisabled"`
-	BannerViews      int64 `json:"bannerViews"`
-	BannerClicks     int64 `json:"bannerClicks"`
-	NoticeTotal      int64 `json:"noticeTotal"`
-	NoticePublished  int64 `json:"noticePublished"`
-	NoticeDraft      int64 `json:"noticeDraft"`
-	NoticeArchived   int64 `json:"noticeArchived"`
-	NoticePinned     int64 `json:"noticePinned"`
-	NoticeViews      int64 `json:"noticeViews"`
-	LastPublishedAt  *time.Time `json:"lastPublishedAt,omitempty"`
+	BannerTotal     int64      `json:"bannerTotal"`
+	BannerLive      int64      `json:"bannerLive"`      // 启用且在投放窗口内
+	BannerScheduled int64      `json:"bannerScheduled"` // 启用但还没开始
+	BannerExpired   int64      `json:"bannerExpired"`   // 启用但已过期
+	BannerDisabled  int64      `json:"bannerDisabled"`
+	BannerViews     int64      `json:"bannerViews"`
+	BannerClicks    int64      `json:"bannerClicks"`
+	NoticeTotal     int64      `json:"noticeTotal"`
+	NoticePublished int64      `json:"noticePublished"`
+	NoticeDraft     int64      `json:"noticeDraft"`
+	NoticeArchived  int64      `json:"noticeArchived"`
+	NoticePinned    int64      `json:"noticePinned"`
+	NoticeViews     int64      `json:"noticeViews"`
+	LastPublishedAt *time.Time `json:"lastPublishedAt,omitempty"`
 }
 
 // 展示位：客户端据此决定这条 Banner 画在哪儿。
@@ -825,10 +831,10 @@ type AppVersionChannel struct {
 	Rules          []ChannelRule  `json:"rules,omitempty"`
 	TargetAudience map[string]any `json:"targetAudience,omitempty"`
 	// SelfJoin 允许登录用户在客户端自助加入（如 Beta 体验计划）
-	SelfJoin  bool  `json:"self_join"`
-	UserCount int64 `json:"userCount,omitempty"`
-	CreatedAt      time.Time      `json:"createdAt"`
-	UpdatedAt      time.Time      `json:"updatedAt"`
+	SelfJoin  bool      `json:"self_join"`
+	UserCount int64     `json:"userCount,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // ChannelRule 灰度分发条件规则

@@ -15,20 +15,23 @@ import (
 // 发起端（网页）的信息在创建时写入；扫码端（已登录的移动端用户）在 scan 时写入。
 // pollHash 是 pollToken 的 SHA-256，明文只在创建响应里出现一次。
 type QRLoginTicket struct {
-	TicketID      string
-	AppID         int64
-	Status        string
-	PollHash      string
-	DeviceID      string
-	Device        string
-	IP            string
-	UserAgent     string
-	Location      string
-	UserID        int64
-	ScannerName   string
-	ScannerAvatar string
-	CreatedAt     time.Time
-	ExpiresAt     time.Time
+	TicketID string
+	AppID    int64
+	Status   string
+	PollHash string
+	DeviceID string
+	Device   string
+	// DeviceModel / DevicePlatform 发起端上报的原始型号与平台，扫码页按设备字典展示
+	DeviceModel    string
+	DevicePlatform string
+	IP             string
+	UserAgent      string
+	Location       string
+	UserID         int64
+	ScannerName    string
+	ScannerAvatar  string
+	CreatedAt      time.Time
+	ExpiresAt      time.Time
 }
 
 // 票据状态。consumed 是 confirmed 被网页领走会话之后的终态，对外按 expired 呈现。
@@ -116,17 +119,19 @@ func (r *SessionRepository) CreateQRLoginTicket(ctx context.Context, ticket QRLo
 	key := r.qrLoginKey(ticket.AppID, ticket.TicketID)
 	pipe := r.client.TxPipeline()
 	pipe.HSet(ctx, key, map[string]any{
-		"ticketId":  ticket.TicketID,
-		"appId":     strconv.FormatInt(ticket.AppID, 10),
-		"status":    ticket.Status,
-		"pollHash":  ticket.PollHash,
-		"deviceId":  ticket.DeviceID,
-		"device":    ticket.Device,
-		"ip":        ticket.IP,
-		"userAgent": ticket.UserAgent,
-		"location":  ticket.Location,
-		"createdAt": strconv.FormatInt(ticket.CreatedAt.Unix(), 10),
-		"expiresAt": strconv.FormatInt(ticket.ExpiresAt.Unix(), 10),
+		"ticketId":       ticket.TicketID,
+		"appId":          strconv.FormatInt(ticket.AppID, 10),
+		"status":         ticket.Status,
+		"pollHash":       ticket.PollHash,
+		"deviceId":       ticket.DeviceID,
+		"device":         ticket.Device,
+		"deviceModel":    ticket.DeviceModel,
+		"devicePlatform": ticket.DevicePlatform,
+		"ip":             ticket.IP,
+		"userAgent":      ticket.UserAgent,
+		"location":       ticket.Location,
+		"createdAt":      strconv.FormatInt(ticket.CreatedAt.Unix(), 10),
+		"expiresAt":      strconv.FormatInt(ticket.ExpiresAt.Unix(), 10),
 	})
 	pipe.Expire(ctx, key, ttl)
 	_, err := pipe.Exec(ctx)
@@ -147,20 +152,22 @@ func (r *SessionRepository) GetQRLoginTicket(ctx context.Context, appID int64, t
 		return n
 	}
 	return &QRLoginTicket{
-		TicketID:      values["ticketId"],
-		AppID:         parseInt("appId"),
-		Status:        values["status"],
-		PollHash:      values["pollHash"],
-		DeviceID:      values["deviceId"],
-		Device:        values["device"],
-		IP:            values["ip"],
-		UserAgent:     values["userAgent"],
-		Location:      values["location"],
-		UserID:        parseInt("userId"),
-		ScannerName:   values["scannerName"],
-		ScannerAvatar: values["scannerAvatar"],
-		CreatedAt:     time.Unix(parseInt("createdAt"), 0).UTC(),
-		ExpiresAt:     time.Unix(parseInt("expiresAt"), 0).UTC(),
+		TicketID:       values["ticketId"],
+		AppID:          parseInt("appId"),
+		Status:         values["status"],
+		PollHash:       values["pollHash"],
+		DeviceID:       values["deviceId"],
+		Device:         values["device"],
+		DeviceModel:    values["deviceModel"],
+		DevicePlatform: values["devicePlatform"],
+		IP:             values["ip"],
+		UserAgent:      values["userAgent"],
+		Location:       values["location"],
+		UserID:         parseInt("userId"),
+		ScannerName:    values["scannerName"],
+		ScannerAvatar:  values["scannerAvatar"],
+		CreatedAt:      time.Unix(parseInt("createdAt"), 0).UTC(),
+		ExpiresAt:      time.Unix(parseInt("expiresAt"), 0).UTC(),
 	}, nil
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	authdomain "aegis/internal/domain/auth"
+	devicedomain "aegis/internal/domain/device"
 	plugindomain "aegis/internal/domain/plugin"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
@@ -66,10 +67,12 @@ type QRLoginCreateResult struct {
 
 // QRLoginRequester 发起登录的网页端，展示在移动端的确认页上。
 type QRLoginRequester struct {
-	Device    string    `json:"device,omitempty"`
-	IP        string    `json:"ip,omitempty"`
-	Location  string    `json:"location,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
+	Device string `json:"device,omitempty"`
+	// DeviceInfo 发起端设备的完整字典映射，便于用户辨认是不是自己的电脑或平板
+	DeviceInfo *devicedomain.Info `json:"deviceInfo,omitempty"`
+	IP         string             `json:"ip,omitempty"`
+	Location   string             `json:"location,omitempty"`
+	CreatedAt  time.Time          `json:"createdAt"`
 }
 
 // QRLoginScanResult /auth/qr/scan 的响应。
@@ -119,18 +122,21 @@ func (s *AuthService) CreateQRLogin(ctx context.Context, input QRLoginCreateInpu
 	}
 	now := time.Now().UTC()
 	expiresAt := now.Add(qrLoginTTL)
+	client := devicedomain.ClientFrom(ctx)
 	err = s.sessions.CreateQRLoginTicket(ctx, redisrepo.QRLoginTicket{
-		TicketID:  ticketID,
-		AppID:     input.AppID,
-		Status:    redisrepo.QRLoginStatusPending,
-		PollHash:  hashPollToken(pollToken),
-		DeviceID:  strings.TrimSpace(input.DeviceID),
-		Device:    strings.TrimSpace(input.Device),
-		IP:        input.IP,
-		UserAgent: input.UserAgent,
-		Location:  input.Location,
-		CreatedAt: now,
-		ExpiresAt: expiresAt,
+		TicketID:       ticketID,
+		AppID:          input.AppID,
+		Status:         redisrepo.QRLoginStatusPending,
+		PollHash:       hashPollToken(pollToken),
+		DeviceID:       strings.TrimSpace(input.DeviceID),
+		Device:         strings.TrimSpace(input.Device),
+		DeviceModel:    client.Model,
+		DevicePlatform: client.Platform,
+		IP:             input.IP,
+		UserAgent:      input.UserAgent,
+		Location:       input.Location,
+		CreatedAt:      now,
+		ExpiresAt:      expiresAt,
 	}, qrLoginTTL)
 	if err != nil {
 		return nil, err
@@ -216,6 +222,10 @@ func (s *AuthService) ScanQRLogin(ctx context.Context, session *authdomain.Sessi
 		Status:    ticket.Status,
 		ExpiresAt: ticket.ExpiresAt,
 		Requester: QRLoginRequester{
+			DeviceInfo: s.devices.DescribeRef(ctx, devicedomain.DescribeInput{
+				Model: ticket.DeviceModel, Platform: ticket.DevicePlatform, DeviceID: ticket.DeviceID,
+				Name: ticket.Device, UserAgent: ticket.UserAgent,
+			}),
 			Device:    ticket.Device,
 			IP:        ticket.IP,
 			Location:  ticket.Location,

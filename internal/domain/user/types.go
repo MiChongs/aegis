@@ -1,6 +1,7 @@
 package user
 
 import (
+	devicedomain "aegis/internal/domain/device"
 	securitydomain "aegis/internal/domain/security"
 	"time"
 )
@@ -205,6 +206,9 @@ type SessionView struct {
 	IssuedAt  time.Time  `json:"issuedAt"`
 	ExpiresAt time.Time  `json:"expiresAt"`
 	LastSeen  *time.Time `json:"lastSeen,omitempty"`
+	// Device 设备展示名（同 deviceInfo.name）；DeviceInfo 设备字典的完整映射，读取时现查
+	Device     string             `json:"device,omitempty"`
+	DeviceInfo *devicedomain.Info `json:"deviceInfo,omitempty"`
 }
 
 type SessionListResult struct {
@@ -214,21 +218,24 @@ type SessionListResult struct {
 
 // SessionDetailView 管理员查看的会话详情（含位置信息）
 type SessionDetailView struct {
-	TokenHash   string    `json:"tokenHash"`
-	TokenID     string    `json:"tokenId"`
-	Account     string    `json:"account"`
-	DeviceID    string    `json:"deviceId,omitempty"`
-	IP          string    `json:"ip"`
-	UserAgent   string    `json:"userAgent"`
-	Provider    string    `json:"provider,omitempty"`
-	IssuedAt    time.Time `json:"issuedAt"`
-	ExpiresAt   time.Time `json:"expiresAt"`
-	Country     string    `json:"country,omitempty"`
-	CountryCode string    `json:"countryCode,omitempty"`
-	Region      string    `json:"region,omitempty"`
-	City        string    `json:"city,omitempty"`
-	ISP         string    `json:"isp,omitempty"`
-	Location    string    `json:"location,omitempty"`
+	TokenHash string    `json:"tokenHash"`
+	TokenID   string    `json:"tokenId"`
+	Account   string    `json:"account"`
+	DeviceID  string    `json:"deviceId,omitempty"`
+	IP        string    `json:"ip"`
+	UserAgent string    `json:"userAgent"`
+	Provider  string    `json:"provider,omitempty"`
+	IssuedAt  time.Time `json:"issuedAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	// Device 设备展示名；DeviceInfo 设备字典的完整映射，读取时现查
+	Device      string             `json:"device,omitempty"`
+	DeviceInfo  *devicedomain.Info `json:"deviceInfo,omitempty"`
+	Country     string             `json:"country,omitempty"`
+	CountryCode string             `json:"countryCode,omitempty"`
+	Region      string             `json:"region,omitempty"`
+	City        string             `json:"city,omitempty"`
+	ISP         string             `json:"isp,omitempty"`
+	Location    string             `json:"location,omitempty"`
 	// 经纬度来自 GeoIP 库。指针而非 0 值：赤道几内亚湾（0,0）是合法坐标，
 	// 用 0 表示"没解析出来"会让所有未知 IP 在地图上堆到大西洋里。
 	Latitude  *float64 `json:"latitude,omitempty"`
@@ -269,6 +276,8 @@ type LoginAuditItem struct {
 	Status    string         `json:"status"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedAt time.Time      `json:"createdAt"`
+	// DeviceInfo 登录所用设备，按记录里的原始型号与平台现查设备字典（旧记录只能靠 deviceId 与 UA）
+	DeviceInfo *devicedomain.Info `json:"deviceInfo,omitempty"`
 	// 以下位置字段由 Handler 层按 IP 解析后回填（与会话详情同一套 GeoIP），
 	// 落库的审计行里没有它们 —— GeoIP 库会更新，位置是查询时的结论而非事实。
 	Country     string   `json:"country,omitempty"`

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	captchadomain "aegis/internal/domain/captcha"
+	devicedomain "aegis/internal/domain/device"
 	"aegis/pkg/response"
 
 	"github.com/gin-gonic/gin"
@@ -111,68 +112,29 @@ func (h *Handler) enforceDevicePolicy(c *gin.Context, appID int64, bodyDeviceID,
 //         Manufacturer 为空 → 直接使用 MarketingName
 //   未命中：返回 clientDevice（客户端原值，保证用户输入永远被尊重）
 func (h *Handler) enrichDeviceFromDict(c *gin.Context, deviceID, clientDevice string) string {
+	// 原始型号与平台挂到请求上下文，会话签发时随会话保存：
+	// 用户接口里的 deviceInfo 是读取时按字典现查的，不能只留一个翻译过的名字
+	platform := resolveDevicePlatform(c)
+	c.Request = c.Request.WithContext(devicedomain.WithClient(c.Request.Context(), devicedomain.Client{
+		Model: clientDevice, Platform: platform,
+	}))
 	if h == nil || h.deviceMarketing == nil {
 		return clientDevice
 	}
-	// 查询候选 key（去重 + 顺序保持）
-	candidates := make([]string, 0, 2)
-	seen := map[string]struct{}{}
-	for _, v := range []string{clientDevice, deviceID} {
-		v = strings.TrimSpace(v)
-		if v == "" {
-			continue
-		}
-		if _, ok := seen[v]; ok {
-			continue
-		}
-		seen[v] = struct{}{}
-		candidates = append(candidates, v)
-	}
-	if len(candidates) == 0 {
-		return clientDevice
-	}
-
-	platforms := resolveDevicePlatforms(c)
-	ctx := c.Request.Context()
-	for _, plat := range platforms {
-		for _, key := range candidates {
-			item, err := h.deviceMarketing.Lookup(ctx, plat, key)
-			if err != nil || item == nil {
-				continue
-			}
-			name := strings.TrimSpace(item.MarketingName)
-			if name == "" {
-				continue
-			}
-			if m := strings.TrimSpace(item.Manufacturer); m != "" {
-				return m + " " + name
-			}
-			return name
-		}
+	if item := h.deviceMarketing.Match(c.Request.Context(), platform, clientDevice, deviceID); item != nil {
+		return item.DisplayName()
 	}
 	// 未命中：**优先使用前端传入的原值**，不做任何覆盖
 	return clientDevice
 }
 
-// resolveDevicePlatforms 按可信度排序给出应尝试查询的平台列表
-func resolveDevicePlatforms(c *gin.Context) []string {
-	// 客户端显式声明
-	if p := strings.ToLower(strings.TrimSpace(c.GetHeader("X-Device-Platform"))); p == "ios" || p == "android" {
-		if p == "ios" {
-			return []string{"ios", "android"}
-		}
-		return []string{"android", "ios"}
+// resolveDevicePlatform 客户端显式声明（X-Device-Platform）优先，其次按 UA 推断；都没有时为空，
+// 查字典时按安卓优先（线上安卓占比更高）。
+func resolveDevicePlatform(c *gin.Context) string {
+	if p := devicedomain.NormalizePlatform(c.GetHeader("X-Device-Platform")); p != "" {
+		return p
 	}
-	// UA 推断
-	ua := strings.ToLower(c.Request.UserAgent())
-	switch {
-	case strings.Contains(ua, "iphone"), strings.Contains(ua, "ipad"), strings.Contains(ua, "ipod"):
-		return []string{"ios", "android"}
-	case strings.Contains(ua, "android"):
-		return []string{"android", "ios"}
-	}
-	// 无上下文：Android 优先（线上 Android 占比更高）
-	return []string{"android", "ios"}
+	return devicedomain.PlatformFromUserAgent(c.Request.UserAgent())
 }
 
 // enforceDevicePolicyIDOnly 宽松版校验：仅要求 deviceId 由客户端显式提供
@@ -200,59 +162,7 @@ func (h *Handler) enforceDevicePolicyIDOnly(c *gin.Context, appID int64, bodyDev
 	return true
 }
 
-// guessDeviceFromUA 从 UA 粗略推断设备描述
-// 不依赖任何第三方库，提取关键词作为 device name 回退
+// guessDeviceFromUA 从 UA 粗略推断设备描述，实现在 devicedomain（服务层展示兜底也用它）。
 func guessDeviceFromUA(ua string) string {
-	if ua == "" {
-		return ""
-	}
-	lower := strings.ToLower(ua)
-
-	// 操作系统 / 平台关键字
-	os := ""
-	switch {
-	case strings.Contains(lower, "android"):
-		os = "Android"
-	case strings.Contains(lower, "iphone") || strings.Contains(lower, "ios") || strings.Contains(lower, "ipad"):
-		os = "iOS"
-	case strings.Contains(lower, "macintosh") || strings.Contains(lower, "mac os"):
-		os = "macOS"
-	case strings.Contains(lower, "windows"):
-		os = "Windows"
-	case strings.Contains(lower, "linux"):
-		os = "Linux"
-	}
-
-	// 浏览器 / App 关键字
-	browser := ""
-	switch {
-	case strings.Contains(lower, "micromessenger"):
-		browser = "WeChat"
-	case strings.Contains(lower, "mqqbrowser"), strings.Contains(lower, "qqbrowser"):
-		browser = "QQ Browser"
-	case strings.Contains(lower, "edg/"):
-		browser = "Edge"
-	case strings.Contains(lower, "opr/"), strings.Contains(lower, "opera"):
-		browser = "Opera"
-	case strings.Contains(lower, "firefox"):
-		browser = "Firefox"
-	case strings.Contains(lower, "chrome"):
-		browser = "Chrome"
-	case strings.Contains(lower, "safari"):
-		browser = "Safari"
-	}
-
-	switch {
-	case os != "" && browser != "":
-		return browser + " on " + os
-	case os != "":
-		return os
-	case browser != "":
-		return browser
-	}
-	// 截断前 80 字符保底
-	if len(ua) > 80 {
-		return ua[:80]
-	}
-	return ua
+	return devicedomain.GuessFromUserAgent(ua)
 }

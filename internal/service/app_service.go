@@ -21,6 +21,8 @@ import (
 )
 
 type AppService struct {
+	// devices 设备字典：应用登录记录里的 deviceInfo 查询时现查
+	devices  *DeviceMarketingService
 	log      *zap.Logger
 	pg       *pgrepo.Repository
 	sessions *redisrepo.SessionRepository
@@ -452,6 +454,11 @@ func (s *AppService) GetAuthSourceStats(ctx context.Context, appID int64) (*appd
 	return s.pg.GetAppAuthSourceStats(ctx, appID)
 }
 
+// SetDeviceDirectory 注入设备字典，登录记录据此给出 deviceInfo。
+func (s *AppService) SetDeviceDirectory(devices *DeviceMarketingService) {
+	s.devices = devices
+}
+
 func (s *AppService) ListLoginAudits(ctx context.Context, appID int64, query appdomain.LoginAuditQuery) (*appdomain.LoginAuditListResult, error) {
 	if _, err := s.GetApp(ctx, appID); err != nil {
 		return nil, err
@@ -475,6 +482,9 @@ func (s *AppService) ListLoginAudits(ctx context.Context, appID int64, query app
 	})
 	if err != nil {
 		return nil, err
+	}
+	for i := range items {
+		items[i].DeviceInfo = s.devices.describeFromMetadata(ctx, items[i].Metadata, items[i].DeviceID, items[i].UserAgent)
 	}
 	return &appdomain.LoginAuditListResult{
 		Items:      items,

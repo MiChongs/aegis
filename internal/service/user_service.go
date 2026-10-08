@@ -14,6 +14,7 @@ import (
 
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
+	devicedomain "aegis/internal/domain/device"
 	captchadomain "aegis/internal/domain/captcha"
 	plugindomain "aegis/internal/domain/plugin"
 	userdomain "aegis/internal/domain/user"
@@ -105,6 +106,8 @@ func hashUserPassword(password string) (string, error) {
 
 type UserService struct {
 	oauth2    *OAuth2ServerService
+	// devices 设备字典：会话与登录记录里的 deviceInfo 读取时现查。为空时只做不查字典的兜底
+	devices   *DeviceMarketingService
 	log       *zap.Logger
 	pg        *pgrepo.Repository
 	sessions  *redisrepo.SessionRepository
@@ -144,6 +147,22 @@ func (s *UserService) SetAdminUserSearchService(search *AdminUserSearchService) 
 
 func (s *UserService) SetAccountBanService(ban *AccountBanService) {
 	s.ban = ban
+}
+
+// SetDeviceDirectory 注入设备字典，会话与登录记录据此给出 deviceInfo。
+func (s *UserService) SetDeviceDirectory(devices *DeviceMarketingService) {
+	s.devices = devices
+}
+
+// describeSession 会话里的设备：新会话有原始型号与平台，旧会话只有翻译过的名称、设备 ID 与 UA。
+func (s *UserService) describeSession(ctx context.Context, session authdomain.Session) *devicedomain.Info {
+	return s.devices.DescribeRef(ctx, devicedomain.DescribeInput{
+		Model:     session.DeviceModel,
+		Platform:  session.DevicePlatform,
+		DeviceID:  session.DeviceID,
+		Name:      session.Device,
+		UserAgent: session.UserAgent,
+	})
 }
 
 // SetOAuth2Server 注入授权服务器：吊销会话（删号、重置密码、强制下线）时一并撤销第三方授权。
@@ -1467,6 +1486,8 @@ func (s *UserService) ListSessions(ctx context.Context, session *authdomain.Sess
 			IssuedAt:  item.Session.IssuedAt,
 			ExpiresAt: item.Session.ExpiresAt,
 		}
+		view.DeviceInfo = s.describeSession(ctx, item.Session)
+		view.Device = view.DeviceInfo.Name
 		result.Items = append(result.Items, view)
 	}
 	sort.Slice(result.Items, func(i, j int) bool {
@@ -1571,7 +1592,7 @@ func (s *UserService) ListLoginAudits(ctx context.Context, session *authdomain.S
 		return nil, err
 	}
 	return &userdomain.LoginAuditListResult{
-		Items:      mapLoginAuditItems(items),
+		Items:      s.mapLoginAuditItems(ctx, items),
 		Page:       page,
 		Limit:      limit,
 		Total:      total,
@@ -1596,7 +1617,7 @@ func (s *UserService) AdminListUserLoginAudits(ctx context.Context, appID int64,
 		return nil, err
 	}
 	return &userdomain.LoginAuditListResult{
-		Items:      mapLoginAuditItems(items),
+		Items:      s.mapLoginAuditItems(ctx, items),
 		Page:       page,
 		Limit:      limit,
 		Total:      total,
@@ -1655,7 +1676,7 @@ func (s *UserService) ExportLoginAudits(ctx context.Context, session *authdomain
 	if err != nil {
 		return nil, err
 	}
-	return mapLoginAuditItems(items), nil
+	return s.mapLoginAuditItems(ctx, items), nil
 }
 
 func (s *UserService) ListSessionAudits(ctx context.Context, session *authdomain.Session, query userdomain.SessionAuditQuery) (*userdomain.SessionAuditListResult, error) {
@@ -1926,10 +1947,11 @@ func (s *UserService) revokeIndexedSession(ctx context.Context, appID int64, use
 	return nil
 }
 
-func mapLoginAuditItems(items []appdomain.LoginAuditItem) []userdomain.LoginAuditItem {
+func (s *UserService) mapLoginAuditItems(ctx context.Context, items []appdomain.LoginAuditItem) []userdomain.LoginAuditItem {
 	result := make([]userdomain.LoginAuditItem, 0, len(items))
 	for _, item := range items {
 		result = append(result, userdomain.LoginAuditItem{
+			DeviceInfo: s.devices.describeFromMetadata(ctx, item.Metadata, item.DeviceID, item.UserAgent),
 			ID:        item.ID,
 			AppID:     item.AppID,
 			LoginType: item.LoginType,
@@ -2158,16 +2180,19 @@ func (s *UserService) AdminListUserSessions(ctx context.Context, appID int64, us
 	}
 	views := make([]userdomain.SessionDetailView, 0, len(items))
 	for _, item := range items {
+		info := s.describeSession(ctx, item.Session)
 		views = append(views, userdomain.SessionDetailView{
-			TokenHash: item.TokenHash,
-			TokenID:   item.Session.TokenID,
-			Account:   item.Session.Account,
-			DeviceID:  item.Session.DeviceID,
-			IP:        item.Session.IP,
-			UserAgent: item.Session.UserAgent,
-			Provider:  item.Session.Provider,
-			IssuedAt:  item.Session.IssuedAt,
-			ExpiresAt: item.Session.ExpiresAt,
+			TokenHash:  item.TokenHash,
+			TokenID:    item.Session.TokenID,
+			Account:    item.Session.Account,
+			DeviceID:   item.Session.DeviceID,
+			IP:         item.Session.IP,
+			UserAgent:  item.Session.UserAgent,
+			Provider:   item.Session.Provider,
+			IssuedAt:   item.Session.IssuedAt,
+			ExpiresAt:  item.Session.ExpiresAt,
+			Device:     info.Name,
+			DeviceInfo: info,
 		})
 	}
 	sort.Slice(views, func(i, j int) bool { return views[i].IssuedAt.After(views[j].IssuedAt) })

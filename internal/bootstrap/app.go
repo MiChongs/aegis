@@ -474,6 +474,10 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 
 	// 设备营销名称字典：启动时幂等种子（表空则解析嵌入的 kt 源并批量写入）
 	deviceMarketingService := service.NewDeviceMarketingService(log, pg)
+	// 设备字典映射到用户接口：会话、登录记录、扫码登录发起端的 deviceInfo 读取时按字典现查
+	userService.SetDeviceDirectory(deviceMarketingService)
+	appService.SetDeviceDirectory(deviceMarketingService)
+	authService.SetDeviceDirectory(deviceMarketingService)
 
 	// 平台级 Banner（超级管理员专属 CRUD；Overview 对所有管理员展示；上传经 StorageService）
 	platformBannerService := service.NewPlatformBannerService(log, pg, sessions, storageService)

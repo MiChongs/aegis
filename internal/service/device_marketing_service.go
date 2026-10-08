@@ -31,10 +31,12 @@ var deviceMarketingSeed string
 type DeviceMarketingService struct {
 	log *zap.Logger
 	pg  *pgrepo.Repository
+	// cache 运行时查询（Describe）的结果缓存，字典有任何写入即整体失效，见 device_info.go
+	cache *deviceLookupCache
 }
 
 func NewDeviceMarketingService(log *zap.Logger, pg *pgrepo.Repository) *DeviceMarketingService {
-	return &DeviceMarketingService{log: log, pg: pg}
+	return &DeviceMarketingService{log: log, pg: pg, cache: newDeviceLookupCache()}
 }
 
 // SeedIfEmpty 启动时调用，表为空则自动从嵌入源种子数据（并发幂等，重复调用无副作用）
@@ -67,6 +69,7 @@ func (s *DeviceMarketingService) Reseed(ctx context.Context) (*devicedomain.Seed
 	if s == nil || s.pg == nil {
 		return nil, apperrors.New(50010, http.StatusServiceUnavailable, "service unavailable")
 	}
+	defer s.cache.reset()
 	return s.seedFromEmbedded(ctx, devicedomain.SourceSeed, true)
 }
 
@@ -161,6 +164,7 @@ func (s *DeviceMarketingService) Create(ctx context.Context, input devicedomain.
 	if existing != nil {
 		return nil, apperrors.New(40901, http.StatusConflict, "该平台下该标识符已存在")
 	}
+	defer s.cache.reset()
 	return s.pg.CreateDeviceMarketingName(ctx, input, devicedomain.SourceManual)
 }
 
@@ -211,6 +215,7 @@ func (s *DeviceMarketingService) Update(ctx context.Context, id int64, input dev
 		}
 		input.MarketingName = &trimmed
 	}
+	defer s.cache.reset()
 	return s.pg.UpdateDeviceMarketingName(ctx, id, input)
 }
 
@@ -219,6 +224,7 @@ func (s *DeviceMarketingService) Delete(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return apperrors.New(40000, http.StatusBadRequest, "id 无效")
 	}
+	defer s.cache.reset()
 	if err := s.pg.DeleteDeviceMarketingName(ctx, id); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return apperrors.New(40404, http.StatusNotFound, "设备营销名称不存在")

@@ -19,6 +19,10 @@ type Session struct {
 	SessionVersion  int64     `json:"session_version"`
 	DeviceID        string    `json:"device_id,omitempty"` // 设备唯一识别码（UUID/指纹）
 	Device          string    `json:"device,omitempty"`    // 设备可读名称（Chrome on Windows 等）
+	// DeviceModel / DevicePlatform 客户端上报的原始型号与平台。对外接口的 deviceInfo
+	// 按它们读取时现查设备字典；Device 只是签发那一刻翻译出的名字
+	DeviceModel    string `json:"device_model,omitempty"`
+	DevicePlatform string `json:"device_platform,omitempty"`
 	IP              string    `json:"ip,omitempty"`
 	UserAgent       string    `json:"user_agent,omitempty"`
 	ExpiresAt       time.Time `json:"expires_at"`
@@ -56,6 +60,8 @@ type RefreshSession struct {
 	SessionVersion  int64      `json:"session_version"`
 	DeviceID        string     `json:"device_id,omitempty"`
 	Device          string     `json:"device,omitempty"`
+	DeviceModel     string     `json:"device_model,omitempty"`
+	DevicePlatform  string     `json:"device_platform,omitempty"`
 	IP              string     `json:"ip,omitempty"`
 	UserAgent       string     `json:"user_agent,omitempty"`
 	Provider        string     `json:"provider,omitempty"`

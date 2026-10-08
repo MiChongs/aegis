@@ -435,6 +435,49 @@ POST /api/v1/apps/{appKey}/auth/login
 - **扫码幂等，归属唯一。** 同一用户重复扫码返回同一结果；已被他人扫过的票据返回 `40906`；
   确认与拒绝只接受扫码人本人。
 
+## 1.9 设备信息（deviceInfo）
+
+客户端登录时上报设备，Aegis 按控制台「设备字典」把机型翻译成可读名称，并在以下接口里
+以 `deviceInfo` 给出字典的完整映射，用于在列表里区分同一用户的多台设备：
+
+| 接口 | 位置 |
+|---|---|
+| `GET /me/sessions` | 每个会话的 `device`（展示名）与 `deviceInfo` |
+| `GET /me/audits/login` | 每条登录记录的 `deviceInfo` |
+| `POST /auth/qr/scan` | `requester.deviceInfo`：发起扫码登录的那台设备 |
+| 控制台的会话列表与登录记录 | 同上 |
+
+上报方式（任一即可，请求体优先）：
+
+| 字段 | 请求体 | 请求头 | 说明 |
+|---|---|---|---|
+| 设备唯一码 | `deviceId` | `X-Device-Id` | 开启「登录设备检查」时必填 |
+| 原始型号 | `device` | `X-Device-Name` | **报原始型号而不是营销名**：Android 用 `Build.MODEL`（如 `SM-G998B`），iOS 用机器标识（如 `iPhone14,3`） |
+| 平台 | — | `X-Device-Platform` | `android` / `ios` / `harmonyos` / `windows` / `macos` / `linux` / `web`；不报时按 UA 推断 |
+
+```json
+"deviceInfo": {
+  "name": "Samsung Galaxy S21 Ultra 5G",
+  "identifier": "SM-G998B",
+  "platform": "android",
+  "marketingName": "Galaxy S21 Ultra 5G",
+  "manufacturer": "Samsung",
+  "manufacturerIconUrl": "https://…",
+  "deviceImageUrl": "https://…",
+  "dictionaryId": 1024,
+  "matched": true,
+  "source": "dictionary"
+}
+```
+
+- `source` 说明 `name` 的来由：`dictionary` 命中字典；`client` 未命中，用客户端上报的原值；
+  `user_agent` 什么都没报，按 UA 推断（如 `Chrome on Windows`）；`unknown` 无从判断。
+- 会话与登录记录只保存客户端上报的**原始型号与平台**，`deviceInfo` 在读取时按字典现查：
+  管理员补录或修正一条字典后，已有会话与历史登录记录立刻显示新名称，无需用户重新登录。
+- 字典按 `平台 + 型号` 查询，结果在每个实例内缓存 10 分钟；字典有写入时本实例立即失效，
+  多实例部署下其他实例最多滞后 10 分钟。
+- 本功能上线之前签发的会话、写入的登录记录没有原始型号，只能按当时翻译出的名称、`deviceId` 与 UA 尽量还原。
+
 ## 2. standard 档
 
 除 HTTPS 外没有任何额外要求。`X-Aegis-App-Key` 头是可选的，

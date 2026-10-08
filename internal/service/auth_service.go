@@ -14,6 +14,7 @@ import (
 	"aegis/internal/config"
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
+	devicedomain "aegis/internal/domain/device"
 	oauthdomain "aegis/internal/domain/oauth"
 	platformdomain "aegis/internal/domain/platform"
 	plugindomain "aegis/internal/domain/plugin"
@@ -57,6 +58,8 @@ type AuthService struct {
 	consistency    *LoginConsistencyService
 	// governance 平台治理判定：应用被冻结 / 封禁时，连已经签发的会话也当场失效
 	governance     *PlatformGovernanceService
+	// devices 设备字典，见 SetDeviceDirectory
+	devices *DeviceMarketingService
 	// cardKey 卡密登录。未注入时 cardkey 登录方式直接报「未启用」而不是空指针
 	cardKey        *CardKeyService
 	registerFlight singleflight.Group
@@ -119,6 +122,11 @@ func (s *AuthService) SetAdminUserSearchService(search *AdminUserSearchService) 
 }
 
 // SetCardKeyService 注入卡密服务，启用「卡密即登录凭证」这一档登录方式。
+// SetDeviceDirectory 注入设备字典：扫码登录的发起端设备据此给出 deviceInfo。
+func (s *AuthService) SetDeviceDirectory(devices *DeviceMarketingService) {
+	s.devices = devices
+}
+
 func (s *AuthService) SetCardKeyService(cardKey *CardKeyService) {
 	s.cardKey = cardKey
 }
@@ -791,6 +799,10 @@ func (s *AuthService) Refresh(ctx context.Context, token, deviceID, ip, userAgen
 	if err := s.revokeAccessSessionsByFamily(ctx, refreshSession.AppID, refreshSession.UserID, refreshSession.FamilyID, ""); err != nil {
 		return nil, err
 	}
+	// 刷新请求自己没带设备信息时沿用旧会话的原始型号与平台
+	if current := devicedomain.ClientFrom(ctx); current.Model == "" && current.Platform == "" {
+		ctx = devicedomain.WithClient(ctx, devicedomain.Client{Model: refreshSession.DeviceModel, Platform: refreshSession.DevicePlatform})
+	}
 	bundle, err := s.issueSessionBundle(ctx, app, user, refreshSession.Provider, "refresh", deviceID, refreshSession.Device, ip, userAgent, refreshSession.FamilyID)
 	if err != nil {
 		return nil, err
@@ -1256,6 +1268,8 @@ func (s *AuthService) issueSessionBundle(ctx context.Context, app *appdomain.App
 	if err != nil {
 		return nil, err
 	}
+	// 原始型号与平台由登录入口挂在上下文上（刷新时由 Refresh 从旧刷新会话带过来）
+	client := devicedomain.ClientFrom(ctx)
 	session := authdomain.Session{
 		UserID:          user.ID,
 		AppID:           user.AppID,
@@ -1265,6 +1279,8 @@ func (s *AuthService) issueSessionBundle(ctx context.Context, app *appdomain.App
 		SessionVersion:  1,
 		DeviceID:        deviceID,
 		Device:          device,
+		DeviceModel:     client.Model,
+		DevicePlatform:  client.Platform,
 		IP:              ip,
 		UserAgent:       userAgent,
 		ExpiresAt:       accessExpiresAt,
@@ -1280,6 +1296,8 @@ func (s *AuthService) issueSessionBundle(ctx context.Context, app *appdomain.App
 		SessionVersion: 1,
 		DeviceID:       deviceID,
 		Device:         device,
+		DeviceModel:    client.Model,
+		DevicePlatform: client.Platform,
 		IP:             ip,
 		UserAgent:      userAgent,
 		Provider:       provider,
@@ -1311,6 +1329,10 @@ func (s *AuthService) issueSessionBundle(ctx context.Context, app *appdomain.App
 		"ip":         ip,
 		"device_id":  deviceID,
 		"user_agent": userAgent,
+		// 整个载荷落进登录记录的 metadata，用户接口据此按字典还原 deviceInfo
+		"device":          device,
+		"device_model":    client.Model,
+		"device_platform": client.Platform,
 	})
 	_ = s.publisher.PublishJSON(ctx, event.SubjectSessionAuditRequested, map[string]any{
 		"user_id":    user.ID,
