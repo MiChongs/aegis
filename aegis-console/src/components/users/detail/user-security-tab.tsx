@@ -43,6 +43,7 @@ import {
   textValue
 } from "./user-detail-shared";
 import { UserResetPasswordDialog } from "../user-reset-password-dialog";
+import { UserOAuth2GrantsPanel } from "./user-oauth2-grants-panel";
 
 type Credential = {
   key: string;
@@ -434,6 +435,8 @@ export function UserSecurityTab({
             </div>
           </Panel>
         ) : null}
+
+        <UserOAuth2GrantsPanel appKey={appKey} userId={userId} />
 
         {!security ? (
           <div className="py-10 text-center text-sm text-muted-foreground">{EMPTY}</div>

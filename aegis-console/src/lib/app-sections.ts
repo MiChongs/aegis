@@ -10,6 +10,7 @@ import {
   KeyRound,
   Mail,
   MonitorPlay,
+  Network,
   PlugZap,
   ScrollText,
   ShieldCheck,
@@ -68,6 +69,7 @@ export const appSectionGroups: AppSectionGroup[] = [
       { key: "password", title: "密码与凭证", summary: "强度规则与过期策略", icon: KeyRound },
       { key: "captcha", title: "验证码", summary: "人机校验渠道与场景", icon: ShieldCheck },
       { key: "oauth", title: "第三方登录", summary: "OAuth 渠道与自动建号", icon: KeyRound },
+      { key: "oauth2-server", title: "OAuth2 授权服务", summary: "对外登录、客户端与令牌", icon: Network },
       // 同理沿用 auth-protocol
       { key: "auth-protocol", title: "接入", summary: "安全等级、密钥与自检", icon: PlugZap }
     ]
