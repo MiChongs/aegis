@@ -69,6 +69,8 @@ export type NavigationGroup = {
   title: string;
   /** 分组用途说明，用于折叠态提示 */
   summary: string;
+  /** 左侧图标轨道上代表这个分组的图标 */
+  icon: NavIcon;
   items: NavigationItem[];
 };
 
@@ -77,6 +79,7 @@ export const navigationGroups: NavigationGroup[] = [
     key: "insight",
     title: "概览",
     summary: "平台运行态势",
+    icon: LayoutDashboard,
     items: [
       {
         title: "总览",
@@ -111,6 +114,7 @@ export const navigationGroups: NavigationGroup[] = [
     key: "product",
     title: "应用与内容",
     summary: "应用接入与内容投放",
+    icon: AppWindow,
     items: [
       {
         // 应用级配置的唯一归属地。列表在 /apps，配置在 /apps/{appKey}。
@@ -178,6 +182,7 @@ export const navigationGroups: NavigationGroup[] = [
     key: "developer",
     title: "开发者",
     summary: "开放能力与接入文档",
+    icon: Code2,
     items: [
       {
         title: "远程函数",
@@ -203,6 +208,7 @@ export const navigationGroups: NavigationGroup[] = [
     key: "identity",
     title: "用户与权限",
     summary: "账号、组织与授权",
+    icon: UsersRound,
     items: [
       {
         // 面向单个应用的终端用户运营：列表在 /app-users，
@@ -289,6 +295,7 @@ export const navigationGroups: NavigationGroup[] = [
     key: "governance",
     title: "平台治理",
     summary: "跨应用的强制管控",
+    icon: Gavel,
     items: [
       {
         // 全局作用域：这里没有顶部应用选择器，一次面对全站所有应用。
@@ -311,6 +318,7 @@ export const navigationGroups: NavigationGroup[] = [
     key: "security",
     title: "安全与风控",
     summary: "防护、风控与留痕",
+    icon: ShieldCheck,
     items: [
       {
         // 只管运行态（发生了什么）；平台安全的配置在 /configuration
@@ -355,6 +363,7 @@ export const navigationGroups: NavigationGroup[] = [
     key: "platform",
     title: "平台运维",
     summary: "配置、存储与扩展",
+    icon: Settings2,
     items: [
       {
         // 平台级配置（对所有应用生效）；应用自身的配置在 /apps

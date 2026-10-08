@@ -32,6 +32,8 @@ type UserMenuProps = {
   onOpenPalette: () => void;
   onLogout: () => void;
   className?: string;
+  /** topbar：头像 + 昵称；rail：图标轨道底部只放头像，菜单向右展开 */
+  variant?: "topbar" | "rail";
 };
 
 /** 控制台之外的公开页面：换的是整个外壳，因此新标签页打开 */
@@ -48,13 +50,32 @@ const HELP_LINKS = [
  * 所以这里补的是它放不下的那一条 —— 邮箱 / 账号与角色徽标。
  * 同名管理员在多租户里很常见，只看昵称分不出自己现在是哪个身份登着。
  */
-export function UserMenu({ operator, onOpenPalette, onLogout, className }: UserMenuProps) {
+export function UserMenu({ operator, onOpenPalette, onLogout, className, variant = "topbar" }: UserMenuProps) {
   const metaKey = useMetaKeyLabel();
   const { name, role, identity, avatarSrc, initials, superAdmin } = operator;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
+        {variant === "rail" ? (
+          <button
+            type="button"
+            aria-label="账户菜单"
+            className={cn(
+              "rounded-full p-0.5 transition-colors hover:bg-sidebar-accent data-[state=open]:bg-sidebar-accent",
+              "focus-visible:ring-[2px] focus-visible:ring-ring/50 focus-visible:outline-none",
+              className
+            )}
+          >
+            <Avatar
+              className={cn("size-8 ring-1", superAdmin ? "ring-primary/50" : "ring-border/70")}
+              preview={false}
+            >
+              <AvatarImage src={avatarSrc} alt={name} />
+              <AvatarFallback className="text-[10px] font-medium">{initials}</AvatarFallback>
+            </Avatar>
+          </button>
+        ) : (
         <button
           type="button"
           aria-label="账户菜单"
@@ -77,9 +98,15 @@ export function UserMenu({ operator, onOpenPalette, onLogout, className }: UserM
           {/* 箭头跟着开合翻转：面板是从这个按钮长出来的，不是凭空浮现的 */}
           <ChevronDown className="hidden size-3 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180 @lg/topbar:block" />
         </button>
+        )}
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="end" sideOffset={8} className="w-64 p-1.5">
+      <DropdownMenuContent
+        side={variant === "rail" ? "right" : "bottom"}
+        align="end"
+        sideOffset={variant === "rail" ? 12 : 8}
+        className="w-64 p-1.5"
+      >
         <DropdownMenuLabel className="p-0 font-normal">
           <div className="flex items-start gap-2.5 rounded-md bg-muted/60 p-2">
             <Avatar className="size-9 shrink-0 ring-1 ring-border/70" preview={false}>

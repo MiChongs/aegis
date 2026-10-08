@@ -138,7 +138,7 @@ export function AppUsersMetrics({
             合计 <span className="font-medium text-foreground">{formatCount(trendQuery.data?.totalNew)}</span>
           </span>
         </div>
-        <div className="mt-2 h-[76px] flex-1">
+        <div className="mt-2 h-[76px] min-h-[76px] lg:h-auto lg:flex-1">
           {trendQuery.isLoading ? (
             <Skeleton className="size-full rounded-lg" />
           ) : series.length ? (

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useMotionValueEvent, useScroll } from "motion/react";
 
+import { SearchTrigger } from "@/components/layout/sidebar/search-trigger";
 import { MobileNav } from "@/components/layout/topbar/mobile-nav";
 import { NotificationBell } from "@/components/layout/topbar/notification-bell";
 import {
@@ -66,14 +67,13 @@ export function ConsoleTopbar({ pathname, onOpenPalette, onLogout }: ConsoleTopb
     <header
       data-scrolled={scrolled ? "true" : "false"}
       className={cn(
-        "@container/topbar sticky top-0 z-30 h-12 shrink-0",
-        "border-b border-border/50 bg-background",
-        "transition-[border-color,box-shadow] duration-200 ease-out",
-        "data-[scrolled=true]:border-border",
-        "data-[scrolled=true]:shadow-[0_6px_20px_-18px_rgb(0_0_0/0.6)]"
+        "@container/topbar sticky top-0 z-30 h-14 shrink-0 bg-sidebar",
+        // 桌面端顶栏与图标轨道同属外框，靠下方内容区的圆角描边分隔，不再自带底边；
+        // 移动端没有外框，滚动后仍需要一条边
+        "max-lg:border-b max-lg:border-transparent max-lg:data-[scrolled=true]:border-border"
       )}
     >
-      <div className="flex h-full items-center gap-1.5 px-3 lg:px-4">
+      <div className="flex h-full items-center gap-1.5 px-3 lg:pr-4 lg:pl-2">
         {/* ── 左：导航入口 + 面包屑 ── */}
         <MobileNav
           pathname={pathname}
@@ -81,7 +81,13 @@ export function ConsoleTopbar({ pathname, onOpenPalette, onLogout }: ConsoleTopb
           onOpenPalette={onOpenPalette}
           onLogout={onLogout}
         />
-        <TopbarBreadcrumb pathname={pathname} className="flex-1" />
+        <TopbarBreadcrumb pathname={pathname} className="min-w-0 flex-1" />
+
+        {/* 居中的搜索框：桌面端唯一的搜索入口（侧栏里不再重复放一个） */}
+        <div className="hidden w-[min(22rem,32vw)] shrink-0 lg:block">
+          <SearchTrigger collapsed={false} onOpen={onOpenPalette} className="h-9 rounded-xl bg-background/70" />
+        </div>
+        <div className="hidden flex-1 lg:block" aria-hidden />
 
         {/* ── 右：动作区 ── */}
         <div className="flex shrink-0 items-center gap-0.5">
@@ -99,9 +105,11 @@ export function ConsoleTopbar({ pathname, onOpenPalette, onLogout }: ConsoleTopb
 
           <NotificationBell />
 
-          <Separator orientation="vertical" className="mx-1 !h-5 bg-border/70" />
-
-          <UserMenu operator={operator} onOpenPalette={onOpenPalette} onLogout={onLogout} />
+          {/* 桌面端账户入口在图标轨道底部 */}
+          <div className="flex items-center lg:hidden">
+            <Separator orientation="vertical" className="mx-1 !h-5 bg-border/70" />
+            <UserMenu operator={operator} onOpenPalette={onOpenPalette} onLogout={onLogout} />
+          </div>
         </div>
       </div>
     </header>

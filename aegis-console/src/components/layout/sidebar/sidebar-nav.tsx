@@ -101,7 +101,7 @@ export function SidebarNavTree({ pathname, activeTab, onNavigate, scope = "deskt
  * 把这几个提到顶部，比记住它们各自埋在哪个分组里快得多。
  * 顺序可拖，因为"常用"本身就是有优先级的。
  */
-function PinnedSection({ pathname, activeTab, onNavigate, scope = "desktop" }: NavTreeProps) {
+export function PinnedSection({ pathname, activeTab, onNavigate, scope = "desktop" }: NavTreeProps) {
   const pinned = useSidebarStore((s) => s.pinned);
   const setPinned = useSidebarStore((s) => s.setPinned);
   const index = useTargetIndex();
