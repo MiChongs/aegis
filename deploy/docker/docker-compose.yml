@@ -16,6 +16,11 @@
 #       docker compose --env-file .env -f deploy/docker/docker-compose.yml --profile app up -d
 #     → 完整基础设施 + migrate（一次性迁移）+ server
 #
+#  ④ 对外 OAuth2 / OIDC 授权服务器（可与以上任一档叠加）
+#       … --profile oauth2 up -d
+#     → hydra-db-init + hydra-migrate（一次性）+ hydra
+#     .env 里需 OAUTH2_SERVER_ENABLED=true 与 HYDRA_* 密钥（一键脚本会生成）
+#
 #  推荐直接使用一键脚本（自动生成强随机凭据并完成上述全部步骤）：
 #       Linux/macOS:  ./deploy/docker/quickstart.sh
 #       Windows:      .\deploy\docker\quickstart.ps1
@@ -204,6 +209,82 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── OAuth2 / OIDC 授权服务器：Ory Hydra（可选，profile: oauth2） ──
+  #  Hydra 负责协议，Aegis 负责登录与同意页，详见 docs/oauth2-provider.md 与 hydra/hydra.yml。
+  #  启用：.env 里 OAUTH2_SERVER_ENABLED=true，启动时加 --profile oauth2。
+  #  数据放在同一个 Postgres 实例的独立 hydra 库里，与 Aegis 的表互不相干。
+  hydra-db-init:
+    image: postgres:17-alpine
+    container_name: aegis-hydra-db-init
+    profiles: ["oauth2"]
+    restart: "no"
+    logging: *default-logging
+    environment:
+      PGHOST: postgres
+      PGUSER: ${AEGIS_DB_USER:-aegis}
+      PGPASSWORD: ${AEGIS_DB_PASSWORD:-aegis}
+      PGDATABASE: ${AEGIS_DB_NAME:-aegis}
+    # 幂等：库已存在则什么都不做
+    command: ["sh", "-c", "psql -tAc \"SELECT 1 FROM pg_database WHERE datname = 'hydra'\" | grep -q 1 || psql -c 'CREATE DATABASE hydra'"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  hydra-migrate:
+    image: oryd/hydra:v26.2.0
+    container_name: aegis-hydra-migrate
+    profiles: ["oauth2"]
+    restart: "no"
+    logging: *default-logging
+    environment:
+      DSN: postgres://${AEGIS_DB_USER:-aegis}:${AEGIS_DB_PASSWORD:-aegis}@postgres:5432/hydra?sslmode=disable
+    command: ["migrate", "sql", "up", "-e", "--yes"]
+    depends_on:
+      hydra-db-init:
+        condition: service_completed_successfully
+
+  hydra:
+    image: oryd/hydra:v26.2.0
+    container_name: aegis-hydra
+    profiles: ["oauth2"]
+    restart: unless-stopped
+    logging: *default-logging
+    # HYDRA_DEV_FLAG=--dev 只用于本机 http 调试：它会关掉 Hydra 的若干安全检查
+    command: serve all -c /etc/config/hydra/hydra.yml ${HYDRA_DEV_FLAG:-}
+    environment:
+      DSN: postgres://${AEGIS_DB_USER:-aegis}:${AEGIS_DB_PASSWORD:-aegis}@postgres:5432/hydra?sslmode=disable&max_conns=20&max_idle_conns=4
+      # 签发方：接入方配置里填的那个地址，必须与浏览器访问 Hydra 公开端的地址完全一致
+      URLS_SELF_ISSUER: ${HYDRA_PUBLIC_URL:-http://localhost:4444}
+      # 登录 / 同意 / 登出页由 Aegis 提供，是浏览器视角的 Aegis 地址
+      URLS_LOGIN: ${API_BASE_URL:-http://localhost:8088}/oauth2/login
+      URLS_CONSENT: ${API_BASE_URL:-http://localhost:8088}/oauth2/consent
+      URLS_LOGOUT: ${API_BASE_URL:-http://localhost:8088}/oauth2/logout
+      URLS_ERROR: ${API_BASE_URL:-http://localhost:8088}/oauth2/error
+      URLS_POST_LOGOUT_REDIRECT: ${API_BASE_URL:-http://localhost:8088}/oauth2/logged-out
+      URLS_DEVICE_VERIFICATION: ${API_BASE_URL:-http://localhost:8088}/oauth2/device
+      URLS_DEVICE_SUCCESS: ${API_BASE_URL:-http://localhost:8088}/oauth2/device/done
+      SECRETS_SYSTEM: ${HYDRA_SYSTEM_SECRET:-}
+      OIDC_SUBJECT_IDENTIFIERS_PAIRWISE_SALT: ${HYDRA_PAIRWISE_SALT:-}
+      # 令牌钩子是容器网络里的 Aegis；Aegis 跑在宿主机（go run）时改成 http://host.docker.internal:8088/...
+      OAUTH2_TOKEN_HOOK_URL: ${HYDRA_TOKEN_HOOK_URL:-http://server:8088/api/oauth2/hooks/token}
+      OAUTH2_TOKEN_HOOK_AUTH_CONFIG_VALUE: Bearer ${HYDRA_TOKEN_HOOK_SECRET:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${HYDRA_PUBLIC_PORT:-4444}:4444"
+      # 管理端不做任何认证，只绑回环：供宿主机上 go run 的 Aegis 访问，绝不能暴露到公网
+      - "127.0.0.1:${HYDRA_ADMIN_PORT:-4445}:4445"
+    volumes:
+      - ./hydra:/etc/config/hydra:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4445/health/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+
   # ── 数据库迁移（一次性任务，server 启动前自动执行） ──
   migrate:
     build:
@@ -250,6 +331,8 @@ services:
       # Workflow 功能静默降级；passthrough 改由 Go 标准库解析，可正常连通。
       TEMPORAL_HOST_PORT: passthrough:///temporal:7233
       RDKIT_CAPTCHA_URL: http://rdkit-captcha:5000
+      # 授权服务器（profile: oauth2）的管理端，容器网络内的地址
+      HYDRA_ADMIN_URL: http://hydra:4445
     command: ["/usr/local/bin/aegis-server"]
     ports:
       - "${HTTP_PORT:-8088}:8088"

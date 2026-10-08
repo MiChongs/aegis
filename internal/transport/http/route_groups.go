@@ -55,6 +55,10 @@ var routeGroups = []routeGroup{
 	// 路径刻意不挂在 /api/admin/* 下，正是为了不落进任何管理端鉴权规则
 	{Realm: realmPublic, Title: "法律文本-公开读", Tag: tagAPI, Auth: authPublic,
 		Prefix: "/api/legal/"},
+	// OAuth2 授权服务器的托管页面：浏览器由 Hydra 重定向而来，只带 challenge，
+	// 页面自己做 CSRF（docs/oauth2-provider.md）
+	{Realm: realmPublic, Title: "OAuth2 授权页", Tag: tagAPI, Auth: authPublic,
+		Prefix: "/oauth2/"},
 
 	// ── 网关：接入方唯一需要认识的命名空间（docs/app-integration.md）──────
 	// /config 必须免包装可读，否则客户端陷入「要读配置得先按配置包装」的死锁
@@ -166,6 +170,9 @@ var routeGroups = []routeGroup{
 	// ── 系统与实时 ────────────────────────────────────────────────────
 	{Realm: realmSystem, Title: "实时通信", Tag: "Realtime", Auth: authWebSocket,
 		Exact: []string{"/api/ws"}},
+	// 只给 Hydra 调：签发与刷新令牌前问一次账号与应用状态
+	{Realm: realmSystem, Title: "OAuth2 令牌钩子", Tag: tagAPI, Auth: authHydraHook,
+		Prefix: "/api/oauth2/hooks/"},
 	{Realm: realmSystem, Title: "系统监控", Tag: tagAPI, Auth: authSuperAdmin,
 		Prefix: "/api/system/monitor"},
 	{Realm: realmSystem, Title: "系统其他", Tag: tagAPI, Auth: authAdminSession,
@@ -215,6 +222,7 @@ const (
 	authEmail          = "部分公开 / 其余 Bearer"
 	authPayCallback    = "渠道回调签名"
 	authWebSocket      = "Bearer 或 query token"
+	authHydraHook      = "Hydra 共享密钥"
 )
 
 // routeGroup 是一条命名空间规则。

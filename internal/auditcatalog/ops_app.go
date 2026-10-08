@@ -41,6 +41,14 @@ func init() {
 		View("POST /api/admin/apps/:appkey/oauth-providers/:provider/test", "测试第三方登录", "第三方登录"),
 		Write("POST /api/admin/apps/:appkey/oauth-providers/reorder", "调整第三方登录顺序", "", SeverityLow),
 
+		View("GET /api/admin/apps/:appkey/oauth2/overview", "查看 OAuth2 授权服务", ""),
+		View("GET /api/admin/apps/:appkey/oauth2/clients", "查看 OAuth2 客户端", ""),
+		View("GET /api/admin/apps/:appkey/oauth2/clients/:clientId", "查看 OAuth2 客户端详情", "OAuth2 客户端"),
+		Write("POST /api/admin/apps/:appkey/oauth2/clients", "新建 OAuth2 客户端", "OAuth2 客户端", SeverityMedium),
+		Write("PUT /api/admin/apps/:appkey/oauth2/clients/:clientId", "编辑 OAuth2 客户端", "OAuth2 客户端", SeverityMedium),
+		Write("DELETE /api/admin/apps/:appkey/oauth2/clients/:clientId", "删除 OAuth2 客户端", "OAuth2 客户端", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/oauth2/clients/:clientId/rotate-secret", "重新生成 OAuth2 客户端密钥", "OAuth2 客户端", SeverityHigh),
+
 		View("GET /api/admin/apps/:appkey/login-baseline/:userid", "查看登录基线", "用户"),
 		Write("DELETE /api/admin/apps/:appkey/login-baseline/:userid", "重置登录基线", "用户", SeverityMedium),
 

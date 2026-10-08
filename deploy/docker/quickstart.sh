@@ -43,11 +43,11 @@ case "${1:-}" in
   --down)
     [ -f "$ENV_FILE" ] || touch "$ENV_FILE"
     step "停止 Aegis 栈（数据卷保留）..."
-    compose --profile app --profile full --profile ui down
+    compose --profile app --profile full --profile ui --profile oauth2 down
     ok "已停止"; exit 0 ;;
   --status)
     [ -f "$ENV_FILE" ] || touch "$ENV_FILE"
-    compose --profile app --profile full --profile ui ps; exit 0 ;;
+    compose --profile app --profile full --profile ui --profile oauth2 ps; exit 0 ;;
 esac
 
 MODE="app"
@@ -92,6 +92,23 @@ else
   ok "已生成 $ENV_FILE（数据库/JWT/管理员凭据均为强随机值）"
 fi
 
+# ── OAuth2 授权服务器（Ory Hydra）的密钥：缺哪个补哪个，已有的绝不覆盖 ──
+# HYDRA_SYSTEM_SECRET 一旦丢失或更换，Hydra 库里加密的数据全部作废（所有令牌失效）
+ensure_secret() {
+  grep -qE "^$1=.+" "$ENV_FILE" && return 0
+  { echo ""; echo "$1=$(rand "$2")"; } >> "$ENV_FILE"
+  ok "已生成 $1"
+}
+ensure_secret HYDRA_SYSTEM_SECRET 32
+ensure_secret HYDRA_PAIRWISE_SALT 16
+ensure_secret HYDRA_TOKEN_HOOK_SECRET 32
+
+PROFILES=(--profile app --profile ui)
+if grep -qiE "^OAUTH2_SERVER_ENABLED=(true|1)" "$ENV_FILE"; then
+  PROFILES+=(--profile oauth2)
+  step "已启用 OAuth2 授权服务器，将一并启动 Hydra"
+fi
+
 # ── 兼容既有部署的 Temporal 外部数据卷（新机器自动创建，幂等） ──
 docker volume create docker_temporal_postgres_data >/dev/null
 
@@ -101,13 +118,18 @@ BUILD_ARGS=()
 
 if [ "$MODE" = "infra" ]; then
   step "启动核心基础设施（postgres / redis / nats）..."
-  compose up -d
+  if grep -qiE "^OAUTH2_SERVER_ENABLED=(true|1)" "$ENV_FILE"; then
+    compose --profile oauth2 up -d
+    warn "宿主机 go run 时：.env 里 HYDRA_ADMIN_URL=http://127.0.0.1:4445，HYDRA_TOKEN_HOOK_URL=http://host.docker.internal:8088/api/oauth2/hooks/token"
+  else
+    compose up -d
+  fi
   ok "基础设施已就绪，可在宿主机执行：go run ./cmd/server"
 else
   step "构建 Aegis 镜像（首次构建需下载依赖，请耐心等待）..."
   compose --profile app build "${BUILD_ARGS[@]}" server
   step "启动全栈（基础设施 → 自动迁移 → 后端）..."
-  compose --profile app --profile ui up -d
+  compose "${PROFILES[@]}" up -d
   step "等待服务健康检查通过..."
   for i in $(seq 1 60); do
     state="$(docker inspect -f '{{.State.Health.Status}}' aegis-server 2>/dev/null || echo starting)"
@@ -130,6 +152,10 @@ if [ "$MODE" = "app" ]; then
   echo -e "  API 文档      http://localhost:${HTTP_PORT}/docs"
   echo -e "  Temporal UI   http://localhost:$(get_env TEMPORAL_UI_PORT || echo 8233)"
   echo -e "  NATS UI       http://localhost:$(get_env NATS_UI_PORT || echo 31311)"
+  if grep -qiE "^OAUTH2_SERVER_ENABLED=(true|1)" "$ENV_FILE"; then
+    ISSUER="$(get_env HYDRA_PUBLIC_URL)"
+    echo -e "  OAuth2 签发方  ${ISSUER:-http://localhost:4444}"
+  fi
   echo ""
   echo -e "  超管账号      $(get_env ADMIN_BOOTSTRAP_ACCOUNT)"
   echo -e "  超管密码      $(get_env ADMIN_BOOTSTRAP_PASSWORD)"

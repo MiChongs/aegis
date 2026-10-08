@@ -127,6 +127,8 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/me/sessions", h.UserSessions)
 		appGatewayAuthed.DELETE("/me/sessions/:tokenHash", h.RevokeUserSession)
 		appGatewayAuthed.POST("/me/sessions/revoke-all", h.RevokeAllUserSessions)
+		appGatewayAuthed.GET("/me/oauth2/grants", h.AppMyOAuth2Grants)
+		appGatewayAuthed.DELETE("/me/oauth2/grants/:clientId", h.AppRevokeMyOAuth2Grant)
 
 		// 网页扫码登录：移动端扫码、确认与拒绝
 		appGatewayAuthed.POST("/auth/qr/scan", h.AppQRLoginScan)

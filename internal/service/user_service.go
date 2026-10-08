@@ -104,6 +104,7 @@ func hashUserPassword(password string) (string, error) {
 }
 
 type UserService struct {
+	oauth2    *OAuth2ServerService
 	log       *zap.Logger
 	pg        *pgrepo.Repository
 	sessions  *redisrepo.SessionRepository
@@ -143,6 +144,11 @@ func (s *UserService) SetAdminUserSearchService(search *AdminUserSearchService) 
 
 func (s *UserService) SetAccountBanService(ban *AccountBanService) {
 	s.ban = ban
+}
+
+// SetOAuth2Server 注入授权服务器：吊销会话（删号、重置密码、强制下线）时一并撤销第三方授权。
+func (s *UserService) SetOAuth2Server(oauth2 *OAuth2ServerService) {
+	s.oauth2 = oauth2
 }
 
 // SetAppService 注入应用服务，用于按应用密码策略推导密码生命周期
@@ -2220,6 +2226,9 @@ func (s *UserService) AdminRevokeUserSessionsBatch(ctx context.Context, appID in
 }
 
 func (s *UserService) revokeAllUserSessions(ctx context.Context, appID int64, userID int64) {
+	if s.oauth2 != nil {
+		s.oauth2.RevokeUserEverywhere(appID, userID)
+	}
 	if s.sessions == nil {
 		return
 	}

@@ -40,6 +40,8 @@ type RouterDeps struct {
 	AuthProtocol       *service.AuthProtocolService
 	AuthProviderHealth *service.AuthProviderHealthService
 	AppOAuth           *service.AppOAuthService
+	// OAuth2Server 对外的 OAuth2 / OIDC 授权服务器（Hydra 的 login / consent provider）
+	OAuth2Server *service.OAuth2ServerService
 
 	// ── 应用与平台 ────────────────────────────────────────────────────
 	App              *service.AppService
@@ -190,6 +192,7 @@ func (d RouterDeps) newHandler() *Handler {
 		legal:              d.Legal,
 		aiProvider:         d.AIProvider,
 		aiAgent:            d.AIAgent,
+		oauth2:             d.OAuth2Server,
 		aiAgentWSOrigin:    service.WebSocketOriginChecker(d.CORS.AllowOrigins),
 	}
 }

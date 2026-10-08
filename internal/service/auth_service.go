@@ -167,13 +167,46 @@ func (s *AuthService) runDetached(name string, timeout time.Duration, fn func(ct
 }
 
 func (s *AuthService) PasswordLogin(ctx context.Context, appID int64, account, password, deviceID, device, ip, userAgent string) (*authdomain.LoginResult, error) {
+	app, user, account, err := s.authenticatePassword(ctx, appID, account, password, deviceID, device, ip, userAgent)
+	if err != nil {
+		return nil, err
+	}
+
+	// 阶段 3 —— 签发会话（app 沿调用链下传，全程仅拉取一次）
+	result, err := s.completeLogin(ctx, app, user, "password", "password", deviceID, device, ip, userAgent)
+	if err != nil {
+		return nil, err
+	}
+	s.afterPasswordLoginSuccess(appID, user, account, ip)
+	return result, nil
+}
+
+// afterPasswordLoginSuccess 成功侧副作用全部异步：清失败计数 / 会话签发钩子，不增加登录响应时延。
+func (s *AuthService) afterPasswordLoginSuccess(appID int64, user *userdomain.User, account, ip string) {
+	if s.loginGuard != nil {
+		s.runDetached("login.guard_success", 3*time.Second, func(actx context.Context) {
+			s.loginGuard.RegisterSuccess(actx, appID, account, ip)
+		})
+	}
+	if s.plugin != nil {
+		uid := user.ID
+		s.runDetached("login.session_hook", 5*time.Second, func(actx context.Context) {
+			s.plugin.ExecuteHook(actx, HookAuthSessionIssued, map[string]any{"userId": uid, "account": account, "appId": appID}, plugindomain.HookMetadata{IP: ip, AppID: &appID, UserID: &uid})
+		})
+	}
+}
+
+// authenticatePassword 密码登录的凭据关卡：防爆破 → 风控 / 插件 / 应用策略 / 用户查询 → 账号状态 → 密码。
+// 只认人、不签发任何会话；App 网关登录与 OAuth2 授权服务器的登录页共用这一份，
+// 因此两条入口的锁定、风控与封禁判定永远一致。返回规范化之后的账号。
+func (s *AuthService) authenticatePassword(ctx context.Context, appID int64, account, password, deviceID, device, ip, userAgent string) (*appdomain.App, *userdomain.User, string, error) {
 	account = normalizeAccount(account)
 
 	// 阶段 0 —— 防爆破快速失败：锁定期内直接拒绝，不触发任何下游查询，
 	// 保证爆破攻击下 PG / 风控 / 插件零负载（Redis 故障 fail-open）
 	if s.loginGuard != nil {
 		if err := s.loginGuard.Check(ctx, appID, account, ip); err != nil {
-			return nil, err
+			return nil, nil, "", err
 		}
 	}
 
@@ -247,7 +280,7 @@ func (s *AuthService) PasswordLogin(ctx context.Context, appID int64, account, p
 	// 避免并发下因取消（context.Canceled）导致对外错误码漂移
 	for _, err := range []error{riskErr, hookErr, appErr, userErr} {
 		if err != nil {
-			return nil, err
+			return nil, nil, "", err
 		}
 	}
 
@@ -258,10 +291,10 @@ func (s *AuthService) PasswordLogin(ctx context.Context, appID int64, account, p
 		if s.loginGuard != nil {
 			s.loginGuard.RegisterFailure(ctx, appID, account, ip)
 		}
-		return nil, apperrors.New(40101, http.StatusUnauthorized, "账号或密码错误")
+		return nil, nil, "", apperrors.New(40101, http.StatusUnauthorized, "账号或密码错误")
 	}
 	if err := s.ensureUserLoginState(ctx, user); err != nil {
-		return nil, err
+		return nil, nil, "", err
 	}
 	if !s.verifyCredential(user.PasswordHash, password) {
 		// 失败计数同步执行（保证防爆破窗口准确），审计与插件钩子移出关键路径
@@ -277,27 +310,9 @@ func (s *AuthService) PasswordLogin(ctx context.Context, appID int64, account, p
 				s.plugin.ExecuteHook(actx, HookAuthLoginFailed, map[string]any{"account": account, "appId": appID, "ip": ip}, plugindomain.HookMetadata{IP: ip, AppID: &appID})
 			})
 		}
-		return nil, apperrors.New(40101, http.StatusUnauthorized, "账号或密码错误")
+		return nil, nil, "", apperrors.New(40101, http.StatusUnauthorized, "账号或密码错误")
 	}
-
-	// 阶段 3 —— 签发会话（app 沿调用链下传，全程仅拉取一次）
-	result, err := s.completeLogin(ctx, app, user, "password", "password", deviceID, device, ip, userAgent)
-	if err != nil {
-		return nil, err
-	}
-	// 成功侧副作用全部异步：清失败计数 / 会话签发钩子，不增加登录响应时延
-	if s.loginGuard != nil {
-		s.runDetached("login.guard_success", 3*time.Second, func(actx context.Context) {
-			s.loginGuard.RegisterSuccess(actx, appID, account, ip)
-		})
-	}
-	if s.plugin != nil {
-		uid := user.ID
-		s.runDetached("login.session_hook", 5*time.Second, func(actx context.Context) {
-			s.plugin.ExecuteHook(actx, HookAuthSessionIssued, map[string]any{"userId": uid, "account": account, "appId": appID}, plugindomain.HookMetadata{IP: ip, AppID: &appID, UserID: &uid})
-		})
-	}
-	return result, nil
+	return app, user, account, nil
 }
 
 func (s *AuthService) RegisterWithPassword(ctx context.Context, input PasswordRegisterInput) (*authdomain.LoginResult, error) {

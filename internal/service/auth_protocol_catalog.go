@@ -113,6 +113,10 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "loginAudits", Method: "GET", Path: "/me/audits/login", Auth: true, Summary: "我的登录记录"},
 	{Key: "sessionAudits", Method: "GET", Path: "/me/audits/sessions", Auth: true, Summary: "我的会话记录"},
 
+	// ── 已授权的第三方应用（经 OAuth2 授权服务器登录过的客户端）──
+	{Key: "oauth2Grants", Method: "GET", Path: "/me/oauth2/grants", Auth: true, Summary: "已授权的第三方应用"},
+	{Key: "oauth2GrantRevoke", Method: "DELETE", Path: "/me/oauth2/grants/{clientId}", Auth: true, Summary: "取消对第三方应用的授权"},
+
 	// ── 签到 / 积分 / 排行榜 ──
 	{Key: "signinStatus", Method: "GET", Path: "/signin/status", Auth: true, Summary: "签到状态"},
 	{Key: "signin", Method: "POST", Path: "/signin", Auth: true, Summary: "签到"},

@@ -85,6 +85,9 @@ type Config struct {
 	// 详见 pkg/egress 与 docs/egress-gateway.md。
 	Egress egress.Config
 	OAuth  map[string]OAuthProviderConfig
+	// OAuth2Server 对外的 OAuth2 / OIDC 授权服务器（Ory Hydra + Aegis 作为登录与同意页）。
+	// 与上面的 OAuth（Aegis 作为客户端去接第三方登录）方向相反。详见 docs/oauth2-provider.md。
+	OAuth2Server OAuth2ServerConfig
 }
 
 // TracingConfig OpenTelemetry 追踪配置（环境变量驱动）。
@@ -1144,6 +1147,7 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 	}
 
 	setDefaults(&cfg)
+	cfg.OAuth2Server = loadOAuth2ServerConfig(v, cfg.APIBaseURL, cfg.Security.MasterKey, cfg.JWT.Secret)
 	for name, defaults := range oauthDefaults {
 		prefix := strings.ToUpper(name)
 		cfg.OAuth[name] = OAuthProviderConfig{

@@ -46,12 +46,12 @@ function Compose {
 if ($Down) {
     if (-not (Test-Path $EnvFile)) { New-Item -ItemType File -Path $EnvFile | Out-Null }
     Step "停止 Aegis 栈（数据卷保留）..."
-    Compose --profile app --profile full --profile ui down
+    Compose --profile app --profile full --profile ui --profile oauth2 down
     Ok "已停止"; exit 0
 }
 if ($Status) {
     if (-not (Test-Path $EnvFile)) { New-Item -ItemType File -Path $EnvFile | Out-Null }
-    Compose --profile app --profile full --profile ui ps; exit 0
+    Compose --profile app --profile full --profile ui --profile oauth2 ps; exit 0
 }
 
 # ── 生成 .env（已存在则不覆盖，保障幂等与既有凭据安全） ──
@@ -96,13 +96,36 @@ TEMPORAL_DB_PASSWORD=$(New-RandomHex 12)
     Ok "已生成 $EnvFile（数据库/JWT/管理员凭据均为强随机值）"
 }
 
+# ── OAuth2 授权服务器（Ory Hydra）的密钥：缺哪个补哪个，已有的绝不覆盖 ──
+# HYDRA_SYSTEM_SECRET 一旦丢失或更换，Hydra 库里加密的数据全部作废（所有令牌失效）
+function Ensure-Secret([string]$key, [int]$bytes) {
+    if (Select-String -Path $EnvFile -Pattern "^$key=.+" -Quiet) { return }
+    [System.IO.File]::AppendAllText($EnvFile, "`n$key=$(New-RandomHex $bytes)`n", [System.Text.UTF8Encoding]::new($false))
+    Ok "已生成 $key"
+}
+Ensure-Secret "HYDRA_SYSTEM_SECRET" 32
+Ensure-Secret "HYDRA_PAIRWISE_SALT" 16
+Ensure-Secret "HYDRA_TOKEN_HOOK_SECRET" 32
+
+$OAuth2Enabled = Select-String -Path $EnvFile -Pattern "^OAUTH2_SERVER_ENABLED=(true|1)" -Quiet
+$Profiles = @("--profile", "app", "--profile", "ui")
+if ($OAuth2Enabled) {
+    $Profiles += @("--profile", "oauth2")
+    Step "已启用 OAuth2 授权服务器，将一并启动 Hydra"
+}
+
 # ── 兼容既有部署的 Temporal 外部数据卷（新机器自动创建，幂等） ──
 docker volume create docker_temporal_postgres_data *> $null
 
 # ── 构建与启动 ──
 if ($Infra) {
     Step "启动核心基础设施（postgres / redis / nats）..."
-    Compose up -d
+    if ($OAuth2Enabled) {
+        Compose --profile oauth2 up -d
+        Warn "本机 go run 时：.env 里 HYDRA_ADMIN_URL=http://127.0.0.1:4445，HYDRA_TOKEN_HOOK_URL=http://host.docker.internal:8088/api/oauth2/hooks/token"
+    } else {
+        Compose up -d
+    }
     Ok "基础设施已就绪，可在本机执行：go run ./cmd/server"
 } else {
     Step "构建 Aegis 镜像（首次构建需下载依赖，请耐心等待）..."
@@ -113,7 +136,7 @@ if ($Infra) {
         Compose --profile app build server
     }
     Step "启动全栈（基础设施 → 自动迁移 → 后端）..."
-    Compose --profile app --profile ui up -d
+    Compose @Profiles up -d
 
     Step "等待服务健康检查通过..."
     $state = "starting"
@@ -145,6 +168,9 @@ if (-not $Infra) {
     Write-Host "  API 文档      http://localhost:$httpPort/docs"
     Write-Host "  Temporal UI   http://localhost:$(Get-EnvValue 'TEMPORAL_UI_PORT' '8233')"
     Write-Host "  NATS UI       http://localhost:$(Get-EnvValue 'NATS_UI_PORT' '31311')"
+    if ($OAuth2Enabled) {
+        Write-Host "  OAuth2 签发方  $(Get-EnvValue 'HYDRA_PUBLIC_URL' 'http://localhost:4444')"
+    }
     Write-Host ""
     Write-Host "  超管账号      $(Get-EnvValue 'ADMIN_BOOTSTRAP_ACCOUNT' 'superadmin')"
     Write-Host "  超管密码      $(Get-EnvValue 'ADMIN_BOOTSTRAP_PASSWORD' '')"

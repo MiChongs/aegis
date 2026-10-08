@@ -89,6 +89,7 @@ type Handler struct {
 	// aiProvider AI 供应商通道（系统级 + 应用级）；aiAgent Agent 会话与 SSE 流。
 	aiProvider *service.AIProviderService
 	aiAgent    *service.AIAgentService
+	oauth2     *service.OAuth2ServerService
 	// aiAgentWSOrigin Agent WebSocket 通道的 Origin 闸门（复用 CORS 白名单，
 	// 与 /api/ws 同一套判定；见 service.WebSocketOriginChecker）。
 	aiAgentWSOrigin func(r *http.Request) bool
@@ -195,6 +196,7 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 	registerWorkflowCompatRoutes(router, h, deps)
 	registerAdminSystemRoutes(router, h, deps)
 	registerPlatformBannerActiveRoute(router, h, deps)
+	registerOAuth2Routes(router, h, deps)
 
 	docsOptions := DefaultDocsOptions()
 	if trimmed := strings.TrimSpace(docsPortalURL); trimmed != "" {

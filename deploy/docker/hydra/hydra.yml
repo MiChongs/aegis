@@ -1,0 +1,88 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  Ory Hydra：Aegis 对外的 OAuth2 / OpenID Connect 授权服务器
+#
+#  分工：Hydra 负责协议（授权端点、令牌端点、JWKS、发现文档、签发与吊销），
+#        Aegis 是它的 login / consent / logout provider（认人、问同意、出 claims）。
+#  完整说明见 docs/oauth2-provider.md。
+#
+#  这份文件只放与部署无关的固定配置。地址、密钥一律由 docker-compose.yml 以环境变量注入
+#  （Hydra 支持用大写下划线形式覆盖任意配置项，例如 URLS_SELF_ISSUER）：
+#
+#    DSN                                   Hydra 自己的数据库（与 Aegis 同一实例，独立的 hydra 库）
+#    URLS_SELF_ISSUER                      签发方，即 HYDRA_PUBLIC_URL
+#    URLS_LOGIN / URLS_CONSENT / ...       指向 Aegis 的 /oauth2/* 页面
+#    SECRETS_SYSTEM                        加密数据库里敏感字段的密钥（至少 32 字符，丢失即全部令牌作废）
+#    OIDC_SUBJECT_IDENTIFIERS_PAIRWISE_SALT   pairwise 主体的盐
+#    OAUTH2_TOKEN_HOOK_URL                 Aegis 的令牌钩子地址
+#    OAUTH2_TOKEN_HOOK_AUTH_CONFIG_VALUE   "Bearer <HYDRA_TOKEN_HOOK_SECRET>"
+# ══════════════════════════════════════════════════════════════════════════
+
+serve:
+  public:
+    port: 4444
+    cors:
+      enabled: false
+  admin:
+    # 管理端只在容器网络内可达，绝不映射到公网：它不做任何认证
+    port: 4445
+  cookies:
+    same_site_mode: Lax
+
+urls:
+  self:
+    issuer: http://localhost:4444
+  login: http://localhost:8088/oauth2/login
+  consent: http://localhost:8088/oauth2/consent
+  logout: http://localhost:8088/oauth2/logout
+  error: http://localhost:8088/oauth2/error
+  post_logout_redirect: http://localhost:8088/oauth2/logged-out
+  device:
+    verification: http://localhost:8088/oauth2/device
+    success: http://localhost:8088/oauth2/device/done
+
+strategies:
+  # 不透明令牌：资源服务器经内省（或 userinfo）判定，吊销即时生效。
+  # 个别客户端需要 JWT 访问令牌时，在控制台把该客户端的「访问令牌格式」设为 jwt
+  access_token: opaque
+  scope: wildcard
+
+ttl:
+  access_token: 1h
+  refresh_token: 720h
+  id_token: 1h
+  auth_code: 10m
+  login_consent_request: 30m
+  device_user_code: 10m
+
+oauth2:
+  # 公开客户端（SPA、移动应用、桌面应用）必须用 PKCE
+  pkce:
+    enforced_for_public_clients: true
+  # 刷新令牌轮换：每次刷新都换新，旧的立即作废
+  grant:
+    refresh_token:
+      rotation_grace_period: 0s
+  # 每次签发与刷新令牌前问一次 Aegis：账号被封禁、应用被冻结时拒绝，刷新时按当前资料重算 claims
+  token_hook:
+    url: http://server:8088/api/oauth2/hooks/token
+    auth:
+      type: api_key
+      config:
+        name: Authorization
+        value: replaced-by-env
+        in: header
+
+oidc:
+  subject_identifiers:
+    supported_types:
+      - public
+      - pairwise
+    pairwise:
+      salt: replaced-by-env
+  # 客户端一律经 Aegis 控制台创建（绑定到应用），不开放动态注册
+  dynamic_client_registration:
+    enabled: false
+
+log:
+  level: info
+  format: json

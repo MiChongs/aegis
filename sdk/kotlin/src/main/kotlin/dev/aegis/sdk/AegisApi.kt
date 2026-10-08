@@ -463,6 +463,19 @@ class AegisMeApi internal constructor(private val client: AegisClient) {
     @JvmOverloads
     fun sessionAudits(page: Int = 1, limit: Int = 20): JsonElement =
         client.call("GET", "/me/audits/sessions", query = pageQuery(page, limit), requireAuth = true)
+
+    // ── 已授权的第三方应用（OAuth2 授权服务器）──
+
+    /** 当前用户授权过的第三方应用（经 Aegis 的 OAuth2 / OIDC 授权登录过的客户端）。 */
+    @Throws(IOException::class)
+    fun oauth2Grants(): JsonElement = client.call("GET", "/me/oauth2/grants", requireAuth = true)
+
+    /** 取消对某个第三方应用的授权，并吊销它持有的访问令牌与刷新令牌。 */
+    @Throws(IOException::class)
+    fun revokeOAuth2Grant(clientId: String): JsonElement {
+        val id = java.net.URLEncoder.encode(clientId, "UTF-8").replace("+", "%20")
+        return client.call("DELETE", "/me/oauth2/grants/$id", requireAuth = true)
+    }
 }
 
 /** 签到、积分、排行榜、站内信、工单。 */

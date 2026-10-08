@@ -22,11 +22,13 @@ DELETE	/api/admin/apps/:appkey/notices/:noticeId	DeleteAdminNotice
 DELETE	/api/admin/apps/:appkey/notifications	DeleteAdminAppNotifications
 DELETE	/api/admin/apps/:appkey/oauth-bindings	AdminDeleteAppOAuthBinding
 DELETE	/api/admin/apps/:appkey/oauth-providers/:provider	AdminDeleteAppOAuthProvider
+DELETE	/api/admin/apps/:appkey/oauth2/clients/:clientId	AdminDeleteOAuth2Client
 DELETE	/api/admin/apps/:appkey/releases/:rid	AdminDeleteRelease
 DELETE	/api/admin/apps/:appkey/users/:userId	AdminDeleteUser
 DELETE	/api/admin/apps/:appkey/users/:userId/avatar	AdminRemoveAppUserAvatar
 DELETE	/api/admin/apps/:appkey/users/:userId/cloud-storage	AdminPurgeCloudStorageUser
 DELETE	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId	AdminDeleteCloudStorageUserItem
+DELETE	/api/admin/apps/:appkey/users/:userId/oauth2-grants	AdminRevokeUserOAuth2Grants
 DELETE	/api/admin/apps/:appkey/users/:userId/sessions/:tokenHash	AdminRevokeUserSession
 DELETE	/api/admin/apps/:appkey/versions/:vid	AdminDeleteVersion
 DELETE	/api/admin/apps/:appkey/vip/features/:tag	AdminDeleteAppVipFeature
@@ -95,6 +97,7 @@ DELETE	/api/user/sessions/:tokenHash	RevokeUserSession
 DELETE	/api/v1/apps/:appkey/auth/oauth/bindings/:provider	UnbindMyOAuthProvider
 DELETE	/api/v1/apps/:appkey/cloud/items/:namespace/:key	AppDeleteCloudItem
 DELETE	/api/v1/apps/:appkey/me/avatar	RemoveUserAvatar
+DELETE	/api/v1/apps/:appkey/me/oauth2/grants/:clientId	AppRevokeMyOAuth2Grant
 DELETE	/api/v1/apps/:appkey/me/passkeys/:credentialId	DeletePasskey
 DELETE	/api/v1/apps/:appkey/me/sessions/:tokenHash	RevokeUserSession
 DELETE	/api/v1/apps/:appkey/notifications/:notificationId	DeleteNotification
@@ -159,6 +162,9 @@ GET	/api/admin/apps/:appkey/notifications/export	ExportAdminAppNotifications
 GET	/api/admin/apps/:appkey/oauth-bindings	AdminListAppOAuthBindings
 GET	/api/admin/apps/:appkey/oauth-providers	AdminListAppOAuthProviders
 GET	/api/admin/apps/:appkey/oauth-providers/:provider	AdminGetAppOAuthProvider
+GET	/api/admin/apps/:appkey/oauth2/clients	AdminListOAuth2Clients
+GET	/api/admin/apps/:appkey/oauth2/clients/:clientId	AdminGetOAuth2Client
+GET	/api/admin/apps/:appkey/oauth2/overview	AdminOAuth2Overview
 GET	/api/admin/apps/:appkey/password-policy	AdminAppPasswordPolicy
 GET	/api/admin/apps/:appkey/policy	AdminAppPolicy
 GET	/api/admin/apps/:appkey/releases	AdminListReleases
@@ -198,6 +204,7 @@ GET	/api/admin/apps/:appkey/users/:userId/cloud-storage	AdminCloudStorageUser
 GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items	AdminCloudStorageUserItems
 GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId	AdminCloudStorageUserItem
 GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/revisions	AdminCloudStorageUserItemRevisions
+GET	/api/admin/apps/:appkey/users/:userId/oauth2-grants	AdminListUserOAuth2Grants
 GET	/api/admin/apps/:appkey/users/:userId/sessions	AdminListUserSessions
 GET	/api/admin/apps/:appkey/users/:userId/wallet	AdminAppUserWallet
 GET	/api/admin/apps/:appkey/users/:userId/wallet/transactions	AdminAppUserWalletTransactions
@@ -508,6 +515,7 @@ GET	/api/v1/apps/:appkey/me/2fa/recovery-codes	ListRecoveryCodes
 GET	/api/v1/apps/:appkey/me/audits/login	UserLoginAudits
 GET	/api/v1/apps/:appkey/me/audits/sessions	UserSessionAudits
 GET	/api/v1/apps/:appkey/me/avatar/history	ListUserAvatarHistory
+GET	/api/v1/apps/:appkey/me/oauth2/grants	AppMyOAuth2Grants
 GET	/api/v1/apps/:appkey/me/passkeys	ListPasskeys
 GET	/api/v1/apps/:appkey/me/profile	Profile
 GET	/api/v1/apps/:appkey/me/security	Security
@@ -551,6 +559,13 @@ GET	/cons-env	EnvPage
 GET	/docs	RegisterDocsRoutes.func2
 GET	/docs/tags/:slug	RegisterDocsRoutes.func3
 GET	/healthz	Healthz
+GET	/oauth2/consent	OAuth2ConsentPage
+GET	/oauth2/device	OAuth2DevicePage
+GET	/oauth2/device/done	OAuth2DeviceDone
+GET	/oauth2/error	OAuth2ErrorPage
+GET	/oauth2/logged-out	OAuth2LoggedOut
+GET	/oauth2/login	OAuth2LoginPage
+GET	/oauth2/logout	OAuth2LogoutPage
 GET	/openapi.json	RegisterDocsRoutes.func1
 GET	/readyz	Readyz
 GET	/status	StatusPage
@@ -664,6 +679,8 @@ POST	/api/admin/apps/:appkey/notifications/delete-by-filter	DeleteAdminAppNotifi
 POST	/api/admin/apps/:appkey/oauth-providers	AdminCreateAppOAuthProvider
 POST	/api/admin/apps/:appkey/oauth-providers/:provider/test	AdminTestAppOAuthProvider
 POST	/api/admin/apps/:appkey/oauth-providers/reorder	AdminReorderAppOAuthProviders
+POST	/api/admin/apps/:appkey/oauth2/clients	AdminCreateOAuth2Client
+POST	/api/admin/apps/:appkey/oauth2/clients/:clientId/rotate-secret	AdminRotateOAuth2ClientSecret
 POST	/api/admin/apps/:appkey/password-policy/reset	ResetAdminAppPasswordPolicy
 POST	/api/admin/apps/:appkey/password-policy/test	TestAdminAppPasswordPolicy
 POST	/api/admin/apps/:appkey/releases	AdminCreateRelease
@@ -936,6 +953,7 @@ POST	/api/notifications/clear	ClearNotifications
 POST	/api/notifications/read	ReadNotification
 POST	/api/notifications/read-all	ReadAllNotifications
 POST	/api/notifications/read-batch	ReadNotificationsBatch
+POST	/api/oauth2/hooks/token	OAuth2TokenHook
 POST	/api/pay/orders/:orderNo/bill	ExportPaymentBill
 POST	/api/pay/orders/:orderNo/receipt/email	EmailPaymentReceipt
 POST	/api/pay/orders/create	CreatePaymentOrder
@@ -1044,6 +1062,11 @@ POST	/api/vip/trial	ClaimVipTrial
 POST	/api/wallet/consume	WalletConsume
 POST	/api/wallet/transactions/:transactionNo/bill	ExportWalletBill
 POST	/api/wallet/transactions/:transactionNo/receipt/email	EmailWalletReceipt
+POST	/oauth2/consent	OAuth2ConsentSubmit
+POST	/oauth2/device	OAuth2DeviceSubmit
+POST	/oauth2/login	OAuth2LoginSubmit
+POST	/oauth2/login/mfa	OAuth2SecondFactorSubmit
+POST	/oauth2/logout	OAuth2LogoutSubmit
 PUT	/api/admin/apps/:appkey	UpdateAdminApp
 PUT	/api/admin/apps/:appkey/ai/configs/:configId	AdminAppAIConfigUpdate
 PUT	/api/admin/apps/:appkey/ai/mcp-servers/:serverId	AdminAppAIMCPUpdate
@@ -1063,6 +1086,7 @@ PUT	/api/admin/apps/:appkey/lottery/prizes/:id	AdminUpdateLotteryPrize
 PUT	/api/admin/apps/:appkey/notices/:noticeId	UpdateAdminNotice
 PUT	/api/admin/apps/:appkey/oauth-providers/:provider	AdminUpdateAppOAuthProvider
 PUT	/api/admin/apps/:appkey/oauth-providers/:provider/enabled	AdminSetAppOAuthProviderEnabled
+PUT	/api/admin/apps/:appkey/oauth2/clients/:clientId	AdminUpdateOAuth2Client
 PUT	/api/admin/apps/:appkey/password-policy	UpdateAdminAppPasswordPolicy
 PUT	/api/admin/apps/:appkey/policy	UpdateAdminAppPolicy
 PUT	/api/admin/apps/:appkey/releases/:rid	AdminUpdateRelease

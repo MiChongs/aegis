@@ -10,6 +10,8 @@ func init() {
 		Export("GET /api/admin/apps/:appkey/users/export", "导出用户", ""),
 		Write("PUT /api/admin/apps/:appkey/users/:userId/profile", "修改用户资料", "用户", SeverityMedium),
 		Write("PUT /api/admin/apps/:appkey/users/:userId/status", "修改用户状态", "用户", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/users/:userId/oauth2-grants", "查看用户的第三方授权", "用户"),
+		Write("DELETE /api/admin/apps/:appkey/users/:userId/oauth2-grants", "撤销用户的第三方授权", "用户", SeverityMedium),
 		Write("PUT /api/admin/apps/:appkey/users/status/batch", "批量修改用户状态", "用户", SeverityCritical),
 		Write("DELETE /api/admin/apps/:appkey/users/:userId", "删除用户", "用户", SeverityCritical),
 		Write("POST /api/admin/apps/:appkey/users/:userId/reset-password", "重置用户密码", "用户", SeverityHigh),

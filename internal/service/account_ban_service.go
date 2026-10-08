@@ -25,6 +25,7 @@ type AccountBanService struct {
 	pg               *pgrepo.Repository
 	sessions         *redisrepo.SessionRepository
 	plugin           *PluginService
+	oauth2           *OAuth2ServerService
 	cron             *cron.Cron
 	cleanupBatchSize int
 	started          bool
@@ -237,7 +238,15 @@ func (s *AccountBanService) runCleanupJob() {
 	}
 }
 
+// SetOAuth2Server 注入授权服务器：封禁时一并撤销该账号在第三方应用上的授权与令牌。
+func (s *AccountBanService) SetOAuth2Server(oauth2 *OAuth2ServerService) {
+	s.oauth2 = oauth2
+}
+
 func (s *AccountBanService) revokeUserSessions(ctx context.Context, appID int64, userID int64) {
+	if s.oauth2 != nil {
+		s.oauth2.RevokeUserEverywhere(appID, userID)
+	}
 	if s.sessions == nil {
 		return
 	}

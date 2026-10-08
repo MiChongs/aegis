@@ -467,6 +467,10 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	riskService.SetLocationService(locationService)
 	authService.SetRiskService(riskService)
 	adminService.SetRiskService(riskService)
+	// 对外 OAuth2 / OIDC 授权服务器（Ory Hydra 承载协议，Aegis 负责登录与同意页）
+	oauth2ServerService := service.NewOAuth2ServerService(cfg, log, pg, authService, appService, avatarService)
+	accountBanService.SetOAuth2Server(oauth2ServerService)
+	userService.SetOAuth2Server(oauth2ServerService)
 
 	// 设备营销名称字典：启动时幂等种子（表空则解析嵌入的 kt 源并批量写入）
 	deviceMarketingService := service.NewDeviceMarketingService(log, pg)
@@ -571,6 +575,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		AuthProtocol:       authProtocolService,
 		AuthProviderHealth: authProviderHealthService,
 		AppOAuth:           appOAuthService,
+		OAuth2Server:       oauth2ServerService,
 
 		App:              appService,
 		AppFunction:      appFunctionService,

@@ -152,6 +152,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/oauth-providers/reorder"):                              AppOAuthProviderReorderRequest{},         // AdminReorderAppOAuthProviders
 		routeKey("PUT", "/api/admin/apps/{appkey}/oauth-providers/{provider}"):                            AppOAuthProviderRequest{},                // AdminUpdateAppOAuthProvider
 		routeKey("PUT", "/api/admin/apps/{appkey}/oauth-providers/{provider}/enabled"):                    AppOAuthProviderEnabledRequest{},         // AdminSetAppOAuthProviderEnabled
+		routeKey("POST", "/api/admin/apps/{appkey}/oauth2/clients"):                                       service.OAuth2ClientInput{},              // AdminCreateOAuth2Client
+		routeKey("PUT", "/api/admin/apps/{appkey}/oauth2/clients/{clientId}"):                             service.OAuth2ClientInput{},              // AdminUpdateOAuth2Client
 		routeKey("PUT", "/api/admin/apps/{appkey}/password-policy"):                                       AdminPasswordPolicyUpdateRequest{},       // UpdateAdminAppPasswordPolicy
 		routeKey("POST", "/api/admin/apps/{appkey}/password-policy/test"):                                 AdminPasswordPolicyTestRequest{},         // TestAdminAppPasswordPolicy
 		routeKey("PUT", "/api/admin/apps/{appkey}/policy"):                                                AdminAppPolicyRequest{},                  // UpdateAdminAppPolicy
@@ -488,6 +490,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/notifications/clear"):                                                      NotificationClearRequest{},               // ClearNotifications
 		routeKey("POST", "/api/notifications/read"):                                                       NotificationReadRequest{},                // ReadNotification
 		routeKey("POST", "/api/notifications/read-batch"):                                                 NotificationReadBatchRequest{},           // ReadNotificationsBatch
+		routeKey("POST", "/api/oauth2/hooks/token"):                                                       service.OAuth2TokenHookRequest{},         // OAuth2TokenHook
 		routeKey("GET", "/api/pay/orders"):                                                                UserPaymentOrdersQuery{},                 // PaymentOrders
 		routeKey("POST", "/api/pay/orders/create"):                                                        CreatePaymentOrderRequest{},              // CreatePaymentOrder
 		routeKey("GET", "/api/pay/orders/{orderNo}/bill"):                                                 PaymentBillExportRequest{},               // ExportPaymentBill

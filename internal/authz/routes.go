@@ -334,6 +334,10 @@ var adminRouteRules = []RouteRule{
 	{Pattern: "/api/admin/apps/:appkey/oauth-bindings/*", Permission: PermAppUserWrite, Scope: ScopeApp},
 	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/oauth-providers/*", Permission: PermAppRead, Scope: ScopeApp},
 	{Pattern: "/api/admin/apps/:appkey/oauth-providers/*", Permission: PermAppWrite, Scope: ScopeApp},
+	// 对外 OAuth2 授权服务器的客户端：与第三方登录渠道同属应用配置。
+	// 用户的授权记录挂在 users/:userId/oauth2-grants 下，由下面的用户规则按用户权限点判定
+	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/oauth2/*", Permission: PermAppRead, Scope: ScopeApp},
+	{Pattern: "/api/admin/apps/:appkey/oauth2/*", Permission: PermAppWrite, Scope: ScopeApp},
 
 	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/users/*", Permission: PermAppUserRead, Scope: ScopeApp},
 	{Pattern: "/api/admin/apps/:appkey/users/*", Permission: PermAppUserWrite, Scope: ScopeApp},
