@@ -150,7 +150,12 @@ export function AppUserDetailPage({ appKey, userId, fromHref }: Props) {
 
   const signals = useMemo(() => deriveUserSignals(user, activeBan), [user, activeBan]);
 
-  function goTab(next: string) {
+  /**
+   * 换页签。`reveal` 用于页签条以外的入口（身份卡按钮、信号带、概览里的跳转）：
+   * 窄屏上这些入口离内容很远，只换页签不滚动，点了像没反应，所以把页签条滚到顶栏下方。
+   * 直接点页签条时只在已经滚过页签条时回拉，页签条还在视口里就别动。
+   */
+  function goTab(next: string, reveal = false) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", next);
     router.replace(`?${params.toString()}`, { scroll: false });
@@ -158,11 +163,13 @@ export function AppUserDetailPage({ appKey, userId, fromHref }: Props) {
     const anchor = tabAnchorRef.current;
     if (!anchor) return;
     const top = anchor.getBoundingClientRect().top;
-    // 只在已经滚过页签条时回拉；页签条还在视口里就别动，免得页面无故跳一下
-    if (top < TOPBAR_HEIGHT) {
+    const offscreen = top > window.innerHeight * 0.6;
+    if (top < TOPBAR_HEIGHT || (reveal && offscreen)) {
       window.scrollTo({ top: window.scrollY + top - TOPBAR_HEIGHT, behavior: "smooth" });
     }
   }
+
+  const revealTab = (next: string) => goTab(next, true);
 
   const title = textValue(
     user?.nickname || user?.profile?.nickname,
@@ -236,19 +243,19 @@ export function AppUserDetailPage({ appKey, userId, fromHref }: Props) {
               appKey={appKey}
               appName={app?.name}
               activeBanScope={activeBan?.banScope}
-              onNavigate={goTab}
+              onNavigate={revealTab}
               onDelete={() => setShowDelete(true)}
             />
 
-            {signals.length ? <SignalRail signals={signals} onNavigate={goTab} /> : null}
+            {signals.length ? <SignalRail signals={signals} onNavigate={revealTab} /> : null}
 
-            <Tabs value={tab} onValueChange={goTab} className="gap-0">
+            <Tabs value={tab} onValueChange={(next) => goTab(next)} className="gap-0">
               <div ref={tabAnchorRef} aria-hidden />
               <TabBar tab={tab} hasActiveBan={Boolean(activeBan)} />
 
               <div className="pt-4 sm:pt-5">
                 <TabsContent value="overview">
-                  <UserOverviewTab user={user} wallet={walletQuery.data} onNavigate={goTab} />
+                  <UserOverviewTab user={user} wallet={walletQuery.data} onNavigate={revealTab} />
                 </TabsContent>
                 <TabsContent value="profile">
                   <UserProfileTab appKey={appKey} userId={userId} user={user} />
