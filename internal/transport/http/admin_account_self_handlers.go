@@ -68,7 +68,7 @@ func (h *Handler) ChangeAdminPassword(c *gin.Context) {
 		return
 	}
 	signOutOthers := req.SignOutOthers == nil || *req.SignOutOthers
-	result, err := h.admin.ChangePassword(c.Request.Context(), access, req.CurrentPassword, req.NewPassword, signOutOthers)
+	result, err := h.admin.ChangePassword(c.Request.Context(), access, req.CurrentPassword, req.NewPassword, req.Code, req.RecoveryCode, signOutOthers)
 	if err != nil {
 		h.writeError(c, err)
 		return

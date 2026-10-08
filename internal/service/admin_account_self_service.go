@@ -41,6 +41,8 @@ var (
 	errAdminPasswordWeak         = apperrors.New(42205, http.StatusUnprocessableEntity, "密码须同时包含字母和数字")
 	errAdminPasswordHasAccount   = apperrors.New(42206, http.StatusUnprocessableEntity, "密码不能包含用户名")
 	errAdminCurrentPasswordWrong = apperrors.New(42207, http.StatusUnprocessableEntity, "当前密码不正确")
+	// errAdminSecondFactorRequired 开启两步验证的账号改密码时未提供验证码或恢复码
+	errAdminSecondFactorRequired = apperrors.New(42208, http.StatusUnprocessableEntity, "已开启两步验证，请输入验证码或恢复码")
 )
 
 // validateAdminAccountName 校验新用户名的格式与保留名。
@@ -158,7 +160,11 @@ func (s *AdminService) ChangeAccount(ctx context.Context, adminID int64, newAcco
 }
 
 // ChangePassword 修改自己的密码。signOutOthers 为真时下线除当前会话外的所有会话。
-func (s *AdminService) ChangePassword(ctx context.Context, access *admindomain.AccessContext, currentPassword, newPassword string, signOutOthers bool) (*admindomain.PasswordChangeResult, error) {
+//
+// 开启了两步验证的账号还须提供验证码（code）或恢复码（recoveryCode）。
+// 二次验证放在密码与新密码规则都校验通过之后：恢复码是一次性的，
+// 不能因为新密码太弱这类可以重填的错误白白消耗掉。
+func (s *AdminService) ChangePassword(ctx context.Context, access *admindomain.AccessContext, currentPassword, newPassword, code, recoveryCode string, signOutOthers bool) (*admindomain.PasswordChangeResult, error) {
 	record, err := s.pg.GetAdminAuthByID(ctx, access.AdminID)
 	if err != nil {
 		return nil, err
@@ -176,6 +182,9 @@ func (s *AdminService) ChangePassword(ctx context.Context, access *admindomain.A
 		return nil, errAdminPasswordSame
 	}
 	if err := validateAdminPasswordStrength(record.Account.Account, newPassword); err != nil {
+		return nil, err
+	}
+	if err := s.requireSecondFactorIfEnabled(ctx, access.AdminID, code, recoveryCode); err != nil {
 		return nil, err
 	}
 	hash, err := adminHashPassword(newPassword)
@@ -205,4 +214,23 @@ func (s *AdminService) ChangePassword(ctx context.Context, access *admindomain.A
 		zap.Int64("revoked_sessions", result.RevokedSessions),
 	)
 	return result, nil
+}
+
+// requireSecondFactorIfEnabled 账号开启了两步验证时，要求验证码或恢复码其一通过；未开启时直接放行。
+func (s *AdminService) requireSecondFactorIfEnabled(ctx context.Context, adminID int64, code, recoveryCode string) error {
+	record, err := s.pg.GetAdminTOTPSecret(ctx, adminID)
+	if err != nil {
+		return err
+	}
+	if record == nil || !record.Enabled {
+		return nil
+	}
+	if s.security == nil {
+		return apperrors.New(50321, http.StatusServiceUnavailable, "安全模块暂不可用")
+	}
+	code, recoveryCode = strings.TrimSpace(code), strings.TrimSpace(recoveryCode)
+	if code == "" && recoveryCode == "" {
+		return errAdminSecondFactorRequired
+	}
+	return s.security.verifyAdminSecondFactor(ctx, adminID, code, recoveryCode)
 }

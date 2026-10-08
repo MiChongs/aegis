@@ -74,7 +74,14 @@ export function changeAdminAccount(token: string, payload: { account: string; cu
 /** 修改自己的密码；signOutOthers 缺省为 true，同时下线其他设备 */
 export function changeAdminPassword(
   token: string,
-  payload: { currentPassword: string; newPassword: string; signOutOthers?: boolean }
+  payload: {
+    currentPassword: string;
+    newPassword: string;
+    signOutOthers?: boolean;
+    /** 开启两步验证时与 recoveryCode 二选一必填 */
+    code?: string;
+    recoveryCode?: string;
+  }
 ) {
   return apiRequest<AdminPasswordChangeResult>("/api/admin/profile/password", {
     method: "POST",

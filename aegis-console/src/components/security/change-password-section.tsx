@@ -13,7 +13,7 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { ApiError } from "@/lib/api-client";
 import { adminPasswordError, passwordScore } from "@/lib/admin-account-rules";
-import { useAdminProfileQuery, useChangeAdminPasswordMutation } from "@/lib/admin-hooks";
+import { useAdminProfileQuery, useAdminSecurityStatusQuery, useChangeAdminPasswordMutation } from "@/lib/admin-hooks";
 import { cn } from "@/lib/utils";
 
 function fmtDate(value?: string | null) {
@@ -30,10 +30,13 @@ function fmtDate(value?: string | null) {
  * 规则与后端一致：8–72 位、同时含字母和数字、不含用户名、不能与当前密码相同。
  * 默认同时下线其他设备：改密码最常见的原因就是怀疑密码泄露，此时保留别处的会话没有意义。
  * 当前会话不受影响，改完不用重新登录。
+ * 开启了两步验证的账号还须输入验证码，验证器不在手边时可改用恢复码（一次性）。
  */
 export function ChangePasswordSection() {
   const profileQ = useAdminProfileQuery();
   const account = profileQ.data?.account;
+  const securityQ = useAdminSecurityStatusQuery();
+  const twoFactor = Boolean(securityQ.data?.twoFactorEnabled);
   const mutation = useChangeAdminPasswordMutation();
 
   const [current, setCurrent] = useState("");
@@ -41,20 +44,32 @@ export function ChangePasswordSection() {
   const [confirm, setConfirm] = useState("");
   const [reveal, setReveal] = useState(false);
   const [signOutOthers, setSignOutOthers] = useState(true);
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [secondFactor, setSecondFactor] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const strength = useMemo(() => passwordScore(next), [next]);
   const ruleError = next ? adminPasswordError(next, account?.account || "") : null;
   const sameAsCurrent = Boolean(next && current && next === current);
   const confirmState = !confirm ? "idle" : confirm === next ? "match" : "mismatch";
-  const canSubmit = Boolean(current && next && !ruleError && !sameAsCurrent && confirmState === "match");
+  const secondFactorReady = !twoFactor || (useRecovery ? secondFactor.trim().length > 0 : /^\d{6}$/.test(secondFactor.trim()));
+  const canSubmit = Boolean(
+    current && next && !ruleError && !sameAsCurrent && confirmState === "match" && secondFactorReady
+  );
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!canSubmit) return;
     setError(null);
     try {
-      const result = await mutation.mutateAsync({ currentPassword: current, newPassword: next, signOutOthers });
+      const factor = secondFactor.trim();
+      const result = await mutation.mutateAsync({
+        currentPassword: current,
+        newPassword: next,
+        signOutOthers,
+        code: twoFactor && !useRecovery ? factor : undefined,
+        recoveryCode: twoFactor && useRecovery ? factor : undefined
+      });
       toast.success("密码已修改", {
         description: result.revokedSessions > 0 ? `已下线其他设备上的 ${result.revokedSessions} 个会话` : undefined
       });
@@ -62,6 +77,8 @@ export function ChangePasswordSection() {
       setNext("");
       setConfirm("");
       setReveal(false);
+      setSecondFactor("");
+      setUseRecovery(false);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "修改失败，请稍后重试");
     }
@@ -166,6 +183,41 @@ export function ChangePasswordSection() {
               </div>
               {confirmState === "mismatch" ? <p className="text-xs text-destructive">两次输入的密码不一致</p> : null}
             </div>
+
+            {twoFactor ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="pw-2fa" className="text-xs">{useRecovery ? "恢复码" : "两步验证码"}</Label>
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    onClick={() => {
+                      setUseRecovery((value) => !value);
+                      setSecondFactor("");
+                      setError(null);
+                    }}
+                  >
+                    {useRecovery ? "改用验证码" : "改用恢复码"}
+                  </button>
+                </div>
+                <Input
+                  id="pw-2fa"
+                  value={secondFactor}
+                  autoComplete="one-time-code"
+                  inputMode={useRecovery ? "text" : "numeric"}
+                  maxLength={useRecovery ? 64 : 6}
+                  placeholder={useRecovery ? "输入一枚未使用的恢复码" : "验证器中的 6 位数字"}
+                  className="font-mono tracking-wider placeholder:font-sans placeholder:tracking-normal"
+                  onChange={(event) => {
+                    setSecondFactor(useRecovery ? event.target.value : event.target.value.replace(/\D/g, ""));
+                    setError(null);
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {useRecovery ? "每枚恢复码只能使用一次，使用后即失效。" : "已开启两步验证，修改密码需要验证身份。"}
+                </p>
+              </div>
+            ) : null}
 
             <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
               <span className="min-w-0">

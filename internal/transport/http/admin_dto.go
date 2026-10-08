@@ -77,6 +77,9 @@ type AdminAccountChangeRequest struct {
 type AdminPasswordChangeRequest struct {
 	CurrentPassword string `json:"currentPassword" binding:"required"`
 	NewPassword     string `json:"newPassword" binding:"required"`
+	// Code / RecoveryCode 开启两步验证时二选一必填：验证器上的 6 位验证码或一枚恢复码。
+	Code         string `json:"code"`
+	RecoveryCode string `json:"recoveryCode"`
 	// SignOutOthers 是否同时下线其他设备上的会话，缺省为是。
 	SignOutOthers *bool `json:"signOutOthers"`
 }
