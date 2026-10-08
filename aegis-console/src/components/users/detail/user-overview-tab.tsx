@@ -150,7 +150,7 @@ export function UserOverviewTab({
               <Fact
                 label="注册 IP"
                 icon={<Globe2 className="size-3" />}
-                value={textValue(user.registerIP || profile?.registerIp)}
+                value={textValue(user.registerIp || profile?.registerIp)}
                 mono
               />
               <Fact

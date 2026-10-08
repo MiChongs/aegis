@@ -230,7 +230,7 @@ export function UserProfileTab({
             <Fact label="邀请码" value={textValue(profile?.inviteCode || user.inviteCode)} mono />
             <Fact label="上级邀请人" value={textValue(profile?.parentInviteAccount)} />
             <Fact label="标识码" value={textValue(profile?.markcode || user.markcode)} mono />
-            <Fact label="注册 IP" value={textValue(profile?.registerIp || user.registerIP)} mono />
+            <Fact label="注册 IP" value={textValue(profile?.registerIp || user.registerIp)} mono />
             <Fact label="注册地" value={textValue([profile?.registerProvince, profile?.registerCity].filter(Boolean).join(" "))} />
             <Fact label="资料更新时间" value={formatTime(profile?.updatedAt)} />
             <Fact label="账户更新时间" value={formatTime(user.updatedAt)} />

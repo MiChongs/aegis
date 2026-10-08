@@ -3117,7 +3117,7 @@ export type AdminAppUserItem = {
   enabled?: boolean;
   integral?: number;
   experience?: number;
-  registerIP?: string;
+  registerIp?: string;
   registerTime?: string;
   registerProvince?: string;
   registerCity?: string;

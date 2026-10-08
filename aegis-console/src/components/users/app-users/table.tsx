@@ -19,6 +19,8 @@ import {
   AtSign,
   Columns3,
   Copy,
+  LayoutGrid,
+  List,
   Crown,
   ExternalLink,
   MoreHorizontal,
@@ -30,7 +32,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -155,6 +156,75 @@ function vipState(expireAt?: string | null): "none" | "active" | "expired" {
   return time > Date.now() ? "active" : "expired";
 }
 
+/** 省市相同（直辖市）时只写一次，避免出现「北京 北京」 */
+function regionLabel(province?: string | null, city?: string | null) {
+  const p = (province || "").trim();
+  const c = (city || "").trim();
+  if (!p) return c;
+  if (!c || c === p) return p;
+  return `${p} ${c}`;
+}
+
+function UserAvatar({
+  item,
+  enabled,
+  className
+}: {
+  item: AdminAppUserItem;
+  enabled: boolean;
+  className?: string;
+}) {
+  return (
+    <div className="relative shrink-0">
+      <Avatar className={cn("ring-1 ring-border", className)} preview={false}>
+        <AvatarImage src={typeof item.avatar === "string" ? item.avatar : ""} alt="" />
+        <AvatarFallback className="text-[11px] font-medium">{initials(item.nickname, item.account)}</AvatarFallback>
+      </Avatar>
+      {/* 状态点长在头像上：扫一列头像就能数出受限的人 */}
+      <span
+        aria-label={enabled ? "正常" : "受限"}
+        className={cn(
+          "absolute -right-px -bottom-px size-2.5 rounded-full ring-2 ring-card",
+          enabled ? "bg-emerald-500" : "bg-red-500"
+        )}
+      />
+    </div>
+  );
+}
+
+function VipMark() {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-500/12 px-1.5 py-px text-[10px] font-medium text-amber-700 dark:text-amber-300">
+      <Crown className="size-2.5" />
+      会员
+    </span>
+  );
+}
+
+function StatusCell({ item }: { item: AdminAppUserItem }) {
+  if (item.enabled !== false) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+        <span className="size-1.5 rounded-full bg-emerald-500" />
+        正常
+      </span>
+    );
+  }
+  const until = fmtTime(item.disabledEndTime).slice(5);
+  return (
+    <div className="min-w-0 space-y-0.5">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:text-red-400">
+        <span className="size-1.5 rounded-full bg-red-500" />
+        受限
+      </span>
+      <div className="max-w-[180px] truncate text-[11px] text-muted-foreground" title={item.disabledReason || undefined}>
+        {until ? `至 ${until}` : "长期"}
+        {item.disabledReason ? `，${item.disabledReason}` : ""}
+      </div>
+    </div>
+  );
+}
+
 async function copyText(value: string, label: string) {
   try {
     await navigator.clipboard.writeText(value);
@@ -172,7 +242,8 @@ export function AppUsersTable({
   selection,
   onSelectionChange,
   onRowClick,
-  emptyText
+  emptyText,
+  footer
 }: {
   data: AdminAppUserItem[];
   loading: boolean;
@@ -182,7 +253,10 @@ export function AppUsersTable({
   onSelectionChange: (next: RowSelectionState) => void;
   onRowClick: (user: AdminAppUserItem) => void;
   emptyText: string;
+  /** 渲染在卡片底部的内容（分页） */
+  footer?: React.ReactNode;
 }) {
+  const [view, setView] = React.useState<"table" | "grid">("table");
   const [density, setDensity] = React.useState<Density>("default");
   const [visibility, setVisibility] = React.useState<ColumnVisibilityState>({});
 
@@ -196,35 +270,18 @@ export function AppUsersTable({
           const enabled = item.enabled !== false;
           const vip = vipState(item.vipExpireAt);
           return (
-            <div className="flex items-center gap-3">
-              <div className="relative shrink-0">
-                <Avatar className="size-9 border">
-                  <AvatarImage src={typeof item.avatar === "string" ? item.avatar : ""} />
-                  <AvatarFallback className="text-[11px]">
-                    {initials(item.nickname, item.account)}
-                  </AvatarFallback>
-                </Avatar>
-                {/* 状态点长在头像上：扫一列头像就能数出受限的人，不用逐行看状态列 */}
-                <span
-                  aria-hidden
-                  className={cn(
-                    "absolute -bottom-px -right-px size-2.5 rounded-full ring-2 ring-card",
-                    enabled ? "bg-emerald-500" : "bg-red-500"
-                  )}
-                />
-              </div>
+            <div className="flex min-w-0 items-center gap-3">
+              <UserAvatar item={item} enabled={enabled} className="size-10" />
               <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
+                <div className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate text-sm font-medium">
                     {item.nickname || item.account || `用户 ${item.id}`}
                   </span>
-                  {vip === "active" ? (
-                    <Crown aria-label="有效会员" className="size-3.5 shrink-0 text-amber-500" />
-                  ) : null}
+                  {vip === "active" ? <VipMark /> : null}
                 </div>
-                <div className="truncate text-[11px] text-muted-foreground">
-                  {item.account && item.nickname ? `@${item.account} · ` : ""}
-                  <span className="font-mono">#{item.id}</span>
+                <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                  {item.account && item.nickname ? <span className="truncate">@{item.account}</span> : null}
+                  <span className="shrink-0 rounded bg-muted px-1 font-mono text-[10px] leading-4">#{item.id}</span>
                 </div>
               </div>
             </div>
@@ -237,7 +294,7 @@ export function AppUsersTable({
         cell: ({ row }) => {
           const { email, phone } = row.original;
           if (!email && !phone) {
-            return <span className="text-xs text-muted-foreground/60">无联系方式</span>;
+            return <span className="text-xs text-muted-foreground/60">未填写</span>;
           }
           return (
             <div className="min-w-0 space-y-0.5">
@@ -264,26 +321,23 @@ export function AppUsersTable({
           const item = row.original;
           const vip = vipState(item.vipExpireAt);
           return (
-            <div className="min-w-0 space-y-0.5">
-              <div className="flex items-baseline gap-1 text-xs">
-                <span className="text-muted-foreground">积分</span>
-                <span className="font-medium tabular-nums">
-                  {(item.integral ?? 0).toLocaleString("zh-CN")}
+            <div className="min-w-0 space-y-1">
+              <div className="flex items-baseline gap-3 text-xs">
+                <span>
+                  <span className="text-muted-foreground">积分 </span>
+                  <span className="font-medium tabular-nums">{(item.integral ?? 0).toLocaleString("zh-CN")}</span>
                 </span>
-                <span className="px-0.5 text-muted-foreground/50">·</span>
-                <span className="text-muted-foreground">经验</span>
-                <span className="font-medium tabular-nums">
-                  {(item.experience ?? 0).toLocaleString("zh-CN")}
+                <span>
+                  <span className="text-muted-foreground">经验 </span>
+                  <span className="font-medium tabular-nums">{(item.experience ?? 0).toLocaleString("zh-CN")}</span>
                 </span>
               </div>
               {vip === "active" ? (
-                <Badge variant="warning" size="sm" className="gap-1">
-                  <Crown className="size-3" />至 {fmtDate(item.vipExpireAt)}
-                </Badge>
+                <div className="text-[11px] text-amber-600 dark:text-amber-400">
+                  会员至 {fmtDate(item.vipExpireAt)}
+                </div>
               ) : vip === "expired" ? (
-                <span className="text-[11px] text-muted-foreground/70">
-                  会员已过期（{fmtDate(item.vipExpireAt)}）
-                </span>
+                <div className="text-[11px] text-muted-foreground/70">会员已于 {fmtDate(item.vipExpireAt)} 到期</div>
               ) : null}
             </div>
           );
@@ -292,55 +346,23 @@ export function AppUsersTable({
       {
         id: "status",
         header: "状态",
-        cell: ({ row }) => {
-          const item = row.original;
-          const enabled = item.enabled !== false;
-          if (enabled) {
-            return (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-400">
-                <span className="size-1.5 rounded-full bg-emerald-500" />
-                正常
-              </span>
-            );
-          }
-          const until = item.disabledEndTime ? fmtTime(item.disabledEndTime) : "";
-          return (
-            <div className="min-w-0 space-y-0.5">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
-                <span className="size-1.5 rounded-full bg-red-500" />
-                受限{until !== "—" && until ? ` · 至 ${until.slice(5, 11)}` : ""}
-              </span>
-              {item.disabledReason ? (
-                <div
-                  className="max-w-[150px] truncate text-[11px] text-muted-foreground"
-                  title={item.disabledReason}
-                >
-                  {item.disabledReason}
-                </div>
-              ) : null}
-            </div>
-          );
-        }
+        cell: ({ row }) => <StatusCell item={row.original} />
       },
       {
         id: "register",
         header: "注册",
         cell: ({ row }) => {
           const item = row.original;
-          const location = [item.registerProvince, item.registerCity].filter(Boolean).join(" ");
+          const location = regionLabel(item.registerProvince, item.registerCity);
           return (
             <div className="min-w-0 space-y-0.5">
-              <div
-                className="truncate text-xs tabular-nums"
-                title={fmtTime(item.registerTime || item.createdAt)}
-              >
+              <div className="truncate text-xs" title={fmtTime(item.registerTime || item.createdAt)}>
                 {relative(item.registerTime || item.createdAt)}
               </div>
-              {item.registerIP || location ? (
-                <div className="truncate text-[11px] text-muted-foreground">
-                  {item.registerIP ? <span className="font-mono">{item.registerIP}</span> : null}
-                  {item.registerIP && location ? " · " : ""}
-                  {location}
+              {item.registerIp || location ? (
+                <div className="flex min-w-0 items-center gap-1.5 truncate text-[11px] text-muted-foreground">
+                  {location ? <span className="shrink-0">{location}</span> : null}
+                  {item.registerIp ? <span className="truncate font-mono text-muted-foreground/80">{item.registerIp}</span> : null}
                 </div>
               ) : null}
             </div>
@@ -457,17 +479,42 @@ export function AppUsersTable({
   // 只包表格容器会让它落在 Provider 之外（Radix 要求必须有 Provider 祖先）。
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm">
+      <div className="overflow-hidden rounded-2xl border bg-card text-card-foreground">
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="inline-flex rounded-lg bg-muted p-0.5" role="tablist" aria-label="视图">
+              {(
+                [
+                  { key: "table", label: "列表", icon: List },
+                  { key: "grid", label: "卡片", icon: LayoutGrid }
+                ] as const
+              ).map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === option.key}
+                  onClick={() => setView(option.key)}
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors",
+                    view === option.key
+                      ? "bg-background font-medium text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <option.icon className="size-3.5" />
+                  {option.label}
+                </button>
+              ))}
+            </div>
             {loading && !rows.length ? (
-              <span>加载中…</span>
+              <span>正在加载</span>
             ) : (
               <span className="tabular-nums">本页 {rows.length} 人</span>
             )}
             {selectedCount > 0 ? (
               <>
-                <span className="text-muted-foreground/40">|</span>
+                <span className="h-3 w-px bg-border" aria-hidden />
                 <span className="font-medium text-foreground tabular-nums">
                   已选 {selectedCount}
                 </span>
@@ -539,14 +586,14 @@ export function AppUsersTable({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <DensityToggle value={density} onChange={setDensity} />
+            {view === "table" ? <DensityToggle value={density} onChange={setDensity} /> : null}
 
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+              <DropdownMenuTrigger asChild disabled={view !== "table"}>
                 <Button
                   size="icon"
                   variant="outline"
-                  className="size-8"
+                  className={cn("size-8", view !== "table" && "hidden")}
                   aria-label="选择显示的列"
                 >
                   <Columns3 className="size-3.5" />
@@ -573,6 +620,14 @@ export function AppUsersTable({
           </div>
         </div>
 
+        {view === "grid" ? (
+          <UserGrid
+            rows={rows}
+            loading={loading}
+            emptyText={emptyText}
+            onOpen={onRowClick}
+          />
+        ) : (
         <div
           ref={scrollRef}
           className={cn("overflow-auto", virtualize && "max-h-[calc(100vh-28rem)] min-h-72")}
@@ -580,8 +635,8 @@ export function AppUsersTable({
           {/* 不用 shadcn 的 <Table> 外壳：它自带 overflow 容器，会抢走
               virtualizer 依赖的滚动元素（scrollRef 必须落在唯一的滚动容器上）。 */}
           <table className="w-full caption-bottom text-sm">
-            <TableHeader className="sticky top-0 z-10 bg-card">
-              <TableRow className="hover:bg-transparent">
+            <TableHeader className="sticky top-0 z-10 bg-muted/40 backdrop-blur-none [&_tr]:border-b">
+              <TableRow className="bg-card hover:bg-card">
                 <TableHead className="w-10 px-3">
                   <Checkbox
                     checked={allSelected ? true : someSelected ? "indeterminate" : false}
@@ -596,7 +651,7 @@ export function AppUsersTable({
                     <TableHead
                       key={header.id}
                       className={cn(
-                        "px-3 text-xs text-muted-foreground",
+                        "h-9 px-3 text-[11px] font-medium text-muted-foreground",
                         header.column.id === "actions" && "w-12",
                         field && "cursor-pointer select-none hover:text-foreground"
                       )}
@@ -704,8 +759,131 @@ export function AppUsersTable({
             </TableBody>
           </table>
         </div>
+        )}
+        {footer ? <div className="border-t px-3 py-2.5">{footer}</div> : null}
       </div>
     </TooltipProvider>
+  );
+}
+
+/** 卡片视图：头像与身份信息优先，适合按人浏览；选择与批量操作仍在列表视图里做 */
+function UserGrid({
+  rows,
+  loading,
+  emptyText,
+  onOpen
+}: {
+  rows: { id: string; original: AdminAppUserItem; getIsSelected: () => boolean; toggleSelected: (value?: boolean) => void }[];
+  loading: boolean;
+  emptyText: string;
+  onOpen: (user: AdminAppUserItem) => void;
+}) {
+  if (loading && !rows.length) {
+    return (
+      <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        {Array.from({ length: 8 }).map((_, index) => (
+          <div key={index} className="space-y-3 rounded-xl border p-4">
+            <div className="flex items-center gap-3">
+              <Skeleton className="size-12 rounded-full" />
+              <div className="space-y-1.5">
+                <Skeleton className="h-3.5 w-24 rounded" />
+                <Skeleton className="h-3 w-16 rounded" />
+              </div>
+            </div>
+            <Skeleton className="h-3 w-full rounded" />
+            <Skeleton className="h-3 w-2/3 rounded" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (!rows.length) {
+    return (
+      <div className="flex h-52 flex-col items-center justify-center gap-2 text-center">
+        <div className="flex size-10 items-center justify-center rounded-full bg-muted">
+          <SearchX className="size-5 text-muted-foreground" />
+        </div>
+        <p className="max-w-sm text-sm text-muted-foreground">{emptyText}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+      {rows.map((row) => {
+        const item = row.original;
+        const enabled = item.enabled !== false;
+        const vip = vipState(item.vipExpireAt);
+        const selected = row.getIsSelected();
+        return (
+          <div
+            key={row.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => onOpen(item)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") onOpen(item);
+            }}
+            data-state={selected ? "selected" : undefined}
+            className="group relative flex cursor-pointer flex-col gap-3 rounded-xl border p-4 transition-colors hover:border-foreground/20 hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none data-[state=selected]:border-primary/40 data-[state=selected]:bg-primary/5"
+          >
+            <div className="absolute top-3 right-3" onClick={(event) => event.stopPropagation()}>
+              <Checkbox
+                checked={selected}
+                aria-label={`选择 ${item.account ?? item.id}`}
+                onCheckedChange={(checked) => row.toggleSelected(Boolean(checked))}
+                className={cn("transition-opacity", !selected && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
+              />
+            </div>
+            <div className="flex min-w-0 items-center gap-3 pr-6">
+              <UserAvatar item={item} enabled={enabled} className="size-12" />
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-sm font-semibold">
+                    {item.nickname || item.account || `用户 ${item.id}`}
+                  </span>
+                  {vip === "active" ? <VipMark /> : null}
+                </div>
+                <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                  {item.account ? <span className="truncate">@{item.account}</span> : null}
+                  <span className="shrink-0 rounded bg-muted px-1 font-mono text-[10px] leading-4">#{item.id}</span>
+                </div>
+              </div>
+            </div>
+            <div className="min-h-9 space-y-1 text-xs">
+              {item.email ? (
+                <div className="flex items-center gap-1.5 truncate">
+                  <AtSign className="size-3 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{item.email}</span>
+                </div>
+              ) : null}
+              {item.phone ? (
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <Phone className="size-3 shrink-0" />
+                  <span className="tabular-nums">{item.phone}</span>
+                </div>
+              ) : null}
+              {!item.email && !item.phone ? <span className="text-muted-foreground/60">未填写联系方式</span> : null}
+            </div>
+            <div className="mt-auto flex items-end justify-between gap-2 border-t pt-3">
+              <div className="flex gap-4 text-xs">
+                <div>
+                  <div className="text-[11px] text-muted-foreground">积分</div>
+                  <div className="font-semibold tabular-nums">{(item.integral ?? 0).toLocaleString("zh-CN")}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] text-muted-foreground">经验</div>
+                  <div className="font-semibold tabular-nums">{(item.experience ?? 0).toLocaleString("zh-CN")}</div>
+                </div>
+              </div>
+              <div className="text-right">
+                <StatusCell item={item} />
+                <div className="mt-1 text-[11px] text-muted-foreground">{relative(item.registerTime || item.createdAt)}注册</div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

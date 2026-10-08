@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { RowSelectionState } from "@tanstack/react-table";
-import { AppWindow, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/data-state";
@@ -20,6 +20,7 @@ import { ApiError } from "@/lib/api-client";
 import { useAdminAppUsersQuery, useAdminAppsQuery } from "@/lib/admin-hooks";
 import { useExportAppUsersMutation } from "@/lib/app-user-hooks";
 import type { AdminAppUserItem } from "@/lib/api/types";
+import { cn } from "@/lib/utils";
 import { BulkActionBar } from "./bulk-actions";
 import { AppUsersFilters } from "./filters";
 import { AppUsersMetrics } from "./metrics";
@@ -119,35 +120,50 @@ export function AppUsersPanel() {
     );
   }
 
+  const currentApp = apps.find((app) => app.appKey === appKey);
+
   return (
     <div className="space-y-4">
-      <SectionHeading
-        eyebrow="控制台"
-        title="应用用户"
-        action={
-          <div className="flex items-center gap-2">
-            {usersQuery.isFetching ? (
-              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-            ) : null}
-            <Select
-              value={appKey ?? ""}
-              onValueChange={(value) => applyQuery({ ...query, appKey: value, page: 1 })}
-            >
-              <SelectTrigger size="sm" className="h-8 w-48 text-xs">
-                <AppWindow className="size-3.5 text-muted-foreground" />
-                <SelectValue placeholder="选择应用" />
-              </SelectTrigger>
-              <SelectContent>
-                {apps.map((app) => (
-                  <SelectItem key={app.id} value={app.appKey} className="text-xs">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">用户与权限</p>
+          <h1 className="mt-1 text-xl font-semibold tracking-tight">应用用户</h1>
+        </div>
+        <div className="flex items-center gap-2">
+          {usersQuery.isFetching && !usersQuery.isLoading ? (
+            <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-label="正在刷新" />
+          ) : null}
+          <Select
+            value={appKey ?? ""}
+            onValueChange={(value) => applyQuery({ ...query, appKey: value, page: 1 })}
+          >
+            <SelectTrigger className="h-10 w-64 gap-2.5 rounded-xl pl-2 text-left" aria-label="选择应用">
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-xs font-semibold text-primary">
+                {(currentApp?.name || "应").slice(0, 1)}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">{currentApp?.name || "选择应用"}</span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  {currentApp ? (currentApp.status ? "运行中" : "已停用") : ""}
+                </span>
+              </span>
+            </SelectTrigger>
+            <SelectContent align="end">
+              {apps.map((app) => (
+                <SelectItem key={app.id} value={app.appKey}>
+                  <span className="flex items-center gap-2">
+                    <span
+                      className={cn("size-1.5 shrink-0 rounded-full", app.status ? "bg-emerald-500" : "bg-muted-foreground/40")}
+                      aria-hidden
+                    />
                     {app.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        }
-      />
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
 
       <AppUsersMetrics
         appKey={appKey}
@@ -172,25 +188,35 @@ export function AppUsersPanel() {
         selection={selection}
         onSelectionChange={setSelection}
         onRowClick={openDetail}
-        emptyText={
-          total === 0 && items.length === 0
-            ? "暂无匹配用户"
-            : "暂无用户"
+        emptyText={query.status !== "all" || query.keyword ? "没有符合条件的用户" : "该应用还没有用户"}
+        footer={
+          <Pagination
+            page={query.page}
+            limit={query.limit}
+            total={total}
+            totalPages={totalPages}
+            onPageChange={(page) => applyQuery({ ...query, page })}
+            onLimitChange={(limit) => applyQuery({ ...query, limit, page: 1 })}
+          />
         }
-      />
-
-      <Pagination
-        page={query.page}
-        limit={query.limit}
-        total={total}
-        totalPages={totalPages}
-        onPageChange={(page) => applyQuery({ ...query, page })}
-        onLimitChange={(limit) => applyQuery({ ...query, limit, page: 1 })}
       />
 
       <BulkActionBar appKey={appKey} selectedIds={selectedIds} onClear={() => setSelection({})} />
     </div>
   );
+}
+
+/** 页码窗口：首尾页常驻，当前页前后各一页，其余折叠成省略号 */
+function pageWindow(page: number, pages: number): Array<number | "gap"> {
+  if (pages <= 7) return Array.from({ length: pages }, (_, index) => index + 1);
+  const keep = new Set([1, pages, page - 1, page, page + 1].filter((value) => value >= 1 && value <= pages));
+  const sorted = [...keep].sort((a, b) => a - b);
+  const result: Array<number | "gap"> = [];
+  sorted.forEach((value, index) => {
+    if (index > 0 && value - sorted[index - 1] > 1) result.push("gap");
+    result.push(value);
+  });
+  return result;
 }
 
 function Pagination({
@@ -215,45 +241,68 @@ function Pagination({
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
       <span className="tabular-nums">
-        {total === 0 ? "共 0 条" : `第 ${from}–${to} 条 · 共 ${total.toLocaleString("zh-CN")} 条`}
+        {total === 0 ? "共 0 位用户" : `第 ${from}–${to} 位，共 ${total.toLocaleString("zh-CN")} 位`}
       </span>
-      <div className="flex items-center gap-2">
-        <span>每页</span>
-        <Select value={String(limit)} onValueChange={(value) => onLimitChange(Number(value))}>
-          <SelectTrigger size="sm" className="h-7 w-[76px] text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PAGE_SIZES.map((size) => (
-              <SelectItem key={size} value={String(size)} className="text-xs">
-                {size}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <span className="tabular-nums">
-          {page} / {pages}
-        </span>
-        <Button
-          size="icon"
-          variant="outline"
-          className="size-7"
-          aria-label="上一页"
-          disabled={page <= 1}
-          onClick={() => onPageChange(page - 1)}
-        >
-          <ChevronLeft className="size-3.5" />
-        </Button>
-        <Button
-          size="icon"
-          variant="outline"
-          className="size-7"
-          aria-label="下一页"
-          disabled={page >= pages}
-          onClick={() => onPageChange(page + 1)}
-        >
-          <ChevronRight className="size-3.5" />
-        </Button>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <span>每页</span>
+          <Select value={String(limit)} onValueChange={(value) => onLimitChange(Number(value))}>
+            <SelectTrigger size="sm" className="h-7 w-[76px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZES.map((size) => (
+                <SelectItem key={size} value={String(size)} className="text-xs">
+                  {size}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <nav className="flex items-center gap-1" aria-label="分页">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-7"
+            aria-label="上一页"
+            disabled={page <= 1}
+            onClick={() => onPageChange(page - 1)}
+          >
+            <ChevronLeft className="size-3.5" />
+          </Button>
+          {pageWindow(page, pages).map((value, index) =>
+            value === "gap" ? (
+              <span key={`gap-${index}`} className="w-5 text-center text-muted-foreground/60">
+                …
+              </span>
+            ) : (
+              <button
+                key={value}
+                type="button"
+                aria-current={value === page ? "page" : undefined}
+                onClick={() => onPageChange(value)}
+                className={cn(
+                  "h-7 min-w-7 rounded-md px-1.5 tabular-nums transition-colors",
+                  value === page
+                    ? "bg-foreground font-medium text-background"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+              >
+                {value}
+              </button>
+            )
+          )}
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-7"
+            aria-label="下一页"
+            disabled={page >= pages}
+            onClick={() => onPageChange(page + 1)}
+          >
+            <ChevronRight className="size-3.5" />
+          </Button>
+        </nav>
       </div>
     </div>
   );

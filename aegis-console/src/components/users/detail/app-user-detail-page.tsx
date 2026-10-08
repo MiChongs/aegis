@@ -333,7 +333,7 @@ function IdentityHeader({
             value={
               textValue(
                 [user.registerProvince, user.registerCity].filter(Boolean).join(" "),
-                textValue(user.registerIP)
+                textValue(user.registerIp)
               )
             }
             hint={textValue(user.registerIsp, "")}
