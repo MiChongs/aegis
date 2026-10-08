@@ -11,10 +11,8 @@ import { useAuthStore } from "@/lib/auth-store";
 import { useAdminCaptchaPublicConfigQuery } from "@/lib/admin-hooks";
 import { CaptchaField } from "./captcha-field";
 import { AUTH_EASE } from "./auth-motion";
-import { AegisMark } from "@/components/brand/aegis-mark";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -163,11 +161,8 @@ export function RegisterForm() {
         animate={{ opacity: 1, y: 0 }}
         className="w-full"
       >
-        <Card className="gap-0 py-0 shadow-none">
-          <CardHeader className="items-center gap-2 px-6 pt-8 pb-6 text-center">
-            <div className="mx-auto mb-1 flex size-11 items-center justify-center rounded-xl border bg-muted/50">
-              <AegisMark className="size-6 text-foreground" />
-            </div>
+        <div className="w-full">
+          <div className="flex flex-col gap-2 pb-7">
             <AnimatePresence mode="wait" initial={false}>
               <m.div
                 key={done ? "done" : "form"}
@@ -177,15 +172,15 @@ export function RegisterForm() {
                 transition={{ duration: 0.2, ease: AUTH_EASE }}
                 className="flex flex-col gap-1.5"
               >
-                <CardTitle className="text-xl font-semibold tracking-tight">
+                <h1 className="text-2xl font-semibold tracking-tight sm:text-[28px]">
                   {done ? "账号已创建" : "创建管理员账号"}
-                </CardTitle>
-                {done ? <CardDescription className="text-[13px]">正在进入控制台</CardDescription> : null}
+                </h1>
+                <p className="text-sm text-muted-foreground">{done ? "正在进入控制台" : "创建账号后即可开始接入你的第一个应用"}</p>
               </m.div>
             </AnimatePresence>
-          </CardHeader>
+          </div>
 
-          <CardContent className="px-6 pt-0 pb-7">
+          <div>
             <AnimatePresence mode="wait" initial={false}>
               {done ? (
                 <m.div
@@ -236,7 +231,7 @@ export function RegisterForm() {
                       onChange={(event) => patch("account", event.target.value)}
                       aria-invalid={Boolean(fieldErrors.account)}
                       aria-describedby="account-hint"
-                      className="h-10"
+                      className="h-11"
                       autoFocus
                     />
                     {!fieldErrors.account ? (
@@ -255,7 +250,7 @@ export function RegisterForm() {
                         value={form.password}
                         onChange={(event) => patch("password", event.target.value)}
                         aria-invalid={Boolean(fieldErrors.password)}
-                        className="h-10 pr-10"
+                        className="h-11 pr-10"
                       />
                       <Button
                         type="button"
@@ -307,7 +302,7 @@ export function RegisterForm() {
                         value={form.confirmPassword}
                         onChange={(event) => patch("confirmPassword", event.target.value)}
                         aria-invalid={Boolean(fieldErrors.confirmPassword) || confirmState === "mismatch"}
-                        className="h-10 pr-9"
+                        className="h-11 pr-9"
                       />
                       {/* 一致与否当场给结论 —— 这件事不需要等提交才知道 */}
                       <AnimatePresence initial={false}>
@@ -343,7 +338,7 @@ export function RegisterForm() {
                       value={form.displayName}
                       onChange={(event) => patch("displayName", event.target.value)}
                       aria-invalid={Boolean(fieldErrors.displayName)}
-                      className="h-10"
+                      className="h-11"
                     />
                   </Field>
 
@@ -356,14 +351,14 @@ export function RegisterForm() {
                       value={form.email}
                       onChange={(event) => patch("email", event.target.value)}
                       aria-invalid={Boolean(fieldErrors.email)}
-                      className="h-10"
+                      className="h-11"
                     />
                   </Field>
 
                   {captchaConfigQuery.isPending ? (
                     <div className="grid gap-2">
                       <Skeleton className="h-4 w-14" />
-                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-11 w-full" />
                     </div>
                   ) : needCaptcha && captchaConfig ? (
                     <CaptchaField
@@ -427,7 +422,7 @@ export function RegisterForm() {
                     </Label>
                   </div>
 
-                  <Button type="submit" className="mt-1 h-10 w-full" disabled={loading || !agreeTerms}>
+                  <Button type="submit" className="mt-1 h-11 w-full" disabled={loading || !agreeTerms}>
                     {loading ? <LoaderCircle className="size-4 animate-spin" /> : null}
                     {loading ? "创建中…" : "创建账号"}
                   </Button>
@@ -444,8 +439,8 @@ export function RegisterForm() {
                 </m.form>
               )}
             </AnimatePresence>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </m.div>
 
     </>

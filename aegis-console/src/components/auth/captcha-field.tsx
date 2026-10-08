@@ -136,7 +136,7 @@ export function CaptchaField({ config, captchaId, onCaptchaIdChange }: CaptchaFi
 
       <div className="flex items-center gap-2">
         {loading ? (
-          <Skeleton className="h-10 w-28 shrink-0 rounded" />
+          <Skeleton className="h-11 w-28 shrink-0 rounded" />
         ) : isAudio && audioData ? (
           <AudioPlayer key={audioData} src={audioData} />
         ) : imageData ? (
@@ -144,11 +144,11 @@ export function CaptchaField({ config, captchaId, onCaptchaIdChange }: CaptchaFi
           <img
             src={imageData}
             alt="验证码"
-            className="h-10 shrink-0 cursor-pointer rounded border"
+            className="h-11 shrink-0 cursor-pointer rounded border"
             onClick={() => void refresh()}
           />
         ) : (
-          <div className="flex h-10 w-28 shrink-0 items-center justify-center rounded border border-dashed text-xs text-muted-foreground">
+          <div className="flex h-11 w-28 shrink-0 items-center justify-center rounded border border-dashed text-xs text-muted-foreground">
             加载失败
           </div>
         )}
@@ -210,7 +210,7 @@ function AudioPlayer({ src }: { src: string }) {
   }
 
   return (
-    <div className="flex h-10 w-36 shrink-0 items-center gap-1.5 rounded-lg border px-2">
+    <div className="flex h-11 w-36 shrink-0 items-center gap-1.5 rounded-lg border px-2">
       <audio ref={audioRef} src={src} preload="auto" />
       <button type="button" onClick={toggle} className="flex size-6 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition-transform hover:scale-110">
         {playing ? <Pause className="size-3" /> : <Play className="size-3 ml-0.5" />}

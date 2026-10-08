@@ -21,10 +21,8 @@ import { getOIDCAuthURL } from "@/lib/api/system";
 import { CaptchaField } from "./captcha-field";
 import { AUTH_EASE } from "./auth-motion";
 import { LegalLinks } from "@/components/legal/legal-links";
-import { AegisMark } from "@/components/brand/aegis-mark";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Label } from "@/components/ui/label";
@@ -43,7 +41,7 @@ type FormPhase = "login" | "mfa" | "success";
 
 /** 三态的抬头文案。集中一处，省得三个分支各写一遍 `phase === ...`。 */
 const PHASE_COPY: Record<FormPhase, { title: string; desc: string }> = {
-  login: { title: "登录 Aegis", desc: "" },
+  login: { title: "欢迎回来", desc: "使用管理员账号登录 Aegis 控制台" },
   mfa: { title: "两步验证", desc: "输入认证器中的验证码" },
   success: { title: "登录成功", desc: "正在进入控制台" }
 };
@@ -170,11 +168,8 @@ export function LoginForm() {
         animate={{ opacity: 1, y: 0 }}
         className="w-full"
       >
-        <Card className="gap-0 py-0 shadow-none">
-          <CardHeader className="items-center gap-2 px-6 pt-8 pb-6 text-center">
-            <div className="mx-auto mb-1 flex size-11 items-center justify-center rounded-xl border bg-muted/50">
-              <AegisMark className="size-6 text-foreground" />
-            </div>
+        <div className="w-full">
+          <div className="flex flex-col gap-2 pb-7">
             {/* 标题随阶段切换，容器不变 —— 换的是这一步在做什么，不是换了个页面 */}
             <AnimatePresence mode="wait" initial={false}>
               <m.div
@@ -185,13 +180,13 @@ export function LoginForm() {
                 transition={{ duration: 0.2, ease: AUTH_EASE }}
                 className="flex flex-col gap-1.5"
               >
-                <CardTitle className="text-xl font-semibold tracking-tight">{copy.title}</CardTitle>
-                {copy.desc ? <CardDescription className="text-[13px]">{copy.desc}</CardDescription> : null}
+                <h1 className="text-2xl font-semibold tracking-tight sm:text-[28px]">{copy.title}</h1>
+                {copy.desc ? <p className="text-sm text-muted-foreground">{copy.desc}</p> : null}
               </m.div>
             </AnimatePresence>
-          </CardHeader>
+          </div>
 
-          <CardContent className="px-6 pt-0 pb-7">
+          <div>
             <AnimatePresence mode="wait" initial={false}>
               {phase === "success" ? (
                 <SuccessPanel key="success" reduced={reduced} />
@@ -228,7 +223,7 @@ export function LoginForm() {
                         autoComplete="username"
                         placeholder="管理员账号"
                         aria-invalid={Boolean(error)}
-                        className="h-10"
+                        className="h-11"
                         autoFocus
                       />
                     </div>
@@ -243,7 +238,7 @@ export function LoginForm() {
                           autoComplete="current-password"
                           placeholder="登录密码"
                           aria-invalid={Boolean(error)}
-                          className="h-10 pr-10"
+                          className="h-11 pr-10"
                         />
                         <Button
                           type="button"
@@ -263,7 +258,7 @@ export function LoginForm() {
                     {captchaConfigQuery.isPending ? (
                       <div className="grid gap-2">
                         <Skeleton className="h-4 w-14" />
-                        <Skeleton className="h-10 w-full" />
+                        <Skeleton className="h-11 w-full" />
                       </div>
                     ) : needCaptcha && captchaConfig ? (
                       <CaptchaField
@@ -275,7 +270,7 @@ export function LoginForm() {
 
                     <ErrorAlert error={error} reduced={reduced} />
 
-                    <Button type="submit" className="mt-1 h-10 w-full" disabled={loading}>
+                    <Button type="submit" className="mt-1 h-11 w-full" disabled={loading}>
                       {loading ? <LoaderCircle className="size-4 animate-spin" /> : null}
                       {loading ? "登录中…" : "登录"}
                     </Button>
@@ -297,8 +292,8 @@ export function LoginForm() {
                 </m.div>
               )}
             </AnimatePresence>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </m.div>
 
     </>
@@ -424,7 +419,7 @@ function TOTPForm({
 
       <ErrorAlert error={error} reduced={reduced} />
 
-      <Button type="submit" className="h-10 w-full" disabled={loading || code.length !== TOTP_LENGTH}>
+      <Button type="submit" className="h-11 w-full" disabled={loading || code.length !== TOTP_LENGTH}>
         {loading ? <LoaderCircle className="size-4 animate-spin" /> : null}
         {loading ? "验证中…" : "确认"}
       </Button>
@@ -463,13 +458,13 @@ function RecoveryForm({
           placeholder="XXXX-XXXX-XXXX"
           autoComplete="one-time-code"
           aria-invalid={Boolean(error)}
-          className="h-10 font-data tracking-[0.1em]"
+          className="h-11 font-data tracking-[0.1em]"
         />
       </div>
 
       <ErrorAlert error={error} reduced={reduced} />
 
-      <Button type="submit" className="h-10 w-full" disabled={loading || !value.trim()}>
+      <Button type="submit" className="h-11 w-full" disabled={loading || !value.trim()}>
         {loading ? <LoaderCircle className="size-4 animate-spin" /> : null}
         {loading ? "验证中…" : "确认"}
       </Button>
@@ -580,7 +575,7 @@ function SSOSection() {
       <Button
         type="button"
         variant="outline"
-        className="h-10 w-full"
+        className="h-11 w-full"
         onClick={handleSSO}
         disabled={redirecting}
       >
