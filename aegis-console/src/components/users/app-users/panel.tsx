@@ -148,7 +148,9 @@ export function AppUsersPanel() {
                 </span>
               </span>
             </SelectTrigger>
-            <SelectContent align="end">
+            {/* 触发器里放的是自定义内容而不是 <SelectValue>，默认的 item-aligned 定位要靠
+                SelectValue 节点对齐，缺了它下拉列表定位失败、根本显示不出来；popper 定位只锚定触发器 */}
+            <SelectContent position="popper" align="end" sideOffset={6} className="w-(--radix-select-trigger-width)">
               {apps.map((app) => (
                 <SelectItem key={app.id} value={app.appKey}>
                   <span className="flex items-center gap-2">
