@@ -1,4 +1,5 @@
 import { apiRequest, buildQuery } from "./client";
+import type { DeviceInfo } from "./device-info";
 import type {
   AdminAppUserDetail,
   AdminAppUserItem,
@@ -207,6 +208,9 @@ export type SessionDetailView = {
   longitude?: number;
   /** 内网 / 回环来源。活动地图据此归到「服务器地址」而不是伪造坐标 */
   isPrivate?: boolean;
+  /** 设备展示名（同 deviceInfo.name） */
+  device?: string;
+  deviceInfo?: DeviceInfo;
 };
 
 export function getAdminUserSessions(token: string, appKey: string, userId: number | string) {

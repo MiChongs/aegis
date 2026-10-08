@@ -63,6 +63,7 @@ import {
   textValue
 } from "./user-detail-shared";
 import { UserSessionsPanel } from "../user-sessions-panel";
+import { DeviceInfoChip } from "../device-info-chip";
 import { UserActivityMap } from "./user-activity-map";
 
 const LOGIN_STATUS_OPTIONS = [
@@ -195,18 +196,22 @@ export function UserActivityTab({
                             {textValue(item.loginIp)}
                           </span>
                         </TableCell>
-                        <TableCell className="max-w-[190px]">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex items-center gap-1.5 text-xs">
-                                <DeviceIcon className="size-3 shrink-0 text-muted-foreground" />
-                                <span className="truncate">{ua.label}</span>
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="max-w-sm break-all text-xs">
-                              {textValue(item.userAgent, "无 User-Agent")}
-                            </TooltipContent>
-                          </Tooltip>
+                        <TableCell className="max-w-[210px]">
+                          {item.deviceInfo ? (
+                            <DeviceInfoChip info={item.deviceInfo} fallback={ua.label} />
+                          ) : (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex items-center gap-1.5 text-xs">
+                                  <DeviceIcon className="size-3 shrink-0 text-muted-foreground" />
+                                  <span className="truncate">{ua.label}</span>
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-sm break-all text-xs">
+                                {textValue(item.userAgent, "无 User-Agent")}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                         </TableCell>
                         <TableCell className="max-w-[130px] truncate font-mono text-[11px] text-muted-foreground">
                           {textValue(item.deviceId)}

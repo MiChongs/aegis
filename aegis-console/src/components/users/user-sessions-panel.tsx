@@ -5,6 +5,7 @@ import { Globe2, Loader2, Monitor, Server, Smartphone, Trash2, XCircle } from "l
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
 import type { SessionDetailView } from "@/lib/api/apps";
+import { DeviceInfoChip } from "./device-info-chip";
 import { classifyIp, isServerSideAddress } from "@/lib/geo/private-network";
 import {
   useAdminUserSessionsQuery,
@@ -162,19 +163,23 @@ export function UserSessionsPanel({ appKey, userId }: { appKey?: string | null; 
                           <span className="text-xs">{loc.text}</span>
                         </div>
                       </TableCell>
-                      <TableCell>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center gap-1.5">
-                              <DeviceIcon className="size-3 shrink-0 text-muted-foreground" />
-                              <span className="max-w-[120px] truncate text-xs">{ua.browser || ua.os || ua.device}</span>
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-xs text-xs">
-                            <div>{ua.os} · {ua.browser}</div>
-                            {s.provider && <Badge variant="outline" className="mt-1 text-[9px]">{s.provider}</Badge>}
-                          </TooltipContent>
-                        </Tooltip>
+                      <TableCell className="max-w-[200px]">
+                        {s.deviceInfo ? (
+                          <DeviceInfoChip info={s.deviceInfo} fallback={ua.browser || ua.os || ua.device} />
+                        ) : (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="flex items-center gap-1.5">
+                                <DeviceIcon className="size-3 shrink-0 text-muted-foreground" />
+                                <span className="max-w-[120px] truncate text-xs">{ua.browser || ua.os || ua.device}</span>
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs text-xs">
+                              <div>{ua.os} · {ua.browser}</div>
+                              {s.provider && <Badge variant="outline" className="mt-1 text-[9px]">{s.provider}</Badge>}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">{s.ip || "—"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{formatTime(s.issuedAt)}</TableCell>

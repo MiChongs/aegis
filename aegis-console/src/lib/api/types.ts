@@ -1,4 +1,5 @@
 import type { CaptchaDynamicConfig } from "./captcha";
+import type { DeviceInfo } from "./device-info";
 
 export type AdminAssignment = {
   roleKey?: string;
@@ -3072,6 +3073,7 @@ export type LoginAuditItem = {
   status?: string;
   metadata?: Record<string, unknown>;
   createdAt?: string;
+  deviceInfo?: DeviceInfo;
   [key: string]: unknown;
 };
 
@@ -3349,6 +3351,8 @@ export type UserLoginAuditRecord = {
   latitude?: number;
   longitude?: number;
   isPrivate?: boolean;
+  /** 登录所用设备，按设备字典现查 */
+  deviceInfo?: DeviceInfo;
 };
 
 export type UserLoginAuditList = {
