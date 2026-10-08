@@ -45,6 +45,15 @@ import {
   wrapGcj02Tiles
 } from "@/lib/geo/gcj02-tiles";
 
+/**
+ * worker 自托管在 public/maplibre（见 scripts/sync-maplibre-worker.mjs）。
+ * maplibre 默认按自身 import.meta.url 推算 worker 地址，打包进 /_next/static 之后那里没有这个文件。
+ * 带上版本号作查询串，升级 maplibre 后浏览器不会继续用缓存里的旧 worker。
+ */
+if (typeof window !== "undefined") {
+  maplibregl.setWorkerUrl(`/maplibre/maplibre-gl-worker.mjs?v=${maplibregl.getVersion()}`);
+}
+
 /** 与 globals.css 的 zinc 令牌严格对齐（layer paint 需要具体色值） */
 const PALETTE = {
   light: { ocean: "#f4f4f5", land: "#ffffff", boundary: "#e4e4e7" },
