@@ -147,7 +147,7 @@ export function isNegativeAmount(value?: string | null) {
 
 export function joinText(parts: Array<string | null | undefined>, fallback = EMPTY) {
   const filtered = parts.map((item) => textValue(item, "")).filter(Boolean);
-  return filtered.length ? filtered.join(" · ") : fallback;
+  return filtered.length ? filtered.join(" ") : fallback;
 }
 
 export function userInitials(nickname?: string | null, account?: string | null) {
@@ -178,8 +178,8 @@ export function Panel({
 }) {
   return (
     <Card className={cn("gap-0 overflow-hidden py-0", className)}>
-      <CardHeader className="flex flex-row items-start justify-between gap-4 border-b px-5 py-4">
-        <div className="min-w-0 space-y-1">
+      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b px-4 py-3.5 sm:px-5 sm:py-4">
+        <div className="min-w-0 flex-1 space-y-1">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
             {icon ? <span className="text-muted-foreground">{icon}</span> : null}
             {title}
@@ -190,7 +190,7 @@ export function Panel({
         </div>
         {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
       </CardHeader>
-      <CardContent className={cn("px-5 py-4", bodyClassName)}>{children}</CardContent>
+      <CardContent className={cn("px-4 py-4 sm:px-5", bodyClassName)}>{children}</CardContent>
     </Card>
   );
 }
@@ -284,7 +284,7 @@ export function StatTile({
   return (
     <div
       className={cn(
-        "rounded-2xl border px-4 py-3",
+        "min-w-0 rounded-2xl border px-3.5 py-3 sm:px-4",
         tone === "danger" && "border-red-200 bg-red-50/60 dark:border-red-900/60 dark:bg-red-950/30",
         tone === "warning" &&
           "border-amber-200 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/30",
@@ -297,7 +297,7 @@ export function StatTile({
         {icon}
         {label}
       </div>
-      <div className="mt-1.5 truncate text-xl font-semibold tabular-nums text-foreground">
+      <div className="mt-1.5 truncate text-lg font-semibold tabular-nums text-foreground sm:text-xl">
         {value}
       </div>
       {hint ? <div className="mt-1 truncate text-[11px] text-muted-foreground">{hint}</div> : null}
@@ -425,7 +425,7 @@ export function describeUserAgent(ua?: string | null) {
   const mobile = /mobile|android|iphone|ipad/i.test(ua);
   const browser = ua.match(/(Chrome|Firefox|Safari|Edge|Opera|Brave|Arc|okhttp|Dalvik)[/ ]?[\d.]*/i);
   const os = ua.match(/(Windows NT|Mac OS X|Linux|Android|iOS|iPhone OS)\s?[\d._]*/i);
-  const label = [os?.[0]?.replace(/_/g, "."), browser?.[0]].filter(Boolean).join(" · ");
+  const label = [os?.[0]?.replace(/_/g, "."), browser?.[0]].filter(Boolean).join(" ");
   return { label: label || (mobile ? "移动客户端" : "桌面客户端"), mobile };
 }
 
@@ -483,7 +483,7 @@ export function deriveUserSignals(
         activeBan.bannedByAdminName ? `操作人 ${activeBan.bannedByAdminName}` : ""
       ]
         .filter(Boolean)
-        .join(" · "),
+        .join("，"),
       tab: "governance",
       tabLabel: "去处置"
     });
@@ -498,7 +498,7 @@ export function deriveUserSignals(
       detail: [
         textValue(user.disabledReason, "无原因"),
         user.disabledEndTime ? `至 ${formatTime(user.disabledEndTime)}` : "无解除时间"
-      ].join(" · "),
+      ].join("，"),
       tab: "governance",
       tabLabel: "去处置"
     });

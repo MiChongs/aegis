@@ -106,12 +106,12 @@ export function UserCloudTab({ appKey, userId }: { appKey: string; userId: numbe
         </div>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <StatTile
           label="已用空间"
           value={formatBytes(state.usedBytes)}
           icon={<HardDrive className="size-3.5" />}
-          hint={`共 ${formatBytes(state.quotaBytes)} · ${percent}%`}
+          hint={`共 ${formatBytes(state.quotaBytes)}，已用 ${percent}%`}
           tone={percent >= 90 ? "danger" : percent >= 70 ? "warning" : "default"}
         />
         <StatTile label="条目" value={state.itemCount} icon={<FileText className="size-3.5" />} hint={`上限 ${state.limits.maxItems}`} />
@@ -341,7 +341,7 @@ function ItemsPanel({ appKey, userId, state }: { appKey: string; userId: number;
     <Panel
       title="条目"
       icon={<FileText className="size-4" />}
-      description={`单条上限 ${formatBytes(state.limits.maxItemBytes)} · 每个条目保留 ${state.limits.maxRevisions} 个修订`}
+      description={`单条上限 ${formatBytes(state.limits.maxItemBytes)}，每个条目保留 ${state.limits.maxRevisions} 个修订`}
       bodyClassName="space-y-3"
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -438,7 +438,7 @@ function ItemsPanel({ appKey, userId, state }: { appKey: string; userId: number;
                 </TableCell>
                 <TableCell className="text-right font-mono text-xs tabular-nums">
                   v{item.revision}
-                  <span className="text-muted-foreground"> · {item.revisionCount}</span>
+                  <span className="text-muted-foreground"> / {item.revisionCount}</span>
                 </TableCell>
                 <TableCell className="text-right font-mono text-xs tabular-nums">
                   {formatBytes(item.size)}
@@ -456,7 +456,7 @@ function ItemsPanel({ appKey, userId, state }: { appKey: string; userId: number;
       {total > PAGE_SIZE ? (
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span className="tabular-nums">
-            共 {total} 条 · 第 {page}/{totalPages} 页
+            共 {total} 条，第 {page}/{totalPages} 页
           </span>
           <div className="flex gap-1.5">
             <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>
@@ -583,7 +583,7 @@ function ItemSheet({
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <Label className="text-xs text-muted-foreground">
-                    内容{detail ? ` · v${detail.contentRevision}` : ""}
+                    内容{detail ? `（v${detail.contentRevision}）` : ""}
                     {revision ? "（历史版本）" : ""}
                   </Label>
                   <Button size="xs" variant="outline" onClick={() => void download()} disabled={busy}>
@@ -625,8 +625,8 @@ function ItemSheet({
                             </div>
                             <p className="mt-0.5 text-[11px] text-muted-foreground">
                               {formatDateTime(rev.createdAt)}
-                              {rev.operator ? ` · ${rev.operator}` : ""}
-                              {rev.deviceId ? ` · ${rev.deviceId}` : ""}
+                              {rev.operator ? `，${rev.operator}` : ""}
+                              {rev.deviceId ? `，${rev.deviceId}` : ""}
                             </p>
                           </div>
                           <Button

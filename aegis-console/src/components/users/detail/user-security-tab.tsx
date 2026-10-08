@@ -104,7 +104,7 @@ export function UserSecurityTab({
       detail: security?.hasPassword
         ? passwordExpired
           ? "已过期"
-          : `强度 ${numberText(security?.passwordStrengthScore)} · ${strength.label}`
+          : `强度 ${numberText(security?.passwordStrengthScore)}（${strength.label}）`
         : "未设置"
     },
     {
@@ -318,12 +318,12 @@ export function UserSecurityTab({
               <div className="flex items-start gap-2 rounded-xl border border-dashed bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
                 <Unlock className="mt-0.5 size-4 shrink-0" />
                 <span>
-                  未开启强绑定策略 ·{" "}
+                  未开启强绑定策略，前往{" "}
                   <Link
                     href={`/apps/${encodeURIComponent(appKey)}?tab=policy`}
                     className="text-foreground underline underline-offset-2"
                   >
-                    应用 · 认证与会话
+                    应用认证与会话
                   </Link>
                 </span>
               </div>
@@ -390,7 +390,7 @@ export function UserSecurityTab({
                       {item.credentialId}
                     </div>
                     <div className="mt-1 text-[11px] text-muted-foreground">
-                      最近使用 {formatTime(item.lastUsedAt)} · 注册于 {formatTime(item.createdAt)}
+                      最近使用 {formatTime(item.lastUsedAt)}，注册于 {formatTime(item.createdAt)}
                     </div>
                   </div>
                 ))}

@@ -280,7 +280,7 @@ export function UserProfileTab({
                       <div className="flex items-center gap-2">
                         {configured ? (
                           <span className="text-[11px] text-muted-foreground">
-                            v{setting?.version ?? info?.version ?? 0} ·{" "}
+                            v{setting?.version ?? info?.version ?? 0}{" "}
                             {formatTime(setting?.updatedAt ?? info?.updatedAt)}
                           </span>
                         ) : null}

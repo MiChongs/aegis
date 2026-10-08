@@ -216,7 +216,7 @@ function AccountSwitchPanel({
             <div className="font-medium text-red-700 dark:text-red-300">当前处于限制状态</div>
             <div className="mt-0.5 text-muted-foreground">
               {textValue(user.disabledReason, "未填写原因")}
-              {user.disabledEndTime ? ` · 解除于 ${formatTime(user.disabledEndTime)}` : ""}
+              {user.disabledEndTime ? `，解除于 ${formatTime(user.disabledEndTime)}` : ""}
             </div>
           </div>
         ) : null}
@@ -322,12 +322,12 @@ function CreateBanPanel({
         {activeBan ? (
           <div className="rounded-xl border border-red-200 bg-red-50/60 px-3 py-2.5 text-xs leading-5 dark:border-red-900/60 dark:bg-red-950/30">
             <div className="font-medium text-red-700 dark:text-red-300">
-              当前生效：{BAN_TYPE_LABEL[activeBan.banType] ?? activeBan.banType} ·{" "}
-              {BAN_SCOPE_LABEL[activeBan.banScope] ?? activeBan.banScope}
+              当前生效：{BAN_TYPE_LABEL[activeBan.banType] ?? activeBan.banType}封禁（
+              {BAN_SCOPE_LABEL[activeBan.banScope] ?? activeBan.banScope}）
             </div>
             <div className="mt-0.5 text-muted-foreground">
               {textValue(activeBan.reason, "未填写原因")}
-              {activeBan.endAt ? ` · 到期 ${formatTime(activeBan.endAt)}` : " · 永久"}
+              {activeBan.endAt ? `，到期 ${formatTime(activeBan.endAt)}` : "，永久有效"}
             </div>
           </div>
         ) : null}
@@ -445,7 +445,7 @@ function BanRow({ appKey, userId, ban }: { appKey: string; userId: number; ban: 
         </TableCell>
         <TableCell className="whitespace-nowrap text-xs">
           {BAN_TYPE_LABEL[ban.banType] ?? ban.banType}
-          <span className="text-muted-foreground"> · {BAN_SCOPE_LABEL[ban.banScope] ?? ban.banScope}</span>
+          <span className="text-muted-foreground">（{BAN_SCOPE_LABEL[ban.banScope] ?? ban.banScope}）</span>
         </TableCell>
         <TableCell className="max-w-[260px]">
           <div className="truncate text-xs" title={ban.reason}>
@@ -466,7 +466,7 @@ function BanRow({ appKey, userId, ban }: { appKey: string; userId: number; ban: 
           <div title={formatTime(ban.startAt)}>{formatShortTime(ban.startAt)} 起</div>
           <div title={ban.endAt ? formatTime(ban.endAt) : undefined}>
             {ban.endAt ? `${formatShortTime(ban.endAt)} 止` : "永久"}
-            {ban.status === "active" && ban.endAt ? ` · ${relativeTime(ban.endAt)}` : ""}
+            {ban.status === "active" && ban.endAt ? `（${relativeTime(ban.endAt)}）` : ""}
           </div>
         </TableCell>
         <TableCell className="text-xs text-muted-foreground">

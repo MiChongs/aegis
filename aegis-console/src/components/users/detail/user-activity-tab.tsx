@@ -337,7 +337,7 @@ function UserRiskPanel({ account }: { account?: string }) {
               </div>
               {item.matchedRules?.length ? (
                 <div className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
-                  {item.matchedRules.map((rule) => rule.reason || rule.ruleName).join(" · ")}
+                  {item.matchedRules.map((rule) => rule.reason || rule.ruleName).join("、")}
                 </div>
               ) : null}
             </div>

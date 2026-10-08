@@ -214,7 +214,7 @@ function buildNodes(
         lat,
         server: e.server,
         label: e.server ? server.name : e.city || e.region || e.country || e.ip || "未知位置",
-        sub: e.server ? classifyIp(e.ip).detail : [e.country, e.isp].filter(Boolean).join(" · "),
+        sub: e.server ? classifyIp(e.ip).detail : [e.country, e.isp].filter(Boolean).join(" "),
         countryCode: e.server ? "" : e.countryCode || "",
         counts: emptyCounts(),
         total: 0,
@@ -337,7 +337,7 @@ function nodeTooltip(d: ActivityNode) {
 function segmentTooltip(d: TrailSegment) {
   return `<div style="padding:8px 10px;font-size:12px;line-height:1.7;max-width:280px">
       <div style="font-weight:600">${esc(d.fromLabel)} → ${esc(d.toLabel)}</div>
-      <div style="opacity:.75">${Math.round(d.km).toLocaleString("zh-CN")} km · 间隔 ${fmtGap(d.hours)}</div>
+      <div style="opacity:.75">${Math.round(d.km).toLocaleString("zh-CN")} km，间隔 ${fmtGap(d.hours)}</div>
       <div style="opacity:.75">折合 ${fmtSpeed(d)}</div>
       ${
         d.impossible
@@ -727,7 +727,7 @@ export function UserActivityMap({ appKey, userId }: { appKey: string; userId: nu
       {/* 汇总：地图上看不见的那部分事实（内网收敛、无法定位）必须写出来 */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
         <span>
-          {fmtCount(nodes.length)} 个位置 · {fmtCount(totalEvents)} 次活动
+          {fmtCount(nodes.length)} 个位置，{fmtCount(totalEvents)} 次活动
         </span>
         {serverHits > 0 && (
           <span className="flex items-center gap-1">

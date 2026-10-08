@@ -105,7 +105,7 @@ export function UserAssetsTab({
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <StatTile label="积分" value={numberText(user.integral)} icon={<Coins className="size-3.5" />} />
         <StatTile
           label="经验"
@@ -192,7 +192,7 @@ export function UserAssetsTab({
                         </div>
                         {txn.remark || txn.relatedOrderNo ? (
                           <div className="truncate text-[11px] text-muted-foreground">
-                            {[txn.remark, txn.relatedOrderNo].filter(Boolean).join(" · ")}
+                            {[txn.remark, txn.relatedOrderNo].filter(Boolean).join("，")}
                           </div>
                         ) : null}
                       </TableCell>
@@ -462,7 +462,7 @@ function VipPanel({ appKey, userId }: { appKey: string; userId: number }) {
 
   const statusBadge = !entitlement ? null : entitlement.isVip ? (
     <Badge variant={entitlement.isTrial ? "warning" : "success"} size="sm">
-      {entitlement.isTrial ? "试用中" : "有效"} · 剩 {Math.max(entitlement.remainingDays, 0)} 天
+      {entitlement.isTrial ? "试用中" : "有效"}，剩余 {Math.max(entitlement.remainingDays, 0)} 天
     </Badge>
   ) : entitlement.expireAt ? (
     <Badge variant="warning" size="sm">已过期</Badge>
@@ -561,7 +561,7 @@ function VipPanel({ appKey, userId }: { appKey: string; userId: number }) {
                     <div className="truncate text-xs">{textValue(txn.planName)}</div>
                     {txn.features?.length ? (
                       <div className="truncate text-[11px] text-muted-foreground">
-                        {txn.features.map(featureName).join(" · ")}
+                        {txn.features.map(featureName).join("、")}
                       </div>
                     ) : null}
                   </TableCell>
@@ -688,7 +688,7 @@ function GrantSection({
                     <SelectContent>
                       {grantablePlans.map((item) => (
                         <SelectItem key={item.id} value={String(item.id)} className="text-xs">
-                          {item.name} · {item.durationDays} 天 · ¥{formatMoney(item.price)}
+                          {item.name}（{item.durationDays} 天，¥{formatMoney(item.price)}）
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -740,9 +740,9 @@ function GrantSection({
                   {plan
                     ? `合计 ${plan.durationDays * quantity} 天` +
                       (plan.bonusIntegral
-                        ? ` · 附赠 ${(plan.bonusIntegral * quantity).toLocaleString("zh-CN")} 积分`
+                        ? `，附赠 ${(plan.bonusIntegral * quantity).toLocaleString("zh-CN")} 积分`
                         : "") +
-                      (plan.features?.length ? ` · 含 ${plan.features.length} 项权益` : "")
+                      (plan.features?.length ? `，含 ${plan.features.length} 项权益` : "")
                     : ""}
                 </p>
                 <Button size="sm" disabled={!plan || grant.isPending} onClick={grantPlan}>
@@ -835,9 +835,9 @@ function GrantSection({
               {customValid
                 ? `发放 ${dayCount} 天` +
                   (Number.parseInt(bonus, 10) > 0
-                    ? ` · 附赠 ${Number.parseInt(bonus, 10).toLocaleString("zh-CN")} 积分`
+                    ? `，附赠 ${Number.parseInt(bonus, 10).toLocaleString("zh-CN")} 积分`
                     : "") +
-                  (selectedFeatures.length ? ` · 含 ${selectedFeatures.length} 项权益` : "")
+                  (selectedFeatures.length ? `，含 ${selectedFeatures.length} 项权益` : "")
                 : ""}
             </p>
             <Button size="sm" disabled={!customValid || grant.isPending} onClick={grantCustom}>
@@ -893,7 +893,7 @@ function TrialSection({
     <div className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3">
       <div className="min-w-0 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">试用</span>
-        <span className="px-1.5 text-muted-foreground/50">·</span>
+        <span className="mx-2 inline-block h-3 w-px translate-y-0.5 bg-border" aria-hidden />
         {trial
           ? `已于 ${formatShortTime(trial.claimedAt)} 领取${trial.planName ? `（${trial.planName}）` : ""}，${
               trial.active ? "试用中" : "已结束"
@@ -902,7 +902,7 @@ function TrialSection({
         {!trial && offer.planName ? (
           <span className="text-muted-foreground/70">
             {" "}
-            · {offer.planName} · {offer.durationDays} 天
+            （{offer.planName}，{offer.durationDays} 天）
           </span>
         ) : null}
       </div>
