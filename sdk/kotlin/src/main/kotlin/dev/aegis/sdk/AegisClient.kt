@@ -334,6 +334,7 @@ class AegisClient private constructor(
         private var appSecret: String? = null
         private var tokenStore: AegisTokenStore = AegisTokenStore.inMemory()
         private var okHttp: OkHttpClient? = null
+        private var deviceProvider: (() -> AegisDevice?)? = null
         private val clock = AegisClock()
 
         /**
@@ -350,10 +351,20 @@ class AegisClient private constructor(
         /** 传入自己的 OkHttpClient（超时、代理、日志、证书固定都在这里配）。 */
         fun httpClient(client: OkHttpClient) = apply { this.okHttp = client }
 
+        /**
+         * 设备信息，随每个请求以 `X-Device-*` 请求头上报，见 [AegisDevice]。
+         * 服务端据此在会话列表与登录记录里给出可区分的 `deviceInfo`。
+         */
+        fun device(device: AegisDevice) = apply { this.deviceProvider = { device } }
+
+        /** 同上，惰性取值：每个请求调用一次 [provider]，设备 ID 首次解析较慢时用它。 */
+        fun device(provider: () -> AegisDevice?) = apply { this.deviceProvider = provider }
+
         fun build(): AegisClient {
             val configHolder = AtomicReference<AegisConfig?>(null)
             val base = okHttp ?: OkHttpClient()
             val client = base.newBuilder()
+                .apply { deviceProvider?.let { addInterceptor(AegisDeviceInterceptor(it)) } }
                 .addInterceptor(
                     AegisTransportInterceptor(
                         appKey = appKey,

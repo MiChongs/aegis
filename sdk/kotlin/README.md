@@ -142,6 +142,23 @@ class PrefsTokenStore(context: Context) : AegisTokenStore {
 AegisClient.builder(baseUrl, appKey).tokenStore(PrefsTokenStore(context)).build()
 ```
 
+## 设备信息
+
+把设备信息交给 SDK，它会以 `X-Device-*` 请求头附加到每个请求上。服务端据此在会话列表、
+登录记录与扫码登录的发起端里给出 `deviceInfo`（营销名、厂商图标、设备图、系统与应用版本），
+用户能分清自己的多台设备：
+
+```kotlin
+val client = AegisClient.builder(baseUrl, appKey)
+    .device { AegisDevice.android(id = stableDeviceId, appVersion = BuildConfig.VERSION_NAME) }
+    .build()
+```
+
+- `model` 报**原始型号**（`Build.MODEL`、`iPhone14,3`），不要报营销名，否则字典查不到。
+- `AegisDevice.android()` 经反射读 `android.os.Build`，SDK 本身不依赖 Android。
+- 含中文等非 ASCII 字符的值自动按 UTF-8 百分号编码（OkHttp 不接受非 ASCII 的请求头）。
+- 请求上已经显式带了的同名头不会被覆盖。字段说明见 `docs/app-integration.md` 的「设备信息」。
+
 ## 线程模型
 
 所有方法都是**同步**的，SDK 不替调用方决定并发模型。
