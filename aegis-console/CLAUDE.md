@@ -1369,3 +1369,13 @@ Monaco 产物**自托管**在 `public/monaco/vs`，由 `scripts/sync-monaco-asse
 - `workflow-studio.tsx` — 编辑器主面板
 - `workflow-dialogs.tsx` — 节点配置弹窗
 - `workflow-helpers.ts` — dagre 自动布局工具函数
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
