@@ -12,6 +12,14 @@ import { cn } from "@/lib/utils"
 
 const blobCache = new Map<string, string>()
 const pendingFetches = new Map<string, Promise<string | null>>()
+/**
+ * fetch 失败过的地址。这些地址交给 <img> 直接加载，不再重试 fetch。
+ *
+ * 缓存靠 fetch() 取 blob，而跨域 fetch 需要对方返回 CORS 头；<img> 不需要。
+ * 第三方头像（QQ / 微信 / GitHub 等 OAuth 头像、Gravatar 跳转）大多不带 CORS 头，
+ * 以前 fetch 一失败就什么都不渲染，列表里只剩首字母 —— 地址明明是对的。
+ */
+const fetchFailed = new Set<string>()
 const MAX_ENTRIES = 200
 
 function evictLRU() {
@@ -35,7 +43,10 @@ function loadImage(src: string): Promise<string | null> {
     .then((r) => (r.ok ? r.blob() : null))
     .then((blob) => {
       pendingFetches.delete(src)
-      if (!blob) return null
+      if (!blob) {
+        fetchFailed.add(src)
+        return null
+      }
       evictLRU()
       const objectUrl = URL.createObjectURL(blob)
       blobCache.set(src, objectUrl)
@@ -43,6 +54,7 @@ function loadImage(src: string): Promise<string | null> {
     })
     .catch(() => {
       pendingFetches.delete(src)
+      fetchFailed.add(src)
       return null
     })
 
@@ -59,31 +71,32 @@ export function evictAvatarCache(prefix?: string) {
   }
 }
 
+/**
+ * 返回可直接用于 <img> 的地址：命中缓存时是 blob URL；
+ * fetch 取不到（跨域无 CORS 头、网络错误）时退回原始地址，交给 <img> 自己加载。
+ */
 function useCachedSrc(src?: string) {
   const srcStr = typeof src === "string" && src ? src : ""
   const syncHit = React.useMemo(
-    () => (srcStr ? (blobCache.get(srcStr) ?? null) : null),
+    () => (srcStr ? (blobCache.get(srcStr) ?? (fetchFailed.has(srcStr) ? srcStr : null)) : null),
     [srcStr]
   )
-  const [asyncHit, setAsyncHit] = React.useState<string | null>(null)
+  // 异步结果连同它对应的 src 一起存：src 变了旧结果自然失效，不必在 effect 里同步清空
+  const [asyncHit, setAsyncHit] = React.useState<{ src: string; url: string } | null>(null)
 
   React.useEffect(() => {
-    if (!srcStr || syncHit) {
-      setAsyncHit(null)
-      return
-    }
+    if (!srcStr || syncHit) return
 
     let cancelled = false
     loadImage(srcStr).then((url) => {
-      if (!cancelled) setAsyncHit(url)
+      if (!cancelled) setAsyncHit({ src: srcStr, url: url ?? srcStr })
     })
     return () => {
       cancelled = true
-      setAsyncHit(null)
     }
   }, [srcStr, syncHit])
 
-  return syncHit || asyncHit
+  return syncHit || (asyncHit?.src === srcStr ? asyncHit.url : null)
 }
 
 type AvatarPreviewContextValue = {
