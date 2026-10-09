@@ -21,6 +21,16 @@ file_name, source, status, created_at, replaced_at`
 // 或两条 active（唯一索引直接报错，上传当场失败）。顺序也不能反 ——
 // 先插后置换会撞上 uq_avatar_assets_active。
 func (r *Repository) ReplaceAvatarAsset(ctx context.Context, asset avatardomain.Asset) (*avatardomain.Asset, error) {
+	return r.ReplaceAvatarAssetWithBlobs(ctx, asset, nil)
+}
+
+// ReplaceAvatarAssetWithBlobs 同 ReplaceAvatarAsset，并把这张头像的字节副本写进
+// avatar_asset_blobs。
+//
+// 副本与资产记录在**同一个事务**里：分开写的话，记录落了而副本没落，正是
+// 「对象存储一丢头像就没了」的那个窗口。同一个事务里顺手把该主体更早的副本清掉，
+// 只留最近 BlobKeepPerOwner 张，表不会随换头像的次数无限长。
+func (r *Repository) ReplaceAvatarAssetWithBlobs(ctx context.Context, asset avatardomain.Asset, blobs []avatardomain.Blob) (*avatardomain.Asset, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -50,10 +60,71 @@ RETURNING `+avatarAssetColumns,
 	if err != nil {
 		return nil, err
 	}
+	for _, blob := range blobs {
+		if len(blob.Data) == 0 || blob.Size < 0 {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO avatar_asset_blobs (asset_id, size, content_type, data)
+VALUES ($1, $2, $3, $4) ON CONFLICT (asset_id, size) DO NOTHING`,
+			saved.ID, blob.Size, avatarBlobContentType(blob.ContentType), blob.Data); err != nil {
+			return nil, err
+		}
+	}
+	if len(blobs) > 0 {
+		if _, err := tx.Exec(ctx, `DELETE FROM avatar_asset_blobs b
+USING avatar_assets a
+WHERE b.asset_id = a.id
+  AND a.owner_type = $1 AND a.owner_app_id = $2 AND a.owner_id = $3
+  AND a.status <> 'active'
+  AND a.id NOT IN (
+      SELECT id FROM avatar_assets
+      WHERE owner_type = $1 AND owner_app_id = $2 AND owner_id = $3
+      ORDER BY created_at DESC, id DESC
+      LIMIT $4
+  )`, asset.Owner.Type, asset.Owner.AppID, asset.Owner.ID, avatardomain.BlobKeepPerOwner); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return saved, nil
+}
+
+// GetAvatarBlob 某张头像某一档的字节副本，没有返回 (nil, nil)。
+func (r *Repository) GetAvatarBlob(ctx context.Context, assetID int64, size int) (*avatardomain.Blob, error) {
+	blob := avatardomain.Blob{Size: size}
+	err := r.pool.QueryRow(ctx, `SELECT content_type, data FROM avatar_asset_blobs
+WHERE asset_id = $1 AND size = $2`, assetID, size).Scan(&blob.ContentType, &blob.Data)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &blob, nil
+}
+
+// SaveAvatarBlob 补一份字节副本。已经有了就不动：同一个 (asset, size) 的字节不会变
+// （对象键里带时间戳，同一个键从不覆盖写），重复补写没有意义。
+//
+// 用来给本次改动之前上传的头像补副本：从对象存储读到一次，就存下来，
+// 之后对象存储再丢也不怕了。
+func (r *Repository) SaveAvatarBlob(ctx context.Context, assetID int64, blob avatardomain.Blob) error {
+	if assetID <= 0 || len(blob.Data) == 0 || blob.Size < 0 {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx, `INSERT INTO avatar_asset_blobs (asset_id, size, content_type, data)
+VALUES ($1, $2, $3, $4) ON CONFLICT (asset_id, size) DO NOTHING`,
+		assetID, blob.Size, avatarBlobContentType(blob.ContentType), blob.Data)
+	return err
+}
+
+func avatarBlobContentType(value string) string {
+	if value == "" {
+		return "image/jpeg"
+	}
+	return value
 }
 
 // GetActiveAvatarAsset 主体当前生效的头像资产，没有返回 (nil, nil)。

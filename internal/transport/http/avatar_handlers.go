@@ -54,20 +54,16 @@ func (h *Handler) AvatarImage(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	c.Header("Cache-Control", avatarCacheControl(image, strings.TrimSpace(c.Query("v"))))
 	if image.Redirect != "" {
-		// 外部头像同样按"地址可能是旧的"处理：短缓存，让换绑之后能收敛。
-		c.Header("Cache-Control", "public, max-age=300")
 		c.Redirect(http.StatusFound, image.Redirect)
 		return
 	}
-
-	requested := strings.TrimSpace(c.Query("v"))
-	if requested != "" && requested == image.Version {
-		c.Header("Cache-Control", "public, max-age=31536000, immutable")
-	} else {
-		c.Header("Cache-Control", "public, max-age=300, stale-while-revalidate=86400")
+	// 降级图没有 ETag：它不代表任何版本，带上的话客户端下次拿它来条件请求，
+	// 只会把一份错的字节续命。
+	if image.ETag != "" {
+		c.Header("ETag", image.ETag)
 	}
-	c.Header("ETag", image.ETag)
 	// 头像是给 <img> 用的，浏览器不会把它当脚本上下文；但这条路由在平台
 	// 自己的域上，nosniff 仍然要给 —— 存储桶里的内容终究是上传方决定的。
 	c.Header("X-Content-Type-Options", "nosniff")
@@ -76,6 +72,28 @@ func (h *Handler) AvatarImage(c *gin.Context) {
 		return
 	}
 	c.Data(http.StatusOK, image.ContentType, image.Data)
+}
+
+// avatarCacheControl 头像响应的缓存头。
+//
+//	降级（自定义头像暂时取不到，给的是默认图） → no-store：下一次必须重新来取
+//	跳转到外部头像                           → 五分钟：换绑之后能收敛
+//	v 与当前版本一致                         → immutable 一年：这个地址确实指向不变的内容
+//	其它（旧地址）                           → 五分钟 + stale-while-revalidate
+//
+// 降级那一档是这次补上的。之前降级图走的是第三档：一次读失败，默认图就被当成
+// 这张头像缓存一年。
+func avatarCacheControl(image *service.AvatarImage, requested string) string {
+	switch {
+	case image == nil || image.Degraded:
+		return "no-store"
+	case image.Redirect != "":
+		return "public, max-age=300"
+	case requested != "" && requested == image.Version:
+		return "public, max-age=31536000, immutable"
+	default:
+		return "public, max-age=300, stale-while-revalidate=86400"
+	}
 }
 
 func (h *Handler) UploadUserAvatar(c *gin.Context) {

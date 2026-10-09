@@ -6,12 +6,14 @@ import (
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"path"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	admindomain "aegis/internal/domain/admin"
@@ -42,6 +44,12 @@ const (
 	// avatarObjectReadLimit 取图时从对象存储读入内存的硬上限。
 	// 与上传上限分开：它管的是**存量**对象，不能跟着"以后能传多大"一起变。
 	avatarObjectReadLimit = 32 << 20
+	// avatarObjectReadAttempts 对象存储读失败时总共试几次。外部存储偶发的超时、
+	// 熔断半开时的那一下，再试一次多半就过了；试太多次则会把整页头像拖慢。
+	avatarObjectReadAttempts = 2
+	avatarObjectRetryDelay   = 150 * time.Millisecond
+	// avatarMissingTTL 对象两次都读不出来之后，多久之内不再去试。
+	avatarMissingTTL = time.Minute
 )
 
 var phoneIdentifierPattern = regexp.MustCompile(`^[+]?\d[\d\s\-()]{5,}$`)
@@ -107,6 +115,23 @@ type AvatarService struct {
 	keyPrefix string
 	signer    *avatarLinkSigner
 	cfg       AvatarSettings
+	// objects 与 blobs 是取图链路依赖的两样东西，单独抽成接口以便测试换成假实现：
+	// 取图失败时的降级行为正是这次要钉住的，而真实存储很难按需"失败一次"。
+	objects avatarObjectReader
+	blobs   avatarBlobStore
+	// localWarned 头像写进了容器内的本地存储时只提醒一次。
+	localWarned atomic.Bool
+}
+
+// avatarObjectReader 从对象存储取字节。生产里是 StorageService。
+type avatarObjectReader interface {
+	ReadObjectBytes(ctx context.Context, configID int64, objectKey string, limit int64) ([]byte, string, error)
+}
+
+// avatarBlobStore 头像字节的数据库副本（avatar_asset_blobs）。生产里是仓储。
+type avatarBlobStore interface {
+	GetAvatarBlob(ctx context.Context, assetID int64, size int) (*avatardomain.Blob, error)
+	SaveAvatarBlob(ctx context.Context, assetID int64, blob avatardomain.Blob) error
 }
 
 // AvatarSettings 是 config.AvatarConfig 在服务层的镜像。
@@ -143,12 +168,21 @@ func NewAvatarService(log *zap.Logger, storage *StorageService, user *UserServic
 	if strings.TrimSpace(settings.GravatarBaseURL) == "" {
 		settings.GravatarBaseURL = "https://weavatar.com/avatar/"
 	}
-	return &AvatarService{
+	svc := &AvatarService{
 		log: log, storage: storage, user: user, admin: admin,
 		pg: pg, redis: redis, keyPrefix: keyPrefix,
 		signer: newAvatarLinkSigner(settings.SigningKey),
 		cfg:    settings,
 	}
+	// 只在真有实现时才赋值：把一个 nil 指针装进接口，接口本身就不是 nil 了，
+	// 之后的 `!= nil` 判断全部失效，调用时才 panic。
+	if storage != nil {
+		svc.objects = storage
+	}
+	if pg != nil {
+		svc.blobs = pg
+	}
+	return svc
 }
 
 // ════════════════════════════════════════════════════════════
@@ -218,20 +252,20 @@ func (s *AvatarService) view(ctx context.Context, baseURL string, owner avatardo
 
 	// 有自定义头像：版本取内容摘要，这样同一张图重复上传不会让缓存失效。
 	if configID, key, ok := parseStorageReference(raw); ok {
-		version := avatarVersionOf(raw)
 		view := avatardomain.View{Kind: avatardomain.KindCustom, Sizes: s.sizes()}
 		// 拿不到资产元数据（仓储未装配、或这是升级前上传的存量头像）时不影响出地址：
 		// 少的只是 blurhash 与主色这类锦上添花的字段，头像本身照常可取。
-		if asset, err := s.avatarAssetByKey(ctx, configID, key); err == nil && asset != nil {
+		asset, err := s.avatarAssetByKey(ctx, configID, key)
+		if err != nil {
+			asset = nil
+		}
+		if asset != nil {
 			view.Blurhash = asset.Blurhash
 			view.DominantColor = asset.DominantColor
 			view.Animated = asset.Animated
-			if asset.Checksum != "" {
-				version = asset.Checksum[:min(len(asset.Checksum), 12)]
-			}
 		}
-		view.Version = version
-		view.URL = buildAvatarLink(s.publicBase(baseURL), token, version)
+		view.Version = customAvatarVersion(asset, raw)
+		view.URL = buildAvatarLink(s.publicBase(baseURL), token, view.Version)
 		return view
 	}
 
@@ -239,10 +273,7 @@ func (s *AvatarService) view(ctx context.Context, baseURL string, owner avatardo
 	// 写坏了（老版本交出去的临时票据地址被客户端原样 PUT 回来）。
 	// 后一种情况资产表里还留着线索，自愈回去。
 	if asset := s.healOwnerAvatar(ctx, owner, raw); asset != nil {
-		version := asset.Checksum
-		if len(version) > 12 {
-			version = version[:12]
-		}
+		version := customAvatarVersion(asset, buildStorageReference(asset.ConfigID, asset.BaseKey))
 		return avatardomain.View{
 			Kind:          avatardomain.KindCustom,
 			URL:           buildAvatarLink(s.publicBase(baseURL), token, version),
@@ -411,6 +442,9 @@ type AvatarImage struct {
 	Redirect string
 	// NotModified 客户端手上那份已经是最新的，Data 为空。
 	NotModified bool
+	// Degraded 这不是该主体真正的头像：自定义头像的字节暂时取不到，给的是默认图。
+	// 传输层据此禁止缓存，ETag 也为空 —— 这份字节不代表任何版本。
+	Degraded bool
 }
 
 // OpenAvatar 按主体令牌取图。这是永久地址背后的实现。
@@ -430,6 +464,11 @@ func (s *AvatarService) OpenAvatar(ctx context.Context, token string, size int, 
 	if err != nil {
 		return nil, err
 	}
+	return s.openTarget(ctx, owner, target, size, ifNoneMatch)
+}
+
+// openTarget 已经知道头像指向什么之后的取图部分：外链跳转、条件请求、取字节、降级。
+func (s *AvatarService) openTarget(ctx context.Context, owner avatardomain.Owner, target avatarTarget, size int, ifNoneMatch string) (*AvatarImage, error) {
 	size = clampAvatarRenderSize(size)
 
 	if target.Kind == avatardomain.KindExternal {
@@ -443,44 +482,165 @@ func (s *AvatarService) OpenAvatar(ctx context.Context, token string, size int, 
 		if err == nil {
 			return image, nil
 		}
-		// 对象取不到（存储配置被删、桶里的文件被清了）时不能 404：
-		// 界面上会变成一个碎图标，而用户什么都没做错。退回默认头像，
+		// 字节取不到（数据库副本没有、对象存储也读不出）时不能 404：
+		// 界面上会变成一个碎图标，而用户什么都没做错。先给默认头像，
 		// 并把真实原因留在日志里。
-		s.log.Warn("头像对象读取失败，回落默认头像",
+		s.log.Warn("头像字节读取失败，临时回落默认头像",
 			zap.String("owner", avatarOwnerPayload(owner)),
 			zap.Int64("config_id", target.ConfigID), zap.String("key", target.Key), zap.Error(err))
+		fallback, ferr := s.renderDefault(ctx, owner, target, size)
+		if ferr != nil {
+			return nil, ferr
+		}
+		// 这份默认图**不是**这个版本的内容，必须标成降级：不带 ETag、不许缓存。
+		//
+		// 此前它带着自定义头像的版本与 ETag 发出去，而传输层见 v 与版本一致就给
+		// `immutable` 一年。于是对象存储只要失手一次（本地存储被重新部署清空、
+		// 外部存储抖一下），浏览器、App 的图片缓存与 CDN 就把默认图当成这张头像
+		// 存上一年；之后的条件请求还会因为 ETag 相同拿到 304。
+		// 用户看到的就是「头像过一阵子就没了，而且再也回不来」。
+		fallback.Degraded = true
+		fallback.ETag = ""
+		return fallback, nil
 	}
 	return s.renderDefault(ctx, owner, target, size)
 }
 
+// openStoredAvatar 取自定义头像的字节。
+//
+// 先试请求尺寸对应的变体，取不到再退回原图：变体对象丢了不等于整张头像丢了，
+// 给一张大一点的图总比给默认图强。
 func (s *AvatarService) openStoredAvatar(ctx context.Context, target avatarTarget, size int) (*AvatarImage, error) {
-	configID, key, contentType := target.ConfigID, target.Key, ""
-	if target.Asset != nil {
-		if variant := target.Asset.VariantFor(size); variant != nil && variant.Key != "" {
-			key, contentType = variant.Key, variant.ContentType
-		} else {
-			contentType = target.Asset.ContentType
+	var lastErr error
+	for _, pick := range avatarPicks(target, size) {
+		data, contentType, err := s.loadAvatarBytes(ctx, target.Asset, pick)
+		if err == nil {
+			return s.buildImage(data, contentType, target.Version, size), nil
 		}
-		// 动图只有原图那一份是动的，请求任何尺寸都给它 ——
-		// 给一个静态变体等于悄悄把用户的动图换成了静态图。
-		if target.Asset.Animated {
-			key, contentType = target.Asset.BaseKey, target.Asset.ContentType
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = apperrors.New(40481, http.StatusNotFound, "头像不存在")
+	}
+	return nil, lastErr
+}
+
+// avatarPick 一档候选：对象存储里的键，以及它在数据库副本里的 size。
+type avatarPick struct {
+	ConfigID    int64
+	Key         string
+	ContentType string
+	BlobSize    int
+}
+
+// avatarPicks 按优先顺序列出该取哪几档：请求尺寸的变体在前，原图兜底。
+func avatarPicks(target avatarTarget, size int) []avatarPick {
+	base := avatarPick{ConfigID: target.ConfigID, Key: target.Key}
+	asset := target.Asset
+	if asset == nil {
+		return []avatarPick{base}
+	}
+	if asset.BaseKey != "" {
+		base.Key = asset.BaseKey
+	}
+	if asset.ConfigID > 0 {
+		base.ConfigID = asset.ConfigID
+	}
+	base.ContentType = asset.ContentType
+	// 动图只有原图那一份是动的，请求任何尺寸都给它 ——
+	// 给一个静态变体等于悄悄把用户的动图换成了静态图。
+	if asset.Animated {
+		return []avatarPick{base}
+	}
+	if variant := asset.VariantFor(size); variant != nil && variant.Key != "" && variant.Key != base.Key {
+		return []avatarPick{
+			{ConfigID: base.ConfigID, Key: variant.Key, ContentType: variant.ContentType, BlobSize: variant.Size},
+			base,
 		}
 	}
-	cacheKey := s.imageCacheKey(configID, key)
+	return []avatarPick{base}
+}
+
+// loadAvatarBytes 一档头像的字节，依次试：Redis 缓存 → 数据库副本 → 对象存储。
+//
+// 数据库副本排在对象存储前面：它就在本地、按主键取一行，比去对象存储快，
+// 也不受对象存储可用性的影响。从对象存储读到的（本次改动之前上传、还没有副本的）
+// 顺手补一份副本，之后对象存储再丢也不怕。
+func (s *AvatarService) loadAvatarBytes(ctx context.Context, asset *avatardomain.Asset, pick avatarPick) ([]byte, string, error) {
+	cacheKey := s.imageCacheKey(pick.ConfigID, pick.Key)
 	if data, ct := s.readCachedAvatar(ctx, cacheKey); len(data) > 0 {
-		return s.buildImage(data, firstNonEmptyAvatarString(ct, contentType), target.Version, size), nil
+		return data, firstNonEmptyAvatarString(ct, pick.ContentType), nil
 	}
-	// 读取上限刻意**不**用 MaxUploadBytes：那是「以后能传多大」，
-	// 而这里要读的是「当年已经传上去的那张」。把上限调小之后，
-	// 存量里超过新上限的头像会集体读不出来、静默退化成默认头像 ——
-	// 一次配置调整不该让已经存在的头像消失，那正是这次要根治的那类问题。
-	data, ct, err := s.storage.ReadObjectBytes(ctx, configID, key, avatarObjectReadLimit)
+	hasAsset := asset != nil && asset.ID > 0 && s.blobs != nil
+	if hasAsset {
+		blob, err := s.blobs.GetAvatarBlob(ctx, asset.ID, pick.BlobSize)
+		if err != nil {
+			s.log.Debug("头像副本读取失败", zap.Int64("asset_id", asset.ID), zap.Error(err))
+		} else if blob != nil && len(blob.Data) > 0 {
+			contentType := firstNonEmptyAvatarString(blob.ContentType, pick.ContentType)
+			s.writeCachedAvatar(ctx, cacheKey, blob.Data, contentType)
+			return blob.Data, contentType, nil
+		}
+	}
+	data, ct, err := s.readAvatarObject(ctx, pick.ConfigID, pick.Key)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	s.writeCachedAvatar(ctx, cacheKey, data, firstNonEmptyAvatarString(ct, contentType))
-	return s.buildImage(data, firstNonEmptyAvatarString(ct, contentType), target.Version, size), nil
+	contentType := firstNonEmptyAvatarString(ct, pick.ContentType)
+	s.writeCachedAvatar(ctx, cacheKey, data, contentType)
+	if hasAsset {
+		if err := s.blobs.SaveAvatarBlob(ctx, asset.ID, avatardomain.Blob{
+			Size: pick.BlobSize, ContentType: contentType, Data: data,
+		}); err != nil {
+			s.log.Warn("补写头像副本失败", zap.Int64("asset_id", asset.ID), zap.Error(err))
+		}
+	}
+	return data, contentType, nil
+}
+
+// readAvatarObject 从对象存储取字节，失败时重试一次。
+//
+// 读取上限刻意**不**用 MaxUploadBytes：那是「以后能传多大」，
+// 而这里要读的是「当年已经传上去的那张」。把上限调小之后，
+// 存量里超过新上限的头像会集体读不出来、静默退化成默认头像 ——
+// 一次配置调整不该让已经存在的头像消失。
+//
+// 两次都失败时记一个短暂的「缺失」标记：对象确实没了的话（本地存储被清空），
+// 一屏几十个头像每个都去存储白跑两趟，只会把整页拖慢。客户端自己断开导致的失败
+// 不记 —— 那说明不了对象在不在。
+func (s *AvatarService) readAvatarObject(ctx context.Context, configID int64, key string) ([]byte, string, error) {
+	if s.objects == nil {
+		return nil, "", apperrors.New(50380, http.StatusServiceUnavailable, "头像服务暂不可用")
+	}
+	missingKey := s.missingCacheKey(configID, key)
+	if s.redis != nil {
+		if exists, err := s.redis.Exists(ctx, missingKey).Result(); err == nil && exists > 0 {
+			return nil, "", apperrors.New(40481, http.StatusNotFound, "头像暂时无法读取")
+		}
+	}
+	var lastErr error
+	for attempt := 0; attempt < avatarObjectReadAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, "", ctx.Err()
+			case <-time.After(avatarObjectRetryDelay):
+			}
+		}
+		data, ct, err := s.objects.ReadObjectBytes(ctx, configID, key, avatarObjectReadLimit)
+		if err == nil {
+			return data, ct, nil
+		}
+		lastErr = err
+		var appErr *apperrors.AppError
+		if errors.As(err, &appErr) && appErr.Code == 41381 {
+			break // 超过读取上限，重试也一样
+		}
+	}
+	if ctx.Err() == nil && s.redis != nil {
+		_ = s.redis.Set(ctx, missingKey, "1", avatarMissingTTL).Err()
+	}
+	return nil, "", lastErr
 }
 
 func (s *AvatarService) renderDefault(ctx context.Context, owner avatardomain.Owner, target avatarTarget, size int) (*AvatarImage, error) {
@@ -613,20 +773,17 @@ func (s *AvatarService) resolveTarget(ctx context.Context, owner avatardomain.Ow
 	if configID, key, ok := parseStorageReference(raw); ok {
 		target.Kind = avatardomain.KindCustom
 		target.ConfigID, target.Key = configID, key
-		target.Version = avatarVersionOf(raw)
 		if asset, err := s.avatarAssetByKey(ctx, configID, key); err == nil && asset != nil {
 			target.Asset = asset
-			if asset.Checksum != "" {
-				target.Version = asset.Checksum[:min(len(asset.Checksum), 12)]
-			}
 		}
+		target.Version = customAvatarVersion(target.Asset, raw)
 		return target, nil
 	}
 	if asset := s.healOwnerAvatar(ctx, owner, raw); asset != nil {
 		target.Kind = avatardomain.KindCustom
 		target.Asset = asset
 		target.ConfigID, target.Key = asset.ConfigID, asset.BaseKey
-		target.Version = asset.Checksum[:min(len(asset.Checksum), 12)]
+		target.Version = customAvatarVersion(asset, buildStorageReference(asset.ConfigID, asset.BaseKey))
 		return target, nil
 	}
 	target.Kind = avatardomain.KindDefault
@@ -828,6 +985,8 @@ func (s *AvatarService) store(ctx context.Context, owner avatardomain.Owner, app
 		})
 	}
 
+	s.warnIfLocalStorage(stored)
+
 	asset := avatardomain.Asset{
 		Owner:         owner,
 		ConfigID:      stored.ConfigID,
@@ -844,11 +1003,46 @@ func (s *AvatarService) store(ctx context.Context, owner avatardomain.Owner, app
 		FileName:      strings.TrimSpace(input.FileName),
 		Source:        avatardomain.SourceUpload,
 	}
-	saved, err := s.pg.ReplaceAvatarAsset(ctx, asset)
+	// 字节在库里也留一份，与资产记录同一个事务落下。对象存储之后丢了
+	// （容器重建清空本地存储、外部存储不可用），头像照样取得到。
+	saved, err := s.pg.ReplaceAvatarAssetWithBlobs(ctx, asset, avatarBlobsOf(processed, variants))
 	if err != nil {
 		return nil, nil, err
 	}
 	return saved, &AvatarUploadResult{Flattened: processed.Flattened}, nil
+}
+
+// avatarBlobsOf 要存进数据库的字节：原图，加上成功传进对象存储的那些变体。
+//
+// 只存进了资产记录的变体：取图时按资产记录挑变体，记录里没有的那一档
+// 根本不会被请求，存了也只是占地方。
+func avatarBlobsOf(processed *processedAvatar, stored []avatardomain.Variant) []avatardomain.Blob {
+	blobs := []avatardomain.Blob{{Size: 0, ContentType: processed.Base.ContentType, Data: processed.Base.Data}}
+	kept := make(map[int]bool, len(stored))
+	for _, variant := range stored {
+		kept[variant.Size] = true
+	}
+	for _, item := range processed.Variants {
+		if item.Size > 0 && kept[item.Size] {
+			blobs = append(blobs, avatardomain.Blob{Size: item.Size, ContentType: item.ContentType, Data: item.Data})
+		}
+	}
+	return blobs
+}
+
+// warnIfLocalStorage 头像写进了本地存储时提醒一次。
+//
+// 本地存储在容器里就是容器自己的磁盘：没给 data 目录挂卷的部署，重新部署一次
+// 对象就全没了。头像已经在数据库里有副本，不会因此消失，但同一个存储里的
+// 其它文件（工单附件、发布包）没有这层保护，值得让运维知道。
+func (s *AvatarService) warnIfLocalStorage(stored *storagedomain.StoredObject) {
+	if stored == nil || stored.Provider != storagedomain.ProviderLocal {
+		return
+	}
+	if s.localWarned.CompareAndSwap(false, true) {
+		s.log.Warn("头像写入了本地存储；容器部署时请为 data 目录挂载持久卷，否则重新部署后对象会丢失（头像在数据库中另有副本）",
+			zap.Int64("config_id", stored.ConfigID))
+	}
 }
 
 func (s *AvatarService) putObject(ctx context.Context, appID int64, configName string, key string, item renderedAvatarImage, input AvatarUploadInput) (*storagedomain.StoredObject, error) {
@@ -1038,6 +1232,11 @@ func (s *AvatarService) publicBase(requestBase string) string {
 func (s *AvatarService) imageCacheKey(configID int64, objectKey string) string {
 	sum := sha256.Sum256([]byte(objectKey))
 	return fmt.Sprintf("%s:avatar:obj:%d:%s", s.keyPrefix, configID, hex.EncodeToString(sum[:12]))
+}
+
+func (s *AvatarService) missingCacheKey(configID int64, objectKey string) string {
+	sum := sha256.Sum256([]byte(objectKey))
+	return fmt.Sprintf("%s:avatar:miss:%d:%s", s.keyPrefix, configID, hex.EncodeToString(sum[:12]))
 }
 
 func (s *AvatarService) defaultCacheKey(seed string, label string, size int) string {

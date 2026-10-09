@@ -248,6 +248,29 @@ func SanitizeExternalAvatar(raw string) string {
 	return trimmed
 }
 
+// avatarCacheEpoch 自定义头像版本串（地址里的 v）的前缀。
+//
+// 改它会让所有自定义头像的地址整体换一遍，客户端与 CDN 手上按旧地址缓存的东西
+// 全部作废，服务端仍按主体令牌返回当前头像（v 只用来破缓存）。
+//
+// 第一次从无到 "2"：此前自定义头像的字节一旦读失败，服务端会把默认图带着这张头像的
+// 版本与 ETag、以 immutable 一年的缓存头发出去，已经被这样缓存住的客户端只有换地址
+// 才能拿回真正的头像。
+const avatarCacheEpoch = "2"
+
+// customAvatarVersion 自定义头像的版本串：有资产记录时取内容摘要的前 12 位，
+// 没有（升级前上传的存量头像）时由引用派生，前面加上缓存纪元。
+func customAvatarVersion(asset *avatardomain.Asset, ref string) string {
+	version := avatarVersionOf(ref)
+	if asset != nil && asset.Checksum != "" {
+		version = asset.Checksum[:min(len(asset.Checksum), 12)]
+	}
+	if version == "" {
+		return ""
+	}
+	return avatarCacheEpoch + "." + version
+}
+
 // avatarVersionOf 由内容标识派生短版本串。
 //
 // 取内容摘要而不是时间戳：同一张图重复上传应该得到同一个版本，

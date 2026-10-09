@@ -109,6 +109,21 @@ type Asset struct {
 	ReplacedAt *time.Time `json:"replacedAt,omitempty"`
 }
 
+// Blob 一份头像字节在数据库里的副本（avatar_asset_blobs）。
+//
+// Size 与 Variant.Size 同义：0 是归一化后的原图，其余是变体边长。
+// 对象存储是头像字节的主存放处，这一份是它丢了（容器重建清空本地存储、
+// 外部存储暂时不可用）时的退路，见迁移 000092。
+type Blob struct {
+	Size        int
+	ContentType string
+	Data        []byte
+}
+
+// BlobKeepPerOwner 每个主体保留字节副本的头像张数：当前这张加上历史里最近的几张，
+// 够「换回上一张」用。更早的只留资产记录，字节仍可从对象存储取。
+const BlobKeepPerOwner = 5
+
 // VariantFor 取最接近请求尺寸的变体：**只向上取**，取不到才退回最大的一档。
 // 向下取会把 64px 的图拉到 256px 显示，糊得比多下几 KB 明显得多。
 func (a *Asset) VariantFor(size int) *Variant {
