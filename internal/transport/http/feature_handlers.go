@@ -287,12 +287,32 @@ func (h *Handler) CreatePaymentOrder(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	payload, order, err := h.payment.CreateOrder(c.Request.Context(), session, req.Subject, req.Body, req.Amount, req.Type, req.ConfigName, req.NotifyURL, req.ReturnURL, req.Metadata, c.ClientIP())
+	payload, order, err := h.payment.CreateOrder(c.Request.Context(), session, req.Subject, req.Body, req.Amount, req.Type, req.PaymentMethod, req.ConfigName, req.NotifyURL, req.ReturnURL, req.Metadata, c.ClientIP())
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
 	response.Success(c, 200, "创建成功", gin.H{"payment": payload, "order": order})
+}
+
+// UserPaymentMethods 当前应用对用户开放的付款方式：渠道配置按子类型展开，只含展示与下单所需字段。
+//
+// 与兼容层的 PaymentMethods 不是一回事：那个列的是平台支持哪些渠道（控制台的渠道市场），
+// 这个列的是这个应用配好了、用户此刻能用哪些。
+func (h *Handler) UserPaymentMethods(c *gin.Context) {
+	session, ok := authSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
+		return
+	}
+	var query PaymentMethodsQuery
+	_ = bind(c, &query)
+	result, err := h.payment.UserPaymentMethods(c.Request.Context(), session, query.Purpose)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "获取成功", result)
 }
 
 // PaymentOrders 用户订单分页。每条订单都带上 receipt 区块 ——

@@ -761,6 +761,24 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
     fun myCardKeys(): JsonElement = client.call("GET", "/card-keys/mine", requireAuth = true)
 
     @Throws(IOException::class)
+    /**
+     * 可用的付款方式。
+     *
+     * 应用在后台配置的支付渠道按子类型展开：一条易支付配置放行了支付宝、微信、QQ 钱包，
+     * 这里就是三项。每项的 `method` / `configName` / `type` 原样传给 [createOrder] 的
+     * `paymentMethod` / `configName` / `type`；`isDefault` 是不指定时服务端会用的那一项，
+     * `key` 可以拿来记住用户上一次的选择。
+     *
+     * [purpose] 传订单用途：`wallet_recharge` 时不列余额支付（充值不能用余额付）。
+     */
+    @JvmOverloads
+    fun paymentMethods(purpose: String? = null): JsonElement = client.call(
+        "GET", "/pay/methods",
+        query = purpose?.takeIf { it.isNotBlank() }?.let { mapOf("purpose" to it) } ?: emptyMap(),
+        requireAuth = true,
+    )
+
+    @Throws(IOException::class)
     @JvmOverloads
     fun orders(page: Int = 1, limit: Int = 20): JsonElement =
         client.call("GET", "/pay/orders", query = pageQuery(page, limit), requireAuth = true)
@@ -769,9 +787,12 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
     /**
      * 创建支付订单。[amount] 是十进制字符串，理由同 [consumeWallet]。
      *
-     * 注意 configName / notifyUrl / returnUrl 三项在服务端是 snake_case
-     * （`config_name` / `notify_url` / `return_url`）——
+     * 注意 paymentMethod / configName / notifyUrl / returnUrl 在服务端是 snake_case
+     * （`payment_method` / `config_name` / `notify_url` / `return_url`）——
      * 这类大小写差异正是让接入方反复吃 40000 的地方，这里替调用方处理掉。
+     *
+     * 让用户选付款方式时，[type]、[configName]、[paymentMethod] 取自 [paymentMethods] 的同一项。
+     * 三者都不传就用应用的默认配置与默认类型。[type] 不在那条配置放行的范围内时返回 40116。
      */
     @JvmOverloads
     fun createOrder(
@@ -783,6 +804,7 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
         notifyUrl: String? = null,
         returnUrl: String? = null,
         metadata: Map<String, Any?>? = null,
+        paymentMethod: String? = null,
     ): JsonElement = client.call(
         "POST", "/pay/orders",
         buildBody(
@@ -790,6 +812,7 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
             "amount" to amount,
             "body" to body,
             "type" to type,
+            "payment_method" to paymentMethod,
             "config_name" to configName,
             "notify_url" to notifyUrl,
             "return_url" to returnUrl,

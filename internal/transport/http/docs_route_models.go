@@ -492,6 +492,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/notifications/read"):                                                       NotificationReadRequest{},                // ReadNotification
 		routeKey("POST", "/api/notifications/read-batch"):                                                 NotificationReadBatchRequest{},           // ReadNotificationsBatch
 		routeKey("POST", "/api/oauth2/hooks/token"):                                                       service.OAuth2TokenHookRequest{},         // OAuth2TokenHook
+		routeKey("GET", "/api/pay/methods"):                                                               PaymentMethodsQuery{},                    // UserPaymentMethods
 		routeKey("GET", "/api/pay/orders"):                                                                UserPaymentOrdersQuery{},                 // PaymentOrders
 		routeKey("POST", "/api/pay/orders/create"):                                                        CreatePaymentOrderRequest{},              // CreatePaymentOrder
 		routeKey("GET", "/api/pay/orders/{orderNo}/bill"):                                                 PaymentBillExportRequest{},               // ExportPaymentBill
@@ -589,6 +590,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/v1/apps/{appkey}/notifications/clear"):                                     NotificationClearRequest{},               // ClearNotifications
 		routeKey("POST", "/api/v1/apps/{appkey}/notifications/read"):                                      NotificationReadRequest{},                // ReadNotification
 		routeKey("POST", "/api/v1/apps/{appkey}/notifications/read-batch"):                                NotificationReadBatchRequest{},           // ReadNotificationsBatch
+		routeKey("GET", "/api/v1/apps/{appkey}/pay/methods"):                                              PaymentMethodsQuery{},                    // UserPaymentMethods
 		routeKey("GET", "/api/v1/apps/{appkey}/pay/orders"):                                               UserPaymentOrdersQuery{},                 // PaymentOrders
 		routeKey("POST", "/api/v1/apps/{appkey}/pay/orders"):                                              CreatePaymentOrderRequest{},              // CreatePaymentOrder
 		routeKey("GET", "/api/v1/apps/{appkey}/points/experience-transactions"):                           PaginationQuery{},                        // ExperienceTransactions

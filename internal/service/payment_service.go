@@ -394,7 +394,12 @@ func (s *PaymentService) resolveReturnURL(config *paymentdomain.Config, requeste
 // aegis-console 的 src/app/pay/result/，以及渠道配置表单里 returnUrl 的占位提示。
 const PaymentResultPath = "/pay/result"
 
-func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Session, subject string, body string, amount string, providerType string, configName string, notifyURL string, returnURL string, metadata map[string]any, clientIP string) (*paymentdomain.PaymentPayload, *paymentdomain.Order, error) {
+// CreateOrder 创建支付订单。
+//
+// paymentMethod 与 configName 一起定位支付配置。配置名只在同一渠道内唯一，两个渠道都叫
+// default 时，只给配置名会落到排序靠前的那一条；用户在 /pay/methods 里选的是哪一项，
+// 就该原样带回它的 method。两者都空时用应用的默认配置。
+func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Session, subject string, body string, amount string, providerType string, paymentMethod string, configName string, notifyURL string, returnURL string, metadata map[string]any, clientIP string) (*paymentdomain.PaymentPayload, *paymentdomain.Order, error) {
 	if session == nil {
 		return nil, nil, apperrors.New(40170, http.StatusUnauthorized, "未认证")
 	}
@@ -406,8 +411,8 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 		}
 	}
 
-	// 查找配置（优先按 configName 精确匹配，否则取默认）
-	config, err := s.pg.GetPaymentConfig(ctx, session.AppID, "", configName)
+	// 查找配置（优先按渠道与配置名精确匹配，否则取默认）
+	config, err := s.pg.GetPaymentConfig(ctx, session.AppID, paymentMethod, configName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -416,6 +421,11 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 	}
 
 	provider, err := s.resolveProvider(config.PaymentMethod)
+	if err != nil {
+		return nil, nil, err
+	}
+	// 子类型在落单之前定下来：订单里记的、交给上游的、凭证上印的，都是同一个值。
+	providerType, err = resolveOrderPayType(provider, config, providerType)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -459,7 +469,7 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 		// 已经收过的那笔钱在凭证上变成另一种货币。
 		Currency:      s.resolveConfigCurrency(config.PaymentMethod, config.ConfigData),
 		PaymentMethod: config.PaymentMethod,
-		ProviderType:  strings.TrimSpace(providerType),
+		ProviderType:  providerType,
 		ClientIP:      clientIP,
 		NotifyURL:     pickString(notifyURL, ""),
 		ReturnURL:     pickString(returnURL, ""),
@@ -497,7 +507,7 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 		Subject:      order.Subject,
 		Body:         order.Body,
 		Amount:       parsedAmount,
-		ProviderType: strings.TrimSpace(providerType),
+		ProviderType: providerType,
 		NotifyURL:    s.resolveNotifyURL(provider, config, order.NotifyURL),
 		ReturnURL:    s.resolveReturnURL(config, order.ReturnURL),
 		ClientIP:     clientIP,

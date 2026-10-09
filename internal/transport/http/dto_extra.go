@@ -168,14 +168,23 @@ type AdminPaymentInitEpayRequest struct {
 }
 
 type CreatePaymentOrderRequest struct {
-	Subject    string         `json:"subject" form:"subject" binding:"required"`
-	Body       string         `json:"body" form:"body"`
-	Amount     string         `json:"amount" form:"amount" binding:"required"`
-	Type       string         `json:"type" form:"type"`
-	ConfigName string         `json:"config_name" form:"config_name"`
-	NotifyURL  string         `json:"notify_url" form:"notify_url"`
-	ReturnURL  string         `json:"return_url" form:"return_url"`
-	Metadata   map[string]any `json:"metadata"`
+	Subject string `json:"subject" form:"subject" binding:"required"`
+	Body    string `json:"body" form:"body"`
+	Amount  string `json:"amount" form:"amount" binding:"required"`
+	// Type 子支付类型（alipay / wxpay / qqpay …），取自 /pay/methods 的 type。
+	Type string `json:"type" form:"type"`
+	// PaymentMethod 与 ConfigName 一起定位支付配置，取自 /pay/methods 的 method / configName。
+	PaymentMethod string         `json:"payment_method" form:"payment_method"`
+	ConfigName    string         `json:"config_name" form:"config_name"`
+	NotifyURL     string         `json:"notify_url" form:"notify_url"`
+	ReturnURL     string         `json:"return_url" form:"return_url"`
+	Metadata      map[string]any `json:"metadata"`
+}
+
+// PaymentMethodsQuery GET /pay/methods 的查询参数。
+type PaymentMethodsQuery struct {
+	// Purpose 订单用途；wallet_recharge 时不列余额支付。
+	Purpose string `json:"purpose" form:"purpose"`
 }
 
 type UserPaymentOrdersQuery struct {

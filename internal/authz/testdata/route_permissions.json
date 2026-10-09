@@ -2073,6 +2073,13 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/apps/:appkey/pay/methods",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/apps/:appkey/pay/orders",
     "permission": "",
     "appScoped": false,
@@ -2459,6 +2466,13 @@
   {
     "method": "GET",
     "path": "/api/user-settings/auto-sign/status",
+    "permission": "",
+    "appScoped": false,
+    "unmapped": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/pay/methods",
     "permission": "",
     "appScoped": false,
     "unmapped": true

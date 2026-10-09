@@ -42,10 +42,7 @@ func (p *vmqpayProvider) Describe() paymentdomain.ProviderMeta {
 		Capabilities: paymentdomain.ProviderCapabilities{
 			QRCode: true, Webhook: true, WebhookSignature: true, RemoteQuery: true,
 		},
-		PayTypes: []paymentdomain.PayTypeOption{
-			payType("alipay", "支付宝", ""),
-			payType("wxpay", "微信支付", ""),
-		},
+		PayTypes: vmqpayPayTypes,
 		Fields: fields(
 			inGroup(paymentdomain.GroupCredential,
 				fURL("apiUrl", "服务地址", "https://vmq.example.com", "自建 V免签 服务端地址"),
@@ -53,6 +50,10 @@ func (p *vmqpayProvider) Describe() paymentdomain.ProviderMeta {
 			),
 			callbackFields("V免签服务端异步通知地址", ""),
 			limitFields("0.01", "50000"),
+			advanced(inGroup(paymentdomain.GroupAdvanced,
+				fTags("supportedTypes", "启用的支付类型", "alipay, wxpay",
+					"用户端按填写顺序列出，未列出的类型下单会被拒绝；留空表示放行全部类型"),
+			)...),
 		),
 	})
 }

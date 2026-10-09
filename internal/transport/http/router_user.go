@@ -253,6 +253,7 @@ func registerCommerceRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 	pay := router.Group("/api/pay")
 	pay.Use(middleware.Auth(authService))
 	{
+		pay.GET("/methods", h.UserPaymentMethods)
 		pay.GET("/orders", h.PaymentOrders)
 		pay.POST("/orders/create", h.CreatePaymentOrder)
 		pay.GET("/orders/:orderNo", h.PaymentOrderDetail)

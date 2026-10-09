@@ -641,3 +641,36 @@ type CallbackResult struct {
 	Message         string          `json:"message,omitempty"`
 	RawData         map[string]any  `json:"raw_data,omitempty"`
 }
+
+// ── 用户端付款方式 ──
+
+// UserPayMethod 用户端可选的一种付款方式：一条支付配置，或者配置下的一个子类型。
+//
+// 只有这几个字段会下发给用户端。配置数据里是商户凭据，整条 Config 绝不能出现在
+// 用户命名空间的响应里。
+type UserPayMethod struct {
+	// Key 是 method:configName:type，客户端据此记住上一次的选择。
+	Key string `json:"key"`
+	// Method / ConfigName / Type 原样作为下单请求的 payment_method / config_name / type。
+	Method     string `json:"method"`
+	ConfigName string `json:"configName"`
+	// Type 为空表示这个渠道不分子类型（托管收银台自己让用户选），下单不带 type。
+	Type        string `json:"type,omitempty"`
+	Label       string `json:"label"` // 支付宝 / 微信支付 / PayPal
+	Description string `json:"description,omitempty"`
+	// Channel 渠道名（易支付、彩虹易支付）：同一种付款应用出现在两条渠道下时靠它区分。
+	Channel string `json:"channel"`
+	// IsDefault 不指定付款方式下单时，服务端选的就是这一项。
+	IsDefault bool   `json:"isDefault"`
+	Currency  string `json:"currency,omitempty"`
+	// MinAmount / MaxAmount 单笔限额（十进制字符串），空表示不限。
+	MinAmount string `json:"minAmount,omitempty"`
+	MaxAmount string `json:"maxAmount,omitempty"`
+}
+
+// UserPayMethods GET /pay/methods 的响应。
+type UserPayMethods struct {
+	Items []UserPayMethod `json:"items"`
+	// DefaultKey 默认那一项的 Key；默认配置不可用时为空。
+	DefaultKey string `json:"defaultKey,omitempty"`
+}

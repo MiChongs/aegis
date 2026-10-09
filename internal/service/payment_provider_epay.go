@@ -55,12 +55,7 @@ func (p *epayProvider) Describe() paymentdomain.ProviderMeta {
 			Redirect: true, QRCode: true, Webhook: true, WebhookSignature: true, RemoteQuery: true,
 			Refund: true, PartialRefund: true,
 		},
-		PayTypes: []paymentdomain.PayTypeOption{
-			payType("alipay", "支付宝", "跳转支付宝收银台"),
-			payType("wxpay", "微信支付", "跳转微信收银台"),
-			payType("qqpay", "QQ 钱包", ""),
-			payType("bank", "网银", "银行卡快捷支付"),
-		},
+		PayTypes: epayPayTypes,
 		Fields: fields(
 			inGroup(paymentdomain.GroupCredential,
 				fText("pid", "商户 PID", "1001", "易支付后台的商户 ID", true),
@@ -80,7 +75,8 @@ func (p *epayProvider) Describe() paymentdomain.ProviderMeta {
 					fNum("expireMinutes", "订单有效期（分钟）", "30", "超时未支付自动关单", 30),
 					fSwitch("verifyIP", "校验回调来源 IP", "开启后仅接受下方白名单 IP 的回调", false),
 					fTags("allowedIPs", "回调 IP 白名单", "1.2.3.4, 5.6.7.8", "逗号分隔；仅在开启来源校验时生效"),
-					fTags("supportedTypes", "启用的支付类型", "alipay, wxpay, qqpay, bank", "留空表示放行全部类型"),
+					fTags("supportedTypes", "启用的支付类型", "alipay, wxpay, qqpay, bank",
+						"用户端按填写顺序列出，未列出的类型下单会被拒绝；留空表示放行全部类型"),
 				),
 			)...),
 		),

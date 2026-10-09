@@ -169,6 +169,7 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/vip/transactions", h.MyVipTransactions)
 		appGatewayAuthed.POST("/vip/purchase", h.PurchaseVip)
 		appGatewayAuthed.POST("/vip/trial", h.ClaimVipTrial)
+		appGatewayAuthed.GET("/pay/methods", h.UserPaymentMethods)
 		appGatewayAuthed.GET("/pay/orders", h.PaymentOrders)
 		appGatewayAuthed.POST("/pay/orders", h.CreatePaymentOrder)
 		appGatewayAuthed.GET("/pay/orders/:orderNo", h.PaymentOrderDetail)

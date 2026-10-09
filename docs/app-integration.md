@@ -98,7 +98,7 @@ val profile = client.me.profile()
 | `GET` | `/points/*` | 积分 / 经验 / 等级与流水 |
 | `GET` | `/leaderboard/*` | 排行榜 |
 | `GET` `POST` `DELETE` | `/notifications/*` | 站内信 |
-| `GET` `POST` | `/wallet/*`、`/vip/*`、`/pay/orders*` | 钱包 / 会员 / 支付（含试用，见下节） |
+| `GET` `POST` | `/wallet/*`、`/vip/*`、`/pay/methods`、`/pay/orders*` | 钱包 / 会员 / 支付（含试用与付款方式，见下节） |
 | `POST` | `/storage/upload`（`multipart`）、`/storage/object-link` | 存储 |
 | `GET` `POST` | `/tickets/*` | 工单自助 |
 
@@ -182,6 +182,55 @@ val profile = client.me.profile()
 `/vip/status` 里还有一项 `features`：当前生效的**功能标识**（见下节）。
 两档会员（基础版能导出、高级版还能用 AI）时按它决定界面上哪些入口可用，
 不要拿 `planName` 做字符串比较 —— 那是运营随时会改的展示文案。
+
+### 付款方式（`/pay/methods`）
+
+应用在后台可以配置多条支付渠道，易支付这类聚合渠道一条配置下还能放行多种付款应用
+（支付宝、微信、QQ 钱包）。**让用户选**之前先拉一次列表：
+
+```jsonc
+// GET /pay/methods?purpose=vip_purchase
+{
+  "items": [
+    {
+      "key": "epay:default:alipay",   // method:configName:type，用来记住用户上次的选择
+      "method": "epay",               // ↓ 这三项原样带回下单请求
+      "configName": "default",
+      "type": "alipay",
+      "label": "支付宝",
+      "description": "跳转支付宝收银台",
+      "channel": "易支付",             // 同一种付款应用出现在两条渠道下时靠它区分
+      "isDefault": false,
+      "currency": "CNY",
+      "minAmount": "0.01",            // 单笔限额，缺省表示不限
+      "maxAmount": "50000.00"
+    },
+    { "key": "epay:default:wxpay", "type": "wxpay", "label": "微信支付", "isDefault": true, ... }
+  ],
+  "defaultKey": "epay:default:wxpay"
+}
+```
+
+下单时把选中项的三个字段带上：
+
+```jsonc
+// POST /pay/orders
+{ "subject": "年度会员", "amount": "98.00", "metadata": { ... },
+  "payment_method": "epay", "config_name": "default", "type": "alipay" }
+```
+
+- **列表只含可用的项**：停用的配置、凭据不完整的配置不列；`purpose=wallet_recharge` 时不列余额支付
+  （充值不能用余额付，`40092`）。
+- 易支付、码支付、V免签按后台「启用的支付类型」逐项展开，顺序即后台填写的顺序；其余渠道
+  （Stripe、PayPal 等）的托管收银台自己让用户选，只列一项，`type` 为空，下单时不带。
+- **`type` 必须是同一条配置放行的类型**，否则返回 `40116`。后台关掉某个类型后，客户端记住的
+  旧选择会失效，此时重新拉一次列表。
+- 三项都不传就按应用默认配置下单，`type` 取默认类型（这条配置放行 `wxpay` 时沿用它，
+  否则取第一项）。订单的 `provider_type` 记的是**实际使用**的类型。
+- `minAmount` / `maxAmount` 是该渠道的单笔限额，超出时下单返回限额错误；客户端可以据此
+  提前把不满足金额的项置灰。
+
+官方 Kotlin SDK：`commerce.paymentMethods(purpose)`，下单 `commerce.createOrder(..., type, configName, paymentMethod = ...)`。
 
 ### 服务端校验会员（接入方后端调用）
 

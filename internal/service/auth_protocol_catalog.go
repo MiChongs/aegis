@@ -149,6 +149,8 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "vipTransactions", Method: "GET", Path: "/vip/transactions", Auth: true, Summary: "会员流水"},
 	{Key: "vipPurchase", Method: "POST", Path: "/vip/purchase", Auth: true, Summary: "购买会员"},
 	{Key: "vipTrial", Method: "POST", Path: "/vip/trial", Auth: true, Summary: "领取试用会员（一人一次，资格见 /vip/status 的 trialOffer）"},
+	{Key: "payMethods", Method: "GET", Path: "/pay/methods", Auth: true,
+		Summary: "可用的付款方式（渠道配置按子类型展开；purpose=wallet_recharge 时不含余额支付）"},
 	{Key: "payOrders", Method: "GET", Path: "/pay/orders", Auth: true, Summary: "我的订单"},
 	{Key: "payOrderCreate", Method: "POST", Path: "/pay/orders", Auth: true, Summary: "创建支付订单"},
 	{Key: "payOrderDetail", Method: "GET", Path: "/pay/orders/{orderNo}", Auth: true, Summary: "订单详情"},
@@ -270,6 +272,9 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 	{Code: 40376, Name: "TRIAL_PLAN_NOT_PURCHASABLE", Message: "试用套餐只能领取，不能购买",
 		Recovery: authprotocol.RecoveryNone, Hint: "kind=trial 的套餐走 /vip/trial，不要传给 /vip/purchase"},
 	// ── 永久会员 ──
+	{Code: 40116, Name: "PAY_TYPE_UNAVAILABLE", Message: "该付款方式未开放",
+		Recovery: authprotocol.RecoveryNone,
+		Hint:     "下单的 type 必须是 /pay/methods 里同一条配置列出的类型；后台关掉某个类型后，旧的选择要重新拉一次列表"},
 	{Code: 40378, Name: "VIP_LIFETIME_INCLUDED", Message: "永久会员已包含该套餐的全部权益，无需购买",
 		Recovery: authprotocol.RecoveryNone,
 		Hint:     "/vip/plans 里 included=true 的套餐不要给购买按钮；/vip/purchase 与会员直购下单都会拒绝它"},

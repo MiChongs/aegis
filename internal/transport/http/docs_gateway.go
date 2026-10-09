@@ -106,6 +106,7 @@ func gatewayRequestModels() map[string]any {
 		"walletTransactions": WalletTransactionsQuery{},
 		"walletConsume":      WalletConsumeRequest{},
 		"vipPurchase":        VipPurchaseRequest{},
+		"payMethods":         PaymentMethodsQuery{},
 		"payOrders":          UserPaymentOrdersQuery{},
 		"payOrderCreate":     CreatePaymentOrderRequest{},
 

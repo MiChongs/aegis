@@ -439,6 +439,7 @@ GET	/api/notifications	Notifications
 GET	/api/notifications/unread-count	NotificationUnreadCount
 GET	/api/pay/bills/:billId/download	DownloadPaymentBill
 GET	/api/pay/epay/query/:orderNo	QueryEpayOrder
+GET	/api/pay/methods	UserPaymentMethods
 GET	/api/pay/orders	PaymentOrders
 GET	/api/pay/orders/:orderNo	PaymentOrderDetail
 GET	/api/pay/orders/:orderNo/bill	ExportPaymentBill
@@ -524,6 +525,7 @@ GET	/api/v1/apps/:appkey/me/settings	Settings
 GET	/api/v1/apps/:appkey/notices	AppNotices
 GET	/api/v1/apps/:appkey/notifications	Notifications
 GET	/api/v1/apps/:appkey/notifications/unread-count	NotificationUnreadCount
+GET	/api/v1/apps/:appkey/pay/methods	UserPaymentMethods
 GET	/api/v1/apps/:appkey/pay/orders	PaymentOrders
 GET	/api/v1/apps/:appkey/pay/orders/:orderNo	PaymentOrderDetail
 GET	/api/v1/apps/:appkey/points/experience-transactions	ExperienceTransactions
