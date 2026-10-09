@@ -779,9 +779,18 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
     )
 
     @Throws(IOException::class)
+    /**
+     * 我的订单，新的在前。
+     *
+     * [status] 只看某一种状态的订单：`pending` 待支付 / `paid` 已支付 / `expired` 已过期 /
+     * `failed` 支付失败；不传就是全部。`total` 是这个筛选条件下的总数。
+     */
     @JvmOverloads
-    fun orders(page: Int = 1, limit: Int = 20): JsonElement =
-        client.call("GET", "/pay/orders", query = pageQuery(page, limit), requireAuth = true)
+    fun orders(page: Int = 1, limit: Int = 20, status: String? = null): JsonElement = client.call(
+        "GET", "/pay/orders",
+        query = pageQuery(page, limit) + (status?.takeIf { it.isNotBlank() }?.let { mapOf("status" to it) } ?: emptyMap()),
+        requireAuth = true,
+    )
 
     @Throws(IOException::class)
     /**
