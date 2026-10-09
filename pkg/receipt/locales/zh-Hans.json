@@ -95,6 +95,7 @@
   "meta.expireAt": "支付截止",
   "meta.plan": "套餐",
   "meta.duration": "有效期",
+  "meta.durationLifetime": "永久",
   "meta.bonusPoints": "赠送积分",
   "meta.points": "发放积分",
   "meta.days": {

@@ -532,7 +532,9 @@ func buildWalletReceiptMetadata(txn *walletdomain.Transaction, currency string) 
 	if name := metaString(txn.Metadata, "planName"); name != "" {
 		pairs = append(pairs, receipt.KeyValue{Key: "meta.plan", Value: name})
 	}
-	if days := metaInt64(txn.Metadata, "durationDays"); days > 0 {
+	if metaBool(txn.Metadata, "lifetime") {
+		pairs = append(pairs, receipt.KeyValue{Key: "meta.duration", ValueKey: "meta.durationLifetime"})
+	} else if days := metaInt64(txn.Metadata, "durationDays"); days > 0 {
 		pairs = append(pairs, receipt.KeyValue{Key: "meta.duration", Value: fmt.Sprintf("%d", days)})
 	}
 	return pairs

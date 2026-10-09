@@ -204,9 +204,16 @@ func (s *UserService) GetMy(ctx context.Context, session *authdomain.Session) (*
 		Enabled:      user.Enabled,
 		VIPExpireAt:  user.VIPExpireAt,
 		IsVIP:        user.VIPExpireAt != nil && user.VIPExpireAt.After(time.Now()),
+		VIPLifetime:  user.VIPLifetimeAt != nil,
 		TokenSource:  session.Provider,
 		LastLoginIP:  session.IP,
 		LastDeviceID: session.DeviceID,
+	}
+	// 永久会员与 /vip/status 同一口径：是会员、没有到期时间。
+	// 限时那条线的到期时间不在这里给 —— 老客户端会把它当成会员到期日显示。
+	if view.VIPLifetime {
+		view.IsVIP = true
+		view.VIPExpireAt = nil
 	}
 	if profile != nil {
 		view.Nickname = profile.Nickname

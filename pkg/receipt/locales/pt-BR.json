@@ -92,6 +92,7 @@
   "meta.expireAt": "Pagar até",
   "meta.plan": "Plano",
   "meta.duration": "Duração",
+  "meta.durationLifetime": "Vitalício",
   "meta.bonusPoints": "Pontos bônus",
   "meta.points": "Pontos concedidos",
   "meta.days": {

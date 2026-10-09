@@ -196,13 +196,22 @@ func (s *RewardedAdService) checkPlansExist(ctx context.Context, appID int64, sc
 		return err
 	}
 	known := make(map[int64]bool, len(plans))
+	lifetime := make(map[int64]bool, len(plans))
 	for _, plan := range plans {
 		known[plan.ID] = true
+		lifetime[plan.ID] = plan.Lifetime
 	}
 	for _, scene := range scenes {
 		for _, reward := range scene.Rewards {
-			if reward.Type == cardkeydomain.RewardVipPlan && !known[reward.RefID] {
+			if reward.Type != cardkeydomain.RewardVipPlan {
+				continue
+			}
+			if !known[reward.RefID] {
 				return apperrors.New(40000, http.StatusBadRequest, "场景「"+scene.Key+"」选择的会员套餐不存在")
+			}
+			// 激励广告是可以每天反复看的；永久会员看一次就到头了，之后每次观看都只是白发赠送积分
+			if lifetime[reward.RefID] {
+				return apperrors.New(40000, http.StatusBadRequest, "场景「"+scene.Key+"」不能以永久套餐作为奖励")
 			}
 		}
 	}

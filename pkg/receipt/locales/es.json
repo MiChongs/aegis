@@ -92,6 +92,7 @@
   "meta.expireAt": "Pagar antes del",
   "meta.plan": "Plan",
   "meta.duration": "Duración",
+  "meta.durationLifetime": "De por vida",
   "meta.bonusPoints": "Puntos de bonificación",
   "meta.points": "Puntos otorgados",
   "meta.days": {

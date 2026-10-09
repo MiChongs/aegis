@@ -182,6 +182,7 @@ if (!server.hasFeature(userToken, "export")) return deny()         // 问的是"
 // 要拿字段时用完整版
 val check = server.verifyMembership(userToken, feature = "export")
 check.membership.isTrial          // 是不是试用会员 —— 决定引导"升级"还是"续费"
+check.membership.isLifetime       // 是不是永久会员 —— 是的话没有到期时间，别去读 remainingDays
 check.membership.remainingDays    // 还剩几天
 check.membership.features         // 当前生效的全部功能标识
 ```

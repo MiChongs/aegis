@@ -434,7 +434,9 @@ func buildReceiptMetadata(order *paymentdomain.Order) []receipt.KeyValue {
 	if name := metaString(order.Metadata, paymentdomain.MetaKeyVipPlanName); name != "" {
 		pairs = append(pairs, receipt.KeyValue{Key: "meta.plan", Value: name})
 	}
-	if days := metaInt64(order.Metadata, paymentdomain.MetaKeyVipDays); days > 0 {
+	if metaBool(order.Metadata, paymentdomain.MetaKeyVipLifetime) {
+		pairs = append(pairs, receipt.KeyValue{Key: "meta.duration", ValueKey: "meta.durationLifetime"})
+	} else if days := metaInt64(order.Metadata, paymentdomain.MetaKeyVipDays); days > 0 {
 		pairs = append(pairs, receipt.KeyValue{Key: "meta.duration", Value: fmt.Sprintf("%d", days)})
 	}
 	if bonus := metaInt64(order.Metadata, paymentdomain.MetaKeyVipBonus); bonus > 0 {

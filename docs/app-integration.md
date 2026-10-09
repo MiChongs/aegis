@@ -147,6 +147,38 @@ val profile = client.me.profile()
 
 官方 Kotlin SDK：`api.vipStatus()` / `api.claimVipTrial()`。
 
+#### 永久会员
+
+永久会员与限时会员是**并列的两条线**，不是一个很远的到期时间：
+
+```jsonc
+{
+  "isVip": true,
+  "isLifetime": true,               // 永久会员
+  "lifetimeSince": "2026-03-01T08:00:00Z",
+  "isTrial": false,
+  "source": "wallet",               // 取最近一笔永久开通的渠道
+  "planName": "永久会员",
+  // expireAt 不出现，remainingSeconds / remainingDays 为 0 —— 永久会员没有到期时间
+  "remainingSeconds": 0,
+  "remainingDays": 0,
+  "timedExpireAt": "2026-04-01T00:00:00Z", // 另买的限时会员仍在期内时才有
+  "features": ["ai.chat", "export"]
+}
+```
+
+- **先判 `isLifetime`，再看 `expireAt`。** 老客户端读到空的 `expireAt` 会显示「长期有效」，
+  不会把永久会员当成到期。`/me` 同理：永久会员 `vipLifetime: true`、`isVip: true`，没有 `vipExpireAt`。
+- 永久会员另买一段**限时**套餐照常顺延、照常到期，那段的功能只到 `timedExpireAt`；
+  功能取两条线上仍生效各段的并集。
+- `/vip/plans` 里的套餐带 `lifetime`（永久套餐，`durationDays` 为 0）。
+  永久会员已经包含的套餐（同一个永久套餐、功能不超出永久会员的套餐）标 `included: true`，
+  不要给它购买按钮 —— `/vip/purchase` 与会员直购下单都会以 `40378` 拒绝。
+  含新功能的套餐（永久基础版 → 永久高级版、或一段限时高级版）照常可买。
+- 永久会员不能领试用（`trialOffer.reason = member_active`）。
+- 退款：永久套餐的订单全额退款会作废那笔永久开通；没有其它永久开通时，永久身份随之取消。
+- 老系统迁移进来的永久会员（`vip_time = 999999999`）在部署时自动转成永久会员，来源为 `unknown`。
+
 `/vip/status` 里还有一项 `features`：当前生效的**功能标识**（见下节）。
 两档会员（基础版能导出、高级版还能用 AI）时按它决定界面上哪些入口可用，
 不要拿 `planName` 做字符串比较 —— 那是运营随时会改的展示文案。
@@ -190,7 +222,7 @@ Content-Type: application/json
   "matched": true,
   "userId": 42, "account": "zhangsan",
   "membership": {
-    "isVip": true, "isTrial": false, "source": "wallet",
+    "isVip": true, "isLifetime": false, "isTrial": false, "source": "wallet",
     "planName": "高级版", "expireAt": "2026-04-01T00:00:00Z",
     "remainingSeconds": 2592000, "remainingDays": 30,
     "features": ["ai.chat", "export"]

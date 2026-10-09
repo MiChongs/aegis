@@ -92,6 +92,7 @@
   "meta.expireAt": "À régler avant le",
   "meta.plan": "Formule",
   "meta.duration": "Durée",
+  "meta.durationLifetime": "À vie",
   "meta.bonusPoints": "Points bonus",
   "meta.points": "Points crédités",
   "meta.days": {

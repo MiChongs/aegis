@@ -92,6 +92,7 @@
   "meta.expireAt": "결제 기한",
   "meta.plan": "요금제",
   "meta.duration": "이용 기간",
+  "meta.durationLifetime": "평생",
   "meta.bonusPoints": "보너스 포인트",
   "meta.points": "지급 포인트",
   "meta.days": {

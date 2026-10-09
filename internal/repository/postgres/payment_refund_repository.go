@@ -271,6 +271,9 @@ func applyFulfillmentReversalTx(
 		if !fullRefund {
 			return paymentdomain.ReversalSkipped, "部分退款不自动回收会员时长，请按需人工调整"
 		}
+		if reverse.VipLifetime {
+			return reverseLifetimeVipTx(ctx, tx, order, reverse, userID)
+		}
 		if reverse.VipDays <= 0 {
 			return paymentdomain.ReversalFailed, "订单缺少会员时长快照，无法冲正"
 		}
@@ -305,6 +308,29 @@ RETURNING vip_expire_at`,
 	default:
 		return paymentdomain.ReversalNone, ""
 	}
+}
+
+// reverseLifetimeVipTx 永久套餐订单的退款冲正：作废这笔永久开通，按剩下的永久开通重算永久身份。
+//
+// 不碰 vip_expire_at：永久开通开通时就没动它。找不到开通记录（历史订单、手工补单）如实记失败 ——
+// 限时那支找不到记录时到期时间已经扣过了，这里却什么都还没回收。
+func reverseLifetimeVipTx(ctx context.Context, tx pgx.Tx, order *paymentdomain.Order,
+	reverse *paymentdomain.FulfillmentInstruction, userID int64) (string, string) {
+	revoked, err := revokeLifetimeSegmentForOrderTx(ctx, tx, order.AppID, userID, order.OrderNo, vipdomain.RevokeReasonRefund)
+	if err != nil {
+		return paymentdomain.ReversalFailed, "作废永久会员开通记录失败：" + err.Error()
+	}
+	if !revoked {
+		return paymentdomain.ReversalFailed, "找不到这笔订单的永久会员开通记录，请人工处理"
+	}
+	if reverse.VipBonus > 0 {
+		if _, _, _, err := applyIntegralChangeTx(ctx, tx, userID, order.AppID, -reverse.VipBonus,
+			"consume", "refund", "订单退款回收赠送积分", order.Subject, "payment_order", &order.ID,
+			map[string]any{"orderNo": order.OrderNo, "reason": "payment_refund"}); err != nil {
+			return paymentdomain.ReversalDone, "永久会员已回收，但赠送积分回收失败：" + err.Error()
+		}
+	}
+	return paymentdomain.ReversalDone, ""
 }
 
 // RefundPaymentOrderToWallet 余额支付订单的退款：原路退回钱包并按需冲正履约（单事务）。

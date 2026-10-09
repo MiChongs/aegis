@@ -92,6 +92,7 @@
   "meta.expireAt": "Zahlbar bis",
   "meta.plan": "Tarif",
   "meta.duration": "Laufzeit",
+  "meta.durationLifetime": "Unbefristet",
   "meta.bonusPoints": "Bonuspunkte",
   "meta.points": "Gutgeschriebene Punkte",
   "meta.days": {

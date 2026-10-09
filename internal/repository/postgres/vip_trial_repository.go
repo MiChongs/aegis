@@ -16,7 +16,7 @@ import (
 // 试用期会员的资格账本。
 //
 // 「会员判定」与「试用发放」都收在这个文件里，因为它们读的是同一批事实：
-// users.vip_expire_at（还是不是会员）、vip_trial_claims（领没领过、领到什么时候）、
+// users.vip_expire_at / vip_lifetime_at（还是不是会员、是不是永久会员）、vip_trial_claims（领没领过、领到什么时候）、
 // vip_transactions + vip_plans（凭什么是会员、此刻解锁了哪些功能）。分开取就必然出现两次查询之间状态变了的窗口。
 
 var (
@@ -73,7 +73,7 @@ func (r *Repository) TrialDeviceClaimed(ctx context.Context, appID int64, device
 // 提成常量是为了让 TestVipEntitlementFactsNullableColumnsAreNullSafe 直接读它 ——
 // 漏兜一列的表现是运行期 `cannot scan NULL into *string`，且只出现在
 // 没领过试用的用户身上，而开发机上随手建的账号往往恰好领过。
-const vipEntitlementFactsSQL = `SELECT u.vip_expire_at,
+const vipEntitlementFactsSQL = `SELECT u.vip_expire_at, u.vip_lifetime_at,
        c.id, c.plan_id, COALESCE(c.plan_name, ''), COALESCE(c.duration_days, 0),
        c.trial_ends_at, COALESCE(c.transaction_no, ''),
        COALESCE(c.device_id, ''), COALESCE(c.device_locked, FALSE), c.created_at,
@@ -97,7 +97,7 @@ func (r *Repository) GetVipEntitlementFacts(ctx context.Context, appID int64, us
 	)
 	claim := vipdomain.TrialClaim{AppID: appID, UserID: userID}
 	err := r.pool.QueryRow(ctx, vipEntitlementFactsSQL, userID, appID).
-		Scan(&facts.ExpireAt,
+		Scan(&facts.ExpireAt, &facts.LifetimeSince,
 			&claimID, &claim.PlanID, &claim.PlanName, &claim.DurationDays, &claimEndsAt,
 			&claim.TransactionNo, &claim.DeviceID, &claim.DeviceLocked, &claimCreated,
 			&segmentsRaw, &facts.FeatureCatalog)
@@ -154,9 +154,12 @@ func (r *Repository) ClaimVipTrial(ctx context.Context, input TrialClaimInput) (
 		}
 	}()
 
-	var expireBefore *time.Time
-	if err := tx.QueryRow(ctx, `SELECT vip_expire_at FROM users WHERE id = $1 AND appid = $2 FOR UPDATE`,
-		input.UserID, input.AppID).Scan(&expireBefore); err != nil {
+	var (
+		expireBefore *time.Time
+		lifetimeAt   *time.Time
+	)
+	if err := tx.QueryRow(ctx, `SELECT vip_expire_at, vip_lifetime_at FROM users WHERE id = $1 AND appid = $2 FOR UPDATE`,
+		input.UserID, input.AppID).Scan(&expireBefore, &lifetimeAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
 		}
@@ -194,7 +197,7 @@ func (r *Repository) ClaimVipTrial(ctx context.Context, input TrialClaimInput) (
 		return nil, ErrTrialAlreadyClaimed
 	}
 
-	if expireBefore != nil && expireBefore.After(now) {
+	if lifetimeAt != nil || (expireBefore != nil && expireBefore.After(now)) {
 		return nil, ErrTrialMemberActive
 	}
 
@@ -272,7 +275,7 @@ RETURNING `+vipTrialClaimColumns,
 }
 
 // vipEntitlementFactsTxSQL 事务内那份（试用记录由调用方给出，因此不 JOIN 资格表）。
-const vipEntitlementFactsTxSQL = `SELECT u.vip_expire_at,
+const vipEntitlementFactsTxSQL = `SELECT u.vip_expire_at, u.vip_lifetime_at,
        ` + vipLiveSegmentsSQL + `,
        ` + vipFeatureCatalogSQL + `
 FROM users u
@@ -283,7 +286,7 @@ func entitlementFactsTx(ctx context.Context, tx pgx.Tx, appID int64, userID int6
 	facts := vipdomain.EvalInput{Claim: claim}
 	var segmentsRaw []byte
 	if err := tx.QueryRow(ctx, vipEntitlementFactsTxSQL, userID, appID).
-		Scan(&facts.ExpireAt, &segmentsRaw, &facts.FeatureCatalog); err != nil {
+		Scan(&facts.ExpireAt, &facts.LifetimeSince, &segmentsRaw, &facts.FeatureCatalog); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
 		}

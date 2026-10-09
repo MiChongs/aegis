@@ -158,15 +158,19 @@ var capabilities = []Capability{
 	{
 		Key: CapVipWrite, Group: CapGroupAsset,
 		Label: "发放会员", API: "aegis.vip.grant(days)",
-		Hint: "按天延长会员有效期，进 vip_transactions 账本",
+		Hint: "按天延长会员有效期或发放永久会员，进 vip_transactions 账本",
 		Risk: RiskHigh, Mutating: true, RequiresUser: true,
 		Namespace: "vip",
-		Members:   []string{"grant", "revoke"},
+		Members:   []string{"grant", "revoke", "grantLifetime", "revokeLifetime"},
 		Declaration: `
     /** 按天延长当前调用者的会员有效期 */
     grant(days: number, reason?: string): { days: number; userId: number; expireAt?: string } | null;
-    /** 按天收回会员有效期；到期时间不会被推到当前时刻之前 */
-    revoke(days: number, reason?: string): { days: number; userId: number; expireAt?: string } | null;`,
+    /** 按天收回会员有效期；到期时间不会被推到当前时刻之前。只扣限时会员，动不到永久会员 */
+    revoke(days: number, reason?: string): { days: number; userId: number; expireAt?: string } | null;
+    /** 把当前调用者设为永久会员（不带功能标识；要带功能请发永久套餐） */
+    grantLifetime(reason?: string): { lifetime: true; userId: number } | null;
+    /** 取消当前调用者的永久会员；另买的限时会员不受影响，仍剩的到期时间放在 expireAt */
+    revokeLifetime(reason?: string): { lifetime: false; userId: number; expireAt?: string } | null;`,
 	},
 	{
 		Key: CapWalletRead, Group: CapGroupAsset,
@@ -448,6 +452,12 @@ declare interface AegisContext {
 declare interface AegisEntitlement {
   /** 当前是不是会员 */
   isVip: boolean;
+  /** 永久会员：没有 expireAt，remainingSeconds / remainingDays 为 0 */
+  isLifetime: boolean;
+  /** 成为永久会员的时间 */
+  lifetimeSince?: string;
+  /** 永久会员另有一段仍在期内的限时会员时，那段的到期时间 */
+  timedExpireAt?: string;
   /** 这段会员期是不是试用给的 */
   isTrial: boolean;
   /** 凭什么是会员：none / trial / wallet / payment_order / admin_grant */
@@ -474,6 +484,9 @@ declare interface AegisUser {
   vip: boolean;
   /** 当前这段会员期是不是试用给的（试用用户能不能用某个功能由脚本自己决定） */
   vipTrial: boolean;
+  /** 永久会员（此时没有 vipExpireAt） */
+  vipLifetime: boolean;
+  vipLifetimeSince?: string;
   /** 凭什么是会员：none / trial / wallet / payment_order / admin_grant */
   vipSource: string;
   /** 当前生效的功能标识。判它而不是判套餐名 —— 套餐名是运营随时会改的展示文案 */

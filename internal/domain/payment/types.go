@@ -85,6 +85,9 @@ const (
 	MetaKeyVipPlanName    = "vipPlanName"
 	MetaKeyVipDays = "vipDurationDays"
 	MetaKeyVipBonus       = "vipBonusIntegral"
+	// MetaKeyVipLifetime 下单那一刻套餐是不是永久套餐（此时 vipDurationDays 为 0）。
+	// 与天数一样是快照：用户付的是「永久」这份钱，下单后套餐怎么改都不影响这一单。
+	MetaKeyVipLifetime    = "vipLifetime"
 	// MetaKeyVipFeatures 下单那一刻套餐包含的功能标识。
 	//
 	// 天数与价格是快照（用户付的就是下单时看到的那一份），功能**不是**：
@@ -103,6 +106,7 @@ type FulfillmentInstruction struct {
 	VipPlanName    string
 	VipFeatures    []string
 	VipDays        int
+	VipLifetime    bool // 永久开通：VipDays 为 0
 	VipBonus       int64
 	IntegralAmount int64 // integral_purchase：发放积分
 }

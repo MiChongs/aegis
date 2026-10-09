@@ -378,11 +378,11 @@ SDK 真正绑定什么由 Go 决定，在前端另写一份类型只会让「补
 
 | capability | 注入 | 说明 |
 |---|---|---|
-| `user.read` | `aegis.user.get / entitlement` | 会员字段走统一判定：`vip` / `vipTrial` / `vipSource` / `vipFeatures` / `vipExpireAt` / `vipRemainingSeconds`；另有积分、封禁状态 |
+| `user.read` | `aegis.user.get / entitlement` | 会员字段走统一判定：`vip` / `vipTrial` / `vipLifetime` / `vipSource` / `vipFeatures` / `vipExpireAt` / `vipRemainingSeconds`；另有积分、封禁状态 |
 | `user.write` | `aegis.user.ban / unban` | 封禁落成正式记录（可撤销、可申诉、有操作人），不是翻一个布尔位 |
 | `points.write` | `aegis.points.add / deduct` | 走正式积分流水，余额不足由服务端拒绝 |
 | `vip.read` | `aegis.vip.status / hasFeature` | 只要会员结论时用它，比 `user.read` 窄 |
-| `vip.write` | `aegis.vip.grant / revoke` | 按天延长或收回会员有效期 |
+| `vip.write` | `aegis.vip.grant / revoke / grantLifetime / revokeLifetime` | 按天延长或收回会员有效期；发放或取消永久会员（扣天数只动限时会员） |
 | `wallet.read` | `aegis.wallet.get` | 金额一律是字符串，转 number 会丢分 |
 | `wallet.write` | `aegis.wallet.adjust` | 正数入账、负数扣减，走管理员调账流水 |
 | `kv.read` | `aegis.kv.get / has / list` | 应用级；`aegis.kv.user.*` 为用户级隔离 |

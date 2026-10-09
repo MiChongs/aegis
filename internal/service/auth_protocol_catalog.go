@@ -269,6 +269,10 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 		Recovery: authprotocol.RecoveryNone},
 	{Code: 40376, Name: "TRIAL_PLAN_NOT_PURCHASABLE", Message: "试用套餐只能领取，不能购买",
 		Recovery: authprotocol.RecoveryNone, Hint: "kind=trial 的套餐走 /vip/trial，不要传给 /vip/purchase"},
+	// ── 永久会员 ──
+	{Code: 40378, Name: "VIP_LIFETIME_INCLUDED", Message: "永久会员已包含该套餐的全部权益，无需购买",
+		Recovery: authprotocol.RecoveryNone,
+		Hint:     "/vip/plans 里 included=true 的套餐不要给购买按钮；/vip/purchase 与会员直购下单都会拒绝它"},
 	// ── 卡密 ──
 	// 每个判据一个码，客户端据此分支。文案区分得比较细是有原因的：
 	// 「已作废」「已用过」「已过期」对用户是三件完全不同的事，

@@ -92,6 +92,7 @@
   "meta.expireAt": "Оплатить до",
   "meta.plan": "Тариф",
   "meta.duration": "Срок",
+  "meta.durationLifetime": "Бессрочно",
   "meta.bonusPoints": "Бонусные баллы",
   "meta.points": "Начислено баллов",
   "meta.days": {

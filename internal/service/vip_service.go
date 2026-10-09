@@ -16,6 +16,8 @@ import (
 
 // VipService 会员系统：套餐管理 / 状态查询 / 余额购买 / 管理端授予与扣减。
 // 开通一律顺延；到期时间只在退款冲正与扣减（AdminRevokeVip）时变早。
+// 永久会员是与之并列的另一条线（users.vip_lifetime_at）：永久开通不动到期时间，
+// 只在退款冲正与取消永久会员（AdminRevokeVipLifetime）时失去。
 // 所有变更落 vip_transactions 账本。
 //
 // 功能权益跟随套餐的**当前**配置：改套餐即对所有在期会员生效，包括拿掉功能（降级）。
@@ -40,8 +42,51 @@ func (s *VipService) SetPaymentService(p *PaymentService) { s.payments = p }
 //
 // 试用套餐的信息由 `/vip/status` 的 trialOffer 给出：那里同时带着「能不能领」，
 // 而这里给不出这个答案 —— 一份列不出资格的试用卡片，客户端只能先渲染再报错。
-func (s *VipService) ListActivePlans(ctx context.Context, appID int64) ([]vipdomain.Plan, error) {
-	return s.pg.ListPurchasableVipPlans(ctx, appID)
+//
+// 永久会员已经包含的套餐标上 included：它们买了也拿不到任何新东西，购买会以 40378 拒绝。
+// 标出来而不是从列表里拿掉 —— 永久会员看到一张空的套餐页，会以为是加载失败。
+func (s *VipService) ListActivePlans(ctx context.Context, session *authdomain.Session) ([]vipdomain.Plan, error) {
+	if session == nil {
+		return nil, apperrors.New(40170, http.StatusUnauthorized, "未认证")
+	}
+	plans, err := s.pg.ListPurchasableVipPlans(ctx, session.AppID)
+	if err != nil || len(plans) == 0 {
+		return plans, err
+	}
+	lifetime, features, err := s.pg.GetVipLifetimeCoverage(ctx, session.AppID, session.UserID)
+	if err != nil {
+		if errors.Is(err, pgrepo.ErrUserNotFound) {
+			return plans, nil
+		}
+		return nil, err
+	}
+	for i := range plans {
+		plans[i].Included = vipdomain.LifetimeIncludes(lifetime, features, plans[i])
+	}
+	return plans, nil
+}
+
+// errCodeVipLifetimeIncluded 永久会员已经包含该套餐的全部权益（购买 / 下单）
+const errCodeVipLifetimeIncluded = 40378 // 403
+
+// errVipLifetimeIncluded 购买与下单共用同一句话。
+func errVipLifetimeIncluded() error {
+	return apperrors.New(errCodeVipLifetimeIncluded, http.StatusForbidden, "永久会员已包含该套餐的全部权益，无需购买")
+}
+
+// ensurePlanNotIncluded 下单前拦住「永久会员已经包含」的套餐（在线直购走这里，余额购买在事务内判）。
+func (s *VipService) ensurePlanNotIncluded(ctx context.Context, appID int64, userID int64, plan vipdomain.Plan) error {
+	lifetime, features, err := s.pg.GetVipLifetimeCoverage(ctx, appID, userID)
+	if err != nil {
+		if errors.Is(err, pgrepo.ErrUserNotFound) {
+			return apperrors.New(40401, http.StatusNotFound, "用户不存在")
+		}
+		return err
+	}
+	if vipdomain.LifetimeIncludes(lifetime, features, plan) {
+		return errVipLifetimeIncluded()
+	}
+	return nil
 }
 
 // 当前用户的会员状态见 `MyEntitlement`（vip_trial_service.go）——
@@ -83,6 +128,8 @@ func (s *VipService) PurchaseWithWallet(ctx context.Context, session *authdomain
 			return nil, apperrors.New(40083, http.StatusBadRequest, "余额不足，请先充值")
 		case errors.Is(err, pgrepo.ErrUserNotFound):
 			return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
+		case errors.Is(err, pgrepo.ErrVipLifetimeIncluded):
+			return nil, errVipLifetimeIncluded()
 		default:
 			return nil, err
 		}
@@ -136,19 +183,23 @@ func (s *VipService) AdminSavePlan(ctx context.Context, mutation vipdomain.PlanM
 			return nil, err
 		}
 	}
+	lifetime, err := s.resolvePlanLifetime(ctx, &mutation)
+	if err != nil {
+		return nil, err
+	}
 	if mutation.ID == 0 {
 		// 新建套餐的必填校验
 		if mutation.Name == nil || strings.TrimSpace(*mutation.Name) == "" {
 			return nil, apperrors.New(40085, http.StatusBadRequest, "套餐名称不能为空")
 		}
-		if mutation.DurationDays == nil || *mutation.DurationDays <= 0 {
+		if !lifetime && (mutation.DurationDays == nil || *mutation.DurationDays <= 0) {
 			return nil, apperrors.New(40086, http.StatusBadRequest, "套餐时长必须大于 0 天")
 		}
 		if mutation.Price == nil || mutation.Price.IsNegative() {
 			return nil, apperrors.New(40087, http.StatusBadRequest, "套餐价格不能为负")
 		}
 	}
-	if mutation.DurationDays != nil && *mutation.DurationDays <= 0 {
+	if !lifetime && mutation.DurationDays != nil && *mutation.DurationDays <= 0 {
 		return nil, apperrors.New(40086, http.StatusBadRequest, "套餐时长必须大于 0 天")
 	}
 	if mutation.Price != nil && mutation.Price.IsNegative() {
@@ -214,6 +265,36 @@ func (s *VipService) validatePlanKind(ctx context.Context, mutation *vipdomain.P
 	return nil
 }
 
+// resolvePlanLifetime 校验并解出这个套餐是不是永久套餐。
+//
+// 永久只能在创建时定：已经卖出去的开通按开通时的形态记账（永久的没有终点、限时的在顺延链上），
+// 套餐一改，「这个套餐卖的到底是什么」在账上就说不清了 —— 要换形态请新建一个套餐、下架旧的。
+// 试用不能是永久的：永久的试用就是白送永久会员。
+func (s *VipService) resolvePlanLifetime(ctx context.Context, mutation *vipdomain.PlanMutation) (bool, error) {
+	lifetime := false
+	if mutation.ID > 0 {
+		existing, err := s.pg.GetVipPlan(ctx, mutation.AppID, mutation.ID)
+		if err != nil {
+			return false, err
+		}
+		if existing == nil {
+			// 交给仓储层统一报「套餐不存在」
+			return mutation.Lifetime != nil && *mutation.Lifetime, nil
+		}
+		if mutation.Lifetime != nil && *mutation.Lifetime != existing.Lifetime {
+			return false, apperrors.New(errCodeTrialPlanKindInvalid, http.StatusBadRequest,
+				"套餐创建后不能在永久与限时之间切换，请新建套餐")
+		}
+		lifetime = existing.Lifetime
+	} else if mutation.Lifetime != nil {
+		lifetime = *mutation.Lifetime
+	}
+	if lifetime && mutation.Kind != nil && *mutation.Kind == vipdomain.KindTrial {
+		return false, apperrors.New(errCodeTrialPlanKindInvalid, http.StatusBadRequest, "试用套餐不能设为永久")
+	}
+	return lifetime, nil
+}
+
 func (s *VipService) AdminDeletePlan(ctx context.Context, appID int64, planID int64) error {
 	deleted, err := s.pg.DeleteVipPlan(ctx, appID, planID)
 	if err != nil {
@@ -230,15 +311,18 @@ func (s *VipService) AdminDeletePlan(ctx context.Context, appID int64, planID in
 // 两种发放方式，二选一：
 //   - PlanID > 0：按套餐发放。时长/赠送积分取自套餐 × Quantity，功能跟随套餐当前配置；
 //     Days 与 Features 忽略 —— 套餐是运营定好的商品，发放时不允许现场改配置。
+//     永久套餐只能发 1 份（永久乘以 N 还是永久，赠送积分却会乘上去）。
 //   - PlanID == 0：自定义发放。Days 为必填时长，Features 为附带的权益标识
 //     （必须已登记在会员功能目录，防止拼错的标识悄悄进账本）。它不挂任何套餐，
 //     功能就是这里给的这一份，改哪个套餐都影响不到它。
+//     Lifetime 为 true 时发的是永久会员，Days 忽略。
 type AdminVipGrantInput struct {
 	UserID        int64
 	AppID         int64
 	PlanID        int64
 	Quantity      int
 	Days          int
+	Lifetime      bool
 	Features      []string
 	Reason        string
 	BonusIntegral int64
@@ -285,14 +369,18 @@ func (s *VipService) AdminGrantVip(ctx context.Context, in AdminVipGrantInput) (
 			return nil, apperrors.New(errCodeTrialPlanNotPurchase, http.StatusForbidden,
 				"试用套餐请通过「代领试用」发放")
 		}
+		if plan.Lifetime && quantity > 1 {
+			return nil, apperrors.New(40086, http.StatusBadRequest, "永久套餐单次只能发放 1 份")
+		}
 		grant.PlanID = &plan.ID
 		grant.PlanName = plan.Name
 		grant.Features = plan.Features
 		grant.DurationDays = plan.DurationDays * quantity
+		grant.Lifetime = plan.Lifetime
 		grant.BonusIntegral = plan.BonusIntegral*int64(quantity) + in.BonusIntegral
 		grant.Metadata["quantity"] = quantity
 	} else {
-		if in.Days <= 0 {
+		if !in.Lifetime && in.Days <= 0 {
 			return nil, apperrors.New(40086, http.StatusBadRequest, "发放天数必须大于 0")
 		}
 		features := vipdomain.NormalizeFeatureTags(in.Features)
@@ -304,10 +392,17 @@ func (s *VipService) AdminGrantVip(ctx context.Context, in AdminVipGrantInput) (
 		grant.PlanName = reason
 		if grant.PlanName == "" {
 			grant.PlanName = "管理员授予"
+			if in.Lifetime {
+				grant.PlanName = "管理员授予永久会员"
+			}
 		}
 		grant.Features = features
-		grant.DurationDays = in.Days
 		grant.BonusIntegral = in.BonusIntegral
+		if in.Lifetime {
+			grant.Lifetime = true
+		} else {
+			grant.DurationDays = in.Days
+		}
 	}
 
 	txn, err := s.pg.GrantVip(ctx, grant)
@@ -366,7 +461,8 @@ func (s *VipService) AdminRevokeVip(ctx context.Context, in AdminVipRevokeInput)
 		case errors.Is(err, pgrepo.ErrUserNotFound):
 			return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
 		case errors.Is(err, pgrepo.ErrVipNotActive):
-			return nil, apperrors.New(errCodeVipNotActive, http.StatusForbidden, "该用户当前不是会员，没有可扣减的时长")
+			// 永久会员也会走到这里：扣天数只扣限时那条线，永久会员请用「取消永久会员」
+			return nil, apperrors.New(errCodeVipNotActive, http.StatusForbidden, "该用户当前没有可扣减的限时会员时长")
 		default:
 			return nil, err
 		}
@@ -374,6 +470,49 @@ func (s *VipService) AdminRevokeVip(ctx context.Context, in AdminVipRevokeInput)
 	s.log.Info("vip days revoked",
 		zap.Int64("appid", in.AppID), zap.Int64("userId", in.UserID),
 		zap.Int("days", in.Days), zap.String("operator", in.Operator), zap.String("reason", reason))
+	return txn, nil
+}
+
+// errCodeVipLifetimeNotActive 取消永久会员时该用户不是永久会员
+const errCodeVipLifetimeNotActive = 40379 // 403
+
+// AdminVipRevokeLifetimeInput 取消永久会员的输入。
+type AdminVipRevokeLifetimeInput struct {
+	UserID   int64
+	AppID    int64
+	Reason   string
+	Operator string
+}
+
+// AdminRevokeVipLifetime 取消永久会员（管理端 / 远程函数 `aegis.vip.revokeLifetime`）。
+//
+// 作废该用户全部仍生效的永久开通并清除永久身份；另买的限时会员不受影响。
+// 不是永久会员时报错而不是静默成功，理由同 AdminRevokeVip。
+// 用户付过钱的永久套餐请走订单退款：那条路会把钱一并退回，这里只收权益。
+func (s *VipService) AdminRevokeVipLifetime(ctx context.Context, in AdminVipRevokeLifetimeInput) (*vipdomain.Transaction, error) {
+	if in.UserID <= 0 || in.AppID <= 0 {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "用户ID与应用ID不能为空")
+	}
+	reason := strings.TrimSpace(in.Reason)
+	txn, err := s.pg.RevokeVipLifetime(ctx, vipdomain.RevokeLifetime{
+		UserID:   in.UserID,
+		AppID:    in.AppID,
+		Reason:   reason,
+		Operator: in.Operator,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, pgrepo.ErrUserNotFound):
+			return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
+		case errors.Is(err, pgrepo.ErrVipLifetimeNotActive):
+			return nil, apperrors.New(errCodeVipLifetimeNotActive, http.StatusForbidden, "该用户不是永久会员")
+		default:
+			return nil, err
+		}
+	}
+	s.log.Info("vip lifetime revoked",
+		zap.Int64("appid", in.AppID), zap.Int64("userId", in.UserID),
+		zap.String("operator", in.Operator), zap.String("reason", reason))
 	return txn, nil
 }
 

@@ -269,6 +269,7 @@ func (r *Repository) grantAdRewardsTx(ctx context.Context, tx pgx.Tx, view *rewa
 				PlanName:      plan.Name,
 				Features:      plan.Features,
 				DurationDays:  plan.DurationDays,
+				Lifetime:      plan.Lifetime,
 				PayChannel:    vipdomain.ChannelAdReward,
 				PayAmount:     decimal.Zero,
 				BonusIntegral: plan.BonusIntegral,
@@ -278,7 +279,7 @@ func (r *Repository) grantAdRewardsTx(ctx context.Context, tx pgx.Tx, view *rewa
 			if err != nil {
 				return nil, err
 			}
-			result.Detail = plan.Name + "（" + strconv.Itoa(plan.DurationDays) + " 天）"
+			result.Detail = plan.Name + "（" + plan.TermLabel() + "）"
 			result.TransactionNo = txn.TransactionNo
 
 		case cardkeydomain.RewardVipDays:

@@ -88,7 +88,10 @@ type FeatureVerdict struct {
 // 那是**客户端**要的东西 —— 服务端校验问的是"他现在有没有这个权益"，
 // 多给的字段只会让调用方不知道该看哪一个。
 type MembershipView struct {
-	IsVIP            bool       `json:"isVip"`
+	IsVIP bool `json:"isVip"`
+	// IsLifetime 永久会员：expireAt 为空、remainingSeconds 为 0
+	IsLifetime       bool       `json:"isLifetime"`
+	LifetimeSince    *time.Time `json:"lifetimeSince,omitempty"`
 	IsTrial          bool       `json:"isTrial"`
 	Source           string     `json:"source"`
 	PlanName         string     `json:"planName,omitempty"`
@@ -108,6 +111,8 @@ func (e Entitlement) View() MembershipView {
 	}
 	return MembershipView{
 		IsVIP:            e.IsVIP,
+		IsLifetime:       e.IsLifetime,
+		LifetimeSince:    e.LifetimeSince,
 		IsTrial:          e.IsTrial,
 		Source:           e.Source,
 		PlanName:         e.PlanName,

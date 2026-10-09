@@ -709,6 +709,7 @@ POST	/api/admin/apps/:appkey/versions/:vid/revoke	AdminRevokeVersion
 POST	/api/admin/apps/:appkey/vip/features	AdminSaveAppVipFeature
 POST	/api/admin/apps/:appkey/vip/grant	AdminGrantAppUserVip
 POST	/api/admin/apps/:appkey/vip/plans	AdminSaveAppVipPlan
+POST	/api/admin/apps/:appkey/vip/revoke	AdminRevokeAppUserVip
 POST	/api/admin/apps/:appkey/vip/trial/claims	AdminClaimAppVipTrial
 POST	/api/admin/apps/:appkey/wallet/adjust	AdminAdjustAppUserWallet
 POST	/api/admin/apps/:appkey/wallet/receipt	AdminAppWalletReceipt

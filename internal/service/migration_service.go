@@ -4,6 +4,7 @@ import (
 	"aegis/internal/config"
 	authdomain "aegis/internal/domain/auth"
 	userdomain "aegis/internal/domain/user"
+	vipdomain "aegis/internal/domain/vip"
 	legacyrepo "aegis/internal/repository/legacymysql"
 	pgrepo "aegis/internal/repository/postgres"
 	"aegis/pkg/taskpool"
@@ -93,7 +94,17 @@ func (s *MigrationService) SyncLegacyUsersBatch(ctx context.Context, lastID int6
 }
 
 func (s *MigrationService) FinalizeLegacySync(ctx context.Context) error {
-	return s.pg.ResetUserIDSequence(ctx)
+	if err := s.pg.ResetUserIDSequence(ctx); err != nil {
+		return err
+	}
+	converted, err := s.pg.ConvertLegacyLifetimeVip(ctx)
+	if err != nil {
+		return err
+	}
+	if converted > 0 {
+		s.log.Info("老系统永久会员已转为永久会员", zap.Int64("users", converted))
+	}
+	return nil
 }
 
 func (s *MigrationService) CountLegacyUsersAfterID(ctx context.Context, lastID int64) (int64, error) {
@@ -189,7 +200,8 @@ func normalizeLegacyVIPTime(value int64) *time.Time {
 		return nil
 	}
 	if value == 999999999 {
-		return new(time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC))
+		// 老系统的永久会员。先落成这个标记，导入收尾时转成真正的永久会员（ConvertLegacyLifetimeVip）
+		return new(vipdomain.LegacyLifetimeExpireAt)
 	}
 	parsed := time.Unix(value, 0).UTC()
 	if parsed.Year() < 2000 || parsed.Year() > 2100 {

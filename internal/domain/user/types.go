@@ -16,7 +16,9 @@ type User struct {
 	Enabled         bool       `json:"enabled"`
 	DisabledEndTime *time.Time `json:"disabledEndTime,omitempty"`
 	VIPExpireAt     *time.Time `json:"vipExpireAt,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
+	// VIPLifetimeAt 成为永久会员的时间，非空即永久会员（与 vip_expire_at 并列的另一条线）
+	VIPLifetimeAt *time.Time `json:"vipLifetimeAt,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
@@ -499,6 +501,8 @@ type AdminUserView struct {
 	Enabled          bool           `json:"enabled"`
 	DisabledEndTime  *time.Time     `json:"disabledEndTime,omitempty"`
 	VIPExpireAt      *time.Time     `json:"vipExpireAt,omitempty"`
+	// VIPLifetimeAt 成为永久会员的时间，非空即永久会员；此时 vipExpireAt 只是限时那条线的到期时间
+	VIPLifetimeAt    *time.Time     `json:"vipLifetimeAt,omitempty"`
 	CreatedAt        time.Time      `json:"createdAt"`
 	UpdatedAt        time.Time      `json:"updatedAt"`
 	RegisterIP       string         `json:"registerIp,omitempty"`
@@ -566,8 +570,11 @@ type MyView struct {
 	Avatar              string     `json:"avatar,omitempty"`
 	Email               string     `json:"email,omitempty"`
 	Enabled             bool       `json:"enabled"`
-	VIPExpireAt         *time.Time `json:"vipExpireAt,omitempty"`
-	IsVIP               bool       `json:"isVip"`
+	// VIPExpireAt 会员到期时间；永久会员没有到期时间，恒为空（老客户端据此显示「长期有效」）
+	VIPExpireAt *time.Time `json:"vipExpireAt,omitempty"`
+	IsVIP       bool       `json:"isVip"`
+	// VIPLifetime 永久会员
+	VIPLifetime         bool       `json:"vipLifetime"`
 	TokenSource         string     `json:"tokenSource,omitempty"`
 	LastLoginIP         string     `json:"lastLoginIp,omitempty"`
 	LastDeviceID        string     `json:"lastDeviceId,omitempty"`

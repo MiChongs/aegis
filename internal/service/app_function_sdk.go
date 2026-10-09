@@ -833,6 +833,8 @@ func (s *ScriptSDK) loadUserPayload(vm *goja.Runtime, userID int64) map[string]a
 		"banned":  banned,
 		"vip":     entitlement.IsVIP,
 		"vipTrial": entitlement.IsTrial,
+		// 永久会员：此时没有 vipExpireAt
+		"vipLifetime": entitlement.IsLifetime,
 		// 功能标识：脚本可以直接判「这个用户能不能用某个能力」，
 		// 而不必去猜套餐名 —— 那是运营随时会改的展示文案
 		"vipFeatures": entitlement.Features,
@@ -847,6 +849,9 @@ func (s *ScriptSDK) loadUserPayload(vm *goja.Runtime, userID int64) map[string]a
 	if entitlement.ExpireAt != nil {
 		payload["vipExpireAt"] = entitlement.ExpireAt.Format(time.RFC3339)
 		payload["vipRemainingSeconds"] = entitlement.RemainingSeconds
+	}
+	if entitlement.LifetimeSince != nil {
+		payload["vipLifetimeSince"] = entitlement.LifetimeSince.Format(time.RFC3339)
 	}
 	if profile, err := s.deps.PG.GetUserProfileByUserID(s.ctx, userID); err == nil && profile != nil {
 		payload["nickname"] = profile.Nickname
@@ -864,6 +869,7 @@ func (s *ScriptSDK) entitlementValue(vm *goja.Runtime, userID int64) goja.Value 
 	}
 	payload := map[string]any{
 		"isVip":            entitlement.IsVIP,
+		"isLifetime":       entitlement.IsLifetime,
 		"isTrial":          entitlement.IsTrial,
 		"source":           entitlement.Source,
 		"features":         entitlement.Features,
@@ -874,6 +880,12 @@ func (s *ScriptSDK) entitlementValue(vm *goja.Runtime, userID int64) goja.Value 
 	}
 	if entitlement.ExpireAt != nil {
 		payload["expireAt"] = entitlement.ExpireAt.Format(time.RFC3339)
+	}
+	if entitlement.LifetimeSince != nil {
+		payload["lifetimeSince"] = entitlement.LifetimeSince.Format(time.RFC3339)
+	}
+	if entitlement.TimedExpireAt != nil {
+		payload["timedExpireAt"] = entitlement.TimedExpireAt.Format(time.RFC3339)
 	}
 	return vm.ToValue(payload)
 }
@@ -1030,13 +1042,67 @@ func (s *ScriptSDK) bindVipNamespace(vm *goja.Runtime, object *goja.Object) erro
 		return vm.ToValue(result)
 	}
 
+	// 永久会员单独两个入口，而不是给 grant 塞一个「天数传 0 即永久」的约定：
+	// 脚本里算错的 0 天不该悄悄变成永久会员。
+	lifetime := func(call goja.FunctionCall, grantIt bool) goja.Value {
+		s.budget(vm, true)
+		userID := s.requireUser(vm)
+		reason := "远程函数 " + s.functionName
+		if len(call.Arguments) > 0 && !goja.IsUndefined(call.Argument(0)) {
+			reason = call.Argument(0).String()
+		}
+		s.recordEffect(CapVipWrite, map[string]any{
+			"userId": userID, "lifetime": grantIt, "revokeLifetime": !grantIt, "reason": reason,
+		})
+		if s.dryRun {
+			return vm.ToValue(map[string]any{"lifetime": grantIt, "userId": userID, "simulated": true})
+		}
+		var err error
+		if grantIt {
+			_, err = s.deps.Vip.AdminGrantVip(s.ctx, AdminVipGrantInput{
+				UserID:   userID,
+				AppID:    s.appID,
+				Lifetime: true,
+				Reason:   reason,
+				Operator: s.operatorLabel(),
+			})
+		} else {
+			_, err = s.deps.Vip.AdminRevokeVipLifetime(s.ctx, AdminVipRevokeLifetimeInput{
+				UserID:   userID,
+				AppID:    s.appID,
+				Reason:   reason,
+				Operator: s.operatorLabel(),
+			})
+		}
+		if err != nil {
+			throw(vm, err)
+		}
+		result := map[string]any{"lifetime": grantIt, "userId": userID}
+		// 取消永久之后可能还剩一段限时会员，把它的到期时间带回去，理由同 grant
+		if entitlement, err := s.deps.Vip.ResolveEntitlement(s.ctx, s.appID, userID, ""); err == nil &&
+			entitlement != nil && entitlement.ExpireAt != nil && entitlement.IsVIP {
+			result["expireAt"] = entitlement.ExpireAt.Format(time.RFC3339)
+		}
+		return vm.ToValue(result)
+	}
+
 	if err := object.Set("grant", func(call goja.FunctionCall) goja.Value {
 		return grant(call, 1)
 	}); err != nil {
 		return err
 	}
-	return object.Set("revoke", func(call goja.FunctionCall) goja.Value {
+	if err := object.Set("revoke", func(call goja.FunctionCall) goja.Value {
 		return grant(call, -1)
+	}); err != nil {
+		return err
+	}
+	if err := object.Set("grantLifetime", func(call goja.FunctionCall) goja.Value {
+		return lifetime(call, true)
+	}); err != nil {
+		return err
+	}
+	return object.Set("revokeLifetime", func(call goja.FunctionCall) goja.Value {
+		return lifetime(call, false)
 	})
 }
 

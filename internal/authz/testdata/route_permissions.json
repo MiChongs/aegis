@@ -3410,6 +3410,13 @@
   },
   {
     "method": "POST",
+    "path": "/api/admin/apps/:appkey/vip/revoke",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
     "path": "/api/admin/apps/:appkey/vip/trial/claims",
     "permission": "app:write",
     "appScoped": true,

@@ -434,7 +434,7 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 
 	// 履约 purpose 处理：校验参数合法性并把套餐/积分快照固化进订单 metadata，
 	// 价格以服务端配置为准（防客户端改价），支付成功后按快照自动履约
-	metadata, err = s.prepareFulfillmentMetadata(ctx, session.AppID, parsedAmount, metadata)
+	metadata, err = s.prepareFulfillmentMetadata(ctx, session.AppID, session.UserID, parsedAmount, metadata)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -869,7 +869,7 @@ func (s *PaymentService) HandleCallback(ctx context.Context, method string, call
 //   - vip_purchase：校验套餐存在且在售、金额与服务端价格一致，并把套餐快照固化进 metadata
 //   - integral_purchase：按应用配置兑换率（settings.integralPerCurrency，默认 100/单位金额）
 //     由服务端计算并固化发放数量，客户端无法指定
-func (s *PaymentService) prepareFulfillmentMetadata(ctx context.Context, appID int64, amount decimal.Decimal, metadata map[string]any) (map[string]any, error) {
+func (s *PaymentService) prepareFulfillmentMetadata(ctx context.Context, appID int64, userID int64, amount decimal.Decimal, metadata map[string]any) (map[string]any, error) {
 	purpose := metaString(metadata, paymentdomain.MetaKeyPurpose)
 	if purpose == "" {
 		return metadata, nil
@@ -902,9 +902,25 @@ func (s *PaymentService) prepareFulfillmentMetadata(ctx context.Context, appID i
 		if !plan.Price.Equal(amount) {
 			return nil, apperrors.New(40089, http.StatusBadRequest, "支付金额与套餐价格不一致")
 		}
+		// 永久会员已经包含这个套餐：拦在付钱之前。履约时不再拦 —— 钱收了就得发，
+		// 两单并发都走到这里的极端情况，由运营在控制台退掉多余的那一单。
+		lifetime, features, err := s.pg.GetVipLifetimeCoverage(ctx, appID, userID)
+		if err != nil && !errors.Is(err, pgrepo.ErrUserNotFound) {
+			return nil, err
+		}
+		if vipdomain.LifetimeIncludes(lifetime, features, *plan) {
+			return nil, errVipLifetimeIncluded()
+		}
 		out[paymentdomain.MetaKeyVipPlanID] = plan.ID
 		out[paymentdomain.MetaKeyVipPlanName] = plan.Name
 		out[paymentdomain.MetaKeyVipDays] = plan.DurationDays
+		// metadata 是客户端传来的：不是永久套餐时必须把这个键删掉，
+		// 否则在月卡订单里塞一个 vipLifetime: true 就能按月卡的价钱开出永久会员。
+		if plan.Lifetime {
+			out[paymentdomain.MetaKeyVipLifetime] = true
+		} else {
+			delete(out, paymentdomain.MetaKeyVipLifetime)
+		}
 		out[paymentdomain.MetaKeyVipBonus] = plan.BonusIntegral
 		out[paymentdomain.MetaKeyVipFeatures] = vipdomain.NormalizeFeatureTags(plan.Features)
 	case paymentdomain.PurposeIntegralPurchase:
@@ -951,8 +967,9 @@ func (s *PaymentService) buildFulfillmentInstruction(order *paymentdomain.Order)
 		instr.VipPlanName = metaString(order.Metadata, paymentdomain.MetaKeyVipPlanName)
 		instr.VipFeatures = metaStringSlice(order.Metadata, paymentdomain.MetaKeyVipFeatures)
 		instr.VipDays = int(metaInt64(order.Metadata, paymentdomain.MetaKeyVipDays))
+		instr.VipLifetime = metaBool(order.Metadata, paymentdomain.MetaKeyVipLifetime)
 		instr.VipBonus = metaInt64(order.Metadata, paymentdomain.MetaKeyVipBonus)
-		if instr.VipDays <= 0 {
+		if !instr.VipLifetime && instr.VipDays <= 0 {
 			return instr, false, fmt.Errorf("order %s vip snapshot invalid: durationDays=%d", order.OrderNo, instr.VipDays)
 		}
 	case paymentdomain.PurposeIntegralPurchase:
@@ -1022,6 +1039,21 @@ func metaString(m map[string]any, key string) string {
 		return strings.TrimSpace(v)
 	}
 	return ""
+}
+
+func metaBool(m map[string]any, key string) bool {
+	if m == nil {
+		return false
+	}
+	switch v := m[key].(type) {
+	case bool:
+		return v
+	case string:
+		parsed, _ := strconv.ParseBool(strings.TrimSpace(v))
+		return parsed
+	default:
+		return false
+	}
 }
 
 func metaInt64(m map[string]any, key string) int64 {

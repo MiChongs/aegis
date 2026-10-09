@@ -169,6 +169,13 @@ func (s *DumpImportService) ImportDump(ctx context.Context, opts DumpImportOptio
 		if err := flush(); err != nil {
 			return result, err
 		}
+		converted, err := s.pg.ConvertLegacyLifetimeVip(ctx)
+		if err != nil {
+			return result, fmt.Errorf("转换老系统永久会员失败: %w", err)
+		}
+		if converted > 0 {
+			s.log.Info("老系统永久会员已转为永久会员", zap.Int64("users", converted))
+		}
 	}
 	return result, nil
 }

@@ -71,7 +71,7 @@ POST /api/v1/apps/{appKey}/card-keys/redeem
 
 | 权益 | 落到哪 |
 |---|---|
-| `vip_plan` | `extendUserVipTx`，继承套餐的时长与功能标识快照 |
+| `vip_plan` | `extendUserVipTx`，继承套餐的时长与功能标识快照；选永久套餐即发永久会员（套餐可以下架，只用于发卡） |
 | `vip_days` | `extendUserVipTx`，不挂套餐、不带功能标识 |
 | `integral` | `applyIntegralChangeTx` |
 | `experience` | `applyExperienceChangeTx`（本次新抽出的事务内助手） |

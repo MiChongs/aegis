@@ -92,6 +92,7 @@
   "meta.expireAt": "付款期限",
   "meta.plan": "方案",
   "meta.duration": "有效期",
+  "meta.durationLifetime": "永久",
   "meta.bonusPoints": "贈送點數",
   "meta.points": "發放點數",
   "meta.days": {

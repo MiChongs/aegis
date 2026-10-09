@@ -40,9 +40,12 @@ type Segment struct {
 	Features []string `json:"features"`
 	// Plan 所引用套餐的**当前**配置。自定义发放、卡密赠送天数、套餐已删除时为 nil。
 	Plan *SegmentPlan `json:"plan,omitempty"`
-	// ActiveFrom / ActiveUntil 这一段在会员链上的实际位置（已计入退款前移与扣减截断）
+	// ActiveFrom / ActiveUntil 这一段在会员链上的实际位置（已计入退款前移与扣减截断）。
+	// 永久开通没有终点，ActiveUntil 为零值，看 Lifetime。
 	ActiveFrom  time.Time `json:"activeFrom"`
 	ActiveUntil time.Time `json:"activeUntil"`
+	// Lifetime 永久开通：不在顺延链上，没有终点，作废之前一直贡献权益
+	Lifetime bool `json:"lifetime"`
 }
 
 // SegmentPlan 套餐的当前配置（判定只需要这两项）。
@@ -73,6 +76,9 @@ func (s Segment) EffectivePlanName() string {
 // 高级版那段排在后面、还没轮到，但用户付了高级版的钱，理所当然认为现在就能用。
 // 窗口为空（ActiveUntil <= ActiveFrom）的是被扣减整段截掉的，不再算数。
 func (s Segment) LiveAt(now time.Time) bool {
+	if s.Lifetime {
+		return true
+	}
 	return s.ActiveUntil.After(now) && s.ActiveUntil.After(s.ActiveFrom)
 }
 
@@ -95,6 +101,18 @@ func latestSegment(live []Segment) *Segment {
 	}
 	latest := live[len(live)-1]
 	return &latest
+}
+
+// latestLifetimeSegment 最近开通的那笔永久开通（永久会员的「当前套餐」「会员来源」取它）。
+// 老系统迁移进来却没有补记的永久会员找不到任何一笔，返回 nil。
+func latestLifetimeSegment(live []Segment) *Segment {
+	for i := len(live) - 1; i >= 0; i-- {
+		if live[i].Lifetime {
+			segment := live[i]
+			return &segment
+		}
+	}
+	return nil
 }
 
 // resolveFeatures 各段功能的并集，再与启用中的功能目录取交集。

@@ -144,6 +144,7 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/vip/plans", h.AdminSaveAppVipPlan)
 		admin.DELETE("/apps/:appkey/vip/plans/:planId", h.AdminDeleteAppVipPlan)
 		admin.POST("/apps/:appkey/vip/grant", h.AdminGrantAppUserVip)
+		admin.POST("/apps/:appkey/vip/revoke", h.AdminRevokeAppUserVip)
 		admin.GET("/apps/:appkey/vip/transactions", h.AdminAppVipTransactions)
 		admin.GET("/apps/:appkey/vip/entitlement", h.AdminAppUserVipEntitlement)
 		admin.GET("/apps/:appkey/vip/features", h.AdminAppVipFeatures)

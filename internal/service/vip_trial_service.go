@@ -72,7 +72,7 @@ func (s *VipService) ResolveEntitlement(ctx context.Context, appID int64, userID
 		facts.TrialPlan = plan.TrialRef()
 		// 设备维度只在「真有可能领得到」时才查：已经领过、已经是会员的用户，
 		// 结论与设备无关，多打一次库只是浪费。
-		alreadyMember := facts.ExpireAt != nil && facts.ExpireAt.After(time.Now())
+		alreadyMember := facts.LifetimeSince != nil || (facts.ExpireAt != nil && facts.ExpireAt.After(time.Now()))
 		if plan.TrialDeviceLimited && facts.Claim == nil && !alreadyMember {
 			if strings.TrimSpace(deviceID) == "" {
 				facts.DeviceMissing = true

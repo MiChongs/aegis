@@ -95,6 +95,7 @@
   "meta.expireAt": "支払期限",
   "meta.plan": "プラン",
   "meta.duration": "有効期間",
+  "meta.durationLifetime": "永久",
   "meta.bonusPoints": "ボーナスポイント",
   "meta.points": "付与ポイント",
   "meta.days": {

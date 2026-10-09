@@ -316,6 +316,7 @@ func (r *Repository) grantCardRewardsTx(ctx context.Context, tx pgx.Tx, appID in
 				PlanName:      plan.Name,
 				Features:      plan.Features,
 				DurationDays:  plan.DurationDays,
+				Lifetime:      plan.Lifetime,
 				PayChannel:    vipdomain.ChannelCardKey,
 				PayAmount:     decimal.Zero,
 				BonusIntegral: plan.BonusIntegral,
@@ -324,7 +325,7 @@ func (r *Repository) grantCardRewardsTx(ctx context.Context, tx pgx.Tx, appID in
 			if err != nil {
 				return nil, err
 			}
-			result.Detail = plan.Name + "（" + strconv.Itoa(plan.DurationDays) + " 天）"
+			result.Detail = plan.Name + "（" + plan.TermLabel() + "）"
 			result.TransactionNo = txn.TransactionNo
 
 		case cardkeydomain.RewardVipDays:

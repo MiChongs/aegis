@@ -18,6 +18,7 @@ func init() {
 		View("GET /api/admin/apps/:appkey/vip/entitlement", "查看用户会员权益", "用户"),
 		View("GET /api/admin/apps/:appkey/vip/transactions", "查看会员交易记录", ""),
 		Write("POST /api/admin/apps/:appkey/vip/grant", "为用户开通会员", "用户", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/vip/revoke", "收回用户会员", "用户", SeverityHigh),
 		View("GET /api/admin/apps/:appkey/vip/trial/claims", "查看会员试用领取记录", ""),
 		Write("POST /api/admin/apps/:appkey/vip/trial/claims", "为用户开通会员试用", "用户", SeverityMedium),
 		Write("DELETE /api/admin/apps/:appkey/vip/trial/claims/:userId", "重置用户会员试用资格", "用户", SeverityMedium),

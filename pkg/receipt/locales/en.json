@@ -92,6 +92,7 @@
   "meta.expireAt": "Payment due",
   "meta.plan": "Plan",
   "meta.duration": "Duration",
+  "meta.durationLifetime": "Lifetime",
   "meta.bonusPoints": "Bonus points",
   "meta.points": "Points granted",
   "meta.days": {

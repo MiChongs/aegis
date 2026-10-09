@@ -203,6 +203,10 @@ data class AegisMembershipCheck(
 @Serializable
 data class AegisMembership(
     @SerialName("isVip") val isVip: Boolean = false,
+    /** 永久会员：此时 [expireAt] 为空、[remainingSeconds] 与 [remainingDays] 为 0 */
+    @SerialName("isLifetime") val isLifetime: Boolean = false,
+    /** 成为永久会员的时间（RFC3339），不是永久会员时为空 */
+    val lifetimeSince: String? = null,
     /** 当前这段会员期是不是试用给的 —— 决定该引导"升级"还是"续费" */
     @SerialName("isTrial") val isTrial: Boolean = false,
     /** none / trial / wallet / payment_order / admin_grant / card_key / unknown */

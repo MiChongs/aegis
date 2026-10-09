@@ -89,7 +89,7 @@ type levelState struct {
 }
 
 func (r *Repository) GetUserByAppAndAccount(ctx context.Context, appID int64, account string) (*userdomain.User, error) {
-	query := `SELECT id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, created_at, updated_at FROM users WHERE appid = $1 AND account = $2 LIMIT 1`
+	query := `SELECT id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, vip_lifetime_at, created_at, updated_at FROM users WHERE appid = $1 AND account = $2 LIMIT 1`
 	return scanUser(r.pool.QueryRow(ctx, query, appID, account))
 }
 
@@ -926,7 +926,7 @@ LIMIT $%d`, len(args)+1)
 }
 
 func (r *Repository) GetUserByID(ctx context.Context, userID int64) (*userdomain.User, error) {
-	query := `SELECT id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, created_at, updated_at FROM users WHERE id = $1 LIMIT 1`
+	query := `SELECT id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, vip_lifetime_at, created_at, updated_at FROM users WHERE id = $1 LIMIT 1`
 	return scanUser(r.pool.QueryRow(ctx, query, userID))
 }
 
@@ -1110,6 +1110,7 @@ func (r *Repository) ListAdminUsersByAppQuery(ctx context.Context, appID int64, 
 	u.enabled,
 	u.disabled_end_time,
 	u.vip_expire_at,
+	u.vip_lifetime_at,
 	u.created_at,
 	u.updated_at,
 	COALESCE(p.nickname, ''),
@@ -1163,7 +1164,7 @@ func (r *Repository) listAdminUsersByAppFast(ctx context.Context, appID int64, e
 	}
 
 	query := `WITH page_users AS (
-    SELECT id, appid, account, integral, experience, enabled, disabled_end_time, vip_expire_at, created_at, updated_at
+    SELECT id, appid, account, integral, experience, enabled, disabled_end_time, vip_expire_at, vip_lifetime_at, created_at, updated_at
     FROM users
     WHERE appid = $1`
 	args := []any{appID}
@@ -1189,6 +1190,7 @@ SELECT
     u.enabled,
     u.disabled_end_time,
     u.vip_expire_at,
+    u.vip_lifetime_at,
     u.created_at,
     u.updated_at,
     COALESCE(p.nickname, ''),
@@ -1236,6 +1238,7 @@ func (r *Repository) GetAdminUserByApp(ctx context.Context, appID int64, userID 
 	u.enabled,
 	u.disabled_end_time,
 	u.vip_expire_at,
+	u.vip_lifetime_at,
 	u.created_at,
 	u.updated_at,
 	COALESCE(p.nickname, ''),
@@ -1280,6 +1283,7 @@ func (r *Repository) ListAdminUsersForExportQuery(ctx context.Context, appID int
 	u.enabled,
 	u.disabled_end_time,
 	u.vip_expire_at,
+	u.vip_lifetime_at,
 	u.created_at,
 	u.updated_at,
 	COALESCE(p.nickname, ''),
@@ -1328,6 +1332,7 @@ func (r *Repository) ListAdminUsersByIDs(ctx context.Context, appID int64, userI
 	u.enabled,
 	u.disabled_end_time,
 	u.vip_expire_at,
+	u.vip_lifetime_at,
 	u.created_at,
 	u.updated_at,
 	COALESCE(p.nickname, ''),
@@ -1604,7 +1609,7 @@ func (r *Repository) UpdateAdminUserStatus(ctx context.Context, appID int64, use
 		}
 	}()
 
-	user, err := scanUser(tx.QueryRow(ctx, `SELECT id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, created_at, updated_at FROM users WHERE id = $1 AND appid = $2 FOR UPDATE`, userID, appID))
+	user, err := scanUser(tx.QueryRow(ctx, `SELECT id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, vip_lifetime_at, created_at, updated_at FROM users WHERE id = $1 AND appid = $2 FOR UPDATE`, userID, appID))
 	if err != nil {
 		return nil, err
 	}
@@ -1986,7 +1991,7 @@ func (r *Repository) CreateUser(ctx context.Context, appID int64, account string
 
 // createUserExec 在指定执行器（连接池或事务）上插入用户。
 func createUserExec(ctx context.Context, q queryExecutor, appID int64, account string, passwordHash string) (*userdomain.User, error) {
-	query := `INSERT INTO users (appid, account, password_hash, enabled) VALUES ($1, $2, $3, TRUE) RETURNING id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, created_at, updated_at`
+	query := `INSERT INTO users (appid, account, password_hash, enabled) VALUES ($1, $2, $3, TRUE) RETURNING id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, vip_lifetime_at, created_at, updated_at`
 	user, err := scanUser(q.QueryRow(ctx, query, appID, account, nullableString(passwordHash)))
 	if isUniqueViolation(err) {
 		return nil, ErrAccountAlreadyExists
@@ -2922,7 +2927,7 @@ func (r *Repository) CreateDailySign(ctx context.Context, userID int64, appID in
 		}
 	}()
 
-	user, err := scanUser(tx.QueryRow(ctx, `SELECT id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, created_at, updated_at FROM users WHERE id = $1 AND appid = $2 FOR UPDATE`, userID, appID))
+	user, err := scanUser(tx.QueryRow(ctx, `SELECT id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, vip_lifetime_at, created_at, updated_at FROM users WHERE id = $1 AND appid = $2 FOR UPDATE`, userID, appID))
 	if err != nil {
 		return nil, err
 	}
@@ -4521,7 +4526,7 @@ WHERE n.id = nr.notification_id
 
 func scanUser(row interface{ Scan(dest ...any) error }) (*userdomain.User, error) {
 	var user userdomain.User
-	if err := row.Scan(&user.ID, &user.AppID, &user.Account, &user.PasswordHash, &user.Integral, &user.Experience, &user.Enabled, &user.DisabledEndTime, &user.VIPExpireAt, &user.CreatedAt, &user.UpdatedAt); err != nil {
+	if err := row.Scan(&user.ID, &user.AppID, &user.Account, &user.PasswordHash, &user.Integral, &user.Experience, &user.Enabled, &user.DisabledEndTime, &user.VIPExpireAt, &user.VIPLifetimeAt, &user.CreatedAt, &user.UpdatedAt); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	return &user, nil
@@ -4539,6 +4544,7 @@ func scanAdminUser(row interface{ Scan(dest ...any) error }) (*userdomain.AdminU
 		&item.Enabled,
 		&item.DisabledEndTime,
 		&item.VIPExpireAt,
+		&item.VIPLifetimeAt,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 		&item.Nickname,
@@ -4581,10 +4587,11 @@ func hydrateAdminUserLegacyFields(item *userdomain.AdminUserView) {
 		createdAt := item.CreatedAt.UTC()
 		item.RegisterTime = &createdAt
 	}
-	if item.VIPExpireAt == nil {
+	// 永久会员的到期时间在迁移时被有意清空（见 000091），不能再从老系统的原始字段里补回来
+	if item.VIPExpireAt == nil && item.VIPLifetimeAt == nil {
 		item.VIPExpireAt = timeFromMap(item.Extra, "legacy_vip_time")
 	}
-	if item.VIPExpireAt == nil {
+	if item.VIPExpireAt == nil && item.VIPLifetimeAt == nil {
 		item.VIPExpireAt = timeFromMap(item.Extra, "vip_expire_at")
 	}
 }

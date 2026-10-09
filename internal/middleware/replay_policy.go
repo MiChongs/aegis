@@ -119,6 +119,7 @@ var replayRules = []replayRule{
 	{methods: []string{"POST"}, segs: split("/api/admin/apps/:appkey/wallet/adjust"), policy: PolicyGuarded, reason: "管理员调账不可撤销"},
 	{methods: []string{"POST"}, segs: split("/api/admin/apps/:appkey/users/:userid/wallet/adjust"), policy: PolicyGuarded, reason: "同上"},
 	{methods: []string{"POST"}, segs: split("/api/admin/apps/:appkey/vip/grant"), policy: PolicyGuarded, reason: "会员发放"},
+	{methods: []string{"POST"}, segs: split("/api/admin/apps/:appkey/vip/revoke"), policy: PolicyGuarded, reason: "会员收回"},
 	{methods: []string{"POST"}, segs: split("/api/admin/apps/:appkey/points/grant"), policy: PolicyGuarded, reason: "积分发放"},
 }
 

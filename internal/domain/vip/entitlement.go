@@ -135,6 +135,11 @@ type TrialOffer struct {
 // 已经发出去的客户端读的就是这三个字段，换名字等于让它们全部瞎掉。
 type Entitlement struct {
 	IsVIP bool `json:"isVip"`
+	// IsLifetime 永久会员。此时 expireAt 为空、remainingSeconds / remainingDays 为 0 ——
+	// 永久会员没有到期时间，老客户端读到空的 expireAt 会显示「长期有效」。
+	IsLifetime bool `json:"isLifetime"`
+	// LifetimeSince 成为永久会员的时间
+	LifetimeSince *time.Time `json:"lifetimeSince,omitempty"`
 	// IsTrial 当前这段会员期是试用给的。
 	// 「是会员」与「是试用会员」是两个问题，客户端两个都要问：
 	// 前者决定功能开不开，后者决定引导用户续费还是升级。
@@ -144,6 +149,10 @@ type Entitlement struct {
 	ExpireAt         *time.Time `json:"expireAt,omitempty"`
 	RemainingSeconds int64      `json:"remainingSeconds"`
 	RemainingDays    int        `json:"remainingDays"`
+	// TimedExpireAt 永久会员另有一段仍在期内的限时会员时，那段的到期时间。
+	// 永久会员再买一段限时的高级版，高级版的功能只到这一刻 —— 不给出来，
+	// 客户端说不清「为什么 AI 功能下个月就没了」。不是永久会员时恒为空（那时看 expireAt）。
+	TimedExpireAt *time.Time `json:"timedExpireAt,omitempty"`
 	// Features 当前生效的功能标识：仍生效的各段按套餐**当前**配置取并集，
 	// 再与启用中的功能目录取交集（见 resolveFeatures）。
 	// 不是会员时恒为空数组 —— 过期用户的开通记录仍在账本里，但权益已经不在了。
@@ -155,6 +164,8 @@ type Entitlement struct {
 // EvalInput 判定所需的全部事实，由仓储一次查询取齐。
 type EvalInput struct {
 	ExpireAt *time.Time
+	// LifetimeSince 成为永久会员的时间（users.vip_lifetime_at），不是永久会员为 nil
+	LifetimeSince *time.Time
 	// Segments 尚未结束、未被作废的各段会员期（含所引用套餐的当前配置）。
 	// 「当前套餐」「会员来源」取最近开通的那段，功能取各段的并集。
 	Segments []Segment
@@ -176,22 +187,41 @@ type EvalInput struct {
 // 功能取**仍生效的各段的并集**而不是"最近一次开通的那份"：会员期是顺延的，
 // 先买基础版再买高级版时两段都还没结束，用户理所当然认为两边的功能现在都能用；
 // 反过来先买高级版再买基础版（降级），高级版那段用完就自然出局，只剩基础版。
+//
+// 永久与限时是并列的两条线：任一成立即是会员，功能取两条线上仍生效各段的并集。
+// 永久会员的「当前套餐」「会员来源」取最近一笔永久开通 —— 那才是他的身份；
+// 另买的限时高级版只贡献功能，到期时间放在 timedExpireAt。
 func Evaluate(in EvalInput, now time.Time) Entitlement {
 	entitlement := Entitlement{Source: SourceNone, ExpireAt: in.ExpireAt, Features: []string{}}
 
+	timedActive := in.ExpireAt != nil && in.ExpireAt.After(now)
+	lifetime := in.LifetimeSince != nil
+
 	var current *Segment
-	if in.ExpireAt != nil && in.ExpireAt.After(now) {
-		remaining := in.ExpireAt.Sub(now)
+	if timedActive || lifetime {
 		live := liveSegments(in.Segments, now)
 		entitlement.IsVIP = true
 		entitlement.Features = resolveFeatures(live, in.FeatureCatalog)
-		entitlement.RemainingSeconds = int64(remaining.Seconds())
-		// 天数沿用旧口径（向下取整）：控制台与客户端上已有的"还剩 N 天"都是这么算的，
-		// 精确到秒的需求由 remainingSeconds 满足。
-		entitlement.RemainingDays = int(remaining.Hours() / 24)
 		// 是会员却找不到任何一段仍生效的开通：老系统直接写进 users 的到期时间就是这样
 		entitlement.Source = SourceUnknown
-		if current = latestSegment(live); current != nil {
+		if lifetime {
+			since := in.LifetimeSince.UTC()
+			entitlement.IsLifetime = true
+			entitlement.LifetimeSince = &since
+			entitlement.ExpireAt = nil
+			if timedActive {
+				entitlement.TimedExpireAt = in.ExpireAt
+			}
+			current = latestLifetimeSegment(live)
+		} else {
+			remaining := in.ExpireAt.Sub(now)
+			entitlement.RemainingSeconds = int64(remaining.Seconds())
+			// 天数沿用旧口径（向下取整）：控制台与客户端上已有的"还剩 N 天"都是这么算的，
+			// 精确到秒的需求由 remainingSeconds 满足。
+			entitlement.RemainingDays = int(remaining.Hours() / 24)
+			current = latestSegment(live)
+		}
+		if current != nil {
 			entitlement.Source = normalizeSource(current.Channel)
 			entitlement.PlanName = current.EffectivePlanName()
 		}
@@ -216,8 +246,11 @@ func Evaluate(in EvalInput, now time.Time) Entitlement {
 		//   2. 最近一段仍生效的开通就是试用 —— 被扣减过天数后 1 不再成立，2 仍成立。
 		// 用户后来买了付费，到期时间被推远、最近一段也换成了付费那段，两者同时失效 ——
 		// 不需要任何状态迁移，也不会出现"买了付费还显示试用中"。
+		// 试用期间开通了永久会员则一律不再算试用：永久那条线不动到期时间，
+		// 第 1 条仍然成立，但这个人已经是永久会员了。
 		currentIsTrial := current != nil && current.Channel == ChannelTrial
-		if entitlement.IsVIP && state.Active && (in.ExpireAt.Equal(in.Claim.TrialEndsAt) || currentIsTrial) {
+		if entitlement.IsVIP && !entitlement.IsLifetime && state.Active &&
+			(in.ExpireAt.Equal(in.Claim.TrialEndsAt) || currentIsTrial) {
 			entitlement.IsTrial = true
 			entitlement.Source = SourceTrial
 			if !currentIsTrial {
@@ -259,6 +292,31 @@ func evaluateTrialOffer(in EvalInput, entitlement Entitlement) TrialOffer {
 	}
 	offer.Message = TrialReasonMessage(offer.Reason)
 	return offer
+}
+
+// LifetimeIncludes 永久会员是否已经包含这个套餐：再开通一次拿不到任何新东西。
+//
+// 判据只看功能：套餐的每个功能标识都已在永久开通的功能里（按套餐当前配置取并集）。
+// 不包含 ≠ 不能买 —— 永久基础版再买一段限时的高级版是正常的升级路径，
+// 拦的只是「已经是永久会员还在续月卡」「同一个永久套餐买第二次」这种纯花钱。
+// 试用对永久会员一律视为已包含（领试用的资格判定本来也会拒）。
+func LifetimeIncludes(lifetime bool, lifetimeFeatures []string, plan Plan) bool {
+	if !lifetime {
+		return false
+	}
+	if plan.IsTrial() {
+		return true
+	}
+	have := make(map[string]struct{}, len(lifetimeFeatures))
+	for _, tag := range NormalizeFeatureTags(lifetimeFeatures) {
+		have[tag] = struct{}{}
+	}
+	for _, tag := range NormalizeFeatureTags(plan.Features) {
+		if _, ok := have[tag]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // normalizeSource 把账本里的渠道翻成会员来源，未登记的渠道一律算"说不清"。

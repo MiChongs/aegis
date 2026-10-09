@@ -45,6 +45,8 @@ type AdminVipPlanRequest struct {
 	// Kind paid（付费，默认）/ trial（试用）。不传即沿用原值 ——
 	// 控制台上「改个名字」不该把一个试用套餐悄悄变成付费套餐。
 	Kind *string `json:"kind"`
+	// Lifetime 永久套餐（不带时长，durationDays 忽略）。只能在创建时指定，之后不能切换
+	Lifetime *bool `json:"lifetime"`
 	// TrialDeviceLimited 仅试用套餐有意义：同一设备只能领一次
 	TrialDeviceLimited *bool `json:"trialDeviceLimited"`
 	// Features 这个套餐解锁哪些功能标识（引用会员功能目录里的 tag）。
@@ -67,15 +69,29 @@ type AdminVipTrialClaimRequest struct {
 // AdminVipGrantRequest 管理员发放会员。
 //
 // 两种方式二选一：planId > 0 按套餐发放（days/features 忽略，时长与权益取自
-// 套餐 × quantity）；否则按 days 自定义发放，可附带已登记的权益标识。
+// 套餐 × quantity，永久套餐只能 1 份）；否则按 days 自定义发放，可附带已登记的权益标识。
+// 自定义发放时 lifetime 为 true 即发永久会员，days 忽略。
 type AdminVipGrantRequest struct {
 	UserID        int64    `json:"userId" binding:"required"`
 	PlanID        int64    `json:"planId"`
 	Quantity      int      `json:"quantity"`
 	Days          int      `json:"days"`
+	Lifetime      bool     `json:"lifetime"`
 	Features      []string `json:"features"`
 	Reason        string   `json:"reason"`
 	BonusIntegral int64    `json:"bonusIntegral"`
+}
+
+// AdminVipRevokeRequest 管理员收回会员。
+//
+// lifetime 为 true 即取消永久会员（作废全部仍生效的永久开通，days 忽略）；
+// 否则从限时会员的到期时间往回扣 days 天，扣过此刻即立即结束。
+// 两者都只收权益不退钱 —— 用户付过钱的请走订单退款。
+type AdminVipRevokeRequest struct {
+	UserID   int64  `json:"userId" binding:"required"`
+	Lifetime bool   `json:"lifetime"`
+	Days     int    `json:"days"`
+	Reason   string `json:"reason"`
 }
 
 // ── 用户端：钱包 ──
@@ -156,7 +172,7 @@ func (h *Handler) VipPlans(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
 		return
 	}
-	plans, err := h.vip.ListActivePlans(c.Request.Context(), session.AppID)
+	plans, err := h.vip.ListActivePlans(c.Request.Context(), session)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -274,6 +290,7 @@ func (h *Handler) AdminSaveAppVipPlan(c *gin.Context) {
 		AppID:              appID,
 		Name:               req.Name,
 		Kind:               req.Kind,
+		Lifetime:           req.Lifetime,
 		TrialDeviceLimited: req.TrialDeviceLimited,
 		Features:           req.Features,
 		DurationDays:       req.DurationDays,
@@ -342,6 +359,7 @@ func (h *Handler) AdminGrantAppUserVip(c *gin.Context) {
 		PlanID:        req.PlanID,
 		Quantity:      req.Quantity,
 		Days:          req.Days,
+		Lifetime:      req.Lifetime,
 		Features:      req.Features,
 		Reason:        req.Reason,
 		BonusIntegral: req.BonusIntegral,
@@ -352,6 +370,46 @@ func (h *Handler) AdminGrantAppUserVip(c *gin.Context) {
 		return
 	}
 	response.Success(c, 200, "会员发放成功", txn)
+}
+
+// AdminRevokeAppUserVip POST /api/admin/apps/:appkey/vip/revoke —— 扣减会员天数 / 取消永久会员
+func (h *Handler) AdminRevokeAppUserVip(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	var req AdminVipRevokeRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	_, operator := adminAccount(c)
+	if req.Lifetime {
+		txn, err := h.vip.AdminRevokeVipLifetime(c.Request.Context(), service.AdminVipRevokeLifetimeInput{
+			UserID:   req.UserID,
+			AppID:    appID,
+			Reason:   req.Reason,
+			Operator: operator,
+		})
+		if err != nil {
+			h.writeError(c, err)
+			return
+		}
+		response.Success(c, 200, "已取消永久会员", txn)
+		return
+	}
+	txn, err := h.vip.AdminRevokeVip(c.Request.Context(), service.AdminVipRevokeInput{
+		UserID:   req.UserID,
+		AppID:    appID,
+		Days:     req.Days,
+		Reason:   req.Reason,
+		Operator: operator,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "会员天数已扣减", txn)
 }
 
 // AdminAppVipTransactions GET /api/admin/apps/:appkey/vip/transactions

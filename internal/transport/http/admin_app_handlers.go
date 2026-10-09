@@ -572,7 +572,7 @@ func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
 	writer := csv.NewWriter(c.Writer)
 	defer writer.Flush()
 
-	_ = writer.Write([]string{"id", "appid", "account", "nickname", "avatar", "email", "phone", "enabled", "integral", "experience", "invite_code", "markcode", "register_ip", "register_time", "register_province", "register_city", "register_isp", "vip_expire_at", "disabled_reason", "created_at"})
+	_ = writer.Write([]string{"id", "appid", "account", "nickname", "avatar", "email", "phone", "enabled", "integral", "experience", "invite_code", "markcode", "register_ip", "register_time", "register_province", "register_city", "register_isp", "vip_expire_at", "disabled_reason", "created_at", "vip_lifetime_at"})
 	for _, item := range items {
 		registerTime := ""
 		if item.RegisterTime != nil {
@@ -581,6 +581,11 @@ func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
 		vipExpireAt := ""
 		if item.VIPExpireAt != nil {
 			vipExpireAt = item.VIPExpireAt.UTC().Format(time.RFC3339)
+		}
+		// 永久会员单独一列且放在最后：按列序读这份文件的下游不受影响
+		vipLifetimeAt := ""
+		if item.VIPLifetimeAt != nil {
+			vipLifetimeAt = item.VIPLifetimeAt.UTC().Format(time.RFC3339)
 		}
 		_ = writer.Write([]string{
 			strconv.FormatInt(item.ID, 10),
@@ -603,6 +608,7 @@ func (h *Handler) ExportAdminAppUsers(c *gin.Context) {
 			vipExpireAt,
 			item.DisabledReason,
 			item.CreatedAt.UTC().Format(time.RFC3339),
+			vipLifetimeAt,
 		})
 	}
 }

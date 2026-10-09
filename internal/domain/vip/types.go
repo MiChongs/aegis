@@ -1,6 +1,7 @@
 package vip
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -14,14 +15,25 @@ const (
 	ChannelTrial        = "trial"         // 领取试用
 	ChannelCardKey      = "card_key"      // 卡密核销
 	ChannelAdReward     = "ad_reward"     // 看激励广告领取
-	// ChannelAdminRevoke 扣减天数（管理员 / 远程函数 vip.revoke）。
-	// 它是账本里的一条负时长记录，不是一段会员期：不贡献功能，也不会成为「当前套餐」。
+	// ChannelAdminRevoke 扣减天数 / 取消永久会员（管理员 / 远程函数 vip.revoke、vip.revokeLifetime）。
+	// 它是账本里的一条留痕记录，不是一段会员期：不贡献功能，也不会成为「当前套餐」。
 	ChannelAdminRevoke = "admin_revoke"
+	// ChannelLegacyImport 老系统迁移进来的永久会员（vip_time = 999999999），由迁移补记。
+	// 老系统没有留下凭什么，判定时归为来源不明。
+	ChannelLegacyImport = "legacy_import"
 )
+
+// LegacyLifetimeExpireAt 老系统永久会员（vip_time = 999999999）导入时被映射成的到期时间。
+//
+// 导入链路仍先写这个值（导入的是 users 一张表，补记开通记录要另一条语句），
+// 随后由 ConvertLegacyLifetimeVip 与迁移 000091 把到期时间不早于它的用户转成真正的永久会员。
+var LegacyLifetimeExpireAt = time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC)
 
 // 开通记录的作废原因
 const (
 	RevokeReasonRefund = "refund" // 订单全额退款，履约冲正
+	// RevokeReasonAdmin 管理员取消永久会员：仍生效的永久开通一并作废
+	RevokeReasonAdmin = "admin_revoke"
 )
 
 // 套餐种类。
@@ -35,30 +47,45 @@ const (
 
 // Plan VIP 套餐（按应用配置）
 type Plan struct {
-	ID     int64  `json:"id"`
-	AppID  int64  `json:"appid"`
-	Name   string `json:"name"`
-	Kind   string `json:"kind"` // paid / trial
+	ID    int64  `json:"id"`
+	AppID int64  `json:"appid"`
+	Name  string `json:"name"`
+	Kind  string `json:"kind"` // paid / trial
+	// Lifetime 永久套餐：没有时长（DurationDays 恒为 0），开通一次永久生效。
+	// 只能是付费套餐；创建后不能在永久与限时之间切换 —— 已经卖出去的那些开通
+	// 按开通时的形态记账，套餐一改，「这个套餐到底卖的是什么」就说不清了。
+	Lifetime bool `json:"lifetime"`
 	// TrialDeviceLimited 仅试用套餐有意义：同一设备只能领一次。
 	// 防的是"注册小号反复领试用"，代价是请求必须带设备标识（否则拒领而不是放行 ——
 	// 开着的开关放行等于没有这个开关）。
 	TrialDeviceLimited bool `json:"trialDeviceLimited"`
 	// Features 这个套餐包含的功能标识（引用 vip_features.tag）。
 	// 空数组即"只是会员"，不带任何细分权益。
-	Features           []string         `json:"features"`
-	DurationDays       int              `json:"durationDays"`
-	Price              decimal.Decimal  `json:"price"`
-	OriginalPrice      *decimal.Decimal `json:"originalPrice,omitempty"`
-	BonusIntegral      int64            `json:"bonusIntegral"`
-	Description        string           `json:"description,omitempty"`
-	IsActive           bool             `json:"isActive"`
-	SortOrder          int              `json:"sortOrder"`
-	CreatedAt          time.Time        `json:"createdAt"`
-	UpdatedAt          time.Time        `json:"updatedAt"`
+	Features      []string         `json:"features"`
+	DurationDays  int              `json:"durationDays"`
+	Price         decimal.Decimal  `json:"price"`
+	OriginalPrice *decimal.Decimal `json:"originalPrice,omitempty"`
+	BonusIntegral int64            `json:"bonusIntegral"`
+	Description   string           `json:"description,omitempty"`
+	IsActive      bool             `json:"isActive"`
+	SortOrder     int              `json:"sortOrder"`
+	CreatedAt     time.Time        `json:"createdAt"`
+	UpdatedAt     time.Time        `json:"updatedAt"`
+	// Included 当前用户的永久会员已经包含这个套餐的全部权益，再买拿不到任何新东西。
+	// 只在用户侧的在售列表里按当前用户填充；购买与下单会以 40378 拒绝这样的套餐。
+	Included bool `json:"included,omitempty"`
 }
 
 // IsTrial 是否试用套餐。
 func (p Plan) IsTrial() bool { return p.Kind == KindTrial }
+
+// TermLabel 套餐时长的中文说法（发放结果、凭证等展示用）。
+func (p Plan) TermLabel() string {
+	if p.Lifetime {
+		return "永久"
+	}
+	return strconv.Itoa(p.DurationDays) + " 天"
+}
 
 // PlanMutation 套餐创建/更新（指针字段为空表示不变更）
 type PlanMutation struct {
@@ -66,16 +93,17 @@ type PlanMutation struct {
 	AppID              int64
 	Name               *string
 	Kind               *string
+	Lifetime           *bool
 	TrialDeviceLimited *bool
 	// Features nil 表示不变更；空切片表示清空
-	Features           *[]string
-	DurationDays       *int
-	Price              *decimal.Decimal
-	OriginalPrice      *decimal.Decimal
-	BonusIntegral      *int64
-	Description        *string
-	IsActive           *bool
-	SortOrder          *int
+	Features      *[]string
+	DurationDays  *int
+	Price         *decimal.Decimal
+	OriginalPrice *decimal.Decimal
+	BonusIntegral *int64
+	Description   *string
+	IsActive      *bool
+	SortOrder     *int
 }
 
 // Grant 一次 VIP 开通/续期指令（仓储层单事务执行：锁用户 → 顺延到期时间 → 记账）
@@ -88,8 +116,11 @@ type Grant struct {
 	//
 	// 它**不是**判定依据：套餐还在时权益按套餐当前配置算（见 Segment），
 	// 快照只在两种情况下生效 —— 这笔不是按套餐开的（自定义发放），或套餐已被删除。
-	Features       []string
-	DurationDays   int
+	Features     []string
+	DurationDays int
+	// Lifetime 永久开通：DurationDays 忽略，不动限时那条线的到期时间，
+	// 只把用户标记为永久会员并记一段没有终点的会员期。
+	Lifetime       bool
 	PayChannel     string
 	PayAmount      decimal.Decimal
 	RelatedOrderNo string
@@ -100,22 +131,26 @@ type Grant struct {
 
 // Transaction VIP 开通/续费记录
 type Transaction struct {
-	ID             int64           `json:"id"`
-	TransactionNo  string          `json:"transactionNo"`
-	UserID         int64           `json:"userId"`
-	AppID          int64           `json:"appid"`
-	PlanID         *int64          `json:"planId,omitempty"`
-	PlanName       string          `json:"planName"`
-	Features       []string        `json:"features"`
-	DurationDays   int             `json:"durationDays"`
+	ID            int64    `json:"id"`
+	TransactionNo string   `json:"transactionNo"`
+	UserID        int64    `json:"userId"`
+	AppID         int64    `json:"appid"`
+	PlanID        *int64   `json:"planId,omitempty"`
+	PlanName      string   `json:"planName"`
+	Features      []string `json:"features"`
+	DurationDays  int      `json:"durationDays"`
+	// Lifetime 永久开通（durationDays 为 0、expireAfter 为空），
+	// 或 admin_revoke 渠道下的「取消永久会员」留痕。
+	Lifetime       bool            `json:"lifetime"`
 	PayChannel     string          `json:"payChannel"`
 	PayAmount      decimal.Decimal `json:"payAmount"`
 	RelatedOrderNo string          `json:"relatedOrderNo,omitempty"`
 	BonusIntegral  int64           `json:"bonusIntegral"`
-	ExpireBefore   *time.Time      `json:"expireBefore,omitempty"`
-	ExpireAfter    time.Time       `json:"expireAfter"`
-	Operator       string          `json:"operator,omitempty"`
-	Metadata       map[string]any  `json:"metadata,omitempty"`
+	// ExpireBefore / ExpireAfter 限时那条线开通前后的到期时间。永久开通不动它，expireAfter 为空。
+	ExpireBefore *time.Time     `json:"expireBefore,omitempty"`
+	ExpireAfter  *time.Time     `json:"expireAfter,omitempty"`
+	Operator     string         `json:"operator,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
 	// RevokedAt / RevokeReason 这笔开通已被作废（目前只有退款冲正一种）。
 	// 作废的记录仍留在账本里，但不再贡献任何权益。
 	RevokedAt    *time.Time `json:"revokedAt,omitempty"`
@@ -135,9 +170,22 @@ type Revoke struct {
 	Metadata map[string]any
 }
 
+// RevokeLifetime 取消永久会员的指令（仓储层单事务执行：锁用户 → 作废仍生效的永久开通 → 记账）。
+//
+// 只动永久那条线：用户另买的限时会员照常生效到原来的到期时间。
+type RevokeLifetime struct {
+	UserID   int64
+	AppID    int64
+	Reason   string
+	Operator string
+	Metadata map[string]any
+}
+
 // Status 用户 VIP 状态
 type Status struct {
-	IsVIP         bool       `json:"isVip"`
+	IsVIP bool `json:"isVip"`
+	// IsLifetime 永久会员：此时 expireAt 为空、remainingDays 为 0
+	IsLifetime    bool       `json:"isLifetime"`
 	ExpireAt      *time.Time `json:"expireAt,omitempty"`
 	RemainingDays int        `json:"remainingDays"`
 }
