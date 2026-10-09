@@ -20,7 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { SectionCard } from "@/components/apps/app-config-primitives";
 import { VipPlanEditor } from "@/components/apps/vip/vip-plan-editor";
-import { FeatureTagList, formatVipPrice } from "@/components/apps/vip/vip-shared";
+import { FeatureTagList, formatVipPrice, vipPlanTerm } from "@/components/apps/vip/vip-shared";
 import {
   useAdminVipFeaturesQuery,
   useAdminVipPlansQuery,
@@ -88,6 +88,11 @@ export function VipPlansPanel({ appKey }: { appKey: string }) {
               试用
             </Badge>
           ) : null}
+          {plan.lifetime ? (
+            <Badge variant="success" size="sm">
+              永久
+            </Badge>
+          ) : null}
           {!plan.isActive ? (
             <Badge variant="secondary" size="sm">
               已停用
@@ -101,9 +106,7 @@ export function VipPlansPanel({ appKey }: { appKey: string }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span>
-            <span className="font-medium text-foreground">{plan.durationDays}</span> 天
-          </span>
+          <span className="font-medium text-foreground">{vipPlanTerm(plan)}</span>
           <span>
             <span className="font-medium text-foreground">{formatVipPrice(plan.price)}</span>
             {plan.originalPrice ? <span className="ml-1 line-through">¥ {plan.originalPrice}</span> : null}

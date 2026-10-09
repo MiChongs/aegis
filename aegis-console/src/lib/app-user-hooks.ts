@@ -31,7 +31,8 @@ import {
   getAdminVipPlans,
   getAdminVipTransactions,
   grantAdminVip,
-  resetAdminVipTrial
+  resetAdminVipTrial,
+  revokeAdminVip
 } from "@/lib/api/configuration";
 import type { AdminAppUserListParams } from "@/lib/api/apps";
 import type { AdminUserBanCreateInput } from "@/lib/api/types";
@@ -207,7 +208,7 @@ export function useAdminVipFeaturesQuery(appKey?: Key) {
   });
 }
 
-/** 发放会员后需要一起刷新的查询：记录、权益判定、详情、列表。 */
+/** 发放 / 收回会员后需要一起刷新的查询：记录、权益判定、详情、列表。 */
 const VIP_SCOPE_KEYS = [
   ["admin-user-vip-txns"],
   ["admin-user-vip-entitlement"],
@@ -229,11 +230,26 @@ export function useGrantAdminUserVipMutation(appKey?: Key, userId?: Id) {
       planId?: number;
       quantity?: number;
       days?: number;
+      lifetime?: boolean;
       features?: string[];
       reason?: string;
       bonusIntegral?: number;
     }) =>
       grantAdminVip(token as string, appKey as string, {
+        userId: Number(userId),
+        ...payload
+      }),
+    onSuccess: invalidate
+  });
+}
+
+/** 收回会员：扣减限时天数，或取消永久会员（`lifetime: true`）。 */
+export function useRevokeAdminUserVipMutation(appKey?: Key, userId?: Id) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateVipScope();
+  return useMutation({
+    mutationFn: (payload: { lifetime?: boolean; days?: number; reason?: string }) =>
+      revokeAdminVip(token as string, appKey as string, {
         userId: Number(userId),
         ...payload
       }),

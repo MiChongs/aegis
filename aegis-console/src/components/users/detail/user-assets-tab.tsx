@@ -34,6 +34,14 @@ import {
   TableRow
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  VipRevokeDialog,
+  formatVipTerm,
+  isLifetimeGrant,
+  vipPlanTerm,
+  vipSourceLabel,
+  type VipRevokeAction
+} from "@/components/apps/vip/vip-shared";
 import { ApiError } from "@/lib/api-client";
 import {
   useAdjustUserExperienceMutation,
@@ -49,7 +57,8 @@ import {
   useAdminVipPlansQuery,
   useClaimAdminVipTrialMutation,
   useGrantAdminUserVipMutation,
-  useResetAdminVipTrialMutation
+  useResetAdminVipTrialMutation,
+  useRevokeAdminUserVipMutation
 } from "@/lib/app-user-hooks";
 import type { AdminAppUserDetail, UserWallet, VipPlan } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -101,6 +110,7 @@ export function UserAssetsTab({
 
   const wallet = walletQuery.data as UserWallet | undefined;
   const walletReady = hasWallet(wallet);
+  const vipLifetime = Boolean(user.vipLifetimeAt);
   const vipActive = Boolean(user.vipExpireAt) && !isPast(user.vipExpireAt);
 
   return (
@@ -118,13 +128,23 @@ export function UserAssetsTab({
           icon={<Wallet className="size-3.5" />}
           hint={walletReady ? `冻结 ¥ ${formatMoney(wallet?.frozen)}` : "钱包数据不可用"}
         />
-        <StatTile
-          label="会员到期"
-          value={vipActive ? relativeTime(user.vipExpireAt) : user.vipExpireAt ? "已过期" : "非会员"}
-          icon={<Crown className="size-3.5" />}
-          tone={vipActive ? "success" : user.vipExpireAt ? "warning" : "default"}
-          hint={user.vipExpireAt ? formatTime(user.vipExpireAt) : undefined}
-        />
+        {vipLifetime ? (
+          <StatTile
+            label="会员到期"
+            value="永久"
+            icon={<Crown className="size-3.5" />}
+            tone="success"
+            hint={`开通于 ${formatTime(user.vipLifetimeAt)}`}
+          />
+        ) : (
+          <StatTile
+            label="会员到期"
+            value={vipActive ? relativeTime(user.vipExpireAt) : user.vipExpireAt ? "已过期" : "非会员"}
+            icon={<Crown className="size-3.5" />}
+            tone={vipActive ? "success" : user.vipExpireAt ? "warning" : "default"}
+            hint={user.vipExpireAt ? formatTime(user.vipExpireAt) : undefined}
+          />
+        )}
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">
@@ -423,18 +443,6 @@ function WalletPanel({
 
 // ── 会员 ──────────────────────────
 
-/** 会员来源标签。unknown 是老系统迁移的历史数据，账本里找不到对应流水。 */
-const VIP_SOURCE_LABEL: Record<string, string> = {
-  none: "—",
-  unknown: "历史数据",
-  trial: "试用",
-  wallet: "余额购买",
-  payment_order: "在线支付",
-  admin_grant: "管理员发放",
-  card_key: "卡密核销",
-  ad_reward: "看广告领取"
-};
-
 /** 自定义发放的快捷时长档位。 */
 const QUICK_DAYS = [7, 30, 90, 365];
 
@@ -446,6 +454,10 @@ const QUICK_DAYS = [7, 30, 90, 365];
  *
  * 发放分「按套餐」与「自定义」两条路：套餐是运营定好的商品（时长 × 数量、
  * 权益、赠送积分整体发放），自定义用于套餐覆盖不了的补偿场景，可单独附带权益。
+ *
+ * 永久与限时是并列的两条线（`users.vip_lifetime_at` 与 `vip_expire_at`）：
+ * 永久会员没有到期时间，另买的限时会员只贡献功能，到期时间单独列为「限时到期」。
+ * 来源 / 渠道的叫法取自会员区块的 `vip-shared`，与 `/apps?tab=vip` 一字不差。
  */
 function VipPanel({ appKey, userId }: { appKey: string; userId: number }) {
   const entitlementQuery = useAdminUserVipEntitlementQuery(appKey, userId);
@@ -460,7 +472,9 @@ function VipPanel({ appKey, userId }: { appKey: string; userId: number }) {
     return (tag: string) => map.get(tag) ?? tag;
   }, [featuresQuery.data]);
 
-  const statusBadge = !entitlement ? null : entitlement.isVip ? (
+  const statusBadge = !entitlement ? null : entitlement.isLifetime ? (
+    <Badge variant="success" size="sm">永久会员</Badge>
+  ) : entitlement.isVip ? (
     <Badge variant={entitlement.isTrial ? "warning" : "success"} size="sm">
       {entitlement.isTrial ? "试用中" : "有效"}，剩余 {Math.max(entitlement.remainingDays, 0)} 天
     </Badge>
@@ -484,22 +498,37 @@ function VipPanel({ appKey, userId }: { appKey: string; userId: number }) {
             <Fact
               label="状态"
               value={
-                entitlement.isVip
-                  ? entitlement.isTrial
-                    ? "试用中"
-                    : "有效"
-                  : entitlement.expireAt
-                    ? "已过期"
-                    : "非会员"
+                entitlement.isLifetime
+                  ? "永久会员"
+                  : entitlement.isVip
+                    ? entitlement.isTrial
+                      ? "试用中"
+                      : "有效"
+                    : entitlement.expireAt
+                      ? "已过期"
+                      : "非会员"
               }
             />
-            <Fact label="来源" value={VIP_SOURCE_LABEL[entitlement.source] ?? entitlement.source} />
-            <Fact label="当前套餐" value={textValue(entitlement.planName)} />
             <Fact
-              label="到期时间"
-              value={formatTime(entitlement.expireAt)}
-              hint={entitlement.isVip ? `剩余 ${Math.max(entitlement.remainingDays, 0)} 天` : undefined}
+              label="来源"
+              value={entitlement.source === "none" ? EMPTY : vipSourceLabel(entitlement.source)}
             />
+            <Fact label="当前套餐" value={textValue(entitlement.planName)} />
+            {entitlement.isLifetime ? (
+              <>
+                <Fact label="到期时间" value="永久" />
+                <Fact label="开通时间" value={formatTime(entitlement.lifetimeSince)} />
+                {entitlement.timedExpireAt ? (
+                  <Fact label="限时到期" value={formatTime(entitlement.timedExpireAt)} />
+                ) : null}
+              </>
+            ) : (
+              <Fact
+                label="到期时间"
+                value={formatTime(entitlement.expireAt)}
+                hint={entitlement.isVip ? `剩余 ${Math.max(entitlement.remainingDays, 0)} 天` : undefined}
+              />
+            )}
           </Facts>
           {entitlement.features.length ? (
             <div className="flex flex-wrap items-center gap-1.5">
@@ -524,6 +553,8 @@ function VipPanel({ appKey, userId }: { appKey: string; userId: number }) {
         featureName={featureName}
         featureTags={(featuresQuery.data ?? []).filter((f) => f.isActive).map((f) => f.tag)}
       />
+
+      <RevokeSection appKey={appKey} userId={userId} entitlement={entitlement} />
 
       <TrialSection appKey={appKey} userId={userId} entitlement={entitlement} />
 
@@ -566,19 +597,35 @@ function VipPanel({ appKey, userId }: { appKey: string; userId: number }) {
                     ) : null}
                   </TableCell>
                   <TableCell className="text-right text-xs tabular-nums">
-                    {numberText(txn.durationDays)} 天
+                    {formatVipTerm(txn)}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline" size="sm">
-                      {textValue(txn.payChannel, "—")}
-                    </Badge>
+                    <div className="flex items-center gap-1">
+                      <Badge variant="outline" size="sm">
+                        {vipSourceLabel(txn.payChannel)}
+                      </Badge>
+                      {txn.revokedAt ? (
+                        <Badge variant="danger" size="sm">
+                          已作废
+                        </Badge>
+                      ) : null}
+                    </div>
                   </TableCell>
                   <TableCell className="text-right text-xs tabular-nums">
                     {formatMoney(txn.payAmount)}
                   </TableCell>
                   <TableCell className="text-[11px] text-muted-foreground">
-                    {txn.expireBefore ? `${formatShortTime(txn.expireBefore)} → ` : "开通 → "}
-                    {formatShortTime(txn.expireAfter)}
+                    {/* 永久开通与取消永久会员都不动限时那条线的到期时间 */}
+                    {isLifetimeGrant(txn) ? (
+                      "永久"
+                    ) : txn.lifetime ? (
+                      EMPTY
+                    ) : (
+                      <>
+                        {txn.expireBefore ? `${formatShortTime(txn.expireBefore)} → ` : "开通 → "}
+                        {formatShortTime(txn.expireAfter)}
+                      </>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -617,18 +664,24 @@ function GrantSection({
   const [planReason, setPlanReason] = useState("");
 
   const [days, setDays] = useState("");
+  const [customLifetime, setCustomLifetime] = useState(false);
   const [bonus, setBonus] = useState("");
   const [customReason, setCustomReason] = useState("");
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
 
   const plan = grantablePlans.find((item) => String(item.id) === planId);
+  // 永久套餐只能发 1 份：永久乘以 N 还是永久，赠送积分却会乘上去（后端同样拒绝）
+  const planLifetime = Boolean(plan?.lifetime);
+  const planQuantity = planLifetime ? 1 : quantity;
   const dayCount = Number.parseInt(days, 10);
-  const customValid = Number.isFinite(dayCount) && dayCount > 0;
+  const customValid = customLifetime || (Number.isFinite(dayCount) && dayCount > 0);
 
   async function submit(payload: Parameters<typeof grant.mutateAsync>[0]) {
     try {
       const result = await grant.mutateAsync(payload);
-      toast.success("会员已发放", { description: `到期时间 ${formatTime(result.expireAfter)}` });
+      toast.success(result.lifetime ? "永久会员已发放" : "会员已发放", {
+        description: result.expireAfter ? `到期时间 ${formatTime(result.expireAfter)}` : undefined
+      });
       return true;
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "发放失败");
@@ -640,7 +693,7 @@ function GrantSection({
     if (!plan) return;
     const ok = await submit({
       planId: plan.id,
-      quantity,
+      quantity: planQuantity,
       reason: planReason.trim() || undefined
     });
     if (ok) {
@@ -652,13 +705,14 @@ function GrantSection({
   async function grantCustom() {
     if (!customValid) return;
     const ok = await submit({
-      days: dayCount,
+      ...(customLifetime ? { lifetime: true } : { days: dayCount }),
       bonusIntegral: Number.parseInt(bonus, 10) || undefined,
       features: selectedFeatures.length ? selectedFeatures : undefined,
       reason: customReason.trim() || undefined
     });
     if (ok) {
       setDays("");
+      setCustomLifetime(false);
       setBonus("");
       setSelectedFeatures([]);
       setCustomReason("");
@@ -688,7 +742,7 @@ function GrantSection({
                     <SelectContent>
                       {grantablePlans.map((item) => (
                         <SelectItem key={item.id} value={String(item.id)} className="text-xs">
-                          {item.name}（{item.durationDays} 天，¥{formatMoney(item.price)}）
+                          {item.name}（{vipPlanTerm(item)}，¥{formatMoney(item.price)}）
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -702,14 +756,15 @@ function GrantSection({
                       variant="outline"
                       className="size-8"
                       aria-label="减少数量"
-                      disabled={quantity <= 1}
+                      disabled={planLifetime || quantity <= 1}
                       onClick={() => setQuantity((prev) => Math.max(1, prev - 1))}
                     >
                       <Minus className="size-3.5" />
                     </Button>
                     <Input
-                      value={String(quantity)}
+                      value={String(planQuantity)}
                       inputMode="numeric"
+                      disabled={planLifetime}
                       className="h-8 w-14 text-center text-xs tabular-nums"
                       onChange={(event) => {
                         const next = Number.parseInt(event.target.value, 10);
@@ -721,7 +776,7 @@ function GrantSection({
                       variant="outline"
                       className="size-8"
                       aria-label="增加数量"
-                      disabled={quantity >= 100}
+                      disabled={planLifetime || quantity >= 100}
                       onClick={() => setQuantity((prev) => Math.min(100, prev + 1))}
                     >
                       <Plus className="size-3.5" />
@@ -738,9 +793,9 @@ function GrantSection({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
                   {plan
-                    ? `合计 ${plan.durationDays * quantity} 天` +
+                    ? (planLifetime ? "永久会员" : `合计 ${plan.durationDays * planQuantity} 天`) +
                       (plan.bonusIntegral
-                        ? `，附赠 ${(plan.bonusIntegral * quantity).toLocaleString("zh-CN")} 积分`
+                        ? `，附赠 ${(plan.bonusIntegral * planQuantity).toLocaleString("zh-CN")} 积分`
                         : "") +
                       (plan.features?.length ? `，含 ${plan.features.length} 项权益` : "")
                     : ""}
@@ -757,28 +812,41 @@ function GrantSection({
         <TabsContent value="custom" className="mt-3 space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">时长（天）</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={days}
-                  inputMode="numeric"
-                  placeholder="30"
-                  className="h-8 text-xs"
-                  onChange={(event) => setDays(event.target.value)}
-                />
-              </div>
+              <Label className="text-xs text-muted-foreground">{customLifetime ? "时长" : "时长（天）"}</Label>
+              {customLifetime ? null : (
+                <div className="flex gap-2">
+                  <Input
+                    value={days}
+                    inputMode="numeric"
+                    placeholder="30"
+                    className="h-8 text-xs"
+                    onChange={(event) => setDays(event.target.value)}
+                  />
+                </div>
+              )}
               <div className="flex flex-wrap gap-1">
                 {QUICK_DAYS.map((preset) => (
                   <Button
                     key={preset}
                     size="sm"
-                    variant="outline"
+                    variant={!customLifetime && days === String(preset) ? "secondary" : "outline"}
                     className="h-6 px-2 text-[11px] tabular-nums"
-                    onClick={() => setDays(String(preset))}
+                    onClick={() => {
+                      setCustomLifetime(false);
+                      setDays(String(preset));
+                    }}
                   >
                     {preset} 天
                   </Button>
                 ))}
+                <Button
+                  size="sm"
+                  variant={customLifetime ? "secondary" : "outline"}
+                  className="h-6 px-2 text-[11px]"
+                  onClick={() => setCustomLifetime(true)}
+                >
+                  永久
+                </Button>
               </div>
             </div>
             <div className="space-y-1.5">
@@ -833,7 +901,7 @@ function GrantSection({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">
               {customValid
-                ? `发放 ${dayCount} 天` +
+                ? (customLifetime ? "发放永久会员" : `发放 ${dayCount} 天`) +
                   (Number.parseInt(bonus, 10) > 0
                     ? `，附赠 ${Number.parseInt(bonus, 10).toLocaleString("zh-CN")} 积分`
                     : "") +
@@ -847,6 +915,108 @@ function GrantSection({
           </div>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+/**
+ * 收回会员：扣减限时天数 / 取消永久会员。只收权益不退钱，付过钱的走订单退款。
+ *
+ * 两个动作各管一条线，按这个人实际有哪条线分别出现：扣减天数只动限时那条线
+ * （永久会员没有另买限时的就无天可扣），取消永久会员只动永久那条线。
+ * 两条线都没有时整段隐藏 —— 与试用段同一条规矩，没有可执行的操作就不占位。
+ */
+function RevokeSection({
+  appKey,
+  userId,
+  entitlement
+}: {
+  appKey: string;
+  userId: number;
+  entitlement?: ReturnType<typeof useAdminUserVipEntitlementQuery>["data"];
+}) {
+  const revoke = useRevokeAdminUserVipMutation(appKey, userId);
+  const [days, setDays] = useState("");
+  const [reason, setReason] = useState("");
+  const [dialog, setDialog] = useState<{ open: boolean; action: VipRevokeAction }>({
+    open: false,
+    action: { lifetime: true }
+  });
+
+  if (!entitlement) return null;
+  const lifetime = Boolean(entitlement.isLifetime);
+  const hasTimed = lifetime ? Boolean(entitlement.timedExpireAt) : entitlement.isVip;
+  if (!lifetime && !hasTimed) return null;
+
+  const dayCount = Number(days);
+  const daysValid = Number.isInteger(dayCount) && dayCount > 0;
+
+  async function handleConfirm() {
+    const action = dialog.action;
+    try {
+      await revoke.mutateAsync(
+        action.lifetime
+          ? { lifetime: true, reason: reason.trim() || undefined }
+          : { days: action.days, reason: reason.trim() || undefined }
+      );
+      toast.success(action.lifetime ? "已取消永久会员" : `已扣减 ${action.days} 天`);
+      setDialog((prev) => ({ ...prev, open: false }));
+      setDays("");
+      setReason("");
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "操作失败");
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-b px-5 py-3">
+      <span className="text-xs font-medium text-foreground">收回</span>
+      <span className="mx-1 inline-block h-3 w-px bg-border" aria-hidden />
+      <Input
+        value={reason}
+        placeholder="收回原因（选填）"
+        className="h-7 min-w-40 flex-1 text-xs"
+        onChange={(event) => setReason(event.target.value)}
+      />
+      {hasTimed ? (
+        <div className="flex items-center gap-1.5">
+          <Input
+            value={days}
+            inputMode="numeric"
+            placeholder="天数"
+            aria-label="扣减天数"
+            className="h-7 w-16 text-xs tabular-nums"
+            onChange={(event) => setDays(event.target.value)}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            disabled={!daysValid || revoke.isPending}
+            onClick={() => setDialog({ open: true, action: { lifetime: false, days: dayCount } })}
+          >
+            扣减天数
+          </Button>
+        </div>
+      ) : null}
+      {lifetime ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs text-destructive hover:text-destructive"
+          disabled={revoke.isPending}
+          onClick={() => setDialog({ open: true, action: { lifetime: true } })}
+        >
+          取消永久会员
+        </Button>
+      ) : null}
+      <VipRevokeDialog
+        open={dialog.open}
+        action={dialog.action}
+        pending={revoke.isPending}
+        onOpenChange={(open) => setDialog((prev) => ({ ...prev, open }))}
+        onConfirm={handleConfirm}
+      />
     </div>
   );
 }

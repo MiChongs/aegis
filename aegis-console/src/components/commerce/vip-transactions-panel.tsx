@@ -7,23 +7,17 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAdminVipTransactionsQuery } from "@/lib/admin-hooks";
+import { formatVipExpireAfter, formatVipTerm, vipSourceLabel } from "@/components/apps/vip/vip-shared";
 import { formatMoney, formatTime } from "./commerce-format";
-
-const channelLabels: Record<string, string> = {
-  wallet: "余额直购",
-  payment_order: "支付订单",
-  admin_grant: "管理员授予",
-  trial: "领取试用",
-  card_key: "卡密核销",
-  ad_reward: "看广告领取",
-  admin_revoke: "扣减天数"
-};
 
 /**
  * 会员开通记录。
  *
  * 与订单页并列而不是合并：余额直购走的是 `wallet` 渠道，**不产生支付订单**，
  * 在订单页一条都看不到。只看订单会以为会员卖得很差。
+ *
+ * 渠道名、时长与到期的口径取自会员区块的 `vip-shared`：同一条记录在两处叫法不同，
+ * 对账的人无从判断是不是同一件事。
  */
 export function VipTransactionsPanel({ appId }: { appId?: number | null }) {
   const [page, setPage] = useState(1);
@@ -77,17 +71,17 @@ export function VipTransactionsPanel({ appId }: { appId?: number | null }) {
                       {item.planName}
                     </span>
                   </TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums">{item.durationDays} 天</TableCell>
+                  <TableCell className="text-right font-mono text-xs tabular-nums">{formatVipTerm(item)}</TableCell>
                   <TableCell className="text-right font-mono text-xs tabular-nums">{formatMoney(item.payAmount)}</TableCell>
                   <TableCell>
                     <Badge variant="outline" className="text-[10px]">
-                      {channelLabels[item.payChannel] ?? item.payChannel}
+                      {vipSourceLabel(item.payChannel)}
                     </Badge>
                     {item.relatedOrderNo ? (
                       <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">{item.relatedOrderNo}</span>
                     ) : null}
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{formatTime(item.expireAfter)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{formatVipExpireAfter(item, formatTime)}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{formatTime(item.createdAt)}</TableCell>
                 </TableRow>
               ))}

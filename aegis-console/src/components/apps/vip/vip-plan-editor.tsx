@@ -30,6 +30,7 @@ type Props = {
 type Form = {
   name: string;
   kind: VipPlanKind;
+  lifetime: boolean;
   trialDeviceLimited: boolean;
   features: string[];
   durationDays: string;
@@ -45,6 +46,7 @@ function seed(plan?: VipPlan | null): Form {
   return {
     name: plan?.name ?? "",
     kind: plan?.kind ?? "paid",
+    lifetime: plan?.lifetime ?? false,
     trialDeviceLimited: plan?.trialDeviceLimited ?? false,
     features: plan?.features ?? [],
     durationDays: String(plan?.durationDays ?? 30),
@@ -63,6 +65,9 @@ function seed(plan?: VipPlan | null): Form {
  * 草稿按「正在编辑哪一个」绑定（`draft.scope`），不用 `useEffect` 同步 ——
  * 与配置面板同一条约束：effect 同步既触发级联渲染，也会把上一个套餐的
  * 未保存改动串到下一个上。
+ *
+ * 期限（限时 / 永久）只在新建时可选：后端不允许已有套餐在两者之间切换
+ * （已卖出的开通按开通时的形态记账），试用套餐也不能是永久的。
  */
 export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasOtherActiveTrial }: Props) {
   const scope = plan ? `plan:${plan.id}` : "new";
@@ -73,7 +78,13 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
 
   const saveMutation = useSaveAdminVipPlanMutation(appKey);
   const isTrial = form.kind === "trial";
+  const lifetime = !isTrial && form.lifetime;
+  // 已有套餐的期限是定死的；永久套餐因此也不能改成试用
+  const termLocked = Boolean(plan);
   const trialConflict = isTrial && form.isActive && hasOtherActiveTrial;
+
+  const pickKind = (kind: VipPlanKind) =>
+    setDraft({ scope, value: { ...form, kind, lifetime: kind === "trial" ? false : form.lifetime } });
 
   const toggleFeature = (tag: string) => {
     patch(
@@ -89,7 +100,7 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
       return;
     }
     const durationDays = Number(form.durationDays);
-    if (!Number.isFinite(durationDays) || durationDays <= 0) {
+    if (!lifetime && (!Number.isFinite(durationDays) || durationDays <= 0)) {
       toast.error("套餐时长必须大于 0 天");
       return;
     }
@@ -105,9 +116,11 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
         id: plan?.id,
         name,
         kind: form.kind,
+        // 期限只在创建时下发：对已有套餐传一个不同的值会被后端拒绝
+        lifetime: plan ? undefined : lifetime,
         trialDeviceLimited: isTrial ? form.trialDeviceLimited : false,
         features: form.features,
-        durationDays,
+        durationDays: lifetime ? undefined : durationDays,
         price,
         originalPrice: form.originalPrice.trim() || undefined,
         bonusIntegral: Number(form.bonusIntegral) || 0,
@@ -135,7 +148,7 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
         <SheetHeader className="shrink-0 border-b px-6 py-4">
           <SheetTitle>{plan ? "编辑套餐" : "新建套餐"}</SheetTitle>
           <SheetDescription>
-            {isTrial ? "试用套餐" : "付费套餐"}
+            {isTrial ? "试用套餐" : lifetime ? "永久套餐" : "付费套餐"}
           </SheetDescription>
         </SheetHeader>
 
@@ -149,9 +162,10 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
                   <button
                     key={kind}
                     type="button"
-                    onClick={() => patch("kind", kind)}
+                    disabled={kind === "trial" && termLocked && form.lifetime}
+                    onClick={() => pickKind(kind)}
                     className={cn(
-                      "rounded-xl border px-3 py-2.5 text-left transition-colors",
+                      "rounded-xl border px-3 py-2.5 text-left transition-colors disabled:pointer-events-none disabled:opacity-50",
                       form.kind === kind
                         ? "border-primary/50 bg-primary/5 ring-1 ring-inset ring-primary/30"
                         : "border-border hover:bg-muted/60"
@@ -166,6 +180,35 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
               ) : null}
             </div>
 
+            {/* 期限：只在新建付费套餐时可选，之后只读 */}
+            {!isTrial ? (
+              <div className="space-y-2">
+                <Label className="text-xs">套餐期限</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([false, true] as const).map((value) => (
+                    <button
+                      key={String(value)}
+                      type="button"
+                      disabled={termLocked}
+                      onClick={() => patch("lifetime", value)}
+                      className={cn(
+                        "rounded-xl border px-3 py-2.5 text-left transition-colors disabled:pointer-events-none",
+                        form.lifetime === value
+                          ? "border-primary/50 bg-primary/5 ring-1 ring-inset ring-primary/30"
+                          : "border-border hover:bg-muted/60",
+                        termLocked && form.lifetime !== value && "opacity-50"
+                      )}
+                    >
+                      <div className="text-xs font-medium">{value ? "永久" : "限时"}</div>
+                    </button>
+                  ))}
+                </div>
+                {termLocked ? (
+                  <p className="text-[11px] text-muted-foreground">创建后不可更改</p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5 sm:col-span-2">
                 <Label className="text-xs">名称</Label>
@@ -176,14 +219,16 @@ export function VipPlanEditor({ appKey, open, onOpenChange, plan, features, hasO
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <Label className="text-xs">时长（天）</Label>
-                <Input
-                  inputMode="numeric"
-                  value={form.durationDays}
-                  onChange={(event) => patch("durationDays", event.target.value)}
-                />
-              </div>
+              {lifetime ? null : (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">时长（天）</Label>
+                  <Input
+                    inputMode="numeric"
+                    value={form.durationDays}
+                    onChange={(event) => patch("durationDays", event.target.value)}
+                  />
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <Label className="text-xs">价格</Label>

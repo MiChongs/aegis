@@ -124,7 +124,10 @@ function initials(nickname?: string | null, account?: string | null) {
   return String(nickname || account || "U").trim().slice(0, 2).toUpperCase();
 }
 
-function isVipActive(expireAt?: string | null) {
+/** 永久会员（vipLifetimeAt 非空）没有到期时间，一律算在期 */
+function isVipActive(user: Pick<AdminAppUserItem, "vipExpireAt" | "vipLifetimeAt">) {
+  if (user.vipLifetimeAt) return true;
+  const expireAt = user.vipExpireAt;
   if (!expireAt) return false;
   const time = new Date(expireAt).getTime();
   return !Number.isNaN(time) && time > Date.now();
@@ -336,7 +339,7 @@ export function SmartUserSearch({
                 ) : previewItems.length ? (
                   previewItems.map((user) => {
                     const enabled = user.enabled !== false;
-                    const vipActive = isVipActive(user.vipExpireAt);
+                    const vipActive = isVipActive(user);
                     return (
                       <CommandPrimitive.Item
                         key={user.id}

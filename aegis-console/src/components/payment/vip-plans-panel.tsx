@@ -20,10 +20,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { vipPlanTerm } from "@/components/apps/vip/vip-shared";
 
 type PlanDraft = {
   id?: number;
   name: string;
+  /** 只读：永久套餐只能在会员区块新建，这里只负责不把它当成「0 天」拦下 */
+  lifetime: boolean;
   durationDays: string;
   price: string;
   originalPrice: string;
@@ -35,6 +38,7 @@ type PlanDraft = {
 
 const emptyDraft: PlanDraft = {
   name: "",
+  lifetime: false,
   durationDays: "30",
   price: "",
   originalPrice: "",
@@ -67,6 +71,7 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
     setDraft({
       id: plan.id,
       name: plan.name,
+      lifetime: Boolean(plan.lifetime),
       durationDays: String(plan.durationDays),
       price: plan.price,
       originalPrice: plan.originalPrice ?? "",
@@ -84,7 +89,8 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
       return;
     }
     const days = Number(draft.durationDays);
-    if (!Number.isInteger(days) || days <= 0) {
+    // 永久套餐的时长恒为 0，后端也不收它的 durationDays
+    if (!draft.lifetime && (!Number.isInteger(days) || days <= 0)) {
       toast.error("套餐时长必须为正整数（天）");
       return;
     }
@@ -96,7 +102,7 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
       await saveMutation.mutateAsync({
         id: draft.id,
         name: draft.name.trim(),
-        durationDays: days,
+        durationDays: draft.lifetime ? undefined : days,
         price: Number(draft.price).toFixed(2),
         originalPrice: draft.originalPrice.trim() ? Number(draft.originalPrice).toFixed(2) : undefined,
         bonusIntegral: Number(draft.bonusIntegral) || 0,
@@ -133,7 +139,11 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
     }
     try {
       const txn = await grantMutation.mutateAsync({ userId, days, reason: grantReason.trim() || undefined });
-      toast.success(`已授予，到期 ${new Date(txn.expireAfter).toLocaleString("zh-CN", { hour12: false })}`);
+      toast.success(
+        txn.expireAfter
+          ? `已授予，到期 ${new Date(txn.expireAfter).toLocaleString("zh-CN", { hour12: false })}`
+          : "已授予"
+      );
       setGrantUserId("");
       setGrantReason("");
     } catch (err) {
@@ -183,7 +193,7 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
                       {plan.name}
                     </span>
                   </TableCell>
-                  <TableCell className="text-xs tabular-nums text-muted-foreground">{plan.durationDays} 天</TableCell>
+                  <TableCell className="text-xs tabular-nums text-muted-foreground">{vipPlanTerm(plan)}</TableCell>
                   <TableCell className="text-right font-mono text-xs tabular-nums">
                     {plan.price}
                     {plan.originalPrice ? <span className="ml-1.5 text-muted-foreground line-through">{plan.originalPrice}</span> : null}
@@ -236,10 +246,17 @@ export function VipPlansPanel({ appId }: { appId?: number | null }) {
               <Input className="h-8 text-sm" placeholder="月度会员" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs">时长（天） <span className="text-destructive">*</span></Label>
-                <Input className="h-8 text-sm" type="number" placeholder="30" value={draft.durationDays} onChange={(e) => setDraft({ ...draft, durationDays: e.target.value })} />
-              </div>
+              {draft.lifetime ? (
+                <div className="space-y-1">
+                  <Label className="text-xs">时长</Label>
+                  <Input className="h-8 text-sm" value="永久" disabled readOnly />
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <Label className="text-xs">时长（天） <span className="text-destructive">*</span></Label>
+                  <Input className="h-8 text-sm" type="number" placeholder="30" value={draft.durationDays} onChange={(e) => setDraft({ ...draft, durationDays: e.target.value })} />
+                </div>
+              )}
               <div className="space-y-1">
                 <Label className="text-xs">价格 <span className="text-destructive">*</span></Label>
                 <Input className="h-8 text-sm" placeholder="19.90" value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })} />

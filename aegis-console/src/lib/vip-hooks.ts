@@ -12,10 +12,13 @@ import {
   listAdminVipTransactions,
   listAdminVipTrialClaims,
   resetAdminVipTrial,
+  revokeAdminVip,
   saveAdminVipFeature,
   saveAdminVipPlan,
   type VipFeaturePayload,
-  type VipPlanPayload
+  type VipGrantPayload,
+  type VipPlanPayload,
+  type VipRevokePayload
 } from "@/lib/api/vip";
 import { useAdminToken } from "@/lib/admin-hooks";
 
@@ -119,8 +122,17 @@ export function useGrantAdminVipMutation(appKey?: string | null) {
   const token = useAdminToken();
   const invalidate = useInvalidateVipScope();
   return useMutation({
-    mutationFn: (payload: { userId: number; days: number; reason?: string; bonusIntegral?: number }) =>
-      grantAdminVip(token as string, appKey as string, payload),
+    mutationFn: (payload: VipGrantPayload) => grantAdminVip(token as string, appKey as string, payload),
+    onSuccess: invalidate
+  });
+}
+
+/** 收回会员：扣减限时天数，或取消永久会员（`lifetime: true`）。 */
+export function useRevokeAdminVipMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateVipScope();
+  return useMutation({
+    mutationFn: (payload: VipRevokePayload) => revokeAdminVip(token as string, appKey as string, payload),
     onSuccess: invalidate
   });
 }

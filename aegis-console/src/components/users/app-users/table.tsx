@@ -149,7 +149,15 @@ function relative(value?: string | null) {
   return fmtTime(value).slice(0, 10);
 }
 
-function vipState(expireAt?: string | null): "none" | "active" | "expired" {
+/**
+ * 会员状态。永久会员（vipLifetimeAt 非空）优先：它没有到期时间，
+ * vipExpireAt 此时要么为空、要么只是另买的限时那条线的到期时间。
+ */
+function vipState(
+  item: Pick<AdminAppUserItem, "vipExpireAt" | "vipLifetimeAt">
+): "none" | "lifetime" | "active" | "expired" {
+  if (item.vipLifetimeAt) return "lifetime";
+  const expireAt = item.vipExpireAt;
   if (!expireAt) return "none";
   const time = new Date(expireAt).getTime();
   if (Number.isNaN(time) || new Date(expireAt).getUTCFullYear() <= 1) return "none";
@@ -192,11 +200,11 @@ function UserAvatar({
   );
 }
 
-function VipMark() {
+function VipMark({ lifetime }: { lifetime?: boolean }) {
   return (
     <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-500/12 px-1.5 py-px text-[10px] font-medium text-amber-700 dark:text-amber-300">
       <Crown className="size-2.5" />
-      会员
+      {lifetime ? "永久会员" : "会员"}
     </span>
   );
 }
@@ -268,7 +276,7 @@ export function AppUsersTable({
         cell: ({ row }) => {
           const item = row.original;
           const enabled = item.enabled !== false;
-          const vip = vipState(item.vipExpireAt);
+          const vip = vipState(item);
           return (
             <div className="flex min-w-0 items-center gap-3">
               <UserAvatar item={item} enabled={enabled} className="size-10" />
@@ -277,7 +285,7 @@ export function AppUsersTable({
                   <span className="truncate text-sm font-medium">
                     {item.nickname || item.account || `用户 ${item.id}`}
                   </span>
-                  {vip === "active" ? <VipMark /> : null}
+                  {vip === "active" || vip === "lifetime" ? <VipMark lifetime={vip === "lifetime"} /> : null}
                 </div>
                 <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                   {item.account && item.nickname ? <span className="truncate">@{item.account}</span> : null}
@@ -319,7 +327,7 @@ export function AppUsersTable({
         header: "权益",
         cell: ({ row }) => {
           const item = row.original;
-          const vip = vipState(item.vipExpireAt);
+          const vip = vipState(item);
           return (
             <div className="min-w-0 space-y-1">
               <div className="flex items-baseline gap-3 text-xs">
@@ -332,7 +340,9 @@ export function AppUsersTable({
                   <span className="font-medium tabular-nums">{(item.experience ?? 0).toLocaleString("zh-CN")}</span>
                 </span>
               </div>
-              {vip === "active" ? (
+              {vip === "lifetime" ? (
+                <div className="text-[11px] text-amber-600 dark:text-amber-400">永久会员</div>
+              ) : vip === "active" ? (
                 <div className="text-[11px] text-amber-600 dark:text-amber-400">
                   会员至 {fmtDate(item.vipExpireAt)}
                 </div>
@@ -812,7 +822,7 @@ function UserGrid({
       {rows.map((row) => {
         const item = row.original;
         const enabled = item.enabled !== false;
-        const vip = vipState(item.vipExpireAt);
+        const vip = vipState(item);
         const selected = row.getIsSelected();
         return (
           <div
@@ -841,7 +851,7 @@ function UserGrid({
                   <span className="truncate text-sm font-semibold">
                     {item.nickname || item.account || `用户 ${item.id}`}
                   </span>
-                  {vip === "active" ? <VipMark /> : null}
+                  {vip === "active" || vip === "lifetime" ? <VipMark lifetime={vip === "lifetime"} /> : null}
                 </div>
                 <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                   {item.account ? <span className="truncate">@{item.account}</span> : null}

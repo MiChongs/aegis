@@ -317,6 +317,8 @@ function IdentityCard({
   onDelete: () => void;
 }) {
   const enabled = user.enabled !== false;
+  // 永久会员与限时会员并列：永久的那条线没有到期时间，徽标优先说「永久」
+  const vipLifetime = Boolean(user.vipLifetimeAt);
   const vipActive = Boolean(user.vipExpireAt) && !isPast(user.vipExpireAt);
   const avatar = user.avatar || user.profile?.avatar || "";
   const name = textValue(user.nickname || user.profile?.nickname, textValue(user.account));
@@ -360,7 +362,12 @@ function IdentityCard({
                   {enabled ? "正常" : "已限制"}
                 </Badge>
               )}
-              {vipActive ? (
+              {vipLifetime ? (
+                <Badge variant="warning" size="sm" title={`开通于 ${formatTime(user.vipLifetimeAt)}`}>
+                  <Crown />
+                  永久会员
+                </Badge>
+              ) : vipActive ? (
                 <Badge variant="warning" size="sm" title={`到期 ${formatTime(user.vipExpireAt)}`}>
                   <Crown />
                   会员至 {formatDate(user.vipExpireAt)}

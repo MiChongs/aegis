@@ -4,7 +4,7 @@ import { apiRequest, buildQuery } from "./client";
  * 会员域 API（应用级）。
  *
  * 覆盖后端 `/api/admin/apps/{appKey}/vip/*` 的全部管理能力：
- * 套餐（含试用）、功能标识目录、试用领取记录、会员权益判定、开通记录与授予。
+ * 套餐（含试用）、功能标识目录、试用领取记录、会员权益判定、开通记录、授予与收回。
  *
  * 金额一律按**字符串**处理（后端 shopspring/decimal），前端不做任何算术 ——
  * 转 number 会丢分，与交易中心同一条约束。
@@ -20,6 +20,8 @@ export type VipPlan = {
   appid: number;
   name: string;
   kind: VipPlanKind;
+  /** 永久套餐：durationDays 恒为 0，只能是付费套餐，创建后不能在永久与限时之间切换 */
+  lifetime: boolean;
   /** 仅试用套餐有意义：同一设备只能领一次 */
   trialDeviceLimited: boolean;
   /** 这个套餐解锁哪些功能标识（引用功能目录的 tag） */
@@ -40,8 +42,11 @@ export type VipPlanPayload = {
   id?: number;
   name?: string;
   kind?: VipPlanKind;
+  /** 只在创建时生效；对已有套餐传入不同的值，后端以 40014 拒绝 */
+  lifetime?: boolean;
   trialDeviceLimited?: boolean;
   features?: string[];
+  /** 永久套餐忽略 */
   durationDays?: number;
   price?: string;
   originalPrice?: string;
@@ -74,7 +79,8 @@ export type VipFeaturePayload = {
 
 /**
  * 会员来源：凭什么是会员。开通记录的渠道（payChannel）也用这组值，
- * 另多一档 `admin_revoke`（扣减天数）—— 它只出现在记录里，不会成为会员来源。
+ * 另多两档只出现在记录里、不会成为会员来源的：`admin_revoke`（扣减天数 / 取消永久会员）
+ * 与 `legacy_import`（老系统迁移进来的永久会员，判定时归为 `unknown`）。
  */
 export type VipSource =
   | "none"
@@ -85,6 +91,7 @@ export type VipSource =
   | "card_key"
   | "ad_reward"
   | "admin_revoke"
+  | "legacy_import"
   | "unknown";
 
 export type VipTrialState = {
@@ -120,7 +127,14 @@ export type VipTrialOffer = {
 
 export type VipEntitlement = {
   isVip: boolean;
+  /** 永久会员：此时没有 expireAt，remainingSeconds / remainingDays 为 0 */
+  isLifetime: boolean;
+  /** 成为永久会员的时间 */
+  lifetimeSince?: string;
+  /** 永久会员另有一段仍在期内的限时会员时，那段的到期时间 */
+  timedExpireAt?: string;
   isTrial: boolean;
+  /** 永久会员取最近一笔永久开通；老系统迁移的为 unknown */
   source: VipSource;
   planName?: string;
   expireAt?: string;
@@ -172,17 +186,22 @@ export type VipTransaction = {
   planId?: number;
   planName: string;
   features: string[];
+  /** 扣减天数时为负数；永久开通与取消永久会员时为 0 */
   durationDays: number;
+  /** 永久开通，或 admin_revoke 渠道下的「取消永久会员」留痕 */
+  lifetime: boolean;
   payChannel: VipSource;
   payAmount: string;
   relatedOrderNo?: string;
   bonusIntegral: number;
+  /** 限时那条线开通前后的到期时间；永久开通不动它，没有 expireAfter */
   expireBefore?: string;
-  expireAfter: string;
+  expireAfter?: string;
   operator?: string;
   metadata?: Record<string, unknown>;
-  /** 这笔开通已作废（目前只有退款冲正），不再贡献任何权益 */
+  /** 这笔开通已作废（退款冲正 / 取消永久会员），不再贡献任何权益 */
   revokedAt?: string;
+  /** refund / admin_revoke */
   revokeReason?: string;
   createdAt: string;
 };
@@ -253,12 +272,43 @@ export function getAdminVipEntitlement(token: string, appKey: string, userId: nu
   );
 }
 
-export function grantAdminVip(
-  token: string,
-  appKey: string,
-  payload: { userId: number; days: number; reason?: string; bonusIntegral?: number }
-) {
+/**
+ * 发放会员载荷。planId > 0 按套餐发放（时长与权益取自套餐 × quantity，永久套餐只能 1 份）；
+ * 否则自定义发放：lifetime 为 true 即发永久会员（days 忽略），否则按 days 发。
+ */
+export type VipGrantPayload = {
+  userId: number;
+  planId?: number;
+  quantity?: number;
+  days?: number;
+  lifetime?: boolean;
+  features?: string[];
+  reason?: string;
+  bonusIntegral?: number;
+};
+
+export function grantAdminVip(token: string, appKey: string, payload: VipGrantPayload) {
   return apiRequest<VipTransaction>(`/api/admin/apps/${appKey}/vip/grant`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+/**
+ * 收回会员载荷。lifetime 为 true 即取消永久会员（作废全部仍生效的永久开通，限时会员不受影响）；
+ * 否则从限时会员的到期时间往回扣 days 天。两者都只收权益不退钱。
+ */
+export type VipRevokePayload = {
+  userId: number;
+  lifetime?: boolean;
+  days?: number;
+  reason?: string;
+};
+
+/** 收回会员，返回那条留痕记录（payChannel 为 admin_revoke）。 */
+export function revokeAdminVip(token: string, appKey: string, payload: VipRevokePayload) {
+  return apiRequest<VipTransaction>(`/api/admin/apps/${appKey}/vip/revoke`, {
     method: "POST",
     token,
     body: JSON.stringify(payload)

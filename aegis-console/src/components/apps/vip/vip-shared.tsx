@@ -1,5 +1,16 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { VipFeature, VipSource, VipTrialReason } from "@/lib/api/vip";
@@ -22,19 +33,23 @@ const SOURCE_META: Record<VipSource, { label: string; variant: "success" | "info
   admin_grant: { label: "管理员授予", variant: "info" },
   card_key: { label: "卡密核销", variant: "info" },
   ad_reward: { label: "看广告领取", variant: "info" },
-  // 只出现在开通记录里：扣减天数是一条负时长的账，不是一段会员期
-  admin_revoke: { label: "扣减天数", variant: "warning" },
+  // 只出现在开通记录里：扣减天数是一条负时长的账，取消永久会员是一条 lifetime 留痕，
+  // 都不是一段会员期。具体收回了什么看时长列（formatVipTerm）
+  admin_revoke: { label: "收回", variant: "warning" },
+  // 只出现在开通记录里：老系统的永久会员由迁移补记，判定时归为 unknown
+  legacy_import: { label: "旧系统迁移", variant: "secondary" },
   // 老系统迁移进来的用户：到期时间是直接写进 users 的，账本里没有对应流水。
   // 谎报成某个具体渠道比说"不知道"更糟 —— 那会让对账的人去找一笔不存在的钱。
   unknown: { label: "来源未知", variant: "secondary" }
 };
 
-export function vipSourceLabel(source?: VipSource) {
-  return SOURCE_META[source ?? "none"]?.label ?? source ?? "—";
+/** 接受 string：交易中心与用户详情走的是宽松类型层（`lib/api/types.ts`），渠道是裸字符串 */
+export function vipSourceLabel(source?: VipSource | string) {
+  return SOURCE_META[(source ?? "none") as VipSource]?.label ?? source ?? "—";
 }
 
-export function VipSourceBadge({ source }: { source?: VipSource }) {
-  const meta = SOURCE_META[source ?? "none"] ?? SOURCE_META.none;
+export function VipSourceBadge({ source }: { source?: VipSource | string }) {
+  const meta = SOURCE_META[(source ?? "none") as VipSource] ?? SOURCE_META.none;
   return (
     <Badge variant={meta.variant} size="sm">
       {meta.label}
@@ -52,12 +67,27 @@ export const TRIAL_REASON_META: Record<VipTrialReason, { label: string }> = {
   device_required: { label: "缺设备标识" }
 };
 
-/** 会员状态徽标：是不是会员 / 是不是试用，一眼分清 */
-export function VipStatusBadge({ isVip, isTrial }: { isVip: boolean; isTrial: boolean }) {
+/** 会员状态徽标：是不是会员 / 是不是永久 / 是不是试用，一眼分清 */
+export function VipStatusBadge({
+  isVip,
+  isTrial,
+  isLifetime
+}: {
+  isVip: boolean;
+  isTrial: boolean;
+  isLifetime?: boolean;
+}) {
   if (!isVip) {
     return (
       <Badge variant="secondary" size="sm">
         非会员
+      </Badge>
+    );
+  }
+  if (isLifetime) {
+    return (
+      <Badge variant="success" size="sm">
+        永久会员
       </Badge>
     );
   }
@@ -143,6 +173,89 @@ export function FeatureTagList({
         <FeatureTag key={tag} tag={tag} catalog={catalog} />
       ))}
     </div>
+  );
+}
+
+/**
+ * 套餐时长。永久套餐的 durationDays 恒为 0，写成「0 天」会被读成「白送的空套餐」。
+ * 结构化入参：会员区块与用户详情 / 交易中心用的是两套类型层，字段同名。
+ */
+export function vipPlanTerm(plan: { lifetime?: boolean; durationDays: number }) {
+  return plan.lifetime ? "永久" : `${plan.durationDays} 天`;
+}
+
+type VipTermRecord = { lifetime?: boolean; durationDays: number; payChannel: string };
+
+/** 这条记录是不是一次永久开通（取消永久会员的留痕同样带 lifetime，要排除） */
+export function isLifetimeGrant(txn: VipTermRecord) {
+  return Boolean(txn.lifetime) && txn.payChannel !== "admin_revoke";
+}
+
+/**
+ * 一条开通记录给会员时长带来的变化：永久 / 取消永久 / +N 天 / -N 天。
+ * 扣减天数的记录 durationDays 本身就是负数。
+ */
+export function formatVipTerm(txn: VipTermRecord) {
+  if (txn.lifetime) return txn.payChannel === "admin_revoke" ? "取消永久" : "永久";
+  return txn.durationDays < 0 ? `-${Math.abs(txn.durationDays)} 天` : `+${txn.durationDays} 天`;
+}
+
+/**
+ * 开通记录的「发到」。永久开通不动限时那条线，没有 expireAfter；
+ * 取消永久会员的留痕也可能没有（用户没有限时会员时），那时只能是「—」而不是「永久」。
+ */
+export function formatVipExpireAfter(
+  txn: VipTermRecord & { expireAfter?: string | null },
+  format: (value: string) => string = formatVipDate
+) {
+  if (txn.expireAfter) return format(txn.expireAfter);
+  return isLifetimeGrant(txn) ? "永久" : "—";
+}
+
+/** 待确认的收回动作：取消永久会员 / 扣减限时天数 */
+export type VipRevokeAction = { lifetime: true } | { lifetime: false; days: number };
+
+/**
+ * 收回会员的确认弹窗（会员区块与用户详情共用，后果的说法只有一份）。
+ *
+ * 动作与开关由调用方分开存：关闭动画期间弹窗仍要显示刚才那个动作的文案，
+ * 用「动作为空即关闭」的话，取消永久会员的弹窗会在淡出时闪成「扣减 0 天」。
+ */
+export function VipRevokeDialog({
+  open,
+  action,
+  pending,
+  onOpenChange,
+  onConfirm
+}: {
+  open: boolean;
+  action: VipRevokeAction;
+  pending: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {action.lifetime ? "取消永久会员？" : `扣减 ${action.days} 天会员？`}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {action.lifetime
+              ? "全部永久开通将作废，限时会员不受影响，费用不退还。"
+              : `限时会员到期时间提前 ${action.days} 天，费用不退还。`}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={onConfirm} disabled={pending}>
+            {pending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            确认
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

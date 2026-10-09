@@ -904,11 +904,11 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 |---|---|
 | `components/apps/vip/app-vip-panel.tsx` | 骨架 + 四个视图的内部切换 |
 | `components/apps/vip/vip-plans-panel.tsx` | 套餐：付费与试用**分区**列出、逐条启停与删除 |
-| `components/apps/vip/vip-plan-editor.tsx` | 套餐编辑抽屉（种类 / 时长 / 价格 / 功能勾选 / 设备限制） |
+| `components/apps/vip/vip-plan-editor.tsx` | 套餐编辑抽屉（种类 / 期限 / 时长 / 价格 / 功能勾选 / 设备限制） |
 | `components/apps/vip/vip-features-panel.tsx` | 功能标识目录：建 / 停用 / 删除，并说清被哪些套餐用着 |
 | `components/apps/vip/vip-trial-panel.tsx` | 试用：汇总（累计 / 试用中 / **已转化** / 转化率）+ 领取记录 + 代领 + 恢复资格 |
-| `components/apps/vip/vip-member-panel.tsx` | 会员查询：权益全貌 + 试用历史与资格 + 授予 + 开通记录 |
-| `components/apps/vip/vip-shared.tsx` | 来源 / 状态徽标、功能标识徽标、金额与剩余时长格式化 |
+| `components/apps/vip/vip-member-panel.tsx` | 会员查询：权益全貌 + 试用历史与资格 + 授予 + 收回 + 开通记录 |
+| `components/apps/vip/vip-shared.tsx` | 来源 / 状态徽标、功能标识徽标、金额与剩余时长格式化、套餐期限与记录时长口径、收回确认弹窗（交易中心与用户详情也从这里取） |
 
 四条硬约束：
 
@@ -923,6 +923,11 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 
 `UserPicker` 的触发器是 `w-full`，**塞进 `SectionCard` 的 `aside` 必须套一层定宽容器** ——
 `SectionCard` 是 `overflow-hidden`，不定宽会把旁边的按钮整个顶出卡片外（不报错，只是看不见）。
+
+永久会员与限时会员是并列的两条线（`vipLifetimeAt` 与 `vipExpireAt`）：永久套餐恒 0 天、只能是付费套餐、
+期限只在新建时可选；永久会员没有到期时间，另买的限时会员到期时间看 `timedExpireAt`。
+「扣减天数」只动限时那条线、「取消永久会员」只动永久那条线，两个按钮按这个人实际有哪条线分别出现。
+套餐与开通记录的时长一律走 `vipPlanTerm` / `formatVipTerm`，不要再写 `{durationDays} 天` —— 永久套餐会显示成「0 天」。
 
 会员时长与功能权益的语义（顺延、并集、跟随套餐当前配置）全部由后端决定，控制台只展示；
 判定入口在 [internal/service](../internal/service/CLAUDE.md#会员判定与试用期会员)。

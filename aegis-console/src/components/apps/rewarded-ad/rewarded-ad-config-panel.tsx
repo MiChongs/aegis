@@ -12,6 +12,7 @@ import {
   SwitchRow
 } from "@/components/apps/app-config-primitives";
 import { VERIFY_MODE_META } from "@/components/apps/rewarded-ad/rewarded-ad-shared";
+import { vipPlanTerm } from "@/components/apps/vip/vip-shared";
 import { CopyButton } from "@/components/profile/profile-shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -128,7 +129,8 @@ export function RewardedAdConfigPanel({ appKey }: { appKey: string }) {
     patch({ scenes: current.scenes.map((scene) => (scene.uid === uid ? { ...scene, ...changes } : scene)) });
 
   const catalog = config?.catalog ?? [];
-  const plans = plansQuery.data ?? [];
+  // 永久套餐不能作为激励广告奖励（后端保存时拒绝），不列出来免得选了再报错
+  const plans = (plansQuery.data ?? []).filter((plan) => !plan.lifetime);
   const callbackUrl = config
     ? config.callbackAbsolute || typeof window === "undefined"
       ? config.callbackUrl
@@ -467,7 +469,7 @@ export function RewardedAdConfigPanel({ appKey }: { appKey: string }) {
                                     <SelectContent>
                                       {plans.map((plan) => (
                                         <SelectItem key={plan.id} value={String(plan.id)}>
-                                          {plan.name}（{plan.durationDays} 天）
+                                          {plan.name}（{vipPlanTerm(plan)}）
                                         </SelectItem>
                                       ))}
                                     </SelectContent>

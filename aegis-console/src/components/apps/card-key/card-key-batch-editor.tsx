@@ -30,6 +30,7 @@ import type {
   CardKeyRewardSpec,
   CardKeyValidityMode
 } from "@/lib/api/card-key";
+import { vipPlanTerm } from "@/components/apps/vip/vip-shared";
 import { useCardKeyCatalogQuery, useGenerateCardKeysMutation } from "@/lib/card-key-hooks";
 import { useAdminVipPlansQuery } from "@/lib/vip-hooks";
 
@@ -375,7 +376,7 @@ export function CardKeyBatchEditor({
                                   <SelectContent>
                                     {plans.map((plan) => (
                                       <SelectItem key={plan.id} value={String(plan.id)}>
-                                        {plan.name}（{plan.durationDays} 天）
+                                        {plan.name}（{vipPlanTerm(plan)}）
                                       </SelectItem>
                                     ))}
                                   </SelectContent>

@@ -53,6 +53,7 @@ export function UserOverviewTab({
 }) {
   const profile = user.profile;
   const security = user.security;
+  const vipLifetime = Boolean(user.vipLifetimeAt);
   const vipActive = Boolean(user.vipExpireAt) && !isPast(user.vipExpireAt);
   const walletReady = hasWallet(wallet);
 
@@ -84,13 +85,23 @@ export function UserOverviewTab({
           icon={<Wallet className="size-3.5" />}
           hint={walletReady ? `冻结 ¥ ${formatMoney(wallet?.frozen)}` : "钱包数据不可用"}
         />
-        <StatTile
-          label="会员"
-          value={vipActive ? relativeTime(user.vipExpireAt) : user.vipExpireAt ? "已过期" : "非会员"}
-          icon={<Crown className="size-3.5" />}
-          tone={vipActive ? "success" : user.vipExpireAt ? "warning" : "default"}
-          hint={user.vipExpireAt ? `到期 ${formatTime(user.vipExpireAt)}` : "从未开通"}
-        />
+        {vipLifetime ? (
+          <StatTile
+            label="会员"
+            value="永久会员"
+            icon={<Crown className="size-3.5" />}
+            tone="success"
+            hint={`开通于 ${formatTime(user.vipLifetimeAt)}`}
+          />
+        ) : (
+          <StatTile
+            label="会员"
+            value={vipActive ? relativeTime(user.vipExpireAt) : user.vipExpireAt ? "已过期" : "非会员"}
+            icon={<Crown className="size-3.5" />}
+            tone={vipActive ? "success" : user.vipExpireAt ? "warning" : "default"}
+            hint={user.vipExpireAt ? `到期 ${formatTime(user.vipExpireAt)}` : "从未开通"}
+          />
+        )}
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">

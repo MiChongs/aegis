@@ -1212,6 +1212,8 @@ export type VipPlan = {
   name: string;
   /** paid（付费）/ trial（试用） */
   kind?: string;
+  /** 永久套餐：durationDays 恒为 0，只能是付费套餐，创建后不能切换 */
+  lifetime?: boolean;
   trialDeviceLimited?: boolean;
   /** 套餐包含的权益标识（引用会员功能目录 tag） */
   features?: string[];
@@ -1234,14 +1236,21 @@ export type VipTransaction = {
   planId?: number | null;
   planName: string;
   features?: string[];
+  /** 扣减天数时为负数；永久开通与取消永久会员时为 0 */
   durationDays: number;
+  /** 永久开通，或 admin_revoke 渠道下的「取消永久会员」留痕 */
+  lifetime?: boolean;
   payChannel: string;
   payAmount: string;
   relatedOrderNo?: string;
   bonusIntegral: number;
   expireBefore?: string | null;
-  expireAfter: string;
+  /** 永久开通不动限时那条线，没有 expireAfter */
+  expireAfter?: string | null;
   operator?: string;
+  /** 这笔开通已作废（refund / admin_revoke） */
+  revokedAt?: string | null;
+  revokeReason?: string;
   createdAt: string;
 };
 
@@ -1283,6 +1292,12 @@ export type VipTrialOffer = {
 /** 会员权益判定结果，与用户端 /vip/status 同源 */
 export type VipEntitlement = {
   isVip: boolean;
+  /** 永久会员：此时没有 expireAt，remainingSeconds / remainingDays 为 0 */
+  isLifetime?: boolean;
+  /** 成为永久会员的时间 */
+  lifetimeSince?: string | null;
+  /** 永久会员另有一段仍在期内的限时会员时，那段的到期时间 */
+  timedExpireAt?: string | null;
   isTrial: boolean;
   /** none / unknown / trial / wallet / payment_order / admin_grant / card_key / ad_reward */
   source: string;
@@ -3124,7 +3139,10 @@ export type AdminAppUserItem = {
   registerProvince?: string;
   registerCity?: string;
   registerIsp?: string;
+  /** 限时会员到期时间；永久会员通常为空（另买了限时套餐时是那条线的到期时间） */
   vipExpireAt?: string | null;
+  /** 成为永久会员的时间，非空即永久会员 */
+  vipLifetimeAt?: string | null;
   disabledReason?: string;
   disabledEndTime?: string | null;
   markcode?: string;
