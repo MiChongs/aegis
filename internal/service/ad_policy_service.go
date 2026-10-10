@@ -214,7 +214,13 @@ func (s *AdPolicyService) ReportSplash(ctx context.Context, input adpolicy.Splas
 			continue
 		}
 		seen[eventID] = true
+		// 账号只能来自令牌，客户端只能声明「这条不属于当前账号」，不能把记录挂到别人头上。
+		userID := input.UserID
+		if item.Anonymous {
+			userID = 0
+		}
 		events = append(events, adpolicy.SplashEvent{
+			UserID:       userID,
 			EventID:      eventID,
 			PlacementID:  adpolicy.TruncateRunes(item.PlacementID, 64),
 			Status:       status,
@@ -225,7 +231,7 @@ func (s *AdPolicyService) ReportSplash(ctx context.Context, input adpolicy.Splas
 			OccurredAt:   adpolicy.ClampOccurredAt(item.OccurredAt, now),
 		})
 	}
-	recorded, err := s.pg.RecordSplashEvents(ctx, input.AppID, input.UserID,
+	recorded, err := s.pg.RecordSplashEvents(ctx, input.AppID,
 		adpolicy.TruncateRunes(input.DeviceID, 128), adpolicy.TruncateRunes(input.ClientIP, 64), events)
 	if err != nil {
 		return nil, err

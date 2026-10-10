@@ -192,6 +192,8 @@ type SplashEventInput struct {
 	LoadMs       int
 	ShownMs      int
 	OccurredAt   *time.Time
+	// Anonymous 这次开屏发生时没有登录（或登录的是另一个账号）：不挂到上报时的账号上。
+	Anonymous bool
 }
 
 // SplashReportInput 一批开屏记录。登录用户挂在账号上，未登录时 UserID 为 0。

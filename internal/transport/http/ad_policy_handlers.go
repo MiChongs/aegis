@@ -49,6 +49,9 @@ type AdConsentRequest struct {
 }
 
 // AdSplashEventRequest 一次开屏尝试。eventId 由客户端生成（8–64 位字母数字 _ -），重传不会重复记录。
+//
+// 记录默认挂到上报时令牌所属的账号上。这次开屏发生时没有登录、或登录的是另一个账号的，
+// 置 anonymous：只留设备标识，不会被记到补报时登录的账号上。
 type AdSplashEventRequest struct {
 	EventID      string     `json:"eventId"`
 	PlacementID  string     `json:"placementId"`
@@ -58,6 +61,7 @@ type AdSplashEventRequest struct {
 	LoadMs       int        `json:"loadMs"`
 	ShownMs      int        `json:"shownMs"`
 	OccurredAt   *time.Time `json:"occurredAt"`
+	Anonymous    bool       `json:"anonymous"`
 }
 
 // AdSplashReportRequest 一批开屏记录（最多 50 条）。
@@ -297,6 +301,7 @@ func (h *Handler) AppReportSplashAd(c *gin.Context) {
 			LoadMs:       item.LoadMs,
 			ShownMs:      item.ShownMs,
 			OccurredAt:   item.OccurredAt,
+			Anonymous:    item.Anonymous,
 		})
 	}
 	result, err := h.adPolicy.ReportSplash(c.Request.Context(), adpolicy.SplashReportInput{

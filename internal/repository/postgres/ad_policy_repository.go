@@ -271,10 +271,8 @@ l.source, l.device_id, l.client_ip, l.created_at`+from+clause+
 // ── 开屏广告 ──
 
 // RecordSplashEvents 落一批开屏记录，返回实际新增了几条（重复的 eventId 不算）。
-//
-// 一条记录挂到哪个账号由上报时的令牌决定，不由客户端在记录里声明：
-// 未登录时攒下的记录在登录后补报，也不会被记到登录的账号上。
-func (r *Repository) RecordSplashEvents(ctx context.Context, appID, userID int64, deviceID, clientIP string,
+// 每条挂到哪个账号由服务层按上报时的令牌与记录上的 anonymous 定好（SplashEvent.UserID）。
+func (r *Repository) RecordSplashEvents(ctx context.Context, appID int64, deviceID, clientIP string,
 	events []adpolicy.SplashEvent) (int, error) {
 	if len(events) == 0 {
 		return 0, nil
@@ -295,7 +293,7 @@ func (r *Repository) RecordSplashEvents(ctx context.Context, appID, userID int64
  client_ip, occurred_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 ON CONFLICT (appid, event_id) DO NOTHING`,
-			appID, nullableInt64(userID), event.EventID, deviceID, event.PlacementID, event.Status,
+			appID, nullableInt64(event.UserID), event.EventID, deviceID, event.PlacementID, event.Status,
 			event.ErrorCode, event.ErrorMessage, event.LoadMs, event.ShownMs, clientIP, event.OccurredAt)
 		if err != nil {
 			return 0, err

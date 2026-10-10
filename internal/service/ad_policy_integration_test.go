@@ -153,8 +153,13 @@ func TestAdPolicyIntegration(t *testing.T) {
 		Events: []adpolicy.SplashEventInput{{EventID: "evt-guest-01", Status: "clicked"}}}); err != nil {
 		t.Fatal(err)
 	}
+	// 登录后补报未登录时攒下的记录：置 anonymous 的不挂到登录的账号上
+	if _, err := svc.ReportSplash(ctx, adpolicy.SplashReportInput{AppID: appID, UserID: userB, DeviceID: "device-guest",
+		Events: []adpolicy.SplashEventInput{{EventID: "evt-guest-02", Status: "shown", Anonymous: true}}}); err != nil {
+		t.Fatal(err)
+	}
 	guestAfter, err := svc.ClientPolicy(ctx, appID, 0, "device-guest")
-	if err != nil || guestAfter.Splash.TodayCount != 1 || guestAfter.Splash.Available {
+	if err != nil || guestAfter.Splash.TodayCount != 2 || guestAfter.Splash.Available {
 		t.Fatalf("未登录按设备频控，得到 %+v / %v", guestAfter.Splash, err)
 	}
 	bAfter, err := svc.ClientPolicy(ctx, appID, userB, "device-guest")
@@ -203,7 +208,7 @@ func TestAdPolicyIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stats.Trend) != 7 || stats.Summary.Outdated != 2 || stats.Summary.TodayShown != 2 || stats.Summary.TodayFailed != 1 ||
+	if len(stats.Trend) != 7 || stats.Summary.Outdated != 2 || stats.Summary.TodayShown != 3 || stats.Summary.TodayFailed != 1 ||
 		stats.Summary.TodayClicked != 1 || stats.Summary.TodayUsers != 2 {
 		t.Fatalf("统计不对：%+v", stats.Summary)
 	}

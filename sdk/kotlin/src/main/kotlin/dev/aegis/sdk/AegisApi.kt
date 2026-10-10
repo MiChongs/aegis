@@ -628,7 +628,8 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
      *
      * 每条记录的字段：`eventId`（客户端生成，8–64 位字母数字 `_` `-`，重传不会重复记录）、
      * `status`（`shown` / `clicked` / `failed` / `timeout`）、`placementId`、`errorCode`、
-     * `errorMessage`、`loadMs`、`shownMs`、`occurredAt`（RFC 3339）。
+     * `errorMessage`、`loadMs`、`shownMs`、`occurredAt`（RFC 3339）、`anonymous`
+     * （这次开屏发生时没有登录或登录的是另一个账号：不挂到上报时的账号上）。
      */
     @Throws(IOException::class)
     @JvmOverloads
