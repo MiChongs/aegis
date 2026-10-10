@@ -376,12 +376,13 @@ type AdminAppSignInStatsQuery struct {
 }
 
 type AdminAppSignInRecordQuery struct {
-	Keyword  string `form:"keyword"`
-	Source   string `form:"source"`
-	DateFrom string `form:"dateFrom"`
-	DateTo   string `form:"dateTo"`
-	Page     int    `form:"page"`
-	Limit    int    `form:"limit"`
+	Keyword   string `form:"keyword"`
+	Source    string `form:"source"`
+	BonusType string `form:"bonusType"`
+	DateFrom  string `form:"dateFrom"`
+	DateTo    string `form:"dateTo"`
+	Page      int    `form:"page"`
+	Limit     int    `form:"limit"`
 }
 
 type AdminLoginAuditQuery struct {

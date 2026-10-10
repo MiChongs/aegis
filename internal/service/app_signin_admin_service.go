@@ -40,12 +40,13 @@ func (s *AppService) ListAppSignInRecords(ctx context.Context, appID int64, quer
 	}
 
 	items, total, err := s.pg.ListAppSignInRecords(ctx, appID, appdomain.AppSignInRecordQuery{
-		Keyword:  query.Keyword,
-		Source:   query.Source,
-		DateFrom: query.DateFrom,
-		DateTo:   query.DateTo,
-		Page:     page,
-		Limit:    limit,
+		Keyword:   query.Keyword,
+		Source:    query.Source,
+		BonusType: query.BonusType,
+		DateFrom:  query.DateFrom,
+		DateTo:    query.DateTo,
+		Page:      page,
+		Limit:     limit,
 	})
 	if err != nil {
 		return nil, err

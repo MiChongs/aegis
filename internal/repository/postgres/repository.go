@@ -2724,10 +2724,16 @@ LIMIT $3`
 
 func (r *Repository) GetAppSignInStats(ctx context.Context, appID int64, today time.Time, startDate time.Time, endDate time.Time) (*appdomain.AppSignInStats, error) {
 	item := &appdomain.AppSignInStats{
-		AppID: appID,
-		Days:  int(endDate.Sub(startDate).Hours()/24) + 1,
-		Trend: make([]appdomain.AppSignInTrendPoint, 0),
+		AppID:            appID,
+		Days:             int(endDate.Sub(startDate).Hours()/24) + 1,
+		Trend:            make([]appdomain.AppSignInTrendPoint, 0),
+		HourDistribution: make([]int64, 24),
+		Timezone:         today.Location().String(),
 	}
+	todayDate := today.Format("2006-01-02")
+	yesterdayDate := today.AddDate(0, 0, -1).Format("2006-01-02")
+	startDay := startDate.Format("2006-01-02")
+	endDay := endDate.Format("2006-01-02")
 
 	if err := r.pool.QueryRow(ctx, `SELECT
     COUNT(*) AS total_sign_records,
@@ -2736,9 +2742,14 @@ func (r *Repository) GetAppSignInStats(ctx context.Context, appID int64, today t
     COALESCE(SUM(ds.experience_reward), 0) AS total_experience_reward,
     COALESCE(AVG(ds.consecutive_days)::float8, 0) AS avg_consecutive_days,
     COALESCE(MAX(ds.consecutive_days), 0) AS max_consecutive_days,
-    COUNT(*) FILTER (WHERE ds.sign_date = $2::date) AS today_sign_count
+    COUNT(*) FILTER (WHERE ds.sign_date = $2::date) AS today_sign_count,
+    COUNT(*) FILTER (WHERE ds.sign_date = $3::date) AS yesterday_sign_count,
+    COUNT(*) FILTER (WHERE ds.sign_date BETWEEN $4::date AND $5::date) AS window_sign_count,
+    COUNT(DISTINCT ds.user_id) FILTER (WHERE ds.sign_date BETWEEN $4::date AND $5::date) AS window_unique_users,
+    COALESCE(SUM(ds.integral_reward) FILTER (WHERE ds.sign_date BETWEEN $4::date AND $5::date), 0) AS window_integral,
+    COALESCE(SUM(ds.experience_reward) FILTER (WHERE ds.sign_date BETWEEN $4::date AND $5::date), 0) AS window_experience
 FROM daily_signins ds
-WHERE ds.appid = $1`, appID, today.Format("2006-01-02")).Scan(
+WHERE ds.appid = $1`, appID, todayDate, yesterdayDate, startDay, endDay).Scan(
 		&item.TotalSignRecords,
 		&item.UniqueSignedUsers,
 		&item.TotalIntegralReward,
@@ -2746,39 +2757,44 @@ WHERE ds.appid = $1`, appID, today.Format("2006-01-02")).Scan(
 		&item.AvgConsecutiveDays,
 		&item.MaxConsecutiveDays,
 		&item.TodaySignCount,
+		&item.YesterdaySignCount,
+		&item.WindowSignCount,
+		&item.WindowUniqueUsers,
+		&item.WindowIntegralReward,
+		&item.WindowExperienceReward,
 	); err != nil {
 		return nil, err
 	}
 
-	rows, err := r.pool.Query(ctx, `SELECT sign_date, COUNT(*)
+	// 趋势：同一用户同一天只能签一次（唯一约束），所以 count 同时就是当天签到人数
+	rows, err := r.pool.Query(ctx, `SELECT sign_date, COUNT(*), COALESCE(SUM(integral_reward), 0), COALESCE(SUM(experience_reward), 0)
 FROM daily_signins
 WHERE appid = $1
   AND sign_date BETWEEN $2::date AND $3::date
 GROUP BY sign_date
-ORDER BY sign_date ASC`, appID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+ORDER BY sign_date ASC`, appID, startDay, endDay)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	trendMap := make(map[string]int64, item.Days)
+	trendMap := make(map[string]appdomain.AppSignInTrendPoint, item.Days)
 	for rows.Next() {
 		var signDate time.Time
-		var count int64
-		if err := rows.Scan(&signDate, &count); err != nil {
+		var point appdomain.AppSignInTrendPoint
+		if err := rows.Scan(&signDate, &point.Count, &point.IntegralReward, &point.ExperienceReward); err != nil {
 			return nil, err
 		}
-		trendMap[signDate.Format("2006-01-02")] = count
+		trendMap[signDate.Format("2006-01-02")] = point
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	for cursor := startDate; !cursor.After(endDate); cursor = cursor.AddDate(0, 0, 1) {
 		day := cursor.Format("2006-01-02")
-		item.Trend = append(item.Trend, appdomain.AppSignInTrendPoint{
-			Date:  day,
-			Count: trendMap[day],
-		})
+		point := trendMap[day]
+		point.Date = day
+		item.Trend = append(item.Trend, point)
 	}
 
 	sourceRows, err := r.pool.Query(ctx, `SELECT
@@ -2801,7 +2817,108 @@ ORDER BY total DESC, source ASC`, appID)
 		}
 		item.Sources = append(item.Sources, stat)
 	}
-	return item, sourceRows.Err()
+	if err := sourceRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 签到时段：signed_at 存的是绝对时刻，按统计时区的固定偏移折算成本地小时
+	_, offsetSeconds := today.Zone()
+	hourRows, err := r.pool.Query(ctx, `SELECT
+    EXTRACT(HOUR FROM (signed_at AT TIME ZONE 'UTC') + make_interval(secs => $4))::int AS hour,
+    COUNT(*)
+FROM daily_signins
+WHERE appid = $1
+  AND sign_date BETWEEN $2::date AND $3::date
+GROUP BY 1`, appID, startDay, endDay, float64(offsetSeconds))
+	if err != nil {
+		return nil, err
+	}
+	defer hourRows.Close()
+	for hourRows.Next() {
+		var hour int
+		var count int64
+		if err := hourRows.Scan(&hour, &count); err != nil {
+			return nil, err
+		}
+		if hour >= 0 && hour < 24 {
+			item.HourDistribution[hour] = count
+		}
+	}
+	if err := hourRows.Err(); err != nil {
+		return nil, err
+	}
+
+	bonusRows, err := r.pool.Query(ctx, `SELECT COALESCE(NULLIF(bonus_type, ''), 'normal') AS bonus_type, COUNT(*)
+FROM daily_signins
+WHERE appid = $1
+  AND sign_date BETWEEN $2::date AND $3::date
+GROUP BY 1
+ORDER BY 2 DESC, 1 ASC
+LIMIT 12`, appID, startDay, endDay)
+	if err != nil {
+		return nil, err
+	}
+	defer bonusRows.Close()
+	item.BonusTypes = make([]appdomain.AppSignInBonusTypeStat, 0, 12)
+	for bonusRows.Next() {
+		var stat appdomain.AppSignInBonusTypeStat
+		if err := bonusRows.Scan(&stat.BonusType, &stat.Count); err != nil {
+			return nil, err
+		}
+		item.BonusTypes = append(item.BonusTypes, stat)
+	}
+	if err := bonusRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 连签仍在延续的用户：今天或昨天签过（昨天签过的人今天还有机会续上）
+	var b1, b2, b3, b4, b5, b6 int64
+	if err := r.pool.QueryRow(ctx, `SELECT
+    COUNT(*),
+    COUNT(*) FILTER (WHERE consecutive_days <= 1),
+    COUNT(*) FILTER (WHERE consecutive_days BETWEEN 2 AND 6),
+    COUNT(*) FILTER (WHERE consecutive_days BETWEEN 7 AND 13),
+    COUNT(*) FILTER (WHERE consecutive_days BETWEEN 14 AND 29),
+    COUNT(*) FILTER (WHERE consecutive_days BETWEEN 30 AND 89),
+    COUNT(*) FILTER (WHERE consecutive_days >= 90)
+FROM sign_stats
+WHERE appid = $1 AND last_sign_date >= $2::date`, appID, yesterdayDate).Scan(
+		&item.ActiveStreakUsers, &b1, &b2, &b3, &b4, &b5, &b6,
+	); err != nil {
+		return nil, err
+	}
+	item.StreakBuckets = []appdomain.AppSignInStreakBucket{
+		{Label: "1 天", Min: 1, Max: 1, Count: b1},
+		{Label: "2-6 天", Min: 2, Max: 6, Count: b2},
+		{Label: "7-13 天", Min: 7, Max: 13, Count: b3},
+		{Label: "14-29 天", Min: 14, Max: 29, Count: b4},
+		{Label: "30-89 天", Min: 30, Max: 89, Count: b5},
+		{Label: "90 天以上", Min: 90, Max: 0, Count: b6},
+	}
+
+	topRows, err := r.pool.Query(ctx, `SELECT ss.user_id, u.account, COALESCE(p.nickname, ''), COALESCE(p.avatar, ''),
+    ss.consecutive_days, ss.total_sign_days, ss.last_sign_date
+FROM sign_stats ss
+JOIN users u ON u.id = ss.user_id AND u.appid = ss.appid
+LEFT JOIN user_profiles p ON p.user_id = u.id
+WHERE ss.appid = $1 AND ss.last_sign_date >= $2::date AND ss.consecutive_days > 0
+ORDER BY ss.consecutive_days DESC, ss.total_sign_days DESC, ss.user_id ASC
+LIMIT 8`, appID, yesterdayDate)
+	if err != nil {
+		return nil, err
+	}
+	defer topRows.Close()
+	item.TopStreaks = make([]appdomain.AppSignInStreakUser, 0, 8)
+	for topRows.Next() {
+		var user appdomain.AppSignInStreakUser
+		var lastSign time.Time
+		if err := topRows.Scan(&user.UserID, &user.Account, &user.Nickname, &user.Avatar, &user.ConsecutiveDays, &user.TotalSignDays, &lastSign); err != nil {
+			return nil, err
+		}
+		user.LastSignDate = lastSign.Format("2006-01-02")
+		item.TopStreaks = append(item.TopStreaks, user)
+	}
+	return item, topRows.Err()
 }
 
 func (r *Repository) ListAppSignInRecords(ctx context.Context, appID int64, query appdomain.AppSignInRecordQuery) ([]appdomain.AppSignInRecordItem, int64, error) {
@@ -2834,6 +2951,14 @@ WHERE ds.appid = $1`
 	if source := strings.TrimSpace(query.Source); source != "" && source != "all" {
 		baseQuery += fmt.Sprintf(" AND COALESCE(NULLIF(ds.sign_in_source, ''), 'manual') = $%d", len(args)+1)
 		args = append(args, source)
+	}
+	if bonusType := strings.TrimSpace(query.BonusType); bonusType != "" && bonusType != "all" {
+		if bonusType == "normal" {
+			baseQuery += fmt.Sprintf(" AND COALESCE(NULLIF(ds.bonus_type, ''), 'normal') = $%d", len(args)+1)
+		} else {
+			baseQuery += fmt.Sprintf(" AND ds.bonus_type = $%d", len(args)+1)
+		}
+		args = append(args, bonusType)
 	}
 	if query.DateFrom != nil {
 		baseQuery += fmt.Sprintf(" AND ds.sign_date >= $%d::date", len(args)+1)

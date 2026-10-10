@@ -83,15 +83,33 @@ func (s *AppService) PreviewSignInReward(ctx context.Context, appID int64, input
 		return nil, err
 	}
 	policy := resolveSignInRewardPolicy(app)
+	draft := false
+	if input.Policy != nil {
+		normalized, validationErrors := normalizeAndValidateSignInRewardPolicy(*input.Policy)
+		if len(validationErrors) > 0 {
+			return nil, apperrors.New(40067, http.StatusBadRequest, strings.Join(validationErrors, "; "))
+		}
+		policy = normalized
+		draft = true
+	}
 	occurredAt := time.Now()
 	if input.OccurredAt != nil && !input.OccurredAt.IsZero() {
 		occurredAt = *input.OccurredAt
+	}
+	if input.ConsecutiveDays < 1 {
+		input.ConsecutiveDays = 1
+	}
+	if input.TotalSignIns < 0 {
+		input.TotalSignIns = 0
+	}
+	if input.UserExperience < 0 {
+		input.UserExperience = 0
 	}
 	resolved, appliedRules, env, err := calculateSignInRewardWithPolicy(ctx, s.pg, policy, occurredAt, input.UserExperience, input.ConsecutiveDays, input.TotalSignIns)
 	if err != nil {
 		return nil, err
 	}
-	return &appdomain.SignInRewardPreview{
+	preview := &appdomain.SignInRewardPreview{
 		AppID:        appID,
 		AppName:      app.Name,
 		OccurredAt:   occurredAt,
@@ -100,7 +118,80 @@ func (s *AppService) PreviewSignInReward(ctx context.Context, appID int64, input
 		Reward:       resolved,
 		AppliedRules: appliedRules,
 		Environment:  env,
-	}, nil
+		Draft:        draft,
+	}
+	if input.SimulateDays > 0 {
+		simulation, err := simulateSignInRewards(ctx, s.pg, policy, occurredAt, input)
+		if err != nil {
+			return nil, err
+		}
+		preview.Simulation = simulation
+	}
+	return preview, nil
+}
+
+// simulateSignInRewards 从 input 描述的那一天起逐日推演连续签到。
+//
+// 每过一天：连签 +1、累计签到 +1、当天拿到的经验加回用户经验（等级经验倍率会随等级变化）。
+// 日期按策略时区推进，周末、月初这类按日期判断的规则因此会在对应的那天命中。
+func simulateSignInRewards(ctx context.Context, pg experienceMultiplierProvider, policy appdomain.SignInRewardPolicy, start time.Time, input appdomain.SignInRewardPreviewInput) (*appdomain.SignInRewardSimulation, error) {
+	days := input.SimulateDays
+	if days > appdomain.SignInRewardMaxSimulateDays {
+		days = appdomain.SignInRewardMaxSimulateDays
+	}
+	location, err := timeutil.LoadLocation(policy.Timezone)
+	if err != nil {
+		location = timeutil.DefaultLocation()
+	}
+	start = start.In(location)
+
+	result := &appdomain.SignInRewardSimulation{
+		Days:     make([]appdomain.SignInRewardSimulationDay, 0, days),
+		RuleHits: map[string]int{},
+	}
+	experience := input.UserExperience
+	for i := 0; i < days; i++ {
+		occurredAt := start.AddDate(0, 0, i)
+		consecutive := input.ConsecutiveDays + i
+		reward, applied, _, err := calculateSignInRewardWithPolicy(ctx, pg, policy, occurredAt, experience, consecutive, input.TotalSignIns+int64(i))
+		if err != nil {
+			return nil, err
+		}
+		keys := make([]string, 0, len(applied))
+		milestone := false
+		for _, rule := range applied {
+			keys = append(keys, rule.Key)
+			result.RuleHits[rule.Key]++
+			if rule.ConsecutiveDays > 0 {
+				milestone = true
+			}
+		}
+		result.TotalIntegral += reward.IntegralReward
+		result.TotalExperience += reward.ExperienceReward
+		result.PeakIntegral = max(result.PeakIntegral, reward.IntegralReward)
+		result.PeakExperience = max(result.PeakExperience, reward.ExperienceReward)
+		experience += reward.ExperienceReward
+
+		weekday := int(occurredAt.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		result.Days = append(result.Days, appdomain.SignInRewardSimulationDay{
+			Day:                  i + 1,
+			Date:                 occurredAt.Format("2006-01-02"),
+			WeekdayISO:           weekday,
+			ConsecutiveDays:      consecutive,
+			IntegralReward:       reward.IntegralReward,
+			ExperienceReward:     reward.ExperienceReward,
+			RewardMultiplier:     reward.RewardMultiplier,
+			BonusType:            reward.BonusType,
+			AppliedRules:         keys,
+			Milestone:            milestone,
+			CumulativeIntegral:   result.TotalIntegral,
+			CumulativeExperience: result.TotalExperience,
+		})
+	}
+	return result, nil
 }
 
 func resolveSignInRewardPolicy(app *appdomain.App) appdomain.SignInRewardPolicy {
@@ -327,28 +418,28 @@ func normalizeAndValidateSignInRewardPolicy(policy appdomain.SignInRewardPolicy)
 
 	errorsList := make([]string, 0)
 	if _, err := timeutil.LoadLocation(policy.Timezone); err != nil {
-		errorsList = append(errorsList, "timezone 无效")
+		errorsList = append(errorsList, "时区无效")
 	}
 	if policy.BaseIntegral < 0 || policy.BaseIntegral > 1_000_000 {
-		errorsList = append(errorsList, "baseIntegral 必须在 0-1000000 之间")
+		errorsList = append(errorsList, "基础积分必须在 0-1000000 之间")
 	}
 	if policy.BaseExperience < 0 || policy.BaseExperience > 1_000_000 {
-		errorsList = append(errorsList, "baseExperience 必须在 0-1000000 之间")
+		errorsList = append(errorsList, "基础经验必须在 0-1000000 之间")
 	}
 	if policy.FirstSignInExperienceBonus < 0 || policy.FirstSignInExperienceBonus > 1_000_000 {
-		errorsList = append(errorsList, "firstSignInExperienceBonus 必须在 0-1000000 之间")
+		errorsList = append(errorsList, "首签经验加成必须在 0-1000000 之间")
 	}
 	if policy.ConsecutiveExperienceStep < 0 || policy.ConsecutiveExperienceStep > 100_000 {
-		errorsList = append(errorsList, "consecutiveExperienceStep 必须在 0-100000 之间")
+		errorsList = append(errorsList, "连签经验步进必须在 0-100000 之间")
 	}
 	if policy.ConsecutiveExperienceStepCap < 0 || policy.ConsecutiveExperienceStepCap > 1_000_000 {
-		errorsList = append(errorsList, "consecutiveExperienceStepCap 必须在 0-1000000 之间")
+		errorsList = append(errorsList, "连签经验上限必须在 0-1000000 之间")
 	}
 	if policy.MaxIntegralReward < 0 || policy.MaxIntegralReward > 1_000_000 {
-		errorsList = append(errorsList, "maxIntegralReward 必须在 0-1000000 之间")
+		errorsList = append(errorsList, "积分奖励上限必须在 0-1000000 之间")
 	}
 	if policy.MaxExperienceReward < 0 || policy.MaxExperienceReward > 1_000_000 {
-		errorsList = append(errorsList, "maxExperienceReward 必须在 0-1000000 之间")
+		errorsList = append(errorsList, "经验奖励上限必须在 0-1000000 之间")
 	}
 
 	ruleKeys := map[string]struct{}{}
@@ -368,38 +459,38 @@ func normalizeAndValidateSignInRewardPolicy(policy appdomain.SignInRewardPolicy)
 			rule.Name = rule.Key
 		}
 		if _, ok := ruleKeys[rule.Key]; ok {
-			errorsList = append(errorsList, fmt.Sprintf("规则 key 重复: %s", rule.Key))
+			errorsList = append(errorsList, fmt.Sprintf("规则标识重复：%s", rule.Key))
 		}
 		ruleKeys[rule.Key] = struct{}{}
 		if rule.Priority == 0 {
 			rule.Priority = i + 1
 		}
 		if rule.Enabled && rule.Expression == "" {
-			errorsList = append(errorsList, fmt.Sprintf("规则 %s 缺少 expression", rule.Key))
+			errorsList = append(errorsList, fmt.Sprintf("规则 %s 缺少触发条件", rule.Key))
 		}
 		if rule.Expression != "" {
 			if _, err := expr.Compile(rule.Expression, expr.Env(defaultSignInRewardExprEnv()), expr.AsBool()); err != nil {
-				errorsList = append(errorsList, fmt.Sprintf("规则 %s 表达式无效: %v", rule.Key, err))
+				errorsList = append(errorsList, fmt.Sprintf("规则 %s 表达式无效：%v", rule.Key, err))
 			}
 		}
 		if rule.IntegralMultiplierDelta < -1 || rule.IntegralMultiplierDelta > 20 {
-			errorsList = append(errorsList, fmt.Sprintf("规则 %s integralMultiplierDelta 超出范围", rule.Key))
+			errorsList = append(errorsList, fmt.Sprintf("规则 %s 的积分倍率增量须在 -1 到 20 之间", rule.Key))
 		}
 		if rule.ExperienceMultiplierDelta < -1 || rule.ExperienceMultiplierDelta > 20 {
-			errorsList = append(errorsList, fmt.Sprintf("规则 %s experienceMultiplierDelta 超出范围", rule.Key))
+			errorsList = append(errorsList, fmt.Sprintf("规则 %s 的经验倍率增量须在 -1 到 20 之间", rule.Key))
 		}
 		if rule.IntegralBonus < -1_000_000 || rule.IntegralBonus > 1_000_000 {
-			errorsList = append(errorsList, fmt.Sprintf("规则 %s integralBonus 超出范围", rule.Key))
+			errorsList = append(errorsList, fmt.Sprintf("规则 %s 的积分加成超出范围", rule.Key))
 		}
 		if rule.ExperienceBonus < -1_000_000 || rule.ExperienceBonus > 1_000_000 {
-			errorsList = append(errorsList, fmt.Sprintf("规则 %s experienceBonus 超出范围", rule.Key))
+			errorsList = append(errorsList, fmt.Sprintf("规则 %s 的经验加成超出范围", rule.Key))
 		}
 	}
 
 	milestoneDays := map[int64]struct{}{}
 	for _, milestone := range policy.Milestones {
 		if milestone.ConsecutiveDays <= 0 {
-			errorsList = append(errorsList, "里程碑 consecutiveDays 必须大于 0")
+			errorsList = append(errorsList, "里程碑天数必须大于 0")
 			continue
 		}
 		if _, ok := milestoneDays[milestone.ConsecutiveDays]; ok {
@@ -407,10 +498,10 @@ func normalizeAndValidateSignInRewardPolicy(policy appdomain.SignInRewardPolicy)
 		}
 		milestoneDays[milestone.ConsecutiveDays] = struct{}{}
 		if milestone.IntegralBonus < -1_000_000 || milestone.IntegralBonus > 1_000_000 {
-			errorsList = append(errorsList, fmt.Sprintf("里程碑 %d integralBonus 超出范围", milestone.ConsecutiveDays))
+			errorsList = append(errorsList, fmt.Sprintf("%d 天里程碑的积分加成超出范围", milestone.ConsecutiveDays))
 		}
 		if milestone.ExperienceBonus < -1_000_000 || milestone.ExperienceBonus > 1_000_000 {
-			errorsList = append(errorsList, fmt.Sprintf("里程碑 %d experienceBonus 超出范围", milestone.ConsecutiveDays))
+			errorsList = append(errorsList, fmt.Sprintf("%d 天里程碑的经验加成超出范围", milestone.ConsecutiveDays))
 		}
 	}
 

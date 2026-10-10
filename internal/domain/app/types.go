@@ -611,6 +611,42 @@ type SignInRewardPreviewInput struct {
 	ConsecutiveDays int        `json:"consecutiveDays"`
 	TotalSignIns    int64      `json:"totalSignIns"`
 	UserExperience  int64      `json:"userExperience"`
+	// Policy 非空时按这份（通常是未保存的草稿）计算，而不是应用已保存的策略。
+	// 管理员改完规则先试算再决定要不要保存，试算必须反映正在编辑的内容。
+	Policy *SignInRewardPolicy `json:"policy,omitempty"`
+	// SimulateDays > 0 时额外逐日推演连续签到 N 天的奖励，上限 SignInRewardMaxSimulateDays。
+	SimulateDays int `json:"simulateDays,omitempty"`
+}
+
+// SignInRewardMaxSimulateDays 连签推演的最大天数。开启等级经验倍率时每天要查一次等级表，
+// 上限同时约束了一次试算的查询次数。
+const SignInRewardMaxSimulateDays = 120
+
+// SignInRewardSimulationDay 推演中的一天：第 Day 天连签、落在 Date 这天时能拿到什么。
+type SignInRewardSimulationDay struct {
+	Day                  int      `json:"day"`
+	Date                 string   `json:"date"`
+	WeekdayISO           int      `json:"weekdayIso"`
+	ConsecutiveDays      int      `json:"consecutiveDays"`
+	IntegralReward       int64    `json:"integralReward"`
+	ExperienceReward     int64    `json:"experienceReward"`
+	RewardMultiplier     float64  `json:"rewardMultiplier"`
+	BonusType            string   `json:"bonusType,omitempty"`
+	AppliedRules         []string `json:"appliedRules"`
+	Milestone            bool     `json:"milestone"`
+	CumulativeIntegral   int64    `json:"cumulativeIntegral"`
+	CumulativeExperience int64    `json:"cumulativeExperience"`
+}
+
+// SignInRewardSimulation 连签推演结果。经验逐日累加回用户经验，等级倍率会随之变化。
+type SignInRewardSimulation struct {
+	Days            []SignInRewardSimulationDay `json:"days"`
+	TotalIntegral   int64                       `json:"totalIntegral"`
+	TotalExperience int64                       `json:"totalExperience"`
+	PeakIntegral    int64                       `json:"peakIntegral"`
+	PeakExperience  int64                       `json:"peakExperience"`
+	// RuleHits 每条规则（含里程碑）在推演期内命中的天数，key 为规则 key。
+	RuleHits map[string]int `json:"ruleHits"`
 }
 
 type SignInRewardPreview struct {
@@ -622,6 +658,9 @@ type SignInRewardPreview struct {
 	Reward       SignInRewardResolved      `json:"reward"`
 	AppliedRules []SignInRewardAppliedRule `json:"appliedRules"`
 	Environment  map[string]any            `json:"environment"`
+	// Draft 为 true 表示按请求里传入的草稿策略计算。
+	Draft      bool                    `json:"draft"`
+	Simulation *SignInRewardSimulation `json:"simulation,omitempty"`
 }
 
 type AppSignInStats struct {
@@ -636,11 +675,50 @@ type AppSignInStats struct {
 	MaxConsecutiveDays    int64                 `json:"maxConsecutiveDays"`
 	Trend                 []AppSignInTrendPoint `json:"trend"`
 	Sources               []AppSignInSourceStat `json:"sources"`
+
+	// 以下为统计窗口（近 Days 天，含今天）内的口径；上面的累计字段是全量。
+	YesterdaySignCount     int64 `json:"yesterdaySignCount"`
+	WindowSignCount        int64 `json:"windowSignCount"`
+	WindowUniqueUsers      int64 `json:"windowUniqueUsers"`
+	WindowIntegralReward   int64 `json:"windowIntegralReward"`
+	WindowExperienceReward int64 `json:"windowExperienceReward"`
+	// ActiveStreakUsers 连签仍在延续的用户数：最近一次签到在今天或昨天。
+	ActiveStreakUsers int64                    `json:"activeStreakUsers"`
+	StreakBuckets     []AppSignInStreakBucket  `json:"streakBuckets"`
+	HourDistribution  []int64                  `json:"hourDistribution"`
+	BonusTypes        []AppSignInBonusTypeStat `json:"bonusTypes"`
+	TopStreaks        []AppSignInStreakUser    `json:"topStreaks"`
+	Timezone          string                   `json:"timezone"`
 }
 
 type AppSignInTrendPoint struct {
-	Date  string `json:"date"`
+	Date             string `json:"date"`
+	Count            int64  `json:"count"`
+	IntegralReward   int64  `json:"integralReward"`
+	ExperienceReward int64  `json:"experienceReward"`
+}
+
+// AppSignInStreakBucket 活跃连签用户按当前连签天数分段。Max 为 0 表示不设上限。
+type AppSignInStreakBucket struct {
+	Label string `json:"label"`
+	Min   int64  `json:"min"`
+	Max   int64  `json:"max"`
 	Count int64  `json:"count"`
+}
+
+type AppSignInBonusTypeStat struct {
+	BonusType string `json:"bonusType"`
+	Count     int64  `json:"count"`
+}
+
+type AppSignInStreakUser struct {
+	UserID          int64  `json:"userId"`
+	Account         string `json:"account"`
+	Nickname        string `json:"nickname,omitempty"`
+	Avatar          string `json:"avatar,omitempty"`
+	ConsecutiveDays int64  `json:"consecutiveDays"`
+	TotalSignDays   int64  `json:"totalSignDays"`
+	LastSignDate    string `json:"lastSignDate"`
 }
 
 type AppSignInSourceStat struct {
@@ -649,12 +727,14 @@ type AppSignInSourceStat struct {
 }
 
 type AppSignInRecordQuery struct {
-	Keyword  string     `json:"keyword"`
-	Source   string     `json:"source"`
-	DateFrom *time.Time `json:"dateFrom,omitempty"`
-	DateTo   *time.Time `json:"dateTo,omitempty"`
-	Page     int        `json:"page"`
-	Limit    int        `json:"limit"`
+	Keyword string `json:"keyword"`
+	Source  string `json:"source"`
+	// BonusType 按奖励类型过滤；"normal" 同时匹配空值（历史记录未写类型）。
+	BonusType string     `json:"bonusType"`
+	DateFrom  *time.Time `json:"dateFrom,omitempty"`
+	DateTo    *time.Time `json:"dateTo,omitempty"`
+	Page      int        `json:"page"`
+	Limit     int        `json:"limit"`
 }
 
 type AppSignInRecordItem struct {

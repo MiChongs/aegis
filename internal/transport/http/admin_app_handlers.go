@@ -1294,6 +1294,8 @@ func (h *Handler) TestAdminAppSignInReward(c *gin.Context) {
 		ConsecutiveDays: req.ConsecutiveDays,
 		TotalSignIns:    req.TotalSignIns,
 		UserExperience:  req.UserExperience,
+		Policy:          req.Policy,
+		SimulateDays:    req.SimulateDays,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -1371,12 +1373,13 @@ func (h *Handler) AdminAppSignInRecords(c *gin.Context) {
 	}
 
 	item, err := h.app.ListAppSignInRecords(c.Request.Context(), appID, appdomain.AppSignInRecordQuery{
-		Keyword:  req.Keyword,
-		Source:   req.Source,
-		DateFrom: dateFrom,
-		DateTo:   dateTo,
-		Page:     req.Page,
-		Limit:    req.Limit,
+		Keyword:   req.Keyword,
+		Source:    req.Source,
+		BonusType: req.BonusType,
+		DateFrom:  dateFrom,
+		DateTo:    dateTo,
+		Page:      req.Page,
+		Limit:     req.Limit,
 	})
 	if err != nil {
 		h.writeError(c, err)
