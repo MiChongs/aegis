@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -32,7 +33,22 @@ const ticketColumns = `t.id, t.ticket_no, t.appid,
 	t.rating, t.rating_comment, t.rated_at,
 	t.tags, COALESCE(t.metadata, '{}'::jsonb), t.locked,
 	t.created_by_admin_id, t.created_at, t.updated_at,
-	COALESCE(c.name, ''), COALESCE(g.name, ''), COALESCE(a.display_name, a.account, ''), COALESCE(ap.name, '')`
+	COALESCE(c.name, ''), COALESCE(g.name, ''), COALESCE(a.display_name, a.account, ''), COALESCE(ap.name, ''),
+	t.kind, COALESCE(c.key, ''),
+	` + ticketAttachmentCountColumns
+
+// ticketAttachmentCountColumns 对外可见附件的分类计数（挂在内部备注上的不算）。
+// 列表页要显示「几张图、几个附件」，逐单再查一次附件表太贵，这里用相关子查询一次带出。
+const ticketAttachmentCountColumns = `(SELECT COUNT(*) FILTER (WHERE ta.kind = 'image') FROM ticket_attachments ta
+		LEFT JOIN ticket_messages tm ON tm.id = ta.message_id
+		WHERE ta.ticket_id = t.id AND COALESCE(tm.internal, FALSE) = FALSE),
+	(SELECT COUNT(*) FILTER (WHERE ta.kind = 'file') FROM ticket_attachments ta
+		LEFT JOIN ticket_messages tm ON tm.id = ta.message_id
+		WHERE ta.ticket_id = t.id AND COALESCE(tm.internal, FALSE) = FALSE)`
+
+// ErrTicketAttachmentUnavailable 待绑定的附件里有不存在、已绑定或不属于当前上传者的。
+// 整个建单 / 回复事务随之回滚，不会出现「挂上了一半附件」的工单。
+var ErrTicketAttachmentUnavailable = errors.New("ticket attachment unavailable")
 
 const ticketJoins = `FROM tickets t
 	LEFT JOIN ticket_categories c ON c.id = t.category_id
@@ -58,6 +74,8 @@ func scanTicket(row interface{ Scan(dest ...any) error }) (*ticketdomain.Ticket,
 		&tags, &metadataRaw, &item.Locked,
 		&item.CreatedByAdminID, &item.CreatedAt, &item.UpdatedAt,
 		&item.CategoryName, &item.GroupName, &item.AssigneeName, &item.AppName,
+		&item.Kind, &item.CategoryKey,
+		&item.ImageCount, &item.AttachmentCount,
 	)
 	if err != nil {
 		return nil, err
@@ -108,6 +126,10 @@ func ticketFilterClauses(query ticketdomain.ListQuery, scope ticketdomain.Scope,
 	if query.AppID != nil {
 		*args = append(*args, *query.AppID)
 		clauses = append(clauses, fmt.Sprintf("t.appid = $%d", len(*args)))
+	}
+	if kind := strings.TrimSpace(query.Kind); kind != "" {
+		*args = append(*args, kind)
+		clauses = append(clauses, fmt.Sprintf("t.kind = $%d", len(*args)))
 	}
 	if len(query.Statuses) > 0 {
 		*args = append(*args, query.Statuses)
@@ -288,20 +310,25 @@ func (r *Repository) CreateTicket(ctx context.Context, cmd ticketdomain.CreateCo
 		tags = []string{}
 	}
 
+	kind := strings.TrimSpace(cmd.Kind)
+	if kind == "" {
+		kind = ticketdomain.KindTicket
+	}
+
 	var ticketID int64
 	insertSQL := `INSERT INTO tickets (
-		ticket_no, appid, requester_type, requester_user_id, requester_admin_id, requester_name, requester_contact,
+		kind, ticket_no, appid, requester_type, requester_user_id, requester_admin_id, requester_name, requester_contact,
 		category_id, title, status, priority, source, assignee_admin_id, group_id,
 		sla_policy_id, first_response_due_at, resolve_due_at,
 		message_count, last_message_at, last_message_role,
 		tags, metadata, created_by_admin_id, created_at, updated_at)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,1,NOW(),'requester',$18,$19,$20,NOW(),NOW())
+	VALUES ($21,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,1,NOW(),'requester',$18,$19,$20,NOW(),NOW())
 	RETURNING id`
 	if err := tx.QueryRow(ctx, insertSQL,
 		ticketNo, cmd.AppID, cmd.RequesterType, cmd.RequesterUserID, cmd.RequesterAdminID, cmd.RequesterName, cmd.RequesterContact,
 		cmd.CategoryID, cmd.Title, ticketdomain.StatusOpen, cmd.Priority, cmd.Source, cmd.AssigneeAdminID, cmd.GroupID,
 		slaPolicyID, firstResponseDue, resolveDue,
-		tags, metadataJSON, cmd.CreatedByAdminID,
+		tags, metadataJSON, cmd.CreatedByAdminID, kind,
 	).Scan(&ticketID); err != nil {
 		return nil, err
 	}
@@ -317,13 +344,8 @@ func (r *Repository) CreateTicket(ctx context.Context, cmd ticketdomain.CreateCo
 		return nil, err
 	}
 
-	if len(cmd.AttachmentIDs) > 0 {
-		// 只回填「尚未归属」的附件，避免把别人工单的附件挂过来
-		if _, err := tx.Exec(ctx,
-			`UPDATE ticket_attachments SET ticket_id = $1, message_id = $2 WHERE id = ANY($3) AND ticket_id IS NULL`,
-			ticketID, messageID, cmd.AttachmentIDs); err != nil {
-			return nil, err
-		}
+	if err := bindTicketAttachments(ctx, tx, ticketID, messageID, cmd.AttachmentIDs, cmd.AttachmentOwner); err != nil {
+		return nil, err
 	}
 
 	actorType, actorID := requesterActor(cmd)
@@ -340,6 +362,56 @@ func (r *Repository) CreateTicket(ctx context.Context, cmd ticketdomain.CreateCo
 	}
 	committed = true
 	return r.GetTicketByID(ctx, ticketID)
+}
+
+// bindTicketAttachments 把附件挂到某条消息上。
+//
+// 只认「尚未挂到任何消息上」的附件（ticket_id 为空，或管理端上传时已指定为本工单），
+// owner 非空时还要求上传者就是当前操作者。早先这里只看 ticket_id IS NULL 且不检查影响行数：
+// 别人刚传、还没提交的附件，猜中 ID 就能挂到自己的单里；不满足条件的 ID 则被静默忽略。
+// 现在只要有一个对不上就返回 ErrTicketAttachmentUnavailable，整个事务回滚。
+func bindTicketAttachments(ctx context.Context, tx pgx.Tx, ticketID, messageID int64, ids []int64, owner *ticketdomain.AttachmentOwner) error {
+	ids = distinctPositiveIDs(ids)
+	if len(ids) == 0 {
+		return nil
+	}
+	ownerType := ""
+	var ownerID int64
+	if owner != nil {
+		ownerType = owner.Type
+		ownerID = owner.ID
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE ticket_attachments SET ticket_id = $1, message_id = $2
+		WHERE id = ANY($3) AND message_id IS NULL AND (ticket_id IS NULL OR ticket_id = $1)
+		  AND ($4::text = '' OR (uploaded_by_type = $4::text AND uploaded_by_id = $5::bigint))`,
+		ticketID, messageID, ids, ownerType, ownerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != int64(len(ids)) {
+		return ErrTicketAttachmentUnavailable
+	}
+	return nil
+}
+
+func distinctPositiveIDs(ids []int64) []int64 {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func requesterActor(cmd ticketdomain.CreateCommand) (string, *int64) {
@@ -523,6 +595,8 @@ type AddTicketMessageInput struct {
 	ContentType   string
 	Metadata      map[string]any
 	AttachmentIDs []int64
+	// AttachmentOwner 非空时只允许绑定该上传者传的附件（用户端回复）
+	AttachmentOwner *ticketdomain.AttachmentOwner
 	// NextStatus 非空时同事务切换状态
 	NextStatus string
 }
@@ -557,12 +631,8 @@ func (r *Repository) AddTicketMessage(ctx context.Context, input AddTicketMessag
 		return nil, err
 	}
 
-	if len(input.AttachmentIDs) > 0 {
-		if _, err := tx.Exec(ctx,
-			`UPDATE ticket_attachments SET ticket_id = $1, message_id = $2 WHERE id = ANY($3) AND (ticket_id IS NULL OR ticket_id = $1)`,
-			input.TicketID, messageID, input.AttachmentIDs); err != nil {
-			return nil, err
-		}
+	if err := bindTicketAttachments(ctx, tx, input.TicketID, messageID, input.AttachmentIDs, input.AttachmentOwner); err != nil {
+		return nil, err
 	}
 
 	// 内部备注不改变对外会话状态，也不计首响
@@ -604,12 +674,12 @@ func (r *Repository) AddTicketMessage(ctx context.Context, input AddTicketMessag
 // ─────────────── 附件 ───────────────
 
 const ticketAttachmentColumns = `id, ticket_id, message_id, file_name, content_type, size_bytes, storage_ref,
-	uploaded_by_type, uploaded_by_id, created_at`
+	uploaded_by_type, uploaded_by_id, created_at, kind`
 
 func scanTicketAttachment(row interface{ Scan(dest ...any) error }) (*ticketdomain.Attachment, error) {
 	item := &ticketdomain.Attachment{}
 	if err := row.Scan(&item.ID, &item.TicketID, &item.MessageID, &item.FileName, &item.ContentType,
-		&item.SizeBytes, &item.StorageRef, &item.UploadedByType, &item.UploadedByID, &item.CreatedAt); err != nil {
+		&item.SizeBytes, &item.StorageRef, &item.UploadedByType, &item.UploadedByID, &item.CreatedAt, &item.Kind); err != nil {
 		return nil, err
 	}
 	return item, nil
@@ -617,12 +687,48 @@ func scanTicketAttachment(row interface{ Scan(dest ...any) error }) (*ticketdoma
 
 // CreateTicketAttachment 落库一条附件。ticketID 传 0 表示"待关联"（提单表单先传附件再建单）。
 func (r *Repository) CreateTicketAttachment(ctx context.Context, item ticketdomain.Attachment) (*ticketdomain.Attachment, error) {
+	kind := item.Kind
+	if kind != ticketdomain.AttachmentImage {
+		kind = ticketdomain.AttachmentFile
+	}
 	row := r.pool.QueryRow(ctx,
-		`INSERT INTO ticket_attachments (ticket_id, message_id, file_name, content_type, size_bytes, storage_ref, uploaded_by_type, uploaded_by_id)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING `+ticketAttachmentColumns,
+		`INSERT INTO ticket_attachments (ticket_id, message_id, file_name, content_type, size_bytes, storage_ref, uploaded_by_type, uploaded_by_id, kind)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING `+ticketAttachmentColumns,
 		item.TicketID, item.MessageID, item.FileName, item.ContentType, item.SizeBytes, item.StorageRef,
-		item.UploadedByType, item.UploadedByID)
+		item.UploadedByType, item.UploadedByID, kind)
 	return scanTicketAttachment(row)
+}
+
+// ListTicketAttachmentsByIDs 按 ID 批量取附件（绑定前校验归属与类型用）。
+func (r *Repository) ListTicketAttachmentsByIDs(ctx context.Context, ids []int64) ([]ticketdomain.Attachment, error) {
+	ids = distinctPositiveIDs(ids)
+	if len(ids) == 0 {
+		return []ticketdomain.Attachment{}, nil
+	}
+	rows, err := r.pool.Query(ctx, "SELECT "+ticketAttachmentColumns+" FROM ticket_attachments WHERE id = ANY($1) ORDER BY id ASC", ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ticketdomain.Attachment, 0, len(ids))
+	for rows.Next() {
+		item, err := scanTicketAttachment(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
+// CountUserTicketsSince 某用户在某应用下自 since 起提交的指定类型工单数（反馈频率限制用）。
+func (r *Repository) CountUserTicketsSince(ctx context.Context, appID int64, userID int64, kind string, since time.Time) (int64, error) {
+	var count int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM tickets
+		WHERE appid = $1 AND kind = $2 AND requester_user_id = $3 AND created_at >= $4`,
+		appID, kind, userID, since).Scan(&count)
+	return count, err
 }
 
 // ListTicketAttachments 工单全部附件。
@@ -760,14 +866,14 @@ func (r *Repository) ListTicketNotifyTargets(ctx context.Context, ticketID int64
 // ─────────────── 分类 ───────────────
 
 const ticketCategoryColumns = `id, appid, parent_id, key, name, description, default_priority,
-	default_group_id, sla_policy_id, COALESCE(form_schema, '[]'::jsonb), user_submittable, sort, enabled, created_at, updated_at`
+	default_group_id, sla_policy_id, COALESCE(form_schema, '[]'::jsonb), user_submittable, sort, enabled, created_at, updated_at, kind`
 
 func scanTicketCategory(row interface{ Scan(dest ...any) error }) (*ticketdomain.Category, error) {
 	item := &ticketdomain.Category{}
 	var schemaRaw []byte
 	if err := row.Scan(&item.ID, &item.AppID, &item.ParentID, &item.Key, &item.Name, &item.Description,
 		&item.DefaultPriority, &item.DefaultGroupID, &item.SLAPolicyID, &schemaRaw,
-		&item.UserSubmittable, &item.Sort, &item.Enabled, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		&item.UserSubmittable, &item.Sort, &item.Enabled, &item.CreatedAt, &item.UpdatedAt, &item.Kind); err != nil {
 		return nil, err
 	}
 	item.FormSchema = []ticketdomain.FormField{}
@@ -821,18 +927,18 @@ func (r *Repository) UpsertTicketCategory(ctx context.Context, item ticketdomain
 			UPDATE ticket_categories
 			SET parent_id = $2, key = $3, name = $4, description = $5, default_priority = $6,
 			    default_group_id = $7, sla_policy_id = $8, form_schema = $9,
-			    user_submittable = $10, sort = $11, enabled = $12, updated_at = NOW()
+			    user_submittable = $10, sort = $11, enabled = $12, kind = $13, updated_at = NOW()
 			WHERE id = $1 RETURNING `+ticketCategoryColumns,
 			item.ID, item.ParentID, item.Key, item.Name, item.Description, item.DefaultPriority,
-			item.DefaultGroupID, item.SLAPolicyID, schemaJSON, item.UserSubmittable, item.Sort, item.Enabled)
+			item.DefaultGroupID, item.SLAPolicyID, schemaJSON, item.UserSubmittable, item.Sort, item.Enabled, item.Kind)
 		return scanTicketCategory(row)
 	}
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO ticket_categories (appid, parent_id, key, name, description, default_priority,
-			default_group_id, sla_policy_id, form_schema, user_submittable, sort, enabled)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING `+ticketCategoryColumns,
+			default_group_id, sla_policy_id, form_schema, user_submittable, sort, enabled, kind)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING `+ticketCategoryColumns,
 		item.AppID, item.ParentID, item.Key, item.Name, item.Description, item.DefaultPriority,
-		item.DefaultGroupID, item.SLAPolicyID, schemaJSON, item.UserSubmittable, item.Sort, item.Enabled)
+		item.DefaultGroupID, item.SLAPolicyID, schemaJSON, item.UserSubmittable, item.Sort, item.Enabled, item.Kind)
 	return scanTicketCategory(row)
 }
 
@@ -1237,7 +1343,8 @@ func (r *Repository) IncrTicketQuickReplyUsage(ctx context.Context, id int64) er
 // ─────────────── 统计 ───────────────
 
 // TicketStats 概览统计（受 Scope 约束）。
-func (r *Repository) TicketStats(ctx context.Context, appID *int64, scope ticketdomain.Scope) (*ticketdomain.Stats, error) {
+// kind 为空表示不区分类型。
+func (r *Repository) TicketStats(ctx context.Context, appID *int64, kind string, scope ticketdomain.Scope) (*ticketdomain.Stats, error) {
 	args := make([]any, 0, 6)
 	clauses := make([]string, 0, 3)
 	if c := ticketScopeClause(scope, &args); c != "" {
@@ -1246,6 +1353,10 @@ func (r *Repository) TicketStats(ctx context.Context, appID *int64, scope ticket
 	if appID != nil {
 		args = append(args, *appID)
 		clauses = append(clauses, fmt.Sprintf("t.appid = $%d", len(args)))
+	}
+	if kind != "" {
+		args = append(args, kind)
+		clauses = append(clauses, fmt.Sprintf("t.kind = $%d", len(args)))
 	}
 	where := ""
 	if len(clauses) > 0 {
@@ -1306,6 +1417,10 @@ func (r *Repository) TicketStats(ctx context.Context, appID *int64, scope ticket
 	if appID != nil {
 		catArgs = append(catArgs, *appID)
 		catClauses = append(catClauses, fmt.Sprintf("t.appid = $%d", len(catArgs)))
+	}
+	if kind != "" {
+		catArgs = append(catArgs, kind)
+		catClauses = append(catClauses, fmt.Sprintf("t.kind = $%d", len(catArgs)))
 	}
 	catWhere := ""
 	if len(catClauses) > 0 {

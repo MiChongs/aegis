@@ -1,8 +1,10 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
+	"errors"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -21,6 +23,7 @@ import (
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/timeutil"
 
+	"github.com/gabriel-vasile/mimetype"
 	"go.uber.org/zap"
 )
 
@@ -113,13 +116,13 @@ func (s *TicketService) Detail(ctx context.Context, access *admindomain.AccessCo
 	return item, nil
 }
 
-// Stats 工单概览统计。
-func (s *TicketService) Stats(ctx context.Context, access *admindomain.AccessContext, appID *int64) (*ticketdomain.Stats, error) {
+// Stats 工单概览统计。kind 为空表示工单与反馈合计。
+func (s *TicketService) Stats(ctx context.Context, access *admindomain.AccessContext, appID *int64, kind string) (*ticketdomain.Stats, error) {
 	scope, err := s.ResolveScope(ctx, access)
 	if err != nil {
 		return nil, err
 	}
-	return s.pg.TicketStats(ctx, appID, scope)
+	return s.pg.TicketStats(ctx, appID, normalizeTicketKind(kind), scope)
 }
 
 // Trend 工单趋势。
@@ -167,6 +170,28 @@ func normalizeTicketQuery(query *ticketdomain.ListQuery) {
 	}
 	query.Statuses = filterValues(query.Statuses, ticketdomain.ValidStatuses)
 	query.Priorities = filterValues(query.Priorities, ticketdomain.ValidPriorities)
+	query.Kind = normalizeTicketKind(query.Kind)
+}
+
+// normalizeTicketKind 不认识的类型按「不区分」处理，与状态筛选对非法值的口径一致。
+func normalizeTicketKind(kind string) string {
+	kind = strings.TrimSpace(strings.ToLower(kind))
+	if !ticketdomain.ValidKind(kind) {
+		return ""
+	}
+	return kind
+}
+
+// normalizeUserContentType 用户端只能发纯文本或 Markdown。html 会被控制台按富文本渲染，
+// 放开等于让任何用户往客服的浏览器里塞标记。
+func normalizeUserContentType(contentType string) (string, error) {
+	switch strings.TrimSpace(strings.ToLower(contentType)) {
+	case "", "text":
+		return "text", nil
+	case "markdown":
+		return "markdown", nil
+	}
+	return "", apperrors.New(40000, http.StatusBadRequest, "不支持的内容格式")
 }
 
 func filterValues(values []string, allowed map[string]struct{}) []string {
@@ -222,6 +247,7 @@ func (s *TicketService) CreateByUser(ctx context.Context, session *authdomain.Se
 	}
 	userID := session.UserID
 	cmd.AppID = session.AppID
+	cmd.Kind = ticketdomain.KindTicket
 	cmd.RequesterType = ticketdomain.RequesterUser
 	cmd.RequesterUserID = &userID
 	cmd.RequesterAdminID = nil
@@ -229,9 +255,16 @@ func (s *TicketService) CreateByUser(ctx context.Context, session *authdomain.Se
 	// 用户不能自行指派与升级优先级，避免"人人都紧急"
 	cmd.AssigneeAdminID = nil
 	cmd.GroupID = nil
-	if strings.TrimSpace(cmd.Source) == "" {
-		cmd.Source = ticketdomain.SourceApp
+	// 来源、标签、元数据是处理侧用来筛选与统计的，不能由提单人自己声明
+	cmd.Source = ticketdomain.SourceApp
+	cmd.Tags = nil
+	cmd.Metadata = nil
+	contentType, err := normalizeUserContentType(cmd.ContentType)
+	if err != nil {
+		return nil, err
 	}
+	cmd.ContentType = contentType
+	cmd.AttachmentOwner = &ticketdomain.AttachmentOwner{Type: "user", ID: userID}
 	if cmd.Priority == ticketdomain.PriorityUrgent {
 		cmd.Priority = ticketdomain.PriorityHigh
 	}
@@ -244,6 +277,9 @@ func (s *TicketService) CreateByUser(ctx context.Context, session *authdomain.Se
 		}
 		if category == nil || !category.Enabled {
 			return nil, apperrors.New(40461, http.StatusNotFound, "工单分类不存在或已停用")
+		}
+		if category.Kind == ticketdomain.KindFeedback {
+			return nil, apperrors.New(40314, http.StatusForbidden, "该分类用于意见反馈，请从反馈入口提交")
 		}
 		if !category.UserSubmittable {
 			return nil, apperrors.New(40314, http.StatusForbidden, "该分类不支持自助提交")
@@ -289,6 +325,13 @@ func (s *TicketService) create(ctx context.Context, cmd ticketdomain.CreateComma
 		}
 		category = found
 	}
+	// 类型跟着分类走：反馈分类下的单就是反馈，避免出现「反馈分类里的普通工单」
+	if category != nil && ticketdomain.ValidKind(category.Kind) {
+		cmd.Kind = category.Kind
+	}
+	if !ticketdomain.ValidKind(cmd.Kind) {
+		cmd.Kind = ticketdomain.KindTicket
+	}
 	if strings.TrimSpace(cmd.Priority) == "" {
 		if category != nil {
 			cmd.Priority = category.DefaultPriority
@@ -322,7 +365,7 @@ func (s *TicketService) create(ctx context.Context, cmd ticketdomain.CreateComma
 	}
 	item, err := s.pg.CreateTicket(ctx, cmd, ticketNo, firstDue, resolveDue, policyID)
 	if err != nil {
-		return nil, err
+		return nil, mapTicketAttachmentError(err)
 	}
 	// 建单人本身不必收到"新工单"提醒——管理员代客提单时尤其明显
 	s.emitTicketEventAs(ctx, item, ticketEventCreated,
@@ -421,7 +464,7 @@ func (s *TicketService) ReplyByAdmin(ctx context.Context, access *admindomain.Ac
 		NextStatus:    strings.TrimSpace(cmd.NextStatus),
 	})
 	if err != nil {
-		return nil, err
+		return nil, mapTicketAttachmentError(err)
 	}
 
 	eventKey := ticketdomain.EventReplied
@@ -462,20 +505,25 @@ func (s *TicketService) ReplyByUser(ctx context.Context, session *authdomain.Ses
 	if len([]rune(content)) > ticketMaxContentLen {
 		return nil, apperrors.New(40000, http.StatusBadRequest, "回复内容过长")
 	}
+	contentType, err := normalizeUserContentType(cmd.ContentType)
+	if err != nil {
+		return nil, err
+	}
 
 	userID := session.UserID
 	message, err := s.pg.AddTicketMessage(ctx, pgrepo.AddTicketMessageInput{
-		TicketID:      cmd.TicketID,
-		AuthorType:    ticketdomain.AuthorRequester,
-		AuthorUserID:  &userID,
-		AuthorName:    item.RequesterName,
-		Internal:      false, // 用户永远发不出内部备注
-		Content:       content,
-		ContentType:   cmd.ContentType,
-		AttachmentIDs: cmd.AttachmentIDs,
+		TicketID:        cmd.TicketID,
+		AuthorType:      ticketdomain.AuthorRequester,
+		AuthorUserID:    &userID,
+		AuthorName:      item.RequesterName,
+		Internal:        false, // 用户永远发不出内部备注
+		Content:         content,
+		ContentType:     contentType,
+		AttachmentIDs:   cmd.AttachmentIDs,
+		AttachmentOwner: &ticketdomain.AttachmentOwner{Type: "user", ID: userID},
 	})
 	if err != nil {
-		return nil, err
+		return nil, mapTicketAttachmentError(err)
 	}
 	_ = s.pg.AddTicketEvent(ctx, ticketdomain.Event{
 		TicketID: cmd.TicketID, Event: ticketdomain.EventReplied, ActorType: "user", ActorID: &userID,
@@ -888,6 +936,8 @@ func (s *TicketService) ListForUser(ctx context.Context, session *authdomain.Ses
 	query.AppID = &appID
 	query.RequesterID = &userID
 	query.IncludeClosed = true
+	// 「我的工单」不混入意见反馈，反馈有自己的入口（/feedback）
+	query.Kind = ticketdomain.KindTicket
 	// 用户只能看自己的工单：Scope.All + RequesterID 过滤即可精确收敛
 	items, total, err := s.pg.ListTickets(ctx, query, ticketdomain.Scope{All: true})
 	if err != nil {
@@ -955,31 +1005,58 @@ type TicketAttachmentInput struct {
 	Content       io.Reader
 	UploaderType  string
 	UploaderID    *int64
+	// Kind 为 image 时严格校验：魔数必须是允许的图片类型，大小按图片上限；
+	// 为 file 时不限类型；为空时按嗅探结果自动归类（工单附件入口）。
+	Kind string
 }
 
 // UploadAttachment 上传附件到对象存储，落库后返回可预览地址。
 func (s *TicketService) UploadAttachment(ctx context.Context, baseURL string, input TicketAttachmentInput) (*ticketdomain.Attachment, error) {
-	if s.storage == nil {
-		return nil, apperrors.New(50380, http.StatusServiceUnavailable, "存储服务未启用")
-	}
 	if input.ContentLength <= 0 {
 		return nil, apperrors.New(40087, http.StatusBadRequest, "上传文件不能为空")
 	}
-	if input.ContentLength > ticketMaxAttachmentSize {
-		return nil, apperrors.New(40088, http.StatusBadRequest, "工单附件不能超过 20MB")
+	requestedKind := strings.TrimSpace(strings.ToLower(input.Kind))
+	switch requestedKind {
+	case "":
+		if input.ContentLength > ticketMaxAttachmentSize {
+			return nil, apperrors.New(40088, http.StatusBadRequest, "工单附件不能超过 20MB")
+		}
+	case ticketdomain.AttachmentImage:
+		if input.ContentLength > feedbackMaxImageSize {
+			return nil, apperrors.New(errCodeFeedbackAttachmentTooLarge, http.StatusRequestEntityTooLarge, "图片不能超过 10MB")
+		}
+	case ticketdomain.AttachmentFile:
+		if input.ContentLength > ticketMaxAttachmentSize {
+			return nil, apperrors.New(errCodeFeedbackAttachmentTooLarge, http.StatusRequestEntityTooLarge, "附件不能超过 20MB")
+		}
+	default:
+		return nil, apperrors.New(40000, http.StatusBadRequest, "附件类型只能是 image 或 file")
 	}
 	fileName := strings.TrimSpace(input.FileName)
 	if fileName == "" {
 		fileName = "attachment"
 	}
+
+	// 类型以魔数为准：落库的 content_type 与 kind 都用嗅探结果，客户端声明只在认不出时兜底。
+	// 存储层还会再嗅探一次，结论相同；这里先嗅探是为了在上传之前就拒掉冒充图片的文件。
+	content, contentType := sniffAttachmentContentType(input.Content)
+	kind := ticketdomain.AttachmentFile
+	if isFeedbackImageType(contentType) {
+		kind = ticketdomain.AttachmentImage
+	}
+	if requestedKind == ticketdomain.AttachmentImage && kind != ticketdomain.AttachmentImage {
+		return nil, apperrors.New(errCodeFeedbackImageUnsupported, http.StatusUnsupportedMediaType, "图片仅支持 PNG、JPEG、WebP、GIF 格式")
+	}
+	if requestedKind == ticketdomain.AttachmentFile {
+		kind = ticketdomain.AttachmentFile
+	}
+	if s.storage == nil {
+		return nil, apperrors.New(50380, http.StatusServiceUnavailable, "存储服务未启用")
+	}
 	ext := strings.ToLower(path.Ext(fileName))
 	key, err := ticketObjectKey(ext)
 	if err != nil {
 		return nil, err
-	}
-	contentType := strings.TrimSpace(input.ContentType)
-	if contentType == "" {
-		contentType = "application/octet-stream"
 	}
 
 	stored, err := s.storage.UploadForApp(ctx, input.AppID, storagedomain.UploadInput{
@@ -989,7 +1066,7 @@ func (s *TicketService) UploadAttachment(ctx context.Context, baseURL string, in
 		ContentType:   contentType,
 		ContentLength: input.ContentLength,
 		Metadata:      map[string]string{"module": "ticket"},
-		Content:       input.Content,
+		Content:       content,
 		UploadedBy:    input.UploaderID,
 		UploaderType:  input.UploaderType,
 	})
@@ -1006,6 +1083,7 @@ func (s *TicketService) UploadAttachment(ctx context.Context, baseURL string, in
 	}
 	saved, err := s.pg.CreateTicketAttachment(ctx, ticketdomain.Attachment{
 		TicketID:       input.TicketID,
+		Kind:           kind,
 		FileName:       fileName,
 		ContentType:    contentType,
 		SizeBytes:      input.ContentLength,
@@ -1018,6 +1096,31 @@ func (s *TicketService) UploadAttachment(ctx context.Context, baseURL string, in
 	}
 	saved.DownloadURL = s.resolveAttachmentURL(ctx, baseURL, saved.StorageRef)
 	return saved, nil
+}
+
+// sniffAttachmentContentType 只按魔数判定类型，认不出来就是 application/octet-stream。
+//
+// 与存储层的 resolveUploadContentType 不同，这里**不**回落到客户端声明或扩展名：
+// 工单附件的 content_type 决定控制台与官网是否按图片内联展示，一段随机字节声明成
+// image/png 就不该被当成图片。返回的 reader 保留了嗅探读掉的头部。
+func sniffAttachmentContentType(content io.Reader) (io.Reader, string) {
+	const generic = "application/octet-stream"
+	if content == nil {
+		return content, generic
+	}
+	buffered := bufio.NewReaderSize(content, mimeSniffLimit+512)
+	head, err := buffered.Peek(mimeSniffLimit)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return buffered, generic
+	}
+	if len(head) == 0 {
+		return buffered, generic
+	}
+	detected := normalizeContentType(mimetype.Detect(head).String())
+	if detected == "" || isGenericContentType(detected) {
+		return buffered, generic
+	}
+	return buffered, detected
 }
 
 func ticketObjectKey(ext string) (string, error) {

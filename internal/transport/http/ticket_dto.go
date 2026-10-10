@@ -10,6 +10,8 @@ import (
 // 逗号分隔的多值字段（status/priority/tags）在 handler 里拆分。
 type TicketListQuery struct {
 	AppID         *int64 `form:"appid"`
+	// Kind ticket / feedback，缺省为全部（仅管理端生效，用户端入口固定类型）
+	Kind          string `form:"kind"`
 	Status        string `form:"status"`
 	Priority      string `form:"priority"`
 	CategoryID    *int64 `form:"categoryId"`
@@ -73,6 +75,35 @@ func (r TicketCreateRequest) ToCommand() ticketdomain.CreateCommand {
 		GroupID:          r.GroupID,
 		Tags:             r.Tags,
 		Metadata:         r.Metadata,
+		AttachmentIDs:    r.AttachmentIDs,
+	}
+}
+
+// UserTicketCreateRequest 用户自助提单。
+//
+// 只收用户该填的字段：来源、标签、元数据、指派与处理组是处理侧的数据，
+// 早先用户端直接复用管理端的 TicketCreateRequest，这些字段都能被提单人自己写进去。
+type UserTicketCreateRequest struct {
+	CategoryID       *int64  `json:"categoryId"`
+	Title            string  `json:"title" binding:"required"`
+	Content          string  `json:"content" binding:"required"`
+	ContentType      string  `json:"contentType"`
+	Priority         string  `json:"priority"`
+	RequesterName    string  `json:"requesterName"`
+	RequesterContact string  `json:"requesterContact"`
+	AttachmentIDs    []int64 `json:"attachmentIds"`
+}
+
+// ToCommand 转成领域命令。
+func (r UserTicketCreateRequest) ToCommand() ticketdomain.CreateCommand {
+	return ticketdomain.CreateCommand{
+		CategoryID:       r.CategoryID,
+		Title:            r.Title,
+		Content:          r.Content,
+		ContentType:      r.ContentType,
+		Priority:         r.Priority,
+		RequesterName:    r.RequesterName,
+		RequesterContact: r.RequesterContact,
 		AttachmentIDs:    r.AttachmentIDs,
 	}
 }
@@ -146,6 +177,8 @@ type TicketCancelRequest struct {
 // TicketCategoryRequest 分类新建/更新。
 type TicketCategoryRequest struct {
 	AppID           int64                   `json:"appid"`
+	// Kind ticket / feedback。新建缺省 ticket，更新缺省保持原值
+	Kind            string                  `json:"kind"`
 	ParentID        *int64                  `json:"parentId"`
 	Key             string                  `json:"key" binding:"required"`
 	Name            string                  `json:"name" binding:"required"`
@@ -164,6 +197,7 @@ func (r TicketCategoryRequest) ToDomain(id int64) ticketdomain.Category {
 	item := ticketdomain.Category{
 		ID:              id,
 		AppID:           r.AppID,
+		Kind:            r.Kind,
 		ParentID:        r.ParentID,
 		Key:             r.Key,
 		Name:            r.Name,

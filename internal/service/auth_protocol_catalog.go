@@ -207,6 +207,19 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "ticketRating", Method: "POST", Path: "/tickets/{ticketId}/rating", Auth: true, Summary: "评价"},
 	{Key: "ticketCancel", Method: "POST", Path: "/tickets/{ticketId}/cancel", Auth: true, Summary: "撤单"},
 
+	// ── 意见反馈 ──
+	// 反馈是 kind=feedback 的工单：图片（≤4，按魔数判定）与附件（≤2）分开传，
+	// 来源与客户端信息由服务端记录，同一用户每小时 5 条、每天 20 条。
+	{Key: "feedbackCategories", Method: "GET", Path: "/feedback/categories", Auth: true, Summary: "反馈分类"},
+	{Key: "feedbackAttachment", Method: "POST", Path: "/feedback/attachments", Auth: true, Upload: true,
+		Summary: "上传反馈图片或附件（multipart/form-data：file，kind=image|file）"},
+	{Key: "feedbackCreate", Method: "POST", Path: "/feedback", Auth: true, Summary: "提交反馈"},
+	{Key: "feedbackList", Method: "GET", Path: "/feedback", Auth: true, Summary: "我的反馈"},
+	{Key: "feedbackDetail", Method: "GET", Path: "/feedback/{feedbackId}", Auth: true, Summary: "反馈详情"},
+	{Key: "feedbackReply", Method: "POST", Path: "/feedback/{feedbackId}/replies", Auth: true, Summary: "补充反馈"},
+	{Key: "feedbackRating", Method: "POST", Path: "/feedback/{feedbackId}/rating", Auth: true, Summary: "评价反馈处理结果"},
+	{Key: "feedbackCancel", Method: "POST", Path: "/feedback/{feedbackId}/cancel", Auth: true, Summary: "撤回反馈"},
+
 	// ── 内容与版本（免登录）──
 	{Key: "banners", Method: "GET", Path: "/banners", Summary: "轮播图"},
 	{Key: "bannerClick", Method: "POST", Path: "/banners/{bannerId}/click", Summary: "轮播图点击上报"},
@@ -346,6 +359,22 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 		Recovery: authprotocol.RecoveryNone},
 	{Code: 50260, Name: "CLOUD_CONTENT_UNREADABLE", Message: "内容读取失败",
 		Recovery: authprotocol.RecoveryNone, Hint: "存储桶里的对象暂时读不出来，稍后重试；持续失败请联系管理员检查存储配置"},
+	// ── 意见反馈与工单附件 ──
+	{Code: errCodeFeedbackRateLimited, Name: "FEEDBACK_RATE_LIMITED", Message: feedbackRateLimitedMessage,
+		Recovery: authprotocol.RecoveryNone, Hint: "同一用户每小时最多 5 条、每天最多 20 条反馈，稍后再提交"},
+	{Code: errCodeTicketAttachmentLimit, Name: "TICKET_ATTACHMENT_LIMIT", Message: "图片或附件数量超过上限",
+		Recovery: authprotocol.RecoveryNone, Hint: "反馈每次最多 4 张图片（imageIds）、2 个附件（attachmentIds）"},
+	{Code: errCodeTicketAttachmentUnavailable, Name: "TICKET_ATTACHMENT_UNAVAILABLE", Message: feedbackAttachmentUnavailableNotice,
+		Recovery: authprotocol.RecoveryNone, Hint: "附件只能由上传者本人使用一次；已提交过的附件要重新上传"},
+	{Code: errCodeFeedbackAttachmentKind, Name: "FEEDBACK_ATTACHMENT_KIND_MISMATCH", Message: "图片与附件的位置不符",
+		Recovery: authprotocol.RecoveryNone, Hint: "kind=image 上传的放 imageIds，kind=file 上传的放 attachmentIds"},
+	{Code: errCodeFeedbackImageUnsupported, Name: "FEEDBACK_IMAGE_UNSUPPORTED", Message: "图片仅支持 PNG、JPEG、WebP、GIF 格式",
+		Recovery: authprotocol.RecoveryNone, Hint: "按文件内容判定，改扩展名或 Content-Type 无效；其它文件请用 kind=file 上传"},
+	{Code: errCodeFeedbackAttachmentTooLarge, Name: "FEEDBACK_ATTACHMENT_TOO_LARGE", Message: "图片或附件过大",
+		Recovery: authprotocol.RecoveryNone, Hint: "图片不超过 10MB，附件不超过 20MB"},
+	{Code: errCodeFeedbackNotFound, Name: "FEEDBACK_NOT_FOUND", Message: "反馈不存在", Recovery: authprotocol.RecoveryNone},
+	{Code: errCodeFeedbackCategoryUnavailable, Name: "FEEDBACK_CATEGORY_UNAVAILABLE", Message: "反馈分类不存在或已停用",
+		Recovery: authprotocol.RecoveryNone, Hint: "重新拉一次 /feedback/categories"},
 	{Code: 40441, Name: "CARD_KEY_NOT_FOUND", Message: "卡密不存在",
 		Recovery: authprotocol.RecoveryNone, Hint: "服务端已忽略大小写与分隔符差异，走到这里就是真的没有这张卡"},
 	{Code: 40910, Name: "CARD_KEY_REDEEMING", Message: "该卡密正在被核销",

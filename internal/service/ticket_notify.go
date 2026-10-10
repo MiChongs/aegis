@@ -61,7 +61,25 @@ func (s *TicketService) emitTicketEventAs(ctx context.Context, item *ticketdomai
 	if s.notify == nil || item == nil {
 		return
 	}
+	s.notify.DispatchAsync(s.buildTicketEvent(ctx, item, eventKey, actor, extraVars))
+}
+
+// buildTicketEvent 把工单翻译成统一通知事件（含收件人解析）。
+func (s *TicketService) buildTicketEvent(ctx context.Context, item *ticketdomain.Ticket,
+	eventKey string, actor ticketActor, extraVars map[string]any) notifydomain.Event {
+
 	consoleLink := s.ticketConsoleLink(item.ID)
+	userLink := fmt.Sprintf("/tickets/%d", item.ID)
+	resource := "ticket"
+	userTitle := ticketUserTitle(eventKey, item)
+	userSummary := ticketUserSummary(eventKey, item, extraVars)
+	// 反馈在用户侧有自己的详情页与文案；事件名不变，订阅规则无需区分
+	if item.Kind == ticketdomain.KindFeedback {
+		userLink = fmt.Sprintf("/feedback/%d", item.ID)
+		resource = "feedback"
+		userTitle = feedbackUserTitle(eventKey, item)
+		userSummary = feedbackUserSummary(eventKey, item, extraVars)
+	}
 	event := notifydomain.Event{
 		Key:         eventKey,
 		AppID:       item.AppID,
@@ -71,12 +89,12 @@ func (s *TicketService) emitTicketEventAs(ctx context.Context, item *ticketdomai
 		Title:       ticketEventTitle(eventKey, item),
 		Summary:     ticketEventSummaryText(eventKey, item, extraVars),
 		Link:        consoleLink,
-		UserLink:    fmt.Sprintf("/tickets/%d", item.ID),
-		UserTitle:   ticketUserTitle(eventKey, item),
-		UserSummary: ticketUserSummary(eventKey, item, extraVars),
+		UserLink:    userLink,
+		UserTitle:   userTitle,
+		UserSummary: userSummary,
 		Priority:    item.Priority,
 		CategoryID:  item.CategoryID,
-		Resource:    "ticket",
+		Resource:    resource,
 		ResourceID:  strconv.FormatInt(item.ID, 10),
 		Fields:      ticketEventFields(item),
 		Vars:        ticketEventVars(item, extraVars),
@@ -85,8 +103,7 @@ func (s *TicketService) emitTicketEventAs(ctx context.Context, item *ticketdomai
 	event.Recipients = s.ticketRecipients(ctx, item, eventKey, actor)
 	// 同一工单同一事件在极短时间内重复触发时，靠 dedupe 键收敛为一次
 	event.DedupeKey = fmt.Sprintf("ticket:%d:%s:%d", item.ID, eventKey, item.UpdatedAt.Unix())
-
-	s.notify.DispatchAsync(event)
+	return event
 }
 
 // ticketRecipients 解析"人"维度的收件目标。
@@ -226,6 +243,9 @@ func ticketEventTitle(eventKey string, item *ticketdomain.Ticket) string {
 	switch eventKey {
 	case ticketEventCreated:
 		prefix = "新工单"
+		if item.Kind == ticketdomain.KindFeedback {
+			prefix = "新反馈"
+		}
 	case ticketEventUserReplied:
 		prefix = "用户追加回复"
 	case ticketEventAgentReplied:
@@ -339,6 +359,49 @@ func ticketUserTitle(eventKey string, item *ticketdomain.Ticket) string {
 		return ""
 	}
 	return fmt.Sprintf("【%s】%s", prefix, item.Title)
+}
+
+// feedbackUserTitle 面向反馈人的标题。
+func feedbackUserTitle(eventKey string, item *ticketdomain.Ticket) string {
+	prefix := ""
+	switch eventKey {
+	case ticketEventAgentReplied:
+		prefix = "反馈已回复"
+	case ticketEventResolved:
+		prefix = "反馈已解决"
+	case ticketEventClosed:
+		prefix = "反馈已关闭"
+	case ticketEventReopened:
+		prefix = "反馈已重新打开"
+	case ticketEventStatusChanged:
+		prefix = "反馈状态更新"
+	default:
+		return ""
+	}
+	return fmt.Sprintf("【%s】%s", prefix, item.Title)
+}
+
+// feedbackUserSummary 面向反馈人的正文。
+func feedbackUserSummary(eventKey string, item *ticketdomain.Ticket, vars map[string]any) string {
+	switch eventKey {
+	case ticketEventAgentReplied:
+		if text := stringVar(vars, "replyExcerpt"); text != "" {
+			return "客服回复：" + text
+		}
+		return "客服已回复你的反馈，点击查看详情。"
+	case ticketEventResolved:
+		if solution := stringVar(vars, "solution"); solution != "" {
+			return "处理结果：" + solution
+		}
+		return "你的反馈已处理完成，感谢你的支持。"
+	case ticketEventClosed:
+		return "反馈已关闭，感谢你的支持。"
+	case ticketEventReopened:
+		return "反馈已重新打开，我们会尽快跟进。"
+	case ticketEventStatusChanged:
+		return fmt.Sprintf("反馈状态更新为「%s」。", statusLabel(item.Status))
+	}
+	return ""
 }
 
 // ticketUserSummary 面向提单人的正文。

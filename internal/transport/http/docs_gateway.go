@@ -127,10 +127,17 @@ func gatewayRequestModels() map[string]any {
 
 		// 工单
 		"tickets":      TicketListQuery{},
-		"ticketCreate": TicketCreateRequest{},
+		"ticketCreate": UserTicketCreateRequest{},
 		"ticketReply":  TicketReplyRequest{},
 		"ticketRating": TicketRatingRequest{},
 		"ticketCancel": TicketCancelRequest{},
+
+		// 意见反馈
+		"feedbackList":   FeedbackListQuery{},
+		"feedbackCreate": FeedbackCreateRequest{},
+		"feedbackReply":  FeedbackReplyRequest{},
+		"feedbackRating": TicketRatingRequest{},
+		"feedbackCancel": TicketCancelRequest{},
 
 		// 内容与版本
 		"versionCheck":   VersionCheckQuery{},

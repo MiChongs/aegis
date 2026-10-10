@@ -37,7 +37,25 @@ const (
 	SourceEmail   = "email"
 	SourceBot     = "bot"
 	SourceImport  = "import"
+	SourceWeb     = "web"
 )
+
+// 工单类型：普通工单与意见反馈共用同一套表与处理流程，按 kind 区分入口与展示
+const (
+	KindTicket   = "ticket"
+	KindFeedback = "feedback"
+)
+
+// 附件类型：image 由服务端按魔数判定，file 为其余一切
+const (
+	AttachmentImage = "image"
+	AttachmentFile  = "file"
+)
+
+// ValidKind 是否为受支持的工单类型。
+func ValidKind(kind string) bool {
+	return kind == KindTicket || kind == KindFeedback
+}
 
 // 提单人类型
 const (
@@ -111,6 +129,7 @@ func IsTerminal(status string) bool {
 type Ticket struct {
 	ID       int64  `json:"id"`
 	TicketNo string `json:"ticketNo"`
+	Kind     string `json:"kind"`
 	AppID    int64  `json:"appid"`
 	AppName  string `json:"appName,omitempty"`
 
@@ -122,6 +141,7 @@ type Ticket struct {
 
 	CategoryID   *int64 `json:"categoryId,omitempty"`
 	CategoryName string `json:"categoryName,omitempty"`
+	CategoryKey  string `json:"categoryKey,omitempty"`
 	Title        string `json:"title"`
 	Status       string `json:"status"`
 	Priority     string `json:"priority"`
@@ -144,6 +164,9 @@ type Ticket struct {
 	LastMessageAt   *time.Time `json:"lastMessageAt,omitempty"`
 	LastMessageRole string     `json:"lastMessageRole,omitempty"`
 	ReopenedCount   int        `json:"reopenedCount"`
+	// 对外可见（不挂在内部备注上）的附件数，按类型分开计
+	ImageCount      int `json:"imageCount"`
+	AttachmentCount int `json:"attachmentCount"`
 
 	Rating        *int16     `json:"rating,omitempty"`
 	RatingComment string     `json:"ratingComment,omitempty"`
@@ -190,6 +213,7 @@ type Attachment struct {
 	ID             int64     `json:"id"`
 	TicketID       *int64    `json:"ticketId,omitempty"`
 	MessageID      *int64    `json:"messageId,omitempty"`
+	Kind           string    `json:"kind"`
 	FileName       string    `json:"fileName"`
 	ContentType    string    `json:"contentType"`
 	SizeBytes      int64     `json:"sizeBytes"`
@@ -230,6 +254,7 @@ type Watcher struct {
 type Category struct {
 	ID              int64       `json:"id"`
 	AppID           int64       `json:"appid"`
+	Kind            string      `json:"kind"`
 	ParentID        *int64      `json:"parentId,omitempty"`
 	Key             string      `json:"key"`
 	Name            string      `json:"name"`
@@ -326,6 +351,8 @@ type QuickReply struct {
 // ListQuery 管理端列表查询条件。Scope 由服务层根据会话注入，不由前端传入。
 type ListQuery struct {
 	AppID      *int64   `json:"appid,omitempty"`
+	// Kind 为空表示不区分（管理端「全部」）；用户端各入口固定传值
+	Kind       string   `json:"kind,omitempty"`
 	Statuses   []string `json:"statuses,omitempty"`
 	Priorities []string `json:"priorities,omitempty"`
 	CategoryID *int64   `json:"categoryId,omitempty"`
@@ -362,6 +389,7 @@ type ListResponse struct {
 // CreateCommand 创建工单。
 type CreateCommand struct {
 	AppID            int64          `json:"appid"`
+	Kind             string         `json:"kind,omitempty"`
 	RequesterType    string         `json:"requesterType"`
 	RequesterUserID  *int64         `json:"requesterUserId,omitempty"`
 	RequesterAdminID *int64         `json:"requesterAdminId,omitempty"`
@@ -379,6 +407,14 @@ type CreateCommand struct {
 	Metadata         map[string]any `json:"metadata,omitempty"`
 	AttachmentIDs    []int64        `json:"attachmentIds,omitempty"`
 	CreatedByAdminID *int64         `json:"-"`
+	// AttachmentOwner 非空时只允许绑定该上传者传的附件（用户端提单）
+	AttachmentOwner *AttachmentOwner `json:"-"`
+}
+
+// AttachmentOwner 附件上传者身份。
+type AttachmentOwner struct {
+	Type string
+	ID   int64
 }
 
 // ReplyCommand 追加一条会话消息。

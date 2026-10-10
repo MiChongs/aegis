@@ -206,5 +206,15 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.POST("/tickets/:ticketId/replies", h.UserReplyTicket)
 		appGatewayAuthed.POST("/tickets/:ticketId/rating", h.UserRateTicket)
 		appGatewayAuthed.POST("/tickets/:ticketId/cancel", h.UserCancelTicket)
+
+		// 意见反馈：kind=feedback 的工单，独立入口与更严的入参（见 feedback_service.go）
+		appGatewayAuthed.GET("/feedback/categories", h.AppFeedbackCategories)
+		appGatewayAuthed.POST("/feedback/attachments", h.AppUploadFeedbackAttachment)
+		appGatewayAuthed.POST("/feedback", h.AppCreateFeedback)
+		appGatewayAuthed.GET("/feedback", h.AppListFeedback)
+		appGatewayAuthed.GET("/feedback/:feedbackId", h.AppGetFeedback)
+		appGatewayAuthed.POST("/feedback/:feedbackId/replies", h.AppReplyFeedback)
+		appGatewayAuthed.POST("/feedback/:feedbackId/rating", h.AppRateFeedback)
+		appGatewayAuthed.POST("/feedback/:feedbackId/cancel", h.AppCancelFeedback)
 	}
 }

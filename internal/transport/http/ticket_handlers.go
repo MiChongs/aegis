@@ -31,6 +31,7 @@ func (h *Handler) AdminListTickets(c *gin.Context) {
 
 	query := ticketdomain.ListQuery{
 		AppID:         q.AppID,
+		Kind:          q.Kind,
 		Statuses:      splitCSV(q.Status),
 		Priorities:    splitCSV(q.Priority),
 		CategoryID:    q.CategoryID,
@@ -91,14 +92,14 @@ func (h *Handler) AdminGetTicket(c *gin.Context) {
 }
 
 // AdminTicketStats 工单概览统计
-// GET /api/admin/tickets/stats
+// GET /api/admin/tickets/stats?appid=&kind=ticket|feedback
 func (h *Handler) AdminTicketStats(c *gin.Context) {
 	session, ok := adminAccessSession(c)
 	if !ok {
 		response.Error(c, http.StatusUnauthorized, 40110, "管理员未认证")
 		return
 	}
-	stats, err := h.ticket.Stats(c.Request.Context(), session, optionalQueryInt64(c, "appid"))
+	stats, err := h.ticket.Stats(c.Request.Context(), session, optionalQueryInt64(c, "appid"), c.Query("kind"))
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -168,6 +169,7 @@ func (h *Handler) ExportAdminTickets(c *gin.Context) {
 	_ = c.ShouldBindQuery(&q)
 	query := ticketdomain.ListQuery{
 		AppID:         q.AppID,
+		Kind:          q.Kind,
 		Statuses:      splitCSV(q.Status),
 		Priorities:    splitCSV(q.Priority),
 		CategoryID:    q.CategoryID,
@@ -487,13 +489,22 @@ func (h *Handler) AdminUploadTicketAttachment(c *gin.Context) {
 // ─────────────── 配置 ───────────────
 
 // AdminListTicketCategories 分类列表
-// GET /api/admin/tickets/categories
+// GET /api/admin/tickets/categories?appid=&enabled=&kind=ticket|feedback
 func (h *Handler) AdminListTicketCategories(c *gin.Context) {
 	appID := queryInt64Default(c, "appid", 0)
 	items, err := h.ticket.ListCategories(c.Request.Context(), appID, c.Query("enabled") == "true")
 	if err != nil {
 		h.writeError(c, err)
 		return
+	}
+	if kind := strings.TrimSpace(strings.ToLower(c.Query("kind"))); ticketdomain.ValidKind(kind) {
+		filtered := make([]ticketdomain.Category, 0, len(items))
+		for _, item := range items {
+			if item.Kind == kind {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
 	}
 	response.Success(c, http.StatusOK, "获取成功", items)
 }
@@ -789,6 +800,11 @@ func (h *Handler) AdminTicketMetadata(c *gin.Context) {
 			{"value": ticketdomain.SourceEmail, "label": "邮件"},
 			{"value": ticketdomain.SourceBot, "label": "机器人"},
 			{"value": ticketdomain.SourceImport, "label": "导入"},
+			{"value": ticketdomain.SourceWeb, "label": "官网"},
+		},
+		"kinds": []gin.H{
+			{"value": ticketdomain.KindTicket, "label": "工单"},
+			{"value": ticketdomain.KindFeedback, "label": "意见反馈"},
 		},
 		"slaStates": []gin.H{
 			{"value": ticketdomain.SLAOnTime, "label": "正常"},
@@ -856,7 +872,7 @@ func (h *Handler) UserCreateTicket(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, 40110, "用户未认证")
 		return
 	}
-	var req TicketCreateRequest
+	var req UserTicketCreateRequest
 	if err := bind(c, &req); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
@@ -967,7 +983,8 @@ func (h *Handler) UserListTicketCategories(c *gin.Context) {
 	// 只暴露允许自助提交的分类，且不下发内部归属字段
 	visible := make([]ticketdomain.Category, 0, len(items))
 	for _, item := range items {
-		if !item.UserSubmittable {
+		// 反馈分类走 /feedback/categories，不出现在工单入口
+		if !item.UserSubmittable || item.Kind == ticketdomain.KindFeedback {
 			continue
 		}
 		item.DefaultGroupID = nil

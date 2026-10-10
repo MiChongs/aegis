@@ -542,7 +542,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/user/site-detail"):                                                          SiteDetailQuery{},                        // SiteDetail
 		routeKey("GET", "/api/user/site-list"):                                                            SiteListQuery{},                          // SiteList
 		routeKey("GET", "/api/user/tickets"):                                                              TicketListQuery{},                        // UserListTickets
-		routeKey("POST", "/api/user/tickets"):                                                             TicketCreateRequest{},                    // UserCreateTicket
+		routeKey("POST", "/api/user/tickets"):                                                             UserTicketCreateRequest{},                // UserCreateTicket
 		routeKey("POST", "/api/user/tickets/{ticketId}/cancel"):                                           TicketCancelRequest{},                    // UserCancelTicket
 		routeKey("POST", "/api/user/tickets/{ticketId}/rating"):                                           TicketRatingRequest{},                    // UserRateTicket
 		routeKey("POST", "/api/user/tickets/{ticketId}/replies"):                                          TicketReplyRequest{},                     // UserReplyTicket
@@ -575,6 +575,11 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}"):                            CloudItemPutRequest{},                    // AppPutCloudItem
 		routeKey("POST", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}/link"):                      CloudItemLinkRequest{},                   // AppCloudItemLink
 		routeKey("POST", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}/rollback"):                  CloudItemRollbackRequest{},               // AppRollbackCloudItem
+		routeKey("GET", "/api/v1/apps/{appkey}/feedback"):                                                 FeedbackListQuery{},                      // AppListFeedback
+		routeKey("POST", "/api/v1/apps/{appkey}/feedback"):                                                FeedbackCreateRequest{},                  // AppCreateFeedback
+		routeKey("POST", "/api/v1/apps/{appkey}/feedback/{feedbackId}/cancel"):                            TicketCancelRequest{},                    // AppCancelFeedback
+		routeKey("POST", "/api/v1/apps/{appkey}/feedback/{feedbackId}/rating"):                            TicketRatingRequest{},                    // AppRateFeedback
+		routeKey("POST", "/api/v1/apps/{appkey}/feedback/{feedbackId}/replies"):                           FeedbackReplyRequest{},                   // AppReplyFeedback
 		routeKey("GET", "/api/v1/apps/{appkey}/leaderboard/points/{type}"):                                LeaderboardListQuery{},                   // LeaderboardPoints
 		routeKey("GET", "/api/v1/apps/{appkey}/leaderboard/signin/{type}"):                                LeaderboardListQuery{},                   // LeaderboardSignIn
 		routeKey("POST", "/api/v1/apps/{appkey}/me/2fa/recovery-codes"):                                   RecoveryCodesRegenerateRequest{},         // GenerateRecoveryCodes
@@ -603,7 +608,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/v1/apps/{appkey}/signin/history"):                                           PaginationQuery{},                        // SignInHistory
 		routeKey("POST", "/api/v1/apps/{appkey}/storage/object-link"):                                     StorageObjectLinkRequest{},               // StorageObjectLink
 		routeKey("GET", "/api/v1/apps/{appkey}/tickets"):                                                  TicketListQuery{},                        // UserListTickets
-		routeKey("POST", "/api/v1/apps/{appkey}/tickets"):                                                 TicketCreateRequest{},                    // UserCreateTicket
+		routeKey("POST", "/api/v1/apps/{appkey}/tickets"):                                                 UserTicketCreateRequest{},                // UserCreateTicket
 		routeKey("POST", "/api/v1/apps/{appkey}/tickets/{ticketId}/cancel"):                               TicketCancelRequest{},                    // UserCancelTicket
 		routeKey("POST", "/api/v1/apps/{appkey}/tickets/{ticketId}/rating"):                               TicketRatingRequest{},                    // UserRateTicket
 		routeKey("POST", "/api/v1/apps/{appkey}/tickets/{ticketId}/replies"):                              TicketReplyRequest{},                     // UserReplyTicket

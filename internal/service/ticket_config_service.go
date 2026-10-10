@@ -53,6 +53,17 @@ func (s *TicketService) SaveCategory(ctx context.Context, access *admindomain.Ac
 		}
 		// appid 不可迁移，防止把应用级分类"提权"成平台级
 		item.AppID = existing.AppID
+		// 更新时不传 kind 表示保持原值
+		if strings.TrimSpace(item.Kind) == "" {
+			item.Kind = existing.Kind
+		}
+	}
+	item.Kind = strings.TrimSpace(strings.ToLower(item.Kind))
+	if item.Kind == "" {
+		item.Kind = ticketdomain.KindTicket
+	}
+	if !ticketdomain.ValidKind(item.Kind) {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "分类类型只能是 ticket 或 feedback")
 	}
 	if err := s.requireTicketManage(ctx, access, item.AppID); err != nil {
 		return nil, err

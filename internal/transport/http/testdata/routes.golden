@@ -514,6 +514,9 @@ GET	/api/v1/apps/:appkey/cloud/items	AppCloudItems
 GET	/api/v1/apps/:appkey/cloud/items/:namespace/:key	AppCloudItem
 GET	/api/v1/apps/:appkey/cloud/items/:namespace/:key/revisions	AppCloudItemRevisions
 GET	/api/v1/apps/:appkey/config	AppConfig
+GET	/api/v1/apps/:appkey/feedback	AppListFeedback
+GET	/api/v1/apps/:appkey/feedback/:feedbackId	AppGetFeedback
+GET	/api/v1/apps/:appkey/feedback/categories	AppFeedbackCategories
 GET	/api/v1/apps/:appkey/leaderboard/me	LeaderboardMe
 GET	/api/v1/apps/:appkey/leaderboard/points/:type	LeaderboardPoints
 GET	/api/v1/apps/:appkey/leaderboard/signin/:type	LeaderboardSignIn
@@ -1039,6 +1042,11 @@ POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/link	AppCloudItemLink
 POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/restore	AppRestoreCloudItem
 POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/rollback	AppRollbackCloudItem
 POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/upload	AppUploadCloudItem
+POST	/api/v1/apps/:appkey/feedback	AppCreateFeedback
+POST	/api/v1/apps/:appkey/feedback/:feedbackId/cancel	AppCancelFeedback
+POST	/api/v1/apps/:appkey/feedback/:feedbackId/rating	AppRateFeedback
+POST	/api/v1/apps/:appkey/feedback/:feedbackId/replies	AppReplyFeedback
+POST	/api/v1/apps/:appkey/feedback/attachments	AppUploadFeedbackAttachment
 POST	/api/v1/apps/:appkey/me/2fa/recovery-codes	GenerateRecoveryCodes
 POST	/api/v1/apps/:appkey/me/2fa/recovery-codes/regenerate	RegenerateRecoveryCodes
 POST	/api/v1/apps/:appkey/me/2fa/totp/disable	DisableTOTP
