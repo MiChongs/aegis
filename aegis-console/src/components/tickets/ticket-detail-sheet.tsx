@@ -34,6 +34,7 @@ import {
   useChangeTicketStatusMutation,
   useDeleteTicketMutation,
   useReplyTicketMutation,
+  useTicketCategoriesQuery,
   useTicketDetailQuery,
   useTicketGroupsQuery,
   useTicketQuickRepliesQuery,
@@ -43,16 +44,21 @@ import {
 } from "@/lib/ticket-hooks";
 import type { TicketAttachment, TicketPriority, TicketStatus } from "@/lib/api/tickets";
 import {
+  KIND_LABEL,
   PRIORITY_LABEL,
+  SOURCE_LABEL,
   STATUS_LABEL,
+  FeedbackCategoryBadge,
   PriorityBadge,
   SLABadge,
   StatusBadge,
-  formatBytes,
   formatDateTime,
   formatDue,
-  formatRelativeTime
+  formatPlatform,
+  formatRelativeTime,
+  getTicketClient
 } from "./ticket-shared";
+import { TicketAttachmentList } from "./ticket-attachments";
 import { cn } from "@/lib/utils";
 
 // 工单详情抽屉。
@@ -81,6 +87,8 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
   const admins = useAdminOptions();
   const groupsQuery = useTicketGroupsQuery(ticket?.appid ?? 0);
   const quickRepliesQuery = useTicketQuickRepliesQuery(ticket?.appid ?? 0);
+  // 分类列表已被列表页缓存，这里只用来取分类标识给反馈分类徽标配色
+  const categoriesQuery = useTicketCategoriesQuery(ticket?.appid ?? 0);
 
   const [replyContent, setReplyContent] = useState("");
   const [internal, setInternal] = useState(false);
@@ -104,6 +112,14 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
   const perms = ticket?.permissions;
   const groups = groupsQuery.data ?? [];
   const quickReplies = quickRepliesQuery.data ?? [];
+
+  const isFeedback = ticket?.kind === "feedback";
+  const noun = isFeedback ? "反馈" : "工单";
+  const client = useMemo(() => getTicketClient(ticket?.metadata), [ticket?.metadata]);
+  const categoryKey = useMemo(
+    () => (categoriesQuery.data ?? []).find((item) => item.id === ticket?.categoryId)?.key,
+    [categoriesQuery.data, ticket?.categoryId]
+  );
 
   const firstResponseDue = useMemo(() => formatDue(ticket?.firstResponseDueAt), [ticket?.firstResponseDueAt]);
   const resolveDue = useMemo(() => formatDue(ticket?.resolveDueAt), [ticket?.resolveDueAt]);
@@ -193,7 +209,7 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
     if (!ticket) return;
     try {
       await deleteMut.mutateAsync(ticket.id);
-      notify.success("工单已删除");
+      notify.success(`${noun}已删除`);
       onClose();
     } catch (error) {
       handleError(error, "删除失败");
@@ -205,7 +221,7 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
       <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-3xl">
         {detailQuery.isLoading || !ticket ? (
           <div className="p-6">
-            <LoadingState title="加载工单" />
+            <LoadingState title="加载详情" />
           </div>
         ) : (
           <div className="flex h-full flex-col">
@@ -214,6 +230,14 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
                 <Badge variant="outline" size="sm" className="font-mono">
                   {ticket.ticketNo}
                 </Badge>
+                {isFeedback ? (
+                  <>
+                    <Badge variant="secondary" size="sm">
+                      {KIND_LABEL.feedback}
+                    </Badge>
+                    <FeedbackCategoryBadge name={ticket.categoryName} categoryKey={categoryKey} />
+                  </>
+                ) : null}
                 <StatusBadge status={ticket.status} />
                 <PriorityBadge priority={ticket.priority} />
                 <SLABadge state={ticket.slaState} />
@@ -225,9 +249,15 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
                 ) : null}
               </div>
               <SheetTitle className="text-left text-base">{ticket.title}</SheetTitle>
-              <SheetDescription className="text-left">
-                {ticket.requesterName} · {ticket.appName || `应用 #${ticket.appid}`} ·{" "}
-                {formatRelativeTime(ticket.createdAt)}提交
+              <SheetDescription className="flex flex-wrap gap-x-3 gap-y-1 text-left">
+                <span>{ticket.requesterName}</span>
+                <span>{ticket.appName || `应用 #${ticket.appid}`}</span>
+                {client ? (
+                  <span>
+                    {[formatPlatform(client.platform), client.version].filter(Boolean).join(" ")}
+                  </span>
+                ) : null}
+                <span>{formatRelativeTime(ticket.createdAt)}提交</span>
               </SheetDescription>
             </SheetHeader>
 
@@ -275,21 +305,7 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
                           {message.content}
                         </p>
                         {message.attachments?.length ? (
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {message.attachments.map((file) => (
-                              <a
-                                key={file.id}
-                                href={file.downloadUrl || "#"}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
-                              >
-                                <Paperclip className="size-3" />
-                                {file.fileName}
-                                <span className="text-[10px]">{formatBytes(file.sizeBytes)}</span>
-                              </a>
-                            ))}
-                          </div>
+                          <TicketAttachmentList attachments={message.attachments} className="mt-2" />
                         ) : null}
                       </div>
                     ))}
@@ -393,8 +409,9 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
                       <li key={event.id} className="relative">
                         <span className="absolute -left-[23px] top-1.5 size-2 rounded-full bg-muted-foreground/60" />
                         <p className="text-sm text-foreground">{event.summary || event.event}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {event.actorName || "系统"} · {formatDateTime(event.createdAt)}
+                        <p className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                          <span>{event.actorName || "系统"}</span>
+                          <span>{formatDateTime(event.createdAt)}</span>
                         </p>
                       </li>
                     ))}
@@ -410,28 +427,50 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
                 <ScrollArea className="h-full px-6 py-4">
                   <div className="space-y-4">
                     <section className="grid gap-3 sm:grid-cols-2">
-                      <Field label="提单人" value={ticket.requesterName} />
-                      <Field label="联系方式" value={ticket.requesterContact || "—"} />
-                      <Field label="分类" value={ticket.categoryName || "未分类"} />
-                      <Field label="来源" value={ticket.source} />
+                      <Field label={isFeedback ? "反馈人" : "提单人"} value={ticket.requesterName} />
+                      <Field label="联系方式" value={ticket.requesterContact || "未填写"} />
+                      <Field label="类型" value={KIND_LABEL[ticket.kind ?? "ticket"]} />
+                      <Field label={isFeedback ? "反馈分类" : "分类"} value={ticket.categoryName || "未分类"} />
+                      <Field label="来源" value={SOURCE_LABEL[ticket.source] ?? ticket.source} />
                       <Field label="受理人" value={ticket.assigneeName || "未指派"} />
                       <Field label="处理组" value={ticket.groupName || "未指定"} />
                       <Field label="创建时间" value={formatDateTime(ticket.createdAt)} />
                       <Field label="最后更新" value={formatRelativeTime(ticket.updatedAt)} />
                       <Field
                         label="首响时限"
-                        value={ticket.firstRespondedAt ? `已响应 · ${formatDateTime(ticket.firstRespondedAt)}` : firstResponseDue.text}
+                        value={ticket.firstRespondedAt ? `已于 ${formatDateTime(ticket.firstRespondedAt)} 响应` : firstResponseDue.text}
                         danger={!ticket.firstRespondedAt && firstResponseDue.overdue}
                       />
                       <Field
                         label="解决时限"
-                        value={ticket.resolvedAt ? `已解决 · ${formatDateTime(ticket.resolvedAt)}` : resolveDue.text}
+                        value={ticket.resolvedAt ? `已于 ${formatDateTime(ticket.resolvedAt)} 解决` : resolveDue.text}
                         danger={!ticket.resolvedAt && resolveDue.overdue}
                       />
                       {ticket.rating ? (
                         <Field label="满意度" value={`${ticket.rating} 星 ${ticket.ratingComment || ""}`} />
                       ) : null}
                     </section>
+
+                    {client ? (
+                      <section className="space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground">提交端</p>
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <Field label="平台" value={formatPlatform(client.platform) || "未知"} />
+                          <Field label="版本" value={client.version || "未知"} />
+                          <Field label="设备" value={client.device || "未知"} />
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {ticket.attachments?.length ? (
+                      <section className="space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          <Paperclip className="mr-1 inline size-3" />
+                          全部附件（{ticket.attachments.length}）
+                        </p>
+                        <TicketAttachmentList attachments={ticket.attachments} size="md" />
+                      </section>
+                    ) : null}
 
                     {ticket.tags?.length ? (
                       <div className="flex flex-wrap gap-1">
@@ -565,7 +604,7 @@ export function TicketDetailSheet({ ticketId, onClose }: Props) {
               ) : null}
               {perms?.close && ticket.status !== "closed" ? (
                 <Button size="sm" variant="outline" onClick={() => handleStatus("closed")}>
-                  关闭工单
+                  关闭{noun}
                 </Button>
               ) : null}
               {perms?.reopen ? (

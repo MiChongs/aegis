@@ -15,6 +15,7 @@ import {
   LayoutDashboard,
   LifeBuoy,
   MailOpen,
+  MessageSquareText,
   Puzzle,
   PackageCheck,
   Settings2,
@@ -288,6 +289,13 @@ export const navigationGroups: NavigationGroup[] = [
           { title: "工单配置", tab: "settings" },
           { title: "通知出口", tab: "notify" }
         ]
+      },
+      {
+        // 反馈与工单同一套可见范围规则，同样不挂 permission
+        title: "意见反馈",
+        href: "/feedback",
+        icon: MessageSquareText,
+        summary: "用户反馈与建议"
       }
     ]
   },

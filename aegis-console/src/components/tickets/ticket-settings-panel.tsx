@@ -33,8 +33,8 @@ import {
   useTicketQuickRepliesQuery,
   useTicketSLAPoliciesQuery
 } from "@/lib/ticket-hooks";
-import type { TicketGroup, TicketPriority } from "@/lib/api/tickets";
-import { PRIORITY_LABEL } from "./ticket-shared";
+import type { TicketGroup, TicketKind, TicketPriority } from "@/lib/api/tickets";
+import { KIND_LABEL, PRIORITY_LABEL } from "./ticket-shared";
 
 // 工单配置面板：分类 / 处理组 / SLA / 快捷回复。
 //
@@ -42,6 +42,7 @@ import { PRIORITY_LABEL } from "./ticket-shared";
 // 选中具体应用则是该应用的私有配置，应用管理员即可维护。
 
 const PRIORITIES: TicketPriority[] = ["urgent", "high", "normal", "low"];
+const KINDS: TicketKind[] = ["ticket", "feedback"];
 
 export function TicketSettingsPanel({ appId }: { appId: number }) {
   return (
@@ -83,7 +84,9 @@ function CategoriesSection({ appId }: { appId: number }) {
 
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | undefined>();
+  const [kindFilter, setKindFilter] = useState<"all" | TicketKind>("all");
   const [form, setForm] = useState({
+    kind: "ticket" as TicketKind,
     key: "",
     name: "",
     description: "",
@@ -98,6 +101,8 @@ function CategoriesSection({ appId }: { appId: number }) {
   const openCreate = () => {
     setEditingId(undefined);
     setForm({
+      // 当前筛选为意见反馈时，新建默认就是反馈分类
+      kind: kindFilter === "feedback" ? "feedback" : "ticket",
       key: "",
       name: "",
       description: "",
@@ -121,6 +126,7 @@ function CategoriesSection({ appId }: { appId: number }) {
         id: editingId,
         payload: {
           appid: appId,
+          kind: form.kind,
           key: form.key.trim(),
           name: form.name.trim(),
           description: form.description.trim(),
@@ -139,11 +145,26 @@ function CategoriesSection({ appId }: { appId: number }) {
     }
   };
 
-  const items = query.data ?? [];
+  const items = (query.data ?? []).filter(
+    (item) => kindFilter === "all" || (item.kind ?? "ticket") === kindFilter
+  );
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-2">
+        <Select value={kindFilter} onValueChange={(value) => setKindFilter(value as "all" | TicketKind)}>
+          <SelectTrigger className="h-9 w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部类型</SelectItem>
+            {KINDS.map((kind) => (
+              <SelectItem key={kind} value={kind}>
+                {KIND_LABEL[kind]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button size="sm" onClick={openCreate}>
           <Plus className="mr-1 size-3.5" />
           新建分类
@@ -163,6 +184,9 @@ function CategoriesSection({ appId }: { appId: number }) {
                     <Badge variant="outline" size="sm" className="font-mono text-[10px]">
                       {item.key}
                     </Badge>
+                    <Badge variant={item.kind === "feedback" ? "info" : "outline"} size="sm">
+                      {KIND_LABEL[item.kind ?? "ticket"]}
+                    </Badge>
                     {item.appid === 0 ? (
                       <Badge variant="secondary" size="sm">
                         平台级
@@ -175,9 +199,8 @@ function CategoriesSection({ appId }: { appId: number }) {
                     ) : null}
                   </div>
                   <p className="truncate text-xs text-muted-foreground">{item.description || "无描述"}</p>
-                  <div className="flex flex-wrap gap-1 text-[11px] text-muted-foreground">
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                     <span>默认 {PRIORITY_LABEL[item.defaultPriority]}</span>
-                    <span>·</span>
                     <span>{item.userSubmittable ? "用户可自助提交" : "仅管理员代提"}</span>
                   </div>
                 </div>
@@ -188,6 +211,7 @@ function CategoriesSection({ appId }: { appId: number }) {
                     onClick={() => {
                       setEditingId(item.id);
                       setForm({
+                        kind: item.kind ?? "ticket",
                         key: item.key,
                         name: item.name,
                         description: item.description,
@@ -231,6 +255,27 @@ function CategoriesSection({ appId }: { appId: number }) {
             <DialogTitle>{editingId ? "编辑分类" : "新建分类"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            <div className="space-y-1">
+              <Label>类型</Label>
+              <Select
+                value={form.kind}
+                onValueChange={(value) => setForm((prev) => ({ ...prev, kind: value as TicketKind }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {KINDS.map((kind) => (
+                    <SelectItem key={kind} value={kind}>
+                      {KIND_LABEL[kind]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                意见反馈分类仅在用户端反馈入口提供，工单分类仅在工单入口提供。
+              </p>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label>标识</Label>

@@ -40,6 +40,7 @@ import {
   type TicketCategoryPayload,
   type TicketCreatePayload,
   type TicketGroupPayload,
+  type TicketKind,
   type TicketListParams,
   type TicketQuickReplyPayload,
   type TicketReplyPayload,
@@ -135,11 +136,11 @@ export function useTicketDetailQuery(id?: number | null) {
   });
 }
 
-export function useTicketStatsQuery(appid?: number) {
+export function useTicketStatsQuery(appid?: number, kind?: TicketKind) {
   const token = useToken();
   return useQuery({
-    queryKey: ["ticket-stats", token, appid],
-    queryFn: () => getTicketStats(token as string, appid),
+    queryKey: ["ticket-stats", token, appid, kind],
+    queryFn: () => getTicketStats(token as string, appid, kind),
     enabled: Boolean(token),
     staleTime: 30_000
   });

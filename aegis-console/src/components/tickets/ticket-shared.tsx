@@ -1,7 +1,19 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
-import type { TicketPriority, TicketSLAState, TicketStatus } from "@/lib/api/tickets";
+import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { joinApiUrl } from "@/lib/api/client";
+import type {
+  TicketAttachment,
+  TicketClientInfo,
+  TicketKind,
+  TicketPriority,
+  TicketSLAState,
+  TicketSource,
+  TicketStatus
+} from "@/lib/api/tickets";
 
 // 工单模块共享的展示映射与格式化。
 // 枚举中文名与后端 /api/admin/tickets/metadata 保持一致；
@@ -142,4 +154,136 @@ export function formatBytes(bytes: number): string {
     index += 1;
   }
   return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+// ─────────────── 类型 / 来源 / 提交端 ───────────────
+
+export const KIND_LABEL: Record<TicketKind, string> = {
+  ticket: "工单",
+  feedback: "意见反馈"
+};
+
+export const SOURCE_LABEL: Record<TicketSource, string> = {
+  console: "控制台",
+  app: "应用内",
+  web: "网页",
+  api: "开放接口",
+  email: "邮件",
+  bot: "机器人",
+  import: "导入"
+};
+
+/** 平台标识 → 中文名；未登记的原样展示 */
+const PLATFORM_LABEL: Record<string, string> = {
+  android: "Android",
+  ios: "iOS",
+  harmony: "HarmonyOS",
+  web: "网页",
+  windows: "Windows",
+  macos: "macOS",
+  linux: "Linux"
+};
+
+export function formatPlatform(value?: string): string {
+  if (!value) return "";
+  return PLATFORM_LABEL[value.toLowerCase()] ?? value;
+}
+
+/** 读取 metadata.client，字段类型不符时丢弃，避免把对象直接渲染进文本 */
+export function getTicketClient(metadata?: Record<string, unknown>): TicketClientInfo | null {
+  const raw = metadata?.client;
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const pick = (key: string) => (typeof record[key] === "string" && record[key] ? (record[key] as string) : undefined);
+  const client: TicketClientInfo = { platform: pick("platform"), version: pick("version"), device: pick("device") };
+  return client.platform || client.version || client.device ? client : null;
+}
+
+/** 列表行用的「平台 版本」短文本 */
+export function formatClientShort(client: TicketClientInfo | null): string {
+  if (!client) return "";
+  return [formatPlatform(client.platform), client.version ? `v${client.version.replace(/^v/i, "")}` : ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+// ─────────────── 反馈分类 ───────────────
+
+const FEEDBACK_CATEGORY_VARIANT: Record<string, BadgeVariant> = {
+  feedback_bug: "danger",
+  feedback_feature: "info",
+  feedback_experience: "warning",
+  feedback_other: "secondary"
+};
+
+const FEEDBACK_CATEGORY_BY_NAME: Record<string, BadgeVariant> = {
+  问题反馈: "danger",
+  功能建议: "info",
+  体验吐槽: "warning",
+  其他: "secondary"
+};
+
+/** 反馈分类徽标。优先按分类标识配色，自建分类回落到名称或中性色 */
+export function FeedbackCategoryBadge({ name, categoryKey }: { name?: string; categoryKey?: string }) {
+  if (!name) {
+    return (
+      <Badge variant="outline" size="sm">
+        未分类
+      </Badge>
+    );
+  }
+  const variant =
+    (categoryKey ? FEEDBACK_CATEGORY_VARIANT[categoryKey] : undefined) ?? FEEDBACK_CATEGORY_BY_NAME[name] ?? "outline";
+  return (
+    <Badge variant={variant} size="sm">
+      {name}
+    </Badge>
+  );
+}
+
+// ─────────────── 附件 ───────────────
+
+export function isImageAttachment(file: TicketAttachment): boolean {
+  if (file.kind) return file.kind === "image";
+  return (file.contentType || "").toLowerCase().startsWith("image/");
+}
+
+/** downloadUrl 是相对 Aegis 根的路径，控制台与 API 分域部署时需补全 */
+export function attachmentUrl(file: TicketAttachment): string {
+  if (!file.downloadUrl) return "";
+  return joinApiUrl(file.downloadUrl);
+}
+
+/** 页头计数卡片，工单中心与意见反馈共用 */
+export function MetricTile({
+  label,
+  value,
+  icon,
+  highlight,
+  danger
+}: {
+  label: string;
+  value: number;
+  icon: ReactNode;
+  highlight?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <Card className={cn(highlight && "border-primary/40")}>
+      <CardContent className="flex items-center gap-3 p-4">
+        <span
+          className={cn(
+            "flex size-8 items-center justify-center rounded-lg bg-muted text-muted-foreground",
+            danger && "bg-destructive/10 text-destructive"
+          )}
+        >
+          {icon}
+        </span>
+        <div>
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <p className={cn("text-lg font-semibold", danger ? "text-destructive" : "text-foreground")}>{value}</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }

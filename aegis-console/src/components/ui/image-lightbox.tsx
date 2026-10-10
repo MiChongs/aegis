@@ -32,6 +32,8 @@ type LightboxOverlayProps = {
   /** 至少一张幻灯片 */
   slides: Array<{ src: string; alt?: string; description?: string }>;
   enableDownload?: boolean;
+  /** 打开时定位到第几张，多图网格点击缩略图时使用 */
+  index?: number;
 };
 
 const zoomConfig = {
@@ -48,7 +50,7 @@ const animationConfig = { fade: 200, swipe: 250 } as const;
 const ico = "size-4";
 
 /** 纯 Lightbox 浮层，无额外 UI，可在任意组件中复用 */
-export function LightboxOverlay({ open, onClose, slides, enableDownload = true }: LightboxOverlayProps) {
+export function LightboxOverlay({ open, onClose, slides, enableDownload = true, index }: LightboxOverlayProps) {
   const plugins = useMemo(
     () => (enableDownload ? [Fullscreen, Zoom, Download] : [Fullscreen, Zoom]),
     [enableDownload],
@@ -79,6 +81,7 @@ export function LightboxOverlay({ open, onClose, slides, enableDownload = true }
       open={open}
       close={onClose}
       slides={slides}
+      index={index}
       plugins={plugins}
       carousel={{ finite: true }}
       animation={animationConfig}

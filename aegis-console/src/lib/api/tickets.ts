@@ -21,7 +21,20 @@ export type TicketPriority = "low" | "normal" | "high" | "urgent";
 
 export type TicketSLAState = "ontime" | "warning" | "breached" | "paused" | "met";
 
-export type TicketSource = "console" | "app" | "api" | "email" | "bot" | "import";
+export type TicketSource = "console" | "app" | "web" | "api" | "email" | "bot" | "import";
+
+/** 工单类型：意见反馈复用工单系统，以 kind 区分，两者在控制台分开展示 */
+export type TicketKind = "ticket" | "feedback";
+
+/** 附件类型：image 由服务端按嗅探出的 MIME 判定 */
+export type TicketAttachmentKind = "image" | "file";
+
+/** 提交端信息，意见反馈写在 metadata.client */
+export type TicketClientInfo = {
+  platform?: string;
+  version?: string;
+  device?: string;
+};
 
 // ─────────────── 实体 ───────────────
 
@@ -45,6 +58,7 @@ export type TicketAttachment = {
   id: number;
   ticketId?: number;
   messageId?: number;
+  kind?: TicketAttachmentKind;
   fileName: string;
   contentType: string;
   sizeBytes: number;
@@ -95,6 +109,8 @@ export type TicketWatcher = {
 export type TicketItem = {
   id: number;
   ticketNo: string;
+  /** 旧版后端不返回时按 ticket 处理 */
+  kind?: TicketKind;
   appid: number;
   appName?: string;
   requesterType: "user" | "admin";
@@ -120,6 +136,9 @@ export type TicketItem = {
   closedAt?: string;
   slaState: TicketSLAState;
   messageCount: number;
+  /** 列表接口若返回附件计数则在行内展示，未返回时回落到 attachments 数组 */
+  attachmentCount?: number;
+  imageCount?: number;
   lastMessageAt?: string;
   lastMessageRole?: string;
   reopenedCount: number;
@@ -210,6 +229,7 @@ export type TicketFormField = {
 export type TicketCategory = {
   id: number;
   appid: number;
+  kind?: TicketKind;
   parentId?: number;
   key: string;
   name: string;
@@ -297,6 +317,8 @@ export type TicketMetadata = {
 
 export type TicketListParams = {
   appid?: number;
+  /** 缺省返回全部类型 */
+  kind?: TicketKind;
   status?: string;
   priority?: string;
   categoryId?: number;
@@ -327,8 +349,8 @@ export function getTicket(token: string, id: number | string) {
   return apiRequest<TicketItem>(`/api/admin/tickets/${id}`, { token });
 }
 
-export function getTicketStats(token: string, appid?: number) {
-  return apiRequest<TicketStats>(`/api/admin/tickets/stats${buildQuery({ appid })}`, { token });
+export function getTicketStats(token: string, appid?: number, kind?: TicketKind) {
+  return apiRequest<TicketStats>(`/api/admin/tickets/stats${buildQuery({ appid, kind })}`, { token });
 }
 
 export function getTicketTrend(token: string, days = 30, appid?: number) {
@@ -505,6 +527,7 @@ export function listTicketCategories(token: string, appid = 0) {
 
 export type TicketCategoryPayload = {
   appid: number;
+  kind?: TicketKind;
   parentId?: number;
   key: string;
   name: string;

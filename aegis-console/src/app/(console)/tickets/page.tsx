@@ -45,6 +45,7 @@ import { TicketDetailSheet } from "@/components/tickets/ticket-detail-sheet";
 import { TicketSettingsPanel } from "@/components/tickets/ticket-settings-panel";
 import { NotifyCenterPanel } from "@/components/tickets/notify-center-panel";
 import {
+  MetricTile,
   PRIORITY_LABEL,
   PriorityBadge,
   SLABadge,
@@ -92,7 +93,8 @@ function TicketsPageInner() {
     router.replace(`/tickets?tab=${tab}`, { scroll: false });
   }, [router, tab]);
 
-  const statsQuery = useTicketStatsQuery();
+  // 意见反馈有独立页面，工单中心的计数与列表只统计工单
+  const statsQuery = useTicketStatsQuery(undefined, "ticket");
   const stats = statsQuery.data;
 
   return (
@@ -169,39 +171,6 @@ function TicketsPageInner() {
   );
 }
 
-function MetricTile({
-  label,
-  value,
-  icon,
-  highlight,
-  danger
-}: {
-  label: string;
-  value: number;
-  icon: React.ReactNode;
-  highlight?: boolean;
-  danger?: boolean;
-}) {
-  return (
-    <Card className={cn(highlight && "border-primary/40")}>
-      <CardContent className="flex items-center gap-3 p-4">
-        <span
-          className={cn(
-            "flex size-8 items-center justify-center rounded-lg bg-muted text-muted-foreground",
-            danger && "bg-destructive/10 text-destructive"
-          )}
-        >
-          {icon}
-        </span>
-        <div>
-          <p className="text-xs text-muted-foreground">{label}</p>
-          <p className={cn("text-lg font-semibold", danger ? "text-destructive" : "text-foreground")}>{value}</p>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 // ─────────────── 工单台 ───────────────
 
 function TicketBoard({ onOpen, mineOnly }: { onOpen: (id: number) => void; mineOnly?: boolean }) {
@@ -220,6 +189,7 @@ function TicketBoard({ onOpen, mineOnly }: { onOpen: (id: number) => void; mineO
 
   const params = useMemo<TicketListParams>(() => {
     const query: TicketListParams = {
+      kind: "ticket",
       keyword: keyword.trim() || undefined,
       priority: priority === "all" ? undefined : priority,
       appid: appId === "all" ? undefined : Number(appId),
@@ -399,12 +369,12 @@ function TicketBoard({ onOpen, mineOnly }: { onOpen: (id: number) => void; mineO
                       <PriorityBadge priority={ticket.priority} />
                       <SLABadge state={ticket.slaState} />
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                       <span>{ticket.requesterName}</span>
-                      {ticket.categoryName ? <span>· {ticket.categoryName}</span> : null}
-                      {ticket.appName ? <span>· {ticket.appName}</span> : null}
-                      <span>· {ticket.messageCount} 条会话</span>
-                      <span>· 更新于 {formatRelativeTime(ticket.updatedAt)}</span>
+                      {ticket.categoryName ? <span>{ticket.categoryName}</span> : null}
+                      {ticket.appName ? <span>{ticket.appName}</span> : null}
+                      <span>{ticket.messageCount} 条会话</span>
+                      <span>更新于 {formatRelativeTime(ticket.updatedAt)}</span>
                     </div>
                   </button>
                   <div className="shrink-0 space-y-1 text-right">
@@ -533,11 +503,13 @@ function CreateTicketDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">不指定</SelectItem>
-                  {(categoriesQuery.data ?? []).map((category) => (
-                    <SelectItem key={category.id} value={String(category.id)}>
-                      {category.name}
-                    </SelectItem>
-                  ))}
+                  {(categoriesQuery.data ?? [])
+                    .filter((category) => (category.kind ?? "ticket") === "ticket")
+                    .map((category) => (
+                      <SelectItem key={category.id} value={String(category.id)}>
+                        {category.name}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -605,7 +577,7 @@ function CreateTicketDialog({
 // ─────────────── 统计 ───────────────
 
 function AnalyticsPanel() {
-  const statsQuery = useTicketStatsQuery();
+  const statsQuery = useTicketStatsQuery(undefined, "ticket");
   const trendQuery = useTicketTrendQuery(30);
   const agentsQuery = useTicketAgentStatsQuery(20);
 
