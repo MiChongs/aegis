@@ -20,6 +20,7 @@ import {
   MoreHorizontal,
   PencilLine,
   ShieldCheck,
+  ShieldHalf,
   Trash2,
   UserRound,
   Wallet
@@ -57,6 +58,7 @@ import type { AdminAppUserDetail } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { UserDeleteDialog } from "../user-delete-dialog";
 import { UserActivityTab } from "./user-activity-tab";
+import { UserAdPolicyTab } from "./user-ad-policy-tab";
 import { UserAssetsTab } from "./user-assets-tab";
 import { UserCloudTab } from "./user-cloud-tab";
 import {
@@ -89,6 +91,7 @@ const TABS = [
   { value: "security", label: "安全", icon: ShieldCheck },
   { value: "assets", label: "资产", icon: Wallet },
   { value: "cloud", label: "云存储", icon: Cloud },
+  { value: "ad-policy", label: "广告", icon: ShieldHalf },
   { value: "activity", label: "活动", icon: Activity },
   { value: "governance", label: "处置", icon: Gavel }
 ];
@@ -268,6 +271,9 @@ export function AppUserDetailPage({ appKey, userId, fromHref }: Props) {
                 </TabsContent>
                 <TabsContent value="cloud">
                   <UserCloudTab appKey={appKey} userId={userId} />
+                </TabsContent>
+                <TabsContent value="ad-policy">
+                  <UserAdPolicyTab appKey={appKey} userId={userId} />
                 </TabsContent>
                 <TabsContent value="activity">
                   <UserActivityTab appKey={appKey} userId={userId} user={user} />

@@ -18,6 +18,7 @@ import { AppCaptchaPanel } from "@/components/apps/app-captcha-panel";
 import { AppInfoPanel } from "@/components/apps/app-info-panel";
 import { AppLotteryPanel } from "@/components/apps/app-lottery-panel";
 import { AppRewardedAdPanel } from "@/components/apps/rewarded-ad/app-rewarded-ad-panel";
+import { AppAdPolicyPanel } from "@/components/apps/ad-policy/app-ad-policy-panel";
 import { AppCloudStoragePanel } from "@/components/apps/cloud-storage/app-cloud-storage-panel";
 import { AppOAuthPanel } from "@/components/apps/app-oauth-panel";
 import { AppOAuth2ServerPanel } from "@/components/apps/app-oauth2-server-panel";
@@ -182,6 +183,8 @@ function AppSectionPanel({ section, app }: { section: string; app: AppSummary })
       return <AppLotteryPanel appKey={app.appKey} />;
     case "rewarded-ad":
       return <AppRewardedAdPanel appKey={app.appKey} />;
+    case "ad-policy":
+      return <AppAdPolicyPanel appKey={app.appKey} />;
     default:
       return <AppInfoPanel appKey={app.appKey} />;
   }

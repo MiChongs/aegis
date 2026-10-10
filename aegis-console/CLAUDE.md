@@ -705,6 +705,8 @@ Shell 挂载 1.5s 后预热一次，面板打开时再兜底触发一次
 | `lib/api/card-key.ts` / `lib/card-key-hooks.ts` | 卡密域 API 与 React Query hooks |
 | `components/apps/rewarded-ad/` | 激励广告区块：概览 / 记录 / 配置（见下节） |
 | `lib/api/rewarded-ad.ts` / `lib/rewarded-ad-hooks.ts` | 激励广告域 API 与 React Query hooks |
+| `components/apps/ad-policy/` | 广告服务区块：概览 / 用户 / 开屏 / 策略（见下节） |
+| `lib/api/ad-policy.ts` / `lib/ad-policy-hooks.ts` | 广告服务策略域 API 与 React Query hooks |
 | `components/apps/cloud-storage/` | 用户云存储区块：概览 / 用户 / 配置（见下节） |
 | `lib/api/cloud-storage.ts` / `lib/cloud-storage-hooks.ts` | 用户云存储域 API 与 React Query hooks |
 | `lib/api/vip.ts` / `lib/vip-hooks.ts` | 会员域 API 与 React Query hooks |
@@ -951,6 +953,26 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
    「哪一方没来」—— 回调没来查平台与签名，上报没来查客户端，只看最终状态回答不了。
 
 结算语义（两方确认、限额、补发）全部由后端决定，见 [docs/rewarded-ads.md](../docs/rewarded-ads.md)。
+
+## 广告服务区块（/apps/{appKey}?tab=ad-policy）
+
+| 文件 | 职责 |
+|---|---|
+| `components/apps/ad-policy/app-ad-policy-panel.tsx` | 骨架 + 概览 / 用户 / 开屏 / 策略四个视图的内部切换 |
+| `components/apps/ad-policy/ad-policy-overview-panel.tsx` | 选择分布（同意 / 拒绝 / 待重新选择）+ 今日开屏 + 开屏与选择变更两张柱状图 |
+| `components/apps/ad-policy/ad-policy-consents-panel.tsx` | 用户选择：「当前」每人一行，「历史」逐次变更；账号链到用户详情的广告页签 |
+| `components/apps/ad-policy/ad-policy-splash-panel.tsx` | 开屏记录：结局、平台错误码、加载与展示耗时；未登录的记录只有设备 |
+| `components/apps/ad-policy/ad-policy-config-panel.tsx` | 同意要求（开关、会员免除、条款版本与链接）+ 基础服务清单 + 开屏广告位与频控 |
+| `components/users/detail/user-ad-policy-tab.tsx` | 用户详情「广告」页签：当前处境、开屏累计与最近记录、变更历史 |
+
+两条硬约束：
+
+1. **服务模式只展示后端的结论**（`mode` / `exempt` / `decisionRequired`，出自 `adpolicy.Evaluate`），
+   前端不再按「同意了没有、是不是会员」自己推一遍 —— 两处各写一遍迟早对不上。
+2. **条款版本只能调高**，调高前弹窗确认：保存后所有人回到「需要重新选择」，此前同意的人在重新选择前只有基础服务。
+
+`configured: false` 表示应用没保存过策略，客户端此时按自己内置的默认策略处理，界面上如实显示「未配置」。
+判定与接口见 [docs/ad-policy.md](../docs/ad-policy.md)。
 
 ## 用户云存储区块（/apps/{appKey}?tab=cloud-storage）
 
