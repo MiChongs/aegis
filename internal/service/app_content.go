@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -40,7 +39,6 @@ import (
 
 const (
 	contentImageMaxUploadSize = 10 << 20 // 10 MB
-	contentImageProxyTTL      = 30 * time.Minute
 	noticeSummaryMaxRunes     = 160
 	contentCacheTTL           = 2 * time.Minute
 )
@@ -598,24 +596,15 @@ func (s *AppService) resolveContentStorageURL(ctx context.Context, appID int64, 
 	if s.storage == nil || configID <= 0 || strings.TrimSpace(objectKey) == "" {
 		return ""
 	}
-	result, ticketID, err := s.storage.CreateObjectLinkByConfigID(ctx, appID, configID, storagedomain.LinkRequest{
-		ObjectKey: objectKey,
-		ExpiresIn: contentImageProxyTTL,
-	})
+	// 代理地址是相对路径：next/image 会把 `/api/...` 当同源图片，
+	// 不走 Next 的 upstream 图片管线，也就不会被它的私网 IP 防护拦下。
+	link, err := s.storage.PermanentObjectLink(ctx, appID, configID, objectKey, false, "")
 	if err != nil {
 		s.log.Warn("resolve banner image url failed",
 			zap.Int64("config_id", configID), zap.String("object_key", objectKey), zap.Error(err))
 		return ""
 	}
-	if result == nil {
-		return ""
-	}
-	if ticketID != "" {
-		// 返回相对路径：next/image 会把 `/api/...` 当同源图片，
-		// 不走 Next 的 upstream 图片管线，也就不会被它的私网 IP 防护拦下。
-		return "/api/storage/proxy/" + url.PathEscape(ticketID)
-	}
-	return strings.TrimSpace(result.URL)
+	return link
 }
 
 /* ───────────────────── 缓存与小工具 ───────────────────── */

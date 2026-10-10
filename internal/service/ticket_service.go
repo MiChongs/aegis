@@ -46,7 +46,6 @@ type TicketService struct {
 const (
 	ticketMaxAttachmentSize = 20 << 20 // 20 MB
 	ticketStoragePrefix     = "storage://"
-	ticketAttachmentTTL     = 30 * time.Minute
 	ticketMaxTitleLen       = 200
 	ticketMaxContentLen     = 20000
 )
@@ -1131,7 +1130,7 @@ func ticketObjectKey(ext string) (string, error) {
 	return fmt.Sprintf("tickets/%s/%s%s", time.Now().UTC().Format("200601"), hex.EncodeToString(buf), ext), nil
 }
 
-// resolveAttachmentURLs 批量换取带票据的代理地址。
+// resolveAttachmentURLs 批量换取永久代理地址。
 func (s *TicketService) resolveAttachmentURLs(ctx context.Context, baseURL string, items []ticketdomain.Attachment) {
 	for i := range items {
 		items[i].DownloadURL = s.resolveAttachmentURL(ctx, baseURL, items[i].StorageRef)
@@ -1160,21 +1159,12 @@ func (s *TicketService) resolveAttachmentURL(ctx context.Context, baseURL string
 		return ""
 	}
 	_ = baseURL // 同源反代下返回相对路径即可，避免被前端图片管线判定为跨域 upstream
-	result, ticketID, err := s.storage.CreateObjectLinkByConfigID(ctx, 0, configID, storagedomain.LinkRequest{
-		ObjectKey: objectKey,
-		ExpiresIn: ticketAttachmentTTL,
-	})
+	link, err := s.storage.PermanentObjectLink(ctx, 0, configID, objectKey, false, "")
 	if err != nil {
 		s.log.Warn("工单附件地址解析失败", zap.Int64("configId", configID), zap.Error(err))
 		return ""
 	}
-	if ticketID != "" {
-		return "/api/storage/proxy/" + url.PathEscape(ticketID)
-	}
-	if result != nil {
-		return strings.TrimSpace(result.URL)
-	}
-	return ""
+	return link
 }
 
 // attachMessageFiles 把附件挂回各自的消息，详情页可以就近展示。

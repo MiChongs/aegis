@@ -199,6 +199,10 @@ func (h *Handler) StorageUpload(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	if strings.HasPrefix(result.URL, "/api/storage/proxy/") {
+		// 上传方拿到的地址要能直接用、能存下来，所以给绝对地址
+		result.URL = absoluteURLFromRequest(c.Request, result.URL)
+	}
 	response.Success(c, 200, "上传成功", result)
 }
 
@@ -257,11 +261,12 @@ func (h *Handler) StorageProxyDownload(c *gin.Context) {
 	}
 	if reader.CacheControl != "" {
 		c.Header("Cache-Control", reader.CacheControl)
+	} else if ticket != nil && ticket.ExpiresAt.IsZero() {
+		// 永久地址：同一地址永远指向同一个对象键。对象键可能被覆盖写，
+		// 所以不给 immutable，过期后凭 ETag 重新验证。
+		c.Header("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800")
 	} else if strings.HasPrefix(contentType, "image/") {
-		// 图片默认给 5 分钟的浏览器 + 中间代理缓存：
-		//   与前端 `useActivePlatformBannersQuery` 的 staleTime（5m）对齐，
-		//   跨页再回到总览 / 刷新页面时命中 HTTP 缓存即刻呈现，杜绝"冷启动渐变"。
-		//   ticket 本身 30 分钟有效，5 分钟缓存在 TTL 之内，不会出现缓存指向已过期 ticket。
+		// 限时地址的图片给 5 分钟缓存，与控制台列表的 staleTime 对齐
 		c.Header("Cache-Control", "public, max-age=300, stale-while-revalidate=60")
 	}
 	if reader.ETag != "" {
@@ -303,8 +308,13 @@ func httpFirstNonEmpty(values ...string) string {
 }
 
 func proxyURLFromRequest(r *http.Request, ticketID string) string {
+	return absoluteURLFromRequest(r, service.StorageProxyPath(ticketID))
+}
+
+// absoluteURLFromRequest 按请求的对外协议与主机把站内路径补成绝对地址。
+func absoluteURLFromRequest(r *http.Request, path string) string {
 	if r == nil {
-		return "/api/storage/proxy/" + url.PathEscape(ticketID)
+		return path
 	}
 	scheme := "http"
 	if r.TLS != nil {
@@ -317,5 +327,5 @@ func proxyURLFromRequest(r *http.Request, ticketID string) string {
 	if host == "" {
 		host = r.Host
 	}
-	return scheme + "://" + host + "/api/storage/proxy/" + url.PathEscape(ticketID)
+	return scheme + "://" + host + path
 }

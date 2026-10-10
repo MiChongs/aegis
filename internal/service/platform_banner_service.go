@@ -25,7 +25,6 @@ import (
 
 const (
 	platformBannerMaxUploadSize = 10 << 20 // 10 MB
-	platformBannerProxyTTL      = 30 * time.Minute
 
 	// storageRefPrefix 是「图片存在对象存储里」的规范持久化形态：
 	// `storage://{configID}/{escapedObjectKey}`。平台横幅与应用 Banner 共用它 ——
@@ -222,9 +221,7 @@ type PlatformBannerUploadResult struct {
 
 // UploadImage 接收前端拖拽/选择的图片，经 StorageService 推至已配置的对象存储。
 //
-// 重要：不再直接返回存储 provider 的原始 URL（local provider 会返回 /api/storage/proxy/{key}，
-// 但该端点实际要求 :ticket，导致 404）。改为统一返回 `storage://` 引用 + 通过 CreateObjectLinkByConfigID
-// 即时换取的带 ticket 代理 URL。
+// 返回 `storage://` 引用（落库用）+ 永久代理地址（预览用）。
 //
 // 约束：
 //   - 仅允许 image/jpeg、image/png、image/gif、image/webp、image/svg+xml
@@ -280,7 +277,7 @@ func (s *PlatformBannerService) UploadImage(ctx context.Context, baseURL string,
 }
 
 // ResolveDisplayURLs 为一批 Banner 填充 ImageDisplayURL。
-// `storage://` 引用 → 通过 CreateObjectLinkByConfigID 换取 ticket 代理 URL；
+// `storage://` 引用 → 永久代理地址；
 // 其它（例如手动粘贴的外链）→ 原值。
 func (s *PlatformBannerService) ResolveDisplayURLs(ctx context.Context, baseURL string, items []systemdomain.PlatformBanner) {
 	for i := range items {
@@ -316,24 +313,15 @@ func (s *PlatformBannerService) resolveStorageURL(ctx context.Context, baseURL s
 	}
 	// baseURL 在同源反代部署时其实没必要拼回；保留参数占位但不使用，
 	// 避免生成的 URL 被 next/image 判定为跨域 upstream 而触发 SSRF 私网 IP 拦截。
+	// 代理地址是相对路径：前端 next/image 会把 `/api/...` 当作 local image
+	// 走同源 fetch，不再走 Next upstream image 管线的私网 IP 防护检查。
 	_ = baseURL
-	result, ticketID, err := s.storage.CreateObjectLinkByConfigID(ctx, 0, configID, storagedomain.LinkRequest{
-		ObjectKey: objectKey,
-		ExpiresIn: platformBannerProxyTTL,
-	})
+	link, err := s.storage.PermanentObjectLink(ctx, 0, configID, objectKey, false, "")
 	if err != nil {
 		s.log.Warn("resolve platform banner url failed", zap.Int64("config_id", configID), zap.String("object_key", objectKey), zap.Error(err))
 		return ""
 	}
-	if result == nil {
-		return ""
-	}
-	if ticketID != "" {
-		// 直接返回相对路径：前端 next/image 会把 `/api/...` 当作 local image
-		// 走同源 fetch，不再走 Next upstream image 管线的私网 IP 防护检查。
-		return "/api/storage/proxy/" + url.PathEscape(ticketID)
-	}
-	return strings.TrimSpace(result.URL)
+	return link
 }
 
 // ───── 校验与对象键辅助 ─────

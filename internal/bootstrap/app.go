@@ -258,6 +258,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	vipService := service.NewVipService(log, pg)
 	workflowService := service.NewWorkflowService(log, pg, temporalClient, cfg.Temporal)
 	storageService := service.NewStorageService(log, pg, redisClient, cfg.Redis.KeyPrefix)
+	storageService.SetLinkSigningKey(cfg.Security.MasterKey)
 	avatarService := service.NewAvatarService(log, storageService, userService, adminService,
 		pg, redisClient, cfg.Redis.KeyPrefix, service.AvatarSettings{
 			DefaultStyle:      cfg.Avatar.DefaultStyle,

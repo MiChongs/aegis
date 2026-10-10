@@ -715,7 +715,7 @@ func manualRouteDocs(generator *openapi3gen.Generator, spec *openapi3.T) map[str
 		},
 		routeKey(http.MethodGet, "/api/storage/proxy/{ticket}"): {
 			Summary:     "Proxy Download",
-			Description: "Streams a proxied storage object when private download mode is enabled.",
+			Description: "Streams a proxied storage object. The path segment is a signed token: permanent for upload results, banners, release assets and ticket attachments; time-limited for cloud storage and explicit object links. Legacy Redis tickets are still honored until they expire.",
 			Tags:        []string{"Storage"},
 			Responses:   binaryDownloadResponses(),
 		},

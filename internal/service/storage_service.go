@@ -42,6 +42,16 @@ type StorageService struct {
 	plugin     *PluginService
 	// governance 平台治理判定：只挡写入，读取与下载始终放行
 	governance *PlatformGovernanceService
+	// links 代理地址的签名器，见 storage_link_token.go
+	links *storageLinkSigner
+}
+
+// SetLinkSigningKey 注入平台主密钥（bootstrap 中调用）。不注入时用进程内随机密钥，
+// 签出的地址重启即失效 —— 只适合测试。
+func (s *StorageService) SetLinkSigningKey(masterKey string) {
+	if strings.TrimSpace(masterKey) != "" {
+		s.links = newStorageLinkSigner(masterKey)
+	}
 }
 
 // SetGovernanceService 注入平台治理服务（bootstrap 中调用）。
@@ -58,6 +68,7 @@ func NewStorageService(log *zap.Logger, pg *pgrepo.Repository, redis *redislib.C
 		pg:        pg,
 		redis:     redis,
 		keyPrefix: keyPrefix,
+		links:     newEphemeralStorageLinkSigner(),
 		httpClient: &http.Client{
 			Timeout:   storageOutboundTimeout,
 			Transport: newStorageOutboundTransport(),
@@ -327,17 +338,6 @@ func (s *StorageService) CreateObjectLinkForApp(ctx context.Context, appID int64
 	return s.createObjectLinkWithConfig(ctx, appID, cfg, req)
 }
 
-func (s *StorageService) CreateObjectLinkByConfigID(ctx context.Context, appID int64, configID int64, req storagedomain.LinkRequest) (*storagedomain.LinkResult, string, error) {
-	cfg, err := s.pg.GetStorageConfigByID(ctx, configID)
-	if err != nil {
-		return nil, "", err
-	}
-	if cfg == nil || !cfg.Enabled {
-		return nil, "", apperrors.New(40482, http.StatusNotFound, "未配置可用存储服务")
-	}
-	return s.createObjectLinkWithConfig(ctx, appID, cfg, req)
-}
-
 func (s *StorageService) uploadWithConfig(ctx context.Context, appID int64, cfg *storagedomain.Config, input storagedomain.UploadInput) (*storagedomain.StoredObject, error) {
 	provider, err := s.buildProvider(cfg)
 	if err != nil {
@@ -373,6 +373,15 @@ func (s *StorageService) uploadWithConfig(ctx context.Context, appID int64, cfg 
 	item.Provider = cfg.Provider
 	item.AccessMode = cfg.AccessMode
 	item.ProxyRequired = cfg.AccessMode == storagedomain.AccessPrivate || cfg.ProxyDownload
+	if item.ProxyRequired {
+		// 提供商给的 URL 在这里没用：本地存储拼的是 BaseURL+对象键（打到 :ticket 路由上必然 404），
+		// 私有桶的直链没有凭证读不了。上传方会把这个地址存下来，所以交永久地址。
+		token, err := s.links.Encode(storageLinkClaims{ConfigID: cfg.ID, ObjectKey: item.Key, AppID: appID})
+		if err != nil {
+			return nil, err
+		}
+		item.URL = StorageProxyPath(token)
+	}
 
 	// 写入文件索引表（storage_objects），用于文件管理、用量统计
 	meta := make(map[string]any, len(input.Metadata)+1)
@@ -441,8 +450,8 @@ func (s *StorageService) signObjectLink(ctx context.Context, appID int64, cfg *s
 	if expiresIn <= 0 {
 		expiresIn = 10 * time.Minute
 	}
-	if expiresIn > time.Hour {
-		expiresIn = time.Hour
+	if expiresIn > storageLinkMaxTTL {
+		expiresIn = storageLinkMaxTTL
 	}
 
 	result := &storagedomain.LinkResult{
@@ -467,16 +476,13 @@ func (s *StorageService) signObjectLink(ctx context.Context, appID int64, cfg *s
 		return result, "", nil
 	}
 
-	ticketID, err := s.issueProxyTicket(ctx, storagedomain.ProxyTicket{
-		AppID:      appID,
-		ConfigID:   cfg.ID,
-		ObjectKey:  objectKey,
-		Download:   download,
-		FileName:   fileName,
-		ExpiresAt:  result.ExpiresAt,
-		IssuedAt:   time.Now(),
-		Provider:   cfg.Provider,
-		AccessMode: cfg.AccessMode,
+	ticketID, err := s.links.Encode(storageLinkClaims{
+		ConfigID:  cfg.ID,
+		ObjectKey: objectKey,
+		AppID:     appID,
+		Download:  download,
+		FileName:  fileName,
+		ExpiresAt: result.ExpiresAt.Unix(),
 	})
 	if err != nil {
 		return nil, "", err
@@ -484,10 +490,71 @@ func (s *StorageService) signObjectLink(ctx context.Context, appID int64, cfg *s
 	return result, ticketID, nil
 }
 
-func (s *StorageService) OpenProxyObject(ctx context.Context, ticketID string) (*storagedomain.ProxyTicket, *storagedomain.Config, *storagedomain.ObjectReader, error) {
-	ticket, err := s.readProxyTicket(ctx, ticketID)
+// PermanentObjectLink 为 storage:// 引用里的对象给出**永久**访问地址。
+//
+// 横幅、发布包、工单附件这些地址会被客户端、缓存和人存下来，所以不能有时效。
+// objectKey 是引用里存的完整键（已含 root_path），与 CreateIndexedObjectLink 同一口径 ——
+// 原来这几处走的 CreateObjectLinkByConfigID 会把 root_path 再拼一遍，配了 root_path 就 404。
+//
+// 公开且不走代理的配置直接给提供商直链；其余给相对路径 `/api/storage/proxy/{token}`，
+// 需要绝对地址的调用方自己拼 baseURL。
+func (s *StorageService) PermanentObjectLink(ctx context.Context, appID int64, configID int64, objectKey string, download bool, fileName string) (string, error) {
+	cfg, err := s.pg.GetStorageConfigByID(ctx, configID)
 	if err != nil {
-		return nil, nil, nil, err
+		return "", err
+	}
+	if cfg == nil || !cfg.Enabled {
+		return "", apperrors.New(40482, http.StatusNotFound, "未配置可用存储服务")
+	}
+	if err := validateStorageObjectKey(objectKey); err != nil {
+		return "", err
+	}
+	if cfg.AccessMode == storagedomain.AccessPublic && !cfg.ProxyDownload {
+		provider, err := s.buildProvider(cfg)
+		if err != nil {
+			return "", err
+		}
+		link, err := provider.PublicURL(ctx, cfg, objectKey, 0)
+		if err != nil {
+			return "", apperrors.New(50082, http.StatusBadGateway, "生成文件地址失败")
+		}
+		return link, nil
+	}
+	token, err := s.links.Encode(storageLinkClaims{
+		ConfigID:  cfg.ID,
+		ObjectKey: objectKey,
+		AppID:     appID,
+		Download:  download,
+		FileName:  strings.TrimSpace(fileName),
+	})
+	if err != nil {
+		return "", err
+	}
+	return StorageProxyPath(token), nil
+}
+
+// StorageProxyPath 代理地址的相对路径。
+func StorageProxyPath(token string) string {
+	return "/api/storage/proxy/" + url.PathEscape(token)
+}
+
+func (s *StorageService) OpenProxyObject(ctx context.Context, ticketID string) (*storagedomain.ProxyTicket, *storagedomain.Config, *storagedomain.ObjectReader, error) {
+	var ticket *storagedomain.ProxyTicket
+	if isStorageLinkToken(ticketID) {
+		decoded, ok := s.links.Decode(ticketID, time.Now())
+		if !ok {
+			return nil, nil, nil, apperrors.New(40481, http.StatusNotFound, "资源不可用")
+		}
+		ticket = decoded
+	} else {
+		legacy, err := s.readProxyTicket(ctx, ticketID)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		ticket = legacy
+	}
+	if err := validateStorageObjectKey(ticket.ObjectKey); err != nil {
+		return nil, nil, nil, apperrors.New(40481, http.StatusNotFound, "资源不可用")
 	}
 	cfg, err := s.pg.GetStorageConfigByID(ctx, ticket.ConfigID)
 	if err != nil {
@@ -672,28 +739,8 @@ func (s *StorageService) validateScopeApp(scope string, appID *int64) error {
 	}
 }
 
-func (s *StorageService) issueProxyTicket(ctx context.Context, ticket storagedomain.ProxyTicket) (string, error) {
-	if s.redis == nil {
-		return "", apperrors.New(50083, http.StatusInternalServerError, "代理票据服务不可用")
-	}
-	id, err := randomHex(16)
-	if err != nil {
-		return "", err
-	}
-	raw, err := json.Marshal(ticket)
-	if err != nil {
-		return "", err
-	}
-	ttl := time.Until(ticket.ExpiresAt)
-	if ttl <= 0 {
-		ttl = 10 * time.Minute
-	}
-	if err := s.redis.Set(ctx, s.proxyTicketKey(id), raw, ttl).Err(); err != nil {
-		return "", apperrors.New(50084, http.StatusInternalServerError, "代理票据写入失败")
-	}
-	return id, nil
-}
-
+// readProxyTicket 读取改造前签发的 Redis 票据。它们最长活 1 小时，
+// 只为部署切换那一刻已经交出去的地址保留；新地址一律是签名令牌。
 func (s *StorageService) readProxyTicket(ctx context.Context, ticketID string) (*storagedomain.ProxyTicket, error) {
 	if strings.TrimSpace(ticketID) == "" {
 		return nil, apperrors.New(40481, http.StatusNotFound, "资源不可用")

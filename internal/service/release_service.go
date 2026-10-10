@@ -53,7 +53,6 @@ type releaseCacheEntry struct {
 
 const (
 	releaseCacheTTL       = 30 * time.Second
-	releaseAssetLinkTTL   = 6 * time.Hour
 	releaseAssetMaxSize   = 2 << 30 // 2 GB
 	releaseAssetMaxCount  = 12
 	releaseEventDedupeTTL = 36 * time.Hour
@@ -736,20 +735,15 @@ func (s *ReleaseService) resolveAssetURL(ctx context.Context, appID int64, store
 	if s.storage == nil {
 		return ""
 	}
-	result, ticketID, err := s.storage.CreateObjectLinkByConfigID(ctx, appID, configID, storagedomain.LinkRequest{
-		ObjectKey: objectKey,
-		Download:  true,
-		FileName:  path.Base(objectKey),
-		ExpiresIn: releaseAssetLinkTTL,
-	})
-	if err != nil || result == nil {
+	link, err := s.storage.PermanentObjectLink(ctx, appID, configID, objectKey, true, path.Base(objectKey))
+	if err != nil {
 		s.log.Warn("resolve release asset url failed", zap.Int64("config_id", configID), zap.Error(err))
 		return ""
 	}
-	if ticketID != "" {
-		return strings.TrimRight(baseURL, "/") + "/api/storage/proxy/" + url.PathEscape(ticketID)
+	if strings.HasPrefix(link, "/") {
+		return strings.TrimRight(baseURL, "/") + link
 	}
-	return strings.TrimSpace(result.URL)
+	return link
 }
 
 func normalizeTargeting(t appdomain.ReleaseTargeting) appdomain.ReleaseTargeting {

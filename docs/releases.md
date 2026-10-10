@@ -77,7 +77,7 @@ Kotlin SDK：`client.releases.*`（已登录时自动带令牌）。
 ```
 
 没有更新时只有 `hasUpdate=false`、`currentVersionCode`、`checkedAt`、`nextCheckAfter`。
-`downloadUrl` 对存储中的安装包是带票据的代理地址，有效期 6 小时，应在检测后尽快下载，过期就重新检测。
+`downloadUrl` 对存储中的安装包是永久代理地址（签名令牌，不依赖 Redis），安装包被删除后才会失效。
 
 ### `GET /releases/latest`
 
