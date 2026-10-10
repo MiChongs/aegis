@@ -478,7 +478,7 @@ class AegisMeApi internal constructor(private val client: AegisClient) {
     }
 }
 
-/** 签到、积分、排行榜、站内信、工单。 */
+/** 签到、积分、排行榜、站内信、工单、意见反馈。 */
 class AegisEngagementApi internal constructor(private val client: AegisClient) {
 
     @Throws(IOException::class)
@@ -685,7 +685,7 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
         categoryId: Long? = null,
         priority: String? = null,
         contentType: String? = null,
-        attachments: List<Any?>? = null,
+        attachmentIds: List<Long>? = null,
     ): JsonElement = client.call(
         "POST", "/tickets",
         buildBody(
@@ -694,7 +694,8 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
             "categoryId" to categoryId,
             "priority" to priority,
             "contentType" to contentType,
-            "attachments" to attachments,
+            // 服务端字段是 attachmentIds（[uploadTicketAttachment] 返回的 id），曾误写成 attachments，附件被静默丢弃。
+            "attachmentIds" to attachmentIds,
         ),
         requireAuth = true,
     )
@@ -724,6 +725,91 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
     @JvmOverloads
     fun cancelTicket(ticketId: String, reason: String? = null): JsonElement =
         client.call("POST", "/tickets/$ticketId/cancel", buildBody("reason" to reason), requireAuth = true)
+
+    // ── 意见反馈 ──
+    // 反馈是独立入口的工单：图片与附件分开上传、分开引用，频率受限（每小时 5 条、每天 20 条，超出 42960）。
+
+    /** 反馈分类：`[{id, key, name, description}]`。 */
+    @Throws(IOException::class)
+    fun feedbackCategories(): JsonElement = client.call("GET", "/feedback/categories", requireAuth = true)
+
+    /**
+     * 上传反馈图片或附件。[kind] 为 `image` 时按文件内容判定，只收 PNG / JPEG / WebP / GIF 且不超过 10MB；
+     * `file` 不限类型，不超过 20MB。返回的 `id` 分别放进 [createFeedback] 的 imageIds / attachmentIds。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun uploadFeedbackAttachment(file: File, kind: String = "file"): JsonElement =
+        client.upload("/feedback/attachments", file, fields = mapOf("kind" to kind))
+
+    /**
+     * 提交反馈。[imageIds] 至多 4 个、[attachmentIds] 至多 2 个，都必须是本人刚上传、尚未使用的。
+     * [platform] / [version] / [device] 记为客户端信息（各至多 128 字），platform 为 `web` 时来源记为官网。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun createFeedback(
+        categoryId: Long,
+        title: String,
+        content: String,
+        contact: String? = null,
+        imageIds: List<Long>? = null,
+        attachmentIds: List<Long>? = null,
+        platform: String? = null,
+        version: String? = null,
+        device: String? = null,
+    ): JsonElement {
+        val clientInfo = buildBody("platform" to platform, "version" to version, "device" to device)
+        return client.call(
+            "POST", "/feedback",
+            buildBody(
+                "categoryId" to categoryId,
+                "title" to title,
+                "content" to content,
+                "contact" to contact,
+                "imageIds" to imageIds,
+                "attachmentIds" to attachmentIds,
+                "client" to clientInfo.ifEmpty { null },
+            ),
+            requireAuth = true,
+        )
+    }
+
+    /** 我的反馈。[status] 逗号分隔，可空；[limit] 至多 50。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun feedbackList(page: Int = 1, limit: Int = 20, status: String? = null): JsonElement =
+        client.call("GET", "/feedback", query = pageQuery(page, limit) + buildQuery("status" to status), requireAuth = true)
+
+    @Throws(IOException::class)
+    fun feedback(feedbackId: String): JsonElement = client.call("GET", "/feedback/$feedbackId", requireAuth = true)
+
+    /** 补充反馈，返回最新的反馈详情。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun replyFeedback(
+        feedbackId: String,
+        content: String,
+        imageIds: List<Long>? = null,
+        attachmentIds: List<Long>? = null,
+    ): JsonElement = client.call(
+        "POST", "/feedback/$feedbackId/replies",
+        buildBody("content" to content, "imageIds" to imageIds, "attachmentIds" to attachmentIds),
+        requireAuth = true,
+    )
+
+    /** 评价处理结果（1–5 星），只能在已解决或已关闭后评价一次。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun rateFeedback(feedbackId: String, rating: Int, comment: String? = null): JsonElement = client.call(
+        "POST", "/feedback/$feedbackId/rating",
+        buildBody("rating" to rating, "comment" to comment), requireAuth = true,
+    )
+
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun cancelFeedback(feedbackId: String, reason: String? = null): JsonElement =
+        client.call("POST", "/feedback/$feedbackId/cancel", buildBody("reason" to reason), requireAuth = true)
 }
 
 /** 钱包、会员、支付、存储。 */
