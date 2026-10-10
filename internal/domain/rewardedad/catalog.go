@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	cardkeydomain "aegis/internal/domain/cardkey"
+	vipdomain "aegis/internal/domain/vip"
 )
 
 var (
@@ -23,10 +24,15 @@ var (
 )
 
 // RewardCatalog 激励广告可配的权益档位（卡密目录的子集，顺序沿用卡密目录）。
+//
+// 「会员天数」的说明与卡密不同：卡密赠送的天数不带功能，激励广告的按场景的会员权益带。
 func RewardCatalog() []cardkeydomain.RewardSpec {
 	out := make([]cardkeydomain.RewardSpec, 0, len(allowedRewardTypes))
 	for _, spec := range cardkeydomain.RewardCatalog() {
 		if slices.Contains(allowedRewardTypes, spec.Type) {
+			if spec.Type == cardkeydomain.RewardVipDays {
+				spec.Hint = "不挂套餐，直接把会员到期时间往后顺延；功能标识按场景的会员权益配置，改配置对已领到的会员同样生效"
+			}
 			out = append(out, spec)
 		}
 	}
@@ -82,7 +88,28 @@ func NormalizeScene(scene Scene) Scene {
 	if scene.Rewards == nil {
 		scene.Rewards = []Reward{}
 	}
+	scene.Membership.Features = vipdomain.NormalizeFeatureTags(scene.Membership.Features)
 	return scene
+}
+
+// GrantsMembership 这个场景是否送会员（会员套餐或会员天数）。
+func (s Scene) GrantsMembership() bool {
+	for _, reward := range s.Rewards {
+		if reward.Type == cardkeydomain.RewardVipPlan || reward.Type == cardkeydomain.RewardVipDays {
+			return true
+		}
+	}
+	return false
+}
+
+// GrantsVipDays 这个场景是否送「会员天数」（会员权益里的功能标识只对这一档生效）。
+func (s Scene) GrantsVipDays() bool {
+	for _, reward := range s.Rewards {
+		if reward.Type == cardkeydomain.RewardVipDays {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateScenes 校验全部场景。每一类问题都给出能直接照着改的文案。
@@ -116,6 +143,29 @@ func ValidateScenes(scenes []Scene) error {
 		if err := ValidateRewards(scene.Rewards); err != nil {
 			return fmt.Errorf("%s：%w", label, err)
 		}
+		if err := validateMembership(scene); err != nil {
+			return fmt.Errorf("%s：%w", label, err)
+		}
+	}
+	return nil
+}
+
+// validateMembership 会员权益的形态校验。功能标识是否在本应用的功能目录里由服务层核对。
+//
+// 不送「会员天数」却配了功能标识的场景直接挡下：那些标识不会落到任何人头上，
+// 留着只会让运营以为「看广告送的会员能用 X」。
+func validateMembership(scene Scene) error {
+	features := scene.Membership.Features
+	if len(features) > MaxSceneFeatures {
+		return fmt.Errorf("会员权益最多 %d 个功能", MaxSceneFeatures)
+	}
+	for _, tag := range features {
+		if !vipdomain.FeatureTagPattern.MatchString(tag) {
+			return fmt.Errorf("功能标识「%s」无效", tag)
+		}
+	}
+	if len(features) > 0 && !scene.GrantsVipDays() {
+		return fmt.Errorf("会员权益里的功能只对「会员天数」生效，请先添加会员天数或清空功能")
 	}
 	return nil
 }
@@ -123,6 +173,41 @@ func ValidateScenes(scenes []Scene) error {
 // ValidProviderAppID 平台应用 ID 的形态校验（允许留空）。
 func ValidProviderAppID(value string) bool {
 	return providerAppPattern.MatchString(value)
+}
+
+// DescribeScene 一句话说清一个场景看完能拿到什么：权益，再加上送出的会员带什么。
+//
+// [featureNames] 是功能标识到展示名的映射，认不出的标识原样展示（停用的功能不会出现在
+// 会员的权益里，这里也不列）。
+func DescribeScene(scene Scene, planNames map[int64]string, featureNames map[string]string) string {
+	summary := DescribeRewards(scene.Rewards, planNames)
+	if !scene.GrantsMembership() {
+		return summary
+	}
+	extras := make([]string, 0, 2)
+	if scene.GrantsVipDays() && len(scene.Membership.Features) > 0 {
+		names := make([]string, 0, len(scene.Membership.Features))
+		for _, tag := range scene.Membership.Features {
+			name, ok := featureNames[tag]
+			if featureNames != nil && !ok {
+				continue
+			}
+			if name == "" {
+				name = tag
+			}
+			names = append(names, name)
+		}
+		if len(names) > 0 {
+			extras = append(extras, "会员可用"+strings.Join(names, "、"))
+		}
+	}
+	if scene.Membership.AdFreeOrDefault() {
+		extras = append(extras, "会员期间免广告")
+	}
+	if len(extras) == 0 {
+		return summary
+	}
+	return summary + "（" + strings.Join(extras, "，") + "）"
 }
 
 // DescribeRewards 一句话说清一组权益，客户端与核销结果直接展示。

@@ -122,12 +122,12 @@ func (s *AdPolicyService) ClientPolicy(ctx context.Context, appID, userID int64,
 			return nil, err
 		}
 		result.Consent = consent
-		result.Vip = s.isVip(ctx, appID, userID)
+		result.Vip, result.AdFree = s.membership(ctx, appID, userID)
 		if s.rewarded != nil {
 			result.AdUserID = s.rewarded.AdUserToken(appID, userID)
 		}
 	}
-	verdict := adpolicy.Evaluate(policy, consent, result.Vip)
+	verdict := adpolicy.Evaluate(policy, consent, result.AdFree)
 	result.Mode = verdict.Mode
 	result.DecisionRequired = verdict.DecisionRequired
 	result.Exempt = verdict.Exempt
@@ -308,8 +308,8 @@ func (s *AdPolicyService) UserProfile(ctx context.Context, appID, userID int64) 
 	if err != nil {
 		return nil, err
 	}
-	vip := s.isVip(ctx, appID, userID)
-	verdict := adpolicy.Evaluate(policy, consent, vip)
+	vip, adFree := s.membership(ctx, appID, userID)
+	verdict := adpolicy.Evaluate(policy, consent, adFree)
 	logs, err := s.pg.ListAdConsentLogs(ctx, adpolicy.ConsentLogQuery{
 		AppID: appID, UserID: userID, Page: 1, Limit: adPolicyProfileLogs})
 	if err != nil {
@@ -330,6 +330,7 @@ func (s *AdPolicyService) UserProfile(ctx context.Context, appID, userID int64) 
 		ConsentVersion:   policy.ConsentVersion,
 		Consent:          consent,
 		Vip:              vip,
+		AdFree:           adFree,
 		Exempt:           verdict.Exempt,
 		DecisionRequired: verdict.DecisionRequired,
 		Mode:             verdict.Mode,
@@ -352,18 +353,22 @@ func (s *AdPolicyService) policyOrDefault(ctx context.Context, appID int64) (adp
 	return *policy, true, nil
 }
 
-// isVip 当前是否为有效会员（含试用与永久）。判定失败按非会员处理：
-// 这里的结论只决定「免不免除」，一次查询抖动不该让会员突然被要求看广告以外的任何事。
-func (s *AdPolicyService) isVip(ctx context.Context, appID, userID int64) bool {
+// membership 当前是否为有效会员（含试用与永久），以及会员身份是否免广告。
+//
+// 免除看的是 adFree 而不是是否会员：看广告赠送的会员按场景设置可以不免广告，
+// 否则「看一次广告换一天不看广告」会让广告服务的同意要求形同虚设（见 vip.Segment.GrantsAdFree）。
+// 判定失败按非会员处理：这里的结论只决定「免不免除」。
+func (s *AdPolicyService) membership(ctx context.Context, appID, userID int64) (bool, bool) {
 	facts, err := s.pg.GetVipEntitlementFacts(ctx, appID, userID)
 	if err != nil {
 		if !errors.Is(err, pgrepo.ErrUserNotFound) {
 			s.log.Warn("ad policy: resolve vip failed", zap.Int64("appid", appID),
 				zap.Int64("userId", userID), zap.Error(err))
 		}
-		return false
+		return false, false
 	}
-	return vipdomain.Evaluate(*facts, time.Now()).IsVIP
+	entitlement := vipdomain.Evaluate(*facts, time.Now())
+	return entitlement.IsVIP, entitlement.AdFree
 }
 
 func (s *AdPolicyService) publishUser(appID, userID int64, event string, data map[string]any) {

@@ -47,6 +47,10 @@ const vipSegmentTimedSQL = `NOT vt.lifetime`
 //
 // 套餐按 (id, appid) 关联：plan_id 没有外键，套餐被删后这一侧为 NULL，读取端回落到快照。
 // 窗口判定与 Segment.LiveAt 同一口径，Evaluate 会用同一个 now 再筛一遍。
+//
+// 看激励广告领的段（ad_reward）另带所属场景**当前**的会员权益：场景按开通记录 metadata 里的
+// scene 在应用的激励广告配置里找，场景没设置会员权益时是 {}（按默认），场景删除后为 NULL
+// （读取端回落到快照：features 列与 metadata.adFree）。与套餐同理，改场景即对存量生效。
 const vipLiveSegmentsSQL = `COALESCE((
     SELECT jsonb_agg(jsonb_build_object(
         'id', vt.id,
@@ -59,7 +63,15 @@ const vipLiveSegmentsSQL = `COALESCE((
                      ELSE jsonb_build_object('name', p.name, 'features', to_jsonb(p.features)) END,
         'activeFrom', ` + vipSegmentFromSQL + `,
         'activeUntil', CASE WHEN vt.lifetime THEN NULL ELSE ` + vipSegmentUntilSQL + ` END,
-        'lifetime', vt.lifetime
+        'lifetime', vt.lifetime,
+        'adTerms', CASE WHEN vt.pay_channel = '` + vipdomain.ChannelAdReward + `' THEN (
+            SELECT COALESCE(s->'membership', '{}'::jsonb)
+            FROM app_rewarded_ad_configs rc, jsonb_array_elements(rc.scenes) s
+            WHERE rc.appid = vt.appid AND s->>'key' = vt.metadata->>'scene'
+            LIMIT 1) END,
+        'adFree', CASE WHEN vt.pay_channel = '` + vipdomain.ChannelAdReward + `'
+                        AND jsonb_typeof(vt.metadata->'adFree') = 'boolean'
+                       THEN vt.metadata->'adFree' END
     ) ORDER BY vt.id)
     FROM vip_transactions vt
     LEFT JOIN vip_plans p ON p.id = vt.plan_id AND p.appid = vt.appid

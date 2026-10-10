@@ -99,6 +99,8 @@ type MembershipView struct {
 	RemainingSeconds int64      `json:"remainingSeconds"`
 	RemainingDays    int        `json:"remainingDays"`
 	Features         []string   `json:"features"`
+	// AdFree 会员身份是否免广告（见 Entitlement.AdFree）
+	AdFree bool `json:"adFree"`
 }
 
 // View 把完整判定投影成校验用的紧凑结构。
@@ -120,6 +122,7 @@ func (e Entitlement) View() MembershipView {
 		RemainingSeconds: e.RemainingSeconds,
 		RemainingDays:    e.RemainingDays,
 		Features:         features,
+		AdFree:           e.AdFree,
 	}
 }
 

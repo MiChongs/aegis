@@ -136,3 +136,51 @@ func TestValidTransID(t *testing.T) {
 		}
 	}
 }
+
+func TestSceneMembershipValidation(t *testing.T) {
+	days := Scene{Key: "vip", Name: "看广告领会员", PlacementID: "p1", Enabled: true,
+		Rewards: []Reward{{Type: cardkeydomain.RewardVipDays, Amount: 1}}}
+	days.Membership.Features = []string{" Export ", "export", "ai.chat"}
+	normalized := NormalizeScene(days)
+	if got := normalized.Membership.Features; len(got) != 2 || got[0] != "ai.chat" || got[1] != "export" {
+		t.Fatalf("features should be trimmed, lowercased, deduplicated and sorted: %v", got)
+	}
+	if err := ValidateScenes([]Scene{normalized}); err != nil {
+		t.Fatalf("valid membership rejected: %v", err)
+	}
+
+	integral := Scene{Key: "points", Name: "看广告领积分", PlacementID: "p1", Enabled: true,
+		Rewards: []Reward{{Type: cardkeydomain.RewardIntegral, Amount: 10}}}
+	integral.Membership.Features = []string{"export"}
+	if err := ValidateScenes([]Scene{NormalizeScene(integral)}); err == nil {
+		t.Fatal("features without a vip_days reward must be rejected")
+	}
+
+	bad := normalized
+	bad.Membership.Features = []string{"Bad Tag"}
+	if err := ValidateScenes([]Scene{bad}); err == nil {
+		t.Fatal("invalid feature tags must be rejected")
+	}
+}
+
+func TestDescribeSceneMentionsMembershipTerms(t *testing.T) {
+	scene := Scene{Rewards: []Reward{{Type: cardkeydomain.RewardVipDays, Amount: 1}}}
+	scene.Membership.Features = []string{"ai.chat", "export"}
+	names := map[string]string{"ai.chat": "AI 对话"}
+	got := DescribeScene(scene, nil, names)
+	if !strings.Contains(got, "会员可用AI 对话") || strings.Contains(got, "export") {
+		t.Fatalf("only active features (by name) should be listed: %q", got)
+	}
+	if !strings.Contains(got, "会员期间免广告") {
+		t.Fatalf("unset adFree means ad-free: %q", got)
+	}
+	off := false
+	scene.Membership.AdFree = &off
+	if strings.Contains(DescribeScene(scene, nil, names), "免广告") {
+		t.Fatal("scenes that keep ads must not promise ad-free")
+	}
+	points := Scene{Rewards: []Reward{{Type: cardkeydomain.RewardIntegral, Amount: 10}}}
+	if strings.Contains(DescribeScene(points, nil, nil), "免广告") {
+		t.Fatal("scenes without membership say nothing about it")
+	}
+}

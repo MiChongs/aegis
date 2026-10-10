@@ -28,6 +28,15 @@ type RewardedAdSceneRequest struct {
 	Rewards         []CardKeyRewardRequest `json:"rewards"`
 	DailyLimit      int                    `json:"dailyLimit"`
 	CooldownSeconds int                    `json:"cooldownSeconds"`
+	// Membership 这个场景送出的会员带什么权益，跟随当前配置（对已领到的会员同样生效）。
+	Membership RewardedAdMembershipRequest `json:"membership"`
+}
+
+// RewardedAdMembershipRequest 看广告赠送的会员的权益。
+// features 只对「会员天数」生效；adFree 不填按免广告（免除广告服务的同意要求、不展示开屏广告）。
+type RewardedAdMembershipRequest struct {
+	Features []string `json:"features"`
+	AdFree   *bool    `json:"adFree"`
 }
 
 // SaveRewardedAdConfigRequest 保存激励广告配置。securityKey 留空表示不修改。
@@ -76,6 +85,10 @@ func (req SaveRewardedAdConfigRequest) toInput(appID int64, operator string) rew
 			Rewards:         rewards,
 			DailyLimit:      item.DailyLimit,
 			CooldownSeconds: item.CooldownSeconds,
+			Membership: rewardedad.SceneMembership{
+				Features: item.Membership.Features,
+				AdFree:   item.Membership.AdFree,
+			},
 		})
 	}
 	return rewardedad.SaveConfigInput{

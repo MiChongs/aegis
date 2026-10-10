@@ -131,6 +131,9 @@ func (s *RewardedAdService) SaveConfig(ctx context.Context, input rewardedad.Sav
 	if err := s.checkPlansExist(ctx, input.AppID, next.Scenes); err != nil {
 		return nil, err
 	}
+	if err := s.checkFeaturesExist(ctx, input.AppID, next.Scenes); err != nil {
+		return nil, err
+	}
 
 	// 密钥：留空沿用、显式清除、或替换。
 	if current != nil {
@@ -212,6 +215,38 @@ func (s *RewardedAdService) checkPlansExist(ctx context.Context, appID int64, sc
 			// 激励广告是可以每天反复看的；永久会员看一次就到头了，之后每次观看都只是白发赠送积分
 			if lifetime[reward.RefID] {
 				return apperrors.New(40000, http.StatusBadRequest, "场景「"+scene.Key+"」不能以永久套餐作为奖励")
+			}
+		}
+	}
+	return nil
+}
+
+// checkFeaturesExist 场景会员权益里的功能标识必须是本应用功能目录里的（停用的也可以选，
+// 停用期间不会落到任何人头上，重新启用即生效 —— 与套餐的功能配置同一口径）。
+func (s *RewardedAdService) checkFeaturesExist(ctx context.Context, appID int64, scenes []rewardedad.Scene) error {
+	needed := false
+	for _, scene := range scenes {
+		if len(scene.Membership.Features) > 0 {
+			needed = true
+			break
+		}
+	}
+	if !needed {
+		return nil
+	}
+	features, err := s.pg.ListVipFeatures(ctx, appID, false)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]bool, len(features))
+	for _, feature := range features {
+		known[feature.Tag] = true
+	}
+	for _, scene := range scenes {
+		for _, tag := range scene.Membership.Features {
+			if !known[tag] {
+				return apperrors.New(40000, http.StatusBadRequest,
+					"场景「"+scene.Key+"」的会员权益里有不存在的功能「"+tag+"」")
 			}
 		}
 	}
@@ -422,25 +457,35 @@ func (s *RewardedAdService) ClientStatus(ctx context.Context, appID, userID int6
 		status.Remaining = max(cfg.DailyLimit-usage.TodayTotal, 0)
 	}
 
-	planNames := s.planNames(ctx, appID, cfg.Scenes)
+	names := &rewardNames{plans: s.planNames(ctx, appID, cfg.Scenes), features: s.featureNames(ctx, appID, cfg.Scenes)}
 	for _, scene := range cfg.Scenes {
 		if !scene.Enabled {
 			continue
 		}
-		status.Scenes = append(status.Scenes, buildClientScene(scene, usage, status.Remaining, planNames, now))
+		status.Scenes = append(status.Scenes, buildClientScene(scene, usage, status.Remaining, names, now))
 	}
 	return status, nil
 }
 
-// buildClientScene 一个场景的剩余次数与冷却。纯函数，便于表驱动测试。
+// rewardNames 权益摘要里要用到的展示名：套餐名、功能名（只含启用中的功能）。
+type rewardNames struct {
+	plans    map[int64]string
+	features map[string]string
+}
+
+// buildClientScene 一个场景的剩余次数与冷却。纯函数，便于表驱动测试。names 为空时摘要不带展示名。
 func buildClientScene(scene rewardedad.Scene, usage *rewardedad.Usage, appRemaining int,
-	planNames map[int64]string, now time.Time) rewardedad.ClientScene {
+	names *rewardNames, now time.Time) rewardedad.ClientScene {
+	if names == nil {
+		names = &rewardNames{}
+	}
 	item := rewardedad.ClientScene{
 		Key:             scene.Key,
 		Name:            scene.Name,
 		PlacementID:     scene.PlacementID,
 		Rewards:         scene.Rewards,
-		RewardSummary:   rewardedad.DescribeRewards(scene.Rewards, planNames),
+		RewardSummary:   rewardedad.DescribeScene(scene, names.plans, names.features),
+		Membership:      scene.Membership,
 		DailyLimit:      scene.DailyLimit,
 		TodayCount:      usage.TodayByScene[scene.Key],
 		CooldownSeconds: scene.CooldownSeconds,
@@ -663,6 +708,26 @@ func (s *RewardedAdService) planNames(ctx context.Context, appID int64, scenes [
 		}
 	}
 	return names
+}
+
+// featureNames 场景会员权益里用到的功能的展示名，只取启用中的：停用的功能不会落到会员头上，
+// 摘要里也不该说「会员可用」它。没有场景配了功能时不查库。
+func (s *RewardedAdService) featureNames(ctx context.Context, appID int64, scenes []rewardedad.Scene) map[string]string {
+	for _, scene := range scenes {
+		if len(scene.Membership.Features) == 0 {
+			continue
+		}
+		features, err := s.pg.ListVipFeatures(ctx, appID, true)
+		if err != nil {
+			return nil
+		}
+		names := make(map[string]string, len(features))
+		for _, feature := range features {
+			names[feature.Tag] = feature.Name
+		}
+		return names
+	}
+	return nil
 }
 
 // userToken 传给广告 SDK 的用户标识：「用户 ID.签名」。

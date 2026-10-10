@@ -47,6 +47,8 @@ const (
 
 // 场景与配置的规模上界。
 const (
+	// MaxSceneFeatures 一个场景送出的会员最多带几个功能标识。
+	MaxSceneFeatures   = 50
 	MaxScenes          = 20
 	MaxDailyLimit      = 1000
 	MaxCooldownSeconds = 86400
@@ -82,6 +84,24 @@ type Scene struct {
 	DailyLimit int `json:"dailyLimit"`
 	// CooldownSeconds 两次领取之间至少间隔多久，0 表示不限。
 	CooldownSeconds int `json:"cooldownSeconds"`
+	// Membership 这个场景送出的会员带什么权益。
+	Membership SceneMembership `json:"membership"`
+}
+
+// SceneMembership 看广告赠送的会员的权益，与套餐一样**跟随当前配置**：
+// 改了这里，已经领到、仍在期内的会员随即按新的权益算（见 vip.Segment.AdTerms）。
+//
+//   - Features 「会员天数」这一档带哪些功能标识。「会员套餐」那一档的功能跟随所选套餐，不看这里。
+//   - AdFree   这个场景送出的会员（两档都算）是否免广告：免除广告服务的同意要求、不展示开屏广告。
+//     为空表示未设置，按免广告处理 —— 与这项配置出现之前的行为一致。
+type SceneMembership struct {
+	Features []string `json:"features"`
+	AdFree   *bool    `json:"adFree,omitempty"`
+}
+
+// AdFreeOrDefault 未设置时按免广告处理。
+func (m SceneMembership) AdFreeOrDefault() bool {
+	return m.AdFree == nil || *m.AdFree
 }
 
 // Config 一个应用的激励广告配置（含密文，只在服务端内部流转）。
@@ -305,11 +325,13 @@ type ClientScene struct {
 	PlacementID string   `json:"placementId"`
 	Rewards     []Reward `json:"rewards"`
 	// RewardSummary 一句话说清看完能拿到什么，客户端直接展示。
-	RewardSummary   string `json:"rewardSummary"`
-	DailyLimit      int    `json:"dailyLimit"`
-	TodayCount      int    `json:"todayCount"`
-	Remaining       int    `json:"remaining"`
-	CooldownSeconds int    `json:"cooldownSeconds"`
+	RewardSummary string `json:"rewardSummary"`
+	// Membership 送出的会员带什么权益（功能标识与是否免广告），客户端可据此说明「会员能做什么」。
+	Membership      SceneMembership `json:"membership"`
+	DailyLimit      int             `json:"dailyLimit"`
+	TodayCount      int             `json:"todayCount"`
+	Remaining       int             `json:"remaining"`
+	CooldownSeconds int             `json:"cooldownSeconds"`
 	// CooldownRemaining 距离下一次可领还要等几秒，0 表示现在就能看。
 	CooldownRemaining int        `json:"cooldownRemaining"`
 	NextAvailableAt   *time.Time `json:"nextAvailableAt,omitempty"`

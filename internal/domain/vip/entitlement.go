@@ -156,7 +156,10 @@ type Entitlement struct {
 	// Features 当前生效的功能标识：仍生效的各段按套餐**当前**配置取并集，
 	// 再与启用中的功能目录取交集（见 resolveFeatures）。
 	// 不是会员时恒为空数组 —— 过期用户的开通记录仍在账本里，但权益已经不在了。
-	Features   []string    `json:"features"`
+	Features []string `json:"features"`
+	// AdFree 会员身份是否免广告（免除广告服务的同意要求、不展示开屏广告）。
+	// 只有全部生效中的会员期都来自「看广告赠送」、且场景设置为不免广告时为 false；不是会员时恒为 false。
+	AdFree     bool        `json:"adFree"`
 	Trial      *TrialState `json:"trial,omitempty"`
 	TrialOffer TrialOffer  `json:"trialOffer"`
 }
@@ -202,6 +205,7 @@ func Evaluate(in EvalInput, now time.Time) Entitlement {
 		live := liveSegments(in.Segments, now)
 		entitlement.IsVIP = true
 		entitlement.Features = resolveFeatures(live, in.FeatureCatalog)
+		entitlement.AdFree = resolveAdFree(live)
 		// 是会员却找不到任何一段仍生效的开通：老系统直接写进 users 的到期时间就是这样
 		entitlement.Source = SourceUnknown
 		if lifetime {

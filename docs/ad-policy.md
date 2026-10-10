@@ -10,9 +10,12 @@
 | 情形 | mode |
 |---|---|
 | 策略未开启 | `full` |
-| 有效会员且开启了会员免除 | `full` |
+| 会员身份免广告（`Entitlement.adFree`）且开启了会员免除 | `full` |
 | 按**当前版本**条款同意过 | `full` |
 | 拒绝、没选过，或按旧版本条款做的选择 | `basic` |
+
+「会员身份免广告」不等于「是会员」：看广告赠送的会员按场景设置可以不免广告（见 [rewarded-ads.md](rewarded-ads.md#看广告赠送的会员权益)），
+此时与非会员一样要同意广告服务、照常展示开屏。`/ads/policy` 同时给出 `vip` 与 `adFree`。
 
 `decisionRequired` 单独回答「要不要请用户（重新）选择」：没选过，或选择所依据的条款版本低于当前版本。
 会员免除时 `mode` 是 `full`，但 `decisionRequired` 照实回答 —— 会员看激励视频同样要先同意，只是不必在启动时追着问。
@@ -80,6 +83,7 @@ App 不登录也能用，所以未登录时的选择由客户端记在本机，�
   "signedIn": true,
   "consent": { "accepted": true, "version": 2, "source": "app", "decidedAt": "…" },
   "vip": false,
+  "adFree": false,
   "exempt": false,
   "decisionRequired": false,
   "mode": "full",

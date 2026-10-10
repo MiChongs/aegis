@@ -23,13 +23,14 @@ type Verdict struct {
 	Exempt           bool
 }
 
-// Evaluate 判定服务模式。
+// Evaluate 判定服务模式。adFree 是会员身份是否免广告（vip.Entitlement.AdFree）：
+// 看广告赠送的会员按场景设置可以不免，此时与非会员一样要同意广告服务。
 //
 // 只有「按当前版本条款同意过」才算同意：按旧版本同意的人在重新选择之前也只有基础服务，
 // 否则调高版本就失去了意义。会员免除时不受同意要求约束，但 DecisionRequired 照实回答 ——
 // 会员看激励广告同样要先同意，只是不必在启动时追着问。
-func Evaluate(policy Policy, consent *Consent, vip bool) Verdict {
-	verdict := Verdict{Exempt: vip && policy.VipExempt}
+func Evaluate(policy Policy, consent *Consent, adFree bool) Verdict {
+	verdict := Verdict{Exempt: adFree && policy.VipExempt}
 	current := consent != nil && consent.Version >= policy.ConsentVersion
 	verdict.DecisionRequired = !current
 	switch {

@@ -274,7 +274,9 @@ type ClientPolicy struct {
 	// Consent 账号上的选择；未登录或还没选过时为空。
 	Consent *Consent `json:"consent,omitempty"`
 	Vip     bool     `json:"vip"`
-	// Exempt 会员免除：不受同意要求约束，也不展示开屏广告。
+	// AdFree 会员身份免广告。看广告赠送的会员按场景设置可以不免（见 vip.Entitlement.AdFree）。
+	AdFree bool `json:"adFree"`
+	// Exempt 会员免除：不受同意要求约束，也不展示开屏广告（adFree 且策略开了会员免除）。
 	Exempt bool `json:"exempt"`
 	// DecisionRequired 需要（重新）选择：没选过，或选择所依据的条款版本已过期。
 	DecisionRequired bool `json:"decisionRequired"`
@@ -292,6 +294,7 @@ type UserProfile struct {
 	ConsentVersion   int           `json:"consentVersion"`
 	Consent          *Consent      `json:"consent,omitempty"`
 	Vip              bool          `json:"vip"`
+	AdFree           bool          `json:"adFree"`
 	Exempt           bool          `json:"exempt"`
 	DecisionRequired bool          `json:"decisionRequired"`
 	Mode             string        `json:"mode"`

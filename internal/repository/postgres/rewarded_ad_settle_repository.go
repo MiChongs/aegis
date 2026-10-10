@@ -249,6 +249,11 @@ func (r *Repository) grantAdRewardsTx(ctx context.Context, tx pgx.Tx, view *rewa
 	source := "激励广告 " + scene.Name
 	viewID := view.ID
 	meta := map[string]any{"transId": view.TransID, "scene": scene.Key, "rewardedAdViewId": view.ID}
+	// 场景的会员权益在判定时按场景的当前配置实时取（见 vip.Segment.AdTerms），
+	// 这里只留开通那一刻的快照，供场景被删除后兜底。
+	if scene.GrantsMembership() {
+		meta["adFree"] = scene.Membership.AdFreeOrDefault()
+	}
 
 	for _, reward := range cardkeydomain.NormalizeRewards(scene.Rewards) {
 		spec, _ := cardkeydomain.FindRewardSpec(reward.Type)
@@ -287,6 +292,7 @@ func (r *Repository) grantAdRewardsTx(ctx context.Context, tx pgx.Tx, view *rewa
 				UserID:       view.UserID,
 				AppID:        view.AppID,
 				PlanName:     "看广告赠送",
+				Features:     scene.Membership.Features,
 				DurationDays: int(reward.Amount),
 				PayChannel:   vipdomain.ChannelAdReward,
 				PayAmount:    decimal.Zero,

@@ -46,6 +46,18 @@ type Segment struct {
 	ActiveUntil time.Time `json:"activeUntil"`
 	// Lifetime 永久开通：不在顺延链上，没有终点，作废之前一直贡献权益
 	Lifetime bool `json:"lifetime"`
+	// AdTerms 看激励广告领到的这一段，所属奖励场景**当前**的会员权益。
+	// 场景已删除（或不是看广告领的）时为 nil，回落到开通时的快照。
+	AdTerms *SegmentAdTerms `json:"adTerms,omitempty"`
+	// AdFree 开通那一刻这一段是否免广告（只有看广告领的段才记）。场景删除后的兜底。
+	AdFree *bool `json:"adFree,omitempty"`
+}
+
+// SegmentAdTerms 激励广告场景的会员权益（与 rewardedad.SceneMembership 同构）。
+type SegmentAdTerms struct {
+	Features []string `json:"features"`
+	// AdFree 为空表示场景没设置，按免广告处理。
+	AdFree *bool `json:"adFree,omitempty"`
 }
 
 // SegmentPlan 套餐的当前配置（判定只需要这两项）。
@@ -54,12 +66,51 @@ type SegmentPlan struct {
 	Features []string `json:"features"`
 }
 
-// EffectiveFeatures 这一段此刻解锁的功能：套餐还在就按套餐现在的配置，否则按快照。
+// EffectiveFeatures 这一段此刻解锁的功能：套餐还在就按套餐现在的配置；
+// 看广告领的会员天数按所属场景现在的会员权益；都没有时按快照。
+//
+// 看广告领的会员套餐仍按套餐算（PlanID 非空）：套餐删除后回落到快照，
+// 不会被场景里那份只对「会员天数」生效的功能顶替。
 func (s Segment) EffectiveFeatures() []string {
 	if s.Plan != nil {
 		return s.Plan.Features
 	}
+	if s.PlanID == nil && s.AdTerms != nil {
+		return s.AdTerms.Features
+	}
 	return s.Features
+}
+
+// GrantsAdFree 这一段此刻是否免广告。
+//
+// 只有看广告领的段可能不免：按所属场景现在的设置，场景删除后按开通时的快照，
+// 两者都没有（这项设置出现之前领的）时按免广告 —— 与此前的行为一致。
+// 付费、试用、兑换、管理员发放的会员一律免广告。
+func (s Segment) GrantsAdFree() bool {
+	if s.Channel != ChannelAdReward {
+		return true
+	}
+	if s.AdTerms != nil {
+		return s.AdTerms.AdFree == nil || *s.AdTerms.AdFree
+	}
+	if s.AdFree != nil {
+		return *s.AdFree
+	}
+	return true
+}
+
+// resolveAdFree 会员此刻是否免广告：仍生效的各段里只要有一段免广告即是。
+// 找不到任何一段的会员（老系统直接写进 users 的到期时间）按免广告处理。
+func resolveAdFree(live []Segment) bool {
+	if len(live) == 0 {
+		return true
+	}
+	for _, segment := range live {
+		if segment.GrantsAdFree() {
+			return true
+		}
+	}
+	return false
 }
 
 // EffectivePlanName 这一段此刻的展示名：套餐改过名就跟着改，套餐没了就用开通时的名字。
