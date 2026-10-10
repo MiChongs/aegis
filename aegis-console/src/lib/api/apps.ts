@@ -481,11 +481,12 @@ export function getAdminAppSignInStats(token: string, appKey: string, params?: {
 export function getAdminAppSignInRecords(
   token: string,
   appKey: string,
-  params?: { keyword?: string; source?: string; dateFrom?: string; dateTo?: string; page?: number; limit?: number }
+  params?: { keyword?: string; source?: string; bonusType?: string; dateFrom?: string; dateTo?: string; page?: number; limit?: number }
 ) {
   const query = buildQuery({
     keyword: params?.keyword,
     source: params?.source,
+    bonusType: params?.bonusType,
     dateFrom: params?.dateFrom,
     dateTo: params?.dateTo,
     page: params?.page,

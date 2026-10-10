@@ -1410,19 +1410,23 @@ export function useAdminAppSignInStatsQuery(appKey?: string | null, days = 14) {
   return useQuery({
     queryKey: ["admin-app-signin-stats", token, appKey, days],
     queryFn: () => getAdminAppSignInStats(token as string, appKey as string, { days }),
-    enabled: Boolean(token && appKey)
+    enabled: Boolean(token && appKey),
+    // 换窗口、翻页时保留上一屏；换了应用则不沿用别的应用的数据
+    placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[2] === appKey ? previous : undefined)
   });
 }
 
 export function useAdminAppSignInRecordsQuery(
   appKey?: string | null,
-  params?: { keyword?: string; source?: string; dateFrom?: string; dateTo?: string; page?: number; limit?: number }
+  params?: { keyword?: string; source?: string; bonusType?: string; dateFrom?: string; dateTo?: string; page?: number; limit?: number }
 ) {
   const token = useAdminToken();
   return useQuery({
     queryKey: ["admin-app-signin-records", token, appKey, params],
     queryFn: () => getAdminAppSignInRecords(token as string, appKey as string, params),
-    enabled: Boolean(token && appKey)
+    enabled: Boolean(token && appKey),
+    // 换窗口、翻页时保留上一屏；换了应用则不沿用别的应用的数据
+    placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[2] === appKey ? previous : undefined)
   });
 }
 

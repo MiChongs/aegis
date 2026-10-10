@@ -589,6 +589,35 @@ export type SignInRewardPreviewInput = {
   consecutiveDays: number;
   totalSignIns: number;
   userExperience: number;
+  /** 草稿策略；缺省时按应用已保存的策略试算 */
+  policy?: SignInRewardPolicy;
+  /** 逐日推演连续签到的天数，0 或缺省表示不推演，上限 120 */
+  simulateDays?: number;
+};
+
+export type SignInRewardSimulationDay = {
+  day: number;
+  date: string;
+  weekdayIso: number;
+  consecutiveDays: number;
+  integralReward: number;
+  experienceReward: number;
+  rewardMultiplier: number;
+  bonusType?: string;
+  appliedRules: string[];
+  milestone: boolean;
+  cumulativeIntegral: number;
+  cumulativeExperience: number;
+};
+
+export type SignInRewardSimulation = {
+  days: SignInRewardSimulationDay[];
+  totalIntegral: number;
+  totalExperience: number;
+  peakIntegral: number;
+  peakExperience: number;
+  /** 规则 key（里程碑为 milestone_N）→ 推演期内命中的天数 */
+  ruleHits: Record<string, number>;
 };
 
 export type SignInRewardPreview = {
@@ -600,6 +629,9 @@ export type SignInRewardPreview = {
   reward: SignInRewardResolved;
   appliedRules: SignInRewardAppliedRule[];
   environment: Record<string, unknown>;
+  /** 按请求里的草稿策略计算 */
+  draft: boolean;
+  simulation?: SignInRewardSimulation;
 };
 
 export type SignInRewardTemplateCatalog = {
@@ -609,7 +641,22 @@ export type SignInRewardTemplateCatalog = {
 
 export type AppSignInTrendPoint = {
   date: string;
+  /** 当天签到次数，同一用户一天只能签一次，因此也是签到人数 */
   count: number;
+  integralReward: number;
+  experienceReward: number;
+};
+
+export type AppSignInStreakBucket = { label: string; min: number; max: number; count: number };
+export type AppSignInBonusTypeStat = { bonusType: string; count: number };
+export type AppSignInStreakUser = {
+  userId: number;
+  account: string;
+  nickname?: string;
+  avatar?: string;
+  consecutiveDays: number;
+  totalSignDays: number;
+  lastSignDate: string;
 };
 
 export type AppSignInSourceStat = {
@@ -629,6 +676,20 @@ export type AppSignInStats = {
   maxConsecutiveDays: number;
   trend: AppSignInTrendPoint[];
   sources: AppSignInSourceStat[];
+  /** 以下为统计窗口（近 days 天，含今天）口径；上面的累计字段是全量 */
+  yesterdaySignCount: number;
+  windowSignCount: number;
+  windowUniqueUsers: number;
+  windowIntegralReward: number;
+  windowExperienceReward: number;
+  /** 连签仍在延续的用户：最近一次签到在今天或昨天 */
+  activeStreakUsers: number;
+  streakBuckets: AppSignInStreakBucket[];
+  /** 24 个小时槽，统计时区 */
+  hourDistribution: number[];
+  bonusTypes: AppSignInBonusTypeStat[];
+  topStreaks: AppSignInStreakUser[];
+  timezone: string;
 };
 
 export type AppSignInRecordItem = {
