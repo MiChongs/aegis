@@ -1,6 +1,7 @@
 import { apiRequest, buildQuery } from "./client";
 import type {
   AppMonitorOverview,
+  AppOnlineStats,
   MonitorAppBrief,
   MonitorOverview,
   OnlineStats,
@@ -62,7 +63,7 @@ export function getAppMonitorHistory(appId: number | string, keys: string[], ran
 }
 
 export function getAppOnlineStats(token: string, appId: number | string) {
-  return apiRequest<OnlineStats>(`/api/admin/system/online/apps/${appId}`, { token });
+  return apiRequest<AppOnlineStats>(`/api/admin/system/online/apps/${appId}`, { token });
 }
 
 export function getAppOnlineUsers(

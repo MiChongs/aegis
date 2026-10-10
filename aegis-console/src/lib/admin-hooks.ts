@@ -549,17 +549,18 @@ export function useDeleteMessageTemplateMutation() {
 
 // ── 会话管理 Hooks ──
 
-export function useAllSessionsQuery(page = 1, limit = 20) {
+export function useAllSessionsQuery(page = 1, limit = 20, options?: { enabled?: boolean; refetchInterval?: number | false }) {
   const token = useAdminToken();
-  return useQuery({ queryKey: ["all-sessions", page, limit, token], queryFn: () => sessionMgmt.listAllSessions(token as string, { page, limit }), enabled: Boolean(token) });
+  return useQuery({ queryKey: ["all-sessions", page, limit, token], queryFn: () => sessionMgmt.listAllSessions(token as string, { page, limit }), enabled: Boolean(token) && (options?.enabled ?? true), refetchInterval: options?.refetchInterval });
 }
-export function useAdminSessionsQuery(adminId?: number | null) {
+export function useAdminSessionsQuery(adminId?: number | null, options?: { enabled?: boolean }) {
   const token = useAdminToken();
-  return useQuery({ queryKey: ["admin-sessions", adminId, token], queryFn: () => sessionMgmt.listAdminSessions(token as string, adminId as number), enabled: Boolean(token && adminId) });
+  return useQuery({ queryKey: ["admin-sessions", adminId, token], queryFn: () => sessionMgmt.listAdminSessions(token as string, adminId as number), enabled: Boolean(token && adminId) && (options?.enabled ?? true) });
 }
-export function useOnlineAdminsQuery() {
+// 会话管理接口只对超管开放（后端 40311），非超管调用方传 enabled: false，免得每 15 秒撞一次 403。
+export function useOnlineAdminsQuery(options?: { enabled?: boolean }) {
   const token = useAdminToken();
-  return useQuery({ queryKey: ["online-admins", token], queryFn: () => sessionMgmt.listOnlineAdmins(token as string), enabled: Boolean(token), refetchInterval: 15000 });
+  return useQuery({ queryKey: ["online-admins", token], queryFn: () => sessionMgmt.listOnlineAdmins(token as string), enabled: Boolean(token) && (options?.enabled ?? true), refetchInterval: 15000 });
 }
 export function useRevokeSessionMutation() {
   const token = useAdminToken(); const qc = useQueryClient();
@@ -826,12 +827,13 @@ export function useAdminDashboardQuery() {
   });
 }
 
-export function useSystemOnlineStatsQuery() {
+export function useSystemOnlineStatsQuery(options?: { refetchInterval?: number | false }) {
   const token = useAdminToken();
   return useQuery({
     queryKey: ["system-online-stats", token],
     queryFn: () => getSystemOnlineStats(token as string),
-    enabled: Boolean(token)
+    enabled: Boolean(token),
+    refetchInterval: options?.refetchInterval
   });
 }
 
@@ -919,24 +921,29 @@ export function useAppMonitorHistoryQuery(appId?: number | string | null, keys: 
   });
 }
 
-export function useAppOnlineStatsQuery(appId?: number | string | null) {
+export function useAppOnlineStatsQuery(appId?: number | string | null, options?: { refetchInterval?: number | false }) {
   const token = useAdminToken();
   return useQuery({
     queryKey: ["app-online-stats", token, appId],
     queryFn: () => getAppOnlineStats(token as string, appId as string | number),
-    enabled: Boolean(token && appId)
+    enabled: Boolean(token && appId),
+    refetchInterval: options?.refetchInterval
   });
 }
 
 export function useAppOnlineUsersQuery(
   appId?: number | string | null,
-  params?: { page?: number; limit?: number }
+  params?: { page?: number; limit?: number },
+  options?: { refetchInterval?: number | false }
 ) {
   const token = useAdminToken();
   return useQuery({
     queryKey: ["app-online-users", token, appId, params?.page, params?.limit],
     queryFn: () => getAppOnlineUsers(token as string, appId as string | number, params),
-    enabled: Boolean(token && appId)
+    enabled: Boolean(token && appId),
+    refetchInterval: options?.refetchInterval,
+    // 翻页、切自动刷新时保留上一屏，表格不闪回骨架
+    placeholderData: (previous) => previous
   });
 }
 
@@ -2214,6 +2221,27 @@ export function useRevokeAdminAppUserSessionsMutation(appKey?: string | null, us
   const token = useAdminToken();
   return useMutation({
     mutationFn: () => revokeAdminAppUserSessions(token as string, appKey as string, userId as string | number)
+  });
+}
+
+/**
+ * 在线会话页的「强制下线」：一张表里每行是不同的用户，appKey / userId 随调用传入，
+ * 而不是像详情页那样在 hook 创建时绑定。
+ */
+export function useRevokeOnlineUserSessionsMutation() {
+  const token = useAdminToken();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { appKey: string; userId: number }) =>
+      revokeAdminAppUserSessions(token as string, payload.appKey, payload.userId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["app-online-users"] }),
+        queryClient.invalidateQueries({ queryKey: ["app-online-stats"] }),
+        queryClient.invalidateQueries({ queryKey: ["system-online-stats"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-user-sessions"] })
+      ]);
+    }
   });
 }
 

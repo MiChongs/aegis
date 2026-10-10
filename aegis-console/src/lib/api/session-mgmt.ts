@@ -16,7 +16,7 @@ export function revokeSession(token: string, sessionId: string) {
 }
 
 export function forceLogoutAdmin(token: string, adminId: number) {
-  return apiRequest<{ revoked: number }>(`/api/admin/system/admins/${adminId}/force-logout`, { method: "POST", token, body: JSON.stringify({}) });
+  return apiRequest<{ adminId: number; revokedCount: number }>(`/api/admin/system/admins/${adminId}/force-logout`, { method: "POST", token, body: JSON.stringify({}) });
 }
 
 export function listOnlineAdmins(token: string) {

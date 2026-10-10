@@ -1,69 +1,130 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { DataTableColumnDef } from "./data-table";
-import { Wifi } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { LoadingState } from "@/components/ui/data-state";
-import { useAdminAppsQuery, useAppOnlineUsersQuery } from "@/lib/admin-hooks";
-import { DataTable } from "./data-table";
+import { useState } from "react";
+import { useIsFetching, useQueryClient } from "@tanstack/react-query";
+import { AppWindow, RefreshCw, ShieldCheck } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  useAdminAppsQuery,
+  useAdminSessionQuery,
+  useOnlineAdminsQuery,
+  useSystemOnlineStatsQuery
+} from "@/lib/admin-hooks";
+import { useAuthStore } from "@/lib/auth-store";
+import { cn } from "@/lib/utils";
+import { AdminSessionsView } from "./online/admin-sessions-view";
+import { AppOnlineView } from "./online/app-online-view";
+import { OnlineOverview } from "./online/online-overview";
 
-type OnlineRow = { account: string; nickname: string; ip: string; connectedAt: string };
+type View = "apps" | "admins";
 
-function textVal(v: unknown, fb = "—") { return typeof v === "string" && v.trim() ? v : fb; }
+const REFRESH_MS = 10_000;
+const ONLINE_QUERY_KEYS = ["system-online-stats", "app-online-stats", "app-online-users", "online-admins", "all-sessions", "admin-sessions"];
 
-function fmtTime(v: unknown) {
-  if (typeof v !== "string") return "—";
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
-const columns: DataTableColumnDef<OnlineRow>[] = [
-  { accessorKey: "account", header: "用户", cell: ({ row }) => <span className="font-medium">{row.original.nickname || row.original.account}</span> },
-  { accessorKey: "ip", header: "IP 地址", cell: ({ getValue }) => <span className="font-mono text-xs text-muted-foreground">{getValue() as string}</span> },
-  { accessorKey: "connectedAt", header: "连接时间", cell: ({ getValue }) => <span className="text-xs tabular-nums text-muted-foreground">{fmtTime(getValue())}</span> }
-];
-
+/**
+ * 在线会话：上面是全站概览，下面按对象分两个视图。
+ *
+ *   应用用户 —— Redis presence 里的实时连接，按应用查看，可展开到每条连接、可强制下线。
+ *   管理员   —— 控制台登录会话（仅超管），可撤销单个会话或让某位管理员整体下线。
+ *
+ * 自动刷新默认开启（10 秒），翻页与刷新之间保留上一屏数据，不闪骨架。
+ */
 export function OnlinePanel() {
+  const operator = useAuthStore((s) => s.operator);
+  const isSuperAdmin = operator?.isSuperAdmin ?? false;
+  const selfId = operator?.id != null ? Number(operator.id) : null;
+
+  const [view, setView] = useState<View>("apps");
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const interval = autoRefresh ? REFRESH_MS : false;
+
+  const queryClient = useQueryClient();
+  const fetching = useIsFetching({ predicate: (q) => ONLINE_QUERY_KEYS.includes(String(q.queryKey[0])) }) > 0;
+
+  const statsQuery = useSystemOnlineStatsQuery({ refetchInterval: interval });
   const appsQuery = useAdminAppsQuery();
-  const apps = appsQuery.data || [];
-  const [selectedAppId, setSelectedAppId] = useState<number | null>(null);
+  const onlineAdminsQuery = useOnlineAdminsQuery({ enabled: isSuperAdmin });
+  const sessionQuery = useAdminSessionQuery();
 
-  useEffect(() => {
-    if (apps.length > 0 && !selectedAppId) setSelectedAppId(apps[0].id);
-  }, [apps, selectedAppId]);
+  const onlineAdmins = onlineAdminsQuery.data ?? [];
+  const activeView: View = isSuperAdmin ? view : "apps";
 
-  const onlineQuery = useAppOnlineUsersQuery(selectedAppId, { page: 1, limit: 100 });
-  const rawItems = onlineQuery.data?.items || [];
-
-  const rows: OnlineRow[] = useMemo(() => rawItems.map((item) => ({
-    account: textVal(item.account, item.userId ? `#${item.userId}` : "—"),
-    nickname: textVal(item.nickname, ""),
-    // IP 顶层没有时回落到样本连接：两处是同一个值，后端把它提到顶层是为了省掉这层挖掘。
-    ip: textVal(item.ip, textVal(item.sampleConnection?.ip)),
-    connectedAt: textVal(item.connectedAt, textVal(item.lastSeenAt))
-  })), [rawItems]);
-
-  if (appsQuery.isLoading) return <LoadingState title="加载中" />;
+  function refreshAll() {
+    void queryClient.invalidateQueries({
+      predicate: (q) => ONLINE_QUERY_KEYS.includes(String(q.queryKey[0]))
+    });
+  }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        {apps.length > 0 && (
-          <Select value={selectedAppId ? String(selectedAppId) : ""} onValueChange={(v) => setSelectedAppId(Number(v))}>
-            <SelectTrigger className="h-8 w-44 text-xs"><SelectValue placeholder="选择应用" /></SelectTrigger>
-            <SelectContent>
-              {apps.map((app) => <SelectItem key={app.id} value={String(app.id)}>{app.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
+      <OnlineOverview
+        stats={statsQuery.data}
+        loading={statsQuery.isLoading}
+        admins={
+          isSuperAdmin
+            ? {
+                online: onlineAdmins.length,
+                sessions: onlineAdmins.reduce((sum, a) => sum + a.sessionCount, 0),
+                loading: onlineAdminsQuery.isLoading
+              }
+            : undefined
+        }
+      />
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {isSuperAdmin ? (
+          <ToggleGroup
+            type="single"
+            value={activeView}
+            onValueChange={(v) => v && setView(v as View)}
+            className="rounded-lg border bg-muted/40 p-0.5"
+          >
+            <ToggleGroupItem value="apps" className="h-8 gap-1.5 rounded-md px-3 text-xs data-[state=on]:bg-background data-[state=on]:shadow-sm">
+              <AppWindow className="size-3.5" />
+              应用用户
+            </ToggleGroupItem>
+            <ToggleGroupItem value="admins" className="h-8 gap-1.5 rounded-md px-3 text-xs data-[state=on]:bg-background data-[state=on]:shadow-sm">
+              <ShieldCheck className="size-3.5" />
+              管理员
+              {onlineAdmins.length > 0 ? (
+                <span className="rounded-full bg-emerald-500/15 px-1.5 text-[10px] leading-4 text-emerald-700 tabular-nums dark:text-emerald-300">
+                  {onlineAdmins.length}
+                </span>
+              ) : null}
+            </ToggleGroupItem>
+          </ToggleGroup>
+        ) : (
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <AppWindow className="size-4 text-muted-foreground" />
+            应用在线用户
+          </h2>
         )}
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Wifi className="size-3" />
-          {rows.length} 个在线
-        </span>
+
+        <div className="flex items-center gap-2">
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs">
+            <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} aria-label="自动刷新" />
+            <span>自动刷新</span>
+            <span className="hidden text-muted-foreground sm:inline">{autoRefresh ? "10 秒" : "已暂停"}</span>
+          </label>
+          <Button variant="outline" size="icon" className="size-8" aria-label="立即刷新" onClick={refreshAll}>
+            <RefreshCw className={cn("size-3.5", fetching && "animate-spin")} />
+          </Button>
+        </div>
       </div>
-      <DataTable columns={columns} data={rows} emptyText={selectedAppId ? "暂无在线用户" : "请先选择应用"} />
+
+      {activeView === "apps" ? (
+        <AppOnlineView apps={appsQuery.data ?? []} appsLoading={appsQuery.isLoading} autoRefresh={interval} />
+      ) : (
+        <AdminSessionsView
+          onlineAdmins={onlineAdmins}
+          onlineLoading={onlineAdminsQuery.isLoading}
+          currentSessionId={sessionQuery.data?.tokenId}
+          selfId={selfId}
+          autoRefresh={interval}
+        />
+      )}
     </div>
   );
 }

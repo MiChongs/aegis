@@ -3398,7 +3398,22 @@ export type UserSessionAuditList = {
   totalPages: number;
 };
 
-export type OnlineStats = Record<string, unknown>;
+/** 全站在线概览，与后端 realtime.OnlineStats 对齐。 */
+export type OnlineStats = {
+  onlineUsers: number;
+  onlineConnections: number;
+  onlineApps: number;
+  refreshedAt: string;
+};
+
+/** 单个应用的在线统计，与后端 realtime.AppOnlineStats 对齐。 */
+export type AppOnlineStats = {
+  appid: number;
+  onlineUsers: number;
+  onlineConnections: number;
+  refreshedAt: string;
+};
+
 /** 一条实时连接的明细，与后端 realtime.PresenceConnection 对齐。 */
 export type OnlinePresenceConnection = {
   connectionId: string;
