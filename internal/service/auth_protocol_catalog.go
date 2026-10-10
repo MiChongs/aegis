@@ -79,6 +79,18 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "rewardedAdRecords", Method: "GET", Path: "/ads/rewarded/records", Auth: true,
 		Summary: "我的激励广告观看与领奖记录"},
 
+	// ── 广告服务策略 ──
+	//
+	// 是否同意广告服务记在账号上：拒绝或尚未选择的用户只能使用 basicTools 里的基础服务。
+	// 策略与开屏上报免登录可用（未登录时开屏按设备记录、选择由客户端记在本机），
+	// 登录后用 ifAbsent 把本机的选择同步到账号上。
+	{Key: "adPolicy", Method: "GET", Path: "/ads/policy",
+		Summary: "广告服务策略：是否要求同意、基础服务清单、开屏广告配置与频控，以及当前账号的选择与服务模式"},
+	{Key: "adConsent", Method: "POST", Path: "/ads/consent", Auth: true,
+		Summary: "记录对广告服务的选择（同意 / 拒绝）；ifAbsent 时账号上已有选择则不覆盖"},
+	{Key: "splashAdEvents", Method: "POST", Path: "/ads/splash/events",
+		Summary: "上报开屏广告记录（shown / clicked / failed / timeout），带令牌时记到账号上"},
+
 	// ── 当前用户 ──
 	{Key: "me", Method: "GET", Path: "/me", Auth: true, Summary: "当前登录用户资料"},
 	{Key: "profile", Method: "GET", Path: "/me/profile", Auth: true, Summary: "个人资料详情"},

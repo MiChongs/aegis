@@ -37,6 +37,7 @@ func init() {
 
 		// 用户云存储
 		View("GET /api/admin/apps/:appkey/users/:userId/cloud-storage", "查看用户云存储", "用户"),
+		View("GET /api/admin/apps/:appkey/users/:userId/ad-policy", "查看用户广告服务情况", "用户"),
 		View("GET /api/admin/apps/:appkey/users/:userId/cloud-storage/items", "查看用户云存储条目", "用户"),
 		View("GET /api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId", "查看云存储条目详情", "云存储条目"),
 		View("GET /api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/revisions", "查看云存储条目历史版本", "云存储条目"),

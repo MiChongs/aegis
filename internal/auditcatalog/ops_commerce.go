@@ -51,6 +51,14 @@ func init() {
 		View("GET /api/admin/apps/:appkey/rewarded-ads/views", "查看激励广告观看记录", ""),
 		Write("POST /api/admin/apps/:appkey/rewarded-ads/views/:viewId/grant", "补发激励广告奖励", "观看记录", SeverityHigh),
 
+		// 广告服务策略
+		View("GET /api/admin/apps/:appkey/ad-policy/config", "查看广告服务策略", ""),
+		Write("PUT /api/admin/apps/:appkey/ad-policy/config", "修改广告服务策略", "", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/ad-policy/consents", "查看用户广告服务选择", ""),
+		View("GET /api/admin/apps/:appkey/ad-policy/consent-logs", "查看广告服务选择记录", ""),
+		View("GET /api/admin/apps/:appkey/ad-policy/splash-events", "查看开屏广告记录", ""),
+		View("GET /api/admin/apps/:appkey/ad-policy/stats", "查看广告服务统计", ""),
+
 		// 签到
 		View("GET /api/admin/apps/:appkey/signin/records", "查看签到记录", ""),
 		View("GET /api/admin/apps/:appkey/signin/stats", "查看签到统计", ""),

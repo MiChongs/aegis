@@ -673,6 +673,12 @@ func (s *RewardedAdService) userToken(appID, userID int64) string {
 	return strconv.FormatInt(userID, 10) + "." + s.userTag(appID, userID)
 }
 
+// AdUserToken 同一个带签名的用户标识，供开屏等其他广告位传给 SDK：
+// 平台后台里同一个人的激励视频与开屏展示对得上，广告数据都挂在账号上。
+func (s *RewardedAdService) AdUserToken(appID, userID int64) string {
+	return s.userToken(appID, userID)
+}
+
 func (s *RewardedAdService) userTag(appID, userID int64) string {
 	mac := hmac.New(sha256.New, s.userKey)
 	mac.Write([]byte(strconv.FormatInt(appID, 10) + ":" + strconv.FormatInt(userID, 10)))

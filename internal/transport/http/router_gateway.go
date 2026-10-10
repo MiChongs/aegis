@@ -61,6 +61,10 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayOptional.GET("/releases/check", h.AppReleaseCheck)
 		appGatewayOptional.GET("/releases/latest", h.AppReleaseLatest)
 		appGatewayOptional.POST("/releases/events", h.AppReleaseEvent)
+		// 广告服务策略与开屏上报：未登录也要知道基础服务有哪些、开屏能不能放；
+		// 带令牌时按账号回答，开屏记录也挂到账号上。
+		appGatewayOptional.GET("/ads/policy", h.AppAdPolicy)
+		appGatewayOptional.POST("/ads/splash/events", h.AppReportSplashAd)
 	}
 
 	// 网关内需要 Bearer 令牌的部分。
@@ -95,6 +99,8 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/ads/rewarded", h.AppRewardedAdStatus)
 		appGatewayAuthed.POST("/ads/rewarded/claim", h.AppClaimRewardedAd)
 		appGatewayAuthed.GET("/ads/rewarded/records", h.AppRewardedAdRecords)
+		// 对广告服务的选择记在账号上；未登录时的选择由客户端在登录后用 ifAbsent 同步上来。
+		appGatewayAuthed.POST("/ads/consent", h.AppSaveAdConsent)
 
 		// 当前用户：资料 / 设置 / 安全概览
 		appGatewayAuthed.GET("/me", h.AppMe)

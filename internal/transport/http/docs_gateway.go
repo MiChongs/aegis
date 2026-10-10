@@ -102,6 +102,10 @@ func gatewayRequestModels() map[string]any {
 		"rewardedAdClaim":   RewardedAdClaimRequest{},
 		"rewardedAdRecords": PaginationQuery{},
 
+		// 广告服务策略
+		"adConsent":      AdConsentRequest{},
+		"splashAdEvents": AdSplashReportRequest{},
+
 		// 钱包 / 会员 / 支付
 		"walletTransactions": WalletTransactionsQuery{},
 		"walletConsume":      WalletConsumeRequest{},

@@ -236,6 +236,13 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.GET("/apps/:appkey/rewarded-ads/views", h.AdminListRewardedAdViews)
 		admin.POST("/apps/:appkey/rewarded-ads/views/:viewId/grant", h.AdminGrantRewardedAdView)
 		admin.GET("/apps/:appkey/rewarded-ads/stats", h.AdminRewardedAdStats)
+		// 广告服务策略。单个用户的情况挂在 users/:userId 之下，按用户数据权限判定。
+		admin.GET("/apps/:appkey/ad-policy/config", h.AdminAdPolicy)
+		admin.PUT("/apps/:appkey/ad-policy/config", h.AdminSaveAdPolicy)
+		admin.GET("/apps/:appkey/ad-policy/consents", h.AdminListAdConsents)
+		admin.GET("/apps/:appkey/ad-policy/consent-logs", h.AdminListAdConsentLogs)
+		admin.GET("/apps/:appkey/ad-policy/splash-events", h.AdminListSplashAdEvents)
+		admin.GET("/apps/:appkey/ad-policy/stats", h.AdminAdPolicyStats)
 		// 用户云存储：应用级配置 / 概览 / 用户列表。单个用户的条目管理挂在 users/:userId 之下，
 		// 与资料、钱包同一组权限（app_user:read / write），因为那是在看某个人的数据。
 		admin.GET("/apps/:appkey/cloud-storage/config", h.AdminCloudStorageConfig)
@@ -309,6 +316,7 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/users/:userId/revoke-sessions", h.AdminRevokeUserSessions)
 		admin.DELETE("/apps/:appkey/users/:userId", h.AdminDeleteUser)
 		admin.GET("/apps/:appkey/users/:userId/cloud-storage", h.AdminCloudStorageUser)
+		admin.GET("/apps/:appkey/users/:userId/ad-policy", h.AdminUserAdPolicy)
 		admin.PUT("/apps/:appkey/users/:userId/cloud-storage", h.AdminSaveCloudStorageUser)
 		admin.DELETE("/apps/:appkey/users/:userId/cloud-storage", h.AdminPurgeCloudStorageUser)
 		admin.GET("/apps/:appkey/users/:userId/cloud-storage/items", h.AdminCloudStorageUserItems)

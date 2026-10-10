@@ -105,6 +105,11 @@ GET	/	Homepage
 GET	/announcements	AnnouncementsPage
 GET	/api/admin/apps	AdminApps
 GET	/api/admin/apps/:appkey	AdminApp
+GET	/api/admin/apps/:appkey/ad-policy/config	AdminAdPolicy
+GET	/api/admin/apps/:appkey/ad-policy/consent-logs	AdminListAdConsentLogs
+GET	/api/admin/apps/:appkey/ad-policy/consents	AdminListAdConsents
+GET	/api/admin/apps/:appkey/ad-policy/splash-events	AdminListSplashAdEvents
+GET	/api/admin/apps/:appkey/ad-policy/stats	AdminAdPolicyStats
 GET	/api/admin/apps/:appkey/ai/agent/ws	AdminAppAIAgentWS
 GET	/api/admin/apps/:appkey/ai/channel	AdminAppAIChannel
 GET	/api/admin/apps/:appkey/ai/configs	AdminAppAIConfigList
@@ -196,6 +201,7 @@ GET	/api/admin/apps/:appkey/stats/regions	AdminAppRegionStats
 GET	/api/admin/apps/:appkey/stats/user-trend	AdminAppUserTrend
 GET	/api/admin/apps/:appkey/users	AdminAppUsers
 GET	/api/admin/apps/:appkey/users/:userId	AdminAppUser
+GET	/api/admin/apps/:appkey/users/:userId/ad-policy	AdminUserAdPolicy
 GET	/api/admin/apps/:appkey/users/:userId/audits/login	AdminAppUserLoginAudits
 GET	/api/admin/apps/:appkey/users/:userId/audits/sessions	AdminAppUserSessionAudits
 GET	/api/admin/apps/:appkey/users/:userId/bans	AdminAppUserBans
@@ -496,6 +502,7 @@ GET	/api/user/tickets	UserListTickets
 GET	/api/user/tickets/:ticketId	UserGetTicket
 GET	/api/user/tickets/categories	UserListTicketCategories
 GET	/api/user/two-factor/recovery-codes	ListRecoveryCodes
+GET	/api/v1/apps/:appkey/ads/policy	AppAdPolicy
 GET	/api/v1/apps/:appkey/ads/rewarded	AppRewardedAdStatus
 GET	/api/v1/apps/:appkey/ads/rewarded/records	AppRewardedAdRecords
 GET	/api/v1/apps/:appkey/auth/oauth/bindings	ListMyOAuthBindings
@@ -1000,7 +1007,9 @@ POST	/api/user/two-factor/enable	EnableTOTP
 POST	/api/user/two-factor/enroll	BeginTOTPEnrollment
 POST	/api/user/two-factor/recovery-codes	GenerateRecoveryCodes
 POST	/api/user/two-factor/recovery-codes/regenerate	RegenerateRecoveryCodes
+POST	/api/v1/apps/:appkey/ads/consent	AppSaveAdConsent
 POST	/api/v1/apps/:appkey/ads/rewarded/claim	AppClaimRewardedAd
+POST	/api/v1/apps/:appkey/ads/splash/events	AppReportSplashAd
 POST	/api/v1/apps/:appkey/auth/2fa/verify	AppSecondFactor
 POST	/api/v1/apps/:appkey/auth/email/code	AppEmailCode
 POST	/api/v1/apps/:appkey/auth/email/verify	AppEmailVerify
@@ -1071,6 +1080,7 @@ POST	/oauth2/login	OAuth2LoginSubmit
 POST	/oauth2/login/mfa	OAuth2SecondFactorSubmit
 POST	/oauth2/logout	OAuth2LogoutSubmit
 PUT	/api/admin/apps/:appkey	UpdateAdminApp
+PUT	/api/admin/apps/:appkey/ad-policy/config	AdminSaveAdPolicy
 PUT	/api/admin/apps/:appkey/ai/configs/:configId	AdminAppAIConfigUpdate
 PUT	/api/admin/apps/:appkey/ai/mcp-servers/:serverId	AdminAppAIMCPUpdate
 PUT	/api/admin/apps/:appkey/ai/skills/:skillId	AdminAppAISkillUpdate

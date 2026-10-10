@@ -578,6 +578,67 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
     fun rewardedAdRecords(page: Int = 1, limit: Int = 20): JsonElement =
         client.call("GET", "/ads/rewarded/records", query = pageQuery(page, limit), requireAuth = true)
 
+    // ── 广告服务策略 ──
+
+    /**
+     * 广告服务策略与当前账号的处境。免登录可用，带令牌时按账号回答。
+     *
+     * `mode = basic` 时只有 `basicTools` 里的功能可用；`decisionRequired` 时应请用户（重新）选择。
+     * `configured = false` 表示应用没配过策略，客户端按自己内置的默认策略处理。
+     * 未登录时选择一律按「还没选」回答，客户端以本机的选择为准。
+     * `adUserId` 原样传给广告 SDK 的请求对象（开屏与激励视频是同一个）。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun adPolicy(deviceId: String? = null): JsonElement = client.call(
+        "GET", "/ads/policy",
+        query = buildQuery("deviceId" to deviceId),
+        optionalAuth = true,
+    )
+
+    /**
+     * 记录对广告服务的选择，返回记录后的策略视图（与 [adPolicy] 同构）。
+     *
+     * [version] 传用户看到的 `consentVersion`，不传按当前版本。[ifAbsent] 用于把未登录时
+     * 在本机做的选择同步到账号上：账号上已经有选择时不覆盖，原样返回已有的那一条。
+     * [source]：`app`（默认）/ `web` / `guest_sync`。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun saveAdConsent(
+        accepted: Boolean,
+        version: Int? = null,
+        ifAbsent: Boolean = false,
+        source: String? = null,
+        deviceId: String? = null,
+    ): JsonElement = client.call(
+        "POST", "/ads/consent",
+        buildBody(
+            "accepted" to accepted,
+            "version" to version,
+            "ifAbsent" to ifAbsent,
+            "source" to source,
+            "deviceId" to deviceId,
+        ),
+        requireAuth = true,
+    )
+
+    /**
+     * 上报一批开屏记录（每次最多 50 条）。带令牌时记到账号上，未登录时只有设备标识。
+     *
+     * 每条记录的字段：`eventId`（客户端生成，8–64 位字母数字 `_` `-`，重传不会重复记录）、
+     * `status`（`shown` / `clicked` / `failed` / `timeout`）、`placementId`、`errorCode`、
+     * `errorMessage`、`loadMs`、`shownMs`、`occurredAt`（RFC 3339）。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun reportSplashAdEvents(events: List<Map<String, Any?>>, deviceId: String? = null): JsonElement =
+        client.call(
+            "POST", "/ads/splash/events",
+            buildBody("events" to events, "deviceId" to deviceId),
+            optionalAuth = true,
+        )
+
     // ── 站内信 ──
 
     @Throws(IOException::class)

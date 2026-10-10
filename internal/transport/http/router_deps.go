@@ -48,6 +48,7 @@ type RouterDeps struct {
 	AppFunction      *service.AppFunctionService
 	CardKey          *service.CardKeyService
 	RewardedAd       *service.RewardedAdService
+	AdPolicy         *service.AdPolicyService
 	CloudStorage     *service.CloudStorageService
 	Site             *service.SiteService
 	Version          *service.VersionService
@@ -171,6 +172,7 @@ func (d RouterDeps) newHandler() *Handler {
 		appFunction:        d.AppFunction,
 		cardKey:            d.CardKey,
 		rewardedAd:         d.RewardedAd,
+		adPolicy:           d.AdPolicy,
 		cloudStorage:       d.CloudStorage,
 		authProtocol:       d.AuthProtocol,
 		dashboard:          d.Dashboard,
