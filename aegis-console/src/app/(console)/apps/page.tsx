@@ -1,18 +1,19 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { LayoutGrid, RotateCw, Rows3, Search, X } from "lucide-react";
+import { AppWindow, LayoutGrid, RotateCw, Rows3, Search, SearchX, X } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { EmptyState, LoadingState } from "@/components/ui/data-state";
+import { LoadingState } from "@/components/ui/data-state";
 import { AppCreateDialog } from "@/components/apps/app-create-dialog";
 import { AppDeleteDialog } from "@/components/apps/app-delete-dialog";
 import { AppCardGrid, AppListSkeleton, AppTable, type AppListRow } from "@/components/apps/app-list-views";
+import { AppListOverview, type AppListCounts } from "@/components/apps/app-list-overview";
 import { useAdminAppsQuery, useDeleteAdminAppMutation } from "@/lib/admin-hooks";
 import { usePlatformAppsQuery } from "@/lib/platform-governance-hooks";
 import { usePermissionChecker } from "@/lib/permissions";
@@ -35,7 +36,17 @@ import type { AppSummary } from "@/lib/api/types";
  */
 
 type StatusFilter = "all" | "enabled" | "disabled" | "register-off" | "login-off" | "governed";
-type SortKey = "created" | "name" | "id" | "users";
+type SortKey = "created" | "name" | "id" | "users" | "new" | "logins";
+
+const SORT_LABEL: Record<SortKey, string> = {
+  created: "最近创建",
+  name: "按名称",
+  id: "按应用 ID",
+  users: "按用户数",
+  new: "按今日新增",
+  logins: "按今日登录"
+};
+const METRIC_SORTS: SortKey[] = ["users", "new", "logins"];
 
 function AppsPageInner() {
   const router = useRouter();
@@ -55,7 +66,12 @@ function AppsPageInner() {
     }
     return map;
   }, [overviewQuery.data]);
-  const hasMetrics = canReadOverview && metricsByAppKey.size > 0;
+  // 有权限就按「有指标」排版，加载期间显示骨架而不是先缺一块再撑开
+  const hasMetrics = canReadOverview && !overviewQuery.isError;
+  const loginFailuresToday = useMemo(
+    () => (overviewQuery.data?.items ?? []).reduce((sum, item) => sum + (item.loginFailureToday ?? 0), 0),
+    [overviewQuery.data]
+  );
 
   const listView = useAppScopeStore((s) => s.listView);
   const setListView = useAppScopeStore((s) => s.setListView);
@@ -63,7 +79,8 @@ function AppsPageInner() {
 
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
-  const [sort, setSort] = useState<SortKey>("created");
+  const [sortChoice, setSort] = useState<SortKey>("created");
+  const sort: SortKey = !hasMetrics && METRIC_SORTS.includes(sortChoice) ? "created" : sortChoice;
   const [deleteTarget, setDeleteTarget] = useState<AppSummary | null>(null);
   const deleteMutation = useDeleteAdminAppMutation();
 
@@ -100,6 +117,8 @@ function AppsPageInner() {
       }
     });
 
+    const metric = (app: AppSummary, key: "totalUsers" | "newUsersToday" | "loginSuccessToday") =>
+      metricsByAppKey.get(app.appKey)?.[key] ?? 0;
     const sorted = [...filtered].sort((a, b) => {
       switch (sort) {
         case "name":
@@ -107,9 +126,11 @@ function AppsPageInner() {
         case "id":
           return a.id - b.id;
         case "users":
-          return (
-            (metricsByAppKey.get(b.appKey)?.totalUsers ?? 0) - (metricsByAppKey.get(a.appKey)?.totalUsers ?? 0)
-          );
+          return metric(b, "totalUsers") - metric(a, "totalUsers");
+        case "new":
+          return metric(b, "newUsersToday") - metric(a, "newUsersToday");
+        case "logins":
+          return metric(b, "loginSuccessToday") - metric(a, "loginSuccessToday");
         default:
           return new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime();
       }
@@ -118,21 +139,18 @@ function AppsPageInner() {
     return sorted.map((app) => ({ app, metrics: metricsByAppKey.get(app.appKey) }));
   }, [apps, keyword, metricsByAppKey, sort, status]);
 
-  const counts = useMemo(() => {
-    let enabled = 0;
-    let disabled = 0;
-    let registerOff = 0;
-    let loginOff = 0;
-    let governed = 0;
+  const counts = useMemo<AppListCounts>(() => {
+    const result: AppListCounts = { total: apps.length, enabled: 0, disabled: 0, registerOff: 0, loginOff: 0, governed: 0, fullyOpen: 0 };
     for (const app of apps) {
-      if (app.status) enabled += 1;
-      else disabled += 1;
-      if (!app.registerStatus) registerOff += 1;
-      if (!app.loginStatus) loginOff += 1;
+      if (app.status) result.enabled += 1;
+      else result.disabled += 1;
+      if (!app.registerStatus) result.registerOff += 1;
+      if (!app.loginStatus) result.loginOff += 1;
+      if (app.status && app.registerStatus && app.loginStatus) result.fullyOpen += 1;
       const metrics = metricsByAppKey.get(app.appKey);
-      if (metrics && metrics.state !== "active") governed += 1;
+      if (metrics && metrics.state !== "active") result.governed += 1;
     }
-    return { total: apps.length, enabled, disabled, registerOff, loginOff, governed };
+    return result;
   }, [apps, metricsByAppKey]);
 
   const handleDelete = useCallback(async () => {
@@ -148,6 +166,18 @@ function AppsPageInner() {
 
   if (redirecting) return <LoadingState title="打开应用配置" description="正在跳转..." />;
 
+  const segments: Array<{ key: StatusFilter; label: string; value: number; dot?: string }> = [
+    { key: "all", label: "全部", value: counts.total },
+    { key: "enabled", label: "已启用", value: counts.enabled, dot: "bg-emerald-500" },
+    { key: "disabled", label: "已停用", value: counts.disabled, dot: "bg-zinc-400" },
+    { key: "register-off", label: "注册关闭", value: counts.registerOff, dot: "bg-amber-500" },
+    { key: "login-off", label: "登录关闭", value: counts.loginOff, dot: "bg-amber-500" }
+  ];
+  if (hasMetrics) segments.push({ key: "governed", label: "被治理", value: counts.governed, dot: "bg-red-500" });
+
+  const filtered = keyword.trim() !== "" || status !== "all";
+  const createDialog = <AppCreateDialog onCreated={(app) => router.push(`/apps/${encodeURIComponent(app.appKey)}`)} />;
+
   return (
     <div className="page-stack">
       <SectionHeading
@@ -161,75 +191,131 @@ function AppsPageInner() {
               className="size-8"
               title="刷新"
               disabled={appsQuery.isFetching}
-              onClick={() => void appsQuery.refetch()}
+              onClick={() => {
+                void appsQuery.refetch();
+                if (canReadOverview) void overviewQuery.refetch();
+              }}
             >
-              <RotateCw className={cn("size-3.5", appsQuery.isFetching && "animate-spin")} />
+              <RotateCw className={cn("size-3.5", (appsQuery.isFetching || overviewQuery.isFetching) && "animate-spin")} />
             </Button>
-            <ViewToggle value={listView} onChange={setListView} />
-            <AppCreateDialog onCreated={(app) => router.push(`/apps/${encodeURIComponent(app.appKey)}`)} />
+            {createDialog}
           </div>
         }
       />
 
-      {/* 汇总即筛选：数字本身可点，看到「2 个已停用」就能直接点进去看是哪两个 */}
-      <div className="flex flex-wrap items-center gap-2">
-        <FilterChip label="全部应用" value={counts.total} active={status === "all"} onClick={() => setStatus("all")} />
-        <FilterChip label="已启用" value={counts.enabled} active={status === "enabled"} onClick={() => setStatus("enabled")} tone="success" />
-        <FilterChip label="已停用" value={counts.disabled} active={status === "disabled"} onClick={() => setStatus("disabled")} tone="danger" />
-        <FilterChip label="注册关闭" value={counts.registerOff} active={status === "register-off"} onClick={() => setStatus("register-off")} tone="warning" />
-        <FilterChip label="登录关闭" value={counts.loginOff} active={status === "login-off"} onClick={() => setStatus("login-off")} tone="warning" />
-        {hasMetrics && (
-          <FilterChip label="被治理" value={counts.governed} active={status === "governed"} onClick={() => setStatus("governed")} tone="danger" />
-        )}
-      </div>
+      <AppListOverview
+        counts={counts}
+        summary={overviewQuery.data?.summary}
+        loginFailuresToday={loginFailuresToday}
+        loading={appsQuery.isLoading}
+        metricsLoading={canReadOverview && overviewQuery.isLoading}
+        hasMetrics={hasMetrics}
+        onFilter={(next) => setStatus(next)}
+      />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-56 flex-1 sm:max-w-80">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={keyword}
-            onChange={(event) => setKeyword(event.target.value)}
-            placeholder="搜索应用名称、ID 或 AppKey"
-            className="h-8 pl-8 text-sm"
-          />
-          {keyword && (
-            <button
-              type="button"
-              onClick={() => setKeyword("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              <X className="size-3.5" />
-            </button>
-          )}
+      <div className="space-y-3">
+        {/* 状态分段：窄屏横向滚动，不折行 */}
+        <div className="-mx-1 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none]">
+          <div role="tablist" aria-label="按状态筛选" className="inline-flex min-w-max items-center gap-1 rounded-xl border bg-muted/40 p-1">
+            {segments.map((segment) => {
+              const active = status === segment.key;
+              return (
+                <button
+                  key={segment.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setStatus(segment.key)}
+                  className={cn(
+                    "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium whitespace-nowrap transition-colors",
+                    active ? "bg-background text-foreground shadow-sm ring-1 ring-border" : "text-muted-foreground hover:text-foreground",
+                    !active && segment.value === 0 && segment.key !== "all" && "opacity-60"
+                  )}
+                >
+                  {segment.dot ? <span className={cn("size-1.5 rounded-full", segment.dot)} /> : null}
+                  {segment.label}
+                  <span className={cn("rounded-md px-1 tabular-nums", active ? "bg-muted" : "")}>{segment.value}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-        <Select value={sort} onValueChange={(value) => setSort(value as SortKey)}>
-          <SelectTrigger className="h-8 w-36 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="created">最近创建</SelectItem>
-            <SelectItem value="name">按名称</SelectItem>
-            <SelectItem value="id">按应用 ID</SelectItem>
-            {hasMetrics && <SelectItem value="users">按用户数</SelectItem>}
-          </SelectContent>
-        </Select>
-        <span className="text-xs text-muted-foreground">
-          {rows.length === apps.length ? `共 ${apps.length} 个应用` : `筛选出 ${rows.length} / ${apps.length}`}
-        </span>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-0 flex-1 basis-56 sm:max-w-80">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              placeholder="搜索应用名称、ID 或 AppKey"
+              className="h-9 pr-8 pl-8 text-sm"
+            />
+            {keyword && (
+              <button
+                type="button"
+                aria-label="清除搜索"
+                onClick={() => setKeyword("")}
+                className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
+          </div>
+          <Select value={sort} onValueChange={(value) => setSort(value as SortKey)}>
+            <SelectTrigger className="h-9 w-36 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(SORT_LABEL) as SortKey[])
+                .filter((key) => hasMetrics || !METRIC_SORTS.includes(key))
+                .map((key) => (
+                  <SelectItem key={key} value={key}>{SORT_LABEL[key]}</SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+          <span className="hidden text-xs text-muted-foreground tabular-nums sm:inline">
+            {filtered ? `筛选出 ${rows.length} / ${apps.length}` : `共 ${apps.length} 个应用`}
+          </span>
+          <div className="ml-auto hidden md:block">
+            <ViewToggle value={listView} onChange={setListView} />
+          </div>
+        </div>
       </div>
 
       {appsQuery.isLoading ? (
-        <AppListSkeleton view={listView} />
+        <AppListSkeleton view={listView} hasMetrics={canReadOverview} />
       ) : appsQuery.isError ? (
-        <EmptyState title="应用列表加载失败" />
+        <EmptyBlock
+          icon={<AppWindow className="size-5" />}
+          title="应用列表加载失败"
+          description="请检查网络或稍后重试。"
+          action={<Button size="sm" variant="outline" className="h-8" onClick={() => void appsQuery.refetch()}>重新加载</Button>}
+        />
       ) : apps.length === 0 ? (
-        <EmptyState title="暂无应用" />
+        <EmptyBlock
+          icon={<AppWindow className="size-5" />}
+          title="还没有应用"
+          description="创建第一个应用后，即可配置登录方式、接入密钥与各项服务。"
+          action={createDialog}
+        />
       ) : rows.length === 0 ? (
-        <EmptyState title="暂无匹配应用" />
+        <EmptyBlock
+          icon={<SearchX className="size-5" />}
+          title="没有匹配的应用"
+          description="调整搜索词或状态筛选后重试。"
+          action={
+            <Button size="sm" variant="outline" className="h-8" onClick={() => { setKeyword(""); setStatus("all"); }}>
+              清除筛选
+            </Button>
+          }
+        />
       ) : listView === "grid" ? (
         <AppCardGrid rows={rows} onDelete={setDeleteTarget} hasMetrics={hasMetrics} />
       ) : (
-        <AppTable rows={rows} onDelete={setDeleteTarget} hasMetrics={hasMetrics} />
+        <>
+          <AppCardGrid rows={rows} onDelete={setDeleteTarget} hasMetrics={hasMetrics} className="md:hidden" />
+          <AppTable rows={rows} onDelete={setDeleteTarget} hasMetrics={hasMetrics} className="hidden md:block" />
+        </>
       )}
 
       {deleteTarget && (
@@ -256,55 +342,41 @@ function ViewToggle({ value, onChange }: { value: AppListView; onChange: (view: 
           key={key}
           type="button"
           title={label}
+          aria-pressed={value === key}
           onClick={() => onChange(key)}
           className={cn(
-            "grid size-7 place-items-center rounded-md transition-colors",
+            "inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs transition-colors",
             value === key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
           )}
         >
           <Icon className="size-3.5" />
+          {label}
         </button>
       ))}
     </div>
   );
 }
 
-function FilterChip({
-  label,
-  value,
-  active,
-  tone,
-  onClick
+function EmptyBlock({
+  icon,
+  title,
+  description,
+  action
 }: {
-  label: string;
-  value: number;
-  active: boolean;
-  tone?: "success" | "warning" | "danger";
-  onClick: () => void;
+  icon: ReactNode;
+  title: string;
+  description: string;
+  action?: ReactNode;
 }) {
-  const muted = value === 0 && !active;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-2 rounded-xl border px-3 py-1.5 text-left transition-colors",
-        active ? "border-foreground/30 bg-accent" : "border-border bg-card hover:bg-accent/50",
-        muted && "opacity-60"
-      )}
-    >
-      <span
-        className={cn(
-          "text-sm font-semibold tabular-nums",
-          value > 0 && tone === "success" && "text-emerald-600 dark:text-emerald-400",
-          value > 0 && tone === "warning" && "text-amber-600 dark:text-amber-400",
-          value > 0 && tone === "danger" && "text-red-600 dark:text-red-400"
-        )}
-      >
-        {value}
-      </span>
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </button>
+    <div className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed bg-card/50 px-6 py-10 text-center">
+      <span className="grid size-11 place-items-center rounded-2xl bg-muted text-muted-foreground">{icon}</span>
+      <div className="space-y-1">
+        <p className="text-sm font-semibold">{title}</p>
+        <p className="max-w-sm text-xs leading-5 text-muted-foreground">{description}</p>
+      </div>
+      {action}
+    </div>
   );
 }
 

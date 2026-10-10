@@ -68,7 +68,7 @@ export function AppRowActions({
       </DropdownMenuTrigger>
       <DropdownMenuContent align={align} className="w-52">
         <DropdownMenuLabel className="truncate text-xs font-normal text-muted-foreground">
-          {app.name} · #{app.id}
+          {app.name}（#{app.id}）
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
 

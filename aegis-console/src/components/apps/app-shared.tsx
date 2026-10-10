@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { Copy } from "lucide-react";
+import { Copy, LogIn, Power, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -128,6 +128,94 @@ export function AppStatusBadges({
           平台{GOVERNANCE_STATE_LABEL[governed] ?? governed}
         </Badge>
       )}
+    </div>
+  );
+}
+
+/**
+ * 一句话健康状态，列表卡片与表格的第一眼。
+ *
+ * 优先级：平台治理 > 停用 > 部分关闭 > 运行中。治理是平台方的处置，
+ * 压在应用自己的开关之上，同时出现时只说更重的那件事，细节交给下面的开关指示。
+ */
+export type AppHealth = { label: string; tone: "ok" | "partial" | "off" | "governed" };
+
+export function appHealth(
+  app: Pick<AppSummary, "status" | "registerStatus" | "loginStatus">,
+  governance?: GovernanceState | null
+): AppHealth {
+  if (governance && governance !== "active") {
+    return { label: `平台${GOVERNANCE_STATE_LABEL[governance] ?? governance}`, tone: "governed" };
+  }
+  if (!app.status) return { label: "已停用", tone: "off" };
+  if (!app.registerStatus || !app.loginStatus) return { label: "部分开放", tone: "partial" };
+  return { label: "运行中", tone: "ok" };
+}
+
+const HEALTH_STYLE: Record<AppHealth["tone"], { dot: string; text: string; plate: string }> = {
+  ok: { dot: "bg-emerald-500", text: "text-emerald-700 dark:text-emerald-300", plate: "bg-emerald-500/10" },
+  partial: { dot: "bg-amber-500", text: "text-amber-700 dark:text-amber-300", plate: "bg-amber-500/10" },
+  off: { dot: "bg-zinc-400", text: "text-muted-foreground", plate: "bg-muted" },
+  governed: { dot: "bg-red-500", text: "text-red-700 dark:text-red-300", plate: "bg-red-500/10" }
+};
+
+export function AppHealthPill({ health, className }: { health: AppHealth; className?: string }) {
+  const style = HEALTH_STYLE[health.tone];
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] leading-[18px] font-medium",
+        style.plate,
+        style.text,
+        className
+      )}
+    >
+      <span className={cn("size-1.5 rounded-full", style.dot, health.tone === "ok" && "animate-pulse")} />
+      {health.label}
+    </span>
+  );
+}
+
+/**
+ * 服务、注册、登录三个开关的状态指示。只读：切换放在操作菜单里，
+ * 卡片上随手一点就把一个线上应用停掉，代价太大。
+ */
+export function AppAccessIndicators({
+  app,
+  compact = false
+}: {
+  app: Pick<AppSummary, "status" | "registerStatus" | "loginStatus">;
+  /** 表格里只画图标，文字进 title */
+  compact?: boolean;
+}) {
+  const items = [
+    { key: "status", label: "服务", on: app.status, icon: Power },
+    { key: "register", label: "注册", on: app.registerStatus, icon: UserPlus },
+    { key: "login", label: "登录", on: app.loginStatus, icon: LogIn }
+  ];
+  return (
+    <div className={cn("flex items-center", compact ? "gap-1" : "gap-1.5")}>
+      {items.map(({ key, label, on, icon: Icon }) => (
+        <span
+          key={key}
+          title={`${label}${on ? "已开启" : "已关闭"}`}
+          className={cn(
+            "inline-flex items-center rounded-md border text-[11px] leading-5",
+            compact ? "size-6 justify-center" : "gap-1 px-1.5",
+            on
+              ? "border-border text-foreground/80"
+              : "border-dashed border-amber-500/50 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+          )}
+        >
+          <Icon className="size-3 shrink-0" />
+          {compact ? null : (
+            <>
+              {label}
+              <span className={cn("font-medium", on ? "text-emerald-600 dark:text-emerald-400" : "")}>{on ? "开" : "关"}</span>
+            </>
+          )}
+        </span>
+      ))}
     </div>
   );
 }
