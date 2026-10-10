@@ -57,7 +57,7 @@ export function UserAdPolicyTab({ appKey, userId }: { appKey: string; userId: nu
             value={
               profile.vip ? (
                 <Badge variant={profile.exempt ? "success" : "outline"} size="sm">
-                  {profile.exempt ? "会员免除" : "会员"}
+                  {profile.exempt ? "会员免除" : profile.adFree ? "会员" : "会员（不免广告）"}
                 </Badge>
               ) : (
                 "否"

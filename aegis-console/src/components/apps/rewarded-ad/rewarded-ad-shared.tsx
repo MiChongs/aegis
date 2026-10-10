@@ -2,7 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import type { CardKeyReward, CardKeyRewardSpec } from "@/lib/api/card-key";
-import type { RewardedAdVerifyMode, RewardedAdViewStatus } from "@/lib/api/rewarded-ad";
+import type { RewardedAdScene, RewardedAdVerifyMode, RewardedAdViewStatus } from "@/lib/api/rewarded-ad";
 
 /** 观看记录状态 → 标签与徽标色。 */
 const STATUS_META: Record<RewardedAdViewStatus, { label: string; variant: "success" | "warning" | "danger" }> = {
@@ -66,6 +66,23 @@ export function describeRewards(
       return `${spec.label} ${reward.amount ?? 0} ${spec.unit ?? ""}`.trim();
     })
     .join("、");
+}
+
+/**
+ * 场景送出的会员带什么：功能（只对会员天数生效，按展示名）与是否免广告。
+ * 场景不送会员时返回空串。
+ */
+export function describeMembership(scene: RewardedAdScene, featureNames: Record<string, string>) {
+  const types = scene.rewards.map((reward) => reward.type);
+  const days = types.includes("vip_days");
+  if (!days && !types.includes("vip_plan")) return "";
+  const parts: string[] = [];
+  const features = scene.membership?.features ?? [];
+  if (days && features.length > 0) {
+    parts.push(`功能 ${features.map((tag) => featureNames[tag] ?? tag).join("、")}`);
+  }
+  parts.push(scene.membership?.adFree === false ? "不免广告" : "免广告");
+  return parts.join(" · ");
 }
 
 /** 冷却秒数的人话形式。 */

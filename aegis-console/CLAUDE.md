@@ -941,15 +941,18 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 | `components/apps/rewarded-ad/app-rewarded-ad-panel.tsx` | 骨架 + 概览 / 记录 / 配置三个视图的内部切换 |
 | `components/apps/rewarded-ad/rewarded-ad-overview-panel.tsx` | 今日观看 / 发放 / 人数 / 待确认 + 趋势图 + 各场景的窗口内表现 |
 | `components/apps/rewarded-ad/rewarded-ad-views-panel.tsx` | 观看记录：两方（回调 / 上报）各自到没到、原因、补发 |
-| `components/apps/rewarded-ad/rewarded-ad-config-panel.tsx` | 接入（平台、应用 ID、Security Key、回调地址）+ 校验模式与总限额 + 奖励场景 |
+| `components/apps/rewarded-ad/rewarded-ad-config-panel.tsx` | 接入（平台、应用 ID、Security Key、回调地址）+ 校验模式与总限额 + 奖励场景（含会员权益：会员天数带的功能、会员期间是否免广告） |
 | `components/apps/rewarded-ad/rewarded-ad-shared.tsx` | 状态徽标、拒发原因、校验模式文案、权益摘要 |
 
-三条硬约束：
+四条硬约束：
 
 1. **权益表单由后端目录驱动**（配置接口随附 `catalog`，是卡密目录的子集）。前端另抄一份，
    就会出现「控制台能勾、保存时报激励广告不能发放该权益」。
 2. **Security Key 留空即不修改**，与其它密钥字段一致；后端只回 `hasSecurityKey` 与末 4 位提示。
-3. **记录表必须同时展示「回调」与「上报」两列。** 用户投诉没到账时，第一个问题永远是
+3. **会员权益跟随场景当前配置**：改了对已领到的会员同样生效（后端在判定时实时取，见 docs/rewarded-ads.md）。
+   功能只对「会员天数」生效，保存时没勾会员天数就把功能清空，否则后端拒收；「免广告」不填时后端按免广告，
+   草稿里没设置过的场景同样按开着展示。
+4. **记录表必须同时展示「回调」与「上报」两列。** 用户投诉没到账时，第一个问题永远是
    「哪一方没来」—— 回调没来查平台与签名，上报没来查客户端，只看最终状态回答不了。
 
 结算语义（两方确认、限额、补发）全部由后端决定，见 [docs/rewarded-ads.md](../docs/rewarded-ads.md)。

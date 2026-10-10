@@ -151,6 +151,8 @@ export type UserAdProfile = {
   consentVersion: number;
   consent?: AdConsent | null;
   vip: boolean;
+  /** 会员身份免广告；看广告赠送的会员按场景设置可以不免 */
+  adFree: boolean;
   exempt: boolean;
   decisionRequired: boolean;
   mode: AdPolicyMode;

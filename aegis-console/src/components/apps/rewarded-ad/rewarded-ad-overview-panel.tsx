@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { CheckCircle2, Clock3, Eye, Settings2, Users } from "lucide-react";
 import { StatusDot } from "@/components/apps/app-config-primitives";
-import { describeRewards, formatCooldown } from "@/components/apps/rewarded-ad/rewarded-ad-shared";
+import { describeMembership, describeRewards, formatCooldown } from "@/components/apps/rewarded-ad/rewarded-ad-shared";
 import { buildChartConfig, ChartCard, type ThemedColor } from "@/components/commerce/commerce-charts";
 import { StatTile } from "@/components/content/content-shared";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useRewardedAdConfigQuery, useRewardedAdStatsQuery } from "@/lib/rewarded-ad-hooks";
-import { useAdminVipPlansQuery } from "@/lib/vip-hooks";
+import { useAdminVipFeaturesQuery, useAdminVipPlansQuery } from "@/lib/vip-hooks";
 
 /** 观看与发放分两个色系：两条线挨得很近时，同色系会让人分不清哪条是哪条。 */
 const SERIES: Array<{ key: "views" | "granted" | "users"; label: string; color: ThemedColor }> = [
@@ -42,6 +42,7 @@ export function RewardedAdOverviewPanel({ appKey, onOpenConfig }: { appKey: stri
   const configQuery = useRewardedAdConfigQuery(appKey);
   const statsQuery = useRewardedAdStatsQuery(appKey, days);
   const plansQuery = useAdminVipPlansQuery(appKey);
+  const featuresQuery = useAdminVipFeaturesQuery(appKey);
 
   const config = configQuery.data;
   const stats = statsQuery.data;
@@ -53,6 +54,10 @@ export function RewardedAdOverviewPanel({ appKey, onOpenConfig }: { appKey: stri
   const planNames = useMemo(
     () => Object.fromEntries((plansQuery.data ?? []).map((plan) => [plan.id, plan.name])),
     [plansQuery.data]
+  );
+  const featureNames = useMemo(
+    () => Object.fromEntries((featuresQuery.data ?? []).map((feature) => [feature.tag, feature.name])),
+    [featuresQuery.data]
   );
   const sceneStats = useMemo(
     () => new Map((stats?.scenes ?? []).map((item) => [item.scene, item])),
@@ -174,6 +179,11 @@ export function RewardedAdOverviewPanel({ appKey, onOpenConfig }: { appKey: stri
                     </TableCell>
                     <TableCell className="text-xs">
                       {describeRewards(scene.rewards, config?.catalog ?? [], planNames)}
+                      {describeMembership(scene, featureNames) ? (
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          {describeMembership(scene, featureNames)}
+                        </p>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {scene.dailyLimit > 0 ? `${scene.dailyLimit} 次/天` : "不限次"} · 冷却{" "}

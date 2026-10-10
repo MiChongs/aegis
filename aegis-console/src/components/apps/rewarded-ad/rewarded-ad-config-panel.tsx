@@ -33,7 +33,8 @@ import { ApiError } from "@/lib/api/client";
 import type { CardKeyReward, CardKeyRewardSpec } from "@/lib/api/card-key";
 import type { RewardedAdConfig, RewardedAdScene, RewardedAdVerifyMode } from "@/lib/api/rewarded-ad";
 import { useRewardedAdConfigQuery, useSaveRewardedAdConfigMutation } from "@/lib/rewarded-ad-hooks";
-import { useAdminVipPlansQuery } from "@/lib/vip-hooks";
+import { cn } from "@/lib/utils";
+import { useAdminVipFeaturesQuery, useAdminVipPlansQuery } from "@/lib/vip-hooks";
 
 /** 灰鲸后台「配置回调URL」里默认的参数名，与后端回调处理器认的名字一致。 */
 const CALLBACK_PARAMS = ["userId", "transId", "sign", "placementId", "rewardAmount", "rewardName", "extrainfo"];
@@ -53,7 +54,14 @@ type SceneDraft = {
   dailyLimit: string;
   cooldownSeconds: string;
   rewards: Record<string, { amount: string; refId: number }>;
+  /** 会员权益：「会员天数」带的功能标识，以及送出的会员是否免广告 */
+  features: string[];
+  adFree: boolean;
 };
+
+/** 送会员的两档：会员权益只在场景勾了其中一档时才有意义。 */
+const VIP_DAYS = "vip_days";
+const VIP_PLAN = "vip_plan";
 
 type Draft = {
   scope: string;
@@ -83,7 +91,10 @@ function sceneToDraft(scene: RewardedAdScene, index: number): SceneDraft {
     enabled: scene.enabled,
     dailyLimit: String(scene.dailyLimit ?? 0),
     cooldownSeconds: String(scene.cooldownSeconds ?? 0),
-    rewards
+    rewards,
+    features: scene.membership?.features ?? [],
+    // 没设置过的场景按免广告（与服务端默认一致）
+    adFree: scene.membership?.adFree ?? true
   };
 }
 
@@ -108,13 +119,16 @@ function blankScene(index: number, placementId: string): SceneDraft {
     enabled: true,
     dailyLimit: "3",
     cooldownSeconds: "60",
-    rewards: { vip_days: { amount: "1", refId: 0 } }
+    rewards: { vip_days: { amount: "1", refId: 0 } },
+    features: [],
+    adFree: true
   };
 }
 
 export function RewardedAdConfigPanel({ appKey }: { appKey: string }) {
   const configQuery = useRewardedAdConfigQuery(appKey);
   const plansQuery = useAdminVipPlansQuery(appKey);
+  const featuresQuery = useAdminVipFeaturesQuery(appKey);
   const saveMutation = useSaveRewardedAdConfigMutation(appKey);
 
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -131,6 +145,7 @@ export function RewardedAdConfigPanel({ appKey }: { appKey: string }) {
   const catalog = config?.catalog ?? [];
   // 永久套餐不能作为激励广告奖励（后端保存时拒绝），不列出来免得选了再报错
   const plans = (plansQuery.data ?? []).filter((plan) => !plan.lifetime);
+  const vipFeatures = featuresQuery.data ?? [];
   const callbackUrl = config
     ? config.callbackAbsolute || typeof window === "undefined"
       ? config.callbackUrl
@@ -183,7 +198,12 @@ export function RewardedAdConfigPanel({ appKey }: { appKey: string }) {
           enabled: scene.enabled,
           rewards: buildRewards(scene),
           dailyLimit: Number(scene.dailyLimit) || 0,
-          cooldownSeconds: Number(scene.cooldownSeconds) || 0
+          cooldownSeconds: Number(scene.cooldownSeconds) || 0,
+          // 功能只对会员天数生效：没勾会员天数时一并清掉，否则服务端会拒收
+          membership: {
+            features: scene.rewards[VIP_DAYS] ? scene.features : [],
+            adFree: scene.adFree
+          }
         }))
       });
       toast.success("激励广告配置已保存");
@@ -502,6 +522,60 @@ export function RewardedAdConfigPanel({ appKey }: { appKey: string }) {
                     })}
                   </div>
                 </FieldGroup>
+
+                {scene.rewards[VIP_DAYS] || scene.rewards[VIP_PLAN] ? (
+                  <FieldGroup
+                    label="会员权益"
+                    hint={scene.rewards[VIP_DAYS] ? `已选 ${scene.features.length} / ${vipFeatures.length}` : undefined}
+                  >
+                    <div className="space-y-2">
+                      <SwitchRow
+                        label="会员期间免广告"
+                        checked={scene.adFree}
+                        onChange={(value) => patchScene(scene.uid, { adFree: value })}
+                      />
+                      {scene.rewards[VIP_DAYS] ? (
+                        vipFeatures.length === 0 ? (
+                          <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground">
+                            暂无功能标识
+                          </p>
+                        ) : (
+                          <div className="grid gap-1 rounded-xl border border-border p-2 sm:grid-cols-2">
+                            {vipFeatures.map((feature) => (
+                              <label
+                                key={feature.tag}
+                                className={cn(
+                                  "flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/60",
+                                  !feature.isActive && "opacity-60"
+                                )}
+                              >
+                                <Checkbox
+                                  checked={scene.features.includes(feature.tag)}
+                                  onCheckedChange={(checked) =>
+                                    patchScene(scene.uid, {
+                                      features: checked
+                                        ? [...scene.features, feature.tag]
+                                        : scene.features.filter((tag) => tag !== feature.tag)
+                                    })
+                                  }
+                                />
+                                <span className="truncate text-xs font-medium">{feature.name}</span>
+                                <code className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                                  {feature.tag}
+                                </code>
+                                {!feature.isActive ? (
+                                  <span className="text-[10px] text-muted-foreground">已停用</span>
+                                ) : null}
+                              </label>
+                            ))}
+                          </div>
+                        )
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground">会员套餐的功能随所选套餐</p>
+                      )}
+                    </div>
+                  </FieldGroup>
+                ) : null}
               </div>
             ))}
           </div>

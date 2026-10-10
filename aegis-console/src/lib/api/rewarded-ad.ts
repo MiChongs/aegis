@@ -22,6 +22,16 @@ export type RewardedAdScene = {
   dailyLimit: number;
   /** 两次领取的最小间隔（秒），0 表示不限 */
   cooldownSeconds: number;
+  /**
+   * 送出的会员带什么权益，跟随当前配置（改了对已领到的会员同样生效）。
+   * features 只对「会员天数」生效（「会员套餐」跟随套餐）；adFree 不填按免广告。
+   */
+  membership?: RewardedAdMembership;
+};
+
+export type RewardedAdMembership = {
+  features: string[];
+  adFree?: boolean;
 };
 
 export type RewardedAdConfig = {
