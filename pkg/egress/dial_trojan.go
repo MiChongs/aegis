@@ -51,6 +51,9 @@ func newTrojanDialer(cfg EndpointConfig) (Dialer, error) {
 }
 
 func (d *trojanDialer) DialContext(ctx context.Context, base BaseDialFunc, network, address string) (net.Conn, error) {
+	if isUDPNetwork(network) {
+		return d.dialUDP(ctx, base, address)
+	}
 	if err := requireTCP(network, ProtocolTrojan); err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package mihomo
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -90,6 +91,39 @@ func TestCoreEndToEnd(t *testing.T) {
 	resp.Body.Close()
 	if !strings.HasPrefix(string(body), "hello via") {
 		t.Fatalf("响应不对: %q", body)
+	}
+
+	// UDP：经策略组的专用入站、经核心分流各走一次，回包要原样回来。
+	echo, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		buf := make([]byte, 2048)
+		for {
+			n, addr, err := echo.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			_, _ = echo.WriteTo(append([]byte("udp:"), buf[:n]...), addr)
+		}
+	}()
+	for _, profile := range []string{"via.group", "via.rules"} {
+		conn, err := gw.DialProfile(ctx, egress.Profile{Name: profile}, "udp", echo.LocalAddr().String())
+		if err != nil {
+			t.Fatalf("%s UDP 拨号失败: %v", profile, err)
+		}
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err := conn.Write([]byte(profile)); err != nil {
+			t.Fatalf("%s UDP 发送失败: %v", profile, err)
+		}
+		buf := make([]byte, 2048)
+		n, err := conn.Read(buf)
+		if err != nil || string(buf[:n]) != "udp:"+profile {
+			t.Fatalf("%s UDP 回包不对: %q %v", profile, buf[:n], err)
+		}
+		conn.Close()
 	}
 
 	api, err := core.Client()

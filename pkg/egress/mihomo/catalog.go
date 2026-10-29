@@ -402,7 +402,7 @@ func ruleTypes() []RuleTypeSpec {
 		{Type: "DST-PORT", Label: "目标端口", Example: "443 或 8000-9000"},
 		{Type: "SRC-PORT", Label: "来源端口", Example: "7890"},
 		{Type: "NETWORK", Label: "网络类型", Example: "tcp"},
-		{Type: "IN-USER", Label: "入站用户", Hint: "网关自己的分发规则也用它，一般不需要手写"},
+		{Type: "IN-USER", Label: "入站用户", Hint: "按 SOCKS / HTTP 入站的用户名匹配；网关流量都用同一个用户，一般用不到"},
 		{Type: "AND", Label: "同时满足", Example: "((DOMAIN-SUFFIX,google.com),(DST-PORT,443))", Logic: true},
 		{Type: "OR", Label: "任一满足", Example: "((DOMAIN,a.com),(DOMAIN,b.com))", Logic: true},
 		{Type: "NOT", Label: "不满足", Example: "((GEOIP,CN))", Logic: true},

@@ -223,6 +223,24 @@ function GatewayInspector({ node, data, patch, context }: { node: WorkflowNodeEn
         <Field label="探测地址">
           <Input className="h-8 font-mono text-xs" value={health.probeUrl ?? ""} placeholder={context.catalog.defaultProbeUrl} onChange={(event) => setHealth({ probeUrl: event.target.value })} />
         </Field>
+        <div className="space-y-2 rounded-xl border p-2.5">
+          <ToggleRow
+            label="UDP 探测"
+            hint="对能承载 UDP 的线路经它发一次 DNS 查询；UDP 健康单独记，只影响 UDP 流量的选路"
+            checked={health.udpProbe !== false}
+            onChange={(udpProbe) => setHealth({ udpProbe })}
+          />
+          {health.udpProbe !== false ? (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="DNS 服务器">
+                <Input className="h-8 font-mono text-xs" placeholder="1.1.1.1:53" value={health.udpProbeServer ?? ""} onChange={(event) => setHealth({ udpProbeServer: event.target.value })} />
+              </Field>
+              <Field label="查询域名">
+                <Input className="h-8 font-mono text-xs" placeholder="www.gstatic.com" value={health.udpProbeName ?? ""} onChange={(event) => setHealth({ udpProbeName: event.target.value })} />
+              </Field>
+            </div>
+          ) : null}
+        </div>
       </section>
 
       <section className="space-y-3">
@@ -320,7 +338,7 @@ function RuleInspector({ node, data, patch, context }: { node: WorkflowNodeEntit
               }
             />
           </Field>
-          <Field label="协议">
+          <Field label="应用协议">
             <div className="flex h-8 items-center gap-1">
               {["https", "http", "tcp"].map((scheme) => {
                 const on = (match.schemes ?? []).includes(scheme);
@@ -338,6 +356,28 @@ function RuleInspector({ node, data, patch, context }: { node: WorkflowNodeEntit
             </div>
           </Field>
         </div>
+        <Field label="传输层" hint="只选 UDP 可以单独管 QUIC、DNS 这类流量；UDP 只会走能承载它的线路">
+          <div className="flex h-8 items-center gap-1">
+            {[
+              { value: "tcp", label: "TCP" },
+              { value: "udp", label: "UDP" }
+            ].map((item) => {
+              const networks = match.networks ?? [];
+              const on = networks.includes(item.value);
+              return (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => setMatch({ networks: on ? networks.filter((value) => value !== item.value) : [...networks, item.value] })}
+                  className={cn("h-7 flex-1 rounded-md border font-mono text-[11px] transition-colors", on ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground")}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+            <span className="ml-1 shrink-0 text-[11px] text-muted-foreground">{(match.networks ?? []).length === 1 ? "" : "两者都匹配"}</span>
+          </div>
+        </Field>
         <Field
           label="调用方"
           hint="平台里每个出站客户端都有调用方标识，可以让同一个域名在不同业务走不同线路"
@@ -514,6 +554,8 @@ function EndpointInspector({ data, patch, context }: { data: EgressEndpoint; pat
         </section>
       ) : null}
 
+      <UDPSection data={data} patch={patch} context={context} />
+
       <section className="space-y-3">
         <SectionTitle>选路与探测</SectionTitle>
         <div className="grid grid-cols-2 gap-3">
@@ -550,5 +592,41 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: s
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className={cn("text-sm font-semibold tabular-nums", tone)}>{value}</div>
     </div>
+  );
+}
+
+const UDP_HINT: Record<string, string> = {
+  direct: "系统 UDP 套接字直接发出",
+  socks5: "经 UDP ASSOCIATE 转发，需要代理服务端开启 UDP；经由跳板时跳板也要能承载 UDP",
+  socks5h: "经 UDP ASSOCIATE 转发，需要代理服务端开启 UDP；经由跳板时跳板也要能承载 UDP",
+  shadowsocks: "经 UDP relay 转发，每个报文单独加密；经由跳板时跳板也要能承载 UDP",
+  trojan: "报文封装在 TLS 流里转发，可以接在任何跳板后面"
+};
+
+function UDPSection({ data, patch, context }: { data: EgressEndpoint; patch: Patch; context: InspectorContext }) {
+  const protocol = data.protocol ?? "socks5h";
+  const transport = context.catalog.udpProtocols?.[protocol];
+  const stat = context.endpointStat;
+  return (
+    <section className="space-y-2">
+      <SectionTitle>UDP</SectionTitle>
+      {transport ? (
+        <>
+          <ToggleRow label="承载 UDP 流量" hint={UDP_HINT[protocol] ?? (transport === "stream" ? "报文封装在 TCP 流里" : "报文以 UDP 发给服务端")} checked={data.udp !== false} onChange={(udp) => patch({ udp: udp ? undefined : false })} />
+          {stat?.udp ? (
+            <div className="grid grid-cols-3 gap-2 rounded-xl bg-muted/60 p-2 text-center">
+              <Metric label="UDP 状态" value={stat.udpHealthy ? "可用" : "不可用"} tone={stat.udpHealthy ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"} />
+              <Metric label="UDP 延迟" value={stat.udpLatencyMs ? `${stat.udpLatencyMs} ms` : "—"} />
+              <Metric label="会话" value={stat.udpSessions.toLocaleString()} />
+            </div>
+          ) : null}
+          {stat?.udpLastError ? <p className="text-[11px] leading-4 text-red-600 dark:text-red-400">{stat.udpLastError}</p> : null}
+        </>
+      ) : (
+        <p className="rounded-lg bg-muted/60 px-3 py-2 text-[11px] leading-4 text-muted-foreground">
+          {PROTOCOL_LABEL[protocol] ?? protocol} 只能承载 TCP，UDP 流量会跳过这条线路去选能承载的线路。
+        </p>
+      )}
+    </section>
   );
 }

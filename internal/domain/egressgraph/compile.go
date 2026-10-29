@@ -212,6 +212,7 @@ func Compile(graph Graph) Result {
 		cfg.Rules = append(cfg.Rules, rule)
 		result.RuleNodes[data.Name] = id
 	}
+	c.checkUDPTargets(cfg, result.RuleNodes)
 	for _, node := range c.sorted(NodeRule) {
 		if !slices.Contains(chain, node.ID) {
 			c.warnf(node.ID, "", "没有接进规则链，不会生效")
@@ -928,4 +929,45 @@ func DefaultCoreSettings(mirror string) mihomo.Settings {
 		}
 	}
 	return settings
+}
+
+// checkUDPTargets 规则明确匹配 UDP 而连到的线路都不能承载 UDP 时提醒：这类流量一定会失败。
+func (c *compiler) checkUDPTargets(cfg egress.Config, ruleNodes map[string]string) {
+	endpoints := map[string]egress.EndpointConfig{}
+	for _, endpoint := range cfg.Endpoints {
+		endpoints[endpoint.Name] = endpoint
+	}
+	for name, endpoint := range c.synthesized {
+		endpoints[name] = endpoint
+	}
+	for _, rule := range cfg.Rules {
+		if rule.Action != egress.ActionProxy || !slices.Contains(rule.Match.Networks, "udp") {
+			continue
+		}
+		capable := false
+		for _, name := range rule.Endpoints {
+			if udpCapable(name, endpoints, 0) {
+				capable = true
+				break
+			}
+		}
+		if !capable {
+			c.warnf(ruleNodes[rule.Name], "", "这条规则匹配 UDP，但连到的线路都不能承载 UDP（HTTP、SSH 只有 TCP；SOCKS5、Shadowsocks 经不能承载 UDP 的跳板时也不行）")
+		}
+	}
+}
+
+func udpCapable(name string, endpoints map[string]egress.EndpointConfig, depth int) bool {
+	endpoint, ok := endpoints[name]
+	if !ok || depth > 8 || (endpoint.UDP != nil && !*endpoint.UDP) {
+		return false
+	}
+	switch egress.ProtocolUDP(endpoint.Protocol) {
+	case egress.UDPOverStream:
+		return true
+	case egress.UDPOverUDP:
+		return endpoint.Via == "" || udpCapable(endpoint.Via, endpoints, depth+1)
+	default:
+		return false
+	}
 }

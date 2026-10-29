@@ -39,6 +39,9 @@ func newShadowsocksDialer(cfg EndpointConfig) (Dialer, error) {
 }
 
 func (d *shadowsocksDialer) DialContext(ctx context.Context, base BaseDialFunc, network, address string) (net.Conn, error) {
+	if isUDPNetwork(network) {
+		return d.dialUDP(ctx, base, network, address)
+	}
 	if err := requireTCP(network, ProtocolShadowsocks); err != nil {
 		return nil, err
 	}

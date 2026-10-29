@@ -22,7 +22,10 @@ type Endpoint struct {
 	netDialer   *net.Dialer
 
 	health healthState
-	stats  endpointCounters
+	// udpHealth UDP 单独的健康状态：TCP 通而 UDP 不通（服务端没开 UDP）很常见，
+	// 不能让 UDP 的失败把 TCP 流量也赶走。
+	udpHealth healthState
+	stats     endpointCounters
 }
 
 type healthState struct {
@@ -42,6 +45,10 @@ type endpointCounters struct {
 	failures  atomic.Uint64
 	bytesIn   atomic.Uint64
 	bytesOut  atomic.Uint64
+	// UDP：建立过的会话数与收发的报文数。
+	udpSessions atomic.Uint64
+	packetsIn   atomic.Uint64
+	packetsOut  atomic.Uint64
 }
 
 func newEndpoint(cfg EndpointConfig, defaultDialTimeout time.Duration) (*Endpoint, error) {
@@ -65,6 +72,7 @@ func newEndpoint(cfg EndpointConfig, defaultDialTimeout time.Duration) (*Endpoin
 	// 新端点默认视为健康：主动探测尚未跑过就先判死，会让每次重载后
 	// 出现一个「所有线路不可用」的窗口。
 	e.health.healthy = true
+	e.udpHealth.healthy = true
 	return e, nil
 }
 
@@ -78,6 +86,29 @@ func (e *Endpoint) Protocol() Protocol { return e.cfg.Protocol }
 func (e *Endpoint) Config() EndpointConfig { return e.cfg.Clone() }
 
 func (e *Endpoint) enabled() bool { return boolValue(e.cfg.Enabled, true) }
+
+// SupportsUDP 这条线路能不能承载 UDP：协议支持、没有显式关掉，
+// 且 UDP 要以 UDP 发给服务端的协议（SOCKS5、Shadowsocks）上一跳也得能承载 UDP。
+func (e *Endpoint) SupportsUDP() bool {
+	if e.cfg.UDP != nil && !*e.cfg.UDP {
+		return false
+	}
+	switch ProtocolUDP(e.cfg.Protocol) {
+	case UDPOverStream:
+		return true
+	case UDPOverUDP:
+		return e.via == nil || e.via.SupportsUDP()
+	default:
+		return false
+	}
+}
+
+func (e *Endpoint) healthFor(udp bool) *healthState {
+	if udp {
+		return &e.udpHealth
+	}
+	return &e.health
+}
 
 // chain 返回从本端点回溯到最外层跳板的名字链，用于展示与排障。
 func (e *Endpoint) chain() []string {
@@ -103,17 +134,26 @@ func (e *Endpoint) dial(ctx context.Context, network, address string, passive bo
 		defer cancel()
 	}
 
+	udp := isUDPNetwork(network)
 	conn, err := e.dialer.DialContext(dialCtx, e.baseDial, network, address)
 	if err != nil {
 		e.stats.failures.Add(1)
 		if passive {
-			e.markFailure(err, cooldown, threshold)
+			e.markFailure(e.healthFor(udp), err, cooldown, threshold)
 		}
 		return nil, err
 	}
 	e.stats.successes.Add(1)
 	if passive {
-		e.markSuccess(time.Since(start))
+		e.markSuccess(e.healthFor(udp), time.Since(start))
+	}
+	if udp {
+		e.stats.udpSessions.Add(1)
+		datagram := asDatagram(conn)
+		return &countingPacketConn{
+			Conn: datagram, pc: datagram.(net.PacketConn),
+			in: &e.stats.bytesIn, out: &e.stats.bytesOut, pin: &e.stats.packetsIn, pout: &e.stats.packetsOut,
+		}, nil
 	}
 	return &countingConn{Conn: conn, in: &e.stats.bytesIn, out: &e.stats.bytesOut}, nil
 }
@@ -131,92 +171,122 @@ func (e *Endpoint) baseDial(ctx context.Context, network, address string) (net.C
 	return e.netDialer.DialContext(ctx, network, address)
 }
 
-// available 判断端点当前能否参与选路。
+// available 判断端点当前能否参与 TCP 选路。
 func (e *Endpoint) available(now time.Time, allowUnhealthy bool) bool {
-	if !e.enabled() {
-		return false
-	}
-	e.health.mu.Lock()
-	defer e.health.mu.Unlock()
-	if now.Before(e.health.cooldownUntil) {
-		return false
-	}
-	return e.health.healthy || allowUnhealthy
+	return e.enabled() && e.health.usable(now, allowUnhealthy)
 }
 
-func (e *Endpoint) markSuccess(latency time.Duration) {
-	e.health.mu.Lock()
-	defer e.health.mu.Unlock()
-	e.health.failures = 0
-	e.health.successes++
-	e.health.healthy = true
-	e.health.lastError = ""
-	e.health.cooldownUntil = time.Time{}
+// availableFor 按传输层判断能否参与选路；UDP 看 UDP 的健康状态。
+func (e *Endpoint) availableFor(now time.Time, udp bool) bool {
+	if udp && !e.SupportsUDP() {
+		return false
+	}
+	return e.enabled() && e.healthFor(udp).usable(now, false)
+}
+
+// latencyFor 选「最低延迟」时用的延迟；UDP 用 UDP 探测的结果。
+func (e *Endpoint) latencyFor(udp bool) time.Duration {
+	h := e.healthFor(udp)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.latency
+}
+
+func (h *healthState) usable(now time.Time, allowUnhealthy bool) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if now.Before(h.cooldownUntil) {
+		return false
+	}
+	return h.healthy || allowUnhealthy
+}
+
+func (e *Endpoint) markSuccess(h *healthState, latency time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.failures = 0
+	h.successes++
+	h.healthy = true
+	h.lastError = ""
+	h.cooldownUntil = time.Time{}
 	// 指数加权平均：单次抖动不至于让「最低延迟」策略来回横跳。
-	if e.health.latency == 0 {
-		e.health.latency = latency
+	if h.latency == 0 {
+		h.latency = latency
 	} else {
-		e.health.latency = (e.health.latency*3 + latency) / 4
+		h.latency = (h.latency*3 + latency) / 4
 	}
 }
 
-func (e *Endpoint) markFailure(err error, cooldown time.Duration, threshold int) {
-	e.health.mu.Lock()
-	defer e.health.mu.Unlock()
-	e.health.successes = 0
-	e.health.failures++
+func (e *Endpoint) markFailure(h *healthState, err error, cooldown time.Duration, threshold int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.successes = 0
+	h.failures++
 	if err != nil {
-		e.health.lastError = err.Error()
+		h.lastError = err.Error()
 	}
 	if threshold <= 0 {
 		threshold = 1
 	}
-	if e.health.failures >= threshold {
-		e.health.healthy = false
+	if h.failures >= threshold {
+		h.healthy = false
 		if cooldown > 0 {
-			e.health.cooldownUntil = time.Now().Add(cooldown)
+			h.cooldownUntil = time.Now().Add(cooldown)
 		}
 	}
 }
 
 // recordProbe 写入主动探测结果，阈值语义与被动熔断一致。
 func (e *Endpoint) recordProbe(latency time.Duration, err error, failureThreshold, successThreshold int) {
-	e.health.mu.Lock()
-	defer e.health.mu.Unlock()
-	e.health.lastCheckedAt = time.Now()
+	e.health.record(latency, err, failureThreshold, successThreshold)
+}
+
+// recordUDPProbe 写入 UDP 探测结果。
+func (e *Endpoint) recordUDPProbe(latency time.Duration, err error, failureThreshold, successThreshold int) {
+	e.udpHealth.record(latency, err, failureThreshold, successThreshold)
+}
+
+func (h *healthState) record(latency time.Duration, err error, failureThreshold, successThreshold int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.lastCheckedAt = time.Now()
 	if err != nil {
-		e.health.successes = 0
-		e.health.failures++
-		e.health.lastError = err.Error()
+		h.successes = 0
+		h.failures++
+		h.lastError = err.Error()
 		if failureThreshold <= 0 {
 			failureThreshold = 1
 		}
-		if e.health.failures >= failureThreshold {
-			e.health.healthy = false
+		if h.failures >= failureThreshold {
+			h.healthy = false
 		}
 		return
 	}
-	e.health.failures = 0
-	e.health.successes++
-	e.health.lastError = ""
+	h.failures = 0
+	h.successes++
+	h.lastError = ""
 	if successThreshold <= 0 {
 		successThreshold = 1
 	}
-	if e.health.successes >= successThreshold {
-		e.health.healthy = true
-		e.health.cooldownUntil = time.Time{}
+	if h.successes >= successThreshold {
+		h.healthy = true
+		h.cooldownUntil = time.Time{}
 	}
-	if e.health.latency == 0 {
-		e.health.latency = latency
+	if h.latency == 0 {
+		h.latency = latency
 	} else {
-		e.health.latency = (e.health.latency*3 + latency) / 4
+		h.latency = (h.latency*3 + latency) / 4
 	}
 }
 
 func (e *Endpoint) snapshotHealth() (healthy bool, latency time.Duration, failures int, lastErr string, checkedAt, cooldownUntil time.Time) {
-	e.health.mu.Lock()
-	defer e.health.mu.Unlock()
-	return e.health.healthy, e.health.latency, e.health.failures, e.health.lastError, e.health.lastCheckedAt, e.health.cooldownUntil
+	return e.health.snapshot()
+}
+
+func (h *healthState) snapshot() (healthy bool, latency time.Duration, failures int, lastErr string, checkedAt, cooldownUntil time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.healthy, h.latency, h.failures, h.lastError, h.lastCheckedAt, h.cooldownUntil
 }
 
 // close 释放协议拨号器持有的长连接（目前只有 SSH 端点有）。

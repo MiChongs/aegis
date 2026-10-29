@@ -22,5 +22,8 @@
 //
 //	conn, err := egress.DialContext(ctx, "tcp", "smtp.gmail.com:465")
 //
+// UDP 同样按路由表走（见 udp.go）：Dial(ctx, profile, "udp", addr) 得到已连接的数据报连接，
+// ListenPacket 得到按目标路由的套接字，Resolver 得到经网关的 DNS 解析器；HTTP/3 在 egressh3 子包里。
+//
 // 设计上本包不依赖 aegis 的任何内部包，可整包复制到别的项目复用。
 package egress

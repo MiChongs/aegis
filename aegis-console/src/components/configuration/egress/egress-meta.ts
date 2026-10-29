@@ -220,6 +220,7 @@ export function matchSummary(match: EgressMatch | undefined): string[] {
   list("端口", match.ports);
   list("协议", match.schemes);
   list("调用方", match.profiles);
+  if (match.networks?.length === 1) parts.push(`仅 ${match.networks[0].toUpperCase()}`);
   if (match.excludeDomainSuffixes?.length) parts.push(`排除 ${match.excludeDomainSuffixes.length} 个后缀`);
   return parts.length ? parts : ["没有匹配条件"];
 }

@@ -24,6 +24,11 @@ type ProbeResult struct {
 	Error     string   `json:"error,omitempty"`
 	ProbeURL  string   `json:"probeUrl,omitempty"`
 	Chain     []string `json:"chain,omitempty"`
+	// UDP 探测（线路能承载 UDP 且开了 UDP 探测时才有）。
+	UDPChecked   bool   `json:"udpChecked"`
+	UDPOK        bool   `json:"udpOk"`
+	UDPLatencyMS int64  `json:"udpLatencyMs,omitempty"`
+	UDPError     string `json:"udpError,omitempty"`
 }
 
 // Start 拉起后台健康探测循环。重复调用只生效一次；ctx 取消即退出。
@@ -136,6 +141,23 @@ func (g *Gateway) probeEndpoint(ctx context.Context, snap *snapshot, endpoint *E
 	}
 	if record {
 		endpoint.recordProbe(latency, err, snap.failureThreshold, snap.successThreshold)
+	}
+	if boolValue(snap.cfg.Health.UDPProbe, true) && endpoint.SupportsUDP() {
+		udpCtx, udpCancel := context.WithTimeout(ctx, timeout)
+		defer udpCancel()
+		udpStart := time.Now()
+		_, udpErr := probeUDP(udpCtx, endpoint, snap.cfg.Health.UDPProbeServer, snap.cfg.Health.UDPProbeName)
+		udpLatency := time.Since(udpStart)
+		result.UDPChecked = true
+		result.UDPLatencyMS = udpLatency.Milliseconds()
+		if udpErr != nil {
+			result.UDPError = udpErr.Error()
+		} else {
+			result.UDPOK = true
+		}
+		if record {
+			endpoint.recordUDPProbe(udpLatency, udpErr, snap.failureThreshold, snap.successThreshold)
+		}
 	}
 	return result
 }

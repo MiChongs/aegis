@@ -69,27 +69,37 @@ var reservedKeys = map[string]bool{
 // ReservedKey 判断顶层键是否由网关托管（控制台据此提示「该键会被忽略」）。
 func ReservedKey(key string) bool { return reservedKeys[strings.ToLower(strings.TrimSpace(key))] }
 
-// System 由核心托管方注入的部分：控制器、入站、以及按用户名分发的置顶规则。
+// System 由核心托管方注入的部分：控制器与入站。
+//
+// 每个被网关引用的策略组 / 节点各有一个专用 SOCKS5 入站（listeners[].proxy 指向它），
+// TCP 与 UDP 都直达目标、不经分流规则；另有一个不指定目标的入站，按 Profile.Rules 分流。
+// 不用 IN-USER 按用户名分发，是因为核心的 SOCKS UDP 中继不携带入站用户，UDP 会落到分流规则上。
 type System struct {
 	ControllerAddr string
 	Secret         string
-	InboundPort    int
-	Password       string
-	// Targets 被网关引用的策略组 / 节点名。每个目标一个入站用户与一条 IN-USER 规则。
-	Targets []string
+	// InboundPort 「交给核心分流」的入站端口。
+	InboundPort int
+	Password    string
+	// TargetPorts 目标名 → 专用入站端口。
+	TargetPorts map[string]int
 }
 
-// RulesUser 「交给核心分流」的入站用户名：没有置顶规则，按 Profile.Rules 走。
-const RulesUser = "rules"
-
-// TargetUser 目标名对应的入站用户名。目标名可能含空格、中文与表情，
-// 而 IN-USER 规则按逗号分段，因此用摘要而不是原名。
-func TargetUser(target string) string {
-	if target == "" {
-		return RulesUser
+// PlaceholderPorts 预览与导出用的示意端口（运行时由核心托管器分配真实端口）。
+func PlaceholderPorts(targets []string) map[string]int {
+	ports := map[string]int{}
+	for index, target := range uniqueStrings(targets) {
+		ports[target] = 20000 + index
 	}
+	return ports
+}
+
+// InboundUser 所有入站共用的用户名（口令随进程随机）。
+const InboundUser = "aegis"
+
+// listenerName 目标的入站名：目标名可能含空格、中文与表情，用摘要。
+func listenerName(target string) string {
 	sum := sha256.Sum256([]byte(target))
-	return "t" + hex.EncodeToString(sum[:8])
+	return "aegis-" + hex.EncodeToString(sum[:6])
 }
 
 // Clone 深拷贝。
@@ -264,19 +274,38 @@ func Render(p Profile, sys System) ([]byte, error) {
 	put("secret", sys.Secret)
 	put("profile", yaml.MapSlice{{Key: "store-selected", Value: true}, {Key: "store-fake-ip", Value: false}})
 
-	users := []yaml.MapSlice{{{Key: "username", Value: RulesUser}, {Key: "password", Value: sys.Password}}}
-	targets := uniqueStrings(sys.Targets)
-	for _, target := range targets {
-		users = append(users, yaml.MapSlice{{Key: "username", Value: TargetUser(target)}, {Key: "password", Value: sys.Password}})
+	users := []yaml.MapSlice{{{Key: "username", Value: InboundUser}, {Key: "password", Value: sys.Password}}}
+	listener := func(name string, port int, target string) yaml.MapSlice {
+		item := yaml.MapSlice{
+			{Key: "name", Value: name},
+			{Key: "type", Value: "socks"},
+			{Key: "listen", Value: "127.0.0.1"},
+			{Key: "port", Value: port},
+			{Key: "udp", Value: true},
+			{Key: "users", Value: users},
+		}
+		if target != "" {
+			item = append(item, yaml.MapItem{Key: "proxy", Value: target})
+		}
+		return item
 	}
-	put("listeners", []yaml.MapSlice{{
-		{Key: "name", Value: "aegis-egress"},
-		{Key: "type", Value: "socks"},
-		{Key: "listen", Value: "127.0.0.1"},
-		{Key: "port", Value: sys.InboundPort},
-		{Key: "udp", Value: false},
-		{Key: "users", Value: users},
-	}})
+	listeners := []yaml.MapSlice{listener("aegis-rules", sys.InboundPort, "")}
+	targets := make([]string, 0, len(sys.TargetPorts))
+	for target := range sys.TargetPorts {
+		targets = append(targets, target)
+	}
+	sort.Strings(targets)
+	known := map[string]bool{}
+	for _, name := range p.Names() {
+		known[name] = true
+	}
+	for _, target := range targets {
+		if !known[target] && !IsBuiltin(target) {
+			return nil, fmt.Errorf("网关引用的「%s」不在核心配置里", target)
+		}
+		listeners = append(listeners, listener(listenerName(target), sys.TargetPorts[target], target))
+	}
+	put("listeners", listeners)
 
 	extraKeys := make([]string, 0, len(p.Extra))
 	for key := range p.Extra {
@@ -301,10 +330,7 @@ func Render(p Profile, sys System) ([]byte, error) {
 		put("rule-providers", p.RuleProviders)
 	}
 
-	rules := make([]string, 0, len(targets)+len(p.Rules)+1)
-	for _, target := range targets {
-		rules = append(rules, fmt.Sprintf("IN-USER,%s,%s", TargetUser(target), target))
-	}
+	rules := make([]string, 0, len(p.Rules)+1)
 	hasMatch := false
 	for _, rule := range p.Rules {
 		rule = strings.TrimSpace(rule)

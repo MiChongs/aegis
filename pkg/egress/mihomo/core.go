@@ -101,13 +101,15 @@ type Core struct {
 	configHash     string
 	controllerPort int
 	inboundPort    int
-	profile        *Profile
-	targets        []string
-	cmd            *exec.Cmd
-	exited         chan struct{}
-	wanted         bool // 期望核心在跑（Apply 过非空配置且没有手动停止）
-	sampleCancel   context.CancelFunc
-	installing     bool
+	// targetPorts 目标 → 专用入站端口。端口在热重载之间保持不变，核心才会原样保留这些入站。
+	targetPorts  map[string]int
+	profile      *Profile
+	targets      []string
+	cmd          *exec.Cmd
+	exited       chan struct{}
+	wanted       bool // 期望核心在跑（Apply 过非空配置且没有手动停止）
+	sampleCancel context.CancelFunc
+	installing   bool
 
 	applyMu sync.Mutex
 	closed  atomic.Bool
@@ -219,14 +221,34 @@ func (c *Core) Running() bool {
 	return c.status == StatusRunning
 }
 
-// Inbound 网关连核心用的 SOCKS5 入站地址与口令；核心没在跑时 ok 为 false。
-func (c *Core) Inbound() (addr, password string, ok bool) {
+// Inbound 网关连核心用的 SOCKS5 入站地址与口令：target 是策略组或节点名时返回它的专用入站，
+// 留空返回「交给核心分流」的入站。核心没在跑、或目标不在当前配置里时 ok 为 false。
+func (c *Core) Inbound(target string) (addr, password string, ok bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.status != StatusRunning || c.inboundPort <= 0 {
+	if c.status != StatusRunning {
 		return "", "", false
 	}
-	return net.JoinHostPort("127.0.0.1", strconv.Itoa(c.inboundPort)), c.password, true
+	port := c.inboundPort
+	if target != "" {
+		port = c.targetPorts[target]
+		if !containsString(c.targets, target) {
+			port = 0
+		}
+	}
+	if port <= 0 {
+		return "", "", false
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), c.password, true
+}
+
+func containsString(items []string, item string) bool {
+	for _, candidate := range items {
+		if candidate == item {
+			return true
+		}
+	}
+	return false
 }
 
 // Client 控制器客户端；核心没在跑时返回错误。
@@ -301,12 +323,13 @@ func (c *Core) placeholderSystem(targets []string) System {
 	if inbound <= 0 {
 		inbound = 7891
 	}
+	ports := PlaceholderPorts(targets)
 	return System{
 		ControllerAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(controller)),
 		Secret:         c.secret,
 		InboundPort:    inbound,
 		Password:       c.password,
-		Targets:        targets,
+		TargetPorts:    ports,
 	}
 }
 
@@ -416,15 +439,41 @@ func (c *Core) Apply(ctx context.Context, p Profile, targets []string) error {
 	return nil
 }
 
+// system 渲染用的入站参数。新目标分配端口，已有目标沿用原端口，不再引用的目标收回。
 func (c *Core) system(targets []string) System {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.targetPorts == nil {
+		c.targetPorts = map[string]int{}
+	}
+	wanted := map[string]bool{}
+	for _, target := range targets {
+		if target == "" {
+			continue
+		}
+		wanted[target] = true
+		if c.targetPorts[target] > 0 {
+			continue
+		}
+		if port, err := freePort(); err == nil {
+			c.targetPorts[target] = port
+		}
+	}
+	for target := range c.targetPorts {
+		if !wanted[target] {
+			delete(c.targetPorts, target)
+		}
+	}
+	ports := make(map[string]int, len(c.targetPorts))
+	for target, port := range c.targetPorts {
+		ports[target] = port
+	}
 	return System{
 		ControllerAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(c.controllerPort)),
 		Secret:         c.secret,
 		InboundPort:    c.inboundPort,
 		Password:       c.password,
-		Targets:        targets,
+		TargetPorts:    ports,
 	}
 }
 
@@ -447,6 +496,8 @@ func (c *Core) allocatePortsLocked() error {
 		return fmt.Errorf("分配核心入站端口失败: %w", err)
 	}
 	c.controllerPort, c.inboundPort = controller, inbound
+	// 目标入站一并换新：端口冲突时说明这一段端口已经被别的进程占用了。
+	c.targetPorts = map[string]int{}
 	return nil
 }
 

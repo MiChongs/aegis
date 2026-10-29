@@ -119,7 +119,7 @@ func TestCompileSample(t *testing.T) {
 	if p.Rules[0] != "GEOIP,CN,DIRECT,no-resolve" {
 		t.Fatalf("分流规则不对: %v", p.Rules)
 	}
-	if _, err := mihomo.Render(p, mihomo.System{ControllerAddr: "127.0.0.1:1", Secret: "s", InboundPort: 2, Password: "p", Targets: result.Targets}); err != nil {
+	if _, err := mihomo.Render(p, mihomo.System{ControllerAddr: "127.0.0.1:1", Secret: "s", InboundPort: 2, Password: "p", TargetPorts: mihomo.PlaceholderPorts(result.Targets)}); err != nil {
 		t.Fatalf("渲染失败: %v", err)
 	}
 	gw, err := egress.New(cfg, nil)
@@ -131,8 +131,8 @@ func TestCompileSample(t *testing.T) {
 
 func TestCompileErrors(t *testing.T) {
 	graph := sampleGraph()
-	graph.Edges = append(graph.Edges, link("g2", PortMembers, "g1"))             // 成环
-	graph.Edges = append(graph.Edges, link("r3", PortHit, "p1"))                 // 拒绝却连了线
+	graph.Edges = append(graph.Edges, link("g2", PortMembers, "g1"))                                                          // 成环
+	graph.Edges = append(graph.Edges, link("r3", PortHit, "p1"))                                                              // 拒绝却连了线
 	graph.Nodes = append(graph.Nodes, node("p3", NodeProxy, ProxyData{Proxy: map[string]any{"name": "香港 01", "type": "ss"}})) // 重名
 	result := Compile(graph)
 	messages := []string{}
@@ -256,5 +256,37 @@ rules:
 	}
 	if !found {
 		t.Fatalf("逻辑规则没有保住: %v", result.Profile.Rules)
+	}
+}
+
+func TestCompileWarnsUDPWithoutCapableTargets(t *testing.T) {
+	gateway := DefaultGateway()
+	build := func(protocol egress.Protocol, via bool) Result {
+		nodes := []Node{
+			node("gw", NodeGateway, gateway),
+			node("r", NodeRule, RuleData{Name: "quic", Match: egress.MatchConfig{Networks: []string{"udp"}}}),
+			node("ep", NodeEndpoint, egress.EndpointConfig{Name: "line", Protocol: protocol, Address: "10.0.0.1:1080", Password: "p", Shadowsocks: egress.ShadowsocksConfig{Method: "aes-128-gcm", Password: "p"}}),
+			node("hop", NodeEndpoint, egress.EndpointConfig{Name: "hop", Protocol: egress.ProtocolHTTP, Address: "10.0.0.2:3128"}),
+		}
+		edges := []Edge{link("gw", PortRules, "r"), link("r", PortHit, "ep")}
+		if via {
+			edges = append(edges, link("ep", PortVia, "hop"))
+		}
+		return Compile(Graph{Nodes: nodes, Edges: edges})
+	}
+	warned := func(result Result) bool {
+		return slices.ContainsFunc(result.Issues, func(issue Issue) bool { return issue.NodeID == "r" && strings.Contains(issue.Message, "UDP") })
+	}
+	if !warned(build(egress.ProtocolHTTP, false)) {
+		t.Fatalf("HTTP 线路承载不了 UDP，应提醒")
+	}
+	if warned(build(egress.ProtocolSOCKS5H, false)) {
+		t.Fatalf("SOCKS5 能承载 UDP，不该提醒")
+	}
+	if !warned(build(egress.ProtocolShadowsocks, true)) {
+		t.Fatalf("经 HTTP 跳板的 Shadowsocks 承载不了 UDP，应提醒")
+	}
+	if warned(build(egress.ProtocolTrojan, true)) {
+		t.Fatalf("Trojan 的 UDP 在 TLS 流里，经 HTTP 跳板也行")
 	}
 }

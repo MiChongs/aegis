@@ -42,11 +42,12 @@ type Gateway struct {
 }
 
 type gatewayCounters struct {
-	routed   atomic.Uint64
-	proxied  atomic.Uint64
-	direct   atomic.Uint64
-	rejected atomic.Uint64
-	failed   atomic.Uint64
+	routed    atomic.Uint64
+	routedUDP atomic.Uint64
+	proxied   atomic.Uint64
+	direct    atomic.Uint64
+	rejected  atomic.Uint64
+	failed    atomic.Uint64
 }
 
 type snapshot struct {
@@ -234,10 +235,13 @@ func (g *Gateway) Route(target Target) Decision {
 	snap := g.snap.Load()
 	target = target.normalized()
 	g.counters.routed.Add(1)
+	if target.Network == "udp" {
+		g.counters.routedUDP.Add(1)
+	}
 
 	if snap == nil || !snap.cfg.Enabled {
 		g.counters.direct.Add(1)
-		return Decision{Action: ActionDirect, Rule: "disabled", Reason: "网关未启用"}
+		return Decision{Action: ActionDirect, Rule: "disabled", Reason: "网关未启用", Network: target.Network}
 	}
 
 	ip, hasIP := netip.Addr{}, false
@@ -251,23 +255,23 @@ func (g *Gateway) Route(target Target) Decision {
 			continue
 		}
 		rule.matched.Add(1)
-		return g.decide(snap, rule.cfg.Name, reason, rule.cfg.Action, rule.endpoints, rule.cfg.Strategy, &rule.rr)
+		return g.decide(snap, rule.cfg.Name, reason, rule.cfg.Action, rule.endpoints, rule.cfg.Strategy, &rule.rr, target.Network)
 	}
-	return g.decide(snap, "default", "未命中任何规则", snap.cfg.DefaultAction, snap.defaultEndpoints, snap.cfg.DefaultStrategy, &snap.defaultRR)
+	return g.decide(snap, "default", "未命中任何规则", snap.cfg.DefaultAction, snap.defaultEndpoints, snap.cfg.DefaultStrategy, &snap.defaultRR, target.Network)
 }
 
 // decide 由动作与候选端点得出最终决策。它没有副作用（除推进传入的轮询游标外），
 // 因此管理端的 Explain 可以传一个临时游标复用同一段判定逻辑。
-func decide(snap *snapshot, ruleName, reason string, action Action, candidates []*Endpoint, strategy Strategy, rr *atomic.Uint64) Decision {
+func decide(snap *snapshot, ruleName, reason string, action Action, candidates []*Endpoint, strategy Strategy, rr *atomic.Uint64, network string) Decision {
 	switch action {
 	case ActionReject:
-		return Decision{Action: ActionReject, Rule: ruleName, Reason: reason}
+		return Decision{Action: ActionReject, Rule: ruleName, Reason: reason, Network: network}
 	case ActionDirect:
-		return Decision{Action: ActionDirect, Rule: ruleName, Reason: reason}
+		return Decision{Action: ActionDirect, Rule: ruleName, Reason: reason, Network: network}
 	}
-	endpoint, err := pickEndpoint(candidates, strategy, rr, snap.allowUnhealthy)
+	endpoint, err := pickEndpoint(candidates, strategy, rr, snap.allowUnhealthy, network)
 	if err != nil {
-		return Decision{Action: ActionProxy, Rule: ruleName, Reason: reason, Err: err}
+		return Decision{Action: ActionProxy, Rule: ruleName, Reason: reason, Err: err, Network: network}
 	}
 	return Decision{
 		Action:      ActionProxy,
@@ -275,12 +279,13 @@ func decide(snap *snapshot, ruleName, reason string, action Action, candidates [
 		Reason:      reason,
 		Endpoint:    endpoint,
 		Chain:       endpoint.chain(),
-		HTTPForward: endpoint.cfg.HTTPForwardMode,
+		HTTPForward: endpoint.cfg.HTTPForwardMode && network != "udp",
+		Network:     network,
 	}
 }
 
-func (g *Gateway) decide(snap *snapshot, ruleName, reason string, action Action, candidates []*Endpoint, strategy Strategy, rr *atomic.Uint64) Decision {
-	decision := decide(snap, ruleName, reason, action, candidates, strategy, rr)
+func (g *Gateway) decide(snap *snapshot, ruleName, reason string, action Action, candidates []*Endpoint, strategy Strategy, rr *atomic.Uint64, network string) Decision {
+	decision := decide(snap, ruleName, reason, action, candidates, strategy, rr, network)
 	switch {
 	case decision.Action == ActionReject:
 		g.counters.rejected.Add(1)
@@ -305,7 +310,11 @@ func (g *Gateway) dialWithProfile(ctx context.Context, network, address string, 
 	if err != nil {
 		return nil, err
 	}
-	decision := g.Route(Target{Host: host, Port: port, Scheme: schemeForPort(port), Profile: profile.Name})
+	scheme := schemeForPort(port)
+	if isUDPNetwork(network) {
+		scheme = "udp"
+	}
+	decision := g.Route(Target{Host: host, Port: port, Scheme: scheme, Profile: profile.Name, Network: networkKind(network)})
 	return g.dialDecision(ctx, decision, network, address, profile)
 }
 
@@ -314,7 +323,11 @@ func (g *Gateway) dialDecision(ctx context.Context, decision Decision, network, 
 	case ActionReject:
 		return nil, fmt.Errorf("%w: %s（规则 %s）", ErrRejected, address, decision.Rule)
 	case ActionDirect:
-		return g.dialDirect(ctx, network, address, profile)
+		conn, err := g.dialDirect(ctx, network, address, profile)
+		if err == nil && isUDPNetwork(network) {
+			conn = asDatagram(conn)
+		}
+		return conn, err
 	}
 	if decision.Err != nil {
 		return nil, fmt.Errorf("出海路由失败（规则 %s）: %w", decision.Rule, decision.Err)
@@ -326,6 +339,9 @@ func (g *Gateway) dialDecision(ctx context.Context, decision Decision, network, 
 	passive, cooldown, threshold := false, time.Duration(0), 1
 	if snap != nil {
 		passive, cooldown, threshold = snap.passive, snap.cooldown, snap.failureThreshold
+	}
+	if isUDPNetwork(network) && !decision.Endpoint.SupportsUDP() {
+		return nil, fmt.Errorf("出海路由失败（规则 %s）: 线路 %s 不能承载 UDP", decision.Rule, decision.Endpoint.Name())
 	}
 	return decision.Endpoint.dial(ctx, network, address, passive, cooldown, threshold)
 }

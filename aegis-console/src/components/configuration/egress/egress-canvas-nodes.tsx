@@ -354,6 +354,7 @@ function CardBody({
     const rule = data as EgressRuleData;
     const stat = overlay.rules.get(rule.name);
     const chips = [
+      ...(rule.match?.networks?.length === 1 ? [`仅 ${rule.match.networks[0].toUpperCase()}`] : []),
       ...(rule.match?.domainSuffixes ?? []),
       ...(rule.match?.domains ?? []),
       ...(rule.match?.profiles ?? []).map((item) => `调用方 ${item}`),
@@ -397,6 +398,7 @@ function CardBody({
             <span className="tabular-nums">{formatBytes(endpointStat.bytesIn + endpointStat.bytesOut)}</span>
           </div>
         ) : null}
+        <UDPBadge data={data} stat={endpointStat} catalog={overlay.catalog} />
         {endpointStat?.lastError ? <div className="line-clamp-2 text-[11px] leading-4 text-red-600 dark:text-red-400">{endpointStat.lastError}</div> : null}
       </>
     );
@@ -581,5 +583,21 @@ function NodeAction({ label, danger, onClick, children }: { label: string; dange
     >
       {children}
     </button>
+  );
+}
+
+/** 线路能不能承载 UDP、UDP 探测的结果。 */
+function UDPBadge({ data, stat, catalog }: { data: Record<string, unknown>; stat?: EgressEndpointStat; catalog?: EgressGraphCatalog }) {
+  const protocol = String(data.protocol ?? "");
+  const supported = Boolean(catalog?.udpProtocols?.[protocol]) && data.udp !== false;
+  if (!supported) return <div className="text-[11px] text-muted-foreground">只承载 TCP</div>;
+  if (!stat?.udp) return <div className="text-[11px] text-muted-foreground">承载 UDP</div>;
+  return (
+    <div className="flex items-center justify-between text-[11px]">
+      <span className={cn("font-medium", stat.udpHealthy ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+        UDP {stat.udpHealthy ? (stat.udpLatencyMs ? `${stat.udpLatencyMs} ms` : "可用") : "不可用"}
+      </span>
+      {stat.udpSessions ? <span className="tabular-nums text-muted-foreground">{stat.udpSessions.toLocaleString()} 个 UDP 会话</span> : null}
+    </div>
   );
 }

@@ -53,6 +53,9 @@ func newSocksDialer(cfg EndpointConfig) (Dialer, error) {
 }
 
 func (d *socksDialer) DialContext(ctx context.Context, base BaseDialFunc, network, address string) (net.Conn, error) {
+	if isUDPNetwork(network) {
+		return d.dialUDP(ctx, base, network, address)
+	}
 	if err := requireTCP(network, d.protocol); err != nil {
 		return nil, err
 	}

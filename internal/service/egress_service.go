@@ -272,7 +272,7 @@ func (s *EgressService) Explain(req systemdomain.EgressExplainRequest) (egress.E
 	if scheme == "" {
 		scheme = "https"
 	}
-	return s.gw.Explain(egress.Target{Host: host, Port: port, Scheme: scheme, Profile: req.Profile}), nil
+	return s.gw.Explain(egress.Target{Host: host, Port: port, Scheme: scheme, Profile: req.Profile, Network: req.Network}), nil
 }
 
 // Probe 立即探测全部端点。

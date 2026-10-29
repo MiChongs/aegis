@@ -89,4 +89,5 @@ type EgressExplainRequest struct {
 	Port    int    `json:"port,omitempty"`
 	Scheme  string `json:"scheme,omitempty"`
 	Profile string `json:"profile,omitempty"`
+	Network string `json:"network,omitempty"`
 }

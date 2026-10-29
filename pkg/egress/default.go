@@ -55,6 +55,26 @@ func DialContext(ctx context.Context, network, address string) (net.Conn, error)
 	return Default().DialContext(ctx, network, address)
 }
 
+// Dial 以指定调用方身份按全局默认网关建立连接，network 可以是 tcp 或 udp。
+// UDP 返回已连接的数据报连接（每次 Write / Read 一个报文），见 udp.go。
+func Dial(ctx context.Context, profile Profile, network, address string) (net.Conn, error) {
+	return Default().DialProfile(ctx, profile, network, address)
+}
+
+// ListenPacket 返回按目标路由的 UDP 套接字（全局默认网关），见 Gateway.ListenPacket。
+//
+// 注意：返回的套接字绑定的是调用这一刻的默认网关；配置热重载会在下一个新目标上生效。
+func ListenPacket(ctx context.Context, profile Profile) (net.PacketConn, error) {
+	return Default().ListenPacket(ctx, profile)
+}
+
+// Resolver 返回经全局默认网关出站的 DNS 解析器，servers 含义见 Gateway.Resolver。
+func Resolver(profile Profile, servers ...string) *net.Resolver {
+	return newResolver(func(ctx context.Context, network, address string) (net.Conn, error) {
+		return Default().DialProfile(ctx, profile, network, address)
+	}, servers)
+}
+
 // Enabled 全局默认网关是否已启用出海路由。
 func Enabled() bool { return Default().Enabled() }
 

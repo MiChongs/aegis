@@ -44,6 +44,8 @@ export interface EgressEndpoint {
   username?: string;
   password?: string;
   via?: string;
+  /** 省略表示协议支持就承载 UDP；false 让线路只走 TCP */
+  udp?: boolean;
   weight?: number;
   dialTimeoutMs?: number;
   region?: string;
@@ -72,6 +74,8 @@ export interface EgressMatch {
   ports?: number[];
   schemes?: string[];
   profiles?: string[];
+  /** 传输层：tcp / udp，留空两者都匹配 */
+  networks?: string[];
   matchAll?: boolean;
 }
 
@@ -96,6 +100,10 @@ export interface EgressHealth {
   passiveEnabled: boolean;
   cooldownSeconds?: number;
   allowUnhealthy?: boolean;
+  /** 对能承载 UDP 的线路另做一次 UDP 探测（经线路发 DNS 查询） */
+  udpProbe?: boolean;
+  udpProbeServer?: string;
+  udpProbeName?: string;
 }
 
 export interface EgressEndpointStat {
@@ -119,6 +127,15 @@ export interface EgressEndpointStat {
   lastError?: string;
   lastCheckedAt?: string;
   cooldownUntil?: string;
+  udp: boolean;
+  udpTransport?: "udp" | "stream";
+  udpHealthy: boolean;
+  udpLatencyMs: number;
+  udpLastError?: string;
+  udpLastCheckedAt?: string;
+  udpSessions: number;
+  packetsIn: number;
+  packetsOut: number;
 }
 
 export interface EgressRuleStat {
@@ -129,6 +146,7 @@ export interface EgressRuleStat {
   strategy?: EgressStrategy;
   endpoints?: string[];
   suffixCount: number;
+  networks?: string[];
   matched: number;
   remark?: string;
 }
@@ -140,6 +158,7 @@ export interface EgressRuntime {
   loadedAt: string;
   defaultAction: EgressAction;
   routed: number;
+  routedUdp: number;
   proxied: number;
   direct: number;
   rejected: number;
@@ -196,6 +215,9 @@ export interface EgressTestResult {
   latencyMs: number;
   body?: string;
   error?: string;
+  network: "tcp" | "udp";
+  /** UDP 自测（DNS 查询）的解析结果 */
+  answers?: string[];
 }
 
 export interface EgressRuleEvaluation {
@@ -208,6 +230,7 @@ export interface EgressExplanation {
   host: string;
   port: number;
   scheme: string;
+  network: "tcp" | "udp";
   profile?: string;
   action: EgressAction;
   rule: string;
@@ -225,6 +248,10 @@ export interface EgressProbeResult {
   error?: string;
   probeUrl?: string;
   chain?: string[];
+  udpChecked: boolean;
+  udpOk: boolean;
+  udpLatencyMs?: number;
+  udpError?: string;
 }
 
 const BASE = "/api/admin/system/egress";
@@ -243,14 +270,14 @@ export function resetEgressSettings(token: string) {
 
 export function testEgress(
   token: string,
-  payload: { url?: string; endpoint?: string; profile?: string; timeoutMs?: number }
+  payload: { url?: string; endpoint?: string; profile?: string; timeoutMs?: number; network?: "tcp" | "udp"; name?: string }
 ) {
   return apiRequest<EgressTestResult>(`${BASE}/test`, { token, method: "POST", body: JSON.stringify(payload) });
 }
 
 export function explainEgress(
   token: string,
-  payload: { host: string; port?: number; scheme?: string; profile?: string }
+  payload: { host: string; port?: number; scheme?: string; profile?: string; network?: "tcp" | "udp" }
 ) {
   return apiRequest<EgressExplanation>(`${BASE}/explain`, { token, method: "POST", body: JSON.stringify(payload) });
 }
@@ -427,6 +454,8 @@ export type EgressGraphCatalog = {
   mihomo: MihomoCatalog;
   /** 平台里已知的调用方标识（"x.*" 是前缀通配） */
   profiles: Array<{ name: string; label: string }>;
+  /** 能承载 UDP 的网关协议：udp 要上一跳也能承载 UDP，stream 封装在 TCP 里 */
+  udpProtocols: Record<string, "udp" | "stream">;
 };
 
 export type EgressGraphSummary = {

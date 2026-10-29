@@ -75,8 +75,7 @@ func wrapTLS(ctx context.Context, conn net.Conn, cfg *tls.Config, fallbackServer
 	return tlsConn, nil
 }
 
-// isTCPNetwork 目前所有协议隧道都只承载 TCP。UDP 出海需要另一套语义
-// （SOCKS5 UDP ASSOCIATE / SS UDP relay），当前明确拒绝而不是静默降级。
+// isTCPNetwork TCP 路径的入口检查；UDP 由各协议的 dialUDP 处理，见 udp.go。
 func isTCPNetwork(network string) bool {
 	switch network {
 	case "tcp", "tcp4", "tcp6":

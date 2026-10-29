@@ -15,6 +15,9 @@ type AdminEgressTestRequest struct {
 	// Profile 模拟调用方标识，验证 profile 维度的规则是否按预期生效。
 	Profile   string `json:"profile"`
 	TimeoutMs int    `json:"timeoutMs"`
+	// Network 为 udp 时做 UDP 自测：URL 填 DNS 服务器 host:port（留空用 UDP 探测服务器），查询 Name。
+	Network string `json:"network" binding:"omitempty,oneof=tcp udp"`
+	Name    string `json:"name"`
 }
 
 // AdminEgressExplainRequest 「这个域名会怎么出去」。
@@ -23,4 +26,6 @@ type AdminEgressExplainRequest struct {
 	Port    int    `json:"port"`
 	Scheme  string `json:"scheme"`
 	Profile string `json:"profile"`
+	// Network tcp（默认）或 udp。
+	Network string `json:"network" binding:"omitempty,oneof=tcp udp"`
 }

@@ -76,6 +76,9 @@ const (
 	DefaultHealthTimeout         = 8 * time.Second
 	DefaultHealthCooldown        = 30 * time.Second
 	DefaultProbeURL              = "https://www.gstatic.com/generate_204"
+	// DefaultUDPProbeServer UDP 探测默认经线路向这个 DNS 服务器发一次查询。
+	DefaultUDPProbeServer = "1.1.1.1:53"
+	DefaultUDPProbeName   = "www.gstatic.com"
 	// maxViaDepth 端点链的最大跳数，防止配置写出环或过深的链路。
 	maxViaDepth = 8
 )
@@ -122,6 +125,11 @@ type HealthConfig struct {
 	// AllowUnhealthy 所有端点都不健康时是否仍然尝试（默认 true）。
 	// 关掉它意味着探测误判会直接切断出海链路，一般不建议。
 	AllowUnhealthy *bool `json:"allowUnhealthy,omitempty"`
+	// UDPProbe 对能承载 UDP 的线路另做一次 UDP 探测（经线路发 DNS 查询），默认开。
+	// UDP 健康单独记：一条线路 TCP 通而 UDP 不通（服务端没开 UDP）时，只有 UDP 流量会绕开它。
+	UDPProbe       *bool  `json:"udpProbe,omitempty"`
+	UDPProbeServer string `json:"udpProbeServer,omitempty"`
+	UDPProbeName   string `json:"udpProbeName,omitempty"`
 }
 
 // EndpointConfig 一条出海线路。
@@ -133,7 +141,10 @@ type EndpointConfig struct {
 	Username string   `json:"username,omitempty"`
 	Password string   `json:"password,omitempty"`
 	// Via 先经另一个端点连出去，形成代理链（如 内网跳板 → 海外落地）。
-	Via           string `json:"via,omitempty"`
+	Via string `json:"via,omitempty"`
+	// UDP 是否承载 UDP 流量。省略表示「协议支持就承载」；显式 false 让这条线路只走 TCP
+	// （例如服务端没开 UDP 转发），显式 true 而协议不支持会在校验时报错。
+	UDP           *bool  `json:"udp,omitempty"`
 	Weight        int    `json:"weight,omitempty"`
 	DialTimeoutMS int    `json:"dialTimeoutMs,omitempty"`
 	Region        string `json:"region,omitempty"`
@@ -206,7 +217,9 @@ type MatchConfig struct {
 	DomainRegexps         []string `json:"domainRegexps,omitempty"`
 	CIDRs                 []string `json:"cidrs,omitempty"` // 目标是字面 IP 时按网段匹配
 	Ports                 []int    `json:"ports,omitempty"`
-	Schemes               []string `json:"schemes,omitempty"` // http / https / tcp
+	Schemes               []string `json:"schemes,omitempty"` // http / https / tcp / udp
+	// Networks 传输层：tcp / udp。留空两者都匹配。
+	Networks []string `json:"networks,omitempty"`
 	// Profiles 调用方标识（如 payment.stripe / storage.s3 / oauth.google），
 	// 让「同一个域名，不同业务走不同线路」成为可能。支持 "payment.*" 前缀通配。
 	Profiles []string `json:"profiles,omitempty"`
@@ -285,6 +298,15 @@ func normalizeHealth(h HealthConfig) HealthConfig {
 	}
 	h.ProbeURL = strings.TrimSpace(h.ProbeURL)
 	h.AllowUnhealthy = boolPtr(boolValue(h.AllowUnhealthy, true))
+	h.UDPProbe = boolPtr(boolValue(h.UDPProbe, true))
+	h.UDPProbeServer = strings.TrimSpace(h.UDPProbeServer)
+	if h.UDPProbeServer == "" {
+		h.UDPProbeServer = DefaultUDPProbeServer
+	}
+	h.UDPProbeName = strings.TrimSpace(h.UDPProbeName)
+	if h.UDPProbeName == "" {
+		h.UDPProbeName = DefaultUDPProbeName
+	}
 	return h
 }
 
@@ -372,6 +394,7 @@ func normalizeRule(r RuleConfig, index int) RuleConfig {
 	m.DomainRegexps = dedupeStrings(mapStrings(m.DomainRegexps, strings.TrimSpace))
 	m.CIDRs = dedupeStrings(mapStrings(m.CIDRs, strings.TrimSpace))
 	m.Schemes = dedupeStrings(mapStrings(m.Schemes, strings.ToLower))
+	m.Networks = dedupeStrings(mapStrings(m.Networks, strings.ToLower))
 	m.Profiles = dedupeStrings(mapStrings(m.Profiles, strings.ToLower))
 	ports := make([]int, 0, len(m.Ports))
 	seen := map[int]struct{}{}
@@ -481,6 +504,9 @@ func (c Config) Clone() Config {
 	if c.Health.AllowUnhealthy != nil {
 		out.Health.AllowUnhealthy = boolPtr(*c.Health.AllowUnhealthy)
 	}
+	if c.Health.UDPProbe != nil {
+		out.Health.UDPProbe = boolPtr(*c.Health.UDPProbe)
+	}
 	out.Endpoints = make([]EndpointConfig, len(c.Endpoints))
 	for i, e := range c.Endpoints {
 		out.Endpoints[i] = e.Clone()
@@ -497,6 +523,9 @@ func (e EndpointConfig) Clone() EndpointConfig {
 	out := e
 	if e.Enabled != nil {
 		out.Enabled = boolPtr(*e.Enabled)
+	}
+	if e.UDP != nil {
+		out.UDP = boolPtr(*e.UDP)
 	}
 	out.TLS.ALPN = append([]string(nil), e.TLS.ALPN...)
 	if len(e.Headers) > 0 {
@@ -522,6 +551,7 @@ func (r RuleConfig) Clone() RuleConfig {
 	out.Match.DomainRegexps = append([]string(nil), r.Match.DomainRegexps...)
 	out.Match.CIDRs = append([]string(nil), r.Match.CIDRs...)
 	out.Match.Schemes = append([]string(nil), r.Match.Schemes...)
+	out.Match.Networks = append([]string(nil), r.Match.Networks...)
 	out.Match.Profiles = append([]string(nil), r.Match.Profiles...)
 	out.Match.Ports = append([]int(nil), r.Match.Ports...)
 	return out
@@ -575,6 +605,11 @@ func (c Config) Validate() error {
 	if c.Health.FailureThreshold <= 0 || c.Health.SuccessThreshold <= 0 {
 		return fmt.Errorf("健康检查阈值必须为正整数")
 	}
+	if boolValue(c.Health.UDPProbe, true) {
+		if _, _, err := splitTarget(c.Health.UDPProbeServer); err != nil {
+			return fmt.Errorf("UDP 探测服务器必须是 host:port: %v", err)
+		}
+	}
 	return nil
 }
 
@@ -621,6 +656,9 @@ func validateEndpoint(e EndpointConfig) error {
 		if !protocolRegistered(e.Protocol) {
 			return fmt.Errorf("未知协议: %s", e.Protocol)
 		}
+	}
+	if e.UDP != nil && *e.UDP && ProtocolUDP(e.Protocol) == UDPNone {
+		return fmt.Errorf("%s 协议不能承载 UDP", e.Protocol)
 	}
 	if e.TLS.Enabled {
 		switch e.TLS.MinVersion {
@@ -672,7 +710,7 @@ func validateRule(r RuleConfig, endpoints map[string]struct{}) error {
 	if !m.MatchAll &&
 		len(m.DomainSuffixes) == 0 && len(m.Domains) == 0 && len(m.DomainKeywords) == 0 &&
 		len(m.DomainRegexps) == 0 && len(m.CIDRs) == 0 && len(m.Ports) == 0 &&
-		len(m.Schemes) == 0 && len(m.Profiles) == 0 {
+		len(m.Schemes) == 0 && len(m.Profiles) == 0 && len(m.Networks) == 0 {
 		return fmt.Errorf("至少要有一个匹配条件（或显式设置 matchAll）")
 	}
 	for _, expr := range m.DomainRegexps {
@@ -687,9 +725,14 @@ func validateRule(r RuleConfig, endpoints map[string]struct{}) error {
 	}
 	for _, scheme := range m.Schemes {
 		switch scheme {
-		case "http", "https", "tcp":
+		case "http", "https", "tcp", "udp":
 		default:
-			return fmt.Errorf("scheme %q 无效（仅 http / https / tcp）", scheme)
+			return fmt.Errorf("scheme %q 无效（仅 http / https / tcp / udp）", scheme)
+		}
+	}
+	for _, network := range m.Networks {
+		if network != "tcp" && network != "udp" {
+			return fmt.Errorf("network %q 无效（仅 tcp / udp）", network)
 		}
 	}
 	return nil

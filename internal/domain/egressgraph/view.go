@@ -48,6 +48,8 @@ type Catalog struct {
 	Mihomo             mihomo.Catalog `json:"mihomo"`
 	// Profiles 平台里已知的调用方标识，规则的「调用方」条件从这里选。
 	Profiles []ProfileOption `json:"profiles"`
+	// UDPProtocols 能承载 UDP 的网关协议及承载方式：udp 要上一跳也能承载 UDP，stream 封装在 TCP 里。
+	UDPProtocols map[string]string `json:"udpProtocols"`
 }
 
 // ProfileOption 一个调用方标识。
@@ -108,6 +110,7 @@ func BuildCatalog(mirror string) Catalog {
 		DefaultCore:        CoreData{Settings: DefaultCoreSettings(mirror)},
 		Mihomo:             mihomo.BuildCatalog(),
 		Profiles:           KnownProfiles,
+		UDPProtocols:       udpProtocols(),
 	}
 }
 
@@ -217,4 +220,14 @@ type ImportResult struct {
 type ExportRequest struct {
 	Graph          Graph `json:"graph"`
 	IncludeSecrets bool  `json:"includeSecrets"`
+}
+
+func udpProtocols() map[string]string {
+	out := map[string]string{}
+	for protocol, transport := range egress.UDPProtocols() {
+		if protocol != mihomo.Protocol {
+			out[string(protocol)] = string(transport)
+		}
+	}
+	return out
 }

@@ -71,6 +71,8 @@ func (h *Handler) AdminTestEgress(c *gin.Context) {
 		Endpoint:  req.Endpoint,
 		Profile:   req.Profile,
 		TimeoutMS: req.TimeoutMs,
+		Network:   req.Network,
+		Name:      req.Name,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -90,7 +92,7 @@ func (h *Handler) AdminExplainEgress(c *gin.Context) {
 		return
 	}
 	item, err := h.egress.Explain(systemdomain.EgressExplainRequest{
-		Host: req.Host, Port: req.Port, Scheme: req.Scheme, Profile: req.Profile,
+		Host: req.Host, Port: req.Port, Scheme: req.Scheme, Profile: req.Profile, Network: req.Network,
 	})
 	if err != nil {
 		h.writeError(c, err)

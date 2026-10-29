@@ -53,7 +53,41 @@ stripeAPI.Init(key, stripe.NewBackends(egress.NewClient(egress.Profile{Name: "pa
 
 // 裸 TCP（SMTP / LDAP / 自定义协议）
 conn, err := egress.DialContext(ctx, "tcp", "smtp.example.com:465")
+
+// UDP：已连接的数据报连接，每次 Write / Read 一个报文；带调用方身份用 egress.Dial
+conn, err := egress.Dial(ctx, egress.Profile{Name: "ntp"}, "udp", "time.google.com:123")
+
+// 一个套接字发往多个目标（QUIC、STUN）：按每个目标各自路由，目标是域名时用 egress.Addr
+pc, err := egress.ListenPacket(ctx, egress.Profile{Name: "stun"})
+pc.WriteTo(payload, egress.Addr{Host: "stun.l.google.com", Port: 19302})
+
+// 经网关解析 DNS（指定境外服务器，路由表把它送进代理即可避开本地污染）
+resolver := egress.Resolver(egress.Profile{Name: "dns"}, "1.1.1.1:53")
+
+// HTTP/3：QUIC 报文按路由表走（pkg/egress/egressh3，单独成包以免核心依赖 quic-go）
+client := egressh3.NewClient(egress.Profile{Name: "h3.api", Timeout: 15 * time.Second})
 ```
+
+## UDP
+
+| 线路协议 | UDP 怎么承载 | 能否接在跳板后面 |
+|---|---|---|
+| direct | 系统 UDP 套接字 | — |
+| socks5 / socks5h | UDP ASSOCIATE：TCP 控制连接 + 到中继地址的 UDP（服务端回 0.0.0.0 时用代理主机） | 跳板也要能承载 UDP |
+| shadowsocks | UDP relay，每个报文单独 AEAD 加密 | 跳板也要能承载 UDP |
+| trojan | UDP ASSOCIATE，报文按「地址 + 长度 + CRLF + 载荷」封装在 TLS 流里 | 任意跳板（只需要 TCP） |
+| mihomo | 经核心的专用 SOCKS5 入站，节点自己的 UDP 能力由核心决定（节点上的 `udp`） | — |
+| http / https / ssh | 不支持（CONNECT 与 direct-tcpip 都只有 TCP） | — |
+
+- **选路**：UDP 流量只在能承载 UDP 的线路里选；规则连的线路都不能承载时这次连接失败（不悄悄直连），画布编译时会提醒。
+  线路上 `udp: false`（DSL 写 `?udp=false`）可以让它只走 TCP，例如服务端没开 UDP 转发。
+- **匹配**：规则多了「传输层」维度 `networks: ["udp"]`，与其它条件同时满足才命中，常用来单独管 QUIC（UDP 443）或 DNS。
+- **健康**：UDP 健康单独记——TCP 通而 UDP 不通（服务端没开 UDP）很常见，不能让 UDP 的失败把 TCP 流量也赶走。
+  主动探测对能承载 UDP 的线路经它向 `udpProbeServer`（默认 `1.1.1.1:53`）查一次 `udpProbeName`，
+  被动熔断也按传输层分开记；「最低延迟」策略对 UDP 用 UDP 探测的延迟。
+- **统计**：每条线路的 UDP 会话数与收发报文数；网关的 UDP 判定数。
+- **自测与解释**：`POST /egress/test` 带 `network: "udp"` 时经路由表（或指定线路）向 DNS 服务器发一次查询并返回解析结果；
+  `POST /egress/explain` 带 `network: "udp"` 按 UDP 判定。
 
 未装配网关时自动退化为直连，单元测试与 CLI 不需要任何初始化。
 
@@ -212,10 +246,11 @@ mihomo（Clash Meta）以 GPL-3.0 发布，网关**不把它编进本程序**，
   部署平台每次发布清空本地盘时（Zeabur 无持久卷），核心会在启动后重新下载；想避免就把 `EGRESS_MIHOMO_HOME` 放到持久卷上。
 - **运行**：配置先用核心自己的 `-t` 校验，再落盘、经 external-controller `PUT /configs` 热重载；
   首次启动等控制器就绪。进程意外退出按 1、2、4…64 秒退避自动拉起；Linux 上设了 `Pdeathsig`，网关进程被强杀时核心一起退出。
-- **接入**：核心只开一条监听 `127.0.0.1` 的带鉴权 SOCKS5 入站。画布里每个被规则引用的策略组 / 节点，
-  编译成一条 `mihomo` 协议的网关端点（`mihomo.<节点 ID>`），对应一个入站用户名；核心配置里置顶
-  `IN-USER,<用户名>,<目标>`。于是「交给哪个策略组」由用户名决定，健康检查、故障转移、统计都照常按网关端点算。
-  连到「mihomo 分流」的流量用 `rules` 用户，不命中任何置顶规则，按核心自己的分流表走。
+- **接入**：画布里每个被规则引用的策略组 / 节点，编译成一条 `mihomo` 协议的网关端点（`mihomo.<节点 ID>`），
+  在核心里对应一个专用的 SOCKS5 入站（监听 `127.0.0.1`、带鉴权、开 UDP，`listeners[].proxy` 指向这个目标），
+  TCP 与 UDP 都直达目标、不经分流规则；健康检查、故障转移、统计都照常按网关端点算。另有一个不指定目标的入站，
+  连到「mihomo 分流」的流量从这里进，按核心自己的分流表走。目标的入站端口在热重载之间保持不变，核心会原样保留这些入站。
+  不用 `IN-USER` 按用户名分发，是因为核心的 SOCKS UDP 中继不带入站用户，UDP 会落到分流规则上。
 - **托管键**：入站、控制器、TUN、`allow-lan`、`external-ui` 这些由网关托管，导入或「其它顶层键」里写了一律剔除。
 - **多进程**：每个进程（API、Worker、多副本）各托管一份核心，家目录 `EGRESS_MIHOMO_HOME/<api|worker>` 分开
   （核心的缓存文件有独占锁）；Unified 模式共用一份。应用只发生在收到请求的进程里，其余进程每 20 秒比对已应用版本号，
@@ -270,7 +305,9 @@ hy2、tuic、anytls、socks、http，一行一条，也接受整段 base64 的 v
 ### 测法
 
 ```bash
-# 自动安装真实核心到指定目录，端到端跑一遍（入站分发、分流拒绝、切换、热重载、重启）
+# UDP 互操作（go-socks5 的 UDP ASSOCIATE、官方 Shadowsocks、最小 Trojan 服务端）与 HTTP/3 经 SOCKS5
+go test ./pkg/egress ./pkg/egress/egressh3
+# 自动安装真实核心到指定目录，端到端跑一遍（专用入站的 TCP 与 UDP、分流拒绝、切换、热重载、重启）
 MIHOMO_INSTALL_DIR=/tmp/mihomo MIHOMO_MIRROR=https://axisnow.gh-proxy.org/ go test ./pkg/egress/mihomo -run TestCoreEndToEnd -v
 # 服务层：真实 Postgres + 真实核心（草稿打码与并发保护、应用、回滚、另一进程按画布启动、恢复为环境变量）
 AEGIS_TEST_PG_DSN=postgres://postgres@127.0.0.1:55441/postgres MIHOMO_BINARY=/tmp/mihomo/bin/mihomo \

@@ -18,13 +18,19 @@ import (
 type Target struct {
 	Host    string
 	Port    int
-	Scheme  string // http / https / tcp
+	Scheme  string // http / https / tcp / udp
 	Profile string
+	// Network 传输层：tcp（默认）或 udp。UDP 只会选能承载 UDP 的线路。
+	Network string
 }
 
 func (t Target) normalized() Target {
 	t.Host = normalizeHost(t.Host)
+	t.Network = networkKind(strings.ToLower(strings.TrimSpace(t.Network)))
 	t.Scheme = strings.ToLower(strings.TrimSpace(t.Scheme))
+	if t.Network == "udp" {
+		t.Scheme = "udp"
+	}
 	if t.Scheme == "" {
 		t.Scheme = "tcp"
 	}
@@ -52,6 +58,8 @@ type Decision struct {
 	Chain []string
 	// HTTPForward 该请求应使用 absolute-URI 转发而非 CONNECT 隧道。
 	HTTPForward bool
+	// Network 这次判定针对的传输层（tcp / udp）。
+	Network string
 	// Err 判定本身失败（如规则要求走代理但无可用端点）。
 	Err error
 }
@@ -68,6 +76,7 @@ type compiledRule struct {
 	prefixes      []netip.Prefix
 	ports         map[int]struct{}
 	schemes       map[string]struct{}
+	networks      map[string]struct{}
 	profiles      []string
 	endpoints     []*Endpoint
 
@@ -130,6 +139,12 @@ func compileRule(cfg RuleConfig, endpoints map[string]*Endpoint) (*compiledRule,
 			r.schemes[s] = struct{}{}
 		}
 	}
+	if len(cfg.Match.Networks) > 0 {
+		r.networks = make(map[string]struct{}, len(cfg.Match.Networks))
+		for _, n := range cfg.Match.Networks {
+			r.networks[n] = struct{}{}
+		}
+	}
 	for _, name := range cfg.Endpoints {
 		endpoint, ok := endpoints[name]
 		if !ok {
@@ -147,6 +162,11 @@ func compileRule(cfg RuleConfig, endpoints map[string]*Endpoint) (*compiledRule,
 func (r *compiledRule) match(t Target, ip netip.Addr, hasIP bool) (string, bool) {
 	if r.excludeSuffix != nil && r.excludeSuffix.contains(t.Host) {
 		return "", false
+	}
+	if len(r.networks) > 0 {
+		if _, ok := r.networks[t.Network]; !ok {
+			return "", false
+		}
 	}
 	if len(r.schemes) > 0 {
 		if _, ok := r.schemes[t.Scheme]; !ok {
@@ -208,6 +228,8 @@ func (r *compiledRule) match(t Target, ip netip.Addr, hasIP bool) (string, bool)
 		return fmt.Sprintf("port=%d", t.Port), true
 	case len(r.schemes) > 0:
 		return "scheme=" + t.Scheme, true
+	case len(r.networks) > 0:
+		return "network=" + t.Network, true
 	case r.cfg.Match.MatchAll:
 		return "matchAll", true
 	default:
@@ -239,14 +261,28 @@ func matchProfile(patterns []string, profile string) bool {
 // 没有可用端点时返回错误而**不是**悄悄降级直连：
 // 「本该出海的流量走了内网出口」是一种会被误当成功的失败，
 // 需要直连兜底就在端点列表末尾显式挂一个 direct 端点。
-func pickEndpoint(candidates []*Endpoint, strategy Strategy, rr *atomic.Uint64, allowUnhealthy bool) (*Endpoint, error) {
+func pickEndpoint(candidates []*Endpoint, strategy Strategy, rr *atomic.Uint64, allowUnhealthy bool, network string) (*Endpoint, error) {
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("没有配置可用端点")
+	}
+	udp := network == "udp"
+	if udp {
+		// UDP 只在能承载它的线路里选：不能承载的线路不是「坏了」，而是根本不在候选里。
+		capable := make([]*Endpoint, 0, len(candidates))
+		for _, endpoint := range candidates {
+			if endpoint.SupportsUDP() {
+				capable = append(capable, endpoint)
+			}
+		}
+		if len(capable) == 0 {
+			return nil, fmt.Errorf("这些线路都不能承载 UDP")
+		}
+		candidates = capable
 	}
 	now := time.Now()
 	available := make([]*Endpoint, 0, len(candidates))
 	for _, endpoint := range candidates {
-		if endpoint.available(now, false) {
+		if endpoint.availableFor(now, udp) {
 			available = append(available, endpoint)
 		}
 	}
@@ -270,7 +306,7 @@ func pickEndpoint(candidates []*Endpoint, strategy Strategy, rr *atomic.Uint64, 
 	case StrategyWeighted:
 		return pickWeighted(available), nil
 	case StrategyLatency:
-		return pickLowestLatency(available), nil
+		return pickLowestLatency(available, udp), nil
 	default: // StrategyFailover
 		return available[0], nil
 	}
@@ -302,11 +338,11 @@ func pickWeighted(candidates []*Endpoint) *Endpoint {
 	return candidates[len(candidates)-1]
 }
 
-func pickLowestLatency(candidates []*Endpoint) *Endpoint {
+func pickLowestLatency(candidates []*Endpoint, udp bool) *Endpoint {
 	best := candidates[0]
-	_, bestLatency, _, _, _, _ := best.snapshotHealth()
+	bestLatency := best.latencyFor(udp)
 	for _, endpoint := range candidates[1:] {
-		_, latency, _, _, _, _ := endpoint.snapshotHealth()
+		latency := endpoint.latencyFor(udp)
 		// 尚未探测过（latency==0）的端点不参与「最低」比较，否则它永远是最优解。
 		if latency == 0 {
 			continue

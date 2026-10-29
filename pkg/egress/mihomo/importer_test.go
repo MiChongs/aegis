@@ -100,12 +100,12 @@ func TestRenderInjectsSystem(t *testing.T) {
 		Extra:       map[string]any{"tun": map[string]any{"enable": true}, "hosts": map[string]any{"x": "1.1.1.1"}},
 		Rules:       []string{"GEOIP,CN,DIRECT"},
 	}
-	out, err := Render(p, System{ControllerAddr: "127.0.0.1:1", Secret: "s", InboundPort: 2, Password: "pw", Targets: []string{"g"}})
+	out, err := Render(p, System{ControllerAddr: "127.0.0.1:1", Secret: "s", InboundPort: 2, Password: "pw", TargetPorts: map[string]int{"g": 3}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(out)
-	for _, want := range []string{"IN-USER," + TargetUser("g") + ",g", "MATCH,DIRECT", "external-controller: 127.0.0.1:1", "interval: 3600", "hosts:"} {
+	for _, want := range []string{"proxy: g", "port: 3", "udp: true", "MATCH,DIRECT", "external-controller: 127.0.0.1:1", "interval: 3600", "hosts:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("缺少 %q:\n%s", want, text)
 		}
@@ -113,8 +113,8 @@ func TestRenderInjectsSystem(t *testing.T) {
 	if strings.Contains(text, "tun:") || strings.Contains(text, "3600.0") {
 		t.Fatalf("不该出现 tun 或浮点整数:\n%s", text)
 	}
-	if strings.Index(text, "IN-USER") > strings.Index(text, "GEOIP") {
-		t.Fatalf("IN-USER 规则必须置顶")
+	if _, err := Render(p, System{ControllerAddr: "127.0.0.1:1", InboundPort: 2, Password: "pw", TargetPorts: map[string]int{"missing": 3}}); err == nil {
+		t.Fatalf("引用核心里不存在的目标应报错")
 	}
 	if err := (Profile{ProxyGroups: []map[string]any{{"name": "g", "type": "select", "proxies": []any{"missing"}}}}).Validate(); err == nil {
 		t.Fatalf("引用不存在的成员应报错")

@@ -51,7 +51,7 @@ func newHTTPDialer(cfg EndpointConfig) (Dialer, error) {
 }
 
 func (d *httpDialer) DialContext(ctx context.Context, base BaseDialFunc, network, address string) (net.Conn, error) {
-	if err := requireTCP(network, d.protocol); err != nil {
+	if err := requireStream(network, d.protocol); err != nil {
 		return nil, err
 	}
 	if _, _, err := splitTarget(address); err != nil {

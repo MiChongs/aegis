@@ -299,7 +299,7 @@ func (s *EgressService) ValidateGraph(ctx context.Context, graph egressgraph.Gra
 }
 
 func previewSystem(targets []string) mihomo.System {
-	return mihomo.System{ControllerAddr: "127.0.0.1:<控制器端口>", Secret: "<随机密钥>", InboundPort: 1, Password: "<随机口令>", Targets: targets}
+	return mihomo.System{ControllerAddr: "127.0.0.1:<控制器端口>", Secret: "<随机密钥>", InboundPort: 7890, Password: "<随机口令>", TargetPorts: mihomo.PlaceholderPorts(targets)}
 }
 
 // ApplyGraph 应用画布：编译 → 核心接受新配置 → 网关热替换 → 落库并记一个版本。

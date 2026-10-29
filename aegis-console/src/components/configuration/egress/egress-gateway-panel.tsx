@@ -195,8 +195,10 @@ function GatewayCard({ view, onOpen }: { view: EgressGraphView; onOpen: () => vo
           </dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">选不出线路</dt>
-          <dd className={cn("font-medium tabular-nums", runtime.failed > 0 && "text-red-600 dark:text-red-400")}>{runtime.failed.toLocaleString()} 次</dd>
+          <dt className="text-muted-foreground">UDP 判定 / 选不出线路</dt>
+          <dd className="font-medium tabular-nums">
+            {(runtime.routedUdp ?? 0).toLocaleString()} / <span className={cn(runtime.failed > 0 && "text-red-600 dark:text-red-400")}>{runtime.failed.toLocaleString()} 次</span>
+          </dd>
         </div>
       </dl>
 
@@ -211,7 +213,13 @@ function GatewayCard({ view, onOpen }: { view: EgressGraphView; onOpen: () => vo
           disabled={probe.isPending || !runtime.endpoints.length}
           onClick={() =>
             probe.mutate(undefined, {
-              onSuccess: (data) => toast.success(`探测完成：${data.results.filter((item) => item.ok).length} / ${data.results.length} 条线路可用`),
+              onSuccess: (data) => {
+                const udp = data.results.filter((item) => item.udpChecked);
+                toast.success(
+                  `探测完成：TCP ${data.results.filter((item) => item.ok).length} / ${data.results.length} 条可用` +
+                    (udp.length ? `，UDP ${udp.filter((item) => item.udpOk).length} / ${udp.length} 条可用` : "")
+                );
+              },
               onError: (error) => toast.error(error instanceof ApiError ? error.message : "探测失败")
             })
           }
@@ -370,6 +378,11 @@ function LinesPanel({ view }: { view: EgressGraphView }) {
                     {endpoint.dials.toLocaleString()} 次连接，{endpoint.failures} 次失败，{formatBytes(endpoint.bytesIn + endpoint.bytesOut)}
                     {endpoint.lastError ? `，${endpoint.lastError}` : ""}
                   </div>
+                  <div className="truncate text-[11px] text-muted-foreground">
+                    {endpoint.udp
+                      ? `UDP ${endpoint.udpHealthy ? (endpoint.udpLatencyMs ? `${endpoint.udpLatencyMs} ms` : "可用") : `不可用${endpoint.udpLastError ? `：${endpoint.udpLastError}` : ""}`}，${endpoint.udpSessions.toLocaleString()} 个会话，${endpoint.packetsIn.toLocaleString()} / ${endpoint.packetsOut.toLocaleString()} 个报文`
+                      : "只承载 TCP"}
+                  </div>
                 </div>
                 <span className={cn("shrink-0 text-xs font-semibold tabular-nums", TONE_TEXT[delayTone(endpoint.latencyMs)], !endpoint.latencyMs && "text-muted-foreground")}>
                   {endpoint.latencyMs ? `${endpoint.latencyMs} ms` : "—"}
@@ -392,6 +405,7 @@ function LinesPanel({ view }: { view: EgressGraphView }) {
                 <div className="flex items-center gap-2 text-sm">
                   <span className="w-6 shrink-0 text-xs tabular-nums text-muted-foreground">#{index + 1}</span>
                   <span className="min-w-0 flex-1 truncate font-medium">{rule.name}</span>
+                  {rule.networks?.length === 1 ? <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{rule.networks[0].toUpperCase()}</span> : null}
                   <span className="shrink-0 text-xs text-muted-foreground">{ACTION_LABEL[rule.action]}</span>
                   <span className="w-16 shrink-0 text-right text-xs font-semibold tabular-nums">{rule.matched.toLocaleString()}</span>
                 </div>

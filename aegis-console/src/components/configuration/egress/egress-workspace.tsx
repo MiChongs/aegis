@@ -1376,11 +1376,12 @@ function TracePanel({
   const [host, setHost] = useState("api.stripe.com");
   const [port, setPort] = useState("443");
   const [profile, setProfile] = useState("");
+  const [network, setNetwork] = useState<"tcp" | "udp">("tcp");
   const [result, setResult] = useState<EgressExplanation | null>(null);
 
   const run = () => {
     explain.mutate(
-      { host: host.trim(), port: Number(port) || 443, profile: profile.trim() || undefined },
+      { host: host.trim(), port: Number(port) || 443, profile: profile.trim() || undefined, network },
       {
         onSuccess: (data) => {
           setResult(data);
@@ -1438,6 +1439,18 @@ function TracePanel({
       <Field label="目标域名或 IP">
         <Input className="h-8 font-mono text-xs" value={host} onChange={(event) => setHost(event.target.value)} onKeyDown={(event) => event.key === "Enter" && run()} />
       </Field>
+      <div className="grid w-40 grid-cols-2 gap-1 rounded-lg bg-muted/60 p-0.5">
+        {(["tcp", "udp"] as const).map((item) => (
+          <button
+            key={item}
+            type="button"
+            onClick={() => setNetwork(item)}
+            className={cn("rounded-md py-1 font-mono text-[11px] transition-colors", network === item ? "bg-background font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >
+            {item.toUpperCase()}
+          </button>
+        ))}
+      </div>
       <div className="grid grid-cols-[96px_1fr] gap-3">
         <Field label="端口">
           <Input className="h-8 font-mono text-xs" value={port} onChange={(event) => setPort(event.target.value)} />

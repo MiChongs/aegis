@@ -65,7 +65,7 @@ func ParseEndpoints(raw string) ([]EndpointConfig, error) {
 // trojan / ss（shadowsocks）。
 //
 // 通用查询参数：weight / region / remark / via / probeUrl / dialTimeoutMs /
-// tls / sni / insecure / alpn / forward。
+// tls / sni / insecure / alpn / forward / udp（udp=false 让线路只走 TCP）。
 // 协议特有：ssh 用 user；ss 用 method（也可写成 ss://method:password@host:port）。
 func ParseEndpointURL(name, raw string) (EndpointConfig, error) {
 	raw = strings.TrimSpace(raw)
@@ -157,6 +157,9 @@ func ParseEndpointURL(name, raw string) (EndpointConfig, error) {
 	}
 	if truthy(query.Get("forward")) {
 		cfg.HTTPForwardMode = true
+	}
+	if v := strings.TrimSpace(query.Get("udp")); v != "" {
+		cfg.UDP = boolPtr(truthy(v))
 	}
 	if truthy(query.Get("tls")) || cfg.Protocol == ProtocolHTTPS || cfg.Protocol == ProtocolTrojan {
 		cfg.TLS.Enabled = true

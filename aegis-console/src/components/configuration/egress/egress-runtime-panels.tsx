@@ -469,7 +469,11 @@ export function DiagnosticsPanel({ view }: { view: EgressGraphView }) {
   const dns = useMihomoDNSMutation();
   const coreRunning = view.core.status === "running";
   const rules = useMihomoRulesQuery(coreRunning);
+  const [network, setNetwork] = useState<"tcp" | "udp">("tcp");
   const [url, setUrl] = useState("https://api.ipify.org?format=json");
+  const [dnsServer, setDnsServer] = useState("");
+  const [queryName, setQueryName] = useState("www.google.com");
+  const [explainNetwork, setExplainNetwork] = useState<"tcp" | "udp">("tcp");
   const [endpoint, setEndpoint] = useState<string | undefined>(undefined);
   const [profile, setProfile] = useState("");
   const [testResult, setTestResult] = useState<EgressTestResult | null>(null);
@@ -484,11 +488,25 @@ export function DiagnosticsPanel({ view }: { view: EgressGraphView }) {
       <section className="space-y-3 rounded-2xl border bg-card p-4">
         <div>
           <h4 className="text-sm font-semibold">出站自测</h4>
-          <p className="text-xs text-muted-foreground">真实发一次请求。把地址指向查询出口 IP 的服务，可以确认落地在哪里。</p>
+          <p className="text-xs text-muted-foreground">
+            {network === "tcp" ? "真实发一次 HTTP 请求。把地址指向查询出口 IP 的服务，可以确认落地在哪里。" : "经路由选中的线路向 DNS 服务器发一次 UDP 查询，验证这条线路的 UDP 是否通。"}
+          </p>
         </div>
-        <Field label="地址">
-          <Input className="h-8 font-mono text-xs" value={url} onChange={(event) => setUrl(event.target.value)} />
-        </Field>
+        <NetworkSwitch value={network} onChange={setNetwork} />
+        {network === "tcp" ? (
+          <Field label="地址">
+            <Input className="h-8 font-mono text-xs" value={url} onChange={(event) => setUrl(event.target.value)} />
+          </Field>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="DNS 服务器" hint="留空用 UDP 探测服务器">
+              <Input className="h-8 font-mono text-xs" placeholder="8.8.8.8:53" value={dnsServer} onChange={(event) => setDnsServer(event.target.value)} />
+            </Field>
+            <Field label="查询域名">
+              <Input className="h-8 font-mono text-xs" value={queryName} onChange={(event) => setQueryName(event.target.value)} />
+            </Field>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Field label="指定线路" hint="留空按路由表">
             <OptionSelect value={endpoint} options={view.runtime.endpoints.map((item) => item.name)} labels={endpointLabels} noneLabel="按路由表" onChange={setEndpoint} />
@@ -500,7 +518,14 @@ export function DiagnosticsPanel({ view }: { view: EgressGraphView }) {
         <Button
           size="sm"
           disabled={test.isPending}
-          onClick={() => test.mutate({ url, endpoint, profile: profile || undefined, timeoutMs: 15000 }, { onSuccess: setTestResult, onError: fail })}
+          onClick={() =>
+            test.mutate(
+              network === "tcp"
+                ? { url, endpoint, profile: profile || undefined, timeoutMs: 15000 }
+                : { network: "udp", url: dnsServer.trim() || undefined, name: queryName.trim() || undefined, endpoint, profile: profile || undefined, timeoutMs: 10000 },
+              { onSuccess: setTestResult, onError: fail }
+            )
+          }
         >
           {test.isPending ? <Loader2 className="animate-spin" /> : <Play />}
           发送请求
@@ -509,7 +534,11 @@ export function DiagnosticsPanel({ view }: { view: EgressGraphView }) {
           <div className={cn("space-y-1 rounded-xl border p-3 text-xs", testResult.ok ? "border-emerald-500/40" : "border-red-500/40")}>
             <div className="flex items-center gap-1.5 font-medium">
               {testResult.ok ? <CircleCheck className="size-3.5 text-emerald-500" /> : <CircleX className="size-3.5 text-red-500" />}
-              {testResult.ok ? `HTTP ${testResult.statusCode}，${testResult.latencyMs} ms` : (testResult.error ?? "失败")}
+              {testResult.ok
+                ? testResult.network === "udp"
+                  ? `UDP 往返 ${testResult.latencyMs} ms，${(testResult.answers ?? []).length} 条记录`
+                  : `HTTP ${testResult.statusCode}，${testResult.latencyMs} ms`
+                : (testResult.error ?? "失败")}
             </div>
             <div className="text-muted-foreground">
               {ACTION_LABEL[testResult.action]}
@@ -526,9 +555,10 @@ export function DiagnosticsPanel({ view }: { view: EgressGraphView }) {
           <h4 className="text-sm font-semibold">路由解释</h4>
           <p className="text-xs text-muted-foreground">不发请求，只看这个目标会命中哪条规则、走哪条线路。画布编辑器的「追踪」会把路径画出来。</p>
         </div>
+        <NetworkSwitch value={explainNetwork} onChange={setExplainNetwork} />
         <div className="flex gap-2">
           <Input className="h-8 font-mono text-xs" value={host} onChange={(event) => setHost(event.target.value)} />
-          <Button size="sm" disabled={!host.trim() || explain.isPending} onClick={() => explain.mutate({ host: host.trim() }, { onSuccess: setExplanation, onError: fail })}>
+          <Button size="sm" disabled={!host.trim() || explain.isPending} onClick={() => explain.mutate({ host: host.trim(), network: explainNetwork }, { onSuccess: setExplanation, onError: fail })}>
             {explain.isPending ? <Loader2 className="animate-spin" /> : <Search />}
             解释
           </Button>
@@ -602,7 +632,7 @@ export function DiagnosticsPanel({ view }: { view: EgressGraphView }) {
               </div>
             ))}
           </div>
-          <p className="text-[11px] text-muted-foreground">InUser 开头的几条是网关自动置顶的分发规则：每个被引用的策略组或节点一条。</p>
+          <p className="text-[11px] text-muted-foreground">网关引用的策略组与节点各有专用入站，不经这些规则；只有「交给 mihomo 分流」的流量按它们走。</p>
         </section>
       ) : null}
     </div>
@@ -704,6 +734,23 @@ export function VersionsPanel({ view, onOpen }: { view: EgressGraphView; onOpen:
           })
         }
       />
+    </div>
+  );
+}
+
+function NetworkSwitch({ value, onChange }: { value: "tcp" | "udp"; onChange: (value: "tcp" | "udp") => void }) {
+  return (
+    <div className="grid w-40 grid-cols-2 gap-1 rounded-lg bg-muted/60 p-0.5">
+      {(["tcp", "udp"] as const).map((item) => (
+        <button
+          key={item}
+          type="button"
+          onClick={() => onChange(item)}
+          className={cn("rounded-md py-1 font-mono text-[11px] transition-colors", value === item ? "bg-background font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground")}
+        >
+          {item.toUpperCase()}
+        </button>
+      ))}
     </div>
   );
 }

@@ -14,6 +14,7 @@ import (
 //
 // 端点配置不填 address：入站地址与口令在核心启动后才确定，拨号时向进程级核心要。
 // Options["target"] 是要交给的策略组或节点名，留空表示「交给核心按分流规则决定」。
+// TCP 与 UDP 都支持：每个目标有专用入站，UDP 经 SOCKS5 UDP ASSOCIATE 交给核心。
 const Protocol egress.Protocol = "mihomo"
 
 // OptionTarget 端点 Options 里存目标名的键。
@@ -21,6 +22,7 @@ const OptionTarget = "target"
 
 func init() {
 	egress.RegisterAddresslessProtocol(Protocol, newDialer)
+	egress.RegisterProtocolUDP(Protocol, egress.UDPOverUDP)
 }
 
 type coreDialer struct {
@@ -43,11 +45,11 @@ func (d *coreDialer) DialContext(ctx context.Context, base egress.BaseDialFunc, 
 	if core == nil {
 		return nil, fmt.Errorf("mihomo 核心未装配")
 	}
-	addr, password, ok := core.Inbound()
-	if !ok {
+	if !core.Running() {
 		return nil, fmt.Errorf("mihomo 核心未运行（%s）", statusLabel(core.Status().Status))
 	}
-	if d.target != "" && !core.HasTarget(d.target) {
+	addr, password, ok := core.Inbound(d.target)
+	if !ok {
 		return nil, fmt.Errorf("mihomo 核心里没有「%s」，配置可能还没生效", d.target)
 	}
 	inner, err := d.socks(addr, password)
@@ -69,7 +71,7 @@ func (d *coreDialer) socks(addr, password string) (egress.Dialer, error) {
 		Name:     "mihomo-inbound",
 		Protocol: egress.ProtocolSOCKS5H,
 		Address:  addr,
-		Username: TargetUser(d.target),
+		Username: InboundUser,
 		Password: password,
 	})
 	if err != nil {

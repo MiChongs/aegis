@@ -76,7 +76,7 @@ func newSSHDialer(cfg EndpointConfig) (Dialer, error) {
 }
 
 func (d *sshDialer) DialContext(ctx context.Context, base BaseDialFunc, network, address string) (net.Conn, error) {
-	if err := requireTCP(network, ProtocolSSH); err != nil {
+	if err := requireStream(network, ProtocolSSH); err != nil {
 		return nil, err
 	}
 	if _, _, err := splitTarget(address); err != nil {
