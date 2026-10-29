@@ -46,6 +46,42 @@ type Catalog struct {
 	DefaultGateway     GatewayData    `json:"defaultGateway"`
 	DefaultCore        CoreData       `json:"defaultCore"`
 	Mihomo             mihomo.Catalog `json:"mihomo"`
+	// Profiles 平台里已知的调用方标识，规则的「调用方」条件从这里选。
+	Profiles []ProfileOption `json:"profiles"`
+}
+
+// ProfileOption 一个调用方标识。
+type ProfileOption struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+}
+
+// KnownProfiles 平台代码里 egress.NewClient 用到的调用方（"x.*" 是前缀通配）。
+var KnownProfiles = []ProfileOption{
+	{Name: "auth.*", Label: "全部登录相关"},
+	{Name: "auth.oauth", Label: "第三方登录 OAuth"},
+	{Name: "auth.oidc", Label: "OIDC 登录"},
+	{Name: "auth.saml_metadata", Label: "SAML 元数据"},
+	{Name: "auth.provider_health", Label: "登录渠道健康检查"},
+	{Name: "oauth.probe", Label: "OAuth 配置探测"},
+	{Name: "payment.*", Label: "全部支付"},
+	{Name: "payment.stripe", Label: "Stripe"},
+	{Name: "payment.paypal", Label: "PayPal"},
+	{Name: "payment.gateway", Label: "其它支付网关"},
+	{Name: "email.*", Label: "全部邮件"},
+	{Name: "email.resend", Label: "Resend"},
+	{Name: "email.ses", Label: "Amazon SES"},
+	{Name: "email.zeabur", Label: "Zeabur 邮件"},
+	{Name: "storage.outbound", Label: "对象存储与云盘"},
+	{Name: "notify.webhook", Label: "Webhook 通知"},
+	{Name: "location.lookup", Label: "IP 归属地查询"},
+	{Name: "risk.ipqs", Label: "IPQS 风险评分"},
+	{Name: "captcha.*", Label: "验证码外部服务"},
+	{Name: "ai.*", Label: "全部 AI"},
+	{Name: "ai.mcp", Label: "AI MCP 工具"},
+	{Name: "ai.catalog.*", Label: "AI 模型目录同步"},
+	{Name: "egress.subscription", Label: "订阅下载"},
+	{Name: "egress.mihomo.install", Label: "核心下载"},
 }
 
 // BuildCatalog 目录；mirror 是 GitHub 镜像前缀，用于新核心节点的 Geo 数据库地址。
@@ -71,6 +107,7 @@ func BuildCatalog(mirror string) Catalog {
 		DefaultGateway:     DefaultGateway(),
 		DefaultCore:        CoreData{Settings: DefaultCoreSettings(mirror)},
 		Mihomo:             mihomo.BuildCatalog(),
+		Profiles:           KnownProfiles,
 	}
 }
 
@@ -119,8 +156,8 @@ type ApplyRequest struct {
 
 // ValidateResult 校验结果，附带渲染后的核心配置（密钥已打码）。
 type ValidateResult struct {
-	Compile CompileView `json:"compile"`
-	YAML    string      `json:"yaml,omitempty"`
+	Compile CompileView  `json:"compile"`
+	YAML    string       `json:"yaml,omitempty"`
 	Routes  RoutePreview `json:"routes"`
 }
 
@@ -169,11 +206,11 @@ type ImportRequest struct {
 
 // ImportResult 导入后的新画布。
 type ImportResult struct {
-	Graph    Graph       `json:"graph"`
-	Format   string      `json:"format"`
-	Notes    []string    `json:"notes"`
-	Added    Summary     `json:"added"`
-	Compile  CompileView `json:"compile"`
+	Graph   Graph       `json:"graph"`
+	Format  string      `json:"format"`
+	Notes   []string    `json:"notes"`
+	Added   Summary     `json:"added"`
+	Compile CompileView `json:"compile"`
 }
 
 // ExportRequest 导出核心配置。
