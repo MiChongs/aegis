@@ -97,7 +97,7 @@ MCP 服务自述（AdminAuth，密钥与会话都能调）：
 | `internal/middleware/admin_mcp_key.go` | 分流、AdminAuth 白名单、路由级约束 |
 | `internal/transport/http/admin_mcp_key_handlers.go`、`router_mcp.go` | 管理接口与自述接口 |
 | `aegis-console/src/components/profile/*mcp-key*` | 控制台「个人资料 → MCP 密钥」 |
-| `mcp/` | Python MCP 服务：FastMCP 4（mcp SDK 2.3），`core/` 内核 + `modules/` 24 个领域模块、386 个工具，清单见 `mcp/TOOLS.md` |
+| `mcp/` | Python MCP 服务：FastMCP 4（mcp SDK 2.3），`core/` 内核 + `modules/` 25 个领域模块、432 个工具，清单见 `mcp/TOOLS.md` |
 
 ## 测法
 

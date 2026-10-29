@@ -59,7 +59,7 @@ AEGIS_BASE_URL=https://aegis.example.com aegis-mcp --transport http --host 0.0.0
 |---|---|
 | `--read-only` | 只暴露只读工具（与密钥是否只读无关，双保险） |
 | `--modules users,vip,lottery` | 只挂载这些模块（通用层恒挂载）；`--exclude-modules` 反之 |
-| `--tool-search` | 只下发 `search_tools` / `run_tool` 与通用层，其余三百多个工具按需检索（BM25）后调用。客户端有工具数量上限或上下文紧张时用 |
+| `--tool-search` | 只下发 `search_tools` / `run_tool` 与通用层，其余四百多个工具按需检索（BM25）后调用。客户端有工具数量上限或上下文紧张时用 |
 | `--list-modules` | 列出可用模块 |
 
 ## 环境变量
@@ -74,7 +74,7 @@ AEGIS_BASE_URL=https://aegis.example.com aegis-mcp --transport http --host 0.0.0
 
 ## 工具
 
-共 386 个，按领域分 24 个模块，工具名前缀即模块：完整清单见 [TOOLS.md](TOOLS.md)（脚本生成）。
+共 432 个，按领域分 25 个模块，工具名前缀即模块：完整清单见 [TOOLS.md](TOOLS.md)（脚本生成）。
 
 | 模块 | 覆盖 |
 |---|---|
@@ -87,6 +87,7 @@ AEGIS_BASE_URL=https://aegis.example.com aegis-mcp --transport http --host 0.0.0
 | `store_` / `cardkey_` / `invite_` / `signin_` / `leaderboard_` | 积分商城、卡密、邀请、签到与奖励策略试算、自动签到、排行榜与结算 |
 | `vip_` / `features_` / `ads_` / `lottery_` | 会员套餐、功能标识、发放（可预览）与收回、权益、流水、试用、折算策略；功能解锁；激励广告与广告服务策略；抽奖活动、奖品、出奖模拟、审计、记录与人工奖品发放 |
 | `grant_` | 物品发放：目录与模板、画布规则（完整画布或表单直线画布）新建修改启停删除、校验与预演（单人追踪 / 抽样估算）、立即执行与取消、执行记录、发放记录、人工物品处理与失败重试、总览 |
+| `egress_` | 出海网关（限超管）：总览、运行态（线路 TCP / UDP 健康）、画布按名字编辑（规则链增改移删、命中去向、网关设置、线路、mihomo 节点 / 策略组 / 订阅 / 分流 / 核心、连线）、校验、路由解释、TCP / UDP 自测、探测、导入 Clash / mihomo 配置与分享链接、导出 YAML、应用、版本与回滚；mihomo 核心状态、策略组测速与切换、订阅与规则集更新、连接、日志、DNS、安装与启停。编辑只改草稿，`egress_apply` 才生效 |
 | `content_` / `tickets_` / `releases_` / `reports_` / `admins_` | 公告、Banner、站内信、平台公告；工单与配置；发布中心（灰度、定向、命中模拟）；报表中心；管理员、角色、授权策略与判定解释、临时权限、委托、会话、在线 |
 
 工具都带 MCP 注解：只读工具 `read_only_hint`，不可逆或影响面大的写工具 `destructive_hint`，客户端据此要求确认。

@@ -1,6 +1,6 @@
 [project]
 name = "aegis-mcp"
-version = "0.2.1"
+version = "0.3.0"
 description = "Aegis 管理端 MCP 服务：让 AI 助手凭 MCP 密钥查询与管理 Aegis（应用、用户、会员、积分、工单、审计等）"
 readme = "README.md"
 requires-python = ">=3.11"
