@@ -195,11 +195,11 @@ export function EgressImportDialog({
 
 /** 作为订阅导入：一个订阅节点 + 一个用它的自动测速组，放在现有节点右侧。 */
 function addProvider(graph: EgressGraph, name: string, url: string, routeFallback: boolean): EgressGraph {
-  const right = Math.max(0, ...graph.nodes.map((node) => node.position.x)) + 420;
+  const right = Math.max(0, ...(graph.nodes ?? []).map((node) => node.position.x)) + 420;
   const providerId = newId("m_provider");
   const groupId = newId("m_group");
   const nodes = [
-    ...graph.nodes,
+    ...(graph.nodes ?? []),
     {
       id: groupId,
       type: "m_group" as const,
@@ -222,7 +222,7 @@ function addProvider(graph: EgressGraph, name: string, url: string, routeFallbac
       }
     }
   ];
-  const edges = [...graph.edges, { id: edgeId(groupId, "members", providerId), source: groupId, sourceHandle: "members", target: providerId }];
+  const edges = [...(graph.edges ?? []), { id: edgeId(groupId, "members", providerId), source: groupId, sourceHandle: "members", target: providerId }];
   if (routeFallback) {
     const gateway = nodes.find((node) => node.type === "gateway");
     if (gateway) {

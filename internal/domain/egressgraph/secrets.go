@@ -48,7 +48,7 @@ type SecretFunc func(node Node, path string, value string) (string, error)
 
 // WalkSecrets 遍历所有节点里的密钥字段（非空字符串才会回调）。
 func WalkSecrets(graph Graph, fn SecretFunc) (Graph, error) {
-	out := Graph{Nodes: make([]Node, len(graph.Nodes)), Edges: append([]Edge(nil), graph.Edges...), Viewport: graph.Viewport}
+	out := Graph{Nodes: make([]Node, len(graph.Nodes)), Edges: append([]Edge{}, graph.Edges...), Viewport: graph.Viewport}
 	for i, node := range graph.Nodes {
 		out.Nodes[i] = node
 		if len(node.Data) == 0 {

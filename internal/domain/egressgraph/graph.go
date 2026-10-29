@@ -200,9 +200,9 @@ func NodeSpecs() []NodeSpec {
 				{ID: PortDialer, Label: "前置代理", Accepts: []string{NodeProxy, NodeGroup}, Side: "right"},
 			}},
 		{Type: NodeRules, Label: "mihomo 分流", Category: "mihomo", Single: true, Input: "left",
-			Hint: "交给核心按 GeoIP、GeoSite、规则集等再分流；网关规则连到这里即可"},
+			Hint: "交给核心按 GeoIP、GeoSite、规则集等再分流；网关规则连到这里即可", Outputs: []PortSpec{}},
 		{Type: NodeCore, Label: "mihomo 核心", Category: "mihomo", Single: true,
-			Hint: "核心的全局设置、DNS、Geo 数据库与其它高级键"},
+			Hint: "核心的全局设置、DNS、Geo 数据库与其它高级键", Outputs: []PortSpec{}},
 	}
 }
 

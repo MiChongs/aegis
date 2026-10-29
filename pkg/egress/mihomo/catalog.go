@@ -310,7 +310,7 @@ func proxyTypes() []TypeSpec {
 			f("host-key-algorithms", "主机公钥算法", "list", "advanced"),
 		}, dialFields())},
 		{Type: "direct", Label: "直连", Hint: "可指定出站网卡或 IP 版本的直连出口", Fields: dialFields()},
-		{Type: "dns", Label: "DNS 劫持", Hint: "把连接交给核心的 DNS 模块", Fields: nil},
+		{Type: "dns", Label: "DNS 劫持", Hint: "把连接交给核心的 DNS 模块", Fields: []FieldSpec{}},
 	}
 }
 
@@ -342,7 +342,7 @@ func groupTypes() []TypeSpec {
 		{Type: "load-balance", Label: "负载均衡", Hint: "在可用节点间分摊连接", Fields: join([]FieldSpec{
 			f("strategy", "分摊方式", "select", "basic").opts("consistent-hashing", "round-robin", "sticky-sessions").def("consistent-hashing").hint("一致性哈希：同一目标地址固定走同一节点"),
 		}, health, common)},
-		{Type: "relay", Label: "链式中继", Hint: "按成员顺序逐跳转发（已不推荐，节点上的「前置代理」连线更灵活）", Fields: nil},
+		{Type: "relay", Label: "链式中继", Hint: "按成员顺序逐跳转发（已不推荐，节点上的「前置代理」连线更灵活）", Fields: []FieldSpec{}},
 	}
 }
 

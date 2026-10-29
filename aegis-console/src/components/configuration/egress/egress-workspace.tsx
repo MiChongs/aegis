@@ -138,7 +138,7 @@ function fromCanvasJSON(json: unknown): EgressGraph {
 }
 
 function portSpec(catalog: EgressGraphCatalog, type: string, port: string) {
-  return catalog.nodes.find((spec) => spec.type === type)?.outputs.find((output) => output.id === port);
+  return catalog.nodes.find((spec) => spec.type === type)?.outputs?.find((output) => output.id === port);
 }
 
 /** 这几类连线连起来不能成环：规则链、经由、成员与前置代理。 */
@@ -217,7 +217,7 @@ function buildEditorProps(graph: EgressGraph, catalog: EgressGraphCatalog, bridg
       if (source.id === target.id) return false;
       const port = String(fromPort.portID ?? "");
       const spec = portSpec(bridge.current.catalog, String(source.flowNodeType), port);
-      if (!spec || !spec.accepts.includes(target.flowNodeType as EgressNodeType)) return false;
+      if (!spec || !(spec.accepts ?? []).includes(target.flowNodeType as EgressNodeType)) return false;
       const lines = ctx.document.linesManager.getAllLines();
       if (lines.some((line) => line.from?.id === source.id && line.to?.id === target.id && String(line.fromPort?.portID) === port)) return false;
       if (!spec.multi && lines.some((line) => line.from?.id === source.id && String(line.fromPort?.portID) === port)) return false;
@@ -1174,7 +1174,7 @@ function NodePalette({
                         <div className="min-w-0">
                           <div className="truncate text-xs font-medium">{spec.label}</div>
                           <div className="truncate text-[11px] text-muted-foreground">
-                            {disabled ? "画布上已有" : spec.outputs.length ? spec.outputs.map((output) => output.label).join(" / ") : "设置节点"}
+                            {disabled ? "画布上已有" : spec.outputs?.length ? spec.outputs.map((output) => output.label).join(" / ") : "设置节点"}
                           </div>
                         </div>
                       </button>
@@ -1233,7 +1233,7 @@ function QuickAddMenu({ catalog, menu, onPick, onClose }: { catalog: EgressGraph
   const left = Math.max(8, Math.min(menu.client.x + 8, window.innerWidth - width - 8));
   const top = Math.max(64, Math.min(menu.client.y - 24, window.innerHeight - 320));
   const port = portSpec(catalog, String(menu.port.node.flowNodeType), String(menu.port.portID ?? ""));
-  const specs = catalog.nodes.filter((spec) => port?.accepts.includes(spec.type));
+  const specs = catalog.nodes.filter((spec) => (port?.accepts ?? []).includes(spec.type));
   return (
     <div className="fixed z-40 max-h-[360px] overflow-y-auto rounded-2xl border bg-popover p-1.5 text-popover-foreground shadow-xl" style={{ left, top, width }} onMouseDown={(event) => event.stopPropagation()}>
       <div className="px-2 pt-1 pb-1.5 text-[11px] text-muted-foreground">从「{port?.label}」接一个新节点</div>

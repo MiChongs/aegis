@@ -319,7 +319,7 @@ export type EgressNodeSpec = {
   hint: string;
   single?: boolean;
   input?: "top" | "left";
-  outputs: EgressPortSpec[];
+  outputs: EgressPortSpec[] | null;
 };
 
 export type MihomoFieldKind = "text" | "number" | "bool" | "select" | "secret" | "list" | "textarea" | "map";
