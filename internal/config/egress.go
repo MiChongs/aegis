@@ -125,3 +125,36 @@ func egressSeconds(v *viper.Viper, key string, fallback int) int {
 	}
 	return int(d / time.Second)
 }
+
+// MihomoConfig 托管 mihomo 核心的部署参数。核心的业务配置在控制台画布里，这里只管「程序在哪、怎么装」。
+type MihomoConfig struct {
+	// Home 核心的家目录（配置、缓存、订阅、Geo 数据库），默认 data/mihomo。
+	// 每个进程用自己的子目录（server / api / worker），互不抢占缓存文件锁。
+	Home string
+	// Binary 显式指定核心程序；留空用 Home/bin/mihomo，需要时自动下载。
+	Binary string
+	// AutoInstall 画布里用到 mihomo 而程序不存在时，从 GitHub 发布页下载并校验 sha256。
+	AutoInstall bool
+	// Mirror GitHub 下载前缀，失败回落直连；留空只走直连。
+	Mirror string
+	// Version 自动安装的版本，留空取最新正式版。
+	Version string
+}
+
+func loadMihomoConfig(v *viper.Viper) MihomoConfig {
+	home := strings.TrimSpace(v.GetString("EGRESS_MIHOMO_HOME"))
+	if home == "" {
+		home = filepath.Join("data", "mihomo")
+	}
+	mirror := "https://axisnow.gh-proxy.org/"
+	if v.IsSet("EGRESS_MIHOMO_MIRROR") {
+		mirror = strings.TrimSpace(v.GetString("EGRESS_MIHOMO_MIRROR"))
+	}
+	return MihomoConfig{
+		Home:        home,
+		Binary:      strings.TrimSpace(v.GetString("EGRESS_MIHOMO_BINARY")),
+		AutoInstall: getBool(v, "EGRESS_MIHOMO_AUTO_INSTALL", true),
+		Mirror:      mirror,
+		Version:     strings.TrimSpace(v.GetString("EGRESS_MIHOMO_VERSION")),
+	}
+}

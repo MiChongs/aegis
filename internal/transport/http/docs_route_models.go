@@ -25,6 +25,7 @@ import (
 	"aegis/internal/domain/app"
 	"aegis/internal/domain/authprotocol"
 	"aegis/internal/domain/devicelimit"
+	"aegis/internal/domain/egressgraph"
 	"aegis/internal/domain/storage"
 	"aegis/internal/domain/system"
 	"aegis/internal/service"
@@ -215,10 +216,10 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/activities/{activityId}/fortune/controls"):                    LotteryFortuneControlRequest{},           // AdminCreateLotteryFortuneControls
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/activities/{activityId}/fortune/controls/preview"):            LotteryFortuneControlRequest{},           // AdminPreviewLotteryFortuneControl
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/activities/{activityId}/fortune/controls/revoke"):             LotteryFortuneRevokeRequest{},            // AdminRevokeLotteryFortuneControls
-		routeKey("PUT", "/api/admin/apps/{appkey}/lottery/settings"):                                                     LotterySettingsRequest{},                 // AdminSaveLotterySettings
 		routeKey("PUT", "/api/admin/apps/{appkey}/lottery/activities/{activityId}/fortune/settings"):                     LotteryFortuneSettingsRequest{},          // AdminSetLotteryFortuneSettings
 		routeKey("PUT", "/api/admin/apps/{appkey}/lottery/activities/{activityId}/status"):                               LotteryStatusRequest{},                   // AdminSetLotteryActivityStatus
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/draws/{drawId}/fulfill"):                                      LotteryFulfillRequest{},                  // AdminFulfillLotteryDraw
+		routeKey("PUT", "/api/admin/apps/{appkey}/lottery/settings"):                                                     LotterySettingsRequest{},                 // AdminSaveLotterySettings
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/simulate"):                                                    LotterySimulateRequest{},                 // AdminSimulateLottery
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/tickets/users/{userId}/adjust"):                               LotteryTicketAdjustRequest{},             // AdminAdjustLotteryTickets
 		routeKey("DELETE", "/api/admin/apps/{appkey}/notices"):                                                           AdminBatchIDsRequest{},                   // DeleteAdminNotices
@@ -400,6 +401,19 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/system/device-marketing-names/{id}"):                                                 DeviceMarketingUpdateRequest{},           // UpdateDeviceMarketingName
 		routeKey("PUT", "/api/admin/system/egress"):                                                                      system.EgressSettingsUpdate{},            // AdminUpdateEgressSettings
 		routeKey("POST", "/api/admin/system/egress/explain"):                                                             AdminEgressExplainRequest{},              // AdminExplainEgress
+		routeKey("PUT", "/api/admin/system/egress/graph"):                                                                egressgraph.SaveRequest{},                // AdminSaveEgressGraph
+		routeKey("POST", "/api/admin/system/egress/graph/apply"):                                                         egressgraph.ApplyRequest{},               // AdminApplyEgressGraph
+		routeKey("POST", "/api/admin/system/egress/graph/export"):                                                        egressgraph.ExportRequest{},              // AdminExportEgressGraph
+		routeKey("POST", "/api/admin/system/egress/graph/import"):                                                        egressgraph.ImportRequest{},              // AdminImportEgressGraph
+		routeKey("POST", "/api/admin/system/egress/graph/rollback"):                                                      AdminEgressRollbackRequest{},             // AdminRollbackEgressGraph
+		routeKey("POST", "/api/admin/system/egress/graph/validate"):                                                      egressgraph.SaveRequest{},                // AdminValidateEgressGraph
+		routeKey("POST", "/api/admin/system/egress/mihomo/connections/close"):                                            AdminEgressCoreCloseRequest{},            // AdminEgressCoreCloseConnection
+		routeKey("POST", "/api/admin/system/egress/mihomo/delay"):                                                        service.CoreDelayRequest{},               // AdminEgressCoreDelay
+		routeKey("POST", "/api/admin/system/egress/mihomo/dns"):                                                          AdminEgressCoreDNSRequest{},              // AdminEgressCoreDNS
+		routeKey("POST", "/api/admin/system/egress/mihomo/install"):                                                      AdminEgressCoreInstallRequest{},          // AdminEgressCoreInstall
+		routeKey("POST", "/api/admin/system/egress/mihomo/maintenance"):                                                  AdminEgressCoreMaintenanceRequest{},      // AdminEgressCoreMaintenance
+		routeKey("POST", "/api/admin/system/egress/mihomo/providers"):                                                    AdminEgressCoreProviderRequest{},         // AdminEgressCoreProvider
+		routeKey("POST", "/api/admin/system/egress/mihomo/select"):                                                       AdminEgressCoreSelectRequest{},           // AdminEgressCoreSelect
 		routeKey("POST", "/api/admin/system/egress/test"):                                                                AdminEgressTestRequest{},                 // AdminTestEgress
 		routeKey("POST", "/api/admin/system/email/configs"):                                                              AdminPlatformEmailConfigSaveRequest{},    // AdminPlatformEmailConfigCreate
 		routeKey("PUT", "/api/admin/system/email/configs/{configId}"):                                                    AdminPlatformEmailConfigSaveRequest{},    // AdminPlatformEmailConfigUpdate

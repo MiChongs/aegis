@@ -37,6 +37,8 @@ type DialerFactory func(cfg EndpointConfig) (Dialer, error)
 var (
 	registryMu sync.RWMutex
 	registry   = map[Protocol]DialerFactory{}
+	// addressless 不需要 address 的协议：服务端地址在拨号时才确定（如进程内托管的 mihomo 核心）。
+	addressless = map[Protocol]bool{}
 )
 
 // RegisterProtocol 注册一种协议实现。
@@ -51,6 +53,30 @@ func RegisterProtocol(p Protocol, factory DialerFactory) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	registry[p] = factory
+}
+
+// RegisterAddresslessProtocol 注册一种「端点不填 address」的协议：
+// 服务端地址由实现方在拨号时自行决定，校验层不再要求 host:port。
+func RegisterAddresslessProtocol(p Protocol, factory DialerFactory) {
+	RegisterProtocol(p, factory)
+	if p == "" || factory == nil {
+		return
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	addressless[p] = true
+}
+
+func protocolAddressless(p Protocol) bool {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	return addressless[p]
+}
+
+// NewDialer 按端点配置构造一个协议拨号器，供扩展协议复用内置实现
+// （例如把流量经 SOCKS5 交给本机的另一个代理核心）。
+func NewDialer(cfg EndpointConfig) (Dialer, error) {
+	return buildDialer(normalizeEndpoint(cfg))
 }
 
 // RegisteredProtocols 返回当前可用的协议清单（含内置与自定义），已排序。

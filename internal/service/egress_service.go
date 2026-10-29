@@ -12,6 +12,7 @@ import (
 	systemdomain "aegis/internal/domain/system"
 	pgrepo "aegis/internal/repository/postgres"
 	"aegis/pkg/egress"
+	"aegis/pkg/egress/mihomo"
 	apperrors "aegis/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -38,6 +39,17 @@ type EgressService struct {
 	dbOverride bool
 	updatedBy  *int64
 	updatedAt  *time.Time
+
+	// core 进程级 mihomo 核心；owner 表示本实例负责启动载入与跨进程同步
+	// （Unified 模式下 API 与 Worker 共用一份网关，只有创建它的一侧是 owner）。
+	core   *mihomo.Core
+	owner  bool
+	mirror string
+	// graphVersion 本进程当前应用的画布版本，0 表示没有在用画布。
+	graphVersion int64
+	targets      []string
+	// graphMu 串行化画布的保存、应用与跨进程同步。
+	graphMu sync.Mutex
 }
 
 // NewEgressService 构造管理面。gw 为 nil 时所有管理端接口返回 503。
@@ -60,6 +72,19 @@ func NewEgressService(log *zap.Logger, pg *pgrepo.Repository, gw *egress.Gateway
 // 而不是整个平台起不来。
 func (s *EgressService) Initialize(ctx context.Context) error {
 	if s == nil || s.gw == nil || s.pg == nil {
+		return nil
+	}
+	s.mu.RLock()
+	owner, attached := s.owner, s.core != nil
+	s.mu.RUnlock()
+	if attached && !owner {
+		// 共用网关的另一侧已经载入过，这里再载一次会把画布配置换回旧版覆盖。
+		return nil
+	}
+	if loaded, err := s.initializeGraph(ctx); err != nil {
+		s.log.Error("读取出海网关画布失败", zap.Error(err))
+	} else if loaded {
+		s.log.Info("出海网关按画布配置运行")
 		return nil
 	}
 	record, err := s.pg.GetPlatformSetting(ctx, egressSettingKey)
@@ -128,6 +153,11 @@ func (s *EgressService) UpdateSettings(ctx context.Context, actorID *int64, upda
 		return systemdomain.EgressSettingsView{}, apperrors.New(50302, http.StatusServiceUnavailable, "出海网关配置存储不可用")
 	}
 
+	if s.core != nil {
+		if profile, ok := s.core.Profile(); ok && !profile.Empty() {
+			return systemdomain.EgressSettingsView{}, apperrors.New(40900, http.StatusConflict, "当前配置包含 mihomo 线路，请在画布里修改")
+		}
+	}
 	next, err := s.materialize(update)
 	if err != nil {
 		return systemdomain.EgressSettingsView{}, err
@@ -171,6 +201,10 @@ func (s *EgressService) UpdateSettings(ctx context.Context, actorID *int64, upda
 	updatedAt := saved.UpdatedAt
 	s.updatedAt = &updatedAt
 	s.mu.Unlock()
+	// 旧接口改过的配置以它为准：撤掉画布，否则下次启动会按画布覆盖回去。
+	if err := s.clearGraph(ctx, actorID); err != nil {
+		s.log.Warn("撤掉出海网关画布失败", zap.Error(err))
+	}
 
 	s.log.Info("出海网关配置已更新",
 		zap.Bool("enabled", next.Enabled),
@@ -193,6 +227,9 @@ func (s *EgressService) ResetToEnv(ctx context.Context, actorID *int64) (systemd
 		return systemdomain.EgressSettingsView{}, apperrors.New(40000, http.StatusBadRequest, err.Error())
 	}
 	if s.pg != nil {
+		if err := s.clearGraph(ctx, actorID); err != nil {
+			s.log.Warn("撤掉出海网关画布失败", zap.Error(err))
+		}
 		// 写入 null 值而不是删行：platform_settings 没有删除接口，
 		// 空值在 Initialize 里被当作「无覆盖」处理，语义一致。
 		if _, err := s.pg.UpsertPlatformSetting(ctx, systemdomain.SettingRecord{

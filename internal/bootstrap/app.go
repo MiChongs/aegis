@@ -372,6 +372,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	adminService.SetPlatformSettings(systemService)
 	// 出海网关管理面：数据库里的配置覆盖 .env 基线
 	egressService := service.NewEgressService(log, pg, egressGateway, cfg.Security.MasterKey, cfg.Egress)
+	egressService.AttachMihomo(ensureMihomoCore(cfg.EgressMihomo, "api", log), ownsEgress, cfg.EgressMihomo.Mirror)
 	if err := adminService.LoadCustomRoles(ctx); err != nil {
 		log.Warn("加载自定义角色失败", zap.Error(err))
 	}
@@ -886,6 +887,7 @@ func (a *APIApp) Start(ctx context.Context) error {
 	}
 	if a.OwnsEgress && a.EgressGateway != nil {
 		a.EgressGateway.Start(ctx)
+		a.Egress.StartSync(ctx)
 	}
 	registerAPIConfigHotReload(a.ConfigManager, a.Logger, a.Firewall, a.Security, a.AutoSign, a.AccountBan, a.Risk, a.Egress)
 

@@ -86,7 +86,9 @@ type Config struct {
 	// Egress 出海代理网关：按目标域名后缀把出站流量路由到境外线路。
 	// 详见 pkg/egress 与 docs/egress-gateway.md。
 	Egress egress.Config
-	OAuth  map[string]OAuthProviderConfig
+	// EgressMihomo 出海网关托管的 mihomo 核心（画布里的节点、策略组、订阅都跑在它上面）。
+	EgressMihomo MihomoConfig
+	OAuth        map[string]OAuthProviderConfig
 	// OAuth2Server 对外的 OAuth2 / OIDC 授权服务器（Ory Hydra + Aegis 作为登录与同意页）。
 	// 与上面的 OAuth（Aegis 作为客户端去接第三方登录）方向相反。详见 docs/oauth2-provider.md。
 	OAuth2Server OAuth2ServerConfig
@@ -1181,6 +1183,7 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 	if err := cfg.Egress.Validate(); err != nil {
 		return Config{}, fmt.Errorf("出海网关配置无效: %w", err)
 	}
+	cfg.EgressMihomo = loadMihomoConfig(v)
 
 	return cfg, nil
 }

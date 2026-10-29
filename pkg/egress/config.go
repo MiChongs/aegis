@@ -581,7 +581,7 @@ func (c Config) Validate() error {
 var endpointNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 func validateEndpoint(e EndpointConfig) error {
-	if e.Protocol != ProtocolDirect {
+	if e.Protocol != ProtocolDirect && !protocolAddressless(e.Protocol) {
 		if e.Address == "" {
 			return fmt.Errorf("缺少 address（host:port）")
 		}

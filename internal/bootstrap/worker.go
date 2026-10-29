@@ -145,6 +145,7 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 	}
 	pg := pgrepo.New(postgres)
 	egressService := service.NewEgressService(log, pg, egressGateway, cfg.Security.MasterKey, cfg.Egress)
+	egressService.AttachMihomo(ensureMihomoCore(cfg.EgressMihomo, "worker", log), ownsEgress, cfg.EgressMihomo.Mirror)
 	if err := egressService.Initialize(ctx); err != nil {
 		log.Warn("加载持久化的出海网关配置失败，沿用 .env 配置", zap.Error(err))
 	}
@@ -233,6 +234,7 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 func (w *WorkerApp) Run(ctx context.Context) error {
 	if w.OwnsEgress && w.EgressGateway != nil {
 		w.EgressGateway.Start(ctx)
+		w.Egress.StartSync(ctx)
 	}
 	registerWorkerConfigHotReload(w.ConfigManager, w.Logger, w.AutoSign, w.Egress)
 	// Worker 侧同样采集：长事务与连接泄漏往往出在后台任务而非请求链路
