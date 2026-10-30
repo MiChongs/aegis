@@ -113,6 +113,9 @@ class AegisClient private constructor(
     /** 权益凭证：服务端签名、离线可验的「拥有某项权益」，见 [AegisFeatureTicketApi]。 */
     val featureTickets: AegisFeatureTicketApi = AegisFeatureTicketApi(this)
 
+    /** 一起听：换取连接一起听服务的票据，见 [AegisListenTogetherApi]。 */
+    val listenTogether: AegisListenTogetherApi = AegisListenTogetherApi(this)
+
     // ── /config ───────────────────────────────────────────────────────
 
     /**

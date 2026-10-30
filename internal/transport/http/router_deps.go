@@ -62,6 +62,7 @@ type RouterDeps struct {
 	Version          *service.VersionService
 	Release          *service.ReleaseService
 	ClientControl    ClientControlAPI
+	ListenTogether   *service.ListenTogetherService
 	DeviceLimit      *service.DeviceLimitService
 	PlatformSettings *service.PlatformSettingsService
 	PlatformBanner   *service.PlatformBannerService
@@ -163,6 +164,7 @@ func (d RouterDeps) newHandler() *Handler {
 		version:            d.Version,
 		release:            d.Release,
 		clientControl:      d.ClientControl,
+		listenTogether:     d.ListenTogether,
 		deviceLimit:        d.DeviceLimit,
 		roleApp:            d.RoleApplication,
 		email:              d.Email,

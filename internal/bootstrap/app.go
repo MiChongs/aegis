@@ -576,6 +576,15 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	accountBanService.SetOAuth2Server(oauth2ServerService)
 	userService.SetOAuth2Server(oauth2ServerService)
 
+	// 一起听（独立微服务 services/listentogether）：主服务只签票据、发布公钥、转发管理操作。
+	// 这里的配置错误只让一起听不可用，不拖垮主服务启动（docs/listen-together.md）。
+	listenTogetherService, err := service.NewListenTogetherService(log, cfg.ListenTogether, vipService, userService, appService, natsConn)
+	if err != nil {
+		log.Error("一起听配置无效，一起听不可用", zap.Error(err))
+		listenTogetherService = nil
+	}
+	accountBanService.SetListenTogether(listenTogetherService)
+
 	// 设备营销名称字典：启动时幂等种子（表空则解析嵌入的 kt 源并批量写入）
 	deviceMarketingService := service.NewDeviceMarketingService(log, pg)
 	// 设备字典映射到用户接口：会话、登录记录、扫码登录发起端的 deviceInfo 读取时按字典现查
@@ -714,6 +723,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Version:          versionService,
 		Release:          releaseService,
 		ClientControl:    clientControlService,
+		ListenTogether:   listenTogetherService,
 		DeviceLimit:      deviceLimitService,
 		PlatformSettings: systemService,
 		PlatformBanner:   platformBannerService,

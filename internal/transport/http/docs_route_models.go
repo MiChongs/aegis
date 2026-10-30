@@ -211,6 +211,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/users/adjust"):                                                 LevelBatchAdjustRequest{},                // AdminBatchAdjustLevelUsers
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/users/{userId}/adjust"):                                        LevelAdjustRequest{},                     // AdminAdjustLevelUser
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/validate"):                                                     LevelGraphRequest{},                      // AdminValidateLevelScheme
+		routeKey("POST", "/api/admin/apps/{appkey}/listen-together/rooms/{roomId}/close"):                                AdminListenTogetherCloseRequest{},        // AdminListenTogetherCloseRoom
+		routeKey("POST", "/api/admin/apps/{appkey}/listen-together/rooms/{roomId}/kick"):                                 AdminListenTogetherKickRequest{},         // AdminListenTogetherKick
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/activities"):                                                  LotteryActivityRequest{},                 // AdminCreateLotteryActivity
 		routeKey("PUT", "/api/admin/apps/{appkey}/lottery/activities/{activityId}"):                                      LotteryActivityRequest{},                 // AdminUpdateLotteryActivity
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/activities/{activityId}/fortune/controls"):                    LotteryFortuneControlRequest{},           // AdminCreateLotteryFortuneControls

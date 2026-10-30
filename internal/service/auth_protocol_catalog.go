@@ -316,6 +316,8 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "vipStatus", Method: "GET", Path: "/vip/status", Auth: true, Summary: "我的会员状态"},
 	{Key: "vipFeatures", Method: "GET", Path: "/vip/features", Auth: true, Summary: "会员权益目录（启用中的标识、名称与说明）"},
 	{Key: "vipFeatureTicket", Method: "POST", Path: "/vip/feature-ticket", Auth: true, Summary: "权益凭证：拥有某项权益时签发绑定账号与设备的 Ed25519 凭证，客户端离线验签"},
+	{Key: "listenTogetherTicket", Method: "POST", Path: "/listen-together/ticket", Auth: true,
+		Summary: "一起听票据：拥有 listen_together 权益时签发短期 EdDSA 票据并给出一起听服务的 wss 地址（docs/listen-together.md）"},
 	{Key: "vipTransactions", Method: "GET", Path: "/vip/transactions", Auth: true, Summary: "会员流水"},
 	{Key: "vipConversions", Method: "GET", Path: "/vip/conversions", Auth: true, Summary: "会员折算记录（已拥有的发放、开通永久时折掉的存量）"},
 	{Key: "vipPurchase", Method: "POST", Path: "/vip/purchase", Auth: true, Summary: "购买会员"},
@@ -735,6 +737,11 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 		Recovery: authprotocol.RecoveryRefreshConfig, Hint: "应用已升到 sealed 档，不能再发明文"},
 	{Code: 50372, Name: "SIGNING_SECRET_MISSING", Message: "尚未签发应用密钥",
 		Recovery: authprotocol.RecoveryNone, Hint: "让管理员在控制台轮换一次应用密钥"},
+	// ── 一起听（docs/listen-together.md）──没有权益沿用 40230 FEATURE_NOT_GRANTED
+	{Code: errCodeListenNotEnabled, Name: "LISTEN_TOGETHER_NOT_ENABLED", Message: "一起听服务尚未开通",
+		Recovery: authprotocol.RecoveryNone, Hint: "服务端没有配置 LISTEN_TOGETHER_ENDPOINTS；客户端隐藏一起听入口"},
+	{Code: errCodeListenUnavailable, Name: "LISTEN_TOGETHER_UNAVAILABLE", Message: "一起听服务暂时不可用",
+		Recovery: authprotocol.RecoveryNone, Hint: "稍后重试"},
 }
 
 // GatewayOperations 供 transport 层做「目录与路由是否一致」的漂移检查。

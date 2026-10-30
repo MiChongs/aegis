@@ -333,6 +333,8 @@ services:
       RDKIT_CAPTCHA_URL: http://rdkit-captcha:5000
       # 授权服务器（profile: oauth2）的管理端，容器网络内的地址
       HYDRA_ADMIN_URL: http://hydra:4445
+      # 一起听微服务的内部管理接口（Connect/gRPC，只在容器网络内可达）
+      LISTEN_TOGETHER_RPC_URL: http://listen-together:8091
       # HTTPS + HTTP/3（TLS_ENABLED=true 时才监听）：容器内固定 8443，对外端口由下面的映射决定，
       # Alt-Svc 宣告与明文跳转用的是对外端口。证书放进 TLS_CERT_DIR，.env 里写容器内路径
       # （TLS_CERT_FILE=/etc/aegis/tls/fullchain.pem）；用 ACME 时证书缓存在 aegis_autocert 卷里。
@@ -367,6 +369,39 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+
+  # ── 一起听微服务（services/listentogether，docs/listen-together.md）──
+  #  独立进程：长连接与房间状态都在这里，主服务只签票据与转发管理操作。
+  #  可水平扩容（docker compose up --scale listen-together=3），实例间经 Redis 共享状态、经 NATS 同步事件。
+  #  对外只暴露 8090（WebSocket），8091 管理接口与指标只在容器网络内。
+  listen-together:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/listen-together.Dockerfile
+    image: aegis-listen-together:latest
+    profiles: ["app", "listen"]
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      LT_REDIS_URL: redis://redis:6379/0
+      LT_NATS_URL: nats://nats:4222
+      LT_TICKET_JWKS_URL: http://server:8088/api/listen-together/jwks.json
+      LT_INTERNAL_TOKEN: ${LISTEN_TOGETHER_INTERNAL_TOKEN:-}
+      LT_ALLOWED_ORIGINS: ${LISTEN_TOGETHER_ALLOWED_ORIGINS:-*}
+      LT_OTLP_ENDPOINT: ${LISTEN_TOGETHER_OTLP_ENDPOINT:-}
+    ports:
+      - "${LISTEN_TOGETHER_PORT:-8090}:8090"
+    depends_on:
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8090/readyz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
 volumes:
   postgres_data:

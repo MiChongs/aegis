@@ -1,0 +1,10 @@
+# 内部服务契约（protobuf）。生成：在 api/ 下执行 `buf generate`（见 docs/listen-together.md）。
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

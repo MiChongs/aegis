@@ -259,6 +259,8 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/vip/status", h.MyVipStatus)
 		appGatewayAuthed.GET("/vip/features", h.VipFeatures)
 		appGatewayAuthed.POST("/vip/feature-ticket", h.VipFeatureTicket)
+		// 一起听：签短期票据并给出一起听微服务的连接地址（docs/listen-together.md）
+		appGatewayAuthed.POST("/listen-together/ticket", h.AppListenTogetherTicket)
 		appGatewayAuthed.GET("/vip/transactions", h.MyVipTransactions)
 		appGatewayAuthed.GET("/vip/conversions", h.MyVipConversions)
 		appGatewayAuthed.POST("/vip/purchase", h.PurchaseVip)

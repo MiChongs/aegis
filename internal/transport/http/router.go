@@ -27,6 +27,7 @@ type Handler struct {
 	version         *service.VersionService
 	release         *service.ReleaseService
 	clientControl   ClientControlAPI
+	listenTogether  *service.ListenTogetherService
 	deviceLimit     *service.DeviceLimitService
 	roleApp         *service.RoleApplicationService
 	email           *service.EmailService

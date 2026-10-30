@@ -245,6 +245,9 @@ GET	/api/admin/apps/:appkey/levels/users	AdminListLevelUsers
 GET	/api/admin/apps/:appkey/levels/users/:userId	AdminGetLevelUser
 GET	/api/admin/apps/:appkey/levels/versions	AdminListLevelVersions
 GET	/api/admin/apps/:appkey/levels/versions/:version	AdminGetLevelVersion
+GET	/api/admin/apps/:appkey/listen-together/rooms	AdminListenTogetherRooms
+GET	/api/admin/apps/:appkey/listen-together/rooms/:roomId	AdminListenTogetherRoom
+GET	/api/admin/apps/:appkey/listen-together/stats	AdminListenTogetherStats
 GET	/api/admin/apps/:appkey/login-baseline/:userid	AdminAppLoginBaseline
 GET	/api/admin/apps/:appkey/lottery/activities	AdminListLotteryActivities
 GET	/api/admin/apps/:appkey/lottery/activities/:activityId	AdminGetLotteryActivity
@@ -586,6 +589,7 @@ GET	/api/leaderboard/signin/:type	LeaderboardSignIn
 GET	/api/leaderboard/summary	LeaderboardSummary
 GET	/api/legal/documents	PublicLegalCatalog
 GET	/api/legal/documents/:docType	PublicLegalDocument
+GET	/api/listen-together/jwks.json	ListenTogetherJWKS
 GET	/api/notifications	Notifications
 GET	/api/notifications/:notificationId	NotificationDetail
 GET	/api/notifications/preferences	NotificationPreferences
@@ -930,6 +934,8 @@ POST	/api/admin/apps/:appkey/levels/users/:userId/adjust	AdminAdjustLevelUser
 POST	/api/admin/apps/:appkey/levels/users/adjust	AdminBatchAdjustLevelUsers
 POST	/api/admin/apps/:appkey/levels/validate	AdminValidateLevelScheme
 POST	/api/admin/apps/:appkey/levels/versions/:version/restore	AdminRestoreLevelVersion
+POST	/api/admin/apps/:appkey/listen-together/rooms/:roomId/close	AdminListenTogetherCloseRoom
+POST	/api/admin/apps/:appkey/listen-together/rooms/:roomId/kick	AdminListenTogetherKick
 POST	/api/admin/apps/:appkey/lottery/activities	AdminCreateLotteryActivity
 POST	/api/admin/apps/:appkey/lottery/activities/:activityId/fortune/controls	AdminCreateLotteryFortuneControls
 POST	/api/admin/apps/:appkey/lottery/activities/:activityId/fortune/controls/preview	AdminPreviewLotteryFortuneControl
@@ -1381,6 +1387,7 @@ POST	/api/v1/apps/:appkey/feedback/:feedbackId/replies	AppReplyFeedback
 POST	/api/v1/apps/:appkey/feedback/attachments	AppUploadFeedbackAttachment
 POST	/api/v1/apps/:appkey/invite/bind	AppBindInvite
 POST	/api/v1/apps/:appkey/invite/preview	AppPreviewInvite
+POST	/api/v1/apps/:appkey/listen-together/ticket	AppListenTogetherTicket
 POST	/api/v1/apps/:appkey/lottery/activities/:activityId/draw	AppLotteryDraw
 POST	/api/v1/apps/:appkey/lottery/activities/:activityId/draw/batch	AppLotteryDrawBatch
 POST	/api/v1/apps/:appkey/me/2fa/recovery-codes	GenerateRecoveryCodes

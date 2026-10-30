@@ -2236,6 +2236,50 @@ private fun encodePathSegment(value: String): String =
 private fun buildBody(vararg pairs: Pair<String, Any?>): Map<String, Any?> =
     pairs.filter { it.second != null }.toMap()
 
+/**
+ * 一起听（服务端 docs/listen-together.md）。
+ *
+ * 房间与长连接在独立的一起听微服务里，这里只换票据：拥有 `listen_together` 权益时，
+ * 服务端签一张短期 EdDSA 票据并给出一起听服务的 wss 地址。客户端连上后第一帧发 `hello` 带票据；
+ * 过了 [AegisListenTogetherTicket.refreshAfter] 再调一次 [ticket]，在连接上发 `auth` 续期。
+ */
+class AegisListenTogetherApi internal constructor(private val client: AegisClient) {
+
+    /** 签一张票据。没有权益抛 [AegisException]（code [CODE_NOT_GRANTED]），服务未开通 code 为 [CODE_NOT_ENABLED]。 */
+    @Throws(IOException::class)
+    fun ticket(): AegisListenTogetherTicket = client.decodeAs(
+        client.call("POST", "/listen-together/ticket", body = emptyMap<String, String>(), requireAuth = true),
+        AegisListenTogetherTicket.serializer(),
+    )
+
+    companion object {
+        /** 会员功能目录里的权益标识。 */
+        const val FEATURE = "listen_together"
+        const val CODE_NOT_GRANTED = 40230
+        const val CODE_NOT_ENABLED = 50360
+        const val CODE_UNAVAILABLE = 50361
+    }
+}
+
+/** 一起听票据（时间均为毫秒时间戳，[serverTime] 可用来粗校时钟）。 */
+@kotlinx.serialization.Serializable
+data class AegisListenTogetherTicket(
+    val ticket: String,
+    val expiresAt: Long,
+    val refreshAfter: Long,
+    val endpoints: List<String> = emptyList(),
+    val serverTime: Long = 0,
+    val user: AegisListenTogetherUser = AegisListenTogetherUser(),
+)
+
+/** 票据里给房间其他人看的资料（[id] 为对外用户 ID）。 */
+@kotlinx.serialization.Serializable
+data class AegisListenTogetherUser(
+    val id: Long = 0,
+    val nickname: String = "",
+    val avatar: String = "",
+)
+
 private fun buildQuery(vararg pairs: Pair<String, String?>): Map<String, String> =
     pairs.mapNotNull { (key, value) -> value?.let { key to it } }.toMap()
 

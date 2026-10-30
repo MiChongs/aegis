@@ -31,6 +31,7 @@ type AccountBanService struct {
 	sessions         *redisrepo.SessionRepository
 	plugin           *PluginService
 	oauth2           *OAuth2ServerService
+	listenTogether   *ListenTogetherService
 	cron             *cron.Cron
 	cleanupBatchSize int
 	started          bool
@@ -263,10 +264,16 @@ func (s *AccountBanService) SetOAuth2Server(oauth2 *OAuth2ServerService) {
 	s.oauth2 = oauth2
 }
 
+// SetListenTogether 注入一起听：封禁时让一起听服务立刻断开这个人（不等票据过期）。
+func (s *AccountBanService) SetListenTogether(listen *ListenTogetherService) {
+	s.listenTogether = listen
+}
+
 // afterBanCreated 封禁落库后的副作用。仅登录的封禁不动已签发的会话 —— 这正是它和全部访问的区别。
 func (s *AccountBanService) afterBanCreated(ctx context.Context, appID int64, userID int64, ban *userdomain.AccountBan) {
 	if ban.Blocks(userdomain.AccountBanCheckpointSession) {
 		s.revokeUserSessions(ctx, appID, userID)
+		s.listenTogether.RevokeUser(appID, userID, "banned")
 	}
 	s.emitUserBannedHook(appID, userID, ban)
 }

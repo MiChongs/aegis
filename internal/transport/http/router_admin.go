@@ -496,6 +496,13 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.GET("/apps/:appkey/ai-gateway/users/:userId/credits", h.AdminAIGatewayUserCredits)
 		admin.POST("/apps/:appkey/ai-gateway/users/:userId/credits", h.AdminAdjustAIGatewayCredit)
 
+		// 一起听（独立微服务，经内部 RPC 转发）：统计、房间、解散、移出
+		admin.GET("/apps/:appkey/listen-together/stats", h.AdminListenTogetherStats)
+		admin.GET("/apps/:appkey/listen-together/rooms", h.AdminListenTogetherRooms)
+		admin.GET("/apps/:appkey/listen-together/rooms/:roomId", h.AdminListenTogetherRoom)
+		admin.POST("/apps/:appkey/listen-together/rooms/:roomId/close", h.AdminListenTogetherCloseRoom)
+		admin.POST("/apps/:appkey/listen-together/rooms/:roomId/kick", h.AdminListenTogetherKick)
+
 		admin.GET("/apps/:appkey/lottery/catalog", h.AdminLotteryCatalog)
 		admin.GET("/apps/:appkey/lottery/settings", h.AdminLotterySettings)
 		admin.PUT("/apps/:appkey/lottery/settings", h.AdminSaveLotterySettings)

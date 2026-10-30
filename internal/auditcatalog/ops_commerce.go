@@ -68,6 +68,13 @@ func init() {
 		View("POST /api/admin/apps/:appkey/wallet/receipt", "生成钱包流水凭证", "钱包流水"),
 		Write("POST /api/admin/apps/:appkey/wallet/receipt/email", "发送钱包流水凭证邮件", "钱包流水", SeverityLow),
 
+		// 一起听（独立微服务，经内部 RPC 转发）
+		View("GET /api/admin/apps/:appkey/listen-together/stats", "查看一起听统计", ""),
+		View("GET /api/admin/apps/:appkey/listen-together/rooms", "查看一起听房间", ""),
+		View("GET /api/admin/apps/:appkey/listen-together/rooms/:roomId", "查看一起听房间详情", ""),
+		Write("POST /api/admin/apps/:appkey/listen-together/rooms/:roomId/close", "解散一起听房间", "一起听房间", SeverityMedium),
+		Write("POST /api/admin/apps/:appkey/listen-together/rooms/:roomId/kick", "移出一起听成员", "一起听房间", SeverityMedium),
+
 		// 激励广告
 		View("GET /api/admin/apps/:appkey/rewarded-ads/config", "查看激励广告配置", ""),
 		Write("PUT /api/admin/apps/:appkey/rewarded-ads/config", "修改激励广告配置", "", SeverityHigh),

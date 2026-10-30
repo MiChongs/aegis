@@ -1,0 +1,163 @@
+syntax = "proto3";
+
+// 一起听微服务的内部管理接口（Connect，同时兼容 gRPC / gRPC-Web）。
+//
+// 调用方只有 Aegis 主服务：控制台的「一起听」页面经主服务的管理端路由转进来，
+// 主服务负责管理员鉴权与审计，这里只认内部服务令牌（Authorization: Bearer <LT_INTERNAL_TOKEN>）。
+// 终端用户不走这里，他们连的是一起听服务的 WebSocket（见 docs/listen-together.md）。
+//
+// 用户 ID 一律是对外的 16 位用户 ID（users.public_id），与票据的 sub 一致；
+// 数据库主键不出 Aegis 主服务。
+package listentogether.v1;
+
+option go_package = "aegis/api/gen/listentogether/v1;listentogetherv1";
+
+service ListenTogetherAdminService {
+  // 统计：房间数、在线人数、各实例的连接数
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+  // 某应用的房间列表，按最近活动倒序
+  rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
+  // 房间详情：成员、队列、正在播放、最近聊天
+  rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
+  // 解散房间：所有成员收到 room.closed
+  rpc CloseRoom(CloseRoomRequest) returns (CloseRoomResponse);
+  // 把某人移出房间，并在该房间存续期间禁止再加入
+  rpc KickMember(KickMemberRequest) returns (KickMemberResponse);
+  // 断开某用户在一起听的全部连接并让其退出房间（封禁、强制下线时用）
+  rpc DisconnectUser(DisconnectUserRequest) returns (DisconnectUserResponse);
+}
+
+message Track {
+  string item_id = 1;
+  string source = 2;
+  string song_id = 3;
+  string title = 4;
+  string artist = 5;
+  string album = 6;
+  string cover_url = 7;
+  int64 duration_ms = 8;
+  int64 requested_by = 9;
+}
+
+message Playback {
+  string item_id = 1;
+  Track track = 2;
+  int64 position_ms = 3;
+  bool playing = 4;
+  double rate = 5;
+  int64 updated_at_ms = 6;
+}
+
+message Member {
+  int64 user_id = 1;
+  string nickname = 2;
+  string avatar = 3;
+  string role = 4;
+  bool can_control = 5;
+  bool online = 6;
+  int64 joined_at_ms = 7;
+  string platform = 8;
+  string state = 9;
+}
+
+message ChatMessage {
+  string id = 1;
+  int64 user_id = 2;
+  string nickname = 3;
+  string text = 4;
+  int64 sent_at_ms = 5;
+}
+
+message RoomSummary {
+  string room_id = 1;
+  string code = 2;
+  string name = 3;
+  int64 host_user_id = 4;
+  string host_nickname = 5;
+  int32 member_count = 6;
+  int32 online_count = 7;
+  int32 capacity = 8;
+  string control_mode = 9;
+  bool allow_requests = 10;
+  bool locked = 11;
+  Playback playback = 12;
+  int32 queue_length = 13;
+  int64 created_at_ms = 14;
+  int64 updated_at_ms = 15;
+}
+
+message RoomDetail {
+  RoomSummary summary = 1;
+  repeated Member members = 2;
+  repeated Track queue = 3;
+  repeated ChatMessage recent_chat = 4;
+  repeated int64 banned_user_ids = 5;
+}
+
+message Instance {
+  string id = 1;
+  string version = 2;
+  int64 started_at_ms = 3;
+  int32 connections = 4;
+  int32 rooms = 5;
+  int64 heartbeat_at_ms = 6;
+}
+
+message GetStatsRequest {
+  // 为空时统计全部应用
+  string app_key = 1;
+}
+
+message GetStatsResponse {
+  int32 rooms = 1;
+  int32 playing_rooms = 2;
+  int32 members = 3;
+  int32 online_members = 4;
+  repeated Instance instances = 5;
+}
+
+message ListRoomsRequest {
+  string app_key = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ListRoomsResponse {
+  repeated RoomSummary rooms = 1;
+  int32 total = 2;
+}
+
+message GetRoomRequest {
+  string app_key = 1;
+  string room_id = 2;
+}
+
+message GetRoomResponse {
+  RoomDetail room = 1;
+}
+
+message CloseRoomRequest {
+  string app_key = 1;
+  string room_id = 2;
+  string reason = 3;
+}
+
+message CloseRoomResponse {}
+
+message KickMemberRequest {
+  string app_key = 1;
+  string room_id = 2;
+  int64 user_id = 3;
+}
+
+message KickMemberResponse {}
+
+message DisconnectUserRequest {
+  string app_key = 1;
+  int64 user_id = 2;
+  string reason = 3;
+}
+
+message DisconnectUserResponse {
+  int32 connections = 1;
+}

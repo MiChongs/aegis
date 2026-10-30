@@ -175,6 +175,9 @@ var routeGroups = []routeGroup{
 	// ── 系统与实时 ────────────────────────────────────────────────────
 	{Realm: realmSystem, Title: "实时通信", Tag: "Realtime", Auth: authWebSocket,
 		Exact: []string{"/api/ws"}},
+	// 一起听票据公钥：一起听微服务（与 JWKS 验签库）免登录拉取，见 docs/listen-together.md
+	{Realm: realmSystem, Title: "一起听-票据公钥", Tag: tagAPI, Auth: authPublic,
+		Exact: []string{"/api/listen-together/jwks.json"}},
 	// 只给 Hydra 调：签发与刷新令牌前问一次账号与应用状态
 	{Realm: realmSystem, Title: "OAuth2 令牌钩子", Tag: tagAPI, Auth: authHydraHook,
 		Prefix: "/api/oauth2/hooks/"},
