@@ -190,6 +190,9 @@ func (s *AIGatewayService) RelayChat(ctx context.Context, principal *AIGatewayPr
 	if reserved.ClampMaxTokens > 0 {
 		request.MaxTokens = reserved.ClampMaxTokens
 	}
+	// 登记为在途：进程退出时会被主动取消，暂扣放回而不是挂到过期（ai_gateway_inflight.go）。
+	ctx, untrack := s.inflight.track(ctx)
+	defer untrack()
 	if in.OnReserved != nil {
 		in.OnReserved(reserved.RequestNo)
 	}
@@ -199,7 +202,8 @@ func (s *AIGatewayService) RelayChat(ctx context.Context, principal *AIGatewayPr
 	started := time.Now()
 	// 流式：累计上游已经生成的内容，客户端中途断开时按它计费。
 	var delivered aidomain.ChatResponse
-	toolArgs := map[string]int{}
+	// 工具调用按适配器给的序号（ToolIndex）归组：上游不给编号或编号重复时按编号归组会串。
+	toolArgs := map[int]int{}
 	clientGone := false
 	var wrapped func(aidomain.StreamEvent) error
 	if in.Stream {
@@ -211,10 +215,10 @@ func (s *AIGatewayService) RelayChat(ctx context.Context, principal *AIGatewayPr
 			case aidomain.StreamReasoning:
 				delivered.Reasoning += event.Delta
 			case aidomain.StreamToolStart:
-				toolArgs[event.ToolID] = len(delivered.ToolCalls)
+				toolArgs[event.ToolIndex] = len(delivered.ToolCalls)
 				delivered.ToolCalls = append(delivered.ToolCalls, aidomain.ToolCall{ID: event.ToolID, Name: event.ToolName})
 			case aidomain.StreamToolDelta:
-				if index, ok := toolArgs[event.ToolID]; ok {
+				if index, ok := toolArgs[event.ToolIndex]; ok {
 					delivered.ToolCalls[index].Arguments = append(delivered.ToolCalls[index].Arguments, event.Delta...)
 				}
 			}
@@ -229,6 +233,12 @@ func (s *AIGatewayService) RelayChat(ctx context.Context, principal *AIGatewayPr
 
 	response, channel, err := s.ai.GatewayDispatch(ctx, principal.AppID, model.ConfigID, request, wrapped)
 	if err != nil {
+		// 进程退出时我们自己取消的：不是客户端的选择，整笔放回、不扣费。
+		if aiGatewayShuttingDown(ctx) {
+			err = aiGatewayShutdownError()
+			call.finish(ctx, s.release(ctx, reserved.RequestNo, err, channel, started), nil, aidomain.FinishError)
+			return nil, err
+		}
 		aborted := in.Stream && (clientGone || ctx.Err() != nil)
 		if output := aigateway.EstimateChatOutput(&delivered); aborted && output > 0 {
 			meters := aigateway.Meters{InputTokens: estimate.InputTokens, OutputTokens: output}

@@ -85,6 +85,7 @@ func TestAIRelayHTTPIntegration(t *testing.T) {
 	}
 	for _, input := range []aigateway.ModelInput{
 		{Model: "chat", UpstreamModel: "up-chat", Kind: aigateway.KindChat, InputPrice: decimal.NewFromInt(1000), OutputPrice: decimal.NewFromInt(1000)},
+		{Model: "cut", UpstreamModel: "up-cut", Kind: aigateway.KindChat, InputPrice: decimal.NewFromInt(1000), OutputPrice: decimal.NewFromInt(1000)},
 		{Model: "edit", UpstreamModel: "up-edit", Kind: aigateway.KindImage, ImagePrice: decimal.NewFromInt(1)},
 		{Model: "whisper", UpstreamModel: "up-whisper", Kind: aigateway.KindTranscription, MinutePrice: decimal.NewFromInt(2)},
 		{Model: "draw", UpstreamModel: "up-draw", Kind: aigateway.KindImage, ImagePrice: decimal.NewFromInt(2)},
@@ -275,6 +276,18 @@ func TestAIRelayHTTPIntegration(t *testing.T) {
 	if streamed, err := gw.GetRequest(ctx, appID, resp.Header.Get("X-Aegis-Request-No")); err != nil ||
 		streamed.FirstTokenMs <= 0 || streamed.Trace.Attempts[1].FirstTokenMs <= 0 || streamed.Trace.Response["text"] != "Hel" {
 		t.Fatalf("流式应记首字耗时与已生成内容：%+v %v", streamed, err)
+	}
+
+	// 上游的流半路断了（没有 finish_reason 也没有 [DONE]）：错误事件收尾、不写 [DONE]，按失败放回不扣费
+	cutBody := `{"model":"cut","stream":true,"messages":[{"role":"user","content":"hi"}],"max_tokens":20}`
+	resp, body = do("POST", "/api/ai/v1/chat/completions", "application/json", strings.NewReader(cutBody), bearer)
+	text = string(body)
+	if resp.StatusCode != 200 || !strings.Contains(text, `"content":"Hel"`) || !strings.Contains(text, `data: {"error":{`) ||
+		strings.Contains(text, "[DONE]") || strings.Contains(text, `"finish_reason":"stop"`) {
+		t.Fatalf("截断的上游流应以错误事件收尾：%d %s", resp.StatusCode, text)
+	}
+	if cut, err := gw.GetRequest(ctx, appID, resp.Header.Get("X-Aegis-Request-No")); err != nil || cut.Status != aigateway.StatusFailed {
+		t.Fatalf("截断的上游流应判失败、不扣费：%+v %v", cut, err)
 	}
 
 	// Anthropic Messages：x-api-key 鉴权、Messages 形状
@@ -614,6 +627,9 @@ func newRelayFakeUpstream(t *testing.T) *relayFakeUpstream {
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = fmt.Fprintf(w, "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"model\":%q,"+
 				"\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hel\"},\"finish_reason\":null}]}\n\n", req.Model)
+			if req.Model == "up-cut" {
+				return // 连接半路断开：没有 finish_reason，也没有 [DONE]
+			}
 			_, _ = fmt.Fprintf(w, "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"model\":%q,"+
 				"\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n", req.Model)
 			_, _ = fmt.Fprintf(w, "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"model\":%q,\"choices\":[],%s}\n\n", req.Model, usage)

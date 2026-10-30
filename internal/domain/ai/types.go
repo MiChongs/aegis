@@ -460,7 +460,10 @@ type ChatResponse struct {
 	Thinking     []ThinkingBlock `json:"thinking,omitempty"`
 	ToolCalls    []ToolCall      `json:"toolCalls,omitempty"`
 	FinishReason string          `json:"finishReason"`
-	Usage        Usage           `json:"usage"`
+	// FinishRaw 上游原样给的结束原因，只在归一不了（FinishReason = FinishOther）时记，
+	// 对外协议照原样转出去，不冒充成 stop。
+	FinishRaw string `json:"finishRaw,omitempty"`
+	Usage     Usage  `json:"usage"`
 }
 
 // ── 流式事件 ──

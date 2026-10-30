@@ -31,10 +31,15 @@ type aiLLMClient struct {
 	log *zap.Logger
 	// thinking 工具调用的思考签名，续轮时补回（ai_llm_reasoning.go）。
 	thinking *aiThinkingMemo
+	// idleTimeout 上游响应开始后连续多久收不到一个字节就判卡死、主动断开；0 不限（ai_llm_idle.go）。
+	idleTimeout time.Duration
 }
 
+// aiUpstreamIdleTimeoutDefault 与 config.AIRelayConfig 的缺省一致；bootstrap 会按配置覆盖。
+const aiUpstreamIdleTimeoutDefault = 5 * time.Minute
+
 func newAILLMClient(log *zap.Logger) *aiLLMClient {
-	return &aiLLMClient{log: log, thinking: newAIThinkingMemo()}
+	return &aiLLMClient{log: log, thinking: newAIThinkingMemo(), idleTimeout: aiUpstreamIdleTimeoutDefault}
 }
 
 // aiUpstreamError 供应商侧的失败。Retryable 决定链路要不要试下一条通道。
@@ -62,6 +67,9 @@ func (c *aiLLMClient) httpClient(provider string) *http.Client {
 		DialTimeout:           15 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Minute,
 	})
+	// 上游空闲看门狗：响应开始后长时间一个字节都不来（连接半开、上游卡死）就断开，
+	// 而不是一直挂到前面的代理把客户端切掉（ai_llm_idle.go）。
+	client.Transport = aiIdleTransport{base: client.Transport, provider: provider, idle: c.idleTimeout}
 	// 网关的调用追踪：ctx 里带 aiTrace 时记下每次往返（ai_gateway_trace.go），否则原样透传。
 	client.Transport = aiTraceTransport{base: client.Transport}
 	return client

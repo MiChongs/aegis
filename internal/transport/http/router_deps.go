@@ -75,6 +75,8 @@ type RouterDeps struct {
 	AIAgent          *service.AIAgentService
 	// AIGateway 面向应用终端用户的计费中转（/api/ai/v1 与网关里的 /ai/*）
 	AIGateway *service.AIGatewayService
+	// AIRelay 中转的请求体上限与读请求体期限（AI_RELAY_*，见 config/ai_relay.go）
+	AIRelay config.AIRelayConfig
 
 	// ── 组织架构 ──────────────────────────────────────────────────────
 	Organization    *service.OrganizationService
@@ -230,6 +232,7 @@ func (d RouterDeps) newHandler() *Handler {
 		aiProvider:         d.AIProvider,
 		aiAgent:            d.AIAgent,
 		aiGateway:          d.AIGateway,
+		aiRelayMaxBody:     d.AIRelay.MaxBodyBytes,
 		oauth2:             d.OAuth2Server,
 		aiAgentWSOrigin:    service.WebSocketOriginChecker(d.CORS.AllowOrigins),
 		consoleURL:         strings.TrimRight(strings.TrimSpace(d.ConsoleBaseURL), "/"),

@@ -95,6 +95,9 @@ type Config struct {
 
 	// ListenTogether 一起听微服务的对接配置（票据、JWKS、内部 RPC），见 listen_together.go
 	ListenTogether ListenTogetherConfig
+
+	// AIRelay 用户 AI 中转的请求体上限、读请求体期限、上游空闲看门狗，见 ai_relay.go
+	AIRelay AIRelayConfig
 }
 
 // TracingConfig OpenTelemetry 追踪配置（环境变量驱动）。
@@ -1183,6 +1186,7 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 		return Config{}, fmt.Errorf("HTTPS_PORT 与 HTTP_PORT 不能相同（都是 %d）", cfg.HTTPPort)
 	}
 	cfg.TLSServer = tlsServer
+	cfg.AIRelay = loadAIRelayConfig(v)
 	cfg.Egress = egressCfg.Normalize()
 	if err := cfg.Egress.Validate(); err != nil {
 		return Config{}, fmt.Errorf("出海网关配置无效: %w", err)

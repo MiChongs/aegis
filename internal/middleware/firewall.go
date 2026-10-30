@@ -507,7 +507,8 @@ func (f *Firewall) inspectRequest(state firewallState, c *gin.Context, clientIP 
 		return interrupted, nil
 	}
 
-	if tx.IsRequestBodyAccessible() && c.Request.Body != nil && c.Request.Body != http.NoBody {
+	if tx.IsRequestBodyAccessible() && c.Request.Body != nil && c.Request.Body != http.NoBody &&
+		!skipsBodyInspection(c.Request.URL.Path) {
 		body, err := f.snapshotRequestBody(c.Request)
 		if errors.Is(err, errSkipBodyInspection) {
 			return nil, nil
@@ -530,6 +531,23 @@ func (f *Firewall) inspectRequest(state firewallState, c *gin.Context, clientIP 
 		return nil, fmt.Errorf("process request body: %w", err)
 	}
 	return interrupted, nil
+}
+
+// bodyInspectionExemptPrefixes 只检查请求头与 URI、不把请求体喂给 WAF 的路径前缀。
+//
+// /api/ai/v1/：用户 AI 中转。请求体是对话历史 —— 工具结果里满是源码、shell 命令、文件路径、
+// SQL，CRS 的 LFI / RCE / 注入规则对它们误报成片，Agent 跑着跑着某一轮就被 403 拦下；
+// 请求体又能到几十 MB，超过 WAF 的检查上限直接 503。这里的内容只会被原样转给模型，
+// 不进 SQL、不进 shell、不落页面，检查它没有收益。鉴权由处理器自己做，限流照常生效。
+var bodyInspectionExemptPrefixes = []string{"/api/ai/v1/"}
+
+func skipsBodyInspection(path string) bool {
+	for _, prefix := range bodyInspectionExemptPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // errSkipBodyInspection 请求体超出检查上限但属于文件上传：放行，只是不做请求体检查。

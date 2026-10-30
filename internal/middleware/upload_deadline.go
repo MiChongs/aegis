@@ -34,3 +34,18 @@ func isUploadRequest(req *http.Request) bool {
 	contentType := strings.ToLower(req.Header.Get("Content-Type"))
 	return strings.HasPrefix(contentType, "multipart/form-data") || strings.HasPrefix(contentType, "application/octet-stream")
 }
+
+// PathReadDeadline 给某个路径前缀下的写请求放宽读请求体的期限（AI 中转：Agent 的多轮对话
+// 请求体动辄几 MB 到几十 MB，带着工具结果与截图，手机上行几秒内传不完）。
+// 与 UploadReadDeadline 一样必须挂在所有读请求体的中间件之前。window <= 0 时不生效。
+func PathReadDeadline(prefix string, window time.Duration) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if window > 0 && prefix != "" && strings.HasPrefix(c.Request.URL.Path, prefix) {
+			switch c.Request.Method {
+			case http.MethodPost, http.MethodPut, http.MethodPatch:
+				_ = http.NewResponseController(c.Writer).SetReadDeadline(time.Now().Add(window))
+			}
+		}
+		c.Next()
+	}
+}

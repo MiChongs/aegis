@@ -501,6 +501,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	aiAgentService := service.NewAIAgentService(log, pg, aiProviderService, appFunctionService)
 	// 面向应用终端用户的计费中转：通道复用上面的链路，计费落积分 / 余额 / 额度（docs/ai-gateway.md）。
 	aiGatewayService := service.NewAIGatewayService(log, pg, authService, aiProviderService)
+	// 上游空闲看门狗（AI_UPSTREAM_IDLE_TIMEOUT）：上游卡死时主动断开，而不是挂到代理切断客户端。
+	aiProviderService.SetUpstreamIdleTimeout(cfg.AIRelay.UpstreamIdleTimeout)
 	// 调用记录的实时事件经 NATS 跨实例分发（控制台调用记录页的实时刷新）。
 	aiGatewayService.AttachLiveBus(natsConn)
 	// script 运行时的 SDK 依赖：脚本通过它们读写平台数据。
@@ -734,6 +736,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Egress:           egressService,
 		AIProvider:       aiProviderService,
 		AIGateway:        aiGatewayService,
+		AIRelay:          cfg.AIRelay,
 		AIAgent:          aiAgentService,
 
 		Organization:    orgService,
@@ -926,6 +929,11 @@ func (a *APIApp) Close(ctx context.Context) {
 // 之后才停后台协程，最后断开 Redis / NATS / Temporal / Postgres。
 // 反过来的顺序会让还在处理的请求撞上已经关掉的连接池。
 func (a *APIApp) close(ctx context.Context) {
+	// 流式 AI 对话不会在 Shutdown 的期限内自己结束：先约好宽限后主动取消，让它们带着
+	// 可重试的错误事件收尾、放回暂扣，而不是被进程退出硬切、暂扣挂到过期（ai_gateway_inflight.go）。
+	if a.AIGateway != nil {
+		a.AIGateway.CancelInFlightAfter(aiRelayShutdownGrace(ctx))
+	}
 	if a.Secure != nil {
 		_ = a.Secure.Shutdown(ctx)
 	}
@@ -1102,4 +1110,14 @@ func initGinMode(appEnv string) {
 	case "test", "testing":
 		gin.SetMode(gin.TestMode)
 	}
+}
+
+// aiRelayShutdownGrace 退出时给在途 AI 对话的宽限：Shutdown 期限的一半（1–10 秒），
+// 另一半留给它们写错误事件、放回暂扣。
+func aiRelayShutdownGrace(ctx context.Context) time.Duration {
+	grace := 5 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		grace = time.Until(deadline) / 2
+	}
+	return min(max(grace, time.Second), 10*time.Second)
 }

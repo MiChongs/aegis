@@ -158,6 +158,49 @@ Location: /api/ai/v1/jobs/AIG…
 代理看到持续有字节就不会断开；结果到了再写 JSON（JSON 允许前导空白，各家 SDK 都能解析）。
 代价是保活开始后出错也只能是 `200` + 错误信封。请求头 `X-Aegis-Keepalive: off` 关掉。
 
+## 流式
+
+`"stream": true` 的 `/chat/completions` 与 `/messages`。网关前面隔着几层反向代理（CDN 的 nginx 默认 60 秒、
+Cloudflare 约 100 秒读超时），推理模型出第一个字前可能想上几分钟；期间一个字节都不写，代理就会切断连接，
+客户端看到的是「生成到一半自己停了」。所以流式的契约是：
+
+- **暂扣成功就开流**：立刻回 `200`、`Content-Type: text/event-stream` 与 `X-Aegis-Request-No`，不等上游第一个字。
+  鉴权、模型、余额、限流这些暂扣之前的错误照旧是带状态码的 JSON 错误（401 / 402 / 404 / 429 …）。
+- **心跳**：从开流到结束，每 15 秒写一次心跳。OpenAI 形状是 SSE 注释行 `: ping`，Anthropic 形状是官方的
+  `event: ping` / `data: {"type":"ping"}`。SSE 解析器（各家 SDK）都会忽略它们。
+- **成功**：OpenAI 形状一定有一个带 `finish_reason` 的收尾块，然后是用量块与 `data: [DONE]`；
+  Anthropic 形状一定有带 `stop_reason` 的 `message_delta` 与 `message_stop`。`finish_reason` 取值
+  `stop` / `length` / `tool_calls` / `content_filter`；上游给了认不出的原因时原样转出（如 `pause_turn`），
+  **不会**冒充成 `stop`。有工具调用而上游没给原因或给了 `stop` 时按 `tool_calls`。
+- **开流之后出错**：HTTP 状态已经是 200 改不了，以一个错误事件收尾 ——
+  OpenAI 形状 `data: {"error":{"message","type","code","aegis_code","status"}}`，**之后不写 `[DONE]`**；
+  Anthropic 形状 `event: error` / `data: {"type":"error","error":{"type","message","aegis_code","status"}}`，不写 `message_stop`。
+  `status` 是这个错误不开流时本该回的 HTTP 状态（502 上游失败、503 服务更新 …）。
+  **客户端必须把「收到错误事件」与「流结束了却没有 finish_reason / `[DONE]`」都当成失败**（可重试），
+  不能把已收到的半截内容当成一次正常的回答。
+- **上游的流不完整就是失败**：上游没给出结束原因就断了（OpenAI 既无 `finish_reason` 也无 `[DONE]`；Anthropic
+  既无 `stop_reason` 也无 `message_stop`；Gemini 没有 `finishReason`），或者 Gemini 报 `MALFORMED_FUNCTION_CALL`，
+  都按上游失败处理：错误事件收尾、整笔放回不扣费。
+- **上游空闲看门狗**：上游响应开始后连续 `AI_UPSTREAM_IDLE_TIMEOUT`（默认 5 分钟，`0` 关闭）一个字节都没有，
+  判上游卡死、主动断开，同样是错误事件 + 不扣费。上游自己的保活字节（如 SSE 注释、Anthropic 的 ping）会重新计时。
+- **工具调用**：按上游的序号归组（不按调用编号 —— 有的上游不给编号或几次调用编号相同），对外 `index` 从 0 连续；
+  调用编号在 `tool_calls` 首块里就给出，上游没给时网关合成一个 `call_…`，流里、聚合结论与下一轮要带回的
+  `tool_call_id` 是同一个。名字之前就到的入参攒着，在首块之后补发。
+- **服务更新**：进程退出时在途的对话先跑一段宽限（`SHUTDOWN_TIMEOUT` 的一半，1–10 秒），之后主动中止：
+  错误事件带 `aegis_code: 40231`（503），暂扣整笔放回、不扣费；客户端重试会落到新实例上。
+
+传输层参数（环境变量）：
+
+| 变量 | 缺省 | 作用 |
+|---|---|---|
+| `WRITE_TIMEOUT` | `0`（不限） | 整个响应的绝对期限。**必须是 0**：任何有限值都会把长流拦腰截断。流式与同步保活的处理器会按连接解除写期限，其余接口（含关掉保活的同步调用、控制台的其它长连接）仍受它约束。 |
+| `AI_RELAY_MAX_BODY_BYTES` | 32 MiB | `/api/ai/v1` 的 JSON 请求体上限（Agent 多轮对话带着工具结果与截图） |
+| `AI_RELAY_READ_TIMEOUT` | `5m` | `/api/ai/v1` 写请求读完请求体的期限（覆盖全局 5 秒的 `READ_TIMEOUT`） |
+| `AI_UPSTREAM_IDLE_TIMEOUT` | `5m` | 上游空闲看门狗，见上 |
+
+`/api/ai/v1/` 的请求体不交给 WAF（Coraza）检查，只检查请求头与 URI：对话历史里的源码、命令、路径会让 CRS 规则
+成片误报，大请求体还会超过 WAF 的检查上限。限流、封禁照常生效，鉴权在处理器里。
+
 ## 计价
 
 **单位是「点」，1 点按 1 积分定价**。库里一律存微点整数（1 点 = 10⁶ 微点），不用浮点。
@@ -198,7 +241,8 @@ Location: /api/ai/v1/jobs/AIG…
 | 上游成功 | 按上游报回的用量结算 | `succeeded` |
 | 上游成功但没报用量 | 按内容估算结算，记录标 `usageEstimated` | `succeeded` |
 | 上游失败、网关出错、客户端在拿到任何内容前断开 | **整笔放回，不扣费** | `failed` |
-| 流式输出到一半**上游**中断 | 不扣费 | `failed` |
+| 流式输出到一半**上游**中断（含流没给结束原因就断开、上游空闲看门狗断开） | 不扣费 | `failed` |
+| 进程退出时主动中止的在途对话（40231） | 不扣费 | `failed` |
 | 流式输出到一半**客户端**断开 | 按上游已生成的内容估算输出 token 计费 | `aborted` |
 | 暂扣超时未结算（进程中断等） | 后台循环放回，不扣费 | `expired` |
 | 超时放回后上游结果才回来 | 照常结算，从实时余额扣 | `succeeded` |
@@ -324,9 +368,10 @@ Location: /api/ai/v1/jobs/AIG…
 | 40224 / 40225 | 409 | 赠送额度不足以扣减 / 调整的请求编号被挪用 |
 | 40226 / 40227 | 404 / 409 | 异步任务不存在或结果已过期 / 任务还没有完成（取结果原文时） |
 | 40228 / 40229 | 502 / 409 | 模型目录刷新失败（models.dev 拉不到）/ 模型目录还没有拉取过 |
+| 40231 | 503 | 服务正在更新，在途对话已中止且不扣费（流式时以错误事件给出），重试即可 |
 
 `/api/ai/v1` 的错误按 OpenAI（`{"error":{"message","type","code","aegis_code"}}`）或
-Anthropic（`{"type":"error","error":{"type","message"}}`）形状回：402 是 `insufficient_quota` / `billing_error`，
+Anthropic（`{"type":"error","error":{"type","message","aegis_code"}}`）形状回（流式开流之后见「流式」）：402 是 `insufficient_quota` / `billing_error`，
 429 是 `rate_limit_error`（SDK 会自动退避重试）。上游的 400 / 413 / 422 原样告诉调用方，
 上游 401 / 403 是通道凭据问题，按 502 报。
 
@@ -356,4 +401,7 @@ go test ./internal/service -run 'LiveHub|AITrace'   # 实时推送的分发与�
 - 调用记录与追踪没有自动清理，量大后需要按 `created_at` 归档或分区。
 - 缓存命中与推理 token 没有单独计量（统一协议的 `Usage` 只有输入、输出与合计；推理 token 含在输出里）。
 - 思考签名只记在本实例内存，多实例的续轮可能退化为不开思考（见「思考」）。
+- 进程退出时只主动中止在途的**对话**（流式与非流式）；同步的原样转发（图像、语音等）仍等 `SHUTDOWN_TIMEOUT`，
+  被硬切时暂扣按 `HoldTTL`（30 分钟）过期放回。进程崩溃（非正常退出）时流式暂扣仍要等 `StreamHoldTTL`（2 小时）
+  才放回，期间占着用户的并发名额（40212）。
 - 赠送额度不过期；激励广告发的额度与管理员发的额度不分开记余额。

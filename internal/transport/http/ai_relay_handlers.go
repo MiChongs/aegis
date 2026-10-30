@@ -35,7 +35,9 @@ import (
 // SDK 只认原生形状。每个响应带 X-Aegis-Request-No，对得上用户的调用记录与扣费流水。
 
 const (
-	aiRelayJSONLimit          = 8 << 20
+	// aiRelayJSONLimitDefault JSON 请求体上限的缺省（AI_RELAY_MAX_BODY_BYTES 覆盖，见 config/ai_relay.go）：
+	// Agent 多轮对话带着工具结果与截图，历史越滚越大。
+	aiRelayJSONLimitDefault   = 32 << 20
 	aiRelayMultipartLimit     = 32 << 20
 	aiRelayResponseLimit      = 32 << 20
 	aiRelayImageResponseLimit = 128 << 20
@@ -120,10 +122,22 @@ func aiRelayErrorOf(err error) aiRelayErrorShape {
 	return shape
 }
 
-// aiRelayErrorBody 按协议的错误信封。
+// aiRelayJSONLimit 本实例的 JSON 请求体上限。
+func (h *Handler) aiRelayJSONLimit() int64 {
+	if h.aiRelayMaxBody > 0 {
+		return h.aiRelayMaxBody
+	}
+	return aiRelayJSONLimitDefault
+}
+
+// aiRelayErrorBody 按协议的错误信封。Anthropic 形状也带 aegis_code（官方 SDK 忽略多余字段）。
 func aiRelayErrorBody(protocol string, shape aiRelayErrorShape) gin.H {
 	if protocol == aidomain.ProtocolAnthropic {
-		return gin.H{"type": "error", "error": gin.H{"type": shape.anthropic, "message": shape.message}}
+		inner := gin.H{"type": shape.anthropic, "message": shape.message}
+		if shape.aegisCode != 0 {
+			inner["aegis_code"] = shape.aegisCode
+		}
+		return gin.H{"type": "error", "error": inner}
 	}
 	body := gin.H{"message": shape.message, "type": shape.openAI, "code": shape.code, "param": nil}
 	if shape.aegisCode != 0 {
@@ -154,12 +168,13 @@ func aiRelayIdempotencyKey(c *gin.Context) string {
 }
 
 // readAIRelayJSON 读一个 JSON 对象，保留未知字段（转发给上游时原样带上）。
-func readAIRelayJSON(c *gin.Context, protocol string) (map[string]json.RawMessage, bool) {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, aiRelayJSONLimit)
+func (h *Handler) readAIRelayJSON(c *gin.Context, protocol string) (map[string]json.RawMessage, bool) {
+	limit := h.aiRelayJSONLimit()
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		writeAIRelayError(c, protocol, apperrors.New(40223, http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("请求体超过 %d MB 或读取失败", aiRelayJSONLimit>>20)))
+			fmt.Sprintf("请求体超过 %d MB 或读取失败", limit>>20)))
 		return nil, false
 	}
 	var payload map[string]json.RawMessage
@@ -344,7 +359,7 @@ func (h *Handler) AIRelayChatCompletions(c *gin.Context) {
 	if !ok {
 		return
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, aiRelayJSONLimit)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.aiRelayJSONLimit())
 	var req openAIGatewayRequest
 	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
 		writeAIRelayError(c, aidomain.ProtocolOpenAI,
@@ -365,7 +380,7 @@ func (h *Handler) AIRelayMessages(c *gin.Context) {
 	if !ok {
 		return
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, aiRelayJSONLimit)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.aiRelayJSONLimit())
 	var req anthropicGatewayRequest
 	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
 		writeAIRelayError(c, aidomain.ProtocolAnthropic,
@@ -413,18 +428,24 @@ func (h *Handler) relayChat(c *gin.Context, principal *service.AIGatewayPrincipa
 		c.Data(http.StatusOK, contentType, body)
 		return
 	}
-	run := func(onEvent func(aidomain.StreamEvent) error) (*aidomain.ChatResponse, error) {
+	// 流式：暂扣成功就开流（200 + SSE 响应头 + 心跳），之后的错误以协议里的错误事件收尾。
+	run := func(begin func(string), onEvent func(aidomain.StreamEvent) error) (*aidomain.ChatResponse, error) {
+		input.OnReserved = begin
 		result, err := h.aiGateway.RelayChat(c.Request.Context(), principal, input, onEvent)
 		if err != nil {
 			return nil, err
 		}
 		return result.Response, nil
 	}
+	errorBody := func(err error) (int, gin.H) {
+		shape := aiRelayErrorOf(err)
+		return shape.status, aiRelayErrorBody(protocol, shape)
+	}
 	if protocol == aidomain.ProtocolAnthropic {
-		streamAnthropicChat(c, request.Model, run, writeErr)
+		streamAnthropicChat(c, request.Model, run, errorBody)
 		return
 	}
-	streamOpenAIChat(c, request.Model, run, writeErr)
+	streamOpenAIChat(c, request.Model, run, errorBody)
 }
 
 // ── 嵌入 ──
@@ -435,7 +456,7 @@ func (h *Handler) AIRelayEmbeddings(c *gin.Context) {
 	if !ok {
 		return
 	}
-	payload, ok := readAIRelayJSON(c, aidomain.ProtocolOpenAI)
+	payload, ok := h.readAIRelayJSON(c, aidomain.ProtocolOpenAI)
 	if !ok {
 		return
 	}
@@ -472,7 +493,7 @@ func (h *Handler) AIRelayImageGenerations(c *gin.Context) {
 	if !ok {
 		return
 	}
-	payload, ok := readAIRelayJSON(c, aidomain.ProtocolOpenAI)
+	payload, ok := h.readAIRelayJSON(c, aidomain.ProtocolOpenAI)
 	if !ok {
 		return
 	}
@@ -510,7 +531,7 @@ func (h *Handler) AIRelayImageEdits(c *gin.Context) {
 			form.builder(nil), form.describer(), imageEstimate(n, size, quality, form.value("prompt", "")), size, quality)
 		return
 	}
-	payload, ok := readAIRelayJSON(c, aidomain.ProtocolOpenAI)
+	payload, ok := h.readAIRelayJSON(c, aidomain.ProtocolOpenAI)
 	if !ok {
 		return
 	}
@@ -547,7 +568,7 @@ func (h *Handler) AIRelaySpeech(c *gin.Context) {
 	if !ok {
 		return
 	}
-	payload, ok := readAIRelayJSON(c, aidomain.ProtocolOpenAI)
+	payload, ok := h.readAIRelayJSON(c, aidomain.ProtocolOpenAI)
 	if !ok {
 		return
 	}
@@ -645,7 +666,7 @@ func (h *Handler) AIRelayRerank(c *gin.Context) {
 	if !ok {
 		return
 	}
-	payload, ok := readAIRelayJSON(c, aidomain.ProtocolOpenAI)
+	payload, ok := h.readAIRelayJSON(c, aidomain.ProtocolOpenAI)
 	if !ok {
 		return
 	}

@@ -943,3 +943,11 @@ func (s *AIProviderService) decryptMCPHeaders(item *aidomain.MCPServer) {
 	}
 	_ = json.Unmarshal([]byte(plain), &item.Headers)
 }
+
+// SetUpstreamIdleTimeout 上游空闲看门狗的期限（AI_UPSTREAM_IDLE_TIMEOUT，0 关闭）；bootstrap 启动时调用一次。
+func (s *AIProviderService) SetUpstreamIdleTimeout(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	s.client.idleTimeout = d
+}

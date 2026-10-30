@@ -338,6 +338,9 @@ func (c *aiLLMClient) geminiChat(ctx context.Context, cfg aidomain.Config, meta 
 		}
 		result := &aidomain.ChatResponse{FinishReason: aidomain.FinishOther}
 		aggregateGeminiChunk(result, response, nil, nil, nil)
+		if err := geminiFinishError(meta.Provider, result); err != nil {
+			return nil, err
+		}
 		return result, nil
 	}
 
@@ -374,7 +377,26 @@ func (c *aiLLMClient) geminiChat(ctx context.Context, cfg aidomain.Config, meta 
 			return nil, streamErr
 		}
 	}
+	// 完整的流最后一个分片带 finishReason；一直没见到就是流被半路切断了。
+	if result.FinishReason == aidomain.FinishOther && result.FinishRaw == "" {
+		return nil, &aiUpstreamError{Provider: meta.Provider, Retryable: true,
+			Message: "上游的流没有给出结束原因就断开了（被上游或中间代理切断），本次结果不完整"}
+	}
+	if err := geminiFinishError(meta.Provider, result); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+// geminiFinishError 以失败告终的结束原因。MALFORMED_FUNCTION_CALL 是模型把函数调用写坏了：
+// 既没有正文也没有可执行的调用，当成正常结束交给下游只会让 Agent 停在原地；按上游失败处理，
+// 不扣费，客户端重试一次多半就好。
+func geminiFinishError(provider string, result *aidomain.ChatResponse) error {
+	if result.FinishRaw == string(genai.FinishReasonMalformedFunctionCall) {
+		return &aiUpstreamError{Provider: provider, Retryable: true,
+			Message: "模型生成的函数调用格式有误（MALFORMED_FUNCTION_CALL），请重试"}
+	}
+	return nil
 }
 
 // aggregateGeminiChunk 把一个响应分片并进聚合结果，可选地向外发增量。
@@ -403,6 +425,10 @@ func aggregateGeminiChunk(result *aidomain.ChatResponse, chunk *genai.GenerateCo
 		}
 		if candidate.FinishReason != "" {
 			result.FinishReason = normalizeGeminiFinish(candidate.FinishReason)
+			result.FinishRaw = ""
+			if result.FinishReason == aidomain.FinishOther {
+				result.FinishRaw = string(candidate.FinishReason)
+			}
 		}
 		if candidate.Content == nil {
 			continue

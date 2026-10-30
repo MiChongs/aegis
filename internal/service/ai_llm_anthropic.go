@@ -292,6 +292,14 @@ func normalizeAnthropicFinish(reason string) string {
 	}
 }
 
+// anthropicFinishRaw 归一不了的 stop_reason（如 pause_turn）原样留下。
+func anthropicFinishRaw(reason string) string {
+	if normalizeAnthropicFinish(reason) == aidomain.FinishOther {
+		return reason
+	}
+	return ""
+}
+
 // mapAnthropicSDKError 把 SDK 返回的错误收敛成 aiUpstreamError。
 // 非 2xx 已被中间件就地包好；SDK 自解析的错误（流内 error 事件）取信封消息；
 // 其余按网络层失败处理，一律可重试。
@@ -346,6 +354,7 @@ func anthropicResponseFromMessage(message *anthropic.Message) *aidomain.ChatResp
 		ID:           message.ID,
 		Model:        string(message.Model),
 		FinishReason: normalizeAnthropicFinish(string(message.StopReason)),
+		FinishRaw:    anthropicFinishRaw(string(message.StopReason)),
 		Usage: aidomain.Usage{
 			InputTokens:  message.Usage.InputTokens,
 			OutputTokens: message.Usage.OutputTokens,
@@ -379,6 +388,9 @@ func anthropicResponseFromMessage(message *anthropic.Message) *aidomain.ChatResp
 
 // consumeAnthropicStream 逐事件消费 SSE，边转发增量边聚合终态。
 // 流内的 error 事件由 SDK 转成错误从 stream.Err() 冒出来，统一走错误收敛。
+//
+// 完整的流以 message_delta（带 stop_reason）与 message_stop 收尾。两样都没见到就是流被
+// 半路切断：按上游失败处理，不把半截内容当成正常结束。
 func consumeAnthropicStream(stream *anthropicsse.Stream[anthropic.MessageStreamEventUnion], provider string,
 	onEvent func(aidomain.StreamEvent) error) (*aidomain.ChatResponse, error) {
 	result := &aidomain.ChatResponse{FinishReason: aidomain.FinishOther}
@@ -392,11 +404,14 @@ func consumeAnthropicStream(stream *anthropicsse.Stream[anthropic.MessageStreamE
 	// 思考块按 index 聚合文字与签名，结束时按出现顺序排好。
 	thinking := map[int]*aidomain.ThinkingBlock{}
 	thinkingOrder := make([]int, 0, 1)
+	sawStop, sawMessageStop := false, false
 
 	for stream.Next() {
 		event := stream.Current()
 		index := int(event.Index)
 		switch event.Type {
+		case "message_stop":
+			sawMessageStop = true
 		case "message_start":
 			result.ID = event.Message.ID
 			result.Model = string(event.Message.Model)
@@ -453,7 +468,9 @@ func consumeAnthropicStream(stream *anthropicsse.Stream[anthropic.MessageStreamE
 			}
 		case "message_delta":
 			if event.Delta.StopReason != "" {
+				sawStop = true
 				result.FinishReason = normalizeAnthropicFinish(string(event.Delta.StopReason))
+				result.FinishRaw = anthropicFinishRaw(string(event.Delta.StopReason))
 			}
 			if event.Usage.OutputTokens > 0 {
 				result.Usage.OutputTokens = event.Usage.OutputTokens
@@ -462,6 +479,18 @@ func consumeAnthropicStream(stream *anthropicsse.Stream[anthropic.MessageStreamE
 	}
 	if err := stream.Err(); err != nil {
 		return nil, mapAnthropicSDKError(provider, err)
+	}
+	if !sawStop && !sawMessageStop {
+		return nil, &aiUpstreamError{Provider: provider, Retryable: true,
+			Message: "上游的流没有给出结束原因就断开了（被上游或中间代理切断），本次结果不完整"}
+	}
+	if !sawStop {
+		// message_stop 到了却没带 stop_reason 的兼容实现：流是完整的，按正常结束处理。
+		result.FinishReason, result.FinishRaw = aidomain.FinishStop, ""
+	}
+	// 发起了工具调用、结束原因却缺失或认不出：按工具收尾，下游才会去执行工具、接着下一轮。
+	if len(order) > 0 && (result.FinishReason == aidomain.FinishOther || result.FinishReason == aidomain.FinishStop) {
+		result.FinishReason, result.FinishRaw = aidomain.FinishToolCalls, ""
 	}
 
 	result.Text = text.String()

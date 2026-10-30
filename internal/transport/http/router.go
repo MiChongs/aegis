@@ -103,7 +103,9 @@ type Handler struct {
 	aiProvider *service.AIProviderService
 	aiAgent    *service.AIAgentService
 	aiGateway  *service.AIGatewayService
-	oauth2     *service.OAuth2ServerService
+	// aiRelayMaxBody /api/ai/v1 的 JSON 请求体上限；0 用缺省（ai_relay_handlers.go）。
+	aiRelayMaxBody int64
+	oauth2         *service.OAuth2ServerService
 	// aiAgentWSOrigin Agent WebSocket 通道的 Origin 闸门（复用 CORS 白名单，
 	// 与 /api/ws 同一套判定；见 service.WebSocketOriginChecker）。
 	aiAgentWSOrigin func(r *http.Request) bool
@@ -162,6 +164,8 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		middleware.ClientIP(clientIPResolver, log),
 		// 文件上传放宽读超时：要排在防火墙与 WAF 读请求体之前，见 upload_deadline.go
 		middleware.UploadReadDeadline(30*time.Minute),
+		// AI 中转同理：Agent 的多轮对话请求体可达几十 MB，手机上行读不完 5 秒的全局期限
+		middleware.PathReadDeadline(service.RelayBasePath+"/", deps.AIRelay.ReadTimeout),
 		middleware.RequestID(),
 		middleware.RequestOrigin(),
 		middleware.CrashRecovery(log, cl),

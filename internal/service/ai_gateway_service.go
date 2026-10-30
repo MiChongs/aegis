@@ -37,6 +37,8 @@ type AIGatewayService struct {
 	jobs *aiGatewayJobRegistry
 	// catalog 公开模型目录的内存索引（ai_model_catalog.go）。
 	catalog *aiModelCatalog
+	// inflight 本实例上在途的对话中转，进程退出时取消以放回暂扣（ai_gateway_inflight.go）。
+	inflight *aiGatewayInflight
 
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -45,7 +47,8 @@ type AIGatewayService struct {
 // NewAIGatewayService 构造网关服务。
 func NewAIGatewayService(log *zap.Logger, pg *pgrepo.Repository, auth *AuthService, ai *AIProviderService) *AIGatewayService {
 	s := &AIGatewayService{log: log, pg: pg, auth: auth, ai: ai, now: time.Now, live: newAIGatewayLiveHub(log),
-		jobs: newAIGatewayJobRegistry(), catalog: newAIModelCatalog(), stop: make(chan struct{})}
+		jobs: newAIGatewayJobRegistry(), catalog: newAIModelCatalog(), inflight: newAIGatewayInflight(),
+		stop: make(chan struct{})}
 	s.live.onCancel = s.jobs.cancel
 	return s
 }
@@ -54,8 +57,10 @@ func NewAIGatewayService(log *zap.Logger, pg *pgrepo.Repository, auth *AuthServi
 const RelayBasePath = "/api/ai/v1"
 
 const (
-	aiGatewaySweepInterval = time.Minute
-	aiGatewaySweepBatch    = 200
+	// aiGatewayInflightDrainTimeout Stop 时等被取消的在途对话放回暂扣多久。
+	aiGatewayInflightDrainTimeout = 5 * time.Second
+	aiGatewaySweepInterval        = time.Minute
+	aiGatewaySweepBatch           = 200
 )
 
 // ── 错误 ──
@@ -163,6 +168,7 @@ func (s *AIGatewayService) Start(ctx context.Context) {
 func (s *AIGatewayService) Stop() {
 	s.stopOnce.Do(func() {
 		close(s.stop)
+		s.drainInFlight(aiGatewayInflightDrainTimeout)
 		s.jobs.drain(aiGatewayJobDrainTimeout)
 		s.live.close()
 	})
