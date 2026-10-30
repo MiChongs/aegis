@@ -36,6 +36,7 @@ import { AppInvitePanel } from "@/components/apps/invite/app-invite-panel";
 import { AppDeviceLimitPanel } from "@/components/apps/device-limit/app-device-limit-panel";
 import { AppPasskeyPanel } from "@/components/apps/app-passkey-panel";
 import { AppCrashReportsPanel } from "@/components/apps/crash-reports/app-crash-reports-panel";
+import { AppListenTogetherPanel } from "@/components/apps/listen-together/app-listen-together-panel";
 import { AppLeaderboardPanel } from "@/components/apps/leaderboard/app-leaderboard-panel";
 import { AppAccountSetupPanel } from "@/components/apps/account-setup/app-account-setup-panel";
 import { AppAccountDeletionPanel } from "@/components/apps/account-deletion/app-account-deletion-panel";
@@ -164,6 +165,8 @@ function AppSectionPanel({ section, app }: { section: string; app: AppSummary })
       return <AppAuditPanel appKey={app.appKey} />;
     case "crash-reports":
       return <AppCrashReportsPanel appKey={app.appKey} />;
+    case "listen-together":
+      return <AppListenTogetherPanel appKey={app.appKey} />;
     case "policy":
       return <AppAuthSessionPanel appKey={app.appKey} />;
     case "device-limit":

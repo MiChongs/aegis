@@ -7,6 +7,7 @@ import {
   Dices,
   Fingerprint,
   Gift,
+  Headphones,
   Info,
   KeyRound,
   Mail,
@@ -99,6 +100,7 @@ export const appSectionGroups: AppSectionGroup[] = [
       { key: "ai-gateway", title: "AI 中转", summary: "用户按量调用、模型价格与密钥", icon: Route },
       { key: "payment", title: "支付", summary: "收款渠道、订单与交易设置", icon: CreditCard },
       { key: "cloud-storage", title: "云存储", summary: "用户数据云端备份与配额", icon: Cloud },
+      { key: "listen-together", title: "一起听", summary: "多人同步收听：服务状态、房间与成员", icon: Headphones },
       { key: "settings", title: "用户设置", summary: "资料字段与默认值", icon: SlidersHorizontal }
     ]
   },
