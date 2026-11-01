@@ -30,7 +30,9 @@ INSTRUCTIONS = """\
 工作方式：
 1. 先调用 whoami 看清这把密钥代表谁、能访问哪些应用、权限范围、是否只读。
 2. 工具按领域分组，名字前缀即领域：apps_ / users_ / audit_ / points_ / wallet_ / payment_ / store_ / cardkey_ /
-   vip_ / lottery_ / content_ / tickets_ / egress_ ……。优先用这些带类型参数的工具。
+   vip_ / lottery_ / content_ / tickets_ / register_ / egress_ ……。优先用这些带类型参数的工具。
+   注册准入（register_）收紧规则前先 register_simulate，或把策略 mode 设为 observe 观察；查可疑注册时 register_inspect_ip
+   与 register_inspect_device 互相跳（地址下的设备、设备用过的地址）。
    出海网关（egress_）的编辑工具只改草稿，egress_apply 才影响线上全部出站：应用前先 egress_validate、egress_explain 核对。
    若只看到 search_tools / run_tool：先用 search_tools 按英文关键词（如 "vip grant"、"lottery prize"、"users ban"）检索，再用 run_tool 调用。
 3. 没有现成工具时：list_endpoints 按关键词找接口 → describe_endpoint 看参数 → call_api 调用（覆盖全部约 970 条管理端接口）。
