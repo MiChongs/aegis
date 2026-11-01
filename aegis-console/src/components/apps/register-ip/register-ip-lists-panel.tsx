@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Pencil, Plus, Search, ShieldBan, Trash2 } from "lucide-react";
+import { Network, Pencil, Plus, Search, ShieldBan, Smartphone, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  DeviceText,
   formatCount,
   IPText,
   LIST_KINDS,
@@ -23,9 +24,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ApiError } from "@/lib/api-client";
-import type { RegIPListEntry, RegIPListKind } from "@/lib/api/register-ip";
+import type { RegIPListInput, RegIPListKind } from "@/lib/api/register-ip";
 import { formatDateTime, formatRelative, fromLocalInputValue, toLocalInputValue } from "@/lib/datetime";
-import { useAddRegIPListsMutation, useDeleteRegIPListsMutation, useRegIPListsQuery, useUpdateRegIPListMutation } from "@/lib/register-ip-hooks";
+import {
+  useAddRegDeviceListsMutation,
+  useAddRegIPListsMutation,
+  useDeleteRegDeviceListsMutation,
+  useDeleteRegIPListsMutation,
+  useRegDeviceListsQuery,
+  useRegIPListsQuery,
+  useUpdateRegDeviceListMutation,
+  useUpdateRegIPListMutation
+} from "@/lib/register-ip-hooks";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
 
@@ -38,46 +48,127 @@ const EXPIRY_PRESETS = [
   { label: "30 天", hours: 24 * 30 }
 ];
 
+type Target = "ip" | "device";
+
+/** 地址名单与设备名单统一成一种行，表格与弹窗共用 */
+type Row = {
+  id: number;
+  value: string;
+  kind: RegIPListKind;
+  factor: number;
+  note: string;
+  expiresAt: string | null;
+  hits: number;
+  lastHitAt: string | null;
+  createdBy: string;
+  createdAt: string;
+};
+
+type UpdateInput = { kind: RegIPListKind; factor?: number; note?: string; expiresAt?: string | null };
+
 /**
- * 名单。拒绝优先于放行、放行优先于放宽；同类里取最具体的网段。
- * 搜索框里填一个地址时列出「包含它」的网段，而不是文本模糊匹配。
+ * 名单：地址名单与设备名单。判定时两边合并 —— 任一边拒绝即拒绝，否则任一边放行即放行，否则取放宽倍数大的。
+ * 地址名单里同类取最具体的网段；搜索框填一个地址时列出「包含它」的网段。设备名单按标识精确匹配（不分大小写）。
  */
-export function RegIPListsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP: (ip: string) => void }) {
+export function RegIPListsPanel({
+  appKey,
+  onOpenIP,
+  onOpenDevice
+}: {
+  appKey: string;
+  onOpenIP: (ip: string) => void;
+  onOpenDevice: (device: string) => void;
+}) {
+  const [target, setTarget] = useState<Target>("ip");
   const [kind, setKind] = useState<RegIPListKind | "all">("all");
   const [keyword, setKeyword] = useState("");
   const [expired, setExpired] = useState(false);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<number[]>([]);
-  const [editing, setEditing] = useState<RegIPListEntry | "new" | null>(null);
-  // 判断「已过期」的参照时刻：渲染期间不能调 Date.now()，挂载时取一次，数据刷新时跟着更新
-  const [now, setNow] = useState(() => Date.now());
-  const [seenData, setSeenData] = useState<unknown>(null);
+  const [editing, setEditing] = useState<Row | "new" | null>(null);
   const debounced = useDebouncedValue(keyword.trim(), 300);
   const params = useMemo(
     () => ({ kind: kind === "all" ? undefined : kind, keyword: debounced || undefined, expired: expired || undefined, page, limit: LIMIT }),
     [kind, debounced, expired, page]
   );
-  const query = useRegIPListsQuery(appKey, params);
-  const remove = useDeleteRegIPListsMutation(appKey);
-  const items = query.data?.items ?? [];
+  const ipQuery = useRegIPListsQuery(appKey, params, target === "ip");
+  const deviceQuery = useRegDeviceListsQuery(appKey, params, target === "device");
+  const removeIP = useDeleteRegIPListsMutation(appKey);
+  const removeDevice = useDeleteRegDeviceListsMutation(appKey);
+  const addIP = useAddRegIPListsMutation(appKey);
+  const addDevice = useAddRegDeviceListsMutation(appKey);
+  const updateIP = useUpdateRegIPListMutation(appKey);
+  const updateDevice = useUpdateRegDeviceListMutation(appKey);
+
+  const query = target === "ip" ? ipQuery : deviceQuery;
+  const rows: Row[] = useMemo(
+    () =>
+      target === "ip"
+        ? (ipQuery.data?.items ?? []).map((item) => ({ ...item, value: item.cidr }))
+        : (deviceQuery.data?.items ?? []).map((item) => ({ ...item, value: item.deviceId })),
+    [target, ipQuery.data, deviceQuery.data]
+  );
+  // 判断「已过期」的参照时刻：渲染期间不能调 Date.now()，数据刷新时跟着更新
+  const [now, setNow] = useState(() => Date.now());
+  const [seenData, setSeenData] = useState<unknown>(null);
   if (query.data !== seenData) {
     setSeenData(query.data);
     setNow(query.dataUpdatedAt || now);
   }
-  const allSelected = items.length > 0 && items.every((item) => selected.includes(item.id));
+  const allSelected = rows.length > 0 && rows.every((row) => selected.includes(row.id));
+  const resetPage = () => {
+    setPage(1);
+    setSelected([]);
+  };
 
-  async function removeSelected(ids: number[]) {
+  async function removeRows(ids: number[]) {
     try {
-      const result = await remove.mutateAsync(ids);
+      const result = target === "ip" ? await removeIP.mutateAsync(ids) : await removeDevice.mutateAsync(ids);
       toast.success(`已删除 ${result.deleted} 项`);
       setSelected([]);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "删除失败");
     }
   }
+  const save = async (input: RegIPListInput | { id: number; input: UpdateInput }) => {
+    if ("id" in input) {
+      return target === "ip" ? updateIP.mutateAsync(input) : updateDevice.mutateAsync(input);
+    }
+    const result = target === "ip" ? await addIP.mutateAsync(input) : await addDevice.mutateAsync(input);
+    return result.items.length;
+  };
 
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="inline-flex rounded-xl bg-muted p-1">
+          {(
+            [
+              ["ip", "地址名单", Network],
+              ["device", "设备名单", Smartphone]
+            ] as const
+          ).map(([value, label, Icon]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => {
+                setTarget(value);
+                setKeyword("");
+                resetPage();
+              }}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                target === value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Icon className="size-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="text-[11px] text-muted-foreground">两边合并判定：任一边拒绝即拒绝</span>
+      </div>
+
       <div className="grid gap-2.5 sm:grid-cols-3">
         {LIST_KINDS.map((item) => {
           const meta = LIST_META[item];
@@ -88,7 +179,7 @@ export function RegIPListsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP
               type="button"
               onClick={() => {
                 setKind(active ? "all" : item);
-                setPage(1);
+                resetPage();
               }}
               className={cn(
                 "flex items-start gap-3 rounded-xl border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/50",
@@ -99,7 +190,10 @@ export function RegIPListsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP
                 <meta.icon className="size-4" />
               </span>
               <span className="min-w-0">
-                <span className="block text-sm font-medium">{meta.label}名单</span>
+                <span className="block text-sm font-medium">
+                  {meta.label}
+                  {target === "ip" ? "地址" : "设备"}
+                </span>
                 <span className="block text-[11px] text-muted-foreground">{meta.description}</span>
               </span>
             </button>
@@ -114,9 +208,9 @@ export function RegIPListsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP
             value={keyword}
             onChange={(event) => {
               setKeyword(event.target.value);
-              setPage(1);
+              resetPage();
             }}
-            placeholder="地址（查包含它的网段）或备注"
+            placeholder={target === "ip" ? "地址（查包含它的网段）或备注" : "设备标识或备注"}
             className="h-8 pl-8 text-xs"
           />
         </div>
@@ -125,19 +219,19 @@ export function RegIPListsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP
             checked={expired}
             onCheckedChange={(value) => {
               setExpired(value);
-              setPage(1);
+              resetPage();
             }}
           />
           含已过期
         </label>
         <div className="ml-auto flex gap-2">
           {selected.length ? (
-            <Button size="sm" variant="outline" className="text-rose-600" disabled={remove.isPending} onClick={() => removeSelected(selected)}>
+            <Button size="sm" variant="outline" className="text-rose-600" onClick={() => removeRows(selected)}>
               <Trash2 className="size-3.5" /> 删除 {selected.length} 项
             </Button>
           ) : null}
           <Button size="sm" onClick={() => setEditing("new")}>
-            <Plus className="size-3.5" /> 添加
+            <Plus className="size-3.5" /> 添加{target === "ip" ? "地址" : "设备"}
           </Button>
         </div>
       </div>
@@ -149,23 +243,19 @@ export function RegIPListsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP
               <Skeleton key={index} className="h-10 w-full" />
             ))}
           </div>
-        ) : items.length === 0 ? (
+        ) : rows.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-14 text-center">
             <ShieldBan className="size-6 text-muted-foreground/50" />
-            <span className="text-sm text-muted-foreground">名单是空的</span>
+            <span className="text-sm text-muted-foreground">{target === "ip" ? "地址名单是空的" : "设备名单是空的"}</span>
           </div>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-8">
-                  <Checkbox
-                    checked={allSelected}
-                    onCheckedChange={(value) => setSelected(value ? items.map((item) => item.id) : [])}
-                    aria-label="全选"
-                  />
+                  <Checkbox checked={allSelected} onCheckedChange={(value) => setSelected(value ? rows.map((row) => row.id) : [])} aria-label="全选" />
                 </TableHead>
-                <TableHead>地址 / 网段</TableHead>
+                <TableHead>{target === "ip" ? "地址 / 网段" : "设备标识"}</TableHead>
                 <TableHead>类型</TableHead>
                 <TableHead>备注</TableHead>
                 <TableHead>命中</TableHead>
@@ -174,38 +264,42 @@ export function RegIPListsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((entry) => {
-                const expiredAt = entry.expiresAt ? new Date(entry.expiresAt).getTime() : 0;
+              {rows.map((row) => {
+                const expiredAt = row.expiresAt ? new Date(row.expiresAt).getTime() : 0;
                 const isExpired = expiredAt > 0 && expiredAt < now;
                 return (
-                  <TableRow key={entry.id} className={cn(isExpired && "opacity-60")}>
+                  <TableRow key={row.id} className={cn(isExpired && "opacity-60")}>
                     <TableCell>
                       <Checkbox
-                        checked={selected.includes(entry.id)}
-                        onCheckedChange={(value) => setSelected((prev) => (value ? [...prev, entry.id] : prev.filter((id) => id !== entry.id)))}
+                        checked={selected.includes(row.id)}
+                        onCheckedChange={(value) => setSelected((prev) => (value ? [...prev, row.id] : prev.filter((id) => id !== row.id)))}
                         aria-label="选择"
                       />
                     </TableCell>
-                    <TableCell>
-                      <IPText value={entry.cidr} onClick={() => onOpenIP(entry.cidr.split("/")[0])} />
+                    <TableCell className="max-w-72">
+                      {target === "ip" ? (
+                        <IPText value={row.value} onClick={() => onOpenIP(row.value.split("/")[0])} />
+                      ) : (
+                        <DeviceText value={row.value} onClick={() => onOpenDevice(row.value)} />
+                      )}
                       <div className="text-[10px] text-muted-foreground">
-                        {entry.createdBy || "系统"} · {formatRelative(entry.createdAt)}
+                        {row.createdBy || "系统"} · {formatRelative(row.createdAt)}
                       </div>
                     </TableCell>
                     <TableCell>
-                      <ListKindBadge kind={entry.kind} factor={entry.factor} />
+                      <ListKindBadge kind={row.kind} factor={row.factor} />
                     </TableCell>
-                    <TableCell className="max-w-56 truncate text-xs text-muted-foreground">{entry.note || "—"}</TableCell>
+                    <TableCell className="max-w-56 truncate text-xs text-muted-foreground">{row.note || "—"}</TableCell>
                     <TableCell className="text-xs tabular-nums">
-                      {formatCount(entry.hits)}
-                      {entry.lastHitAt ? <div className="text-[10px] text-muted-foreground">{formatRelative(entry.lastHitAt)}</div> : null}
+                      {formatCount(row.hits)}
+                      {row.lastHitAt ? <div className="text-[10px] text-muted-foreground">{formatRelative(row.lastHitAt)}</div> : null}
                     </TableCell>
                     <TableCell className="text-xs">
-                      {entry.expiresAt ? (
+                      {row.expiresAt ? (
                         isExpired ? (
                           <Badge variant="outline" size="sm">已过期</Badge>
                         ) : (
-                          formatDateTime(entry.expiresAt)
+                          formatDateTime(row.expiresAt)
                         )
                       ) : (
                         <span className="text-muted-foreground">永久</span>
@@ -213,10 +307,10 @@ export function RegIPListsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-0.5">
-                        <Button size="icon-sm" variant="ghost" className="size-7" onClick={() => setEditing(entry)} aria-label="编辑">
+                        <Button size="icon-sm" variant="ghost" className="size-7" onClick={() => setEditing(row)} aria-label="编辑">
                           <Pencil className="size-3.5" />
                         </Button>
-                        <Button size="icon-sm" variant="ghost" className="size-7 text-rose-600" onClick={() => removeSelected([entry.id])} aria-label="删除">
+                        <Button size="icon-sm" variant="ghost" className="size-7 text-rose-600" onClick={() => removeRows([row.id])} aria-label="删除">
                           <Trash2 className="size-3.5" />
                         </Button>
                       </div>
@@ -232,9 +326,10 @@ export function RegIPListsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP
 
       {editing ? (
         <ListEntryDialog
-          appKey={appKey}
-          entry={editing === "new" ? null : editing}
+          target={target}
+          row={editing === "new" ? null : editing}
           defaultKind={kind === "all" ? "deny" : kind}
+          onSave={save}
           onClose={() => setEditing(null)}
         />
       ) : null}
@@ -243,25 +338,26 @@ export function RegIPListsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP
 }
 
 function ListEntryDialog({
-  appKey,
-  entry,
+  target,
+  row,
   defaultKind,
+  onSave,
   onClose
 }: {
-  appKey: string;
-  entry: RegIPListEntry | null;
+  target: Target;
+  row: Row | null;
   defaultKind: RegIPListKind;
+  onSave: (input: RegIPListInput | { id: number; input: UpdateInput }) => Promise<unknown>;
   onClose: () => void;
 }) {
-  const add = useAddRegIPListsMutation(appKey);
-  const update = useUpdateRegIPListMutation(appKey);
   const [values, setValues] = useState("");
-  const [kind, setKind] = useState<RegIPListKind>(entry?.kind ?? defaultKind);
-  const [factor, setFactor] = useState(String(entry?.factor && entry.factor > 1 ? entry.factor : 5));
-  const [note, setNote] = useState(entry?.note ?? "");
-  const [expiresAt, setExpiresAt] = useState(entry?.expiresAt ? toLocalInputValue(entry.expiresAt) : "");
-  const pending = add.isPending || update.isPending;
+  const [kind, setKind] = useState<RegIPListKind>(row?.kind ?? defaultKind);
+  const [factor, setFactor] = useState(String(row?.factor && row.factor > 1 ? row.factor : 5));
+  const [note, setNote] = useState(row?.note ?? "");
+  const [expiresAt, setExpiresAt] = useState(row?.expiresAt ? toLocalInputValue(row.expiresAt) : "");
+  const [pending, setPending] = useState(false);
   const count = values.split(/[\s,，;]+/).filter(Boolean).length;
+  const noun = target === "ip" ? "地址" : "设备";
 
   async function submit() {
     const payload = {
@@ -270,17 +366,20 @@ function ListEntryDialog({
       note: note.trim(),
       expiresAt: expiresAt ? fromLocalInputValue(expiresAt) : null
     };
+    setPending(true);
     try {
-      if (entry) {
-        await update.mutateAsync({ id: entry.id, input: payload });
+      if (row) {
+        await onSave({ id: row.id, input: payload });
         toast.success("已保存");
       } else {
-        const result = await add.mutateAsync({ ...payload, values: [values] });
-        toast.success(`已添加 ${result.items.length} 项`);
+        const added = await onSave({ ...payload, values: [values] });
+        toast.success(`已添加 ${added} 项`);
       }
       onClose();
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "保存失败");
+    } finally {
+      setPending(false);
     }
   }
 
@@ -288,19 +387,25 @@ function ListEntryDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{entry ? "编辑名单项" : "添加到名单"}</DialogTitle>
+          <DialogTitle>{row ? `编辑${noun}名单项` : `添加到${noun}名单`}</DialogTitle>
           <DialogDescription>
-            {entry ? <span className="font-mono">{entry.cidr}</span> : "单个地址或网段（CIDR），一次可以粘贴多行，最多 500 项；已存在的会被覆盖"}
+            {row ? (
+              <span className="break-all font-mono">{row.value}</span>
+            ) : target === "ip" ? (
+              "单个地址或网段（CIDR），一次可以粘贴多行，最多 500 项；已存在的会被覆盖"
+            ) : (
+              "设备标识（X-Device-Id），一次可以粘贴多行，最多 500 项；不分大小写；无效的标识只能加入拒绝名单"
+            )}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          {!entry ? (
+          {!row ? (
             <div className="space-y-1.5">
               <Textarea
                 rows={5}
                 value={values}
                 onChange={(event) => setValues(event.target.value)}
-                placeholder={"1.2.3.4\n10.20.0.0/16\n2408:8207::/48"}
+                placeholder={target === "ip" ? "1.2.3.4\n10.20.0.0/16\n2408:8207::/48" : "6f9619ff-8b86-d011-b42d-00c04fc964ff\na1b2c3d4e5f60718"}
                 className="font-mono text-xs"
               />
               <div className="text-right text-[10px] text-muted-foreground">{count} 项</div>
@@ -327,13 +432,15 @@ function ListEntryDialog({
                 );
               })}
             </div>
-            <p className="text-[11px] text-muted-foreground">{LIST_META[kind].description}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {target === "device" && kind === "elevated" ? "配额乘以倍数，适合共享的测试机、门店收银机" : LIST_META[kind].description}
+            </p>
           </div>
           {kind === "elevated" ? (
             <div className="flex items-center gap-2">
               <Label className="text-xs">配额倍数</Label>
               <Input type="number" min={1.1} max={1000} step={0.5} value={factor} onChange={(event) => setFactor(event.target.value)} className="h-8 w-24 text-xs" />
-              <span className="text-[11px] text-muted-foreground">例如 5：每天 10 个变成 50 个</span>
+              <span className="text-[11px] text-muted-foreground">例如 5：每天 3 个变成 15 个</span>
             </div>
           ) : null}
           <div className="space-y-1.5">
@@ -360,15 +467,21 @@ function ListEntryDialog({
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">备注</Label>
-            <Input value={note} maxLength={200} onChange={(event) => setNote(event.target.value)} placeholder="例如：某高校出口、批量注册工作室" className="text-xs" />
+            <Input
+              value={note}
+              maxLength={200}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder={target === "ip" ? "例如：某高校出口、批量注册工作室" : "例如：内部测试机、确认的群控设备"}
+              className="text-xs"
+            />
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             取消
           </Button>
-          <Button disabled={pending || (!entry && count === 0)} onClick={submit}>
-            {pending ? "保存中..." : entry ? "保存" : `添加 ${count} 项`}
+          <Button disabled={pending || (!row && count === 0)} onClick={submit}>
+            {pending ? "保存中..." : row ? "保存" : `添加 ${count} 项`}
           </Button>
         </DialogFooter>
       </DialogContent>

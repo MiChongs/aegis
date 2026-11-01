@@ -16,6 +16,7 @@ import {
   Save,
   ServerCog,
   ShieldCheck,
+  Smartphone,
   Sparkles,
   Trash2,
   TriangleAlert,
@@ -26,6 +27,9 @@ import { FieldGroup, ModeCard, SectionCard, SliderField, SwitchRow } from "@/com
 import {
   ACTION_META,
   ActionToggle,
+  DeviceActionToggle,
+  deviceScope,
+  distinctScope,
   durationLabel,
   LimitStepper,
   MethodChips,
@@ -34,6 +38,7 @@ import {
   SCOPE_META,
   SCOPES,
   ScopeGlyph,
+  unitOf,
   WindowPicker,
   windowLabel
 } from "@/components/apps/register-ip/register-ip-shared";
@@ -57,6 +62,10 @@ const RULE_TEMPLATES: Array<Omit<RegIPRule, "id" | "enabled"> & { title: string 
   { title: "同一地址只能注册 1 个", name: "同一地址累计 1 个", scope: "ip", windowSeconds: 0, limit: 1, action: "reject" },
   { title: "同一地址每小时 3 个，超出加验", name: "同一地址每小时", scope: "ip", windowSeconds: 3600, limit: 3, action: "challenge" },
   { title: "同一网段每天 50 个", name: "同一网段每天", scope: "subnet", windowSeconds: 86400, limit: 50, action: "reject" },
+  { title: "同一设备只能注册 1 个", name: "同一设备累计 1 个", scope: "device", windowSeconds: 0, limit: 1, action: "reject" },
+  { title: "同一设备每天 3 个", name: "同一设备每天", scope: "device", windowSeconds: 86400, limit: 3, action: "reject" },
+  { title: "同一地址每小时最多 10 台设备，超出加验", name: "地址下的设备每小时", scope: "ip_devices", windowSeconds: 3600, limit: 10, action: "challenge" },
+  { title: "同一设备每天最多换 5 个地址", name: "设备换地址每天", scope: "device_ips", windowSeconds: 86400, limit: 5, action: "reject" },
   { title: "同一城市每 10 分钟 100 个，观察", name: "同一城市每 10 分钟", scope: "city", windowSeconds: 600, limit: 100, action: "observe" },
   { title: "整个应用每分钟 200 个", name: "整个应用每分钟", scope: "app", windowSeconds: 60, limit: 200, action: "challenge" }
 ];
@@ -144,8 +153,8 @@ export function RegIPPolicyPanel({
       <div className="space-y-4">
         <SectionCard
           icon={<ShieldCheck className="size-4" />}
-          title="注册 IP 控制"
-          description="四种注册方式（密码、短信、第三方、卡密）建号前统一过这里"
+          title="注册准入"
+          description="四种注册方式（密码、短信、第三方、卡密）建号前统一过这里；地址与设备两条线互补"
           aside={
             <label className="flex cursor-pointer items-center gap-2 text-xs font-medium">
               {policy.enabled ? "已开启" : "未开启"}
@@ -177,7 +186,7 @@ export function RegIPPolicyPanel({
         <SectionCard
           icon={<ListChecks className="size-4" />}
           title="配额规则"
-          description="每条规则在自己的主体与窗口里独立计数；多条同时超限时 拒绝 > 加验 > 观察，同档按顺序取第一条"
+          description="每条规则在自己的主体与窗口里独立计数；多条同时超限时 拒绝 > 加验 > 观察，同档按顺序取第一条。缺了地址或设备，只依赖那一边的规则不参与"
           aside={<Badge variant="outline" size="sm">{policy.rules.length} / {MAX_RULES}</Badge>}
         >
           <div className={cn("space-y-3", off && "opacity-60")}>
@@ -259,7 +268,7 @@ export function RegIPPolicyPanel({
                 />
               </div>
             </FieldGroup>
-            <FieldGroup label="主体">
+            <FieldGroup label="地址一侧的主体">
               <div className="flex gap-2">
                 {(["ip", "subnet"] as const).map((scope) => (
                   <button
@@ -277,6 +286,15 @@ export function RegIPPolicyPanel({
                 ))}
               </div>
             </FieldGroup>
+            <div className="sm:col-span-2">
+              <SwitchRow
+                icon={<Smartphone className="size-3.5" />}
+                label="设备也进惩罚期"
+                hint="同一设备、设备换地址的规则拒绝时，惩罚落在设备上：进了惩罚期的设备换任何网络都注册不了"
+                checked={policy.penalty.device}
+                onChange={(value) => patch("penalty", { ...policy.penalty, device: value })}
+              />
+            </div>
             <FieldGroup label="首次时长">
               <WindowPicker value={policy.penalty.baseSeconds} allowLifetime={false} onChange={(value) => patch("penalty", { ...policy.penalty, baseSeconds: value })} />
             </FieldGroup>
@@ -355,6 +373,38 @@ export function RegIPPolicyPanel({
             <FieldGroup label="触发后">
               <ActionToggle value={policy.surge.action} onChange={(value) => patch("surge", { ...policy.surge, action: value })} />
             </FieldGroup>
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          icon={<Smartphone className="size-4" />}
+          title="设备标识"
+          description="客户端经 X-Device-Id（或请求体 deviceId）上报；占位值（unknown、全 0 等）在接入层就当成没上报"
+        >
+          <div className={cn("space-y-3", off && "opacity-60")}>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="text-xs font-medium">没上报设备标识时</div>
+                <div className="text-[10px] text-muted-foreground">放行时只受地址一侧约束</div>
+              </div>
+              <DeviceActionToggle value={policy.device.missing} onChange={(value) => patch("device", { ...policy.device, missing: value })} />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="text-xs font-medium">上报了无效标识时</div>
+                <div className="text-[10px] text-muted-foreground">过短、字符过于单一（aaaaaaaa）、含空白或非 ASCII；无效标识不参与任何设备规则</div>
+              </div>
+              <DeviceActionToggle value={policy.device.invalid} onChange={(value) => patch("device", { ...policy.device, invalid: value })} />
+            </div>
+            <SliderField
+              label="有效标识最短长度"
+              value={policy.device.minLength}
+              min={4}
+              max={64}
+              unit="位"
+              hint="UUID 36 位、Android ID 16 位、IDFV 36 位"
+              onChange={(value) => patch("device", { ...policy.device, minLength: value })}
+            />
           </div>
         </SectionCard>
 
@@ -581,11 +631,12 @@ function RuleEditor({
           value={rule.scope}
           onValueChange={(value) => {
             const scope = value as RegIPScope;
-            // 整个应用不能累计：切过去时给一个窗口
-            onChange({ ...rule, scope, windowSeconds: scope === "app" && rule.windowSeconds === 0 ? 3600 : rule.windowSeconds });
+            // 整个应用与去重型主体不能累计：切过去时给一个窗口
+            const needsWindow = scope === "app" || distinctScope(scope);
+            onChange({ ...rule, scope, windowSeconds: needsWindow && rule.windowSeconds === 0 ? 3600 : rule.windowSeconds });
           }}
         >
-          <SelectTrigger size="sm" className="w-32 bg-background text-xs">
+          <SelectTrigger size="sm" className="w-36 bg-background text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -600,9 +651,21 @@ function RuleEditor({
             })}
           </SelectContent>
         </Select>
-        <WindowPicker value={rule.windowSeconds} allowLifetime={rule.scope !== "app"} onChange={(windowSeconds) => onChange({ ...rule, windowSeconds })} />
+        <WindowPicker
+          value={rule.windowSeconds}
+          allowLifetime={rule.scope !== "app" && !distinctScope(rule.scope)}
+          onChange={(windowSeconds) => onChange({ ...rule, windowSeconds })}
+        />
         <span className="text-muted-foreground">最多</span>
-        <LimitStepper value={rule.limit} min={1} max={1_000_000} unit="个" zeroLabel="" onChange={(limit) => onChange({ ...rule, limit })} className="bg-background" />
+        <LimitStepper
+          value={rule.limit}
+          min={1}
+          max={1_000_000}
+          unit={unitOf(rule.scope)}
+          zeroLabel=""
+          onChange={(limit) => onChange({ ...rule, limit })}
+          className="bg-background"
+        />
         <span className="text-muted-foreground">超出</span>
         <ActionToggle value={rule.action} onChange={(action) => onChange({ ...rule, action })} />
       </div>
@@ -690,6 +753,7 @@ function validate(policy: RegIPPolicy): string[] {
   policy.rules.forEach((rule, index) => {
     const label = rule.name.trim() || `第 ${index + 1} 条规则`;
     if (rule.scope === "app" && rule.windowSeconds === 0) issues.push(`${label}：整个应用的规则需要设统计窗口`);
+    if (distinctScope(rule.scope) && rule.windowSeconds === 0) issues.push(`${label}：不同设备数 / 不同地址数需要设统计窗口`);
     if (rule.windowSeconds > 0 && rule.windowSeconds < 60) issues.push(`${label}：统计窗口至少 1 分钟`);
     if (rule.windowSeconds > 365 * 86400) issues.push(`${label}：统计窗口最长 365 天`);
     if (rule.limit < 1) issues.push(`${label}：上限至少为 1`);
@@ -710,12 +774,19 @@ function readable(policy: RegIPPolicy): string[] {
   const rules = policy.rules.filter((rule) => rule.enabled);
   for (const rule of rules) {
     const methods = rule.methods?.length ? `（仅${rule.methods.map((m) => ({ password: "密码", sms: "短信", oauth: "第三方", cardkey: "卡密" })[m]).join("、")}注册）` : "";
-    lines.push(`${SCOPE_META[rule.scope].label}${windowLabel(rule.windowSeconds)}最多注册 ${rule.limit} 个，超出${ACTION_META[rule.action].label}${methods}`);
+    const verb = rule.scope === "ip_devices" ? "最多出现" : rule.scope === "device_ips" ? "最多使用" : "最多注册";
+    lines.push(
+      `${SCOPE_META[rule.scope].label}${windowLabel(rule.windowSeconds)}${verb} ${rule.limit} ${unitOf(rule.scope)}，超出${ACTION_META[rule.action].label}${methods}`
+    );
   }
   if (!rules.length) lines.push("没有配额规则");
+  const deviceRules = rules.filter((rule) => deviceScope(rule.scope) || rule.scope === "ip_devices").length;
+  if (deviceRules && policy.device.missing === "allow") lines.push(`没上报设备标识的注册跳过 ${deviceRules} 条设备规则，只受地址一侧约束`);
+  if (policy.device.missing !== "allow") lines.push(`没上报设备标识时${policy.device.missing === "reject" ? "拒绝" : "要求加验"}`);
+  if (policy.device.invalid !== "allow") lines.push(`设备标识无效（短于 ${policy.device.minLength} 位或明显伪造）时${policy.device.invalid === "reject" ? "拒绝" : "要求加验"}`);
   if (policy.penalty.enabled) {
     lines.push(
-      `${durationLabel(policy.penalty.strikeWindowSeconds)}内被拒 ${policy.penalty.strikes} 次，该${policy.penalty.scope === "ip" ? "地址" : "网段"}禁止注册 ${penaltyLadder(policy.penalty)}`
+      `${durationLabel(policy.penalty.strikeWindowSeconds)}内被拒 ${policy.penalty.strikes} 次，该${policy.penalty.scope === "ip" ? "地址" : "网段"}${policy.penalty.device ? "（设备规则则是该设备）" : ""}禁止注册 ${penaltyLadder(policy.penalty)}`
     );
   }
   if (policy.surge.enabled) {

@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Flame, FlaskConical, LockKeyhole, MapPin, Play, ShieldQuestion } from "lucide-react";
+import { Flame, FlaskConical, LockKeyhole, MapPin, Play, ShieldQuestion, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import { FieldGroup, SwitchRow } from "@/components/apps/app-config-primitives";
 import {
   Block,
   DecisionBanner,
+  DeviceQuality,
+  DeviceText,
   Fact,
   IPText,
   ListKindBadge,
@@ -14,7 +16,8 @@ import {
   METHODS,
   METHOD_META,
   RuleHitList,
-  SCOPE_META
+  SCOPE_META,
+  unitOf
 } from "@/components/apps/register-ip/register-ip-shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,13 +28,15 @@ import { useSimulateRegIPMutation } from "@/lib/register-ip-hooks";
 import { cn } from "@/lib/utils";
 
 /**
- * 模拟一次注册：草稿（或已保存的）策略 + 一个地址。计数取真实值、只数不占，不会写台账也不会占名额；
+ * 模拟一次注册：草稿（或已保存的）策略 + 一个地址和 / 或一台设备。计数取真实值、只数不占，不会写台账也不会占名额；
  * 可以改写某条规则的已有注册数、属地、突增与惩罚期，看「如果……会怎样」。
  */
 export function RegIPSimulatorPanel({ appKey, draft, dirty }: { appKey: string; draft: RegIPPolicy; dirty: boolean }) {
   const mutation = useSimulateRegIPMutation(appKey);
   const [useDraft, setUseDraft] = useState(true);
   const [ip, setIP] = useState("");
+  const [device, setDevice] = useState("");
+  const [devicePenalty, setDevicePenalty] = useState("");
   const [method, setMethod] = useState<RegIPMethod>("password");
   const [captchaPassed, setCaptchaPassed] = useState(false);
   const [counts, setCounts] = useState<Record<string, string>>({});
@@ -49,12 +54,14 @@ export function RegIPSimulatorPanel({ appKey, draft, dirty }: { appKey: string; 
     const input: RegIPSimulateInput = {
       policy: useDraft ? draft : null,
       ip: ip.trim(),
+      deviceId: device.trim() || undefined,
       method,
       captchaPassed,
       counts: Object.keys(parsedCounts).length ? parsedCounts : undefined,
       location: overrideLocation ? { ...location, resolved: Boolean(location.country) } : null,
       surgeActive: surge ? true : null,
-      penaltySeconds: penalty.trim() ? Math.max(0, Number(penalty) || 0) * 60 : null
+      penaltySeconds: penalty.trim() ? Math.max(0, Number(penalty) || 0) * 60 : null,
+      devicePenaltySeconds: devicePenalty.trim() ? Math.max(0, Number(devicePenalty) || 0) * 60 : null
     };
     try {
       setResult(await mutation.mutateAsync(input));
@@ -83,6 +90,12 @@ export function RegIPSimulatorPanel({ appKey, draft, dirty }: { appKey: string; 
         />
         <FieldGroup label="注册地址">
           <Input value={ip} onChange={(event) => setIP(event.target.value)} placeholder="1.2.3.4 或 2408:8207::1，留空模拟缺少 IP" className="font-mono text-xs" />
+        </FieldGroup>
+        <FieldGroup label="设备标识" hint="留空模拟没上报">
+          <div className="relative">
+            <Smartphone className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-fuchsia-500" />
+            <Input value={device} onChange={(event) => setDevice(event.target.value)} placeholder="6f9619ff-8b86-d011-b42d-00c04fc964ff" className="pl-8 font-mono text-xs" />
+          </div>
         </FieldGroup>
         <FieldGroup label="注册方式">
           <div className="flex flex-wrap gap-1.5">
@@ -124,7 +137,9 @@ export function RegIPSimulatorPanel({ appKey, draft, dirty }: { appKey: string; 
                     placeholder="真实"
                     className="h-7 w-20 text-xs tabular-nums"
                   />
-                  <span className="w-12 shrink-0 text-right text-[10px] text-muted-foreground">/ {rule.limit}</span>
+                  <span className="w-16 shrink-0 text-right text-[10px] text-muted-foreground">
+                    / {rule.limit} {unitOf(rule.scope)}
+                  </span>
                 </div>
               ))}
             </div>
@@ -148,8 +163,21 @@ export function RegIPSimulatorPanel({ appKey, draft, dirty }: { appKey: string; 
         <SwitchRow icon={<Flame className="size-3.5" />} label="假定正在突增" checked={surge} onChange={setSurge} />
         <div className="flex items-center gap-2 rounded-xl bg-muted px-3 py-2.5">
           <LockKeyhole className="size-3.5 text-muted-foreground" />
-          <span className="flex-1 text-xs font-medium">假定惩罚期剩余</span>
+          <span className="flex-1 text-xs font-medium">假定地址惩罚期剩余</span>
           <Input type="number" min={0} value={penalty} onChange={(event) => setPenalty(event.target.value)} placeholder="真实" className="h-7 w-20 bg-background text-xs" />
+          <span className="text-[11px] text-muted-foreground">分钟</span>
+        </div>
+        <div className="flex items-center gap-2 rounded-xl bg-muted px-3 py-2.5">
+          <Smartphone className="size-3.5 text-muted-foreground" />
+          <span className="flex-1 text-xs font-medium">假定设备惩罚期剩余</span>
+          <Input
+            type="number"
+            min={0}
+            value={devicePenalty}
+            onChange={(event) => setDevicePenalty(event.target.value)}
+            placeholder="真实"
+            className="h-7 w-20 bg-background text-xs"
+          />
           <span className="text-[11px] text-muted-foreground">分钟</span>
         </div>
         <Button className="w-full" disabled={mutation.isPending} onClick={run}>
@@ -188,10 +216,24 @@ export function RegIPSimulatorPanel({ appKey, draft, dirty }: { appKey: string; 
                     </Fact>
                   </>
                 ) : null}
+                <Fact label="设备">{result.device.id ? <DeviceText value={result.device.id} /> : "未上报"}</Fact>
+                <Fact label="设备质量">
+                  <DeviceQuality device={result.device} />
+                </Fact>
                 <Fact label="属地">{result.location.resolved ? locationText(result.location) : "查不到"}</Fact>
                 <Fact label="运营商">{result.location.isp || "—"}</Fact>
-                <Fact label="名单">{result.list ? <ListKindBadge kind={result.list.kind} factor={result.list.factor} /> : "未命中"}</Fact>
-                <Fact label="惩罚期">{result.penaltySeconds ? `剩余 ${Math.ceil(result.penaltySeconds / 60)} 分钟` : "无"}</Fact>
+                <Fact label="名单">
+                  {result.list ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <ListKindBadge kind={result.list.kind} factor={result.list.factor} />
+                      <span className="text-[10px] text-muted-foreground">{result.list.target === "device" ? "设备名单" : "地址名单"}</span>
+                    </span>
+                  ) : (
+                    "未命中"
+                  )}
+                </Fact>
+                <Fact label="地址惩罚期">{result.penaltySeconds ? `剩余 ${Math.ceil(result.penaltySeconds / 60)} 分钟` : "无"}</Fact>
+                <Fact label="设备惩罚期">{result.devicePenaltySeconds ? `剩余 ${Math.ceil(result.devicePenaltySeconds / 60)} 分钟` : "无"}</Fact>
                 <Fact label="突增">
                   {result.surge.active ? (
                     <Badge variant="danger" size="sm">突增中</Badge>

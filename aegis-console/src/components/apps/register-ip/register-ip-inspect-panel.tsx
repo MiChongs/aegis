@@ -1,17 +1,19 @@
 "use client";
 
-import { useState } from "react";
-import { Ban, LockKeyhole, MapPin, SearchCode, ShieldCheck, Timer, Undo2, Users } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Ban, Boxes, LockKeyhole, MapPin, SearchCode, ShieldCheck, Timer, Undo2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { SwitchRow } from "@/components/apps/app-config-primitives";
 import {
   Block,
   DecisionBanner,
+  DeviceText,
   durationLabel,
   Fact,
   formatCount,
   IPText,
   KindBadge,
+  LinkedList,
   ListKindBadge,
   locationText,
   methodLabel,
@@ -35,7 +37,17 @@ import { cn } from "@/lib/utils";
  * IP 查询：一个地址此刻的全部状况。判定按「此刻用密码注册」推演（只数不占），计数是真实值。
  * 从概览、名单、记录里点地址都会跳到这里。
  */
-export function RegIPInspectPanel({ appKey, ip, onIPChange }: { appKey: string; ip: string; onIPChange: (ip: string) => void }) {
+export function RegIPInspectPanel({
+  appKey,
+  ip,
+  onIPChange,
+  onOpenDevice
+}: {
+  appKey: string;
+  ip: string;
+  onIPChange: (ip: string) => void;
+  onOpenDevice: (device: string) => void;
+}) {
   const [text, setText] = useState(ip);
   const [seenIP, setSeenIP] = useState(ip);
   if (ip !== seenIP) {
@@ -85,7 +97,7 @@ export function RegIPInspectPanel({ appKey, ip, onIPChange }: { appKey: string; 
           {query.error instanceof ApiError ? query.error.message : "查询失败"}
         </p>
       ) : data ? (
-        <InspectResult appKey={appKey} data={data} onOpenIP={onIPChange} />
+        <InspectResult appKey={appKey} data={data} onOpenIP={onIPChange} onOpenDevice={onOpenDevice} />
       ) : null}
 
       {data ? <ReleaseDialog appKey={appKey} data={data} open={releasing} onOpenChange={setReleasing} /> : null}
@@ -93,8 +105,19 @@ export function RegIPInspectPanel({ appKey, ip, onIPChange }: { appKey: string; 
   );
 }
 
-function InspectResult({ appKey, data, onOpenIP }: { appKey: string; data: RegIPInspection; onOpenIP: (ip: string) => void }) {
+function InspectResult({
+  appKey,
+  data,
+  onOpenIP,
+  onOpenDevice
+}: {
+  appKey: string;
+  data: RegIPInspection;
+  onOpenIP: (ip: string) => void;
+  onOpenDevice: (device: string) => void;
+}) {
   const [now] = useState(() => Date.now());
+  const live = useMemo(() => new Set(data.recent.map((item) => item.key)), [data.recent]);
   const addList = useAddRegIPListsMutation(appKey);
   const quickList = async (kind: "allow" | "deny") => {
     try {
@@ -138,15 +161,30 @@ function InspectResult({ appKey, data, onOpenIP }: { appKey: string; data: RegIP
             )}
           </Block>
 
+          <Block
+            title={
+              <span className="flex items-center gap-1.5">
+                <Boxes className="size-4 text-muted-foreground" />
+                地址下的设备（{formatCount(data.devicesTotal)}）
+              </span>
+            }
+            aside={live.size ? <Badge variant="info" size="sm">窗口内 {live.size} 台</Badge> : null}
+            bodyClassName="p-0"
+          >
+            <LinkedList items={data.devices} kind="device" onOpen={onOpenDevice} live={live} />
+          </Block>
+
           <RegistrationsBlock
             title={`该地址注册的账号（${formatCount(data.hostRegistrations)}）`}
             items={data.registrations}
             onOpenIP={onOpenIP}
+            onOpenDevice={onOpenDevice}
           />
           <RegistrationsBlock
             title={`同网段 ${data.address.subnet} 的注册（${formatCount(data.subnetRegistrations)}）`}
             items={data.subnetRecent}
             onOpenIP={onOpenIP}
+            onOpenDevice={onOpenDevice}
           />
         </div>
 
@@ -249,7 +287,17 @@ function InspectResult({ appKey, data, onOpenIP }: { appKey: string; data: RegIP
   );
 }
 
-function RegistrationsBlock({ title, items, onOpenIP }: { title: string; items: RegIPRegistration[]; onOpenIP: (ip: string) => void }) {
+function RegistrationsBlock({
+  title,
+  items,
+  onOpenIP,
+  onOpenDevice
+}: {
+  title: string;
+  items: RegIPRegistration[];
+  onOpenIP: (ip: string) => void;
+  onOpenDevice: (device: string) => void;
+}) {
   return (
     <Block
       title={
@@ -271,6 +319,7 @@ function RegistrationsBlock({ title, items, onOpenIP }: { title: string; items: 
                 <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                   <IPText value={item.ip} className="text-[10px]" onClick={() => onOpenIP(item.ip)} />
                   <span>· {methodLabel(item.method)}</span>
+                  {item.deviceId ? <DeviceText value={item.deviceId} className="min-w-0 text-[10px]" onClick={() => onOpenDevice(item.deviceId)} /> : null}
                 </div>
               </div>
               {item.releasedAt ? <Badge variant="outline" size="sm">已解除</Badge> : null}

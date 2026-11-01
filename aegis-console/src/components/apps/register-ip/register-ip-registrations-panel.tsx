@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { ScrollText, Search } from "lucide-react";
 import { rangeStart, RANGES, type RangeKey } from "@/components/apps/register-ip/register-ip-events-panel";
-import { IPText, locationText, methodLabel, METHODS, METHOD_META, Pager } from "@/components/apps/register-ip/register-ip-shared";
+import { DeviceText, IPText, locationText, methodLabel, METHODS, METHOD_META, Pager } from "@/components/apps/register-ip/register-ip-shared";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -21,26 +21,37 @@ const LIMIT = 20;
  * 注册台账：每个新账号从哪个地址、用什么方式注册的。累计规则按它数；
  * 「已解除」的行不再计入上限，账号本身不受影响。删号后行仍保留（账号显示为已删除）。
  */
-export function RegIPRegistrationsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP: (ip: string) => void }) {
+export function RegIPRegistrationsPanel({
+  appKey,
+  onOpenIP,
+  onOpenDevice
+}: {
+  appKey: string;
+  onOpenIP: (ip: string) => void;
+  onOpenDevice: (device: string) => void;
+}) {
   const [method, setMethod] = useState("all");
   const [released, setReleased] = useState<"all" | "active" | "released">("all");
   const [range, setRange] = useState<RangeKey>("7");
   const [ip, setIP] = useState("");
+  const [device, setDevice] = useState("");
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(1);
   const debouncedIP = useDebouncedValue(ip.trim(), 400);
+  const debouncedDevice = useDebouncedValue(device.trim(), 400);
   const debouncedKeyword = useDebouncedValue(keyword.trim(), 300);
   const params = useMemo(
     () => ({
       method: method === "all" ? undefined : method,
       released: released === "all" ? undefined : released === "released",
       ip: debouncedIP || undefined,
+      deviceId: debouncedDevice || undefined,
       keyword: debouncedKeyword || undefined,
       from: rangeStart(range),
       page,
       limit: LIMIT
     }),
-    [method, released, debouncedIP, debouncedKeyword, range, page]
+    [method, released, debouncedIP, debouncedDevice, debouncedKeyword, range, page]
   );
   const query = useRegIPRegistrationsQuery(appKey, params);
   const items = query.data?.items ?? [];
@@ -82,7 +93,8 @@ export function RegIPRegistrationsPanel({ appKey, onOpenIP }: { appKey: string; 
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        <Input value={ip} onChange={(event) => reset(setIP)(event.target.value)} placeholder="地址或网段，如 1.2.3.0/24" className="h-8 w-52 font-mono text-xs" />
+        <Input value={ip} onChange={(event) => reset(setIP)(event.target.value)} placeholder="地址或网段，如 1.2.3.0/24" className="h-8 w-48 font-mono text-xs" />
+        <Input value={device} onChange={(event) => reset(setDevice)(event.target.value)} placeholder="设备标识" className="h-8 w-44 font-mono text-xs" />
         <div className="relative min-w-44 flex-1 sm:max-w-60">
           <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input value={keyword} onChange={(event) => reset(setKeyword)(event.target.value)} placeholder="账号、设备、属地、运营商" className="h-8 pl-8 text-xs" />
@@ -110,7 +122,7 @@ export function RegIPRegistrationsPanel({ appKey, onOpenIP }: { appKey: string; 
                 <TableHead className="w-32">时间</TableHead>
                 <TableHead>账号</TableHead>
                 <TableHead>方式</TableHead>
-                <TableHead>地址</TableHead>
+                <TableHead>地址 / 设备</TableHead>
                 <TableHead>属地</TableHead>
                 <TableHead>状态</TableHead>
               </TableRow>
@@ -129,7 +141,13 @@ export function RegIPRegistrationsPanel({ appKey, onOpenIP }: { appKey: string; 
                   <TableCell className="text-xs">{methodLabel(item.method)}</TableCell>
                   <TableCell>
                     <IPText value={item.ip} onClick={() => onOpenIP(item.ip)} />
-                    {item.deviceId ? <div className="truncate font-mono text-[10px] text-muted-foreground">{item.deviceId}</div> : null}
+                    {item.deviceId ? (
+                      <div>
+                        <DeviceText value={item.deviceId} className="text-[10px]" onClick={() => onOpenDevice(item.deviceId)} />
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-muted-foreground">未上报设备</div>
+                    )}
                   </TableCell>
                   <TableCell className="max-w-56 text-xs">
                     <div className="truncate">{locationText(item)}</div>

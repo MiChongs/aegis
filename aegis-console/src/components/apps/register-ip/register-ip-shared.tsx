@@ -2,8 +2,13 @@
 
 import { useState, type ReactNode } from "react";
 import {
+  ArrowRight,
   Ban,
   BadgeCheck,
+  Boxes,
+  Fingerprint,
+  Shuffle,
+  Smartphone,
   CircleCheck,
   CircleDashed,
   Copy,
@@ -36,6 +41,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type {
   RegIPAction,
   RegIPDecision,
+  RegIPDevice,
+  RegIPDeviceAction,
+  RegIPLinked,
   RegIPEventKind,
   RegIPListKind,
   RegIPMethod,
@@ -56,7 +64,17 @@ export { Block, DeviceLimitPager as Pager, formatCount, LimitStepper } from "@/c
 
 type BadgeVariant = "danger" | "warning" | "info" | "success" | "secondary" | "outline";
 
-export const SCOPES: RegIPScope[] = ["ip", "subnet", "city", "app"];
+export const SCOPES: RegIPScope[] = ["ip", "subnet", "device", "ip_devices", "device_ips", "city", "app"];
+
+/** 数的是「不同成员数」：地址下的不同设备、设备下的不同地址。必须有窗口 */
+export function distinctScope(scope: RegIPScope) {
+  return scope === "ip_devices" || scope === "device_ips";
+}
+
+/** 统计对象是设备：没有有效设备标识时不参与 */
+export function deviceScope(scope: RegIPScope) {
+  return scope === "device" || scope === "device_ips";
+}
 
 export const SCOPE_META: Record<RegIPScope, { label: string; short: string; icon: LucideIcon; tint: string; hint: string }> = {
   ip: {
@@ -72,6 +90,27 @@ export const SCOPE_META: Record<RegIPScope, { label: string; short: string; icon
     icon: Network,
     tint: "bg-sky-500/10 text-sky-600 ring-sky-500/20 dark:text-sky-400",
     hint: "按网段前缀聚合，挡住同一机房的轮换地址"
+  },
+  device: {
+    label: "同一设备",
+    short: "设备",
+    icon: Smartphone,
+    tint: "bg-fuchsia-500/10 text-fuchsia-600 ring-fuchsia-500/20 dark:text-fuchsia-400",
+    hint: "按设备标识计；换网络、开代理都是同一台"
+  },
+  ip_devices: {
+    label: "地址下的设备",
+    short: "地址→设备",
+    icon: Boxes,
+    tint: "bg-amber-500/10 text-amber-600 ring-amber-500/20 dark:text-amber-400",
+    hint: "同一地址出现的不同设备数：群控、模拟器农场；老设备再来不算"
+  },
+  device_ips: {
+    label: "设备换的地址",
+    short: "设备→地址",
+    icon: Shuffle,
+    tint: "bg-rose-500/10 text-rose-600 ring-rose-500/20 dark:text-rose-400",
+    hint: "同一设备用过的不同地址数：代理池轮换"
   },
   city: {
     label: "同一城市",
@@ -118,6 +157,8 @@ export function methodLabel(method?: string | null) {
 export const REASON_META: Record<Exclude<RegIPReason, "">, { label: string; icon: LucideIcon }> = {
   disabled: { label: "未开启", icon: CircleDashed },
   missing_ip: { label: "缺少 IP", icon: ShieldAlert },
+  missing_device: { label: "缺少设备", icon: Smartphone },
+  invalid_device: { label: "无效设备", icon: Fingerprint },
   list_allow: { label: "放行名单", icon: ShieldCheck },
   list_deny: { label: "拒绝名单", icon: Ban },
   penalty: { label: "惩罚期", icon: LockKeyhole },
@@ -218,7 +259,14 @@ export function durationLabel(seconds: number) {
 }
 
 export function ruleSummary(rule: { scope: RegIPScope; windowSeconds: number; limit: number }) {
-  return `${SCOPE_META[rule.scope]?.label ?? rule.scope}${windowLabel(rule.windowSeconds)}最多 ${rule.limit} 个`;
+  return `${SCOPE_META[rule.scope]?.label ?? rule.scope}${windowLabel(rule.windowSeconds)}最多 ${rule.limit} ${unitOf(rule.scope)}`;
+}
+
+/** 规则上限的单位：注册数是「个」，设备是「台」，地址是「个地址」 */
+export function unitOf(scope: RegIPScope) {
+  if (scope === "ip_devices") return "台";
+  if (scope === "device_ips") return "个地址";
+  return "个";
 }
 
 /* ───────────────────── 策略 ───────────────────── */
@@ -236,9 +284,12 @@ export function defaultRegIPPolicy(): RegIPPolicy {
     rules: [
       { id: "ip-hour", name: "同一地址每小时", enabled: true, scope: "ip", windowSeconds: 3600, limit: 3, action: "challenge" },
       { id: "ip-day", name: "同一地址每天", enabled: true, scope: "ip", windowSeconds: 86400, limit: 10, action: "reject" },
-      { id: "subnet-day", name: "同一网段每天", enabled: true, scope: "subnet", windowSeconds: 86400, limit: 50, action: "reject" }
+      { id: "subnet-day", name: "同一网段每天", enabled: true, scope: "subnet", windowSeconds: 86400, limit: 50, action: "reject" },
+      { id: "device-day", name: "同一设备每天", enabled: true, scope: "device", windowSeconds: 86400, limit: 3, action: "reject" },
+      { id: "ip-devices-hour", name: "同一地址每小时出现的设备", enabled: true, scope: "ip_devices", windowSeconds: 3600, limit: 10, action: "challenge" },
+      { id: "device-ips-day", name: "同一设备每天换的地址", enabled: true, scope: "device_ips", windowSeconds: 86400, limit: 5, action: "challenge" }
     ],
-    penalty: { enabled: true, strikes: 5, strikeWindowSeconds: 3600, baseSeconds: 1800, multiplier: 2, maxSeconds: 7 * 86400, scope: "ip" },
+    penalty: { enabled: true, strikes: 5, strikeWindowSeconds: 3600, baseSeconds: 1800, multiplier: 2, maxSeconds: 7 * 86400, scope: "ip", device: true },
     surge: { enabled: false, windowMinutes: 5, baselineMinutes: 60, sensitivity: 4, minRegistrations: 30, action: "challenge", tightenFactor: 0.5 },
     isp: {
       enabled: false,
@@ -246,6 +297,7 @@ export function defaultRegIPPolicy(): RegIPPolicy {
       action: "challenge"
     },
     geo: { mode: "off", regions: [], action: "reject", unknown: "allow" },
+    device: { missing: "allow", invalid: "challenge", minLength: 8 },
     missingIp: "allow",
     failMode: "open",
     rejectMessage: ""
@@ -617,6 +669,129 @@ export function WindowPicker({
         </>
       ) : null}
     </div>
+  );
+}
+
+/** 设备标识：等宽、过长截断、点击查询、悬停复制 */
+export function DeviceText({ value, className, onClick }: { value?: string | null; className?: string; onClick?: () => void }) {
+  if (!value) return <span className="text-muted-foreground">—</span>;
+  const short = value.length > 22 ? `${value.slice(0, 10)}…${value.slice(-8)}` : value;
+  return (
+    <span className={cn("group inline-flex max-w-full items-center gap-1 font-mono text-xs", className)} title={value}>
+      <Smartphone className="size-3 shrink-0 text-fuchsia-500" />
+      {onClick ? (
+        <button type="button" onClick={onClick} className="truncate hover:underline" title="查询这台设备">
+          {short}
+        </button>
+      ) : (
+        <span className="truncate">{short}</span>
+      )}
+      <button
+        type="button"
+        aria-label="复制"
+        className="opacity-0 transition-opacity group-hover:opacity-100"
+        onClick={() => {
+          void navigator.clipboard?.writeText(value).then(() => toast.success("已复制"));
+        }}
+      >
+        <Copy className="size-3 text-muted-foreground" />
+      </button>
+    </span>
+  );
+}
+
+/** 设备标识的质量：有效 / 无效（附原因） */
+export function DeviceQuality({ device }: { device?: RegIPDevice | null }) {
+  if (!device || (!device.valid && !device.invalid)) return <Badge variant="outline" size="sm">未上报</Badge>;
+  if (device.valid) {
+    return (
+      <Badge variant="success" size="sm" className="gap-1">
+        <BadgeCheck className="size-3" /> 有效
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="warning" size="sm" className="gap-1" title={device.invalidReason}>
+      <Fingerprint className="size-3" /> 无效：{device.invalidReason}
+    </Badge>
+  );
+}
+
+const DEVICE_ACTIONS: Array<{ value: RegIPDeviceAction; label: string; icon: LucideIcon; active: string }> = [
+  { value: "allow", label: "放行", icon: CircleCheck, active: "bg-emerald-500/12 text-emerald-700 ring-emerald-500/30 dark:text-emerald-300" },
+  { value: "challenge", label: "加验", icon: ShieldQuestion, active: ACTION_META.challenge.active },
+  { value: "reject", label: "拒绝", icon: Ban, active: ACTION_META.reject.active }
+];
+
+/** 缺少 / 无效设备的处置：放行、加验、拒绝 */
+export function DeviceActionToggle({ value, onChange }: { value: RegIPDeviceAction; onChange: (value: RegIPDeviceAction) => void }) {
+  return (
+    <div className="inline-flex rounded-lg bg-muted p-0.5">
+      {DEVICE_ACTIONS.map((item) => (
+        <button
+          key={item.value}
+          type="button"
+          onClick={() => onChange(item.value)}
+          className={cn(
+            "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+            value === item.value ? cn("ring-1 ring-inset", item.active) : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <item.icon className="size-3" />
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 关联列表：地址下出现过的设备，或设备用过的地址。每行带「账号数」比例条，点一下跳到另一边的查询 ——
+ * 地址与设备两张查询页靠它互相跳转，顺着一个可疑设备摸出它背后的整个出口池。
+ */
+export function LinkedList({
+  items,
+  kind,
+  onOpen,
+  live
+}: {
+  items: RegIPLinked[];
+  kind: "device" | "ip";
+  onOpen: (key: string) => void;
+  /** 去重计数里此刻窗口内的成员（标「窗口内」） */
+  live?: Set<string>;
+}) {
+  if (!items.length) return <p className="px-4 py-6 text-center text-xs text-muted-foreground">没有关联记录</p>;
+  const peak = Math.max(1, ...items.map((item) => item.accounts));
+  return (
+    <ul className="divide-y divide-border">
+      {items.map((item) => (
+        <li key={item.key} className="relative px-4 py-2">
+          <span className="absolute inset-y-0 left-0 bg-fuchsia-500 opacity-[0.06]" style={{ width: `${(item.accounts / peak) * 100}%` }} />
+          <div className="relative flex items-center gap-2.5">
+            <div className="min-w-0 flex-1">
+              {kind === "device" ? (
+                <DeviceText value={item.key} onClick={() => onOpen(item.key)} />
+              ) : (
+                <IPText value={item.key} onClick={() => onOpen(item.key)} />
+              )}
+              <div className="truncate text-[10px] text-muted-foreground">
+                {item.location ? `${item.location} · ` : ""}
+                {new Date(item.firstAt).toLocaleDateString("zh-CN")} – {new Date(item.lastAt).toLocaleDateString("zh-CN")}
+              </div>
+            </div>
+            {live?.has(item.key) ? <Badge variant="info" size="sm">窗口内</Badge> : null}
+            <span className="shrink-0 text-xs font-medium tabular-nums">
+              {item.accounts}
+              <span className="ml-0.5 text-[10px] font-normal text-muted-foreground">个账号</span>
+            </span>
+            <button type="button" aria-label="查询" onClick={() => onOpen(item.key)} className="text-muted-foreground hover:text-foreground">
+              <ArrowRight className="size-3.5" />
+            </button>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 

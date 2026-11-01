@@ -1,16 +1,18 @@
 import { apiRequest, buildQuery } from "@/lib/api/client";
 
 /**
- * 注册 IP 控制 API。
+ * 注册准入（IP 与设备）API。
  *
- * 同一网络能注册多少账号、注册多快：按地址 / 网段 / 属地 / 整个应用分别配滑动窗口或累计配额，
+ * 同一网络、同一台设备能注册多少账号、注册多快：地址与设备两条互补的线，按地址 / 网段 / 设备 /
+ * 地址下的不同设备 / 设备换的不同地址 / 属地 / 整个应用分别配滑动窗口或累计配额，
  * 加上名单、惩罚期、突增检测、运营商与属地限制。判定全部在后端（`regip.Decide`），
  * 控制台只配置、查看、查询与模拟。规则见 docs/register-ip.md。
  */
 
 export type RegIPMode = "enforce" | "observe";
 export type RegIPAction = "reject" | "challenge" | "observe";
-export type RegIPScope = "ip" | "subnet" | "city" | "app";
+export type RegIPScope = "ip" | "subnet" | "device" | "ip_devices" | "device_ips" | "city" | "app";
+export type RegIPDeviceAction = "allow" | "challenge" | "reject";
 export type RegIPMethod = "password" | "sms" | "oauth" | "cardkey";
 export type RegIPGeoMode = "off" | "allow" | "deny";
 export type RegIPAllowReject = "allow" | "reject";
@@ -21,6 +23,8 @@ export type RegIPReason =
   | ""
   | "disabled"
   | "missing_ip"
+  | "missing_device"
+  | "invalid_device"
   | "list_allow"
   | "list_deny"
   | "penalty"
@@ -57,6 +61,8 @@ export type RegIPPolicy = {
     multiplier: number;
     maxSeconds: number;
     scope: "ip" | "subnet";
+    /** 设备一侧的规则拒绝时惩罚落在设备上 */
+    device: boolean;
   };
   surge: {
     enabled: boolean;
@@ -69,6 +75,7 @@ export type RegIPPolicy = {
   };
   isp: { enabled: boolean; keywords: string[]; action: RegIPAction };
   geo: { mode: RegIPGeoMode; regions: string[]; action: RegIPAction; unknown: RegIPAllowReject };
+  device: { missing: RegIPDeviceAction; invalid: RegIPDeviceAction; minLength: number };
   missingIp: RegIPAllowReject;
   failMode: RegIPFailMode;
   rejectMessage: string;
@@ -92,7 +99,9 @@ export type RegIPLocation = {
 export type RegIPListMatch = {
   entryId: number;
   kind: RegIPListKind;
-  cidr: string;
+  target: "ip" | "device";
+  cidr?: string;
+  device?: string;
   factor?: number;
   note?: string;
 };
@@ -138,7 +147,15 @@ export type RegIPDecision = {
 
 export type RegIPAddress = { ip: string; host: string; subnet: string; family: 4 | 6; private: boolean };
 
-export type RegIPTopItem = { key: string; count: number; location?: string; lastAt: string };
+export type RegIPDevice = { id?: string; raw?: string; valid: boolean; invalid?: boolean; invalidReason?: string };
+
+export type RegIPTopDevice = { key: string; count: number; accounts?: number; location?: string; lastAt: string };
+
+export type RegIPLinked = { key: string; accounts: number; firstAt: string; lastAt: string; location?: string };
+
+export type RegIPMember = { key: string; seenAt: string; ruleId: string };
+
+export type RegIPTopItem = { key: string; count: number; accounts?: number; location?: string; lastAt: string };
 
 export type RegIPPenalty = { subject: string; level: number; expiresAt: string; remaining: number };
 
@@ -151,7 +168,14 @@ export type RegIPOverview = {
   configured: boolean;
   days: number;
   tz: string;
-  totals: { registrations: number; distinctIps: number; distinctSubnets: number } & Partial<Record<RegIPEventKind, number>>;
+  totals: {
+    registrations: number;
+    distinctIps: number;
+    distinctSubnets: number;
+    distinctDevices: number;
+    withDevice: number;
+    withoutDevice: number;
+  } & Partial<Record<RegIPEventKind, number>>;
   trend: RegIPTrendPoint[];
   reasons: Partial<Record<RegIPReason, number>>;
   methods: Record<string, number>;
@@ -165,6 +189,15 @@ export type RegIPOverview = {
   penalties: RegIPPenalty[];
   penaltyCount: number;
   surge?: RegIPSurgeState | null;
+  devices: {
+    lists: Partial<Record<RegIPListKind, number>>;
+    distribution: Array<{ bucket: string; count: number }>;
+    topDevices: RegIPTopItem[];
+    /** count 是不同设备数，accounts 是注册数 */
+    topIpDevices: RegIPTopItem[];
+    /** count 是不同地址数 */
+    topDeviceIps: RegIPTopItem[];
+  };
   writers: Record<"events" | "ledger", RegIPWriterStats>;
 };
 
@@ -220,6 +253,8 @@ export type RegIPListEntry = {
   updatedAt: string;
 };
 
+export type RegIPDeviceListEntry = Omit<RegIPListEntry, "cidr"> & { deviceId: string };
+
 export type RegIPPage<T> = { items: T[]; total: number; page: number; limit: number };
 
 export type RegIPRuleUsage = RegIPRuleHit & { remaining: number; resetAt?: string | null };
@@ -236,23 +271,45 @@ export type RegIPInspection = {
   subnetRegistrations: number;
   registrations: RegIPRegistration[];
   subnetRecent: RegIPRegistration[];
+  devices: RegIPLinked[];
+  devicesTotal: number;
+  recent: RegIPMember[];
+  events: RegIPEvent[];
+};
+
+export type RegIPDeviceInspection = {
+  device: RegIPDevice;
+  list: RegIPDeviceListEntry | null;
+  match: RegIPListMatch | null;
+  penalty: { subject: string; remaining: number; level: number; expiresAt: string | null };
+  decision: RegIPDecision;
+  usage: RegIPRuleUsage[];
+  registrations: RegIPRegistration[];
+  active: number;
+  addresses: RegIPLinked[];
+  addressesTotal: number;
+  recent: RegIPMember[];
   events: RegIPEvent[];
 };
 
 export type RegIPSimulateInput = {
   policy?: RegIPPolicy | null;
   ip: string;
+  deviceId?: string;
   method?: RegIPMethod;
   captchaPassed?: boolean;
   counts?: Record<string, number>;
   location?: RegIPLocation | null;
   surgeActive?: boolean | null;
   penaltySeconds?: number | null;
+  devicePenaltySeconds?: number | null;
 };
 
 export type RegIPSimulation = {
   decision: RegIPDecision;
   address?: RegIPAddress;
+  device: RegIPDevice;
+  devicePenaltySeconds: number;
   location: RegIPLocation;
   list: RegIPListMatch | null;
   penaltySeconds: number;
@@ -262,7 +319,8 @@ export type RegIPSimulation = {
 };
 
 export type RegIPReleaseInput = {
-  ip: string;
+  ip?: string;
+  device?: string;
   scope: "ip" | "subnet";
   counters?: boolean;
   penalty?: boolean;
@@ -292,6 +350,7 @@ export type RegIPEventParams = {
   ruleId?: string;
   method?: string;
   ip?: string;
+  deviceId?: string;
   keyword?: string;
   from?: string;
   to?: string;
@@ -301,6 +360,7 @@ export type RegIPEventParams = {
 
 export type RegIPRegistrationParams = {
   ip?: string;
+  deviceId?: string;
   method?: string;
   keyword?: string;
   released?: boolean;
@@ -369,4 +429,29 @@ export function updateRegIPList(
 
 export function deleteRegIPLists(token: string, appKey: string, ids: number[]) {
   return apiRequest<{ deleted: number }>(`${base(appKey)}/lists/delete`, { method: "POST", token, body: JSON.stringify({ ids }) });
+}
+
+export function inspectRegDevice(token: string, appKey: string, device: string) {
+  return apiRequest<RegIPDeviceInspection>(`${base(appKey)}/devices/inspect${buildQuery({ device })}`, { token });
+}
+
+export function listRegDeviceLists(token: string, appKey: string, params?: RegIPListParams) {
+  return apiRequest<RegIPPage<RegIPDeviceListEntry>>(`${base(appKey)}/device-lists${buildQuery(params ?? {})}`, { token });
+}
+
+export function addRegDeviceLists(token: string, appKey: string, input: RegIPListInput) {
+  return apiRequest<{ items: RegIPDeviceListEntry[] }>(`${base(appKey)}/device-lists`, { method: "POST", token, body: JSON.stringify(input) });
+}
+
+export function updateRegDeviceList(
+  token: string,
+  appKey: string,
+  id: number,
+  input: { kind: RegIPListKind; factor?: number; note?: string; expiresAt?: string | null }
+) {
+  return apiRequest<RegIPDeviceListEntry>(`${base(appKey)}/device-lists/${id}`, { method: "PUT", token, body: JSON.stringify(input) });
+}
+
+export function deleteRegDeviceLists(token: string, appKey: string, ids: number[]) {
+  return apiRequest<{ deleted: number }>(`${base(appKey)}/device-lists/delete`, { method: "POST", token, body: JSON.stringify({ ids }) });
 }

@@ -13,6 +13,7 @@ import {
   Network,
   ShieldQuestion,
   SlidersHorizontal,
+  Smartphone,
   UserPlus,
   Wifi
 } from "lucide-react";
@@ -20,6 +21,7 @@ import { StatusDot } from "@/components/apps/app-config-primitives";
 import {
   ACTION_META,
   Block,
+  DeviceText,
   durationLabel,
   formatCount,
   IPText,
@@ -55,6 +57,7 @@ const TREND_CONFIG = buildChartConfig([
 ]);
 const DISTRIBUTION_CONFIG = buildChartConfig([{ key: "count", label: "地址数", color: { light: "#0ea5e9", dark: "#38bdf8" } }]);
 const REASON_CONFIG = buildChartConfig([{ key: "count", label: "次数", color: { light: "#f43f5e", dark: "#fb7185" } }]);
+const DEVICE_DISTRIBUTION_CONFIG = buildChartConfig([{ key: "count", label: "设备数", color: { light: "#d946ef", dark: "#e879f9" } }]);
 
 /**
  * 概览。注册数取台账、拦截取记录，按所选天数与浏览器时区分日；惩罚期与突增是「此刻」的，30 秒刷新一次。
@@ -63,11 +66,13 @@ const REASON_CONFIG = buildChartConfig([{ key: "count", label: "次数", color: 
 export function RegIPOverviewPanel({
   appKey,
   onOpenPolicy,
-  onOpenIP
+  onOpenIP,
+  onOpenDevice
 }: {
   appKey: string;
   onOpenPolicy: () => void;
   onOpenIP: (ip: string) => void;
+  onOpenDevice: (device: string) => void;
 }) {
   const [days, setDays] = useState<number>(7);
   const query = useRegIPOverviewQuery(appKey, days);
@@ -140,10 +145,20 @@ export function RegIPOverviewPanel({
         <StatTile
           label="名单"
           icon={SlidersHorizontal}
-          value={data ? formatCount(LIST_KINDS.reduce((sum, kind) => sum + (data.lists[kind] ?? 0), 0)) : "—"}
-          hint={data ? LIST_KINDS.map((kind) => `${LIST_META[kind].label} ${data.lists[kind] ?? 0}`).join("，") : undefined}
+          value={
+            data
+              ? formatCount(LIST_KINDS.reduce((sum, kind) => sum + (data.lists[kind] ?? 0) + (data.devices.lists[kind] ?? 0), 0))
+              : "—"
+          }
+          hint={
+            data
+              ? `地址 ${LIST_KINDS.reduce((sum, kind) => sum + (data.lists[kind] ?? 0), 0)}，设备 ${LIST_KINDS.reduce((sum, kind) => sum + (data.devices.lists[kind] ?? 0), 0)}`
+              : undefined
+          }
         />
       </div>
+
+      <DeviceStrip loading={loading} data={data} />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <ChartCard title="注册与拦截" loading={loading} empty={trendEmpty} height={230}>
@@ -213,6 +228,29 @@ export function RegIPOverviewPanel({
         <TopList title="被拦最多的地址" items={data?.topBlocked} loading={loading} onOpen={onOpenIP} unit="次" tone="danger" />
       </div>
 
+      <div className="grid gap-4 lg:grid-cols-3">
+        <TopList title="注册最多的设备" items={data?.devices.topDevices} loading={loading} onOpen={onOpenDevice} unit="个账号" kind="device" />
+        <TopList
+          title="设备最多的地址"
+          items={data?.devices.topIpDevices}
+          loading={loading}
+          onOpen={onOpenIP}
+          unit="台设备"
+          tone="danger"
+          hint="一个出口后面冒出很多设备：群控、模拟器"
+        />
+        <TopList
+          title="换地址最多的设备"
+          items={data?.devices.topDeviceIps}
+          loading={loading}
+          onOpen={onOpenDevice}
+          unit="个地址"
+          kind="device"
+          tone="danger"
+          hint="一台设备不停换出口：代理池轮换"
+        />
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <Block title="正在惩罚期" aside={data ? <Badge variant="outline" size="sm">{formatCount(data.penaltyCount)}</Badge> : null} bodyClassName="p-0">
           {loading ? (
@@ -224,7 +262,11 @@ export function RegIPOverviewPanel({
               {data.penalties.map((item) => (
                 <li key={item.subject} className="flex items-center gap-3 px-4 py-2.5">
                   <LockKeyhole className="size-4 shrink-0 text-violet-500" />
-                  <IPText value={item.subject} className="min-w-0 flex-1" onClick={() => onOpenIP(item.subject.split("/")[0])} />
+                  {item.subject.startsWith("device:") ? (
+                    <DeviceText value={item.subject.slice(7)} className="min-w-0 flex-1" onClick={() => onOpenDevice(item.subject.slice(7))} />
+                  ) : (
+                    <IPText value={item.subject} className="min-w-0 flex-1" onClick={() => onOpenIP(item.subject.split("/")[0])} />
+                  )}
                   <Badge variant="outline" size="sm">第 {item.level} 次</Badge>
                   <span className="w-20 text-right text-[11px] tabular-nums text-muted-foreground">剩 {durationLabel(item.remaining)}</span>
                 </li>
@@ -325,6 +367,65 @@ function SurgeCard({ loading, data }: { loading: boolean; data?: ReturnType<type
   );
 }
 
+/** 设备一侧的一行：带设备的注册占比、不同设备数、每台设备账号数分布 */
+function DeviceStrip({ loading, data }: { loading: boolean; data?: ReturnType<typeof useRegIPOverviewQuery>["data"] }) {
+  const total = (data?.totals.withDevice ?? 0) + (data?.totals.withoutDevice ?? 0);
+  const coverage = total ? ((data?.totals.withDevice ?? 0) / total) * 100 : 0;
+  const distribution = data?.devices.distribution ?? [];
+  const empty = distribution.every((row) => !row.count);
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <Block
+        title={
+          <span className="flex items-center gap-1.5">
+            <Smartphone className="size-4 text-fuchsia-500" />
+            设备一侧
+          </span>
+        }
+      >
+        {loading || !data ? (
+          <Skeleton className="h-[120px] w-full" />
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <Metric label="不同设备" value={formatCount(data.totals.distinctDevices)} />
+              <Metric label="人均设备" value={data.totals.distinctDevices ? (data.totals.withDevice / data.totals.distinctDevices).toFixed(2) : "—"} />
+              <Metric label="未上报设备" value={formatCount(data.totals.withoutDevice)} strong={coverage < 80 && total > 0} />
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-baseline justify-between text-[11px]">
+                <span className="text-muted-foreground">带设备标识的注册</span>
+                <span className="font-medium tabular-nums">{total ? `${coverage.toFixed(1)}%` : "—"}</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-fuchsia-500 transition-[width] duration-200" style={{ width: `${coverage}%` }} />
+              </div>
+              <p className="text-[10px] leading-relaxed text-muted-foreground">
+                不带设备标识的注册只受地址一侧约束；占比偏高时，检查客户端是否上报 X-Device-Id，或在策略里要求设备标识。
+              </p>
+            </div>
+          </div>
+        )}
+      </Block>
+      <ChartCard title="每台设备注册的账号数" loading={loading} empty={empty} emptyText="暂无带设备的注册" height={160}>
+        <ChartContainer config={DEVICE_DISTRIBUTION_CONFIG} className="h-[160px] w-full">
+          <BarChart data={distribution} margin={{ left: 0, right: 8, top: 12 }}>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" />
+            <XAxis dataKey="bucket" tickLine={false} axisLine={false} fontSize={11} tickFormatter={(v) => `${v} 个`} />
+            <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={11} width={36} />
+            <ChartTooltip content={<ChartTooltipContent labelFormatter={(label) => `注册 ${label} 个账号的设备`} />} />
+            <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+              {distribution.map((row, index) => (
+                <Cell key={row.bucket} fill="var(--color-count)" fillOpacity={0.35 + index * 0.16} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ChartContainer>
+      </ChartCard>
+    </div>
+  );
+}
+
 function Metric({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
     <div className="rounded-lg bg-muted px-2 py-2">
@@ -340,7 +441,9 @@ function TopList({
   loading,
   onOpen,
   unit,
-  tone
+  tone,
+  kind = "ip",
+  hint
 }: {
   title: string;
   items?: RegIPTopItem[];
@@ -348,10 +451,12 @@ function TopList({
   onOpen: (key: string) => void;
   unit: string;
   tone?: "danger";
+  kind?: "ip" | "device";
+  hint?: string;
 }) {
   const peak = Math.max(1, ...(items ?? []).map((item) => item.count));
   return (
-    <Block title={title} bodyClassName="p-0">
+    <Block title={title} aside={hint ? <span className="truncate text-[10px] text-muted-foreground">{hint}</span> : null} bodyClassName="p-0">
       {loading ? (
         <ListSkeleton />
       ) : !items?.length ? (
@@ -368,9 +473,15 @@ function TopList({
               <div className="relative flex items-center gap-2.5">
                 <span className="w-4 shrink-0 text-[11px] tabular-nums text-muted-foreground">{index + 1}</span>
                 <div className="min-w-0 flex-1">
-                  <IPText value={item.key} onClick={() => onOpen(item.key)} />
+                  {kind === "device" ? (
+                    <DeviceText value={item.key} onClick={() => onOpen(item.key)} />
+                  ) : (
+                    <IPText value={item.key} onClick={() => onOpen(item.key)} />
+                  )}
                   <div className="truncate text-[10px] text-muted-foreground">
                     {item.location || "属地未知"} · {formatRelative(item.lastAt)}
+                    {item.accounts && unit !== "个账号" ? ` · ${formatCount(item.accounts)} 个账号` : ""}
+                    {item.accounts && unit === "个账号" ? ` · ${formatCount(item.accounts)} 个地址` : ""}
                   </div>
                 </div>
                 <span className={cn("shrink-0 text-xs font-medium tabular-nums", tone === "danger" && "text-rose-600 dark:text-rose-400")}>
@@ -416,7 +527,7 @@ function PolicySummary({
     <section className="overflow-hidden rounded-2xl border border-border bg-card" style={{ boxShadow: "var(--shadow-soft)" }}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
         <div className="flex flex-wrap items-center gap-3">
-          <StatusDot active={policy.enabled} labelActive="注册 IP 控制已开启" labelInactive="注册 IP 控制未开启" />
+          <StatusDot active={policy.enabled} labelActive="注册准入已开启" labelInactive="注册准入未开启" />
           {policy.enabled && policy.mode === "observe" ? (
             <Badge variant="info" size="sm" className="gap-1">
               <Eye className="size-3" /> 观察模式：只记录不拦截
@@ -492,8 +603,21 @@ function PolicySummary({
               </Badge>
             ) : null}
             {policy.missingIp === "reject" ? <Badge variant="outline" size="sm" className="font-normal">缺 IP 拒绝</Badge> : null}
+            {policy.device.missing !== "allow" ? (
+              <Badge variant="outline" size="sm" className="gap-1 font-normal">
+                <Smartphone className="size-3" /> 缺设备{policy.device.missing === "reject" ? "拒绝" : "加验"}
+              </Badge>
+            ) : null}
+            {policy.device.invalid !== "allow" ? (
+              <Badge variant="outline" size="sm" className="font-normal">无效设备{policy.device.invalid === "reject" ? "拒绝" : "加验"}</Badge>
+            ) : null}
             {policy.failMode === "closed" ? <Badge variant="warning" size="sm" className="font-normal">故障时拒绝</Badge> : null}
-            {!policy.isp.enabled && policy.geo.mode === "off" && policy.missingIp !== "reject" && policy.failMode !== "closed" ? (
+            {!policy.isp.enabled &&
+            policy.geo.mode === "off" &&
+            policy.missingIp !== "reject" &&
+            policy.failMode !== "closed" &&
+            policy.device.missing === "allow" &&
+            policy.device.invalid === "allow" ? (
               <span className="flex items-center gap-1 text-sm text-muted-foreground">
                 <BadgeCheck className="size-3.5" /> 无
               </span>

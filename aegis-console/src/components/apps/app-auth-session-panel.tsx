@@ -195,7 +195,7 @@ export function AppAuthSessionPanel({ appKey }: { appKey?: string | null }) {
 }
 
 /**
- * 注册 IP 控制已移到「注册 IP」区块（地址 / 网段配额、名单、惩罚期、突增检测），这里只留入口与当前状态。
+ * 注册 IP 与设备控制已移到「注册准入」区块（地址 / 网段 / 设备配额、名单、惩罚期、突增检测），这里只留入口与当前状态。
  * 旧开关「注册 IP 唯一」本页照原值回传：没保存过新策略时它仍决定推导出的策略，保存过之后后端不再改它。
  */
 function RegisterIPEntry({ appKey }: { appKey: string }) {
@@ -228,7 +228,7 @@ function RegisterIPEntry({ appKey }: { appKey: string }) {
             <Skeleton className="h-3.5 w-40" />
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <StatusDot active={Boolean(policy?.enabled)} labelActive="注册 IP 控制已开启" labelInactive="注册 IP 控制未开启" />
+              <StatusDot active={Boolean(policy?.enabled)} labelActive="注册准入已开启" labelInactive="注册准入未开启" />
               {policy?.enabled && summary ? <span className="text-xs text-muted-foreground">{summary}</span> : null}
             </div>
           )}

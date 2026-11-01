@@ -2,7 +2,12 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  addRegDeviceLists,
   addRegIPLists,
+  deleteRegDeviceLists,
+  inspectRegDevice,
+  listRegDeviceLists,
+  updateRegDeviceList,
   deleteRegIPLists,
   getRegIPOverview,
   getRegIPPolicy,
@@ -133,12 +138,12 @@ export function useRegIPRegistrationsQuery(appKey: string | null | undefined, pa
   });
 }
 
-export function useRegIPListsQuery(appKey: string | null | undefined, params: RegIPListParams) {
+export function useRegIPListsQuery(appKey: string | null | undefined, params: RegIPListParams, enabled = true) {
   const token = useAdminToken();
   return useQuery({
     queryKey: [ROOT, "lists", token, appKey, params],
     queryFn: () => listRegIPLists(token as string, appKey as string, params),
-    enabled: Boolean(token && appKey),
+    enabled: Boolean(token && appKey && enabled),
     placeholderData: keepPreviousData
   });
 }
@@ -172,6 +177,59 @@ export function useDeleteRegIPListsMutation(appKey?: string | null) {
   const invalidate = useInvalidateRegIP();
   return useMutation({
     mutationFn: (ids: number[]) => deleteRegIPLists(token as string, appKey as string, ids),
+    onSuccess: () => invalidate()
+  });
+}
+
+export function useRegDeviceInspectQuery(appKey: string | null | undefined, device: string | null | undefined) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "device-inspect", token, appKey, device],
+    queryFn: () => inspectRegDevice(token as string, appKey as string, device as string),
+    enabled: Boolean(token && appKey && device),
+    retry: false
+  });
+}
+
+export function useRegDeviceListsQuery(appKey: string | null | undefined, params: RegIPListParams, enabled = true) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "device-lists", token, appKey, params],
+    queryFn: () => listRegDeviceLists(token as string, appKey as string, params),
+    enabled: Boolean(token && appKey && enabled),
+    placeholderData: keepPreviousData
+  });
+}
+
+export function useAddRegDeviceListsMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateRegIP();
+  return useMutation({
+    mutationFn: (input: RegIPListInput) => addRegDeviceLists(token as string, appKey as string, input),
+    onSuccess: () => invalidate()
+  });
+}
+
+export function useUpdateRegDeviceListMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateRegIP();
+  return useMutation({
+    mutationFn: ({
+      id,
+      input
+    }: {
+      id: number;
+      input: { kind: RegIPListKind; factor?: number; note?: string; expiresAt?: string | null };
+    }) => updateRegDeviceList(token as string, appKey as string, id, input),
+    onSuccess: () => invalidate()
+  });
+}
+
+export function useDeleteRegDeviceListsMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateRegIP();
+  return useMutation({
+    mutationFn: (ids: number[]) => deleteRegDeviceLists(token as string, appKey as string, ids),
     onSuccess: () => invalidate()
   });
 }

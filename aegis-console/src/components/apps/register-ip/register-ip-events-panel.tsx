@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { ListTree, Search } from "lucide-react";
 import {
+  DeviceText,
   EVENT_KINDS,
   IPText,
   KIND_META,
@@ -44,15 +45,25 @@ export function rangeStart(key: RangeKey) {
 }
 
 /** 拦截记录：拒绝、加验、观察、加验后放行、惩罚与解除。地址筛选支持网段 */
-export function RegIPEventsPanel({ appKey, onOpenIP }: { appKey: string; onOpenIP: (ip: string) => void }) {
+export function RegIPEventsPanel({
+  appKey,
+  onOpenIP,
+  onOpenDevice
+}: {
+  appKey: string;
+  onOpenIP: (ip: string) => void;
+  onOpenDevice: (device: string) => void;
+}) {
   const [kind, setKind] = useState<RegIPEventKind | "all">("all");
   const [reason, setReason] = useState<RegIPReason | "all">("all");
   const [method, setMethod] = useState<string>("all");
   const [range, setRange] = useState<RangeKey>("7");
   const [ip, setIP] = useState("");
+  const [device, setDevice] = useState("");
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(1);
   const debouncedIP = useDebouncedValue(ip.trim(), 400);
+  const debouncedDevice = useDebouncedValue(device.trim(), 400);
   const debouncedKeyword = useDebouncedValue(keyword.trim(), 300);
   const params = useMemo(
     () => ({
@@ -60,12 +71,13 @@ export function RegIPEventsPanel({ appKey, onOpenIP }: { appKey: string; onOpenI
       reason: reason === "all" ? undefined : reason,
       method: method === "all" ? undefined : method,
       ip: debouncedIP || undefined,
+      deviceId: debouncedDevice || undefined,
       keyword: debouncedKeyword || undefined,
       from: rangeStart(range),
       page,
       limit: LIMIT
     }),
-    [kind, reason, method, debouncedIP, debouncedKeyword, range, page]
+    [kind, reason, method, debouncedIP, debouncedDevice, debouncedKeyword, range, page]
   );
   const query = useRegIPEventsQuery(appKey, params);
   const items = query.data?.items ?? [];
@@ -125,7 +137,8 @@ export function RegIPEventsPanel({ appKey, onOpenIP }: { appKey: string; onOpenI
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        <Input value={ip} onChange={(event) => reset(setIP)(event.target.value)} placeholder="地址或网段" className="h-8 w-44 font-mono text-xs" />
+        <Input value={ip} onChange={(event) => reset(setIP)(event.target.value)} placeholder="地址或网段" className="h-8 w-40 font-mono text-xs" />
+        <Input value={device} onChange={(event) => reset(setDevice)(event.target.value)} placeholder="设备标识" className="h-8 w-44 font-mono text-xs" />
         <div className="relative min-w-44 flex-1 sm:max-w-60">
           <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input value={keyword} onChange={(event) => reset(setKeyword)(event.target.value)} placeholder="账号、设备、属地、规则" className="h-8 pl-8 text-xs" />
@@ -169,7 +182,11 @@ export function RegIPEventsPanel({ appKey, onOpenIP }: { appKey: string; onOpenI
                     <KindBadge kind={event.kind} />
                   </TableCell>
                   <TableCell className="max-w-56">
-                    <IPText value={event.ip || event.subnet} onClick={() => onOpenIP((event.ip || event.subnet).split("/")[0])} />
+                    {event.ip || event.subnet ? (
+                      <IPText value={event.ip || event.subnet} onClick={() => onOpenIP((event.ip || event.subnet).split("/")[0])} />
+                    ) : (
+                      <DeviceText value={event.deviceId} onClick={() => onOpenDevice(event.deviceId)} />
+                    )}
                     <div className="truncate text-[10px] text-muted-foreground">
                       {locationText(event)}
                       {event.isp ? ` · ${event.isp}` : ""}
@@ -182,6 +199,7 @@ export function RegIPEventsPanel({ appKey, onOpenIP }: { appKey: string; onOpenI
                       <>
                         <div className="truncate">{event.account || "—"}</div>
                         <div className="text-[10px] text-muted-foreground">{methodLabel(event.method)}</div>
+                        {event.deviceId ? <DeviceText value={event.deviceId} className="text-[10px]" onClick={() => onOpenDevice(event.deviceId)} /> : null}
                       </>
                     )}
                   </TableCell>
