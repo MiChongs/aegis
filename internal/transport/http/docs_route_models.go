@@ -251,6 +251,9 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/points-store/redemptions/{redemptionId}/fulfill"):                     PointsStoreHandleRequest{},               // AdminFulfillPointsStoreRedemption
 		routeKey("PUT", "/api/admin/apps/{appkey}/points-store/settings"):                                                PointsStoreSettingsRequest{},             // AdminSavePointsStoreSettings
 		routeKey("PUT", "/api/admin/apps/{appkey}/policy"):                                                               AdminAppPolicyRequest{},                  // UpdateAdminAppPolicy
+		routeKey("POST", "/api/admin/apps/{appkey}/register-ip/device-lists"):                                            regip.ListInput{},                        // AdminAddRegisterDeviceLists
+		routeKey("POST", "/api/admin/apps/{appkey}/register-ip/device-lists/delete"):                                     regip.ListDeleteInput{},                  // AdminDeleteRegisterDeviceLists
+		routeKey("PUT", "/api/admin/apps/{appkey}/register-ip/device-lists/{id}"):                                        regip.ListUpdate{},                       // AdminUpdateRegisterDeviceList
 		routeKey("POST", "/api/admin/apps/{appkey}/register-ip/lists"):                                                   regip.ListInput{},                        // AdminAddRegisterIPLists
 		routeKey("POST", "/api/admin/apps/{appkey}/register-ip/lists/delete"):                                            regip.ListDeleteInput{},                  // AdminDeleteRegisterIPLists
 		routeKey("PUT", "/api/admin/apps/{appkey}/register-ip/lists/{id}"):                                               regip.ListUpdate{},                       // AdminUpdateRegisterIPList

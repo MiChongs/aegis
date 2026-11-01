@@ -70,10 +70,12 @@ ON CONFLICT (user_id) WHERE user_id IS NOT NULL DO NOTHING`,
 	return err
 }
 
-// RegisterIPCountQuery 累计型规则要数的范围。Prefix 与 City 二选一，都为空表示整个应用。
+// RegisterIPCountQuery 累计型规则要数的范围。Prefix、Device、City 三选一，都为空表示整个应用。
 type RegisterIPCountQuery struct {
-	AppID   int64
-	Prefix  netip.Prefix
+	AppID  int64
+	Prefix netip.Prefix
+	// Device 规整后的设备标识（小写）
+	Device  string
 	City    string // 「国家/省/市」
 	Methods []string
 	Since   *time.Time
@@ -91,6 +93,8 @@ func registerIPScopeWhere(q RegisterIPCountQuery, alias string, args []any) ([]s
 	if q.Prefix.IsValid() {
 		from, to := regip.PrefixRange(q.Prefix)
 		add(alias+"ip >= ?::inet AND "+alias+"ip <= ?::inet", from.String(), to.String())
+	} else if q.Device != "" {
+		add(alias+"device_id <> '' AND lower("+alias+"device_id) = ?", strings.ToLower(q.Device))
 	} else if q.City != "" {
 		parts := strings.SplitN(q.City, "/", 3)
 		for len(parts) < 3 {
@@ -119,6 +123,16 @@ func (r *Repository) CountRegisterIPLedger(ctx context.Context, q RegisterIPCoun
 	var count int
 	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM register_ip_ledger WHERE `+strings.Join(where, " AND "), args...).Scan(&count)
 	return count, err
+}
+
+// ReleaseRegisterIPLedgerByDevice 解除一台设备的台账：不再计入设备累计上限。
+func (r *Repository) ReleaseRegisterIPLedgerByDevice(ctx context.Context, appID int64, device string) (int64, error) {
+	where, args := registerIPScopeWhere(RegisterIPCountQuery{AppID: appID, Device: device}, "", []any{appID})
+	tag, err := r.pool.Exec(ctx, `UPDATE register_ip_ledger SET released_at = NOW() WHERE `+strings.Join(where, " AND "), args...)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // ReleaseRegisterIPLedger 解除网段内的台账：不再计入累计上限，账号不受影响。返回解除了多少行。
@@ -164,6 +178,9 @@ func (r *Repository) ListRegisterIPLedger(ctx context.Context, q regip.Registrat
 	}
 	if q.Method != "" {
 		add("l.method = ?", q.Method)
+	}
+	if device := strings.TrimSpace(q.DeviceID); device != "" {
+		add("l.device_id <> '' AND lower(l.device_id) = ?", strings.ToLower(device))
 	}
 	if q.Released != nil {
 		if *q.Released {
@@ -443,6 +460,9 @@ func (r *Repository) ListRegisterIPEvents(ctx context.Context, q regip.EventQuer
 	}
 	if q.RuleID != "" {
 		add("rule_id = ?", q.RuleID)
+	}
+	if device := strings.TrimSpace(q.DeviceID); device != "" {
+		add("device_id <> '' AND lower(device_id) = ?", strings.ToLower(device))
 	}
 	if q.Method != "" {
 		add("method = ?", q.Method)

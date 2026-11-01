@@ -72,11 +72,11 @@ func (a Address) Prefix(scope string) (netip.Prefix, bool) {
 	return netip.Prefix{}, false
 }
 
-// SubjectKey 计数键里的主体部分。网段写成 CIDR，属地写成「国家/省/市」，应用就是 app。
-// 返回空串表示这条规则这次无从统计（例如属地查不到），不参与判定。
-func SubjectKey(scope string, addr Address, loc Location) string {
+// SubjectKey 计数键里的主体部分。网段写成 CIDR，设备写成 device:<标识>，属地写成「国家/省/市」，应用就是 app。
+// 返回空串表示这条规则这次无从统计（例如属地查不到、没有有效设备标识），不参与判定。
+func SubjectKey(scope string, addr Address, dev Device, loc Location) string {
 	switch scope {
-	case ScopeIP:
+	case ScopeIP, ScopeIPDevices:
 		if addr.Host.IsValid() {
 			return addr.Host.String()
 		}
@@ -84,12 +84,187 @@ func SubjectKey(scope string, addr Address, loc Location) string {
 		if addr.Subnet.IsValid() {
 			return addr.Subnet.String()
 		}
+	case ScopeDevice, ScopeDeviceIPs:
+		if dev.Valid {
+			return dev.Subject()
+		}
 	case ScopeCity:
 		return loc.CityKey()
 	case ScopeApp:
 		return "app"
 	}
 	return ""
+}
+
+// MemberKey 去重型主体这一次要加入的成员：地址下的设备、设备下的地址。两边都要有才能数。
+func MemberKey(scope string, addr Address, dev Device) string {
+	switch scope {
+	case ScopeIPDevices:
+		if dev.Valid && addr.Host.IsValid() {
+			return dev.ID
+		}
+	case ScopeDeviceIPs:
+		if dev.Valid && addr.Host.IsValid() {
+			return addr.Host.String()
+		}
+	}
+	return ""
+}
+
+/* ───────────────────── 设备 ───────────────────── */
+
+// Device 一次注册上报的设备标识。
+type Device struct {
+	// ID 规整后的标识（去空白、转小写）；Raw 是原样
+	ID  string `json:"id,omitempty"`
+	Raw string `json:"raw,omitempty"`
+	// Valid 可以参与设备规则
+	Valid bool `json:"valid"`
+	// Invalid 上报了值但被判为无效，InvalidReason 说明为什么
+	Invalid       bool   `json:"invalid,omitempty"`
+	InvalidReason string `json:"invalidReason,omitempty"`
+}
+
+// Present 是否上报了值（有效或无效）。
+func (d Device) Present() bool { return d.Valid || d.Invalid }
+
+// Subject 设备作为统计 / 惩罚主体时的键。前缀与地址主体区分开，两边在同一个惩罚索引里不会撞。
+func (d Device) Subject() string { return DeviceSubjectPrefix + d.ID }
+
+// DeviceSubjectPrefix 设备主体的前缀。
+const DeviceSubjectPrefix = "device:"
+
+// MaxDeviceLength 设备标识最长多少字符。
+const MaxDeviceLength = 128
+
+// ParseDevice 规整并检查设备标识。占位值已在接入层（devicedomain.NormalizeID）当成没上报，
+// 这里只看「像不像一台真实设备」：长度、可见字符、是不是同一个字符重复、是不是只有一两种字符。
+func ParseDevice(raw string, minLength int) Device {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return Device{}
+	}
+	if minLength <= 0 {
+		minLength = 8
+	}
+	id := strings.ToLower(raw)
+	out := Device{ID: id, Raw: raw}
+	invalid := func(reason string) Device {
+		out.Invalid, out.InvalidReason = true, reason
+		return out
+	}
+	runes := []rune(id)
+	switch {
+	case len(runes) < minLength:
+		return invalid(fmt.Sprintf("长度不足 %d", minLength))
+	case len(runes) > MaxDeviceLength:
+		return invalid(fmt.Sprintf("超过 %d 个字符", MaxDeviceLength))
+	}
+	distinct := map[rune]struct{}{}
+	for _, r := range runes {
+		if r <= 0x20 || r == 0x7f || r > 0x7e {
+			return invalid("含空白、不可见或非 ASCII 字符")
+		}
+		switch r {
+		case '-', ':', '_', '.', '{', '}':
+			continue
+		}
+		distinct[r] = struct{}{}
+	}
+	if len(distinct) <= 2 {
+		// aaaaaaaa、12121212、ffff-ffff：真实标识（UUID、Android ID、IDFV）几乎不可能只有两种字符
+		return invalid("字符过于单一")
+	}
+	out.Valid = true
+	return out
+}
+
+// DeviceListEntry 设备名单的一项。
+type DeviceListEntry struct {
+	ID        int64      `json:"id"`
+	AppID     int64      `json:"appId"`
+	DeviceID  string     `json:"deviceId"`
+	Kind      string     `json:"kind"`
+	Factor    float64    `json:"factor"`
+	Note      string     `json:"note"`
+	ExpiresAt *time.Time `json:"expiresAt"`
+	Hits      int64      `json:"hits"`
+	LastHitAt *time.Time `json:"lastHitAt"`
+	CreatedBy string     `json:"createdBy"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+}
+
+// CompiledDeviceLists 设备名单：哈希表，O(1) 查。
+type CompiledDeviceLists struct {
+	entries map[string]DeviceListEntry
+}
+
+// CompileDeviceLists 编译生效中的设备名单项。
+func CompileDeviceLists(entries []DeviceListEntry, now time.Time) *CompiledDeviceLists {
+	out := &CompiledDeviceLists{entries: make(map[string]DeviceListEntry, len(entries))}
+	for _, entry := range entries {
+		if entry.ExpiresAt != nil && !entry.ExpiresAt.After(now) {
+			continue
+		}
+		if !slices.Contains(ListKinds, entry.Kind) {
+			continue
+		}
+		out.entries[strings.ToLower(strings.TrimSpace(entry.DeviceID))] = entry
+	}
+	return out
+}
+
+// Size 名单项数。
+func (c *CompiledDeviceLists) Size() int {
+	if c == nil {
+		return 0
+	}
+	return len(c.entries)
+}
+
+// Match 设备命中的名单项；没命中或设备无效返回 nil。
+func (c *CompiledDeviceLists) Match(dev Device) *ListMatch {
+	if c == nil || !dev.Valid {
+		return nil
+	}
+	entry, ok := c.entries[dev.ID]
+	if !ok {
+		return nil
+	}
+	return &ListMatch{EntryID: entry.ID, Kind: entry.Kind, Target: ListTargetDevice, Device: entry.DeviceID, Factor: entry.Factor, Note: entry.Note}
+}
+
+// 名单命中的对象。
+const (
+	ListTargetIP     = "ip"
+	ListTargetDevice = "device"
+)
+
+// CombineLists 地址名单与设备名单合并成一个结论：任一边拒绝 → 拒绝；否则任一边放行 → 放行；
+// 否则取两边放宽倍数大的那个。地址在放行名单里但设备在拒绝名单里，按更危险的处理。
+func CombineLists(ip, device *ListMatch) *ListMatch {
+	pick := func(kind string) *ListMatch {
+		for _, m := range []*ListMatch{ip, device} {
+			if m != nil && m.Kind == kind {
+				return m
+			}
+		}
+		return nil
+	}
+	if m := pick(ListDeny); m != nil {
+		return m
+	}
+	if m := pick(ListAllow); m != nil {
+		return m
+	}
+	var best *ListMatch
+	for _, m := range []*ListMatch{ip, device} {
+		if m != nil && m.Kind == ListElevated && (best == nil || m.Factor > best.Factor) {
+			best = m
+		}
+	}
+	return best
 }
 
 // PrefixRange 网段的首末地址，给数据库按 btree 做范围扫描用：
@@ -240,11 +415,14 @@ func ParsePrefix(raw string) (netip.Prefix, error) {
 
 // ListMatch 地址命中的名单项。
 type ListMatch struct {
-	EntryID int64   `json:"entryId"`
-	Kind    string  `json:"kind"`
-	CIDR    string  `json:"cidr"`
-	Factor  float64 `json:"factor,omitempty"`
-	Note    string  `json:"note,omitempty"`
+	EntryID int64  `json:"entryId"`
+	Kind    string `json:"kind"`
+	// Target 命中的是地址名单还是设备名单
+	Target string  `json:"target"`
+	CIDR   string  `json:"cidr,omitempty"`
+	Device string  `json:"device,omitempty"`
+	Factor float64 `json:"factor,omitempty"`
+	Note   string  `json:"note,omitempty"`
 }
 
 // CompiledLists 编译后的名单：放行与拒绝各一个 IPSet（有序区间表，二分查找 O(log n)），
@@ -329,9 +507,9 @@ func (c *CompiledLists) find(addr netip.Addr, kind string) *ListMatch {
 			return toMatch(item)
 		}
 	}
-	return &ListMatch{Kind: kind}
+	return &ListMatch{Kind: kind, Target: ListTargetIP}
 }
 
 func toMatch(item compiledEntry) *ListMatch {
-	return &ListMatch{EntryID: item.entry.ID, Kind: item.entry.Kind, CIDR: item.prefix.String(), Factor: item.entry.Factor, Note: item.entry.Note}
+	return &ListMatch{EntryID: item.entry.ID, Kind: item.entry.Kind, Target: ListTargetIP, CIDR: item.prefix.String(), Factor: item.entry.Factor, Note: item.entry.Note}
 }

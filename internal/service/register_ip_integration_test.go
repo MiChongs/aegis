@@ -57,13 +57,17 @@ func TestRegisterIPIntegration(t *testing.T) {
 	// 不 Start：批量写入退化成同步写，断言不用等异步队列
 
 	var seq atomic.Int64
-	register := func(rctx context.Context, ip string) error {
+	registerWith := func(rctx context.Context, ip, device string) error {
 		n := seq.Add(1)
 		_, err := auth.RegisterWithPassword(rctx, PasswordRegisterInput{
 			AppID: appID, Account: fmt.Sprintf("user%04d", n), Password: "Str0ng!Passw0rd#2026", IP: ip,
-			DeviceID: fmt.Sprintf("dev-%d", n), UserAgent: "test", SuppressSession: true,
+			DeviceID: device, UserAgent: "test", SuppressSession: true,
 		})
 		return err
+	}
+	// 每次注册一台新设备：地址一侧的用例不受设备规则影响
+	register := func(rctx context.Context, ip string) error {
+		return registerWith(rctx, ip, fmt.Sprintf("auto-%012x", uint64(seq.Load()+1)*2654435761))
 	}
 	codeOf := func(err error) int {
 		var appErr *apperrors.AppError
@@ -86,10 +90,11 @@ func TestRegisterIPIntegration(t *testing.T) {
 	}
 	reset := func() {
 		mr.FlushAll()
-		if _, err := pool.Exec(ctx, `DELETE FROM register_ip_ledger; DELETE FROM register_ip_lists; DELETE FROM register_ip_events`); err != nil {
+		if _, err := pool.Exec(ctx, `DELETE FROM register_ip_ledger; DELETE FROM register_ip_lists; DELETE FROM register_device_lists; DELETE FROM register_ip_events`); err != nil {
 			t.Fatal(err)
 		}
 		svc.lists.Delete(appID)
+		svc.deviceLists.Delete(appID)
 		svc.surge.Delete(appID)
 	}
 
@@ -315,6 +320,155 @@ func TestRegisterIPIntegration(t *testing.T) {
 		released, err := svc.Release(ctx, appID, RegisterIPReleaseInput{IP: "8.8.8.8", Ledger: true}, "tester")
 		if err != nil || released.LedgerReleased != 3 {
 			t.Fatalf("解除台账：%+v err=%v", released, err)
+		}
+	})
+
+	t.Run("设备：跨地址的设备上限与设备惩罚", func(t *testing.T) {
+		reset()
+		p := regip.DefaultPolicy()
+		p.Rules = []regip.Rule{{ID: "dev-day", Enabled: true, Scope: regip.ScopeDevice, WindowSeconds: 86400, Limit: 2, Action: regip.ActionReject}}
+		p.Penalty = regip.Penalty{Enabled: true, Strikes: 1, StrikeWindowSeconds: 600, BaseSeconds: 600, Multiplier: 2, MaxSeconds: 3600, Scope: regip.ScopeIP, Device: true}
+		savePolicy(p)
+		const phone = "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+		for i, ip := range []string{"10.1.0.1", "10.2.0.1"} {
+			if err := registerWith(ctx, ip, phone); err != nil {
+				t.Fatalf("第 %d 个应放行：%v", i+1, err)
+			}
+			settle()
+		}
+		if code := codeOf(registerWith(ctx, "10.3.0.1", strings.ToUpper(phone))); code != errCodeRegisterIPLimited {
+			t.Fatalf("换地址、换大小写也是同一台设备，应 40902，得到 %d", code)
+		}
+		// 一次拒绝就进惩罚期：设备换任何地址都不行，地址换设备不受影响
+		if code := codeOf(registerWith(ctx, "10.4.0.1", phone)); code != errCodeRegisterIPPenalty {
+			t.Fatalf("设备惩罚期应 42917，得到 %d", code)
+		}
+		if err := registerWith(ctx, "10.3.0.1", "a7c3e9f1b2d40685"); err != nil {
+			t.Fatalf("地址没受罚，换设备应放行：%v", err)
+		}
+		inspect, err := svc.InspectDevice(ctx, appID, phone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inspect.Penalty.Remaining <= 0 || inspect.Active != 2 || inspect.AddressesTotal != 2 {
+			t.Fatalf("设备查询：penalty=%d active=%d addrs=%d", inspect.Penalty.Remaining, inspect.Active, inspect.AddressesTotal)
+		}
+		if _, err := svc.Release(ctx, appID, RegisterIPReleaseInput{Device: phone, ResetLevel: true, Ledger: true}, "tester"); err != nil {
+			t.Fatal(err)
+		}
+		if err := registerWith(ctx, "10.5.0.1", phone); err != nil {
+			t.Fatalf("解除后应放行：%v", err)
+		}
+	})
+
+	t.Run("设备：同一地址的不同设备与同一设备的不同地址", func(t *testing.T) {
+		reset()
+		p := regip.DefaultPolicy()
+		p.Penalty.Enabled = false
+		p.Rules = []regip.Rule{
+			{ID: "farm", Enabled: true, Scope: regip.ScopeIPDevices, WindowSeconds: 3600, Limit: 3, Action: regip.ActionChallenge},
+			{ID: "hop", Enabled: true, Scope: regip.ScopeDeviceIPs, WindowSeconds: 3600, Limit: 3, Action: regip.ActionReject},
+		}
+		savePolicy(p)
+		devices := []string{"aa11bb22cc33dd44", "bb22cc33dd44ee55", "cc33dd44ee55ff66", "dd44ee55ff6677aa"}
+		for _, dev := range devices[:3] {
+			if err := registerWith(ctx, "20.0.0.1", dev); err != nil {
+				t.Fatalf("%s 应放行：%v", dev, err)
+			}
+		}
+		settle()
+		if code := codeOf(registerWith(ctx, "20.0.0.1", devices[3])); code != errCodeRiskCaptchaRequired {
+			t.Fatalf("第 4 台新设备应加验，得到 %d", code)
+		}
+		if err := registerWith(ctx, "20.0.0.1", devices[0]); err != nil {
+			t.Fatalf("老设备再来不算新设备，应放行：%v", err)
+		}
+		// 名额回收：新设备建号失败后不留在集合里
+		_, err := auth.RegisterWithPassword(WithRiskCaptchaPassed(ctx), PasswordRegisterInput{AppID: appID, Account: "user0001",
+			Password: "Str0ng!Passw0rd#2026", IP: "20.0.0.1", DeviceID: devices[3], SuppressSession: true})
+		if codeOf(err) != 40901 {
+			t.Fatalf("重复账号应 40901：%v", err)
+		}
+		settle()
+		ipView, err := svc.Inspect(ctx, appID, "20.0.0.1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ipView.Recent) != 3 || ipView.DevicesTotal != 3 {
+			t.Fatalf("地址下应仍是 3 台设备：recent=%d total=%d", len(ipView.Recent), ipView.DevicesTotal)
+		}
+		hopper := "ee55ff6677aa8899"
+		for i := 1; i <= 3; i++ {
+			if err := registerWith(ctx, fmt.Sprintf("30.0.%d.1", i), hopper); err != nil {
+				t.Fatalf("第 %d 个地址应放行：%v", i, err)
+			}
+		}
+		settle()
+		if code := codeOf(registerWith(ctx, "30.0.9.1", hopper)); code != errCodeRegisterIPLimited {
+			t.Fatalf("设备换第 4 个地址应 40902，得到 %d", code)
+		}
+	})
+
+	t.Run("设备：并发的新设备不超额", func(t *testing.T) {
+		reset()
+		p := regip.DefaultPolicy()
+		p.Penalty.Enabled = false
+		p.Rules = []regip.Rule{{ID: "farm", Enabled: true, Scope: regip.ScopeIPDevices, WindowSeconds: 3600, Limit: 4, Action: regip.ActionReject}}
+		savePolicy(p)
+		var ok, limited atomic.Int64
+		var wg sync.WaitGroup
+		for i := 0; i < 20; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				switch code := codeOf(registerWith(ctx, "60.0.0.1", fmt.Sprintf("farm-%04d-%08x", i, i*2654435761))); code {
+				case 0:
+					ok.Add(1)
+				case errCodeRegisterIPLimited:
+					limited.Add(1)
+				default:
+					t.Errorf("意外的错误码 %d", code)
+				}
+			}(i)
+		}
+		wg.Wait()
+		if ok.Load() != 4 || limited.Load() != 16 {
+			t.Fatalf("地址下最多 4 台设备：放行 %d、拒绝 %d", ok.Load(), limited.Load())
+		}
+	})
+
+	t.Run("设备：名单、缺少与无效设备", func(t *testing.T) {
+		reset()
+		p := regip.DefaultPolicy()
+		p.Penalty.Enabled = false
+		p.Rules = nil
+		p.Device = regip.DeviceRule{Missing: regip.DeviceReject, Invalid: regip.DeviceReject, MinLength: 8}
+		savePolicy(p)
+		if _, err := svc.AddLists(ctx, appID, regip.ListInput{Values: []string{"40.0.0.0/24"}, Kind: regip.ListAllow}, "tester"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.AddDeviceLists(ctx, appID, regip.ListInput{Values: []string{"BADBAD00FACE1234"}, Kind: regip.ListDeny}, "tester"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.AddDeviceLists(ctx, appID, regip.ListInput{Values: []string{"aaaaaaaaaa"}, Kind: regip.ListAllow}, "tester"); codeOf(err) != 40000 {
+			t.Fatalf("无效设备不能加入放行名单：%v", err)
+		}
+		if code := codeOf(registerWith(ctx, "40.0.0.5", "badbad00face1234")); code != errCodeRegisterIPForbidden {
+			t.Fatalf("设备拒绝名单优先于地址放行名单，应 40919，得到 %d", code)
+		}
+		if code := codeOf(registerWith(ctx, "50.0.0.5", "")); code != errCodeRegisterDeviceMissing {
+			t.Fatalf("缺设备应 40931，得到 %d", code)
+		}
+		if code := codeOf(registerWith(ctx, "50.0.0.5", "zzzzzzzzzzzz")); code != errCodeRegisterDeviceInvalid {
+			t.Fatalf("无效设备应 40932，得到 %d", code)
+		}
+		lists, total, err := svc.ListDeviceLists(ctx, regip.ListQuery{AppID: appID})
+		if err != nil || total != 1 || lists[0].DeviceID != "badbad00face1234" {
+			t.Fatalf("设备名单：%+v total=%d err=%v", lists, total, err)
+		}
+		overview, err := svc.Overview(ctx, appID, 7, "Asia/Shanghai")
+		if err != nil || overview.Devices.Lists["deny"] != 1 {
+			t.Fatalf("概览设备名单：%+v err=%v", overview.Devices.Lists, err)
 		}
 	})
 

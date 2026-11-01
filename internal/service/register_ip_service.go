@@ -43,15 +43,17 @@ type RegisterIPService struct {
 	location *LocationService
 	now      func() time.Time
 
-	lists     sync.Map // appID → *registerIPListSnapshot
-	listGroup singleflight.Group
-	surge     sync.Map // appID → *registerIPSurgeSnapshot
+	lists       sync.Map // appID → *registerIPListSnapshot
+	deviceLists sync.Map // appID → *registerDeviceListSnapshot
+	listGroup   singleflight.Group
+	surge       sync.Map // appID → *registerIPSurgeSnapshot
 
 	events *asyncBatchWriter[regip.Event]
 	ledger *asyncBatchWriter[pgrepo.RegisterIPLedgerRow]
 
-	hitsMu sync.Mutex
-	hits   map[int64]int64
+	hitsMu     sync.Mutex
+	hits       map[int64]int64
+	deviceHits map[int64]int64
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -60,12 +62,14 @@ type RegisterIPService struct {
 
 // 错误码，见 auth_protocol_catalog.go。
 const (
-	errCodeRegisterIPMissing   = 40025 // 拿不到注册 IP 且策略要求拒绝
-	errCodeRegisterIPLimited   = 40902 // 配额规则：当前网络注册的账号数已达上限（沿用旧开关的码）
-	errCodeRegisterIPForbidden = 40919 // 拒绝名单 / 属地 / 运营商：当前网络环境不允许注册
-	errCodeRegisterIPPenalty   = 42917 // 惩罚期内
-	errCodeRegisterIPSurge     = 42918 // 注册量突增，暂停注册
-	errCodeRegisterIPBusy      = 42919 // 计数存储不可用且策略要求拒绝
+	errCodeRegisterIPMissing     = 40025 // 拿不到注册 IP 且策略要求拒绝
+	errCodeRegisterIPLimited     = 40902 // 配额规则：当前网络注册的账号数已达上限（沿用旧开关的码）
+	errCodeRegisterIPForbidden   = 40919 // 拒绝名单 / 属地 / 运营商：当前网络环境不允许注册
+	errCodeRegisterIPPenalty     = 42917 // 惩罚期内
+	errCodeRegisterIPSurge       = 42918 // 注册量突增，暂停注册
+	errCodeRegisterIPBusy        = 42919 // 计数存储不可用且策略要求拒绝
+	errCodeRegisterDeviceMissing = 40931 // 没上报设备标识且策略要求拒绝
+	errCodeRegisterDeviceInvalid = 40932 // 设备标识无效且策略要求拒绝
 )
 
 const (
@@ -77,6 +81,11 @@ const (
 
 type registerIPListSnapshot struct {
 	lists    *regip.CompiledLists
+	loadedAt time.Time
+}
+
+type registerDeviceListSnapshot struct {
+	lists    *regip.CompiledDeviceLists
 	loadedAt time.Time
 }
 
@@ -93,7 +102,7 @@ func NewRegisterIPService(log *zap.Logger, pg *pgrepo.Repository, counters *redi
 	}
 	s := &RegisterIPService{
 		log: log, pg: pg, counters: counters, app: app, location: location, now: time.Now,
-		hits: map[int64]int64{}, stop: make(chan struct{}),
+		hits: map[int64]int64{}, deviceHits: map[int64]int64{}, stop: make(chan struct{}),
 	}
 	s.events = newAsyncBatchWriter("register_ip.events", log, 8192, 2, 500, 500*time.Millisecond, s.flushEvents)
 	s.ledger = newAsyncBatchWriter("register_ip.ledger", log, 8192, 2, 500, 200*time.Millisecond, s.flushLedger)
@@ -211,9 +220,11 @@ type registerIPEvaluation struct {
 	reserve  *redisrepo.RegisterIPReserveResult
 	counters []redisrepo.RegisterIPCounter
 	// ruleOf 计数器下标 → 规则下标
-	ruleOf  []int
-	token   string
-	penalty string
+	ruleOf []int
+	token  string
+	// penalty / devicePenalty 地址与设备两侧的惩罚主体，缺哪边为空
+	penalty       string
+	devicePenalty string
 }
 
 // evalOptions 判定的开关：线上占位；模拟与查询只数不占，并可改写事实。
@@ -260,9 +271,28 @@ func (s *RegisterIPService) Admit(ctx context.Context, req RegisterIPRequest) (*
 	// 脚本只在「没有挡住的超限」时占位，判定挡住了却占了位只可能是两边口径不一致：撤销，宁可多放一次名额
 	ticket.Release()
 	if d.Reason == regip.ReasonRule && d.Outcome == regip.OutcomeReject {
-		s.strike(req.AppID, policy, eval.penalty)
+		if subject := strikeSubject(policy, d.RuleID, eval); subject != "" {
+			s.strike(req.AppID, policy, subject)
+		}
 	}
 	return nil, registerIPError(d)
+}
+
+// strikeSubject 配额拒绝记在谁头上：设备一侧的规则（同一设备、同一设备换地址）记设备，
+// 地址一侧的规则记地址（或网段）；城市与整个应用的规则不怪任何一个地址或设备。
+func strikeSubject(policy regip.Policy, ruleID string, eval *registerIPEvaluation) string {
+	for _, rule := range policy.Rules {
+		if rule.ID != ruleID {
+			continue
+		}
+		switch {
+		case regip.DeviceScope(rule.Scope):
+			return eval.devicePenalty
+		case regip.IPScope(rule.Scope):
+			return eval.penalty
+		}
+	}
+	return ""
 }
 
 // registerIPError 判定结论翻译成业务错误。
@@ -273,6 +303,10 @@ func registerIPError(d regip.Decision) error {
 	switch d.Reason {
 	case regip.ReasonMissingIP:
 		return apperrors.New(errCodeRegisterIPMissing, http.StatusBadRequest, d.Message)
+	case regip.ReasonMissingDevice:
+		return apperrors.New(errCodeRegisterDeviceMissing, http.StatusConflict, d.Message)
+	case regip.ReasonInvalidDevice:
+		return apperrors.New(errCodeRegisterDeviceInvalid, http.StatusConflict, d.Message)
 	case regip.ReasonListDeny, regip.ReasonGeo, regip.ReasonISP:
 		return apperrors.New(errCodeRegisterIPForbidden, http.StatusConflict, d.Message)
 	case regip.ReasonPenalty:
@@ -293,7 +327,8 @@ func IsRegisterIPRejection(err error) bool {
 	}
 	switch appErr.Code {
 	case errCodeRegisterIPMissing, errCodeRegisterIPLimited, errCodeRegisterIPForbidden,
-		errCodeRegisterIPPenalty, errCodeRegisterIPSurge, errCodeRegisterIPBusy:
+		errCodeRegisterIPPenalty, errCodeRegisterIPSurge, errCodeRegisterIPBusy,
+		errCodeRegisterDeviceMissing, errCodeRegisterDeviceInvalid:
 		return true
 	}
 	return false
@@ -308,28 +343,41 @@ func surgeBucketTTL(policy regip.Policy) time.Duration {
 }
 
 // evaluate 取齐事实并判定。
+//
+// 地址与设备是两条互补的线：缺了哪条，只依赖那条的规则就不参与，另一条照常数；
+// 名单两边合并（任一边拒绝即拒绝），惩罚期两边各查一个键、同一个脚本里读。
 func (s *RegisterIPService) evaluate(ctx context.Context, req RegisterIPRequest, policy regip.Policy, captchaPassed bool, opts evalOptions) *registerIPEvaluation {
 	eval := &registerIPEvaluation{policy: policy, token: newRegisterIPToken()}
-	facts := regip.Facts{Method: req.Method, CaptchaPassed: captchaPassed}
+	facts := regip.Facts{Method: req.Method, CaptchaPassed: captchaPassed, Device: regip.ParseDevice(req.DeviceID, policy.Device.MinLength)}
 	addr, ok := regip.ParseAddress(req.IP, policy.Network)
 	if ok {
 		facts.Address = addr
 	}
-	if !policy.Enabled || !ok {
+	dev := facts.Device
+	if !policy.Enabled || (!ok && !dev.Valid) {
 		eval.facts = facts
 		eval.decision = regip.Decide(policy, facts)
 		return eval
 	}
 
-	// 名单、属地、突增三样互不依赖，并行取。各自失败都降级：名单空、属地未知、不算突增
+	// 地址名单、设备名单、属地、突增四样互不依赖，并行取。各自失败都降级：名单空、属地未知、不算突增
+	var ipMatch, deviceMatch *regip.ListMatch
 	var g errgroup.Group
-	g.Go(func() error {
-		facts.List = s.listsFor(ctx, req.AppID).Match(addr.Addr)
-		return nil
-	})
-	if policy.NeedsLocation() {
+	if ok {
 		g.Go(func() error {
-			facts.Location = s.resolveLocation(ctx, addr.Addr.String())
+			ipMatch = s.listsFor(ctx, req.AppID).Match(addr.Addr)
+			return nil
+		})
+		if policy.NeedsLocation() {
+			g.Go(func() error {
+				facts.Location = s.resolveLocation(ctx, addr.Addr.String())
+				return nil
+			})
+		}
+	}
+	if dev.Valid {
+		g.Go(func() error {
+			deviceMatch = s.deviceListsFor(ctx, req.AppID).Match(dev)
 			return nil
 		})
 	}
@@ -340,6 +388,7 @@ func (s *RegisterIPService) evaluate(ctx context.Context, req RegisterIPRequest,
 		})
 	}
 	_ = g.Wait()
+	facts.List = regip.CombineLists(ipMatch, deviceMatch)
 	if override := opts.override; override != nil {
 		if override.Location != nil {
 			facts.Location = *override.Location
@@ -349,8 +398,12 @@ func (s *RegisterIPService) evaluate(ctx context.Context, req RegisterIPRequest,
 			facts.Surge.Active = *override.SurgeActive
 		}
 	}
-	if facts.List != nil && facts.List.EntryID > 0 && opts.reserve {
-		s.countHit(facts.List.EntryID)
+	if m := facts.List; m != nil && m.EntryID > 0 && opts.reserve {
+		if m.Target == regip.ListTargetDevice {
+			s.countDeviceHit(m.EntryID)
+		} else {
+			s.countHit(m.EntryID)
+		}
 	}
 
 	pre, final := regip.PreDecide(policy, facts)
@@ -361,22 +414,29 @@ func (s *RegisterIPService) evaluate(ctx context.Context, req RegisterIPRequest,
 	}
 	// 放行名单与观察模式：照样数、照样占位（台账与窗口都该记上这一笔），只是谁也挡不住
 	bypass := final
-	penaltySubject := addr.Host.String()
-	if policy.Penalty.Scope == regip.ScopeSubnet {
-		penaltySubject = addr.Subnet.String()
+	if ok {
+		eval.penalty = addr.Host.String()
+		if policy.Penalty.Scope == regip.ScopeSubnet {
+			eval.penalty = addr.Subnet.String()
+		}
 	}
-	eval.penalty = penaltySubject
+	if dev.Valid && policy.Penalty.Device {
+		eval.devicePenalty = dev.Subject()
+	}
 	for i, rule := range policy.Rules {
-		subject := regip.SubjectKey(rule.Scope, addr, facts.Location)
-		if !rule.Applies(req.Method) || subject == "" {
+		subject := regip.SubjectKey(rule.Scope, addr, dev, facts.Location)
+		member := regip.MemberKey(rule.Scope, addr, dev)
+		if !rule.Applies(req.Method) || subject == "" || regip.DistinctScope(rule.Scope) && member == "" {
 			continue
 		}
 		limit := regip.EffectiveLimit(rule.Limit, pre.Factor, pre.Tighten)
 		counter := redisrepo.RegisterIPCounter{
-			Rule: rule.ID, Subject: subject, Limit: limit, WindowMs: int64(rule.WindowSeconds) * 1000,
+			Rule: rule.ID, Subject: subject, Limit: limit, WindowMs: int64(rule.WindowSeconds) * 1000, Member: member,
 			Blocking: !bypass && regip.RuleBlocks(policy, rule, captchaPassed),
 		}
 		switch {
+		case regip.DistinctScope(rule.Scope):
+			counter.Kind = redisrepo.RegisterIPCounterDistinct
 		case rule.Lifetime():
 			counter.Kind = redisrepo.RegisterIPCounterLifetime
 		case limit > redisrepo.RegisterIPBucketedThreshold:
@@ -389,20 +449,24 @@ func (s *RegisterIPService) evaluate(ctx context.Context, req RegisterIPRequest,
 	}
 	penaltyBlocks := !bypass && policy.Penalty.Enabled && policy.Mode == regip.ModeEnforce
 
-	// 回填累计计数要用到地址，先把已取齐的事实挂上
+	// 回填累计计数要用到地址与设备，先把已取齐的事实挂上
 	eval.facts = facts
 	result, err := s.reserve(ctx, req.AppID, policy, eval, opts.reserve, penaltyBlocks)
 	facts.Counts = map[string]int{}
 	if err != nil {
-		s.log.Warn("注册 IP 计数失败", zap.Int64("appid", req.AppID), zap.Error(err))
+		s.log.Warn("注册准入计数失败", zap.Int64("appid", req.AppID), zap.Error(err))
 		facts.StoreFailed = true
 	} else {
 		eval.reserve = result
 		for i, count := range result.Counts {
 			facts.Counts[policy.Rules[eval.ruleOf[i]].ID] = count
+			eval.counters[i].Added = result.Added[i]
 		}
-		if policy.Penalty.Enabled && result.PenaltyMs > 0 {
+		if policy.Penalty.Enabled {
 			facts.PenaltySeconds = int((result.PenaltyMs + 999) / 1000)
+			if policy.Penalty.Device {
+				facts.DevicePenaltySeconds = int((result.DevicePenaltyMs + 999) / 1000)
+			}
 		}
 	}
 	if override := opts.override; override != nil {
@@ -411,6 +475,9 @@ func (s *RegisterIPService) evaluate(ctx context.Context, req RegisterIPRequest,
 		}
 		if override.PenaltySeconds != nil {
 			facts.PenaltySeconds = max(0, *override.PenaltySeconds)
+		}
+		if override.DevicePenaltySeconds != nil {
+			facts.DevicePenaltySeconds = max(0, *override.DevicePenaltySeconds)
 		}
 		if facts.StoreFailed && len(override.Counts) > 0 {
 			facts.StoreFailed = false
@@ -427,7 +494,7 @@ func (s *RegisterIPService) reserve(ctx context.Context, appID int64, policy reg
 		return nil, errors.New("计数存储未接入")
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		result, err := s.counters.Reserve(ctx, appID, eval.penalty, eval.token, reserve, penaltyBlocks, eval.counters)
+		result, err := s.counters.Reserve(ctx, appID, eval.penalty, eval.devicePenalty, eval.token, reserve, penaltyBlocks, eval.counters)
 		if err != nil {
 			return nil, err
 		}
@@ -458,11 +525,13 @@ func (s *RegisterIPService) seedLifetime(ctx context.Context, appID int64, polic
 				query.Prefix = eval.facts.Address.Host
 			case regip.ScopeSubnet:
 				query.Prefix = eval.facts.Address.Subnet
+			case regip.ScopeDevice:
+				query.Device = eval.facts.Device.ID
 			case regip.ScopeCity:
 				query.City = counter.Subject
 			}
-			// 没有网段也没有属地的查询数的是整个应用：主体缺失时宁可报错（按故障处置），也不能拿全应用的数当成这个地址的
-			if !query.Prefix.IsValid() && query.City == "" {
+			// 没有网段、设备也没有属地的查询数的是整个应用：主体缺失时宁可报错（按故障处置），也不能拿全应用的数当成这一个的
+			if !query.Prefix.IsValid() && query.City == "" && query.Device == "" {
 				return errors.New("累计计数回填缺少统计主体：" + rule.ID)
 			}
 			count, err := s.pg.CountRegisterIPLedger(gctx, query)

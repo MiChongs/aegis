@@ -8317,6 +8317,41 @@
   },
   {
     "method": "GET",
+    "path": "/api/admin/apps/:appkey/register-ip/devices/inspect",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/register-ip/device-lists",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/register-ip/device-lists",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/apps/:appkey/register-ip/device-lists/:id",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/register-ip/device-lists/delete",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
     "path": "/api/admin/apps/:appkey/crash-reports",
     "permission": "app:read",
     "appScoped": true,

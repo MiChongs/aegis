@@ -15,6 +15,7 @@ import (
 	apperrors "aegis/pkg/errors"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // 注册 IP 控制的事实来源（名单快照、属地、突增）、批量写入与管理端能力。规则见 docs/register-ip.md。
@@ -119,6 +120,9 @@ func (s *RegisterIPService) recordDecision(req RegisterIPRequest, eval *register
 		event.IP = eval.facts.Address.Addr.String()
 		event.Subnet = eval.facts.Address.Subnet.String()
 	}
+	if dev := eval.facts.Device; dev.Present() {
+		event.DeviceID = dev.ID
+	}
 	for _, hit := range d.Rules {
 		if hit.RuleID == d.RuleID && d.RuleID != "" {
 			event.Count, event.Limit = hit.Count, hit.Limit
@@ -139,6 +143,12 @@ func (s *RegisterIPService) recordDecision(req RegisterIPRequest, eval *register
 	}
 	if eval.facts.List != nil {
 		extra["list"] = eval.facts.List
+	}
+	if dev := eval.facts.Device; dev.Invalid {
+		extra["deviceInvalid"] = dev.InvalidReason
+	}
+	if eval.facts.DevicePenaltySeconds > 0 {
+		extra["devicePenaltySeconds"] = eval.facts.DevicePenaltySeconds
 	}
 	if req.UserAgent != "" {
 		extra["userAgent"] = truncateRunes(req.UserAgent, 200)
@@ -203,16 +213,19 @@ func (s *RegisterIPService) countHit(id int64) {
 
 func (s *RegisterIPService) flushHits() {
 	s.hitsMu.Lock()
-	hits := s.hits
-	s.hits = map[int64]int64{}
+	hits, deviceHits := s.hits, s.deviceHits
+	s.hits, s.deviceHits = map[int64]int64{}, map[int64]int64{}
 	s.hitsMu.Unlock()
-	if len(hits) == 0 {
+	if len(hits) == 0 && len(deviceHits) == 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := s.pg.AddRegisterIPListHits(ctx, hits, s.now()); err != nil {
 		s.log.Warn("注册 IP 名单命中次数写入失败", zap.Error(err))
+	}
+	if err := s.pg.AddRegisterDeviceListHits(ctx, deviceHits, s.now()); err != nil {
+		s.log.Warn("设备名单命中次数写入失败", zap.Error(err))
 	}
 }
 
@@ -247,6 +260,9 @@ func (s *RegisterIPService) cleanupLoop(ctx context.Context) {
 				s.log.Warn("清理过期注册 IP 名单失败", zap.Error(err))
 			} else if n > 0 {
 				s.log.Info("已清理过期注册 IP 名单", zap.Int64("count", n))
+			}
+			if _, err := s.pg.PurgeExpiredRegisterDeviceLists(cctx, 7*24*time.Hour); err != nil {
+				s.log.Warn("清理过期设备名单失败", zap.Error(err))
 			}
 			if _, err := s.pg.PurgeRegisterIPEvents(cctx, s.now().Add(-registerIPEventKeep)); err != nil {
 				s.log.Warn("清理注册 IP 拦截记录失败", zap.Error(err))
@@ -327,7 +343,17 @@ type RegisterIPOverview struct {
 	Penalties    []regip.PenaltyEntry        `json:"penalties"`
 	PenaltyCount int64                       `json:"penaltyCount"`
 	Surge        *regip.SurgeState           `json:"surge"`
+	Devices      RegisterDeviceOverview      `json:"devices"`
 	Writers      map[string]asyncBatchStats  `json:"writers"`
+}
+
+// RegisterDeviceOverview 概览里设备一侧的部分。
+type RegisterDeviceOverview struct {
+	Lists        map[string]int64           `json:"lists"`
+	Distribution []map[string]any           `json:"distribution"`
+	TopDevices   []pgrepo.RegisterIPTopItem `json:"topDevices"`
+	TopIPDevices []pgrepo.RegisterIPTopItem `json:"topIpDevices"`
+	TopDeviceIPs []pgrepo.RegisterIPTopItem `json:"topDeviceIps"`
 }
 
 var registerIPDistributionBuckets = []string{"1", "2", "3-5", "6-10", "11+"}
@@ -358,17 +384,58 @@ func (s *RegisterIPService) Overview(ctx context.Context, appID int64, days int,
 	}
 	now := s.now().In(location)
 	startDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location).AddDate(0, 0, -(days - 1))
-	stats, err := s.pg.RegisterIPOverviewStats(ctx, appID, startDay, tz, view.Policy.Network.IPv4Subnet, view.Policy.Network.IPv6Subnet, 10)
-	if err != nil {
+
+	// 地址一侧、设备一侧两个 Batch，加上惩罚期与突增两次 Redis 读取，四路并行
+	var stats *pgrepo.RegisterIPStats
+	var devices *pgrepo.RegisterDeviceStats
+	var penalties []redisrepo.RegisterIPPenalty
+	var penaltyTotal int64
+	var surge *regip.SurgeState
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() (err error) {
+		stats, err = s.pg.RegisterIPOverviewStats(gctx, appID, startDay, tz, view.Policy.Network.IPv4Subnet, view.Policy.Network.IPv6Subnet, 10)
+		return err
+	})
+	g.Go(func() (err error) {
+		devices, err = s.pg.RegisterDeviceOverviewStats(gctx, appID, startDay, 10)
+		return err
+	})
+	if s.counters != nil {
+		g.Go(func() error {
+			items, total, err := s.counters.Penalties(gctx, appID, 10)
+			if err != nil {
+				s.log.Warn("读取注册惩罚期失败", zap.Int64("appid", appID), zap.Error(err))
+				return nil
+			}
+			penalties, penaltyTotal = items, total
+			return nil
+		})
+		g.Go(func() error {
+			// 没开突增检测时也按推荐参数算一份给概览看：开不开之前先看看平时的量
+			cfg := view.Policy.Surge
+			if !cfg.Enabled {
+				cfg = regip.DefaultPolicy().Surge
+			}
+			state := s.surgeFor(gctx, appID, cfg)
+			surge = &state
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 	out := &RegisterIPOverview{
 		Policy: view.Policy, Configured: view.Configured, Days: days, TZ: tz,
 		Totals: map[string]int64{
 			"registrations": stats.Registrations, "distinctIps": stats.DistinctIPs, "distinctSubnets": stats.DistinctSubnet,
+			"distinctDevices": devices.DistinctDevices, "withDevice": devices.WithDevice, "withoutDevice": devices.WithoutDevice,
 		},
 		Reasons: stats.Reasons, Methods: stats.Methods, Rules: stats.Rules, TopIPs: stats.TopIPs, TopSubnets: stats.TopSubnets,
-		TopBlocked: stats.TopBlocked, TopCities: stats.TopCities, Lists: stats.Lists, Penalties: []regip.PenaltyEntry{},
+		TopBlocked: stats.TopBlocked, TopCities: stats.TopCities, Lists: stats.Lists, Penalties: toPenaltyEntries(penalties, s.now()),
+		PenaltyCount: penaltyTotal, Surge: surge,
+		Devices: RegisterDeviceOverview{
+			Lists: devices.Lists, TopDevices: devices.TopDevices, TopIPDevices: devices.TopIPDevices, TopDeviceIPs: devices.TopDeviceIPs,
+		},
 		Writers: map[string]asyncBatchStats{"events": s.events.Stats(), "ledger": s.ledger.Stats()},
 	}
 	for _, kind := range regip.EventKinds {
@@ -384,23 +451,9 @@ func (s *RegisterIPService) Overview(ctx context.Context, appID int64, days int,
 	}
 	for _, bucket := range registerIPDistributionBuckets {
 		out.Distribution = append(out.Distribution, map[string]any{"bucket": bucket, "count": stats.Distribution[bucket]})
+		out.Devices.Distribution = append(out.Devices.Distribution, map[string]any{"bucket": bucket, "count": devices.Distribution[bucket]})
 	}
 	sort.SliceStable(out.Rules, func(i, j int) bool { return out.Rules[i].Count > out.Rules[j].Count })
-	if s.counters != nil {
-		if penalties, total, err := s.counters.Penalties(ctx, appID, 10); err == nil {
-			out.PenaltyCount = total
-			out.Penalties = toPenaltyEntries(penalties, s.now())
-		} else {
-			s.log.Warn("读取注册 IP 惩罚期失败", zap.Int64("appid", appID), zap.Error(err))
-		}
-		// 没开突增检测时也按推荐参数算一份给概览看：开不开之前先看看平时的量
-		cfg := view.Policy.Surge
-		if !cfg.Enabled {
-			cfg = regip.DefaultPolicy().Surge
-		}
-		state := s.surgeFor(ctx, appID, cfg)
-		out.Surge = &state
-	}
 	return out, nil
 }
 
@@ -416,7 +469,7 @@ func toPenaltyEntries(items []redisrepo.RegisterIPPenalty, now time.Time) []regi
 	return out
 }
 
-// Penalties 正在惩罚期的主体。
+// Penalties 正在惩罚期的主体（地址、网段与设备）。
 func (s *RegisterIPService) Penalties(ctx context.Context, appID int64, limit int) ([]regip.PenaltyEntry, int64, error) {
 	if s.counters == nil {
 		return []regip.PenaltyEntry{}, 0, nil
@@ -435,17 +488,20 @@ func (s *RegisterIPService) Penalties(ctx context.Context, appID int64, limit in
 type RegisterIPSimulation struct {
 	Decision regip.Decision   `json:"decision"`
 	Address  map[string]any   `json:"address"`
+	Device   regip.Device     `json:"device"`
 	Location regip.Location   `json:"location"`
 	List     *regip.ListMatch `json:"list"`
 	Penalty  int              `json:"penaltySeconds"`
-	Surge    regip.SurgeState `json:"surge"`
+	// DevicePenalty 设备惩罚期剩余秒数
+	DevicePenalty int              `json:"devicePenaltySeconds"`
+	Surge         regip.SurgeState `json:"surge"`
 	// Draft 是否按草稿策略判的
 	Draft bool `json:"draft"`
 	// StoreFailed 计数存储不可用，结果按故障处置推演
 	StoreFailed bool `json:"storeFailed"`
 }
 
-// Simulate 模拟一次注册：只数不占，可改写计数、属地、突增与惩罚期。
+// Simulate 模拟一次注册：只数不占，可改写计数、属地、突增与两侧的惩罚期。
 func (s *RegisterIPService) Simulate(ctx context.Context, appID int64, in regip.SimulateInput) (*RegisterIPSimulation, error) {
 	policy, err := s.policyOf(ctx, appID)
 	if err != nil {
@@ -463,7 +519,7 @@ func (s *RegisterIPService) Simulate(ctx context.Context, appID int64, in regip.
 	if method == "" {
 		method = regip.MethodPassword
 	}
-	req := RegisterIPRequest{AppID: appID, IP: in.IP, Method: method}
+	req := RegisterIPRequest{AppID: appID, IP: in.IP, DeviceID: in.DeviceID, Method: method}
 	// 模拟要看到全部规则的计数，哪怕草稿没开启
 	probe := policy
 	probe.Enabled = true
@@ -474,7 +530,8 @@ func (s *RegisterIPService) Simulate(ctx context.Context, appID int64, in regip.
 		decision.Rules = eval.decision.Rules
 	}
 	out := &RegisterIPSimulation{
-		Decision: decision, Location: eval.facts.Location, List: eval.facts.List, Penalty: eval.facts.PenaltySeconds,
+		Decision: decision, Device: eval.facts.Device, Location: eval.facts.Location, List: eval.facts.List,
+		Penalty: eval.facts.PenaltySeconds, DevicePenalty: eval.facts.DevicePenaltySeconds,
 		Surge: eval.facts.Surge, Draft: draft, StoreFailed: eval.facts.StoreFailed,
 	}
 	out.Surge.Series = nil
@@ -505,7 +562,7 @@ type RegisterIPInspection struct {
 		Level     int        `json:"level"`
 		ExpiresAt *time.Time `json:"expiresAt"`
 	} `json:"penalty"`
-	// Decision 此刻用这个地址按密码注册会怎样
+	// Decision 此刻用这个地址（不带设备）按密码注册会怎样；设备一侧的规则不参与
 	Decision regip.Decision    `json:"decision"`
 	Usage    []regip.RuleUsage `json:"usage"`
 	// HostRegistrations / SubnetRegistrations 该地址 / 网段未解除的累计注册数
@@ -513,10 +570,14 @@ type RegisterIPInspection struct {
 	SubnetRegistrations int64                `json:"subnetRegistrations"`
 	Registrations       []regip.Registration `json:"registrations"`
 	SubnetRecent        []regip.Registration `json:"subnetRecent"`
-	Events              []regip.Event        `json:"events"`
+	// Devices 这个地址（单地址口径）下注册过的设备；Recent 是去重计数里此刻窗口内出现的设备
+	Devices      []regip.LinkedItem `json:"devices"`
+	DevicesTotal int64              `json:"devicesTotal"`
+	Recent       []RegisterIPMember `json:"recent"`
+	Events       []regip.Event      `json:"events"`
 }
 
-// Inspect 查一个地址此刻的全部状况。
+// Inspect 查一个地址此刻的全部状况。判定、名单、台账、关联设备、记录、惩罚期、去重成员七路并行。
 func (s *RegisterIPService) Inspect(ctx context.Context, appID int64, ip string) (*RegisterIPInspection, error) {
 	policy, err := s.policyOf(ctx, appID)
 	if err != nil {
@@ -528,29 +589,84 @@ func (s *RegisterIPService) Inspect(ctx context.Context, appID int64, ip string)
 	}
 	probe := policy
 	probe.Enabled = true
-	needLocation := probe.NeedsLocation()
-	eval := s.evaluate(ctx, RegisterIPRequest{AppID: appID, IP: addr.Addr.String(), Method: regip.MethodPassword}, probe, false, evalOptions{})
-	out := &RegisterIPInspection{Address: addressView(addr), Location: eval.facts.Location, List: eval.facts.List, Decision: eval.decision}
+	out := &RegisterIPInspection{Address: addressView(addr), Recent: []RegisterIPMember{}}
+	var eval *registerIPEvaluation
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		eval = s.evaluate(gctx, RegisterIPRequest{AppID: appID, IP: addr.Addr.String(), Method: regip.MethodPassword}, probe, false, evalOptions{})
+		if !probe.NeedsLocation() {
+			eval.facts.Location = s.resolveLocation(gctx, addr.Addr.String())
+		}
+		return nil
+	})
+	g.Go(func() (err error) {
+		out.Lists, _, err = s.pg.ListRegisterIPLists(gctx, regip.ListQuery{AppID: appID, Keyword: addr.Addr.String(), IncludeExpired: true, Page: 1, PageSize: 20})
+		return err
+	})
+	g.Go(func() (err error) {
+		out.Registrations, out.HostRegistrations, err = s.pg.RegisterIPLedgerByPrefix(gctx, appID, addr.Host, 20)
+		return err
+	})
+	g.Go(func() (err error) {
+		out.SubnetRecent, out.SubnetRegistrations, err = s.pg.RegisterIPLedgerByPrefix(gctx, appID, addr.Subnet, 20)
+		return err
+	})
+	g.Go(func() (err error) {
+		out.Devices, out.DevicesTotal, err = s.pg.RegisterIPDevicesOfPrefix(gctx, appID, addr.Host, 30)
+		return err
+	})
+	g.Go(func() (err error) {
+		out.Events, _, err = s.pg.ListRegisterIPEvents(gctx, regip.EventQuery{AppID: appID, IP: addr.Subnet.String(), Page: 1, PageSize: 20})
+		return err
+	})
+	penaltySubject := addr.Host.String()
+	if policy.Penalty.Scope == regip.ScopeSubnet {
+		penaltySubject = addr.Subnet.String()
+	}
+	out.Penalty.Subject = penaltySubject
+	if s.counters != nil {
+		g.Go(func() error {
+			if remaining, level, err := s.counters.PenaltyOf(gctx, appID, penaltySubject); err == nil {
+				out.Penalty.Remaining, out.Penalty.Level = int(remaining.Seconds()), level
+				if remaining > 0 {
+					at := s.now().Add(remaining)
+					out.Penalty.ExpiresAt = &at
+				}
+			}
+			return nil
+		})
+		for _, rule := range policy.Rules {
+			if !rule.Enabled || rule.Scope != regip.ScopeIPDevices {
+				continue
+			}
+			counter := redisrepo.RegisterIPCounter{Kind: redisrepo.RegisterIPCounterDistinct, Rule: rule.ID, Subject: addr.Host.String(), WindowMs: int64(rule.WindowSeconds) * 1000}
+			ruleID := rule.ID
+			g.Go(func() error {
+				items, err := s.counters.DistinctMembers(gctx, appID, counter, 30)
+				if err != nil {
+					return nil
+				}
+				for _, item := range items {
+					out.Recent = append(out.Recent, RegisterIPMember{Key: memberString(item.Member), SeenAt: time.UnixMilli(int64(item.Score)), RuleID: ruleID})
+				}
+				return nil
+			})
+			break
+		}
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	out.Location, out.List, out.Decision = eval.facts.Location, eval.facts.List, eval.decision
 	if !policy.Enabled {
 		out.Decision = regip.Decide(policy, eval.facts)
 		out.Decision.Rules = eval.decision.Rules
 	}
-	if !needLocation {
-		out.Location = s.resolveLocation(ctx, addr.Addr.String())
-	}
-	out.Penalty.Subject = eval.penalty
-	if s.counters != nil && eval.penalty != "" {
-		if remaining, level, err := s.counters.PenaltyOf(ctx, appID, eval.penalty); err == nil {
-			out.Penalty.Remaining = int(remaining.Seconds())
-			out.Penalty.Level = level
-			if remaining > 0 {
-				at := s.now().Add(remaining)
-				out.Penalty.ExpiresAt = &at
-			}
-		}
-	}
 	out.Usage = make([]regip.RuleUsage, 0, len(eval.decision.Rules))
 	for _, hit := range eval.decision.Rules {
+		if regip.DeviceScope(hit.Scope) {
+			continue // 设备一侧的规则在设备查询里看
+		}
 		usage := regip.RuleUsage{RuleHit: hit, Remaining: max(0, hit.Limit-hit.Count)}
 		for i, counter := range eval.counters {
 			if policy.Rules[eval.ruleOf[i]].ID != hit.RuleID || s.counters == nil {
@@ -563,30 +679,16 @@ func (s *RegisterIPService) Inspect(ctx context.Context, appID int64, ip string)
 		}
 		out.Usage = append(out.Usage, usage)
 	}
-	lists, _, err := s.pg.ListRegisterIPLists(ctx, regip.ListQuery{AppID: appID, Keyword: addr.Addr.String(), IncludeExpired: true, Page: 1, PageSize: 20})
-	if err != nil {
-		return nil, err
-	}
-	out.Lists = lists
-	if out.Registrations, out.HostRegistrations, err = s.pg.RegisterIPLedgerByPrefix(ctx, appID, addr.Host, 20); err != nil {
-		return nil, err
-	}
-	if out.SubnetRecent, out.SubnetRegistrations, err = s.pg.RegisterIPLedgerByPrefix(ctx, appID, addr.Subnet, 20); err != nil {
-		return nil, err
-	}
-	events, _, err := s.pg.ListRegisterIPEvents(ctx, regip.EventQuery{AppID: appID, IP: addr.Subnet.String(), Page: 1, PageSize: 20})
-	if err != nil {
-		return nil, err
-	}
-	out.Events = events
 	return out, nil
 }
 
 /* ───────────────────── 解除 ───────────────────── */
 
-// RegisterIPReleaseInput 解除限制。
+// RegisterIPReleaseInput 解除限制。IP 与 Device 至少给一个；两个都给时两边一起解除。
 type RegisterIPReleaseInput struct {
 	IP string `json:"ip"`
+	// Device 设备标识
+	Device string `json:"device"`
 	// Scope ip：只解除这个地址；subnet：连同它所在的网段
 	Scope string `json:"scope"`
 	// Counters 清空窗口计数（默认开）
@@ -607,30 +709,55 @@ type RegisterIPReleaseResult struct {
 	LedgerReleased  int64    `json:"ledgerReleased"`
 }
 
-// Release 解除一个地址（或它所在网段）的限制。
+// Release 解除一个地址（或它所在网段）和 / 或一台设备的限制。
 func (s *RegisterIPService) Release(ctx context.Context, appID int64, in RegisterIPReleaseInput, operator string) (*RegisterIPReleaseResult, error) {
 	policy, err := s.policyOf(ctx, appID)
 	if err != nil {
 		return nil, err
 	}
-	addr, ok := regip.ParseAddress(in.IP, policy.Network)
-	if !ok {
-		return nil, apperrors.New(40000, http.StatusBadRequest, "请输入有效的 IP 地址")
+	var addr regip.Address
+	hasIP := strings.TrimSpace(in.IP) != ""
+	if hasIP {
+		parsed, ok := regip.ParseAddress(in.IP, policy.Network)
+		if !ok {
+			return nil, apperrors.New(40000, http.StatusBadRequest, "请输入有效的 IP 地址")
+		}
+		addr = parsed
 	}
-	scopes := map[string]netip.Prefix{regip.ScopeIP: addr.Host}
-	if in.Scope == regip.ScopeSubnet {
-		scopes[regip.ScopeSubnet] = addr.Subnet
+	dev := regip.ParseDevice(in.Device, policy.Device.MinLength)
+	if strings.TrimSpace(in.Device) != "" && !dev.Valid {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "设备标识无效："+dev.InvalidReason)
+	}
+	if !hasIP && !dev.Valid {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "请填写要解除的地址或设备")
+	}
+	// 主体 → 它在各规则里的 subject
+	subjects := map[string]string{}
+	if hasIP {
+		subjects[regip.ScopeIP] = addr.Host.String()
+		subjects[regip.ScopeIPDevices] = addr.Host.String()
+		if in.Scope == regip.ScopeSubnet {
+			subjects[regip.ScopeSubnet] = addr.Subnet.String()
+		}
+	}
+	if dev.Valid {
+		subjects[regip.ScopeDevice] = dev.Subject()
+		subjects[regip.ScopeDeviceIPs] = dev.Subject()
 	}
 	out := &RegisterIPReleaseResult{}
-	for _, prefix := range scopes {
-		out.Subjects = append(out.Subjects, prefix.String())
+	seen := map[string]bool{}
+	for _, subject := range subjects {
+		if !seen[subject] {
+			seen[subject] = true
+			out.Subjects = append(out.Subjects, subject)
+		}
 	}
 	sort.Strings(out.Subjects)
 	if s.counters != nil && (in.Counters == nil || *in.Counters) {
 		counters := []redisrepo.RegisterIPCounter{}
 		for _, rule := range policy.Rules {
-			if prefix, ok := scopes[rule.Scope]; ok {
-				counters = append(counters, redisrepo.RegisterIPCounter{Rule: rule.ID, Subject: prefix.String()})
+			if subject, ok := subjects[rule.Scope]; ok {
+				counters = append(counters, redisrepo.RegisterIPCounter{Rule: rule.ID, Subject: subject})
 			}
 		}
 		if err := s.counters.ClearCounters(ctx, appID, counters); err != nil {
@@ -639,23 +766,32 @@ func (s *RegisterIPService) Release(ctx context.Context, appID int64, in Registe
 		out.CountersCleared = len(counters)
 	}
 	if s.counters != nil && (in.Penalty == nil || *in.Penalty) {
-		for _, prefix := range scopes {
-			if err := s.counters.ClearPenalty(ctx, appID, prefix.String(), in.ResetLevel); err != nil {
+		for _, subject := range out.Subjects {
+			if err := s.counters.ClearPenalty(ctx, appID, subject, in.ResetLevel); err != nil {
 				return nil, err
 			}
 		}
 		out.PenaltyCleared = true
 	}
 	if in.Ledger {
-		prefix := scopes[regip.ScopeIP]
-		if subnet, ok := scopes[regip.ScopeSubnet]; ok {
-			prefix = subnet
+		if hasIP {
+			prefix := addr.Host
+			if in.Scope == regip.ScopeSubnet {
+				prefix = addr.Subnet
+			}
+			released, err := s.pg.ReleaseRegisterIPLedger(ctx, appID, prefix)
+			if err != nil {
+				return nil, err
+			}
+			out.LedgerReleased += released
 		}
-		released, err := s.pg.ReleaseRegisterIPLedger(ctx, appID, prefix)
-		if err != nil {
-			return nil, err
+		if dev.Valid {
+			released, err := s.pg.ReleaseRegisterIPLedgerByDevice(ctx, appID, dev.ID)
+			if err != nil {
+				return nil, err
+			}
+			out.LedgerReleased += released
 		}
-		out.LedgerReleased = released
 		// 累计计数按台账重算：删掉缓存，下次注册时回填
 		if s.counters != nil {
 			counters := []redisrepo.RegisterIPCounter{}
@@ -663,8 +799,15 @@ func (s *RegisterIPService) Release(ctx context.Context, appID int64, in Registe
 				if !rule.Lifetime() {
 					continue
 				}
-				for _, p := range []netip.Prefix{addr.Host, addr.Subnet} {
-					counters = append(counters, redisrepo.RegisterIPCounter{Rule: rule.ID, Subject: p.String()})
+				candidates := []string{}
+				if hasIP {
+					candidates = append(candidates, addr.Host.String(), addr.Subnet.String())
+				}
+				if dev.Valid {
+					candidates = append(candidates, dev.Subject())
+				}
+				for _, subject := range candidates {
+					counters = append(counters, redisrepo.RegisterIPCounter{Rule: rule.ID, Subject: subject})
 				}
 			}
 			_ = s.counters.ClearCounters(ctx, appID, counters)
@@ -674,11 +817,14 @@ func (s *RegisterIPService) Release(ctx context.Context, appID int64, in Registe
 	if note := strings.TrimSpace(in.Note); note != "" {
 		detail += "（" + note + "）"
 	}
-	s.events.Enqueue(regip.Event{
-		AppID: appID, Kind: regip.EventReleased, IP: addr.Addr.String(), Subnet: addr.Subnet.String(), Detail: detail,
-		Operator: operator, At: s.now(),
+	event := regip.Event{
+		AppID: appID, Kind: regip.EventReleased, Detail: detail, Operator: operator, At: s.now(), DeviceID: dev.ID,
 		Extra: map[string]any{"countersCleared": out.CountersCleared, "penaltyCleared": out.PenaltyCleared, "ledgerReleased": out.LedgerReleased},
-	})
+	}
+	if hasIP {
+		event.IP, event.Subnet = addr.Addr.String(), addr.Subnet.String()
+	}
+	s.events.Enqueue(event)
 	return out, nil
 }
 

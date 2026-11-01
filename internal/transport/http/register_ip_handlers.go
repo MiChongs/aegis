@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 注册 IP 控制管理端接口。规则见 docs/register-ip.md。
+// 注册准入（地址与设备）管理端接口。规则见 docs/register-ip.md。
 //
 // /api/admin/apps/:appkey/register-ip/*：读（含模拟与 IP 查询）app:user:read；改策略、名单 app:write；
 // 解除限制 app:user:write。网关侧没有新接口 —— 准入在四条建号路径里，拦截以业务错误码返回。
@@ -166,7 +166,7 @@ func (h *Handler) AdminRegisterIPPenalties(c *gin.Context) {
 }
 
 // AdminRegisterIPEvents GET /api/admin/apps/:appkey/register-ip/events
-// 参数：page、limit、kind、reason、ruleId、method、ip（地址或网段）、keyword、from、to（RFC 3339）。
+// 参数：page、limit、kind、reason、ruleId、method、ip（地址或网段）、deviceId、keyword、from、to（RFC 3339）。
 func (h *Handler) AdminRegisterIPEvents(c *gin.Context) {
 	appID, ok := h.registerIPReady(c)
 	if !ok {
@@ -177,6 +177,7 @@ func (h *Handler) AdminRegisterIPEvents(c *gin.Context) {
 	query := regip.EventQuery{
 		AppID: appID, Kind: strings.TrimSpace(c.Query("kind")), Reason: strings.TrimSpace(c.Query("reason")),
 		RuleID: strings.TrimSpace(c.Query("ruleId")), Method: strings.TrimSpace(c.Query("method")), IP: c.Query("ip"),
+		DeviceID: strings.TrimSpace(c.Query("deviceId")),
 		Keyword: c.Query("keyword"), From: queryTime(c, "from"), To: queryTime(c, "to"), Page: page, PageSize: limit,
 	}
 	items, total, err := h.registerIP.Events(c.Request.Context(), query)
@@ -189,7 +190,7 @@ func (h *Handler) AdminRegisterIPEvents(c *gin.Context) {
 }
 
 // AdminRegisterIPRegistrations GET /api/admin/apps/:appkey/register-ip/registrations
-// 参数：page、limit、ip（地址或网段）、method、keyword、released（true/false）、from、to。
+// 参数：page、limit、ip（地址或网段）、deviceId、method、keyword、released（true/false）、from、to。
 func (h *Handler) AdminRegisterIPRegistrations(c *gin.Context) {
 	appID, ok := h.registerIPReady(c)
 	if !ok {
@@ -198,7 +199,7 @@ func (h *Handler) AdminRegisterIPRegistrations(c *gin.Context) {
 	page, _ := strconv.Atoi(c.Query("page"))
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	query := regip.RegistrationQuery{
-		AppID: appID, IP: c.Query("ip"), Method: strings.TrimSpace(c.Query("method")), Keyword: c.Query("keyword"),
+		AppID: appID, IP: c.Query("ip"), DeviceID: strings.TrimSpace(c.Query("deviceId")), Method: strings.TrimSpace(c.Query("method")), Keyword: c.Query("keyword"),
 		From: queryTime(c, "from"), To: queryTime(c, "to"), Page: page, PageSize: limit,
 	}
 	if released, err := strconv.ParseBool(c.Query("released")); err == nil {
@@ -291,6 +292,111 @@ func (h *Handler) AdminDeleteRegisterIPLists(c *gin.Context) {
 		return
 	}
 	deleted, err := h.registerIP.DeleteLists(c.Request.Context(), appID, req.IDs)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "已删除", gin.H{"deleted": deleted})
+}
+
+// AdminRegisterDeviceInspectQuery 设备查询参数（仅用于接口文档）。
+type AdminRegisterDeviceInspectQuery struct {
+	Device string `json:"device" form:"device"`
+}
+
+// AdminInspectRegisterDevice GET /api/admin/apps/:appkey/register-ip/devices/inspect?device=
+// 一台设备此刻的全部状况：名单、惩罚期、设备规则用量、注册过的账号、用过的地址（关联）、最近拦截。
+func (h *Handler) AdminInspectRegisterDevice(c *gin.Context) {
+	appID, ok := h.registerIPReady(c)
+	if !ok {
+		return
+	}
+	result, err := h.registerIP.InspectDevice(c.Request.Context(), appID, c.Query("device"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "获取成功", result)
+}
+
+// AdminRegisterDeviceLists GET /api/admin/apps/:appkey/register-ip/device-lists?kind=&keyword=&expired=
+func (h *Handler) AdminRegisterDeviceLists(c *gin.Context) {
+	appID, ok := h.registerIPReady(c)
+	if !ok {
+		return
+	}
+	page, _ := strconv.Atoi(c.Query("page"))
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	expired, _ := strconv.ParseBool(c.Query("expired"))
+	items, total, err := h.registerIP.ListDeviceLists(c.Request.Context(), regip.ListQuery{
+		AppID: appID, Kind: strings.TrimSpace(c.Query("kind")), Keyword: c.Query("keyword"), IncludeExpired: expired,
+		Page: page, PageSize: limit,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	page, limit = normalizedPage(page, limit)
+	response.Success(c, http.StatusOK, "获取成功", regip.DeviceListList{Items: items, Total: total, Page: page, Limit: limit})
+}
+
+// AdminAddRegisterDeviceLists POST /api/admin/apps/:appkey/register-ip/device-lists
+// values 可以一次贴多行（换行、逗号、空格分隔），最多 500 项；无效的设备标识只能加入拒绝名单。
+func (h *Handler) AdminAddRegisterDeviceLists(c *gin.Context) {
+	appID, ok := h.registerIPReady(c)
+	if !ok {
+		return
+	}
+	var req regip.ListInput
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	_, operator := adminAccount(c)
+	items, err := h.registerIP.AddDeviceLists(c.Request.Context(), appID, req, operator)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "已添加", gin.H{"items": items})
+}
+
+// AdminUpdateRegisterDeviceList PUT /api/admin/apps/:appkey/register-ip/device-lists/:id
+func (h *Handler) AdminUpdateRegisterDeviceList(c *gin.Context) {
+	appID, ok := h.registerIPReady(c)
+	if !ok {
+		return
+	}
+	id, err := pathInt64(c, "id")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的名单项")
+		return
+	}
+	var req regip.ListUpdate
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	item, err := h.registerIP.UpdateDeviceList(c.Request.Context(), appID, id, req)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "已保存", item)
+}
+
+// AdminDeleteRegisterDeviceLists POST /api/admin/apps/:appkey/register-ip/device-lists/delete
+func (h *Handler) AdminDeleteRegisterDeviceLists(c *gin.Context) {
+	appID, ok := h.registerIPReady(c)
+	if !ok {
+		return
+	}
+	var req regip.ListDeleteInput
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	deleted, err := h.registerIP.DeleteDeviceLists(c.Request.Context(), appID, req.IDs)
 	if err != nil {
 		h.writeError(c, err)
 		return

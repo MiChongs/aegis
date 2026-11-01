@@ -43,6 +43,13 @@ const (
 	ScopeIP = "ip"
 	// ScopeSubnet 网段：IPv4 按 Network.IPv4Subnet、IPv6 按 Network.IPv6Subnet
 	ScopeSubnet = "subnet"
+	// ScopeDevice 同一设备（客户端上报的设备标识）。与地址互补：换网络、开代理挡不住设备，
+	// 一台设备上开多开、改机挡不住地址
+	ScopeDevice = "device"
+	// ScopeIPDevices 同一地址在窗口内出现的不同设备数：一个出口后面突然冒出几十台「新手机」是群控 / 模拟器农场
+	ScopeIPDevices = "ip_devices"
+	// ScopeDeviceIPs 同一设备在窗口内用过的不同地址数（按「单个地址」口径聚合）：一台设备频繁换出口是代理池轮换
+	ScopeDeviceIPs = "device_ips"
 	// ScopeCity 同一属地（国家 / 省 / 市）。属地查不到时这条规则不参与判定
 	ScopeCity = "city"
 	// ScopeApp 整个应用。与突增检测互补：一个是写死的硬上限，一个跟着平时的量走
@@ -50,7 +57,18 @@ const (
 )
 
 // Scopes 全部统计主体，顺序即展示顺序。
-var Scopes = []string{ScopeIP, ScopeSubnet, ScopeCity, ScopeApp}
+var Scopes = []string{ScopeIP, ScopeSubnet, ScopeDevice, ScopeIPDevices, ScopeDeviceIPs, ScopeCity, ScopeApp}
+
+// DistinctScope 这个主体数的是「不同成员数」而不是注册数（地址下的不同设备、设备下的不同地址）。
+func DistinctScope(scope string) bool { return scope == ScopeIPDevices || scope == ScopeDeviceIPs }
+
+// DeviceScope 这个主体的统计对象是设备（缺少有效设备标识时不参与）。
+func DeviceScope(scope string) bool { return scope == ScopeDevice || scope == ScopeDeviceIPs }
+
+// IPScope 这个主体的统计对象是地址（缺少注册 IP 时不参与）。
+func IPScope(scope string) bool {
+	return scope == ScopeIP || scope == ScopeSubnet || scope == ScopeIPDevices
+}
 
 // 注册方式。规则的 Methods 为空表示全部方式都算。
 const (
@@ -112,6 +130,8 @@ type Policy struct {
 	ISP ISPRule `json:"isp"`
 	// Geo 按属地放行或拒绝
 	Geo GeoRule `json:"geo"`
+	// Device 设备标识的质量要求：缺少或明显无效时怎么办
+	Device DeviceRule `json:"device"`
 	// MissingIP 拿不到注册 IP 时的处置
 	MissingIP string `json:"missingIp"`
 	// FailMode 计数存储出错时的处置
@@ -161,8 +181,11 @@ type Penalty struct {
 	BaseSeconds         int     `json:"baseSeconds"`
 	Multiplier          float64 `json:"multiplier"`
 	MaxSeconds          int     `json:"maxSeconds"`
-	// Scope 惩罚的主体：ip 或 subnet
+	// Scope 地址一侧的惩罚主体：ip 或 subnet
 	Scope string `json:"scope"`
+	// Device 设备一侧的规则（同一设备、同一设备换地址）拒绝时，惩罚落在设备上：
+	// 进了惩罚期的设备换任何网络都注册不了，进了惩罚期的地址换任何设备也一样
+	Device bool `json:"device"`
 }
 
 // Surge 突增检测：最近 WindowMinutes 分钟的注册数明显高于此前 BaselineMinutes 分钟的平常水平时触发。
@@ -195,6 +218,27 @@ type GeoRule struct {
 	Unknown string `json:"unknown"`
 }
 
+// DeviceRule 设备标识的质量要求。
+//
+// 「无效」指上报了值但明显不是真实设备：过短、全是同一个字符、含不可见字符、超长。
+// 占位值（unknown、全 0、Android 9774d56d682e549c 等）在接入层已被当成没上报。
+// 无效的设备标识不参与任何设备规则 —— 否则所有上报 "aaaaaaaa" 的人会挤在同一台「设备」上互相触发上限。
+type DeviceRule struct {
+	// Missing 没上报设备标识时：allow / challenge / reject
+	Missing string `json:"missing"`
+	// Invalid 上报了无效标识时：allow / challenge / reject
+	Invalid string `json:"invalid"`
+	// MinLength 有效标识的最短长度，默认 8
+	MinLength int `json:"minLength"`
+}
+
+// 缺少 / 无效设备的处置。
+const (
+	DeviceAllow     = "allow"
+	DeviceChallenge = "challenge"
+	DeviceReject    = "reject"
+)
+
 // DefaultISPKeywords 常见机房与云厂商出口。正常用户几乎不会从这些网络注册。
 var DefaultISPKeywords = []string{"阿里云", "腾讯云", "华为云", "百度云", "亚马逊", "Amazon", "Google", "Microsoft", "DigitalOcean", "Linode", "Vultr", "OVH", "Hetzner", "数据中心", "IDC"}
 
@@ -208,11 +252,15 @@ func DefaultPolicy() Policy {
 			{ID: "ip-hour", Name: "同一地址每小时", Enabled: true, Scope: ScopeIP, WindowSeconds: 3600, Limit: 3, Action: ActionChallenge},
 			{ID: "ip-day", Name: "同一地址每天", Enabled: true, Scope: ScopeIP, WindowSeconds: 86400, Limit: 10, Action: ActionReject},
 			{ID: "subnet-day", Name: "同一网段每天", Enabled: true, Scope: ScopeSubnet, WindowSeconds: 86400, Limit: 50, Action: ActionReject},
+			{ID: "device-day", Name: "同一设备每天", Enabled: true, Scope: ScopeDevice, WindowSeconds: 86400, Limit: 3, Action: ActionReject},
+			{ID: "ip-devices-hour", Name: "同一地址每小时出现的设备", Enabled: true, Scope: ScopeIPDevices, WindowSeconds: 3600, Limit: 10, Action: ActionChallenge},
+			{ID: "device-ips-day", Name: "同一设备每天换的地址", Enabled: true, Scope: ScopeDeviceIPs, WindowSeconds: 86400, Limit: 5, Action: ActionChallenge},
 		},
-		Penalty:   Penalty{Enabled: true, Strikes: 5, StrikeWindowSeconds: 3600, BaseSeconds: 1800, Multiplier: 2, MaxSeconds: 7 * 86400, Scope: ScopeIP},
+		Penalty:   Penalty{Enabled: true, Strikes: 5, StrikeWindowSeconds: 3600, BaseSeconds: 1800, Multiplier: 2, MaxSeconds: 7 * 86400, Scope: ScopeIP, Device: true},
 		Surge:     Surge{Enabled: false, WindowMinutes: 5, BaselineMinutes: 60, Sensitivity: 4, MinRegistrations: 30, Action: ActionChallenge, TightenFactor: 0.5},
 		ISP:       ISPRule{Enabled: false, Keywords: slices.Clone(DefaultISPKeywords), Action: ActionChallenge},
 		Geo:       GeoRule{Mode: GeoOff, Regions: []string{}, Action: ActionReject, Unknown: MissingIPAllow},
+		Device:    DeviceRule{Missing: DeviceAllow, Invalid: DeviceChallenge, MinLength: 8},
 		MissingIP: MissingIPAllow,
 		FailMode:  FailOpen,
 	}
@@ -260,6 +308,9 @@ func (p Policy) Normalize() (Policy, error) {
 		return out, err
 	}
 	if out.Geo, err = out.Geo.normalize(); err != nil {
+		return out, err
+	}
+	if out.Device, err = out.Device.normalize(); err != nil {
 		return out, err
 	}
 	switch out.MissingIP {
@@ -346,6 +397,9 @@ func (r Rule) normalize(index int) (Rule, error) {
 	if out.Lifetime() && out.Scope == ScopeApp {
 		return out, fmt.Errorf("%s：整个应用的累计注册数不该有上限，请设一个统计窗口", label)
 	}
+	if out.Lifetime() && DistinctScope(out.Scope) {
+		return out, fmt.Errorf("%s：不同设备数 / 不同地址数需要设一个统计窗口", label)
+	}
 	if out.Limit < 1 || out.Limit > MaxLimit {
 		return out, fmt.Errorf("%s：上限需要在 1–%d 之间", label, MaxLimit)
 	}
@@ -407,6 +461,30 @@ func (p Penalty) normalize() (Penalty, error) {
 		return out, fmt.Errorf("惩罚期：最长时长需要不短于首次时长、不超过 30 天")
 	case out.Scope != ScopeIP && out.Scope != ScopeSubnet:
 		return out, fmt.Errorf("惩罚期：主体只能是单个地址或网段")
+	}
+	return out, nil
+}
+
+func (d DeviceRule) normalize() (DeviceRule, error) {
+	out := d
+	if out.Missing == "" {
+		out.Missing = DeviceAllow
+	}
+	if out.Invalid == "" {
+		out.Invalid = DeviceChallenge
+	}
+	if out.MinLength == 0 {
+		out.MinLength = 8
+	}
+	for _, value := range []string{out.Missing, out.Invalid} {
+		switch value {
+		case DeviceAllow, DeviceChallenge, DeviceReject:
+		default:
+			return out, fmt.Errorf("不认识的设备标识处置 %q", value)
+		}
+	}
+	if out.MinLength < 4 || out.MinLength > 64 {
+		return out, fmt.Errorf("设备标识最短长度需要在 4–64 之间")
 	}
 	return out, nil
 }
@@ -528,9 +606,13 @@ func NormalizeRegion(value string) string {
 	return strings.Join(out, "/")
 }
 
-// DescribeRule 规则的默认名称，例如「同一地址 每小时 最多 3 个」。
+// DescribeRule 规则的默认名称，例如「同一地址每小时最多 3 个」「同一地址的不同设备每小时最多 10 台」。
 func DescribeRule(r Rule) string {
-	return fmt.Sprintf("%s%s最多 %d 个", ScopeLabel(r.Scope), WindowLabel(r.WindowSeconds), r.Limit)
+	unit := "个"
+	if r.Scope == ScopeIPDevices {
+		unit = "台"
+	}
+	return fmt.Sprintf("%s%s最多 %d %s", ScopeLabel(r.Scope), WindowLabel(r.WindowSeconds), r.Limit, unit)
 }
 
 // ScopeLabel 统计主体的中文名。
@@ -540,6 +622,12 @@ func ScopeLabel(scope string) string {
 		return "同一地址"
 	case ScopeSubnet:
 		return "同一网段"
+	case ScopeDevice:
+		return "同一设备"
+	case ScopeIPDevices:
+		return "同一地址的不同设备"
+	case ScopeDeviceIPs:
+		return "同一设备的不同地址"
 	case ScopeCity:
 		return "同一城市"
 	case ScopeApp:
@@ -607,6 +695,7 @@ func legacyPolicy(settings map[string]any) Policy {
 	policy.Rules = []Rule{{ID: "legacy-ip", Name: "同一地址累计最多 1 个（旧开关）", Enabled: true, Scope: ScopeIP, WindowSeconds: 0, Limit: 1, Action: ActionReject}}
 	policy.Penalty.Enabled = false
 	policy.MissingIP = MissingIPReject
+	policy.Device = DeviceRule{Missing: DeviceAllow, Invalid: DeviceAllow, MinLength: 8}
 	// 旧开关按完整地址比对，IPv6 也是 /128
 	policy.Network.IPv6Host = 128
 	policy.Network.IPv6Subnet = 64

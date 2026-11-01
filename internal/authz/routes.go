@@ -395,6 +395,8 @@ var adminRouteRules = []RouteRule{
 	{Methods: []string{"PUT"}, Pattern: "/api/admin/apps/:appkey/register-ip/policy", Permission: PermAppWrite, Scope: ScopeApp},
 	{Pattern: "/api/admin/apps/:appkey/register-ip/lists", Permission: PermAppWrite, Scope: ScopeApp},
 	{Pattern: "/api/admin/apps/:appkey/register-ip/lists/*", Permission: PermAppWrite, Scope: ScopeApp},
+	{Pattern: "/api/admin/apps/:appkey/register-ip/device-lists", Permission: PermAppWrite, Scope: ScopeApp},
+	{Pattern: "/api/admin/apps/:appkey/register-ip/device-lists/*", Permission: PermAppWrite, Scope: ScopeApp},
 	{Pattern: "/api/admin/apps/:appkey/register-ip/*", Permission: PermAppUserWrite, Scope: ScopeApp},
 	// 崩溃报告：查看（列表、筛选项、含正文的详情）要应用读权限，标记已处理与删除要应用写权限。
 	// 显式写出来而不是落进下面的兜底：报告里带设备标识与 IP，权限改动应当在这里一眼看见。

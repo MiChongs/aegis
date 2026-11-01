@@ -63,6 +63,7 @@ type EventQuery struct {
 	RuleID   string
 	Method   string
 	IP       string // 地址或网段（CIDR）
+	DeviceID string // 设备标识（精确）
 	Keyword  string // 账号、设备、属地、详情
 	From     *time.Time
 	To       *time.Time
@@ -92,6 +93,7 @@ type Registration struct {
 type RegistrationQuery struct {
 	AppID    int64
 	IP       string // 地址或网段
+	DeviceID string // 设备标识（精确）
 	Method   string
 	Keyword  string
 	Released *bool
@@ -149,6 +151,7 @@ type RuleUsage struct {
 type SimulateInput struct {
 	Policy        *Policy `json:"policy"`
 	IP            string  `json:"ip"`
+	DeviceID      string  `json:"deviceId"`
 	Method        string  `json:"method"`
 	CaptchaPassed bool    `json:"captchaPassed"`
 	// Counts 改写某些规则的计数（规则 ID → 已有注册数），模拟「如果已经注册了 N 个」
@@ -157,8 +160,10 @@ type SimulateInput struct {
 	Location *Location `json:"location"`
 	// Surge 强制突增状态：nil 用真实值
 	SurgeActive *bool `json:"surgeActive"`
-	// PenaltySeconds 强制惩罚期剩余秒数：nil 用真实值
+	// PenaltySeconds 强制地址惩罚期剩余秒数：nil 用真实值
 	PenaltySeconds *int `json:"penaltySeconds"`
+	// DevicePenaltySeconds 强制设备惩罚期剩余秒数：nil 用真实值
+	DevicePenaltySeconds *int `json:"devicePenaltySeconds"`
 }
 
 // EventList 拦截记录分页。
@@ -194,4 +199,21 @@ type PenaltyList struct {
 // ListDeleteInput 批量删除名单。
 type ListDeleteInput struct {
 	IDs []int64 `json:"ids"`
+}
+
+// DeviceListList 设备名单分页。
+type DeviceListList struct {
+	Items []DeviceListEntry `json:"items"`
+	Total int64             `json:"total"`
+	Page  int               `json:"page"`
+	Limit int               `json:"limit"`
+}
+
+// LinkedItem 关联视图的一行：某地址下出现过的一台设备，或某设备用过的一个地址。
+type LinkedItem struct {
+	Key      string    `json:"key"`
+	Accounts int64     `json:"accounts"`
+	FirstAt  time.Time `json:"firstAt"`
+	LastAt   time.Time `json:"lastAt"`
+	Location string    `json:"location,omitempty"`
 }

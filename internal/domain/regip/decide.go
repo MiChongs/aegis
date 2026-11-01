@@ -14,17 +14,19 @@ const (
 
 // 结论的原因，也是拦截记录的 reason。
 const (
-	ReasonNone      = ""
-	ReasonDisabled  = "disabled"   // 没开启
-	ReasonMissingIP = "missing_ip" // 拿不到注册 IP
-	ReasonListAllow = "list_allow" // 命中放行名单
-	ReasonListDeny  = "list_deny"  // 命中拒绝名单
-	ReasonPenalty   = "penalty"    // 惩罚期内
-	ReasonGeo       = "geo"        // 属地限制
-	ReasonISP       = "isp"        // 运营商限制
-	ReasonSurge     = "surge"      // 注册量突增
-	ReasonRule      = "rule"       // 配额规则
-	ReasonFailure   = "failure"    // 计数存储出错且策略要求拒绝
+	ReasonNone          = ""
+	ReasonDisabled      = "disabled"       // 没开启
+	ReasonMissingIP     = "missing_ip"     // 拿不到注册 IP
+	ReasonMissingDevice = "missing_device" // 没上报设备标识
+	ReasonInvalidDevice = "invalid_device" // 设备标识无效
+	ReasonListAllow     = "list_allow"     // 命中放行名单
+	ReasonListDeny      = "list_deny"      // 命中拒绝名单
+	ReasonPenalty       = "penalty"        // 惩罚期内
+	ReasonGeo           = "geo"            // 属地限制
+	ReasonISP           = "isp"            // 运营商限制
+	ReasonSurge         = "surge"          // 注册量突增
+	ReasonRule          = "rule"           // 配额规则
+	ReasonFailure       = "failure"        // 计数存储出错且策略要求拒绝
 )
 
 // Facts 一次判定需要的全部事实。线上由 RegisterIPService 取齐，模拟时可以部分虚构。
@@ -32,13 +34,18 @@ type Facts struct {
 	Method string
 	// Address 解析出的地址；Valid() 为假表示缺少或无法解析
 	Address Address
+	// Device 上报的设备标识
+	Device Device
 	// CaptchaPassed 这次请求已经通过了图形验证码（风控加验或应用自己要求的都算）
 	CaptchaPassed bool
-	List          *ListMatch
-	Location      Location
-	// PenaltySeconds 惩罚期剩余秒数，0 表示不在惩罚期
+	// List 地址名单与设备名单合并后的结论（CombineLists）
+	List     *ListMatch
+	Location Location
+	// PenaltySeconds 地址一侧惩罚期剩余秒数，0 表示不在惩罚期
 	PenaltySeconds int
-	Surge          SurgeState
+	// DevicePenaltySeconds 设备一侧惩罚期剩余秒数
+	DevicePenaltySeconds int
+	Surge                SurgeState
 	// Counts 规则 ID → 该规则统计主体里已有的注册数（不含这一次）。缺失表示这次无从统计
 	Counts map[string]int
 	// StoreFailed 计数存储出错，Counts 不可信
@@ -109,46 +116,69 @@ func RuleBlocks(policy Policy, rule Rule, captchaPassed bool) bool {
 
 // PreDecide 只用不需要计数的事实做前置判定。返回 final=true 表示已经有结论，不必再去计数。
 //
-// 顺序即优先级：缺 IP → 放行名单 → 拒绝名单 → 惩罚期 → 属地 → 运营商 → 突增。
-// 放行名单排在拒绝名单前面看，是因为 CompiledLists.Match 已经让拒绝优先：
-// 能以 list_allow 走到这里，说明它不在任何拒绝项里。
+// 顺序即优先级：缺 IP → 设备标识质量 → 名单（地址与设备合并）→ 惩罚期（地址或设备）→ 属地 → 运营商 → 突增。
+// 地址与设备互为补充：缺了一边，只依赖那一边的规则不参与，另一边照常判；两边都缺时无从计数。
 func PreDecide(policy Policy, facts Facts) (Decision, bool) {
 	d := Decision{Outcome: OutcomeAllow, Rules: []RuleHit{}}
 	if !policy.Enabled {
 		d.Reason = ReasonDisabled
 		return d, true
 	}
-	if !facts.Address.Valid() {
-		if policy.MissingIP == MissingIPReject {
-			return finalize(policy, d, OutcomeReject, ReasonMissingIP, "缺少注册 IP", "当前应用要求提供注册 IP")
-		}
-		d.Reason = ReasonMissingIP
-		d.Detail = "缺少注册 IP，按策略放行"
-		return d, true
-	}
-	if facts.List != nil {
-		switch facts.List.Kind {
-		case ListAllow:
-			d.Reason = ReasonListAllow
-			d.Detail = "命中放行名单 " + facts.List.CIDR
-			return d, true
-		case ListDeny:
-			return finalize(policy, d, OutcomeReject, ReasonListDeny, "命中拒绝名单 "+facts.List.CIDR, "当前网络环境暂不允许注册")
-		case ListElevated:
-			d.Factor = facts.List.Factor
-		}
-	}
-	if facts.PenaltySeconds > 0 {
-		d.RetryAfter = facts.PenaltySeconds
-		return finalize(policy, d, OutcomeReject, ReasonPenalty,
-			fmt.Sprintf("惩罚期内，剩余 %s", DurationLabel(facts.PenaltySeconds)),
-			fmt.Sprintf("当前网络注册过于频繁，请 %s后再试", DurationLabel(facts.PenaltySeconds)))
+	if !facts.Address.Valid() && policy.MissingIP == MissingIPReject {
+		return finalize(policy, d, OutcomeReject, ReasonMissingIP, "缺少注册 IP", "当前应用要求提供注册 IP")
 	}
 	// step 落一个前置项的处置：挡住了就是最终结论；观察或加验已过只留痕，继续往下判
 	step := func(action, reason, detail, message string) bool {
 		out, final := applyAction(policy, d, action, reason, detail, message, facts.CaptchaPassed)
 		d = out
 		return final
+	}
+	switch dev := facts.Device; {
+	case dev.Invalid && policy.Device.Invalid != DeviceAllow:
+		if step(policy.Device.Invalid, ReasonInvalidDevice, "设备标识无效："+dev.InvalidReason, "当前设备标识无效，请更新客户端后重试") {
+			return d, true
+		}
+	case !dev.Present() && policy.Device.Missing != DeviceAllow:
+		if step(policy.Device.Missing, ReasonMissingDevice, "没有上报设备标识", "当前应用要求提供设备标识，请更新客户端后重试") {
+			return d, true
+		}
+	}
+	if !facts.Address.Valid() && !facts.Device.Valid {
+		if d.Reason == ReasonNone {
+			d.Reason = ReasonMissingIP
+			d.Detail = "缺少注册 IP 与有效设备标识，无从计数，按策略放行"
+		}
+		return d, true
+	}
+	if facts.List != nil {
+		target := facts.List.CIDR
+		if facts.List.Target == ListTargetDevice {
+			target = "设备 " + facts.List.Device
+		}
+		switch facts.List.Kind {
+		case ListAllow:
+			d.Reason = ReasonListAllow
+			d.Detail = "命中放行名单 " + target
+			return d, true
+		case ListDeny:
+			message := "当前网络环境暂不允许注册"
+			if facts.List.Target == ListTargetDevice {
+				message = "当前设备暂不允许注册"
+			}
+			return finalize(policy, d, OutcomeReject, ReasonListDeny, "命中拒绝名单 "+target, message)
+		case ListElevated:
+			d.Factor = facts.List.Factor
+		}
+	}
+	if seconds := max(facts.PenaltySeconds, facts.DevicePenaltySeconds); seconds > 0 {
+		d.RetryAfter = seconds
+		side, who := "地址", "当前网络"
+		if facts.DevicePenaltySeconds >= facts.PenaltySeconds {
+			side, who = "设备", "当前设备"
+		}
+		return finalize(policy, d, OutcomeReject, ReasonPenalty,
+			fmt.Sprintf("%s在惩罚期内，剩余 %s", side, DurationLabel(seconds)),
+			fmt.Sprintf("%s注册过于频繁，请 %s后再试", who, DurationLabel(seconds)))
 	}
 	if policy.Geo.Mode != GeoOff {
 		matched := ""
@@ -271,7 +301,11 @@ func Decide(policy Policy, facts Facts) Decision {
 	}
 	pick := func(hit *RuleHit, outcome, message string) Decision {
 		d.RuleID, d.RuleName = hit.RuleID, hit.Name
-		detail := fmt.Sprintf("%s：%s %s已注册 %d 个，上限 %d", hit.Name, ScopeLabel(hit.Scope), WindowLabel(hit.WindowSeconds), hit.Count, hit.Limit)
+		verb := "已注册"
+		if DistinctScope(hit.Scope) {
+			verb = "已有"
+		}
+		detail := fmt.Sprintf("%s：%s %s%s %d 个，上限 %d", hit.Name, ScopeLabel(hit.Scope), WindowLabel(hit.WindowSeconds), verb, hit.Count, hit.Limit)
 		if hit.WindowSeconds > 0 {
 			d.RetryAfter = hit.WindowSeconds
 		}
@@ -308,13 +342,14 @@ func describeRules(policy Policy, facts Facts, d Decision) []RuleHit {
 			RuleID: rule.ID, Name: rule.Name, Scope: rule.Scope, WindowSeconds: rule.WindowSeconds,
 			Action: rule.Action, Configured: rule.Limit,
 			Limit:   EffectiveLimit(rule.Limit, d.Factor, d.Tighten),
-			Subject: SubjectKey(rule.Scope, facts.Address, facts.Location),
+			Subject: SubjectKey(rule.Scope, facts.Address, facts.Device, facts.Location),
 		}
+		member := MemberKey(rule.Scope, facts.Address, facts.Device)
 		switch count, ok := facts.Counts[rule.ID]; {
 		case !rule.Applies(facts.Method):
 			hit.Skipped, hit.SkipReason = true, "不约束这种注册方式"
-		case hit.Subject == "":
-			hit.Skipped, hit.SkipReason = true, "属地未知，无从统计"
+		case hit.Subject == "" || DistinctScope(rule.Scope) && member == "":
+			hit.Skipped, hit.SkipReason = true, skipReason(rule.Scope, facts)
 		case !ok:
 			hit.Skipped, hit.SkipReason = true, "没有计数"
 		default:
@@ -326,13 +361,35 @@ func describeRules(policy Policy, facts Facts, d Decision) []RuleHit {
 	return hits
 }
 
+func skipReason(scope string, facts Facts) string {
+	switch {
+	case scope == ScopeCity:
+		return "属地未知，无从统计"
+	case DeviceScope(scope) && !facts.Device.Valid, scope == ScopeIPDevices && !facts.Device.Valid:
+		return "没有有效设备标识，无从统计"
+	case !facts.Address.Valid():
+		return "缺少注册 IP，无从统计"
+	}
+	return "无从统计"
+}
+
 // RejectMessage 配额拒绝的提示：管理员配了文案就用它（{limit}、{window} 占位），否则用默认。
 func RejectMessage(policy Policy, hit RuleHit) string {
 	if policy.RejectMessage != "" {
 		return strings.NewReplacer("{limit}", fmt.Sprint(hit.Limit), "{window}", WindowLabel(hit.WindowSeconds)).Replace(policy.RejectMessage)
 	}
-	if hit.Scope == ScopeApp {
+	switch hit.Scope {
+	case ScopeApp:
 		return "注册人数已达上限，请稍后再试"
+	case ScopeIPDevices:
+		return "当前网络下注册的设备过多，请稍后再试"
+	case ScopeDeviceIPs:
+		return "当前设备更换网络过于频繁，请稍后再试"
+	case ScopeDevice:
+		if hit.WindowSeconds == 0 {
+			return fmt.Sprintf("当前设备注册的账号数已达上限（%d 个）", hit.Limit)
+		}
+		return fmt.Sprintf("当前设备%s最多注册 %d 个账号，请稍后再试", WindowLabel(hit.WindowSeconds), hit.Limit)
 	}
 	if hit.WindowSeconds == 0 {
 		return fmt.Sprintf("当前网络注册的账号数已达上限（%d 个）", hit.Limit)
