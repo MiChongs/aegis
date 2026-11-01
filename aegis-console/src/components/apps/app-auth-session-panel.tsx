@@ -49,6 +49,7 @@ import {
 import { OVERFLOW_META } from "@/components/apps/device-limit/device-limit-shared";
 import { appSectionHref } from "@/lib/app-sections";
 import { useDeviceLimitPolicyQuery } from "@/lib/device-limit-hooks";
+import { useRegIPPolicyQuery } from "@/lib/register-ip-hooks";
 
 type PolicyForm = {
   loginCheckDevice: boolean;
@@ -186,27 +187,59 @@ export function AppAuthSessionPanel({ appKey }: { appKey?: string | null }) {
 
       <DeviceLimitEntry appKey={appKey} />
 
-      <SectionCard icon={<UserPlus className="size-4" />} title="注册准入">
-        <div className="space-y-5">
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            <SwitchRow
-              icon={<UserPlus className="size-3.5" />}
-              label="注册 IP 唯一"
-              checked={form.registerCheckIp}
-              onChange={(v) => patch("registerCheckIp", v)}
-            />
-          </div>
-
-          <div className="flex justify-end pt-1">
-            <Button size="sm" disabled={mutation.isPending} onClick={handleSave}>
-              <Save className="size-3.5" />
-              {mutation.isPending ? "保存中..." : "保存策略"}
-            </Button>
-          </div>
-        </div>
-      </SectionCard>
+      <RegisterIPEntry appKey={appKey} />
 
       <LoginBaselineCard appKey={appKey} enabled={strictBindingOn} />
+    </div>
+  );
+}
+
+/**
+ * 注册 IP 控制已移到「注册 IP」区块（地址 / 网段配额、名单、惩罚期、突增检测），这里只留入口与当前状态。
+ * 旧开关「注册 IP 唯一」本页照原值回传：没保存过新策略时它仍决定推导出的策略，保存过之后后端不再改它。
+ */
+function RegisterIPEntry({ appKey }: { appKey: string }) {
+  const query = useRegIPPolicyQuery(appKey);
+  const policy = query.data?.policy;
+  const rules = policy?.rules.filter((rule) => rule.enabled).length ?? 0;
+  const summary = policy
+    ? [
+        policy.mode === "observe" ? "观察模式" : "",
+        rules ? `${rules} 条配额规则` : "无配额规则",
+        policy.penalty.enabled ? "惩罚期" : "",
+        policy.surge.enabled ? "突增检测" : "",
+        !query.data?.configured ? "沿用旧开关" : ""
+      ]
+        .filter(Boolean)
+        .join("，")
+    : "";
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4"
+      style={{ boxShadow: "var(--shadow-soft)" }}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/20 dark:text-emerald-400">
+          <UserPlus className="size-4" />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <h3 className="text-sm font-semibold tracking-tight">注册准入</h3>
+          {query.isLoading ? (
+            <Skeleton className="h-3.5 w-40" />
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusDot active={Boolean(policy?.enabled)} labelActive="注册 IP 控制已开启" labelInactive="注册 IP 控制未开启" />
+              {policy?.enabled && summary ? <span className="text-xs text-muted-foreground">{summary}</span> : null}
+            </div>
+          )}
+        </div>
+      </div>
+      <Button size="sm" variant="outline" asChild>
+        <Link href={appSectionHref(appKey, "register-ip")}>
+          管理
+          <ArrowRight className="size-3.5" />
+        </Link>
+      </Button>
     </div>
   );
 }

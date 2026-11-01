@@ -34,6 +34,7 @@ import { AppCardKeyPanel } from "@/components/apps/card-key/app-card-key-panel";
 import { AppPointsStorePanel } from "@/components/apps/points-store/app-points-store-panel";
 import { AppInvitePanel } from "@/components/apps/invite/app-invite-panel";
 import { AppDeviceLimitPanel } from "@/components/apps/device-limit/app-device-limit-panel";
+import { AppRegisterIPPanel } from "@/components/apps/register-ip/app-register-ip-panel";
 import { AppPasskeyPanel } from "@/components/apps/app-passkey-panel";
 import { AppCrashReportsPanel } from "@/components/apps/crash-reports/app-crash-reports-panel";
 import { AppListenTogetherPanel } from "@/components/apps/listen-together/app-listen-together-panel";
@@ -171,6 +172,8 @@ function AppSectionPanel({ section, app }: { section: string; app: AppSummary })
       return <AppAuthSessionPanel appKey={app.appKey} />;
     case "device-limit":
       return <AppDeviceLimitPanel appKey={app.appKey} />;
+    case "register-ip":
+      return <AppRegisterIPPanel appKey={app.appKey} />;
     case "password":
       return <AppPasswordPanel appKey={app.appKey} />;
     case "passkey":

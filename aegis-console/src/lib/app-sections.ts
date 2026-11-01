@@ -21,6 +21,7 @@ import {
   ScanFace,
   ScrollText,
   ShieldCheck,
+  ShieldBan,
   ShieldHalf,
   ShoppingBag,
   SlidersHorizontal,
@@ -81,6 +82,7 @@ export const appSectionGroups: AppSectionGroup[] = [
       // tab 键沿用 policy：已分享出去的深链不该因为改叫法而失效
       { key: "policy", title: "认证与会话", summary: "登录绑定与注册准入", icon: Fingerprint },
       { key: "device-limit", title: "登录设备", summary: "设备数上限、超限处置与在线设备", icon: MonitorSmartphone },
+      { key: "register-ip", title: "注册 IP", summary: "地址与网段配额、名单、惩罚期与突增防护", icon: ShieldBan },
       { key: "password", title: "密码与凭证", summary: "强度规则与过期策略", icon: KeyRound },
       { key: "passkey", title: "通行密钥", summary: "RP ID、网页来源与安卓应用", icon: ScanFace },
       { key: "captcha", title: "验证码", summary: "人机校验渠道与场景", icon: ShieldCheck },
