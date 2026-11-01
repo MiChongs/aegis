@@ -10,6 +10,7 @@ import (
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
 	plugindomain "aegis/internal/domain/plugin"
+	"aegis/internal/domain/regip"
 	userdomain "aegis/internal/domain/user"
 	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
@@ -76,14 +77,17 @@ func (s *AuthService) SMSLogin(ctx context.Context, input SMSLoginInput) (*authd
 			if _, err := s.app.EnsureRegisterAllowed(ctx, input.AppID); err != nil {
 				return nil, err
 			}
-			if err := s.validateRegisterPolicy(ctx, app, input.IP); err != nil {
-				return nil, err
-			}
 		}
-		user, err = s.createPhoneUser(ctx, input, phone)
+		ticket, err := s.admitRegister(ctx, app, regip.MethodSMS, input.IP, phone, input.DeviceID, input.UserAgent)
 		if err != nil {
 			return nil, err
 		}
+		user, err = s.createPhoneUser(ctx, input, phone)
+		if err != nil {
+			ticket.Release()
+			return nil, err
+		}
+		ticket.Commit(user.ID, user.Account)
 		registered = true
 	} else {
 		// 既有账号：把手机号补进档案，兼容"先用密码注册、后绑手机"的历史数据

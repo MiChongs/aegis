@@ -73,6 +73,8 @@ type APIApp struct {
 	Storage *service.StorageService
 	// AccountDeletion 账号注销：后台循环执行到期的冷静期申请并发到期提醒，退出时必须 Stop
 	AccountDeletion *service.AccountDeletionService
+	// RegisterIP 注册 IP 控制：台账与拦截记录批量写入协程，退出时必须 Stop 把队列写完
+	RegisterIP *service.RegisterIPService
 	// Leaderboard 积分排行榜：后台循环结算到期的周期榜并发放奖励，退出时必须 Stop
 	Leaderboard *service.LeaderboardService
 	// ItemGrant 物品发放：后台循环执行到点的定时规则、接管中断的执行，退出时必须 Stop
@@ -603,6 +605,11 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	deviceLimitService.SetRealtime(realtimeService)
 	authService.SetDeviceLimitService(deviceLimitService)
 
+	// 注册 IP 控制：四条建号路径写库前过准入，按地址 / 网段 / 属地 / 应用配额、名单、惩罚期与突增判定（docs/register-ip.md）
+	registerIPService := service.NewRegisterIPService(log, pg, redisrepo.NewRegisterIPRepository(redisClient, cfg.Redis.KeyPrefix),
+		appService, locationService)
+	authService.SetRegisterIPService(registerIPService)
+
 	// 平台级 Banner（超级管理员专属 CRUD；Overview 对所有管理员展示；上传经 StorageService）
 	platformBannerService := service.NewPlatformBannerService(log, pg, sessions, storageService)
 
@@ -727,6 +734,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		ClientControl:    clientControlService,
 		ListenTogether:   listenTogetherService,
 		DeviceLimit:      deviceLimitService,
+		RegisterIP:       registerIPService,
 		PlatformSettings: systemService,
 		PlatformBanner:   platformBannerService,
 		Governance:       governanceService,
@@ -845,6 +853,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		CloudStorage:       cloudStorageService,
 		Storage:            storageService,
 		AccountDeletion:    accountDeletionService,
+		RegisterIP:         registerIPService,
 		Leaderboard:        leaderboardService,
 		ItemGrant:          itemGrantService,
 		Level:              levelService,
@@ -885,6 +894,9 @@ func (a *APIApp) Start(ctx context.Context) error {
 	}
 	if a.AccountDeletion != nil {
 		a.AccountDeletion.Start(ctx)
+	}
+	if a.RegisterIP != nil {
+		a.RegisterIP.Start(ctx)
 	}
 	if a.Leaderboard != nil {
 		a.Leaderboard.Start(ctx)
@@ -951,6 +963,9 @@ func (a *APIApp) close(ctx context.Context) {
 	}
 	if a.AccountDeletion != nil {
 		a.AccountDeletion.Stop()
+	}
+	if a.RegisterIP != nil {
+		a.RegisterIP.Stop(ctx)
 	}
 	if a.Leaderboard != nil {
 		a.Leaderboard.Stop()

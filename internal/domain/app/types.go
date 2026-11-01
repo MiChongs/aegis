@@ -42,7 +42,7 @@ type AppMutation struct {
 //
 //	设备绑定    LoginCheckDevice + DeviceRebindInterval
 //	登录一致性  LoginCheckIP / LoginCheckUser（与上次成功登录比对）
-//	会话与注册  MultiDeviceLogin / MultiDeviceLimit / RegisterCheckIP
+//	会话与注册  MultiDeviceLogin / MultiDeviceLimit / RegisterCheckIP（执行点 RegisterIPService.Admit）
 //
 // 注册验证码不在此处：能否要求验证码由应用的验证码配置（captcha.requireForRegister）
 // 单独决定。两处配同一件事时接入方无从判断哪个生效。
@@ -61,7 +61,8 @@ type Policy struct {
 	MultiDeviceLogin bool `json:"multiDeviceLogin"`
 	// MultiDeviceLimit 同时在线设备上限；MultiDeviceLogin 为 false 时恒为 1。
 	MultiDeviceLimit int `json:"multiDeviceLimit"`
-	// RegisterCheckIP 同一 IP 不允许重复注册。
+	// RegisterCheckIP 旧开关「同一 IP 不允许重复注册」。判定已归注册 IP 控制（regip，docs/register-ip.md）：
+	// 没保存过注册 IP 策略时按它推导出「同一地址累计最多 1 个」，保存过之后它只是写回的展示值。
 	RegisterCheckIP bool `json:"registerCheckIp"`
 }
 

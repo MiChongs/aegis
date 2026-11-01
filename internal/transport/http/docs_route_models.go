@@ -26,6 +26,7 @@ import (
 	"aegis/internal/domain/authprotocol"
 	"aegis/internal/domain/devicelimit"
 	"aegis/internal/domain/egressgraph"
+	"aegis/internal/domain/regip"
 	"aegis/internal/domain/storage"
 	"aegis/internal/domain/system"
 	"aegis/internal/service"
@@ -250,6 +251,12 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/points-store/redemptions/{redemptionId}/fulfill"):                     PointsStoreHandleRequest{},               // AdminFulfillPointsStoreRedemption
 		routeKey("PUT", "/api/admin/apps/{appkey}/points-store/settings"):                                                PointsStoreSettingsRequest{},             // AdminSavePointsStoreSettings
 		routeKey("PUT", "/api/admin/apps/{appkey}/policy"):                                                               AdminAppPolicyRequest{},                  // UpdateAdminAppPolicy
+		routeKey("POST", "/api/admin/apps/{appkey}/register-ip/lists"):                                                   regip.ListInput{},                        // AdminAddRegisterIPLists
+		routeKey("POST", "/api/admin/apps/{appkey}/register-ip/lists/delete"):                                            regip.ListDeleteInput{},                  // AdminDeleteRegisterIPLists
+		routeKey("PUT", "/api/admin/apps/{appkey}/register-ip/lists/{id}"):                                               regip.ListUpdate{},                       // AdminUpdateRegisterIPList
+		routeKey("PUT", "/api/admin/apps/{appkey}/register-ip/policy"):                                                   regip.Policy{},                           // AdminUpdateRegisterIPPolicy
+		routeKey("POST", "/api/admin/apps/{appkey}/register-ip/release"):                                                 service.RegisterIPReleaseInput{},         // AdminReleaseRegisterIP
+		routeKey("POST", "/api/admin/apps/{appkey}/register-ip/simulate"):                                                regip.SimulateInput{},                    // AdminSimulateRegisterIP
 		routeKey("POST", "/api/admin/apps/{appkey}/releases"):                                                            AdminReleaseSaveRequest{},                // AdminCreateRelease
 		routeKey("POST", "/api/admin/apps/{appkey}/releases/assets/complete"):                                            releaseAssetCompleteRequest{},            // AdminCompleteReleaseAsset
 		routeKey("POST", "/api/admin/apps/{appkey}/releases/assets/presign"):                                             releaseAssetPresignRequest{},             // AdminPresignReleaseAsset

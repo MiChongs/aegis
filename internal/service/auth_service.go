@@ -22,6 +22,7 @@ import (
 	oauthdomain "aegis/internal/domain/oauth"
 	platformdomain "aegis/internal/domain/platform"
 	plugindomain "aegis/internal/domain/plugin"
+	"aegis/internal/domain/regip"
 	securitydomain "aegis/internal/domain/security"
 	userdomain "aegis/internal/domain/user"
 	"aegis/internal/event"
@@ -86,6 +87,13 @@ type AuthService struct {
 	notifications notificationDeliverer
 	// deviceLimit 登录设备数控制，见 SetDeviceLimitService；未注入时不做限制
 	deviceLimit *DeviceLimitService
+	// registerIP 注册 IP 控制，见 SetRegisterIPService；未注入时不做限制
+	registerIP *RegisterIPService
+}
+
+// SetRegisterIPService 接上注册 IP 控制（docs/register-ip.md）。
+func (s *AuthService) SetRegisterIPService(registerIP *RegisterIPService) {
+	s.registerIP = registerIP
 }
 
 // SetDeviceLimitService 接上登录设备数控制（docs/device-limit.md）。
@@ -433,9 +441,10 @@ func (s *AuthService) RegisterWithPassword(ctx context.Context, input PasswordRe
 		return nil, err
 	}
 
-	// 阶段 1 —— 并行外部检查：风控评估与注册 IP 唯一性检查（PG 查询）互相独立，
-	// errgroup 并发执行；错误优先级固定为 风控 > 注册 IP 策略
+	// 阶段 1 —— 并行外部检查：风控评估与注册 IP 准入（一个 Redis 脚本数完全部规则并占位）互相独立，
+	// errgroup 并发执行；错误优先级固定为 风控 > 注册 IP 策略。风控拦了而 IP 准入已占位时撤销占位
 	var riskErr, policyErr error
+	var ticket *RegisterIPTicket
 	g, gctx := errgroup.WithContext(ctx)
 	if s.risk != nil {
 		g.Go(func() error {
@@ -451,24 +460,29 @@ func (s *AuthService) RegisterWithPassword(ctx context.Context, input PasswordRe
 	}
 	if app != nil {
 		g.Go(func() error {
-			if err := s.validateRegisterPolicy(gctx, app, input.IP); err != nil {
+			admitted, err := s.admitRegister(gctx, app, regip.MethodPassword, input.IP, input.Account, input.DeviceID, input.UserAgent)
+			if err != nil {
 				policyErr = err
 				return err
 			}
+			ticket = admitted
 			return nil
 		})
 	}
 	_ = g.Wait()
 	for _, err := range []error{riskErr, policyErr} {
 		if err != nil {
+			ticket.Release()
 			return nil, err
 		}
 	}
 
-	// 阶段 2 —— singleflight 合并同一 app+account 的并发注册，仅执行一次真实写入
+	// 阶段 2 —— singleflight 合并同一 app+account 的并发注册，仅执行一次真实写入。
+	// 只有真正执行写入的那个请求的票会被确认；被合并的请求没有建号，各自的占位在下面撤销
 	result, err, _ := s.registerFlight.Do(registerFlightKey(input.AppID, input.Account), func() (any, error) {
-		return s.registerWithPasswordOnce(ctx, app, input)
+		return s.registerWithPasswordOnce(ctx, app, input, ticket)
 	})
+	ticket.Release()
 	if err != nil {
 		return nil, err
 	}
@@ -479,7 +493,7 @@ func (s *AuthService) RegisterWithPassword(ctx context.Context, input PasswordRe
 	return loginResult, nil
 }
 
-func (s *AuthService) registerWithPasswordOnce(ctx context.Context, app *appdomain.App, input PasswordRegisterInput) (*authdomain.LoginResult, error) {
+func (s *AuthService) registerWithPasswordOnce(ctx context.Context, app *appdomain.App, input PasswordRegisterInput, ticket *RegisterIPTicket) (*authdomain.LoginResult, error) {
 	// 重复账号快速失败：在执行重 CPU 的 bcrypt 之前先做一次点查，
 	// 重复注册（重试 / 撞库）场景下省去 ~100ms 哈希开销；
 	// 并发竞争仍由事务内唯一约束兜底，不存在 TOCTOU 风险
@@ -554,6 +568,7 @@ func (s *AuthService) registerWithPasswordOnce(ctx context.Context, app *appdoma
 	if user == nil {
 		return nil, fmt.Errorf("create user with invite code exceeded max retries")
 	}
+	ticket.Commit(user.ID, user.Account)
 
 	// 注册审计与注册插件钩子移出关键路径（与登录链路一致的 runDetached 语义）
 	userID := user.ID
@@ -1644,24 +1659,15 @@ func (s *AuthService) enforceLoginConsistency(ctx context.Context, app *appdomai
 	return s.consistency.Enforce(ctx, s.app.ResolvePolicy(app), user.AppID, user.ID, deviceID, ip)
 }
 
-func (s *AuthService) validateRegisterPolicy(ctx context.Context, app *appdomain.App, ip string) error {
-	if s.app == nil {
-		return nil
+// admitRegister 注册 IP 准入（docs/register-ip.md）。放行时返回票：建号成功调 Commit、没建成调 Release；
+// 两者在 nil 票上都是空操作，未接入注册 IP 控制时返回 nil 票。
+func (s *AuthService) admitRegister(ctx context.Context, app *appdomain.App, method, ip, account, deviceID, userAgent string) (*RegisterIPTicket, error) {
+	if s.registerIP == nil || app == nil {
+		return nil, nil
 	}
-	policy := s.app.ResolvePolicy(app)
-	if policy.RegisterCheckIP {
-		if strings.TrimSpace(ip) == "" {
-			return apperrors.New(40025, http.StatusBadRequest, "当前应用要求提供注册 IP")
-		}
-		exists, err := s.pg.HasUserRegisteredFromIPForApp(ctx, app.ID, ip)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return apperrors.New(40902, http.StatusConflict, "IP已注册过账号")
-		}
-	}
-	return nil
+	return s.registerIP.Admit(ctx, RegisterIPRequest{
+		AppID: app.ID, App: app, IP: ip, Method: method, Account: account, DeviceID: deviceID, UserAgent: userAgent,
+	})
 }
 
 func (s *AuthService) handleRefreshReuse(ctx context.Context, session *authdomain.RefreshSession) {

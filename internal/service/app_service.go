@@ -11,6 +11,7 @@ import (
 	captchadomain "aegis/internal/domain/captcha"
 	platformdomain "aegis/internal/domain/platform"
 	plugindomain "aegis/internal/domain/plugin"
+	"aegis/internal/domain/regip"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
@@ -750,7 +751,11 @@ func (s *AppService) UpdatePolicy(ctx context.Context, appID int64, policy appdo
 	// multiDeviceLogin / multiDeviceLoginNum 归登录设备数控制（DeviceLimitService.SavePolicy）管，
 	// 这里不再写：旧控制台保存「登录绑定」时总会带上一个默认的上限，写进去会让没配过设备数的应用
 	// 被按旧字段推导出一个限制（docs/device-limit.md）。
-	settings["registerCheckIp"] = policy.RegisterCheckIP
+	// 注册 IP 归注册 IP 控制（RegisterIPService.SavePolicy，docs/register-ip.md）管：用新策略保存过之后，
+	// 旧开关只是写回的展示值，这里改它会让两处说法对不上。没保存过时它仍是推导新策略的唯一来源
+	if _, configured := settings[regip.SettingsKey]; !configured {
+		settings[regip.LegacySettingsKey] = policy.RegisterCheckIP
+	}
 	// 注册验证码已归口到应用验证码配置（captcha.requireForRegister）。
 	// 残留键会被 ResolvePolicy 忽略，但留在库里会让人以为还能从这里配 —— 一并清掉。
 	delete(settings, "registerCaptcha")

@@ -388,6 +388,14 @@ var adminRouteRules = []RouteRule{
 	{Methods: []string{"POST"}, Pattern: "/api/admin/apps/:appkey/device-limit/simulate", Permission: PermAppUserRead, Scope: ScopeApp},
 	{Methods: []string{"PUT"}, Pattern: "/api/admin/apps/:appkey/device-limit/policy", Permission: PermAppWrite, Scope: ScopeApp},
 	{Pattern: "/api/admin/apps/:appkey/device-limit/*", Permission: PermAppUserWrite, Scope: ScopeApp},
+	// 注册 IP 控制：查看（含模拟、IP 查询）是用户数据的读；策略与名单是应用配置的写；解除限制是用户数据的写
+	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/register-ip", Permission: PermAppUserRead, Scope: ScopeApp},
+	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/register-ip/*", Permission: PermAppUserRead, Scope: ScopeApp},
+	{Methods: []string{"POST"}, Pattern: "/api/admin/apps/:appkey/register-ip/simulate", Permission: PermAppUserRead, Scope: ScopeApp},
+	{Methods: []string{"PUT"}, Pattern: "/api/admin/apps/:appkey/register-ip/policy", Permission: PermAppWrite, Scope: ScopeApp},
+	{Pattern: "/api/admin/apps/:appkey/register-ip/lists", Permission: PermAppWrite, Scope: ScopeApp},
+	{Pattern: "/api/admin/apps/:appkey/register-ip/lists/*", Permission: PermAppWrite, Scope: ScopeApp},
+	{Pattern: "/api/admin/apps/:appkey/register-ip/*", Permission: PermAppUserWrite, Scope: ScopeApp},
 	// 崩溃报告：查看（列表、筛选项、含正文的详情）要应用读权限，标记已处理与删除要应用写权限。
 	// 显式写出来而不是落进下面的兜底：报告里带设备标识与 IP，权限改动应当在这里一眼看见。
 	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/crash-reports", Permission: PermAppRead, Scope: ScopeApp},

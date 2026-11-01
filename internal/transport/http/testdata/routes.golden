@@ -281,6 +281,13 @@ GET	/api/admin/apps/:appkey/points-store/redemptions	AdminListPointsStoreRedempt
 GET	/api/admin/apps/:appkey/points-store/settings	AdminPointsStoreSettings
 GET	/api/admin/apps/:appkey/points-store/stats	AdminPointsStoreStats
 GET	/api/admin/apps/:appkey/policy	AdminAppPolicy
+GET	/api/admin/apps/:appkey/register-ip	AdminRegisterIPOverview
+GET	/api/admin/apps/:appkey/register-ip/events	AdminRegisterIPEvents
+GET	/api/admin/apps/:appkey/register-ip/inspect	AdminInspectRegisterIP
+GET	/api/admin/apps/:appkey/register-ip/lists	AdminRegisterIPLists
+GET	/api/admin/apps/:appkey/register-ip/penalties	AdminRegisterIPPenalties
+GET	/api/admin/apps/:appkey/register-ip/policy	AdminRegisterIPPolicy
+GET	/api/admin/apps/:appkey/register-ip/registrations	AdminRegisterIPRegistrations
 GET	/api/admin/apps/:appkey/releases	AdminListReleases
 GET	/api/admin/apps/:appkey/releases/:rid	AdminGetRelease
 GET	/api/admin/apps/:appkey/releases/:rid/stats	AdminReleaseStats
@@ -956,6 +963,10 @@ POST	/api/admin/apps/:appkey/password-policy/test	TestAdminAppPasswordPolicy
 POST	/api/admin/apps/:appkey/points-store/items	AdminCreatePointsStoreItem
 POST	/api/admin/apps/:appkey/points-store/redemptions/:redemptionId/cancel	AdminCancelPointsStoreRedemption
 POST	/api/admin/apps/:appkey/points-store/redemptions/:redemptionId/fulfill	AdminFulfillPointsStoreRedemption
+POST	/api/admin/apps/:appkey/register-ip/lists	AdminAddRegisterIPLists
+POST	/api/admin/apps/:appkey/register-ip/lists/delete	AdminDeleteRegisterIPLists
+POST	/api/admin/apps/:appkey/register-ip/release	AdminReleaseRegisterIP
+POST	/api/admin/apps/:appkey/register-ip/simulate	AdminSimulateRegisterIP
 POST	/api/admin/apps/:appkey/releases	AdminCreateRelease
 POST	/api/admin/apps/:appkey/releases/:rid/pause	AdminPauseRelease
 POST	/api/admin/apps/:appkey/releases/:rid/publish	AdminPublishRelease
@@ -1493,6 +1504,8 @@ PUT	/api/admin/apps/:appkey/points-store/items/:itemId	AdminUpdatePointsStoreIte
 PUT	/api/admin/apps/:appkey/points-store/items/:itemId/status	AdminSetPointsStoreItemStatus
 PUT	/api/admin/apps/:appkey/points-store/settings	AdminSavePointsStoreSettings
 PUT	/api/admin/apps/:appkey/policy	UpdateAdminAppPolicy
+PUT	/api/admin/apps/:appkey/register-ip/lists/:id	AdminUpdateRegisterIPList
+PUT	/api/admin/apps/:appkey/register-ip/policy	AdminUpdateRegisterIPPolicy
 PUT	/api/admin/apps/:appkey/releases/:rid	AdminUpdateRelease
 PUT	/api/admin/apps/:appkey/releases/:rid/rollout	AdminSetReleaseRollout
 PUT	/api/admin/apps/:appkey/rewarded-ads/config	AdminSaveRewardedAdConfig

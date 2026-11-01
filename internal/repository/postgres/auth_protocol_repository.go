@@ -136,15 +136,6 @@ WHERE appid=$1 AND key_id=$2`, appID, keyID)
 	return err
 }
 
-func (r *Repository) HasUserRegisteredFromIPForApp(ctx context.Context, appID int64, ip string) (bool, error) {
-	var exists bool
-	err := r.pool.QueryRow(ctx, `SELECT EXISTS(
-SELECT 1 FROM user_profiles p JOIN users u ON u.id=p.user_id
-WHERE u.appid=$1 AND COALESCE(p.register_ip, COALESCE(p.extra->>'register_ip',''))=$2
-LIMIT 1)`, appID, ip).Scan(&exists)
-	return exists, err
-}
-
 const transportKeySelect = `SELECT id, appid, key_id, algorithm, public_key, private_key_cipher,
 status, not_before, not_after, created_at, revoked_at FROM app_transport_keys `
 

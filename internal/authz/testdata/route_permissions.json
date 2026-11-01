@@ -8226,6 +8226,97 @@
   },
   {
     "method": "GET",
+    "path": "/api/admin/apps/:appkey/register-ip",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/register-ip/policy",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/apps/:appkey/register-ip/policy",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/register-ip/simulate",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/register-ip/inspect",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/register-ip/release",
+    "permission": "app:user:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/register-ip/penalties",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/register-ip/events",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/register-ip/registrations",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/register-ip/lists",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/register-ip/lists",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/apps/:appkey/register-ip/lists/:id",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/register-ip/lists/delete",
+    "permission": "app:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
     "path": "/api/admin/apps/:appkey/crash-reports",
     "permission": "app:read",
     "appScoped": true,

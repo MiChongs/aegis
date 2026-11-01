@@ -20,6 +20,7 @@
 | `notification` | 两套收件箱：`types.go` 应用用户站内信；`admin_inbox.go` 管理员收件箱（主键空间不同，刻意分开以防串消息）；`category.go` 消息中心的分类目录、type→分类映射、跳转动作白名单与校验 |
 | `notify` | 统一通知出口：渠道 / 订阅 / 模板 / 投递记录 + 渠道类型目录（`ChannelKinds`）与事件目录（`KnownEvents`） |
 | `ticket` | 工单：`Ticket`/`Message`/`Event`/`Category`/`Group`/`SLAPolicy`，以及可见范围 `Scope` 与动作集 `ActionSet` |
+| `regip` | 注册 IP 控制：策略（配额规则 / 惩罚期 / 突增 / 运营商 / 属地）、网络主体推导、名单编译成 `netipx.IPSet`、EWMA 突增检测与判定 `Decide`，全部纯函数（docs/register-ip.md） |
 | `platform` | 平台治理：`Governance`/`Restrictions`/`ActionRecord`/`Appeal` + 六档状态与七项能力常量。状态与限制项的**预设**（`PresetRestrictions`）也在这里，后端判定与控制台展示读同一份 |
 | `payment` | 支付订单、支付方式 |
 | `points` | 积分交易、积分账户 |

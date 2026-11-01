@@ -29,6 +29,7 @@ type Handler struct {
 	clientControl   ClientControlAPI
 	listenTogether  *service.ListenTogetherService
 	deviceLimit     *service.DeviceLimitService
+	registerIP      *service.RegisterIPService
 	roleApp         *service.RoleApplicationService
 	email           *service.EmailService
 	payment         *service.PaymentService

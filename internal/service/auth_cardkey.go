@@ -1,6 +1,7 @@
 package service
 
 import (
+	"aegis/internal/domain/regip"
 	securitydomain "aegis/internal/domain/security"
 	"context"
 	"net/http"
@@ -135,19 +136,28 @@ func (s *AuthService) resolveCardKeyUser(ctx context.Context, input CardKeyLogin
 	}
 
 	account := CardKeyAccount(card.Code)
+	var ticket *RegisterIPTicket
 	if app := s.app; app != nil {
-		if _, err := app.EnsureRegisterAllowed(ctx, input.AppID); err != nil {
+		loaded, err := app.EnsureRegisterAllowed(ctx, input.AppID)
+		if err != nil {
+			return nil, false, err
+		}
+		if ticket, err = s.admitRegister(ctx, loaded, regip.MethodCardKey, input.IP, account, input.DeviceID, input.UserAgent); err != nil {
 			return nil, false, err
 		}
 	}
 
 	user, err := s.createCardKeyUser(ctx, input, account)
 	if err != nil {
+		ticket.Release()
 		return nil, false, err
 	}
 	if user != nil {
+		ticket.Commit(user.ID, user.Account)
 		return user, true, nil
 	}
+	// 并发首登：账号被同一张卡的另一个请求建出来了，这次没有建号
+	ticket.Release()
 
 	// 并发首登：账号已被同一张卡的另一个请求建出来了，回读即可。
 	existing, err := s.pg.GetUserByAppAndAccount(ctx, input.AppID, account)
