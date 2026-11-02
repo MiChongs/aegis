@@ -89,6 +89,9 @@ export type LotteryCatalog = {
   signals?: LotterySignalSpec[];
   /** 自定义规则里能用的变量 */
   ruleVariables?: LotteryRuleVariable[];
+  /** 风控规则：信号与处置目录（处置从轻到重） */
+  riskSignals?: LotteryRiskSignalSpec[];
+  riskActions?: LotteryRiskActionSpec[];
   strategyLimits?: LotteryStrategyLimits;
   /** 人群特权：人群目录、条件表达式变量、取值上界 */
   perkAudiences?: LotteryPerkAudienceSpec[];
@@ -195,6 +198,108 @@ export type LotteryStrategyLimits = {
   luckStrength?: number;
   controlGain?: number;
   fortuneSpread?: number;
+  riskRules?: number;
+};
+
+// ── 风控规则（docs/lottery.md「风控规则」）──
+
+export type LotteryRiskOp = "gt" | "gte" | "lt" | "lte";
+/** 降权 / 不触发保底 / 停发稀有 / 只发兜底 / 拒绝抽奖（从轻到重） */
+export type LotteryRiskAction = "damp" | "noPity" | "rare" | "floor" | "deny";
+
+export type LotteryRiskSignalSpec = {
+  key: string;
+  label: string;
+  unit: string;
+  hint: string;
+  group: string;
+  /** 新建规则时的默认比较与阈值 */
+  op: LotteryRiskOp;
+  threshold: number;
+  /** 取值只有 0 / 1 */
+  bool?: boolean;
+  /** 只出现在旧记录里，不能新建 */
+  hidden?: boolean;
+};
+
+export type LotteryRiskActionSpec = { key: LotteryRiskAction; label: string; hint: string; severity: number };
+
+export type LotteryRiskRule = {
+  name?: string;
+  signal: string;
+  op: LotteryRiskOp;
+  threshold: number;
+  action: LotteryRiskAction;
+  /** damp 的系数（0–1） */
+  factor?: number;
+  /** rare 的公示概率线（0–1） */
+  rareBelow?: number;
+  /** damp / rare 只作用于这些奖品类型 */
+  kinds?: string[];
+  disabled?: boolean;
+};
+
+/** 一条规则在一次抽奖里的评估 */
+export type LotteryRiskCheck = {
+  name?: string;
+  signal: string;
+  op: LotteryRiskOp;
+  threshold: number;
+  value: number;
+  /** 取不到这个信号（按未命中） */
+  missing?: boolean;
+  hit: boolean;
+  action: LotteryRiskAction;
+  factor?: number;
+  rareBelow?: number;
+  kinds?: string[];
+};
+
+export type LotteryRiskReport = {
+  checks: LotteryRiskCheck[];
+  /** 命中规则里最重的处置 */
+  action?: LotteryRiskAction;
+  hits?: string[];
+  noPity?: boolean;
+};
+
+export type LotteryRiskCount = { key: string; draws: number; denied: number };
+
+export type LotteryRiskCluster = { key: string; accounts: number; draws: number; flagged: number; lastAt: string };
+
+export type LotteryRiskEvent = {
+  id: number;
+  userId: number;
+  account: string;
+  nickname?: string;
+  action: LotteryRiskAction;
+  rules: string[];
+  report?: LotteryRiskReport;
+  source?: string;
+  deviceId?: string;
+  clientIp?: string;
+  createdAt: string;
+};
+
+/** 风控总览 */
+export type LotteryRiskOverview = {
+  activityId: number;
+  days: number;
+  since: string;
+  draws: number;
+  users: number;
+  flagged: number;
+  flaggedUsers: number;
+  denied: number;
+  actions: LotteryRiskCount[];
+  signals: LotteryRiskCount[];
+  trend: Array<{ date: string; draws: number; flagged: number; denied: number }>;
+  devices: LotteryRiskCluster[];
+  ips: LotteryRiskCluster[];
+  subnets: LotteryRiskCluster[];
+  events: LotteryRiskEvent[];
+  rules: LotteryRiskRule[];
+  tookMs: number;
 };
 
 export type LotteryStrategyRule = {
@@ -222,7 +327,8 @@ export type LotteryStrategy = {
   cooldown?: { draws: number; factor: number };
   /** paced：按当天时间进度放量 */
   budget?: { dailyPoints: number; paced?: boolean };
-  risk?: { deviceAccounts: number; ipAccounts: number };
+  /** 风控规则；deviceAccounts / ipAccounts 是旧字段（后端读入时转成只发兜底规则） */
+  risk?: { rules?: LotteryRiskRule[]; deviceAccounts?: number; ipAccounts?: number };
   behavior?: LotteryBehaviorModel;
   rules?: LotteryStrategyRule[];
   /** 运气平衡：每 1σ 在对数几率上校正多少 */
@@ -295,7 +401,10 @@ export type LotteryPrizeOdds = {
 export type LotteryDrawPlan = {
   odds: LotteryPrizeOdds[];
   softPity?: number;
+  /** 风控只发兜底或拒绝 */
   risk?: boolean;
+  /** 风控逐条评估 */
+  riskReport?: LotteryRiskReport;
   behavior?: LotteryBehaviorScore;
   winRate: number;
   /** 这一次的期望价值（积分当量） */
@@ -310,8 +419,15 @@ export type LotteryDrawPlan = {
   pity?: boolean;
   picked?: number;
   fallback?: boolean;
+  /** empty 所有奖品最终权重为 0 / contended 限量奖品被并发抢光 */
+  fallbackReason?: "empty" | "contended";
+  /** 这一次的兜底奖 ID */
+  floor?: number;
   /** 这一次生效的人群特权 */
   perks?: LotteryPerkEffects;
+  /** 今天的运气系数（真实奖品权重已乘过）；fortuneBase 为至尊加成之前的 */
+  fortune?: number;
+  fortuneBase?: number;
 };
 
 /** 距首次中奖次数的精确分布（吸收马尔可夫链） */
@@ -609,6 +725,9 @@ export type LotteryDraw = {
   clientIp?: string;
   /** 出奖方案：各奖品的系数与最终概率、行为分 */
   trace?: LotteryDrawPlan;
+  /** 命中的风控信号与最重的处置 */
+  riskRules?: string[];
+  riskAction?: LotteryRiskAction;
   createdAt: string;
 };
 
@@ -627,7 +746,13 @@ export type LotteryDrawParams = {
   source?: LotterySource;
   /** 只看抽中的（排除谢谢参与） */
   winning?: boolean;
+  /** 检索式：单号、IP、数字、文本，或 user: prize: device: ip: no: id: 字段，空格分隔同时满足 */
   keyword?: string;
+  /** any 命中过风控 / clean 未命中 / 信号键 */
+  risk?: string;
+  riskAction?: LotteryRiskAction;
+  outcome?: "pity" | "fallback" | "conversion";
+  prizeId?: number;
   start?: string;
   end?: string;
   page?: number;
@@ -744,6 +869,11 @@ export function simulateLottery(token: string, appKey: string, payload: LotteryS
 }
 
 /** 出奖审计：最近 days 天的记录是否服从每一次方案给出的概率 */
+/** 风控总览（days 1–90） */
+export function getLotteryRisk(token: string, appKey: string, activityId: number, days: number) {
+  return apiRequest<LotteryRiskOverview>(`${base(appKey)}/activities/${activityId}/risk${buildQuery({ days })}`, { token });
+}
+
 export function getLotteryAudit(token: string, appKey: string, activityId: number, days: number) {
   return apiRequest<LotteryAuditResult>(`${base(appKey)}/activities/${activityId}/audit${buildQuery({ days })}`, { token });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adjustLotteryTickets,
   getLotteryTicketAccount,
@@ -25,6 +25,7 @@ import {
   deleteLotteryActivity,
   fulfillLotteryDraw,
   getLotteryAudit,
+  getLotteryRisk,
   getLotteryCatalog,
   getLotteryStats,
   listLotteryActivities,
@@ -53,6 +54,7 @@ const KEY = {
   draws: "admin-lottery-draws",
   stats: "admin-lottery-stats",
   audit: "admin-lottery-audit",
+  risk: "admin-lottery-risk",
   fortune: "admin-lottery-fortune",
   fortuneUser: "admin-lottery-fortune-user",
   fortuneControls: "admin-lottery-fortune-controls",
@@ -147,13 +149,19 @@ export function useLotteryDrawsQuery(appKey?: string | null, params?: LotteryDra
       params?.source ?? "",
       params?.winning ?? false,
       params?.keyword ?? "",
+      params?.risk ?? "",
+      params?.riskAction ?? "",
+      params?.outcome ?? "",
+      params?.prizeId ?? 0,
       params?.start ?? "",
       params?.end ?? "",
       params?.page ?? 1,
       params?.limit ?? 20
     ],
     queryFn: () => listLotteryDraws(token as string, appKey as string, params),
-    enabled: Boolean(token && appKey)
+    enabled: Boolean(token && appKey),
+    // 翻页、改筛选时保留上一页，表格不闪成骨架
+    placeholderData: keepPreviousData
   });
 }
 
@@ -174,6 +182,18 @@ export function useSimulateLotteryMutation(appKey: string) {
   const token = useAdminToken();
   return useMutation({
     mutationFn: (payload: LotterySimulatePayload) => simulateLottery(token as string, appKey, payload)
+  });
+}
+
+/** 风控总览 */
+export function useLotteryRiskQuery(appKey: string | null | undefined, activityId: number | null | undefined, days: number) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [KEY.risk, token, appKey, activityId, days],
+    queryFn: () => getLotteryRisk(token as string, appKey as string, activityId as number, days),
+    enabled: Boolean(token && appKey && activityId),
+    placeholderData: keepPreviousData,
+    staleTime: 30_000
   });
 }
 

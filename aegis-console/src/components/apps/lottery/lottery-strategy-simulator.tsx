@@ -329,7 +329,7 @@ function SimulationReport({
       {result.current ? (
         <div className="space-y-1.5">
           <span className="text-[11px] font-medium">此用户下一次抽奖</span>
-          <DrawPlanView plan={result.current} prizeName={nameOf} signals={catalog?.signals} />
+          <DrawPlanView plan={result.current} prizeName={nameOf} signals={catalog?.signals} catalog={catalog} />
         </div>
       ) : null}
     </div>

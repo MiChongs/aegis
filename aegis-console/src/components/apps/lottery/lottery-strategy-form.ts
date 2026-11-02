@@ -1,4 +1,11 @@
-import type { LotteryCatalog, LotteryStrategy, LotteryStrategyLimits } from "@/lib/api/lottery";
+import type {
+  LotteryCatalog,
+  LotteryRiskAction,
+  LotteryRiskOp,
+  LotteryRiskRule,
+  LotteryStrategy,
+  LotteryStrategyLimits
+} from "@/lib/api/lottery";
 import {
   activitySupremePayload,
   seedSupreme,
@@ -28,7 +35,8 @@ export const STRATEGY_LIMITS: LotteryStrategyLimits = {
   simulationDraws: 200_000,
   luckStrength: 2,
   controlGain: 20,
-  fortuneSpread: 1
+  fortuneSpread: 1,
+  riskRules: 16
 };
 
 export type RuleDraft = {
@@ -43,6 +51,21 @@ export type RuleDraft = {
 };
 
 export type SignalDraft = { weight: string; half: string };
+
+/** 一条风控规则的草稿（阈值、系数按字符串存；稀有线按百分比存） */
+export type RiskRuleDraft = {
+  key: number;
+  name: string;
+  signal: string;
+  op: LotteryRiskOp;
+  threshold: string;
+  action: LotteryRiskAction;
+  factor: string;
+  /** 百分比 */
+  rareBelow: string;
+  kinds: string[];
+  disabled: boolean;
+};
 
 export type StrategyDraft = {
   softPity: boolean;
@@ -60,8 +83,7 @@ export type StrategyDraft = {
   /** 按当天时间进度放量 */
   budgetPaced: boolean;
   risk: boolean;
-  riskDevice: string;
-  riskIp: string;
+  riskRules: RiskRuleDraft[];
   behavior: boolean;
   behaviorMin: string;
   behaviorMax: string;
@@ -117,8 +139,7 @@ export function seedStrategy(strategy?: LotteryStrategy | null): StrategyDraft {
     budgetPoints: num(s.budget?.dailyPoints, 10000),
     budgetPaced: Boolean(s.budget?.paced),
     risk: Boolean(s.risk),
-    riskDevice: num(s.risk?.deviceAccounts, 3),
-    riskIp: num(s.risk?.ipAccounts, 0),
+    riskRules: seedRiskRules(s.risk),
     behavior: Boolean(s.behavior),
     behaviorMin: num(s.behavior?.minFactor, 0.8),
     behaviorMax: num(s.behavior?.maxBoost, 1.5),
@@ -155,6 +176,34 @@ export function seedStrategy(strategy?: LotteryStrategy | null): StrategyDraft {
   };
 }
 
+/** 旧字段 deviceAccounts / ipAccounts 与后端一样转成「只发兜底」规则，排在前面 */
+function seedRiskRules(risk: LotteryStrategy["risk"]): RiskRuleDraft[] {
+  const rules: LotteryRiskRule[] = [];
+  if (risk?.deviceAccounts) {
+    rules.push({ name: "同设备多账号", signal: "deviceAccounts", op: "gt", threshold: risk.deviceAccounts, action: "floor" });
+  }
+  if (risk?.ipAccounts) {
+    rules.push({ name: "同网络多账号", signal: "ipAccounts", op: "gt", threshold: risk.ipAccounts, action: "floor" });
+  }
+  rules.push(...(risk?.rules ?? []));
+  return rules.map((rule, index) => riskRuleDraft(rule, index + 1));
+}
+
+export function riskRuleDraft(rule: LotteryRiskRule, key: number): RiskRuleDraft {
+  return {
+    key,
+    name: rule.name ?? "",
+    signal: rule.signal,
+    op: rule.op,
+    threshold: String(rule.threshold),
+    action: rule.action,
+    factor: String(rule.factor ?? 0.5),
+    rareBelow: String(Math.round((rule.rareBelow ?? 0.01) * 100000) / 1000),
+    kinds: rule.kinds ?? [],
+    disabled: Boolean(rule.disabled)
+  };
+}
+
 /** 0–1 → 百分比字符串（保留一位小数） */
 const pct = (value: number | undefined, fallback: number) =>
   String(value === undefined ? fallback : Math.round(value * 1000) / 10);
@@ -172,7 +221,21 @@ export function strategyPayload(draft: StrategyDraft, catalog?: LotteryCatalog |
   if (draft.pacing) out.pacing = { slack: toNumber(draft.pacingSlack) / 100, maxBoost: toNumber(draft.pacingBoost) };
   if (draft.cooldown) out.cooldown = { draws: toInt(draft.cooldownDraws), factor: toNumber(draft.cooldownFactor) };
   if (draft.budget) out.budget = { dailyPoints: toInt(draft.budgetPoints), paced: draft.budgetPaced || undefined };
-  if (draft.risk) out.risk = { deviceAccounts: toInt(draft.riskDevice), ipAccounts: toInt(draft.riskIp) };
+  if (draft.risk) {
+    out.risk = {
+      rules: draft.riskRules.map((rule) => ({
+        name: rule.name.trim() || undefined,
+        signal: rule.signal,
+        op: rule.op,
+        threshold: toNumber(rule.threshold),
+        action: rule.action,
+        factor: rule.action === "damp" ? toNumber(rule.factor) : undefined,
+        rareBelow: rule.action === "rare" ? toNumber(rule.rareBelow) / 100 : undefined,
+        kinds: (rule.action === "damp" || rule.action === "rare") && rule.kinds.length ? rule.kinds : undefined,
+        disabled: rule.disabled || undefined
+      }))
+    };
+  }
   if (draft.behavior) {
     out.behavior = {
       minFactor: toNumber(draft.behaviorMin),
@@ -253,7 +316,24 @@ export function validateStrategy(draft: StrategyDraft, prizeCount: number, limit
     if (factor < 0 || factor >= 1) issues.push("中奖冷却的系数需要在 0–1 之间（不含 1）");
   }
   if (draft.budget && toInt(draft.budgetPoints) <= 0) issues.push("每日积分预算需要大于 0");
-  if (draft.risk && toInt(draft.riskDevice) <= 0 && toInt(draft.riskIp) <= 0) issues.push("同设备与同网络账号数上限至少设置一项");
+  if (draft.risk) {
+    const max = limits.riskRules ?? 16;
+    if (!draft.riskRules.length) issues.push("风控至少设置一条规则");
+    if (draft.riskRules.length > max) issues.push(`风控规则最多 ${max} 条`);
+    draft.riskRules.forEach((rule, index) => {
+      const label = rule.name.trim() ? `风控规则「${rule.name.trim()}」` : `第 ${index + 1} 条风控规则`;
+      const threshold = Number(rule.threshold);
+      if (rule.threshold.trim() === "" || !Number.isFinite(threshold) || threshold < 0) issues.push(`${label}的阈值需要是非负数`);
+      if (rule.action === "damp") {
+        const factor = toNumber(rule.factor);
+        if (factor <= 0 || factor >= 1) issues.push(`${label}的降权系数需要在 0–1 之间（不含 0 和 1）`);
+      }
+      if (rule.action === "rare") {
+        const line = toNumber(rule.rareBelow);
+        if (line <= 0 || line > 100) issues.push(`${label}的稀有概率线需要在 0–100% 之间`);
+      }
+    });
+  }
   if (draft.behavior) {
     const min = toNumber(draft.behaviorMin);
     const maxBoost = toNumber(draft.behaviorMax);
@@ -308,7 +388,7 @@ export const FACTOR_LABEL: Record<string, string> = {
   dailyLimit: "全站每日限量",
   userLimit: "个人上限",
   userDailyLimit: "个人每日上限",
-  risk: "设备聚集",
+  risk: "风控",
   pacing: "匀速释放",
   budget: "积分预算",
   behavior: "行为画像",

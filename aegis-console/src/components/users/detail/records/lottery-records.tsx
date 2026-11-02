@@ -124,6 +124,10 @@ export function LotteryRecords({ appKey, userId }: { appKey: string; userId: num
     const activity = activitiesQuery.data?.find((item) => item.id === draw.activityId);
     return activity?.prizes.find((prize) => prize.id === id)?.name || (draw.trace?.picked === id ? draw.prizeName : `位置 ${position + 1}`);
   };
+  const prizeKindOf = (draw: LotteryDraw) => (id: number) => {
+    const activity = activitiesQuery.data?.find((item) => item.id === draw.activityId);
+    return activity?.prizes.find((prize) => prize.id === id)?.kind || (draw.trace?.picked === id ? draw.prizeKind : undefined);
+  };
 
   const columns: Array<Column<LotteryDraw>> = [
     {
@@ -385,7 +389,13 @@ export function LotteryRecords({ appKey, userId }: { appKey: string; userId: num
             {selected.trace ? (
               <div className="flex flex-col gap-2">
                 <div className="text-xs font-medium text-muted-foreground">出奖方案</div>
-                <DrawPlanView plan={selected.trace} signals={catalogQuery.data?.signals} prizeName={prizeNameOf(selected)} />
+                <DrawPlanView
+                  plan={selected.trace}
+                  signals={catalogQuery.data?.signals}
+                  catalog={catalogQuery.data}
+                  prizeName={prizeNameOf(selected)}
+                  prizeKind={prizeKindOf(selected)}
+                />
               </div>
             ) : null}
           </>

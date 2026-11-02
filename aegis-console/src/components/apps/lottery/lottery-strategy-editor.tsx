@@ -21,6 +21,7 @@ import {
 import { FieldGroup, NumberField, SwitchRow } from "@/components/apps/app-config-primitives";
 import { STRATEGY_LIMITS, type RuleDraft, type StrategyDraft } from "@/components/apps/lottery/lottery-strategy-form";
 import { kindLabelOf } from "@/components/apps/lottery/lottery-shared";
+import { RiskRulesEditor } from "@/components/apps/lottery/lottery-risk-editor";
 import { SupremeFields, SupremeModePicker, type SupremeTierOption } from "@/components/apps/lottery/lottery-supreme-editor";
 import { Button } from "@/components/ui/button";
 import {
@@ -66,7 +67,7 @@ const DIMENSIONS: Dimension[] = [
   { key: "pacing", label: "库存匀速释放", hint: "限量奖品按活动进度放量", icon: Hourglass },
   { key: "cooldown", label: "中奖冷却", hint: "近期中过的奖品降低权重", icon: Timer },
   { key: "budget", label: "积分预算", hint: "当日积分过半后逐步收紧", icon: Wallet },
-  { key: "risk", label: "设备聚集", hint: "同设备或网络多账号只出未中奖", icon: Activity }
+  { key: "risk", label: "风控规则", hint: "按设备、网络、账号与频率拦截刷奖", icon: Activity }
 ];
 
 type Control = {
@@ -356,22 +357,12 @@ export function LotteryStrategyEditor({
       ) : null}
 
       {value.risk ? (
-        <DimensionBox title="设备聚集">
-          <NumberField
-            label="同设备账号上限"
-            value={value.riskDevice}
-            min={0}
-            unit="个，0 为不查"
-            onChange={(next) => patch({ riskDevice: next })}
-          />
-          <NumberField
-            label="同网络账号上限"
-            value={value.riskIp}
-            min={0}
-            unit="个，0 为不查"
-            onChange={(next) => patch({ riskIp: next })}
-          />
-        </DimensionBox>
+        <RiskRulesEditor
+          rules={value.riskRules}
+          onChange={(riskRules) => patch({ riskRules })}
+          catalog={catalog}
+          max={limits.riskRules ?? STRATEGY_LIMITS.riskRules ?? 16}
+        />
       ) : null}
 
       <RulesPanel
