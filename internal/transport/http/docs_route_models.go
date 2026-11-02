@@ -251,6 +251,12 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/points-store/redemptions/{redemptionId}/fulfill"):                     PointsStoreHandleRequest{},               // AdminFulfillPointsStoreRedemption
 		routeKey("PUT", "/api/admin/apps/{appkey}/points-store/settings"):                                                PointsStoreSettingsRequest{},             // AdminSavePointsStoreSettings
 		routeKey("PUT", "/api/admin/apps/{appkey}/policy"):                                                               AdminAppPolicyRequest{},                  // UpdateAdminAppPolicy
+		routeKey("GET", "/api/admin/apps/{appkey}/promo/campaigns"):                                                      PromoCampaignQuery{},                     // AdminListPromoCampaigns
+		routeKey("POST", "/api/admin/apps/{appkey}/promo/campaigns"):                                                     PromoCampaignRequest{},                   // AdminCreatePromoCampaign
+		routeKey("PUT", "/api/admin/apps/{appkey}/promo/campaigns/{campaignId}"):                                         PromoCampaignRequest{},                   // AdminUpdatePromoCampaign
+		routeKey("PUT", "/api/admin/apps/{appkey}/promo/campaigns/{campaignId}/status"):                                  PromoStatusRequest{},                     // AdminSetPromoCampaignStatus
+		routeKey("GET", "/api/admin/apps/{appkey}/promo/submissions"):                                                    PromoSubmissionQuery{},                   // AdminListPromoSubmissions
+		routeKey("POST", "/api/admin/apps/{appkey}/promo/submissions/review"):                                            PromoReviewRequest{},                     // AdminReviewPromoSubmissions
 		routeKey("POST", "/api/admin/apps/{appkey}/register-ip/device-lists"):                                            regip.ListInput{},                        // AdminAddRegisterDeviceLists
 		routeKey("POST", "/api/admin/apps/{appkey}/register-ip/device-lists/delete"):                                     regip.ListDeleteInput{},                  // AdminDeleteRegisterDeviceLists
 		routeKey("PUT", "/api/admin/apps/{appkey}/register-ip/device-lists/{id}"):                                        regip.ListUpdate{},                       // AdminUpdateRegisterDeviceList
@@ -799,6 +805,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/v1/apps/{appkey}/points/experience-transactions"):                                          PaginationQuery{},                        // ExperienceTransactions
 		routeKey("GET", "/api/v1/apps/{appkey}/points/integral-transactions"):                                            PaginationQuery{},                        // IntegralTransactions
 		routeKey("POST", "/api/v1/apps/{appkey}/points/store/redeem"):                                                    PointsStoreRedeemRequest{},               // AppRedeemPointsStoreItem
+		routeKey("POST", "/api/v1/apps/{appkey}/promo/{campaignId}/submissions"):                                         PromoSubmitRequest{},                     // AppSubmitPromo
+		routeKey("POST", "/api/v1/apps/{appkey}/promo/{campaignId}/tiers/claim"):                                         PromoClaimRequest{},                      // AppClaimPromoTier
 		routeKey("POST", "/api/v1/apps/{appkey}/releases/events"):                                                        AppReleaseEventRequest{},                 // AppReleaseEvent
 		routeKey("POST", "/api/v1/apps/{appkey}/signin"):                                                                 SignInRequest{},                          // SignIn
 		routeKey("GET", "/api/v1/apps/{appkey}/signin/history"):                                                          PaginationQuery{},                        // SignInHistory

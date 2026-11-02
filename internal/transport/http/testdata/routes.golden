@@ -34,6 +34,7 @@ DELETE	/api/admin/apps/:appkey/oauth-bindings	AdminDeleteAppOAuthBinding
 DELETE	/api/admin/apps/:appkey/oauth-providers/:provider	AdminDeleteAppOAuthProvider
 DELETE	/api/admin/apps/:appkey/oauth2/clients/:clientId	AdminDeleteOAuth2Client
 DELETE	/api/admin/apps/:appkey/points-store/items/:itemId	AdminDeletePointsStoreItem
+DELETE	/api/admin/apps/:appkey/promo/campaigns/:campaignId	AdminDeletePromoCampaign
 DELETE	/api/admin/apps/:appkey/releases/:rid	AdminDeleteRelease
 DELETE	/api/admin/apps/:appkey/users/:userId	AdminDeleteUser
 DELETE	/api/admin/apps/:appkey/users/:userId/avatar	AdminRemoveAppUserAvatar
@@ -282,6 +283,12 @@ GET	/api/admin/apps/:appkey/points-store/redemptions	AdminListPointsStoreRedempt
 GET	/api/admin/apps/:appkey/points-store/settings	AdminPointsStoreSettings
 GET	/api/admin/apps/:appkey/points-store/stats	AdminPointsStoreStats
 GET	/api/admin/apps/:appkey/policy	AdminAppPolicy
+GET	/api/admin/apps/:appkey/promo/campaigns	AdminListPromoCampaigns
+GET	/api/admin/apps/:appkey/promo/campaigns/:campaignId	AdminGetPromoCampaign
+GET	/api/admin/apps/:appkey/promo/campaigns/:campaignId/leaderboard	AdminPromoCampaignLeaderboard
+GET	/api/admin/apps/:appkey/promo/campaigns/:campaignId/stats	AdminPromoCampaignStats
+GET	/api/admin/apps/:appkey/promo/catalog	AdminPromoCatalog
+GET	/api/admin/apps/:appkey/promo/submissions	AdminListPromoSubmissions
 GET	/api/admin/apps/:appkey/register-ip	AdminRegisterIPOverview
 GET	/api/admin/apps/:appkey/register-ip/device-lists	AdminRegisterDeviceLists
 GET	/api/admin/apps/:appkey/register-ip/devices/inspect	AdminInspectRegisterDevice
@@ -741,6 +748,10 @@ GET	/api/v1/apps/:appkey/points/levels	PointsLevels
 GET	/api/v1/apps/:appkey/points/overview	PointsOverview
 GET	/api/v1/apps/:appkey/points/store	AppPointsStore
 GET	/api/v1/apps/:appkey/points/store/redemptions	AppPointsStoreRedemptions
+GET	/api/v1/apps/:appkey/promo	AppPromoCampaigns
+GET	/api/v1/apps/:appkey/promo/:campaignId	AppPromoCampaign
+GET	/api/v1/apps/:appkey/promo/:campaignId/leaderboard	AppPromoLeaderboard
+GET	/api/v1/apps/:appkey/promo/:campaignId/submissions	AppPromoSubmissions
 GET	/api/v1/apps/:appkey/releases	AppReleaseHistory
 GET	/api/v1/apps/:appkey/releases/channels	AppReleaseChannels
 GET	/api/v1/apps/:appkey/releases/check	AppReleaseCheck
@@ -966,6 +977,8 @@ POST	/api/admin/apps/:appkey/password-policy/test	TestAdminAppPasswordPolicy
 POST	/api/admin/apps/:appkey/points-store/items	AdminCreatePointsStoreItem
 POST	/api/admin/apps/:appkey/points-store/redemptions/:redemptionId/cancel	AdminCancelPointsStoreRedemption
 POST	/api/admin/apps/:appkey/points-store/redemptions/:redemptionId/fulfill	AdminFulfillPointsStoreRedemption
+POST	/api/admin/apps/:appkey/promo/campaigns	AdminCreatePromoCampaign
+POST	/api/admin/apps/:appkey/promo/submissions/review	AdminReviewPromoSubmissions
 POST	/api/admin/apps/:appkey/register-ip/device-lists	AdminAddRegisterDeviceLists
 POST	/api/admin/apps/:appkey/register-ip/device-lists/delete	AdminDeleteRegisterDeviceLists
 POST	/api/admin/apps/:appkey/register-ip/lists	AdminAddRegisterIPLists
@@ -1435,6 +1448,8 @@ POST	/api/v1/apps/:appkey/notifications/unread	UnreadNotification
 POST	/api/v1/apps/:appkey/pay/orders	CreatePaymentOrder
 POST	/api/v1/apps/:appkey/points/level/rewards/:rewardId/claim	ClaimLevelReward
 POST	/api/v1/apps/:appkey/points/store/redeem	AppRedeemPointsStoreItem
+POST	/api/v1/apps/:appkey/promo/:campaignId/submissions	AppSubmitPromo
+POST	/api/v1/apps/:appkey/promo/:campaignId/tiers/claim	AppClaimPromoTier
 POST	/api/v1/apps/:appkey/releases/channels/:code/join	AppReleaseChannelJoin
 POST	/api/v1/apps/:appkey/releases/channels/:code/leave	AppReleaseChannelLeave
 POST	/api/v1/apps/:appkey/releases/events	AppReleaseEvent
@@ -1509,6 +1524,8 @@ PUT	/api/admin/apps/:appkey/points-store/items/:itemId	AdminUpdatePointsStoreIte
 PUT	/api/admin/apps/:appkey/points-store/items/:itemId/status	AdminSetPointsStoreItemStatus
 PUT	/api/admin/apps/:appkey/points-store/settings	AdminSavePointsStoreSettings
 PUT	/api/admin/apps/:appkey/policy	UpdateAdminAppPolicy
+PUT	/api/admin/apps/:appkey/promo/campaigns/:campaignId	AdminUpdatePromoCampaign
+PUT	/api/admin/apps/:appkey/promo/campaigns/:campaignId/status	AdminSetPromoCampaignStatus
 PUT	/api/admin/apps/:appkey/register-ip/device-lists/:id	AdminUpdateRegisterDeviceList
 PUT	/api/admin/apps/:appkey/register-ip/lists/:id	AdminUpdateRegisterIPList
 PUT	/api/admin/apps/:appkey/register-ip/policy	AdminUpdateRegisterIPPolicy

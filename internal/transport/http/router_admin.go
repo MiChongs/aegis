@@ -318,6 +318,17 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/invite/relations/:relationId/settle", h.AdminSettleInviteRelation)
 		admin.POST("/apps/:appkey/invite/relations/:relationId/cancel", h.AdminCancelInviteRelation)
 		admin.GET("/apps/:appkey/invite/stats", h.AdminInviteStats)
+		admin.GET("/apps/:appkey/promo/catalog", h.AdminPromoCatalog)
+		admin.GET("/apps/:appkey/promo/campaigns", h.AdminListPromoCampaigns)
+		admin.POST("/apps/:appkey/promo/campaigns", h.AdminCreatePromoCampaign)
+		admin.GET("/apps/:appkey/promo/campaigns/:campaignId", h.AdminGetPromoCampaign)
+		admin.PUT("/apps/:appkey/promo/campaigns/:campaignId", h.AdminUpdatePromoCampaign)
+		admin.PUT("/apps/:appkey/promo/campaigns/:campaignId/status", h.AdminSetPromoCampaignStatus)
+		admin.DELETE("/apps/:appkey/promo/campaigns/:campaignId", h.AdminDeletePromoCampaign)
+		admin.GET("/apps/:appkey/promo/campaigns/:campaignId/stats", h.AdminPromoCampaignStats)
+		admin.GET("/apps/:appkey/promo/campaigns/:campaignId/leaderboard", h.AdminPromoCampaignLeaderboard)
+		admin.GET("/apps/:appkey/promo/submissions", h.AdminListPromoSubmissions)
+		admin.POST("/apps/:appkey/promo/submissions/review", h.AdminReviewPromoSubmissions)
 		// 积分排行榜：设置（含榜单与权益目录）/ 实时与往期榜（真实账号）/ 移出名单 / 结算记录、明细、重试 /
 		// 手动结算 / 概览。权限与积分商城同级（app:read / app:write）。
 		admin.GET("/apps/:appkey/leaderboard/settings", h.AdminLeaderboardSettings)

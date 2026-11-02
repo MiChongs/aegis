@@ -784,6 +784,10 @@ type inviteGrant struct {
 	Title    string
 	Plans    map[int64]pointstore.PlanRef
 	Features map[string]pointstore.FeatureRef
+	// Ref / Meta 不挂在邀请关系上的发放（推广活动）自带的账本引用与流水元数据；
+	// Ref 为空时按关系 ID 生成，此时 RelationID 为 0 的流水不记 source_id
+	Ref  string
+	Meta map[string]any
 }
 
 // grantInviteRewardsTx 逐项发放。这里的 switch 与 invite 的权益目录双向钉死
@@ -791,8 +795,20 @@ type inviteGrant struct {
 func (r *Repository) grantInviteRewardsTx(ctx context.Context, tx pgx.Tx, grant inviteGrant, rewards []invite.Reward) ([]invite.RewardResult, error) {
 	appID, userID := grant.AppID, grant.UserID
 	relationID := grant.RelationID
-	meta := map[string]any{"inviteRelationId": relationID, "inviteGrant": grant.Key}
-	ref := "INV" + strconv.FormatInt(relationID, 10)
+	meta := map[string]any{"inviteGrant": grant.Key}
+	ref := grant.Ref
+	sourceID := &relationID
+	if relationID != 0 {
+		meta["inviteRelationId"] = relationID
+	} else {
+		sourceID = nil
+	}
+	if ref == "" {
+		ref = "INV" + strconv.FormatInt(relationID, 10)
+	}
+	for key, value := range grant.Meta {
+		meta[key] = value
+	}
 	out := make([]invite.RewardResult, 0, len(rewards))
 	for _, reward := range invite.NormalizeRewards(rewards) {
 		described := invite.DescribeReward(reward, grant.Plans, grant.Features)
@@ -801,7 +817,7 @@ func (r *Repository) grantInviteRewardsTx(ctx context.Context, tx pgx.Tx, grant 
 		switch reward.Type {
 		case invite.RewardPoints:
 			_, after, txnNo, err := applyIntegralChangeTx(ctx, tx, userID, appID, reward.Amount,
-				"earn", invite.IntegralCategory, grant.Title, "", invite.SourceType, &relationID, meta)
+				"earn", invite.IntegralCategory, grant.Title, "", invite.SourceType, sourceID, meta)
 			if err != nil {
 				return nil, err
 			}
@@ -871,7 +887,7 @@ func (r *Repository) grantInviteRewardsTx(ctx context.Context, tx pgx.Tx, grant 
 
 		case pointstore.RewardExperience:
 			expResult, err := r.applyExperienceChangeTx(ctx, tx, userID, appID, reward.Amount,
-				invite.IntegralCategory, grant.Title, "", invite.SourceType, &relationID, meta)
+				invite.IntegralCategory, grant.Title, "", invite.SourceType, sourceID, meta)
 			if err != nil {
 				return nil, err
 			}

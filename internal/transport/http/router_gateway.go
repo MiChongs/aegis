@@ -220,6 +220,13 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/invite/invitees", h.AppInvitees)
 		appGatewayAuthed.POST("/invite/bind", h.AppBindInvite)
 		appGatewayAuthed.PUT("/invite/code", h.AppUpdateInviteCode)
+		// 推广活动：列表 / 详情 / 排行 / 领取邀请档位 / 我的提交 / 提交文章
+		appGatewayAuthed.GET("/promo", h.AppPromoCampaigns)
+		appGatewayAuthed.GET("/promo/:campaignId", h.AppPromoCampaign)
+		appGatewayAuthed.GET("/promo/:campaignId/leaderboard", h.AppPromoLeaderboard)
+		appGatewayAuthed.POST("/promo/:campaignId/tiers/claim", h.AppClaimPromoTier)
+		appGatewayAuthed.GET("/promo/:campaignId/submissions", h.AppPromoSubmissions)
+		appGatewayAuthed.POST("/promo/:campaignId/submissions", h.AppSubmitPromo)
 		appGatewayAuthed.GET("/leaderboard/summary", h.LeaderboardSummary)
 		appGatewayAuthed.GET("/leaderboard/me", h.LeaderboardMe)
 		appGatewayAuthed.GET("/leaderboard/points/:type", h.LeaderboardPoints)

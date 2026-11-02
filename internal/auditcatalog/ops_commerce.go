@@ -119,6 +119,19 @@ func init() {
 		Write("POST /api/admin/apps/:appkey/invite/relations/:relationId/cancel", "取消邀请人奖励", "邀请记录", SeverityMedium),
 		View("GET /api/admin/apps/:appkey/invite/stats", "查看邀请统计", ""),
 
+		// 推广活动
+		View("GET /api/admin/apps/:appkey/promo/catalog", "查看推广活动配置目录", ""),
+		View("GET /api/admin/apps/:appkey/promo/campaigns", "查看推广活动", ""),
+		Write("POST /api/admin/apps/:appkey/promo/campaigns", "创建推广活动", "推广活动", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/promo/campaigns/:campaignId", "查看推广活动详情", ""),
+		Write("PUT /api/admin/apps/:appkey/promo/campaigns/:campaignId", "修改推广活动", "推广活动", SeverityHigh),
+		Write("PUT /api/admin/apps/:appkey/promo/campaigns/:campaignId/status", "上线或下线推广活动", "推广活动", SeverityHigh),
+		Write("DELETE /api/admin/apps/:appkey/promo/campaigns/:campaignId", "删除推广活动", "推广活动", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/promo/campaigns/:campaignId/stats", "查看推广活动统计", ""),
+		View("GET /api/admin/apps/:appkey/promo/campaigns/:campaignId/leaderboard", "查看推广活动排行", ""),
+		View("GET /api/admin/apps/:appkey/promo/submissions", "查看推广文章提交", ""),
+		Write("POST /api/admin/apps/:appkey/promo/submissions/review", "审核推广文章", "推广文章", SeverityHigh),
+
 		// 积分排行榜
 		View("GET /api/admin/apps/:appkey/leaderboard/settings", "查看排行榜设置", ""),
 		Write("PUT /api/admin/apps/:appkey/leaderboard/settings", "修改排行榜设置", "", SeverityHigh),

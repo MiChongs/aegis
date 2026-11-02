@@ -472,6 +472,10 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	inviteService.SetEventPublisher(realtimeService)
 	inviteService.SetAppNames(appService)
 	signInService.SetAfterSignIn(inviteService.OnSignIn)
+	// 推广活动：人数与邀请码来自邀请；审核结论走站内信，奖励到账推 promo.changed。
+	promoService := service.NewPromoService(log, pg, inviteService)
+	promoService.SetNotifier(notificationService)
+	promoService.SetEventPublisher(realtimeService)
 	// 积分排行榜：实时榜走 Redis 缓存；周期榜到期由 API 进程的后台循环结算、发奖，奖励到账走站内信。
 	leaderboardService := service.NewLeaderboardService(log, pg, sessions)
 	leaderboardService.SetPublicIDs(userService.PublicIDs())
@@ -725,6 +729,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		CrashReport:      crashReportService,
 		PointsStore:      pointsStoreService,
 		Invite:           inviteService,
+		Promo:            promoService,
 		Leaderboard:      leaderboardService,
 		AccountDeletion:  accountDeletionService,
 		CloudStorage:     cloudStorageService,

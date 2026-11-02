@@ -121,6 +121,11 @@ func gatewayRequestModels() map[string]any {
 		"inviteCode":     InviteCodeUpdateRequest{},
 		"invitePreview":  InvitePreviewRequest{},
 
+		// 推广活动
+		"promoClaimTier":   PromoClaimRequest{},
+		"promoSubmissions": PaginationQuery{},
+		"promoSubmit":      PromoSubmitRequest{},
+
 		// 积分排行榜
 		"leaderboardBoard":            LeaderboardPageQuery{},
 		"leaderboardPeriods":          LeaderboardPeriodsQuery{},

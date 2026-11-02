@@ -1015,6 +1015,52 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
     fun updateInviteCode(code: String? = null): JsonElement =
         client.call("PUT", "/invite/code", mapOf("code" to code), requireAuth = true)
 
+    /**
+     * 推广活动列表：进行中与刚结束（还在领取期内）的活动，`phase` 为 `upcoming` / `active` / `ended`，
+     * `claimable` 表示有可领取的邀请档位。没有活动时为空列表。
+     */
+    @Throws(IOException::class)
+    fun promoCampaigns(): JsonElement = client.call("GET", "/promo", requireAuth = true)
+
+    /**
+     * 推广活动详情：邀请任务（`invite`：活动期间的有效邀请人数、各档位与状态、我的邀请码与分享文案）
+     * 与分享任务（`share`：允许的平台、禁止的平台、奖励、次数与能否提交）。没有某项任务时对应字段为 null。
+     * 不存在或未上线 40415。
+     */
+    @Throws(IOException::class)
+    fun promoCampaign(id: Long): JsonElement = client.call("GET", "/promo/$id", requireAuth = true)
+
+    /** 推广活动的邀请排行：`items`（名次、打码昵称、头像、人数）与我自己的名次 `me`。 */
+    @Throws(IOException::class)
+    fun promoLeaderboard(id: Long): JsonElement = client.call("GET", "/promo/$id/leaderboard", requireAuth = true)
+
+    /**
+     * 领取一档邀请奖励（[count] 为档位人数）。失败码：42240 活动未开始或已过领取期 / 42241 没有邀请任务 /
+     * 42242 人数不够 / 40955 已领取 / 42248 奖励配置已失效。
+     */
+    @Throws(IOException::class)
+    fun claimPromoTier(id: Long, count: Int): JsonElement =
+        client.call("POST", "/promo/$id/tiers/claim", mapOf("count" to count), requireAuth = true)
+
+    /** 我在这期活动里提交的文章：状态 `pending` / `approved` / `rejected`、驳回原因与发放结果。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun promoSubmissions(id: Long, page: Int = 1, limit: Int = 20): JsonElement =
+        client.call("GET", "/promo/$id/submissions", query = pageQuery(page, limit), requireAuth = true)
+
+    /**
+     * 提交一篇推广文章的链接，审核通过后发奖励。失败码：42243 没有分享任务 / 42244 平台未启用 /
+     * 42245 链接无效或不属于所选平台 / 42246 抖音等禁止的平台 / 40956 已提交过 / 42247 次数已满。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun submitPromo(id: Long, platform: String, url: String, note: String? = null, deviceId: String? = null): JsonElement =
+        client.call(
+            "POST", "/promo/$id/submissions",
+            mapOf("platform" to platform, "url" to url, "note" to note, "deviceId" to deviceId),
+            requireAuth = true,
+        )
+
     @Throws(IOException::class)
     fun leaderboardSummary(): JsonElement = client.call("GET", "/leaderboard/summary", requireAuth = true)
 

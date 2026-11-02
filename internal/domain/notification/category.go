@@ -240,6 +240,7 @@ const (
 	RouteTickets     = "tickets"
 	RouteProfile     = "profile"
 	RouteLevel       = "level"
+	RoutePromo       = "promo"
 )
 
 var routes = []RouteSpec{
@@ -256,6 +257,7 @@ var routes = []RouteSpec{
 	{Key: RouteTickets, Label: "工单"},
 	{Key: RouteProfile, Label: "个人资料"},
 	{Key: RouteLevel, Label: "我的等级"},
+	{Key: RoutePromo, Label: "推广活动"},
 }
 
 // Routes 全部路由键（副本）。

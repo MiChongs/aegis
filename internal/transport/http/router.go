@@ -70,6 +70,7 @@ type Handler struct {
 	crashReport     *service.CrashReportService
 	pointsStore     *service.PointsStoreService
 	invite          *service.InviteService
+	promo           *service.PromoService
 	leaderboard     *service.LeaderboardService
 	accountDeletion *service.AccountDeletionService
 	cloudStorage    *service.CloudStorageService

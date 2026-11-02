@@ -55,6 +55,7 @@ type RouterDeps struct {
 	CrashReport      *service.CrashReportService
 	PointsStore      *service.PointsStoreService
 	Invite           *service.InviteService
+	Promo            *service.PromoService
 	Leaderboard      *service.LeaderboardService
 	AccountDeletion  *service.AccountDeletionService
 	CloudStorage     *service.CloudStorageService
@@ -210,6 +211,7 @@ func (d RouterDeps) newHandler() *Handler {
 		crashReport:        d.CrashReport,
 		pointsStore:        d.PointsStore,
 		invite:             d.Invite,
+		promo:              d.Promo,
 		leaderboard:        d.Leaderboard,
 		accountDeletion:    d.AccountDeletion,
 		cloudStorage:       d.CloudStorage,
