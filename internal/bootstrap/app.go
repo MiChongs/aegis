@@ -698,6 +698,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		return nil, fmt.Errorf("客户端 IP 判定配置无效: %w", err)
 	}
 	logClientIPResolution(log, clientIPResolver)
+	// 受信代理的地址不当注册地址计数：上游丢了客户端地址时别让所有人挤在入口那一个地址上
+	registerIPService.SetProxyFilter(clientIPResolver.TrustedProxy)
 
 	// 在线记录带上 IP 归属地（建连时只读本地库与缓存）
 	realtimeService.SetLocationService(locationService)

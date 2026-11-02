@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -469,6 +470,34 @@ func TestRegisterIPIntegration(t *testing.T) {
 		overview, err := svc.Overview(ctx, appID, 7, "Asia/Shanghai")
 		if err != nil || overview.Devices.Lists["deny"] != 1 {
 			t.Fatalf("概览设备名单：%+v err=%v", overview.Devices.Lists, err)
+		}
+	})
+
+	t.Run("受信代理的地址按拿不到 IP 处理", func(t *testing.T) {
+		reset()
+		p := regip.DefaultPolicy()
+		p.Rules = []regip.Rule{{ID: "ip-life", Enabled: true, Scope: regip.ScopeIP, Limit: 1, Action: regip.ActionReject}}
+		p.MissingIP = regip.MissingIPAllow
+		savePolicy(p)
+		inner := netip.MustParsePrefix("10.0.0.0/8")
+		svc.SetProxyFilter(inner.Contains)
+		defer svc.SetProxyFilter(nil)
+		for i := 0; i < 3; i++ {
+			if err := register(ctx, "10.0.1.9"); err != nil {
+				t.Fatalf("入口地址第 %d 个应放行：%v", i+1, err)
+			}
+			settle()
+		}
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM register_ip_ledger WHERE ip = '10.0.1.9'`).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("入口地址不应进台账：n=%d err=%v", n, err)
+		}
+		if err := register(ctx, "1.2.3.4"); err != nil {
+			t.Fatalf("真实地址第一个应放行：%v", err)
+		}
+		settle()
+		if code := codeOf(register(ctx, "1.2.3.4")); code != errCodeRegisterIPLimited {
+			t.Fatalf("真实地址照常计数，第二个应 40902，得到 %d", code)
 		}
 	})
 

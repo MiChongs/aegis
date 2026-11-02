@@ -414,6 +414,15 @@ func (r *Resolver) headerAddr(req *http.Request) (netip.Addr, string, bool) {
 	return netip.Addr{}, "", false
 }
 
+// TrustedProxy 该地址是否落在受信代理网段里。
+//
+// 受信代理的地址不会是客户端：判定结果等于它，只说明转发链没给出结论（上游没带客户端地址、
+// 或入口把转发头丢了），只能退回直连对端。按地址计数的地方（注册准入）据此把它当作「拿不到 IP」，
+// 免得经过同一入口的所有人挤在一个地址上。direct-peer 不是网段，不算在内。
+func (r *Resolver) TrustedProxy(addr netip.Addr) bool {
+	return r != nil && r.trusted != nil && addr.IsValid() && r.trusted.Contains(addr.Unmap())
+}
+
 // DebugHeader 是否回显判定过程。
 func (r *Resolver) DebugHeader() bool {
 	return r != nil && r.debugHeader

@@ -589,3 +589,19 @@ func TestDescribeReportsEffectiveSettings(t *testing.T) {
 		t.Fatalf("PrefixStrings = %s, want %s", got, want)
 	}
 }
+
+// 上游没带客户端地址时判定退回直连对端（入口内网地址）：TrustedProxy 要能认出它不是客户端。
+func TestTrustedProxy(t *testing.T) {
+	resolver := mustResolver(t, Config{TrustedProxies: []string{"10.0.0.0/8", "95.82.8.0/23"}}, nil)
+	res := resolver.Resolve(newRequest(t, "10.0.1.9:48840", map[string]string{"X-Forwarded-For": "95.82.9.4"}))
+	if res.IP.String() != "10.0.1.9" || !resolver.TrustedProxy(res.IP) {
+		t.Fatalf("链全受信应退回对端且被认出是代理：ip=%s trusted=%t", res.IP, resolver.TrustedProxy(res.IP))
+	}
+	res = resolver.Resolve(newRequest(t, "10.0.1.9:48840", map[string]string{"X-Forwarded-For": "2408:8417::1, 95.82.9.4"}))
+	if res.IP.String() != "2408:8417::1" || resolver.TrustedProxy(res.IP) {
+		t.Fatalf("真实客户端不应算代理：ip=%s", res.IP)
+	}
+	if (*Resolver)(nil).TrustedProxy(res.IP) {
+		t.Fatal("nil 判定器不应认任何地址")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -54,6 +55,10 @@ type RegisterIPService struct {
 	hitsMu     sync.Mutex
 	hits       map[int64]int64
 	deviceHits map[int64]int64
+
+	// proxy 判断地址是否是自己的入口代理（见 SetProxyFilter）；proxyReported 每个应用只告警一次
+	proxy         func(netip.Addr) bool
+	proxyReported sync.Map
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -107,6 +112,30 @@ func NewRegisterIPService(log *zap.Logger, pg *pgrepo.Repository, counters *redi
 	s.events = newAsyncBatchWriter("register_ip.events", log, 8192, 2, 500, 500*time.Millisecond, s.flushEvents)
 	s.ledger = newAsyncBatchWriter("register_ip.ledger", log, 8192, 2, 500, 200*time.Millisecond, s.flushLedger)
 	return s
+}
+
+// SetProxyFilter 接入「这个地址是不是受信代理」的判断（客户端 IP 判定器的受信网段）。
+//
+// 上游 CDN 节点没带客户端地址、或入口反代不信任它而丢了转发头时，判定只能退回直连对端，
+// 拿到的是 Docker 内网负载均衡、入口反代这类地址。拿它计数，经过同一入口的所有人会挤在
+// 一个地址上互相占名额、一起进惩罚期。这类地址按「拿不到 IP」处理，设备那条线照常数。
+func (s *RegisterIPService) SetProxyFilter(fn func(netip.Addr) bool) {
+	if s != nil {
+		s.proxy = fn
+	}
+}
+
+// proxyAddress 地址是否是受信代理；是的话每个应用告警一次，提示去修入口的转发头。
+func (s *RegisterIPService) proxyAddress(appID int64, addr netip.Addr) bool {
+	if s.proxy == nil || !s.proxy(addr) {
+		return false
+	}
+	if _, seen := s.proxyReported.LoadOrStore(appID, struct{}{}); !seen {
+		s.log.Warn("注册准入：客户端 IP 是受信代理的地址，按拿不到 IP 处理",
+			zap.Int64("appid", appID), zap.String("ip", addr.String()),
+			zap.String("cause", "上游没带客户端地址，或入口反代（Traefik forwardedHeaders.trustedIPs）不信任上游而丢了转发头"))
+	}
+	return true
 }
 
 // Start 启动批量写入协程与后台循环（名单命中次数落库、过期名单与旧记录清理）。
@@ -350,6 +379,9 @@ func (s *RegisterIPService) evaluate(ctx context.Context, req RegisterIPRequest,
 	eval := &registerIPEvaluation{policy: policy, token: newRegisterIPToken()}
 	facts := regip.Facts{Method: req.Method, CaptchaPassed: captchaPassed, Device: regip.ParseDevice(req.DeviceID, policy.Device.MinLength)}
 	addr, ok := regip.ParseAddress(req.IP, policy.Network)
+	if ok && s.proxyAddress(req.AppID, addr.Addr) {
+		ok = false
+	}
 	if ok {
 		facts.Address = addr
 	}
