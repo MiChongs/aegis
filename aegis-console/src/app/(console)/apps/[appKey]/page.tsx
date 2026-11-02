@@ -33,6 +33,7 @@ import { AppUserSettingsPanel } from "@/components/apps/app-user-settings-panel"
 import { AppCardKeyPanel } from "@/components/apps/card-key/app-card-key-panel";
 import { AppPointsStorePanel } from "@/components/apps/points-store/app-points-store-panel";
 import { AppInvitePanel } from "@/components/apps/invite/app-invite-panel";
+import { AppPromoPanel } from "@/components/apps/promo/app-promo-panel";
 import { AppDeviceLimitPanel } from "@/components/apps/device-limit/app-device-limit-panel";
 import { AppRegisterIPPanel } from "@/components/apps/register-ip/app-register-ip-panel";
 import { AppPasskeyPanel } from "@/components/apps/app-passkey-panel";
@@ -220,6 +221,8 @@ function AppSectionPanel({ section, app }: { section: string; app: AppSummary })
       return <AppPointsStorePanel appKey={app.appKey} />;
     case "invite":
       return <AppInvitePanel appKey={app.appKey} />;
+    case "promo":
+      return <AppPromoPanel appKey={app.appKey} />;
     case "leaderboard":
       return <AppLeaderboardPanel appKey={app.appKey} />;
     case "account-deletion":
