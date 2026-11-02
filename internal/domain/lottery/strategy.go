@@ -21,7 +21,8 @@ import (
 // 策略在基础权重之上逐个维度乘一个系数，算出这一次、这个人的最终概率：
 //
 //	基础权重（含已拥有剔除）
-//	  → 硬性资格：库存、全站每日限量、个人总上限、个人每日上限、风控（命中只出未中奖）
+//	  → 硬性资格：库存、全站每日限量、个人总上限、个人每日上限
+//	  → 风控规则（risk.go）：信号比阈值，命中后降权、停发稀有、不触发保底、只发兜底或拒绝抽奖
 //	  → 库存匀速释放：限量奖品按活动进度放量，超前暂停、落后加速
 //	  → 积分预算：当日已发积分过半后积分奖逐步收紧，单次超出剩余预算的不出
 //	  → 行为画像：注册时长、在线时长、签到、会员率、付费、等级、邀请、广告、兑换、风险等全部行为
@@ -116,13 +117,6 @@ type Budget struct {
 	Paced       bool  `json:"paced,omitempty"`
 }
 
-// RiskGuard 设备 / 网络聚集：本活动当天同一设备（或同一 IP）上抽过奖的账号数超过上限时，
-// 这个人只出未中奖（保底也不触发）。0 为不检查。
-type RiskGuard struct {
-	DeviceAccounts int `json:"deviceAccounts"`
-	IPAccounts     int `json:"ipAccounts"`
-}
-
 // StrategyRule 一条自定义规则：When 为真时，给命中的奖品（Kinds / Positions 都空 = 全部奖品）乘 Factor。
 // When 是 expr 表达式，变量见 RuleEnv；空表示总是生效。Factor 为 0 等于这一次剔除这些奖品。
 type StrategyRule struct {
@@ -161,9 +155,7 @@ func NormalizeStrategy(s Strategy) Strategy {
 	if s.Budget != nil && s.Budget.DailyPoints <= 0 {
 		s.Budget = nil
 	}
-	if s.Risk != nil && s.Risk.DeviceAccounts <= 0 && s.Risk.IPAccounts <= 0 {
-		s.Risk = nil
-	}
+	s.Risk = normalizeRisk(s.Risk)
 	s.Behavior = normalizeBehavior(s.Behavior)
 	normalizeControl(&s)
 	rules := make([]StrategyRule, 0, len(s.Rules))
@@ -217,10 +209,8 @@ func ValidateStrategy(s Strategy, prizeCount int) error {
 	if b := s.Budget; b != nil && b.DailyPoints > MaxBudgetPoints {
 		return fmt.Errorf("每日积分预算不能超过 %d", MaxBudgetPoints)
 	}
-	if r := s.Risk; r != nil {
-		if r.DeviceAccounts < 0 || r.DeviceAccounts > MaxRiskAccounts || r.IPAccounts < 0 || r.IPAccounts > MaxRiskAccounts {
-			return fmt.Errorf("同设备 / 同网络账号数上限需要在 0–%d 之间", MaxRiskAccounts)
-		}
+	if err := validateRisk(s.Risk); err != nil {
+		return err
 	}
 	if err := validateBehavior(s.Behavior); err != nil {
 		return err
@@ -283,9 +273,17 @@ type DrawState struct {
 	PrizeDailyUsed map[int64]int64
 	// PointsIssuedToday 本活动今天发出的积分（含已拥有折算）
 	PointsIssuedToday int64
-	// DeviceAccounts / IPAccounts 本活动今天同设备 / 同 IP 抽过奖的账号数（含这个人）
+	// DeviceAccounts / IPAccounts / SubnetAccounts 本活动今天同设备 / 同 IP / 同网段抽过奖的账号数（含这个人）
 	DeviceAccounts int
 	IPAccounts     int
+	SubnetAccounts int
+	// DeviceHistory 这台设备在应用里登录过的账号数
+	DeviceHistory int
+	// DeviceMissing / IPMissing 请求没有设备号 / IP（相应的聚集信号取不到）
+	DeviceMissing bool
+	IPMissing     bool
+	// RecentDraws 这个人最近 BurstWindowMinutes 分钟在本活动抽了几次（不含这一次）
+	RecentDraws int
 	// Profile 这个人在应用里的全部行为
 	Profile BehaviorProfile
 	// DayProgress 应用时区的今天过去了多少（0–1）
@@ -323,9 +321,11 @@ type PrizeOdds struct {
 // DrawPlan 一次抽奖的完整出奖方案。会原样写进记录的 trace。
 type DrawPlan struct {
 	Odds []PrizeOdds `json:"odds"`
-	// SoftPity 软保底给中奖总概率加了多少个百分点；Risk 是否命中风控
+	// SoftPity 软保底给中奖总概率加了多少个百分点
 	SoftPity float64 `json:"softPity,omitempty"`
-	Risk     bool    `json:"risk,omitempty"`
+	// Risk 风控只发兜底或拒绝（老控制台只认这一项）；RiskReport 逐条规则的评估
+	Risk       bool        `json:"risk,omitempty"`
+	RiskReport *RiskReport `json:"riskReport,omitempty"`
 	// Behavior 行为分与各信号明细（启用行为画像时）
 	Behavior *BehaviorScore `json:"behavior,omitempty"`
 	// WinRate 这一次的中奖总概率（0–1）；Value 这一次的期望价值（积分当量）
@@ -338,10 +338,13 @@ type DrawPlan struct {
 	// GuardInfeasible 护栏约束在可发的奖品上无法同时满足（已尽力逼近）
 	GuardInfeasible bool    `json:"guardInfeasible,omitempty"`
 	PRD             float64 `json:"prd,omitempty"`
-	// Pity 硬保底触发；Picked 最终选中的奖品 ID；Fallback 选中后因库存 / 限量竞争改发了兜底奖
-	Pity     bool  `json:"pity,omitempty"`
-	Picked   int64 `json:"picked,omitempty"`
-	Fallback bool  `json:"fallback,omitempty"`
+	// Pity 硬保底触发；Picked 最终选中的奖品 ID；Fallback 改发了兜底奖，FallbackReason 说明为什么
+	Pity           bool   `json:"pity,omitempty"`
+	Picked         int64  `json:"picked,omitempty"`
+	Fallback       bool   `json:"fallback,omitempty"`
+	FallbackReason string `json:"fallbackReason,omitempty"`
+	// FloorID 这一次的兜底奖（风控只发兜底、权重全为 0、限量被抢光时发它）
+	FloorID int64 `json:"floor,omitempty"`
 	// Perks 这一次生效的人群特权（权重与保底已按它改写）
 	Perks *PerkEffects `json:"perks,omitempty"`
 	// Fortune 这个人今天的运气系数（真实奖品的权重已乘过）；没开每日运气时不写
@@ -356,9 +359,18 @@ type DrawPlan struct {
 // prizes 是这个人的奖盘（已按已拥有处理方式剔除，见 PersonalPrizes）。
 func PlanDraw(activity Activity, strategy Strategy, prizes []Prize, state DrawState) DrawPlan {
 	plan := DrawPlan{Odds: make([]PrizeOdds, len(prizes))}
-	risky := riskHit(strategy.Risk, state)
-	plan.Risk = risky
+	risk := EvaluateRisk(strategy.Risk, state)
+	plan.RiskReport = risk
+	plan.Risk = risk.Floor()
+	if floor, ok := FallbackPrize(prizes); ok {
+		plan.FloorID = floor.ID
+	}
+	// Probabilities 是百分比，风控的稀有线是 0–1
 	baseProbabilities := Probabilities(prizes)
+	missStreak := state.MissStreak
+	if risk != nil && risk.NoPity {
+		missStreak = 0
+	}
 	recent := map[int64]bool{}
 	if c := strategy.Cooldown; c != nil {
 		for index, id := range state.Recent {
@@ -401,8 +413,20 @@ func PlanDraw(activity Activity, strategy Strategy, prizes []Prize, state DrawSt
 			block(FactorUserLimit, fmt.Sprintf("%d/%d", state.PrizeWins[prize.ID], prize.UserLimit))
 		case prize.UserDailyLimit > 0 && state.PrizeWinsToday[prize.ID] >= prize.UserDailyLimit:
 			block(FactorUserDailyLimit, fmt.Sprintf("%d/%d", state.PrizeWinsToday[prize.ID], prize.UserDailyLimit))
-		case risky && prize.Winning():
-			block(FactorRisk, "")
+		}
+		if weight > 0 || odds.Blocked == "" {
+			blocked, note, damp := riskPrizeEffect(risk, prize, baseProbabilities[index]/100, plan.FloorID)
+			switch {
+			case blocked && odds.Blocked == "":
+				block(FactorRisk, note)
+			case damp < 1 && weight > 0:
+				multiply(FactorRisk, damp, note)
+			}
+		}
+		// 只发兜底时兜底奖必须可出：它的权重为 0（纯保底格）时给 1，方案里看得到它是 100%
+		if risk.Floor() && prize.ID == plan.FloorID && odds.Blocked == "" && weight == 0 {
+			odds.Factors = append(odds.Factors, Factor{Key: FactorRisk, Value: 1, Note: "只发兜底，兜底奖照常可出"})
+			weight = 1
 		}
 
 		if weight > 0 && strategy.Pacing != nil && prize.Quantity >= 0 && progress >= 0 {
@@ -449,9 +473,9 @@ func PlanDraw(activity Activity, strategy Strategy, prizes []Prize, state DrawSt
 	plan.Fair = round6(winShare(plan.Odds, prizes))
 	applyLuck(&plan, prizes, strategy.Luck, state)
 	if strategy.Variance == VariancePRD {
-		applyPRD(&plan, prizes, state.MissStreak)
-	} else if p := strategy.SoftPity; p != nil && state.MissStreak >= p.Start {
-		plan.SoftPity = applySoftPity(plan.Odds, prizes, p.Step*float64(state.MissStreak-p.Start+1))
+		applyPRD(&plan, prizes, missStreak)
+	} else if p := strategy.SoftPity; p != nil && missStreak >= p.Start {
+		plan.SoftPity = applySoftPity(plan.Odds, prizes, p.Step*float64(missStreak-p.Start+1))
 	}
 	applyWinRateControl(&plan, prizes, strategy.WinRate, state)
 	values := make([]float64, len(prizes))
@@ -507,14 +531,6 @@ func applySoftPity(odds []PrizeOdds, prizes []Prize, boost float64) float64 {
 		odds[index].Factors = append(odds[index].Factors, Factor{Key: FactorSoftPity, Value: round6(scale)})
 	}
 	return round6((target - current) * 100)
-}
-
-func riskHit(guard *RiskGuard, state DrawState) bool {
-	if guard == nil {
-		return false
-	}
-	return (guard.DeviceAccounts > 0 && state.DeviceAccounts > guard.DeviceAccounts) ||
-		(guard.IPAccounts > 0 && state.IPAccounts > guard.IPAccounts)
 }
 
 // activityProgress 活动进度（0–1）与剩余天数；没有结束时间时进度为 -1。
@@ -601,8 +617,11 @@ func Sample(plan DrawPlan, src rand.Source) (int, bool) {
 	return sampleuv.NewWeighted(weights, src).Take()
 }
 
-// PityChoice 硬保底：到点且保底奖这一次没有被硬性资格挡掉时，返回它的下标。
+// PityChoice 硬保底：到点、风控没有关掉保底、且保底奖这一次没有被硬性资格挡掉时，返回它的下标。
 func PityChoice(activity Activity, plan DrawPlan, prizes []Prize, missStreak int) (int, bool) {
+	if plan.RiskReport != nil && plan.RiskReport.NoPity {
+		return 0, false
+	}
 	if activity.PityPrizeID == nil || !PityDue(activity.PityThreshold, missStreak) {
 		return 0, false
 	}

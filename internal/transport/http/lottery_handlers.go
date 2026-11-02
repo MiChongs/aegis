@@ -380,6 +380,24 @@ func (h *Handler) AdminLotteryAudit(c *gin.Context) {
 	response.Success(c, http.StatusOK, "ok", result)
 }
 
+// AdminLotteryRisk 风控总览（days，默认 7，最多 90）。
+func (h *Handler) AdminLotteryRisk(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	activityID, ok := cardKeyPathID(c, "activityId")
+	if !ok {
+		return
+	}
+	result, err := h.lottery.RiskOverview(c.Request.Context(), appID, activityID, parsePositiveInt(c.Query("days"), 7))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "ok", result)
+}
+
 // AdminDeleteLotteryActivity 删除没有抽奖记录的活动。
 func (h *Handler) AdminDeleteLotteryActivity(c *gin.Context) {
 	appID, ok := resolveAppID(c, h.app)
@@ -415,7 +433,8 @@ func (h *Handler) AdminLotteryStats(c *gin.Context) {
 	response.Success(c, http.StatusOK, "ok", stats)
 }
 
-// AdminListLotteryDraws 抽奖记录（activityId / userId / status / source / winning / keyword / start / end）。
+// AdminListLotteryDraws 抽奖记录（activityId / userId / prizeId / status / source / winning / risk / riskAction /
+// outcome / keyword / start / end）。keyword 是检索式，见 lottery.ParseDrawSearch。
 func (h *Handler) AdminListLotteryDraws(c *gin.Context) {
 	appID, ok := resolveAppID(c, h.app)
 	if !ok {
@@ -431,9 +450,13 @@ func (h *Handler) AdminListLotteryDraws(c *gin.Context) {
 		Source:     strings.TrimSpace(c.Query("source")),
 		Winning:    c.Query("winning") == "true" || c.Query("winning") == "1",
 		Keyword:    strings.TrimSpace(c.Query("keyword")),
+		Risk:       strings.TrimSpace(c.Query("risk")),
+		RiskAction: strings.TrimSpace(c.Query("riskAction")),
+		Outcome:    strings.TrimSpace(c.Query("outcome")),
 		Page:       parsePositiveInt(c.Query("page"), 1),
 		Limit:      parsePositiveInt(c.Query("limit"), 20),
 	}
+	query.PrizeID, _ = strconv.ParseInt(c.Query("prizeId"), 10, 64)
 	if start, err := time.Parse(time.RFC3339, c.Query("start")); err == nil {
 		query.Start = &start
 	}

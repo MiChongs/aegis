@@ -1443,6 +1443,13 @@
   },
   {
     "method": "GET",
+    "path": "/api/admin/apps/:appkey/lottery/activities/:activityId/risk",
+    "permission": "app:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
     "path": "/api/admin/apps/:appkey/lottery/draws",
     "permission": "app:read",
     "appScoped": true,

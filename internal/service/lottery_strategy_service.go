@@ -300,3 +300,26 @@ func (s *LotteryService) Audit(ctx context.Context, appID, activityID int64, day
 	result := lotterydomain.Audit(draws)
 	return &result, nil
 }
+
+// MaxLotteryRiskDays 风控总览最多回看多少天。
+const MaxLotteryRiskDays = 90
+
+// RiskOverview 一个活动最近 days 天的风控总览：命中与拒绝、按处置与信号、按天、设备 / IP / 网段聚集、最近被拒绝的请求。
+func (s *LotteryService) RiskOverview(ctx context.Context, appID, activityID int64, days int) (*lotterydomain.RiskOverview, error) {
+	activity, err := s.pg.GetLotteryActivity(ctx, appID, activityID)
+	if err != nil {
+		return nil, s.translate(err)
+	}
+	days = min(max(days, 1), MaxLotteryRiskDays)
+	since := lotteryDayStart(time.Now()).AddDate(0, 0, -(days - 1))
+	overview, err := s.pg.LotteryRiskOverview(ctx, appID, activityID, since, timeutil.DefaultLocation().String())
+	if err != nil {
+		return nil, err
+	}
+	overview.Days = days
+	overview.Rules = activity.Strategy.Risk.EffectiveRules()
+	if overview.Rules == nil {
+		overview.Rules = []lotterydomain.RiskRule{}
+	}
+	return overview, nil
+}

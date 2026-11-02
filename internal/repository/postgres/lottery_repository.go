@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
+	"golang.org/x/sync/errgroup"
 
 	"aegis/internal/domain/featuretime"
 	lotterydomain "aegis/internal/domain/lottery"
@@ -118,7 +119,8 @@ func scanLotteryPrize(row interface{ Scan(dest ...any) error }) (*lotterydomain.
 const lotteryDrawColumns = `d.id, d.draw_no, d.appid, d.activity_id, COALESCE(a.name, ''), d.user_id, COALESCE(u.account, ''),
 COALESCE(up.nickname, ''), d.prize_id, d.prize_name, d.prize_kind, d.reward, d.position, d.source, d.points_cost, d.pity,
 d.status, d.results, d.conversion, COALESCE(d.note, ''), COALESCE(d.handled_by, ''), d.handled_at, COALESCE(d.request_id, ''),
-COALESCE(d.device_id, ''), COALESCE(d.client_ip, ''), d.trace, d.created_at, d.ticket_lot_id, d.ticket_origin, d.ticket_paid`
+COALESCE(d.device_id, ''), COALESCE(d.client_ip, ''), d.trace, d.created_at, d.ticket_lot_id, d.ticket_origin, d.ticket_paid,
+d.risk_rules, COALESCE(d.risk_action, '')`
 
 const lotteryDrawJoins = `FROM lottery_draws d
 LEFT JOIN lottery_activities a ON a.id = d.activity_id
@@ -135,7 +137,7 @@ func scanLotteryDraw(row interface{ Scan(dest ...any) error }) (*lotterydomain.D
 		&item.Account, &item.Nickname, &item.PrizeID, &item.PrizeName, &item.PrizeKind, &reward, &item.Position,
 		&item.Source, &item.PointsCost, &item.Pity, &item.Status, &results, &conversion, &item.Note, &item.HandledBy,
 		&item.HandledAt, &item.RequestID, &item.DeviceID, &item.ClientIP, &trace, &item.CreatedAt,
-		&ticketLot, &ticketOrigin, &ticketPaid); err != nil {
+		&ticketLot, &ticketOrigin, &ticketPaid, &item.RiskRules, &item.RiskAction); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLotteryDrawNotFound
 		}
@@ -564,6 +566,44 @@ type LotteryDrawOutcome struct {
 //
 // 随机数来自 crypto/rand，在服务端产生、不出事务：客户端拿到的只是结果。
 func (r *Repository) DrawLottery(ctx context.Context, input lotterydomain.DrawInput) (*LotteryDrawOutcome, error) {
+	outcome, err := r.drawLottery(ctx, input)
+	var denied *LotteryRiskDeniedError
+	if errors.As(err, &denied) {
+		// 事务已回滚，没有抽奖记录：单独记一条风控事件，管理端「风控」里看得到被挡下的请求
+		r.recordLotteryRiskEvent(ctx, input, denied.Plan)
+	}
+	return outcome, err
+}
+
+// LotteryRiskDeniedError 风控规则判定拒绝这一次抽奖（事务回滚，次数与积分不扣）。
+type LotteryRiskDeniedError struct {
+	Plan lotterydomain.DrawPlan
+}
+
+func (e *LotteryRiskDeniedError) Error() string { return "lottery: draw denied by risk rules" }
+
+// recordLotteryRiskEvent 记一条被拒绝的抽奖。写失败不影响给用户的答复（拒绝本身已经生效）。
+func (r *Repository) recordLotteryRiskEvent(ctx context.Context, input lotterydomain.DrawInput, plan lotterydomain.DrawPlan) {
+	report := plan.RiskReport
+	if report == nil {
+		return
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		return
+	}
+	hits := report.Hits
+	if hits == nil {
+		hits = []string{}
+	}
+	_, _ = r.pool.Exec(context.WithoutCancel(ctx), `INSERT INTO lottery_risk_events
+(appid, activity_id, user_id, action, rules, report, source, device_id, client_ip)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, input.AppID, input.ActivityID, input.UserID, report.Action, hits, raw,
+		truncateColumn(input.Source, 16), nullableString(truncateColumn(input.DeviceID, 128)),
+		nullableString(truncateColumn(input.ClientIP, 64)))
+}
+
+func (r *Repository) drawLottery(ctx context.Context, input lotterydomain.DrawInput) (*LotteryDrawOutcome, error) {
 	now := input.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -721,6 +761,10 @@ ON CONFLICT (activity_id, user_id) DO NOTHING`, activity.ID, input.UserID); err 
 		plan.FortuneBase, plan.Supreme = supreme.Base, &supreme.Grade
 	}
 	pity := plan.Pity
+	riskHits, riskAction := []string{}, (*string)(nil)
+	if report := plan.RiskReport; report != nil && report.Action != "" {
+		riskHits, riskAction = report.Hits, &report.Action
+	}
 	trace, err := json.Marshal(plan)
 	if err != nil {
 		return nil, err
@@ -747,12 +791,14 @@ ON CONFLICT (activity_id, user_id) DO NOTHING`, activity.ID, input.UserID); err 
 	}
 	if err := tx.QueryRow(ctx, `INSERT INTO lottery_draws
 (draw_no, appid, activity_id, user_id, prize_id, prize_name, prize_kind, reward, position, source, points_cost, pity,
- status, request_id, device_id, client_ip, user_agent, created_at, trace, ticket_lot_id, ticket_origin, ticket_paid)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING id`,
+ status, request_id, device_id, client_ip, user_agent, created_at, trace, ticket_lot_id, ticket_origin, ticket_paid,
+ risk_rules, risk_action)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) RETURNING id`,
 		drawNo, input.AppID, activity.ID, input.UserID, prizeID, truncateColumn(prize.Name, 64), prize.Kind, reward,
 		prize.Position, source, pointsCost, pity, status, nullableString(input.RequestID),
 		nullableString(truncateColumn(input.DeviceID, 128)), nullableString(truncateColumn(input.ClientIP, 64)),
-		nullableString(truncateColumn(input.UserAgent, 256)), now, trace, ticketLot, ticket.Origin, ticket.Paid).Scan(&drawID); err != nil {
+		nullableString(truncateColumn(input.UserAgent, 256)), now, trace, ticketLot, ticket.Origin, ticket.Paid,
+		riskHits, riskAction).Scan(&drawID); err != nil {
 		return nil, err
 	}
 
@@ -870,12 +916,15 @@ func recordLotteryConversionTx(ctx context.Context, tx pgx.Tx, appID, userID int
 func pickLotteryPrize(ctx context.Context, tx pgx.Tx, activity lotterydomain.Activity, prizes []lotterydomain.Prize,
 	state lotterydomain.DrawState, dayStart time.Time) (lotterydomain.Prize, lotterydomain.DrawPlan, error) {
 	plan := lotterydomain.PlanDraw(activity, activity.Strategy, prizes, state)
-	fallback := func() (lotterydomain.Prize, lotterydomain.DrawPlan, error) {
+	if plan.RiskReport.Denied() {
+		return lotterydomain.Prize{}, plan, &LotteryRiskDeniedError{Plan: plan}
+	}
+	fallback := func(reason string) (lotterydomain.Prize, lotterydomain.DrawPlan, error) {
 		prize, ok := lotterydomain.FallbackPrize(prizes)
 		if !ok {
 			return prize, plan, ErrLotteryPoolBroken
 		}
-		plan.Pity, plan.Fallback, plan.Picked = false, true, prize.ID
+		plan.Pity, plan.Fallback, plan.FallbackReason, plan.Picked = false, true, reason, prize.ID
 		return prize, plan, nil
 	}
 
@@ -887,7 +936,7 @@ func pickLotteryPrize(ctx context.Context, tx pgx.Tx, activity lotterydomain.Act
 		}
 		var ok bool
 		if index, ok = lotterydomain.Sample(plan, src); !ok {
-			return fallback()
+			return fallback(lotterydomain.FallbackEmpty)
 		}
 	}
 	chosen := prizes[index]
@@ -896,7 +945,7 @@ func pickLotteryPrize(ctx context.Context, tx pgx.Tx, activity lotterydomain.Act
 		return chosen, plan, err
 	}
 	if !reserved {
-		return fallback()
+		return fallback(lotterydomain.FallbackContended)
 	}
 	plan.Pity, plan.Picked = pity, chosen.ID
 	return chosen, plan, nil
@@ -1080,18 +1129,28 @@ WHERE d.id = $1 AND d.appid = $2`, drawID, appID))
 }
 
 // ListLotteryDraws 抽奖记录分页。
+//
+// 检索式见 lottery.ParseDrawSearch：每一段都落到有索引的列上（单号唯一索引、prize_name 与账号 / 昵称的
+// 三元组索引、按应用的设备 / IP / 用户索引），账号与昵称先在用户表里解析成 user_id 集合再回到记录表，
+// 不在三表 JOIN 之后做 OR 模糊匹配。总数与这一页在两个连接上并行查。
 func (r *Repository) ListLotteryDraws(ctx context.Context, query lotterydomain.DrawQuery) (*lotterydomain.Page[lotterydomain.Draw], error) {
 	where := []string{"d.appid = $1"}
 	args := []any{query.AppID}
-	add := func(clause string, value any) {
+	arg := func(value any) string {
 		args = append(args, value)
-		where = append(where, strings.ReplaceAll(clause, "?", "$"+strconv.Itoa(len(args))))
+		return "$" + strconv.Itoa(len(args))
+	}
+	add := func(clause string, value any) {
+		where = append(where, strings.ReplaceAll(clause, "?", arg(value)))
 	}
 	if query.ActivityID > 0 {
 		add("d.activity_id = ?", query.ActivityID)
 	}
 	if query.UserID > 0 {
 		add("d.user_id = ?", query.UserID)
+	}
+	if query.PrizeID > 0 {
+		add("d.prize_id = ?", query.PrizeID)
 	}
 	if query.Status != "" {
 		add("d.status = ?", query.Status)
@@ -1102,8 +1161,28 @@ func (r *Repository) ListLotteryDraws(ctx context.Context, query lotterydomain.D
 	if query.Winning {
 		where = append(where, "d.prize_kind <> 'none'")
 	}
-	if keyword := strings.TrimSpace(query.Keyword); keyword != "" {
-		add("(d.draw_no = ? OR d.prize_name ILIKE '%' || ? || '%' OR u.account ILIKE '%' || ? || '%' OR up.nickname ILIKE '%' || ? || '%')", keyword)
+	switch query.Risk {
+	case "":
+	case "any":
+		where = append(where, "d.risk_action IS NOT NULL")
+	case "clean":
+		where = append(where, "d.risk_action IS NULL")
+	default:
+		add("d.risk_action IS NOT NULL AND d.risk_rules @> ARRAY[?]::text[]", query.Risk)
+	}
+	if query.RiskAction != "" {
+		add("d.risk_action = ?", query.RiskAction)
+	}
+	switch query.Outcome {
+	case "pity":
+		where = append(where, "d.pity")
+	case "fallback":
+		where = append(where, "d.trace IS NOT NULL AND (d.trace->>'fallback') = 'true'")
+	case "conversion":
+		where = append(where, "d.conversion IS NOT NULL")
+	}
+	for _, term := range lotterydomain.ParseDrawSearch(query.Keyword) {
+		where = append(where, lotteryDrawSearchClause(term, arg))
 	}
 	if query.Start != nil {
 		add("d.created_at >= ?", *query.Start)
@@ -1121,28 +1200,79 @@ func (r *Repository) ListLotteryDraws(ctx context.Context, query lotterydomain.D
 		limit = 20
 	}
 	result := &lotterydomain.Page[lotterydomain.Draw]{Items: []lotterydomain.Draw{}, Page: page, Limit: limit}
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) `+lotteryDrawJoins+` WHERE `+whereSQL, args...).Scan(&result.Total); err != nil {
+	listArgs := append(append([]any{}, args...), limit, (page-1)*limit)
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		// 计数不需要 JOIN 活动与用户资料：条件都在 d 上（账号已解析成 user_id 子查询）
+		return r.pool.QueryRow(groupCtx, `SELECT COUNT(*) FROM lottery_draws d WHERE `+whereSQL, args...).Scan(&result.Total)
+	})
+	group.Go(func() error {
+		rows, err := r.pool.Query(groupCtx, `SELECT `+lotteryDrawColumns+` `+lotteryDrawJoins+` WHERE `+whereSQL+`
+ORDER BY d.created_at DESC, d.id DESC LIMIT $`+strconv.Itoa(len(listArgs)-1)+` OFFSET $`+strconv.Itoa(len(listArgs)), listArgs...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			item, err := scanLotteryDraw(rows)
+			if err != nil {
+				return err
+			}
+			result.Items = append(result.Items, *item)
+		}
+		return rows.Err()
+	})
+	if err := group.Wait(); err != nil {
 		return nil, err
 	}
 	result.TotalPages = int((result.Total + int64(limit) - 1) / int64(limit))
-	if result.Total == 0 {
-		return result, nil
-	}
-	args = append(args, limit, (page-1)*limit)
-	rows, err := r.pool.Query(ctx, `SELECT `+lotteryDrawColumns+` `+lotteryDrawJoins+` WHERE `+whereSQL+`
-ORDER BY d.created_at DESC, d.id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		item, err := scanLotteryDraw(rows)
-		if err != nil {
-			return nil, err
+	return result, nil
+}
+
+// lotteryUserMatchSQL 按账号或昵称模糊匹配本应用的用户（$1 是 appid，两边各走自己的三元组索引）。
+const lotteryUserMatchSQL = `SELECT u2.id FROM users u2 WHERE u2.appid = $1 AND u2.account ILIKE %[1]s
+UNION SELECT up2.user_id FROM user_profiles up2 JOIN users u3 ON u3.id = up2.user_id AND u3.appid = $1
+WHERE up2.nickname ILIKE %[1]s`
+
+// lotteryDrawSearchClause 检索式的一段 → 条件。arg 登记参数并返回占位符。
+func lotteryDrawSearchClause(term lotterydomain.SearchTerm, arg func(any) string) string {
+	value := term.Value
+	like := func() string { return arg("%" + escapeLikePattern(value) + "%") }
+	users := func(pattern string) string { return fmt.Sprintf(lotteryUserMatchSQL, pattern) }
+	switch term.Kind() {
+	case lotterydomain.SearchNo:
+		if len(value) == lotterydomain.DrawNoLength {
+			return "d.draw_no = " + arg(strings.ToUpper(value))
 		}
-		result.Items = append(result.Items, *item)
+		return "d.draw_no LIKE " + arg(escapeLikePattern(strings.ToUpper(value))+"%")
+	case lotterydomain.SearchIP:
+		return "d.client_ip = " + arg(value)
+	case lotterydomain.SearchDevice:
+		return "d.device_id = " + arg(value)
+	case lotterydomain.SearchPrize:
+		return "d.prize_name ILIKE " + like()
+	case lotterydomain.SearchUser:
+		pattern := like()
+		if id, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return "(d.user_id = " + arg(id) + " OR d.user_id IN (" + users(pattern) + "))"
+		}
+		return "d.user_id IN (" + users(pattern) + ")"
+	case lotterydomain.SearchID:
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return "FALSE"
+		}
+		if term.Field == lotterydomain.SearchID {
+			return "d.id = " + arg(id)
+		}
+		// 没指定字段的纯数字：记录 ID、用户 ID、数字账号（手机号之类），或奖品名里的数（「10」找「10 积分」）
+		idArg := arg(id)
+		return "(d.id = " + idArg + " OR d.user_id = " + idArg + " OR d.user_id IN (SELECT u2.id FROM users u2 WHERE u2.appid = $1 AND u2.account = " +
+			arg(value) + ") OR d.prize_name ILIKE " + like() + ")"
 	}
-	return result, rows.Err()
+	pattern := like()
+	return "(d.prize_name ILIKE " + pattern + " OR d.user_id IN (" + users(pattern) + "))"
 }
 
 // FulfillLotteryDraw 把一条待发放的记录标记为已发放。

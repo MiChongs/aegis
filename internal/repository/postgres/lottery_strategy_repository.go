@@ -231,24 +231,61 @@ FROM lottery_draws WHERE activity_id = $1 AND created_at >= $2`, activity.ID, in
 		}
 	}
 
-	if guard := strategy.Risk; guard != nil {
-		// 数的是除了自己之外的账号，再加上自己
-		if guard.DeviceAccounts > 0 && input.DeviceID != "" {
-			if err := tx.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) + 1 FROM lottery_draws
-WHERE activity_id = $1 AND device_id = $2 AND created_at >= $3 AND user_id <> $4`,
-				activity.ID, input.DeviceID, input.DayStart, input.UserID).Scan(&state.DeviceAccounts); err != nil {
-				return state, err
-			}
-		}
-		if guard.IPAccounts > 0 && input.ClientIP != "" {
-			if err := tx.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) + 1 FROM lottery_draws
-WHERE activity_id = $1 AND client_ip = $2 AND created_at >= $3 AND user_id <> $4`,
-				activity.ID, input.ClientIP, input.DayStart, input.UserID).Scan(&state.IPAccounts); err != nil {
-				return state, err
-			}
-		}
+	if err := lotteryRiskFacts(ctx, tx, strategy.Risk, activity.ID, input, now, &state); err != nil {
+		return state, err
 	}
 	return state, nil
+}
+
+// lotteryRiskFacts 风控规则要用的事实。只数生效规则用得到的信号；聚集类数的是除了自己之外的账号，再加上自己。
+func lotteryRiskFacts(ctx context.Context, tx queryExecutor, guard *lotterydomain.RiskGuard, activityID int64,
+	input lotterydomain.DrawInput, now time.Time, state *lotterydomain.DrawState) error {
+	state.DeviceMissing = input.DeviceID == ""
+	state.IPMissing = input.ClientIP == ""
+	if guard == nil {
+		return nil
+	}
+	uses := func(signal string) bool { return guard.Uses(signal) }
+	if !state.DeviceMissing && uses(lotterydomain.RiskSignalDeviceAccounts) {
+		if err := tx.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) + 1 FROM lottery_draws
+WHERE activity_id = $1 AND device_id = $2 AND created_at >= $3 AND user_id <> $4`,
+			activityID, input.DeviceID, input.DayStart, input.UserID).Scan(&state.DeviceAccounts); err != nil {
+			return err
+		}
+	}
+	if !state.IPMissing && uses(lotterydomain.RiskSignalIPAccounts) {
+		if err := tx.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) + 1 FROM lottery_draws
+WHERE activity_id = $1 AND client_ip = $2 AND created_at >= $3 AND user_id <> $4`,
+			activityID, input.ClientIP, input.DayStart, input.UserID).Scan(&state.IPAccounts); err != nil {
+			return err
+		}
+	}
+	if subnet := lotterydomain.SubnetOf(input.ClientIP); subnet != "" && uses(lotterydomain.RiskSignalSubnetAccounts) {
+		// client_ip 是文本：先判能不能解析成 inet，再按族取 /24 或 /64（与 lottery.SubnetOf 同一口径）
+		if err := tx.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) + 1 FROM lottery_draws
+WHERE activity_id = $1 AND created_at >= $2 AND user_id <> $3 AND client_ip IS NOT NULL
+  AND CASE WHEN pg_input_is_valid(client_ip, 'inet')
+        THEN network(set_masklen(client_ip::inet, CASE WHEN family(client_ip::inet) = 4 THEN 24 ELSE 64 END))
+      END = $4::cidr`, activityID, input.DayStart, input.UserID, subnet).Scan(&state.SubnetAccounts); err != nil {
+			return err
+		}
+	} else if subnet == "" && !state.IPMissing {
+		state.SubnetAccounts = 1
+	}
+	if !state.DeviceMissing && uses(lotterydomain.RiskSignalDeviceHistory) {
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM user_login_devices WHERE appid = $1 AND device_key = $2`,
+			input.AppID, input.DeviceID).Scan(&state.DeviceHistory); err != nil {
+			return err
+		}
+	}
+	if uses(lotterydomain.RiskSignalBurst) {
+		since := now.Add(-lotterydomain.BurstWindowMinutes * time.Minute)
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM lottery_draws
+WHERE activity_id = $1 AND user_id = $2 AND created_at >= $3`, activityID, input.UserID, since).Scan(&state.RecentDraws); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // reserveLotteryPrize 给选中的奖品占一份：先占全站每日限量，再扣库存。
@@ -313,7 +350,7 @@ ON CONFLICT (user_id, day) DO UPDATE SET seconds = LEAST(user_online_daily.secon
 }
 
 // LotteryPreview 管理端预览：这个人此刻再抽一次时的出奖方案（不加锁、不抽、不写）。
-// 设备与网络聚集按 1 个账号算（预览没有请求上下文）。
+// 预览没有请求上下文：设备与 IP 取这个人在应用里最近一次抽奖用的，风控按它们评估；一次都没抽过时聚集按 1 个账号算。
 func (r *Repository) LotteryPreview(ctx context.Context, activity lotterydomain.Activity, prizes []lotterydomain.Prize,
 	appID, userID int64, profile lotterydomain.BehaviorProfile, now, dayStart time.Time, location *time.Location,
 ) (lotterydomain.DrawState, error) {
@@ -325,9 +362,17 @@ func (r *Repository) LotteryPreview(ctx context.Context, activity lotterydomain.
 		AppID: appID, UserID: userID, ActivityID: activity.ID, DayStart: dayStart, Now: now, Location: location,
 		Profile: profile,
 	}
+	if err := r.pool.QueryRow(ctx, `SELECT COALESCE(device_id, ''), COALESCE(client_ip, '') FROM lottery_draws
+WHERE appid = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1`, appID, userID).Scan(&input.DeviceID, &input.ClientIP); err != nil &&
+		!errors.Is(err, pgx.ErrNoRows) {
+		return lotterydomain.DrawState{}, err
+	}
 	state, err := lotteryDrawState(ctx, r.pool, activity, prizes, input, facts, now)
 	if err != nil {
 		return state, err
+	}
+	if input.DeviceID == "" && input.ClientIP == "" {
+		state.DeviceMissing, state.IPMissing = false, false
 	}
 	chances := lotterydomain.EvaluateChances(activity, facts, lotterydomain.VideoChances{})
 	state.Source = chances.Next

@@ -151,7 +151,7 @@ POST /api/v1/apps/{appKey}/lottery/activities/{activityId}/draw
 | 维度 | 配置 | 作用 |
 |---|---|---|
 | 硬性资格 | 奖品的 `dailyLimit` / `userLimit` / `userDailyLimit`，库存 | 全站每天最多出几个、每人最多中几次、每人每天最多中几次；不满足的这一次权重为 0（`blocked`） |
-| 设备聚集 | `risk.deviceAccounts` / `risk.ipAccounts` | 本活动当天同设备（同 IP）抽过奖的账号数超过上限时，这个人只出未中奖，保底也不触发 |
+| 风控规则 | `risk.rules[]` | 见下节「风控规则」：信号比阈值，命中后降权、停发稀有、不触发保底、只发兜底或拒绝抽奖 |
 | 库存匀速释放 | `pacing.slack`（提前量，库存比例）/ `pacing.maxBoost` | 限量奖品按活动时间进度放量：已放量 = 库存 ×（进度 + 提前量）。超前时在提前量内线性降到 0，落后超过一个提前量时放大到 `maxBoost` 倍。需要结束时间 |
 | 积分预算 | `budget.dailyPoints` | 本活动当天发出的积分（含折算）过半后，积分奖按剩余比例线性收紧；单个奖品超过剩余预算时不出。并发下是软上限 |
 | 行为画像 | `behavior` | 见下节 |
@@ -160,8 +160,52 @@ POST /api/v1/apps/{appKey}/lottery/activities/{activityId}/draw
 | 软保底 | `softPity.start` / `softPity.step` | 连续未中达到 start 次起，每多一次未中，中奖总概率抬高 step 个百分点（中奖奖品之间比例不变，只缩小未中奖） |
 | 硬保底 | `pityThreshold`（原有） | 到点直接给保底奖；保底奖这一次被硬性资格挡掉时退回常规抽取 |
 
-每一次的完整方案（各奖品的基础权重、每个维度的系数与原因、最终概率、行为分明细、是否保底 / 改发兜底）
+每一次的完整方案（各奖品的基础权重、每个维度的系数与原因、最终概率、行为分明细、风控逐条结果、是否保底 / 改发兜底及原因）
 写进 `lottery_draws.trace`，管理端记录里点「方案」可看；客户端接口一律不返回。
+
+`trace.floor` 是这一次的兜底奖；`trace.fallbackReason` 说明为什么改发兜底：`empty`（所有奖品最终权重都是 0）、
+`contended`（抽中的限量奖品占库存时被并发抢光）。
+
+### 风控规则
+
+旧版风控只有「同设备 / 同 IP 账号数超过上限 → 只出未中奖」两项，trace 里只有一个 `risk: true`：奖盘没有「谢谢参与」时，
+管理端看到每个奖品都是「设备聚集 0」、概率全是 0%，却又抽中了兜底奖，看不出几个账号、上限多少。
+
+现在 `strategy.risk.rules[]` 是一组规则（`risk.go`，迁移 `000145`），每条 = 信号 比较 阈值 → 处置：
+
+```json
+"risk": {"rules": [
+  {"name": "同设备多账号", "signal": "deviceAccounts", "op": "gt", "threshold": 3, "action": "floor"},
+  {"signal": "subnetAccounts", "op": "gt", "threshold": 12, "action": "damp", "factor": 0.5},
+  {"signal": "accountAgeHours", "op": "lt", "threshold": 24, "action": "rare", "rareBelow": 0.01, "kinds": ["vip_plan"]},
+  {"signal": "noDevice", "op": "gte", "threshold": 1, "action": "deny"}
+]}
+```
+
+| 信号 | 含义 |
+|---|---|
+| `deviceAccounts` / `ipAccounts` | 本活动今天同设备 / 同 IP 抽过奖的账号数（含本人） |
+| `subnetAccounts` | 同网段（IPv4 /24、IPv6 /64）今天的账号数，挡换 IP 不换网段的批量号 |
+| `deviceHistory` | 这台设备在应用里登录过的账号数（`user_login_devices`） |
+| `accountDevices` | 这个账号登录过的设备数 |
+| `noDevice` | 请求没带设备号（0 / 1） |
+| `accountAgeHours` | 注册时长（小时） |
+| `riskScore` | 风控中心近 30 天给这个账号的最高分 |
+| `burst10m` / `todayDraws` / `winsToday` | 近 10 分钟抽奖次数 / 今天抽奖次数 / 今天中奖次数（本活动，不含这一次） |
+
+处置从轻到重：`damp` 降权（中奖奖品权重 × factor，多条相乘，可限奖品类型）→ `noPity` 不触发保底（硬保底、软保底、
+伪随机都按未连败算）→ `rare` 停发稀有（公示概率低于 `rareBelow` 的中奖奖品不出，可限类型）→ `floor` 只发兜底
+（兜底奖以外的中奖奖品不出；兜底奖照常可出，它本是纯保底格、权重 0 时这一次按 1 算，方案里显示 100%）→
+`deny` 拒绝抽奖（事务回滚、次数与积分不扣，用户收到 `40348`，另记一条 `lottery_risk_events`）。兜底奖不受降权与停发影响。
+
+取不到的信号（请求没有设备号时数不了同设备账号）记 `missing`、按未命中处理。旧字段 `deviceAccounts` / `ipAccounts`
+读入时转成两条 `floor` 规则，已保存的活动行为不变。
+
+每条规则的取值、阈值、是否命中写进 `trace.riskReport.checks`；命中的信号与最重的处置另写 `lottery_draws.risk_rules` /
+`risk_action`（GIN 与部分索引），按风控筛记录不用解 JSON。迁移前命中风控的记录回填为 `legacyCluster` / `floor`。
+
+`GET /lottery/activities/{id}/risk?days=7` 是风控总览：抽奖与命中人次、按处置与信号的命中 / 拒绝、按天趋势、
+设备 / IP / 网段聚集排行（2 个账号以上）、最近被拒绝的请求、当前生效的规则。八组聚合互不依赖，在各自的连接上并行查（errgroup）。
 
 ### 概率控制层
 
@@ -329,7 +373,7 @@ f' 关于 f 单调不减，所以拿到加成的人的系数范围就是把自�
   "pacing": {"slack": 0.05, "maxBoost": 1.5},
   "cooldown": {"draws": 5, "factor": 0.3},
   "budget": {"dailyPoints": 10000},
-  "risk": {"deviceAccounts": 3, "ipAccounts": 0},
+  "risk": {"rules": [{"signal": "deviceAccounts", "op": "gt", "threshold": 3, "action": "floor"}]},
   "behavior": {"minFactor": 0.8, "maxBoost": 1.5, "kinds": ["points", "vip_days"],
                "signals": [{"key": "onlineMinutes30d", "weight": 2, "half": 900}]},
   "rules": [{"name": "连签一周", "when": "user.signStreak >= 7", "kinds": ["points"], "factor": 1.5}]
@@ -473,7 +517,8 @@ k 已拥有格子的发放比例。
 | GET / PUT / DELETE | `/api/admin/apps/{appKey}/lottery/activities/{activityId}` | 详情 / 整体更新活动与奖品 / 删除（有记录时 `40927`，改为结束） |
 | PUT | `/api/admin/apps/{appKey}/lottery/activities/{activityId}/status` | `draft` / `active` / `paused` / `ended`；上线前按当前奖盘再校验一次 |
 | GET | `/api/admin/apps/{appKey}/lottery/activities/{activityId}/stats?days=14` | 概览、按天趋势、来源与奖品分布 |
-| GET | `/api/admin/apps/{appKey}/lottery/draws` | 记录（activityId / userId / status / source / winning / keyword / start / end） |
+| GET | `/api/admin/apps/{appKey}/lottery/draws` | 记录（activityId / userId / prizeId / status / source / winning / risk / riskAction / outcome / keyword / start / end），见下 |
+| GET | `/api/admin/apps/{appKey}/lottery/activities/{activityId}/risk?days=7` | 风控总览（见上文「风控规则」） |
 | POST | `/api/admin/apps/{appKey}/lottery/draws/{drawId}/fulfill` | 人工发放的奖品标记已发放（`{note}` 写进站内信；重复标记 `40926`） |
 | POST | `/api/admin/apps/{appKey}/lottery/simulate` | 出奖策略模拟（见上文「模拟」），附首中精确分析 `analytic` |
 | GET | `/api/admin/apps/{appKey}/lottery/activities/{activityId}/audit?days=14` | 出奖审计（见上文「精确分析与审计」） |
@@ -482,6 +527,12 @@ k 已拥有格子的发放比例。
 | GET | `/api/admin/apps/{appKey}/lottery/tickets/ledger` | 次数流水（userId / kind / origin / keyword） |
 | GET | `/api/admin/apps/{appKey}/lottery/tickets/users/{userId}` | 一个人的账户与批次 |
 | POST | `/api/admin/apps/{appKey}/lottery/tickets/users/{userId}/adjust` | `{amount, reason, paid}`：正数发放（发站内信）、负数按扣除顺序扣减（不够扣 `40000`） |
+
+记录检索：`keyword` 是检索式（`search.go`），空格分隔的多段同时满足。完整单号走唯一索引，`LTD` 开头的前缀按前缀匹配；
+IP 精确匹配；纯数字匹配记录 ID、用户 ID、数字账号或奖品名里的数；其余匹配奖品名、账号、昵称（三元组索引，账号与昵称先在
+用户表里解析成 user_id 集合）。可指定字段：`user:` `prize:` `device:` `ip:` `no:` `id:`（也认「用户 / 奖品 / 设备 / 单号」），
+引号包起来的值可以带空格。`risk` 为 `any` / `clean` / 信号键，`outcome` 为 `pity` / `fallback` / `conversion`。
+总数与这一页在两个连接上并行查。
 
 活动的保存体：
 
@@ -516,12 +567,18 @@ k 已拥有格子的发放比例。
 
 `000142_lottery_app_settings` 建应用级设置表（至尊加成），只有 `CREATE TABLE IF NOT EXISTS`，不碰旧表搬迁。
 
+`000145_lottery_risk` 给记录加 `risk_rules` / `risk_action` 与检索索引、建 `lottery_risk_events`。旧记录的回填放在
+「`idx_lottery_draws_risk` 还不存在」的 DO 块里，只跑一次。
+
 ## 验证
 
 `TestLotteryIntegration`（真实 Postgres）：保存校验、草稿不可见、免费次数与幂等回放、视频抽奖（client 模式的激励广告发次数）、
 积分抽奖与每日上限、保底、限量奖品并发只出库存数、同一 requestId 并发只抽一次、会员 / 功能 / 人工发放、
 已拥有的奖品（四种处理方式、单奖品改发、剔除后的概率与保底、已永久解锁的功能、统计）、删除与统计，
-最后在旧表形状上跑 000110 + 000114 + 000124 + 000125 + 000130 + 000136 两遍核对搬迁。
+最后在旧表形状上跑 000110 + 000114 + 000124 + 000125 + 000130 + 000136 + 000145 两遍核对搬迁。
+
+`TestLotteryRiskIntegration`：同设备与同网段聚集（第 3 个账号起只发兜底、兜底奖照常发出）、风控列与逐条结果落库、
+按信号筛记录、缺设备标识拒绝且次数不扣、拒绝事件、风控总览的并行聚合（处置 / 信号 / 设备与网段聚集），以及各种检索式。
 
 `TestLotteryTicketsIntegration`：早期余额对齐成一批、管理员发放两档、活动页拆分、过时页面传 `points` 也先扣免费、
 指定 `free` 不越级、单抽与十连抽都按「免费 → 赠送 → 兑换 → 积分」、流水与累计、扣减先扣赠送的且跨批记两条、总览与账户搜索。

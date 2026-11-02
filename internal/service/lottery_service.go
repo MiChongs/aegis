@@ -151,6 +151,9 @@ func (s *LotteryService) Catalog(ctx context.Context, appID int64) (map[string]a
 		// 出奖策略：行为信号、规则变量与取值上界
 		"signals":       lotterydomain.SignalCatalog(),
 		"ruleVariables": lotterydomain.RuleVariables(),
+		// 风控规则：信号与处置目录
+		"riskSignals": lotterydomain.RiskSignals(),
+		"riskActions": lotterydomain.RiskActions(),
 		"strategyLimits": map[string]any{
 			"rules": lotterydomain.MaxStrategyRules, "ruleFactor": lotterydomain.MaxRuleFactor,
 			"softPityStep": lotterydomain.MaxSoftPityStep, "cooldownDraws": lotterydomain.MaxCooldownDraws,
@@ -158,7 +161,7 @@ func (s *LotteryService) Catalog(ctx context.Context, appID int64) (map[string]a
 			"prizeLimit": lotterydomain.MaxPrizeLimit, "simulationUsers": lotterydomain.MaxSimulationUsers,
 			"simulationEach": lotterydomain.MaxSimulationEach, "simulationDraws": lotterydomain.MaxSimulationDraws,
 			"luckStrength": lotterydomain.MaxLuckStrength, "controlGain": lotterydomain.MaxControlGain,
-			"fortuneSpread": lotterydomain.MaxFortuneSpread,
+			"fortuneSpread": lotterydomain.MaxFortuneSpread, "riskRules": lotterydomain.MaxRiskRules,
 		},
 		// 人群特权：人群、条件表达式的变量与取值上界
 		"perkAudiences": lotterydomain.PerkAudiences(),
@@ -953,6 +956,10 @@ func (s *LotteryService) translate(err error) error {
 		default:
 			return apperrors.New(errCodeLotterySourceUnavailable, http.StatusConflict, message)
 		}
+	}
+	var denied *pgrepo.LotteryRiskDeniedError
+	if errors.As(err, &denied) {
+		return apperrors.New(errCodeLotteryRiskBlocked, http.StatusForbidden, "当前环境存在风险，暂时无法抽奖")
 	}
 	var stock *pgrepo.LotteryStockError
 	if errors.As(err, &stock) {

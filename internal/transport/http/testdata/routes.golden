@@ -255,6 +255,7 @@ GET	/api/admin/apps/:appkey/lottery/activities/:activityId/audit	AdminLotteryAud
 GET	/api/admin/apps/:appkey/lottery/activities/:activityId/fortune	AdminLotteryFortune
 GET	/api/admin/apps/:appkey/lottery/activities/:activityId/fortune/controls	AdminListLotteryFortuneControls
 GET	/api/admin/apps/:appkey/lottery/activities/:activityId/fortune/users/:userId	AdminLotteryFortuneUser
+GET	/api/admin/apps/:appkey/lottery/activities/:activityId/risk	AdminLotteryRisk
 GET	/api/admin/apps/:appkey/lottery/activities/:activityId/stats	AdminLotteryStats
 GET	/api/admin/apps/:appkey/lottery/catalog	AdminLotteryCatalog
 GET	/api/admin/apps/:appkey/lottery/draws	AdminListLotteryDraws

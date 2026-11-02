@@ -258,7 +258,10 @@ type Draw struct {
 	DeviceID   string      `json:"deviceId,omitempty"`
 	ClientIP   string      `json:"clientIp,omitempty"`
 	// Trace 出奖方案（每个奖品的系数、最终概率、行为分）。只给管理端，客户端接口返回前清空
-	Trace     *DrawPlan `json:"trace,omitempty"`
+	Trace *DrawPlan `json:"trace,omitempty"`
+	// RiskRules / RiskAction 命中的风控信号与最重的处置（只给管理端）
+	RiskRules  []string `json:"riskRules,omitempty"`
+	RiskAction string   `json:"riskAction,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -271,7 +274,14 @@ type DrawQuery struct {
 	Source     string
 	// Winning 只看抽中的（排除谢谢参与）
 	Winning bool
+	// Keyword 检索式，见 ParseDrawSearch
 	Keyword string
+	// Risk any = 命中过风控，clean = 没命中，其余为信号键；RiskAction 按处置筛
+	Risk       string
+	RiskAction string
+	// Outcome pity 保底 / fallback 改发兜底 / conversion 已拥有改发
+	Outcome string
+	PrizeID int64
 	Start   *time.Time
 	End     *time.Time
 	Page    int
