@@ -126,6 +126,19 @@ WHERE user_id = $1 AND source_type = 'item_grant' ORDER BY id DESC LIMIT 1`, ann
 	if profile.Experience.Factor != (growth.Factor{Num: 2, Den: 1}) || profile.Experience.DailyCap != 150 || profile.Experience.UsedToday != 150 {
 		t.Fatalf("experience view = %+v", profile.Experience)
 	}
+	// 签到流水（source_type daily_signin）归到 signin，只出现一次，并带着规则前后的数额
+	signins := 0
+	for _, stat := range profile.Integral.Stats {
+		if stat.Source == growth.SourceSignin {
+			signins++
+			if stat.Base != 9 || stat.Granted != 4 || stat.Touched != 1 {
+				t.Fatalf("signin stat = %+v, want base 9 / granted 4 / touched 1", stat)
+			}
+		}
+	}
+	if signins != 1 {
+		t.Fatalf("signin appears %d times in stats", signins)
+	}
 	if len(profile.Rules) != 2 || len(profile.AppRules) != 1 || len(profile.Events) < 3 {
 		t.Fatalf("profile rules=%d app=%d events=%d", len(profile.Rules), len(profile.AppRules), len(profile.Events))
 	}

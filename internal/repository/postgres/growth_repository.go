@@ -503,20 +503,18 @@ type GrowthSourceStat struct {
 	Touched int64  `json:"touched"`
 }
 
-// GrowthSourceStats 最近 days 天按来源汇总的收入（流水 + 签到）。
+// GrowthSourceStats 最近 days 天按来源汇总的收入。签到事务自己会写 source_type = daily_signin 的流水，归到 signin。
 func (r *Repository) GrowthSourceStats(ctx context.Context, appID, userID int64, kind growth.Kind, days int) ([]GrowthSourceStat, error) {
 	since := itemGrantDayStart(time.Now()).AddDate(0, 0, -(max(days, 1) - 1))
-	table, signinColumn := "integral_transactions", "integral_reward"
+	table := "integral_transactions"
 	if kind == growth.KindExperience {
-		table, signinColumn = "experience_transactions", "experience_reward"
+		table = "experience_transactions"
 	}
-	rows, err := r.pool.Query(ctx, `SELECT COALESCE(source_type, category), COALESCE(SUM(COALESCE((extra_data->'growth'->>'base')::bigint, amount)), 0),
+	rows, err := r.pool.Query(ctx, `SELECT CASE WHEN COALESCE(source_type, category) = 'daily_signin' THEN 'signin' ELSE COALESCE(source_type, category) END AS source,
+COALESCE(SUM(COALESCE((extra_data->'growth'->>'base')::bigint, amount)), 0),
 COALESCE(SUM(amount), 0), COUNT(*), COUNT(*) FILTER (WHERE extra_data ? 'growth')
 FROM `+table+` WHERE user_id = $1 AND appid = $2 AND type = 'earn' AND amount >= 0 AND created_at >= $3
 GROUP BY 1
-UNION ALL
-SELECT 'signin', COALESCE(SUM(`+signinColumn+`), 0), COALESCE(SUM(`+signinColumn+`), 0), COUNT(*), 0
-FROM daily_signins WHERE user_id = $1 AND appid = $2 AND signed_at >= $3
 ORDER BY 3 DESC`, userID, appID, since)
 	if err != nil {
 		return nil, err

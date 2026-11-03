@@ -2898,7 +2898,8 @@ func (r *Repository) CreateDailySign(ctx context.Context, userID int64, appID in
 		}
 	}
 
-	// 成长调控：签到奖励按规则换算（在等级签到加成之后）
+	// 成长调控：签到奖励按规则换算（在等级签到加成之后）；结果写进两条签到流水的 extra_data.growth
+	growthOutcomes := map[growth.Kind]growth.Outcome{}
 	for _, item := range []struct {
 		kind   growth.Kind
 		amount *int64
@@ -2909,6 +2910,7 @@ func (r *Repository) CreateDailySign(ctx context.Context, userID int64, appID in
 		}
 		if touched {
 			*item.amount = outcome.Granted
+			growthOutcomes[item.kind] = outcome
 		}
 	}
 
@@ -3023,13 +3025,17 @@ ON CONFLICT (month_key, appid, user_id) DO UPDATE SET
 		return nil, err
 	}
 
-	integralExtra, _ := json.Marshal(map[string]any{
+	integralExtraMap := map[string]any{
 		"sign_date":         record.SignDate,
 		"consecutive_days":  record.ConsecutiveDays,
 		"bonus_type":        record.BonusType,
 		"bonus_description": record.BonusDescription,
 		"source":            record.SignInSource,
-	})
+	}
+	if outcome, ok := growthOutcomes[growth.KindIntegral]; ok {
+		integralExtraMap["growth"] = outcome
+	}
+	integralExtra, _ := json.Marshal(integralExtraMap)
 	if _, err = tx.Exec(ctx, `INSERT INTO integral_transactions (transaction_no, user_id, appid, type, category, amount, balance_before, balance_after, status, title, description, source_id, source_type, multiplier, client_ip, user_agent, extra_data, created_at, updated_at) VALUES ($1, $2, $3, 'earn', 'daily_signin', $4, $5, $6, 'completed', $7, $8, $9, 'daily_signin', $10, $11, $12, $13, NOW(), NOW())`,
 		generateTransactionNo("INT"),
 		record.UserID,
@@ -3061,7 +3067,7 @@ ON CONFLICT (month_key, appid, user_id) DO UPDATE SET
 	for _, reward := range scheme.RewardsBetween(levelBefore, levelAfterInfo.CurrentLevel) {
 		levelRewards = append(levelRewards, map[string]any{"level": reward.Level, "label": reward.Label, "claim": reward.Claim})
 	}
-	experienceExtra, _ := json.Marshal(map[string]any{
+	experienceExtraMap := map[string]any{
 		"sign_date":         record.SignDate,
 		"consecutive_days":  record.ConsecutiveDays,
 		"bonus_type":        record.BonusType,
@@ -3070,7 +3076,11 @@ ON CONFLICT (month_key, appid, user_id) DO UPDATE SET
 		"level_before":      levelBefore,
 		"level_after":       levelAfterInfo.CurrentLevel,
 		"level_rewards":     levelRewards,
-	})
+	}
+	if outcome, ok := growthOutcomes[growth.KindExperience]; ok {
+		experienceExtraMap["growth"] = outcome
+	}
+	experienceExtra, _ := json.Marshal(experienceExtraMap)
 	experienceTitle := "每日签到经验奖励"
 	if isLevelUp {
 		experienceTitle = "每日签到经验奖励（等级提升）"
