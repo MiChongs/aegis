@@ -576,6 +576,8 @@ type AdminUserSearchConfig struct {
 	MaxPinyinPaths    int
 	WarmupEnabled     bool
 	WarmupConcurrency int
+	// Shards 索引分片数（检索时并行），0 = 按 CPU 核数（2–16）
+	Shards int
 }
 
 type AccountBanConfig struct {
@@ -932,6 +934,7 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 			MaxPinyinPaths:    v.GetInt("ADMIN_USER_SEARCH_MAX_PINYIN_PATHS"),
 			WarmupEnabled:     getBool(v, "ADMIN_USER_SEARCH_WARMUP_ENABLED", true),
 			WarmupConcurrency: v.GetInt("ADMIN_USER_SEARCH_WARMUP_CONCURRENCY"),
+			Shards:            v.GetInt("ADMIN_USER_SEARCH_SHARDS"),
 		},
 		AccountBan: AccountBanConfig{
 			CleanupEnabled:   getBool(v, "ACCOUNT_BAN_CLEANUP_ENABLED", true),

@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -22,23 +25,43 @@ import (
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/mozillazg/go-pinyin"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
 
+// 管理端用户搜索（bleve 全文 + 拼音 / 首字母）。
+//
+// 第 4 版起索引按用户 ID 取模分成 N 个分片（默认等于 CPU 核数，2–16 之间），查询经 bleve.IndexAlias
+// 同时打到全部分片、各分片在自己的 goroutine 里检索后归并排序 —— 大应用的关键词搜索按核数并行。
+// 写入按用户 ID 落到固定分片；全量 / 增量同步是三段流水线：
+//
+//	读库（游标分页，下一页与本页的建索引重叠）→ 多核构建文档（拼音展开最耗 CPU）→ 各分片并行提交批次
+//
+// 同一个检索条件在 15 秒内重复出现时直接用缓存（控制台翻页、搜索框防抖前后的重复请求）；
+// 任何写入（建号、改资料、删除、同步）都让该应用的缓存代次 +1，缓存立即作废。
 const (
 	adminUserSearchBatchSize     = 2000
-	adminUserSearchIndexVersion  = 3
+	adminUserSearchIndexVersion  = 4
 	adminUserSearchMaxPinyinPath = 16
+	adminUserSearchMaxShards     = 16
+	adminUserSearchCacheTTL      = 15 * time.Second
+	adminUserSearchCacheMax      = 4096
 )
 
 var adminUserSearchPinyinPathLimit = adminUserSearchMaxPinyinPath
 
+// 旧版本（单一索引）目录名：新版本打开后在后台删掉，它们只是可重建的派生数据。
+var adminUserSearchLegacyDir = regexp.MustCompile(`^admin_users_v[0-3]\.bleve$`)
+
 type AdminUserSearchService struct {
-	log               *zap.Logger
-	pg                *pgrepo.Repository
+	log *zap.Logger
+	pg  *pgrepo.Repository
+	// shards 写入按用户 ID 取模落到其中一个；index 是覆盖全部分片的只读别名，检索走它（并行）
+	shards            []bleve.Index
 	index             bleve.Index
 	indexPath         string
 	batchSize         int
+	buildWorkers      int
 	warmupEnabled     bool
 	warmupConcurrency int
 	indexedApps       sync.Map
@@ -46,6 +69,18 @@ type AdminUserSearchService struct {
 	warmupOnce        sync.Once
 	closeOnce         sync.Once
 	closeErr          error
+
+	// 结果缓存：key → adminUserSearchCacheEntry；appGen：appID → *atomic.Uint64
+	cache     sync.Map
+	cacheSize atomic.Int64
+	appGen    sync.Map
+}
+
+type adminUserSearchCacheEntry struct {
+	gen     uint64
+	ids     []int64
+	total   int64
+	expires time.Time
 }
 
 type adminUserSearchCheckpoint struct {
@@ -87,6 +122,15 @@ type adminUserSearchDocument struct {
 	CreatedAt             time.Time `json:"created_at"`
 }
 
+// adminUserSearchShardCount 分片数：配置值优先，否则取 CPU 核数，限制在 [1, 16]。
+func adminUserSearchShardCount(configured int) int {
+	n := configured
+	if n <= 0 {
+		n = min(max(runtime.NumCPU(), 2), adminUserSearchMaxShards)
+	}
+	return min(max(n, 1), adminUserSearchMaxShards)
+}
+
 func NewAdminUserSearchService(log *zap.Logger, pg *pgrepo.Repository, cfg config.AdminUserSearchConfig) (*AdminUserSearchService, error) {
 	if log == nil {
 		log = zap.NewNop()
@@ -112,39 +156,78 @@ func NewAdminUserSearchService(log *zap.Logger, pg *pgrepo.Repository, cfg confi
 	if warmupConcurrency <= 0 {
 		warmupConcurrency = 2
 	}
+	shardCount := adminUserSearchShardCount(cfg.Shards)
 
-	indexPath := filepath.Join(rootDir, fmt.Sprintf("admin_users_v%d.bleve", adminUserSearchIndexVersion))
-	index, err := bleve.Open(indexPath)
-	created := false
-	if err != nil {
-		if !errors.Is(err, bleve.ErrorIndexPathDoesNotExist) {
-			return nil, err
+	// 分片数写进目录名：改了分片数就是一份新索引（取模路由变了），旧目录由下面的清理删除
+	indexPath := filepath.Join(rootDir, fmt.Sprintf("admin_users_v%d_s%d", adminUserSearchIndexVersion, shardCount))
+	if err := os.MkdirAll(indexPath, 0o755); err != nil {
+		return nil, err
+	}
+	shards := make([]bleve.Index, shardCount)
+	created := make([]bool, shardCount)
+	group := errgroup.Group{}
+	for i := range shards {
+		group.Go(func() error {
+			path := filepath.Join(indexPath, fmt.Sprintf("shard-%02d.bleve", i))
+			index, err := bleve.Open(path)
+			if err != nil {
+				if !errors.Is(err, bleve.ErrorIndexPathDoesNotExist) {
+					return fmt.Errorf("open search shard %d: %w", i, err)
+				}
+				if index, err = bleve.New(path, newAdminUserSearchMapping()); err != nil {
+					return fmt.Errorf("create search shard %d: %w", i, err)
+				}
+				created[i] = true
+			}
+			shards[i] = index
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		for _, shard := range shards {
+			if shard != nil {
+				_ = shard.Close()
+			}
 		}
-		index, err = bleve.New(indexPath, newAdminUserSearchMapping())
-		if err != nil {
-			return nil, err
-		}
-		created = true
+		return nil, err
+	}
+	// 任何一个分片是新建的，其它分片里的检查点就不可信（分片 0 存检查点）：全部清空重建
+	anyCreated := false
+	for _, c := range created {
+		anyCreated = anyCreated || c
+	}
+
+	alias := bleve.NewIndexAlias(shards...)
+	if err := alias.SetIndexMapping(newAdminUserSearchMapping()); err != nil {
+		log.Debug("admin user search alias mapping not set", zap.Error(err))
 	}
 
 	service := &AdminUserSearchService{
 		log:               log,
 		pg:                pg,
-		index:             index,
+		shards:            shards,
+		index:             alias,
 		indexPath:         indexPath,
 		batchSize:         batchSize,
+		buildWorkers:      max(runtime.NumCPU(), 2),
 		warmupEnabled:     cfg.WarmupEnabled,
 		warmupConcurrency: warmupConcurrency,
 	}
+	if anyCreated {
+		service.resetCheckpoints()
+	}
+	go service.removeLegacyIndexes(rootDir)
 
-	docCount, countErr := index.DocCount()
+	docCount, countErr := alias.DocCount()
 	if countErr != nil {
 		log.Warn("admin user search doc count failed", zap.String("indexPath", indexPath), zap.Error(countErr))
 	}
 	log.Info("admin user bleve search initialized",
 		zap.String("indexPath", indexPath),
-		zap.Bool("created", created),
+		zap.Int("shards", shardCount),
+		zap.Bool("created", anyCreated),
 		zap.Int("batchSize", batchSize),
+		zap.Int("buildWorkers", service.buildWorkers),
 		zap.Int("maxPinyinPaths", adminUserSearchPinyinPathLimit),
 		zap.Bool("warmupEnabled", cfg.WarmupEnabled),
 		zap.Int("warmupConcurrency", warmupConcurrency),
@@ -153,13 +236,56 @@ func NewAdminUserSearchService(log *zap.Logger, pg *pgrepo.Repository, cfg confi
 	return service, nil
 }
 
+// resetCheckpoints 分片集合不完整时（有分片是新建的）作废全部检查点，下次查询该应用时全量同步。
+func (s *AdminUserSearchService) resetCheckpoints() {
+	apps, err := s.pg.ListApps(context.Background())
+	if err != nil {
+		return
+	}
+	for _, app := range apps {
+		_ = s.shards[0].DeleteInternal(adminUserSearchCheckpointKey(app.ID))
+	}
+}
+
+// removeLegacyIndexes 删除旧版本的单一索引目录（只匹配 admin_users_v0–v3.bleve 与其它分片数的 v4 目录）。
+func (s *AdminUserSearchService) removeLegacyIndexes(rootDir string) {
+	entries, err := os.ReadDir(rootDir)
+	if err != nil {
+		return
+	}
+	current := filepath.Base(s.indexPath)
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() || name == current {
+			continue
+		}
+		legacy := adminUserSearchLegacyDir.MatchString(name) ||
+			(strings.HasPrefix(name, fmt.Sprintf("admin_users_v%d_s", adminUserSearchIndexVersion)))
+		if !legacy {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(rootDir, name)); err != nil {
+			s.log.Warn("remove legacy admin user search index failed", zap.String("dir", name), zap.Error(err))
+			continue
+		}
+		s.log.Info("removed legacy admin user search index", zap.String("dir", name))
+	}
+}
+
 func (s *AdminUserSearchService) Close() error {
 	if s == nil || s.index == nil {
 		return nil
 	}
 	s.closeOnce.Do(func() {
-		s.log.Info("closing admin user bleve search", zap.String("indexPath", s.indexPath))
-		s.closeErr = s.index.Close()
+		s.log.Info("closing admin user bleve search", zap.String("indexPath", s.indexPath), zap.Int("shards", len(s.shards)))
+		_ = s.index.Close()
+		var errs []error
+		for _, shard := range s.shards {
+			if err := shard.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		s.closeErr = errors.Join(errs...)
 	})
 	return s.closeErr
 }
@@ -171,6 +297,59 @@ func (s *AdminUserSearchService) StartWarmup(ctx context.Context) {
 	s.warmupOnce.Do(func() {
 		go s.warmupApps(ctx)
 	})
+}
+
+// shardFor 用户落在哪个分片。
+func (s *AdminUserSearchService) shardFor(userID int64) bleve.Index {
+	n := int64(len(s.shards))
+	return s.shards[((userID%n)+n)%n]
+}
+
+// generation 应用的缓存代次。
+func (s *AdminUserSearchService) generation(appID int64) *atomic.Uint64 {
+	if value, ok := s.appGen.Load(appID); ok {
+		return value.(*atomic.Uint64)
+	}
+	value, _ := s.appGen.LoadOrStore(appID, new(atomic.Uint64))
+	return value.(*atomic.Uint64)
+}
+
+// invalidate 应用的检索结果缓存作废。
+func (s *AdminUserSearchService) invalidate(appID int64) { s.generation(appID).Add(1) }
+
+func adminUserSearchCacheKey(appID int64, adminQuery userdomain.AdminUserQuery) string {
+	raw, _ := json.Marshal(adminQuery)
+	return strconv.FormatInt(appID, 10) + "|" + string(raw)
+}
+
+func (s *AdminUserSearchService) cached(key string, gen uint64) ([]int64, int64, bool) {
+	value, ok := s.cache.Load(key)
+	if !ok {
+		return nil, 0, false
+	}
+	entry := value.(adminUserSearchCacheEntry)
+	if entry.gen != gen || time.Now().After(entry.expires) {
+		s.cache.Delete(key)
+		s.cacheSize.Add(-1)
+		return nil, 0, false
+	}
+	return append([]int64(nil), entry.ids...), entry.total, true
+}
+
+func (s *AdminUserSearchService) remember(key string, gen uint64, ids []int64, total int64) {
+	if s.cacheSize.Load() >= adminUserSearchCacheMax {
+		// 满了整体清空：条目都是 15 秒内的，清掉的代价只是下一次重新检索
+		s.cache.Range(func(k, _ any) bool {
+			s.cache.Delete(k)
+			return true
+		})
+		s.cacheSize.Store(0)
+	}
+	if _, loaded := s.cache.Swap(key, adminUserSearchCacheEntry{
+		gen: gen, ids: append([]int64(nil), ids...), total: total, expires: time.Now().Add(adminUserSearchCacheTTL),
+	}); !loaded {
+		s.cacheSize.Add(1)
+	}
 }
 
 func (s *AdminUserSearchService) SearchUsers(ctx context.Context, appID int64, adminQuery userdomain.AdminUserQuery) ([]int64, int64, error) {
@@ -198,10 +377,17 @@ func (s *AdminUserSearchService) SearchUsers(ctx context.Context, appID int64, a
 		return nil, 0, err
 	}
 
+	gen := s.generation(appID).Load()
+	cacheKey := adminUserSearchCacheKey(appID, adminQuery)
+	if ids, total, ok := s.cached(cacheKey, gen); ok {
+		return ids, total, nil
+	}
+
 	rootQuery := bleve.NewConjunctionQuery(buildAdminUserSearchQueries(appID, adminQuery)...)
 	req := bleve.NewSearchRequestOptions(rootQuery, adminQuery.Limit, (adminQuery.Page-1)*adminQuery.Limit, false)
 	req.SortBy([]string{"-_score", "-created_at", "-user_id"})
 
+	// 别名把请求同时发给全部分片（每个分片一个 goroutine），再按排序键归并
 	result, err := s.index.SearchInContext(ctx, req)
 	if err != nil {
 		s.log.Warn("admin user bleve search failed",
@@ -221,20 +407,12 @@ func (s *AdminUserSearchService) SearchUsers(ctx context.Context, appID int64, a
 		}
 		ids = append(ids, userID)
 	}
+	s.remember(cacheKey, gen, ids, int64(result.Total))
 
 	s.log.Debug("admin user bleve search completed",
 		zap.Int64("appid", appID),
 		zap.String("keyword", strings.TrimSpace(adminQuery.Keyword)),
-		zap.String("account", strings.TrimSpace(adminQuery.Account)),
-		zap.String("nickname", strings.TrimSpace(adminQuery.Nickname)),
-		zap.String("email", strings.TrimSpace(adminQuery.Email)),
-		zap.String("phone", strings.TrimSpace(adminQuery.Phone)),
-		zap.String("inviteCode", strings.TrimSpace(adminQuery.InviteCode)),
-		zap.String("registerIp", strings.TrimSpace(adminQuery.RegisterIP)),
-		zap.Bool("hasUserId", adminQuery.UserID != nil),
-		zap.Bool("hasEnabled", adminQuery.Enabled != nil),
-		zap.Bool("hasCreatedFrom", adminQuery.CreatedFrom != nil),
-		zap.Bool("hasCreatedTo", adminQuery.CreatedTo != nil),
+		zap.Int("shards", len(s.shards)),
 		zap.Int("page", adminQuery.Page),
 		zap.Int("limit", adminQuery.Limit),
 		zap.Int("hits", len(ids)),
@@ -248,6 +426,7 @@ func (s *AdminUserSearchService) IndexUser(ctx context.Context, appID int64, use
 	if s == nil || s.index == nil || userID <= 0 || appID <= 0 {
 		return nil
 	}
+	defer s.invalidate(appID)
 	item, err := s.pg.GetAdminUserByApp(ctx, appID, userID)
 	if err != nil {
 		s.log.Warn("load admin user for bleve indexing failed",
@@ -258,8 +437,9 @@ func (s *AdminUserSearchService) IndexUser(ctx context.Context, appID int64, use
 		return err
 	}
 	docID := adminUserSearchDocID(appID, userID)
+	shard := s.shardFor(userID)
 	if item == nil {
-		if err := s.index.Delete(docID); err != nil {
+		if err := shard.Delete(docID); err != nil {
 			s.log.Warn("delete missing admin user bleve doc failed",
 				zap.Int64("appid", appID),
 				zap.Int64("userId", userID),
@@ -283,7 +463,7 @@ func (s *AdminUserSearchService) IndexUser(ctx context.Context, appID int64, use
 		Enabled:    item.Enabled,
 		CreatedAt:  item.CreatedAt,
 	})
-	if err := s.index.Index(docID, doc); err != nil {
+	if err := shard.Index(docID, doc); err != nil {
 		s.log.Warn("index admin user bleve doc failed",
 			zap.Int64("appid", appID),
 			zap.Int64("userId", userID),
@@ -299,7 +479,8 @@ func (s *AdminUserSearchService) DeleteUser(appID int64, userID int64) error {
 	if s == nil || s.index == nil || userID <= 0 || appID <= 0 {
 		return nil
 	}
-	if err := s.index.Delete(adminUserSearchDocID(appID, userID)); err != nil {
+	defer s.invalidate(appID)
+	if err := s.shardFor(userID).Delete(adminUserSearchDocID(appID, userID)); err != nil {
 		s.log.Warn("delete admin user bleve doc failed",
 			zap.Int64("appid", appID),
 			zap.Int64("userId", userID),
@@ -335,6 +516,7 @@ func (s *AdminUserSearchService) ensureAppIndexed(ctx context.Context, appID int
 			zap.Int64("lastUserId", checkpoint.LastUserID),
 		)
 		count, nextCheckpoint, err := s.rebuildApp(ctx, appID, checkpoint)
+		s.invalidate(appID)
 		if err != nil {
 			s.log.Warn("admin user bleve sync failed",
 				zap.Int64("appid", appID),
@@ -347,65 +529,147 @@ func (s *AdminUserSearchService) ensureAppIndexed(ctx context.Context, appID int
 			return nil, err
 		}
 		s.indexedApps.Store(appID, struct{}{})
+		elapsed := time.Since(startedAt)
+		rate := 0.0
+		if elapsed > 0 {
+			rate = float64(count) / elapsed.Seconds()
+		}
 		s.log.Info("admin user bleve sync completed",
 			zap.Int64("appid", appID),
 			zap.Int("documents", count),
+			zap.Int("shards", len(s.shards)),
+			zap.Float64("docsPerSecond", rate),
 			zap.Bool("initialized", nextCheckpoint.Initialized),
 			zap.Time("lastSyncedAt", nextCheckpoint.LastSyncedAt),
 			zap.Int64("lastUserId", nextCheckpoint.LastUserID),
-			zap.Duration("elapsed", time.Since(startedAt)),
+			zap.Duration("elapsed", elapsed),
 		)
 		return nil, nil
 	})
 	return err
 }
 
+// adminUserSearchPage 读库得到的一页，与读这一页之后的检查点。
+type adminUserSearchPage struct {
+	items      []userdomain.AdminUserSearchSource
+	checkpoint adminUserSearchCheckpoint
+}
+
+// rebuildApp 同步一个应用：读库协程按游标往前读（最多领先一页），本协程把每页的文档多核构建后按分片并行提交。
 func (s *AdminUserSearchService) rebuildApp(ctx context.Context, appID int64, checkpoint adminUserSearchCheckpoint) (int, adminUserSearchCheckpoint, error) {
-	var (
-		total = 0
-		batch = s.index.NewBatch()
-	)
-	for {
-		items, err := s.pg.ListAdminUserSearchSourcesByApp(ctx, appID, checkpoint.LastSyncedAt, checkpoint.LastUserID, s.batchSize)
-		if err != nil {
-			return total, checkpoint, err
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	pages := make(chan adminUserSearchPage, 1)
+	readErr := make(chan error, 1)
+	go func() {
+		defer close(pages)
+		cursor := checkpoint
+		for {
+			items, err := s.pg.ListAdminUserSearchSourcesByApp(ctx, appID, cursor.LastSyncedAt, cursor.LastUserID, s.batchSize)
+			if err != nil {
+				readErr <- err
+				return
+			}
+			if len(items) > 0 {
+				last := items[len(items)-1]
+				cursor.LastSyncedAt, cursor.LastUserID = last.SourceUpdatedAt.UTC(), last.UserID
+			}
+			select {
+			case pages <- adminUserSearchPage{items: items, checkpoint: cursor}:
+			case <-ctx.Done():
+				return
+			}
+			if len(items) < s.batchSize {
+				return
+			}
 		}
-		if len(items) == 0 {
+	}()
+
+	total := 0
+	for page := range pages {
+		if len(page.items) > 0 {
+			if err := s.indexPage(ctx, page.items); err != nil {
+				return total, checkpoint, err
+			}
+			checkpoint.LastSyncedAt, checkpoint.LastUserID = page.checkpoint.LastSyncedAt, page.checkpoint.LastUserID
+			checkpoint.AppID = appID
+			checkpoint.SyncedAt = time.Now().UTC()
+			if err := s.saveCheckpoint(checkpoint); err != nil {
+				return total, checkpoint, err
+			}
+			total += len(page.items)
+			s.log.Debug("admin user bleve sync batch indexed",
+				zap.Int64("appid", appID),
+				zap.Int("batchSize", len(page.items)),
+				zap.Time("lastSyncedAt", checkpoint.LastSyncedAt),
+				zap.Int64("lastUserId", checkpoint.LastUserID),
+			)
+		}
+		if len(page.items) < s.batchSize {
 			checkpoint.AppID = appID
 			checkpoint.Initialized = true
 			checkpoint.SyncedAt = time.Now().UTC()
 			return total, checkpoint, nil
 		}
-
-		batch.Reset()
-		for _, item := range items {
-			if err := batch.Index(adminUserSearchDocID(item.AppID, item.UserID), buildAdminUserSearchDocument(item)); err != nil {
-				return total, checkpoint, err
-			}
-			checkpoint.LastSyncedAt = item.SourceUpdatedAt.UTC()
-			checkpoint.LastUserID = item.UserID
-		}
-		if err := s.index.Batch(batch); err != nil {
-			return total, checkpoint, err
-		}
-		checkpoint.AppID = appID
-		checkpoint.SyncedAt = time.Now().UTC()
-		if err := s.saveCheckpoint(checkpoint); err != nil {
-			return total, checkpoint, err
-		}
-		total += len(items)
-		s.log.Debug("admin user bleve sync batch indexed",
-			zap.Int64("appid", appID),
-			zap.Int("batchSize", len(items)),
-			zap.Time("lastSyncedAt", checkpoint.LastSyncedAt),
-			zap.Int64("lastUserId", checkpoint.LastUserID),
-		)
-		if len(items) < s.batchSize {
-			checkpoint.Initialized = true
-			checkpoint.SyncedAt = time.Now().UTC()
-			return total, checkpoint, nil
-		}
 	}
+	select {
+	case err := <-readErr:
+		return total, checkpoint, err
+	default:
+	}
+	if err := ctx.Err(); err != nil {
+		return total, checkpoint, err
+	}
+	checkpoint.AppID = appID
+	checkpoint.Initialized = true
+	checkpoint.SyncedAt = time.Now().UTC()
+	return total, checkpoint, nil
+}
+
+// indexPage 一页用户：文档构建分给 buildWorkers 个协程（拼音多音字展开是 CPU 密集的），再按分片分组、各分片并行提交一个批次。
+func (s *AdminUserSearchService) indexPage(ctx context.Context, items []userdomain.AdminUserSearchSource) error {
+	docs := make([]adminUserSearchDocument, len(items))
+	workers := min(s.buildWorkers, len(items))
+	chunk := (len(items) + workers - 1) / workers
+	build, _ := errgroup.WithContext(ctx)
+	for start := 0; start < len(items); start += chunk {
+		end := min(start+chunk, len(items))
+		build.Go(func() error {
+			for i := start; i < end; i++ {
+				docs[i] = buildAdminUserSearchDocument(items[i])
+			}
+			return nil
+		})
+	}
+	_ = build.Wait()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	buckets := make([][]int, len(s.shards))
+	n := int64(len(s.shards))
+	for i, item := range items {
+		shard := ((item.UserID % n) + n) % n
+		buckets[shard] = append(buckets[shard], i)
+	}
+	commit, _ := errgroup.WithContext(ctx)
+	for shardIndex, members := range buckets {
+		if len(members) == 0 {
+			continue
+		}
+		commit.Go(func() error {
+			shard := s.shards[shardIndex]
+			batch := shard.NewBatch()
+			for _, i := range members {
+				if err := batch.Index(adminUserSearchDocID(items[i].AppID, items[i].UserID), docs[i]); err != nil {
+					return err
+				}
+			}
+			return shard.Batch(batch)
+		})
+	}
+	return commit.Wait()
 }
 
 func (s *AdminUserSearchService) warmupApps(ctx context.Context) {
@@ -453,12 +717,13 @@ func (s *AdminUserSearchService) warmupApps(ctx context.Context) {
 	)
 }
 
+// 检查点存在分片 0 的内部键里。
 func (s *AdminUserSearchService) loadCheckpoint(appID int64) (adminUserSearchCheckpoint, error) {
 	checkpoint := adminUserSearchCheckpoint{AppID: appID}
-	if s == nil || s.index == nil || appID <= 0 {
+	if s == nil || len(s.shards) == 0 || appID <= 0 {
 		return checkpoint, nil
 	}
-	raw, err := s.index.GetInternal(adminUserSearchCheckpointKey(appID))
+	raw, err := s.shards[0].GetInternal(adminUserSearchCheckpointKey(appID))
 	if err != nil || len(raw) == 0 {
 		return checkpoint, err
 	}
@@ -469,18 +734,20 @@ func (s *AdminUserSearchService) loadCheckpoint(appID int64) (adminUserSearchChe
 }
 
 func (s *AdminUserSearchService) saveCheckpoint(checkpoint adminUserSearchCheckpoint) error {
-	if s == nil || s.index == nil || checkpoint.AppID <= 0 {
+	if s == nil || len(s.shards) == 0 || checkpoint.AppID <= 0 {
 		return nil
 	}
 	raw, err := json.Marshal(checkpoint)
 	if err != nil {
 		return err
 	}
-	return s.index.SetInternal(adminUserSearchCheckpointKey(checkpoint.AppID), raw)
+	return s.shards[0].SetInternal(adminUserSearchCheckpointKey(checkpoint.AppID), raw)
 }
 
+const adminUserSearchCheckpointPrefix = "admin_user_search:checkpoint:"
+
 func adminUserSearchCheckpointKey(appID int64) []byte {
-	return []byte(fmt.Sprintf("admin_user_search:checkpoint:%d", appID))
+	return []byte(adminUserSearchCheckpointPrefix + strconv.FormatInt(appID, 10))
 }
 
 func newAdminUserSearchMapping() mapping.IndexMapping {
