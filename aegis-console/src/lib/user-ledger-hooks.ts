@@ -8,11 +8,12 @@
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAdminToken } from "@/lib/admin-hooks";
+import type { ExperienceLevelMode } from "@/lib/api/apps";
 import { browserTimeZone } from "@/lib/datetime";
 import {
   getUserPointLedger,
   getUserPointSummary,
-  reverseUserIntegral,
+  reverseUserPoints,
   type PointKind,
   type PointLedgerParams
 } from "@/lib/api/user-ledger";
@@ -41,12 +42,16 @@ export function useUserPointSummaryQuery(appKey: Key, userId: Id, kind: PointKin
   });
 }
 
-export function useReverseUserIntegralMutation(appKey: Key, userId: Id) {
+/** 冲正一笔积分或经验流水（经验扣回时带等级处理方式）。 */
+export function useReverseUserPointsMutation(appKey: Key, userId: Id, kind: PointKind) {
   const token = useAdminToken();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (args: { transactionNo: string; reason?: string }) =>
-      reverseUserIntegral(token as string, appKey as string, userId as number, args.transactionNo, args.reason),
+    mutationFn: (args: { transactionNo: string; reason?: string; levelMode?: ExperienceLevelMode }) =>
+      reverseUserPoints(token as string, appKey as string, userId as number, kind, args.transactionNo, {
+        reason: args.reason,
+        levelMode: args.levelMode
+      }),
     onSuccess: () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ["admin-app-user"] }),

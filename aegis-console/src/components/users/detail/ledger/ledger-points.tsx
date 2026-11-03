@@ -5,10 +5,10 @@
  *
  * 自上而下：四张指标卡（当前、累计入账、累计出账、管理员净调整）→ 走势图（每日入出账柱 + 余额线）
  * → 来源构成（点一项即按该分类筛选流水）→ 流水表（关键词、方向、分类、时间区间，导出 CSV，
- * 行点开看完整字段；积分流水可在抽屉里冲正）。
+ * 行点开看完整字段；积分与经验流水都可在抽屉里冲正）。
  *
  * 冲正走后端专用接口：请求编号由原流水号派生，同一笔重复点只生效一次；冲正产生的流水不能再冲正。
- * 经验只增不减，所以经验流水没有冲正。
+ * 经验扣回时要选等级处理（保留现有等级 / 按经验重新判定）。
  */
 
 import * as React from "react";
@@ -47,7 +47,8 @@ import { useAdminToken } from "@/lib/admin-hooks";
 import { ApiError } from "@/lib/api-client";
 import { getUserPointLedger, type PointKind, type PointLedgerCategory, type PointTransaction } from "@/lib/api/user-ledger";
 import { formatDateTime, formatRelative } from "@/lib/datetime";
-import { useReverseUserIntegralMutation, useUserPointLedgerQuery, useUserPointSummaryQuery } from "@/lib/user-ledger-hooks";
+import { useReverseUserPointsMutation, useUserPointLedgerQuery, useUserPointSummaryQuery } from "@/lib/user-ledger-hooks";
+import type { ExperienceLevelMode } from "@/lib/api/apps";
 import { cn } from "@/lib/utils";
 import {
   FilterBar,
@@ -542,7 +543,9 @@ function PointTransactionSheet({
 }) {
   const [confirming, setConfirming] = React.useState(false);
   const [reason, setReason] = React.useState("");
-  const reverse = useReverseUserIntegralMutation(appKey, userId);
+  const reverse = useReverseUserPointsMutation(appKey, userId, kind);
+  const [levelMode, setLevelMode] = React.useState<ExperienceLevelMode>("keep");
+  const unit = kind === "experience" ? "经验" : "积分";
 
   // 保留最后一笔：关闭动画期间内容不要突然变空
   const [shown, setShown] = React.useState<PointTransaction | null>(transaction);
@@ -551,7 +554,9 @@ function PointTransactionSheet({
 
   const extra = txn?.extraData ?? {};
   const reversalOf = typeof extra.reversalOf === "string" ? extra.reversalOf : "";
-  const canReverse = kind === "integral" && Boolean(txn) && !reversalOf && txn?.amount !== 0;
+  const canReverse = Boolean(txn) && !reversalOf && txn?.amount !== 0;
+  // 经验：冲正一笔「获得」是扣回，要选等级处理；冲正一笔「扣减」是还回，按经验正常升级
+  const reverseDeducts = kind === "experience" && (txn?.amount ?? 0) > 0;
 
   const fields: InfoItem[] = txn
     ? [
@@ -580,11 +585,19 @@ function PointTransactionSheet({
   async function submitReverse() {
     if (!txn) return;
     try {
-      const result = await reverse.mutateAsync({ transactionNo: txn.transactionNo, reason: reason.trim() || undefined });
+      const result = await reverse.mutateAsync({
+        transactionNo: txn.transactionNo,
+        reason: reason.trim() || undefined,
+        levelMode: reverseDeducts ? levelMode : undefined
+      });
       toast.success(
         result.replayed
           ? "这笔已冲正过，未重复执行"
-          : `已冲正，积分 ${formatInt(result.beforeAmount)} → ${formatInt(result.afterAmount)}`
+          : `已冲正，${unit} ${formatInt(result.beforeAmount)} → ${formatInt(result.afterAmount)}`,
+        {
+          description:
+            result.levelChanged && typeof result.newLevel === "number" ? `等级 Lv.${result.oldLevel ?? "—"} → Lv.${result.newLevel}` : undefined
+        }
       );
       setConfirming(false);
       setReason("");
@@ -633,12 +646,37 @@ function PointTransactionSheet({
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>冲正这笔积分流水？</AlertDialogTitle>
+            <AlertDialogTitle>冲正这笔{unit}流水？</AlertDialogTitle>
             <AlertDialogDescription>
-              将按原金额反向调整 {txn ? <SignedAmount value={-txn.amount} /> : null} 积分，并生成一笔新的流水。同一笔只能冲正一次；
-              扣减时若用户积分不足会失败。
+              将按原数量反向调整 {txn ? <SignedAmount value={-txn.amount} /> : null} {unit}，并生成一笔新的流水。同一笔只能冲正一次；
+              扣回时若用户{unit}不足会失败。
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {reverseDeducts ? (
+            <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="扣回经验后的等级处理">
+              {(
+                [
+                  { value: "keep", title: "保留现有等级", hint: "只扣回经验" },
+                  { value: "recalc", title: "按经验重新判定", hint: "可能降级，不低于锁定的保底" }
+                ] as const
+              ).map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={levelMode === item.value}
+                  onClick={() => setLevelMode(item.value)}
+                  className={cn(
+                    "flex flex-col items-start gap-0.5 rounded-lg border p-2.5 text-left transition-colors",
+                    levelMode === item.value ? "border-primary bg-primary/5" : "hover:bg-accent/50"
+                  )}
+                >
+                  <span className="text-sm font-medium">{item.title}</span>
+                  <span className="text-xs text-muted-foreground">{item.hint}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
           <Input
             value={reason}
             maxLength={200}

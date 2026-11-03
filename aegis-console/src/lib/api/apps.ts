@@ -289,16 +289,26 @@ export type PointsAdjustResult = {
   levelChanged?: boolean;
   oldLevel?: number;
   newLevel?: number;
+  /** 扣减经验时的等级处理 */
+  levelMode?: ExperienceLevelMode;
 };
+
+/**
+ * 扣减经验后的等级处理：keep 保留现有等级只扣经验；recalc 按扣减后的经验重新判定，可以降级
+ * （不低于锁定的保底，封顶照旧）。两种都不收回已发的等级奖励，再升回去也不重复发。
+ */
+export type ExperienceLevelMode = "keep" | "recalc";
 
 export type PointsAdjustPayload = {
   userId: number;
   appid: number;
-  /** 正数增加、负数扣减（经验只能为正）；单次绝对值不超过 100,000,000 */
+  /** 正数增加、负数扣减；单次绝对值不超过 100,000,000 */
   amount: number;
   reason?: string;
   /** 防重复提交：同一编号只生效一次 */
   requestId?: string;
+  /** 只对扣减经验有意义 */
+  levelMode?: ExperienceLevelMode;
 };
 
 // 后端字段是下划线写法（user_id / request_id）。这里显式转换，不把驼峰对象原样发出去 ——
@@ -309,7 +319,8 @@ function pointsAdjustBody(payload: PointsAdjustPayload) {
     appid: payload.appid,
     amount: payload.amount,
     reason: payload.reason,
-    request_id: payload.requestId
+    request_id: payload.requestId,
+    level_mode: payload.levelMode
   });
 }
 

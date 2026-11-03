@@ -278,8 +278,13 @@ export type AdjustFormProps = {
   reasons: string[];
   /** 扣减超过当前值时的提示（后端同样拒绝），如「积分不足」 */
   shortageText: string;
-  /** 只允许增加（经验只增不减），不显示方向选择 */
+  /** 只允许增加，不显示方向选择 */
   addOnly?: boolean;
+  /**
+   * 扣减时附加的内容（经验的等级处理）：`form` 放在数量下方，`confirm` 作为确认框里的一行。
+   * 参数是当前输入的有效扣减数量（十进制字符串），无效时为 null。
+   */
+  deductExtra?: (amount: string | null) => { form?: React.ReactNode; confirm?: React.ReactNode };
   /** 单次调整数量上限（十进制字符串） */
   maxAmount?: string;
   /** 调整后余额上限（十进制字符串） */
@@ -308,6 +313,7 @@ export function AdjustForm({
   reasons,
   shortageText,
   addOnly = false,
+  deductExtra,
   maxAmount,
   maxBalance,
   pending,
@@ -332,6 +338,7 @@ export function AdjustForm({
   const disabled = blocked || pending || !amountValid || shortage || overAmount || overBalance;
 
   const verb = direction === "add" ? "增加" : "扣减";
+  const extra = direction === "deduct" && deductExtra ? deductExtra(amountValid ? trimmed : null) : null;
   const amountLabel = decimal ? `¥${trimmed}` : `${formatIntegerString(trimmed)} ${unit}`;
 
   // 请求编号跟着「这一笔」走：内容不变就复用，改了任何一项就换新的
@@ -450,6 +457,8 @@ export function AdjustForm({
           />
         </div>
 
+        {extra?.form ? <div className="flex flex-col gap-2">{extra.form}</div> : null}
+
         <div className="flex flex-col gap-2">
           <Label className="text-xs text-muted-foreground">原因</Label>
           <ReasonInput
@@ -494,6 +503,12 @@ export function AdjustForm({
                   </span>
                 </dd>
               </div>
+              {extra?.confirm ? (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-xs text-muted-foreground">等级</dt>
+                  <dd className="min-w-0 text-right">{extra.confirm}</dd>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-xs text-muted-foreground">原因</dt>
                 <dd className="min-w-0 truncate">{confirming.reason || "未填写"}</dd>

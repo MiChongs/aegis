@@ -12,18 +12,20 @@ import {
   useAdminUserVipEntitlementQuery,
   useAdminUserWalletQuery
 } from "@/lib/app-user-hooks";
+import type { ExperienceLevelMode } from "@/lib/api/apps";
 import type { AdminAppUserDetail, UserWallet, VipEntitlement } from "@/lib/api/types";
 import { useUserPointSummaryQuery } from "@/lib/user-ledger-hooks";
 import { InfoGrid, MetricCard, Section, StateBlock, type Tone } from "./kit";
 import { AdjustForm, Segmented, formatIntegerString, type AdjustFormProps, type SegmentOption } from "./user-assets-adjust";
 import { EMPTY, formatMoney, formatTime, hasWallet, isNegativeAmount, isZeroTime } from "./user-detail-shared";
+import { ExperienceLevelChoice, ExperienceLevelConfirm } from "./user-experience-level";
 import { UserFeatureUnlocksPanel } from "./user-feature-unlocks-panel";
 import { UserVipPanel } from "./user-vip-panel";
 
 const POINT_QUICK = ["10", "50", "100", "500", "1000"];
 const MONEY_QUICK = ["1", "5", "10", "50", "100"];
 const POINT_REASONS = ["活动奖励", "客诉补偿", "签到补发", "错误更正", "违规扣除"];
-const EXPERIENCE_REASONS = ["活动奖励", "客诉补偿", "签到补发", "错误更正"];
+const EXPERIENCE_REASONS = ["活动奖励", "客诉补偿", "签到补发", "错误更正", "违规扣除"];
 /** 与后端 pointdomain.MaxAdminAdjustAmount / MaxBalance 一致 */
 const POINT_MAX_ADJUST = "100000000";
 const POINT_MAX_BALANCE = "9007199254740991";
@@ -83,6 +85,8 @@ export function UserAssetsTab({
   const walletMutation = useAdjustAdminUserWalletMutation(appKey, userId);
 
   const [kind, setKind] = useState<AssetKind>("integral");
+  /** 扣减经验时的等级处理，默认保留现有等级 */
+  const [levelMode, setLevelMode] = useState<ExperienceLevelMode>("keep");
 
   const viewLedger = onNavigate ? (sub: LedgerSub) => () => onNavigate("ledger", sub) : undefined;
 
@@ -100,7 +104,14 @@ export function UserAssetsTab({
     const label = target === "integral" ? "积分" : "经验";
     const mutation = target === "integral" ? integralMutation : experienceMutation;
     try {
-      const result = await mutation.mutateAsync({ userId, appid: appId, amount, reason: reason || undefined, requestId });
+      const result = await mutation.mutateAsync({
+        userId,
+        appid: appId,
+        amount,
+        reason: reason || undefined,
+        requestId,
+        levelMode: target === "experience" && amount < 0 ? levelMode : undefined
+      });
       const after = typeof result?.afterAmount === "number" ? `，当前 ${formatIntegerString(String(result.afterAmount))}` : "";
       const level =
         result?.levelChanged && typeof result.newLevel === "number"
@@ -167,11 +178,26 @@ export function UserAssetsTab({
       unit: "经验",
       current: numberString(user.experience),
       format: formatCount,
-      hint: "经验只增不减，等级随之重算",
+      hint: "扣减不能超过当前经验；扣减时可选择是否降级",
       quick: POINT_QUICK,
       reasons: EXPERIENCE_REASONS,
       shortageText: "经验不足",
-      addOnly: true,
+      deductExtra: (amount) => {
+        const experience = typeof user.experience === "number" ? user.experience : 0;
+        return {
+          form: (
+            <ExperienceLevelChoice
+              appKey={appKey}
+              userId={userId}
+              experience={experience}
+              amount={amount}
+              mode={levelMode}
+              onModeChange={setLevelMode}
+            />
+          ),
+          confirm: <ExperienceLevelConfirm appKey={appKey} userId={userId} experience={experience} amount={amount} mode={levelMode} />
+        };
+      },
       maxAmount: POINT_MAX_ADJUST,
       maxBalance: POINT_MAX_BALANCE,
       pending: experienceMutation.isPending,

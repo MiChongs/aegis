@@ -5,7 +5,7 @@
  * 左闭右开；控制台按浏览器时区把日期换算成瞬时值再传（见 lib/datetime）。
  */
 import { apiRequest, buildQuery } from "./client";
-import type { PointsAdjustResult } from "./apps";
+import type { ExperienceLevelMode, PointsAdjustResult } from "./apps";
 
 export type PointKind = "integral" | "experience";
 
@@ -114,16 +114,23 @@ export function getUserPointSummary(
   return apiRequest<PointLedgerSummary>(`${base(appKey, userId)}/${kind}/summary${query}`, { token });
 }
 
-/** 冲正一笔积分流水：按原金额反向调整一次，同一笔重复提交只生效一次。 */
-export function reverseUserIntegral(
+/**
+ * 冲正一笔积分或经验流水。经验扣回时 levelMode 决定等级处理（keep 保留现有等级 / recalc 按经验重新判定）。
+ */
+export function reverseUserPoints(
   token: string,
   appKey: string,
   userId: number | string,
+  kind: PointKind,
   transactionNo: string,
-  reason?: string
+  options: { reason?: string; levelMode?: ExperienceLevelMode } = {}
 ) {
   return apiRequest<PointsAdjustResult>(
-    `${base(appKey, userId)}/integral/transactions/${encodeURIComponent(transactionNo)}/reverse`,
-    { method: "POST", token, body: JSON.stringify({ reason: reason || undefined }) }
+    `${base(appKey, userId)}/${kind}/transactions/${encodeURIComponent(transactionNo)}/reverse`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ reason: options.reason || undefined, levelMode: kind === "experience" ? options.levelMode : undefined })
+    }
   );
 }
