@@ -143,13 +143,15 @@ function AppDetailInner() {
           否则他只会遇到一连串不明所以的 403 */}
       <AppGovernanceNotice appKey={appKey} />
 
-      {/* 窄屏吸顶区块条：必须是页面根的直接子元素，吸顶范围才是整页而不是某个格子 */}
+      {/* 1280 以下的吸顶区块条：必须是页面根的直接子元素，吸顶范围才是整页而不是某个格子。
+          分界放在 xl 而不是 lg：1024 宽时控制台侧栏已占去三百多像素，再常驻一列区块导航，
+          面板只剩四百来宽，却按 lg 断点排成双栏，验证码页右栏只剩 41px */}
       <AppSectionMobileBar section={section} onSelect={selectSection} />
 
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[13.5rem_minmax(0,1fr)] lg:gap-6">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[13.5rem_minmax(0,1fr)] xl:gap-6">
         <AppSectionRail section={section} onSelect={selectSection} />
         {/* app-detail-content：把面板关在视口内（见 globals.css），宽表格与工具条在自己的格子里横滑 */}
-        <div ref={contentRef} className="app-detail-content min-w-0 scroll-mt-40 space-y-4 lg:scroll-mt-20">
+        <div ref={contentRef} className="app-detail-content min-w-0 scroll-mt-40 space-y-4 xl:scroll-mt-20">
           <AppSectionHeading section={section} />
           <AppSectionPanel section={section} app={app} />
         </div>

@@ -520,6 +520,8 @@
   .app-detail-content {
     max-width: 100%;
     overflow-x: clip;
+    /* 横滑条常用 -mx-1 往外借几像素做留白，裁切线放宽一点，别把它们的边切掉 */
+    overflow-clip-margin: 0.75rem;
   }
   .app-detail-content :where(pre, table, img, video, canvas, iframe) {
     max-width: 100%;
@@ -527,8 +529,9 @@
   .app-detail-content :where(pre) {
     overflow-x: auto;
   }
-  @media (max-width: 1023.98px) {
-    /* 子页签：窄屏横滑，不再把一排 tab 挤出屏幕 */
+  /* 不限断点：1024–1280 的窄桌面上面板列也只有六七百宽 */
+  @media all {
+    /* 子页签：放不下就横滑，不再把一排 tab 挤出去 */
     .app-detail-content [data-slot="tabs-list"][data-variant] {
       max-width: 100%;
       overflow-x: auto;
@@ -540,6 +543,15 @@
     }
     .app-detail-content [data-slot="tabs-trigger"] {
       flex: 0 0 auto;
+    }
+    /* 分段选择（ToggleGroup）同理：一排选项放不下就横滑 */
+    .app-detail-content [data-slot="toggle-group"] {
+      max-width: 100%;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .app-detail-content [data-slot="toggle-group"]::-webkit-scrollbar {
+      display: none;
     }
     /* 卡片与区块不再给固定的最小宽度 */
     .app-detail-content :where(section, form, [data-slot="card"]) {

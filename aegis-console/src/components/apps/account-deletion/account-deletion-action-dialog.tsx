@@ -61,7 +61,7 @@ export function DeletionActionDialog({
   const open = Boolean(request && kind);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="sm:max-w-md">
         {request && kind ? (
           <ActionForm
             key={`${kind}-${request.id}`}

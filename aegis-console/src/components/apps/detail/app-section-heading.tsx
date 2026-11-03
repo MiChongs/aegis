@@ -13,7 +13,7 @@ export function AppSectionHeading({ section }: { section: string }) {
   if (!meta) return null;
   const Icon = meta.icon;
   return (
-    <div className="hidden min-w-0 items-center gap-3 lg:flex">
+    <div className="hidden min-w-0 items-center gap-3 xl:flex">
       <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
         <Icon className="size-4" />
       </span>

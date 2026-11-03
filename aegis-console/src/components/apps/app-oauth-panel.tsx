@@ -734,7 +734,7 @@ function ProviderMarket({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>添加第三方登录渠道</DialogTitle>
           <DialogDescription>选择服务商模板</DialogDescription>
@@ -1254,7 +1254,7 @@ function TestResultDialog({
 }) {
   return (
     <Dialog open={Boolean(result)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             渠道自检

@@ -287,7 +287,7 @@ function AddSuppressionDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>添加到抑制名单</DialogTitle>
           <DialogDescription>加入后不再向这个地址发送任何邮件，包括验证码。</DialogDescription>

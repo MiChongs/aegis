@@ -211,7 +211,7 @@ export function EmailChannelsPanel({
       </div>
 
       <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent className="max-w-3xl gap-0! p-0!">
+        <DialogContent className="sm:max-w-3xl gap-0! p-0!">
           <DialogHeader className="border-b px-6 pb-4 pt-6">
             <div className="flex items-center gap-3">
               <EmailBrandBadge slug={activeMeta?.icon} brandColor={activeMeta?.brandColor} name={activeMeta?.name} />

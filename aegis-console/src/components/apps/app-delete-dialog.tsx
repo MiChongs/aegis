@@ -19,7 +19,7 @@ export function AppDeleteDialog({ open, onOpenChange, appName, onConfirm, isPend
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) setConfirmText(""); onOpenChange(v); }}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm text-destructive"><AlertTriangle className="size-4" />删除应用</DialogTitle>
           <DialogDescription>

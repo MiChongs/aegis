@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { useSectionFilter } from "@/components/apps/detail/use-section-filter";
 
 /**
- * 宽屏左侧区块导航。
+ * 宽屏（≥1280）左侧区块导航。
  *
  * 旧版只是一列吸顶按钮，没有高度上限：三十多个区块在 13 寸屏上排不下，
  * 底部「广告服务」「物品发放」永远够不着，只能先滚主内容。这里把导航
@@ -44,7 +44,7 @@ export function AppSectionRail({
     });
 
   return (
-    <nav aria-label="应用配置区块" className="hidden lg:block">
+    <nav aria-label="应用配置区块" className="hidden xl:block">
       <div className="sticky top-[4.5rem] flex max-h-[calc(100svh-5.5rem)] flex-col overflow-hidden rounded-2xl border border-border bg-card">
         <div className="shrink-0 border-b border-border p-2">
           <label className="flex h-8 items-center gap-2 rounded-lg bg-muted/60 px-2.5 text-xs focus-within:ring-1 focus-within:ring-ring">

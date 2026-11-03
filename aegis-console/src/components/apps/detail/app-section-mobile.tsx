@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { useSectionFilter } from "@/components/apps/detail/use-section-filter";
 
 /**
- * 窄屏区块导航：吸顶的「当前区块」条 + 全屏选择器。
+ * 窄屏与窄桌面（<1280）区块导航：吸顶的「当前区块」条 + 全屏选择器。
  *
  * 旧版窄屏是一条三十多个胶囊的横向滚动条，组与组之间只靠一根竖线区分，
  * 想去「积分商城」得横着划五六屏，划过头了也不知道。这里拆成两层：
@@ -45,8 +45,8 @@ export function AppSectionMobileBar({
 
   return (
     <>
-      <div className="sticky top-14 z-20 -mx-4 border-b border-border bg-background/90 backdrop-blur-md supports-[backdrop-filter]:bg-background/75 lg:hidden">
-        <div className="flex items-center gap-1.5 px-4 pt-2 pb-1.5">
+      <div className="sticky top-14 z-20 -mx-4 border-b border-border bg-background/90 backdrop-blur-md supports-[backdrop-filter]:bg-background/75 lg:-mx-6 xl:hidden">
+        <div className="flex items-center gap-1.5 px-4 pt-2 pb-1.5 lg:px-6">
           <button
             type="button"
             onClick={() => {
@@ -77,7 +77,7 @@ export function AppSectionMobileBar({
         {group.sections.length > 1 && (
           <div
             ref={chipsRef}
-            className="flex items-center gap-1.5 overflow-x-auto px-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="flex items-center gap-1.5 overflow-x-auto px-4 pb-2 [scrollbar-width:none] lg:px-6 [&::-webkit-scrollbar]:hidden"
           >
             {group.sections.map((item) => {
               const active = item.key === section;

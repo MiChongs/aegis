@@ -285,7 +285,7 @@ function AlgoGroup({
         onValueChange={onToggle}
         variant="outline"
         size="sm"
-        className="gap-2"
+        className="max-w-full flex-wrap gap-2"
         disabled={disabled}
       >
         {algos.map((a) => (

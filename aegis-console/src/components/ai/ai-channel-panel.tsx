@@ -434,7 +434,7 @@ function SkillsSection({ scope }: { scope: AIScope }) {
       )}
 
       <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent className="max-w-2xl p-0! gap-0!">
+        <DialogContent className="sm:max-w-2xl p-0! gap-0!">
           <DialogHeader className="px-6 pt-6 pb-4 border-b">
             <DialogTitle>
               {editing?.builtin ? "内置技能" : editing?.skillId ? "编辑技能" : "新建技能"}
@@ -718,7 +718,7 @@ function MCPSection({ scope }: { scope: AIScope }) {
       )}
 
       <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent className="max-w-xl p-0! gap-0!">
+        <DialogContent className="sm:max-w-xl p-0! gap-0!">
           <DialogHeader className="px-6 pt-6 pb-4 border-b">
             <DialogTitle>{editing?.serverId ? "编辑 MCP 服务器" : "添加 MCP 服务器"}</DialogTitle>
           </DialogHeader>
