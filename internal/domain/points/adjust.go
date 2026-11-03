@@ -75,6 +75,37 @@ func ApplyDelta(before, delta int64) (int64, error) {
 	return after, nil
 }
 
+// LevelMode 扣减经验之后的等级处理。
+//
+// 扣经验不收回已经发出去的等级达成奖励；之后再升回同一级也不会重复发（奖励按 用户 × 奖励键 去重）。
+type LevelMode string
+
+const (
+	// LevelKeep 保留现有等级（已达到的等级是保底），只扣经验；等级进度按新经验显示。默认值。
+	LevelKeep LevelMode = "keep"
+	// LevelRecalc 按扣减后的经验重新判定，可以降级：不低于管理员锁定的保底，等级封顶照旧生效。
+	LevelRecalc LevelMode = "recalc"
+)
+
+// Label 中文名。
+func (m LevelMode) Label() string {
+	if m == LevelRecalc {
+		return "按经验重新判定等级"
+	}
+	return "保留现有等级"
+}
+
+// NormalizeLevelMode 空值按 keep 处理，其它值必须是 keep / recalc。
+func NormalizeLevelMode(raw string) (LevelMode, error) {
+	switch LevelMode(strings.ToLower(strings.TrimSpace(raw))) {
+	case "", LevelKeep:
+		return LevelKeep, nil
+	case LevelRecalc:
+		return LevelRecalc, nil
+	}
+	return "", invalid("等级处理方式只能是 keep（保留现有等级）或 recalc（按经验重新判定）")
+}
+
 // AdjustInput 一次管理员调整的输入（已解析、未校验）。
 type AdjustInput struct {
 	Kind      Kind
@@ -83,6 +114,8 @@ type AdjustInput struct {
 	Amount    int64
 	Reason    string
 	RequestID string
+	// LevelMode 只对扣减经验有意义（见 LevelMode）
+	LevelMode LevelMode
 }
 
 // ValidationError 输入不合法，Message 直接给到调用方。
@@ -142,6 +175,11 @@ func (in *AdjustInput) Validate() error {
 		return err
 	}
 	in.RequestID = requestID
+	mode, err := NormalizeLevelMode(string(in.LevelMode))
+	if err != nil {
+		return err
+	}
+	in.LevelMode = mode
 	return nil
 }
 

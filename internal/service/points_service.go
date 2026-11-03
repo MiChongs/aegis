@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -291,12 +293,10 @@ func (s *PointsService) AdminAdjustIntegral(ctx context.Context, in pointdomain.
 	return result, nil
 }
 
-// AdminAdjustExperience 管理员增加经验。经验只增不减，负数直接拒绝。
+// AdminAdjustExperience 管理员调整经验：正数增加，负数扣减。扣减时 in.LevelMode 决定等级怎么处理
+// （keep 保留现有等级，recalc 按扣减后的经验重新判定、可以降级）；已发的等级奖励都不收回。
 func (s *PointsService) AdminAdjustExperience(ctx context.Context, in pointdomain.AdjustInput, options pointdomain.AdminAdjustOptions) (*pointdomain.ExperienceAdjustResult, error) {
 	in.Kind = pointdomain.KindExperience
-	if in.Amount < 0 {
-		return nil, mapPointsAdjustError(in.Kind, pgrepo.ErrExperienceDeduction)
-	}
 	if err := in.Validate(); err != nil {
 		return nil, mapPointsAdjustError(in.Kind, err)
 	}
@@ -320,7 +320,7 @@ func (s *PointsService) AdjustUserIntegral(ctx context.Context, userID int64, ap
 	return result, nil
 }
 
-// AdjustUserExperience 内部增加经验，数量必须为正。
+// AdjustUserExperience 内部增加经验，数量必须为正（云函数等自动路径不能扣经验，扣减只开放给管理员）。
 func (s *PointsService) AdjustUserExperience(ctx context.Context, userID int64, appID int64, amount int64, reason string, options pointdomain.AdminAdjustOptions) (*pointdomain.ExperienceAdjustResult, error) {
 	if amount < 0 {
 		return nil, mapPointsAdjustError(pointdomain.KindExperience, pgrepo.ErrExperienceDeduction)
@@ -415,6 +415,79 @@ func (s *PointsService) BatchAdjustUserIntegral(ctx context.Context, userIDs []i
 	}, nil
 }
 
+// BatchAdjustUserExperience 管理员批量调整经验。amount 为正数，方向由 operationType（add / consume）决定；
+// 扣减时 levelMode 决定等级处理。逐人在自己的事务里执行（等级要逐人判定），一个人失败不影响其他人；
+// 带请求编号时每人的编号为「编号-用户ID」，整批重试只会补上没成功的人。
+func (s *PointsService) BatchAdjustUserExperience(ctx context.Context, userIDs []int64, appID int64, amount int64, operationType string,
+	reason string, requestID string, levelMode string, options pointdomain.AdminAdjustOptions) (*pointdomain.BatchExperienceAdjustResult, error) {
+	kind := pointdomain.KindExperience
+	if appID <= 0 {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "缺少应用 ID（appid）")
+	}
+	ids := uniquePositiveIDs(userIDs)
+	if len(ids) == 0 {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "用户 ID 列表不能为空")
+	}
+	if len(ids) > pointdomain.MaxAdminBatchUsers {
+		return nil, apperrors.New(40000, http.StatusBadRequest, fmt.Sprintf("批量操作最多支持 %d 个用户", pointdomain.MaxAdminBatchUsers))
+	}
+	if amount <= 0 {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "调整数量必须大于 0，扣减请使用 operation_type=consume")
+	}
+	if err := pointdomain.ValidateAmount(kind, amount); err != nil {
+		return nil, mapPointsAdjustError(kind, err)
+	}
+	mode, err := pointdomain.NormalizeLevelMode(levelMode)
+	if err != nil {
+		return nil, mapPointsAdjustError(kind, err)
+	}
+	requestID, err = pointdomain.NormalizeRequestID(requestID)
+	if err != nil {
+		return nil, mapPointsAdjustError(kind, err)
+	}
+	op := strings.ToLower(strings.TrimSpace(operationType))
+	if op == "" {
+		op = "add"
+	}
+	if op != "add" && op != "consume" {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "操作类型必须为 add 或 consume")
+	}
+	signed := amount
+	if op == "consume" {
+		signed = -amount
+	}
+	out := &pointdomain.BatchExperienceAdjustResult{
+		AppID: appID, OperationType: op, Amount: amount, RequestedCount: len(ids),
+		Results: []pointdomain.ExperienceAdjustResult{}, Failures: []pointdomain.BatchAdjustFailure{},
+	}
+	if op == "consume" {
+		out.LevelMode = mode
+	}
+	for _, id := range ids {
+		in := pointdomain.AdjustInput{Kind: kind, AppID: appID, UserID: id, Amount: signed, Reason: reason, LevelMode: mode}
+		if requestID != "" {
+			// 编号最长 64 位：超出时用摘要
+			perUser := fmt.Sprintf("%s-%d", requestID, id)
+			if len(perUser) > 64 {
+				sum := sha256.Sum256([]byte(perUser))
+				perUser = "b_" + hex.EncodeToString(sum[:20])
+			}
+			in.RequestID = perUser
+		}
+		result, err := s.AdminAdjustExperience(ctx, in, options)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			out.Failures = append(out.Failures, pointdomain.BatchAdjustFailure{UserID: id, Error: err.Error()})
+			continue
+		}
+		out.Results = append(out.Results, *result)
+	}
+	out.SuccessCount, out.FailedCount = len(out.Results), len(out.Failures)
+	return out, nil
+}
+
 // mapPointsAdjustError 把仓储与校验错误翻译成带业务码的错误，提示里带上当前余额。
 func mapPointsAdjustError(kind pointdomain.Kind, err error) error {
 	var validation *pointdomain.ValidationError
@@ -425,7 +498,7 @@ func mapPointsAdjustError(kind pointdomain.Kind, err error) error {
 	case errors.Is(err, pgrepo.ErrUserNotFound):
 		return apperrors.New(40401, http.StatusNotFound, "用户不存在或不属于该应用")
 	case errors.Is(err, pgrepo.ErrExperienceDeduction):
-		return apperrors.New(40000, http.StatusBadRequest, "经验只能增加，不支持扣减")
+		return apperrors.New(40000, http.StatusBadRequest, "自动发放的经验不能为负数，扣减经验请由管理员调整")
 	case errors.Is(err, pgrepo.ErrRequestIDConflict):
 		return apperrors.New(40921, http.StatusConflict, "请求编号已用于另一笔调整，请刷新后重试")
 	case errors.As(err, &balance) && errors.Is(err, pointdomain.ErrBalanceOverflow):

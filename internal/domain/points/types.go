@@ -248,21 +248,36 @@ type IntegralAdjustResult struct {
 }
 
 type ExperienceAdjustResult struct {
-	UserID        int64     `json:"userId"`
-	AppID         int64     `json:"appid"`
-	Account       string    `json:"account"`
-	Amount        int64     `json:"amount"`
-	BeforeAmount  int64     `json:"beforeAmount"`
-	AfterAmount   int64     `json:"afterAmount"`
-	Reason        string    `json:"reason"`
-	OperationType string    `json:"operationType"`
-	TransactionNo string    `json:"transactionNo"`
-	LevelChanged  bool      `json:"levelChanged"`
-	OldLevel      int       `json:"oldLevel"`
-	NewLevel      int       `json:"newLevel"`
-	CreatedAt     time.Time `json:"createdAt"`
+	UserID        int64  `json:"userId"`
+	AppID         int64  `json:"appid"`
+	Account       string `json:"account"`
+	Amount        int64  `json:"amount"`
+	BeforeAmount  int64  `json:"beforeAmount"`
+	AfterAmount   int64  `json:"afterAmount"`
+	Reason        string `json:"reason"`
+	OperationType string `json:"operationType"`
+	TransactionNo string `json:"transactionNo"`
+	LevelChanged  bool   `json:"levelChanged"`
+	OldLevel      int    `json:"oldLevel"`
+	NewLevel      int    `json:"newLevel"`
+	// LevelMode 扣减时的等级处理（keep / recalc），增加时为空
+	LevelMode LevelMode `json:"levelMode,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
 	// Replayed 为真表示同一请求编号已经生效过，这里返回的是首次的结果，没有再次变更余额
 	Replayed bool `json:"replayed,omitempty"`
+}
+
+// BatchExperienceAdjustResult 批量调整经验：逐人在自己的事务里执行（等级要逐人判定）。
+type BatchExperienceAdjustResult struct {
+	AppID          int64                    `json:"appid"`
+	OperationType  string                   `json:"operationType"`
+	Amount         int64                    `json:"amount"`
+	LevelMode      LevelMode                `json:"levelMode,omitempty"`
+	RequestedCount int                      `json:"requestedCount"`
+	SuccessCount   int                      `json:"successCount"`
+	FailedCount    int                      `json:"failedCount"`
+	Results        []ExperienceAdjustResult `json:"results"`
+	Failures       []BatchAdjustFailure     `json:"failures"`
 }
 
 type BatchAdjustFailure struct {

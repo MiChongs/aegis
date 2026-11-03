@@ -31,6 +31,10 @@ type pointsAdjustPayload struct {
 	Reason        string
 	RequestID     string
 	OperationType string
+	// Kind 批量调整的数值类型：integral（默认）/ experience
+	Kind string
+	// LevelMode 扣减经验时的等级处理：keep（默认）/ recalc
+	LevelMode string
 }
 
 type fieldAliases struct {
@@ -47,6 +51,8 @@ var (
 	fieldReason    = fieldAliases{"reason", []string{"reason"}, "调整原因（reason）"}
 	fieldRequestID = fieldAliases{"request_id", []string{"request_id", "requestId"}, "请求编号（request_id）"}
 	fieldOperation = fieldAliases{"operation_type", []string{"operation_type", "operationType"}, "操作类型（operation_type）"}
+	fieldKind      = fieldAliases{"kind", []string{"kind"}, "数值类型（kind）"}
+	fieldLevelMode = fieldAliases{"level_mode", []string{"level_mode", "levelMode"}, "等级处理方式（level_mode）"}
 )
 
 // requestFields 把 JSON 或表单请求体统一成「键 → 原始值」。
@@ -235,6 +241,9 @@ func decodePointsAdjust(c *gin.Context, batch bool) (*pointsAdjustPayload, error
 		if out.OperationType, err = fields.string(fieldOperation); err != nil {
 			return nil, err
 		}
+		if out.Kind, err = fields.string(fieldKind); err != nil {
+			return nil, err
+		}
 	} else {
 		var ok bool
 		if out.UserID, ok, err = fields.int64(fieldUserID); err != nil {
@@ -257,6 +266,9 @@ func decodePointsAdjust(c *gin.Context, batch bool) (*pointsAdjustPayload, error
 		return nil, err
 	}
 	if out.RequestID, err = fields.string(fieldRequestID); err != nil {
+		return nil, err
+	}
+	if out.LevelMode, err = fields.string(fieldLevelMode); err != nil {
 		return nil, err
 	}
 	header := strings.TrimSpace(c.GetHeader("Idempotency-Key"))

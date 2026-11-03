@@ -1085,6 +1085,13 @@
     "unmapped": false
   },
   {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/users/:userId/points/experience/transactions/:transactionNo/reverse",
+    "permission": "app:user:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
     "method": "GET",
     "path": "/api/admin/apps/:appkey/users/:userId/cloud-storage",
     "permission": "app:user:read",

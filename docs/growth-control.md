@@ -56,6 +56,23 @@
 - **解除封顶**：按当前体系补判一次，经验已够的级数立即升上去；经过的达成奖励按 `(appid, user_id, reward_key)` 去重，不会重复发放。
 - **强制升级**与**锁定保底**沿用等级体系的调级接口（docs/levels.md）；强制升级的目标高于封顶时返回 40900。
 
+## 扣减经验
+
+管理员可以扣减经验（用户详情「资产」页、`POST /api/app/points/adjust-experience` 传负数、批量、冲正）。扣减后经验不足整笔拒绝（40009）。
+自动发放的路径（云函数等内部调用）仍然不能扣经验。扣减时选等级处理 `level_mode`：
+
+| 值 | 行为 |
+|---|---|
+| `keep`（默认） | 保留现有等级（已达到的等级是保底），只扣经验；进度按新经验显示，要重新攒够才会再升级 |
+| `recalc` | 按扣减后的经验从锁定的保底起重新判定（与「重算并允许降级」同一套逻辑），可以降级；封顶照旧；降级写升级记录（原因 `admin`），不通知 |
+
+两种都不收回已发放的等级达成奖励；以后再升回同一级，奖励按 用户 × 奖励键 去重，不会重复发。
+流水是 `type = consume` 的负数行，`extra_data.levelMode` 记处理方式，`level_before / level_after` 记前后等级。
+
+- 批量：`POST /api/app/points/batch-adjust` 带 `kind=experience`（与 `level_mode`），逐人在各自的事务里执行，带请求编号时每人的编号为「编号-用户ID」，整批重试只补上没成功的人。
+- 冲正：`POST /api/admin/apps/:appkey/users/:userId/points/experience/transactions/:transactionNo/reverse`（`reason`、`levelMode`）。冲正一笔获得是扣回（按 `levelMode` 处理等级），冲正一笔扣减是还回（按经验正常升级）。同一笔只能冲正一次，冲正流水不能再冲正。
+- MCP：`points_adjust_experience`（可加可扣）、`points_batch_adjust(kind=experience)`、`points_reverse(kind=experience)`；aegis-mcp 0.4.1。
+
 ## 接口（管理端）
 
 | 方法 | 路径 | 说明 |

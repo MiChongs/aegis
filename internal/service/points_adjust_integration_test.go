@@ -115,7 +115,7 @@ func TestPointsAdjustIntegration(t *testing.T) {
 	_, err = adjust(alice, 50, "req-carol-0001")
 	expectCode(t, err, 40921, "请求编号")
 
-	// 经验只增不减
+	// 经验：增加、重放；管理员可扣减（不足整笔拒绝），内部自动路径不能扣
 	exp, err := points.AdminAdjustExperience(ctx, pointdomain.AdjustInput{AppID: appID, UserID: alice, Amount: 20, RequestID: "req-exp-0001"}, opts)
 	if err != nil || exp.AfterAmount != 20 {
 		t.Fatalf("增加经验：%+v %v", exp, err)
@@ -125,10 +125,15 @@ func TestPointsAdjustIntegration(t *testing.T) {
 		t.Fatalf("经验重放：%+v %v", expAgain, err)
 	}
 	expectBalance(t, ctx, pool, alice, "experience", 20)
-	_, err = points.AdminAdjustExperience(ctx, pointdomain.AdjustInput{AppID: appID, UserID: alice, Amount: -5}, opts)
-	expectCode(t, err, 40000, "经验只能增加")
+	deducted, err := points.AdminAdjustExperience(ctx, pointdomain.AdjustInput{AppID: appID, UserID: alice, Amount: -5}, opts)
+	if err != nil || deducted.AfterAmount != 15 || deducted.OperationType != "consume" {
+		t.Fatalf("扣减经验：%+v %v", deducted, err)
+	}
+	_, err = points.AdminAdjustExperience(ctx, pointdomain.AdjustInput{AppID: appID, UserID: alice, Amount: -100}, opts)
+	expectCode(t, err, 40009, "经验不足")
+	expectBalance(t, ctx, pool, alice, "experience", 15)
 	_, err = points.AdjustUserExperience(ctx, alice, appID, -5, "内部扣减", opts)
-	expectCode(t, err, 40000, "经验只能增加")
+	expectCode(t, err, 40000, "自动发放的经验不能为负数")
 
 	// 跨应用：用户不属于该应用
 	_, err = adjust(outsider, 10, "")

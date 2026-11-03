@@ -122,7 +122,7 @@ func (r *Repository) AdminAdjustIntegral(ctx context.Context, in pointdomain.Adj
 	}, nil
 }
 
-// AdminAdjustExperience 管理员给单个用户增加经验（经验只增不减）。
+// AdminAdjustExperience 管理员调整单个用户的经验：正数增加，负数扣减（等级按 in.LevelMode 处理）。
 func (r *Repository) AdminAdjustExperience(ctx context.Context, in pointdomain.AdjustInput, opts pointdomain.AdminAdjustOptions) (*pointdomain.ExperienceAdjustResult, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -140,12 +140,25 @@ func (r *Repository) AdminAdjustExperience(ctx context.Context, in pointdomain.A
 		}
 	}
 	reason := in.Reason
-	if reason == "" {
-		reason = "管理员手动调整经验值"
+	var result *pointdomain.ExperienceAdjustResult
+	if in.Amount < 0 {
+		if reason == "" {
+			reason = "管理员手动扣减经验值"
+		}
+		result, err = r.applyExperienceDeductTx(ctx, tx, experienceDeduction{
+			UserID: in.UserID, AppID: in.AppID, Amount: in.Amount, Category: "admin_adjust", Title: "管理员手动扣减",
+			Description: reason, SourceType: "admin_manual", SourceID: nullableAdminID(opts.AdminID),
+			Extra: adminAdjustExtra(opts, reason, in.RequestID, false), TransactionNo: txnNo,
+			LevelMode: in.LevelMode, Operator: opts.AdminAccount,
+		})
+	} else {
+		if reason == "" {
+			reason = "管理员手动调整经验值"
+		}
+		result, err = r.applyExperienceChangeTxNo(ctx, tx, in.UserID, in.AppID, in.Amount,
+			"admin_adjust", "管理员手动调整", reason, "admin_manual", nullableAdminID(opts.AdminID),
+			adminAdjustExtra(opts, reason, in.RequestID, false), txnNo)
 	}
-	result, err := r.applyExperienceChangeTxNo(ctx, tx, in.UserID, in.AppID, in.Amount,
-		"admin_adjust", "管理员手动调整", reason, "admin_manual", nullableAdminID(opts.AdminID),
-		adminAdjustExtra(opts, reason, in.RequestID, false), txnNo)
 	if err != nil {
 		return nil, err
 	}
@@ -309,14 +322,14 @@ func findExperienceReplay(ctx context.Context, tx pgx.Tx, txnNo string, in point
 	var (
 		userID, appID, amount, before, after int64
 		levelBefore, levelAfter              int
-		reason                               *string
+		reason, levelMode                    *string
 		createdAt                            time.Time
 		account                              string
 	)
 	err := tx.QueryRow(ctx, `SELECT t.user_id, t.appid, t.amount, t.balance_before, t.balance_after, t.level_before, t.level_after,
-t.description, t.created_at, u.account
+t.description, t.extra_data->>'levelMode', t.created_at, u.account
 FROM experience_transactions t JOIN users u ON u.id = t.user_id WHERE t.transaction_no = $1`, txnNo).
-		Scan(&userID, &appID, &amount, &before, &after, &levelBefore, &levelAfter, &reason, &createdAt, &account)
+		Scan(&userID, &appID, &amount, &before, &after, &levelBefore, &levelAfter, &reason, &levelMode, &createdAt, &account)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -326,11 +339,15 @@ FROM experience_transactions t JOIN users u ON u.id = t.user_id WHERE t.transact
 	if userID != in.UserID || appID != in.AppID || amount != in.Amount {
 		return nil, ErrRequestIDConflict
 	}
+	operation := "add"
+	if amount < 0 {
+		operation = "consume"
+	}
 	return &pointdomain.ExperienceAdjustResult{
 		UserID: userID, AppID: appID, Account: account, Amount: amount, BeforeAmount: before, AfterAmount: after,
-		Reason: derefString(reason), OperationType: "add", TransactionNo: txnNo,
-		LevelChanged: levelAfter > levelBefore, OldLevel: levelBefore, NewLevel: levelAfter,
-		CreatedAt: createdAt, Replayed: true,
+		Reason: derefString(reason), OperationType: operation, TransactionNo: txnNo,
+		LevelChanged: levelAfter != levelBefore, OldLevel: levelBefore, NewLevel: levelAfter,
+		LevelMode: pointdomain.LevelMode(derefString(levelMode)), CreatedAt: createdAt, Replayed: true,
 	}, nil
 }
 

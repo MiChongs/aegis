@@ -188,6 +188,7 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.PUT("/apps/:appkey/users/:userId/growth/level-cap", h.AdminSetAppUserLevelCap)
 		admin.DELETE("/apps/:appkey/users/:userId/growth/level-cap", h.AdminClearAppUserLevelCap)
 		admin.POST("/apps/:appkey/users/:userId/points/integral/transactions/:transactionNo/reverse", h.AdminReverseAppUserIntegral)
+		admin.POST("/apps/:appkey/users/:userId/points/experience/transactions/:transactionNo/reverse", h.AdminReverseAppUserExperience)
 		admin.POST("/apps/:appkey/wallet/adjust", h.AdminAdjustAppUserWallet)
 		// 全应用资金视图：按用户一个个点过去无法对账
 		admin.GET("/apps/:appkey/wallet/transactions", h.AdminAppWalletTransactions)

@@ -37,6 +37,7 @@ func init() {
 
 		// 用户钱包（只读）
 		View("GET /api/admin/apps/:appkey/users/:userId/wallet", "查看用户钱包", "用户"),
+		Write("POST /api/admin/apps/:appkey/users/:userId/points/experience/transactions/:transactionNo/reverse", "冲正用户经验流水", "用户", SeverityHigh),
 		View("GET /api/admin/apps/:appkey/users/:userId/wallet/transactions", "查看用户钱包流水", "用户"),
 
 		// 用户云存储

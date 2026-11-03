@@ -84,7 +84,6 @@ func (s *PointsService) AdminLedgerSummary(ctx context.Context, kind string, app
 //
 // 请求编号由原流水号派生，同一笔只能冲正一次；重复提交返回首次结果（Replayed=true）。
 // 冲正本身的流水（REV 编号派生的 ADI 流水）不能再被冲正，避免来回翻转。
-// 经验只增不减，所以只支持积分。
 func (s *PointsService) AdminReverseIntegral(ctx context.Context, appID, userID int64, transactionNo string, reason string, options pointdomain.AdminAdjustOptions) (*pointdomain.IntegralAdjustResult, error) {
 	transactionNo = strings.TrimSpace(transactionNo)
 	if transactionNo == "" {
@@ -116,5 +115,47 @@ func (s *PointsService) AdminReverseIntegral(ctx context.Context, appID, userID 
 		Amount:    -original.Amount,
 		Reason:    reason,
 		RequestID: "rev_" + hex.EncodeToString(sum[:16]),
+	}, options)
+}
+
+// AdminReverseExperience 冲正一笔经验流水：按原数量反向调整一次（获得的扣回、扣减的还回）。
+//
+// 扣回时 levelMode 决定等级怎么处理（keep / recalc，见 pointdomain.LevelMode）；还回时按经验正常升级，
+// 经过的达成奖励若已发过不会重复发。同一笔只能冲正一次，冲正流水不能再冲正。
+func (s *PointsService) AdminReverseExperience(ctx context.Context, appID, userID int64, transactionNo string, reason string, levelMode string, options pointdomain.AdminAdjustOptions) (*pointdomain.ExperienceAdjustResult, error) {
+	transactionNo = strings.TrimSpace(transactionNo)
+	if transactionNo == "" {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "缺少流水号")
+	}
+	mode, err := pointdomain.NormalizeLevelMode(levelMode)
+	if err != nil {
+		return nil, mapPointsAdjustError(pointdomain.KindExperience, err)
+	}
+	original, err := s.pg.AdminGetPointLedgerTransaction(ctx, pointdomain.KindExperience, appID, userID, transactionNo)
+	if err != nil {
+		return nil, err
+	}
+	if original == nil {
+		return nil, apperrors.New(40404, http.StatusNotFound, "流水不存在或不属于该用户")
+	}
+	if original.Amount == 0 {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "该流水数量为 0，无需冲正")
+	}
+	if reversed, _ := original.ExtraData["reversalOf"].(string); reversed != "" {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "冲正流水不能再次冲正")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = fmt.Sprintf("冲正 %s", original.TransactionNo)
+	}
+	sum := sha256.Sum256([]byte(original.TransactionNo))
+	options.Extra = map[string]any{"reversalOf": original.TransactionNo}
+	return s.AdminAdjustExperience(ctx, pointdomain.AdjustInput{
+		AppID:     appID,
+		UserID:    userID,
+		Amount:    -original.Amount,
+		Reason:    reason,
+		RequestID: "rev_" + hex.EncodeToString(sum[:16]),
+		LevelMode: mode,
 	}, options)
 }

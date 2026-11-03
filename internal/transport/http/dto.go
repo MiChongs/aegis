@@ -559,13 +559,15 @@ type AppAdjustIntegralRequest struct {
 	RequestID string `json:"request_id" form:"request_id"`
 }
 
-// AppAdjustExperienceRequest 文档用的请求模型；amount 必须为正（经验只增不减）。
+// AppAdjustExperienceRequest 文档用的请求模型；amount 为正增加、为负扣减。
+// level_mode 只对扣减有意义：keep（默认）保留现有等级，recalc 按扣减后的经验重新判定（可降级，不低于锁定的保底）。
 type AppAdjustExperienceRequest struct {
 	UserID    int64  `json:"user_id" form:"user_id" binding:"required"`
 	AppID     int64  `json:"appid" form:"appid" binding:"required"`
 	Amount    int64  `json:"amount" form:"amount" binding:"required"`
 	Reason    string `json:"reason" form:"reason"`
 	RequestID string `json:"request_id" form:"request_id"`
+	LevelMode string `json:"level_mode" form:"level_mode"`
 }
 
 // AppBatchAdjustIntegralRequest 文档用的请求模型。
@@ -576,6 +578,9 @@ type AppBatchAdjustIntegralRequest struct {
 	OperationType string  `json:"operation_type" form:"operation_type"`
 	Reason        string  `json:"reason" form:"reason"`
 	RequestID     string  `json:"request_id" form:"request_id"`
+	// Kind integral（默认）/ experience；LevelMode 扣减经验时的等级处理（keep / recalc）
+	Kind      string `json:"kind" form:"kind"`
+	LevelMode string `json:"level_mode" form:"level_mode"`
 }
 
 type SiteCreateRequest struct {

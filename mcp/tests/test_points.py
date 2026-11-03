@@ -43,11 +43,23 @@ async def test_add_experience(backend, call, call_error):
     await call_error("points_add_experience", {"app": "demo", "user_id": 7, "amount": -1})
 
 
+async def test_adjust_experience(backend, call, call_error):
+    await call("points_adjust_experience", {"app": "demo", "user_id": 7, "amount": -30, "level_mode": "recalc", "reason": "刷经验"})
+    assert (backend.last().path, backend.last().json) == (
+        "/api/app/points/adjust-experience", {"appid": 42, "user_id": 7, "amount": -30, "reason": "刷经验", "level_mode": "recalc"})
+    await call("points_adjust_experience", {"app": "demo", "user_id": 7, "amount": 5})
+    assert backend.last().json == {"appid": 42, "user_id": 7, "amount": 5}
+    assert "不能为 0" in await call_error("points_adjust_experience", {"app": "demo", "user_id": 7, "amount": 0})
+    await call_error("points_adjust_experience", {"app": "demo", "user_id": 7, "amount": -1, "level_mode": "drop"})
+
+
 async def test_batch_adjust(backend, call, call_error):
     await call("points_batch_adjust", {"app": "demo", "user_ids": [1, 2, 3], "amount": 10, "operation": "consume", "reason": "回收"})
     req = backend.last()
     assert (req.method, req.path) == ("POST", "/api/app/points/batch-adjust")
     assert req.json == {"appid": 42, "user_ids": [1, 2, 3], "amount": 10, "operation_type": "consume", "reason": "回收"}
+    await call("points_batch_adjust", {"app": "demo", "user_ids": [1], "amount": 10, "operation": "consume", "kind": "experience", "level_mode": "recalc"})
+    assert backend.last().json == {"appid": 42, "user_ids": [1], "amount": 10, "operation_type": "consume", "kind": "experience", "level_mode": "recalc"}
     await call_error("points_batch_adjust", {"app": "demo", "user_ids": [], "amount": 10})
     await call_error("points_batch_adjust", {"app": "demo", "user_ids": [1], "amount": 0})
 
@@ -58,6 +70,9 @@ async def test_reverse(backend, call):
     assert backend.last().json == {}
     await call("points_reverse", {"app": "demo", "user_id": 7, "transaction_no": "ADI123", "reason": "误发"})
     assert backend.last().json == {"reason": "误发"}
+    backend.reply("POST", f"{U}/experience/transactions/EXP9/reverse", {"replayed": False})
+    await call("points_reverse", {"app": "demo", "user_id": 7, "transaction_no": "EXP9", "kind": "experience", "level_mode": "recalc"})
+    assert (backend.last().path, backend.last().json) == (f"{U}/experience/transactions/EXP9/reverse", {"levelMode": "recalc"})
 
 
 async def test_stats_and_backend_error(backend, call, call_error):

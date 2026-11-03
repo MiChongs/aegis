@@ -351,7 +351,7 @@ func (h *Handler) AppAdjustIntegral(c *gin.Context) {
 	response.Success(c, 200, message, result)
 }
 
-// AppAdjustExperience 管理员给单个用户增加经验（经验只增不减）。
+// AppAdjustExperience 管理员调整单个用户的经验（amount 为正增加、为负扣减；扣减时 level_mode 决定等级处理）。
 func (h *Handler) AppAdjustExperience(c *gin.Context) {
 	req, err := decodePointsAdjust(c, false)
 	if err != nil {
@@ -360,6 +360,7 @@ func (h *Handler) AppAdjustExperience(c *gin.Context) {
 	}
 	result, err := h.points.AdminAdjustExperience(c.Request.Context(), pointdomain.AdjustInput{
 		AppID: req.AppID, UserID: req.UserID, Amount: req.Amount, Reason: req.Reason, RequestID: req.RequestID,
+		LevelMode: pointdomain.LevelMode(req.LevelMode),
 	}, h.pointsAdjustOptions(c))
 	if err != nil {
 		h.writeError(c, err)
@@ -372,11 +373,27 @@ func (h *Handler) AppAdjustExperience(c *gin.Context) {
 	response.Success(c, 200, message, result)
 }
 
-// AppBatchAdjustIntegral 管理员批量调整积分（amount 为正数，operation_type 决定增加或扣减）。
+// AppBatchAdjustIntegral 管理员批量调整积分或经验（amount 为正数，operation_type 决定增加或扣减；
+// kind=experience 时调整经验，扣减时 level_mode 决定等级处理）。
 func (h *Handler) AppBatchAdjustIntegral(c *gin.Context) {
 	req, err := decodePointsAdjust(c, true)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(req.Kind)) {
+	case "", string(pointdomain.KindIntegral):
+	case string(pointdomain.KindExperience):
+		result, err := h.points.BatchAdjustUserExperience(c.Request.Context(), req.UserIDs, req.AppID, req.Amount,
+			req.OperationType, req.Reason, req.RequestID, req.LevelMode, h.pointsAdjustOptions(c))
+		if err != nil {
+			h.writeError(c, err)
+			return
+		}
+		response.Success(c, 200, "批量调整完成", result)
+		return
+	default:
+		response.Error(c, http.StatusBadRequest, 40000, "数值类型（kind）只能是 integral 或 experience")
 		return
 	}
 	result, err := h.points.BatchAdjustUserIntegral(c.Request.Context(), req.UserIDs, req.AppID, req.Amount,

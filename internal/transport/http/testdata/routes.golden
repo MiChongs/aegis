@@ -1018,6 +1018,7 @@ POST	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/restore	A
 POST	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/rollback	AdminRollbackCloudStorageUserItem
 POST	/api/admin/apps/:appkey/users/:userId/feature-unlocks	AdminGrantFeatureUnlock
 POST	/api/admin/apps/:appkey/users/:userId/feature-unlocks/:unlockId/revoke	AdminRevokeFeatureUnlock
+POST	/api/admin/apps/:appkey/users/:userId/points/experience/transactions/:transactionNo/reverse	AdminReverseAppUserExperience
 POST	/api/admin/apps/:appkey/users/:userId/points/integral/transactions/:transactionNo/reverse	AdminReverseAppUserIntegral
 POST	/api/admin/apps/:appkey/users/:userId/reset-password	AdminResetUserPassword
 POST	/api/admin/apps/:appkey/users/:userId/revoke-sessions	AdminRevokeUserSessions

@@ -31,6 +31,8 @@ type AdminPointSummaryQuery struct {
 // AdminPointReverseRequest 冲正原因，留空时写「冲正 <流水号>」。
 type AdminPointReverseRequest struct {
 	Reason string `json:"reason"`
+	// LevelMode 冲正经验时扣回的那部分怎么处理等级：keep（默认）/ recalc
+	LevelMode string `json:"levelMode"`
 }
 
 func pathUserID(c *gin.Context) (int64, bool) {
@@ -112,6 +114,26 @@ func (h *Handler) AdminReverseAppUserIntegral(c *gin.Context) {
 	var req AdminPointReverseRequest
 	_ = c.ShouldBindJSON(&req)
 	result, err := h.points.AdminReverseIntegral(c.Request.Context(), appID, userID, c.Param("transactionNo"), req.Reason, h.pointsAdjustOptions(c))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "冲正成功", result)
+}
+
+// AdminReverseAppUserExperience POST /api/admin/apps/:appkey/users/:userId/points/experience/transactions/:transactionNo/reverse
+func (h *Handler) AdminReverseAppUserExperience(c *gin.Context) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok {
+		return
+	}
+	userID, ok := pathUserID(c)
+	if !ok {
+		return
+	}
+	var req AdminPointReverseRequest
+	_ = c.ShouldBindJSON(&req)
+	result, err := h.points.AdminReverseExperience(c.Request.Context(), appID, userID, c.Param("transactionNo"), req.Reason, req.LevelMode, h.pointsAdjustOptions(c))
 	if err != nil {
 		h.writeError(c, err)
 		return
