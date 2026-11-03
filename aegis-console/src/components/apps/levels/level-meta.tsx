@@ -137,7 +137,8 @@ export const EVENT_REASON_LABEL: Record<LevelEventReason, string> = {
   experience: "经验增长",
   sync: "补判",
   recalc: "重算任务",
-  admin: "管理员调整"
+  admin: "管理员调整",
+  penalty: "封顶降级"
 };
 
 export const JOB_STATUS_META: Record<LevelJobStatus, { label: string; variant: "info" | "success" | "danger" | "secondary" }> = {

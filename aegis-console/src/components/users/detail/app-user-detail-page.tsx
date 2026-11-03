@@ -21,6 +21,7 @@ import {
   MoreHorizontal,
   PencilLine,
   Receipt,
+  Scale,
   ShieldCheck,
   ShieldHalf,
   Sparkles,
@@ -73,6 +74,7 @@ import {
   type UserSignal
 } from "./user-detail-shared";
 import { UserGovernanceTab } from "./user-governance-tab";
+import { UserGrowthTab } from "./user-growth-tab";
 import { UserLedgerTab } from "./user-ledger-tab";
 import { UserOverviewTab } from "./user-overview-tab";
 import { UserProfileTab } from "./user-profile-tab";
@@ -102,6 +104,7 @@ const TAB_GROUPS: Array<{ label: string; tabs: TabDef[] }> = [
     label: "资产",
     tabs: [
       { value: "assets", label: "资产与权益", icon: Wallet },
+      { value: "growth", label: "奖惩", icon: Scale },
       { value: "ledger", label: "流水", icon: Receipt },
       { value: "records", label: "互动记录", icon: ListChecks }
     ]
@@ -277,6 +280,8 @@ export function AppUserDetailPage({ appKey, userId, fromHref }: Props) {
                   <UserActivityTab appKey={appKey} userId={userId} user={user} />
                 ) : tab === "assets" ? (
                   <UserAssetsTab appKey={appKey} userId={userId} user={user} onNavigate={goTab} />
+                ) : tab === "growth" ? (
+                  <UserGrowthTab appKey={appKey} userId={userId} />
                 ) : tab === "ledger" ? (
                   <UserLedgerTab appKey={appKey} userId={userId} user={user} onNavigate={goTab} />
                 ) : tab === "records" ? (

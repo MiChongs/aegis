@@ -250,7 +250,7 @@ export type LevelUserParams = {
   limit?: number;
 };
 
-export type LevelEventReason = "experience" | "sync" | "recalc" | "admin";
+export type LevelEventReason = "experience" | "sync" | "recalc" | "admin" | "penalty";
 
 export type LevelNotifyStatus = "none" | "pending" | "sending" | "sent" | "failed";
 
