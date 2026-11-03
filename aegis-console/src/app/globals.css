@@ -510,6 +510,44 @@
   }
 
   /*
+   * 应用详情页的面板区：任何面板都不许把页面撑出视口。
+   *
+   * 三十多个面板是不同时期写的，工具条、子页签、代码块各有各的固定宽度。
+   * 这里统一兜底：本区 overflow-x: clip（不是 hidden / auto —— 那两个会生成
+   * 滚动容器，面板里的 sticky 表头与保存条就失效了），再把最常见的几类
+   * 「撑宽元凶」改成在自己的格子里横滑，而不是被裁掉。
+   */
+  .app-detail-content {
+    max-width: 100%;
+    overflow-x: clip;
+  }
+  .app-detail-content :where(pre, table, img, video, canvas, iframe) {
+    max-width: 100%;
+  }
+  .app-detail-content :where(pre) {
+    overflow-x: auto;
+  }
+  @media (max-width: 1023.98px) {
+    /* 子页签：窄屏横滑，不再把一排 tab 挤出屏幕 */
+    .app-detail-content [data-slot="tabs-list"][data-variant] {
+      max-width: 100%;
+      overflow-x: auto;
+      justify-content: flex-start;
+      scrollbar-width: none;
+    }
+    .app-detail-content [data-slot="tabs-list"]::-webkit-scrollbar {
+      display: none;
+    }
+    .app-detail-content [data-slot="tabs-trigger"] {
+      flex: 0 0 auto;
+    }
+    /* 卡片与区块不再给固定的最小宽度 */
+    .app-detail-content :where(section, form, [data-slot="card"]) {
+      min-width: 0;
+    }
+  }
+
+  /*
    * 满屏工作台：可用高度 = 视口 − 顶栏（h-12）− <main> 的上下留白。
    *
    * 给「一屏之内做完、不靠滚动」的页面用（当前是远程函数的脚本工作台）：

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
@@ -9,8 +9,10 @@ import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingState } from "@/components/ui/data-state";
 import { AppGovernanceNotice } from "@/components/apps/app-governance-notice";
 import { AppDeleteDialog } from "@/components/apps/app-delete-dialog";
-import { AppDetailHeader } from "@/components/apps/app-detail-header";
-import { AppSectionNav, AppSectionTitle } from "@/components/apps/app-section-nav";
+import { AppDetailHero } from "@/components/apps/detail/app-detail-hero";
+import { AppSectionHeading } from "@/components/apps/detail/app-section-heading";
+import { AppSectionMobileBar } from "@/components/apps/detail/app-section-mobile";
+import { AppSectionRail } from "@/components/apps/detail/app-section-rail";
 import { AppAuditPanel } from "@/components/apps/app-audit-panel";
 import { AppAuthProtocolPanel } from "@/components/apps/app-auth-protocol-panel";
 import { AppAuthSessionPanel } from "@/components/apps/app-auth-session-panel";
@@ -101,8 +103,17 @@ function AppDetailInner() {
     }
   }, [deleteTarget, deleteMutation, router, setLastAppKey]);
 
+  // 换区块时不跳回页顶（头部还在原处），但若已经滚过了内容区开头，就把新区块的开头拉回吸顶条下方，
+  // 否则在长面板底部点了「下一个」，看到的是新面板的半截
+  const contentRef = useRef<HTMLDivElement>(null);
   const selectSection = useCallback(
-    (next: string) => router.replace(appSectionHref(appKey, next), { scroll: false }),
+    (next: string) => {
+      router.replace(appSectionHref(appKey, next), { scroll: false });
+      const el = contentRef.current;
+      if (!el) return;
+      const margin = parseFloat(getComputedStyle(el).scrollMarginTop) || 0;
+      if (el.getBoundingClientRect().top < margin) el.scrollIntoView({ block: "start" });
+    },
     [appKey, router]
   );
 
@@ -119,8 +130,8 @@ function AppDetailInner() {
   }
 
   return (
-    <div className="page-stack">
-      <AppDetailHeader
+    <div className="page-stack min-w-0 gap-4 lg:gap-5">
+      <AppDetailHero
         app={app}
         apps={apps}
         section={section}
@@ -132,10 +143,14 @@ function AppDetailInner() {
           否则他只会遇到一连串不明所以的 403 */}
       <AppGovernanceNotice appKey={appKey} />
 
-      <div className="grid gap-4 lg:grid-cols-[12.5rem_minmax(0,1fr)] lg:gap-6">
-        <AppSectionNav section={section} onSelect={selectSection} />
-        <div className="min-w-0 space-y-4">
-          <AppSectionTitle section={section} />
+      {/* 窄屏吸顶区块条：必须是页面根的直接子元素，吸顶范围才是整页而不是某个格子 */}
+      <AppSectionMobileBar section={section} onSelect={selectSection} />
+
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[13.5rem_minmax(0,1fr)] lg:gap-6">
+        <AppSectionRail section={section} onSelect={selectSection} />
+        {/* app-detail-content：把面板关在视口内（见 globals.css），宽表格与工具条在自己的格子里横滑 */}
+        <div ref={contentRef} className="app-detail-content min-w-0 scroll-mt-40 space-y-4 lg:scroll-mt-20">
+          <AppSectionHeading section={section} />
           <AppSectionPanel section={section} app={app} />
         </div>
       </div>

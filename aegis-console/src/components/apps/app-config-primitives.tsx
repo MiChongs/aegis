@@ -34,23 +34,23 @@ export function SectionCard({
 }) {
   return (
     <section
-      className="overflow-hidden rounded-2xl border border-border bg-card"
+      className="min-w-0 overflow-hidden rounded-2xl border border-border bg-card"
       style={{ boxShadow: "var(--shadow-soft)" }}
     >
-      <header className="flex flex-col gap-2 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-3">
+      <header className="flex flex-col gap-2 border-b border-border px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-4">
+        <div className="flex min-w-0 items-start gap-3">
           <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/20 dark:text-emerald-400">
             {icon}
           </div>
-          <div className="space-y-0.5">
+          <div className="min-w-0 space-y-0.5">
             <h3 className="text-sm font-semibold tracking-tight">{title}</h3>
             {description && <p className="text-xs text-muted-foreground">{description}</p>}
           </div>
         </div>
-        {aside && <div className="shrink-0">{aside}</div>}
+        {aside && <div className="min-w-0 max-w-full shrink-0">{aside}</div>}
       </header>
-      <div className="p-5">{children}</div>
-      {footer && <footer className="border-t border-border bg-muted/30 px-5 py-3">{footer}</footer>}
+      <div className="p-4 sm:p-5">{children}</div>
+      {footer && <footer className="border-t border-border bg-muted/30 px-4 py-3 sm:px-5">{footer}</footer>}
     </section>
   );
 }

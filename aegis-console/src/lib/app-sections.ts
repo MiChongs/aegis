@@ -152,3 +152,15 @@ export function appSectionHref(appKey: string, section?: string | null): string 
     ? `/apps/${encodeURIComponent(appKey)}`
     : `/apps/${encodeURIComponent(appKey)}?tab=${resolved}`;
 }
+
+/** 区块所在分组 */
+export function findAppSectionGroup(key?: string | null): AppSectionGroup | undefined {
+  return key ? appSectionGroups.find((group) => group.sections.some((item) => item.key === key)) : undefined;
+}
+
+/** 按目录顺序的上一个 / 下一个区块（跨组连续），窄屏顶栏的翻页按钮用 */
+export function adjacentAppSections(key: string): { prev?: AppSection; next?: AppSection } {
+  const index = appSections.findIndex((item) => item.key === key);
+  if (index < 0) return {};
+  return { prev: appSections[index - 1], next: appSections[index + 1] };
+}
