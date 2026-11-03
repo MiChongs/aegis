@@ -15,6 +15,7 @@ import (
 
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
+	"aegis/internal/domain/growth"
 	"aegis/internal/domain/levels"
 	pointdomain "aegis/internal/domain/points"
 	userdomain "aegis/internal/domain/user"
@@ -68,6 +69,8 @@ type levelRecordRow struct {
 	LastLevelUpAt       *time.Time
 	// LockedLevel 管理员锁定的保底等级（重算降级也不低于它），0 = 没有锁定
 	LockedLevel int
+	// CappedLevel 管理员设的等级封顶（成长调控），0 = 不封顶
+	CappedLevel int
 }
 
 func (r *Repository) GetUserByAppAndAccount(ctx context.Context, appID int64, account string) (*userdomain.User, error) {
@@ -2895,6 +2898,20 @@ func (r *Repository) CreateDailySign(ctx context.Context, userID int64, appID in
 		}
 	}
 
+	// 成长调控：签到奖励按规则换算（在等级签到加成之后）
+	for _, item := range []struct {
+		kind   growth.Kind
+		amount *int64
+	}{{growth.KindIntegral, &reward.IntegralReward}, {growth.KindExperience, &reward.ExperienceReward}} {
+		outcome, touched, growthErr := applyGrowthTx(ctx, tx, appID, userID, item.kind, growth.SourceSignin, *item.amount)
+		if growthErr != nil {
+			return nil, growthErr
+		}
+		if touched {
+			*item.amount = outcome.Granted
+		}
+	}
+
 	integralBefore := user.Integral
 	experienceBefore := user.Experience
 	// 签到奖励同样走 ApplyDelta：余额接近上限时拒绝，而不是让 int64 回绕
@@ -4303,6 +4320,7 @@ func scanLevelRecord(row interface{ Scan(dest ...any) error }) (*levelRecordRow,
 		&item.LevelUpCount,
 		&item.LastLevelUpAt,
 		&item.LockedLevel,
+		&item.CappedLevel,
 	); err != nil {
 		return nil, normalizeNotFound(err)
 	}

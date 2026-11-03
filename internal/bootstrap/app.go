@@ -13,10 +13,10 @@ import (
 	"aegis/internal/config"
 	"aegis/internal/db"
 	"aegis/internal/event"
+	"aegis/internal/mailtpl"
 	"aegis/internal/middleware"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
-	"aegis/internal/mailtpl"
 	"aegis/internal/service"
 	httptransport "aegis/internal/transport/http"
 	"aegis/pkg/clientip"
@@ -488,6 +488,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	levelService := service.NewLevelService(log, pg)
 	levelService.SetNotifier(notificationService)
 	levelService.SetEventPublisher(realtimeService)
+	growthService := service.NewGrowthService(log, pg)
+	growthService.SetEventPublisher(realtimeService)
 	signInService.SetSignInObserver(itemGrantService.OnSignIn)
 	authService.SetLoginObserver(itemGrantService.OnLogin)
 	// 用户云存储：内容走 storageService 解析出的存储配置，治理闸门（blockStorage）
@@ -636,13 +638,13 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	}
 	// 执行点注入：每一处都对应 platformdomain 里的一项限制，
 	// 少接一处就等于那一项开关只落库不生效。
-	appService.SetGovernanceService(governanceService)             // blockLogin / blockRegister
-	authService.SetGovernanceService(governanceService)            // blockApi
-	paymentService.SetGovernanceService(governanceService)         // blockPayment
-	storageService.SetGovernanceService(governanceService)         // blockStorage
-	notificationService.SetGovernanceService(governanceService)    // blockNotification（站内信）
-	emailService.SetGovernanceService(governanceService)           // blockNotification（邮件）
-	aiProviderService.SetGovernanceService(governanceService)      // blockApi（被限的应用不再消耗 AI 通道）
+	appService.SetGovernanceService(governanceService)          // blockLogin / blockRegister
+	authService.SetGovernanceService(governanceService)         // blockApi
+	paymentService.SetGovernanceService(governanceService)      // blockPayment
+	storageService.SetGovernanceService(governanceService)      // blockStorage
+	notificationService.SetGovernanceService(governanceService) // blockNotification（站内信）
+	emailService.SetGovernanceService(governanceService)        // blockNotification（邮件）
+	aiProviderService.SetGovernanceService(governanceService)   // blockApi（被限的应用不再消耗 AI 通道）
 	// 平台级邮件的落款主体取品牌名（应用级取应用名）。没有它的话，
 	// 一封平台通知的标题会渲染成「 账号已开通」——前面缺一个词。
 	emailService.SetPlatformSettings(systemService)
@@ -764,6 +766,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Lottery:      lotteryService,
 		ItemGrant:    itemGrantService,
 		Level:        levelService,
+		Growth:       growthService,
 		Wallet:       walletService,
 		Vip:          vipService,
 		Payment:      paymentService,

@@ -12,6 +12,8 @@ const (
 	ReasonSync       = "sync"
 	ReasonRecalc     = "recalc"
 	ReasonAdmin      = "admin"
+	// ReasonPenalty 管理员等级封顶并降级（成长调控，docs/growth-control.md）
+	ReasonPenalty = "penalty"
 )
 
 // 升级通知的发送状态。

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"aegis/internal/domain/growth"
 	pointdomain "aegis/internal/domain/points"
 	walletdomain "aegis/internal/domain/wallet"
 	"github.com/jackc/pgx/v5"
@@ -457,6 +458,8 @@ type integralChangeResult struct {
 	Before        int64
 	After         int64
 	TransactionNo string
+	// Granted 实际入账的数量（成长调控规则作用之后，可能与请求的不同）
+	Granted int64
 }
 
 // applyIntegralChangeTxNo 锁行、按 pointdomain.ApplyDelta 计算新余额（不足或超过上限都拒绝）、更新、记账。
@@ -469,6 +472,19 @@ func applyIntegralChangeTxNo(ctx context.Context, tx pgx.Tx, in integralChange) 
 		}
 		return nil, err
 	}
+	// 成长调控：受管来源的收入按规则换算（管理员调整、充值、会员赠送、折算、退回不受管）
+	multiplier := 1.0
+	if in.Amount > 0 && in.TxnType == "earn" {
+		source := growth.SourceFor(growth.KindIntegral, in.SourceType, strings.Contains(in.Category, "refund"))
+		outcome, touched, err := applyGrowthTx(ctx, tx, in.AppID, in.UserID, growth.KindIntegral, source, in.Amount)
+		if err != nil {
+			return nil, err
+		}
+		if touched {
+			in.Amount, in.Extra, multiplier = outcome.Granted, growthExtra(in.Extra, outcome), outcome.Multiplier()
+		}
+	}
+	out.Granted = in.Amount
 	after, err := pointdomain.ApplyDelta(out.Before, in.Amount)
 	if err != nil {
 		if errors.Is(err, pointdomain.ErrBalanceInsufficient) {
@@ -492,10 +508,10 @@ func applyIntegralChangeTxNo(ctx context.Context, tx pgx.Tx, in integralChange) 
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO integral_transactions (transaction_no, user_id, appid, type, category, amount, balance_before, balance_after,
 status, title, description, source_id, source_type, multiplier, client_ip, user_agent, extra_data, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'completed', $9, $10, $11, $12, 1, $13, $14, $15, NOW(), NOW())`,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'completed', $9, $10, $11, $12, $16, $13, $14, $15, NOW(), NOW())`,
 		out.TransactionNo, in.UserID, in.AppID, in.TxnType, in.Category, in.Amount, out.Before, out.After,
 		in.Title, nullableString(in.Description), in.SourceID, nullableString(in.SourceType),
-		nullableString(in.ClientIP), nullableString(in.UserAgent), extraJSON); err != nil {
+		nullableString(in.ClientIP), nullableString(in.UserAgent), extraJSON, multiplier); err != nil {
 		return nil, err
 	}
 	return &out, nil

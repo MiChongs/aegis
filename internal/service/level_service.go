@@ -480,6 +480,16 @@ func (s *LevelService) AdjustUser(ctx context.Context, input LevelAdjustInput) (
 }
 
 func (s *LevelService) adjustUser(ctx context.Context, scheme *levels.Scheme, input LevelAdjustInput) (*LevelAdjustResult, error) {
+	if input.Level > 0 {
+		// 成长调控封顶的人不能被强制升到封顶之上（封顶会把结果截回去，不如直接说清楚）
+		state, err := s.pg.GrowthLevel(ctx, input.AppID, input.UserID)
+		if err != nil {
+			return nil, s.translate(err)
+		}
+		if state.Capped > 0 && input.Level > state.Capped {
+			return nil, apperrors.New(40900, http.StatusConflict, "该用户等级封顶在 Lv."+strconv.Itoa(state.Capped)+"，先在用户详情的「奖惩」里解除封顶")
+		}
+	}
 	note := strings.TrimSpace(input.Note)
 	result := &LevelAdjustResult{}
 	if input.TopUp && input.Level > 0 {

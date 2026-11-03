@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"aegis/internal/domain/growth"
 	pointdomain "aegis/internal/domain/points"
 )
 
@@ -48,6 +49,17 @@ func (r *Repository) applyExperienceChangeTxNo(ctx context.Context, tx pgx.Tx, u
 		return nil, err
 	}
 
+	// 成长调控：受管来源的经验按规则换算，可能被换算成 0（冻结或到了每日上限），这笔流水照记以便追溯
+	multiplier := 1.0
+	source := growth.SourceFor(growth.KindExperience, sourceType, false)
+	outcome, touched, err := applyGrowthTx(ctx, tx, appID, userID, growth.KindExperience, source, amount)
+	if err != nil {
+		return nil, err
+	}
+	if touched {
+		amount, extra, multiplier = outcome.Granted, growthExtra(extra, outcome), outcome.Multiplier()
+	}
+
 	experienceAfter, err := pointdomain.ApplyDelta(experienceBefore, amount)
 	if err != nil {
 		return nil, &BalanceError{Err: pointdomain.ErrBalanceOverflow, Kind: pointdomain.KindExperience, Balance: experienceBefore}
@@ -85,7 +97,7 @@ func (r *Repository) applyExperienceChangeTxNo(ctx context.Context, tx pgx.Tx, u
 	extraData, _ := json.Marshal(payload)
 
 	if _, err := tx.Exec(ctx, `INSERT INTO experience_transactions (transaction_no, user_id, appid, type, category, amount, balance_before, balance_after, level_before, level_after, status, title, description, source_id, source_type, multiplier, is_level_up, client_ip, user_agent, extra_data, created_at, updated_at)
-VALUES ($1, $2, $3, 'earn', $4, $5, $6, $7, $8, $9, 'completed', $10, $11, $12, $13, 1, $14, $15, $16, $17, $18, $18)`,
+VALUES ($1, $2, $3, 'earn', $4, $5, $6, $7, $8, $9, 'completed', $10, $11, $12, $13, $19, $14, $15, $16, $17, $18, $18)`,
 		transactionNo,
 		userID,
 		appID,
@@ -104,6 +116,7 @@ VALUES ($1, $2, $3, 'earn', $4, $5, $6, $7, $8, $9, 'completed', $10, $11, $12, 
 		nullableString(stringFrom(extra, "userAgent")),
 		extraData,
 		now,
+		multiplier,
 	); err != nil {
 		return nil, err
 	}

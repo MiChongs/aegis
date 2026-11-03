@@ -209,6 +209,11 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/rewards/{rewardId}/fulfill"):                                   LevelFulfillRequest{},                    // AdminFulfillLevelReward
 		routeKey("PUT", "/api/admin/apps/{appkey}/levels/scheme"):                                                        LevelDraftRequest{},                      // AdminSaveLevelScheme
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/simulate"):                                                     LevelSimulateRequest{},                   // AdminSimulateLevel
+		routeKey("POST", "/api/admin/apps/{appkey}/growth/rules"):                                                        GrowthRuleRequest{},                      // AdminCreateGrowthRule
+		routeKey("PUT", "/api/admin/apps/{appkey}/growth/rules/{ruleId}"):                                                GrowthRuleRequest{},                      // AdminUpdateGrowthRule
+		routeKey("POST", "/api/admin/apps/{appkey}/growth/rules/{ruleId}/revoke"):                                        GrowthRevokeRequest{},                    // AdminRevokeGrowthRule
+		routeKey("POST", "/api/admin/apps/{appkey}/growth/preview"):                                                      GrowthPreviewRequest{},                   // AdminPreviewGrowth
+		routeKey("PUT", "/api/admin/apps/{appkey}/users/{userId}/growth/level-cap"):                                      GrowthLevelCapRequest{},                  // AdminSetAppUserLevelCap
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/users/adjust"):                                                 LevelBatchAdjustRequest{},                // AdminBatchAdjustLevelUsers
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/users/{userId}/adjust"):                                        LevelAdjustRequest{},                     // AdminAdjustLevelUser
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/validate"):                                                     LevelGraphRequest{},                      // AdminValidateLevelScheme

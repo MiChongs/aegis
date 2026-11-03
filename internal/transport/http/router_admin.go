@@ -183,6 +183,10 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.GET("/apps/:appkey/users/:userId/wallet/transactions", h.AdminAppUserWalletTransactions)
 		admin.GET("/apps/:appkey/users/:userId/points/:kind/transactions", h.AdminAppUserPointLedger)
 		admin.GET("/apps/:appkey/users/:userId/points/:kind/summary", h.AdminAppUserPointSummary)
+		// 成长调控（docs/growth-control.md）：用户详情「奖惩」页签
+		admin.GET("/apps/:appkey/users/:userId/growth", h.AdminAppUserGrowth)
+		admin.PUT("/apps/:appkey/users/:userId/growth/level-cap", h.AdminSetAppUserLevelCap)
+		admin.DELETE("/apps/:appkey/users/:userId/growth/level-cap", h.AdminClearAppUserLevelCap)
 		admin.POST("/apps/:appkey/users/:userId/points/integral/transactions/:transactionNo/reverse", h.AdminReverseAppUserIntegral)
 		admin.POST("/apps/:appkey/wallet/adjust", h.AdminAdjustAppUserWallet)
 		// 全应用资金视图：按用户一个个点过去无法对账
@@ -553,6 +557,16 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/item-grants/records/:recordId/fulfill", h.AdminFulfillItemGrantRecord)
 		admin.POST("/apps/:appkey/item-grants/records/:recordId/retry", h.AdminRetryItemGrantRecord)
 		// 等级体系（docs/levels.md）
+		// 成长调控：积分 / 经验获取倍率规则（个人与全应用）
+		admin.GET("/apps/:appkey/growth/catalog", h.AdminGrowthCatalog)
+		admin.GET("/apps/:appkey/growth/rules", h.AdminListGrowthRules)
+		admin.POST("/apps/:appkey/growth/rules", h.AdminCreateGrowthRule)
+		admin.GET("/apps/:appkey/growth/rules/:ruleId", h.AdminGetGrowthRule)
+		admin.PUT("/apps/:appkey/growth/rules/:ruleId", h.AdminUpdateGrowthRule)
+		admin.DELETE("/apps/:appkey/growth/rules/:ruleId", h.AdminDeleteGrowthRule)
+		admin.POST("/apps/:appkey/growth/rules/:ruleId/revoke", h.AdminRevokeGrowthRule)
+		admin.POST("/apps/:appkey/growth/preview", h.AdminPreviewGrowth)
+		admin.GET("/apps/:appkey/growth/events", h.AdminListGrowthEvents)
 		admin.GET("/apps/:appkey/levels/catalog", h.AdminLevelCatalog)
 		admin.GET("/apps/:appkey/levels/overview", h.AdminLevelOverview)
 		admin.GET("/apps/:appkey/levels/scheme", h.AdminGetLevelScheme)

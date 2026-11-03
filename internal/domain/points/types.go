@@ -116,9 +116,12 @@ type LevelInfo struct {
 	// ClaimableRewards 待领取的达成奖励数
 	ClaimableRewards int `json:"claimableRewards"`
 	// BlockedBy 经验已够、但卡在下一级的晋级条件上
-	BlockedBy     *LevelGateInfo `json:"blockedBy,omitempty"`
-	SchemeName    string         `json:"schemeName,omitempty"`
-	SchemeVersion int            `json:"schemeVersion"`
+	BlockedBy *LevelGateInfo `json:"blockedBy,omitempty"`
+	// CappedLevel 管理员设的等级封顶（成长调控），0 = 不封顶；CapReached 已经停在封顶处
+	CappedLevel   int    `json:"cappedLevel,omitempty"`
+	CapReached    bool   `json:"capReached,omitempty"`
+	SchemeName    string `json:"schemeName,omitempty"`
+	SchemeVersion int    `json:"schemeVersion"`
 	// HideLocked 体系要求 App 不展示还没达到的等级
 	HideLocked bool `json:"hideLocked,omitempty"`
 }

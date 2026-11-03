@@ -22,6 +22,7 @@ DELETE	/api/admin/apps/:appkey/function-keys/:keyId	AdminRevokeAppFunctionKey
 DELETE	/api/admin/apps/:appkey/function-kv	AdminDeleteAppFunctionKV
 DELETE	/api/admin/apps/:appkey/functions/:functionName	AdminDeleteAppFunction
 DELETE	/api/admin/apps/:appkey/functions/:functionName/versions/:version	AdminDeleteAppFunctionVersion
+DELETE	/api/admin/apps/:appkey/growth/rules/:ruleId	AdminDeleteGrowthRule
 DELETE	/api/admin/apps/:appkey/invite/codes/:codeId	AdminDeleteInviteCode
 DELETE	/api/admin/apps/:appkey/item-grants/rules/:ruleId	AdminDeleteItemGrantRule
 DELETE	/api/admin/apps/:appkey/leaderboard/exclusions/:userId	AdminRemoveLeaderboardExclusion
@@ -40,6 +41,7 @@ DELETE	/api/admin/apps/:appkey/users/:userId	AdminDeleteUser
 DELETE	/api/admin/apps/:appkey/users/:userId/avatar	AdminRemoveAppUserAvatar
 DELETE	/api/admin/apps/:appkey/users/:userId/cloud-storage	AdminPurgeCloudStorageUser
 DELETE	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId	AdminDeleteCloudStorageUserItem
+DELETE	/api/admin/apps/:appkey/users/:userId/growth/level-cap	AdminClearAppUserLevelCap
 DELETE	/api/admin/apps/:appkey/users/:userId/oauth2-grants	AdminRevokeUserOAuth2Grants
 DELETE	/api/admin/apps/:appkey/users/:userId/sessions/:tokenHash	AdminRevokeUserSession
 DELETE	/api/admin/apps/:appkey/versions/:vid	AdminDeleteVersion
@@ -215,6 +217,10 @@ GET	/api/admin/apps/:appkey/functions/:functionName/versions	AdminListAppFunctio
 GET	/api/admin/apps/:appkey/functions/:functionName/versions/:version	AdminGetAppFunctionVersion
 GET	/api/admin/apps/:appkey/governance	AdminAppGovernance
 GET	/api/admin/apps/:appkey/governance/history	AdminAppGovernanceHistory
+GET	/api/admin/apps/:appkey/growth/catalog	AdminGrowthCatalog
+GET	/api/admin/apps/:appkey/growth/events	AdminListGrowthEvents
+GET	/api/admin/apps/:appkey/growth/rules	AdminListGrowthRules
+GET	/api/admin/apps/:appkey/growth/rules/:ruleId	AdminGetGrowthRule
 GET	/api/admin/apps/:appkey/invite/catalog	AdminInviteCatalog
 GET	/api/admin/apps/:appkey/invite/codes	AdminListInviteCodes
 GET	/api/admin/apps/:appkey/invite/relations	AdminListInviteRelations
@@ -341,6 +347,7 @@ GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items	AdminCloudStorageU
 GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId	AdminCloudStorageUserItem
 GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/revisions	AdminCloudStorageUserItemRevisions
 GET	/api/admin/apps/:appkey/users/:userId/feature-unlocks	AdminUserFeatureUnlocks
+GET	/api/admin/apps/:appkey/users/:userId/growth	AdminAppUserGrowth
 GET	/api/admin/apps/:appkey/users/:userId/oauth2-grants	AdminListUserOAuth2Grants
 GET	/api/admin/apps/:appkey/users/:userId/points/:kind/summary	AdminAppUserPointSummary
 GET	/api/admin/apps/:appkey/users/:userId/points/:kind/transactions	AdminAppUserPointLedger
@@ -931,6 +938,9 @@ POST	/api/admin/apps/:appkey/functions/:functionName/versions	AdminCreateAppFunc
 POST	/api/admin/apps/:appkey/functions/:functionName/versions/:version/activate	AdminActivateAppFunctionVersion
 POST	/api/admin/apps/:appkey/governance/appeals	AdminAppSubmitGovernanceAppeal
 POST	/api/admin/apps/:appkey/governance/appeals/:appealId/withdraw	AdminAppWithdrawGovernanceAppeal
+POST	/api/admin/apps/:appkey/growth/preview	AdminPreviewGrowth
+POST	/api/admin/apps/:appkey/growth/rules	AdminCreateGrowthRule
+POST	/api/admin/apps/:appkey/growth/rules/:ruleId/revoke	AdminRevokeGrowthRule
 POST	/api/admin/apps/:appkey/invite/codes	AdminCreateInviteCodes
 POST	/api/admin/apps/:appkey/invite/relations/:relationId/cancel	AdminCancelInviteRelation
 POST	/api/admin/apps/:appkey/invite/relations/:relationId/settle	AdminSettleInviteRelation
@@ -1502,6 +1512,7 @@ PUT	/api/admin/apps/:appkey/device-limit/overrides/:userId	AdminSaveDeviceLimitO
 PUT	/api/admin/apps/:appkey/device-limit/policy	AdminUpdateDeviceLimitPolicy
 PUT	/api/admin/apps/:appkey/encryption	UpdateAdminAppEncryption
 PUT	/api/admin/apps/:appkey/functions/:functionName	AdminUpdateAppFunction
+PUT	/api/admin/apps/:appkey/growth/rules/:ruleId	AdminUpdateGrowthRule
 PUT	/api/admin/apps/:appkey/invite/codes/:codeId	AdminUpdateInviteCode
 PUT	/api/admin/apps/:appkey/invite/codes/:codeId/status	AdminSetInviteCodeStatus
 PUT	/api/admin/apps/:appkey/invite/settings	AdminSaveInviteSettings
@@ -1535,6 +1546,7 @@ PUT	/api/admin/apps/:appkey/rewarded-ads/config	AdminSaveRewardedAdConfig
 PUT	/api/admin/apps/:appkey/signin-reward	UpdateAdminAppSignInReward
 PUT	/api/admin/apps/:appkey/users/:userId/account	AdminRenameAppUser
 PUT	/api/admin/apps/:appkey/users/:userId/cloud-storage	AdminSaveCloudStorageUser
+PUT	/api/admin/apps/:appkey/users/:userId/growth/level-cap	AdminSetAppUserLevelCap
 PUT	/api/admin/apps/:appkey/users/:userId/profile	AdminUpdateUserProfile
 PUT	/api/admin/apps/:appkey/users/:userId/status	UpdateAdminAppUserStatus
 PUT	/api/admin/apps/:appkey/users/status/batch	BatchUpdateAdminAppUserStatus

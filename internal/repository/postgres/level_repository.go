@@ -364,7 +364,7 @@ func (r *Repository) syncUserLevel(ctx context.Context, q queryExecutor, userID,
 		return nil, err
 	}
 
-	query := `SELECT user_id, appid, current_level, current_experience, total_experience, next_level_experience, level_progress, highest_level, level_up_count, last_level_up_at, locked_level FROM user_level_records WHERE user_id = $1 AND appid = $2`
+	query := `SELECT user_id, appid, current_level, current_experience, total_experience, next_level_experience, level_progress, highest_level, level_up_count, last_level_up_at, locked_level, capped_level FROM user_level_records WHERE user_id = $1 AND appid = $2`
 	if _, isTx := q.(pgx.Tx); isTx {
 		query += ` FOR UPDATE`
 	}
@@ -372,9 +372,9 @@ func (r *Repository) syncUserLevel(ctx context.Context, q queryExecutor, userID,
 	if err != nil {
 		return nil, err
 	}
-	floor, locked := 0, 0
+	floor, locked, capped := 0, 0, 0
 	if record != nil {
-		floor, locked = record.CurrentLevel, record.LockedLevel
+		floor, locked, capped = record.CurrentLevel, record.LockedLevel, record.CappedLevel
 	}
 
 	// 晋级条件按需取行为画像（一次判定最多取一次）
@@ -414,6 +414,16 @@ func (r *Repository) syncUserLevel(ctx context.Context, q queryExecutor, userID,
 	newLevel, blocked, err := scheme.Resolve(totalExperience, start, check)
 	if err != nil {
 		return nil, err
+	}
+	// 等级封顶（成长调控）：经验照常累计，等级停在封顶处；封顶低于现有等级时不在这里降级（降级只由管理员显式执行）
+	cappedHit := false
+	if capped > 0 && newLevel > capped {
+		// 不低于保底：平时保底是现有等级，重算时是锁定的等级
+		lower := floor
+		if opts.Recompute {
+			lower = start
+		}
+		newLevel, blocked, cappedHit = max(capped, min(lower, newLevel)), nil, true
 	}
 
 	switch {
@@ -496,6 +506,10 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 	info.LastLevelUpAt = lastLevelUpAt
 	if blocked != nil && blocked.Gate != nil {
 		info.BlockedBy = &pointdomain.LevelGateInfo{Label: blocked.Gate.Label, Hint: blocked.Gate.Hint}
+	}
+	if capped > 0 {
+		info.CappedLevel = capped
+		info.CapReached = cappedHit || newLevel >= capped
 	}
 	return &levelSyncResult{Info: info, From: from, To: newLevel, Changed: newLevel != from}, nil
 }
