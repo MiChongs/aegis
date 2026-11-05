@@ -16,10 +16,9 @@ import (
 // 宝塔面板的 IP 归属地接口：GET ?ip=a,b,c，按 IP 返回一个对象。
 // 大陆地址给到区县与运营商，并附行政区划代码；不支持 IPv6（字段全空）；
 // 保留地址的 country 为「保留」；Google DNS 等知名地址 country 是名称、没有国家代码。
-const (
-	btcnEndpoint  = "https://www.bt.cn/api/panel/get_ip_info"
-	btcnBatchSize = 50
-)
+var btcnEndpoint = "https://www.bt.cn/api/panel/get_ip_info"
+
+const btcnBatchSize = 50
 
 type btcnIPInfo struct {
 	Continent   string `json:"continent"`

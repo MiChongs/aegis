@@ -38,7 +38,7 @@ graph TD
     NATS[("NATS JetStream")]
     Temporal[("Temporal")]
     MySQL[("Legacy MySQL")]
-    GeoIP[("GeoIP2 mmdb")]
+    GeoIP[("IP 归属地接口<br/>美团 / 宝塔 / UAPIs")]
   end
 
   subgraph pkg["共享包 (pkg/)"]
@@ -428,7 +428,7 @@ docker build -f deploy/docker/console.Dockerfile \
 | 支付凭证 | `pkg/receipt`：gopdf（PDF 引擎，支持 TTF 子集嵌入）+ `pkg/fontkit`（TTC → 独立 sfnt，gopdf 读不了 TTC/OTF）+ `pkg/i18n`（x/text 的语言协商与 CLDR 复数）+ x/image/gofont（内嵌拉丁字形，保证英文凭证零依赖）+ go-colorful（Lab 空间配色派生与 WCAG 对比度）+ boombuler/barcode（矢量二维码）。10 语言、默认 en、Claude 暖调配色，详见 [docs](docs/payment-receipt.md) |
 | 客户端 IP | realclientip-go（XFF 与 RFC 7239 Forwarded 解析 + 五种取值策略 + 随库发布的 Cloudflare 网段）+ go4.org/netipx（受信网段集合运算），详见 [docs](docs/client-ip.md) |
 | 验证码 | 静态图形 / 算术 / 数字走 base64Captcha；音频 WAV 走 dchest/captcha；**动态 GIF 是自研的 `pkg/gifcaptcha`**：image/gif（逐帧编码 + 全局色表）+ fogleman/gg（噪点与干扰曲线）+ x/image 的 opentype/gofont（内嵌字体）与 draw（仿射变换）+ go-colorful（HCL 取色）。外观按应用/平台分别动态配置，详见 [internal/service](internal/service/CLAUDE.md#动态图片验证码gifcaptcha) |
-| 地理位置 | GeoIP2 MaxMind mmdb (自动更新) |
+| 地理位置 | 远程归属地接口：美团、宝塔面板、UAPIs 按优先级合并 + 每来源熔断 + Redis 缓存，详见 [internal/service](internal/service/CLAUDE.md#locationservice) |
 | 风控引擎 | expr-lang/expr（表达式规则，**类型化 Env + 编译缓存**，写错变量名在保存时即报错）+ mileusna/useragent（客户端解析：设备型号 / 桌面·移动·平板·Bot 分类 / 浏览器与系统版本）+ redis_rate GCRA 限流 + Redis HyperLogLog 基数统计（账号扩散速度），详见 [internal/service](internal/service/CLAUDE.md#riskservice--风控中心) |
 | 可观测性 | OpenTelemetry + Zap |
 | 前端 | Next.js 16 + React 19 + Tailwind CSS 4 + shadcn/ui |

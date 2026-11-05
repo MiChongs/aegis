@@ -16,6 +16,7 @@ import (
 	redislib "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
+	"golang.org/x/time/rate"
 )
 
 type IPLocation struct {
@@ -51,8 +52,8 @@ type cachedLocation struct {
 	expiresAt time.Time
 }
 
-// LocationService 的定位数据全部来自宝塔面板的 IP 归属地接口（见 location_btcn.go），
-// 进程内与 Redis 两级缓存挡住重复查询。
+// LocationService 的定位数据来自远程归属地接口：美团、宝塔面板、UAPIs，按 GEOIP_PROVIDERS
+// 排优先级合并（见 location_provider.go），进程内与 Redis 两级缓存挡住重复查询。
 type LocationService struct {
 	log                *zap.Logger
 	redis              *redislib.Client
@@ -70,13 +71,20 @@ type LocationService struct {
 	cacheWriteTimeout  time.Duration
 	refreshTimeout     time.Duration
 	providerTimeout    time.Duration
+	sources            []*locationSource
+	uapisKey           string
+	uapisSource        string
 }
+
+// defaultLocationProviders 美团优先：国内地址到区县且有区划代码；宝塔补运营商并兜底 IPv4；
+// UAPIs 有额度，只补前两个没查出来的（IPv6 主要靠它）。
+var defaultLocationProviders = []string{"meituan", "btcn", "uapis"}
 
 func NewLocationService(log *zap.Logger, redisClient *redislib.Client, keyPrefix string, geoCfg config.GeoIPConfig) *LocationService {
 	if log == nil {
 		log = zap.NewNop()
 	}
-	return &LocationService{
+	s := &LocationService{
 		log:       log,
 		redis:     redisClient,
 		keyPrefix: strings.TrimSpace(keyPrefix),
@@ -93,6 +101,51 @@ func NewLocationService(log *zap.Logger, redisClient *redislib.Client, keyPrefix
 		refreshTimeout:     4 * time.Second,
 		providerTimeout:    2500 * time.Millisecond,
 	}
+	s.uapisKey = strings.TrimSpace(geoCfg.UAPIsKey)
+	s.uapisSource = geoCfg.UAPIsSource
+	switch s.uapisSource {
+	case "":
+		if s.uapisKey != "" {
+			s.uapisSource = uapisSourceCommercial
+		}
+	case "standard", "default":
+		s.uapisSource = ""
+	}
+	s.sources = s.buildSources(geoCfg)
+	return s
+}
+
+func (s *LocationService) buildSources(geoCfg config.GeoIPConfig) []*locationSource {
+	names := geoCfg.Providers
+	if len(names) == 0 {
+		names = defaultLocationProviders
+	}
+	qps := geoCfg.UAPIsQPS
+	if qps <= 0 {
+		qps = 4
+	}
+	ipv4 := func(addr netip.Addr) bool { return addr.Unmap().Is4() }
+	sources := make([]*locationSource, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, raw := range names {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		switch name {
+		case "meituan":
+			sources = append(sources, &locationSource{name: name, strictCN: true, supports: ipv4, single: s.lookupMeituan, concurrency: 8})
+		case "btcn", "bt":
+			sources = append(sources, &locationSource{name: "btcn", supports: ipv4, batch: s.lookupBtCN, batchSize: btcnBatchSize})
+		case "uapis":
+			sources = append(sources, &locationSource{name: name, metered: true, single: s.lookupUAPIs, concurrency: 4,
+				limiter: rate.NewLimiter(rate.Limit(qps), 1)})
+		default:
+			s.log.Warn("unknown location provider ignored", zap.String("provider", raw))
+		}
+	}
+	return sources
 }
 
 func (s *LocationService) Close() {}
@@ -258,30 +311,13 @@ func (s *LocationService) lookupAndStore(ctx context.Context, ips []string) map[
 		}
 	}
 
-	results := make(map[string]IPLocation, len(unique))
-	failed := false
-	for start := 0; start < len(unique); start += btcnBatchSize {
-		end := min(start+btcnBatchSize, len(unique))
-		providerCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
-		batch, err := s.lookupBtCN(providerCtx, unique[start:end])
-		cancel()
-		if err != nil {
-			failed = true
-			if ctx.Err() == nil {
-				s.log.Debug("location provider failed", zap.String("provider", "btcn"), zap.Strings("ips", unique[start:end]), zap.Error(err))
-			}
-			continue
-		}
-		for query, loc := range batch {
-			results[query] = loc
-		}
-	}
+	results, incomplete := s.lookupSources(ctx, unique)
 
 	for ip, query := range queries {
 		loc, ok := results[query]
 		if !ok {
 			out[ip] = s.DefaultLocation(ip)
-			if failed {
+			if incomplete[query] {
 				s.setLocal(ip, out[ip], s.errorTTL)
 			} else {
 				s.persist(ip, out[ip], s.failureTTL)
@@ -318,9 +354,9 @@ func (s *LocationService) persist(ip string, loc IPLocation, ttl time.Duration) 
 
 func (s *LocationService) redisKey(ip string) string {
 	if s.keyPrefix == "" {
-		return "location:v3:ip:" + ip
+		return "location:v4:ip:" + ip
 	}
-	return s.keyPrefix + ":location:v3:ip:" + ip
+	return s.keyPrefix + ":location:v4:ip:" + ip
 }
 
 func (s *LocationService) getLocal(ip string) (IPLocation, bool) {

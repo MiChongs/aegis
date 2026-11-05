@@ -616,10 +616,19 @@ type RiskRateLimitConfig struct {
 	AccountDevicePerMinute int
 }
 
-// GeoIPConfig IP 归属地。数据全部来自宝塔面板的归属地接口（service/location_btcn.go），
-// 不再下载本地库。
+// GeoIPConfig IP 归属地。数据来自远程接口（美团、宝塔面板、UAPIs，见 service/location_provider.go），
+// 不下载本地库。
 type GeoIPConfig struct {
 	Enabled bool
+	// Providers 查询来源与优先级，越靠前越优先（GEOIP_PROVIDERS，默认 meituan,btcn,uapis）
+	Providers []string
+	// UAPIsKey UAPIs 密钥（GEOIP_UAPIS_KEY）。不配按出口 IP 计免费额度：每秒 4 次、30 天 1500 积分
+	UAPIsKey string
+	// UAPIsSource 查询档位（GEOIP_UAPIS_SOURCE）：commercial 带区县与区划代码、每次 2 积分；
+	// standard 只到城市、每次 1 积分。不配时有密钥用 commercial、没密钥用 standard
+	UAPIsSource string
+	// UAPIsQPS 每秒请求上限（GEOIP_UAPIS_QPS，默认 4，与免费档一致）
+	UAPIsQPS float64
 }
 
 // GeoRiskConfig 地理风控 / 地理分析配置。
@@ -965,7 +974,11 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 			},
 		},
 		GeoIP: GeoIPConfig{
-			Enabled: getBool(v, "GEOIP_ENABLED", true),
+			Enabled:     getBool(v, "GEOIP_ENABLED", true),
+			Providers:   csvList(v.GetString("GEOIP_PROVIDERS")),
+			UAPIsKey:    strings.TrimSpace(v.GetString("GEOIP_UAPIS_KEY")),
+			UAPIsSource: strings.ToLower(strings.TrimSpace(v.GetString("GEOIP_UAPIS_SOURCE"))),
+			UAPIsQPS:    v.GetFloat64("GEOIP_UAPIS_QPS"),
 		},
 		GeoRisk: GeoRiskConfig{
 			Enabled:              getBool(v, "GEORISK_ENABLED", true),

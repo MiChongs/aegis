@@ -29,7 +29,7 @@ Config
 ├── LegacyMySQL → LegacyMySQLConfig (迁移用)
 ├── Redis      → RedisConfig (Addr, Password, DB, KeyPrefix)
 ├── Egress     → egress.Config (出海代理端点 + 域名后缀规则 + 健康检查)
-├── GeoIP      → GeoIPConfig (mmdb 路径、自动更新)
+├── GeoIP      → GeoIPConfig (开关、来源优先级 GEOIP_PROVIDERS、UAPIs 密钥/档位/限速)
 ├── NATS       → NATSConfig (URL, StreamName)
 ├── Temporal   → TemporalConfig (HostPort, Namespace, TaskQueue, 超时)
 ├── AutoSign   → AutoSignConfig (定时签到参数)

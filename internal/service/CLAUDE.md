@@ -65,8 +65,10 @@
 | `risk_env.go` | — | `RiskEvalEnv` —— 引擎看到的全部事实，同时是 expr 的类型化环境（`expr` 标签即变量名） |
 | `risk_expr.go` | — | expr 编译缓存、领域函数（`in_cidr`/`any_cidr`/`contains_any`/`in_time_window`）、表达式校验 |
 | `risk_provider.go` / `risk_provider_ipqs.go` | — | 外部 IP 情报源抽象与 IPQualityScore 适配（带熔断与限速） |
-| `location_geoip.go` | — | GeoIP2 mmdb 加载 & 自动更新实现 |
-| `location_service.go` | `LocationService` | IP 地理位置查询（city + ASN），Redis 缓存 |
+| `location_service.go` | `LocationService` | IP 归属地查询入口：两级缓存、批量合并、singleflight |
+| `location_provider.go` | — | 归属地来源链：按 `GEOIP_PROVIDERS` 排优先级、两轮查询（不限额并发 → 有额度补缺）、合并填空、每来源熔断 |
+| `location_meituan.go` / `location_btcn.go` / `location_uapis.go` | — | 美团（IPv4、区县+区划代码、无运营商）/ 宝塔（IPv4 批量、带运营商）/ UAPIs（支持 IPv6、有额度）三个来源的请求与字段映射 |
+| `location_country.go` | — | 中文国名 → ISO 两位代码（CLDR 反推 + 常见简称） |
 | `migration_service.go` | `MigrationService` | 遗留 MySQL 用户迁移 |
 | `monitor_service.go` | `MonitorService` | 系统监控数据聚合（所有服务汇总） |
 | `notification_service.go` | `NotificationService` | **应用用户**站内信（notifications 表，外键 users）：唯一写入口 `Deliver`（分类、动作、实时事件），消息中心读写与推送偏好，见 [docs](../../docs/notification-center.md) |
@@ -1268,9 +1270,14 @@ localStorage、移动端存进本地库、邮件正文里嵌成 `<img>`、中间
 - 连接状态同步写入 Redis
 
 ### LocationService
-- 首次查询写入 Redis 缓存（TTL 24h）
-- GeoIP2 mmdb 文件自动从 GitHub 下载并定时更新
-- 可选 `ChinaOptimized` 模式和远程 HTTP fallback
+- 全部走远程接口，不下载本地库。来源与优先级 `GEOIP_PROVIDERS`（默认 `meituan,btcn,uapis`）
+- 第一轮美团、宝塔并发；UAPIs 有额度，只补没查到 / 缺运营商 / 缺国家代码的地址（IPv6 主要靠它）
+- 合并以最靠前且查到的来源为准，后面的只填空；省份对不上不混拼。`Source` 记参与的来源（`meituan+btcn`）
+- 每个来源独立熔断：连续 3 次失败停 1 分钟起翻倍、封顶 30 分钟；429 按接口给的等待时间停。
+  美团 IP 定位 2026 年年中起对所有地址回 404「Can Not Loc」，靠「别家判成国内、它说查不到」识别成故障
+- Redis 键 `location:v4:ip:`：查到 72h、查不到 6h；来源故障导致没查全的只在进程内记 1 分钟
+- UAPIs：`GEOIP_UAPIS_KEY`（不配按出口 IP 每秒 4 次、30 天 1500 积分）、`GEOIP_UAPIS_SOURCE`（commercial 带区县、2 积分）、`GEOIP_UAPIS_QPS`
+- 测试：`go test ./internal/service/ -run 'BtCN|Meituan|UAPIs|MergeLocations|SourceHealth|LocationSource'`；真实接口 `LOCATION_LIVE=1 go test ./internal/service/ -run LocationProvidersLive -v`
 
 ### PlatformSettingsService
 - 支持动态更新 Firewall 配置（CIDR 黑白名单、限流规则）
