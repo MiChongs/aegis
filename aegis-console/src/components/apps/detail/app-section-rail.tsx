@@ -33,6 +33,7 @@ export function AppSectionRail({
   const groups = useSectionFilter(query);
   const activeGroup = findAppSectionGroup(section)?.key;
   const listRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const filtering = query.trim().length > 0;
 
@@ -64,6 +65,37 @@ export function AppSectionRail({
     listRef.current?.querySelector<HTMLElement>(`[data-section="${cursorKey}"]`)?.scrollIntoView({ block: "nearest" });
   }, [cursorKey]);
 
+  // 高度跟着卡片在视口里的实际位置走。只写 `max-h: 100svh - 顶栏` 不够：页面还没滚动时
+  // 卡片上方压着头部名片，下半截落在屏幕外；列表又是 overscroll-contain，
+  // 在目录上滚轮只滚列表不带页面，最后几组永远看不到。
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    let frame = 0;
+    const fit = () => {
+      frame = 0;
+      if (panel.offsetParent === null) return; // 窄屏时导航隐藏
+      const top = panel.getBoundingClientRect().top;
+      const available = window.innerHeight - Math.max(0, top) - 16;
+      panel.style.maxHeight = `${Math.max(240, Math.floor(available))}px`;
+    };
+    const schedule = () => {
+      if (!frame) frame = window.requestAnimationFrame(fit);
+    };
+    fit();
+    // capture：控制台的滚动容器不一定是 window，任何祖先滚动都要重算
+    window.addEventListener("scroll", schedule, { capture: true, passive: true });
+    window.addEventListener("resize", schedule);
+    const observer = new ResizeObserver(schedule);
+    observer.observe(document.documentElement);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", schedule, { capture: true });
+      window.removeEventListener("resize", schedule);
+      observer.disconnect();
+    };
+  }, []);
+
   // `/` 聚焦筛选框（输入框、编辑器里按下时不抢）
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -91,6 +123,7 @@ export function AppSectionRail({
   return (
     <nav aria-label="应用配置区块" className="hidden xl:block">
       <div
+        ref={panelRef}
         className="sticky top-[4.5rem] flex max-h-[calc(100svh-5.5rem)] flex-col overflow-hidden rounded-2xl border border-border bg-card"
         style={{ boxShadow: "var(--shadow-soft)" }}
       >
