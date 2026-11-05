@@ -164,12 +164,18 @@ func TestSourceHealth(t *testing.T) {
 	if wait, opened := h.fail(now, 0); !opened || wait != sourceBaseCooldown || h.allow(now) {
 		t.Fatalf("third failure: %s %v", wait, opened)
 	}
-	if wait, _ := h.fail(now, 0); wait != 2*sourceBaseCooldown {
+	if _, opened := h.fail(now, 0); opened {
+		t.Fatal("in-flight failures during cooldown must not escalate")
+	}
+	later := now.Add(sourceBaseCooldown)
+	if wait, _ := h.fail(later, 0); wait != 2*sourceBaseCooldown {
 		t.Fatalf("doubling: %s", wait)
 	}
 	for range 10 {
-		h.fail(now, 0)
+		later = later.Add(sourceMaxCooldown)
+		h.fail(later, 0)
 	}
+	now = later.Add(sourceMaxCooldown)
 	if wait, _ := h.fail(now, 0); wait != sourceMaxCooldown {
 		t.Fatalf("cap: %s", wait)
 	}

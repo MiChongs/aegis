@@ -88,6 +88,10 @@ func (h *sourceHealth) succeed() {
 func (h *sourceHealth) fail(now time.Time, wait time.Duration) (time.Duration, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if wait <= 0 && now.Before(h.openUntil) {
+		// 停用前已经发出的并发请求陆续失败，不该把停用时长一路翻上去
+		return 0, false
+	}
 	h.failures++
 	if wait <= 0 {
 		if h.failures < sourceFailureThreshold {
