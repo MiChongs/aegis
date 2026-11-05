@@ -1678,8 +1678,18 @@ export type AuthSourceStatItem = {
   [key: string]: unknown;
 };
 
+/**
+ * `/stats/auth-sources` 的返回。后端 `appdomain.AuthSourceStats`：
+ * 总用户、设了密码的用户、绑过第三方的用户，以及按渠道的绑定数。
+ * 一个用户可以既有密码又绑了多个渠道，三项之和不等于总数。
+ */
 export type AuthSourceStatsResult = {
   appid?: number;
+  totalUsers?: number;
+  passwordUsers?: number;
+  oauthBoundUsers?: number;
+  providerBindings?: Array<{ source: string; count: number }>;
+  /** 旧字段，后端不再返回；保留以兼容尚未迁移的调用方 */
   items?: AuthSourceStatItem[];
   total?: number;
   [key: string]: unknown;

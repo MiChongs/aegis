@@ -50,6 +50,7 @@ import { AIChannelPanel } from "@/components/ai/ai-channel-panel";
 import { useAdminAppQuery, useAdminAppsQuery, useDeleteAdminAppMutation } from "@/lib/admin-hooks";
 import { useAppGovernanceQuery } from "@/lib/platform-governance-hooks";
 import { useAppScopeStore } from "@/lib/app-scope-store";
+import { useAppSectionNavStore } from "@/lib/app-section-nav-store";
 import { appSectionHref, resolveAppSection } from "@/lib/app-sections";
 import type { AppSummary } from "@/lib/api/types";
 
@@ -86,6 +87,12 @@ function AppDetailInner() {
   useEffect(() => {
     if (app?.appKey) setLastAppKey(app.appKey);
   }, [app?.appKey, setLastAppKey]);
+
+  // 记下进过的区块，区块目录顶部的「最近」靠它
+  const visitSection = useAppSectionNavStore((s) => s.visit);
+  useEffect(() => {
+    visitSection(section);
+  }, [section, visitSection]);
 
   const [deleteTarget, setDeleteTarget] = useState<AppSummary | null>(null);
   const deleteMutation = useDeleteAdminAppMutation();
@@ -148,12 +155,12 @@ function AppDetailInner() {
           面板只剩四百来宽，却按 lg 断点排成双栏，验证码页右栏只剩 41px */}
       <AppSectionMobileBar section={section} onSelect={selectSection} />
 
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[13.5rem_minmax(0,1fr)] xl:gap-6">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[14.5rem_minmax(0,1fr)] xl:gap-5 2xl:grid-cols-[15.5rem_minmax(0,1fr)] 2xl:gap-6">
         <AppSectionRail section={section} onSelect={selectSection} />
         {/* app-detail-content：把面板关在视口内（见 globals.css），宽表格与工具条在自己的格子里横滑 */}
         <div ref={contentRef} className="app-detail-content min-w-0 scroll-mt-40 space-y-4 xl:scroll-mt-20">
-          <AppSectionHeading section={section} />
-          <AppSectionPanel section={section} app={app} />
+          <AppSectionHeading section={section} onSelect={selectSection} />
+          <AppSectionPanel section={section} app={app} onDelete={() => setDeleteTarget(app)} />
         </div>
       </div>
 
@@ -176,7 +183,7 @@ function AppDetailInner() {
  * 十几个面板同时挂载会在进页面的一瞬间打出十几条请求（OAuth 渠道、抽奖奖池、
  * 密码策略模板……），其中绝大多数当次根本不会被看到。
  */
-function AppSectionPanel({ section, app }: { section: string; app: AppSummary }) {
+function AppSectionPanel({ section, app, onDelete }: { section: string; app: AppSummary; onDelete: () => void }) {
   switch (section) {
     case "stats":
       return <AppStatsPanel appKey={app.appKey} />;
@@ -245,7 +252,7 @@ function AppSectionPanel({ section, app }: { section: string; app: AppSummary })
     case "account-deletion":
       return <AppAccountDeletionPanel appKey={app.appKey} />;
     default:
-      return <AppInfoPanel appKey={app.appKey} />;
+      return <AppInfoPanel appKey={app.appKey} onDelete={onDelete} />;
   }
 }
 

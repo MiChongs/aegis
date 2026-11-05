@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Boxes,
   Bug,
   Cloud,
   CreditCard,
@@ -10,6 +11,7 @@ import {
   Headphones,
   Info,
   KeyRound,
+  LayoutDashboard,
   Mail,
   Megaphone,
   MonitorSmartphone,
@@ -18,11 +20,13 @@ import {
   PackagePlus,
   Network,
   PlugZap,
+  Rocket,
   Route,
   ScanFace,
   ScrollText,
   ShieldCheck,
   ShieldBan,
+  ShieldEllipsis,
   ShieldHalf,
   ShoppingBag,
   SlidersHorizontal,
@@ -62,6 +66,8 @@ export type AppSection = {
 export type AppSectionGroup = {
   key: string;
   title: string;
+  /** 分组图标：详情页区块导航的组头用 */
+  icon: LucideIcon;
   sections: AppSection[];
 };
 
@@ -69,6 +75,7 @@ export const appSectionGroups: AppSectionGroup[] = [
   {
     key: "overview",
     title: "概览",
+    icon: LayoutDashboard,
     sections: [
       { key: "info", title: "基本信息", summary: "标识、开关与关联入口", icon: Info },
       { key: "stats", title: "统计分析", summary: "用户规模与增长趋势", icon: BarChart3 },
@@ -79,6 +86,7 @@ export const appSectionGroups: AppSectionGroup[] = [
   {
     key: "auth",
     title: "认证与安全",
+    icon: ShieldEllipsis,
     sections: [
       // tab 键沿用 policy：已分享出去的深链不该因为改叫法而失效
       { key: "policy", title: "认证与会话", summary: "登录绑定与注册准入", icon: Fingerprint },
@@ -97,6 +105,7 @@ export const appSectionGroups: AppSectionGroup[] = [
   {
     key: "service",
     title: "服务能力",
+    icon: Boxes,
     sections: [
       { key: "email", title: "邮件", summary: "发信出口与模板", icon: Mail },
       { key: "ai", title: "AI 服务", summary: "模型通道、技能与 MCP", icon: Sparkles },
@@ -110,6 +119,7 @@ export const appSectionGroups: AppSectionGroup[] = [
   {
     key: "growth",
     title: "用户运营",
+    icon: Rocket,
     sections: [
       { key: "vip", title: "会员", summary: "套餐、试用与功能权益", icon: Crown },
       { key: "card-key", title: "卡密", summary: "授权卡与兑换卡", icon: Ticket },
