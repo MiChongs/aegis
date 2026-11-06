@@ -3085,9 +3085,33 @@ export type AdminDashboard = {
   stats: {
     totalApps: number;
     totalUsers: number;
+    /** 今日管理员登录次数 */
     todayLogins: number;
+    /** 未撤销且未过期的管理员会话 */
     activeSessions: number;
   };
+  /** 近 14 天（含今天）应用用户的登录、注册与活跃人数，按浏览器时区分日；仅超管有数据 */
+  trend?: AdminDashboardDay[];
+  /** 近 7 天登录次数最多的应用；仅超管有数据 */
+  topApps?: AdminDashboardApp[];
+};
+
+export type AdminDashboardDay = {
+  /** YYYY-MM-DD */
+  date: string;
+  logins: number;
+  registrations: number;
+  activeUsers: number;
+};
+
+export type AdminDashboardApp = {
+  id: number;
+  name: string;
+  appKey: string;
+  status: boolean;
+  users: number;
+  logins: number;
+  registrations: number;
 };
 
 export type AvatarUploadResult = {

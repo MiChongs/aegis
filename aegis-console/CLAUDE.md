@@ -10,7 +10,7 @@
 | React | 19.2.8 |
 | TypeScript | 7.0.2（编译器）+ 6.0.2（工具链 API，见下） |
 | Tailwind CSS | ^4.3.3 |
-| shadcn/ui | new-york-v4，40 个官方组件均为最新版（见下方扩展说明） |
+| shadcn/ui | new-york-v4，41 个官方组件均为最新版（2026-11-06 补 `empty`，概览页空状态用）（见下方扩展说明） |
 | radix-ui | ^1.6.7（**统一包**，已取代 32 个 `@radix-ui/react-*` 独立包） |
 | TanStack React Query | ^5.101.4 |
 | TanStack React Table | ^9.1.2（表格，v9 按需注册功能） |

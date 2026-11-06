@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardList, ListChecks, Mail, Shield, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ChevronRight, CircleCheck, ClipboardList, ListChecks, Mail, Shield, ShieldAlert } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAdminDashboardQuery } from "@/lib/admin-hooks";
 import { formatCompact, formatDateTime } from "@/lib/datetime";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { CardEmpty, CardLink, OverviewCard } from "./overview-kit";
 
 /* 审计明细形如 `GET /api/admin/auth/me → 200 (0ms)`，解析失败时按原文展示。 */
 const DETAIL_RE = /^([A-Z]+)\s+(\S+)\s*(?:→|->)\s*(\d{3})(?:\s*\((\d+)\s*ms\))?/;
@@ -42,50 +45,16 @@ function elidePath(path: string, max = 52) {
   return `${path.slice(0, max - 1 - tail)}…${path.slice(-tail)}`;
 }
 
-function PanelShell({
-  icon: Icon,
-  title,
-  action,
-  children,
-  className
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <section className={cn("flex min-h-[280px] flex-col rounded-xl border bg-card", className)}>
-      <header className="flex h-12 items-center gap-2 border-b px-4">
-        <Icon className="size-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold">{title}</h2>
-        <div className="ml-auto flex items-center gap-2">{action}</div>
-      </header>
-      <div className="flex flex-1 flex-col p-2">{children}</div>
-    </section>
-  );
-}
-
-function PanelEmpty({ icon: Icon, title }: { icon: React.ComponentType<{ className?: string }>; title: string }) {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center">
-      <Icon className="size-6 text-muted-foreground/40" />
-      <p className="text-xs text-muted-foreground">{title}</p>
-    </div>
-  );
-}
-
 const ALERT_TONE: Record<string, string> = {
-  firewall_block: "text-red-600 dark:text-red-400",
-  login_failed: "text-amber-600 dark:text-amber-400"
+  firewall_block: "bg-rose-500/12 text-rose-600 dark:text-rose-400",
+  login_failed: "bg-amber-500/12 text-amber-600 dark:text-amber-400"
 };
 
 /**
  * 待处理：审批类待办与安全提醒合在一处。两者都是「需要有人去看一眼」，
  * 分成两块时没有提醒的那块常年空着。
  */
-export function AttentionPanel() {
+export function AttentionPanel({ className }: { className?: string }) {
   const { data, isLoading } = useAdminDashboardQuery();
 
   const todos = [
@@ -97,58 +66,63 @@ export function AttentionPanel() {
   const total = todos.reduce((sum, todo) => sum + todo.count, 0) + alerts.length;
 
   return (
-    <PanelShell
+    <OverviewCard
       icon={ListChecks}
+      tone={total > 0 ? "rose" : "muted"}
       title="待处理"
-      action={total > 0 ? <Badge variant="danger" size="sm">{total}</Badge> : null}
+      className={className}
+      action={
+        total > 0 ? (
+          <Badge variant="danger" size="sm" className="font-data tabular-nums">
+            {total}
+          </Badge>
+        ) : null
+      }
     >
       {isLoading ? (
-        <div className="space-y-1.5 p-1">
-          <Skeleton className="h-10 rounded-lg" />
-          <Skeleton className="h-10 rounded-lg" />
-          <Skeleton className="h-10 rounded-lg" />
+        <div className="space-y-2">
+          <Skeleton className="h-14 rounded-lg" />
+          <Skeleton className="h-14 rounded-lg" />
         </div>
       ) : total === 0 ? (
-        <PanelEmpty icon={CheckCircle2} title="暂无待处理事项" />
+        <CardEmpty icon={CircleCheck} title="暂无待处理事项" />
       ) : (
-        <ul className="flex flex-col">
+        <ItemGroup className="gap-2">
           {todos.map((todo) => (
-            <li key={todo.href}>
-              <Link
-                href={todo.href}
-                className="group/todo flex items-center gap-3 rounded-lg px-2.5 py-2.5 text-xs transition-colors hover:bg-muted/60"
-              >
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                  <todo.icon className="size-3.5" />
-                </span>
-                <span className="flex-1 truncate font-medium">{todo.label}</span>
-                <span className="font-data text-sm font-semibold tabular-nums">{todo.count}</span>
-                <ArrowRight className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/todo:opacity-100" />
+            <Item key={todo.href} variant="outline" size="sm" asChild>
+              <Link href={todo.href}>
+                <ItemMedia variant="icon" className="rounded-md border-transparent bg-primary/10 text-primary">
+                  <todo.icon />
+                </ItemMedia>
+                <ItemContent className="min-w-0">
+                  <ItemTitle className="text-xs">{todo.label}</ItemTitle>
+                </ItemContent>
+                <ItemActions>
+                  <span className="font-data text-sm font-semibold tabular-nums">{todo.count}</span>
+                  <ChevronRight className="size-4 text-muted-foreground" />
+                </ItemActions>
               </Link>
-            </li>
+            </Item>
           ))}
           {alerts.map((alert, index) => (
-            <li key={`${alert.type}-${index}`}>
-              <Link
-                href="/security"
-                className="group/todo flex items-start gap-3 rounded-lg px-2.5 py-2.5 text-xs transition-colors hover:bg-muted/60"
-              >
-                <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-md bg-muted", ALERT_TONE[alert.type] ?? "text-muted-foreground")}>
-                  {alert.type === "firewall_block" ? <ShieldAlert className="size-3.5" /> : <AlertTriangle className="size-3.5" />}
-                </span>
-                <span className="min-w-0 flex-1 space-y-0.5">
-                  <span className="block truncate font-medium">{alert.title}</span>
-                  <span className="block truncate text-muted-foreground">{alert.detail}</span>
-                </span>
-                <span className="shrink-0 font-data text-[11px] text-muted-foreground tabular-nums" title={formatDateTime(alert.time)}>
-                  {formatCompact(alert.time, "")}
-                </span>
+            <Item key={`${alert.type}-${index}`} variant="outline" size="sm" asChild>
+              <Link href="/security">
+                <ItemMedia variant="icon" className={cn("rounded-md border-transparent", ALERT_TONE[alert.type] ?? "bg-muted text-muted-foreground")}>
+                  {alert.type === "firewall_block" ? <ShieldAlert /> : <AlertTriangle />}
+                </ItemMedia>
+                <ItemContent className="min-w-0">
+                  <ItemTitle className="text-xs">{alert.title}</ItemTitle>
+                  <ItemDescription className="truncate text-xs">{alert.detail}</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <ChevronRight className="size-4 text-muted-foreground" />
+                </ItemActions>
               </Link>
-            </li>
+            </Item>
           ))}
-        </ul>
+        </ItemGroup>
       )}
-    </PanelShell>
+    </OverviewCard>
   );
 }
 
@@ -157,41 +131,58 @@ export function RecentActivity({ className }: { className?: string }) {
   const logs = data?.recentAuditLogs ?? [];
 
   return (
-    <PanelShell
+    <OverviewCard
       icon={ClipboardList}
+      tone="violet"
       title="最近操作"
+      description="本账号"
       className={className}
-      action={
-        <Link href="/audit" className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
-          审计日志
-          <ArrowRight className="size-3" />
-        </Link>
-      }
+      action={<CardLink href="/audit">审计日志</CardLink>}
     >
       {isLoading ? (
-        <div className="space-y-1.5 p-1">
+        <div className="space-y-2">
           {Array.from({ length: 6 }, (_, index) => (
-            <Skeleton key={index} className="h-8 rounded-md" />
+            <Skeleton key={index} className="h-9 rounded-md" />
           ))}
         </div>
       ) : logs.length === 0 ? (
-        <PanelEmpty icon={ClipboardList} title="暂无操作记录" />
+        <CardEmpty icon={ClipboardList} title="暂无操作记录" />
       ) : (
-        <ul className="flex flex-col">
+        <ol className="-mx-2 flex flex-col divide-y divide-border/60">
           {logs.map((log, index) => {
             const parsed = parseDetail(log.detail || "");
+            const time = (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <time dateTime={log.createdAt} className="shrink-0 font-data text-[11px] text-muted-foreground tabular-nums">
+                    {formatCompact(log.createdAt, "")}
+                  </time>
+                </TooltipTrigger>
+                <TooltipContent>{formatDateTime(log.createdAt)}</TooltipContent>
+              </Tooltip>
+            );
             return (
-              <li key={index} className="flex h-9 items-center gap-3 rounded-md px-2.5 text-xs transition-colors hover:bg-muted/50">
+              <li key={index} className="flex min-w-0 items-center gap-3 rounded-md px-2 py-2 text-xs transition-colors hover:bg-muted/50">
                 {parsed ? (
                   <>
                     <span className={cn("chip-method w-14 shrink-0 justify-center", methodClass(parsed.method))}>{parsed.method}</span>
-                    <span className="min-w-0 flex-1 truncate font-data text-[11px] text-muted-foreground" title={parsed.path}>
-                      {elidePath(parsed.path)}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-data text-[11px] text-foreground/80" title={parsed.path}>
+                        {elidePath(parsed.path)}
+                      </span>
+                      {/* 手机上状态码与耗时折到路径下面一行，路径才放得下 */}
+                      <span className="mt-0.5 flex items-center gap-2 sm:hidden">
+                        <span className={cn("font-data text-[11px] font-medium", statusClass(parsed.status))}>{parsed.status}</span>
+                        {typeof parsed.latency === "number" ? (
+                          <span className="font-data text-[11px] text-muted-foreground">{parsed.latency}ms</span>
+                        ) : null}
+                      </span>
                     </span>
-                    <span className={cn("shrink-0 font-data text-[11px] font-medium", statusClass(parsed.status))}>{parsed.status}</span>
+                    <span className={cn("hidden shrink-0 font-data text-[11px] font-medium sm:block", statusClass(parsed.status))}>{parsed.status}</span>
                     <span className="hidden w-12 shrink-0 text-right font-data text-[11px] text-muted-foreground sm:block">
                       {typeof parsed.latency === "number" ? `${parsed.latency}ms` : ""}
                     </span>
+                    {time}
                   </>
                 ) : (
                   <>
@@ -199,16 +190,14 @@ export function RecentActivity({ className }: { className?: string }) {
                       {log.action.split(".").pop()}
                     </Badge>
                     <span className="min-w-0 flex-1 truncate text-muted-foreground">{log.detail}</span>
+                    {time}
                   </>
                 )}
-                <span className="w-20 shrink-0 text-right font-data text-[11px] text-muted-foreground tabular-nums" title={formatDateTime(log.createdAt)}>
-                  {formatCompact(log.createdAt, "")}
-                </span>
               </li>
             );
           })}
-        </ul>
+        </ol>
       )}
-    </PanelShell>
+    </OverviewCard>
   );
 }
