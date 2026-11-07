@@ -24,6 +24,7 @@ import {
   Users2,
   UsersRound,
   Wallet,
+  Waves,
   Workflow
 } from "lucide-react";
 import { appSections } from "@/lib/app-sections";
@@ -355,6 +356,21 @@ export const navigationGroups: NavigationGroup[] = [
           { title: "账户安全", tab: "account" },
           { title: "防火墙", tab: "firewall" },
           { title: "地理风控", tab: "geo-intel" }
+        ]
+      },
+      {
+        // 内置插件 traffic：限速、并发、排队、预热与过载保护
+        title: "流量管理",
+        href: "/traffic",
+        icon: Waves,
+        summary: "限流、削峰与过载保护",
+        superAdmin: true,
+        children: [
+          { title: "总览", tab: "overview" },
+          { title: "规则", tab: "rules" },
+          { title: "全局设置", tab: "settings" },
+          { title: "历史", tab: "history" },
+          { title: "版本", tab: "revisions" }
         ]
       },
       {

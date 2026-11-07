@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity, Check, Code2, Cpu, Loader2, Plus, Power, PowerOff,
+  Activity, Boxes, Check, Code2, Cpu, Loader2, Plus, Power, PowerOff,
   Puzzle, RefreshCw, Search, Trash2, X
 } from "lucide-react";
 import { toast } from "sonner";
@@ -27,6 +28,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { NativePluginsPanel } from "@/components/plugins/native-plugins-panel";
 import dynamic from "next/dynamic";
 import type { Monaco } from "@monaco-editor/react";
 import { loadMonaco } from "@/lib/monaco/loader";
@@ -473,7 +475,21 @@ const domainLabels: Record<string, string> = {
   payment: "支付", notification: "通知", storage: "存储", system: "系统",
 };
 
+const PLUGIN_TABS = new Set(["plugins", "native", "hooks", "logs"]);
+
 export default function PluginsPage() {
+  return (
+    <Suspense>
+      <PluginsPageInner />
+    </Suspense>
+  );
+}
+
+function PluginsPageInner() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const rawTab = searchParams.get("tab");
+  const tab = rawTab && PLUGIN_TABS.has(rawTab) ? rawTab : "plugins";
   const token = useAuthStore((s) => s.accessToken) || "";
   const qc = useQueryClient();
   const [keyword, setKeyword] = useState("");
@@ -527,9 +543,10 @@ export default function PluginsPage() {
     <div className="page-stack">
       <SectionHeading eyebrow="控制台" title="插件系统" />
 
-      <Tabs defaultValue="plugins">
+      <Tabs value={tab} onValueChange={(v) => router.replace(`/plugins?tab=${v}`, { scroll: false })}>
         <TabsList>
           <TabsTrigger value="plugins"><Puzzle className="size-4" />插件管理</TabsTrigger>
+          <TabsTrigger value="native"><Boxes className="size-4" />内置插件</TabsTrigger>
           <TabsTrigger value="hooks"><Activity className="size-4" />钩子注册表</TabsTrigger>
           <TabsTrigger value="logs"><Code2 className="size-4" />执行日志</TabsTrigger>
         </TabsList>
@@ -603,6 +620,11 @@ export default function PluginsPage() {
               )}
             </div>
           )}
+        </TabsContent>
+
+        {/* ── 内置插件 ── */}
+        <TabsContent value="native" className="space-y-4">
+          {tab === "native" ? <NativePluginsPanel /> : null}
         </TabsContent>
 
         {/* ── 钩子注册表 ── */}
