@@ -96,6 +96,7 @@ DELETE	/api/admin/system/storage/objects/:objectId	SoftDeleteStorageObject
 DELETE	/api/admin/system/storage/objects/:objectId/permanent	PermanentDeleteStorageObject
 DELETE	/api/admin/system/storage/rules/:ruleId	DeleteStorageRule
 DELETE	/api/admin/system/templates/:code	DeleteTemplate
+DELETE	/api/admin/system/traffic/rules/:ruleId	AdminTrafficDeleteRule
 DELETE	/api/admin/system/user-master/lists/:id	AdminDeleteUserListEntry
 DELETE	/api/admin/system/user-master/mappings/:id	AdminDeleteMapping
 DELETE	/api/admin/system/user-master/segments/:id	AdminDeleteSegment
@@ -490,6 +491,7 @@ GET	/api/admin/system/memory/history	AdminMemoryHistory
 GET	/api/admin/system/memory/leak	AdminMemoryLeakReport
 GET	/api/admin/system/memory/pools	AdminMemoryPoolStats
 GET	/api/admin/system/memory/snapshot	AdminMemorySnapshot
+GET	/api/admin/system/native-plugins	AdminListNativePlugins
 GET	/api/admin/system/online/apps/:appkey	AdminAppOnlineStats
 GET	/api/admin/system/online/apps/:appkey/users	AdminAppOnlineUsers
 GET	/api/admin/system/online/live	AdminOnlineLive
@@ -563,8 +565,14 @@ GET	/api/admin/system/storage/usage/history	GetStorageUsageHistory
 GET	/api/admin/system/temp-permissions	ListTempPermissions
 GET	/api/admin/system/templates	ListTemplates
 GET	/api/admin/system/templates/:code	GetTemplate
-GET	/api/admin/system/traffic-ramp	AdminGetTrafficRamp
-GET	/api/admin/system/traffic-ramp/stats	AdminTrafficRampStats
+GET	/api/admin/system/traffic/config	AdminTrafficConfig
+GET	/api/admin/system/traffic/events	AdminTrafficEvents
+GET	/api/admin/system/traffic/history	AdminTrafficHistory
+GET	/api/admin/system/traffic/overview	AdminTrafficOverview
+GET	/api/admin/system/traffic/revisions	AdminTrafficRevisions
+GET	/api/admin/system/traffic/revisions/:revision	AdminTrafficRevision
+GET	/api/admin/system/traffic/rules/:ruleId/stats	AdminTrafficRuleStats
+GET	/api/admin/system/traffic/templates	AdminTrafficTemplates
 GET	/api/admin/system/user-master/appeals	AdminListAppeals
 GET	/api/admin/system/user-master/deactivations	AdminListDeactivations
 GET	/api/admin/system/user-master/identities	AdminListIdentities
@@ -1152,6 +1160,9 @@ POST	/api/admin/system/firewall/geo-fences/preview	AdminPreviewGeoFence
 POST	/api/admin/system/ldap/test	AdminLDAPTest
 POST	/api/admin/system/legal/documents/:docType/:locale/preview	AdminPreviewLegalDocument
 POST	/api/admin/system/memory/gc	AdminMemoryForceGC
+POST	/api/admin/system/native-plugins/:pluginId/disable	AdminDisableNativePlugin
+POST	/api/admin/system/native-plugins/:pluginId/enable	AdminEnableNativePlugin
+POST	/api/admin/system/native-plugins/:pluginId/restart	AdminRestartNativePlugin
 POST	/api/admin/system/oidc/test	AdminOIDCTest
 POST	/api/admin/system/org-approvals/:instanceId/decision	DecideApproval
 POST	/api/admin/system/org-invitations/:inviteId/:action	RespondInvitation
@@ -1199,7 +1210,13 @@ POST	/api/admin/system/temp-permissions	GrantTempPermission
 POST	/api/admin/system/temp-permissions/:permId/revoke	RevokeTempPermission
 POST	/api/admin/system/templates	CreateTemplate
 POST	/api/admin/system/templates/:code/preview	PreviewTemplate
-POST	/api/admin/system/traffic-ramp/reset-stats	AdminResetTrafficRampStats
+POST	/api/admin/system/traffic/reset-stats	AdminTrafficResetStats
+POST	/api/admin/system/traffic/rollback	AdminTrafficRollback
+POST	/api/admin/system/traffic/rules	AdminTrafficCreateRule
+POST	/api/admin/system/traffic/rules/:ruleId/toggle	AdminTrafficToggleRule
+POST	/api/admin/system/traffic/rules/reorder	AdminTrafficReorderRules
+POST	/api/admin/system/traffic/simulate	AdminTrafficSimulate
+POST	/api/admin/system/traffic/validate	AdminTrafficValidateRule
 POST	/api/admin/system/user-master/appeals	AdminCreateAppeal
 POST	/api/admin/system/user-master/deactivations	AdminCreateDeactivation
 POST	/api/admin/system/user-master/deactivations/:id/cancel	AdminCancelDeactivation
@@ -1598,7 +1615,8 @@ PUT	/api/admin/system/settings	AdminUpdateSystemSettings
 PUT	/api/admin/system/storage/cdn/:configId	UpsertCDNConfig
 PUT	/api/admin/system/storage/rules/:ruleId	UpdateStorageRule
 PUT	/api/admin/system/templates/:code	UpdateTemplate
-PUT	/api/admin/system/traffic-ramp	AdminUpdateTrafficRamp
+PUT	/api/admin/system/traffic/rules/:ruleId	AdminTrafficUpdateRule
+PUT	/api/admin/system/traffic/settings	AdminTrafficSaveSettings
 PUT	/api/admin/system/user-master/appeals/:id	AdminReviewAppeal
 PUT	/api/admin/system/user-master/identities/:id/lifecycle	AdminUpdateIdentityLifecycle
 PUT	/api/admin/system/user-master/identities/:id/risk	AdminUpdateIdentityRisk

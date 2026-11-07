@@ -5,6 +5,8 @@ import (
 
 	"aegis/internal/config"
 	"aegis/internal/middleware"
+	"aegis/internal/nativeplugin"
+	trafficplugin "aegis/internal/plugins/traffic"
 	redisrepo "aegis/internal/repository/redis"
 	"aegis/internal/service"
 	"aegis/pkg/clientip"
@@ -131,9 +133,11 @@ type RouterDeps struct {
 
 	// ── 基础设施 ──────────────────────────────────────────────────────
 	Firewall *middleware.Firewall
-	// TrafficRamp 突发流量爬坡（自适应准入），挂在 Firewall 之后：
-	// 先由防火墙拒掉恶意流量，剩下的合法洪峰再整形。nil 时中间件直通。
-	TrafficRamp *middleware.TrafficRamp
+	// Traffic 流量管理插件，中间件挂在 Firewall 之后：先由防火墙拒掉恶意流量，
+	// 剩下的合法流量再按规则整形。nil 或插件停用时中间件直通。
+	Traffic *trafficplugin.Plugin
+	// NativePlugins 内置插件宿主（启停、重启、状态）。
+	NativePlugins *nativeplugin.Host
 	ReplayGuard *middleware.ReplayGuard
 	CrashLog    *crashlog.Logger
 	Logger      *zap.Logger
@@ -205,6 +209,8 @@ func (d RouterDeps) newHandler() *Handler {
 		tmpl:               d.Template,
 		audit:              d.Audit,
 		plugin:             d.Plugin,
+		traffic:            d.Traffic,
+		nativePlugins:      d.NativePlugins,
 		appFunction:        d.AppFunction,
 		cardKey:            d.CardKey,
 		rewardedAd:         d.RewardedAd,

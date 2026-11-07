@@ -876,20 +876,6 @@
   },
   {
     "method": "GET",
-    "path": "/api/admin/system/traffic-ramp",
-    "permission": "system:admin:manage",
-    "appScoped": false,
-    "unmapped": false
-  },
-  {
-    "method": "GET",
-    "path": "/api/admin/system/traffic-ramp/stats",
-    "permission": "system:admin:manage",
-    "appScoped": false,
-    "unmapped": false
-  },
-  {
-    "method": "GET",
     "path": "/api/admin/apps",
     "permission": "app:read",
     "appScoped": false,
@@ -4712,13 +4698,6 @@
   },
   {
     "method": "POST",
-    "path": "/api/admin/system/traffic-ramp/reset-stats",
-    "permission": "system:admin:manage",
-    "appScoped": false,
-    "unmapped": false
-  },
-  {
-    "method": "POST",
     "path": "/api/admin/system/temp-permissions",
     "permission": "system:admin:manage",
     "appScoped": false,
@@ -7071,13 +7050,6 @@
   },
   {
     "method": "PUT",
-    "path": "/api/admin/system/traffic-ramp",
-    "permission": "system:admin:manage",
-    "appScoped": false,
-    "unmapped": false
-  },
-  {
-    "method": "PUT",
     "path": "/api/admin/system/plugins/:id",
     "permission": "system:admin:manage",
     "appScoped": false,
@@ -9072,6 +9044,160 @@
     "path": "/api/admin/apps/:appkey/users/:userId/growth/level-cap",
     "permission": "app:user:write",
     "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/system/traffic/rules/:ruleId",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/native-plugins",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/traffic/config",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/traffic/events",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/traffic/history",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/traffic/overview",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/traffic/revisions",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/traffic/revisions/:revision",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/traffic/rules/:ruleId/stats",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/traffic/templates",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/native-plugins/:pluginId/disable",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/native-plugins/:pluginId/enable",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/native-plugins/:pluginId/restart",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/traffic/reset-stats",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/traffic/rollback",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/traffic/rules",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/traffic/rules/:ruleId/toggle",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/traffic/rules/reorder",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/traffic/simulate",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/traffic/validate",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/system/traffic/rules/:ruleId",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/system/traffic/settings",
+    "permission": "system:admin:manage",
+    "appScoped": false,
     "unmapped": false
   }
 ]

@@ -1,6 +1,6 @@
 package auditcatalog
 
-// 安全与风控：防火墙与 IP 封禁、地理封禁与围栏、风控规则与评估、出站代理、流量爬坡、身份源连通性测试。
+// 安全与风控：防火墙与 IP 封禁、地理封禁与围栏、风控规则与评估、出站代理、流量管理、身份源连通性测试。
 func init() {
 	Register("security",
 		// 防火墙与 IP 封禁
@@ -93,11 +93,30 @@ func init() {
 		View("POST /api/admin/system/egress/mihomo/dns", "经 mihomo 解析域名", ""),
 		Write("POST /api/admin/system/egress/mihomo/maintenance", "维护 mihomo 核心", "", SeverityLow),
 
-		// 流量爬坡
-		View("GET /api/admin/system/traffic-ramp", "查看流量爬坡设置", ""),
-		View("GET /api/admin/system/traffic-ramp/stats", "查看流量爬坡统计", ""),
-		Write("PUT /api/admin/system/traffic-ramp", "修改流量爬坡设置", "", SeverityHigh),
-		Write("POST /api/admin/system/traffic-ramp/reset-stats", "重置流量爬坡统计", "", SeverityMedium),
+		// 流量管理（内置插件 traffic）
+		View("GET /api/admin/system/traffic/overview", "查看流量总览", ""),
+		View("GET /api/admin/system/traffic/config", "查看流量配置", ""),
+		View("GET /api/admin/system/traffic/templates", "查看流量规则模板", ""),
+		Write("PUT /api/admin/system/traffic/settings", "修改流量全局设置", "", SeverityHigh),
+		Write("POST /api/admin/system/traffic/rules", "新建流量规则", "", SeverityHigh),
+		Write("POST /api/admin/system/traffic/rules/reorder", "调整流量规则顺序", "", SeverityHigh),
+		Write("PUT /api/admin/system/traffic/rules/:ruleId", "修改流量规则", "", SeverityHigh),
+		Write("DELETE /api/admin/system/traffic/rules/:ruleId", "删除流量规则", "", SeverityHigh),
+		Write("POST /api/admin/system/traffic/rules/:ruleId/toggle", "启停流量规则", "", SeverityHigh),
+		View("GET /api/admin/system/traffic/rules/:ruleId/stats", "查看流量规则统计", ""),
+		View("POST /api/admin/system/traffic/validate", "校验流量规则", ""),
+		View("POST /api/admin/system/traffic/simulate", "模拟流量请求", ""),
+		View("GET /api/admin/system/traffic/revisions", "查看流量配置修订", ""),
+		View("GET /api/admin/system/traffic/revisions/:revision", "查看流量配置修订详情", ""),
+		Write("POST /api/admin/system/traffic/rollback", "回滚流量配置", "", SeverityHigh),
+		View("GET /api/admin/system/traffic/history", "查看流量历史", ""),
+		View("GET /api/admin/system/traffic/events", "查看流量事件", ""),
+		Write("POST /api/admin/system/traffic/reset-stats", "清零流量统计", "", SeverityMedium),
+		// 内置插件
+		View("GET /api/admin/system/native-plugins", "查看内置插件", ""),
+		Write("POST /api/admin/system/native-plugins/:pluginId/enable", "启用内置插件", "", SeverityHigh),
+		Write("POST /api/admin/system/native-plugins/:pluginId/disable", "停用内置插件", "", SeverityHigh),
+		Write("POST /api/admin/system/native-plugins/:pluginId/restart", "重启内置插件", "", SeverityMedium),
 
 		// 身份源与验证码
 		View("POST /api/admin/system/ldap/test", "测试 LDAP 连接", ""),

@@ -184,6 +184,10 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/test"):                                         testAppFunctionRequest{},                 // AdminTestAppFunction
 		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/versions"):                                     createAppFunctionVersionRequest{},        // AdminCreateAppFunctionVersion
 		routeKey("POST", "/api/admin/apps/{appkey}/governance/appeals"):                                                    GovernanceAppealRequest{},                // AdminAppSubmitGovernanceAppeal
+		routeKey("POST", "/api/admin/apps/{appkey}/growth/preview"):                                                        GrowthPreviewRequest{},                   // AdminPreviewGrowth
+		routeKey("POST", "/api/admin/apps/{appkey}/growth/rules"):                                                          GrowthRuleRequest{},                      // AdminCreateGrowthRule
+		routeKey("PUT", "/api/admin/apps/{appkey}/growth/rules/{ruleId}"):                                                  GrowthRuleRequest{},                      // AdminUpdateGrowthRule
+		routeKey("POST", "/api/admin/apps/{appkey}/growth/rules/{ruleId}/revoke"):                                          GrowthRevokeRequest{},                    // AdminRevokeGrowthRule
 		routeKey("GET", "/api/admin/apps/{appkey}/invite/codes"):                                                           InviteCodeQuery{},                        // AdminListInviteCodes
 		routeKey("POST", "/api/admin/apps/{appkey}/invite/codes"):                                                          InviteCodeRequest{},                      // AdminCreateInviteCodes
 		routeKey("PUT", "/api/admin/apps/{appkey}/invite/codes/{codeId}"):                                                  InviteCodeRequest{},                      // AdminUpdateInviteCode
@@ -209,11 +213,6 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/rewards/{rewardId}/fulfill"):                                     LevelFulfillRequest{},                    // AdminFulfillLevelReward
 		routeKey("PUT", "/api/admin/apps/{appkey}/levels/scheme"):                                                          LevelDraftRequest{},                      // AdminSaveLevelScheme
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/simulate"):                                                       LevelSimulateRequest{},                   // AdminSimulateLevel
-		routeKey("POST", "/api/admin/apps/{appkey}/growth/rules"):                                                          GrowthRuleRequest{},                      // AdminCreateGrowthRule
-		routeKey("PUT", "/api/admin/apps/{appkey}/growth/rules/{ruleId}"):                                                  GrowthRuleRequest{},                      // AdminUpdateGrowthRule
-		routeKey("POST", "/api/admin/apps/{appkey}/growth/rules/{ruleId}/revoke"):                                          GrowthRevokeRequest{},                    // AdminRevokeGrowthRule
-		routeKey("POST", "/api/admin/apps/{appkey}/growth/preview"):                                                        GrowthPreviewRequest{},                   // AdminPreviewGrowth
-		routeKey("PUT", "/api/admin/apps/{appkey}/users/{userId}/growth/level-cap"):                                        GrowthLevelCapRequest{},                  // AdminSetAppUserLevelCap
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/users/adjust"):                                                   LevelBatchAdjustRequest{},                // AdminBatchAdjustLevelUsers
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/users/{userId}/adjust"):                                          LevelAdjustRequest{},                     // AdminAdjustLevelUser
 		routeKey("POST", "/api/admin/apps/{appkey}/levels/validate"):                                                       LevelGraphRequest{},                      // AdminValidateLevelScheme
@@ -322,8 +321,9 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/cloud-storage/items/{itemId}/rollback"):                  AdminCloudRollbackRequest{},              // AdminRollbackCloudStorageUserItem
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/feature-unlocks"):                                        FeatureUnlockGrantRequest{},              // AdminGrantFeatureUnlock
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/feature-unlocks/{unlockId}/revoke"):                      FeatureUnlockRevokeRequest{},             // AdminRevokeFeatureUnlock
-		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/points/integral/transactions/{transactionNo}/reverse"):   AdminPointReverseRequest{},               // AdminReverseAppUserIntegral
+		routeKey("PUT", "/api/admin/apps/{appkey}/users/{userId}/growth/level-cap"):                                        GrowthLevelCapRequest{},                  // AdminSetAppUserLevelCap
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/points/experience/transactions/{transactionNo}/reverse"): AdminPointReverseRequest{},               // AdminReverseAppUserExperience
+		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/points/integral/transactions/{transactionNo}/reverse"):   AdminPointReverseRequest{},               // AdminReverseAppUserIntegral
 		routeKey("GET", "/api/admin/apps/{appkey}/users/{userId}/points/{kind}/summary"):                                   AdminPointSummaryQuery{},                 // AdminAppUserPointSummary
 		routeKey("GET", "/api/admin/apps/{appkey}/users/{userId}/points/{kind}/transactions"):                              AdminPointLedgerQuery{},                  // AdminAppUserPointLedger
 		routeKey("PUT", "/api/admin/apps/{appkey}/users/{userId}/profile"):                                                 AdminUpdateUserProfileRequest{},          // AdminUpdateUserProfile
@@ -538,8 +538,20 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/system/templates"):                                                                    CreateTemplateRequest{},                  // CreateTemplate
 		routeKey("PUT", "/api/admin/system/templates/{code}"):                                                              UpdateTemplateRequest{},                  // UpdateTemplate
 		routeKey("POST", "/api/admin/system/templates/{code}/preview"):                                                     PreviewTemplateRequest{},                 // PreviewTemplate
-		routeKey("PUT", "/api/admin/system/traffic-ramp"):                                                                  AdminTrafficRampUpdateRequest{},          // AdminUpdateTrafficRamp
-		routeKey("GET", "/api/admin/system/traffic-ramp/stats"):                                                            AdminTrafficRampStatsQuery{},             // AdminTrafficRampStats
+		routeKey("GET", "/api/admin/system/traffic/events"):                                                                AdminTrafficListQuery{},                  // AdminTrafficEvents
+		routeKey("GET", "/api/admin/system/traffic/history"):                                                               AdminTrafficHistoryQuery{},               // AdminTrafficHistory
+		routeKey("GET", "/api/admin/system/traffic/overview"):                                                              AdminTrafficOverviewQuery{},              // AdminTrafficOverview
+		routeKey("GET", "/api/admin/system/traffic/revisions"):                                                             AdminTrafficListQuery{},                  // AdminTrafficRevisions
+		routeKey("POST", "/api/admin/system/traffic/rollback"):                                                             AdminTrafficRollbackRequest{},            // AdminTrafficRollback
+		routeKey("POST", "/api/admin/system/traffic/rules"):                                                                AdminTrafficRuleRequest{},                // AdminTrafficCreateRule
+		routeKey("POST", "/api/admin/system/traffic/rules/reorder"):                                                        AdminTrafficReorderRequest{},             // AdminTrafficReorderRules
+		routeKey("DELETE", "/api/admin/system/traffic/rules/{ruleId}"):                                                     AdminTrafficDeleteQuery{},                // AdminTrafficDeleteRule
+		routeKey("PUT", "/api/admin/system/traffic/rules/{ruleId}"):                                                        AdminTrafficRuleRequest{},                // AdminTrafficUpdateRule
+		routeKey("GET", "/api/admin/system/traffic/rules/{ruleId}/stats"):                                                  AdminTrafficOverviewQuery{},              // AdminTrafficRuleStats
+		routeKey("POST", "/api/admin/system/traffic/rules/{ruleId}/toggle"):                                                AdminTrafficToggleRequest{},              // AdminTrafficToggleRule
+		routeKey("PUT", "/api/admin/system/traffic/settings"):                                                              AdminTrafficSettingsRequest{},            // AdminTrafficSaveSettings
+		routeKey("POST", "/api/admin/system/traffic/simulate"):                                                             AdminTrafficSimulateRequest{},            // AdminTrafficSimulate
+		routeKey("POST", "/api/admin/system/traffic/validate"):                                                             AdminTrafficValidateRequest{},            // AdminTrafficValidateRule
 		routeKey("GET", "/api/admin/system/user-master/appeals"):                                                           AppealListQuery{},                        // AdminListAppeals
 		routeKey("POST", "/api/admin/system/user-master/appeals"):                                                          CreateAppealRequest{},                    // AdminCreateAppeal
 		routeKey("PUT", "/api/admin/system/user-master/appeals/{id}"):                                                      ReviewAppealRequest{},                    // AdminReviewAppeal

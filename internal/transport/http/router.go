@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"aegis/internal/middleware"
+	"aegis/internal/nativeplugin"
+	trafficplugin "aegis/internal/plugins/traffic"
 	redisrepo "aegis/internal/repository/redis"
 	"aegis/internal/service"
 	"aegis/pkg/response"
@@ -63,6 +65,8 @@ type Handler struct {
 	tmpl            *service.TemplateService
 	audit           *service.AuditService
 	plugin          *service.PluginService
+	traffic         *trafficplugin.Plugin
+	nativePlugins   *nativeplugin.Host
 	appFunction     *service.AppFunctionService
 	cardKey         *service.CardKeyService
 	rewardedAd      *service.RewardedAdService
@@ -130,7 +134,7 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		locationService     = deps.Location
 		authProtocolService = deps.AuthProtocol
 		firewall            = deps.Firewall
-		trafficRamp         = deps.TrafficRamp
+		trafficPlugin       = deps.Traffic
 		replayGuard         = deps.ReplayGuard
 		cl                  = deps.CrashLog
 		log                 = deps.Logger
@@ -178,9 +182,9 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		// 与平台其余部分的结构化输出混在一起，采集端每条都解析失败。见 access_log.go。
 		middleware.AccessLog(log, middleware.AccessLogSkipPaths()...),
 		firewall.Handler(),
-		// 突发流量爬坡：必须在 Firewall 之后（先拒恶意，再整形合法洪峰）、
-		// ReplayGuard 之前（被整形掉的请求不该消耗 Nonce / 幂等键占位）。
-		trafficRamp.Handler(),
+		// 流量管理（内置插件 traffic）：必须在 Firewall 之后（先拒恶意，再整形合法流量）、
+		// ReplayGuard 之前（被拒掉的请求不该消耗 Nonce / 幂等键占位）。插件停用时直通。
+		trafficPlugin.Handler(),
 		replayGuard.Handler(),
 		middleware.AppGateway(authProtocolService),
 		// 版本管控的服务端执行点：读 AppGateway 写入的 aegis.app_id，必须排在它之后

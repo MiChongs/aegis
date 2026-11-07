@@ -15,6 +15,8 @@ import (
 	"aegis/internal/event"
 	"aegis/internal/mailtpl"
 	"aegis/internal/middleware"
+	"aegis/internal/nativeplugin"
+	trafficplugin "aegis/internal/plugins/traffic"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	"aegis/internal/service"
@@ -91,6 +93,8 @@ type APIApp struct {
 	EgressGateway   *egress.Gateway
 	OwnsEgress      bool
 	ShutdownTracing func(context.Context) error
+	// NativePlugins 内置插件宿主（流量管理等）：Start 里跑启停对账，退出时逆序停止
+	NativePlugins *nativeplugin.Host
 
 	// closeOnce 保证 Close 只执行一次（信号路径与 fx OnStop 都可能调用）。
 	closeOnce sync.Once
@@ -356,9 +360,11 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		postgres.Close()
 		return nil, err
 	}
-	// 突发流量爬坡：单实例自适应准入，挂在 Firewall 之后整形合法洪峰。
-	// 持久化配置由 systemService.Initialize 热加载覆盖。
-	trafficRamp := middleware.NewTrafficRamp(cfg.TrafficRamp, log)
+	// 流量管理以内置插件运行：中间件常驻在 Firewall 之后，插件停用时直通。
+	// 插件宿主在下面 Boot：读启停记录、加载（首次则初始化）流量配置。
+	nativePlugins := nativeplugin.NewHost(pg, log)
+	trafficPlugin := trafficplugin.New(pg, redisClient, cfg.Redis.KeyPrefix, log)
+	nativePlugins.Register(trafficPlugin)
 	ldapService := service.NewLDAPService(log, cfg.JWT.Secret)
 	adminService.SetLDAPService(ldapService)
 	oidcService := service.NewOIDCService(log, cfg.JWT.Secret)
@@ -369,7 +375,6 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 供 /api/admin/system/admins 超管视图标注"账号可能无法登录"，N 账号共享一次探测
 	authProviderHealthService := service.NewAuthProviderHealthService(log, ldapService, oidcService, samlService)
 	systemService := service.NewPlatformSettingsService(cfg, log, pg, firewall, securityService, ldapService, oidcService, samlService)
-	systemService.SetTrafficRamp(trafficRamp)
 	// 自助注册开关与自助建应用配额存在平台设置里，权限层要读它们
 	adminService.SetPlatformSettings(systemService)
 	// 出海网关管理面：数据库里的配置覆盖 .env 基线
@@ -404,6 +409,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		postgres.Close()
 		return nil, err
 	}
+	// 内置插件：流量管理的配置在这里加载完，服务开始监听前请求链路就已按规则整形
+	nativePlugins.Boot(ctx)
 	// 平台设置 Initialize 完成后，LDAP/OIDC/SAML 的真实配置才通过 Reload 写入对应服务；
 	// 构造时 NewAuthProviderHealthService 的初始探测只看到空配置，此处立即重新探测一次，
 	// 确保首次 Snapshot() 命中即是真实健康数据（而不是等 30s 的下一轮 tick）。
@@ -801,7 +808,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		DatabaseManager: databaseManager,
 
 		Firewall:       firewall,
-		TrafficRamp:    trafficRamp,
+		Traffic:        trafficPlugin,
+		NativePlugins:  nativePlugins,
 		ReplayGuard:    replayGuard,
 		CrashLog:       cl,
 		Logger:         log,
@@ -876,6 +884,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		PostgresHandle:     pgHandle,
 		ClientIP:           clientIPResolver,
 		ShutdownTracing:    shutdownTracing,
+		NativePlugins:      nativePlugins,
 	}
 	return app, nil
 }
@@ -924,6 +933,11 @@ func (a *APIApp) Start(ctx context.Context) error {
 		a.EgressGateway.Start(ctx)
 		a.Egress.StartSync(ctx)
 	}
+	if a.NativePlugins != nil {
+		SafeGo(a.Logger, a.CrashLog, "api.native_plugins", true, func() {
+			a.NativePlugins.Run(ctx)
+		})
+	}
 	registerAPIConfigHotReload(a.ConfigManager, a.Logger, a.Firewall, a.Security, a.AutoSign, a.AccountBan, a.Risk, a.Egress)
 
 	SafeGo(a.Logger, a.CrashLog, "api.admin_session_cleanup", true, func() {
@@ -961,6 +975,10 @@ func (a *APIApp) close(ctx context.Context) {
 	}
 	if a.Server != nil {
 		_ = a.Server.Shutdown(ctx)
+	}
+	// 在途请求都结束后再停插件：流量插件退出前要把缓冲的分钟样本写进库
+	if a.NativePlugins != nil {
+		a.NativePlugins.Shutdown(ctx)
 	}
 	if a.Governance != nil {
 		a.Governance.Stop()
