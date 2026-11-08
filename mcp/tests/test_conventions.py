@@ -58,11 +58,19 @@ def test_every_module_is_well_formed():
 @pytest.mark.skipif(not GOLDEN.exists(), reason="不在 Aegis 仓库里，找不到 routes.golden")
 def test_every_declared_route_exists_in_backend():
     registered = set()
+    # 通配路由（如风控平台的 /api/admin/system/risk/*path 整段转发到 risk-admin）：前缀对上即可
+    wildcards: list[tuple[str, str]] = []
     for line in GOLDEN.read_text(encoding="utf-8").splitlines():
         parts = line.split("\t")
         if len(parts) >= 2:
             registered.add((parts[0], parts[1]))
-    missing = sorted(f"{method} {template}" for method, template in REGISTRY if (method, template) not in registered)
+            if "/*" in parts[1]:
+                wildcards.append((parts[0], parts[1].split("/*", 1)[0] + "/"))
+
+    def known(method: str, template: str) -> bool:
+        return (method, template) in registered or any(m == method and template.startswith(p) for m, p in wildcards)
+
+    missing = sorted(f"{method} {template}" for method, template in REGISTRY if not known(method, template))
     assert not missing, "这些接口在后端路由表里不存在（写错路径或参数名？）：\n" + "\n".join(missing)
 
 
