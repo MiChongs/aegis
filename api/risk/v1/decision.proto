@@ -1,0 +1,157 @@
+// 风控决策服务契约（docs/risk-platform.md）。
+//
+// 生成（Kitex，protobuf 序列化走 TTHeader）：
+//   cd services/risk && kitex -module aegis -type protobuf -gen-path kitex_gen -I ../../api ../../api/risk/v1/decision.proto
+syntax = "proto3";
+
+package aegis.risk.v1;
+
+option go_package = "aegis/services/risk/kitex_gen/aegis/risk/v1;riskv1";
+
+// 设备信息：客户端上报的指纹要素，进向量检索与图谱
+message Device {
+  string id = 1;
+  string platform = 2;      // android / ios / web / windows …
+  string brand = 3;
+  string model = 4;
+  string os_version = 5;
+  string app_version = 6;
+  string screen = 7;        // 1080x2400@440
+  string locale = 8;
+  string timezone = 9;
+  bool emulator = 10;
+  bool rooted = 11;
+  map<string, string> attrs = 12; // 其余指纹要素（字体哈希、传感器、WebGL 渲染器……）
+}
+
+// 网络情报：主服务按 IP 归属地与情报源补齐后带过来
+message Geo {
+  string country = 1;   // ISO 3166-1 alpha-2
+  string province = 2;
+  string city = 3;
+  string isp = 4;
+  int64 asn = 5;
+  bool proxy = 6;
+  bool vpn = 7;
+  bool tor = 8;
+  bool datacenter = 9;
+  int32 ip_score = 10;  // 情报源给的 0-100 风险分
+}
+
+message EvaluateRequest {
+  string scene = 1;
+  int64 app_id = 2;
+  int64 user_id = 3;
+  string account = 4;       // 登录名 / 邮箱 / 手机号
+  string ip = 5;
+  string user_agent = 6;
+  Device device = 7;
+  bool captcha_passed = 8;
+  string request_id = 9;    // 幂等：同一个请求重复评估返回第一次的结论
+  bytes extra_json = 10;    // 场景入参（JSON 对象），按场景字段定义校验
+  string phone = 11;
+  string email = 12;
+  int64 target_user_id = 13; // 邀请 / 转赠等的对方
+  double amount = 14;
+  int64 identity_id = 15;
+  Geo geo = 16;
+  bool explain = 17;        // 返回完整轨迹（管理端调用）
+}
+
+message RuleHit {
+  string key = 1;
+  string name = 2;
+  string dimension = 3;
+  int32 score = 4;
+  string mode = 5;          // enforce / observe
+  string decision = 6;      // 命中即强制的处置（可空）
+  string reason = 7;
+}
+
+message ListHit {
+  string list_type = 1;
+  string kind = 2;          // block / allow / watch
+  string value = 3;
+  string list_key = 4;
+  string reason = 5;
+}
+
+message Command {
+  string id = 1;
+  string kind = 2;          // list_add / account_ban / firewall_ban / revoke_sessions
+  string target = 3;        // device / ip / account / user
+  string value = 4;
+  int64 duration_seconds = 5;
+  string reason = 6;
+}
+
+message EvaluateResponse {
+  string decision_id = 1;
+  string action = 2;        // pass / review / captcha / block / ban
+  string risk_level = 3;    // none / low / medium / high / critical
+  int32 score = 4;
+  repeated string reasons = 5;
+  repeated RuleHit hits = 6;
+  map<string, int32> dimension_scores = 7;
+  map<string, double> model_scores = 8;
+  repeated ListHit list_hits = 9;
+  string release = 10;      // 生效的发布版本
+  int64 latency_us = 11;
+  string decided_by = 12;   // list / rule / flow / policy / default / fail_open
+  repeated Command commands = 13;
+  bytes trace_json = 14;    // 只有 Simulate 与 explain=true 时返回完整轨迹
+  repeated string degraded = 15; // 超出预算或出错而缺失的特征来源
+}
+
+message SimulateRequest {
+  EvaluateRequest request = 1;
+  // 草稿发布包（JSON），为空时用当前生效版本
+  bytes bundle_json = 2;
+  // 是否执行处置与记录流水（模拟默认都不做）
+  bool side_effects = 3;
+}
+
+message ExplainRequest {
+  string decision_id = 1;
+}
+
+message ValidateRequest {
+  bytes bundle_json = 1;
+}
+
+message ValidateIssue {
+  string stage = 1;   // rules / features / flow / policy / model
+  string key = 2;
+  string message = 3;
+}
+
+message ValidateResponse {
+  bool ok = 1;
+  repeated ValidateIssue issues = 2;
+}
+
+message StatusRequest {}
+
+message SceneRelease {
+  string scene = 1;
+  string version = 2;
+  string checksum = 3;
+  int64 loaded_at = 4;
+  string candidate = 5;
+  int32 canary_percent = 6;
+  bool shadow = 7;
+  string error = 8;
+}
+
+message StatusResponse {
+  string instance = 1;
+  repeated SceneRelease scenes = 2;
+  map<string, string> dependencies = 3; // redis / nebula / milvus / nats → ok / 错误
+}
+
+service DecisionService {
+  rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
+  rpc Simulate(SimulateRequest) returns (EvaluateResponse);
+  rpc Validate(ValidateRequest) returns (ValidateResponse);
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
