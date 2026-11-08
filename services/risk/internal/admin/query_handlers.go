@@ -539,8 +539,37 @@ type entityUse struct {
 	First    time.Time `ch:"first" json:"firstSeen"`
 	Count    uint64    `ch:"n" json:"count"`
 	Country  string    `ch:"country" json:"country"`
+	Province string    `ch:"province" json:"province,omitempty"`
 	City     string    `ch:"city" json:"city"`
+	ISP      string    `ch:"isp" json:"isp,omitempty"`
+	ASN      int64     `ch:"asn" json:"asn,omitempty"`
 	Device   string    `ch:"device" json:"-"`
+}
+
+// sceneUse 用户在某个场景的评估次数与被拦次数
+type sceneUse struct {
+	Key     string `ch:"k" json:"key"`
+	Count   uint64 `ch:"n" json:"count"`
+	Blocked uint64 `ch:"blocked" json:"blocked"`
+	Flagged uint64 `ch:"flagged" json:"flagged"` // 没有直接放行的（复核、验证码、拦截、封禁）
+}
+
+// similarView 相似设备：补上型号与那位用户的名字，控制台能写成「张三的小米 14」
+type similarView struct {
+	vector.Neighbor
+	Model    string `json:"model,omitempty"`
+	UserName string `json:"userName,omitempty"`
+}
+
+// ipFlags 关系图里这个 IP 的判断（机房出口、多人共用、IPv6 线路）
+type ipFlags struct {
+	Users   int64  `json:"users,omitempty"`
+	Hosting bool   `json:"hosting,omitempty"`
+	Shared  bool   `json:"shared,omitempty"`
+	Proxy   bool   `json:"proxy,omitempty"`
+	VPN     bool   `json:"vpn,omitempty"`
+	V6      bool   `json:"v6,omitempty"`
+	Line    string `json:"line,omitempty"` // IPv6 所在的 /64 线路
 }
 
 // profile 用户风险画像：关系图 + 时间线 + 设备与 IP + 名单 + 复核 + 告警 + 相似设备
@@ -609,10 +638,11 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 		return r[0], err
 	})
 	run("scenes", func() (any, error) {
-		var r []kv
-		err := conn.Select(ctx, &r, "SELECT scene AS k, count() AS n FROM decisions WHERE "+base+" GROUP BY k ORDER BY n DESC", args...)
+		var r []sceneUse
+		err := conn.Select(ctx, &r, "SELECT scene AS k, count() AS n, countIf(action IN ('block','ban')) AS blocked, countIf(action != 'pass') AS flagged FROM decisions WHERE "+base+" GROUP BY k ORDER BY n DESC", args...)
 		return r, err
 	})
+	run("names", func() (any, error) { return s.configNames(ctx) })
 	run("rules", func() (any, error) {
 		var r []kv
 		err := conn.Select(ctx, &r, "SELECT arrayJoin(hits) AS k, count() AS n FROM decisions WHERE "+base+" GROUP BY k ORDER BY n DESC LIMIT 15", args...)
@@ -660,30 +690,108 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 
 	// 设备、IP 与它们身上的名单、相似设备（依赖上面的流水，串行做）
 	var devices, ips []entityUse
-	_ = conn.Select(ctx, &devices, "SELECT device_id AS v, max(ts) AS last, min(ts) AS first, count() AS n, any(country) AS country, any(city) AS city, argMax(device, ts) AS device FROM decisions WHERE "+base+" AND device_id != '' GROUP BY v ORDER BY last DESC LIMIT 20", args...)
-	_ = conn.Select(ctx, &ips, "SELECT ip AS v, max(ts) AS last, min(ts) AS first, count() AS n, any(country) AS country, any(city) AS city, '' AS device FROM decisions WHERE "+base+" AND ip != '' GROUP BY v ORDER BY last DESC LIMIT 20", args...)
+	_ = conn.Select(ctx, &devices, "SELECT device_id AS v, max(ts) AS last, min(ts) AS first, count() AS n, any(country) AS country, '' AS province, any(city) AS city, '' AS isp, toInt64(0) AS asn, argMax(device, ts) AS device FROM decisions WHERE "+base+" AND device_id != '' GROUP BY v ORDER BY last DESC LIMIT 20", args...)
+	_ = conn.Select(ctx, &ips, "SELECT ip AS v, max(ts) AS last, min(ts) AS first, count() AS n, any(country) AS country, any(province) AS province, any(city) AS city, any(isp) AS isp, toInt64(any(asn)) AS asn, '' AS device FROM decisions WHERE "+base+" AND ip != '' GROUP BY v ORDER BY last DESC LIMIT 20", args...)
 	type entityView struct {
 		entityUse
 		Lists       []lists.Entry     `json:"lists"`
 		Fingerprint map[string]string `json:"fingerprint,omitempty"`
-		Similar     []vector.Neighbor `json:"similar,omitempty"`
+		Similar     []similarView     `json:"similar,omitempty"`
+		Net         *ipFlags          `json:"net,omitempty"`
 	}
-	var devViews, ipViews []entityView
+	devViews := make([]entityView, len(devices))
+	var swg sync.WaitGroup
+	sem := make(chan struct{}, 4)
 	for i, d := range devices {
 		v := entityView{entityUse: d}
 		v.Lists, _ = s.Store.EntriesFor(ctx, bundle.ListDevice, d.Value)
 		_ = json.Unmarshal([]byte(d.Device), &v.Fingerprint)
-		if s.Vector != nil && i < 3 && len(v.Fingerprint) > 0 {
-			sctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			v.Similar, _ = s.Vector.Similar(sctx, appID, d.Value, vector.Embed(v.Fingerprint), 10)
-			cancel()
+		devViews[i] = v
+		if s.Vector == nil || len(v.Fingerprint) == 0 {
+			continue
 		}
-		devViews = append(devViews, v)
+		// 每台设备都查相似设备（并发 4 个、各 2 秒上限）
+		swg.Add(1)
+		go func(i int, fp map[string]string, id string) {
+			defer swg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			sctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			ns, _ := s.Vector.Similar(sctx, appID, id, vector.Embed(fp), 10)
+			views := make([]similarView, len(ns))
+			for k, n := range ns {
+				views[k] = similarView{Neighbor: n}
+			}
+			devViews[i].Similar = views
+		}(i, v.Fingerprint, d.Value)
 	}
+	swg.Wait()
+	// 相似设备补型号与用户名：所有相似设备与其用户一次从关系图取
+	if s.Graph != nil {
+		var ids []string
+		seen := map[string]bool{}
+		for _, v := range devViews {
+			for _, n := range v.Similar {
+				for _, id := range []string{graph.DeviceVID(n.DeviceID), graph.UserVID(appID, n.UserID)} {
+					if n.UserID <= 0 && strings.HasPrefix(id, "u:") || seen[id] {
+						continue
+					}
+					seen[id] = true
+					ids = append(ids, id)
+				}
+			}
+		}
+		if len(ids) > 0 {
+			if props, err := s.Graph.Props(ids); err == nil {
+				str := func(p map[string]any, k string) string { v, _ := p[k].(string); return strings.TrimSpace(v) }
+				for i := range devViews {
+					for k := range devViews[i].Similar {
+						n := &devViews[i].Similar[k]
+						if p := props[graph.DeviceVID(n.DeviceID)]; p != nil {
+							n.Model = strings.TrimSpace(str(p, "brand") + " " + str(p, "model"))
+						}
+						if p := props[graph.UserVID(appID, n.UserID)]; p != nil {
+							if n.UserName = str(p, "nickname"); n.UserName == "" {
+								n.UserName = str(p, "name")
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	ipViews := make([]entityView, 0, len(ips))
 	for _, p := range ips {
 		v := entityView{entityUse: p}
 		v.Lists, _ = s.Store.EntriesFor(ctx, bundle.ListIP, p.Value)
 		ipViews = append(ipViews, v)
+	}
+	if s.Graph != nil && len(ipViews) > 0 {
+		ids := make([]string, len(ipViews))
+		for i, v := range ipViews {
+			ids[i] = graph.IPVID(v.Value)
+		}
+		if props, err := s.Graph.Props(ids); err == nil {
+			for i := range ipViews {
+				p := props[ids[i]]
+				if p == nil {
+					continue
+				}
+				f := &ipFlags{Users: num64(p["users"]), Hosting: p["hosting"] == true, Shared: p["shared"] == true,
+					Proxy: p["proxy"] == true, VPN: p["vpn"] == true, V6: p["v6"] == true}
+				if f.V6 {
+					f.Line = graph.IPKey(ipViews[i].Value)
+				}
+				if ipViews[i].ISP == "" {
+					ipViews[i].ISP, _ = p["isp"].(string)
+				}
+				if ipViews[i].Province == "" {
+					ipViews[i].Province, _ = p["province"].(string)
+				}
+				ipViews[i].Net = f
+			}
+		}
 	}
 	out["devices"], out["ips"] = nonNilSlice(devViews), nonNilSlice(ipViews)
 	userLists, _ := s.Store.EntriesFor(ctx, bundle.ListUser, strconv.FormatInt(uid, 10))
@@ -863,4 +971,45 @@ func (s *Server) userScore(ctx context.Context, c *app.RequestContext) (any, err
 		return nil, err
 	}
 	return map[string]any{"maxScore": max32}, nil
+}
+
+func num64(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case float64:
+		return int64(n)
+	}
+	return 0
+}
+
+// configNames 规则、特征、模型的中文名（画像里只有键，控制台据此显示名称，不必再单独请求配置接口）
+func (s *Server) configNames(ctx context.Context) (map[string]map[string]string, error) {
+	out := map[string]map[string]string{"rules": {}, "features": {}, "models": {}}
+	rules, err := s.Store.ListRules(ctx, "")
+	if err != nil {
+		return out, err
+	}
+	for _, r := range rules {
+		if r.Name != "" {
+			out["rules"][r.Key] = r.Name
+		}
+	}
+	if fs, err := s.Store.ListFeatures(ctx); err == nil {
+		for _, f := range fs {
+			if f.Name != "" {
+				out["features"][f.Key] = f.Name
+			}
+		}
+	}
+	if ms, err := s.Store.ListModels(ctx); err == nil {
+		for _, m := range ms {
+			if m.Name != "" {
+				out["models"][m.Key] = m.Name
+			}
+		}
+	}
+	return out, nil
 }

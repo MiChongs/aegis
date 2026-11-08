@@ -282,6 +282,9 @@ func boolAt(rec *nebula.Record, i int) bool {
 	return b
 }
 
+// Props 批量取点的属性（点 ID → 属性）；取不到的点不在结果里
+func (c *Client) Props(ids []string) (map[string]map[string]any, error) { return c.fetchProps(ids) }
+
 func (c *Client) fetchProps(ids []string) (map[string]map[string]any, error) {
 	out := map[string]map[string]any{}
 	byTag := map[string][]string{}
