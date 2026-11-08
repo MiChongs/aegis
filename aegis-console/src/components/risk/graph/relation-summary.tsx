@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import type { GraphNode } from "@/lib/api/risk";
 import { cn } from "@/lib/utils";
 
-import { REASON_LABEL, displayName, isBanned, providerName, seen, type Reason, type Relation, type RelationStats } from "./graph-model";
+import { REASON_LABEL, displayName, isBanned, isV6Line, providerName, seen, type Reason, type Relation, type RelationStats } from "./graph-model";
 import { parseUserVid } from "./node-detail";
 
 const REASON_ICON: Record<Reason["kind"], React.ComponentType<{ className?: string }>> = {
@@ -20,7 +20,10 @@ const REASON_ICON: Record<Reason["kind"], React.ComponentType<{ className?: stri
 export function RelationNarrative({ text, stats }: { text: string; stats: RelationStats }) {
   const chips: Array<{ label: string; value: string }> = [];
   chips.push({ label: "设备", value: String(stats.devices.length) });
-  chips.push({ label: "IP", value: stats.weakIPs.length ? `${stats.ips.length}，其中共用 ${stats.weakIPs.length}` : String(stats.ips.length) });
+  const v6 = stats.ips.filter(isV6Line).length;
+  const v4 = stats.ips.length - v6;
+  chips.push({ label: "IPv4", value: stats.weakIPs.length ? `${v4}，其中共用 ${stats.weakIPs.length}` : String(v4) });
+  if (v6) chips.push({ label: "IPv6 线路", value: String(v6) });
   if (stats.identities.length) chips.push({ label: "第三方账号", value: [...new Set(stats.identities.map((i) => providerName(String(i.props?.provider ?? ""))))].join("、") });
   if (stats.payers.length) chips.push({ label: "付款账号", value: String(stats.payers.length) });
   chips.push({ label: "关联的人", value: String(stats.relations.length) });
@@ -42,10 +45,11 @@ export function RelationNarrative({ text, stats }: { text: string; stats: Relati
 function reasonText(r: Reason) {
   const via = r.via ? displayName(r.via) : "";
   switch (r.kind) {
+    case "ip":
+      return isV6Line(r.via) ? `同一条 IPv6 线路：${via}` : `同一个 IP：${via}`;
     case "device":
     case "phone":
     case "email":
-    case "ip":
     case "account":
       return via ? `${REASON_LABEL[r.kind]}：${via}` : REASON_LABEL[r.kind];
     case "identity":

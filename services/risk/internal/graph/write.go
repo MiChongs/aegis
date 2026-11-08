@@ -84,8 +84,12 @@ func Statements(e events.Event) string {
 	}
 	// 代理 / CDN / 内网地址不是用户的出口，不进图（否则会把大量无关用户连在一起）
 	if e.IP != "" && !proxyip.IsProxy(e.IP) {
-		iv := IPVID(e.IP)
-		sets := []string{setStr("addr", e.IP)}
+		key := IPKey(e.IP)
+		iv := "ip:" + key
+		sets := []string{setStr("addr", key)}
+		if IsV6Net(key) {
+			sets = append(sets, "v6 = true")
+		}
 		if e.Country != "" {
 			sets = append(sets, setStr("country", e.Country))
 		}
@@ -109,7 +113,7 @@ func Statements(e events.Event) string {
 		if subject != "" {
 			upsertEdge(&b, EdgeUsesIP, subject, iv, ts)
 		}
-		if e.IPSubnet != "" {
+		if e.IPSubnet != "" && !IsV6Net(key) { // IPv6 的点本身就是 /64，不再挂网段
 			sv := SubnetVID(e.IPSubnet)
 			upsertVertex(&b, TagSubnet, sv, ts, setStr("cidr", e.IPSubnet))
 			upsertEdge(&b, EdgeInSubnet, iv, sv, ts)

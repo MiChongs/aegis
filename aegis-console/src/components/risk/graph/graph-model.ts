@@ -65,6 +65,11 @@ export function isBanned(n?: GraphNode) {
 }
 
 /** 共享出口（多人共用）或机房、代理出口的 IP：弱关系，不作为关联依据 */
+/** IPv6 线路点（按 /64 合并的） */
+export function isV6Line(n?: GraphNode) {
+  return !!n && n.kind === "ip" && (n.props?.v6 === true || n.id.includes("/"));
+}
+
 export function isWeakIP(n?: GraphNode) {
   return !!n && n.kind === "ip" && (n.props?.shared === true || n.props?.hosting === true);
 }
@@ -296,8 +301,11 @@ export function analyze(g: Subgraph): RelationStats {
 export function narrative(name: string, days: number | null, s: RelationStats): string {
   const span = days ? `近 ${days} 天，` : "";
   const parts: string[] = [];
+  const v6 = s.ips.filter(isV6Line).length;
+  const v4 = s.ips.length - v6;
   if (s.devices.length) parts.push(`${s.devices.length} 台设备`);
-  if (s.ips.length) parts.push(`${s.ips.length} 个 IP 地址`);
+  if (v4) parts.push(`${v4} 个 IPv4 地址`);
+  if (v6) parts.push(`${v6} 条 IPv6 线路`);
   let head = parts.length ? `${span}${name} 用过 ${parts.join("、")}` : `${span}${name} 没有留下设备与网络记录`;
   if (s.identities.length) head += `，绑定了 ${[...new Set(s.identities.map((i) => providerName(str(i.props?.provider))))].join("、")} 账号`;
   head += "。";
@@ -308,7 +316,7 @@ export function narrative(name: string, days: number | null, s: RelationStats): 
   const phrase: Record<ReasonKind, (n: number) => string> = {
     device: (n) => `${n} 位在同一台设备上登录过`, phone: (n) => `${n} 位绑定了同一个手机号`, identity: (n) => `${n} 位绑定了同一个第三方账号`,
     payer: (n) => `${n} 位用同一个账号付过款`, invited: (n) => `${n} 位是 TA 邀请来的`, invited_by: (n) => (n === 1 ? "1 位是 TA 的邀请人" : `${n} 位邀请过 TA`),
-    email: (n) => `${n} 位用同一个邮箱`, account: (n) => `${n} 位用过同一个登录名`, ip: (n) => `${n} 位用过同一个 IP`, target: (n) => `${n} 位和 TA 有过互动`,
+    email: (n) => `${n} 位用同一个邮箱`, account: (n) => `${n} 位用过同一个登录名`, ip: (n) => `${n} 位用过同一个 IP 或同一条 IPv6 线路`, target: (n) => `${n} 位和 TA 有过互动`,
   };
   const bits = order.filter((k) => s.byReason.get(k)).map((k) => phrase[k](s.byReason.get(k)!));
   return `${head}与 ${s.relations.length} 位用户存在关联：${bits.join("，")}。${weakNote(s)}`;
@@ -362,7 +370,11 @@ export function describe(n: GraphNode, degree: number): { title: string; subtitl
     }
     case "ip": {
       const where = [str(p.country), str(p.province), str(p.city)].filter(Boolean).join(" ");
-      subtitle = where || "IP 地址";
+      subtitle = p.v6 === true ? `IPv6 线路${where ? `，${where}` : ""}` : where || "IP 地址";
+      if (p.v6 === true) {
+        push("说明", "同一条线路（一个手机数据会话或一条宽带）分到一整个 /64，设备会在里面不停换地址，所以按整条线路算一个点", "muted");
+        if (num(p.addrs) > 1) push("出现过的地址", `${num(p.addrs)} 个`);
+      }
       push("运营商", [str(p.isp), num(p.asn) ? `AS${num(p.asn)}` : ""].filter(Boolean).join("，"));
       if (num(p.users)) push("用过它的用户", `${num(p.users)} 位`, num(p.users) >= 5 ? "warning" : undefined);
       if (p.shared === true) push("判断", "多人共用的出口，不作为关联依据", "muted");

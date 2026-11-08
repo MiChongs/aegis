@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -93,6 +94,8 @@ func SchemaAdditions() []string {
 		// users：用过这个 IP 的不同用户数；hosting：机房 / 云主机 / 代理出口；shared：共享出口（用户数达到 proxyip.SharedUsers）。
 		// 后两者为真的 IP 是"弱关系"：关系图上不穿过它们展开，图特征里不按它们统计同 IP 账号。
 		"ALTER TAG ip ADD (users int DEFAULT 0, hosting bool DEFAULT false, shared bool DEFAULT false)",
+		// v6：这个点是一条 IPv6 线路（/64）；addrs：这条线路上出现过的不同地址数（回灌统计）
+		"ALTER TAG ip ADD (v6 bool DEFAULT false, addrs int DEFAULT 0)",
 	}
 }
 
@@ -181,8 +184,34 @@ func AccountVID(appID int64, account string) string {
 // DeviceVID 设备点
 func DeviceVID(id string) string { return hashed("d:", id) }
 
-// IPVID IP 点
-func IPVID(ip string) string { return "ip:" + ip }
+// IPKey 图里 IP 点的键：IPv4 用地址本身；IPv6 用所在的 /64。
+//
+// 一条 IPv6 线路（一个手机数据会话、一条家庭宽带）分到的是一整个 /64，后 64 位由设备自己生成、
+// 隔一阵就换（隐私地址）。按单个地址建点，同一部手机几天就是几十个「不同的 IP」，
+// 关系图被刷满却没有任何信息量；按 /64 建点，同一条线路是一个点，两个账号共用一个 /64 才说明真在同一条线路上。
+// 已经是网段写法（带 /）或解析不了的原样返回。
+func IPKey(ip string) string {
+	ip = strings.TrimSpace(ip)
+	a, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	a = a.Unmap()
+	if a.Is4() {
+		return a.String()
+	}
+	p, err := a.Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return p.String()
+}
+
+// IsV6Net IP 点的键是不是 IPv6 线路（/64）
+func IsV6Net(key string) bool { return strings.Contains(key, ":") }
+
+// IPVID IP 点（IPv6 按 /64，见 IPKey）
+func IPVID(ip string) string { return "ip:" + IPKey(ip) }
 
 // SubnetVID 网段点
 func SubnetVID(cidr string) string { return "sn:" + cidr }

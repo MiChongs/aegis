@@ -509,6 +509,9 @@ func srcFinalize(ctx context.Context, _ *pgx.Conn, r *Runner) (int64, error) {
 		if info.hasRiskRow {
 			sets = append(sets, graph.SetBool("proxy", info.proxy), graph.SetBool("vpn", info.vpn), graph.SetBool("tor", info.tor), graph.SetBool("datacenter", info.dc))
 		}
+		if addrs, ok := r.v6Addrs[ip]; ok {
+			sets = append(sets, graph.SetBool("v6", true), graph.SetInt("addrs", int64(len(addrs))))
+		}
 		users := int64(len(info.users))
 		hosting := proxyip.IsHosting(info.isp, info.asn) || info.proxy || info.vpn || info.tor || info.dc
 		shared := users >= proxyip.SharedUsers
@@ -582,8 +585,9 @@ func parseASN(s string) int64 {
 
 // purgeProxies 删除代理 / CDN / 内网地址的 IP 点（连同它们的边），以及只由这些地址组成的网段点。
 // 这些地址是历史上被误记成用户 IP 的，留在图上会把大量无关用户连在一起。
+// 也删掉以前按单个 IPv6 地址建的点和 IPv6 的 /64 网段点：IPv6 现在整条 /64 线路是一个 IP 点（见 graph.IPKey）。
 func (r *Runner) purgeProxies() error {
-	if len(r.proxies) == 0 {
+	if len(r.proxies) == 0 && len(r.v6Addrs) == 0 {
 		return nil
 	}
 	if err := r.batch.Flush(); err != nil {
@@ -596,12 +600,27 @@ func (r *Runner) purgeProxies() error {
 	var vids []string
 	subnets := map[string]bool{}
 	for ip := range r.proxies {
-		vids = append(vids, graph.Quote(graph.IPVID(ip)))
+		vids = append(vids, graph.Quote("ip:"+ip))
+		// 代理所在的 IPv6 线路：没有正常用户在用时一起删
+		if key := graph.IPKey(ip); key != ip {
+			if _, used := r.ips[key]; !used {
+				vids = append(vids, graph.Quote("ip:"+key))
+			}
+		}
 		if sn := engine.Subnet(ip); sn != "" && !userSubnets[sn] && !subnets[sn] {
 			subnets[sn] = true
 			vids = append(vids, graph.Quote(graph.SubnetVID(sn)))
 		}
 	}
+	var v6Addrs int
+	for key, addrs := range r.v6Addrs {
+		vids = append(vids, graph.Quote(graph.SubnetVID(key)))
+		for a := range addrs {
+			vids = append(vids, graph.Quote("ip:"+a))
+			v6Addrs++
+		}
+	}
+	r.prog.V6Lines, r.prog.V6Addrs = int64(len(r.v6Addrs)), int64(v6Addrs)
 	for i := 0; i < len(vids); i += 50 {
 		if _, err := r.Graph.Exec("DELETE VERTEX " + strings.Join(vids[i:min(i+50, len(vids))], ", ") + " WITH EDGE"); err != nil {
 			return err
@@ -609,7 +628,7 @@ func (r *Runner) purgeProxies() error {
 	}
 	r.prog.ProxyIPs = int64(len(r.proxies))
 	if r.Logf != nil {
-		r.Logf("关系图回灌：删除代理 / CDN 地址 %d 个、网段 %d 个", len(r.proxies), len(subnets))
+		r.Logf("关系图回灌：删除代理 / CDN 地址 %d 个、网段 %d 个；%d 个 IPv6 地址合并成 %d 条 /64 线路", len(r.proxies), len(subnets), v6Addrs, len(r.v6Addrs))
 	}
 	return nil
 }
