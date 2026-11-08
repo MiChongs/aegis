@@ -91,7 +91,16 @@ export interface ReleaseState {
   updatedBy: string;
 }
 
-export interface SceneView extends Scene { state?: ReleaseState; ruleCount?: number }
+export interface SceneView extends Scene {
+  state?: ReleaseState;
+  ruleCount?: number;
+  /** 启用的规则里生效与观察各几条（含对全部场景生效的规则） */
+  ruleEnforce?: number;
+  ruleObserve?: number;
+  /** 最近一次发布（调灰度比例不算） */
+  lastPublishedAt?: string;
+  lastPublishedBy?: string;
+}
 
 /** zen JDM 决策图（只建模本控制台编辑器用到的部分，其余字段原样保留） */
 export interface JdmNode {
@@ -385,10 +394,21 @@ export interface GraphNode { id: string; kind: GraphNodeKind; label: string; pro
 export interface GraphLink { source: string; target: string; kind: string; firstSeen: number; lastSeen: number; count: number }
 export interface Subgraph { center: string; nodes: GraphNode[]; links: GraphLink[]; truncated: boolean }
 
+/** 关系图里对一个 IP 的判断 */
+export interface IpNetFlags { users?: number; hosting?: boolean; shared?: boolean; proxy?: boolean; vpn?: boolean; v6?: boolean; line?: string }
+
+export interface SimilarDevice { deviceId: string; userId: number; banned: boolean; score: number; model?: string; userName?: string }
+
 export interface EntityUse {
   value: string; lastSeen: string; firstSeen: string; count: number; country: string; city: string;
-  lists: ListEntry[] | null; fingerprint?: Record<string, string>; similar?: Array<{ deviceId: string; userId: number; banned: boolean; score: number }>;
+  province?: string; isp?: string; asn?: number;
+  lists: ListEntry[] | null; fingerprint?: Record<string, string>; similar?: SimilarDevice[];
+  /** 只有 IP 有：关系图里的判断 */
+  net?: IpNetFlags;
 }
+
+/** 用户在某个场景的评估次数、被拦次数与未直接放行次数 */
+export interface SceneUse extends KV { blocked?: number; flagged?: number }
 
 export interface UserRiskProfile {
   appId: number;
@@ -400,8 +420,12 @@ export interface UserRiskProfile {
     total: number; blocked: number; reviewed: number; captcha: number; maxScore: number; avgScore: number;
     scenes: number; devices: number; ips: number; firstSeen: string; lastSeen: string;
   };
-  scenes?: KV[];
+  scenes?: SceneUse[];
   rules?: KV[];
+  /** 规则、特征、模型的中文名（键 → 名称） */
+  names?: { rules?: Record<string, string>; features?: Record<string, string>; models?: Record<string, string> };
+  /** 规则键 → 维度、分值、是否观察中（命中规则旁的标签） */
+  ruleMeta?: Record<string, { name: string; dimension: string; score: number; mode: RuleMode; decision?: string }>;
   decisions?: DecisionRow[];
   events?: EventRow[];
   alerts?: AlertRow[];
@@ -489,7 +513,18 @@ export const deleteModel = (t: string, key: string) => send<void>(t, "DELETE", `
 export const predictModel = (t: string, key: string, values: Record<string, number>) =>
   send<{ score: number; inputs: string[]; values: number[] }>(t, "POST", `/models/${encodeURIComponent(key)}/predict`, { values });
 
-export const listEntries = (t: string, q: { type?: string; kind?: string; value?: string; app?: number; source?: string; active?: boolean; page?: number; limit?: number }) =>
+/** 名单统计（有效条目）：按种类、类型的条数，未来 7 天每天到期的条数（按种类），长期有效的条数 */
+export interface ListStats {
+  total: number;
+  byKind: Partial<Record<ListKind, number>>;
+  byType: Partial<Record<ListType, number>>;
+  permanent: number;
+  expiring: Array<{ day: string; byKind: Partial<Record<ListKind, number>> }>;
+}
+export const getListStats = (t: string, q: { app?: number }) => get<ListStats>(t, "/lists/stats", q);
+
+/** sort: "exp" 按到期时间升序（最先到期在前，长期有效排最后）；默认按添加时间倒序 */
+export const listEntries = (t: string, q: { type?: string; kind?: string; value?: string; app?: number; source?: string; active?: boolean; page?: number; limit?: number; sort?: "exp" }) =>
   get<Paged<ListEntry>>(t, "/lists", q);
 export const addEntries = (t: string, input: { listType: ListType; kind: ListKind; values: string[]; appId?: number; scenes?: string[]; reason?: string; durationSeconds?: number }) =>
   send<{ added: number; invalid: string[] | null }>(t, "POST", "/lists", input);
@@ -502,7 +537,8 @@ export const listPatterns = (t: string) => get<CepPattern[]>(t, "/cep/patterns")
 export const savePattern = (t: string, key: string, p: Partial<CepPattern>) => send<CepPattern>(t, "PUT", `/cep/patterns/${encodeURIComponent(key)}`, p);
 export const deletePattern = (t: string, key: string) => send<void>(t, "DELETE", `/cep/patterns/${encodeURIComponent(key)}`);
 
-export const getDashboard = (t: string, q: { app?: number; from?: string; to?: string }) => get<DashboardData>(t, "/dashboard", q);
+/** scene / user 可选：按场景、按用户看分布与趋势（按用户时后端改查明细表） */
+export const getDashboard = (t: string, q: { app?: number; from?: string; to?: string; scene?: string; user?: number }) => get<DashboardData>(t, "/dashboard", q);
 export const listDecisions = (t: string, q: { app?: number; scene?: string; action?: string; user?: number; device?: string; ip?: string; account?: string; rule?: string; release?: string; shadow?: boolean; from?: string; to?: string; page?: number; limit?: number }) =>
   get<Paged<DecisionRow>>(t, "/decisions", q);
 export const getDecision = (t: string, id: string) => get<DecisionDetail>(t, `/decisions/${encodeURIComponent(id)}`);
@@ -510,6 +546,23 @@ export const listEvents = (t: string, q: { app?: number; user?: number; type?: s
   get<EventRow[]>(t, "/events", q).then((r) => r ?? []);
 export const listAlerts = (t: string, q: { app?: number; pattern?: string; user?: number; from?: string; to?: string; limit?: number }) =>
   get<AlertRow[]>(t, "/alerts", q).then((r) => r ?? []);
+
+/** 复核单全局统计（不受分页影响） */
+export interface CaseStats {
+  pending: number;
+  /** 待复核按风险分段：critical ≥ 80、high 60–79、medium 30–59、low < 30 */
+  pendingByLevel: Record<"critical" | "high" | "medium" | "low", number>;
+  /** 等得最久的一张待复核单的创建时间 */
+  oldestPendingAt?: string;
+  /** 近 30 天结案数，按结论：approve 判定为正常、reject 确认有风险 */
+  closed30d: Partial<Record<"approve" | "reject", number>>;
+}
+export const getCaseStats = (t: string, q: { app?: number }) => get<CaseStats>(t, "/cases/stats", q);
+
+/** 规则近 N 天的命中：daily 与 days 一一对应，最早的一天在前；只统计正式评估 */
+export interface RuleHit { rule: string; total: number; lastHour: string; daily: number[] }
+export interface RuleHitsView { days: string[]; decisions: number; rules: RuleHit[] }
+export const getRuleHits = (t: string, q: { scene?: string; app?: number; days?: number }) => get<RuleHitsView>(t, "/rules/hits", q);
 
 export const listCases = (t: string, q: { status?: string; app?: number; user?: number; scene?: string; page?: number; limit?: number }) =>
   get<Paged<RiskCase>>(t, "/cases", q);
@@ -532,3 +585,38 @@ export const getUserProfile = (t: string, app: number, user: number, days = 30) 
   }));
 export const getRiskStatus = (t: string) => get<RiskStatus>(t, "/status");
 export const listAudit = (t: string, limit = 100) => get<AuditEntry[]>(t, "/audit", { limit }).then((r) => r ?? []);
+
+// ── 关系图回灌（把主库里的历史关系整理进关系图）──
+
+export type BackfillStepStatus = "pending" | "running" | "done" | "skipped" | "failed";
+export interface BackfillSource { key: string; label: string; detail: string }
+export interface BackfillStep { key: string; label: string; detail: string; status: BackfillStepStatus; rows: number; error?: string; seconds: number }
+export interface BackfillProgress {
+  status: "running" | "done" | "failed" | string;
+  startedAt: string;
+  finishedAt?: string | null;
+  steps: BackfillStep[] | null;
+  written: Record<string, number> | null;
+  users: number;
+  devices: number;
+  ips: number;
+  vectors: number;
+  proxyIps: number;
+  hostingIps: number;
+  sharedIps: number;
+  v6Lines: number;
+  v6Addrs: number;
+  error?: string;
+}
+export interface BackfillRun {
+  id: number;
+  status: "running" | "done" | "failed";
+  operator?: string;
+  startedAt: string;
+  finishedAt?: string | null;
+  progress: BackfillProgress | null;
+}
+export interface GraphBackfillState { running: boolean; sources: BackfillSource[] | null; run?: BackfillRun | null }
+
+export const getGraphBackfill = (t: string) => get<GraphBackfillState>(t, "/graph/backfill");
+export const startGraphBackfill = (t: string) => send<{ id: number; started: boolean }>(t, "POST", "/graph/backfill");

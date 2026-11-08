@@ -118,3 +118,42 @@ export function tableFromBands(bands: ScoreBand[]): TableModel {
 export function tableRowCount(graph: JdmGraph | null | undefined): number | null {
   return tableFromGraph(graph)?.rows.length ?? null;
 }
+
+/* ── 读成中文 ── */
+
+const ACTION_WORD: Record<string, string> = { pass: "放行", review: "人工复核", captcha: "图形验证码", block: "拦截", ban: "封禁" };
+const BASE_LABEL = new Map(BASE_INPUT_FIELDS.map((f) => [f.field, f.label]));
+
+/** 输入列字段的中文名：总分、命中黑名单、某个特征、某个模型、某归类得分 */
+export function fieldLabel(field: string, nameOf: (kind: "feature" | "model", key: string) => string | undefined, dimLabel: (d: string) => string): string {
+  const base = BASE_LABEL.get(field);
+  if (base) return base;
+  if (field.startsWith("features.")) return nameOf("feature", field.slice(9)) ?? "已删除的特征";
+  if (field.startsWith("models.")) return nameOf("model", field.slice(7)) ?? "已删除的模型";
+  if (field.startsWith("dimensions.")) return `${dimLabel(field.slice(11))}得分`;
+  return field || "未选择";
+}
+
+/** 输入格（一元表达式）→ 说法：「>= 80」→「不少于 80」，空 = 任意 */
+export function describeCell(cell: string | undefined): string {
+  const s = (cell ?? "").trim();
+  if (!s) return "任意";
+  let m: RegExpMatchArray | null;
+  if ((m = s.match(/^(>=|<=|>|<|==|!=|=)\s*(-?\d+(?:\.\d+)?)$/))) {
+    const word: Record<string, string> = { ">=": "不少于", "<=": "不超过", ">": "超过", "<": "少于", "==": "等于", "=": "等于", "!=": "不等于" };
+    return `${word[m[1]]} ${m[2]}`;
+  }
+  if ((m = s.match(/^\[\s*(-?\d+(?:\.\d+)?)\s*\.\.\s*(-?\d+(?:\.\d+)?)\s*\]$/))) return `在 ${m[1]} 至 ${m[2]} 之间`;
+  if (/^-?\d+(?:\.\d+)?$/.test(s)) return `等于 ${s}`;
+  if (s === "true") return "为是";
+  if (s === "false") return "为否";
+  const lit = unquote(s);
+  if (lit !== s) return `为「${ACTION_WORD[lit] ?? lit}」`;
+  return `满足 ${s}`;
+}
+
+/** 节点类型的中文名 */
+export const NODE_TYPE_LABEL: Record<string, string> = {
+  inputNode: "请求输入", outputNode: "输出结论", decisionTableNode: "决策表", expressionNode: "表达式", functionNode: "函数", switchNode: "分支",
+  decisionNode: "子决策",
+};

@@ -105,10 +105,11 @@ export function scopeText(appId?: number | null, appName?: (id: number) => strin
 /** 复核单的状态 */
 export function caseStatus(c: Pick<RiskCase, "verdict">): { label: string; tone: "warning" | "success" | "danger" | "secondary" } {
   switch (c.verdict) {
+    // 与后端一致：approve = 放行（没问题），reject = 确认有风险
     case "approve":
-      return { label: "已确认有风险", tone: "danger" };
+      return { label: "已判定为正常", tone: "success" };
     case "reject":
-      return { label: "已判定为误报", tone: "success" };
+      return { label: "已确认有风险", tone: "danger" };
     default:
       return { label: "待复核", tone: "warning" };
   }

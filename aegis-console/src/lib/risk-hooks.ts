@@ -336,3 +336,41 @@ export function useDispose() {
   const inv = useInvalidate();
   return useMutation({ mutationFn: (input: risk.DisposeInput) => risk.dispose(t, input), onSuccess: () => inv(RISK_KEYS.lists, RISK_KEYS.profile) });
 }
+
+// ── 关系图回灌 ──
+
+export const RISK_BACKFILL_KEY = ["risk", "graph-backfill"] as const;
+
+/** 回灌状态：进行中每 2 秒刷新一次，平时每分钟 */
+export function useRiskGraphBackfill() {
+  const t = useToken();
+  return useQuery({
+    queryKey: RISK_BACKFILL_KEY,
+    queryFn: () => risk.getGraphBackfill(t),
+    enabled: !!t,
+    refetchInterval: (q) => (q.state.data?.running ? 2_000 : 60_000),
+  });
+}
+
+export function useStartGraphBackfill() {
+  const t = useToken();
+  const inv = useInvalidate();
+  return useMutation({ mutationFn: () => risk.startGraphBackfill(t), onSuccess: () => inv(RISK_BACKFILL_KEY, RISK_KEYS.graph, RISK_KEYS.profile) });
+}
+
+// ── 统计（名单、复核单） ──
+
+export function useRiskListStats(app?: number) {
+  const t = useToken();
+  return useQuery({ queryKey: [...RISK_KEYS.lists, "stats", app ?? null], queryFn: () => risk.getListStats(t, { app }), enabled: !!t });
+}
+
+export function useRiskRuleHits(scene: string, days = 7) {
+  const t = useToken();
+  return useQuery({ queryKey: [...RISK_KEYS.rules, "hits", scene, days], queryFn: () => risk.getRuleHits(t, { scene, days }), enabled: !!t && !!scene, refetchInterval: 300_000 });
+}
+
+export function useRiskCaseStats(app?: number) {
+  const t = useToken();
+  return useQuery({ queryKey: [...RISK_KEYS.cases, "stats", app ?? null], queryFn: () => risk.getCaseStats(t, { app }), enabled: !!t, refetchInterval: 60_000 });
+}

@@ -1,17 +1,15 @@
 "use client";
 
-import { useMemo } from "react";
-import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import type { LucideIcon } from "lucide-react";
+import { Fragment } from "react";
+import { ChevronRight, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 /**
- * 场景决策管线：装配 → 名单 → 特征 → 派生 → 模型 → 规则 → 决策流 → 策略 → 处置。
+ * 评估管线示意：一次请求依次经过的环节，分「准备数据 → 做出判断 → 执行处置」三段。
  *
- * 只读布局（不能拖、不能连线），节点上是每一步的实时摘要与校验问题数，点节点切换下方的编辑面板。
- * 用 xyflow 而不是一排 div：窄屏时整条管线按比例缩放、可横向拖动查看，连线与箭头也不用手画。
+ * 每个节点写着这一步的实时摘要与问题数，点击切换下方的编辑面板。
+ * 用普通排版而不是画布：文字多少都能撑开节点，窄屏时整条横向滑动。
  */
 
 export type PipelineStage = {
@@ -22,44 +20,47 @@ export type PipelineStage = {
   issues: number;
   /** 这一步没有任何配置（虚线框） */
   idle?: boolean;
+  /** 所属阶段：准备 / 判断 / 执行 */
+  phase?: "prepare" | "decide" | "act";
 };
 
-type StageData = PipelineStage & { selected: boolean; first: boolean; last: boolean };
+const PHASES: Array<{ key: NonNullable<PipelineStage["phase"]>; title: string }> = [
+  { key: "prepare", title: "准备数据" },
+  { key: "decide", title: "做出判断" },
+  { key: "act", title: "执行处置" },
+];
 
-const NODE_W = 156;
-const GAP = 44;
-
-function StageNode({ data }: NodeProps<Node<StageData>>) {
-  const Icon = data.icon;
+function StageNode({ stage, selected, onSelect }: { stage: PipelineStage; selected: boolean; onSelect: () => void }) {
+  const Icon = stage.icon;
   return (
-    <div
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-current={selected ? "step" : undefined}
       className={cn(
-        "flex h-[104px] cursor-pointer flex-col gap-1.5 rounded-xl border bg-card px-3 py-2.5 text-left transition-colors",
-        data.selected ? "border-primary ring-2 ring-primary/25" : "hover:border-foreground/30",
-        data.idle && !data.selected && "border-dashed",
-        data.issues > 0 && !data.selected && "border-red-300 dark:border-red-800",
+        "group relative flex w-36 shrink-0 flex-col gap-1.5 rounded-xl border bg-card px-3 py-2.5 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/40 sm:w-40",
+        selected ? "border-foreground/60 ring-1 ring-foreground/20" : "hover:border-foreground/30 hover:bg-accent/30",
+        stage.idle && !selected && "border-dashed bg-transparent",
+        stage.issues > 0 && !selected && "border-red-300 dark:border-red-900",
       )}
-      style={{ width: NODE_W }}
     >
-      {!data.first ? <Handle type="target" position={Position.Left} className="size-1.5! border-0! bg-border!" isConnectable={false} /> : null}
-      <div className="flex min-w-0 items-center gap-1.5">
-        <Icon className={cn("size-3.5 shrink-0", data.selected ? "text-primary" : "text-muted-foreground")} />
-        <span className="min-w-0 flex-1 truncate text-xs font-semibold">{data.title}</span>
-        {data.issues > 0 ? (
-          <span className="grid h-4 min-w-4 place-items-center rounded-full bg-destructive px-1 text-[10px] leading-none font-semibold text-white">{data.issues}</span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className={cn("grid size-6 shrink-0 place-items-center rounded-md", selected ? "bg-foreground text-background" : "bg-muted text-muted-foreground")}>
+          <Icon className="size-3.5" />
+        </span>
+        <span className="min-w-0 flex-1 truncate text-xs font-semibold">{stage.title}</span>
+        {stage.issues > 0 ? (
+          <span className="grid h-4 min-w-4 place-items-center rounded-full bg-destructive px-1 text-[10px] leading-none font-semibold text-white tabular-nums">{stage.issues}</span>
         ) : null}
-      </div>
-      <div className="flex min-w-0 flex-col gap-0.5">
-        {data.summary.slice(0, 3).map((line, i) => (
-          <span key={i} className={cn("truncate text-[11px] leading-4", i === 0 ? "text-foreground" : "text-muted-foreground")}>{line}</span>
+      </span>
+      <span className="flex min-w-0 flex-col gap-0.5">
+        {stage.summary.slice(0, 2).map((line, i) => (
+          <span key={i} className={cn("text-[11px] leading-4 [overflow-wrap:anywhere]", i === 0 ? "text-foreground" : "text-muted-foreground")}>{line}</span>
         ))}
-      </div>
-      {!data.last ? <Handle type="source" position={Position.Right} className="size-1.5! border-0! bg-border!" isConnectable={false} /> : null}
-    </div>
+      </span>
+    </button>
   );
 }
-
-const nodeTypes = { stage: StageNode };
 
 export function ScenePipeline({ stages, selected, onSelect, className }: {
   stages: PipelineStage[];
@@ -67,50 +68,37 @@ export function ScenePipeline({ stages, selected, onSelect, className }: {
   onSelect: (key: string) => void;
   className?: string;
 }) {
-  const { nodes, edges } = useMemo(() => {
-    const nodes: Node<StageData>[] = stages.map((s, i) => ({
-      id: s.key,
-      type: "stage",
-      position: { x: i * (NODE_W + GAP), y: 0 },
-      data: { ...s, selected: s.key === selected, first: i === 0, last: i === stages.length - 1 },
-      draggable: false,
-      connectable: false,
-      selectable: false,
-    }));
-    const edges: Edge[] = stages.slice(1).map((s, i) => ({
-      id: `${stages[i].key}-${s.key}`,
-      source: stages[i].key,
-      target: s.key,
-      type: "straight",
-      style: { stroke: "var(--border)", strokeWidth: 1.5 },
-      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "var(--muted-foreground)" },
-    }));
-    return { nodes, edges };
-  }, [stages, selected]);
+  const grouped = PHASES.map((p) => ({ ...p, items: stages.filter((s) => (s.phase ?? "prepare") === p.key) })).filter((p) => p.items.length);
 
   return (
-    <div className={cn("h-[150px] min-w-0 overflow-hidden rounded-xl border bg-muted/20", className)}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onNodeClick={(_, node) => onSelect(node.id)}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={false}
-        zoomOnScroll={false}
-        zoomOnPinch={false}
-        zoomOnDoubleClick={false}
-        panOnScroll={false}
-        preventScrolling={false}
-        fitView
-        fitViewOptions={{ padding: 0.08, minZoom: 0.45, maxZoom: 1 }}
-        minZoom={0.45}
-        maxZoom={1}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background gap={18} size={1} />
-      </ReactFlow>
-    </div>
+    <nav aria-label="评估管线" className={cn("min-w-0 overflow-x-auto", className)}>
+      <ol className="flex w-max min-w-full items-stretch gap-2 pb-1">
+        {grouped.map((phase, pi) => (
+          <Fragment key={phase.key}>
+            {pi > 0 ? (
+              <li aria-hidden className="flex items-center pt-6">
+                <ChevronRight className="size-4 text-muted-foreground" />
+              </li>
+            ) : null}
+            <li className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 px-1">
+                <span className="text-[11px] font-medium text-muted-foreground">{phase.title}</span>
+                <span className="h-px flex-1 bg-border" />
+              </div>
+              <ol className="flex flex-1 items-stretch gap-1.5">
+                {phase.items.map((s, i) => (
+                  <Fragment key={s.key}>
+                    {i > 0 ? <li aria-hidden className="flex items-center"><span className="h-px w-2.5 bg-border" /></li> : null}
+                    <li className="flex">
+                      <StageNode stage={s} selected={s.key === selected} onSelect={() => onSelect(s.key)} />
+                    </li>
+                  </Fragment>
+                ))}
+              </ol>
+            </li>
+          </Fragment>
+        ))}
+      </ol>
+    </nav>
   );
 }
