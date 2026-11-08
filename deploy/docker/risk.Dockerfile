@@ -30,7 +30,7 @@ FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd -r risk && useradd -r -g risk -d /var/lib/aegis-risk risk \
+    && groupadd -r -g 10001 risk && useradd -r -u 10001 -g risk -d /var/lib/aegis-risk risk \
     && mkdir -p /var/lib/aegis-risk && chown risk:risk /var/lib/aegis-risk
 COPY --from=build /out/ /usr/local/bin/
 USER risk

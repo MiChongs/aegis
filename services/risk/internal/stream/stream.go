@@ -165,6 +165,8 @@ func ObjectFor(f bundle.Feature) Object {
 // Target 连接参数
 type Target struct {
 	NATSServer    string   // risk 视角的 NATS 地址（host:port）
+	NATSUser      string   // 有值时用 user_and_password 连接（生产 NATS 带账户鉴权）
+	NATSPassword  string
 	RedisURLs     []string // redis://:密码@主机:端口
 	StartupMode   string   // earliest（默认，回填）/ latest
 	DurablePrefix string
@@ -244,10 +246,14 @@ func SQL(f bundle.Feature, t Target) ([]string, error) {
 		startup = "earliest"
 	}
 	subjects := events.SubjectEventPrefix + ">," + events.SubjectDecisionPrefix + ">"
+	auth := "connect_mode = 'plain'"
+	if t.NATSUser != "" {
+		auth = fmt.Sprintf("connect_mode = 'user_and_password', username = %s, password = %s", Literal(t.NATSUser), Literal(t.NATSPassword))
+	}
 	src := fmt.Sprintf(`CREATE SOURCE IF NOT EXISTS %s (%s) WITH (
-  connector = 'nats', server_url = %s, subject = %s, stream = %s, connect_mode = 'plain',
+  connector = 'nats', server_url = %s, subject = %s, stream = %s, %s,
   consumer.durable_name = %s, scan.startup.mode = %s
-) FORMAT PLAIN ENCODE JSON`, obj.Source(), strings.Join(cols, ", "), Literal(t.NATSServer), Literal(subjects), Literal(events.StreamEvents),
+) FORMAT PLAIN ENCODE JSON`, obj.Source(), strings.Join(cols, ", "), Literal(t.NATSServer), Literal(subjects), Literal(events.StreamEvents), auth,
 		Literal(t.DurablePrefix+obj.Base), Literal(startup))
 	view := fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS %s AS
 SELECT %s || ':' || %s || ':' || %s AS k, (%s)::double precision AS v
@@ -368,8 +374,11 @@ func Preview(f bundle.Feature, t Target) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// 预览里不露出 Redis 密码
+	// 预览里不露出 Redis 与 NATS 密码
 	out := strings.Join(stmts, ";\n\n") + ";"
+	if t.NATSPassword != "" {
+		out = strings.ReplaceAll(out, Literal(t.NATSPassword), "'******'")
+	}
 	for _, u := range t.RedisURLs {
 		if i := strings.Index(u, "@"); i > 0 {
 			out = strings.ReplaceAll(out, u[:i], "redis://:******")

@@ -1,6 +1,6 @@
 # 风控平台上线方案（HK Dokploy）
 
-> 2026-11-08 起草，尚未执行。对应代码：本地 `main` 上 3093802 … 0cf0e0f（未推送）。
+> 2026-11-08 起草。阶段 A 的代码改动与编排见 `deploy/dokploy/risk-stack.yml`，分支 `risk-platform`。
 
 ## 1. 现状
 
@@ -18,13 +18,13 @@
 
 1. **RisingWave 的 NATS 源带鉴权**：生产 NATS 要用户名密码，`stream.SQL` 现在写死 `connect_mode = 'plain'`。改为从 `RISK_NATS_URL` 解出用户密码，用 `connect_mode = 'user_and_password'`。Go 服务与 Flink（jnats）都直接支持 URL 里带凭据，不用改。
 2. **RISK 流的容量可配**：现在 `MaxBytes` 写死 20 GB，超过服务器 8 GB 上限会建流失败。改成 `RISK_STREAM_MAX_BYTES`，生产给 3 GB（按每次决策事件约 5 KB、日 2 万次算，7 天约 0.7 GB，留 4 倍余量）。
-3. **Nebula 默认密码**：graphd 首次启动是 `root / nebula`。`risk-admin migrate` 在 `RISK_NEBULA_PASSWORD` 不是默认值时先用默认密码登录、执行 `ALTER USER root WITH PASSWORD`。
+3. **Nebula 默认密码**：graphd 首次启动是 `root / nebula`。`risk-admin migrate` 在 `RISK_NEBULA_PASSWORD` 不是默认值时先用默认密码登录、执行 `CHANGE PASSWORD root FROM 'nebula' TO ...`，并等 graphd 从 metad 同步账号（实测约 8 秒）后用新密码重连。
 4. **生产编排** `deploy/dokploy/risk-stack.yml`（新文件，不动开发用的 compose）：
    - 复用现有 Postgres（建库 `aegis_risk`）与 NATS（同一个账户），不另起；
    - 单机部署：etcd 1 节点、Redis Cluster 3 主 0 从（单机上副本不带来任何高可用，只多吃内存），其余各 1；
    - 全部挂 `dokploy-network`、别名 `risk-*`，不映射任何宿主端口；数据绑定到 `/srv/aegis/risk/<组件>`；
    - 每个容器设内存上限（见下表），ClickHouse 设 `max_server_memory_usage`，RisingWave 设 `--total-memory-bytes`；
-   - `risk-decision` 2 副本。
+   - `risk-decision` 两个固定实例（`risk-decision-1/2`）：各用自己的本地暂存目录，bbolt 文件锁不能两个进程共用。
 
 ## 3. 资源预算
 

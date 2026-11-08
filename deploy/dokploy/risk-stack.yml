@@ -1,0 +1,551 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  Aegis 风控平台：HK Dokploy 生产编排（docs/risk-deploy-hk.md）
+# ══════════════════════════════════════════════════════════════════════════
+#
+#  Dokploy compose 项目 aegis-risk，分支 risk-platform，compose 路径就是本文件。
+#  与开发用的 deploy/docker/docker-compose.yml（profile risk）的区别：
+#    - 复用基础设施项目 aegis-infra 的 Postgres（建库 aegis_risk）与 NATS（同一账户），不另起；
+#    - 单机：etcd 1 节点、Redis Cluster 3 主 0 从（单机上副本只多吃内存，不带来高可用）；
+#    - 全部只挂 dokploy-network（别名 risk-*）：Kitex / Hertz 注册到 etcd 的就是这张网上的 IP，
+#      主服务 aegis-api（同一张网）才连得上；不映射任何宿主端口；
+#    - 数据绑定到 /srv/aegis/risk/<组件>，每个容器设内存上限。
+#
+#  必填环境变量（Dokploy 环境变量页，本机备份 ~/Documents/zeabur-migration/env/aegis/aegis-risk.env）：
+#    RISK_INTERNAL_TOKEN        主服务与风控服务之间的内部令牌（aegis-api 配同一个值）
+#    RISK_PG_USER / RISK_PG_PASSWORD / RISK_PG_MAIN_DB   现有 Postgres 账号与主库名（建库、导旧名单用）
+#    RISK_NATS_USER / RISK_NATS_PASSWORD                 现有 NATS 账户 APP 的用户
+#    RISK_REDIS_PASSWORD / RISK_CLICKHOUSE_PASSWORD / RISK_NEBULA_PASSWORD
+#    RISK_MINIO_ACCESS_KEY / RISK_MINIO_SECRET_KEY
+#  密码只用 URL 安全字符（字母数字），因为会拼进 DSN 与 NATS 地址。
+# ══════════════════════════════════════════════════════════════════════════
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+x-risk-env: &risk-env
+  RISK_ETCD_ENDPOINTS: risk-etcd:2379
+  RISK_REDIS_ADDRS: risk-redis-1:7001,risk-redis-2:7002,risk-redis-3:7003
+  RISK_REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:?}
+  RISK_PG_DSN: postgres://${RISK_PG_USER:?}:${RISK_PG_PASSWORD:?}@aegis-postgres:5432/aegis_risk?sslmode=disable
+  RISK_PG_ADMIN_DSN: postgres://${RISK_PG_USER:?}:${RISK_PG_PASSWORD:?}@aegis-postgres:5432/${RISK_PG_MAIN_DB:?}?sslmode=disable
+  RISK_NATS_URL: nats://${RISK_NATS_USER:?}:${RISK_NATS_PASSWORD:?}@aegis-nats:4222
+  # NATS 服务端 jetstream.max_file 只有 8G，RISK 流给 3G（7 天约 0.7G）
+  RISK_STREAM_MAX_BYTES: 3G
+  RISK_CLICKHOUSE_ADDR: risk-clickhouse:9000
+  RISK_CLICKHOUSE_USER: aegis
+  RISK_CLICKHOUSE_PASSWORD: ${RISK_CLICKHOUSE_PASSWORD:?}
+  RISK_CLICKHOUSE_DB: aegis_risk
+  RISK_NEBULA_ADDRS: risk-nebula-graphd:9669
+  RISK_NEBULA_USER: root
+  RISK_NEBULA_PASSWORD: ${RISK_NEBULA_PASSWORD:?}
+  RISK_NEBULA_STORAGED: risk-nebula-storaged:9779
+  RISK_MILVUS_ADDR: risk-milvus:19530
+  RISK_RISINGWAVE_DSN: postgres://root@risk-risingwave:4566/dev?sslmode=disable
+  RISK_S3_ENDPOINT: risk-minio:9000
+  RISK_S3_ACCESS_KEY: ${RISK_MINIO_ACCESS_KEY:?}
+  RISK_S3_SECRET_KEY: ${RISK_MINIO_SECRET_KEY:?}
+  RISK_S3_BUCKET: aegis-risk
+  RISK_INTERNAL_TOKEN: ${RISK_INTERNAL_TOKEN:?}
+  RISK_ADMIN_URL: http://risk-admin:8891
+  TZ: Asia/Shanghai
+
+x-redis: &redis
+  image: redis:8-alpine
+  restart: unless-stopped
+  logging: *logging
+  mem_limit: 384m
+  healthcheck:
+    test: ["CMD-SHELL", "redis-cli -p $$REDIS_PORT -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+
+x-flink-env: &flink-env
+  RISK_NATS_URL: nats://${RISK_NATS_USER:?}:${RISK_NATS_PASSWORD:?}@aegis-nats:4222
+  RISK_ADMIN_URL: http://risk-admin:8891
+  RISK_INTERNAL_TOKEN: ${RISK_INTERNAL_TOKEN:?}
+  TZ: Asia/Shanghai
+
+services:
+  # ── 绑定目录属主：Milvus（999）、Flink（9999）、风控服务（10001）；其余镜像入口会自己 chown ──
+  risk-volume-init:
+    image: milvusdb/milvus:v3.0.5
+    user: "0:0"
+    network_mode: none
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        mkdir -p /risk/milvus /risk/flink /risk/spool/decision-1 /risk/spool/decision-2 /risk/spool/admin
+        chown -R "$$(id -u milvus):$$(id -g milvus)" /risk/milvus
+        chown -R 9999:9999 /risk/flink
+        chown -R 10001:10001 /risk/spool
+    volumes:
+      - /srv/aegis/risk:/risk
+
+  # ── etcd：服务注册发现、配置发布、选主，Milvus 元数据 ──
+  risk-etcd:
+    image: quay.io/coreos/etcd:v3.7.3
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 256m
+    entrypoint: ["/usr/local/bin/etcd"]
+    command:
+      - --name=risk-etcd
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://risk-etcd:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://risk-etcd:2380
+      - --initial-cluster=risk-etcd=http://risk-etcd:2380
+      - --initial-cluster-state=new
+      - --initial-cluster-token=aegis-risk
+      - --auto-compaction-mode=revision
+      - --auto-compaction-retention=1000
+      - --quota-backend-bytes=2147483648
+      - --snapshot-count=50000
+    volumes:
+      - /srv/aegis/risk/etcd:/etcd-data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      dokploy-network:
+        aliases: [risk-etcd]
+
+  # ── Redis Cluster：名单、滑窗计数、流式特征 ──
+  risk-redis-1:
+    <<: *redis
+    environment:
+      REDIS_PORT: "7001"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:?}
+    command: >-
+      sh -c 'exec redis-server --port 7001 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-1 --cluster-preferred-endpoint-type hostname
+      --maxmemory 300mb --maxmemory-policy noeviction'
+    volumes:
+      - /srv/aegis/risk/redis-1:/data
+    networks:
+      dokploy-network:
+        aliases: [risk-redis-1]
+
+  risk-redis-2:
+    <<: *redis
+    environment:
+      REDIS_PORT: "7002"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:?}
+    command: >-
+      sh -c 'exec redis-server --port 7002 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-2 --cluster-preferred-endpoint-type hostname
+      --maxmemory 300mb --maxmemory-policy noeviction'
+    volumes:
+      - /srv/aegis/risk/redis-2:/data
+    networks:
+      dokploy-network:
+        aliases: [risk-redis-2]
+
+  risk-redis-3:
+    <<: *redis
+    environment:
+      REDIS_PORT: "7003"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:?}
+    command: >-
+      sh -c 'exec redis-server --port 7003 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-3 --cluster-preferred-endpoint-type hostname
+      --maxmemory 300mb --maxmemory-policy noeviction'
+    volumes:
+      - /srv/aegis/risk/redis-3:/data
+    networks:
+      dokploy-network:
+        aliases: [risk-redis-3]
+
+  # 建集群（幂等：已经成形就什么都不做）
+  risk-redis-init:
+    image: redis:8-alpine
+    restart: "no"
+    logging: *logging
+    environment:
+      REDISCLI_AUTH: ${RISK_REDIS_PASSWORD:?}
+    command:
+      - sh
+      - -c
+      - |
+        if redis-cli -h risk-redis-1 -p 7001 cluster info | grep -q 'cluster_state:ok'; then echo 'cluster ready'; exit 0; fi
+        yes yes | redis-cli --cluster create risk-redis-1:7001 risk-redis-2:7002 risk-redis-3:7003 --cluster-replicas 0
+        for i in $$(seq 1 30); do
+          redis-cli -h risk-redis-1 -p 7001 cluster info | grep -q 'cluster_state:ok' && exit 0
+          sleep 1
+        done
+        exit 1
+    depends_on:
+      risk-redis-1: {condition: service_healthy}
+      risk-redis-2: {condition: service_healthy}
+      risk-redis-3: {condition: service_healthy}
+    networks: [dokploy-network]
+
+  # ── 对象存储：Milvus 数据与风控模型文件 ──
+  risk-minio:
+    image: milvusdb/minio:RELEASE.2024-12-18T13-15-44Z
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
+    environment:
+      MINIO_ACCESS_KEY: ${RISK_MINIO_ACCESS_KEY:?}
+      MINIO_SECRET_KEY: ${RISK_MINIO_SECRET_KEY:?}
+    command: minio server /minio_data --console-address ":9001"
+    volumes:
+      - /srv/aegis/risk/minio:/minio_data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      dokploy-network:
+        aliases: [risk-minio]
+
+  # ── Milvus：设备相似向量 ──
+  risk-milvus:
+    image: milvusdb/milvus:v3.0.5
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 3g
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: risk-etcd:2379
+      MINIO_ADDRESS: risk-minio:9000
+      MINIO_ACCESS_KEY_ID: ${RISK_MINIO_ACCESS_KEY:?}
+      MINIO_SECRET_ACCESS_KEY: ${RISK_MINIO_SECRET_KEY:?}
+      MINIO_REGION: us-east-1
+    volumes:
+      - /srv/aegis/risk/milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 15s
+      start_period: 90s
+      timeout: 10s
+      retries: 10
+    depends_on:
+      risk-volume-init: {condition: service_completed_successfully}
+      risk-etcd: {condition: service_healthy}
+      risk-minio: {condition: service_healthy}
+    networks:
+      dokploy-network:
+        aliases: [risk-milvus]
+
+  # ── NebulaGraph：关系图 ──
+  risk-nebula-metad:
+    image: vesoft/nebula-metad:v3.8.0
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
+    command:
+      - --meta_server_addrs=risk-nebula-metad:9559
+      - --local_ip=risk-nebula-metad
+      - --ws_ip=risk-nebula-metad
+      - --port=9559
+      - --ws_http_port=19559
+      - --data_path=/data/meta
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    volumes:
+      - /srv/aegis/risk/nebula-meta:/data/meta
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://risk-nebula-metad:19559/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      dokploy-network:
+        aliases: [risk-nebula-metad]
+
+  risk-nebula-storaged:
+    image: vesoft/nebula-storaged:v3.8.0
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 1g
+    command:
+      - --meta_server_addrs=risk-nebula-metad:9559
+      - --local_ip=risk-nebula-storaged
+      - --ws_ip=risk-nebula-storaged
+      - --port=9779
+      - --ws_http_port=19779
+      - --data_path=/data/storage
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    volumes:
+      - /srv/aegis/risk/nebula-storage:/data/storage
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://risk-nebula-storaged:19779/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    depends_on:
+      risk-nebula-metad: {condition: service_healthy}
+    networks:
+      dokploy-network:
+        aliases: [risk-nebula-storaged]
+
+  risk-nebula-graphd:
+    image: vesoft/nebula-graphd:v3.8.0
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
+    command:
+      - --meta_server_addrs=risk-nebula-metad:9559
+      - --port=9669
+      - --local_ip=risk-nebula-graphd
+      - --ws_ip=risk-nebula-graphd
+      - --ws_http_port=19669
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+      - --enable_authorize=true
+      - --session_idle_timeout_secs=3600
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://risk-nebula-graphd:19669/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    # storaged 要等 risk-migrate 在 graphd 上 ADD HOSTS 才就绪，这里只等它起来
+    depends_on:
+      risk-nebula-metad: {condition: service_healthy}
+      risk-nebula-storaged: {condition: service_started}
+    networks:
+      dokploy-network:
+        aliases: [risk-nebula-graphd]
+
+  # ── ClickHouse：决策流水、事件、告警、处置记录 ──
+  risk-clickhouse:
+    image: clickhouse/clickhouse-server:26.8
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 3g
+    environment:
+      CLICKHOUSE_DB: aegis_risk
+      CLICKHOUSE_USER: aegis
+      CLICKHOUSE_PASSWORD: ${RISK_CLICKHOUSE_PASSWORD:?}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    volumes:
+      - /srv/aegis/risk/clickhouse:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      dokploy-network:
+        aliases: [risk-clickhouse]
+
+  # ── RisingWave：流式特征（读 NATS JetStream，物化视图经 Redis Sink 写回 Redis Cluster）──
+  risk-risingwave:
+    image: risingwavelabs/risingwave:v3.1.1
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 7g
+    command:
+      - single_node
+      - --store-directory=/risingwave/data
+      - --listen-addr=0.0.0.0:4566
+      # 低于约 6 GiB 时 compactor 启动断言失败
+      - --total-memory-bytes=6442450944
+      # 免费许可证最多 4 核
+      - --parallelism=4
+    environment:
+      RW_TELEMETRY_ENABLED: "false"
+    volumes:
+      - /srv/aegis/risk/risingwave:/risingwave/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'printf \"\" > /dev/tcp/127.0.0.1/4566' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    networks:
+      dokploy-network:
+        aliases: [risk-risingwave]
+
+  # ── 一次性初始化：建库建表、图空间、向量集合、JetStream 流、流式特征、旧名单导入 ──
+  risk-migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/risk.Dockerfile
+    image: aegis-risk:latest
+    restart: "no"
+    logging: *logging
+    environment:
+      <<: *risk-env
+    command: ["/usr/local/bin/risk-admin", "migrate"]
+    depends_on:
+      risk-redis-init: {condition: service_completed_successfully}
+      risk-clickhouse: {condition: service_healthy}
+      risk-nebula-graphd: {condition: service_healthy}
+      risk-milvus: {condition: service_healthy}
+      risk-risingwave: {condition: service_healthy}
+      risk-minio: {condition: service_healthy}
+      risk-etcd: {condition: service_healthy}
+    networks: [dokploy-network]
+
+  # ── 在线决策（Kitex :8890，注册到 etcd）。两个固定实例：各用自己的本地暂存目录（bbolt 文件锁不能共用）──
+  risk-decision-1:
+    image: aegis-risk:latest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
+    environment:
+      <<: *risk-env
+      RISK_DECISION_ADDR: 0.0.0.0:8890
+    command: ["/usr/local/bin/risk-decision"]
+    volumes:
+      - /srv/aegis/risk/spool/decision-1:/var/lib/aegis-risk
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/risk-admin", "probe", "http://127.0.0.1:8892/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      risk-migrate: {condition: service_completed_successfully}
+    networks:
+      dokploy-network:
+        aliases: [risk-decision-1]
+
+  risk-decision-2:
+    image: aegis-risk:latest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
+    environment:
+      <<: *risk-env
+      RISK_DECISION_ADDR: 0.0.0.0:8890
+    command: ["/usr/local/bin/risk-decision"]
+    volumes:
+      - /srv/aegis/risk/spool/decision-2:/var/lib/aegis-risk
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/risk-admin", "probe", "http://127.0.0.1:8892/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      risk-migrate: {condition: service_completed_successfully}
+    networks:
+      dokploy-network:
+        aliases: [risk-decision-2]
+
+  # ── 管理接口（Hertz :8891，主服务把 /api/admin/system/risk/* 代理过来）──
+  risk-admin:
+    image: aegis-risk:latest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
+    environment:
+      <<: *risk-env
+      RISK_ADMIN_ADDR: 0.0.0.0:8891
+    command: ["/usr/local/bin/risk-admin"]
+    volumes:
+      - /srv/aegis/risk/spool/admin:/var/lib/aegis-risk
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/risk-admin", "probe", "http://127.0.0.1:8891/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      risk-migrate: {condition: service_completed_successfully}
+    networks:
+      dokploy-network:
+        aliases: [risk-admin]
+
+  # ── 事件落地：ClickHouse / 图 / 向量 / 名单命令 / CEP 告警处置 ──
+  risk-ingest:
+    image: aegis-risk:latest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
+    environment:
+      <<: *risk-env
+    command: ["/usr/local/bin/risk-ingest"]
+    depends_on:
+      risk-migrate: {condition: service_completed_successfully}
+    networks:
+      dokploy-network:
+        aliases: [risk-ingest]
+
+  # ── Flink CEP：application 模式，jobmanager 带着作业启动 ──
+  risk-flink-jobmanager:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/risk-cep.Dockerfile
+    image: aegis-risk-cep:latest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 1536m
+    command: ["standalone-job", "--job-classname", "aegis.risk.cep.RiskCepJob"]
+    environment:
+      <<: *flink-env
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: risk-flink-jobmanager
+        jobmanager.memory.process.size: 1400m
+        parallelism.default: 2
+        state.backend.type: rocksdb
+        execution.checkpointing.dir: file:///flink-data/checkpoints
+        execution.checkpointing.interval: 30s
+        execution.checkpointing.mode: EXACTLY_ONCE
+        restart-strategy.type: exponential-delay
+        high-availability.type: NONE
+    volumes:
+      - /srv/aegis/risk/flink:/flink-data
+    depends_on:
+      risk-volume-init: {condition: service_completed_successfully}
+      risk-admin: {condition: service_healthy}
+    networks:
+      dokploy-network:
+        aliases: [risk-flink-jobmanager]
+
+  risk-flink-taskmanager:
+    image: aegis-risk-cep:latest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 2560m
+    command: ["taskmanager"]
+    environment:
+      <<: *flink-env
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: risk-flink-jobmanager
+        taskmanager.memory.process.size: 2300m
+        taskmanager.numberOfTaskSlots: 2
+        state.backend.type: rocksdb
+        execution.checkpointing.dir: file:///flink-data/checkpoints
+    volumes:
+      - /srv/aegis/risk/flink:/flink-data
+    depends_on:
+      - risk-flink-jobmanager
+    networks:
+      dokploy-network:
+        aliases: [risk-flink-taskmanager]
+
+networks:
+  dokploy-network:
+    external: true

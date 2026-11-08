@@ -117,9 +117,14 @@ func probe(u string) error {
 // StreamTarget RisingWave 视角的 NATS 与 Redis 地址（默认取风控服务自己的配置）
 func StreamTarget(cfg config.Config) stream.Target {
 	natsAddr := os.Getenv("RISK_STREAM_NATS")
-	if natsAddr == "" {
-		if u, err := url.Parse(cfg.NATSURL); err == nil {
+	var natsUser, natsPass string
+	if u, err := url.Parse(cfg.NATSURL); err == nil {
+		if natsAddr == "" {
 			natsAddr = u.Host
+		}
+		if u.User != nil {
+			natsUser = u.User.Username()
+			natsPass, _ = u.User.Password()
 		}
 	}
 	addrs := cfg.RedisAddrs
@@ -134,7 +139,7 @@ func StreamTarget(cfg config.Config) stream.Target {
 			urls = append(urls, "redis://"+strings.TrimSpace(a))
 		}
 	}
-	return stream.Target{NATSServer: natsAddr, RedisURLs: urls, DurablePrefix: "aegis_"}
+	return stream.Target{NATSServer: natsAddr, NATSUser: natsUser, NATSPassword: natsPass, RedisURLs: urls, DurablePrefix: "aegis_"}
 }
 
 func migrate(logf func(string, ...any)) error {

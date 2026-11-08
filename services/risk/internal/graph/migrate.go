@@ -23,7 +23,25 @@ func Migrate(cfg config.Config, logf func(string, ...any)) error {
 	defer pool.Close()
 	session, err := pool.GetSession(cfg.NebulaUser, cfg.NebulaPassword)
 	if err != nil {
-		return err
+		// graphd 首次启动只有 root / nebula：配置了别的密码就用默认密码登录改掉，再用新密码重连
+		if cfg.NebulaUser != "root" || cfg.NebulaPassword == defaultRootPassword {
+			return err
+		}
+		if cerr := changeDefaultPassword(pool, cfg.NebulaPassword); cerr != nil {
+			return fmt.Errorf("%w（用默认密码改密也失败：%v）", err, cerr)
+		}
+		logf("nebula：root 默认密码已改为配置的密码")
+		// graphd 从 metad 同步账号有几秒延迟（实测约 8 秒），期间新密码登录会报 Invalid password
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			if session, err = pool.GetSession(cfg.NebulaUser, cfg.NebulaPassword); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				return err
+			}
+			time.Sleep(2 * time.Second)
+		}
 	}
 	defer session.Release()
 	exec := func(stmt string) (*nebula.ResultSet, error) {
@@ -105,6 +123,24 @@ func Migrate(cfg config.Config, logf func(string, ...any)) error {
 	}
 	if logf != nil {
 		logf("nebula: 空间 %s 就绪", cfg.NebulaSpace)
+	}
+	return nil
+}
+
+const defaultRootPassword = "nebula"
+
+func changeDefaultPassword(pool *nebula.ConnectionPool, password string) error {
+	session, err := pool.GetSession("root", defaultRootPassword)
+	if err != nil {
+		return err
+	}
+	defer session.Release()
+	rs, err := session.Execute(fmt.Sprintf("CHANGE PASSWORD root FROM %s TO %s", Quote(defaultRootPassword), Quote(password)))
+	if err != nil {
+		return err
+	}
+	if !rs.IsSucceed() {
+		return fmt.Errorf("%s", rs.GetErrorMsg())
 	}
 	return nil
 }

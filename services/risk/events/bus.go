@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +16,29 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	bolt "go.etcd.io/bbolt"
 )
+
+// StreamMaxBytes RISK 流的容量上限：RISK_STREAM_MAX_BYTES（字节数，或带 K / M / G 后缀），默认 20G。
+// 不能超过 NATS 服务端 jetstream.max_file，否则建流失败。
+func StreamMaxBytes() int64 {
+	raw := strings.ToUpper(strings.TrimSpace(os.Getenv("RISK_STREAM_MAX_BYTES")))
+	if raw == "" {
+		return 20 << 30
+	}
+	mult := int64(1)
+	switch {
+	case strings.HasSuffix(raw, "G"), strings.HasSuffix(raw, "GB"):
+		mult, raw = 1<<30, strings.TrimSuffix(strings.TrimSuffix(raw, "B"), "G")
+	case strings.HasSuffix(raw, "M"), strings.HasSuffix(raw, "MB"):
+		mult, raw = 1<<20, strings.TrimSuffix(strings.TrimSuffix(raw, "B"), "M")
+	case strings.HasSuffix(raw, "K"), strings.HasSuffix(raw, "KB"):
+		mult, raw = 1<<10, strings.TrimSuffix(strings.TrimSuffix(raw, "B"), "K")
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || n <= 0 {
+		return 20 << 30
+	}
+	return n * mult
+}
 
 // EnsureStreams 建流（可重复执行；配置变了就更新）
 func EnsureStreams(ctx context.Context, js jetstream.JetStream) error {
@@ -25,7 +50,7 @@ func EnsureStreams(ctx context.Context, js jetstream.JetStream) error {
 			Retention:   jetstream.LimitsPolicy,
 			Storage:     jetstream.FileStorage,
 			MaxAge:      7 * 24 * time.Hour,
-			MaxBytes:    20 << 30,
+			MaxBytes:    StreamMaxBytes(),
 			Discard:     jetstream.DiscardOld,
 			// 去重窗口覆盖待发队列的积压时长：NATS 断开期间落盘的事件恢复后补发，不会重复入流
 			Duplicates: 2 * time.Hour,
@@ -38,6 +63,7 @@ func EnsureStreams(ctx context.Context, js jetstream.JetStream) error {
 			Retention:   jetstream.WorkQueuePolicy,
 			Storage:     jetstream.FileStorage,
 			MaxAge:      7 * 24 * time.Hour,
+			MaxBytes:    1 << 30,
 			Duplicates:  2 * time.Hour,
 			Replicas:    1,
 		},
