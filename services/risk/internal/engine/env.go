@@ -400,3 +400,31 @@ func plainValue(v any) any {
 	_ = json.Unmarshal(raw, &out)
 	return out
 }
+
+// Fingerprint 设备指纹要素的扁平形态：事件、图谱、向量共用同一套键
+func (d Device) Fingerprint() map[string]string {
+	out := map[string]string{}
+	put := func(k, v string) {
+		if v != "" {
+			out[k] = v
+		}
+	}
+	put("platform", strings.ToLower(d.Platform))
+	put("brand", d.Brand)
+	put("model", d.Model)
+	put("os_version", d.OSVersion)
+	put("app_version", d.AppVersion)
+	put("screen", d.Screen)
+	put("locale", d.Locale)
+	put("timezone", d.Timezone)
+	if d.Emulator {
+		out["emulator"] = "true"
+	}
+	if d.Rooted {
+		out["rooted"] = "true"
+	}
+	for k, v := range d.Attrs {
+		put("x."+k, v)
+	}
+	return out
+}

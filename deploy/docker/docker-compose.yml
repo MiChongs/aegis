@@ -21,6 +21,11 @@
 #     → hydra-db-init + hydra-migrate（一次性）+ hydra
 #     .env 里需 OAUTH2_SERVER_ENABLED=true 与 HYDRA_* 密钥（一键脚本会生成）
 #
+#  ⑤ 风控平台（docs/risk-platform.md，可与 app 叠加）
+#       … --profile app --profile risk up -d
+#     → etcd ×3、Redis Cluster ×6、MinIO、Milvus、NebulaGraph、ClickHouse、RisingWave、
+#       Flink（CEP 作业）、risk-migrate（一次性初始化）、risk-decision、risk-admin、risk-ingest
+#
 #  推荐直接使用一键脚本（自动生成强随机凭据并完成上述全部步骤）：
 #       Linux/macOS:  ./deploy/docker/quickstart.sh
 #       Windows:      .\deploy\docker\quickstart.ps1
@@ -35,6 +40,56 @@ x-logging: &default-logging
   options:
     max-size: "20m"
     max-file: "3"
+
+# 风控服务共用的连接配置（容器网络内的地址）
+x-risk-env: &risk-env
+  RISK_ETCD_ENDPOINTS: risk-etcd-1:2379,risk-etcd-2:2379,risk-etcd-3:2379
+  RISK_REDIS_ADDRS: risk-redis-1:7001,risk-redis-2:7002,risk-redis-3:7003,risk-redis-4:7004,risk-redis-5:7005,risk-redis-6:7006
+  RISK_REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
+  RISK_PG_DSN: postgres://${AEGIS_DB_USER:-aegis}:${AEGIS_DB_PASSWORD:-aegis}@postgres:5432/${RISK_DB_NAME:-aegis_risk}?sslmode=disable
+  RISK_PG_ADMIN_DSN: postgres://${AEGIS_DB_USER:-aegis}:${AEGIS_DB_PASSWORD:-aegis}@postgres:5432/${AEGIS_DB_NAME:-aegis}?sslmode=disable
+  RISK_NATS_URL: nats://nats:4222
+  RISK_CLICKHOUSE_ADDR: risk-clickhouse:9000
+  RISK_CLICKHOUSE_USER: ${RISK_CLICKHOUSE_USER:-aegis}
+  RISK_CLICKHOUSE_PASSWORD: ${RISK_CLICKHOUSE_PASSWORD:-aegis-risk}
+  RISK_CLICKHOUSE_DB: aegis_risk
+  RISK_NEBULA_ADDRS: risk-nebula-graphd:9669
+  RISK_NEBULA_USER: root
+  RISK_NEBULA_PASSWORD: ${RISK_NEBULA_PASSWORD:-nebula}
+  RISK_NEBULA_STORAGED: risk-nebula-storaged:9779
+  RISK_MILVUS_ADDR: risk-milvus:19530
+  RISK_RISINGWAVE_DSN: postgres://root@risk-risingwave:4566/dev?sslmode=disable
+  RISK_S3_ENDPOINT: risk-minio:9000
+  RISK_S3_ACCESS_KEY: ${RISK_MINIO_ACCESS_KEY:-minioadmin}
+  RISK_S3_SECRET_KEY: ${RISK_MINIO_SECRET_KEY:-minioadmin}
+  RISK_S3_BUCKET: aegis-risk
+  RISK_INTERNAL_TOKEN: ${RISK_INTERNAL_TOKEN:-}
+  RISK_ADMIN_URL: http://risk-admin:8891
+
+# etcd 集群节点
+x-risk-etcd: &risk-etcd
+  image: quay.io/coreos/etcd:v3.7.3
+  profiles: ["risk"]
+  restart: unless-stopped
+  logging: *default-logging
+  entrypoint: ["/usr/local/bin/etcd"]
+  healthcheck:
+    test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health"]
+    interval: 10s
+    timeout: 5s
+    retries: 10
+
+# Redis Cluster 节点：三主三从，各节点用自己的端口号（宿主机 1:1 映射，本机调试时地址可以对上）
+x-risk-redis: &risk-redis
+  image: redis:8-alpine
+  profiles: ["risk"]
+  restart: unless-stopped
+  logging: *default-logging
+  healthcheck:
+    test: ["CMD-SHELL", "redis-cli -p $$REDIS_PORT -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
 
 services:
   # ── 主数据库：PostgreSQL 17 + PostGIS（地理风控/分析依赖） ──
@@ -337,6 +392,9 @@ services:
       HYDRA_ADMIN_URL: http://hydra:4445
       # 一起听微服务的内部管理接口（Connect/gRPC，只在容器网络内可达）
       LISTEN_TOGETHER_RPC_URL: http://listen-together:8091
+      # 风控平台（profile: risk）：经 etcd 发现 risk-decision / risk-admin；没起风控时按场景失败策略放行
+      RISK_ETCD_ENDPOINTS: ${RISK_ETCD_ENDPOINTS:-risk-etcd-1:2379,risk-etcd-2:2379,risk-etcd-3:2379}
+      RISK_INTERNAL_TOKEN: ${RISK_INTERNAL_TOKEN:-}
       # HTTPS + HTTP/3（TLS_ENABLED=true 时才监听）：容器内固定 8443，对外端口由下面的映射决定，
       # Alt-Svc 宣告与明文跳转用的是对外端口。证书放进 TLS_CERT_DIR，.env 里写容器内路径
       # （TLS_CERT_FILE=/etc/aegis/tls/fullchain.pem）；用 ACME 时证书缓存在 aegis_autocert 卷里。
@@ -405,12 +463,561 @@ services:
       retries: 10
       start_period: 10s
 
+  # ════════════════════════════ 风控平台（profile: risk）════════════════════════════
+  #  docs/risk-platform.md。基础设施在前，三个 Go 服务与 Flink 作业在后。
+
+  # ── etcd：服务注册发现、配置发布通道、选主；Milvus 元数据也放这里 ──
+  risk-etcd-1:
+    <<: *risk-etcd
+    container_name: aegis-risk-etcd-1
+    command:
+      - --name=etcd-1
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://risk-etcd-1:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://risk-etcd-1:2380
+      - --initial-cluster=etcd-1=http://risk-etcd-1:2380,etcd-2=http://risk-etcd-2:2380,etcd-3=http://risk-etcd-3:2380
+      - --initial-cluster-state=new
+      - --initial-cluster-token=aegis-risk
+      - --auto-compaction-mode=revision
+      - --auto-compaction-retention=1000
+      - --quota-backend-bytes=4294967296
+      - --snapshot-count=50000
+    volumes:
+      - risk_etcd_1:/etcd-data
+
+  risk-etcd-2:
+    <<: *risk-etcd
+    container_name: aegis-risk-etcd-2
+    command:
+      - --name=etcd-2
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://risk-etcd-2:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://risk-etcd-2:2380
+      - --initial-cluster=etcd-1=http://risk-etcd-1:2380,etcd-2=http://risk-etcd-2:2380,etcd-3=http://risk-etcd-3:2380
+      - --initial-cluster-state=new
+      - --initial-cluster-token=aegis-risk
+      - --auto-compaction-mode=revision
+      - --auto-compaction-retention=1000
+      - --quota-backend-bytes=4294967296
+      - --snapshot-count=50000
+    volumes:
+      - risk_etcd_2:/etcd-data
+
+  risk-etcd-3:
+    <<: *risk-etcd
+    container_name: aegis-risk-etcd-3
+    command:
+      - --name=etcd-3
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://risk-etcd-3:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://risk-etcd-3:2380
+      - --initial-cluster=etcd-1=http://risk-etcd-1:2380,etcd-2=http://risk-etcd-2:2380,etcd-3=http://risk-etcd-3:2380
+      - --initial-cluster-state=new
+      - --initial-cluster-token=aegis-risk
+      - --auto-compaction-mode=revision
+      - --auto-compaction-retention=1000
+      - --quota-backend-bytes=4294967296
+      - --snapshot-count=50000
+    volumes:
+      - risk_etcd_3:/etcd-data
+
+  # ── Redis Cluster：名单、滑窗计数、流式特征、缓存 ──
+  risk-redis-1:
+    <<: *risk-redis
+    container_name: aegis-risk-redis-1
+    environment:
+      REDIS_PORT: "7001"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
+    command: >-
+      sh -c 'exec redis-server --port 7001 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-1 --cluster-preferred-endpoint-type hostname
+      --maxmemory-policy noeviction'
+    ports:
+      - "127.0.0.1:7001:7001"
+    volumes:
+      - risk_redis_1:/data
+
+  risk-redis-2:
+    <<: *risk-redis
+    container_name: aegis-risk-redis-2
+    environment:
+      REDIS_PORT: "7002"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
+    command: >-
+      sh -c 'exec redis-server --port 7002 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-2 --cluster-preferred-endpoint-type hostname
+      --maxmemory-policy noeviction'
+    ports:
+      - "127.0.0.1:7002:7002"
+    volumes:
+      - risk_redis_2:/data
+
+  risk-redis-3:
+    <<: *risk-redis
+    container_name: aegis-risk-redis-3
+    environment:
+      REDIS_PORT: "7003"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
+    command: >-
+      sh -c 'exec redis-server --port 7003 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-3 --cluster-preferred-endpoint-type hostname
+      --maxmemory-policy noeviction'
+    ports:
+      - "127.0.0.1:7003:7003"
+    volumes:
+      - risk_redis_3:/data
+
+  risk-redis-4:
+    <<: *risk-redis
+    container_name: aegis-risk-redis-4
+    environment:
+      REDIS_PORT: "7004"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
+    command: >-
+      sh -c 'exec redis-server --port 7004 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-4 --cluster-preferred-endpoint-type hostname
+      --maxmemory-policy noeviction'
+    ports:
+      - "127.0.0.1:7004:7004"
+    volumes:
+      - risk_redis_4:/data
+
+  risk-redis-5:
+    <<: *risk-redis
+    container_name: aegis-risk-redis-5
+    environment:
+      REDIS_PORT: "7005"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
+    command: >-
+      sh -c 'exec redis-server --port 7005 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-5 --cluster-preferred-endpoint-type hostname
+      --maxmemory-policy noeviction'
+    ports:
+      - "127.0.0.1:7005:7005"
+    volumes:
+      - risk_redis_5:/data
+
+  risk-redis-6:
+    <<: *risk-redis
+    container_name: aegis-risk-redis-6
+    environment:
+      REDIS_PORT: "7006"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
+    command: >-
+      sh -c 'exec redis-server --port 7006 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-6 --cluster-preferred-endpoint-type hostname
+      --maxmemory-policy noeviction'
+    ports:
+      - "127.0.0.1:7006:7006"
+    volumes:
+      - risk_redis_6:/data
+
+  # 建集群（幂等：已经成形就什么都不做）
+  risk-redis-init:
+    image: redis:8-alpine
+    container_name: aegis-risk-redis-init
+    profiles: ["risk"]
+    restart: "no"
+    logging: *default-logging
+    environment:
+      REDISCLI_AUTH: ${RISK_REDIS_PASSWORD:-aegis-risk}
+    command:
+      - sh
+      - -c
+      - |
+        if redis-cli -h risk-redis-1 -p 7001 cluster info | grep -q 'cluster_state:ok'; then echo 'cluster ready'; exit 0; fi
+        yes yes | redis-cli --cluster create risk-redis-1:7001 risk-redis-2:7002 risk-redis-3:7003 \
+          risk-redis-4:7004 risk-redis-5:7005 risk-redis-6:7006 --cluster-replicas 1
+        for i in $$(seq 1 30); do
+          redis-cli -h risk-redis-1 -p 7001 cluster info | grep -q 'cluster_state:ok' && exit 0
+          sleep 1
+        done
+        exit 1
+    depends_on:
+      risk-redis-1: {condition: service_healthy}
+      risk-redis-2: {condition: service_healthy}
+      risk-redis-3: {condition: service_healthy}
+      risk-redis-4: {condition: service_healthy}
+      risk-redis-5: {condition: service_healthy}
+      risk-redis-6: {condition: service_healthy}
+
+  # ── 对象存储：Milvus 数据、RisingWave 无关、风控模型文件 ──
+  risk-minio:
+    image: milvusdb/minio:RELEASE.2024-12-18T13-15-44Z
+    container_name: aegis-risk-minio
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      MINIO_ACCESS_KEY: ${RISK_MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${RISK_MINIO_SECRET_KEY:-minioadmin}
+    command: minio server /minio_data --console-address ":9001"
+    ports:
+      - "127.0.0.1:${RISK_MINIO_PORT:-19100}:9000"
+      - "127.0.0.1:${RISK_MINIO_CONSOLE_PORT:-19101}:9001"
+    volumes:
+      - risk_minio:/minio_data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── Milvus：设备指纹与行为向量 ──
+  risk-milvus-volume-init:
+    image: milvusdb/milvus:v3.0.5
+    container_name: aegis-risk-milvus-volume-init
+    profiles: ["risk"]
+    user: "0:0"
+    network_mode: none
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        uid="$$(id -u milvus)"; gid="$$(id -g milvus)"
+        marker="/var/lib/milvus/.milvus-volume-owner-$${uid}-$${gid}"
+        if [ ! -e "$${marker}" ]; then chown -R "$${uid}:$${gid}" /var/lib/milvus; touch "$${marker}"; chown "$${uid}:$${gid}" "$${marker}"; fi
+    volumes:
+      - risk_milvus:/var/lib/milvus
+
+  risk-milvus:
+    image: milvusdb/milvus:v3.0.5
+    container_name: aegis-risk-milvus
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: risk-etcd-1:2379,risk-etcd-2:2379,risk-etcd-3:2379
+      MINIO_ADDRESS: risk-minio:9000
+      MINIO_ACCESS_KEY_ID: ${RISK_MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_ACCESS_KEY: ${RISK_MINIO_SECRET_KEY:-minioadmin}
+      MINIO_REGION: us-east-1
+    ports:
+      - "127.0.0.1:${RISK_MILVUS_PORT:-19530}:19530"
+    volumes:
+      - risk_milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 15s
+      start_period: 90s
+      timeout: 10s
+      retries: 10
+    depends_on:
+      risk-milvus-volume-init: {condition: service_completed_successfully}
+      risk-etcd-1: {condition: service_healthy}
+      risk-etcd-2: {condition: service_healthy}
+      risk-etcd-3: {condition: service_healthy}
+      risk-minio: {condition: service_healthy}
+
+  # ── NebulaGraph：关系图（meta / storage / graph 各一）──
+  risk-nebula-metad:
+    image: vesoft/nebula-metad:v3.8.0
+    container_name: aegis-risk-nebula-metad
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    command:
+      - --meta_server_addrs=risk-nebula-metad:9559
+      - --local_ip=risk-nebula-metad
+      - --ws_ip=risk-nebula-metad
+      - --port=9559
+      - --ws_http_port=19559
+      - --data_path=/data/meta
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    volumes:
+      - risk_nebula_meta:/data/meta
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://risk-nebula-metad:19559/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  risk-nebula-storaged:
+    image: vesoft/nebula-storaged:v3.8.0
+    container_name: aegis-risk-nebula-storaged
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    command:
+      - --meta_server_addrs=risk-nebula-metad:9559
+      - --local_ip=risk-nebula-storaged
+      - --ws_ip=risk-nebula-storaged
+      - --port=9779
+      - --ws_http_port=19779
+      - --data_path=/data/storage
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    volumes:
+      - risk_nebula_storage:/data/storage
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://risk-nebula-storaged:19779/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    depends_on:
+      risk-nebula-metad: {condition: service_healthy}
+
+  risk-nebula-graphd:
+    image: vesoft/nebula-graphd:v3.8.0
+    container_name: aegis-risk-nebula-graphd
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    command:
+      - --meta_server_addrs=risk-nebula-metad:9559
+      - --port=9669
+      - --local_ip=risk-nebula-graphd
+      - --ws_ip=risk-nebula-graphd
+      - --ws_http_port=19669
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+      - --enable_authorize=true
+      - --session_idle_timeout_secs=3600
+    ports:
+      - "127.0.0.1:${RISK_NEBULA_PORT:-9669}:9669"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://risk-nebula-graphd:19669/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    # storaged 要等 graphd 上执行 ADD HOSTS 才会就绪（risk-migrate 负责），这里只等它起来
+    depends_on:
+      risk-nebula-metad: {condition: service_healthy}
+      risk-nebula-storaged: {condition: service_started}
+
+  # ── ClickHouse：决策流水、事件、告警、处置记录 ──
+  risk-clickhouse:
+    image: clickhouse/clickhouse-server:26.8
+    container_name: aegis-risk-clickhouse
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      CLICKHOUSE_DB: aegis_risk
+      CLICKHOUSE_USER: ${RISK_CLICKHOUSE_USER:-aegis}
+      CLICKHOUSE_PASSWORD: ${RISK_CLICKHOUSE_PASSWORD:-aegis-risk}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    ports:
+      - "127.0.0.1:${RISK_CLICKHOUSE_HTTP_PORT:-18123}:8123"
+      - "127.0.0.1:${RISK_CLICKHOUSE_PORT:-19000}:9000"
+    volumes:
+      - risk_clickhouse:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ── RisingWave：流式特征（读 NATS JetStream，物化视图经 Redis Sink 写回 Redis Cluster）──
+  risk-risingwave:
+    image: risingwavelabs/risingwave:v3.1.1
+    container_name: aegis-risk-risingwave
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    command:
+      - single_node
+      - --store-directory=/risingwave/data
+      - --listen-addr=0.0.0.0:4566
+      # 单节点要分给 compactor 足够内存（小于约 6 GB 时 compactor 启动断言失败）
+      - --total-memory-bytes=${RISK_RISINGWAVE_MEMORY_BYTES:-8589934592}
+      # 免费许可证最多 4 核（rwu_limit=4）
+      - --parallelism=${RISK_RISINGWAVE_PARALLELISM:-4}
+    environment:
+      RW_TELEMETRY_ENABLED: "false"
+    ports:
+      - "127.0.0.1:${RISK_RISINGWAVE_PORT:-4566}:4566"
+    volumes:
+      - risk_risingwave:/risingwave/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'printf \"\" > /dev/tcp/127.0.0.1/4566' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  # ── 一次性初始化：建库建表、图空间、向量集合、JetStream 流、RisingWave 基础源 ──
+  risk-migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/risk.Dockerfile
+    image: aegis-risk:latest
+    container_name: aegis-risk-migrate
+    profiles: ["risk"]
+    restart: "no"
+    logging: *default-logging
+    environment:
+      <<: *risk-env
+    command: ["/usr/local/bin/risk-admin", "migrate"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      nats: {condition: service_healthy}
+      risk-redis-init: {condition: service_completed_successfully}
+      risk-clickhouse: {condition: service_healthy}
+      risk-nebula-graphd: {condition: service_healthy}
+      risk-milvus: {condition: service_healthy}
+      risk-risingwave: {condition: service_healthy}
+      risk-minio: {condition: service_healthy}
+
+  # ── 在线决策（Kitex :8890，注册到 etcd；可 --scale 水平扩容）──
+  risk-decision:
+    image: aegis-risk:latest
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      <<: *risk-env
+      RISK_DECISION_ADDR: 0.0.0.0:8890
+    command: ["/usr/local/bin/risk-decision"]
+    volumes:
+      - risk_decision_spool:/var/lib/aegis-risk
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/risk-admin", "probe", "http://127.0.0.1:8892/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      risk-migrate: {condition: service_completed_successfully}
+
+  # ── 管理接口（Hertz :8891，主服务把 /api/admin/risk/* 代理过来）──
+  risk-admin:
+    image: aegis-risk:latest
+    container_name: aegis-risk-admin
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      <<: *risk-env
+      RISK_ADMIN_ADDR: 0.0.0.0:8891
+    command: ["/usr/local/bin/risk-admin"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/risk-admin", "probe", "http://127.0.0.1:8891/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      risk-migrate: {condition: service_completed_successfully}
+
+  # ── 事件落地：ClickHouse / 图 / 向量 / 名单命令 / CEP 告警处置 ──
+  risk-ingest:
+    image: aegis-risk:latest
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      <<: *risk-env
+    command: ["/usr/local/bin/risk-ingest"]
+    depends_on:
+      risk-migrate: {condition: service_completed_successfully}
+
+  # ── Flink CEP：application 模式，jobmanager 直接带着作业启动 ──
+  risk-flink-jobmanager:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/risk-cep.Dockerfile
+    image: aegis-risk-cep:latest
+    container_name: aegis-risk-flink-jobmanager
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["standalone-job", "--job-classname", "aegis.risk.cep.RiskCepJob"]
+    environment:
+      RISK_NATS_URL: nats://nats:4222
+      RISK_ADMIN_URL: http://risk-admin:8891
+      RISK_INTERNAL_TOKEN: ${RISK_INTERNAL_TOKEN:-}
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: risk-flink-jobmanager
+        parallelism.default: 2
+        state.backend.type: rocksdb
+        execution.checkpointing.dir: file:///flink-data/checkpoints
+        execution.checkpointing.interval: 30s
+        execution.checkpointing.mode: EXACTLY_ONCE
+        restart-strategy.type: exponential-delay
+        high-availability.type: NONE
+    ports:
+      - "127.0.0.1:${RISK_FLINK_UI_PORT:-8081}:8081"
+    volumes:
+      - risk_flink:/flink-data
+    depends_on:
+      risk-admin: {condition: service_healthy}
+      nats: {condition: service_healthy}
+
+  risk-flink-taskmanager:
+    image: aegis-risk-cep:latest
+    profiles: ["risk"]
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["taskmanager"]
+    environment:
+      RISK_NATS_URL: nats://nats:4222
+      RISK_ADMIN_URL: http://risk-admin:8891
+      RISK_INTERNAL_TOKEN: ${RISK_INTERNAL_TOKEN:-}
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: risk-flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        state.backend.type: rocksdb
+        execution.checkpointing.dir: file:///flink-data/checkpoints
+    volumes:
+      - risk_flink:/flink-data
+    depends_on:
+      - risk-flink-jobmanager
+
 volumes:
   postgres_data:
   aegis_autocert:
   redis_data:
   nats_data:
   nats_ui_data:
+  risk_etcd_1:
+  risk_etcd_2:
+  risk_etcd_3:
+  risk_redis_1:
+  risk_redis_2:
+  risk_redis_3:
+  risk_redis_4:
+  risk_redis_5:
+  risk_redis_6:
+  risk_minio:
+  risk_milvus:
+  risk_nebula_meta:
+  risk_nebula_storage:
+  risk_clickhouse:
+  risk_risingwave:
+  risk_flink:
+  risk_decision_spool:
   # 保留 external 命名：兼容既有部署中已存在的 Temporal 数据卷，避免升级丢数据
   temporal_postgres_data:
     external: true
