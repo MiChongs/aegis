@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/engine"
 	"aegis/services/risk/internal/graph"
 	"aegis/services/risk/internal/proxyip"
@@ -44,6 +45,7 @@ type Progress struct {
 	IPs        int64            `json:"ips"`
 	Vectors    int64            `json:"vectors"`
 	ProxyIPs   int64            `json:"proxyIps"`   // 从图里删掉的代理 / CDN 地址数
+	BadDevices int64            `json:"badDevices"` // 从图里删掉的假设备码（占位值、UA 摘要）数
 	V6Lines    int64            `json:"v6Lines"`    // IPv6 线路（/64）数
 	V6Addrs    int64            `json:"v6Addrs"`    // 这些线路上出现过的 IPv6 地址数（合并前每个地址一个点）
 	HostingIPs int64            `json:"hostingIps"` // 标成机房 / 云主机出口的 IP 数
@@ -67,6 +69,7 @@ type Runner struct {
 	ips     map[string]*ipInfo
 	devices map[string]*deviceInfo         // app:device
 	proxies map[string]bool                // 遇到的代理 / CDN / 内网地址
+	badDevs map[string]bool                // 遇到的假设备码原值（占位值、UA 摘要），最后从图里删掉
 	v6Addrs map[string]map[string]struct{} // IPv6 线路（/64）→ 出现过的地址
 }
 
@@ -131,6 +134,7 @@ func (r *Runner) Run(ctx context.Context) (Progress, error) {
 	r.ips = map[string]*ipInfo{}
 	r.devices = map[string]*deviceInfo{}
 	r.proxies = map[string]bool{}
+	r.badDevs = map[string]bool{}
 	r.v6Addrs = map[string]map[string]struct{}{}
 	r.prog = Progress{Status: "running", StartedAt: time.Now(), Written: map[string]int64{}}
 	for _, s := range sources {
@@ -292,8 +296,7 @@ func (r *Runner) noteIP(ip string, first, last int64) *ipInfo {
 
 // useDevice 用户用过某台设备（设备属性累积起来，最后统一写设备点与向量）
 func (r *Runner) useDevice(edge string, appID, uid int64, deviceID string, first, last, count int64, attrs map[string]string) error {
-	deviceID = strings.TrimSpace(deviceID)
-	if deviceID == "" || appID <= 0 {
+	if deviceID = r.deviceKey(deviceID); deviceID == "" || appID <= 0 {
 		return nil
 	}
 	r.noteDevice(appID, uid, deviceID, first, last, attrs)
@@ -304,6 +307,10 @@ func (r *Runner) useDevice(edge string, appID, uid int64, deviceID string, first
 }
 
 func (r *Runner) noteDevice(appID, uid int64, deviceID string, first, last int64, attrs map[string]string) *deviceInfo {
+	// 占位值、UA 摘要不是设备：给一个不入表的空记录，调用方照常改它的字段也不会建点
+	if deviceID = r.deviceKey(deviceID); deviceID == "" {
+		return &deviceInfo{attrs: map[string]string{}}
+	}
 	key := fmt.Sprintf("%d:%s", appID, deviceID)
 	d := r.devices[key]
 	if d == nil {
@@ -389,4 +396,16 @@ func lowerPlatform(p string) string {
 		return "harmonyos"
 	}
 	return p
+}
+
+// deviceKey 有效设备码原样返回；占位值、UA 摘要返回空串，并记下原值（以前按原值建过点，最后要删）
+func (r *Runner) deviceKey(raw string) string {
+	id := events.NormalizeDeviceID(raw)
+	if id == "" {
+		if t := strings.TrimSpace(raw); t != "" {
+			r.badDevs[t] = true
+			r.badDevs[raw] = true
+		}
+	}
+	return id
 }

@@ -737,24 +737,24 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 		v.Lists, _ = s.Store.EntriesFor(ctx, bundle.ListDevice, d.Value)
 		_ = json.Unmarshal([]byte(d.Device), &v.Fingerprint)
 		devViews[i] = v
-		if s.Vector == nil || len(v.Fingerprint) == 0 {
+		if s.Vector == nil || vector.Empty(vector.Embed(d.Value)) {
 			continue
 		}
 		// 每台设备都查相似设备（并发 4 个、各 2 秒上限）
 		swg.Add(1)
-		go func(i int, fp map[string]string, id string) {
+		go func(i int, id string) {
 			defer swg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			sctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			ns, _ := s.Vector.Similar(sctx, appID, id, vector.Embed(fp), 10)
+			ns, _ := s.Vector.Similar(sctx, appID, id, 10)
 			views := make([]similarView, len(ns))
 			for k, n := range ns {
 				views[k] = similarView{Neighbor: n}
 			}
 			devViews[i].Similar = views
-		}(i, v.Fingerprint, d.Value)
+		}(i, d.Value)
 	}
 	swg.Wait()
 	// 相似设备补型号与用户名：所有相似设备与其用户一次从关系图取
@@ -885,7 +885,7 @@ func (s *Server) status(ctx context.Context, _ *app.RequestContext) (any, error)
 		if s.Vector == nil {
 			return errors.New("未连接")
 		}
-		_, err := s.Vector.Similar(c, 0, "", vector.Embed(map[string]string{"brand": "probe"}), 1)
+		_, err := s.Vector.Similar(c, 0, "probe-device", 1)
 		return err
 	})
 	check("risingwave", func(c context.Context) error {

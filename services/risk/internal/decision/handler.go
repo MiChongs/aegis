@@ -44,7 +44,7 @@ func ToRequest(in *riskv1.EvaluateRequest) (engine.Request, error) {
 		Now: time.Now(),
 	}
 	if d := in.GetDevice(); d != nil {
-		req.Device = engine.Device{ID: d.GetId(), Platform: d.GetPlatform(), Brand: d.GetBrand(), Model: d.GetModel(), OSVersion: d.GetOsVersion(),
+		req.Device = engine.Device{ID: events.NormalizeDeviceID(d.GetId()), Platform: d.GetPlatform(), Brand: d.GetBrand(), Model: d.GetModel(), OSVersion: d.GetOsVersion(),
 			AppVersion: d.GetAppVersion(), Screen: d.GetScreen(), Locale: d.GetLocale(), Timezone: d.GetTimezone(), Emulator: d.GetEmulator(),
 			Rooted: d.GetRooted(), Attrs: d.GetAttrs()}
 	}

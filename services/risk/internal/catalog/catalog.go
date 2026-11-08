@@ -78,9 +78,9 @@ func Features() []store.Feature {
 		graphF("g_device_users", "关系图：设备上的账号数", bundle.EntityDevice, bundle.GraphDeviceUsers, 30),
 		graphF("g_ip_users", "关系图：IP 上的账号数", bundle.EntityIP, bundle.GraphIPUsers, 1),
 
-		{Feature: bundle.Feature{Key: "v_similar_devices", Name: "向量：高度相似的设备数", Kind: bundle.FeatureVector,
+		{Feature: bundle.Feature{Key: "v_similar_devices", Name: "向量：设备码几乎相同的设备数", Kind: bundle.FeatureVector,
 			Vector: &bundle.VectorDef{Collection: "device", TopK: 20, MinScore: 0.97, Output: "similar_count"}}},
-		{Feature: bundle.Feature{Key: "v_similar_banned", Name: "向量：相似设备里已封禁的数量", Kind: bundle.FeatureVector,
+		{Feature: bundle.Feature{Key: "v_similar_banned", Name: "向量：设备码几乎相同的被封设备数", Kind: bundle.FeatureVector,
 			Vector: &bundle.VectorDef{Collection: "device", TopK: 20, MinScore: 0.95, Output: "similar_banned"}}},
 
 		derived("risky_network", "高危网络（代理 / VPN / Tor / 机房）", "net.proxy || net.vpn || net.tor || net.datacenter"),
@@ -168,8 +168,8 @@ func Templates() []Template {
 			rule("device_tampered", "设备被篡改", bundle.DimDevice, "F.device_tampered == 1", 20, "", "模拟器或已 Root"),
 			rule("watch_list", "观察名单", bundle.DimList, "list.watch", 30, "", "命中观察名单"),
 			rule("banned_neighbors", "关联被封账号", bundle.DimGraph, "F.g_banned_neighbors >= 2", 40, "", "两跳内有 {{F.g_banned_neighbors}} 个被封账号"),
-			rule("similar_banned_devices", "与被封设备高度相似", bundle.DimDevice, "F.v_similar_banned >= 1", 45, "", "与 {{F.v_similar_banned}} 台被封设备指纹几乎一致"),
-			rule("device_farm", "设备农场", bundle.DimDevice, "F.v_similar_devices >= 10", 50, "", "同应用里有 {{F.v_similar_devices}} 台指纹几乎一样的设备"),
+			rule("similar_banned_devices", "设备码与被封设备几乎相同", bundle.DimDevice, "F.v_similar_banned >= 1", 45, "", "设备码与 {{F.v_similar_banned}} 台被封设备只差一两个字符"),
+			rule("device_farm", "设备农场", bundle.DimDevice, "F.v_similar_devices >= 10", 50, "", "有 {{F.v_similar_devices}} 台设备的设备码与它只差一两个字符，像是批量生成"),
 		}},
 		{Key: "account_security", Name: "账号安全", Description: "撞库、爆破、一号多机", Scenes: []string{"login", "password_reset", "admin_login", "oauth_login", "passkey_login", "qr_login", "password_change", "contact_change", "account_delete", "oauth_bind", "oauth2_authorize"}, Rules: []store.Rule{
 			rule("ip_burst", "IP 请求突增", bundle.DimBehavior, "F.ip_scene_10m > 30", 40, "", "IP 10 分钟请求 {{F.ip_scene_10m}} 次"),
@@ -188,7 +188,7 @@ func Templates() []Template {
 			rule("device_accounts", "一机多号", bundle.DimDevice, "F.device_accounts_1d >= 3", 50, "", "设备 1 天出现 {{F.device_accounts_1d}} 个账号"),
 			rule("graph_device_accounts", "同设备账号团", bundle.DimGraph, "F.g_device_accounts >= 5", 60, "", "与 {{F.g_device_accounts}} 个账号共用设备"),
 			rule("invite_burst", "邀请裂变异常", bundle.DimGraph, "scene == 'invite' && F.g_invite_tree >= 200", 60, "", "三层邀请树 {{F.g_invite_tree}} 人"),
-			rule("farm_ban", "设备农场封禁", bundle.DimDevice, "F.v_similar_banned >= 3 && F.device_tampered == 1", 0, "ban", "改机设备与多台被封设备相同"),
+			rule("farm_ban", "设备农场封禁", bundle.DimDevice, "F.v_similar_banned >= 3 && F.device_tampered == 1", 0, "ban", "改机设备的设备码与多台被封设备几乎相同"),
 			rule("user_blocked_recently", "近期多次被拦", bundle.DimAccount, "F.user_blocked_7d >= 5", 40, "", "7 天被拦截 {{F.user_blocked_7d}} 次"),
 		}},
 		{Key: "payment", Name: "支付风控", Description: "大额、频繁退款、新设备大额", Scenes: []string{"payment"}, Rules: []store.Rule{

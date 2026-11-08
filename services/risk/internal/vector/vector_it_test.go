@@ -9,13 +9,7 @@ import (
 	"aegis/services/risk/internal/config"
 )
 
-func TestEmbedSimilarity(t *testing.T) {
-	a := map[string]string{"brand": "Xiaomi", "model": "2312DRA50C", "screen": "1220x2712@446", "os_version": "14.0", "platform": "android", "locale": "zh-CN", "timezone": "Asia/Shanghai"}
-	b := map[string]string{}
-	for k, v := range a {
-		b[k] = v
-	}
-	c := map[string]string{"brand": "Apple", "model": "iPhone16,1", "screen": "1179x2556@460", "os_version": "18.1", "platform": "ios", "locale": "en-US", "timezone": "America/New_York"}
+func TestSimilarity(t *testing.T) {
 	cos := func(x, y []float32) float64 {
 		var s float64
 		for i := range x {
@@ -23,15 +17,26 @@ func TestEmbedSimilarity(t *testing.T) {
 		}
 		return s
 	}
-	if v := cos(Embed(a), Embed(b)); v < 0.999 {
-		t.Fatalf("identical = %v", v)
+	real1, real2 := "108db9c2f1a64e0b9d3c7a5e2f8b6d41", "cfd6ed07a9b34c1e8f2d6b0a7c5e9f13"
+	if v := Similarity(real1, real2); v > 0.3 {
+		t.Fatalf("两个随机码 = %v", v)
 	}
-	if v := cos(Embed(a), Embed(c)); v > 0.3 {
-		t.Fatalf("different = %v", v)
+	if v := Similarity(real1, real1[:31]+"2"); v < 0.96 || v > 0.97 {
+		t.Fatalf("32 位差 1 位 = %v", v)
 	}
-	b["os_version"] = "14.1"
-	if v := cos(Embed(a), Embed(b)); v < 0.8 || v > 0.99 {
-		t.Fatalf("near = %v", v)
+	long := real1 + real2
+	if v := Similarity(long, long[:61]+"zzz"); v < 0.95 {
+		t.Fatalf("64 位差 3 位 = %v", v)
+	}
+	if v := Similarity("ABC", "abc"); v != 1 {
+		t.Fatalf("大小写 = %v", v)
+	}
+	if !Empty(Embed("0000-0000")) || !Empty(Embed("ua:19619c1804348206")) || !Empty(Embed(" ")) {
+		t.Fatal("占位值与 UA 摘要不该有向量")
+	}
+	// 召回向量：只差末位的码应远比随机码近
+	if a, b := cos(Embed(real1), Embed(real1[:31]+"2")), cos(Embed(real1), Embed(real2)); a < 0.85 || b > 0.4 {
+		t.Fatalf("召回 near=%v far=%v", a, b)
 	}
 }
 
@@ -49,18 +54,19 @@ func TestVectorIT(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := time.Now().UnixNano() % 1_000_000
-	farm := map[string]string{"brand": "Google", "model": "sdk_gphone64", "screen": "1080x2400@420", "os_version": "13", "emulator": "true"}
+	base := "5f0e9c1a7b3d4e2f8a6c0b9d1e7f3a2"
+	f1, f2, f3, real := base+"1", base+"2", base+"3", "cfd6ed07a9b34c1e8f2d6b0a7c5e9f13"
 	rows := []Device{
-		{AppID: app, DeviceID: "f1", UserID: 1, Vec: Embed(farm), Banned: true},
-		{AppID: app, DeviceID: "f2", UserID: 2, Vec: Embed(farm)},
-		{AppID: app, DeviceID: "real", UserID: 3, Vec: Embed(map[string]string{"brand": "Apple", "model": "iPhone15,2", "os_version": "17.4"})},
+		{AppID: app, DeviceID: f1, UserID: 1, Vec: Embed(f1), Banned: true},
+		{AppID: app, DeviceID: f2, UserID: 2, Vec: Embed(f2)},
+		{AppID: app, DeviceID: real, UserID: 3, Vec: Embed(real)},
 	}
 	if err := c.Upsert(ctx, rows); err != nil {
 		t.Fatal(err)
 	}
 	var ns []Neighbor
 	for i := 0; i < 20; i++ {
-		ns, err = c.Similar(ctx, app, "f3", Embed(farm), 5)
+		ns, err = c.Similar(ctx, app, f3, 5)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -69,19 +75,19 @@ func TestVectorIT(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	if len(ns) < 2 || ns[0].Score < 0.99 {
+	if len(ns) < 2 || ns[0].Score < 0.96 || ns[len(ns)-1].Score > 0.5 {
 		t.Fatalf("neighbors = %+v", ns)
 	}
 	banned := 0
 	for _, n := range ns {
-		if n.Score > 0.95 && n.Banned {
+		if n.Score >= 0.95 && n.Banned {
 			banned++
 		}
 	}
 	if banned != 1 {
 		t.Fatalf("banned similar = %d (%+v)", banned, ns)
 	}
-	if err := c.SetBanned(ctx, app, "f2", true); err != nil {
+	if err := c.SetBanned(ctx, app, f2, true); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("neighbors: %+v", ns)

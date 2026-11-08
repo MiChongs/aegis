@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"aegis/services/risk/internal/engine"
@@ -500,6 +501,9 @@ func srcFinalize(ctx context.Context, _ *pgx.Conn, r *Runner) (int64, error) {
 	if err := r.purgeProxies(); err != nil {
 		return n, err
 	}
+	if err := r.purgeBadDevices(); err != nil {
+		return n, err
+	}
 	for ip, info := range r.ips {
 		sets := graph.Sets(graph.Set("addr", ip), graph.Set("country", info.country), graph.Set("province", info.province),
 			graph.Set("city", info.city), graph.Set("isp", info.isp))
@@ -558,8 +562,8 @@ func srcFinalize(ctx context.Context, _ *pgx.Conn, r *Runner) (int64, error) {
 			return n, err
 		}
 		n++
-		// 没有任何型号 / 系统要素的设备不建向量（全零向量和谁都不像，只会占地方）
-		if vec := vector.Embed(a); !vector.Empty(vec) {
+		// 向量只按设备码建（型号相同的正常手机多得是，不能算相似）
+		if vec := vector.Embed(d.id); !vector.Empty(vec) {
 			vecs = append(vecs, vector.Device{AppID: d.appID, DeviceID: d.id, UserID: d.userID, Banned: d.banned, UpdatedAt: d.last, Vec: vec})
 			if len(vecs) >= 500 {
 				if err := flushVec(); err != nil {
@@ -629,6 +633,33 @@ func (r *Runner) purgeProxies() error {
 	r.prog.ProxyIPs = int64(len(r.proxies))
 	if r.Logf != nil {
 		r.Logf("关系图回灌：删除代理 / CDN 地址 %d 个、网段 %d 个；%d 个 IPv6 地址合并成 %d 条 /64 线路", len(r.proxies), len(subnets), v6Addrs, len(r.v6Addrs))
+	}
+	return nil
+}
+
+// purgeBadDevices 删掉以前按占位值、UA 摘要建的设备点（连同边）。向量集合按设备码重建，本来就不收这类值。
+// 全零 OAID 曾把 64 个互不相识的用户连成「共用一台设备」，UA 摘要会让同型号同版本的手机共用一个点。
+func (r *Runner) purgeBadDevices() error {
+	if len(r.badDevs) == 0 {
+		return nil
+	}
+	if err := r.batch.Flush(); err != nil {
+		return err
+	}
+	vids := make([]string, 0, len(r.badDevs))
+	for raw := range r.badDevs {
+		vids = append(vids, graph.Quote(graph.DeviceVID(raw)))
+	}
+	slices.Sort(vids)
+	vids = slices.Compact(vids)
+	for i := 0; i < len(vids); i += 50 {
+		if _, err := r.Graph.Exec("DELETE VERTEX " + strings.Join(vids[i:min(i+50, len(vids))], ", ") + " WITH EDGE"); err != nil {
+			return err
+		}
+	}
+	r.prog.BadDevices = int64(len(vids))
+	if r.Logf != nil {
+		r.Logf("关系图回灌：删除占位值、UA 摘要这类假设备码 %d 个", len(vids))
 	}
 	return nil
 }

@@ -1,8 +1,13 @@
-// Package vector 设备指纹向量（Milvus）。
+// Package vector 设备标识向量（Milvus）。
 //
-// 每台设备一行：主键 应用:设备，向量由指纹要素做带符号的特征哈希（128 维，L2 归一，COSINE）。
-// 同一批改机 / 模拟器出来的设备，指纹要素几乎一样，向量余弦接近 1；同型号的正常设备一般在 0.6–0.85。
-// 决策时按应用（分区键）检索 TopK，数相似度过阈值的设备、其中已封禁的设备。
+// 只看设备码本身，不看品牌、型号、系统版本：客户端的设备码由硬件信号加盐哈希得到（重装不变），
+// 正常设备之间毫无相似之处；同型号的手机在型号层面一模一样，按型号比只会把正常用户都算成「设备农场」。
+// 真正可疑的是脚本批量生成或改机工具改出来的设备码：同一个模板、只差末尾几位计数、或在真码上改一两个字符。
+//
+// 做法：每台设备一行（主键 应用:设备码），向量是设备码的字符三元组与「第 i 位是什么字符」做带符号的特征哈希
+// （256 维，L2 归一，COSINE），只用来召回候选；候选再按两个设备码的编辑距离精确打分：
+// 分数 = 1 − 编辑距离 ÷ 较长的长度。32 位设备码差 1 个字符得 0.969，64 位差 1 个得 0.984、差 3 个得 0.953，
+// 互不相干的随机码在 0.1 以下。特征阈值（0.97 / 0.95）因此就是「只差一两个字符」。
 package vector
 
 import (
@@ -15,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/config"
 
 	"github.com/milvus-io/milvus/client/v3/entity"
@@ -23,71 +29,49 @@ import (
 )
 
 // Dim 向量维数
-const Dim = 128
+const Dim = 256
 
-// CollectionDevices 设备集合
-const CollectionDevices = "risk_devices"
+// CollectionDevices 设备集合（按设备码建向量）
+const CollectionDevices = "risk_device_ids"
 
-var weights = map[string]float64{
-	"brand": 1.0, "model": 2.0, "brand_model": 2.0, "screen": 1.5, "platform": 0.8, "os": 1.0, "os_major": 0.8,
-	"locale": 0.8, "timezone": 0.8, "app_major": 0.5, "emulator": 1.5, "rooted": 1.2,
+// legacyCollections 以前按型号要素建的集合，迁移时删掉
+var legacyCollections = []string{"risk_devices"}
+
+// normalize 比较用的形式：去空白、小写；不是设备码的值（占位值、UA 摘要）得到空串
+func normalize(id string) string {
+	return strings.ToLower(events.NormalizeDeviceID(id))
 }
 
-// Embed 指纹要素 → 向量。attrs 的键与 engine.Device.Attrs 一致。
-func Embed(attrs map[string]string) []float32 {
+// Embed 设备码 → 召回向量。不是有效设备码时返回全零向量（见 Empty）。
+func Embed(deviceID string) []float32 {
+	id := normalize(deviceID)
+	out := make([]float32, Dim)
+	if id == "" {
+		return out
+	}
 	vec := make([]float64, Dim)
 	add := func(token string, w float64) {
 		h := fnv.New64a()
 		_, _ = h.Write([]byte(token))
 		sum := h.Sum64()
-		idx := int(sum % Dim)
 		sign := 1.0
 		if (sum>>63)&1 == 1 {
 			sign = -1
 		}
-		vec[idx] += sign * w
+		vec[int(sum%Dim)] += sign * w
 	}
-	get := func(k string) string { return strings.ToLower(strings.TrimSpace(attrs[k])) }
-	for _, k := range []string{"brand", "model", "screen", "platform", "locale", "timezone"} {
-		if v := get(k); v != "" {
-			add(k+"="+v, weights[k])
-		}
+	rs := []rune(id)
+	for i, r := range rs {
+		add(fmt.Sprintf("p%d=%c", i, r), 1)
 	}
-	if b, m := get("brand"), get("model"); b != "" || m != "" {
-		add("brand_model="+b+"|"+m, weights["brand_model"])
+	for i := 0; i+3 <= len(rs); i++ {
+		add("g="+string(rs[i:i+3]), 1)
 	}
-	if os := get("os_version"); os != "" {
-		add("os="+os, weights["os"])
-		major, _, _ := strings.Cut(os, ".")
-		add("os_major="+major, weights["os_major"])
-	}
-	if app := get("app_version"); app != "" {
-		major, _, _ := strings.Cut(app, ".")
-		add("app_major="+major, weights["app_major"])
-	}
-	for _, k := range []string{"emulator", "rooted"} {
-		if get(k) == "true" {
-			add(k, weights[k])
-		}
-	}
-	// 其余要素（字体哈希、传感器、WebGL 渲染器……）
-	var extra []string
-	for k := range attrs {
-		if strings.HasPrefix(k, "x.") {
-			extra = append(extra, k)
-		}
-	}
-	sort.Strings(extra)
-	for _, k := range extra {
-		if v := get(k); v != "" {
-			add(k+"="+v, 0.7)
-		}
-	}
+	add(fmt.Sprintf("len=%d", len(rs)), 1)
 	var norm float64
 	for _, v := range vec {
 		norm += v * v
 	}
-	out := make([]float32, Dim)
 	if norm == 0 {
 		return out
 	}
@@ -98,7 +82,7 @@ func Embed(attrs map[string]string) []float32 {
 	return out
 }
 
-// Empty 向量全零（没有任何指纹要素）
+// Empty 向量全零（不是有效设备码）
 func Empty(v []float32) bool {
 	for _, x := range v {
 		if x != 0 {
@@ -106,6 +90,38 @@ func Empty(v []float32) bool {
 		}
 	}
 	return true
+}
+
+// Similarity 两个设备码的相似度：1 − 编辑距离 ÷ 较长的长度，0–1
+func Similarity(a, b string) float32 {
+	x, y := []rune(normalize(a)), []rune(normalize(b))
+	if len(x) == 0 || len(y) == 0 {
+		return 0
+	}
+	n := len(x)
+	if len(y) > n {
+		n = len(y)
+	}
+	return float32(1 - float64(levenshtein(x, y))/float64(n))
+}
+
+func levenshtein(a, b []rune) int {
+	prev, cur := make([]int, len(b)+1), make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
 }
 
 // Client Milvus
@@ -133,12 +149,23 @@ func (c *Client) Close(ctx context.Context) {
 
 // Migrate 建集合与索引并加载（可重复执行）
 func (c *Client) Migrate(ctx context.Context) error {
+	for _, old := range legacyCollections {
+		had, err := c.cli.HasCollection(ctx, milvusclient.NewHasCollectionOption(old))
+		if err != nil {
+			return err
+		}
+		if had {
+			if err := c.cli.DropCollection(ctx, milvusclient.NewDropCollectionOption(old)); err != nil {
+				return err
+			}
+		}
+	}
 	has, err := c.cli.HasCollection(ctx, milvusclient.NewHasCollectionOption(CollectionDevices))
 	if err != nil {
 		return err
 	}
 	if !has {
-		schema := entity.NewSchema().WithName(CollectionDevices).WithDescription("风控设备指纹向量").
+		schema := entity.NewSchema().WithName(CollectionDevices).WithDescription("风控设备标识向量").
 			WithField(entity.NewField().WithName("key").WithDataType(entity.FieldTypeVarChar).WithMaxLength(160).WithIsPrimaryKey(true)).
 			WithField(entity.NewField().WithName("app_id").WithDataType(entity.FieldTypeInt64).WithIsPartitionKey(true)).
 			WithField(entity.NewField().WithName("device_id").WithDataType(entity.FieldTypeVarChar).WithMaxLength(128)).
@@ -216,36 +243,49 @@ type Neighbor struct {
 	Score    float32 `json:"score"`
 }
 
-// Similar 同应用里与 vec 最相似的设备（排除自己）
-func (c *Client) Similar(ctx context.Context, appID int64, self string, vec []float32, topK int) ([]Neighbor, error) {
-	if Empty(vec) {
+// Similar 同应用里设备码与 self 最相近的设备（排除自己），按相似度从高到低。
+// 先按向量召回较多的候选，再逐个按编辑距离打分重排；self 不是有效设备码时没有结果。
+func (c *Client) Similar(ctx context.Context, appID int64, self string, topK int) ([]Neighbor, error) {
+	vec := Embed(self)
+	if Empty(vec) || topK <= 0 {
 		return nil, nil
 	}
-	rs, err := c.cli.Search(ctx, milvusclient.NewSearchOption(CollectionDevices, topK+1, []entity.Vector{entity.FloatVector(vec)}).
+	recall := topK * 4
+	if recall < 40 {
+		recall = 40
+	} else if recall > 200 {
+		recall = 200
+	}
+	rs, err := c.cli.Search(ctx, milvusclient.NewSearchOption(CollectionDevices, recall, []entity.Vector{entity.FloatVector(vec)}).
 		WithANNSField("vec").
-		WithFilter("app_id == {app} && key != {self}").WithTemplateParam("app", appID).WithTemplateParam("self", Key(appID, self)).
+		WithFilter("app_id == {app} && key != {self}").WithTemplateParam("app", appID).WithTemplateParam("self", Key(appID, strings.TrimSpace(self))).
 		WithOutputFields("device_id", "user_id", "banned").
 		WithConsistencyLevel(entity.ClBounded))
 	if err != nil {
 		return nil, err
 	}
-	if len(rs) == 0 {
+	if len(rs) == 0 || rs[0].ResultCount == 0 {
 		return nil, nil
 	}
 	r := rs[0]
-	if r.ResultCount == 0 {
-		return nil, nil
-	}
 	devCol, userCol, banCol := r.GetColumn("device_id"), r.GetColumn("user_id"), r.GetColumn("banned")
 	if devCol == nil || userCol == nil || banCol == nil {
 		return nil, errors.New("milvus 结果缺列")
 	}
+	me := normalize(self)
 	out := make([]Neighbor, 0, r.ResultCount)
-	for i := 0; i < r.ResultCount && len(out) < topK; i++ {
+	for i := 0; i < r.ResultCount; i++ {
 		d, _ := devCol.GetAsString(i)
+		if normalize(d) == me {
+			continue
+		}
 		u, _ := userCol.GetAsInt64(i)
 		b, _ := banCol.GetAsBool(i)
-		out = append(out, Neighbor{DeviceID: d, UserID: u, Banned: b, Score: r.Scores[i]})
+		out = append(out, Neighbor{DeviceID: d, UserID: u, Banned: b, Score: Similarity(self, d)})
+	}
+	sort.SliceStable(out, func(a, b int) bool { return out[a].Score > out[b].Score })
+	if len(out) > topK {
+		out = out[:topK]
 	}
 	return out, nil
 }

@@ -150,6 +150,7 @@ func decode(msgs []jetstream.Msg) []events.Event {
 		if err := json.Unmarshal(m.Data(), &e); err != nil || e.ID == "" {
 			continue // 坏消息确认掉，不阻塞后面的
 		}
+		e.DeviceID = events.NormalizeDeviceID(e.DeviceID)
 		// 时间戳缺失或离谱（早于 2020 年）时用入流时间，否则 ClickHouse 的 TTL 会当场把它删掉
 		if e.TS < 1577836800000 {
 			if md, err := m.Metadata(); err == nil {
@@ -180,10 +181,10 @@ func (w *Worker) handleDecisions(ctx context.Context, msgs []jetstream.Msg) erro
 	// 设备向量：同一批里同一台设备只留最新一条
 	latest := map[string]vector.Device{}
 	for _, e := range live {
-		if e.DeviceID == "" || len(e.Device) == 0 {
+		if e.DeviceID == "" {
 			continue
 		}
-		vec := vector.Embed(e.Device)
+		vec := vector.Embed(e.DeviceID)
 		if vector.Empty(vec) {
 			continue
 		}
@@ -264,6 +265,7 @@ func (w *Worker) handleAlerts(ctx context.Context, msgs []jetstream.Msg) error {
 	for _, m := range msgs {
 		var a analytics.Alert
 		if err := json.Unmarshal(m.Data(), &a); err == nil && a.ID != "" {
+			a.DeviceID = events.NormalizeDeviceID(a.DeviceID)
 			alerts = append(alerts, a)
 		}
 	}

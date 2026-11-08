@@ -123,8 +123,8 @@ func (l *Live) Vector(ctx context.Context, qs []engine.VectorQuery, dev engine.D
 			topK = q.TopK
 		}
 	}
-	vec := vector.Embed(dev.Fingerprint())
-	if vector.Empty(vec) {
+	// 只按设备码比：型号、系统版本相同的正常手机多得是，不能算「相似设备」
+	if vector.Empty(vector.Embed(qs[0].Self)) {
 		return nil, nil
 	}
 	type result struct {
@@ -133,7 +133,7 @@ func (l *Live) Vector(ctx context.Context, qs []engine.VectorQuery, dev engine.D
 	}
 	ch := make(chan result, 1)
 	go func() {
-		ns, err := l.Milvus.Similar(ctx, qs[0].AppID, qs[0].Self, vec, topK)
+		ns, err := l.Milvus.Similar(ctx, qs[0].AppID, qs[0].Self, topK)
 		ch <- result{ns, err}
 	}()
 	var r result
