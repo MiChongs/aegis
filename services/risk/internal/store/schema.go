@@ -187,6 +187,17 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log (at DESC);
 `,
+	// 2：关系图回灌记录
+	`
+CREATE TABLE IF NOT EXISTS graph_backfills (
+	id bigserial PRIMARY KEY,
+	operator text NOT NULL DEFAULT '',
+	status text NOT NULL DEFAULT 'running',
+	progress jsonb NOT NULL DEFAULT '{}',
+	started_at timestamptz NOT NULL DEFAULT now(),
+	finished_at timestamptz
+);
+`,
 }
 
 // EnsureDatabase 连主库建 aegis_risk 库（已存在则跳过）

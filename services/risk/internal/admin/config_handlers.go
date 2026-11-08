@@ -54,6 +54,8 @@ func (s *Server) routes(g *route.RouterGroup) {
 	g.POST("/rules", s.wrap(s.saveRule))
 	g.PUT("/rules/:id", s.wrap(s.saveRule))
 	g.DELETE("/rules/:id", s.wrap(s.deleteRule))
+	g.GET("/graph/backfill", s.wrap(s.getBackfill))
+	g.POST("/graph/backfill", s.wrap(s.startBackfill))
 	g.GET("/templates", s.wrap(s.listTemplates))
 	g.POST("/templates/apply", s.wrap(s.applyTemplate))
 

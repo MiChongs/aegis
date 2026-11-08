@@ -380,7 +380,7 @@ export interface DisposeInput {
 
 // ── 关系图与画像 ──
 
-export type GraphNodeKind = "user" | "account" | "device" | "ip" | "subnet" | "phone" | "email";
+export type GraphNodeKind = "user" | "account" | "device" | "ip" | "subnet" | "phone" | "email" | "identity" | "payer" | "passkey" | "client";
 export interface GraphNode { id: string; kind: GraphNodeKind; label: string; props: Record<string, unknown>; depth: number }
 export interface GraphLink { source: string; target: string; kind: string; firstSeen: number; lastSeen: number; count: number }
 export interface Subgraph { center: string; nodes: GraphNode[]; links: GraphLink[]; truncated: boolean }

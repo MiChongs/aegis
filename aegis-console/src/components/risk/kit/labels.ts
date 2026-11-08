@@ -68,11 +68,14 @@ export const GRAPH_TEMPLATE_LABEL: Record<string, string> = {
 
 export const NODE_KIND_LABEL: Record<GraphNodeKind, string> = {
   user: "用户", account: "登录名", device: "设备", ip: "IP", subnet: "网段", phone: "手机号", email: "邮箱",
+  identity: "第三方账号", payer: "付款账号", passkey: "通行密钥", client: "授权应用",
 };
 
 export const EDGE_LABEL: Record<string, string> = {
   uses_device: "使用设备", uses_ip: "使用 IP", in_subnet: "属于网段", has_phone: "绑定手机", has_email: "绑定邮箱",
   account_of: "登录名", invited: "邀请", targets: "交互对象",
+  registered_from: "注册 IP", registered_on: "注册设备", bound_identity: "绑定第三方账号", paid_with: "付款账号",
+  has_passkey: "通行密钥", authorized: "授权应用",
 };
 
 export const STAGE_LABEL: Record<string, string> = {

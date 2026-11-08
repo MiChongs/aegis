@@ -108,12 +108,17 @@ func Migrate(cfg config.Config, logf func(string, ...any)) error {
 			return err
 		}
 	}
-	// schema 同样要等心跳才对写入生效：试写一次确认
+	for _, stmt := range SchemaAdditions() {
+		if _, err := exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "existed") {
+			return err
+		}
+	}
+	// schema 同样要等心跳才对写入生效：新点类型与新加的属性各试写一次确认
 	deadline = time.Now().Add(60 * time.Second)
 	for {
-		_, err := exec(`UPSERT VERTEX ON subnet "sn:__probe__" SET cidr = "probe"`)
+		_, err := exec(`UPSERT VERTEX ON subnet "sn:__probe__" SET cidr = "probe"; UPSERT VERTEX ON identity "oa:__probe__" SET provider = "probe"; UPSERT VERTEX ON user "u:__probe__" SET nickname = "probe"; UPSERT VERTEX ON ip "ip:__probe__" SET vpn = false`)
 		if err == nil {
-			_, _ = exec(`DELETE VERTEX "sn:__probe__"`)
+			_, _ = exec(`DELETE VERTEX "sn:__probe__", "oa:__probe__", "u:__probe__", "ip:__probe__"`)
 			break
 		}
 		if time.Now().After(deadline) {

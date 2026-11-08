@@ -164,8 +164,8 @@ func ObjectFor(f bundle.Feature) Object {
 
 // Target 连接参数
 type Target struct {
-	NATSServer    string   // risk 视角的 NATS 地址（host:port）
-	NATSUser      string   // 有值时用 user_and_password 连接（生产 NATS 带账户鉴权）
+	NATSServer    string // risk 视角的 NATS 地址（host:port）
+	NATSUser      string // 有值时用 user_and_password 连接（生产 NATS 带账户鉴权）
 	NATSPassword  string
 	RedisURLs     []string // redis://:密码@主机:端口
 	StartupMode   string   // earliest（默认，回填）/ latest

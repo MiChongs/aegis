@@ -23,6 +23,10 @@ const KIND_STYLE: Record<GraphNodeKind, { color: string; size: number; symbol: s
   subnet: { color: "#14b8a6", size: 14, symbol: "diamond" },
   phone: { color: "#f59e0b", size: 16, symbol: "triangle" },
   email: { color: "#ec4899", size: 16, symbol: "triangle" },
+  identity: { color: "#2563eb", size: 18, symbol: "pin" },
+  payer: { color: "#d97706", size: 16, symbol: "rect" },
+  passkey: { color: "#059669", size: 14, symbol: "rect" },
+  client: { color: "#7c3aed", size: 16, symbol: "roundRect" },
 };
 
 const KINDS = Object.keys(KIND_STYLE) as GraphNodeKind[];

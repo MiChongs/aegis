@@ -252,6 +252,9 @@ func label(id string, p map[string]any) string {
 	}
 	switch Kind(id) {
 	case TagUser:
+		if n := pick("nickname"); n != "" {
+			return n
+		}
 		if n := pick("name"); n != "" {
 			return n
 		}
@@ -271,8 +274,47 @@ func label(id string, p map[string]any) string {
 		return pick("masked")
 	case TagEmail:
 		return pick("masked")
+	case TagIdentity:
+		if n := pick("nickname"); n != "" {
+			return n
+		}
+		return providerName(pick("provider")) + " 账号"
+	case TagPayer:
+		if m := pick("masked"); m != "" {
+			return m
+		}
+		return pick("channel") + " 付款账号"
+	case TagPasskey:
+		if n := pick("name"); n != "" {
+			return n
+		}
+		return "通行密钥"
+	case TagClient:
+		if n := pick("name"); n != "" {
+			return n
+		}
+		return pick("client_id")
 	}
 	return id
+}
+
+// providerName 第三方登录渠道的显示名
+func providerName(p string) string {
+	switch strings.ToLower(p) {
+	case "qq":
+		return "QQ"
+	case "google":
+		return "Google"
+	case "wechat", "weixin":
+		return "微信"
+	case "github":
+		return "GitHub"
+	case "apple":
+		return "Apple"
+	case "":
+		return "第三方"
+	}
+	return p
 }
 
 func str(rec *nebula.Record, i int) string {

@@ -24,6 +24,7 @@ import (
 	"aegis/services/risk/events"
 	"aegis/services/risk/internal/admin"
 	"aegis/services/risk/internal/analytics"
+	"aegis/services/risk/internal/backfill"
 	"aegis/services/risk/internal/catalog"
 	"aegis/services/risk/internal/config"
 	"aegis/services/risk/internal/graph"
@@ -55,6 +56,8 @@ func main() {
 		err = emit(os.Args[2], logf)
 	case len(os.Args) > 1 && os.Args[1] == "migrate":
 		err = migrate(logf)
+	case len(os.Args) > 1 && os.Args[1] == "graph-backfill":
+		err = graphBackfill(logf)
 	default:
 		err = serve(logf)
 	}
@@ -312,5 +315,45 @@ func serve(logf func(string, ...any)) error {
 		return err
 	}
 	logf("risk-admin 启动 %s", cfg.AdminAddr)
+	// 从没回灌过关系图（新部署）就在后台自动跑一次；等服务起来、依赖都连上再开始
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-time.After(15 * time.Second):
+			srv.AutoBackfill(ctx)
+		}
+	}()
 	return srv.Run(ctx, reg)
+}
+
+// graphBackfill 命令行跑一次关系图回灌（前台、打印每个来源的结果）
+func graphBackfill(logf func(string, ...any)) error {
+	cfg := config.Load()
+	ctx := context.Background()
+	// 先补齐图模式（新加的点类型与属性），可重复执行
+	if err := graph.Migrate(cfg, logf); err != nil {
+		return err
+	}
+	g, err := graph.Open(cfg)
+	if err != nil {
+		return err
+	}
+	defer g.Close()
+	var vc *vector.Client
+	if v, err := vector.Open(ctx, cfg); err == nil {
+		vc = v
+		defer v.Close(ctx)
+	}
+	done := map[string]bool{}
+	r := &backfill.Runner{MainDSN: cfg.PGAdminDSN, Graph: g, Vector: vc, Logf: logf, OnProgress: func(p backfill.Progress) {
+		for _, st := range p.Steps {
+			if (st.Status == "done" || st.Status == "failed" || st.Status == "skipped") && !done[st.Key] {
+				done[st.Key] = true
+				logf("关系图回灌：%s %s，%d 行，%d 秒 %s", st.Label, st.Status, st.Rows, st.Seconds, st.Error)
+			}
+		}
+	}}
+	p, err := r.Run(ctx)
+	logf("关系图回灌结束：%d 位用户、%d 个 IP、%d 台设备、%d 条设备向量，写入 %v", p.Users, p.IPs, p.Devices, p.Vectors, p.Written)
+	return err
 }
