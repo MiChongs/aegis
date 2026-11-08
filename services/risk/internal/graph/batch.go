@@ -16,10 +16,14 @@ type Batch struct {
 	Written map[string]int
 }
 
-// NewBatch 每满 maxStmt 条语句提交一次
+// MaxStatements 一次提交的语句上限。Nebula 把分号连起来的语句编成一棵执行计划树，
+// 深度超过 512 层报 "The depth of plan tree has exceeded the max 512 level"；每条 UPSERT 占几层，80 条留足余量。
+const MaxStatements = 80
+
+// NewBatch 每满 maxStmt 条语句提交一次（不超过 MaxStatements）
 func (c *Client) NewBatch(maxStmt int) *Batch {
-	if maxStmt <= 0 {
-		maxStmt = 400
+	if maxStmt <= 0 || maxStmt > MaxStatements {
+		maxStmt = MaxStatements
 	}
 	return &Batch{c: c, maxStmt: maxStmt, Written: map[string]int{}}
 }

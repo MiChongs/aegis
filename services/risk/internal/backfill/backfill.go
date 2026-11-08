@@ -118,7 +118,7 @@ func (r *Runner) Run(ctx context.Context) (Progress, error) {
 		return Progress{}, err
 	}
 
-	r.batch = r.Graph.NewBatch(400)
+	r.batch = r.Graph.NewBatch(graph.MaxStatements)
 	r.ips = map[string]*ipInfo{}
 	r.devices = map[string]*deviceInfo{}
 	r.prog = Progress{Status: "running", StartedAt: time.Now(), Written: map[string]int64{}}

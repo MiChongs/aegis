@@ -134,20 +134,37 @@ func Statements(e events.Event) string {
 	return b.String()
 }
 
-// Apply 写入一批事件
+// Apply 写入一批事件。按语句数分段提交：一次提交的语句太多，Nebula 的执行计划树会超过 512 层直接报错。
 func (c *Client) Apply(evs []events.Event) error {
 	var b strings.Builder
+	n := 0
+	flush := func() error {
+		if n == 0 {
+			return nil
+		}
+		_, err := c.Exec(b.String())
+		b.Reset()
+		n = 0
+		return err
+	}
 	for _, e := range evs {
 		if e.Shadow {
 			continue
 		}
-		b.WriteString(Statements(e))
+		stmts := Statements(e)
+		if stmts == "" {
+			continue
+		}
+		k := strings.Count(stmts, ";")
+		if n > 0 && n+k > MaxStatements {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		b.WriteString(stmts)
+		n += k
 	}
-	if b.Len() == 0 {
-		return nil
-	}
-	_, err := c.Exec(b.String())
-	return err
+	return flush()
 }
 
 // SetBanned 标记封禁状态（设备 / IP 进黑名单、账号封禁时）
