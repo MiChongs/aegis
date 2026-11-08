@@ -576,6 +576,9 @@ type Order struct {
 // ReviewAmountMismatch 待人工处理的原因：实付少于订单金额，或者不允许改金额的渠道金额对不上。
 const ReviewAmountMismatch = "amount_mismatch"
 
+// OrderFilterReview 管理端订单列表的筛选值（status=review）：只看待人工处理的订单。
+const OrderFilterReview = "review"
+
 // ReturnView 同步跳转结果页能看到的订单信息。
 //
 // 字段刻意只有这几个。这条响应的凭据是渠道附在 return_url 上的签名 query，

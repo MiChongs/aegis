@@ -196,6 +196,11 @@ VALUES ('afdian-super', 'x', '超级管理员', TRUE) RETURNING id`).Scan(&super
 	if o := statusOf(first.OrderNo); o.PaidAmount == nil || o.PaidAmount.StringFixed(2) != "29.90" {
 		t.Fatalf("正常结单的实付应为订单金额 29.90，得到 %+v", o.PaidAmount)
 	}
+	// 管理端订单列表的「待人工处理」筛选：只有少付的那一笔
+	reviewItems, reviewTotal, err := pg.ListPaymentOrdersByApp(ctx, appID, paymentdomain.OrderFilterReview, "", "", 0, 1, 50)
+	if err != nil || reviewTotal != 1 || len(reviewItems) != 1 || reviewItems[0].OrderNo != fourth.OrderNo {
+		t.Fatalf("待人工处理筛选应只有 %s，得到 %d 条 %v", fourth.OrderNo, reviewTotal, err)
+	}
 	// 付款人改不了金额的渠道仍然严格相等
 	if pay.payerAdjustsAmount(paymentdomain.MethodEpay) || !pay.payerAdjustsAmount(paymentdomain.MethodAfdian) {
 		t.Fatal("只有爱发电允许多付")

@@ -218,7 +218,10 @@ func (r *Repository) ListPaymentOrdersByApp(ctx context.Context, appID int64, st
 	}
 	args := []any{appID}
 	where := ` WHERE appid = $1`
-	if status = strings.TrimSpace(status); status != "" {
+	if status = strings.TrimSpace(status); status == paymentdomain.OrderFilterReview {
+		// 不是订单状态：待人工处理的订单（实付与订单金额对不上，见 docs/payment-review.md）
+		where += " AND review_reason IS NOT NULL"
+	} else if status != "" {
 		args = append(args, status)
 		where += fmt.Sprintf(" AND status = $%d", len(args))
 	}
