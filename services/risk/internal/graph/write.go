@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"aegis/services/risk/events"
+	"aegis/services/risk/internal/proxyip"
 )
 
 // 边的 UPSERT：首次见到记 first_seen，之后只推 last_seen 与次数。
@@ -81,7 +82,8 @@ func Statements(e events.Event) string {
 			upsertEdge(&b, EdgeUsesDevice, subject, dv, ts)
 		}
 	}
-	if e.IP != "" {
+	// 代理 / CDN / 内网地址不是用户的出口，不进图（否则会把大量无关用户连在一起）
+	if e.IP != "" && !proxyip.IsProxy(e.IP) {
 		iv := IPVID(e.IP)
 		sets := []string{setStr("addr", e.IP)}
 		if e.Country != "" {

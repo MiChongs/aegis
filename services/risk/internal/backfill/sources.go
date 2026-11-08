@@ -89,7 +89,7 @@ func srcUsers(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) {
 				return err
 			}
 		}
-		if ip := cleanIP(regIP); ip != "" {
+		if ip := r.clientIP(regIP); ip != "" {
 			info := r.noteIP(ip, regAt, regAt)
 			if info.province == "" {
 				info.province, info.city, info.isp = prov, city, isp
@@ -111,7 +111,7 @@ func srcRegister(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) 
 		if err := row.Scan(&appID, &uid, &ip, &dev, &country, &prov, &city, &isp, &ts); err != nil {
 			return err
 		}
-		if ip = cleanIP(ip); ip != "" {
+		if ip = r.clientIP(ip); ip != "" {
 			info := r.noteIP(ip, ts, ts)
 			if info.country == "" {
 				info.country = country
@@ -187,7 +187,7 @@ func srcLoginGeo(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) 
 		if err := row.Scan(&ip, &country, &region, &city, &isp, &asn, &first, &last); err != nil {
 			return err
 		}
-		if ip = cleanIP(ip); ip == "" {
+		if ip = r.clientIP(ip); ip == "" {
 			return nil
 		}
 		info := r.noteIP(ip, first, last)
@@ -468,7 +468,7 @@ func srcIPIntel(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) {
 		if err := row.Scan(&ip, &country, &region, &isp, &asn, &proxy, &vpn, &tor, &dc, &first, &last); err != nil {
 			return err
 		}
-		ip = cleanIP(ip)
+		ip = r.clientIP(ip)
 		info, ok := r.ips[ip]
 		if ip == "" || !ok { // 只补图上已有（有用户用过）的 IP，不把整张情报表搬进图
 			return nil
@@ -491,9 +491,12 @@ func srcIPIntel(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) {
 	})
 }
 
-// srcFinalize 写 IP 点（带网段）、设备点与设备向量
+// srcFinalize 删掉图里的代理 / CDN 地址，再写 IP 点（带网段）、设备点与设备向量
 func srcFinalize(ctx context.Context, _ *pgx.Conn, r *Runner) (int64, error) {
 	var n int64
+	if err := r.purgeProxies(); err != nil {
+		return n, err
+	}
 	for ip, info := range r.ips {
 		sets := graph.Sets(graph.Set("addr", ip), graph.Set("country", info.country), graph.Set("province", info.province),
 			graph.Set("city", info.city), graph.Set("isp", info.isp))
@@ -562,4 +565,38 @@ func parseASN(s string) int64 {
 		n = n*10 + int64(c-'0')
 	}
 	return n
+}
+
+// purgeProxies 删除代理 / CDN / 内网地址的 IP 点（连同它们的边），以及只由这些地址组成的网段点。
+// 这些地址是历史上被误记成用户 IP 的，留在图上会把大量无关用户连在一起。
+func (r *Runner) purgeProxies() error {
+	if len(r.proxies) == 0 {
+		return nil
+	}
+	if err := r.batch.Flush(); err != nil {
+		return err
+	}
+	userSubnets := map[string]bool{}
+	for ip := range r.ips {
+		userSubnets[engine.Subnet(ip)] = true
+	}
+	var vids []string
+	subnets := map[string]bool{}
+	for ip := range r.proxies {
+		vids = append(vids, graph.Quote(graph.IPVID(ip)))
+		if sn := engine.Subnet(ip); sn != "" && !userSubnets[sn] && !subnets[sn] {
+			subnets[sn] = true
+			vids = append(vids, graph.Quote(graph.SubnetVID(sn)))
+		}
+	}
+	for i := 0; i < len(vids); i += 50 {
+		if _, err := r.Graph.Exec("DELETE VERTEX " + strings.Join(vids[i:min(i+50, len(vids))], ", ") + " WITH EDGE"); err != nil {
+			return err
+		}
+	}
+	r.prog.ProxyIPs = int64(len(r.proxies))
+	if r.Logf != nil {
+		r.Logf("关系图回灌：删除代理 / CDN 地址 %d 个、网段 %d 个", len(r.proxies), len(subnets))
+	}
+	return nil
 }

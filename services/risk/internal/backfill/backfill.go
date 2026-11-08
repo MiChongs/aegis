@@ -15,6 +15,7 @@ import (
 
 	"aegis/services/risk/internal/engine"
 	"aegis/services/risk/internal/graph"
+	"aegis/services/risk/internal/proxyip"
 	"aegis/services/risk/internal/vector"
 
 	"github.com/jackc/pgx/v5"
@@ -42,6 +43,7 @@ type Progress struct {
 	Devices    int64            `json:"devices"`
 	IPs        int64            `json:"ips"`
 	Vectors    int64            `json:"vectors"`
+	ProxyIPs   int64            `json:"proxyIps"` // 从图里删掉的代理 / CDN 地址数
 	Error      string           `json:"error,omitempty"`
 }
 
@@ -60,6 +62,7 @@ type Runner struct {
 	batch   *graph.Batch
 	ips     map[string]*ipInfo
 	devices map[string]*deviceInfo // app:device
+	proxies map[string]bool        // 遇到的代理 / CDN / 内网地址
 }
 
 type ipInfo struct {
@@ -121,6 +124,7 @@ func (r *Runner) Run(ctx context.Context) (Progress, error) {
 	r.batch = r.Graph.NewBatch(graph.MaxStatements)
 	r.ips = map[string]*ipInfo{}
 	r.devices = map[string]*deviceInfo{}
+	r.proxies = map[string]bool{}
 	r.prog = Progress{Status: "running", StartedAt: time.Now(), Written: map[string]int64{}}
 	for _, s := range sources {
 		r.prog.Steps = append(r.prog.Steps, Step{Key: s.key, Label: s.label, Detail: s.detail, Status: "pending"})
@@ -246,7 +250,7 @@ func (r *Runner) user(appID, uid, first, last int64, sets ...string) error {
 
 // useIP 用户用过某个 IP（记下 IP，最后统一写 IP 点与网段）
 func (r *Runner) useIP(edge string, appID, uid int64, ip string, first, last, count int64) error {
-	ip = cleanIP(ip)
+	ip = r.clientIP(ip)
 	if ip == "" || appID <= 0 || uid <= 0 {
 		return nil
 	}
@@ -312,6 +316,19 @@ func cleanIP(ip string) string {
 		ip = ip[:i]
 	}
 	if engine.Subnet(ip) == "" {
+		return ""
+	}
+	return ip
+}
+
+// clientIP 用户自己的出口 IP；代理 / CDN / 内网地址记下来（最后从图里删掉）并返回空
+func (r *Runner) clientIP(ip string) string {
+	ip = cleanIP(ip)
+	if ip == "" {
+		return ""
+	}
+	if proxyip.IsProxy(ip) {
+		r.proxies[ip] = true
 		return ""
 	}
 	return ip

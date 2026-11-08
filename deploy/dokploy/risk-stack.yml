@@ -34,6 +34,9 @@ x-risk-env: &risk-env
   RISK_NATS_URL: nats://${RISK_NATS_USER:?}:${RISK_NATS_PASSWORD:?}@aegis-nats:4222
   # NATS 服务端 jetstream.max_file 只有 8G，RISK 流给 3G（7 天约 0.7G）
   RISK_STREAM_MAX_BYTES: 3G
+  # 代理 / CDN / 服务器出口地址：不当作用户 IP 写进关系图。与 aegis-api 的 TRUSTED_PROXIES 保持一致，
+  # 另加代用户发请求的服务器出口（旧 Zeabur 机器上的官网 BFF、本机公网地址）
+  RISK_PROXY_CIDRS: ${RISK_PROXY_CIDRS:-}
   RISK_CLICKHOUSE_ADDR: risk-clickhouse:9000
   RISK_CLICKHOUSE_USER: aegis
   RISK_CLICKHOUSE_PASSWORD: ${RISK_CLICKHOUSE_PASSWORD:?}
