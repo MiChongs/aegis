@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1059,6 +1060,88 @@ func (s *Server) ruleMeta(ctx context.Context) (map[string]ruleInfo, error) {
 	out := make(map[string]ruleInfo, len(rules))
 	for _, r := range rules {
 		out[r.Key] = ruleInfo{Name: r.Name, Dimension: r.Dimension, Score: r.Score, Mode: string(r.Mode), Decision: r.Decision}
+	}
+	return out, nil
+}
+
+// RuleHit 一条规则在近 N 天的命中情况
+type RuleHit struct {
+	Rule     string    `json:"rule"`
+	Total    uint64    `json:"total"`
+	LastHour time.Time `json:"lastHour"`
+	Daily    []uint64  `json:"daily"` // 与 Days 一一对应，最早的一天在前
+}
+
+// RuleHitsView 规则命中统计：给规则列表标「近 7 天命中 N 次」和走势，并给出同期评估总量算命中率
+type RuleHitsView struct {
+	Days      []string  `json:"days"` // UTC 日期 yyyy-mm-dd
+	Decisions uint64    `json:"decisions"`
+	Rules     []RuleHit `json:"rules"`
+}
+
+// ruleHits GET /rules/hits?scene=&app=&days=7，只统计正式评估（影子评估不进 rule_hits_hour）
+func (s *Server) ruleHits(ctx context.Context, c *app.RequestContext) (any, error) {
+	days := qint(c, "days", 7)
+	if days < 1 {
+		days = 1
+	} else if days > 90 {
+		days = 90
+	}
+	now := time.Now().UTC()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(days - 1))
+	cond, args := "", []any{start}
+	if a := qapp(c); a != nil {
+		cond += " AND app_id = ?"
+		args = append(args, *a)
+	}
+	if sc := strings.TrimSpace(string(c.Query("scene"))); sc != "" {
+		cond += " AND scene = ?"
+		args = append(args, sc)
+	}
+	out := RuleHitsView{Days: make([]string, days), Rules: []RuleHit{}}
+	index := map[string]int{}
+	for i := 0; i < days; i++ {
+		d := start.AddDate(0, 0, i).Format("2006-01-02")
+		out.Days[i] = d
+		index[d] = i
+	}
+	conn := s.CH.Conn()
+	var rows []struct {
+		Rule string    `ch:"rule"`
+		Day  time.Time `ch:"d"`
+		N    uint64    `ch:"n"`
+		Last time.Time `ch:"last"`
+	}
+	if err := conn.Select(ctx, &rows, "SELECT rule, toDate(hour) AS d, sum(n) AS n, max(hour) AS last FROM rule_hits_hour WHERE hour >= ?"+cond+" GROUP BY rule, d", args...); err != nil {
+		return nil, err
+	}
+	byRule := map[string]*RuleHit{}
+	for _, r := range rows {
+		h := byRule[r.Rule]
+		if h == nil {
+			h = &RuleHit{Rule: r.Rule, Daily: make([]uint64, days)}
+			byRule[r.Rule] = h
+		}
+		if i, ok := index[r.Day.UTC().Format("2006-01-02")]; ok {
+			h.Daily[i] += r.N
+		}
+		h.Total += r.N
+		if r.Last.After(h.LastHour) {
+			h.LastHour = r.Last
+		}
+	}
+	for _, h := range byRule {
+		out.Rules = append(out.Rules, *h)
+	}
+	sort.Slice(out.Rules, func(i, j int) bool { return out.Rules[i].Total > out.Rules[j].Total })
+	var total []struct {
+		N uint64 `ch:"n"`
+	}
+	if err := conn.Select(ctx, &total, "SELECT sum(n) AS n FROM decisions_minute WHERE minute >= ? AND shadow = 0"+cond, args...); err != nil {
+		return nil, err
+	}
+	if len(total) > 0 {
+		out.Decisions = total[0].N
 	}
 	return out, nil
 }

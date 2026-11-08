@@ -51,6 +51,7 @@ func (s *Server) routes(g *route.RouterGroup) {
 	g.POST("/features/sync", s.wrap(s.syncStreams))
 
 	g.GET("/rules", s.wrap(s.listRules))
+	g.GET("/rules/hits", s.wrap(s.ruleHits))
 	g.POST("/rules", s.wrap(s.saveRule))
 	g.PUT("/rules/:id", s.wrap(s.saveRule))
 	g.DELETE("/rules/:id", s.wrap(s.deleteRule))
