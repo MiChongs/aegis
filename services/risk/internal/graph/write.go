@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"aegis/services/risk/internal/events"
+	"aegis/services/risk/events"
 )
 
 // 边的 UPSERT：首次见到记 first_seen，之后只推 last_seen 与次数。

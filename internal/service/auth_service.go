@@ -3,6 +3,7 @@ package service
 import (
 	"aegis/internal/domain/accountdeletion"
 	"aegis/pkg/egress"
+	riskevents "aegis/services/risk/events"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -47,33 +48,33 @@ const (
 
 type AuthService struct {
 	// publicIDs 主键 ↔ 对外用户 ID（与 UserService 共用一份，见 SetPublicIDs）
-	publicIDs      *UserPublicIDs
-	cfg            config.Config
-	log            *zap.Logger
-	pg             *pgrepo.Repository
-	sessions       *redisrepo.SessionRepository
-	publisher      *event.Publisher
-	app            *AppService
-	security       *SecurityService
-	providers      map[string]*OAuthProvider
-	appOAuth       *AppOAuthService
-	http           *http.Client
-	plugin         *PluginService
-	risk           *RiskService
-	search         *AdminUserSearchService
-	loginGuard     *LoginGuardService
-	consistency    *LoginConsistencyService
+	publicIDs   *UserPublicIDs
+	cfg         config.Config
+	log         *zap.Logger
+	pg          *pgrepo.Repository
+	sessions    *redisrepo.SessionRepository
+	publisher   *event.Publisher
+	app         *AppService
+	security    *SecurityService
+	providers   map[string]*OAuthProvider
+	appOAuth    *AppOAuthService
+	http        *http.Client
+	plugin      *PluginService
+	risk        *RiskService
+	search      *AdminUserSearchService
+	loginGuard  *LoginGuardService
+	consistency *LoginConsistencyService
 	// governance 平台治理判定：应用被冻结 / 封禁时，连已经签发的会话也当场失效
-	governance     *PlatformGovernanceService
+	governance *PlatformGovernanceService
 	// devices 设备字典，见 SetDeviceDirectory
 	devices *DeviceMarketingService
 	// cardKey 卡密登录。未注入时 cardkey 登录方式直接报「未启用」而不是空指针
-	cardKey        *CardKeyService
+	cardKey *CardKeyService
 	// recoveryEmail / recoveryCaptcha / recoveryUsers 找回密码的发信、短信与会话治理，见 SetPasswordRecovery
 	recoveryEmail   passwordRecoveryMailer
 	recoveryCaptcha *CaptchaService
 	recoveryUsers   *UserService
-	registerFlight singleflight.Group
+	registerFlight  singleflight.Group
 	// jwtSecret 预转换的签名密钥字节，避免每次签发/校验重复分配
 	jwtSecret []byte
 	// timingDummyHash 时序均衡用哑 bcrypt 哈希：账号不存在或账号无密码时，
@@ -134,7 +135,9 @@ type PasswordRegisterInput struct {
 
 // SetAccountDeletion 接上账号注销：登录结果带上冷静期状态（按配置登录即撤销），注册前核对重新注册限制。
 // SetLoginObserver 注册登录观察者，见 loginObserver。
-func (s *AuthService) SetLoginObserver(fn func(appID, userID int64, provider string)) { s.loginObserver = fn }
+func (s *AuthService) SetLoginObserver(fn func(appID, userID int64, provider string)) {
+	s.loginObserver = fn
+}
 
 func (s *AuthService) SetAccountDeletion(deletion *AccountDeletionService) {
 	s.deletion = deletion
@@ -1546,6 +1549,13 @@ func (s *AuthService) issueSessionBundle(ctx context.Context, app *appdomain.App
 		"device_platform": client.Platform,
 		"device_extra":    client.Extra.Ref(),
 	})
+	if s.risk != nil {
+		fp := DeviceFingerprint(ctx)
+		s.risk.Report(ctx, riskevents.Event{
+			Type: riskevents.TypeLoginSuccess, Scene: securitydomain.SceneLogin, AppID: user.AppID, UserID: user.ID, Account: user.Account,
+			IP: ip, DeviceID: deviceID, UA: userAgent, Device: fp, Props: map[string]any{"loginType": loginType, "provider": provider},
+		})
+	}
 	_ = s.publisher.PublishJSON(ctx, event.SubjectSessionAuditRequested, map[string]any{
 		"user_id":    user.ID,
 		"appid":      user.AppID,

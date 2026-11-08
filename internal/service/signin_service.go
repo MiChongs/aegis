@@ -2,6 +2,7 @@ package service
 
 import (
 	securitydomain "aegis/internal/domain/security"
+	riskevents "aegis/services/risk/events"
 	"context"
 	"fmt"
 	"net/http"
@@ -127,7 +128,13 @@ func (s *SignInService) SignIn(ctx context.Context, session *authdomain.Session,
 	}, RiskGuardOption{Message: "当前环境存在风险，暂时无法签到"}); err != nil {
 		return nil, err
 	}
-	return s.signInInternal(ctx, session.UserID, session.AppID, source, deviceInfo, ipAddress, location)
+	result, err := s.signInInternal(ctx, session.UserID, session.AppID, source, deviceInfo, ipAddress, location)
+	if err == nil {
+		s.riskReport(ctx, riskevents.Event{Type: riskevents.TypeSignin, Scene: securitydomain.SceneSignIn, AppID: session.AppID, UserID: session.UserID,
+			Account: session.Account, IP: ipAddress, DeviceID: session.DeviceID, UA: session.UserAgent, Device: DeviceFingerprint(ctx),
+			Props: map[string]any{"source": source}})
+	}
+	return result, err
 }
 
 func (s *SignInService) SignInForUser(ctx context.Context, userID int64, appID int64, source, deviceInfo, ipAddress, location string) (*userdomain.SignInResult, error) {

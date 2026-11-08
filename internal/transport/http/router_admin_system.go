@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"aegis/internal/middleware"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -376,49 +377,10 @@ func registerAdminSystemRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		adminSystem.POST("/user-master/sync", h.AdminSyncIdentity)
 		adminSystem.POST("/user-master/sync/batch", h.AdminBatchSyncIdentities)
 
-		// 风控中心
-		// 目录（/metadata）驱动控制台的场景下拉、条件参数表单与表达式提示：
-		// 后端新增一种条件类型时前端零改动即自动出现，不要在前端另抄一份枚举。
-		adminSystem.GET("/risk/metadata", h.AdminRiskMetadata)
-		adminSystem.POST("/risk/expression/validate", h.AdminValidateRiskExpression)
-		adminSystem.GET("/risk/dashboard", h.AdminRiskDashboard)
-		adminSystem.POST("/risk/evaluate", h.AdminEvaluateRisk)
-		adminSystem.POST("/risk/simulate", h.AdminSimulateRisk)
-		adminSystem.GET("/risk/rules", h.AdminListRiskRules)
-		adminSystem.POST("/risk/rules", h.AdminCreateRiskRule)
-		adminSystem.GET("/risk/rules/:id", h.AdminGetRiskRule)
-		adminSystem.PUT("/risk/rules/:id", h.AdminUpdateRiskRule)
-		adminSystem.DELETE("/risk/rules/:id", h.AdminDeleteRiskRule)
-		adminSystem.POST("/risk/rules/:id/simulate", h.AdminSimulateRiskRule)
-		adminSystem.GET("/risk/assessments", h.AdminListRiskAssessments)
-		adminSystem.DELETE("/risk/assessments", h.AdminPurgeRiskAssessments)
-		adminSystem.GET("/risk/assessments/:id", h.AdminGetRiskAssessment)
-		adminSystem.POST("/risk/assessments/:id/review", h.AdminReviewRiskAssessment)
-		adminSystem.POST("/risk/assessments/:id/replay", h.AdminReplayRiskAssessment)
-		adminSystem.GET("/risk/reviews/pending", h.AdminListPendingReviews)
-		adminSystem.GET("/risk/devices", h.AdminListRiskDevices)
-		adminSystem.GET("/risk/devices/suspicious", h.AdminListSuspiciousDevices)
-		adminSystem.GET("/risk/devices/:deviceId", h.AdminGetDeviceFingerprint)
-		adminSystem.PUT("/risk/devices/:id/tag", h.AdminUpdateDeviceRiskTag)
-		adminSystem.GET("/risk/ips", h.AdminListHighRiskIPs)
-		adminSystem.GET("/risk/ips/:ip", h.AdminGetIPRisk)
-		adminSystem.POST("/risk/ips/:ip/refresh", h.AdminRefreshIPReputation)
-		adminSystem.PUT("/risk/ips/:id/tag", h.AdminUpdateIPRiskTag)
-		adminSystem.GET("/risk/actions", h.AdminListRiskActions)
-		adminSystem.POST("/risk/actions", h.AdminCreateRiskAction)
-		adminSystem.PUT("/risk/actions/:id", h.AdminUpdateRiskAction)
-		adminSystem.DELETE("/risk/actions/:id", h.AdminDeleteRiskAction)
-		adminSystem.GET("/risk/lists", h.AdminListRiskLists)
-		adminSystem.POST("/risk/lists", h.AdminCreateRiskLists)
-		adminSystem.POST("/risk/lists/batch-delete", h.AdminBatchDeleteRiskLists)
-		adminSystem.POST("/risk/lists/check", h.AdminCheckRiskLists)
-		adminSystem.PUT("/risk/lists/:id", h.AdminUpdateRiskList)
-		adminSystem.DELETE("/risk/lists/:id", h.AdminDeleteRiskList)
-		adminSystem.GET("/risk/accounts", h.AdminListRiskAccounts)
-		adminSystem.GET("/risk/accounts/detail", h.AdminGetRiskAccount)
-		adminSystem.POST("/risk/dispose", h.AdminDisposeRisk)
-		adminSystem.GET("/risk/templates", h.AdminListRiskTemplates)
-		adminSystem.POST("/risk/templates/apply", h.AdminApplyRiskTemplate)
+		// 风控平台：转发到独立服务 risk-admin（docs/risk-platform.md），读对管理员开放、写限超管
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+			adminSystem.Handle(method, "/risk/*path", h.AdminRiskProxy)
+		}
 
 		// 平台级 Banner 的"写"操作：统一套 RequireSuperAdmin，仅超管可进行 CRUD
 		platformBannerGroup := adminSystem.Group("/banners", middleware.RequireSuperAdmin())

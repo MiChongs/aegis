@@ -12,14 +12,15 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/analytics"
 	"aegis/services/risk/internal/config"
-	"aegis/services/risk/internal/events"
 	"aegis/services/risk/internal/graph"
 	"aegis/services/risk/internal/lists"
 	"aegis/services/risk/internal/models"
@@ -114,6 +115,10 @@ func (s *Server) auth(ctx context.Context, c *app.RequestContext) {
 
 func operator(c *app.RequestContext) string {
 	if op := strings.TrimSpace(string(c.GetHeader("X-Risk-Operator"))); op != "" {
+		// 主服务按 URL 转义带过来（请求头里放不了任意 UTF-8）
+		if un, err := url.PathUnescape(op); err == nil {
+			return un
+		}
 		return op
 	}
 	return "unknown"
@@ -215,11 +220,8 @@ func (s *Server) Run(ctx context.Context, reg registry.Registry) error {
 	})
 	s.routes(h.Group("/v1", s.auth))
 	h.GET("/internal/cep/patterns", s.auth, s.wrap(s.internalPatterns))
-	go func() {
-		<-ctx.Done()
-		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = h.Shutdown(sctx)
-	}()
-	return h.Run()
+	// Spin 而不是 Run：注册到 etcd 是挂在 Spin 的启动钩子上的，收到 SIGTERM 时它会先注销再优雅关闭
+	_ = ctx
+	h.Spin()
+	return nil
 }

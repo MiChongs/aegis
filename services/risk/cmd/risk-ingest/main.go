@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/analytics"
 	"aegis/services/risk/internal/config"
-	"aegis/services/risk/internal/events"
 	"aegis/services/risk/internal/graph"
 	"aegis/services/risk/internal/ingest"
 	"aegis/services/risk/internal/lists"

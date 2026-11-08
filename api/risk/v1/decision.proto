@@ -56,6 +56,7 @@ message EvaluateRequest {
   int64 identity_id = 15;
   Geo geo = 16;
   bool explain = 17;        // 返回完整轨迹（管理端调用）
+  bool captcha_unavailable = 18; // 这个应用拿不到图形验证码（验证码处置转人工复核）
 }
 
 message RuleHit {

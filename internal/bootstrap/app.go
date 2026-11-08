@@ -223,7 +223,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	appOAuthService := service.NewAppOAuthService(log, pg, cfg)
 	authService.SetAppOAuthService(appOAuthService)
 	loginGuardRepo := redisrepo.NewLoginGuardRepository(redisClient, cfg.Redis.KeyPrefix)
-	authService.SetLoginGuard(service.NewLoginGuardService(cfg.LoginGuard, log, loginGuardRepo, pg))
+	loginGuardService := service.NewLoginGuardService(cfg.LoginGuard, log, loginGuardRepo, pg)
+	authService.SetLoginGuard(loginGuardService)
 	// 授权引擎：策略落库 + 内置角色重刷 + 跨实例广播。
 	// 它必须先于 AdminService 起来 —— 后者的每一次判定都要问它。
 	// 内置策略 = 平台角色 + 组织内置角色，两者共用一张策略表、一个模型。
@@ -569,13 +570,12 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	storageResourceService.SetObjectRemover(storageService)
 	userMasterService := service.NewUserMasterService(log, pg)
 	reportService := service.NewReportService(log, pg)
-	riskService := service.NewRiskService(cfg.Risk, log, pg, redisClient, cfg.Redis.KeyPrefix)
-	// 归属地走 LocationService：未采购外部 IP 情报源时，geo_* 系列变量若恒为空，
-	// 「归属地异常」这类规则配了也永不命中 —— 那是最典型的"看起来防住了"。
+	// 风控平台（services/risk，docs/risk-platform.md）：Guard 经 etcd 发现 risk-decision，业务事件进 RISK 流，
+	// 封号 / 封 IP / 踢下线命令从 RISK_CMD 回到这里执行。没配 RISK_ETCD_ENDPOINTS 时 Guard 一律放行。
+	riskService := service.NewRiskService(cfg.Risk, log, "aegis-api", cfg.NATS.URL, redisClient, cfg.Redis.KeyPrefix)
 	riskService.SetLocationService(locationService)
-	if err := riskService.AttachTrailStream(natsConn); err != nil {
-		log.Warn("风控留痕未接上 JetStream，改为直接写库", zap.Error(err))
-	}
+	loginGuardService.SetRiskService(riskService)
+	pluginService.ObserveHooks(riskService.ObserveHook)
 	authService.SetRiskService(riskService)
 	inviteService.SetRiskService(riskService)
 	lotteryService.SetRiskService(riskService)
@@ -589,6 +589,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 处置执行器：ban 与复核驳回真的落到账号封禁与防火墙上
 	riskService.SetAccountBanService(accountBanService)
 	riskService.SetFirewall(ipBanService)
+	riskService.SetSessionRevoker(userService)
 	riskService.SetCaptchaProbe(func(ctx context.Context, appID int64) bool {
 		cfg, err := appService.GetCaptchaConfig(ctx, appID)
 		return err == nil && service.IsCaptchaRequired(cfg)
@@ -931,7 +932,9 @@ func (a *APIApp) Start(ctx context.Context) error {
 		a.Lottery.Start(ctx)
 	}
 	if a.Risk != nil {
-		a.Risk.Start(ctx)
+		if err := a.Risk.StartCommands(ctx); err != nil {
+			a.Logger.Error("风控命令消费启动失败：风控判出的封号 / 封 IP 不会执行", zap.Error(err))
+		}
 	}
 	if a.ItemGrant != nil {
 		a.ItemGrant.Start(ctx)

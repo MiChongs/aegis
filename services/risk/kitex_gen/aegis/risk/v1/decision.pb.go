@@ -205,23 +205,24 @@ func (x *Geo) GetIpScore() int32 {
 }
 
 type EvaluateRequest struct {
-	Scene         string  `protobuf:"bytes,1,opt,name=scene" json:"scene,omitempty"`
-	AppId         int64   `protobuf:"varint,2,opt,name=app_id" json:"app_id,omitempty"`
-	UserId        int64   `protobuf:"varint,3,opt,name=user_id" json:"user_id,omitempty"`
-	Account       string  `protobuf:"bytes,4,opt,name=account" json:"account,omitempty"` // 登录名 / 邮箱 / 手机号
-	Ip            string  `protobuf:"bytes,5,opt,name=ip" json:"ip,omitempty"`
-	UserAgent     string  `protobuf:"bytes,6,opt,name=user_agent" json:"user_agent,omitempty"`
-	Device        *Device `protobuf:"bytes,7,opt,name=device" json:"device,omitempty"`
-	CaptchaPassed bool    `protobuf:"varint,8,opt,name=captcha_passed" json:"captcha_passed,omitempty"`
-	RequestId     string  `protobuf:"bytes,9,opt,name=request_id" json:"request_id,omitempty"`  // 幂等：同一个请求重复评估返回第一次的结论
-	ExtraJson     []byte  `protobuf:"bytes,10,opt,name=extra_json" json:"extra_json,omitempty"` // 场景入参（JSON 对象），按场景字段定义校验
-	Phone         string  `protobuf:"bytes,11,opt,name=phone" json:"phone,omitempty"`
-	Email         string  `protobuf:"bytes,12,opt,name=email" json:"email,omitempty"`
-	TargetUserId  int64   `protobuf:"varint,13,opt,name=target_user_id" json:"target_user_id,omitempty"` // 邀请 / 转赠等的对方
-	Amount        float64 `protobuf:"fixed64,14,opt,name=amount" json:"amount,omitempty"`
-	IdentityId    int64   `protobuf:"varint,15,opt,name=identity_id" json:"identity_id,omitempty"`
-	Geo           *Geo    `protobuf:"bytes,16,opt,name=geo" json:"geo,omitempty"`
-	Explain       bool    `protobuf:"varint,17,opt,name=explain" json:"explain,omitempty"` // 返回完整轨迹（管理端调用）
+	Scene              string  `protobuf:"bytes,1,opt,name=scene" json:"scene,omitempty"`
+	AppId              int64   `protobuf:"varint,2,opt,name=app_id" json:"app_id,omitempty"`
+	UserId             int64   `protobuf:"varint,3,opt,name=user_id" json:"user_id,omitempty"`
+	Account            string  `protobuf:"bytes,4,opt,name=account" json:"account,omitempty"` // 登录名 / 邮箱 / 手机号
+	Ip                 string  `protobuf:"bytes,5,opt,name=ip" json:"ip,omitempty"`
+	UserAgent          string  `protobuf:"bytes,6,opt,name=user_agent" json:"user_agent,omitempty"`
+	Device             *Device `protobuf:"bytes,7,opt,name=device" json:"device,omitempty"`
+	CaptchaPassed      bool    `protobuf:"varint,8,opt,name=captcha_passed" json:"captcha_passed,omitempty"`
+	RequestId          string  `protobuf:"bytes,9,opt,name=request_id" json:"request_id,omitempty"`  // 幂等：同一个请求重复评估返回第一次的结论
+	ExtraJson          []byte  `protobuf:"bytes,10,opt,name=extra_json" json:"extra_json,omitempty"` // 场景入参（JSON 对象），按场景字段定义校验
+	Phone              string  `protobuf:"bytes,11,opt,name=phone" json:"phone,omitempty"`
+	Email              string  `protobuf:"bytes,12,opt,name=email" json:"email,omitempty"`
+	TargetUserId       int64   `protobuf:"varint,13,opt,name=target_user_id" json:"target_user_id,omitempty"` // 邀请 / 转赠等的对方
+	Amount             float64 `protobuf:"fixed64,14,opt,name=amount" json:"amount,omitempty"`
+	IdentityId         int64   `protobuf:"varint,15,opt,name=identity_id" json:"identity_id,omitempty"`
+	Geo                *Geo    `protobuf:"bytes,16,opt,name=geo" json:"geo,omitempty"`
+	Explain            bool    `protobuf:"varint,17,opt,name=explain" json:"explain,omitempty"`                         // 返回完整轨迹（管理端调用）
+	CaptchaUnavailable bool    `protobuf:"varint,18,opt,name=captcha_unavailable" json:"captcha_unavailable,omitempty"` // 这个应用拿不到图形验证码（验证码处置转人工复核）
 }
 
 func (x *EvaluateRequest) Reset() { *x = EvaluateRequest{} }
@@ -345,6 +346,13 @@ func (x *EvaluateRequest) GetGeo() *Geo {
 func (x *EvaluateRequest) GetExplain() bool {
 	if x != nil {
 		return x.Explain
+	}
+	return false
+}
+
+func (x *EvaluateRequest) GetCaptchaUnavailable() bool {
+	if x != nil {
+		return x.CaptchaUnavailable
 	}
 	return false
 }

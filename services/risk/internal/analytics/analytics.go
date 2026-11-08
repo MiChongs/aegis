@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"time"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/config"
-	"aegis/services/risk/internal/events"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"

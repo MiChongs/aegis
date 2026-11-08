@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/bundle"
 	"aegis/services/risk/internal/engine"
-	"aegis/services/risk/internal/events"
 	"aegis/services/risk/internal/lists"
 	"aegis/services/risk/internal/release"
 	riskv1 "aegis/services/risk/kitex_gen/aegis/risk/v1"
@@ -38,7 +38,7 @@ var _ riskv1.DecisionService = (*Handler)(nil)
 func ToRequest(in *riskv1.EvaluateRequest) (engine.Request, error) {
 	req := engine.Request{
 		Scene: in.GetScene(), AppID: in.GetAppId(), UserID: in.GetUserId(), IdentityID: in.GetIdentityId(), Account: in.GetAccount(),
-		IP: in.GetIp(), UserAgent: in.GetUserAgent(), CaptchaPassed: in.GetCaptchaPassed(), RequestID: in.GetRequestId(),
+		IP: in.GetIp(), UserAgent: in.GetUserAgent(), CaptchaPassed: in.GetCaptchaPassed(), CaptchaUnavailable: in.GetCaptchaUnavailable(), RequestID: in.GetRequestId(),
 		Phone: in.GetPhone(), Email: in.GetEmail(), TargetUserID: in.GetTargetUserId(), Amount: in.GetAmount(),
 		// 在这里定下评估时刻：引擎、事件、流水用同一个时间（引擎里的 Normalize 只改它自己那份副本）
 		Now: time.Now(),

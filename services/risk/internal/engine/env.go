@@ -43,23 +43,25 @@ type Geo struct {
 
 // Request 一次评估的输入（与 RPC 契约解耦，测试与模拟直接构造）
 type Request struct {
-	Scene         string         `json:"scene"`
-	AppID         int64          `json:"appId"`
-	UserID        int64          `json:"userId,omitempty"`
-	IdentityID    int64          `json:"identityId,omitempty"`
-	Account       string         `json:"account,omitempty"`
-	IP            string         `json:"ip,omitempty"`
-	UserAgent     string         `json:"userAgent,omitempty"`
-	Device        Device         `json:"device"`
-	Geo           Geo            `json:"geo"`
-	CaptchaPassed bool           `json:"captchaPassed,omitempty"`
-	RequestID     string         `json:"requestId,omitempty"`
-	Phone         string         `json:"phone,omitempty"`
-	Email         string         `json:"email,omitempty"`
-	TargetUserID  int64          `json:"targetUserId,omitempty"`
-	Amount        float64        `json:"amount,omitempty"`
-	Extra         map[string]any `json:"extra,omitempty"`
-	Now           time.Time      `json:"now"`
+	Scene         string `json:"scene"`
+	AppID         int64  `json:"appId"`
+	UserID        int64  `json:"userId,omitempty"`
+	IdentityID    int64  `json:"identityId,omitempty"`
+	Account       string `json:"account,omitempty"`
+	IP            string `json:"ip,omitempty"`
+	UserAgent     string `json:"userAgent,omitempty"`
+	Device        Device `json:"device"`
+	Geo           Geo    `json:"geo"`
+	CaptchaPassed bool   `json:"captchaPassed,omitempty"`
+	// CaptchaUnavailable 这个应用拿不到图形验证码：验证码处置转人工复核
+	CaptchaUnavailable bool           `json:"captchaUnavailable,omitempty"`
+	RequestID          string         `json:"requestId,omitempty"`
+	Phone              string         `json:"phone,omitempty"`
+	Email              string         `json:"email,omitempty"`
+	TargetUserID       int64          `json:"targetUserId,omitempty"`
+	Amount             float64        `json:"amount,omitempty"`
+	Extra              map[string]any `json:"extra,omitempty"`
+	Now                time.Time      `json:"now"`
 }
 
 // DeviceEnv 表达式里的 device.*
@@ -129,6 +131,7 @@ type Env struct {
 	Amount        float64            `expr:"amount" json:"amount"`
 	TargetUserID  int64              `expr:"target_user_id" json:"target_user_id"`
 	CaptchaPassed bool               `expr:"captcha_passed" json:"captcha_passed"`
+	CaptchaReady  bool               `expr:"captcha_available" json:"captcha_available"`
 	LoggedIn      bool               `expr:"logged_in" json:"logged_in"`
 	Hour          int                `expr:"hour" json:"hour"`
 	Weekday       int                `expr:"weekday" json:"weekday"` // 1=周一 … 7=周日
@@ -155,7 +158,7 @@ func Variables() []Variable {
 		{"account", "string", "登录名 / 邮箱 / 手机号"}, {"ip", "string", "客户端 IP"}, {"device_id", "string", "设备 ID"},
 		{"ua", "string", "User-Agent"}, {"phone", "string", "手机号"}, {"phone_prefix", "string", "手机号段（前 7 位）"},
 		{"email", "string", "邮箱"}, {"email_domain", "string", "邮箱域名"}, {"amount", "float", "金额"},
-		{"target_user_id", "int", "对方用户 ID"}, {"captcha_passed", "bool", "已通过图形验证码"}, {"logged_in", "bool", "已登录"},
+		{"target_user_id", "int", "对方用户 ID"}, {"captcha_passed", "bool", "已通过图形验证码"}, {"captcha_available", "bool", "应用能出图形验证码"}, {"logged_in", "bool", "已登录"},
 		{"hour", "int", "小时（0-23，服务器时区）"}, {"weekday", "int", "星期（1=周一）"},
 		{"device.id", "string", "设备 ID"}, {"device.platform", "string", "平台"}, {"device.brand", "string", "品牌"},
 		{"device.model", "string", "型号"}, {"device.os_version", "string", "系统版本"}, {"device.app_version", "string", "应用版本"},
@@ -280,7 +283,7 @@ func BuildEnv(r Request) Env {
 	env := Env{
 		Scene: r.Scene, AppID: r.AppID, UserID: r.UserID, Account: r.Account, IP: r.IP, DeviceID: r.Device.ID,
 		UA: r.UserAgent, Phone: r.Phone, PhonePrefix: PhonePrefix(r.Phone), Email: r.Email, EmailDomain: EmailDomain(r.Email),
-		Amount: r.Amount, TargetUserID: r.TargetUserID, CaptchaPassed: r.CaptchaPassed, LoggedIn: r.UserID > 0,
+		Amount: r.Amount, TargetUserID: r.TargetUserID, CaptchaPassed: r.CaptchaPassed, CaptchaReady: !r.CaptchaUnavailable, LoggedIn: r.UserID > 0,
 		Hour: r.Now.Hour(), Weekday: weekday,
 		Device: DeviceEnv{
 			ID: r.Device.ID, Platform: strings.ToLower(r.Device.Platform), Brand: r.Device.Brand, Model: r.Device.Model,
@@ -344,7 +347,7 @@ func (env *Env) asMap() map[string]any {
 		"scene": env.Scene, "app_id": env.AppID, "user_id": env.UserID, "account": env.Account, "ip": env.IP,
 		"device_id": env.DeviceID, "ua": env.UA, "phone": env.Phone, "phone_prefix": env.PhonePrefix, "email": env.Email,
 		"email_domain": env.EmailDomain, "amount": env.Amount, "target_user_id": env.TargetUserID,
-		"captcha_passed": env.CaptchaPassed, "logged_in": env.LoggedIn, "hour": env.Hour, "weekday": env.Weekday,
+		"captcha_passed": env.CaptchaPassed, "captcha_available": env.CaptchaReady, "logged_in": env.LoggedIn, "hour": env.Hour, "weekday": env.Weekday,
 		"device": map[string]any{
 			"id": env.Device.ID, "platform": env.Device.Platform, "brand": env.Device.Brand, "model": env.Device.Model,
 			"os_version": env.Device.OSVersion, "app_version": env.Device.AppVersion, "emulator": env.Device.Emulator,

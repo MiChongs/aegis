@@ -47,6 +47,8 @@ const (
 	TypeAccountUnban   = "account.unban"
 	TypeVerifyCodeSent = "verify_code.sent"
 	TypeCEPAlert       = "cep.alert"
+	TypeLoginLocked    = "login.locked" // 登录防爆破锁定
+	TypeGeoAnomaly     = "geo.anomaly"  // 登录地理异常（不可能旅行、新国家……）
 )
 
 // Types 全部业务事件类型（控制台的事件下拉框、流式特征与 CEP 模式的事件选择）
@@ -56,7 +58,8 @@ func Types() []TypeInfo {
 		{TypePasswordReset, "重置密码"}, {TypePaymentPaid, "支付成功"}, {TypePaymentRefund, "退款"}, {TypeInviteBind, "邀请绑定"},
 		{TypeSignin, "签到"}, {TypeLotteryDraw, "抽奖"}, {TypeCardkeyRedeem, "卡密兑换"}, {TypePointsRedeem, "积分兑换"},
 		{TypeAdReward, "激励广告发奖"}, {TypeProfileUpdate, "资料变更"}, {TypeAccountBan, "账号封禁"}, {TypeAccountUnban, "账号解封"},
-		{TypeVerifyCodeSent, "验证码发送"}, {TypeCEPAlert, "行为模式告警"},
+		{TypeVerifyCodeSent, "验证码发送"}, {TypeCEPAlert, "行为模式告警"}, {TypeLoginLocked, "登录防爆破锁定"},
+		{TypeGeoAnomaly, "登录地理异常"},
 	}
 }
 

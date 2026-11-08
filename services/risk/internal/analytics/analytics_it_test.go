@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/config"
-	"aegis/services/risk/internal/events"
 )
 
 func TestAnalyticsIT(t *testing.T) {

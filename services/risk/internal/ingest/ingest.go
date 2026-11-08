@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/analytics"
 	"aegis/services/risk/internal/bundle"
-	"aegis/services/risk/internal/events"
 	"aegis/services/risk/internal/graph"
 	"aegis/services/risk/internal/lists"
 	"aegis/services/risk/internal/store"

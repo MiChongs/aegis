@@ -20,8 +20,8 @@ import (
 	"strconv"
 	"strings"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/bundle"
-	"aegis/services/risk/internal/events"
 
 	"github.com/jackc/pgx/v5"
 )

@@ -45,6 +45,7 @@ type WorkerApp struct {
 	Location       *service.LocationService
 	IPBan          *service.IPBanService
 	GeoRisk        *service.GeoRiskService
+	Risk           *service.RiskService
 	GeoAnalytics   *service.GeoAnalyticsService
 	// Tickets 只用于 SLA 巡检（预警 / 超时告警），工单读写走 API 侧
 	Tickets *service.TicketService
@@ -161,6 +162,9 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 	firewallLogService := service.NewFirewallLogService(log, pg, locationService, ipBanService)
 	geoProfiles := redisrepo.NewGeoProfileRepository(redisClient, cfg.Redis.KeyPrefix)
 	geoRiskService := service.NewGeoRiskService(log, cfg.GeoRisk, pg, geoProfiles, locationService)
+	// 地理异常报给风控平台（geo.anomaly）；Worker 只上报事件，不评估
+	workerRisk := service.NewRiskService(cfg.Risk, log, "aegis-worker", cfg.NATS.URL, redisClient, cfg.Redis.KeyPrefix)
+	geoRiskService.SetRiskService(workerRisk)
 	geoAnalyticsService := service.NewGeoAnalyticsService(log, cfg.GeoRisk, pg)
 	// 工单 SLA 巡检需要的最小依赖：统一通知出口 + 工单服务。
 	// AdminService / StorageService 在 Worker 侧用不到（巡检不做权限判定、不传附件），故传 nil。
@@ -221,6 +225,7 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 		Location:        locationService,
 		IPBan:           ipBanService,
 		GeoRisk:         geoRiskService,
+		Risk:            workerRisk,
 		GeoAnalytics:    geoAnalyticsService,
 		Tickets:         ticketService,
 		Governance:      workerGovernance,
@@ -389,6 +394,9 @@ func (w *WorkerApp) close(ctx context.Context) {
 		w.TemporalWorker.Stop()
 	}
 	drainNATS(ctx, w.NATSConn)
+	if w.Risk != nil {
+		w.Risk.Close(ctx) // 待发的风控事件先尽量发完
+	}
 	if w.Governance != nil {
 		w.Governance.Stop()
 	}

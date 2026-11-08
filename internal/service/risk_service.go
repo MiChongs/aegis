@@ -2,1000 +2,517 @@ package service
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"slices"
-	"strconv"
+	"math/rand/v2"
+	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"aegis/internal/config"
+	devicedomain "aegis/internal/domain/device"
+	plugindomain "aegis/internal/domain/plugin"
 	securitydomain "aegis/internal/domain/security"
-	pgrepo "aegis/internal/repository/postgres"
-	"aegis/pkg/timeutil"
+	apperrors "aegis/pkg/errors"
+	riskevents "aegis/services/risk/events"
+	riskv1 "aegis/services/risk/kitex_gen/aegis/risk/v1"
+	"aegis/services/risk/kitex_gen/aegis/risk/v1/decisionservice"
 
-	redisrate "github.com/go-redis/redis_rate/v10"
-	"github.com/nats-io/nats.go"
-	redislib "github.com/redis/go-redis/v9"
+	"github.com/cloudwego/kitex/client"
+	etcdreg "github.com/kitex-contrib/registry-etcd"
+	"github.com/redis/go-redis/v9"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"golang.org/x/sync/singleflight"
 )
 
-// RiskService 风控中心业务服务
+// 风控已拆成独立的风控平台（services/risk，docs/risk-platform.md）。主服务这一侧只剩接入层：
+//
+//   - Guard：业务入口调用，Kitex 经 etcd 发现 risk-decision 评估；超时或出错按放行处理并记日志
+//   - Report：业务结果事件（登录成功 / 失败、注册、支付……）发进 RISK 流，流式特征、行为模式、关系图都从这里来
+//   - 命令消费（risk_commands.go）：风控判出来要封号、封 IP、踢会话的，在主服务这里执行
+//
+// 业务代码的调用方式与旧风控中心完全一样（Guard / riskHook / 40398 / 40015），SDK 不用改。
+
+const (
+	errCodeRiskBlocked         = 40398
+	errCodeRiskCaptchaRequired = 40015
+)
+
+// RiskDecisionServiceName risk-decision 在 etcd 里的服务名
+const RiskDecisionServiceName = "aegis.risk.decision"
+
+// RiskService 风控接入层
 type RiskService struct {
-	mu             sync.RWMutex
-	log            *zap.Logger
-	pg             *pgrepo.Repository
-	redis          *redislib.Client
-	location       *LocationService
-	keyPrefix      string
-	cfg            config.RiskConfig
-	rateLimiter    *redisrate.Limiter
-	ipProvider     IPReputationProvider
-	ipLookupFlight singleflight.Group
+	log    *zap.Logger
+	cfg    config.RiskConfig
+	client decisionservice.Client
+	bus    *riskevents.Bus
+	redis  *redis.Client
+	prefix string
 
-	// 规则 / 策略 / 名单的内存快照：评估热路径不查库
-	snapshot       atomic.Pointer[riskSnapshot]
-	snapshotFlight singleflight.Group
-
-	// 处置执行器
+	mu           sync.RWMutex
+	location     *LocationService
+	ipRep        IPReputationProvider
+	captchaProbe func(ctx context.Context, appID int64) bool
 	accountBans  riskAccountBanner
 	firewall     riskFirewall
-	captchaProbe func(ctx context.Context, appID int64) bool
+	sessions     riskSessionRevoker
 
-	// trail 评估留痕（JetStream 可靠队列 + 批量写库，risk_trail.go）
-	trail *riskTrail
+	stopCommands func()
+
+	etcd       *clientv3.Client
+	adminMu    sync.Mutex
+	adminAddrs []string
+	adminAt    time.Time
 }
 
-// velocityWindow 账号扩散基数统计的窗口。
-// 短于登录爆破的典型节奏就统计不到东西，长于一天则昨天的正常登录会污染今天的判定。
-const velocityWindow = 6 * time.Hour
-
-// NewRiskService 创建风控服务
-func NewRiskService(cfg config.RiskConfig, log *zap.Logger, pg *pgrepo.Repository, redis *redislib.Client, keyPrefix string) *RiskService {
-	service := &RiskService{
-		log:       log,
-		pg:        pg,
-		redis:     redis,
-		keyPrefix: keyPrefix,
-		cfg:       cfg,
+// NewRiskService 接风控平台。没配 RISK_ETCD_ENDPOINTS 时返回一个只放行的实例（开发环境不起风控也能用）。
+//
+// name 区分同一进程里的多个实例（API 与 Worker 在统一模式下同进程，各自的待发队列文件不能同名）。
+func NewRiskService(cfg config.RiskConfig, log *zap.Logger, name, natsURL string, redisClient *redis.Client, keyPrefix string) *RiskService {
+	s := &RiskService{log: log, cfg: cfg, redis: redisClient, prefix: keyPrefix}
+	if provider := buildIPReputationProvider(cfg.IPReputation); provider != nil {
+		s.ipRep = wrapIPReputationProvider(provider)
 	}
-	if redis != nil {
-		service.rateLimiter = redisrate.NewLimiter(redis)
+	if len(cfg.EtcdEndpoints) == 0 {
+		log.Warn("未配置 RISK_ETCD_ENDPOINTS：风控平台未接入，Guard 一律放行")
+		return s
 	}
-	service.trail = newRiskTrail(pg, log, service.rememberAccountFact)
-	service.applyConfig(cfg)
-	return service
-}
-
-// AttachTrailStream 接上 NATS：评估留痕改走 JetStream（AEGIS_RISK_TRAIL）。不调用时留痕直接写库。
-func (s *RiskService) AttachTrailStream(conn *nats.Conn) error {
-	return s.trail.attach(conn)
-}
-
-// Start 建留痕流与消费者、启动写库协程（接了 NATS 时）。
-func (s *RiskService) Start(ctx context.Context) {
-	if s == nil || s.trail == nil {
-		return
+	resolver, err := etcdreg.NewEtcdResolver(cfg.EtcdEndpoints)
+	if err != nil {
+		log.Error("风控 etcd 解析器创建失败，Guard 一律放行", zap.Error(err))
+		return s
 	}
-	s.trail.start(ctx)
-}
-
-// Close 停止取新的留痕；正在写的那一批写完、确认完（退出时调用；ctx 到点就不再等）。没取走的留在流里，下次启动接着写。
-func (s *RiskService) Close(ctx context.Context) {
-	if s == nil || s.trail == nil {
-		return
+	cli, err := decisionservice.NewClient(RiskDecisionServiceName, client.WithResolver(resolver), client.WithRPCTimeout(cfg.Timeout),
+		client.WithConnectTimeout(200*time.Millisecond))
+	if err != nil {
+		log.Error("风控决策客户端创建失败，Guard 一律放行", zap.Error(err))
+		return s
 	}
-	s.trail.stop(ctx)
+	s.client = cli
+	if etcdCli, err := clientv3.New(clientv3.Config{Endpoints: cfg.EtcdEndpoints, DialTimeout: 3 * time.Second}); err == nil {
+		s.etcd = etcdCli
+	} else {
+		log.Warn("风控 etcd 客户端创建失败，管理接口改用 RISK_ADMIN_URL", zap.Error(err))
+	}
+	if natsURL != "" {
+		bus, err := riskevents.Connect(natsURL, cfg.SpoolDir, name, func(format string, args ...any) {
+			log.Warn(fmt.Sprintf(format, args...))
+		})
+		if err != nil {
+			log.Error("风控事件总线连接失败，业务事件不上报", zap.Error(err))
+		} else {
+			s.bus = bus
+		}
+	}
+	return s
 }
 
-// SetLocationService 注入地理定位服务。
-// 归属地此前只能从外部 IP 情报源拿，未采购情报源时 geo_* 系列变量恒为空 ——
-// 那意味着「归属地异常」这类规则配了也永不命中。LocationService 是免费的兜底。
+func buildIPReputationProvider(cfg config.RiskIPReputationConfig) IPReputationProvider {
+	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
+	case "ipqs", "ipqualityscore":
+		if strings.TrimSpace(cfg.IPQS.APIKey) != "" {
+			return NewIPQualityScoreProvider(cfg)
+		}
+	}
+	return nil
+}
+
+// Enabled 风控平台是否接上
+func (s *RiskService) Enabled() bool { return s != nil && s.client != nil }
+
+// SetLocationService 接 IP 归属地（评估请求里的国家 / 省 / 市 / 运营商）
 func (s *RiskService) SetLocationService(location *LocationService) {
 	s.mu.Lock()
 	s.location = location
 	s.mu.Unlock()
 }
 
-func (s *RiskService) Reload(cfg config.RiskConfig) {
-	s.applyConfig(cfg)
-}
-
-func (s *RiskService) applyConfig(cfg config.RiskConfig) {
-	provider := buildIPReputationProvider(cfg.IPReputation, s.log)
+// SetCaptchaProbe 接「应用有没有可用的图形验证码」判定
+func (s *RiskService) SetCaptchaProbe(probe func(ctx context.Context, appID int64) bool) {
 	s.mu.Lock()
-	s.cfg = cfg
-	s.ipProvider = provider
+	s.captchaProbe = probe
 	s.mu.Unlock()
 }
 
-type riskRuntime struct {
-	cfg      config.RiskConfig
-	provider IPReputationProvider
-	location *LocationService
+// Close 关掉命令消费与事件总线（待发事件先尽量发完）
+func (s *RiskService) Close(_ context.Context) {
+	if s == nil {
+		return
+	}
+	if s.stopCommands != nil {
+		s.stopCommands()
+	}
+	if s.bus != nil {
+		s.bus.Close()
+	}
+	if s.etcd != nil {
+		_ = s.etcd.Close()
+	}
 }
 
-func (s *RiskService) runtime() riskRuntime {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return riskRuntime{cfg: s.cfg, provider: s.ipProvider, location: s.location}
+// Reload 热更新：超时与 IP 情报源（etcd 地址改了需要重启）
+func (s *RiskService) Reload(cfg config.RiskConfig) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.cfg.IPReputation = cfg.IPReputation
+	if provider := buildIPReputationProvider(cfg.IPReputation); provider != nil {
+		s.ipRep = wrapIPReputationProvider(provider)
+	} else {
+		s.ipRep = nil
+	}
+	s.mu.Unlock()
 }
 
-func buildIPReputationProvider(cfg config.RiskIPReputationConfig, log *zap.Logger) IPReputationProvider {
-	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
-	case "", "none":
-	case "ipqualityscore":
-		provider := NewIPQualityScoreProvider(cfg)
-		if provider == nil && log != nil {
-			log.Warn("IP reputation provider enabled but api key is empty", zap.String("provider", "ipqualityscore"))
-		}
-		return wrapIPReputationProvider(provider)
-	default:
-		if log != nil {
-			log.Warn("unknown IP reputation provider, fallback to local records only", zap.String("provider", cfg.Provider))
-		}
-	}
-	return nil
+// RiskGuardOption Guard 的业务定制：各业务有自己的拒绝错误码与文案
+type RiskGuardOption struct {
+	Code    int
+	Message string
 }
 
-// ════════════════════════════════════════════════════════════
-//  规则管理（带校验）
-// ════════════════════════════════════════════════════════════
+// Guard 评估一次业务请求并翻译成业务错误：拦截 / 封禁 → 403，需要验证码 → 40015，其余放行（复核是事后的）。
+// 风控自身出错时放行并记日志 —— 风控抖一下不该让全站登录不了。
+func (s *RiskService) Guard(ctx context.Context, req securitydomain.RiskEvalRequest, opts ...RiskGuardOption) (*securitydomain.RiskEvalResult, error) {
+	if !s.Enabled() {
+		return nil, nil
+	}
+	result, err := s.Evaluate(ctx, req)
+	if err != nil {
+		s.log.Warn("风控评估失败，按放行处理", zap.String("scene", req.Scene), zap.Error(err))
+		return nil, nil
+	}
+	return result, GuardError(result, opts...)
+}
 
-// ValidateRuleInput 在落库之前把规则配置检查一遍。
-//
-// 这是整套改造里最值钱的一段：以前一条写错的规则能顺利存进数据库，
-// 之后它对每一个请求都判假、永不命中，而列表上显示「已启用」。
-// 现在场景 / 条件类型 / 必填参数 / 表达式语法任一项不合法都当场拒绝。
-func ValidateRuleInput(scene, conditionType string, data map[string]any) error {
-	if !securitydomain.ValidRuleScene(scene) {
-		return fmt.Errorf("未知场景：%s", scene)
+// Evaluate 评估（不翻译成业务错误）
+func (s *RiskService) Evaluate(ctx context.Context, req securitydomain.RiskEvalRequest) (*securitydomain.RiskEvalResult, error) {
+	if !s.Enabled() {
+		return nil, errors.New("风控平台未接入")
 	}
-	catalog := securitydomain.ConditionCatalogEntries()
-	idx := slices.IndexFunc(catalog, func(c securitydomain.ConditionCatalog) bool { return c.Value == conditionType })
-	if idx < 0 {
-		return fmt.Errorf("未知条件类型：%s", conditionType)
+	in := s.buildRequest(ctx, req)
+	resp, err := s.client.Evaluate(ctx, in)
+	if err != nil {
+		return nil, err
 	}
-	for _, field := range catalog[idx].Fields {
-		if !field.Required {
+	out := &securitydomain.RiskEvalResult{
+		DecisionID: resp.GetDecisionId(), Action: resp.GetAction(), RiskLevel: resp.GetRiskLevel(), Score: int(resp.GetScore()),
+		Reasons: resp.GetReasons(), DecidedBy: resp.GetDecidedBy(), Release: resp.GetRelease(), LatencyMS: int(resp.GetLatencyUs() / 1000),
+		Degraded: resp.GetDegraded(),
+	}
+	for _, h := range resp.GetHits() {
+		if h.GetMode() == "observe" {
 			continue
 		}
-		value, ok := data[field.Key]
-		if !ok || isBlankValue(value) {
-			return fmt.Errorf("条件参数「%s」为必填项", field.Label)
+		out.Hits = append(out.Hits, securitydomain.RiskRuleHit{Key: h.GetKey(), Name: h.GetName(), Dimension: h.GetDimension(), Score: int(h.GetScore()), Reason: h.GetReason()})
+	}
+	return out, nil
+}
+
+// buildRequest 业务请求 → 评估请求：补齐归属地、IP 情报与验证码可用性。
+// 这些都只读缓存：缓存没有就带空值去评估、后台去刷新，不让一次登录等外部情报源。
+func (s *RiskService) buildRequest(ctx context.Context, req securitydomain.RiskEvalRequest) *riskv1.EvaluateRequest {
+	in := &riskv1.EvaluateRequest{
+		Scene: req.Scene, Account: strings.TrimSpace(req.Account), Ip: strings.TrimSpace(req.IP), UserAgent: req.UserAgent,
+		CaptchaPassed: req.CaptchaPassed || riskCaptchaPassed(ctx), RequestId: req.RequestID, Phone: req.Phone, Email: req.Email,
+		TargetUserId: req.TargetUserID,
+	}
+	if req.AppID != nil {
+		in.AppId = *req.AppID
+	}
+	if req.UserID != nil {
+		in.UserId = *req.UserID
+	}
+	if req.IdentityID != nil {
+		in.IdentityId = *req.IdentityID
+	}
+	if in.Account == "" {
+		if v, ok := req.Extra["account"].(string); ok {
+			in.Account = strings.TrimSpace(v)
 		}
-		switch field.Type {
-		case "number":
-			number := numberOf(value, 0)
-			if field.Min != nil && number < *field.Min {
-				return fmt.Errorf("条件参数「%s」不得小于 %g", field.Label, *field.Min)
+	}
+	if amount, ok := req.Extra["amount"]; ok {
+		in.Amount = toFloat64(amount)
+	}
+	if len(req.Extra) > 0 {
+		in.ExtraJson, _ = jsonMarshal(req.Extra)
+	}
+	dev := &riskv1.Device{Id: strings.TrimSpace(req.DeviceID), Attrs: map[string]string{}}
+	for k, v := range req.Device {
+		switch k {
+		case "platform":
+			dev.Platform = v
+		case "brand":
+			dev.Brand = v
+		case "model":
+			dev.Model = v
+		case "os_version", "osVersion":
+			dev.OsVersion = v
+		case "app_version", "appVersion":
+			dev.AppVersion = v
+		case "screen":
+			dev.Screen = v
+		case "locale":
+			dev.Locale = v
+		case "timezone":
+			dev.Timezone = v
+		case "emulator":
+			dev.Emulator = v == "true"
+		case "rooted":
+			dev.Rooted = v == "true"
+		default:
+			if v != "" {
+				dev.Attrs[k] = v
 			}
-			if field.Max != nil && number > *field.Max {
-				return fmt.Errorf("条件参数「%s」不得大于 %g", field.Label, *field.Max)
+		}
+	}
+	// 业务没传设备要素时，取传输层放进上下文的客户端设备信息（登录、下单等请求头里的 X-Device-*）
+	if dev.Model == "" && dev.Platform == "" && dev.Brand == "" {
+		fillDeviceFromContext(ctx, dev)
+	}
+	in.Device = dev
+
+	s.mu.RLock()
+	location, ipRep, probe := s.location, s.ipRep, s.captchaProbe
+	s.mu.RUnlock()
+	geo := &riskv1.Geo{}
+	if in.Ip != "" && location != nil {
+		if loc, ok := location.GetCached(ctx, in.Ip); ok {
+			geo.Country, geo.Province, geo.City, geo.Isp = loc.CountryCode, loc.Region, loc.City, loc.ISP
+		} else {
+			location.RefreshAsync(in.Ip)
+		}
+	}
+	if in.Ip != "" && ipRep != nil {
+		if rec, ok := s.cachedIPReputation(ctx, in.Ip); ok {
+			geo.Proxy, geo.Vpn, geo.Tor, geo.Datacenter, geo.IpScore = rec.IsProxy, rec.IsVPN, rec.IsTor, rec.IsDatacenter, int32(rec.RiskScore)
+			if geo.Isp == "" {
+				geo.Isp = rec.ISP
 			}
-		case "list":
-			if len(toStringSlice(value)) == 0 {
-				return fmt.Errorf("条件参数「%s」至少需要一项", field.Label)
-			}
-		case "time":
-			if _, err := timeutil.ParseLocalTimeOfDay(stringOf(value, "")); err != nil {
-				return fmt.Errorf("条件参数「%s」格式应为 HH:MM", field.Label)
-			}
 		}
 	}
+	in.Geo = geo
+	if probe != nil && in.AppId > 0 {
+		in.CaptchaUnavailable = !probe(ctx, in.AppId)
+	}
+	return in
+}
 
-	switch conditionType {
-	case securitydomain.CondCustomExpr:
-		if err := ValidateRiskExpression(stringOf(data["expression"], "")); err != nil {
-			return fmt.Errorf("表达式无法编译：%w", err)
+// fillDeviceFromContext 用请求上下文里的客户端设备信息补设备要素
+func fillDeviceFromContext(ctx context.Context, dev *riskv1.Device) {
+	client := devicedomain.ClientFrom(ctx)
+	extra := client.Extra.Normalize()
+	dev.Model, dev.Platform = client.Model, client.Platform
+	dev.Brand = firstNonEmpty(extra.Brand, extra.Manufacturer)
+	dev.OsVersion, dev.AppVersion = extra.OSVersion, extra.AppVersion
+	if extra.Codename != "" {
+		dev.Attrs["codename"] = extra.Codename
+	}
+	if extra.OS != "" && dev.Platform == "" {
+		dev.Platform = strings.ToLower(extra.OS)
+	}
+}
+
+// DeviceFingerprint 请求上下文里的设备要素（事件上报用，键与风控平台一致）
+func DeviceFingerprint(ctx context.Context) map[string]string {
+	dev := &riskv1.Device{Attrs: map[string]string{}}
+	fillDeviceFromContext(ctx, dev)
+	out := map[string]string{}
+	put := func(k, v string) {
+		if v != "" {
+			out[k] = v
 		}
-	case securitydomain.CondIPCIDR:
-		for _, cidr := range toStringSlice(data["cidrs"]) {
-			if !isValidCIDR(cidr) {
-				return fmt.Errorf("网段格式非法：%s", cidr)
-			}
-		}
-	case securitydomain.CondTimeWindow:
-		if _, err := inTimeWindow(timeutil.Now(), stringOf(data["start"], ""), stringOf(data["end"], "")); err != nil {
-			return err
-		}
 	}
-	return nil
-}
-
-func (s *RiskService) CreateRiskRule(ctx context.Context, input securitydomain.CreateRiskRuleInput, createdBy int64) (*securitydomain.RiskRule, error) {
-	if strings.TrimSpace(input.Name) == "" {
-		return nil, fmt.Errorf("规则名称不能为空")
-	}
-	if input.ConditionData == nil {
-		input.ConditionData = map[string]any{}
-	}
-	if err := ValidateRuleInput(input.Scene, input.ConditionType, input.ConditionData); err != nil {
-		return nil, err
-	}
-	if input.Score <= 0 {
-		input.Score = 20
-	}
-	if input.Priority <= 0 {
-		input.Priority = 100
-	}
-	if err := validateRuleMode(input.Mode, input.Decision); err != nil {
-		return nil, err
-	}
-	rule, err := s.pg.CreateRiskRule(ctx, input, createdBy)
-	if err == nil {
-		s.invalidateSnapshot()
-	}
-	return rule, err
-}
-
-func validateRuleMode(mode, decision string) error {
-	if mode != "" && mode != securitydomain.RuleModeEnforce && mode != securitydomain.RuleModeObserve {
-		return fmt.Errorf("未知规则模式：%s", mode)
-	}
-	if decision != "" && decision != securitydomain.ActionPass && !slices.Contains(securitydomain.ActionValues(), decision) {
-		return fmt.Errorf("未知处置动作：%s", decision)
-	}
-	return nil
-}
-
-func (s *RiskService) UpdateRiskRule(ctx context.Context, id int64, input securitydomain.UpdateRiskRuleInput) error {
-	// 部分更新也必须整体校验：只改 conditionData 而不看 conditionType，
-	// 就会出现「参数换成另一种条件的形状」这种存得进去但永不命中的组合。
-	current, err := s.pg.GetRiskRule(ctx, id)
-	if err != nil {
-		return err
-	}
-	if current == nil {
-		return fmt.Errorf("规则不存在")
-	}
-	scene := current.Scene
-	if input.Scene != nil {
-		scene = *input.Scene
-	}
-	conditionType := current.ConditionType
-	if input.ConditionType != nil {
-		conditionType = *input.ConditionType
-	}
-	data := current.ConditionData
-	if input.ConditionData != nil {
-		data = *input.ConditionData
-	}
-	if data == nil {
-		data = map[string]any{}
-	}
-	if err := ValidateRuleInput(scene, conditionType, data); err != nil {
-		return err
-	}
-	mode, decision := "", ""
-	if input.Mode != nil {
-		mode = *input.Mode
-	}
-	if input.Decision != nil {
-		decision = *input.Decision
-	}
-	if err := validateRuleMode(mode, decision); err != nil {
-		return err
-	}
-	if err := s.pg.UpdateRiskRule(ctx, id, input); err != nil {
-		return err
-	}
-	s.invalidateSnapshot()
-	return nil
-}
-
-// pgRiskScope 作用域过滤
-func pgRiskScope(scene string, appID *int64) pgrepo.RiskScopeFilter {
-	return pgrepo.RiskScopeFilter{Scene: scene, AppID: appID}
-}
-
-func (s *RiskService) ListRiskRules(ctx context.Context, scene string, appID *int64) ([]securitydomain.RiskRule, error) {
-	return s.pg.ListRiskRules(ctx, pgRiskScope(scene, appID))
-}
-
-func (s *RiskService) GetRiskRule(ctx context.Context, id int64) (*securitydomain.RiskRule, error) {
-	return s.pg.GetRiskRule(ctx, id)
-}
-
-// GetRiskRuleDetail 规则详情：定义 + 效果 + 最近命中的请求。
-// 「这条规则拦了什么」必须能被直接看到，否则调分数只能靠猜。
-func (s *RiskService) GetRiskRuleDetail(ctx context.Context, id int64, start, end time.Time) (*securitydomain.RiskRuleDetail, error) {
-	rule, err := s.pg.GetRiskRule(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if rule == nil {
-		return nil, nil
-	}
-	stats, err := s.pg.GetRuleHitStat(ctx, id, start, end)
-	if err != nil {
-		return nil, err
-	}
-	recent, _, err := s.pg.ListRiskAssessments(ctx, securitydomain.AssessmentQuery{RuleID: id, Page: 1, PageSize: 20})
-	if err != nil {
-		return nil, err
-	}
-	series, err := s.pg.GetRuleHitSeries(ctx, id, start, end, bucketFor(start, end))
-	if err != nil {
-		return nil, err
-	}
-	return &securitydomain.RiskRuleDetail{
-		Rule:        *rule,
-		Stats:       stats,
-		RecentHits:  recent,
-		Series:      series,
-		Explanation: explainRule(*rule),
-	}, nil
-}
-
-func (s *RiskService) DeleteRiskRule(ctx context.Context, id int64) error {
-	if err := s.pg.DeleteRiskRule(ctx, id); err != nil {
-		return err
-	}
-	s.invalidateSnapshot()
-	return nil
-}
-
-// ════════════════════════════════════════════════════════════
-//  评估记录与复核
-// ════════════════════════════════════════════════════════════
-
-func (s *RiskService) ListRiskAssessments(ctx context.Context, query securitydomain.AssessmentQuery) ([]securitydomain.RiskAssessment, int64, error) {
-	return s.pg.ListRiskAssessments(ctx, query)
-}
-
-func (s *RiskService) GetRiskAssessment(ctx context.Context, id int64) (*securitydomain.RiskAssessment, error) {
-	return s.pg.GetRiskAssessment(ctx, id)
-}
-
-// GetRiskAssessmentDetail 组装一条评估记录的完整上下文。
-// 复核人要回答的是「这次拦得对不对」，光看分数和 IP 回答不了；
-// 同 IP / 同设备 / 同账号最近发生过什么，才是判断依据。
-func (s *RiskService) GetRiskAssessmentDetail(ctx context.Context, id int64) (*securitydomain.RiskAssessmentDetail, error) {
-	assessment, err := s.pg.GetRiskAssessment(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if assessment == nil {
-		return nil, nil
-	}
-
-	detail := &securitydomain.RiskAssessmentDetail{Assessment: *assessment}
-	detail.Rules = rebuildRuleEvaluations(*assessment)
-
-	if assessment.DeviceID != "" {
-		if fp, err := s.pg.GetDeviceFingerprint(ctx, assessment.DeviceID); err == nil {
-			detail.Device = fp
-		}
-		detail.SameDevice, _, _ = s.pg.ListRiskAssessments(ctx, securitydomain.AssessmentQuery{DeviceID: assessment.DeviceID, Page: 1, PageSize: 10})
-		detail.DevSummary, _ = s.pg.GetEntitySummary(ctx, "device", assessment.DeviceID)
-	}
-	if assessment.IP != "" {
-		if record, err := s.pg.GetIPRisk(ctx, assessment.IP); err == nil {
-			detail.IPRecord = record
-		}
-		detail.SameIP, _, _ = s.pg.ListRiskAssessments(ctx, securitydomain.AssessmentQuery{IP: assessment.IP, Page: 1, PageSize: 10})
-		detail.IPSummary, _ = s.pg.GetEntitySummary(ctx, "ip", assessment.IP)
-	}
-	if assessment.Account != "" {
-		detail.SameAccount, _, _ = s.pg.ListRiskAssessments(ctx, securitydomain.AssessmentQuery{Account: assessment.Account, Page: 1, PageSize: 10})
-	}
-	pairs := map[string][]string{
-		securitydomain.ListTypeIP: {assessment.IP}, securitydomain.ListTypeDevice: {assessment.DeviceID},
-		securitydomain.ListTypeAccount: {strings.ToLower(assessment.Account)},
-	}
-	if assessment.UserID != nil {
-		pairs[securitydomain.ListTypeUser] = []string{strconv.FormatInt(*assessment.UserID, 10)}
-	}
-	detail.ListEntries, _ = s.pg.FindRiskListEntriesFor(ctx, assessment.AppID, pairs)
-	if detail.ListEntries == nil {
-		detail.ListEntries = []securitydomain.RiskListEntry{}
-	}
-	return detail, nil
-}
-
-// rebuildRuleEvaluations 把留痕里的命中规则还原成轨迹结构，
-// 让详情页与模拟器共用同一套渲染。
-func rebuildRuleEvaluations(assessment securitydomain.RiskAssessment) []securitydomain.RuleEvaluation {
-	out := make([]securitydomain.RuleEvaluation, 0, len(assessment.MatchedRules))
-	for _, rule := range assessment.MatchedRules {
-		mode := securitydomain.RuleModeEnforce
-		if rule.Observe {
-			mode = securitydomain.RuleModeObserve
-		}
-		dimension := rule.Dimension
-		if dimension == "" {
-			dimension = securitydomain.ConditionDimension(rule.ConditionType, nil)
-		}
-		out = append(out, securitydomain.RuleEvaluation{
-			RuleID: rule.RuleID, RuleName: rule.RuleName, ConditionType: rule.ConditionType, Dimension: dimension,
-			Score: rule.Score, Mode: mode, Decision: rule.Decision, Hit: true, Reason: rule.Reason,
-		})
+	put("platform", strings.ToLower(dev.Platform))
+	put("brand", dev.Brand)
+	put("model", dev.Model)
+	put("os_version", dev.OsVersion)
+	put("app_version", dev.AppVersion)
+	for k, v := range dev.Attrs {
+		put("x."+k, v)
 	}
 	return out
 }
 
-func (s *RiskService) ListPendingReviews(ctx context.Context, appID *int64, page, limit int) ([]securitydomain.RiskAssessment, int64, error) {
-	reviewed := false
-	return s.pg.ListRiskAssessments(ctx, securitydomain.AssessmentQuery{
-		AppID:    appID,
-		Action:   securitydomain.ActionReview,
-		Reviewed: &reviewed,
-		Page:     page,
-		PageSize: limit,
-	})
+// ObserveHook 插件钩子 → 风控业务事件（登录失败、注册、支付、退款、封号）。
+// 钩子在这些业务的成功点上本来就会触发，挂在这里比在每个业务里再埋一次点可靠。
+func (s *RiskService) ObserveHook(hookName string, data map[string]any, meta plugindomain.HookMetadata) {
+	if s == nil || s.bus == nil {
+		return
+	}
+	e := riskevents.Event{IP: meta.IP, UA: meta.UserAgent}
+	if meta.AppID != nil {
+		e.AppID = *meta.AppID
+	} else if v, ok := data["appId"]; ok {
+		e.AppID = int64(toFloat64(v))
+	}
+	if meta.UserID != nil {
+		e.UserID = *meta.UserID
+	} else if v, ok := data["userId"]; ok {
+		e.UserID = int64(toFloat64(v))
+	}
+	if v, ok := data["account"].(string); ok {
+		e.Account = v
+	}
+	if v, ok := data["ip"].(string); ok && e.IP == "" {
+		e.IP = v
+	}
+	switch hookName {
+	case HookAuthLoginFailed:
+		e.Type, e.Scene = riskevents.TypeLoginFail, securitydomain.SceneLogin
+	case HookUserRegistered:
+		e.Type, e.Scene = riskevents.TypeRegister, securitydomain.SceneRegister
+	case HookPaymentCompleted:
+		e.Type, e.Scene = riskevents.TypePaymentPaid, securitydomain.ScenePayment
+		e.Amount = toFloat64(data["amount"])
+		e.Props = map[string]any{"orderId": data["orderId"]}
+	case HookPaymentRefunded:
+		e.Type, e.Scene = riskevents.TypePaymentRefund, securitydomain.ScenePayment
+		e.Amount = toFloat64(data["amount"])
+		e.Props = map[string]any{"orderId": data["orderId"], "refundNo": data["refundNo"]}
+	case HookUserBanned:
+		e.Type = riskevents.TypeAccountBan
+		e.Props = map[string]any{"banType": data["banType"], "reason": data["reason"]}
+	default:
+		return
+	}
+	if e.AppID <= 0 {
+		return
+	}
+	s.Report(context.Background(), e)
 }
 
-// PurgeAssessments 清理指定时间之前的评估记录。
-// 这张表按登录量线性增长，没有清理入口时它迟早会变成库里最大的一张表。
-func (s *RiskService) PurgeAssessments(ctx context.Context, before time.Time) (int64, error) {
-	return s.pg.PurgeRiskAssessments(ctx, before)
-}
-
-// ════════════════════════════════════════════════════════════
-//  设备指纹
-// ════════════════════════════════════════════════════════════
-
-func (s *RiskService) UpsertDeviceFingerprint(ctx context.Context, fp securitydomain.DeviceFingerprint) (*securitydomain.DeviceFingerprint, error) {
-	return s.pg.TouchDeviceFingerprint(ctx, fp)
-}
-
-func (s *RiskService) GetDeviceFingerprint(ctx context.Context, deviceID string) (*securitydomain.DeviceFingerprint, error) {
-	return s.pg.GetDeviceFingerprint(ctx, deviceID)
-}
-
-func (s *RiskService) ListDevices(ctx context.Context, query securitydomain.EntityQuery) ([]securitydomain.DeviceFingerprint, int64, error) {
-	return s.pg.ListDeviceFingerprints(ctx, query)
-}
-
-func (s *RiskService) GetDeviceDetail(ctx context.Context, deviceID string) (*securitydomain.DeviceRiskDetail, error) {
-	fp, err := s.pg.GetDeviceFingerprint(ctx, deviceID)
-	if err != nil {
-		return nil, err
-	}
-	if fp == nil {
-		return nil, nil
-	}
-	summary, _ := s.pg.GetEntitySummary(ctx, "device", deviceID)
-	recent, _, _ := s.pg.ListRiskAssessments(ctx, securitydomain.AssessmentQuery{DeviceID: deviceID, Page: 1, PageSize: 30})
-	ips, accounts, _ := s.pg.ListDevicePeers(ctx, deviceID, 20)
-	entries, _ := s.pg.FindRiskListEntriesFor(ctx, nil, map[string][]string{securitydomain.ListTypeDevice: {deviceID}})
-	if entries == nil {
-		entries = []securitydomain.RiskListEntry{}
-	}
-	return &securitydomain.DeviceRiskDetail{
-		Device:      *fp,
-		Summary:     summary,
-		Recent:      recent,
-		IPs:         ips,
-		Accounts:    accounts,
-		ListEntries: entries,
-	}, nil
-}
-
-// UpdateDeviceRiskTag 改设备标签。封禁 / 受信两种标签同时写进名单库，才真正参与判定；
-// 改回正常或可疑时撤销对应的全平台名单。
-func (s *RiskService) UpdateDeviceRiskTag(ctx context.Context, id int64, tag, note string) error {
-	if !slices.ContainsFunc(securitydomain.DeviceTagCatalog(), func(e securitydomain.CatalogEntry) bool { return e.Value == tag }) {
-		return fmt.Errorf("未知设备风险标签：%s", tag)
-	}
-	if err := s.pg.UpdateDeviceRiskTag(ctx, id, tag, note); err != nil {
-		return err
-	}
-	deviceID, err := s.pg.GetDeviceIDByFingerprintID(ctx, id)
-	if err != nil || deviceID == "" {
-		return err
-	}
-	return s.syncTagToList(ctx, securitydomain.ListTypeDevice, deviceID, tag, note)
-}
-
-// syncTagToList 档案标签 → 全平台名单
-func (s *RiskService) syncTagToList(ctx context.Context, listType, value, tag, note string) error {
-	kind := ""
-	switch tag {
-	case securitydomain.TagBlocked:
-		kind = securitydomain.ListKindBlock
-	case securitydomain.TagTrusted:
-		kind = securitydomain.ListKindAllow
-	}
-	if kind == "" {
-		existing, err := s.pg.FindRiskListEntriesFor(ctx, nil, map[string][]string{listType: {value}})
-		if err != nil {
-			return err
-		}
-		ids := make([]int64, 0, len(existing))
-		for _, entry := range existing {
-			if entry.AppID == nil && entry.Kind != securitydomain.ListKindWatch {
-				ids = append(ids, entry.ID)
-			}
-		}
-		if len(ids) > 0 {
-			if _, err := s.pg.DeleteRiskListEntries(ctx, ids); err != nil {
-				return err
-			}
-		}
-		s.invalidateSnapshot()
+// GuardError 把评估结论翻译成业务错误（nil 为放行）
+func GuardError(result *securitydomain.RiskEvalResult, opts ...RiskGuardOption) error {
+	if result == nil {
 		return nil
 	}
-	if note == "" {
-		note = "档案标签"
+	opt := RiskGuardOption{Code: errCodeRiskBlocked, Message: "当前请求存在风险，已被拦截"}
+	if len(opts) > 0 {
+		if opts[0].Code != 0 {
+			opt.Code = opts[0].Code
+		}
+		if opts[0].Message != "" {
+			opt.Message = opts[0].Message
+		}
 	}
-	_, _, _, err := s.pg.UpsertRiskListEntries(ctx, securitydomain.ListEntryInput{
-		ListType: listType, Values: []string{value}, Kind: kind, Reason: note, Source: riskSourceManual,
-	})
-	s.invalidateSnapshot()
+	switch result.Action {
+	case securitydomain.ActionBlock, securitydomain.ActionBan:
+		return apperrors.New(opt.Code, http.StatusForbidden, opt.Message)
+	case securitydomain.ActionCaptcha:
+		return apperrors.New(errCodeRiskCaptchaRequired, http.StatusBadRequest, "当前环境存在风险，请先完成图形验证码")
+	}
+	return nil
+}
+
+// IsRiskRejection 错误是否为风控拒绝（调用方据此区分「风控拦了」与「业务失败」）
+func IsRiskRejection(err error) bool {
+	var appErr *apperrors.AppError
+	return errors.As(err, &appErr) && (appErr.Code == errCodeRiskBlocked || appErr.Code == errCodeRiskCaptchaRequired)
+}
+
+type riskCaptchaKey struct{}
+
+// WithRiskCaptchaPassed 标记这次请求已经通过图形验证码（接入层校验通过后调用）
+func WithRiskCaptchaPassed(ctx context.Context) context.Context {
+	return context.WithValue(ctx, riskCaptchaKey{}, true)
+}
+
+func riskCaptchaPassed(ctx context.Context) bool {
+	passed, _ := ctx.Value(riskCaptchaKey{}).(bool)
+	return passed
+}
+
+// Report 发一条业务事件（异步安全：NATS 不可用时落本地待发队列，恢复后补发）
+func (s *RiskService) Report(ctx context.Context, e riskevents.Event) {
+	if s == nil || s.bus == nil {
+		return
+	}
+	if e.ID == "" {
+		e.ID = riskevents.NewID()
+	}
+	if e.TS == 0 {
+		e.TS = time.Now().UnixMilli()
+	}
+	if e.IP != "" && e.IPSubnet == "" {
+		e.IPSubnet = ipSubnet(e.IP)
+	}
+	if e.Email != "" && e.EmailDomain == "" {
+		if at := strings.LastIndexByte(e.Email, '@'); at > 0 {
+			e.EmailDomain = strings.ToLower(e.Email[at+1:])
+		}
+	}
+	if err := s.bus.PublishEvent(context.WithoutCancel(ctx), e); err != nil {
+		s.log.Warn("风控事件上报失败", zap.String("type", e.Type), zap.Error(err))
+	}
+}
+
+// riskHook 业务服务接入风控的统一挂点：嵌进服务结构体，装配时 SetRiskService，
+// 没接（测试、离线工具）时 guard 直接放行、report 什么都不做。
+type riskHook struct {
+	risk *RiskService
+}
+
+// SetRiskService 接入风控平台
+func (h *riskHook) SetRiskService(risk *RiskService) { h.risk = risk }
+
+func (h *riskHook) riskGuard(ctx context.Context, req securitydomain.RiskEvalRequest, opts ...RiskGuardOption) error {
+	if h == nil || h.risk == nil {
+		return nil
+	}
+	_, err := h.risk.Guard(ctx, req, opts...)
 	return err
 }
 
-// ════════════════════════════════════════════════════════════
-//  IP 风险库
-// ════════════════════════════════════════════════════════════
-
-func (s *RiskService) UpsertIPRisk(ctx context.Context, rec securitydomain.IPRiskRecord) (*securitydomain.IPRiskRecord, error) {
-	record, err := s.pg.UpsertIPRisk(ctx, rec)
-	if err == nil {
-		s.invalidateIPRiskCache(ctx, rec.IP)
+func (h *riskHook) riskReport(ctx context.Context, e riskevents.Event) {
+	if h == nil || h.risk == nil {
+		return
 	}
-	return record, err
+	h.risk.Report(ctx, e)
 }
 
-func (s *RiskService) GetIPRisk(ctx context.Context, ip string) (*securitydomain.IPRiskRecord, error) {
-	return s.pg.GetIPRisk(ctx, ip)
-}
+// riskAdminPrefix risk-admin 在 etcd 里的注册前缀（hertz-contrib/registry/etcd 的键格式：前缀/服务名/地址）
+const riskAdminPrefix = "hertz/registry-etcd/aegis.risk.admin/"
 
-func (s *RiskService) ListIPRecords(ctx context.Context, query securitydomain.EntityQuery) ([]securitydomain.IPRiskRecord, int64, error) {
-	return s.pg.ListIPRiskRecords(ctx, query)
-}
-
-func (s *RiskService) GetIPDetail(ctx context.Context, ip string) (*securitydomain.IPRiskDetail, error) {
-	record, err := s.pg.GetIPRisk(ctx, ip)
-	if err != nil {
-		return nil, err
+// AdminBaseURL 一个可用的 risk-admin 实例地址（10 秒缓存，多实例随机挑一个）
+func (s *RiskService) AdminBaseURL(ctx context.Context) (string, error) {
+	if s == nil {
+		return "", errors.New("风控平台未接入")
 	}
-	if record == nil {
-		// 没有档案不等于没有数据：这个 IP 可能刚刚触发过评估但还没被情报源收录。
-		// 直接 404 会让「点开列表里的一行什么都看不到」。
-		record = &securitydomain.IPRiskRecord{IP: ip, RiskTag: securitydomain.TagNormal}
+	s.adminMu.Lock()
+	defer s.adminMu.Unlock()
+	if time.Since(s.adminAt) < 10*time.Second && len(s.adminAddrs) > 0 {
+		return "http://" + s.adminAddrs[rand.IntN(len(s.adminAddrs))], nil
 	}
-	summary, _ := s.pg.GetEntitySummary(ctx, "ip", ip)
-	recent, _, _ := s.pg.ListRiskAssessments(ctx, securitydomain.AssessmentQuery{IP: ip, Page: 1, PageSize: 30})
-	devices, accounts, _ := s.pg.ListIPPeers(ctx, ip, 20)
-	entries, _ := s.pg.FindRiskListEntriesFor(ctx, nil, map[string][]string{securitydomain.ListTypeIP: {normalizeListValue(securitydomain.ListTypeIP, ip)}})
-	if entries == nil {
-		entries = []securitydomain.RiskListEntry{}
-	}
-	detail := &securitydomain.IPRiskDetail{
-		Record:      *record,
-		Summary:     summary,
-		Recent:      recent,
-		Devices:     devices,
-		Accounts:    accounts,
-		ListEntries: entries,
-	}
-	if ban, err := s.pg.GetActiveIPBan(ctx, ip); err == nil && ban != nil {
-		detail.FirewallBan = &securitydomain.FirewallBanRef{ID: ban.ID, Reason: ban.Reason, Source: ban.Source, ExpiresAt: ban.ExpiresAt, CreatedAt: ban.CreatedAt}
-	}
-	return detail, nil
-}
-
-// UpdateIPRiskTag 人工改写 IP 标签。source 固定为 manual，
-// 之后的情报刷新会绕开这条记录，管理员的结论不会被静默改回去。
-func (s *RiskService) UpdateIPRiskTag(ctx context.Context, id int64, tag, note string) error {
-	if !slices.ContainsFunc(securitydomain.IPTagCatalog(), func(e securitydomain.CatalogEntry) bool { return e.Value == tag }) {
-		return fmt.Errorf("未知 IP 风险标签：%s", tag)
-	}
-	ip, err := s.pg.UpdateIPRiskTag(ctx, id, tag, riskSourceManual, note)
-	if err != nil {
-		return err
-	}
-	s.invalidateIPRiskCache(ctx, ip)
-	if tag == securitydomain.TagBlocked || tag == securitydomain.TagTrusted || tag == securitydomain.TagNormal {
-		return s.syncTagToList(ctx, securitydomain.ListTypeIP, normalizeListValue(securitydomain.ListTypeIP, ip), tag, note)
-	}
-	return nil
-}
-
-// RefreshIPReputation 强制向情报源重新拉取一次。
-func (s *RiskService) RefreshIPReputation(ctx context.Context, ip string) (*securitydomain.IPRiskRecord, error) {
-	rt := s.runtime()
-	if rt.provider == nil {
-		return nil, fmt.Errorf("未配置外部 IP 情报源")
-	}
-	record, err := rt.provider.Lookup(ctx, ip)
-	if err != nil {
-		return nil, err
-	}
-	record = normalizeIPRiskRecord(ip, record)
-	if record == nil {
-		return nil, fmt.Errorf("情报源未返回该 IP 的数据")
-	}
-	record.Source = rt.provider.Name()
-	stored, err := s.pg.UpsertIPRisk(ctx, *record)
-	if err != nil {
-		return nil, err
-	}
-	s.invalidateIPRiskCache(ctx, ip)
-	return stored, nil
-}
-
-// ════════════════════════════════════════════════════════════
-//  处置策略
-// ════════════════════════════════════════════════════════════
-
-func (s *RiskService) CreateRiskAction(ctx context.Context, input securitydomain.CreateRiskActionInput) (*securitydomain.RiskAction, error) {
-	if err := validateActionInput(input.Scene, input.Action, input.MinScore, input.MaxScore, input.BanDuration); err != nil {
-		return nil, err
-	}
-	if err := validateBanTargets(input.BanTargets); err != nil {
-		return nil, err
-	}
-	if err := s.checkActionOverlap(ctx, 0, input.AppID, input.Scene, input.MinScore, input.MaxScore); err != nil {
-		return nil, err
-	}
-	action, err := s.pg.CreateRiskAction(ctx, input)
-	if err == nil {
-		s.invalidateSnapshot()
-	}
-	return action, err
-}
-
-// checkActionOverlap 同一作用域、同一场景里分数区间不能重叠：
-// 重叠时「到底走哪条策略」取决于 SQL 的排序，是最难排查的一类配置事故。
-func (s *RiskService) checkActionOverlap(ctx context.Context, selfID int64, appID *int64, scene string, minScore int, maxScore *int) error {
-	existing, err := s.pg.ListRiskActions(ctx, pgRiskScope("", nil))
-	if err != nil {
-		return err
-	}
-	for _, other := range existing {
-		if other.ID == selfID || other.Scene != scene || !sameAppScope(other.AppID, appID) {
-			continue
-		}
-		if scoreRangesOverlap(minScore, maxScore, other.MinScore, other.MaxScore) {
-			return fmt.Errorf("分数区间与已有策略 #%d（%d–%s）重叠", other.ID, other.MinScore, formatMaxScore(other.MaxScore))
-		}
-	}
-	return nil
-}
-
-func sameAppScope(a, b *int64) bool {
-	av, bv := int64(0), int64(0)
-	if a != nil {
-		av = *a
-	}
-	if b != nil {
-		bv = *b
-	}
-	return av == bv
-}
-
-func validateBanTargets(targets []string) error {
-	for _, target := range targets {
-		if !slices.ContainsFunc(securitydomain.BanTargetCatalog(), func(e securitydomain.CatalogEntry) bool { return e.Value == target }) {
-			return fmt.Errorf("未知封禁对象：%s", target)
-		}
-	}
-	return nil
-}
-
-func (s *RiskService) ListRiskActions(ctx context.Context, scene string, appID *int64) ([]securitydomain.RiskAction, error) {
-	if scene == securitydomain.SceneAll {
-		all, err := s.pg.ListRiskActions(ctx, pgRiskScope("", appID))
-		if err != nil {
-			return nil, err
-		}
-		out := all[:0]
-		for _, a := range all {
-			if a.Scene == securitydomain.SceneAll {
-				out = append(out, a)
-			}
-		}
-		return out, nil
-	}
-	return s.pg.ListRiskActions(ctx, pgRiskScope(scene, appID))
-}
-
-func (s *RiskService) UpdateRiskAction(ctx context.Context, id int64, input securitydomain.UpdateRiskActionInput) error {
-	current, err := s.pg.GetRiskAction(ctx, id)
-	if err != nil {
-		return err
-	}
-	if current == nil {
-		return fmt.Errorf("处置策略不存在")
-	}
-	minScore := current.MinScore
-	if input.MinScore != nil {
-		minScore = *input.MinScore
-	}
-	maxScore := current.MaxScore
-	if input.MaxScore != nil {
-		maxScore = *input.MaxScore
-	}
-	action := current.Action
-	if input.Action != nil {
-		action = *input.Action
-	}
-	banDuration := current.BanDuration
-	if input.BanDuration != nil {
-		banDuration = *input.BanDuration
-	}
-	if err := validateActionInput(current.Scene, action, minScore, maxScore, banDuration); err != nil {
-		return err
-	}
-	if input.BanTargets != nil {
-		if err := validateBanTargets(*input.BanTargets); err != nil {
-			return err
-		}
-	}
-	if err := s.checkActionOverlap(ctx, id, current.AppID, current.Scene, minScore, maxScore); err != nil {
-		return err
-	}
-	if err := s.pg.UpdateRiskAction(ctx, id, input); err != nil {
-		return err
-	}
-	s.invalidateSnapshot()
-	return nil
-}
-
-func (s *RiskService) DeleteRiskAction(ctx context.Context, id int64) error {
-	if err := s.pg.DeleteRiskAction(ctx, id); err != nil {
-		return err
-	}
-	s.invalidateSnapshot()
-	return nil
-}
-
-func validateActionInput(scene, action string, minScore int, maxScore *int, banDuration int) error {
-	if !securitydomain.ValidRuleScene(scene) {
-		return fmt.Errorf("未知场景：%s", scene)
-	}
-	if !slices.Contains(securitydomain.ActionValues(), action) {
-		return fmt.Errorf("未知处置动作：%s", action)
-	}
-	if minScore < 0 {
-		return fmt.Errorf("最低分数不能为负")
-	}
-	if maxScore != nil && *maxScore < minScore {
-		return fmt.Errorf("最高分数不能小于最低分数")
-	}
-	if action == securitydomain.ActionBan && banDuration <= 0 {
-		// 封禁 0 秒等于没封。让它存进去只会制造一条看起来生效、实际不生效的策略。
-		return fmt.Errorf("封禁动作必须指定大于 0 的封禁时长")
-	}
-	if banDuration < 0 {
-		return fmt.Errorf("封禁时长不能为负")
-	}
-	return nil
-}
-
-func scoreRangesOverlap(aMin int, aMax *int, bMin int, bMax *int) bool {
-	aHigh := 1 << 30
-	if aMax != nil {
-		aHigh = *aMax
-	}
-	bHigh := 1 << 30
-	if bMax != nil {
-		bHigh = *bMax
-	}
-	return aMin <= bHigh && bMin <= aHigh
-}
-
-func formatMaxScore(maxScore *int) string {
-	if maxScore == nil {
-		return "∞"
-	}
-	return strconv.Itoa(*maxScore)
-}
-
-// ════════════════════════════════════════════════════════════
-//  大盘与目录
-// ════════════════════════════════════════════════════════════
-
-// GetRiskDashboard 组装风控大盘。
-func (s *RiskService) GetRiskDashboard(ctx context.Context, start, end time.Time, appID *int64) (*securitydomain.RiskDashboard, error) {
-	bucket := bucketFor(start, end)
-	dash, err := s.pg.GetRiskDashboard(ctx, start, end, bucket, appID)
-	if err != nil {
-		return nil, err
-	}
-	dash.Engine = s.engineStatus(ctx, appID)
-	return dash, nil
-}
-
-// bucketFor 按跨度选聚合粒度。
-// 跨度超过 3 天还按小时聚合会给出几百个点，折线图上只剩噪声。
-func bucketFor(start, end time.Time) string {
-	if end.Sub(start) > 3*24*time.Hour {
-		return "day"
-	}
-	return "hour"
-}
-
-// engineStatus 回答「引擎现在到底在跑什么」。
-// 大盘全是 0 有两种截然不同的原因 —— 真没风险，或者根本没有规则在跑。
-// 执行器也一样：ban 判出来了、账号封禁服务却没接上，封禁就只是一行留痕。
-func (s *RiskService) engineStatus(ctx context.Context, appID *int64) securitydomain.EngineStatus {
-	rt := s.runtime()
-	bans, firewall, probe := s.executors()
-	status := securitydomain.EngineStatus{
-		IPProvider:      strings.ToLower(strings.TrimSpace(rt.cfg.IPReputation.Provider)),
-		IPProviderReady: rt.provider != nil,
-		GeoReady:        rt.location != nil,
-		RedisReady:      s.redis != nil,
-		RateLimitOn:     rt.cfg.RateLimit.Enabled && s.rateLimiter != nil,
-		CacheTTLSeconds: int(rt.cfg.IPReputation.CacheTTL / time.Second),
-		AccountBanReady: bans != nil,
-		FirewallReady:   firewall != nil,
-		CaptchaReady:    probe != nil,
-	}
-	if status.IPProvider == "" {
-		status.IPProvider = "none"
-	}
-	snap, err := s.loadSnapshot(ctx)
-	if err != nil {
-		return status
-	}
-	at := snap.loadedAt
-	status.SnapshotAt = &at
-	scopeApp := int64(0)
-	if appID != nil {
-		scopeApp = *appID
-	}
-	inScope := func(id *int64) bool { return id == nil || scopeApp == 0 || *id == scopeApp }
-
-	all, err := s.pg.ListRiskRules(ctx, pgRiskScope("", appID))
-	if err == nil {
-		for _, rule := range all {
-			status.TotalRules++
-			if rule.IsActive {
-				status.ActiveRules++
-				if rule.Mode == securitydomain.RuleModeObserve {
-					status.ObserveRules++
+	if s.etcd != nil {
+		cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		resp, err := s.etcd.Get(cctx, riskAdminPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+		cancel()
+		if err == nil {
+			addrs := make([]string, 0, len(resp.Kvs))
+			for _, kv := range resp.Kvs {
+				if addr := strings.TrimPrefix(string(kv.Key), riskAdminPrefix); addr != "" {
+					addrs = append(addrs, addr)
 				}
 			}
+			if len(addrs) > 0 {
+				s.adminAddrs, s.adminAt = addrs, time.Now()
+				return "http://" + addrs[rand.IntN(len(addrs))], nil
+			}
 		}
 	}
-	covered := map[string]bool{}
-	for _, rule := range snap.rules {
-		if !inScope(rule.AppID) || rule.Mode == securitydomain.RuleModeObserve {
-			continue
-		}
-		covered[rule.Scene] = true
+	if s.cfg.AdminURL != "" {
+		return s.cfg.AdminURL, nil
 	}
-	for _, scene := range securitydomain.SceneValues() {
-		if covered[scene] || covered[securitydomain.SceneAll] {
-			status.ScenesCovered = append(status.ScenesCovered, scene)
-		} else {
-			status.ScenesUncovered = append(status.ScenesUncovered, scene)
-		}
-	}
-	for _, action := range snap.actions {
-		if !inScope(action.AppID) {
-			continue
-		}
-		status.TotalActions++
-		if action.IsActive {
-			status.ActiveActions++
-		}
-	}
-	status.ListEntries = int64(snap.lists.total)
-	return status
+	return "", errors.New("没有可用的 risk-admin 实例")
 }
 
-// Metadata 返回风控中心的自描述目录。
-func (s *RiskService) Metadata() securitydomain.RiskMetadata {
-	return securitydomain.BuildRiskMetadata()
-}
-
-// ValidateExpression 校验表达式，供控制台边写边提示。
-func (s *RiskService) ValidateExpression(expression string) securitydomain.ExprValidation {
-	if err := ValidateRiskExpression(expression); err != nil {
-		return securitydomain.ExprValidation{Valid: false, Error: err.Error(), Message: "表达式无法编译"}
-	}
-	return securitydomain.ExprValidation{Valid: true, Message: "表达式可用"}
-}
-
-// ════════════════════════════════════════════════════════════
-//  小工具
-// ════════════════════════════════════════════════════════════
-
-func (s *RiskService) logWarn(msg string, fields ...zap.Field) {
-	if s.log != nil {
-		s.log.Warn(msg, fields...)
-	}
-}
-
-func (s *RiskService) logInfo(msg string, fields ...zap.Field) {
-	if s.log != nil {
-		s.log.Info(msg, fields...)
-	}
-}
-
-func normalizeRiskDimension(value string) string {
-	return strings.TrimSpace(strings.ToLower(value))
-}
-
-func toString(value any) string {
-	switch typed := value.(type) {
-	case nil:
+// InternalToken 转发到风控服务时带的内部令牌
+func (s *RiskService) InternalToken() string {
+	if s == nil {
 		return ""
-	case string:
-		return typed
-	case fmt.Stringer:
-		return typed.String()
-	default:
-		return fmt.Sprintf("%v", value)
 	}
-}
-
-// numberOf 从 JSONB 反序列化出来的任意数值形态里取 float64。
-// conditionData 存的是 JSONB，回来的数字一律是 float64；
-// 但表达式覆写、测试构造的 map 可能给 int —— 两种都要认。
-func numberOf(value any, fallback float64) float64 {
-	switch typed := value.(type) {
-	case float64:
-		return typed
-	case float32:
-		return float64(typed)
-	case int:
-		return float64(typed)
-	case int32:
-		return float64(typed)
-	case int64:
-		return float64(typed)
-	case json.Number:
-		if parsed, err := typed.Float64(); err == nil {
-			return parsed
-		}
-	case string:
-		if parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err == nil {
-			return parsed
-		}
-	}
-	return fallback
-}
-
-func stringOf(value any, fallback string) string {
-	if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
-		return text
-	}
-	return fallback
-}
-
-func boolOf(value any, fallback bool) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		if parsed, err := strconv.ParseBool(strings.TrimSpace(typed)); err == nil {
-			return parsed
-		}
-	}
-	return fallback
-}
-
-func isBlankValue(value any) bool {
-	switch typed := value.(type) {
-	case nil:
-		return true
-	case string:
-		return strings.TrimSpace(typed) == ""
-	case []any:
-		return len(typed) == 0
-	case []string:
-		return len(typed) == 0
-	case map[string]any:
-		return len(typed) == 0
-	}
-	return false
-}
-
-func truncateText(text string, limit int) string {
-	runes := []rune(text)
-	if len(runes) <= limit {
-		return text
-	}
-	return string(runes[:limit]) + "…"
+	return s.cfg.InternalToken
 }

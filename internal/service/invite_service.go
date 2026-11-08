@@ -1,6 +1,7 @@
 package service
 
 import (
+	riskevents "aegis/services/risk/events"
 	"context"
 	"errors"
 	"net/http"
@@ -757,6 +758,12 @@ func (s *InviteService) bind(ctx context.Context, req InviteBindRequest, source 
 		}
 	}
 	s.publishUser(req.AppID, req.UserID, map[string]any{"relationId": result.Relation.ID})
+	if s.risk != nil && result.Relation.InviterID != nil {
+		// 邀请关系进关系图：邀请树规模、同设备邀请团都从这条边上算
+		s.risk.Report(ctx, riskevents.Event{Type: riskevents.TypeInviteBind, Scene: securitydomain.SceneInvite, AppID: req.AppID, UserID: req.UserID,
+			TargetUserID: *result.Relation.InviterID, IP: req.ClientIP, DeviceID: strings.TrimSpace(req.DeviceID), UA: req.UserAgent,
+			Device: DeviceFingerprint(ctx), Props: map[string]any{"source": source}})
+	}
 	if result.InviterSettled {
 		relation := result.Relation
 		s.afterSettle(*settings, &invite.SettleResult{

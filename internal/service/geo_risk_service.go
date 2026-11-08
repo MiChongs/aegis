@@ -1,6 +1,7 @@
 package service
 
 import (
+	riskevents "aegis/services/risk/events"
 	"context"
 	"errors"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"aegis/internal/config"
 	geodomain "aegis/internal/domain/geo"
 	notificationdomain "aegis/internal/domain/notification"
-	securitydomain "aegis/internal/domain/security"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 
@@ -47,6 +47,7 @@ const (
 //
 // 全链路在 Worker 异步执行，不增加登录请求延迟。
 type GeoRiskService struct {
+	riskHook
 	log      *zap.Logger
 	cfg      config.GeoRiskConfig
 	pg       *pgrepo.Repository
@@ -224,38 +225,28 @@ func (s *GeoRiskService) assess(p *geodomain.Profile, evt geodomain.LoginEvent) 
 // recordFindings 写入 risk_assessments 并在高危时通知用户。
 func (s *GeoRiskService) recordFindings(ctx context.Context, evt geodomain.LoginEvent, findings []geoRiskFinding) {
 	total := 0
-	matched := make([]securitydomain.MatchedRule, 0, len(findings))
+	rules := make([]string, 0, len(findings))
 	details := make([]string, 0, len(findings))
 	for _, f := range findings {
 		total += f.score
-		matched = append(matched, securitydomain.MatchedRule{RuleName: f.rule, Score: f.score})
+		rules = append(rules, f.rule)
 		details = append(details, f.detail)
 	}
 	level, action := geoRiskLevel(total)
-
-	assessment := securitydomain.RiskAssessment{
-		Scene:        geodomain.SceneGeoLogin,
-		AppID:        &evt.AppID,
-		UserID:       &evt.UserID,
-		IP:           evt.IP,
-		DeviceID:     evt.DeviceID,
-		TotalScore:   total,
-		RiskLevel:    level,
-		MatchedRules: matched,
-		Action:       action,
-		ActionDetail: strings.Join(details, "；"),
-	}
-	if _, err := s.pg.CreateRiskAssessment(ctx, assessment); err != nil {
-		s.log.Warn("geo risk assessment write failed",
-			zap.Int64("user_id", evt.UserID), zap.Error(err))
-	}
+	// 报给风控平台（geo.anomaly）：进流水与关系图，规则、流式特征、行为模式都能用
+	s.riskReport(ctx, riskevents.Event{
+		Type: riskevents.TypeGeoAnomaly, Scene: geodomain.SceneGeoLogin, AppID: evt.AppID, UserID: evt.UserID, IP: evt.IP,
+		DeviceID: evt.DeviceID, Country: evt.Country, Province: evt.Region, City: evt.City, Score: total, Level: level, Action: action,
+		Props: map[string]any{"rules": rules, "detail": strings.Join(details, "；")},
+	})
+	assessmentDetail := strings.Join(details, "；")
 	s.log.Info("geo risk findings",
 		zap.Int64("user_id", evt.UserID),
 		zap.Int64("app_id", evt.AppID),
 		zap.String("ip", evt.IP),
 		zap.Int("score", total),
 		zap.String("level", level),
-		zap.String("detail", assessment.ActionDetail),
+		zap.String("detail", assessmentDetail),
 	)
 
 	// 高危 → 给用户发送异地登录提醒

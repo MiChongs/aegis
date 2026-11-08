@@ -21,6 +21,10 @@ decision := d if {
 	not input.scene.captchaSupported
 	d := object.union(input.proposed, {"action": "review", "reasons": array.concat(input.proposed.reasons, ["场景接不了验证码，转人工复核"])})
 } else := d if {
+	input.proposed.action == "captcha"
+	not input.request.captcha_available
+	d := object.union(input.proposed, {"action": "review", "reasons": array.concat(input.proposed.reasons, ["应用没有配置图形验证码，转人工复核"])})
+} else := d if {
 	input.proposed.action == "ban"
 	not input.scene.enforcement.autoBanAllowed
 	d := object.union(input.proposed, {"action": "block", "reasons": array.concat(input.proposed.reasons, ["场景不允许自动封禁，只拦截"])})

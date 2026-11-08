@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/bundle"
 	"aegis/services/risk/internal/config"
-	"aegis/services/risk/internal/events"
 )
 
 // 需要本地 compose 的 risk profile：RISK_IT=1 go test ./services/risk/internal/graph -run IT

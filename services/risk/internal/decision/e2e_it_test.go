@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/bundle"
 	"aegis/services/risk/internal/config"
-	"aegis/services/risk/internal/events"
 	"aegis/services/risk/internal/lists"
 	"aegis/services/risk/internal/models"
 	"aegis/services/risk/internal/redisx"

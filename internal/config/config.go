@@ -586,9 +586,20 @@ type AccountBanConfig struct {
 	CleanupBatchSize int
 }
 
+// RiskConfig 风控平台接入（docs/risk-platform.md）：主服务经 etcd 发现 risk-decision / risk-admin。
+//
+//	RISK_ETCD_ENDPOINTS   风控平台的 etcd（逗号分隔）；留空 = 不接风控，Guard 一律放行
+//	RISK_INTERNAL_TOKEN   转发到 risk-admin 时带的内部令牌（与风控服务同值）
+//	RISK_TIMEOUT          一次评估的 RPC 超时，默认 300ms；超时按放行处理
+//	RISK_ADMIN_URL        etcd 里查不到 risk-admin 时的直连地址（可选）
+//	RISK_SPOOL_DIR        事件待发队列目录（NATS 不可用时落盘），默认 data/risk-spool
 type RiskConfig struct {
-	IPReputation RiskIPReputationConfig
-	RateLimit    RiskRateLimitConfig
+	EtcdEndpoints []string
+	InternalToken string
+	Timeout       time.Duration
+	AdminURL      string
+	SpoolDir      string
+	IPReputation  RiskIPReputationConfig
 }
 
 type RiskIPReputationConfig struct {
@@ -608,13 +619,6 @@ type RiskIPQualityScoreConfig struct {
 	LighterPenalties bool
 }
 
-type RiskRateLimitConfig struct {
-	Enabled                bool
-	IPPerMinute            int
-	AccountPerMinute       int
-	DevicePerMinute        int
-	AccountDevicePerMinute int
-}
 
 // GeoIPConfig IP 归属地。数据来自远程接口（美团、宝塔面板、UAPIs，见 service/location_provider.go），
 // 不下载本地库。
@@ -937,6 +941,11 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 			CleanupBatchSize: v.GetInt("ACCOUNT_BAN_CLEANUP_BATCH_SIZE"),
 		},
 		Risk: RiskConfig{
+			EtcdEndpoints: csvList(v.GetString("RISK_ETCD_ENDPOINTS")),
+			InternalToken: v.GetString("RISK_INTERNAL_TOKEN"),
+			Timeout:       v.GetDuration("RISK_TIMEOUT"),
+			AdminURL:      strings.TrimRight(strings.TrimSpace(v.GetString("RISK_ADMIN_URL")), "/"),
+			SpoolDir:      v.GetString("RISK_SPOOL_DIR"),
 			IPReputation: RiskIPReputationConfig{
 				Provider:   v.GetString("RISK_IP_REPUTATION_PROVIDER"),
 				CacheTTL:   v.GetDuration("RISK_IP_REPUTATION_CACHE_TTL"),
@@ -950,13 +959,6 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 					Mobile:           getBool(v, "RISK_IPQUALITYSCORE_MOBILE", false),
 					LighterPenalties: getBool(v, "RISK_IPQUALITYSCORE_LIGHTER_PENALTIES", false),
 				},
-			},
-			RateLimit: RiskRateLimitConfig{
-				Enabled:                getBool(v, "RISK_RATE_LIMIT_ENABLED", false),
-				IPPerMinute:            v.GetInt("RISK_RATE_LIMIT_IP_PER_MINUTE"),
-				AccountPerMinute:       v.GetInt("RISK_RATE_LIMIT_ACCOUNT_PER_MINUTE"),
-				DevicePerMinute:        v.GetInt("RISK_RATE_LIMIT_DEVICE_PER_MINUTE"),
-				AccountDevicePerMinute: v.GetInt("RISK_RATE_LIMIT_ACCOUNT_DEVICE_PER_MINUTE"),
 			},
 		},
 		GeoIP: GeoIPConfig{
@@ -1507,6 +1509,12 @@ func setDefaults(cfg *Config) {
 	if strings.TrimSpace(cfg.DocsPortalURL) == "" {
 		cfg.DocsPortalURL = "/developers"
 	}
+	if cfg.Risk.Timeout <= 0 {
+		cfg.Risk.Timeout = 300 * time.Millisecond
+	}
+	if strings.TrimSpace(cfg.Risk.SpoolDir) == "" {
+		cfg.Risk.SpoolDir = "data/risk-spool"
+	}
 	if strings.TrimSpace(cfg.Risk.IPReputation.Provider) == "" {
 		cfg.Risk.IPReputation.Provider = "none"
 	}
@@ -1521,9 +1529,6 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Risk.IPReputation.IPQS.Strictness <= 0 {
 		cfg.Risk.IPReputation.IPQS.Strictness = 1
-	}
-	if cfg.Risk.RateLimit.IPPerMinute <= 0 {
-		cfg.Risk.RateLimit.IPPerMinute = 120
 	}
 	if cfg.NATS.StreamName == "" {
 		cfg.NATS.StreamName = "AEGIS_EVENTS"

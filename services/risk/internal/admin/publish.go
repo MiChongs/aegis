@@ -6,10 +6,10 @@ import (
 	"errors"
 	"strconv"
 
+	"aegis/services/risk/events"
 	"aegis/services/risk/internal/bundle"
 	"aegis/services/risk/internal/decision"
 	"aegis/services/risk/internal/engine"
-	"aegis/services/risk/internal/events"
 	"aegis/services/risk/internal/release"
 	"aegis/services/risk/internal/store"
 	"aegis/services/risk/internal/stream"
@@ -341,7 +341,7 @@ func toRPC(r engine.Request) *riskv1.EvaluateRequest {
 	extra, _ := json.Marshal(r.Extra)
 	return &riskv1.EvaluateRequest{
 		Scene: r.Scene, AppId: r.AppID, UserId: r.UserID, Account: r.Account, Ip: r.IP, UserAgent: r.UserAgent,
-		CaptchaPassed: r.CaptchaPassed, Phone: r.Phone, Email: r.Email, TargetUserId: r.TargetUserID, Amount: r.Amount, ExtraJson: extra,
+		CaptchaPassed: r.CaptchaPassed, CaptchaUnavailable: r.CaptchaUnavailable, Phone: r.Phone, Email: r.Email, TargetUserId: r.TargetUserID, Amount: r.Amount, ExtraJson: extra,
 		Device: &riskv1.Device{Id: r.Device.ID, Platform: r.Device.Platform, Brand: r.Device.Brand, Model: r.Device.Model, OsVersion: r.Device.OSVersion,
 			AppVersion: r.Device.AppVersion, Screen: r.Device.Screen, Locale: r.Device.Locale, Timezone: r.Device.Timezone, Emulator: r.Device.Emulator,
 			Rooted: r.Device.Rooted, Attrs: r.Device.Attrs},

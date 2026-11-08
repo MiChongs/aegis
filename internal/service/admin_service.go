@@ -139,7 +139,8 @@ func (s *AdminService) Login(ctx context.Context, account, password, ip, userAge
 	// ── 风控评估：管理员登录 ──
 	if s.risk != nil {
 		if _, err := s.risk.Guard(ctx, securitydomain.RiskEvalRequest{
-			Scene: securitydomain.SceneLogin, IP: ip, UserAgent: userAgent, Account: account,
+			// 管理员登录是独立场景：规则、名单、处置都与应用用户的登录分开配置
+			Scene: securitydomain.SceneAdminLogin, IP: ip, UserAgent: userAgent, Account: account,
 			Extra: map[string]any{"admin": true},
 		}, RiskGuardOption{Message: "当前请求被风控拦截"}); err != nil {
 			return nil, err

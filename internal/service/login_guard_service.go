@@ -2,10 +2,10 @@ package service
 
 import (
 	"aegis/internal/config"
-	securitydomain "aegis/internal/domain/security"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	riskevents "aegis/services/risk/events"
 	"context"
 	"fmt"
 	"net/http"
@@ -35,6 +35,7 @@ const SceneLoginBruteforce = "login_bruteforce"
 //   - Redis 故障一律 fail-open（只告警不阻断登录），与防火墙限流一致
 //   - 每次锁定异步写入一条 risk_assessments（scene=login_bruteforce）供风控中心追溯
 type LoginGuardService struct {
+	riskHook
 	cfg   config.LoginGuardConfig
 	log   *zap.Logger
 	redis *redisrepo.LoginGuardRepository
@@ -170,36 +171,18 @@ func (s *LoginGuardService) lock(ctx context.Context, kind string, appID int64, 
 	s.recordAssessment(kind, appID, account, ip, failCount, lvl, duration)
 }
 
-// recordAssessment 异步写入风控评估记录（不阻塞登录请求路径）。
+// recordAssessment 锁定事件报给风控平台（login.locked）：流式特征与行为模式能据此识别撞库与爆破
 func (s *LoginGuardService) recordAssessment(kind string, appID int64, account, ip string, failCount, level int64, duration time.Duration) {
-	if s.pg == nil {
-		return
-	}
 	kindLabel := "account"
 	if kind == loginGuardKindIP {
 		kindLabel = "ip"
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		appIDCopy := appID
-		assessment := securitydomain.RiskAssessment{
-			Scene: SceneLoginBruteforce,
-			AppID: &appIDCopy,
-			IP:    ip,
-			MatchedRules: []securitydomain.MatchedRule{
-				{RuleName: "bruteforce_" + kindLabel, Score: 80},
-			},
-			TotalScore: 80,
-			RiskLevel:  "high",
-			Action:     "block",
-			ActionDetail: fmt.Sprintf("登录防爆破：%s 维度窗口内失败 %d 次，第 %d 次锁定 %s（account=%s ip=%s）",
-				kindLabel, failCount, level, duration, maskAccount(account), ip),
-		}
-		if _, err := s.pg.CreateRiskAssessment(ctx, assessment); err != nil {
-			s.log.Warn("login guard 风控评估写入失败", zap.Error(err))
-		}
-	}()
+	s.riskReport(context.Background(), riskevents.Event{
+		Type: riskevents.TypeLoginLocked, Scene: SceneLoginBruteforce, AppID: appID, Account: account, IP: ip,
+		Props: map[string]any{"dimension": kindLabel, "failCount": failCount, "level": level, "lockSeconds": int64(duration.Seconds())},
+	})
+	s.log.Info("登录防爆破锁定", zap.String("dimension", kindLabel), zap.Int64("fails", failCount), zap.Int64("level", level),
+		zap.Duration("lock", duration), zap.String("account", maskAccount(account)), zap.String("ip", ip), zap.String("detail", fmt.Sprintf("app %d", appID)))
 }
 
 // lockDurationForLevel 按退避级别计算锁定时长：base × 2^(level-1)，封顶 max。

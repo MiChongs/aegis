@@ -493,35 +493,6 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/system/plugins"):                                                                      PluginCreateRequest{},                    // AdminCreatePlugin
 		routeKey("GET", "/api/admin/system/plugins/executions"):                                                            HookExecutionQueryParams{},               // AdminListHookExecutions
 		routeKey("PUT", "/api/admin/system/plugins/{id}"):                                                                  PluginUpdateRequest{},                    // AdminUpdatePlugin
-		routeKey("GET", "/api/admin/system/risk/accounts"):                                                                 RiskAccountListRequest{},                 // AdminListRiskAccounts
-		routeKey("GET", "/api/admin/system/risk/accounts/detail"):                                                          RiskAccountDetailRequest{},               // AdminGetRiskAccount
-		routeKey("GET", "/api/admin/system/risk/actions"):                                                                  RiskActionListRequest{},                  // AdminListRiskActions
-		routeKey("POST", "/api/admin/system/risk/actions"):                                                                 RiskActionCreateRequest{},                // AdminCreateRiskAction
-		routeKey("PUT", "/api/admin/system/risk/actions/{id}"):                                                             RiskActionUpdateRequest{},                // AdminUpdateRiskAction
-		routeKey("DELETE", "/api/admin/system/risk/assessments"):                                                           RiskPurgeRequest{},                       // AdminPurgeRiskAssessments
-		routeKey("GET", "/api/admin/system/risk/assessments"):                                                              RiskAssessmentListRequest{},              // AdminListRiskAssessments
-		routeKey("POST", "/api/admin/system/risk/assessments/{id}/review"):                                                 RiskReviewRequest{},                      // AdminReviewRiskAssessment
-		routeKey("GET", "/api/admin/system/risk/dashboard"):                                                                RiskDashboardRequest{},                   // AdminRiskDashboard
-		routeKey("GET", "/api/admin/system/risk/devices"):                                                                  RiskEntityListRequest{},                  // AdminListRiskDevices
-		routeKey("GET", "/api/admin/system/risk/devices/suspicious"):                                                       RiskPageRequest{},                        // AdminListSuspiciousDevices
-		routeKey("PUT", "/api/admin/system/risk/devices/{id}/tag"):                                                         DeviceRiskTagRequest{},                   // AdminUpdateDeviceRiskTag
-		routeKey("POST", "/api/admin/system/risk/dispose"):                                                                 RiskDisposeRequest{},                     // AdminDisposeRisk
-		routeKey("POST", "/api/admin/system/risk/evaluate"):                                                                RiskEvalRequest{},                        // AdminEvaluateRisk
-		routeKey("POST", "/api/admin/system/risk/expression/validate"):                                                     RiskExprValidateRequest{},                // AdminValidateRiskExpression
-		routeKey("GET", "/api/admin/system/risk/ips"):                                                                      RiskEntityListRequest{},                  // AdminListHighRiskIPs
-		routeKey("PUT", "/api/admin/system/risk/ips/{id}/tag"):                                                             IPRiskTagRequest{},                       // AdminUpdateIPRiskTag
-		routeKey("GET", "/api/admin/system/risk/lists"):                                                                    RiskListQueryRequest{},                   // AdminListRiskLists
-		routeKey("POST", "/api/admin/system/risk/lists"):                                                                   RiskListCreateRequest{},                  // AdminCreateRiskLists
-		routeKey("POST", "/api/admin/system/risk/lists/batch-delete"):                                                      RiskListBatchDeleteRequest{},             // AdminBatchDeleteRiskLists
-		routeKey("POST", "/api/admin/system/risk/lists/check"):                                                             RiskListCheckRequest{},                   // AdminCheckRiskLists
-		routeKey("PUT", "/api/admin/system/risk/lists/{id}"):                                                               RiskListUpdateRequest{},                  // AdminUpdateRiskList
-		routeKey("GET", "/api/admin/system/risk/reviews/pending"):                                                          RiskPageRequest{},                        // AdminListPendingReviews
-		routeKey("GET", "/api/admin/system/risk/rules"):                                                                    RiskRuleListRequest{},                    // AdminListRiskRules
-		routeKey("POST", "/api/admin/system/risk/rules"):                                                                   RiskRuleCreateRequest{},                  // AdminCreateRiskRule
-		routeKey("PUT", "/api/admin/system/risk/rules/{id}"):                                                               RiskRuleUpdateRequest{},                  // AdminUpdateRiskRule
-		routeKey("POST", "/api/admin/system/risk/rules/{id}/simulate"):                                                     RiskSimulateRequest{},                    // AdminSimulateRiskRule
-		routeKey("POST", "/api/admin/system/risk/simulate"):                                                                RiskSimulateRequest{},                    // AdminSimulateRisk
-		routeKey("POST", "/api/admin/system/risk/templates/apply"):                                                         RiskTemplateApplyRequest{},               // AdminApplyRiskTemplate
 		routeKey("POST", "/api/admin/system/roles"):                                                                        CreateCustomRoleRequest{},                // AdminCreateCustomRole
 		routeKey("PUT", "/api/admin/system/roles/{roleKey}"):                                                               UpdateCustomRoleRequest{},                // AdminUpdateCustomRole
 		routeKey("POST", "/api/admin/system/saml/test"):                                                                    AdminSAMLTestRequest{},                   // AdminSAMLTest

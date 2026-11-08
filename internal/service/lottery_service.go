@@ -1,6 +1,7 @@
 package service
 
 import (
+	riskevents "aegis/services/risk/events"
 	"context"
 	"errors"
 	"net/http"
@@ -800,6 +801,16 @@ type LotteryDrawRequest struct {
 
 // Draw 抽一次。结果（抽中什么、发了什么）全部由服务端在一个事务里决定并到账。
 func (s *LotteryService) Draw(ctx context.Context, req LotteryDrawRequest) (*lotterydomain.DrawResult, error) {
+	res, err := s.draw(ctx, req)
+	if err == nil && s.risk != nil {
+		s.risk.Report(ctx, riskevents.Event{Type: riskevents.TypeLotteryDraw, Scene: securitydomain.SceneLottery, AppID: req.AppID, UserID: req.UserID,
+			IP: req.ClientIP, DeviceID: strings.TrimSpace(req.DeviceID), UA: req.UserAgent, Device: DeviceFingerprint(ctx),
+			Props: map[string]any{"activityId": req.ActivityID, "source": req.Source}})
+	}
+	return res, err
+}
+
+func (s *LotteryService) draw(ctx context.Context, req LotteryDrawRequest) (*lotterydomain.DrawResult, error) {
 	req.RequestID = strings.TrimSpace(req.RequestID)
 	req.Source = strings.TrimSpace(req.Source)
 	if len(req.RequestID) > lotterydomain.MaxRequestIDLength {
