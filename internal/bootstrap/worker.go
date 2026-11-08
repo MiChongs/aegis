@@ -165,6 +165,7 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 	// 地理异常报给风控平台（geo.anomaly）；Worker 只上报事件，不评估
 	workerRisk := service.NewRiskService(cfg.Risk, log, "aegis-worker", cfg.NATS.URL, redisClient, cfg.Redis.KeyPrefix)
 	geoRiskService.SetRiskService(workerRisk)
+	pg.SetRiskScorer(func(ctx context.Context, appID, userID int64) int { return workerRisk.UserMaxScore(ctx, appID, userID, 30) })
 	geoAnalyticsService := service.NewGeoAnalyticsService(log, cfg.GeoRisk, pg)
 	// 工单 SLA 巡检需要的最小依赖：统一通知出口 + 工单服务。
 	// AdminService / StorageService 在 Worker 侧用不到（巡检不做权限判定、不传附件），故传 nil。

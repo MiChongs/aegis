@@ -770,3 +770,89 @@ func (s *Server) status(ctx context.Context, _ *app.RequestContext) (any, error)
 	wg.Wait()
 	return map[string]any{"components": comps, "decision": decisionStatus, "spoolPending": s.Bus.Pending()}, nil
 }
+
+// ── 应用报表（主服务的报表中心「风控」页取数）──
+
+// ReportGroupRow 与主服务报表引擎的分组行同形
+type ReportGroupRow struct {
+	Key    string  `ch:"k" json:"key"`
+	Label  string  `ch:"l" json:"label"`
+	Count  uint64  `ch:"n" json:"count"`
+	Users  uint64  `ch:"u" json:"users"`
+	Amount float64 `ch:"a" json:"amount"`
+	Value  float64 `ch:"v" json:"value"`
+}
+
+// ReportDailyRow 与主服务报表引擎的按日行同形
+type ReportDailyRow struct {
+	Day string  `ch:"d" json:"day"`
+	Key string  `ch:"k" json:"key"`
+	A   float64 `ch:"a" json:"a"`
+	B   float64 `ch:"b" json:"b"`
+}
+
+func (s *Server) report(ctx context.Context, c *app.RequestContext) (any, error) {
+	appID := qint64(c, "app")
+	if appID <= 0 {
+		return nil, bad("要应用")
+	}
+	from := qtime(c, "from", time.Now().Add(-7*24*time.Hour)).UTC()
+	to := qtime(c, "to", time.Now()).UTC()
+	tz := string(c.Query("tz"))
+	if _, err := time.LoadLocation(tz); tz == "" || err != nil {
+		tz = "Asia/Shanghai"
+	}
+	conn := s.CH.Conn()
+	base := "app_id = ? AND ts >= ? AND ts < ? AND shadow = 0"
+	args := []any{appID, from, to}
+	users := "uniqExactIf(user_id, user_id > 0)"
+	queries := map[string]string{
+		"levels":  "SELECT level AS k, '' AS l, count() AS n, " + users + " AS u, 0. AS a, ifNotFinite(avg(score), 0) AS v FROM decisions WHERE " + base + " GROUP BY k",
+		"actions": "SELECT action AS k, '' AS l, count() AS n, " + users + " AS u, 0. AS a, 0. AS v FROM decisions WHERE " + base + " GROUP BY k",
+		"scenes":  "SELECT scene AS k, '' AS l, count() AS n, " + users + " AS u, 0. AS a, toFloat64(countIf(action IN ('block','ban'))) AS v FROM decisions WHERE " + base + " GROUP BY k",
+		"rules":   "SELECT arrayJoin(hits) AS k, '' AS l, count() AS n, " + users + " AS u, 0. AS a, ifNotFinite(avg(score), 0) AS v FROM decisions WHERE " + base + " GROUP BY k ORDER BY n DESC LIMIT 20",
+		"ips":     "SELECT ip AS k, any(country) AS l, count() AS n, uniqExact(if(user_id > 0, toString(user_id), account)) AS u, 0. AS a, toFloat64(max(score)) AS v FROM decisions WHERE " + base + " AND action != 'pass' AND ip != '' GROUP BY k ORDER BY n DESC LIMIT 20",
+	}
+	out := map[string]any{}
+	groups := map[string][]ReportGroupRow{}
+	for name, q := range queries {
+		var rows []ReportGroupRow
+		if err := conn.Select(ctx, &rows, q, args...); err != nil {
+			return nil, fmt.Errorf("%s：%w", name, err)
+		}
+		groups[name] = nonNilSlice(rows)
+	}
+	out["groups"] = groups
+	var daily []ReportDailyRow
+	if err := conn.Select(ctx, &daily, "SELECT toString(toDate(ts, ?)) AS d, level AS k, toFloat64(count()) AS a, toFloat64(countIf(action IN ('block','ban'))) AS b FROM decisions WHERE "+base+" GROUP BY d, k ORDER BY d",
+		append([]any{tz}, args...)...); err != nil {
+		return nil, err
+	}
+	out["daily"] = nonNilSlice(daily)
+	var samples []struct {
+		Score   int32 `ch:"score"`
+		Latency int64 `ch:"latency_us"`
+	}
+	if err := conn.Select(ctx, &samples, "SELECT score, latency_us FROM decisions WHERE "+base+" LIMIT 20000", args...); err != nil {
+		return nil, err
+	}
+	scores, latencies := make([]float64, len(samples)), make([]float64, len(samples))
+	for i, sm := range samples {
+		scores[i], latencies[i] = float64(sm.Score), float64(sm.Latency)/1000
+	}
+	out["scores"], out["latencies"] = scores, latencies
+	return out, nil
+}
+
+// userScore 用户近 N 天的最高风险分（抽奖行为画像用）
+func (s *Server) userScore(ctx context.Context, c *app.RequestContext) (any, error) {
+	appID, uid := qint64(c, "app"), qint64(c, "user")
+	days := min(max(qint(c, "days", 30), 1), 365)
+	var max32 int32
+	err := s.CH.Conn().QueryRow(ctx, "SELECT max(score) FROM decisions WHERE app_id = ? AND user_id = ? AND ts >= ? AND shadow = 0",
+		appID, uid, time.Now().Add(-time.Duration(days)*24*time.Hour).UTC()).Scan(&max32)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"maxScore": max32}, nil
+}

@@ -30,7 +30,12 @@ type Repository struct {
 	levels levelSchemeCache
 	// lotteryTotals 抽奖全站计数的读缓存（lottery_counters_repository.go；只缓存读，计数本身随抽奖事务落库）
 	lotteryTotals lotteryTotalsCache
+	// riskScore 用户近 30 天最高风险分：风控流水在风控平台的 ClickHouse 里，由装配层注入（未注入为 0）
+	riskScore func(ctx context.Context, appID, userID int64) int
 }
+
+// SetRiskScorer 注入「用户近 30 天最高风险分」的取法（行为画像的风险信号）
+func (r *Repository) SetRiskScorer(fn func(ctx context.Context, appID, userID int64) int) { r.riskScore = fn }
 
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}

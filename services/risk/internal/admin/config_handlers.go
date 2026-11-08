@@ -84,6 +84,8 @@ func (s *Server) routes(g *route.RouterGroup) {
 	g.GET("/profile", s.wrap(s.profile))
 	g.GET("/status", s.wrap(s.status))
 	g.GET("/audit", s.wrap(s.audit))
+	g.GET("/report", s.wrap(s.report))
+	g.GET("/users/score", s.wrap(s.userScore))
 	g.POST("/dispose", s.wrap(s.dispose))
 }
 

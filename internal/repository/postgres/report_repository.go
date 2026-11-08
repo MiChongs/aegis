@@ -132,31 +132,6 @@ FROM notifications n LEFT JOIN notification_receipts nr ON nr.notification_id = 
 WHERE n.appid = $1 AND n.created_at >= $2 AND n.created_at < $3
 GROUP BY 1`},
 
-	"risk.levels": {sql: `
-SELECT COALESCE(NULLIF(risk_level, ''), ''), '', COUNT(*), COUNT(DISTINCT user_id), 0::float8, COALESCE(AVG(total_score), 0)::float8
-FROM risk_assessments WHERE app_id = $1 AND created_at >= $2 AND created_at < $3
-GROUP BY 1`},
-	"risk.actions": {sql: `
-SELECT COALESCE(NULLIF(action, ''), ''), '', COUNT(*), COUNT(DISTINCT user_id), 0::float8, 0::float8
-FROM risk_assessments WHERE app_id = $1 AND created_at >= $2 AND created_at < $3
-GROUP BY 1`},
-	"risk.scenes": {sql: `
-SELECT COALESCE(NULLIF(scene, ''), ''), '', COUNT(*), COUNT(DISTINCT user_id), 0::float8,
-       COUNT(*) FILTER (WHERE action IN ('block', 'ban'))::float8
-FROM risk_assessments WHERE app_id = $1 AND created_at >= $2 AND created_at < $3
-GROUP BY 1`},
-	"risk.rules": {sql: `
-SELECT COALESCE(NULLIF(r->>'ruleName', ''), r->>'ruleId', ''), COALESCE(MAX(r->>'conditionType'), ''), COUNT(*), COUNT(DISTINCT a.user_id), 0::float8,
-       COALESCE(SUM((r->>'score')::float8), 0)
-FROM risk_assessments a CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(a.matched_rules) = 'array' THEN a.matched_rules ELSE '[]'::jsonb END) r
-WHERE a.app_id = $1 AND a.created_at >= $2 AND a.created_at < $3
-GROUP BY 1 ORDER BY 3 DESC LIMIT 20`},
-	"risk.ips": {sql: `
-SELECT COALESCE(NULLIF(ip, ''), ''), COALESCE(MAX(country), ''), COUNT(*), COUNT(DISTINCT COALESCE(user_id::text, NULLIF(account, ''))), 0::float8,
-       COALESCE(MAX(total_score), 0)::float8
-FROM risk_assessments WHERE app_id = $1 AND created_at >= $2 AND created_at < $3 AND action <> 'pass'
-GROUP BY 1 ORDER BY 3 DESC LIMIT 20`},
-
 	"firewall.severity": {global: true, sql: `
 SELECT COALESCE(NULLIF(severity, ''), ''), '', COUNT(*), COUNT(DISTINCT ip), 0::float8, 0::float8
 FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2
@@ -251,11 +226,6 @@ SELECT (nr.read_at AT TIME ZONE $4::text)::date, '', COUNT(*)::float8, 0::float8
 FROM notification_receipts nr JOIN notifications n ON n.id = nr.notification_id
 WHERE n.appid = $1 AND nr.read_at >= $2 AND nr.read_at < $3
 GROUP BY 1`},
-	"risk.daily": {tz: true, sql: `
-SELECT (created_at AT TIME ZONE $4::text)::date, COALESCE(NULLIF(risk_level, ''), 'unknown'), COUNT(*)::float8,
-       COUNT(*) FILTER (WHERE action IN ('block', 'ban'))::float8, 0::float8
-FROM risk_assessments WHERE app_id = $1 AND created_at >= $2 AND created_at < $3
-GROUP BY 1, 2`},
 	"firewall.daily": {global: true, tz: true, sql: `
 SELECT (blocked_at AT TIME ZONE $3::text)::date, COALESCE(NULLIF(severity, ''), 'unknown'), COUNT(*)::float8, 0::float8, 0::float8
 FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2
@@ -566,21 +536,6 @@ ORDER BY n.created_at DESC LIMIT ` + fmt.Sprint(reportSampleLimit)
 			return err
 		}
 		return fn(v)
-	})
-}
-
-// ReportRiskSamples 风控评估的分数与耗时
-func (r *Repository) ReportRiskSamples(ctx context.Context, appID int64, from, to time.Time, fn func(score, latencyMs float64) error) error {
-	query := `
-SELECT total_score::float8, COALESCE(latency_ms, 0)::float8
-FROM risk_assessments WHERE app_id = $1 AND created_at >= $2 AND created_at < $3
-ORDER BY created_at DESC LIMIT ` + fmt.Sprint(reportSampleLimit)
-	return r.reportStream(ctx, query, []any{appID, from, to}, func(rows pgx.Rows) error {
-		var score, latency float64
-		if err := rows.Scan(&score, &latency); err != nil {
-			return err
-		}
-		return fn(score, latency)
 	})
 }
 

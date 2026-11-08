@@ -575,6 +575,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	riskService := service.NewRiskService(cfg.Risk, log, "aegis-api", cfg.NATS.URL, redisClient, cfg.Redis.KeyPrefix)
 	riskService.SetLocationService(locationService)
 	loginGuardService.SetRiskService(riskService)
+	pg.SetRiskScorer(func(ctx context.Context, appID, userID int64) int { return riskService.UserMaxScore(ctx, appID, userID, 30) })
+	reportService.SetRiskService(riskService)
 	pluginService.ObserveHooks(riskService.ObserveHook)
 	authService.SetRiskService(riskService)
 	inviteService.SetRiskService(riskService)

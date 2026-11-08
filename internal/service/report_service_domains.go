@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"aegis/internal/service/reportengine"
 
 	"github.com/RoaringBitmap/roaring/v2/roaring64"
+	"go.uber.org/zap"
 )
 
 // 业务侧报表：登录、设备、地区、渠道、支付、通知、风控、抽奖、互动。
@@ -607,36 +609,16 @@ func (s *ReportService) Risk(ctx context.Context, appID int64, p ReportParams) (
 		scores, latencies                         []float64
 	)
 	g, gctx := reportGroup(ctx)
-	g.Go(func() (err error) {
-		daily, err = s.pg.ReportDaily(gctx, "risk.daily", appID, w.PrevStart(), w.End(), w.TZ)
-		return
-	})
-	g.Go(func() (err error) {
-		levels, err = s.groups(gctx, "risk.levels", appID, w, reportengine.SliceOptions{})
-		return
-	})
-	g.Go(func() (err error) {
-		actions, err = s.groups(gctx, "risk.actions", appID, w, reportengine.SliceOptions{})
-		return
-	})
-	g.Go(func() (err error) {
-		scenes, err = s.groups(gctx, "risk.scenes", appID, w, reportengine.SliceOptions{})
-		return
-	})
-	g.Go(func() (err error) {
-		rules, err = s.groups(gctx, "risk.rules", appID, w, reportengine.SliceOptions{})
-		return
-	})
-	g.Go(func() (err error) {
-		ips, err = s.groups(gctx, "risk.ips", appID, w, reportengine.SliceOptions{})
-		return
-	})
+	// 风控流水在风控平台（ClickHouse），一次取齐；风控没接入或不可用时这一块为空，不影响防火墙那一半
 	g.Go(func() error {
-		return s.pg.ReportRiskSamples(gctx, appID, w.Start, w.End(), func(score, latency float64) error {
-			scores = append(scores, score)
-			latencies = append(latencies, latency)
+		rr, err := s.riskReport(gctx, appID, w)
+		if err != nil {
+			s.log.Warn("报表：风控平台取数失败", zap.Int64("app", appID), zap.Error(err))
 			return nil
-		})
+		}
+		daily, scores, latencies = rr.daily, rr.scores, rr.latencies
+		levels, actions, scenes, rules, ips = rr.groups["levels"], rr.groups["actions"], rr.groups["scenes"], rr.groups["rules"], rr.groups["ips"]
+		return nil
 	})
 	g.Go(func() (err error) {
 		fwDaily, err = s.pg.ReportDaily(gctx, "firewall.daily", 0, w.Start, w.End(), w.TZ)
@@ -898,4 +880,55 @@ func (s *ReportService) Engagement(ctx context.Context, appID int64, p ReportPar
 		RewardedScenes: scenes,
 		SplashAds:      splash,
 	}, nil
+}
+
+type riskReportData struct {
+	daily             []pgrepo.ReportDailyRow
+	groups            map[string][]reportdomain.Slice
+	scores, latencies []float64
+}
+
+// riskReport 从风控平台取应用的风控报表数据（risk-admin /v1/report），转成报表引擎的行
+func (s *ReportService) riskReport(ctx context.Context, appID int64, w *reportengine.Window) (*riskReportData, error) {
+	if s.risk == nil || !s.risk.Enabled() {
+		return &riskReportData{groups: map[string][]reportdomain.Slice{}}, nil
+	}
+	var raw struct {
+		Daily []struct {
+			Day string  `json:"day"`
+			Key string  `json:"key"`
+			A   float64 `json:"a"`
+			B   float64 `json:"b"`
+		} `json:"daily"`
+		Groups map[string][]struct {
+			Key    string  `json:"key"`
+			Label  string  `json:"label"`
+			Count  int64   `json:"count"`
+			Users  int64   `json:"users"`
+			Amount float64 `json:"amount"`
+			Value  float64 `json:"value"`
+		} `json:"groups"`
+		Scores    []float64 `json:"scores"`
+		Latencies []float64 `json:"latencies"`
+	}
+	q := url.Values{"app": {strconv.FormatInt(appID, 10)}, "from": {w.PrevStart().UTC().Format(time.RFC3339)}, "to": {w.End().UTC().Format(time.RFC3339)}, "tz": {w.TZ}}
+	if err := s.risk.AdminGet(ctx, "report", q, &raw); err != nil {
+		return nil, err
+	}
+	out := &riskReportData{groups: map[string][]reportdomain.Slice{}, scores: raw.Scores, latencies: raw.Latencies}
+	for _, d := range raw.Daily {
+		day, err := time.Parse(time.DateOnly, d.Day)
+		if err != nil {
+			continue
+		}
+		out.daily = append(out.daily, pgrepo.ReportDailyRow{Day: day, Key: d.Key, A: d.A, B: d.B})
+	}
+	for name, rows := range raw.Groups {
+		conv := make([]pgrepo.ReportGroupRow, 0, len(rows))
+		for _, r := range rows {
+			conv = append(conv, pgrepo.ReportGroupRow{Key: r.Key, Label: r.Label, Count: r.Count, Users: r.Users, Amount: r.Amount, Value: r.Value})
+		}
+		out.groups[name] = reportengine.ToSlices(toGroups(conv), reportengine.SliceOptions{})
+	}
+	return out, nil
 }

@@ -61,8 +61,7 @@ SELECT
   (SELECT COUNT(*) FROM points_store_redemptions WHERE appid = $2 AND user_id = $1)
     + (SELECT COUNT(*) FROM card_key_redemptions WHERE appid = $2 AND user_id = $1),
   (SELECT COUNT(*) FROM user_login_devices WHERE appid = $2 AND user_id = $1),
-  COALESCE((SELECT MAX(total_score) FROM risk_assessments
-            WHERE user_id = $1 AND created_at >= $3::timestamptz - INTERVAL '30 days'), 0)
+  0::bigint -- 风险分从风控平台取（见 Repository.SetRiskScorer）
 FROM u, online, logins`
 
 // LotteryBehaviorProfile 这个人的行为画像。today 是应用时区的今天。
@@ -101,6 +100,9 @@ func (r *Repository) LotteryBehaviorProfile(ctx context.Context, appID, userID i
 	p.Experience, p.Level, p.Integral = float64(experience), float64(level), float64(integral)
 	p.PointsEarned30d, p.Invites, p.AdViews30d = float64(earned), float64(invites), float64(ads)
 	p.Redemptions, p.Devices, p.RiskScore30d = float64(redemptions), float64(devices), float64(risk)
+	if r.riskScore != nil {
+		p.RiskScore30d = float64(r.riskScore(ctx, appID, userID))
+	}
 	if lastActive != nil {
 		p.RecencyDays = math.Max(0, now.Sub(*lastActive).Hours()/24)
 	} else {

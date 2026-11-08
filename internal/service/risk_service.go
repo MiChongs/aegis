@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -515,4 +517,69 @@ func (s *RiskService) InternalToken() string {
 		return ""
 	}
 	return s.cfg.InternalToken
+}
+
+var riskAdminHTTP = &http.Client{Timeout: 5 * time.Second}
+
+// AdminGet 主服务自己读风控平台的数据（报表、行为画像）：GET risk-admin /v1/<path>，解开 {code, data} 信封
+func (s *RiskService) AdminGet(ctx context.Context, path string, query url.Values, out any) error {
+	if !s.Enabled() {
+		return errors.New("风控平台未接入")
+	}
+	base, err := s.AdminBaseURL(ctx)
+	if err != nil {
+		return err
+	}
+	u := base + "/v1/" + strings.TrimPrefix(path, "/")
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Risk-Token", s.cfg.InternalToken)
+	req.Header.Set("X-Risk-Operator", "aegis-server")
+	resp, err := riskAdminHTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var env struct {
+		Code    int             `json:"code"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK || env.Code != 200 {
+		return fmt.Errorf("risk-admin %s：%s", path, env.Message)
+	}
+	return json.Unmarshal(env.Data, out)
+}
+
+// UserMaxScore 用户近 days 天的最高风险分（5 分钟缓存；风控不可用时返回 0）
+func (s *RiskService) UserMaxScore(ctx context.Context, appID, userID int64, days int) int {
+	if !s.Enabled() || userID <= 0 {
+		return 0
+	}
+	key := fmt.Sprintf("%srisk:maxscore:%d:%d:%d", s.prefix, appID, userID, days)
+	if s.redis != nil {
+		if v, err := s.redis.Get(ctx, key).Int(); err == nil {
+			return v
+		}
+	}
+	cctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	var out struct {
+		MaxScore int `json:"maxScore"`
+	}
+	if err := s.AdminGet(cctx, "users/score", url.Values{"app": {fmt.Sprint(appID)}, "user": {fmt.Sprint(userID)}, "days": {fmt.Sprint(days)}}, &out); err != nil {
+		return 0
+	}
+	if s.redis != nil {
+		_ = s.redis.Set(ctx, key, out.MaxScore, 5*time.Minute).Err()
+	}
+	return out.MaxScore
 }

@@ -25,6 +25,7 @@ import (
 // 多个报表共用的「活跃事实」「注册事实」按（应用, 窗口, 时区）缓存一分钟，
 // 同一时刻的并发请求经 singleflight 合并成一次加载 —— 控制台切标签页不会把同一批明细反复扫一遍。
 type ReportService struct {
+	risk    *RiskService
 	log     *zap.Logger
 	pg      *pgrepo.Repository
 	devices *DeviceMarketingService
@@ -379,6 +380,9 @@ func toGroups(rows []pgrepo.ReportGroupRow) []reportengine.Group {
 	}
 	return out
 }
+
+// SetRiskService 接风控平台（「风控」报表的数据在它的 ClickHouse 里）
+func (s *ReportService) SetRiskService(risk *RiskService) { s.risk = risk }
 
 func (s *ReportService) groups(ctx context.Context, name string, appID int64, w *reportengine.Window, opts reportengine.SliceOptions) ([]reportdomain.Slice, error) {
 	rows, err := s.pg.ReportGroups(ctx, name, appID, w.Start, w.End(), w.TZ)
