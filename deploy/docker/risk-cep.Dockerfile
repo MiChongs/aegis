@@ -6,12 +6,16 @@
 #
 #   docker build -f deploy/docker/risk-cep.Dockerfile -t aegis-risk-cep .
 #
-# MAVEN_MIRROR：Maven Central 的镜像地址（mirrorOf central），留空直连。HK 服务器到 repo.maven.apache.org
-# 的 IPv4 连接会被重置，生产编排传 Google 的 Maven Central 亚洲镜像。
+# 两个构建参数都是可选的：
+#   MAVEN_MIRROR  Maven Central 的镜像地址（mirrorOf central），留空直连
+#   MAVEN_OPTS    传给 mvn 的 JVM 参数。HK 服务器到 Maven Central 的 IPv4 连接会被重置、IPv6 正常，
+#                 生产编排传 -Djava.net.preferIPv6Addresses=true（Java 默认优先 IPv4）
 #
 FROM maven:3-eclipse-temurin-21 AS build
 WORKDIR /src
 ARG MAVEN_MIRROR=
+ARG MAVEN_OPTS=
+ENV MAVEN_OPTS=${MAVEN_OPTS}
 RUN if [ -n "$MAVEN_MIRROR" ]; then \
       printf '<settings><mirrors><mirror><id>central-mirror</id><mirrorOf>central</mirrorOf><url>%s</url></mirror></mirrors></settings>\n' "$MAVEN_MIRROR"; \
     else \
