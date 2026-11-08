@@ -16,7 +16,7 @@
 #    RISK_NATS_USER / RISK_NATS_PASSWORD                 现有 NATS 账户 APP 的用户
 #    RISK_REDIS_PASSWORD / RISK_CLICKHOUSE_PASSWORD / RISK_NEBULA_PASSWORD
 #    RISK_MINIO_ACCESS_KEY / RISK_MINIO_SECRET_KEY
-#  密码只用 URL 安全字符（字母数字），因为会拼进 DSN 与 NATS 地址。
+#  密码只用 URL 安全字符（字母数字），因为会拼进 DSN 与 NATS 地址；RISK_NEBULA_PASSWORD 不超过 24 个字符（Nebula 上限）。
 # ══════════════════════════════════════════════════════════════════════════
 
 x-logging: &logging

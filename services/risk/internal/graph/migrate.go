@@ -129,7 +129,13 @@ func Migrate(cfg config.Config, logf func(string, ...any)) error {
 
 const defaultRootPassword = "nebula"
 
+// maxPasswordLen NebulaGraph 密码最长 24 个字符（更长的 CHANGE PASSWORD 报 SemanticError）
+const maxPasswordLen = 24
+
 func changeDefaultPassword(pool *nebula.ConnectionPool, password string) error {
+	if len(password) > maxPasswordLen {
+		return fmt.Errorf("RISK_NEBULA_PASSWORD 有 %d 个字符，NebulaGraph 最长 %d 个", len(password), maxPasswordLen)
+	}
 	session, err := pool.GetSession("root", defaultRootPassword)
 	if err != nil {
 		return err
