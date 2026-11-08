@@ -595,7 +595,8 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 			countIf(action = 'captcha') AS captcha, max(score) AS max_score, ifNotFinite(avg(score), 0) AS avg_score, uniqExact(scene) AS scenes,
 			uniqExactIf(device_id, device_id != '') AS devices, uniqExactIf(ip, ip != '') AS ips, min(ts) AS first, max(ts) AS last
 			FROM decisions WHERE `+base, args...)
-		if len(r) == 0 {
+		// 没有评估时聚合出来的首末时间是 1970-01-01，控制台会显示成「56 年前」：直接给空摘要
+		if len(r) == 0 || r[0].Total == 0 {
 			return map[string]any{}, err
 		}
 		return r[0], err

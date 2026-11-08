@@ -61,7 +61,7 @@ export function UserRiskTab({ appKey, userId, user }: { appKey: string; userId: 
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm text-muted-foreground">
-          {s?.lastSeen ? `最近一次评估 ${formatRelative(s.lastSeen)}` : "近期没有风控评估"}
+          {s?.total && s.lastSeen ? `最近一次评估 ${formatRelative(s.lastSeen)}` : "近期没有风控评估"}
         </div>
         <ToggleGroup type="single" size="sm" variant="outline" value={String(days)} onValueChange={(v) => v && setDays(Number(v))}>
           {[7, 30, 90, 180].map((d) => (
