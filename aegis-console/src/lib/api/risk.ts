@@ -602,6 +602,7 @@ export interface BackfillProgress {
   ips: number;
   vectors: number;
   proxyIps: number;
+  badDevices?: number;
   hostingIps: number;
   sharedIps: number;
   v6Lines: number;

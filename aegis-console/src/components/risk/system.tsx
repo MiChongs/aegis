@@ -489,9 +489,10 @@ function GraphDataPanel() {
     ? [
         { label: "用户", value: p.users },
         { label: "IP", value: p.ips, sub: p.hostingIps || p.sharedIps ? `机房出口 ${p.hostingIps}，共享出口 ${p.sharedIps}` : undefined },
-        { label: "设备", value: p.devices, sub: p.vectors ? `设备指纹 ${p.vectors}` : undefined },
+        { label: "设备", value: p.devices, sub: p.vectors ? `设备码向量 ${p.vectors}` : undefined },
         { label: "IPv6 线路", value: p.v6Lines, sub: p.v6Addrs ? `含 ${p.v6Addrs.toLocaleString("zh-CN")} 个地址` : undefined },
         { label: "删除的代理地址", value: p.proxyIps },
+        { label: "删除的假设备码", value: p.badDevices ?? 0 },
       ]
     : [];
 

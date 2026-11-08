@@ -255,7 +255,7 @@ const KIND_HINT: Record<FeatureKind, string> = {
   velocity: "实时计数，本次请求也计算在内",
   stream: "从历史事件中统计，适合较长的时间范围",
   graph: "账号、设备、IP 之间的关联关系",
-  vector: "按设备指纹找相似设备",
+  vector: "按设备码找几乎相同的设备",
   derived: "由请求信息组合出的判断",
 };
 
@@ -284,8 +284,8 @@ export function featureSummary(f: Feature, options: VarOption[] = []): string {
     case "vector": {
       const v = f.vector;
       if (!v) return KIND_HINT.vector;
-      const out = v.output === "similar_banned" ? "其中已被封禁的数量" : v.output === "similar_count" ? "相似设备数" : "最高相似度";
-      return `在最相似的 ${v.topK} 台设备中，相似度不低于 ${Math.round(v.minScore * 100)}% 的${out}`;
+      const out = v.output === "similar_banned" ? "其中已被封禁的数量" : v.output === "similar_count" ? "设备数" : "最高相似度";
+      return `在设备码最相近的 ${v.topK} 台设备中，相似度不低于 ${Math.round(v.minScore * 100)}%（按相差的字符数算）的${out}`;
     }
     default: {
       const { tokens, loose } = describeExpr(f.expr ?? "", options);

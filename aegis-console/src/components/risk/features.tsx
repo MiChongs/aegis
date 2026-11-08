@@ -62,14 +62,14 @@ import { ConditionRows, errorText, formatCondValue, keyError, MultiPick } from "
 
 const KINDS: FeatureKind[] = ["velocity", "stream", "graph", "vector", "derived"];
 const AGG_LABEL: Record<Agg, string> = { count: "次数", distinct: "去重个数", sum: "总和", max: "最大值", avg: "平均值" };
-const VECTOR_OUTPUT_LABEL = { similar_count: "相似设备数", similar_banned: "相似且已封禁的设备数", max_score: "最高相似度" } as const;
+const VECTOR_OUTPUT_LABEL = { similar_count: "设备码几乎相同的设备数", similar_banned: "其中已封禁的设备数", max_score: "最高相似度" } as const;
 const MAX_VELOCITY_WINDOW = 30 * 86400;
 
 const KIND_META: Record<FeatureKind, { icon: LucideIcon; hint: string; plate: string; accent: string }> = {
   velocity: { icon: Timer, hint: "实时累计，本次请求计入在内", plate: "bg-sky-500/12 text-sky-600 dark:text-sky-400", accent: "bg-sky-500" },
   stream: { icon: Activity, hint: "从业务事件聚合，适合长窗口与业务结果", plate: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400", accent: "bg-emerald-500" },
   graph: { icon: Waypoints, hint: "账号、设备、IP 之间的关联", plate: "bg-violet-500/12 text-violet-600 dark:text-violet-400", accent: "bg-violet-500" },
-  vector: { icon: Fingerprint, hint: "找出指纹相近的设备", plate: "bg-amber-500/12 text-amber-600 dark:text-amber-400", accent: "bg-amber-500" },
+  vector: { icon: Fingerprint, hint: "找出设备码只差几个字符的设备", plate: "bg-amber-500/12 text-amber-600 dark:text-amber-400", accent: "bg-amber-500" },
   derived: { icon: Sigma, hint: "用表达式组合请求字段与其他特征", plate: "bg-rose-500/12 text-rose-600 dark:text-rose-400", accent: "bg-rose-500" },
 };
 
@@ -145,7 +145,7 @@ function rawSentence(f: Feature, sceneName?: (k: string) => string): string {
     case "vector": {
       const v = f.vector;
       if (!v) return "";
-      const lib = v.collection === "behavior" ? "行为序列" : "设备指纹";
+      const lib = v.collection === "behavior" ? "行为序列" : "设备码";
       return `在${lib}中找与当前设备最相近的 ${v.topK} 个，相似度不低于 ${v.minScore}，取${VECTOR_OUTPUT_LABEL[v.output] ?? v.output}`;
     }
     case "derived":
@@ -797,7 +797,7 @@ function FeatureDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="device">设备指纹</SelectItem>
+                <SelectItem value="device">设备码</SelectItem>
                 <SelectItem value="behavior">行为序列</SelectItem>
               </SelectContent>
             </Select>

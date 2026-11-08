@@ -655,7 +655,7 @@ function riskStory(args: {
       const extra: string[] = [];
       if (emu) extra.push(`${emu} 台是模拟器`);
       if (root) extra.push(`${root} 台已 Root`);
-      if (twin) extra.push(`${twin} 台与已封禁的设备高度相似`);
+      if (twin) extra.push(`${twin} 台的设备码与已封禁的设备几乎相同`);
       if (extra.length) d += `，其中 ${extra.join("，")}`;
       bits.push(d);
     }
@@ -1215,7 +1215,7 @@ function DevicesPanel({ devices, total, appKey, look, loading }: {
     : [
         `用过 ${count} 台设备`,
         emu ? `${emu} 台是模拟器` : "",
-        twin ? `${twin} 台与已封禁的设备高度相似` : "",
+        twin ? `${twin} 台的设备码与已封禁的设备几乎相同` : "",
       ].filter(Boolean).join("，");
 
   return (
@@ -1302,8 +1302,9 @@ function DeviceCard({ use, latest, appKey, look }: { use: EntityUse; latest: boo
           <div className={cn("rounded-lg px-3 py-2.5", bannedTwins ? TONE_SOFT.danger : "bg-muted/50")}>
             <div className="flex items-center gap-1.5 text-xs font-medium">
               <Sparkles className="size-3.5 shrink-0" />
-              {bannedTwins ? `与 ${similar.length} 台设备高度相似，其中 ${bannedTwins} 台的用户已被封禁` : `与 ${similar.length} 台设备高度相似`}
+              {bannedTwins ? `设备码与 ${similar.length} 台设备几乎相同，其中 ${bannedTwins} 台的用户已被封禁` : `设备码与 ${similar.length} 台设备几乎相同`}
             </div>
+            <p className="mt-1 text-xs text-muted-foreground">正常设备的设备码由硬件信号生成，彼此毫无相似之处；只差几个字符多半是脚本批量生成或改机改出来的。</p>
             <ul className="mt-1.5 space-y-0.5">
               {similar.slice(0, 4).map((n) => (
                 <li key={n.deviceId} className="flex items-center justify-between gap-2 text-xs">
@@ -1316,7 +1317,7 @@ function DeviceCard({ use, latest, appKey, look }: { use: EntityUse; latest: boo
                   )}
                   <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
                     {n.banned ? <span className="text-rose-600 dark:text-rose-400">已封禁</span> : null}
-                    <span className="text-muted-foreground">相似度 {Math.round(n.score * 100)}%</span>
+                    <span className="text-muted-foreground" title="按两个设备码相差的字符数计算">相似度 {Math.round(n.score * 100)}%</span>
                   </span>
                 </li>
               ))}
@@ -1324,7 +1325,7 @@ function DeviceCard({ use, latest, appKey, look }: { use: EntityUse; latest: boo
             {similar.length > 4 ? <div className="mt-1 text-xs text-muted-foreground">另有 {similar.length - 4} 台</div> : null}
           </div>
         ) : (
-          <div className="text-xs text-muted-foreground">未发现高度相似的设备</div>
+          <div className="text-xs text-muted-foreground">没有设备码与它几乎相同的设备</div>
         )
       ) : null}
 

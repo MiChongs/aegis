@@ -51,7 +51,7 @@ export const FEATURE_KIND_HINT: Record<FeatureKind, string> = {
   velocity: "决策服务在 Redis Cluster 里维护的滑窗计数，本次请求算在内",
   stream: "RisingWave 从事件流聚合，适合长窗口与业务结果（失败、支付、退款）",
   graph: "NebulaGraph 关系查询：同设备 / 同 IP 账号、被封邻居、邀请树",
-  vector: "Milvus 设备指纹相似检索：改机与模拟器批量",
+  vector: "Milvus 设备码相似检索：批量生成与改机改出的设备码",
   derived: "用表达式组合请求字段与其它特征",
 };
 
