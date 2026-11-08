@@ -14,13 +14,14 @@ import (
 
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
-	devicedomain "aegis/internal/domain/device"
 	captchadomain "aegis/internal/domain/captcha"
+	devicedomain "aegis/internal/domain/device"
 	plugindomain "aegis/internal/domain/plugin"
 	userdomain "aegis/internal/domain/user"
 	"aegis/internal/event"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
+	"aegis/pkg/clientip"
 	apperrors "aegis/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -105,7 +106,7 @@ func hashUserPassword(password string) (string, error) {
 }
 
 type UserService struct {
-	oauth2    *OAuth2ServerService
+	oauth2 *OAuth2ServerService
 	// devices 设备字典：会话与登录记录里的 deviceInfo 读取时现查。为空时只做不查字典的兜底
 	devices   *DeviceMarketingService
 	log       *zap.Logger
@@ -254,7 +255,8 @@ func (s *UserService) GetMy(ctx context.Context, session *authdomain.Session) (*
 		"user_id":   user.ID,
 		"appid":     user.AppID,
 		"token_jti": session.TokenID,
-		"ip":        session.IP,
+		// 这一次请求的 IP，不是会话里存的登录时 IP（旧会话里存的可能是 CDN 节点）
+		"ip": clientip.FromContext(ctx, session.IP),
 	})
 	return view, nil
 }
@@ -607,7 +609,7 @@ func (s *UserService) dispatchSensitiveProfileChangeCode(ctx context.Context, se
 			AppID:    session.AppID,
 			Phone:    change.Value,
 			Purpose:  captchadomain.Purpose(change.Purpose),
-			ClientIP: strings.TrimSpace(session.IP),
+			ClientIP: clientip.FromContext(ctx, session.IP),
 		}, providerCfg)
 		return err
 	default:
@@ -1841,7 +1843,7 @@ func (s *UserService) loadActiveUser(ctx context.Context, session *authdomain.Se
 	if err != nil {
 		return nil, nil, err
 	}
-	profile = s.backfillProfileRegisterIPAsync(user.AppID, user.ID, profile, session.IP)
+	profile = s.backfillProfileRegisterIPAsync(user.AppID, user.ID, profile, clientip.FromContext(ctx, session.IP))
 	s.enrichProfileRegisterLocationAsync(user.AppID, user.ID, profile)
 	return user, profile, nil
 }
@@ -2050,17 +2052,17 @@ func (s *UserService) mapLoginAuditItems(ctx context.Context, items []appdomain.
 	for _, item := range items {
 		result = append(result, userdomain.LoginAuditItem{
 			DeviceInfo: s.devices.describeFromMetadata(ctx, item.Metadata, item.DeviceID, item.UserAgent),
-			ID:        item.ID,
-			AppID:     item.AppID,
-			LoginType: item.LoginType,
-			Provider:  item.Provider,
-			TokenJTI:  item.TokenJTI,
-			LoginIP:   item.LoginIP,
-			DeviceID:  item.DeviceID,
-			UserAgent: item.UserAgent,
-			Status:    item.Status,
-			Metadata:  item.Metadata,
-			CreatedAt: item.CreatedAt,
+			ID:         item.ID,
+			AppID:      item.AppID,
+			LoginType:  item.LoginType,
+			Provider:   item.Provider,
+			TokenJTI:   item.TokenJTI,
+			LoginIP:    item.LoginIP,
+			DeviceID:   item.DeviceID,
+			UserAgent:  item.UserAgent,
+			Status:     item.Status,
+			Metadata:   item.Metadata,
+			CreatedAt:  item.CreatedAt,
 		})
 	}
 	return result

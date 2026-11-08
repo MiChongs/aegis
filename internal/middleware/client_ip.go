@@ -58,6 +58,8 @@ func ClientIP(resolver *clientip.Resolver, log *zap.Logger) gin.HandlerFunc {
 			}
 			c.Request.RemoteAddr = net.JoinHostPort(ip, port)
 			c.Set(clientIPContextKey, ip)
+			// 也放进请求上下文：服务层拿不到 gin.Context，要取当前请求的 IP 时读它
+			c.Request = c.Request.WithContext(clientip.WithIP(c.Request.Context(), ip))
 		}
 
 		if resolver.DebugHeader() {
