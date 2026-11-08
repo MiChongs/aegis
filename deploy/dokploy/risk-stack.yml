@@ -394,6 +394,9 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/risk.Dockerfile
+      args:
+        # proxy.golang.org 会跳到 Google 存储下载，那一跳从本机常被重置；goproxy.cn 稳定且快，失败再回落
+        GOPROXY: ${RISK_GOPROXY:-https://goproxy.cn,https://proxy.golang.org,direct}
     image: aegis-risk:latest
     restart: "no"
     logging: *logging
