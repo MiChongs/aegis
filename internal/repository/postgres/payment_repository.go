@@ -127,12 +127,12 @@ func (r *Repository) CreatePaymentOrder(ctx context.Context, item paymentdomain.
 	meta, _ := json.Marshal(item.Metadata)
 	query := `INSERT INTO payment_orders (appid, user_id, config_id, order_no, subject, body, amount, payment_method, provider_type, status, notify_status, client_ip, notify_url, return_url, metadata, expire_at, currency, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', 'pending', $10, $11, $12, $13, $14, $15, NOW(), NOW())
-RETURNING id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at`
+RETURNING id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at`
 	return scanPaymentOrder(r.pool.QueryRow(ctx, query, item.AppID, item.UserID, item.ConfigID, item.OrderNo, item.Subject, nullableString(item.Body), item.Amount.StringFixed(2), item.PaymentMethod, item.ProviderType, nullableString(item.ClientIP), nullableString(item.NotifyURL), nullableString(item.ReturnURL), meta, item.ExpireAt, strings.ToUpper(strings.TrimSpace(item.Currency))))
 }
 
 func (r *Repository) GetPaymentOrderByOrderNo(ctx context.Context, orderNo string) (*paymentdomain.Order, error) {
-	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at FROM payment_orders WHERE order_no = $1 LIMIT 1`
+	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at FROM payment_orders WHERE order_no = $1 LIMIT 1`
 	return scanPaymentOrder(r.pool.QueryRow(ctx, query, orderNo))
 }
 
@@ -144,7 +144,7 @@ func (r *Repository) ListUnsettledPaymentOrders(ctx context.Context, methods []s
 	if limit < 1 {
 		limit = 100
 	}
-	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at FROM payment_orders WHERE payment_method = ANY($1) AND status IN ('pending', 'expired') AND created_at >= $2 ORDER BY created_at DESC LIMIT $3`
+	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at FROM payment_orders WHERE payment_method = ANY($1) AND status IN ('pending', 'expired') AND review_reason IS NULL AND created_at >= $2 ORDER BY created_at DESC LIMIT $3`
 	rows, err := r.pool.Query(ctx, query, methods, since, limit)
 	if err != nil {
 		return nil, err
@@ -162,7 +162,7 @@ func (r *Repository) ListUnsettledPaymentOrders(ctx context.Context, methods []s
 }
 
 func (r *Repository) GetPaymentOrderByOrderNoForUser(ctx context.Context, appID int64, userID int64, orderNo string) (*paymentdomain.Order, error) {
-	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at FROM payment_orders WHERE appid = $1 AND user_id = $2 AND order_no = $3 LIMIT 1`
+	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at FROM payment_orders WHERE appid = $1 AND user_id = $2 AND order_no = $3 LIMIT 1`
 	return scanPaymentOrder(r.pool.QueryRow(ctx, query, appID, userID, orderNo))
 }
 
@@ -177,7 +177,7 @@ func (r *Repository) ListPaymentOrdersByUser(ctx context.Context, appID int64, u
 
 	args := []any{appID, userID}
 	countQuery := `SELECT COUNT(*) FROM payment_orders WHERE appid = $1 AND user_id = $2`
-	listQuery := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at FROM payment_orders WHERE appid = $1 AND user_id = $2`
+	listQuery := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at FROM payment_orders WHERE appid = $1 AND user_id = $2`
 	if status = strings.TrimSpace(status); status != "" {
 		args = append(args, status)
 		countQuery += fmt.Sprintf(" AND status = $%d", len(args))
@@ -239,7 +239,7 @@ func (r *Repository) ListPaymentOrdersByApp(ctx context.Context, appID int64, st
 		return nil, 0, err
 	}
 	args = append(args, limit, (page-1)*limit)
-	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at FROM payment_orders` +
+	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at FROM payment_orders` +
 		where + fmt.Sprintf(" ORDER BY id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -305,13 +305,40 @@ FROM payment_callback_logs WHERE appid = $1 AND order_id = $2 ORDER BY id DESC L
 // MarkPaymentOrderPaid 幂等地把订单标记为已支付。
 // 返回 firstTime=true 表示本次首次完成支付确认（仅此时应触发履约等一次性副作用）；
 // 重复回调命中 status='paid' 守卫后不再改写任何字段。
-func (r *Repository) MarkPaymentOrderPaid(ctx context.Context, orderID int64, providerOrderNo string, tradeStatus string, rawCallback map[string]any) (bool, error) {
+// MarkPaymentOrderPaid 确认支付（仅首次真正翻转状态，返回是否是这一次翻转的）。paidAmount 是渠道报的实付金额
+// （为零时按订单金额记）。
+func (r *Repository) MarkPaymentOrderPaid(ctx context.Context, orderID int64, providerOrderNo string, tradeStatus string, rawCallback map[string]any,
+	paidAmount decimal.Decimal) (bool, error) {
 	raw, _ := json.Marshal(rawCallback)
-	result, err := r.pool.Exec(ctx, `UPDATE payment_orders SET provider_order_no = $2, status = 'paid', notify_status = $3, raw_callback = $4, paid_at = COALESCE(paid_at, NOW()), updated_at = NOW() WHERE id = $1 AND status <> 'paid'`, orderID, nullableString(providerOrderNo), tradeStatus, raw)
+	var paid *string
+	if paidAmount.IsPositive() {
+		value := paidAmount.StringFixed(2)
+		paid = &value
+	}
+	result, err := r.pool.Exec(ctx, `UPDATE payment_orders SET provider_order_no = $2, status = 'paid', notify_status = $3, raw_callback = $4,
+  paid_amount = COALESCE($5::numeric, amount), paid_at = COALESCE(paid_at, NOW()), updated_at = NOW()
+WHERE id = $1 AND status <> 'paid'`, orderID, nullableString(providerOrderNo), tradeStatus, raw, paid)
 	if err != nil {
 		return false, err
 	}
 	return result.RowsAffected() > 0, nil
+}
+
+// FlagPaymentOrderForReview 把一笔没结成的订单标成「待人工处理」：记下原因、说明与渠道报的实付金额，之后不再自动查单补单。
+// 只在第一次标记时返回 true（重复到达的回调、查单不会重复标记，调用方据此只通知一次）。
+func (r *Repository) FlagPaymentOrderForReview(ctx context.Context, orderID int64, reason, note string, paidAmount decimal.Decimal) (bool, error) {
+	var paid *string
+	if paidAmount.IsPositive() {
+		value := paidAmount.StringFixed(2)
+		paid = &value
+	}
+	tag, err := r.pool.Exec(ctx, `UPDATE payment_orders SET review_reason = $2, review_note = $3, review_at = NOW(),
+  paid_amount = COALESCE($4::numeric, paid_amount), updated_at = NOW()
+WHERE id = $1 AND review_reason IS NULL AND status <> 'paid'`, orderID, reason, note, paid)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (r *Repository) MarkPaymentOrderCallbackFailed(ctx context.Context, orderID int64, tradeStatus string, rawCallback map[string]any) error {
@@ -342,8 +369,14 @@ func scanPaymentOrder(row interface{ Scan(dest ...any) error }) (*paymentdomain.
 	var refundedAmount string
 	var metadata []byte
 	var rawCallback []byte
-	if err := row.Scan(&item.ID, &item.AppID, &item.UserID, &item.ConfigID, &item.OrderNo, &item.ProviderOrderNo, &item.Subject, &item.Body, &amount, &item.PaymentMethod, &item.ProviderType, &item.Status, &item.NotifyStatus, &item.ClientIP, &item.NotifyURL, &item.ReturnURL, &metadata, &rawCallback, &refundedAmount, &item.RefundStatus, &item.Currency, &item.PaidAt, &item.ExpireAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	var paidAmount *string
+	if err := row.Scan(&item.ID, &item.AppID, &item.UserID, &item.ConfigID, &item.OrderNo, &item.ProviderOrderNo, &item.Subject, &item.Body, &amount, &item.PaymentMethod, &item.ProviderType, &item.Status, &item.NotifyStatus, &item.ClientIP, &item.NotifyURL, &item.ReturnURL, &metadata, &rawCallback, &refundedAmount, &item.RefundStatus, &item.Currency, &item.PaidAt, &item.ExpireAt, &item.CreatedAt, &item.UpdatedAt, &paidAmount, &item.ReviewReason, &item.ReviewNote, &item.ReviewAt); err != nil {
 		return nil, normalizeNotFound(err)
+	}
+	if paidAmount != nil {
+		if value, err := decimal.NewFromString(*paidAmount); err == nil {
+			item.PaidAmount = &value
+		}
 	}
 	item.Amount = decimal.RequireFromString(amount)
 	item.RefundedAmount = decimal.RequireFromString(refundedAmount)

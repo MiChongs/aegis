@@ -23,6 +23,12 @@ func TestAfdianPaymentIntegration(t *testing.T) {
 	pg := pgrepo.New(pool)
 	pay := &PaymentService{log: zap.NewNop(), pg: pg, providers: make(map[string]paymentProvider)}
 	pay.registerBuiltinProviders(resty.New())
+	pay.SetAdminInbox(NewAdminInboxService(zap.NewNop(), pg, nil))
+	var superAdmin int64
+	if err := pool.QueryRow(ctx, `INSERT INTO admin_accounts (account, password_hash, display_name, is_super_admin)
+VALUES ('afdian-super', 'x', '超级管理员', TRUE) RETURNING id`).Scan(&superAdmin); err != nil {
+		t.Fatal(err)
+	}
 	const appID = int64(20100)
 
 	if _, err := pool.Exec(ctx, `INSERT INTO apps (id, name) VALUES ($1, 'afdian-test') ON CONFLICT DO NOTHING`, appID); err != nil {
@@ -138,9 +144,61 @@ func TestAfdianPaymentIntegration(t *testing.T) {
 	if ack(nil, err) != 200 {
 		t.Fatal("金额不符重推也没用，应回 ec=200")
 	}
+	// 少付：标成待人工处理、记下实付，之后不再查单；超级管理员收到一条站内信
+	flagged := statusOf(fourth.OrderNo)
+	if flagged.Status == "paid" || flagged.ReviewReason != paymentdomain.ReviewAmountMismatch ||
+		flagged.PaidAmount == nil || flagged.PaidAmount.StringFixed(2) != "5.00" {
+		t.Fatalf("少付的订单应标成待人工处理并记下实付 5.00，得到 %+v", flagged)
+	}
+	before = fake.calls.Load()
 	pay.syncUnsettledOrders()
+	if _, err := pay.GetUserOrder(ctx, session, fourth.OrderNo); err != nil {
+		t.Fatal(err)
+	}
 	if o := statusOf(fourth.OrderNo); o.Status == "paid" {
 		t.Fatal("少付的订单被后台补单结掉了")
+	}
+	if calls := fake.calls.Load() - before; calls != 0 {
+		t.Fatalf("待人工处理的订单不应再查单，查了 %d 次", calls)
+	}
+	// 推送重复到达：照样拒绝，不再重复通知
+	if _, err := pay.HandleCallback(ctx, paymentdomain.MethodAfdian, afdianWebhook(cheap), "POST", "1.2.3.4"); errCode(err) != 40096 {
+		t.Fatalf("重推仍应拒绝，得到 %v", err)
+	}
+	waitFor(t, func() bool {
+		var n int
+		_ = pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_notifications WHERE admin_id = $1 AND type = 'payment_review'`, superAdmin).Scan(&n)
+		return n == 1
+	})
+	time.Sleep(100 * time.Millisecond)
+	var notices int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_notifications WHERE admin_id = $1 AND type = 'payment_review'`, superAdmin).
+		Scan(&notices); err != nil || notices != 1 {
+		t.Fatalf("同一笔订单只通知一次，得到 %d %v", notices, err)
+	}
+
+	// 多付：照常结单，记下实付与差额
+	generous := createOrder("49.90")
+	more := upstreamPaid("AF005", generous.OrderNo, "50.00")
+	if _, err := pay.HandleCallback(ctx, paymentdomain.MethodAfdian, afdianWebhook(more), "POST", "1.2.3.4"); err != nil {
+		t.Fatalf("多付应照常结单，得到 %v", err)
+	}
+	if o := statusOf(generous.OrderNo); o.Status != "paid" || o.PaidAmount == nil || o.PaidAmount.StringFixed(2) != "50.00" ||
+		o.ReviewReason != "" {
+		t.Fatalf("多付的订单应已支付、实付记 50.00，得到 %+v", o)
+	}
+	var overpaid int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM payment_callback_logs WHERE order_id = $1 AND verification_status = 'overpaid'`,
+		generous.ID).Scan(&overpaid); err != nil || overpaid != 1 {
+		t.Fatalf("多付应记一条 overpaid 回调日志，得到 %d %v", overpaid, err)
+	}
+	// 金额对得上的订单，实付记成订单金额
+	if o := statusOf(first.OrderNo); o.PaidAmount == nil || o.PaidAmount.StringFixed(2) != "29.90" {
+		t.Fatalf("正常结单的实付应为订单金额 29.90，得到 %+v", o.PaidAmount)
+	}
+	// 付款人改不了金额的渠道仍然严格相等
+	if pay.payerAdjustsAmount(paymentdomain.MethodEpay) || !pay.payerAdjustsAmount(paymentdomain.MethodAfdian) {
+		t.Fatal("只有爱发电允许多付")
 	}
 
 	// ── 爱发电后台的测试推送 / 不经本平台的普通赞助 ──

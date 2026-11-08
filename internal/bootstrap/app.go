@@ -644,6 +644,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 治理表读不出来时把整个平台锁死，代价远大于漏放一会儿。
 	governanceService := service.NewPlatformGovernanceService(log, pg, sessions)
 	governanceService.SetAdminInbox(adminInboxService)
+	paymentService.SetAdminInbox(adminInboxService)
 	governanceService.SetPluginService(pluginService)
 	if err := governanceService.Initialize(ctx); err != nil {
 		log.Warn("平台治理状态加载失败，本轮判定按无治理放行", zap.Error(err))

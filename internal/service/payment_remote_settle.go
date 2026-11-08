@@ -41,9 +41,13 @@ func (s *PaymentService) settlerMethods() []string {
 	return methods
 }
 
-// orderSettleable 订单还值得去上游核实：未支付、在补单窗口内、渠道支持主动查单
+// orderSettleable 订单还值得去上游核实：未支付、没标成待人工处理、在补单窗口内、渠道支持主动查单
 func (s *PaymentService) orderSettleable(order *paymentdomain.Order) bool {
 	if order == nil || (order.Status != "pending" && order.Status != "expired") {
+		return false
+	}
+	// 已标成待人工处理的（金额对不上）：再查多少次结论都一样，不再查
+	if order.ReviewReason != "" {
 		return false
 	}
 	if time.Since(order.CreatedAt) > remoteSettleWindow {

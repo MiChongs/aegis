@@ -60,6 +60,10 @@ const (
 
 func (p *afdianProvider) Name() string { return paymentdomain.MethodAfdian }
 
+// PayerAdjustsAmount 爱发电的自选金额付款页上付款人可以改金额（2026-10 至 11 月线上 8 笔永久会员订单被改成了 50.00 / 49.00）：
+// 多付按已支付处理，少付标成待人工处理（payment_review.go）。方案模式下能不能改月数未实测，多付同样按已支付处理。
+func (p *afdianProvider) PayerAdjustsAmount() bool { return true }
+
 func (p *afdianProvider) Describe() paymentdomain.ProviderMeta {
 	return finalizeMeta(paymentdomain.ProviderMeta{
 		Method:       paymentdomain.MethodAfdian,

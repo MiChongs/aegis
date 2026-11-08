@@ -565,7 +565,16 @@ type Order struct {
 	ExpireAt        *time.Time      `json:"expire_at,omitempty"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
+	// PaidAmount 渠道报的实付金额（结单或标记待人工处理时记下）；与 Amount 不同时就是多付或少付
+	PaidAmount *decimal.Decimal `json:"paid_amount,omitempty"`
+	// ReviewReason 需要人工处理的原因（ReviewAmountMismatch）；有值的订单不再自动查单补单
+	ReviewReason string     `json:"review_reason,omitempty"`
+	ReviewNote   string     `json:"review_note,omitempty"`
+	ReviewAt     *time.Time `json:"review_at,omitempty"`
 }
+
+// ReviewAmountMismatch 待人工处理的原因：实付少于订单金额，或者不允许改金额的渠道金额对不上。
+const ReviewAmountMismatch = "amount_mismatch"
 
 // ReturnView 同步跳转结果页能看到的订单信息。
 //

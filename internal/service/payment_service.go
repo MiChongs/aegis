@@ -58,7 +58,12 @@ type PaymentService struct {
 	consoleBaseURL string
 	// settleAttempts 用户查单触发主动核实的节流表：订单号 → 上次核实时间
 	settleAttempts sync.Map
+	// inbox 管理员站内信：订单需要人工处理时通知应用管理员与超级管理员
+	inbox *AdminInboxService
 }
+
+// SetAdminInbox 接上管理员站内信（订单待人工处理的通知）。
+func (s *PaymentService) SetAdminInbox(inbox *AdminInboxService) { s.inbox = inbox }
 
 // SetConsoleBaseURL 注入控制台对外地址（bootstrap 中调用）。
 func (s *PaymentService) SetConsoleBaseURL(baseURL string) {
@@ -861,16 +866,28 @@ func (s *PaymentService) applyVerifiedResult(ctx context.Context, order *payment
 		_ = s.pg.CreatePaymentCallbackLog(ctx, order.AppID, &order.ID, method, callbackMethod, clientIP, result.RawData, "order_mismatch", "回调订单号与本地订单不一致")
 		return nil, apperrors.New(40095, http.StatusBadRequest, "回调订单号不一致")
 	}
+	paidAmount := order.Amount
 	if result.Paid && result.Amount.IsPositive() && !result.Amount.Equal(order.Amount) {
-		_ = s.pg.CreatePaymentCallbackLog(ctx, order.AppID, &order.ID, method, callbackMethod, clientIP, result.RawData, "amount_mismatch",
-			fmt.Sprintf("回调金额 %s 与订单金额 %s 不一致", result.Amount.StringFixed(2), order.Amount.StringFixed(2)))
-		return nil, apperrors.New(40096, http.StatusBadRequest, "回调金额与订单不一致")
+		// 付款页上付款人能改金额的渠道（爱发电自选金额）：多付照常结单，记下实付与差额。
+		// 少付、或别的渠道金额对不上：不结单，标成待人工处理（不再自动查单），通知管理员一次。
+		if result.Amount.GreaterThan(order.Amount) && s.payerAdjustsAmount(method) {
+			_ = s.pg.CreatePaymentCallbackLog(ctx, order.AppID, &order.ID, method, callbackMethod, clientIP, result.RawData, "overpaid",
+				fmt.Sprintf("实付 %s 多于订单金额 %s（多付 %s），按已支付处理", result.Amount.StringFixed(2),
+					order.Amount.StringFixed(2), result.Amount.Sub(order.Amount).StringFixed(2)))
+			paidAmount = result.Amount
+		} else {
+			message := fmt.Sprintf("回调金额 %s 与订单金额 %s 不一致", result.Amount.StringFixed(2), order.Amount.StringFixed(2))
+			_ = s.pg.CreatePaymentCallbackLog(ctx, order.AppID, &order.ID, method, callbackMethod, clientIP, result.RawData,
+				"amount_mismatch", message)
+			s.flagOrderForReview(ctx, order, method, result.Amount, message+"，未自动结单")
+			return nil, apperrors.New(40096, http.StatusBadRequest, "回调金额与订单不一致")
+		}
 	}
 
 	// 更新订单状态
 	if result.Paid {
 		// 幂等确认支付：仅首次回调真正翻转状态，重复回调直接跳过写入
-		firstTime, err := s.pg.MarkPaymentOrderPaid(ctx, order.ID, result.ProviderOrderNo, result.TradeStatus, result.RawData)
+		firstTime, err := s.pg.MarkPaymentOrderPaid(ctx, order.ID, result.ProviderOrderNo, result.TradeStatus, result.RawData, paidAmount)
 		if err != nil {
 			return nil, err
 		}
