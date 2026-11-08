@@ -263,6 +263,8 @@ FROM %s WHERE %s GROUP BY %s`, obj.View(), Literal(f.Key), scope, ent, agg, obj.
 type Manager struct {
 	conn   *pgx.Conn
 	target Target
+	// OnDrop 特征对象删掉后回调持久消费者名：RisingWave 删源不会删 NATS 上的消费者，不删会一直积压
+	OnDrop func(ctx context.Context, durable string)
 }
 
 // Connect 连 RisingWave（pgwire）
@@ -355,6 +357,9 @@ func (m *Manager) drop(ctx context.Context, base string) {
 	_, _ = m.conn.Exec(ctx, "DROP SINK IF EXISTS "+o.Sink())
 	_, _ = m.conn.Exec(ctx, "DROP MATERIALIZED VIEW IF EXISTS "+o.View())
 	_, _ = m.conn.Exec(ctx, "DROP SOURCE IF EXISTS "+o.Source())
+	if m.OnDrop != nil {
+		m.OnDrop(ctx, m.target.DurablePrefix+base)
+	}
 }
 
 // Preview 控制台上展示生成的 SQL

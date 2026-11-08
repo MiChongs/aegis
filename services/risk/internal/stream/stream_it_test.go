@@ -73,6 +73,7 @@ func TestStreamIT(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close(ctx)
+	m.OnDrop = func(ctx context.Context, durable string) { _ = bus.JetStream().DeleteConsumer(ctx, events.StreamEvents, durable) }
 	res, err := m.Sync(ctx, []bundle.Feature{f, sum})
 	if err != nil || len(res.Failed) > 0 {
 		t.Fatalf("sync: %+v %v", res, err)

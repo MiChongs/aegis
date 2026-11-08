@@ -126,6 +126,9 @@ func Schema() []string {
 		ORDER BY (app_id, ts, id)
 		TTL toDateTime(ts) + INTERVAL 730 DAY`,
 
+		// 设备指纹（JSON），用户画像里的相似设备检索要用
+		`ALTER TABLE decisions ADD COLUMN IF NOT EXISTS device String CODEC(ZSTD(3)) AFTER trace`,
+
 		// 看板：按分钟的决策汇总
 		`CREATE TABLE IF NOT EXISTS decisions_minute (
 			minute DateTime('UTC'),
@@ -220,6 +223,14 @@ func propsJSON(p map[string]any) string {
 	return string(raw)
 }
 
+func deviceJSON(d map[string]string) string {
+	if len(d) == 0 {
+		return ""
+	}
+	raw, _ := json.Marshal(d)
+	return string(raw)
+}
+
 func strs(v []string) []string {
 	if v == nil {
 		return []string{}
@@ -239,7 +250,7 @@ func (c *Client) WriteDecisions(ctx context.Context, evs []events.Event) error {
 	if len(evs) == 0 {
 		return nil
 	}
-	b, err := c.conn.PrepareBatch(ctx, `INSERT INTO decisions (id, ts, app_id, scene, user_id, account, ip, ip_subnet, device_id, ua, country, province, city, isp, asn, action, level, score, release, hits, reasons, latency_us, features, models, shadow, props, trace)`)
+	b, err := c.conn.PrepareBatch(ctx, `INSERT INTO decisions (id, ts, app_id, scene, user_id, account, ip, ip_subnet, device_id, ua, country, province, city, isp, asn, action, level, score, release, hits, reasons, latency_us, features, models, shadow, props, trace, device)`)
 	if err != nil {
 		return err
 	}
@@ -250,7 +261,7 @@ func (c *Client) WriteDecisions(ctx context.Context, evs []events.Event) error {
 		}
 		if err := b.Append(e.ID, ms(e.TS), e.AppID, e.Scene, e.UserID, e.Account, e.IP, e.IPSubnet, e.DeviceID, e.UA,
 			e.Country, e.Province, e.City, e.ISP, uint32(e.ASN), e.Action, e.Level, int32(e.Score), e.Release,
-			strs(e.Hits), strs(e.Reasons), e.Latency, floats(e.Features), floats(e.Models), shadow, propsJSON(e.Props), e.Trace); err != nil {
+			strs(e.Hits), strs(e.Reasons), e.Latency, floats(e.Features), floats(e.Models), shadow, propsJSON(e.Props), e.Trace, deviceJSON(e.Device)); err != nil {
 			_ = b.Abort()
 			return err
 		}

@@ -40,6 +40,8 @@ func ToRequest(in *riskv1.EvaluateRequest) (engine.Request, error) {
 		Scene: in.GetScene(), AppID: in.GetAppId(), UserID: in.GetUserId(), IdentityID: in.GetIdentityId(), Account: in.GetAccount(),
 		IP: in.GetIp(), UserAgent: in.GetUserAgent(), CaptchaPassed: in.GetCaptchaPassed(), RequestID: in.GetRequestId(),
 		Phone: in.GetPhone(), Email: in.GetEmail(), TargetUserID: in.GetTargetUserId(), Amount: in.GetAmount(),
+		// 在这里定下评估时刻：引擎、事件、流水用同一个时间（引擎里的 Normalize 只改它自己那份副本）
+		Now: time.Now(),
 	}
 	if d := in.GetDevice(); d != nil {
 		req.Device = engine.Device{ID: d.GetId(), Platform: d.GetPlatform(), Brand: d.GetBrand(), Model: d.GetModel(), OSVersion: d.GetOsVersion(),

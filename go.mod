@@ -163,6 +163,7 @@ require (
 	github.com/cloudwego/fastpb v0.0.6 // indirect
 	github.com/cloudwego/frugal v0.3.1 // indirect
 	github.com/cloudwego/gopkg v0.2.1 // indirect
+	github.com/cloudwego/hertz v0.10.6 // indirect
 	github.com/cloudwego/localsession v0.2.2 // indirect
 	github.com/cloudwego/netpoll v0.7.5 // indirect
 	github.com/cloudwego/runtimex v0.1.2 // indirect
@@ -180,6 +181,7 @@ require (
 	github.com/gobwas/glob v1.0.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0 // indirect
+	github.com/hertz-contrib/registry/etcd v0.0.0-20250319055937-8a220332e808 // indirect
 	github.com/iancoleman/strcase v0.3.0 // indirect
 	github.com/jhump/protoreflect v1.8.2 // indirect
 	github.com/kitex-contrib/registry-etcd v0.3.0 // indirect

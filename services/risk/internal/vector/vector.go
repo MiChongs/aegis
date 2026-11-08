@@ -196,11 +196,15 @@ func (c *Client) Upsert(ctx context.Context, rows []Device) error {
 	return err
 }
 
-// SetBanned 改封禁标记：部分更新只改这一列
+// SetBanned 改封禁标记：部分更新只改这一列。设备还没有向量（从没带指纹评估过）时没有可改的行，
+// 之后第一次写入向量时 risk-ingest 会按名单带上封禁标记。
 func (c *Client) SetBanned(ctx context.Context, appID int64, deviceID string, banned bool) error {
 	_, err := c.cli.Upsert(ctx, milvusclient.NewColumnBasedInsertOption(CollectionDevices).
 		WithVarcharColumn("key", []string{Key(appID, deviceID)}).WithInt64Column("app_id", []int64{appID}).
 		WithBoolColumn("banned", []bool{banned}).WithPartialUpdate(true))
+	if err != nil && strings.Contains(err.Error(), "does not exist") {
+		return nil
+	}
 	return err
 }
 
