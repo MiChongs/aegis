@@ -17,12 +17,14 @@ import (
 	captchadomain "aegis/internal/domain/captcha"
 	devicedomain "aegis/internal/domain/device"
 	plugindomain "aegis/internal/domain/plugin"
+	securitydomain "aegis/internal/domain/security"
 	userdomain "aegis/internal/domain/user"
 	"aegis/internal/event"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	"aegis/pkg/clientip"
 	apperrors "aegis/pkg/errors"
+	riskevents "aegis/services/risk/events"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -106,6 +108,7 @@ func hashUserPassword(password string) (string, error) {
 }
 
 type UserService struct {
+	riskHook
 	oauth2 *OAuth2ServerService
 	// devices 设备字典：会话与登录记录里的 deviceInfo 读取时现查。为空时只做不查字典的兜底
 	devices   *DeviceMarketingService
@@ -517,6 +520,15 @@ func (s *UserService) ConfirmSensitiveProfileChange(ctx context.Context, session
 		s.log.Warn("delete pending profile change failed", zap.Int64("appid", session.AppID), zap.Int64("userId", session.UserID), zap.String("field", field), zap.Error(err))
 	}
 	s.notifyProfileChangeCompleted(session.AppID, session.UserID, field, notificationEmail, notificationOldValue, notificationNewValue, secondaryEmail)
+	// 关系图：新的手机号 / 邮箱挂到用户上
+	changed := riskevents.Event{Type: riskevents.TypeContactChange, Scene: securitydomain.SceneContactChange, AppID: session.AppID,
+		UserID: session.UserID, Account: session.Account, Props: map[string]any{"field": field}}
+	if field == profileChangeFieldPhone {
+		changed.Phone = notificationNewValue
+	} else if field == profileChangeFieldEmail {
+		changed.Email = notificationNewValue
+	}
+	s.riskReport(ctx, changed)
 	pendingChanges, err := s.loadPendingProfileChanges(ctx, session.AppID, session.UserID)
 	if err != nil {
 		return nil, err
@@ -529,6 +541,17 @@ func (s *UserService) ConfirmSensitiveProfileChange(ctx context.Context, session
 
 func (s *UserService) queueSensitiveProfileChange(ctx context.Context, session *authdomain.Session, field string, value string) error {
 	value = strings.TrimSpace(value)
+	// 风控：发验证码之前评估（换绑是接管账号的常见一步）
+	req := securitydomain.RiskEvalRequest{Scene: securitydomain.SceneContactChange, AppID: &session.AppID, UserID: &session.UserID,
+		Account: session.Account, Extra: map[string]any{"field": field}}
+	if field == profileChangeFieldPhone {
+		req.Phone = value
+	} else if field == profileChangeFieldEmail {
+		req.Email = value
+	}
+	if err := s.riskGuard(ctx, req, RiskGuardOption{Message: "当前环境存在风险，暂时无法修改绑定信息"}); err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	change := userdomain.PendingProfileChange{
 		Field:       field,

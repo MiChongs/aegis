@@ -14,10 +14,12 @@ import (
 
 	"aegis/internal/config"
 	appdomain "aegis/internal/domain/app"
+	securitydomain "aegis/internal/domain/security"
 	userdomain "aegis/internal/domain/user"
 	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/hydra"
+	riskevents "aegis/services/risk/events"
 
 	"go.uber.org/zap"
 )
@@ -35,6 +37,7 @@ import (
 // metadata 写 aegisAppId，登录页据此只在该应用的用户库里认人。主体（sub）是对外用户 ID，
 // 用户本身只属于一个应用，因此跨应用的主体天然不会撞。详见 docs/oauth2-provider.md。
 type OAuth2ServerService struct {
+	riskHook
 	cfg     config.OAuth2ServerConfig
 	apiBase string
 	log     *zap.Logger
@@ -443,7 +446,19 @@ func (s *OAuth2ServerService) AcceptConsent(ctx context.Context, challenge strin
 			scopes = append(scopes, scope)
 		}
 	}
-	return s.acceptConsent(ctx, req, app, user, scopes, remember)
+	// 风控：把账号授权给第三方应用。被拦时按 OAuth2 规范拒绝授权，第三方拿到 access_denied
+	appID, uid := app.ID, user.ID
+	if err := s.riskGuard(ctx, securitydomain.RiskEvalRequest{Scene: securitydomain.SceneOAuth2Authorize, AppID: &appID, UserID: &uid, Account: user.Account,
+		Extra: map[string]any{"clientId": req.Client.ClientID, "clientName": req.Client.ClientName, "scopes": len(scopes)}},
+		RiskGuardOption{Message: "当前环境存在风险，暂时无法授权"}); err != nil {
+		return s.rejectConsent(ctx, challenge, "access_denied", err)
+	}
+	redirect, err := s.acceptConsent(ctx, req, app, user, scopes, remember)
+	if err == nil {
+		s.riskReport(ctx, riskevents.Event{Type: riskevents.TypeOAuth2Authorize, Scene: securitydomain.SceneOAuth2Authorize, AppID: appID, UserID: uid,
+			Account: user.Account, Props: map[string]any{riskevents.PropClientID: req.Client.ClientID, riskevents.PropClientName: req.Client.ClientName, "scopes": scopes}})
+	}
+	return redirect, err
 }
 
 // RejectConsent 用户拒绝授权。

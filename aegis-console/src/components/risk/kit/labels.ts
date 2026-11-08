@@ -96,6 +96,9 @@ export const EVENT_LABEL: Record<string, string> = {
   signin: "签到", "lottery.draw": "抽奖", "cardkey.redeem": "卡密兑换", "points.redeem": "积分兑换", "ad.reward": "激励广告发奖",
   "profile.update": "资料变更", "account.ban": "账号封禁", "account.unban": "账号解封", "verify_code.sent": "验证码发送",
   "cep.alert": "行为模式告警", "login.locked": "登录防爆破锁定", "geo.anomaly": "登录地理异常",
+  "oauth.login": "第三方账号登录", "oauth.bind": "绑定第三方账号", "oauth.unbind": "解绑第三方账号", "oauth2.authorize": "授权第三方应用",
+  "passkey.register": "登记通行密钥", "passkey.remove": "删除通行密钥", "qr.confirm": "确认扫码登录", "password.change": "修改密码",
+  "contact.change": "换绑手机号或邮箱", "account.setup": "补设用户名与密码", "account.delete_request": "申请注销账号", "vip.trial": "领取会员试用",
 };
 
 export const SEVERITY_LABEL: Record<string, string> = { low: "低", medium: "中", high: "高", critical: "严重" };

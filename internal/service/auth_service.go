@@ -839,6 +839,10 @@ func (s *AuthService) bindOAuthProfile(ctx context.Context, appID, userID int64,
 	if user == nil || user.AppID != appID {
 		return nil, apperrors.New(40410, http.StatusNotFound, "账号不存在")
 	}
+	if err := s.riskCheck(ctx, securitydomain.RiskEvalRequest{Scene: securitydomain.SceneOAuthBind, AppID: &appID, UserID: &userID,
+		Account: user.Account, Extra: map[string]any{"provider": profile.Provider}}, "当前环境存在风险，暂时无法绑定第三方账号"); err != nil {
+		return nil, err
+	}
 	boundUserID, err := s.pg.FindOAuthBinding(ctx, appID, profile.Provider, profile.ProviderUserID)
 	if err != nil {
 		return nil, err
@@ -858,6 +862,8 @@ func (s *AuthService) bindOAuthProfile(ctx context.Context, appID, userID int64,
 	if err := s.pg.UpsertOAuthBinding(ctx, appID, userID, profile); err != nil {
 		return nil, err
 	}
+	s.riskEmit(ctx, riskevents.Event{Type: riskevents.TypeOAuthBind, Scene: securitydomain.SceneOAuthBind, AppID: appID, UserID: userID,
+		Account: user.Account, Props: identityProps(profile)})
 	return &oauthdomain.Binding{
 		AppID: appID, UserID: userID, Account: user.Account,
 		Provider: profile.Provider, ProviderUserID: profile.ProviderUserID,
@@ -986,6 +992,10 @@ func (s *AuthService) ChangePassword(ctx context.Context, session *authdomain.Se
 	if user == nil || user.AppID != session.AppID {
 		return apperrors.New(40401, http.StatusNotFound, "用户不存在")
 	}
+	if err := s.riskCheck(ctx, securitydomain.RiskEvalRequest{Scene: securitydomain.ScenePasswordChange, AppID: &session.AppID, UserID: &session.UserID,
+		Account: user.Account}, "当前环境存在风险，暂时无法修改密码"); err != nil {
+		return err
+	}
 	pctx := s.userPasswordContext(ctx, user)
 	if err := s.validatePasswordPolicyWithContext(ctx, session.AppID, newPassword, pctx); err != nil {
 		return err
@@ -1037,6 +1047,8 @@ func (s *AuthService) ChangePassword(ctx context.Context, session *authdomain.Se
 		"event_type": "password_changed",
 		"changed_at": changedAt.Format(time.RFC3339),
 	})
+	s.riskEmit(ctx, riskevents.Event{Type: riskevents.TypePasswordChange, Scene: securitydomain.ScenePasswordChange, AppID: session.AppID,
+		UserID: session.UserID, Account: user.Account})
 	return nil
 }
 
@@ -1147,6 +1159,16 @@ func (s *AuthService) loginWithOAuthProfile(ctx context.Context, app *appdomain.
 			return nil, err
 		}
 	}
+	// 风控：第三方账号登录（含首次登录建号）。已绑定时带上那个用户，评估能看到账号自己的历史
+	riskReq := securitydomain.RiskEvalRequest{Scene: securitydomain.SceneOAuthLogin, AppID: &appID, Account: profile.Nickname,
+		IP: ip, DeviceID: deviceID, UserAgent: userAgent, Extra: map[string]any{"provider": profile.Provider, "newUser": user == nil}}
+	if user != nil {
+		uid := user.ID
+		riskReq.UserID, riskReq.Account = &uid, user.Account
+	}
+	if err := s.riskCheck(ctx, riskReq, "当前环境存在风险，暂时无法使用第三方账号登录"); err != nil {
+		return nil, err
+	}
 	if user == nil {
 		if !allowRegister {
 			return nil, apperrors.New(40393, http.StatusForbidden,
@@ -1162,6 +1184,8 @@ func (s *AuthService) loginWithOAuthProfile(ctx context.Context, app *appdomain.
 	if err := s.pg.UpsertOAuthBinding(ctx, appID, user.ID, profile); err != nil {
 		return nil, err
 	}
+	s.riskEmit(ctx, riskevents.Event{Type: riskevents.TypeOAuthLogin, Scene: securitydomain.SceneOAuthLogin, AppID: appID, UserID: user.ID,
+		Account: user.Account, IP: ip, DeviceID: deviceID, UA: userAgent, Props: identityProps(profile)})
 	// 封禁/禁用校验在此执行一次，completeLogin 不再重复（原实现会触发两次 RefreshUserAccountBanState）
 	if err := s.ensureUserLoginState(ctx, user); err != nil {
 		return nil, err
@@ -1299,6 +1323,11 @@ func (s *AuthService) VerifyPasskeyLogin(ctx context.Context, appID int64, chall
 		return nil, err
 	}
 	if err := s.ensureUserLoginState(ctx, user); err != nil {
+		return nil, err
+	}
+	uid := user.ID
+	if err := s.riskCheck(ctx, securitydomain.RiskEvalRequest{Scene: securitydomain.ScenePasskeyLogin, AppID: &appID, UserID: &uid,
+		Account: user.Account, IP: ip, DeviceID: deviceID, UserAgent: userAgent}, "当前环境存在风险，暂时无法使用通行密钥登录"); err != nil {
 		return nil, err
 	}
 	// Passkey 属强认证，按既有设计不再叠加二次验证，直接 finalize（并补记首次设备）

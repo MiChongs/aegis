@@ -239,6 +239,11 @@ func IdentityVID(provider, subject string) string {
 	return digest("oa:"+strings.ToLower(provider)+":", subject)
 }
 
+// IdentityVIDFromKey 用摘要（events.Digest(subject)）建点，与 IdentityVID 结果一致
+func IdentityVIDFromKey(provider, key string) string {
+	return "oa:" + strings.ToLower(provider) + ":" + key
+}
+
 // PayerVID 付款账号（如爱发电用户）
 func PayerVID(channel, account string) string {
 	return digest("py:"+strings.ToLower(channel)+":", account)

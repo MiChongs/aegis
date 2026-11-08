@@ -23,6 +23,7 @@ import (
 // 功能权益跟随套餐的**当前**配置：改套餐即对所有在期会员生效，包括拿掉功能（降级）。
 // 判定规则见 internal/domain/vip/segment.go。
 type VipService struct {
+	riskHook
 	log *zap.Logger
 	pg  *pgrepo.Repository
 	// payments 凭证引擎的持有者；余额直购成功后由它按应用设置自动寄送凭证

@@ -575,8 +575,15 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	riskService := service.NewRiskService(cfg.Risk, log, "aegis-api", cfg.NATS.URL, redisClient, cfg.Redis.KeyPrefix)
 	riskService.SetLocationService(locationService)
 	loginGuardService.SetRiskService(riskService)
-	pg.SetRiskScorer(func(ctx context.Context, appID, userID int64) int { return riskService.UserMaxScore(ctx, appID, userID, 30) })
+	pg.SetRiskScorer(func(ctx context.Context, appID, userID int64) int {
+		return riskService.UserMaxScore(ctx, appID, userID, 30)
+	})
 	reportService.SetRiskService(riskService)
+	securityService.SetRiskService(riskService)
+	userService.SetRiskService(riskService)
+	accountDeletionService.SetRiskService(riskService)
+	vipService.SetRiskService(riskService)
+	appOAuthService.SetRiskService(riskService)
 	pluginService.ObserveHooks(riskService.ObserveHook)
 	authService.SetRiskService(riskService)
 	inviteService.SetRiskService(riskService)
@@ -598,6 +605,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	})
 	// 对外 OAuth2 / OIDC 授权服务器（Ory Hydra 承载协议，Aegis 负责登录与同意页）
 	oauth2ServerService := service.NewOAuth2ServerService(cfg, log, pg, authService, appService, avatarService)
+	oauth2ServerService.SetRiskService(riskService)
 	accountBanService.SetOAuth2Server(oauth2ServerService)
 	userService.SetOAuth2Server(oauth2ServerService)
 

@@ -129,6 +129,40 @@ func Statements(e events.Event) string {
 		upsertVertex(&b, TagEmail, ev, ts, setStr("masked", MaskEmail(e.Email)), setStr("domain", e.EmailDomain))
 		upsertEdge(&b, EdgeHasEmail, subject, ev, ts)
 	}
+	// 第三方账号、授权过的应用、通行密钥：事件里只带摘要（events.Digest），与回灌用同一个点
+	if e.UserID > 0 {
+		prop := func(k string) string {
+			v, _ := e.Props[k].(string)
+			return strings.TrimSpace(v)
+		}
+		if provider, key := prop(events.PropIdentityProvider), prop(events.PropIdentityKey); provider != "" && key != "" && e.Type != events.TypeOAuthUnbind {
+			iv := IdentityVIDFromKey(provider, key)
+			sets := []string{setStr("provider", strings.ToLower(provider))}
+			if n := prop(events.PropIdentityNickname); n != "" {
+				sets = append(sets, setStr("nickname", n))
+			}
+			upsertVertex(&b, TagIdentity, iv, ts, sets...)
+			upsertEdge(&b, EdgeBoundIdentity, subject, iv, ts)
+		}
+		if id := prop(events.PropClientID); id != "" && e.Type == events.TypeOAuth2Authorize {
+			cv := ClientVID(id)
+			sets := []string{setStr("client_id", id)}
+			if n := prop(events.PropClientName); n != "" {
+				sets = append(sets, setStr("name", n))
+			}
+			upsertVertex(&b, TagClient, cv, ts, sets...)
+			upsertEdge(&b, EdgeAuthorized, subject, cv, ts)
+		}
+		if key := prop(events.PropPasskeyKey); key != "" && e.Type == events.TypePasskeyRegister {
+			pv := "pk:" + key
+			var sets []string
+			if n := prop(events.PropPasskeyName); n != "" {
+				sets = append(sets, setStr("name", n))
+			}
+			upsertVertex(&b, TagPasskey, pv, ts, sets...)
+			upsertEdge(&b, EdgeHasPasskey, subject, pv, ts)
+		}
+	}
 	if e.UserID > 0 && e.TargetUserID > 0 && e.TargetUserID != e.UserID {
 		target := UserVID(e.AppID, e.TargetUserID)
 		upsertVertex(&b, TagUser, target, ts, fmt.Sprintf("app_id = %d", e.AppID), fmt.Sprintf("uid = %d", e.TargetUserID))

@@ -20,6 +20,17 @@ const (
 	SceneCardKey       = "cardkey"
 	ScenePointsRedeem  = "points_redeem"
 	SceneAdReward      = "ad_reward"
+
+	// 身份与账号安全
+	SceneOAuthLogin      = "oauth_login"      // QQ / Google 等第三方账号登录（含首次登录建号）
+	SceneOAuthBind       = "oauth_bind"       // 绑定第三方账号
+	SceneOAuth2Authorize = "oauth2_authorize" // 用户把账号授权给接入 Aegis 的第三方应用（OAuth2 同意页）
+	ScenePasskeyLogin    = "passkey_login"    // 通行密钥登录
+	SceneQRLogin         = "qr_login"         // 扫码登录（手机端确认）
+	ScenePasswordChange  = "password_change"  // 登录状态下修改密码
+	SceneContactChange   = "contact_change"   // 换绑手机号 / 邮箱
+	SceneAccountDelete   = "account_delete"   // 申请注销账号
+	SceneVipTrial        = "vip_trial"        // 领取会员试用
 )
 
 // 处置，从轻到重

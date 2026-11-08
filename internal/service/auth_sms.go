@@ -2,6 +2,7 @@ package service
 
 import (
 	"aegis/internal/domain/accountdeletion"
+	securitydomain "aegis/internal/domain/security"
 	"context"
 	"net/http"
 	"strings"
@@ -98,6 +99,13 @@ func (s *AuthService) SMSLogin(ctx context.Context, input SMSLoginInput) (*authd
 
 	if !registered {
 		if err := s.ensureUserLoginState(ctx, user); err != nil {
+			return nil, err
+		}
+		// 风控：短信验证码登录走登录场景（新号走注册准入，已在 admitRegister 里评估）
+		uid := user.ID
+		if err := s.riskCheck(ctx, securitydomain.RiskEvalRequest{Scene: securitydomain.SceneLogin, AppID: &input.AppID, UserID: &uid,
+			Account: user.Account, Phone: phone, IP: input.IP, DeviceID: input.DeviceID, UserAgent: input.UserAgent,
+			Extra: map[string]any{"method": "sms"}}, "当前请求被风控拦截，请稍后重试"); err != nil {
 			return nil, err
 		}
 	}

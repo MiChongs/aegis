@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	riskevents "aegis/services/risk/events"
 	"github.com/go-webauthn/webauthn/protocol"
 	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
 	gojson "github.com/goccy/go-json"
@@ -26,6 +28,7 @@ import (
 )
 
 type SecurityService struct {
+	riskHook
 	cfg           config.Config
 	log           *zap.Logger
 	pg            *pgrepo.Repository
@@ -563,6 +566,9 @@ func (s *SecurityService) FinishPasskeyRegistration(ctx context.Context, session
 	}
 	s.invalidateSecurityCaches(ctx, session.AppID, session.UserID)
 	s.notifySecurityEvent(ctx, session.AppID, session.UserID, "security", "Passkey 已添加", "账户已完成新的 Passkey 绑定。", "info")
+	// 关系图：用户 → 通行密钥（只带凭据摘要，算法与回灌一致：凭据 ID 的十六进制再取摘要）
+	s.riskReport(ctx, riskevents.Event{Type: riskevents.TypePasskeyRegister, AppID: session.AppID, UserID: session.UserID, Account: session.Account,
+		Props: map[string]any{riskevents.PropPasskeyKey: riskevents.Digest(hex.EncodeToString(credential.ID)), riskevents.PropPasskeyName: name}})
 	view := s.passkeyRecordToView(*record)
 	return &view, nil
 }
@@ -596,6 +602,7 @@ func (s *SecurityService) RemovePasskey(ctx context.Context, session *authdomain
 	}
 	s.invalidateSecurityCaches(ctx, session.AppID, session.UserID)
 	s.notifySecurityEvent(ctx, session.AppID, session.UserID, "security", "Passkey 已移除", "账户的 Passkey 绑定已移除。", "warning")
+	s.riskReport(ctx, riskevents.Event{Type: riskevents.TypePasskeyRemove, AppID: session.AppID, UserID: session.UserID, Account: session.Account})
 	return nil
 }
 

@@ -49,6 +49,20 @@ const (
 	TypeCEPAlert       = "cep.alert"
 	TypeLoginLocked    = "login.locked" // 登录防爆破锁定
 	TypeGeoAnomaly     = "geo.anomaly"  // 登录地理异常（不可能旅行、新国家……）
+
+	// 身份与账号安全
+	TypeOAuthLogin      = "oauth.login"      // 第三方账号登录（Props 带 identity_provider / identity_key / identity_nickname）
+	TypeOAuthBind       = "oauth.bind"       // 绑定第三方账号（同上）
+	TypeOAuthUnbind     = "oauth.unbind"     // 解绑第三方账号
+	TypeOAuth2Authorize = "oauth2.authorize" // 授权第三方应用（Props 带 client_id / client_name / scopes）
+	TypePasskeyRegister = "passkey.register" // 登记通行密钥（Props 带 passkey_key / passkey_name）
+	TypePasskeyRemove   = "passkey.remove"   // 删除通行密钥
+	TypeQRConfirm       = "qr.confirm"       // 扫码登录：手机端确认
+	TypePasswordChange  = "password.change"  // 登录状态下修改密码
+	TypeContactChange   = "contact.change"   // 换绑手机号 / 邮箱（Phone / Email 为新值）
+	TypeAccountSetup    = "account.setup"    // 快速登录号补设用户名与密码
+	TypeAccountDelete   = "account.delete_request"
+	TypeVipTrial        = "vip.trial" // 领取会员试用
 )
 
 // Types 全部业务事件类型（控制台的事件下拉框、流式特征与 CEP 模式的事件选择）

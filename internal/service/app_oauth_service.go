@@ -2,6 +2,7 @@ package service
 
 import (
 	"aegis/pkg/egress"
+	riskevents "aegis/services/risk/events"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -42,6 +43,7 @@ var oauthSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,31}$`)
 // 密钥安全：client_secret 以 AES-GCM 密文落库，密钥派生自 SECURITY_MASTER_KEY；
 // 任何出网响应都只暴露 ClientSecretSet / ClientSecretHint，不回传明文。
 type AppOAuthService struct {
+	riskHook
 	log        *zap.Logger
 	pg         *pgrepo.Repository
 	key        []byte
@@ -455,6 +457,15 @@ func (s *AppOAuthService) ListUserBindings(ctx context.Context, appID, userID in
 // 安全约束：解除最后一个可用登录方式会让账号彻底登不进来，
 // 因此当账号没有密码且这是最后一个绑定时拒绝，并提示先设置密码。
 func (s *AppOAuthService) Unbind(ctx context.Context, appID, userID int64, provider string, force bool) error {
+	if err := s.unbind(ctx, appID, userID, provider, force); err != nil {
+		return err
+	}
+	s.riskReport(ctx, riskevents.Event{Type: riskevents.TypeOAuthUnbind, AppID: appID, UserID: userID,
+		Props: map[string]any{"provider": normalizeOAuthSlug(provider), "force": force}})
+	return nil
+}
+
+func (s *AppOAuthService) unbind(ctx context.Context, appID, userID int64, provider string, force bool) error {
 	slug := normalizeOAuthSlug(provider)
 	if slug == "" {
 		return apperrors.New(40001, http.StatusBadRequest, "不支持的 OAuth2 提供商")

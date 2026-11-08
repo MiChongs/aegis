@@ -113,6 +113,15 @@ func Scenes() []store.Scene {
 		scene("cardkey", "卡密兑换", "兑换卡与授权卡", false, []string{"device", "ip"}, false),
 		scene("points_redeem", "积分兑换", "积分商城兑换", false, []string{"device"}, true),
 		scene("ad_reward", "激励广告发奖", "看完激励视频后发奖", false, []string{"device"}, true),
+		scene("oauth_login", "第三方登录", "QQ、Google 等第三方账号登录，含首次登录建号", false, acct, false),
+		scene("oauth_bind", "绑定第三方账号", "已登录用户绑定 QQ、Google 等第三方账号", false, acct, false),
+		scene("oauth2_authorize", "授权第三方应用", "用户在授权页把账号授权给接入 Aegis 的第三方应用", false, acct, false),
+		scene("passkey_login", "通行密钥登录", "用通行密钥（指纹、面容、安全密钥）登录", false, acct, false),
+		scene("qr_login", "扫码登录", "手机端确认网页或电脑端的扫码登录", false, acct, false),
+		scene("password_change", "修改密码", "登录状态下修改密码", false, acct, false),
+		scene("contact_change", "换绑手机号或邮箱", "修改绑定的手机号、邮箱（发送验证码前评估）", false, acct, false),
+		scene("account_delete", "注销账号", "提交注销申请", false, acct, false),
+		scene("vip_trial", "领取会员试用", "领取免费会员试用", false, []string{"device"}, true),
 	}
 	for i := range out {
 		switch out[i].Key {
@@ -122,6 +131,16 @@ func Scenes() []store.Scene {
 			out[i].Fields = []bundle.Field{{Key: "activityId", Label: "活动 ID", Type: bundle.FieldNumber}, {Key: "times", Label: "抽数", Type: bundle.FieldNumber}}
 		case "invite":
 			out[i].Fields = []bundle.Field{{Key: "code", Label: "邀请码", Type: bundle.FieldString}}
+		case "oauth_login":
+			out[i].Fields = []bundle.Field{{Key: "provider", Label: "第三方平台", Type: bundle.FieldString}, {Key: "newUser", Label: "首次登录建号", Type: bundle.FieldBool}}
+		case "oauth_bind":
+			out[i].Fields = []bundle.Field{{Key: "provider", Label: "第三方平台", Type: bundle.FieldString}}
+		case "oauth2_authorize":
+			out[i].Fields = []bundle.Field{{Key: "clientId", Label: "应用 ID", Type: bundle.FieldString}, {Key: "clientName", Label: "应用名称", Type: bundle.FieldString}, {Key: "scopes", Label: "授权范围数", Type: bundle.FieldNumber}}
+		case "contact_change":
+			out[i].Fields = []bundle.Field{{Key: "field", Label: "修改项（phone / email）", Type: bundle.FieldString}}
+		case "account_delete":
+			out[i].Fields = []bundle.Field{{Key: "channel", Label: "验证方式", Type: bundle.FieldString}}
 		}
 	}
 	return out
@@ -152,7 +171,7 @@ func Templates() []Template {
 			rule("similar_banned_devices", "与被封设备高度相似", bundle.DimDevice, "F.v_similar_banned >= 1", 45, "", "与 {{F.v_similar_banned}} 台被封设备指纹几乎一致"),
 			rule("device_farm", "设备农场", bundle.DimDevice, "F.v_similar_devices >= 10", 50, "", "同应用里有 {{F.v_similar_devices}} 台指纹几乎一样的设备"),
 		}},
-		{Key: "account_security", Name: "账号安全", Description: "撞库、爆破、一号多机", Scenes: []string{"login", "password_reset", "admin_login"}, Rules: []store.Rule{
+		{Key: "account_security", Name: "账号安全", Description: "撞库、爆破、一号多机", Scenes: []string{"login", "password_reset", "admin_login", "oauth_login", "passkey_login", "qr_login", "password_change", "contact_change", "account_delete", "oauth_bind", "oauth2_authorize"}, Rules: []store.Rule{
 			rule("ip_burst", "IP 请求突增", bundle.DimBehavior, "F.ip_scene_10m > 30", 40, "", "IP 10 分钟请求 {{F.ip_scene_10m}} 次"),
 			rule("ip_many_accounts", "一 IP 多账号", bundle.DimBehavior, "F.ip_accounts_1h > 10", 50, "", "IP 1 小时出现 {{F.ip_accounts_1h}} 个账号"),
 			rule("account_bruteforce", "账号被爆破", bundle.DimAccount, "F.account_login_fail_1h >= 5", 60, "", "账号 1 小时登录失败 {{F.account_login_fail_1h}} 次"),
@@ -165,7 +184,7 @@ func Templates() []Template {
 			rule("device_reuse", "设备重复注册", bundle.DimDevice, "F.device_register_7d >= 3", 60, "", "设备 7 天注册 {{F.device_register_7d}} 个"),
 			rule("device_many_users", "设备挂多号", bundle.DimGraph, "F.g_device_users >= 8", 80, "block", "设备上已有 {{F.g_device_users}} 个账号"),
 		}},
-		{Key: "marketing", Name: "营销反作弊", Description: "羊毛党、设备农场、邀请裂变", Scenes: []string{"invite", "lottery", "signin", "points_redeem", "ad_reward", "cardkey"}, Rules: []store.Rule{
+		{Key: "marketing", Name: "营销反作弊", Description: "羊毛党、设备农场、邀请裂变", Scenes: []string{"invite", "lottery", "signin", "points_redeem", "ad_reward", "cardkey", "vip_trial"}, Rules: []store.Rule{
 			rule("device_accounts", "一机多号", bundle.DimDevice, "F.device_accounts_1d >= 3", 50, "", "设备 1 天出现 {{F.device_accounts_1d}} 个账号"),
 			rule("graph_device_accounts", "同设备账号团", bundle.DimGraph, "F.g_device_accounts >= 5", 60, "", "与 {{F.g_device_accounts}} 个账号共用设备"),
 			rule("invite_burst", "邀请裂变异常", bundle.DimGraph, "scene == 'invite' && F.g_invite_tree >= 200", 60, "", "三层邀请树 {{F.g_invite_tree}} 人"),

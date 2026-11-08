@@ -19,11 +19,13 @@ import (
 	authdomain "aegis/internal/domain/auth"
 	captchadomain "aegis/internal/domain/captcha"
 	notificationdomain "aegis/internal/domain/notification"
+	securitydomain "aegis/internal/domain/security"
 	userdomain "aegis/internal/domain/user"
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/timeutil"
+	riskevents "aegis/services/risk/events"
 )
 
 // 账号注销。
@@ -83,6 +85,7 @@ type accountDeletionMailer interface {
 
 // AccountDeletionService 账号注销：配置、提交与验证、审核、冷静期调度、执行、重新注册限制。
 type AccountDeletionService struct {
+	riskHook
 	log        *zap.Logger
 	pg         *pgrepo.Repository
 	sessions   *redisrepo.SessionRepository
@@ -446,8 +449,25 @@ type AccountDeletionSubmitInput struct {
 	UserAgent    string
 }
 
-// Submit 提交注销申请：校验 → 前置条件 → 身份验证 → 落库 →（立即注销时）执行。
+// Submit 提交注销申请：先过风控（注销是账号被盗后的常见收尾），成功后上报
 func (s *AccountDeletionService) Submit(ctx context.Context, input AccountDeletionSubmitInput) (*accountdeletion.SubmitResult, error) {
+	if sess := input.Session; sess != nil {
+		if err := s.riskGuard(ctx, securitydomain.RiskEvalRequest{Scene: securitydomain.SceneAccountDelete, AppID: &sess.AppID, UserID: &sess.UserID,
+			Account: sess.Account, Extra: map[string]any{"channel": input.Channel, "mode": input.Mode}},
+			RiskGuardOption{Message: "当前环境存在风险，暂时无法提交注销申请"}); err != nil {
+			return nil, err
+		}
+	}
+	result, err := s.submit(ctx, input)
+	if err == nil && input.Session != nil {
+		s.riskReport(ctx, riskevents.Event{Type: riskevents.TypeAccountDelete, Scene: securitydomain.SceneAccountDelete, AppID: input.Session.AppID,
+			UserID: input.Session.UserID, Account: input.Session.Account, Props: map[string]any{"mode": input.Mode, "reason": input.ReasonCode}})
+	}
+	return result, err
+}
+
+// submit 提交注销申请：校验 → 前置条件 → 身份验证 → 落库 →（立即注销时）执行。
+func (s *AccountDeletionService) submit(ctx context.Context, input AccountDeletionSubmitInput) (*accountdeletion.SubmitResult, error) {
 	session := input.Session
 	settings, err := s.pg.GetAccountDeletionSettings(ctx, session.AppID)
 	if err != nil {

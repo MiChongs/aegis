@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"aegis/internal/config"
+	authdomain "aegis/internal/domain/auth"
 	devicedomain "aegis/internal/domain/device"
 	plugindomain "aegis/internal/domain/plugin"
 	securitydomain "aegis/internal/domain/security"
+	"aegis/pkg/clientip"
 	apperrors "aegis/pkg/errors"
 	riskevents "aegis/services/risk/events"
 	riskv1 "aegis/services/risk/kitex_gen/aegis/risk/v1"
@@ -215,7 +217,66 @@ func (s *RiskService) Evaluate(ctx context.Context, req securitydomain.RiskEvalR
 
 // buildRequest 业务请求 → 评估请求：补齐归属地、IP 情报与验证码可用性。
 // 这些都只读缓存：缓存没有就带空值去评估、后台去刷新，不让一次登录等外部情报源。
+// fillRiskEnv 调用方没给的请求环境从请求上下文补：客户端 IP（中间件判定的）、登录会话里的应用、用户、账号、设备与 UA。
+// 让业务接入点只写场景与业务字段，也让漏传 IP / 设备的老调用点自动变完整。
+func fillRiskEnv(ctx context.Context, req *securitydomain.RiskEvalRequest) {
+	if strings.TrimSpace(req.IP) == "" {
+		req.IP = clientip.FromContext(ctx, "")
+	}
+	sess := authdomain.SessionFrom(ctx)
+	if sess == nil {
+		return
+	}
+	if req.AppID == nil && sess.AppID > 0 {
+		app := sess.AppID
+		req.AppID = &app
+	}
+	if req.UserID == nil && sess.UserID > 0 && (req.AppID == nil || *req.AppID == sess.AppID) {
+		uid := sess.UserID
+		req.UserID = &uid
+	}
+	if req.Account == "" && req.UserID != nil && *req.UserID == sess.UserID {
+		req.Account = sess.Account
+	}
+	if strings.TrimSpace(req.DeviceID) == "" {
+		req.DeviceID = sess.DeviceID
+	}
+	if strings.TrimSpace(req.UserAgent) == "" {
+		req.UserAgent = sess.UserAgent
+	}
+}
+
+// fillEventEnv 事件同理
+func fillEventEnv(ctx context.Context, e *riskevents.Event) {
+	if e.IP == "" {
+		e.IP = clientip.FromContext(ctx, "")
+	}
+	if sess := authdomain.SessionFrom(ctx); sess != nil {
+		if e.AppID == 0 {
+			e.AppID = sess.AppID
+		}
+		if e.UserID == 0 && e.AppID == sess.AppID {
+			e.UserID = sess.UserID
+		}
+		if e.Account == "" && e.UserID == sess.UserID {
+			e.Account = sess.Account
+		}
+		if e.DeviceID == "" {
+			e.DeviceID = sess.DeviceID
+		}
+		if e.UA == "" {
+			e.UA = sess.UserAgent
+		}
+	}
+	if len(e.Device) == 0 {
+		if fp := DeviceFingerprint(ctx); len(fp) > 0 {
+			e.Device = fp
+		}
+	}
+}
+
 func (s *RiskService) buildRequest(ctx context.Context, req securitydomain.RiskEvalRequest) *riskv1.EvaluateRequest {
+	fillRiskEnv(ctx, &req)
 	in := &riskv1.EvaluateRequest{
 		Scene: req.Scene, Account: strings.TrimSpace(req.Account), Ip: strings.TrimSpace(req.IP), UserAgent: req.UserAgent,
 		CaptchaPassed: req.CaptchaPassed || riskCaptchaPassed(ctx), RequestId: req.RequestID, Phone: req.Phone, Email: req.Email,
@@ -432,6 +493,7 @@ func (s *RiskService) Report(ctx context.Context, e riskevents.Event) {
 	if s == nil || s.bus == nil {
 		return
 	}
+	fillEventEnv(ctx, &e)
 	if e.ID == "" {
 		e.ID = riskevents.NewID()
 	}

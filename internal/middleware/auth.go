@@ -33,6 +33,7 @@ func Auth(authService *service.AuthService) gin.HandlerFunc {
 		}
 		c.Set("auth.session", session)
 		c.Set("auth.token", token)
+		c.Request = c.Request.WithContext(authdomain.WithSession(c.Request.Context(), session))
 		registerUserIDAlias(c, authService, session)
 		c.Next()
 	}
@@ -58,6 +59,7 @@ func OptionalAuth(authService *service.AuthService) gin.HandlerFunc {
 		if err == nil && session != nil {
 			c.Set("auth.session", session)
 			c.Set("auth.token", token)
+			c.Request = c.Request.WithContext(authdomain.WithSession(c.Request.Context(), session))
 			registerUserIDAlias(c, authService, session)
 		}
 		c.Next()

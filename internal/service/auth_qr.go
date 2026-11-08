@@ -16,8 +16,10 @@ import (
 	authdomain "aegis/internal/domain/auth"
 	devicedomain "aegis/internal/domain/device"
 	plugindomain "aegis/internal/domain/plugin"
+	securitydomain "aegis/internal/domain/security"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
+	riskevents "aegis/services/risk/events"
 )
 
 // 网页扫码登录（QR login）。
@@ -244,7 +246,21 @@ func (s *AuthService) ScanQRLogin(ctx context.Context, session *authdomain.Sessi
 
 // ConfirmQRLogin 移动端确认登录。只记下确认，会话在网页领取时签发。
 func (s *AuthService) ConfirmQRLogin(ctx context.Context, session *authdomain.Session, ticketID string) error {
-	return s.transitionQRLogin(ctx, session, ticketID, "confirm", QRLoginScanner{})
+	if session != nil {
+		// 风控：确认的这一下把账号交给了另一台设备（网页 / 电脑端），按账号安全场景评估
+		if err := s.riskCheck(ctx, securitydomain.RiskEvalRequest{Scene: securitydomain.SceneQRLogin, AppID: &session.AppID, UserID: &session.UserID,
+			Account: session.Account}, "当前环境存在风险，暂时无法确认扫码登录"); err != nil {
+			return err
+		}
+	}
+	if err := s.transitionQRLogin(ctx, session, ticketID, "confirm", QRLoginScanner{}); err != nil {
+		return err
+	}
+	if session != nil {
+		s.riskEmit(ctx, riskevents.Event{Type: riskevents.TypeQRConfirm, Scene: securitydomain.SceneQRLogin, AppID: session.AppID,
+			UserID: session.UserID, Account: session.Account})
+	}
+	return nil
 }
 
 // CancelQRLogin 移动端拒绝登录，票据作废。

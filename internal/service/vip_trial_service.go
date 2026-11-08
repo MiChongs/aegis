@@ -8,9 +8,11 @@ import (
 	"time"
 
 	authdomain "aegis/internal/domain/auth"
+	securitydomain "aegis/internal/domain/security"
 	vipdomain "aegis/internal/domain/vip"
 	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
+	riskevents "aegis/services/risk/events"
 	"go.uber.org/zap"
 )
 
@@ -130,7 +132,18 @@ func (s *VipService) ClaimTrial(ctx context.Context, session *authdomain.Session
 	if session == nil {
 		return nil, apperrors.New(40170, http.StatusUnauthorized, "未认证")
 	}
-	return s.claimTrialFor(ctx, session.AppID, session.UserID, session.DeviceID, clientIP, "")
+	// 风控：领试用是羊毛党的高发点（一机多号、批量注册后挨个领）。管理员代领不评估
+	if err := s.riskGuard(ctx, securitydomain.RiskEvalRequest{Scene: securitydomain.SceneVipTrial, AppID: &session.AppID, UserID: &session.UserID,
+		Account: session.Account, IP: clientIP, DeviceID: session.DeviceID, UserAgent: session.UserAgent},
+		RiskGuardOption{Message: "当前环境存在风险，暂时无法领取试用"}); err != nil {
+		return nil, err
+	}
+	result, err := s.claimTrialFor(ctx, session.AppID, session.UserID, session.DeviceID, clientIP, "")
+	if err == nil {
+		s.riskReport(ctx, riskevents.Event{Type: riskevents.TypeVipTrial, Scene: securitydomain.SceneVipTrial, AppID: session.AppID,
+			UserID: session.UserID, Account: session.Account, IP: clientIP, DeviceID: session.DeviceID, UA: session.UserAgent})
+	}
+	return result, err
 }
 
 // AdminClaimTrialFor 管理员代某用户领取试用（客服补发场景，走同一套资格判定）。
