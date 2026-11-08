@@ -908,6 +908,12 @@ func (h *Handler) writeError(c *gin.Context, err error) {
 		response.Error(c, appErr.HTTPStatus, appErr.Code, appErr.Message)
 		return
 	}
+	// 客户端先断开了（连点取消、超时离开）：请求上下文被取消，事务已回滚。不是服务端错误，回 499
+	// （客户端已经收不到了），访问日志按普通请求记，不再混进 5xx
+	if errors.Is(err, context.Canceled) && c.Request.Context().Err() != nil {
+		c.AbortWithStatus(statusClientClosedRequest)
+		return
+	}
 	// 记录真实错误到 gin logger（控制台可见）
 	_ = c.Error(err)
 	// 锁等待超时、死锁、语句超时：库里一时挤不进去，不是程序错误。回 503 + Retry-After，客户端退避重试
@@ -992,6 +998,9 @@ func resolveAppID(c *gin.Context, appService appIDResolver) (int64, bool) {
 	response.Error(c, http.StatusNotFound, 40404, "应用不存在")
 	return 0, false
 }
+
+// statusClientClosedRequest 客户端在服务端答复之前断开（nginx 的 499）。
+const statusClientClosedRequest = 499
 
 // errCodeDatabaseBusy 数据库一时繁忙（锁等待超时、死锁、语句超时）。
 const errCodeDatabaseBusy = 50310

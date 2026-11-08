@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"context"
+	"fmt"
 	appdomain "aegis/internal/domain/app"
 	"net/http"
 	"net/http/httptest"
@@ -119,5 +120,27 @@ func TestResolveAppIDReturnsNotFoundForUnknownApp(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "\"code\":40404") {
 		t.Fatalf("unexpected response body: %s", recorder.Body.String())
+	}
+}
+
+func TestWriteErrorClientClosed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c.Request = httptest.NewRequest(http.MethodPost, "/draw", nil).WithContext(ctx)
+	(&Handler{}).writeError(c, fmt.Errorf("draw: %w", context.Canceled))
+	if c.Writer.Status() != statusClientClosedRequest {
+		t.Fatalf("客户端断开时回 499，得到 %d", c.Writer.Status())
+	}
+
+	// 请求还在、只是下游自己取消的，仍按服务端错误
+	recorder = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/draw", nil)
+	(&Handler{}).writeError(c, context.Canceled)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("请求没断开时不是 499，得到 %d", recorder.Code)
 	}
 }
