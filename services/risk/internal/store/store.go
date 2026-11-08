@@ -441,6 +441,8 @@ type ListQuery struct {
 	Active   bool
 	Page     int
 	Limit    int
+	// Sort exp：按到期时间升序（最先到期的在前，长期有效的排最后）；默认按添加时间倒序
+	Sort string
 }
 
 const entryCols = "id, list_type, value, kind, app_id, scenes, reason, source, created_by, decision_id, expires_at, created_at"
@@ -490,7 +492,11 @@ func (s *Store) ListEntries(ctx context.Context, q ListQuery) ([]lists.Entry, in
 		q.Page = 1
 	}
 	args = append(args, q.Limit, (q.Page-1)*q.Limit)
-	rows, err := s.pool.Query(ctx, fmt.Sprintf("SELECT %s FROM list_entries WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d", entryCols, cond, len(args)-1, len(args)), args...)
+	order := "created_at DESC"
+	if q.Sort == "exp" {
+		order = "expires_at ASC NULLS LAST, created_at DESC"
+	}
+	rows, err := s.pool.Query(ctx, fmt.Sprintf("SELECT %s FROM list_entries WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d", entryCols, cond, order, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, 0, err
 	}

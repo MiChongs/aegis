@@ -66,6 +66,7 @@ func (s *Server) routes(g *route.RouterGroup) {
 	g.POST("/models/:key/predict", s.wrap(s.predictModel))
 
 	g.GET("/lists", s.wrap(s.listEntries))
+	g.GET("/lists/stats", s.wrap(s.listStats))
 	g.POST("/lists", s.wrap(s.addEntries))
 	g.POST("/lists/remove", s.wrap(s.removeEntries))
 	g.POST("/lists/check", s.wrap(s.checkList))
@@ -81,6 +82,7 @@ func (s *Server) routes(g *route.RouterGroup) {
 	g.GET("/events", s.wrap(s.listEvents))
 	g.GET("/alerts", s.wrap(s.listAlerts))
 	g.GET("/cases", s.wrap(s.listCases))
+	g.GET("/cases/stats", s.wrap(s.caseStats))
 	g.POST("/cases/:id/review", s.wrap(s.reviewCase))
 	g.GET("/graph", s.wrap(s.graph))
 	g.GET("/profile", s.wrap(s.profile))
@@ -129,6 +131,12 @@ type sceneView struct {
 	store.Scene
 	State     *store.State `json:"state,omitempty"`
 	RuleCount int          `json:"ruleCount"`
+	// RuleEnforce / RuleObserve 启用的规则里生效与观察各几条（含对全部场景生效的规则）
+	RuleEnforce int `json:"ruleEnforce"`
+	RuleObserve int `json:"ruleObserve"`
+	// LastPublishedAt 最近一次发布（调灰度比例不算）
+	LastPublishedAt *time.Time `json:"lastPublishedAt,omitempty"`
+	LastPublishedBy string     `json:"lastPublishedBy,omitempty"`
 }
 
 func (s *Server) listScenes(ctx context.Context, _ *app.RequestContext) (any, error) {
@@ -144,21 +152,33 @@ func (s *Server) listScenes(ctx context.Context, _ *app.RequestContext) (any, er
 	if err != nil {
 		return nil, err
 	}
-	counts := map[string]int{}
-	global := 0
+	counts, enforce := map[string]int{}, map[string]int{}
+	global, globalEnforce := 0, 0
 	for _, r := range rules {
 		if !r.Enabled {
 			continue
 		}
+		on := 0
+		if r.Mode != bundle.ModeObserve {
+			on = 1
+		}
 		if r.Scene == "*" {
 			global++
+			globalEnforce += on
 		} else {
 			counts[r.Scene]++
+			enforce[r.Scene] += on
 		}
 	}
+	published, _ := s.Store.LastPublished(ctx)
 	out := make([]sceneView, 0, len(scenes))
 	for _, sc := range scenes {
-		v := sceneView{Scene: sc, RuleCount: counts[sc.Key] + global}
+		n, on := counts[sc.Key]+global, enforce[sc.Key]+globalEnforce
+		v := sceneView{Scene: sc, RuleCount: n, RuleEnforce: on, RuleObserve: n - on}
+		if p, ok := published[sc.Key]; ok {
+			at := p.At
+			v.LastPublishedAt, v.LastPublishedBy = &at, p.By
+		}
 		if st, ok := states[sc.Key]; ok {
 			st := st
 			v.State = &st
@@ -542,10 +562,15 @@ func (s *Server) predictModel(ctx context.Context, c *app.RequestContext) (any, 
 
 // ── 名单 ──
 
+// listStats 名单统计：按种类、类型的有效条数，未来 7 天每天到期的条数，长期有效的条数
+func (s *Server) listStats(ctx context.Context, c *app.RequestContext) (any, error) {
+	return s.Store.ListStats(ctx, qapp(c))
+}
+
 func (s *Server) listEntries(ctx context.Context, c *app.RequestContext) (any, error) {
 	q := store.ListQuery{ListType: string(c.Query("type")), Kind: string(c.Query("kind")), Value: string(c.Query("value")),
 		AppID: qapp(c), Source: string(c.Query("source")), Active: string(c.Query("active")) != "false",
-		Page: qint(c, "page", 1), Limit: qint(c, "limit", 50)}
+		Page: qint(c, "page", 1), Limit: qint(c, "limit", 50), Sort: string(c.Query("sort"))}
 	list, total, err := s.Store.ListEntries(ctx, q)
 	if err != nil {
 		return nil, err

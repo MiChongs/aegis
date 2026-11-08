@@ -159,7 +159,20 @@ func (s *Server) dashboard(ctx context.Context, c *app.RequestContext) (any, err
 	if app != nil {
 		appCond, appArgs = " AND app_id = ?", []any{*app}
 	}
+	// scene：两张表都有这一列；user：只有明细表有，按用户看时分布与趋势改走明细表
+	if sc := strings.TrimSpace(string(c.Query("scene"))); sc != "" {
+		appCond += " AND scene = ?"
+		appArgs = append(appArgs, sc)
+	}
+	userID := qint64(c, "user")
+	userCond, userArgs := "", []any{}
+	if userID > 0 {
+		userCond, userArgs = " AND user_id = ?", []any{userID}
+	}
 	args := func(extra ...any) []any { return append(append([]any{from, to}, appArgs...), extra...) }
+	dargs := func(extra ...any) []any {
+		return append(append(append([]any{from, to}, appArgs...), userArgs...), extra...)
+	}
 	bucket := "toStartOfHour(minute)"
 	if to.Sub(from) > 7*24*time.Hour {
 		bucket = "toStartOfDay(minute)"
@@ -189,6 +202,10 @@ func (s *Server) dashboard(ctx context.Context, c *app.RequestContext) (any, err
 	conn := s.CH.Conn()
 	run("byAction", func() (any, error) {
 		var r []kv
+		if userID > 0 {
+			err := conn.Select(ctx, &r, "SELECT action AS k, count() AS n FROM decisions WHERE ts >= ? AND ts < ? AND shadow = 0"+appCond+userCond+" GROUP BY k ORDER BY n DESC", dargs()...)
+			return r, err
+		}
 		err := conn.Select(ctx, &r, "SELECT action AS k, sum(n) AS n FROM decisions_minute WHERE minute >= ? AND minute < ? AND shadow = 0"+appCond+" GROUP BY k ORDER BY n DESC", args()...)
 		return r, err
 	})
@@ -203,6 +220,10 @@ func (s *Server) dashboard(ctx context.Context, c *app.RequestContext) (any, err
 	})
 	run("series", func() (any, error) {
 		var r []series
+		if userID > 0 {
+			err := conn.Select(ctx, &r, "SELECT "+strings.ReplaceAll(bucket, "minute", "ts")+" AS t, action, count() AS n FROM decisions WHERE ts >= ? AND ts < ? AND shadow = 0"+appCond+userCond+" GROUP BY t, action ORDER BY t", dargs()...)
+			return r, err
+		}
 		err := conn.Select(ctx, &r, "SELECT "+bucket+" AS t, action, sum(n) AS n FROM decisions_minute WHERE minute >= ? AND minute < ? AND shadow = 0"+appCond+" GROUP BY t, action ORDER BY t", args()...)
 		return r, err
 	})
@@ -336,6 +357,11 @@ func (s *Server) listAlerts(ctx context.Context, c *app.RequestContext) (any, er
 }
 
 // ── 复核 ──
+
+// caseStats 复核单全局统计：待复核按风险分段、最早一张待复核的创建时间、近 30 天结案结论
+func (s *Server) caseStats(ctx context.Context, c *app.RequestContext) (any, error) {
+	return s.Store.CaseStats(ctx, qapp(c))
+}
 
 func (s *Server) listCases(ctx context.Context, c *app.RequestContext) (any, error) {
 	q := store.CaseQuery{Status: string(c.Query("status")), AppID: qapp(c), UserID: qint64(c, "user"), Scene: string(c.Query("scene")),
@@ -643,6 +669,7 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 		return r, err
 	})
 	run("names", func() (any, error) { return s.configNames(ctx) })
+	run("ruleMeta", func() (any, error) { return s.ruleMeta(ctx) })
 	run("rules", func() (any, error) {
 		var r []kv
 		err := conn.Select(ctx, &r, "SELECT arrayJoin(hits) AS k, count() AS n FROM decisions WHERE "+base+" GROUP BY k ORDER BY n DESC LIMIT 15", args...)
@@ -1010,6 +1037,28 @@ func (s *Server) configNames(ctx context.Context) (map[string]map[string]string,
 				out["models"][m.Key] = m.Name
 			}
 		}
+	}
+	return out, nil
+}
+
+// ruleInfo 规则在控制台上要显示的几项（命中规则旁的维度、分值、是否观察中）
+type ruleInfo struct {
+	Name      string `json:"name"`
+	Dimension string `json:"dimension"`
+	Score     int    `json:"score"`
+	Mode      string `json:"mode"`
+	Decision  string `json:"decision,omitempty"`
+}
+
+// ruleMeta 规则键 → 显示信息（同一个键在多个场景时取最近更新的那条）
+func (s *Server) ruleMeta(ctx context.Context) (map[string]ruleInfo, error) {
+	rules, err := s.Store.ListRules(ctx, "")
+	if err != nil {
+		return map[string]ruleInfo{}, err
+	}
+	out := make(map[string]ruleInfo, len(rules))
+	for _, r := range rules {
+		out[r.Key] = ruleInfo{Name: r.Name, Dimension: r.Dimension, Score: r.Score, Mode: string(r.Mode), Decision: r.Decision}
 	}
 	return out, nil
 }
