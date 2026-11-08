@@ -43,7 +43,9 @@ type Progress struct {
 	Devices    int64            `json:"devices"`
 	IPs        int64            `json:"ips"`
 	Vectors    int64            `json:"vectors"`
-	ProxyIPs   int64            `json:"proxyIps"` // 从图里删掉的代理 / CDN 地址数
+	ProxyIPs   int64            `json:"proxyIps"`   // 从图里删掉的代理 / CDN 地址数
+	HostingIPs int64            `json:"hostingIps"` // 标成机房 / 云主机出口的 IP 数
+	SharedIPs  int64            `json:"sharedIps"`  // 标成共享出口的 IP 数
 	Error      string           `json:"error,omitempty"`
 }
 
@@ -66,6 +68,7 @@ type Runner struct {
 }
 
 type ipInfo struct {
+	users                           map[string]struct{} // 用过它的不同用户（应用:用户）
 	first, last                     int64
 	country, province, city, isp    string
 	asn                             int64
@@ -254,8 +257,18 @@ func (r *Runner) useIP(edge string, appID, uid int64, ip string, first, last, co
 	if ip == "" || appID <= 0 || uid <= 0 {
 		return nil
 	}
-	r.noteIP(ip, first, last)
+	r.noteIP(ip, first, last).addUser(appID, uid)
 	return r.batch.Edge(edge, graph.UserVID(appID, uid), graph.IPVID(ip), first, last, count)
+}
+
+func (i *ipInfo) addUser(appID, uid int64) {
+	if appID <= 0 || uid <= 0 {
+		return
+	}
+	if i.users == nil {
+		i.users = map[string]struct{}{}
+	}
+	i.users[fmt.Sprintf("%d:%d", appID, uid)] = struct{}{}
 }
 
 func (r *Runner) noteIP(ip string, first, last int64) *ipInfo {

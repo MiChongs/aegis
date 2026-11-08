@@ -101,6 +101,10 @@ func Statements(e events.Event) string {
 		if e.ASN > 0 {
 			sets = append(sets, fmt.Sprintf("asn = %d", e.ASN))
 		}
+		// 机房 / 云主机出口当场就能认出来；共享出口要按用户数统计，由每日回灌更新
+		if proxyip.IsHosting(e.ISP, e.ASN) {
+			sets = append(sets, "hosting = true")
+		}
 		upsertVertex(&b, TagIP, iv, ts, sets...)
 		if subject != "" {
 			upsertEdge(&b, EdgeUsesIP, subject, iv, ts)

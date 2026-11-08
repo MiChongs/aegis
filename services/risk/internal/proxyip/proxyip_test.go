@@ -18,3 +18,21 @@ func TestContains(t *testing.T) {
 		t.Fatalf("len %d", s.Len())
 	}
 }
+
+func TestIsHosting(t *testing.T) {
+	cases := []struct {
+		isp  string
+		asn  int64
+		want bool
+	}{
+		{"Oracle", 0, true}, {"Hytron Network Services Limited", 151407, true}, {"Cloudinnovation", 0, true},
+		{"TermRat Network Limited", 154648, true}, {"Alibaba (US) Technology Co., Ltd.", 45102, true},
+		{"移动", 9808, false}, {"中国电信", 4134, false}, {"Far EastTone Telecommunication Co., Ltd.", 9674, false},
+		{"KDDI", 2516, false}, {"教育网", 4538, false}, {"", 0, false}, {"OVH SAS", 16276, true}, {"阿里云", 0, true},
+	}
+	for _, c := range cases {
+		if got := IsHosting(c.isp, c.asn); got != c.want {
+			t.Errorf("%q/%d: got %v want %v", c.isp, c.asn, got, c.want)
+		}
+	}
+}

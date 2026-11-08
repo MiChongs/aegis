@@ -90,6 +90,9 @@ func SchemaAdditions() []string {
 		"ALTER TAG user ADD (nickname string DEFAULT \"\", registered_at int DEFAULT 0)",
 		"ALTER TAG device ADD (os_version string DEFAULT \"\", app_version string DEFAULT \"\", name string DEFAULT \"\")",
 		"ALTER TAG ip ADD (vpn bool DEFAULT false, tor bool DEFAULT false)",
+		// users：用过这个 IP 的不同用户数；hosting：机房 / 云主机 / 代理出口；shared：共享出口（用户数达到 proxyip.SharedUsers）。
+		// 后两者为真的 IP 是"弱关系"：关系图上不穿过它们展开，图特征里不按它们统计同 IP 账号。
+		"ALTER TAG ip ADD (users int DEFAULT 0, hosting bool DEFAULT false, shared bool DEFAULT false)",
 	}
 }
 

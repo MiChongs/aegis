@@ -41,6 +41,13 @@ export function isBanned(n: GraphNode) {
   return n.props?.banned === true || n.props?.status === "banned";
 }
 
+/** 共享出口（多人共用）或机房、代理出口的 IP：弱关系，不作为关联依据 */
+export function isWeakIP(n: GraphNode | undefined) {
+  return !!n && n.kind === "ip" && (n.props?.shared === true || n.props?.hosting === true);
+}
+
+const WEAK_COLOR = "#94a3b8";
+
 function propLines(n: GraphNode): string[] {
   const out: string[] = [];
   const p = n.props ?? {};
@@ -59,6 +66,11 @@ function propLines(n: GraphNode): string[] {
   pick("isp", "运营商");
   pick("asn", "ASN");
   pick("last_action", "最近处置");
+  if (n.kind === "ip") {
+    if (typeof p.users === "number" && p.users > 0) out.push(`用过的用户：${p.users} 位`);
+    if (p.shared === true) out.push("多人共用的出口，不作为关联依据");
+    if (p.hosting === true) out.push("机房或代理出口，不作为关联依据");
+  }
   if (p.emulator === true) out.push("模拟器");
   if (p.rooted === true) out.push("已 Root");
   if (isBanned(n)) out.push("已封禁");
@@ -106,6 +118,7 @@ export function RelationGraph({ graph, height = 520, onNodeClick, focusId }: Rel
       const st = KIND_STYLE[n.kind] ?? KIND_STYLE.account;
       const center = n.id === graph.center;
       const banned = isBanned(n);
+      const weak = isWeakIP(n) && !center;
       const size = (center ? st.size * 1.6 : st.size) + Math.min(10, (degree.get(n.id) ?? 0) * 0.6);
       return {
         id: n.id,
@@ -115,8 +128,10 @@ export function RelationGraph({ graph, height = 520, onNodeClick, focusId }: Rel
         symbolSize: size,
         value: n.depth,
         itemStyle: {
-          color: st.color,
-          borderColor: banned ? destructive : n.id === focusId ? fg : "rgba(255,255,255,0.85)",
+          color: weak ? WEAK_COLOR : st.color,
+          opacity: weak ? 0.75 : 1,
+          borderType: (weak ? "dashed" : "solid") as "dashed" | "solid",
+          borderColor: banned ? destructive : n.id === focusId ? fg : weak ? WEAK_COLOR : "rgba(255,255,255,0.85)",
           borderWidth: banned ? 3 : n.id === focusId || center ? 2.5 : 1,
           shadowBlur: center ? 14 : 0,
           shadowColor: st.color,
@@ -124,26 +139,29 @@ export function RelationGraph({ graph, height = 520, onNodeClick, focusId }: Rel
         label: {
           show: center || n.depth <= 1 || graph.nodes.length <= 60,
           position: "right" as const,
-          color: banned ? destructive : fg,
+          color: banned ? destructive : weak ? muted : fg,
           fontSize: center ? 13 : 11,
           fontWeight: center ? ("bold" as const) : ("normal" as const),
           formatter: (p: { name: string }) => (p.name.length > 18 ? `${p.name.slice(0, 17)}…` : p.name),
         },
       };
     });
-    const links = graph.links.map((l) => ({
-      source: l.source,
-      target: l.target,
-      value: l.count,
-      kind: l.kind,
-      lineStyle: {
-        color: l.kind === "invited" ? "#f59e0b" : border,
-        width: Math.min(4, 1 + Math.log10(Math.max(1, l.count))),
-        opacity: 0.85,
-        curveness: l.kind === "invited" ? 0.2 : 0.05,
-        type: (l.kind === "in_subnet" || l.kind === "account_of" ? "dashed" : "solid") as "dashed" | "solid",
-      },
-    }));
+    const links = graph.links.map((l) => {
+      const weak = isWeakIP(byId.get(l.source)) || isWeakIP(byId.get(l.target));
+      return {
+        source: l.source,
+        target: l.target,
+        value: l.count,
+        kind: l.kind,
+        lineStyle: {
+          color: l.kind === "invited" ? "#f59e0b" : weak ? WEAK_COLOR : border,
+          width: weak ? 1 : Math.min(4, 1 + Math.log10(Math.max(1, l.count))),
+          opacity: weak ? 0.5 : 0.85,
+          curveness: l.kind === "invited" ? 0.2 : 0.05,
+          type: (weak || l.kind === "in_subnet" || l.kind === "account_of" ? "dashed" : "solid") as "dashed" | "solid",
+        },
+      };
+    });
     return {
       backgroundColor: "transparent",
       tooltip: {

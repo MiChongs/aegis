@@ -323,6 +323,7 @@ func serve(logf func(string, ...any)) error {
 			srv.AutoBackfill(ctx)
 		}
 	}()
+	go srv.DailyBackfill(ctx)
 	return srv.Run(ctx, reg)
 }
 

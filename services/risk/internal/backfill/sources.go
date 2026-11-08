@@ -7,6 +7,7 @@ import (
 
 	"aegis/services/risk/internal/engine"
 	"aegis/services/risk/internal/graph"
+	"aegis/services/risk/internal/proxyip"
 	"aegis/services/risk/internal/vector"
 
 	"github.com/jackc/pgx/v5"
@@ -91,6 +92,7 @@ func srcUsers(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) {
 		}
 		if ip := r.clientIP(regIP); ip != "" {
 			info := r.noteIP(ip, regAt, regAt)
+			info.addUser(appID, uid)
 			if info.province == "" {
 				info.province, info.city, info.isp = prov, city, isp
 			}
@@ -113,6 +115,7 @@ func srcRegister(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) 
 		}
 		if ip = r.clientIP(ip); ip != "" {
 			info := r.noteIP(ip, ts, ts)
+			info.addUser(appID, uid)
 			if info.country == "" {
 				info.country = country
 			}
@@ -505,6 +508,16 @@ func srcFinalize(ctx context.Context, _ *pgx.Conn, r *Runner) (int64, error) {
 		}
 		if info.hasRiskRow {
 			sets = append(sets, graph.SetBool("proxy", info.proxy), graph.SetBool("vpn", info.vpn), graph.SetBool("tor", info.tor), graph.SetBool("datacenter", info.dc))
+		}
+		users := int64(len(info.users))
+		hosting := proxyip.IsHosting(info.isp, info.asn) || info.proxy || info.vpn || info.tor || info.dc
+		shared := users >= proxyip.SharedUsers
+		sets = append(sets, graph.SetInt("users", users), graph.SetBool("hosting", hosting), graph.SetBool("shared", shared))
+		if hosting {
+			r.prog.HostingIPs++
+		}
+		if shared {
+			r.prog.SharedIPs++
 		}
 		if err := r.batch.Vertex(graph.TagIP, graph.IPVID(ip), info.first, info.last, sets...); err != nil {
 			return n, err

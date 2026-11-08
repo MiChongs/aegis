@@ -141,7 +141,7 @@ function RiskGraphPanel({ appKey, appId, graph, loading, error }: { appKey: stri
     <Panel
       title="关系图"
       icon={<Network className="size-4" />}
-      description="账号、设备、IP、网段、手机号、邮箱与邀请关系，两跳内展开。点一个点以它为中心继续展开，红色描边为已封禁"
+      description="所选时间内的账号、设备、IP、第三方账号、手机号、邮箱、邀请与支付关系，两跳内展开。灰色虚线的 IP 是多人共用的出口或机房、代理地址，不作为关联依据，也不从它继续展开。红色描边为已封禁"
       action={
         <div className="flex items-center gap-2">
           <Select value={String(depth)} onValueChange={(v) => setDepth(Number(v))}>

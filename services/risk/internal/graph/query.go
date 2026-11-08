@@ -20,22 +20,23 @@ func FeatureQuery(template, vid string, appID int64, withinDays int, now time.Ti
 	src := Quote(vid)
 	appPrefix := Quote(fmt.Sprintf("u:%d:", appID))
 	recent := fmt.Sprintf("properties(edge).last_seen >= %d", since)
-	shared := func(edge string) string {
+	shared := func(edge, extra string) string {
 		return fmt.Sprintf(
-			"GO FROM %s OVER %s WHERE %s YIELD dst(edge) AS x | GO FROM $-.x OVER %s REVERSELY WHERE %s AND src(edge) != %s AND src(edge) STARTS WITH %s YIELD DISTINCT src(edge) AS other | YIELD count(*) AS n",
-			src, edge, recent, edge, recent, src, appPrefix)
+			"GO FROM %s OVER %s WHERE %s%s YIELD dst(edge) AS x | GO FROM $-.x OVER %s REVERSELY WHERE %s AND src(edge) != %s AND src(edge) STARTS WITH %s YIELD DISTINCT src(edge) AS other | YIELD count(*) AS n",
+			src, edge, recent, extra, edge, recent, src, appPrefix)
 	}
 	switch template {
 	case bundle.GraphDeviceAccounts:
-		return shared(EdgeUsesDevice), nil
+		return shared(EdgeUsesDevice, ""), nil
 	case bundle.GraphIPAccounts:
-		return shared(EdgeUsesIP), nil
+		// 共享出口与机房出口上的"同 IP"不算：用同一家代理、同一个运营商 NAT 出口的人互不相干
+		return shared(EdgeUsesIP, " AND "+strongIP), nil
 	case bundle.GraphPhoneAccounts:
-		return shared(EdgeHasPhone), nil
+		return shared(EdgeHasPhone, ""), nil
 	case bundle.GraphBannedNeighbors:
 		return fmt.Sprintf(
-			"GO FROM %s OVER uses_device, uses_ip, has_phone WHERE %s YIELD dst(edge) AS x | GO FROM $-.x OVER uses_device, uses_ip, has_phone REVERSELY WHERE src(edge) != %s AND src(edge) STARTS WITH %s YIELD DISTINCT src(edge) AS other | FETCH PROP ON user $-.other YIELD user.banned AS banned | YIELD count(*) AS n WHERE $-.banned == true",
-			src, recent, src, appPrefix), nil
+			"GO FROM %s OVER uses_device, uses_ip, has_phone WHERE %s AND (type(edge) != \"uses_ip\" OR %s) YIELD dst(edge) AS x | GO FROM $-.x OVER uses_device, uses_ip, has_phone REVERSELY WHERE src(edge) != %s AND src(edge) STARTS WITH %s YIELD DISTINCT src(edge) AS other | FETCH PROP ON user $-.other YIELD user.banned AS banned | YIELD count(*) AS n WHERE $-.banned == true",
+			src, recent, strongIP, src, appPrefix), nil
 	case bundle.GraphInviteChildren:
 		return fmt.Sprintf("GO FROM %s OVER invited WHERE %s YIELD DISTINCT dst(edge) AS c | YIELD count(*) AS n", src, recent), nil
 	case bundle.GraphInviteTree:
@@ -50,6 +51,9 @@ func FeatureQuery(template, vid string, appID int64, withinDays int, now time.Ti
 	}
 	return "", fmt.Errorf("未知图特征模板 %q", template)
 }
+
+// strongIP GO 语句里"目的 IP 不是共享 / 机房出口"的条件
+const strongIP = "($$.ip.shared != true AND $$.ip.hosting != true)"
 
 // SubjectVID 主体在图里的点 ID
 func SubjectVID(entity string, appID int64, value string) string {
@@ -123,9 +127,26 @@ type Subgraph struct {
 	Truncated bool   `json:"truncated"`
 }
 
-// Expand 从一个点向外展开 depth 跳，每跳每个点最多 fanout 条边，总点数不超过 maxNodes。
-// 不用 GET SUBGRAPH：热门 IP 上挂着上万账号时它会把整张子图搬回来。
+// ExpandOptions 子图展开参数
+type ExpandOptions struct {
+	Depth, Fanout, Max int
+	// Since 只看最近一次出现在这之后（秒）的关系；0 不限
+	Since int64
+	// Subnets 是否带上 IP 所属网段（网段点多、信息量少，用户视图默认不带）
+	Subnets bool
+}
+
+// Expand 兼容旧调用：不限时间、带网段
 func (c *Client) Expand(center string, depth, fanout, maxNodes int) (*Subgraph, error) {
+	return c.ExpandWith(center, ExpandOptions{Depth: depth, Fanout: fanout, Max: maxNodes, Subnets: true})
+}
+
+// ExpandWith 从一个点向外展开，每跳每个点最多 Fanout 条边，总点数不超过 Max。
+// 共享出口 / 机房出口的 IP 点会画出来，但不从它继续往外展开（中心点本身除外）：
+// 用同一家代理、同一个运营商 NAT 出口的人互不相干，展开只会把陌生人拉进图。
+// 不用 GET SUBGRAPH：热门 IP 上挂着上万账号时它会把整张子图搬回来。
+func (c *Client) ExpandWith(center string, o ExpandOptions) (*Subgraph, error) {
+	depth, fanout, maxNodes := o.Depth, o.Fanout, o.Max
 	if depth <= 0 {
 		depth = 2
 	}
@@ -140,15 +161,26 @@ func (c *Client) Expand(center string, depth, fanout, maxNodes int) (*Subgraph, 
 	order := []string{center}
 	linkSeen := map[string]bool{}
 	frontier := []string{center}
-	edges := strings.Join(Edges(), ", ")
+	var kinds []string
+	for _, e := range Edges() {
+		if e == EdgeInSubnet && !o.Subnets {
+			continue
+		}
+		kinds = append(kinds, e)
+	}
+	edges := strings.Join(kinds, ", ")
+	where := ""
+	if o.Since > 0 {
+		where = fmt.Sprintf(" WHERE properties(edge).last_seen >= %d", o.Since)
+	}
 	for hop := 1; hop <= depth && len(frontier) > 0; hop++ {
 		quoted := make([]string, len(frontier))
 		for i, v := range frontier {
 			quoted[i] = Quote(v)
 		}
 		stmt := fmt.Sprintf(
-			"GO FROM %s OVER %s BIDIRECT YIELD src(edge) AS s, dst(edge) AS d, type(edge) AS t, properties(edge).first_seen AS f, properties(edge).last_seen AS l, properties(edge).count AS c | LIMIT %d",
-			strings.Join(quoted, ", "), edges, fanout*len(frontier))
+			"GO FROM %s OVER %s BIDIRECT%s YIELD src(edge) AS s, dst(edge) AS d, type(edge) AS t, properties(edge).first_seen AS f, properties(edge).last_seen AS l, properties(edge).count AS c | LIMIT %d",
+			strings.Join(quoted, ", "), edges, where, fanout*len(frontier))
 		rs, err := c.Exec(stmt)
 		if err != nil {
 			return nil, err
@@ -180,7 +212,7 @@ func (c *Client) Expand(center string, depth, fanout, maxNodes int) (*Subgraph, 
 				next = append(next, v)
 			}
 		}
-		frontier = next
+		frontier = c.dropWeakIPs(next, center)
 	}
 	// 只保留两端都在图里的边
 	kept := g.Links[:0]
@@ -204,6 +236,49 @@ func (c *Client) Expand(center string, depth, fanout, maxNodes int) (*Subgraph, 
 		g.Nodes = append(g.Nodes, Node{ID: id, Kind: Kind(id), Label: label(id, p), Props: p, Depth: seen[id]})
 	}
 	return g, nil
+}
+
+// dropWeakIPs 从下一跳的展开起点里去掉共享 / 机房出口的 IP（查不到属性的照常展开）
+func (c *Client) dropWeakIPs(ids []string, center string) []string {
+	var ips []string
+	for _, id := range ids {
+		if id != center && Kind(id) == TagIP {
+			ips = append(ips, Quote(id))
+		}
+	}
+	if len(ips) == 0 {
+		return ids
+	}
+	rs, err := c.Exec(fmt.Sprintf("FETCH PROP ON ip %s YIELD id(vertex) AS id, ip.shared AS s, ip.hosting AS h", strings.Join(ips, ", ")))
+	if err != nil {
+		return ids
+	}
+	weak := map[string]bool{}
+	for i := 0; i < rs.GetRowSize(); i++ {
+		rec, err := rs.GetRowValuesByIndex(i)
+		if err != nil {
+			continue
+		}
+		if boolAt(rec, 1) || boolAt(rec, 2) {
+			weak[str(rec, 0)] = true
+		}
+	}
+	out := ids[:0]
+	for _, id := range ids {
+		if !weak[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func boolAt(rec *nebula.Record, i int) bool {
+	v, err := rec.GetValueByIndex(i)
+	if err != nil {
+		return false
+	}
+	b, _ := v.AsBool()
+	return b
 }
 
 func (c *Client) fetchProps(ids []string) (map[string]map[string]any, error) {

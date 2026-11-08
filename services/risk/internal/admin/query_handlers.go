@@ -516,7 +516,13 @@ func (s *Server) graph(ctx context.Context, c *app.RequestContext) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	return s.Graph.Expand(center, min(max(qint(c, "depth", 2), 1), 3), min(max(qint(c, "fanout", 40), 5), 200), min(max(qint(c, "max", 300), 20), 800))
+	o := graph.ExpandOptions{Depth: min(max(qint(c, "depth", 2), 1), 3), Fanout: min(max(qint(c, "fanout", 40), 5), 200),
+		Max: min(max(qint(c, "max", 300), 20), 800), Subnets: string(c.Query("subnets")) == "1"}
+	// days：只看最近 N 天出现过的关系（0 或不传不限）
+	if d := qint(c, "days", 0); d > 0 {
+		o.Since = time.Now().Add(-time.Duration(min(d, 3650)) * 24 * time.Hour).Unix()
+	}
+	return s.Graph.ExpandWith(center, o)
 }
 
 type dayAction struct {
@@ -570,7 +576,8 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 		if s.Graph == nil {
 			return nil, errors.New("关系图未就绪")
 		}
-		return s.Graph.Expand(graph.UserVID(appID, uid), 2, 40, 260)
+		// 与画像同一时间窗；网段不画（信息量少、点多）；共享 / 机房出口不往外展开
+		return s.Graph.ExpandWith(graph.UserVID(appID, uid), graph.ExpandOptions{Depth: 2, Fanout: 40, Max: 260, Since: since.Unix()})
 	})
 	run("timeline", func() (any, error) {
 		var r []dayAction

@@ -136,3 +136,32 @@ func (s *Server) AutoBackfill(ctx context.Context) {
 		s.Logf("关系图自动回灌没有启动：%v", err)
 	}
 }
+
+// DailyBackfill 每天凌晨 4 点重跑一次回灌：实时写入只能当场认出机房出口，
+// 一个 IP 是不是共享出口（被多少个不同用户用过）要按全量统计，回灌顺带刷新；回灌本身可重复执行。
+func (s *Server) DailyBackfill(ctx context.Context) {
+	t := time.NewTicker(10 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			if now.Hour() != 4 {
+				continue
+			}
+			last, err := s.Store.LastBackfill(ctx)
+			if err != nil {
+				continue
+			}
+			y, m, d := now.Date()
+			today := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+			if last != nil && !last.StartedAt.Before(today) {
+				continue
+			}
+			if _, _, err := s.StartBackfill(ctx, "system-daily"); err != nil && s.Logf != nil {
+				s.Logf("每日关系图回灌没有启动：%v", err)
+			}
+		}
+	}
+}
