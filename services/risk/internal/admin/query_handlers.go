@@ -160,6 +160,8 @@ func (s *Server) dashboard(ctx context.Context, c *app.RequestContext) (any, err
 	if app != nil {
 		appCond, appArgs = " AND app_id = ?", []any{*app}
 	}
+	// 告警表没有 scene 列，告警只按应用过滤
+	alertCond, alertArgs := appCond, append([]any{from, to}, appArgs...)
 	// scene：两张表都有这一列；user：只有明细表有，按用户看时分布与趋势改走明细表
 	if sc := strings.TrimSpace(string(c.Query("scene"))); sc != "" {
 		appCond += " AND scene = ?"
@@ -257,7 +259,7 @@ func (s *Server) dashboard(ctx context.Context, c *app.RequestContext) (any, err
 	})
 	run("alerts", func() (any, error) {
 		var r []kv
-		err := conn.Select(ctx, &r, "SELECT pattern AS k, count() AS n FROM alerts WHERE ts >= ? AND ts < ?"+appCond+" GROUP BY k ORDER BY n DESC LIMIT 10", args()...)
+		err := conn.Select(ctx, &r, "SELECT pattern AS k, count() AS n FROM alerts WHERE ts >= ? AND ts < ?"+alertCond+" GROUP BY k ORDER BY n DESC LIMIT 10", alertArgs...)
 		return r, err
 	})
 	run("pendingCases", func() (any, error) {
