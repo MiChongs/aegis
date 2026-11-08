@@ -24,7 +24,9 @@ export const ORDER_STATUS_FILTERS = [
   { value: "paid", label: "已支付" },
   { value: "pending", label: "待支付" },
   { value: "expired", label: "已过期" },
-  { value: "failed", label: "支付失败" }
+  { value: "failed", label: "支付失败" },
+  // 不是订单状态：实付与订单金额对不上、等管理员处理的订单（后端 status=review）
+  { value: "review", label: "待人工处理" }
 ];
 
 export function orderStatusMeta(status?: string): OrderStatusMeta {
@@ -39,6 +41,35 @@ export function OrderStatusBadge({ status, className }: { status?: string; class
       {meta.label}
     </Badge>
   );
+}
+
+/** 待人工处理：实付与订单金额对不上，系统没有自动结单，也不会再自动查单。 */
+export function OrderReviewBadge({ className }: { className?: string }) {
+  return (
+    <Badge variant="outline" className={cn("gap-1.5 font-medium", "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400", className)}>
+      <span className="size-1.5 rounded-full bg-amber-500" />
+      待人工处理
+    </Badge>
+  );
+}
+
+const toCents = (value?: string | null) => Math.round(Number(value ?? "0") * 100);
+
+/**
+ * 实付与订单金额的差：没有实付记录或两边相等时返回 null。
+ * diff 为正是多付、为负是少付（单位：分）。
+ */
+export function orderPaidDifference(order: { amount: string; paid_amount?: string | null }) {
+  if (!order.paid_amount) return null;
+  const diff = toCents(order.paid_amount) - toCents(order.amount);
+  if (diff === 0) return null;
+  return { paid: order.paid_amount, diff };
+}
+
+/** 「多付 0.10」/「少付 0.99」 */
+export function orderPaidDifferenceLabel(diff: number) {
+  const abs = (Math.abs(diff) / 100).toFixed(2);
+  return diff > 0 ? `多付 ${abs}` : `少付 ${abs}`;
 }
 
 /** 订单退款汇总状态 */

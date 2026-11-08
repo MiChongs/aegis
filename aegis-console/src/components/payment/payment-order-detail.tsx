@@ -13,6 +13,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { PaymentBrandBadge } from "./payment-brand-icon";
 import {
+  OrderReviewBadge,
+  orderPaidDifference,
+  orderPaidDifferenceLabel,
   OrderStatusBadge,
   callbackVerified,
   formatOrderTime,
@@ -47,6 +50,7 @@ export function PaymentOrderDetailSheet({
   const order = detail?.order;
   const meta = method(order?.payment_method);
   const refundable = order?.status === "paid" && order.refund_status !== "full";
+  const paidDiff = order ? orderPaidDifference(order) : null;
 
   return (
     <Sheet open={Boolean(orderNo)} onOpenChange={onOpenChange}>
@@ -70,12 +74,34 @@ export function PaymentOrderDetailSheet({
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-foreground">{order.subject || "未命名商品"}</p>
                 <p className="mt-1 font-mono text-3xl font-semibold tracking-tight tabular-nums">{formatMoney(order.amount)}</p>
+                {paidDiff ? (
+                  <p
+                    className={cn(
+                      "mt-1 text-xs tabular-nums",
+                      paidDiff.diff < 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
+                    )}
+                  >
+                    实付 {formatMoney(paidDiff.paid)}，{orderPaidDifferenceLabel(paidDiff.diff)}
+                  </p>
+                ) : null}
                 {orderRefundLabel(order.refund_status) ? (
                   <p className="mt-1 text-xs text-sky-600 tabular-nums dark:text-sky-400">
                     {orderRefundLabel(order.refund_status)}，已退 {formatMoney(order.refunded_amount)}
                   </p>
                 ) : null}
               </div>
+              {order.review_reason ? (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <OrderReviewBadge />
+                    {order.review_at ? (
+                      <span className="text-xs text-muted-foreground tabular-nums">{formatOrderTime(order.review_at, true)} 标记</span>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 text-foreground">{order.review_note || "实付与订单金额不一致，未自动结单。"}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">系统不会再自动查单。核实后请补发商品或在渠道后台退款。</p>
+                </div>
+              ) : null}
               <div className="flex flex-wrap gap-2">
                 {refundable ? (
                   <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => onRefund(order.order_no)}>
@@ -122,6 +148,13 @@ export function PaymentOrderDetailSheet({
                   <Fact label="商品" value={order.subject} />
                   {order.body ? <Fact label="商品描述" value={order.body} wrap /> : null}
                   <Fact label="金额" value={formatMoney(order.amount)} mono />
+                  {order.paid_amount ? (
+                    <Fact
+                      label="实付金额"
+                      value={paidDiff ? `${formatMoney(order.paid_amount)}（${orderPaidDifferenceLabel(paidDiff.diff)}）` : formatMoney(order.paid_amount)}
+                      mono
+                    />
+                  ) : null}
                   {Number(order.refunded_amount) > 0 ? <Fact label="已退金额" value={formatMoney(order.refunded_amount)} mono /> : null}
                 </Facts>
               </Section>

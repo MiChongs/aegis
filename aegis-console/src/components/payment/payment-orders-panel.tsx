@@ -25,8 +25,11 @@ import { ListPagination, ListState, RefreshButton, SearchBox, StatusSegments } f
 import { usePaymentMethodMeta, usePaymentOrderActions, type MethodMeta } from "./payment-order-actions";
 import {
   ORDER_STATUS_FILTERS,
+  OrderReviewBadge,
   OrderStatusBadge,
   formatOrderTime,
+  orderPaidDifference,
+  orderPaidDifferenceLabel,
   orderRefundLabel,
   relativeOrderTime
 } from "./payment-order-meta";
@@ -221,6 +224,8 @@ function OrderRow({
 }) {
   const refundLabel = orderRefundLabel(order.refund_status);
   const refundable = order.status === "paid" && order.refund_status !== "full";
+  const paidDiff = orderPaidDifference(order);
+  const review = Boolean(order.review_reason);
   return (
     <li
       role="button"
@@ -265,14 +270,31 @@ function OrderRow({
 
       <div className="text-right">
         <p className="font-mono text-sm font-semibold tabular-nums">{formatMoney(order.amount)}</p>
+        {paidDiff ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <p
+                className={cn(
+                  "text-xs tabular-nums",
+                  paidDiff.diff < 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
+                )}
+              >
+                实付 {formatMoney(paidDiff.paid)}
+              </p>
+            </TooltipTrigger>
+            <TooltipContent>{orderPaidDifferenceLabel(paidDiff.diff)}</TooltipContent>
+          </Tooltip>
+        ) : null}
         {refundLabel ? <p className="text-xs text-sky-600 tabular-nums dark:text-sky-400">已退 {formatMoney(order.refunded_amount)}</p> : null}
-        <div className="mt-1 flex justify-end md:hidden">
+        <div className="mt-1 flex flex-wrap justify-end gap-1 md:hidden">
           <OrderStatusBadge status={order.status} />
+          {review ? <OrderReviewBadge /> : null}
         </div>
       </div>
 
       <div className="hidden flex-col items-start gap-1 md:flex">
         <OrderStatusBadge status={order.status} />
+        {review ? <OrderReviewBadge /> : null}
         {refundLabel ? <span className="text-xs text-muted-foreground">{refundLabel}</span> : null}
       </div>
 

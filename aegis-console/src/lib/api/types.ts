@@ -1179,6 +1179,12 @@ export type AdminPaymentOrder = {
   expire_at?: string | null;
   createdAt?: string;
   updatedAt?: string;
+  /** 渠道报的实付金额（结单或标记待人工处理时记下）；与 amount 不同时就是多付或少付 */
+  paid_amount?: string | null;
+  /** 待人工处理的原因（amount_mismatch）；有值的订单不再自动查单补单 */
+  review_reason?: string;
+  review_note?: string;
+  review_at?: string | null;
   [key: string]: unknown;
 };
 
