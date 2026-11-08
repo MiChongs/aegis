@@ -246,14 +246,7 @@ export const navigationGroups: NavigationGroup[] = [
         children: [
           { title: "管理员", tab: "admins" },
           { title: "在线会话", tab: "online" },
-          { title: "角色权限", tab: "roles" },
-          { title: "用户主档", tab: "identities" },
-          { title: "标签管理", tab: "tags" },
-          { title: "分群管理", tab: "segments" },
-          { title: "黑白名单", tab: "lists" },
-          { title: "风险用户", tab: "risk" },
-          { title: "用户申诉", tab: "appeals" },
-          { title: "注销管理", tab: "deactivation" }
+          { title: "角色权限", tab: "roles" }
         ]
       },
       {
