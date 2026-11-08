@@ -67,7 +67,8 @@ Redis Stream 或 Lua 脚本要求 Redis 可靠落盘，线上 Redis 的启动参
 `deploy/docker/postgres/tuning.sql`（`ALTER SYSTEM`，写进数据目录，容器重建后仍生效），按 8 核 / 32 GB、与其它服务同机估算：
 `shared_buffers` 4 GB、`effective_cache_size` 16 GB、`work_mem` 16 MB、`max_connections` 200、`max_wal_size` 4 GB、
 `random_page_cost` 1.1、自动清理更积极、`pg_stat_statements` 与慢语句 / 等锁日志。标「重启」的参数要重启 Postgres
-才生效（几秒中断）。容器的 `/dev/shm` 默认只有 64 MB，compose 里给 postgres 加 `shm_size: 1g`。
+才生效（几秒中断）。容器的 `/dev/shm` 默认只有 64 MB：`min_dynamic_shared_memory` 256 MB 让并行查询先用主共享内存里预留的
+一块，不受它限制（线上的基础设施 compose 存在 Dokploy 里，改 `shm_size` 要整套重新部署，所以用这个参数代替）。
 
 JetStream 默认每 2 分钟把文件存储刷一次盘（`sync_interval`），进程崩溃不丢、整机断电可能丢最近的未刷盘部分；
 要连断电都不丢，nats-server 配 `jetstream { sync_interval: always }`（写入变慢）。

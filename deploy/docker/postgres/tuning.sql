@@ -8,7 +8,8 @@
 -- 之后：
 --   标「重启」的参数要重启 Postgres 才生效（约几秒中断，API 会自动重连）；
 --   其余参数 SELECT pg_reload_conf() 立即生效（脚本末尾已经调用）。
--- 另外容器的 /dev/shm 默认只有 64 MB，并行查询会用到它：compose 里给 postgres 加 shm_size: 1g。
+-- 容器的 /dev/shm 默认只有 64 MB，并行查询的动态共享内存默认在那里：下面的 min_dynamic_shared_memory 在启动时从主共享内存里
+-- 先留出一块给它（不走 /dev/shm），改不了 compose 的 shm_size 时这样就够；能改的话 compose 里再给 postgres 加 shm_size: 1g。
 
 -- ── 内存 ──
 ALTER SYSTEM SET shared_buffers = '4GB';              -- 重启。默认 128 MB：600 MB 的抽奖表都放不进缓存
@@ -16,6 +17,7 @@ ALTER SYSTEM SET effective_cache_size = '16GB';       -- 规划器估算可用�
 ALTER SYSTEM SET work_mem = '16MB';                   -- 每个排序 / 哈希节点；连接数 × 节点数要留余量
 ALTER SYSTEM SET maintenance_work_mem = '512MB';      -- 建索引、VACUUM
 ALTER SYSTEM SET huge_pages = 'try';                  -- 重启
+ALTER SYSTEM SET min_dynamic_shared_memory = '256MB'; -- 重启。并行查询先用这块，不受容器 /dev/shm 64 MB 的限制
 
 -- ── 连接 ──
 ALTER SYSTEM SET max_connections = 200;               -- 重启。API 每实例最多 40 条，滚动发布时两个实例同时在线
