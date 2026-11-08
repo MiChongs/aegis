@@ -20,7 +20,7 @@ import (
 // 抽奖吞吐压测（默认跳过）：N 个人同时抽，每人 M 次，连接池 40 条（与生产默认的上限一致），
 // 报每秒抽奖数与延迟分位。
 //
-// AEGIS_LOTTERY_LOAD=1 AEGIS_LOTTERY_LOAD_USERS=2000 AEGIS_LOTTERY_LOAD_DRAWS=5 \
+// AEGIS_LOTTERY_LOAD=1 AEGIS_LOTTERY_LOAD_USERS=2000 AEGIS_LOTTERY_LOAD_DRAWS=5 [AEGIS_LOTTERY_LOAD_BATCH=1] \
 // AEGIS_TEST_PG_DSN=... go test ./internal/service -run TestLotteryLoad -v
 func TestLotteryLoad(t *testing.T) {
 	if os.Getenv("AEGIS_LOTTERY_LOAD") == "" {
@@ -36,6 +36,11 @@ func TestLotteryLoad(t *testing.T) {
 	defer pool.Close()
 	users := envInt("AEGIS_LOTTERY_LOAD_USERS", 1000)
 	draws := envInt("AEGIS_LOTTERY_LOAD_DRAWS", 5)
+	// AEGIS_LOTTERY_LOAD_BATCH=1：每人一次十连抽（draws 次），而不是 draws 次单抽
+	batch := os.Getenv("AEGIS_LOTTERY_LOAD_BATCH") != ""
+	if batch && draws > lotterydomain.MaxBatchDraws {
+		draws = lotterydomain.MaxBatchDraws
+	}
 
 	pg := pgrepo.New(pool)
 	lottery := NewLotteryService(zap.NewNop(), pg, nil)
@@ -96,16 +101,29 @@ SELECT $1, id, $2::bigint, $2::bigint FROM users WHERE appid = $1`, appID, draws
 		go func() {
 			defer wg.Done()
 			local := make([]time.Duration, 0, draws)
-			for i := 0; i < draws; i++ {
+			req := LotteryDrawRequest{AppID: appID, UserID: userID, ActivityID: activity.ID,
+				Source: lotterydomain.SourceBonus, DeviceID: fmt.Sprintf("load-dev-%d", index/3),
+				ClientIP: fmt.Sprintf("10.%d.%d.%d", index/65536%256, index/256%256, index%256)}
+			if batch {
+				// 十连抽：每人一次抽完 draws 次（draws 不超过 10）
 				begin := time.Now()
-				_, err := lottery.Draw(ctx, LotteryDrawRequest{AppID: appID, UserID: userID, ActivityID: activity.ID,
-					Source: lotterydomain.SourceBonus, DeviceID: fmt.Sprintf("load-dev-%d", index/3),
-					ClientIP: fmt.Sprintf("10.%d.%d.%d", index/65536%256, index/256%256, index%256)})
-				if err != nil {
+				result, err := lottery.DrawBatch(ctx, LotteryBatchRequest{LotteryDrawRequest: req, Count: draws})
+				if err != nil || len(result.Draws) != draws {
 					failed.Add(1)
-					continue
+				} else {
+					for range draws {
+						local = append(local, time.Since(begin))
+					}
 				}
-				local = append(local, time.Since(begin))
+			} else {
+				for i := 0; i < draws; i++ {
+					begin := time.Now()
+					if _, err := lottery.Draw(ctx, req); err != nil {
+						failed.Add(1)
+						continue
+					}
+					local = append(local, time.Since(begin))
+				}
 			}
 			mu.Lock()
 			latencies = append(latencies, local...)
@@ -121,7 +139,11 @@ SELECT $1, id, $2::bigint, $2::bigint FROM users WHERE appid = $1`, appID, draws
 		}
 		return latencies[min(len(latencies)-1, int(float64(len(latencies))*p))]
 	}
-	t.Logf("%d 人 × %d 次 = %d 次抽奖，失败 %d，用时 %v，%.0f 次/秒；延迟 p50 %v p95 %v p99 %v",
+	mode := "单抽"
+	if batch {
+		mode = "十连抽"
+	}
+	t.Logf("%s：%d 人 × %d 次 = %d 次抽奖，失败 %d，用时 %v，%.0f 次/秒；延迟 p50 %v p95 %v p99 %v", mode,
 		users, draws, len(latencies), failed.Load(), elapsed, float64(len(latencies))/elapsed.Seconds(),
 		pct(0.50), pct(0.95), pct(0.99))
 	if failed.Load() > 0 {

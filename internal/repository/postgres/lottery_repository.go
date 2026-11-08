@@ -197,11 +197,19 @@ func (r *Repository) ListLotteryPrizes(ctx context.Context, activityID int64) ([
 }
 
 func listLotteryPrizes(ctx context.Context, q queryExecutor, activityID int64) ([]lotterydomain.Prize, error) {
-	rows, err := q.Query(ctx, `SELECT `+lotteryPrizeColumns+`
-FROM lottery_prizes p WHERE p.activity_id = $1 ORDER BY p.position, p.id`, activityID)
+	rows, err := q.Query(ctx, listLotteryPrizesSQL, activityID)
 	if err != nil {
 		return nil, err
 	}
+	return scanLotteryPrizeRows(rows)
+}
+
+// listLotteryPrizesSQL 活动的全部奖品（$1 活动 ID）。
+const listLotteryPrizesSQL = `SELECT ` + lotteryPrizeColumns + `
+FROM lottery_prizes p WHERE p.activity_id = $1 ORDER BY p.position, p.id`
+
+// scanLotteryPrizeRows 读完并关闭 rows（单发与批量管道共用）。
+func scanLotteryPrizeRows(rows pgx.Rows) ([]lotterydomain.Prize, error) {
 	defer rows.Close()
 	out := make([]lotterydomain.Prize, 0, 8)
 	for rows.Next() {
@@ -522,16 +530,24 @@ func lotteryMemberCoverage(ctx context.Context, q queryExecutor, appID, userID i
 // 含抽奖次数的组合商品也算（按全部积分摊给次数，偏低、偏保守）。不看上下架时段：今天不开放、明天开放，
 // 环照样接得上。
 func lotteryStoreDrawPriceQ(ctx context.Context, q queryExecutor, appID int64) (int64, error) {
-	var price *float64
-	if err := q.QueryRow(ctx, `SELECT MIN(i.cost::float8 / d.draws)
+	return scanLotteryStoreDrawPrice(q.QueryRow(ctx, lotteryStoreDrawPriceSQL, appID, pointstore.RewardLotteryDraws,
+		pointstore.StatusActive))
+}
+
+// lotteryStoreDrawPriceSQL 见 lotteryStoreDrawPriceQ（$1 appid、$2 抽奖次数的奖励类型、$3 上架状态）。
+const lotteryStoreDrawPriceSQL = `SELECT MIN(i.cost::float8 / d.draws)
 FROM points_store_items i
 CROSS JOIN LATERAL (
     SELECT SUM((r->>'amount')::float8) AS draws
     FROM jsonb_array_elements(i.rewards) r
     WHERE r->>'type' = $2 AND (r->>'amount')::float8 > 0
 ) d
-WHERE i.appid = $1 AND i.status = $3 AND d.draws > 0`, appID, pointstore.RewardLotteryDraws, pointstore.StatusActive).
-		Scan(&price); err != nil {
+WHERE i.appid = $1 AND i.status = $3 AND d.draws > 0`
+
+// scanLotteryStoreDrawPrice 解析单价（单发与批量管道共用）。
+func scanLotteryStoreDrawPrice(row pgx.Row) (int64, error) {
+	var price *float64
+	if err := row.Scan(&price); err != nil {
 		return 0, err
 	}
 	if price == nil {
@@ -564,35 +580,7 @@ func lotteryNeedsCatalog(prizes []lotterydomain.Prize) bool {
 
 // ── 抽奖 ──
 
-// LotteryDrawOutcome 抽奖事务的产出：记录、当时的活动与奖品，以及是否是重复提交的回放。
-type LotteryDrawOutcome struct {
-	Draw     lotterydomain.Draw
-	Activity lotterydomain.Activity
-	Prizes   []lotterydomain.Prize
-	Replayed bool
-}
-
-// DrawLottery 抽一次（单事务，要么全成要么全不成）。
-//
-// 顺序：读活动（FOR SHARE，与改奖盘互斥）→ 判时间窗 → 锁用户行 → 幂等键回放 → 锁本人状态行与
-// 次数余额 → 判定用哪种次数 → 扣次数 → 选奖品（保底 / 加权随机）→ 扣库存（抢光了改发兜底奖）→
-// 落记录 → 扣积分 → 发奖 → 更新连续未中次数。
-//
-// 锁用户行在最前：今天用了几次、次数余额、积分余额、连续未中都是这个人的事实，不锁就有
-// 「两个并发请求都看到还剩 1 次免费」的窗口（旧版的日限额就是这样被穿透的）。
-// 奖品的库存是所有人共享的，扣减用条件 UPDATE（used < quantity），不锁整张奖盘，
-// 只有限量奖品会被更新；不限量的奖品（通常是谢谢参与）不写，热门奖品行上没有锁竞争。
-//
-// 随机数来自 crypto/rand，在服务端产生、不出事务：客户端拿到的只是结果。
-func (r *Repository) DrawLottery(ctx context.Context, input lotterydomain.DrawInput) (*LotteryDrawOutcome, error) {
-	outcome, err := r.drawLottery(ctx, input)
-	var denied *LotteryRiskDeniedError
-	if errors.As(err, &denied) {
-		// 事务已回滚，没有抽奖记录：单独记一条风控事件，管理端「风控」里看得到被挡下的请求
-		r.recordLotteryRiskEvent(ctx, input, denied.Plan)
-	}
-	return outcome, err
-}
+// ── 抽奖 ──（事务本身见 lottery_draw_tx.go）
 
 // LotteryRiskDeniedError 风控规则判定拒绝这一次抽奖（事务回滚，次数与积分不扣）。
 type LotteryRiskDeniedError struct {
@@ -620,294 +608,6 @@ func (r *Repository) recordLotteryRiskEvent(ctx context.Context, input lotterydo
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, input.AppID, input.ActivityID, input.UserID, report.Action, hits, raw,
 		truncateColumn(input.Source, 16), nullableString(truncateColumn(input.DeviceID, 128)),
 		nullableString(truncateColumn(input.ClientIP, 64)))
-}
-
-func (r *Repository) drawLottery(ctx context.Context, input lotterydomain.DrawInput) (*LotteryDrawOutcome, error) {
-	now := input.Now
-	if now.IsZero() {
-		now = time.Now()
-	}
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if tx != nil {
-			_ = tx.Rollback(ctx)
-		}
-	}()
-
-	// 锁等待上限压到 lotteryLockTimeout：同一个人在别的实例上的抽奖、兑换占着用户行时快速失败（报「繁忙」让客户端
-	// 稍后重试），不在连接池里排队。活动用共享咨询锁与改奖盘互斥：行级 FOR SHARE 在高并发下会变成
-	// MultiXact，每一次都要写活动行的锁信息，几千个并发事务挤在同一行上。
-	if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true), pg_advisory_xact_lock_shared($2, $3::int)`,
-		lotteryLockTimeout, lotteryActivityLockClass, int32(input.ActivityID)); err != nil {
-		return nil, err
-	}
-	activity, err := scanLotteryActivity(tx.QueryRow(ctx, `SELECT `+lotteryActivityColumns+`
-FROM lottery_activities a WHERE a.id = $1 AND a.appid = $2`, input.ActivityID, input.AppID))
-	if err != nil {
-		return nil, err
-	}
-
-	if err := lockUserRowTx(ctx, tx, input.UserID, input.AppID); err != nil {
-		return nil, err
-	}
-
-	prizes, err := listLotteryPrizes(ctx, tx, activity.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	// 幂等键在锁用户行之后查：同一个键的并发请求，后一个等前一个提交后在这里看到它的记录
-	if input.RequestID != "" {
-		existing, err := scanLotteryDraw(tx.QueryRow(ctx, `SELECT `+lotteryDrawColumns+` `+lotteryDrawJoins+`
-WHERE d.activity_id = $1 AND d.user_id = $2 AND d.request_id = $3`, activity.ID, input.UserID, input.RequestID))
-		if err == nil {
-			if err := tx.Commit(ctx); err != nil {
-				return nil, err
-			}
-			tx = nil
-			return &LotteryDrawOutcome{Draw: *existing, Activity: *activity, Prizes: prizes, Replayed: true}, nil
-		}
-		if !errors.Is(err, ErrLotteryDrawNotFound) {
-			return nil, err
-		}
-	}
-
-	if reason := lotterydomain.Window(*activity, now); reason != lotterydomain.ReasonOK {
-		return nil, lotteryUnavailable(reason)
-	}
-
-	counters, err := lockLotteryCountersTx(ctx, tx, activity.ID, input.UserID, input.DayStart, now)
-	if err != nil {
-		return nil, err
-	}
-	counters = counters.today(input.DayStart)
-	facts, err := lotteryUserFacts(ctx, tx, input.AppID, input.UserID, counters, true)
-	if err != nil {
-		return nil, err
-	}
-	// 人群特权：这个人眼里的活动（免费次数、积分价格、保底）与奖盘权重，与活动页同一个函数
-	var effects lotterydomain.PerkEffects
-	if lotterydomain.PerksActive(activity.Perks) {
-		local := now
-		if input.Location != nil {
-			local = now.In(input.Location)
-		}
-		perkFacts, err := lotteryPerkFacts(ctx, tx, input.AppID, input.UserID, local, input.DayStart)
-		if err != nil {
-			return nil, err
-		}
-		perkFacts.Profile, perkFacts.TotalDraws = input.Profile, int(facts.TotalDraws)
-		effects = lotterydomain.ResolvePerks(activity.Perks, perkFacts)
-		effects = effects.WithAdSkip(*activity, input.UserID, input.DayStart, input.Video, facts.FreeUsedToday)
-	}
-	personalActivity := effects.Personalize(*activity)
-
-	chances := lotterydomain.EvaluateChances(personalActivity, facts, lotterydomain.VideoChances{})
-	source, reason := lotterydomain.ResolveSource(chances, input.Source)
-	if reason != lotterydomain.ReasonOK {
-		return nil, lotteryUnavailable(reason)
-	}
-
-	drawNo := lotteryDrawNo(now)
-	// 次数按使用顺序取一批：赠送的先于兑换的，同一档先到先用（lotterydomain.TicketConsumeOrder）
-	var ticket lotteryTicketUse
-	if source == lotterydomain.SourceBonus {
-		ticket, err = consumeLotteryTicketTx(ctx, tx, input.AppID, input.UserID, drawNo, "抽奖 "+activity.Name)
-		if errors.Is(err, ErrLotteryTicketsInsufficient) {
-			return nil, lotteryUnavailable(lotterydomain.ReasonBonusExhausted)
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// 已拥有判定在锁用户行之后取：同一把锁下，抽奖与购买 / 兑换会员是串行的
-	coverage, err := lotteryMemberCoverage(ctx, tx, input.AppID, input.UserID)
-	if err != nil {
-		return nil, err
-	}
-	var plans map[int64]pointstore.PlanRef
-	var features map[string]pointstore.FeatureRef
-	if lotteryNeedsCatalog(prizes) {
-		if plans, features, err = pointsStoreCatalogRefs(ctx, tx, input.AppID); err != nil {
-			return nil, err
-		}
-	}
-	rule := lotterydomain.RuleOf(*activity, coverage.Policy)
-	// 今日运气计入管理员干预（全站与本人的），再按已拥有的判定加上至尊加成，与活动页同一个解析
-	var fortune float64 = 1
-	var supreme *lotterydomain.SupremeOutcome
-	if f := activity.Strategy.Fortune; f != nil && f.Spread > 0 {
-		controls, err := lotteryFortuneControlsQ(ctx, tx, activity.ID, input.UserID, now)
-		if err != nil {
-			return nil, err
-		}
-		fortune = lotterydomain.FortuneFactor(f, activity.ID, input.UserID, input.DayStart, now, controls)
-		app, err := lotteryAppSupremeQ(ctx, tx, input.AppID)
-		if err != nil {
-			return nil, err
-		}
-		config, _ := lotterydomain.EffectiveSupreme(f, app)
-		if supreme = lotterydomain.ResolveSupreme(config, coverage.Holdings, fortune); supreme != nil {
-			fortune = supreme.Factor
-		}
-	}
-	personal := lotterydomain.FortunePrizes(effects.BoostPrizes(lotterydomain.PersonalPrizes(rule, coverage, prizes, plans)), fortune)
-	// 无套利：原价折算会让积分买次数稳赚时，已拥有格子的改发按刚好回本的比例缩减（正常奖盘照原价）
-	storePrice, err := lotteryStoreDrawPriceQ(ctx, tx, input.AppID)
-	if err != nil {
-		return nil, err
-	}
-	rule = rule.WithEconomy(lotterydomain.EconomyOf(rule, coverage, personal, plans,
-		lotterydomain.DrawPrice(personalActivity, storePrice)))
-
-	state, err := r.lotteryDrawState(ctx, tx, personalActivity, personal, input, counters, now)
-	if err != nil {
-		return nil, err
-	}
-	state.Source = source
-	prize, plan, err := pickLotteryPrize(ctx, tx, personalActivity, personal, state, input.DayStart, input.UserID)
-	if err != nil {
-		return nil, err
-	}
-	if !effects.Empty() {
-		plan.Perks = &effects
-	}
-	if fortune != 1 {
-		plan.Fortune = fortune
-	}
-	if supreme != nil {
-		plan.FortuneBase, plan.Supreme = supreme.Base, &supreme.Grade
-	}
-	pity := plan.Pity
-	riskHits, riskAction := []string{}, (*string)(nil)
-	if report := plan.RiskReport; report != nil && report.Action != "" {
-		riskHits, riskAction = report.Hits, &report.Action
-	}
-	trace, err := json.Marshal(plan)
-	if err != nil {
-		return nil, err
-	}
-
-	status := lotterydomain.DrawGranted
-	if prize.Kind == lotterydomain.KindManual {
-		status = lotterydomain.DrawPending
-	}
-	var pointsCost int64
-	if source == lotterydomain.SourcePoints {
-		// 特权折扣之后的价格（与活动页上的 chances.points.cost 同一个数）
-		pointsCost = chances.Points.Cost
-	}
-	reward, err := json.Marshal(prize.Reward)
-	if err != nil {
-		return nil, err
-	}
-	// 记录的 ID 先取号：积分流水、发放结果都引用它，等发完再一次写入整条记录（不再「先插后改」，
-	// 每一次抽奖少一个死元组、少一轮索引更新）。
-	var drawID int64
-	if err := tx.QueryRow(ctx, `SELECT nextval(pg_get_serial_sequence('lottery_draws', 'id'))`).Scan(&drawID); err != nil {
-		return nil, err
-	}
-	var ticketLot *int64
-	if ticket.LotID > 0 {
-		ticketLot = &ticket.LotID
-	}
-
-	meta := map[string]any{"drawNo": drawNo, "activityId": activity.ID, "prizeId": prize.ID}
-	var integralTxnNo string
-	if pointsCost > 0 {
-		_, _, integralTxnNo, err = applyIntegralChangeTx(ctx, tx, input.UserID, input.AppID, -pointsCost,
-			"consume", lotterydomain.IntegralCategory, "积分抽奖", activity.Name, lotterydomain.SourceType, &drawID, meta)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// 抽中的奖品对他是已拥有的：按活动的处理方式改发（照常发放时 swapped=false）
-	granted := prize
-	var conversion *lotterydomain.Conversion
-	if reason, owned := coverage.Owned(prize.Reward, plans); owned {
-		if alt, swapped := lotterydomain.Swap(rule, prize, plans); swapped {
-			label := lotterydomain.SwapLabel(alt)
-			conversion = &lotterydomain.Conversion{
-				Reason: reason, Reward: alt, Label: label,
-				Message: lotterydomain.ConversionMessage(reason, prize.Name, label),
-			}
-			granted.Kind, granted.Reward = alt.Type, alt
-			meta["converted"] = true
-			meta["originalKind"] = prize.Kind
-		}
-	}
-	title := "抽奖奖品"
-	if conversion != nil {
-		title = "抽奖奖品折算"
-	}
-	results, err := r.grantLotteryPrizeTx(ctx, tx, lotteryPrizeGrant{
-		AppID: input.AppID, UserID: input.UserID, DrawID: drawID, DrawNo: drawNo,
-		Title: title, Source: activity.Name, Meta: meta, Plans: plans, Features: features,
-	}, granted)
-	if err != nil {
-		return nil, err
-	}
-	if conversion != nil {
-		// 与卡密、邀请、管理员发放的折算记在同一处：用户的「折算记录」与控制台的折算视图都看得到
-		if err := recordLotteryConversionTx(ctx, tx, input.AppID, input.UserID, rule, prize, plans, conversion, results); err != nil {
-			return nil, err
-		}
-	}
-	resultsJSON, err := json.Marshal(results)
-	if err != nil {
-		return nil, err
-	}
-	var conversionJSON []byte
-	if conversion != nil {
-		if conversionJSON, err = json.Marshal(conversion); err != nil {
-			return nil, err
-		}
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO lottery_draws
-(id, draw_no, appid, activity_id, user_id, prize_id, prize_name, prize_kind, reward, position, source, points_cost, pity,
- status, request_id, device_id, client_ip, user_agent, created_at, trace, ticket_lot_id, ticket_origin, ticket_paid,
- risk_rules, risk_action, results, integral_transaction_no, conversion)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
-		drawID, drawNo, input.AppID, activity.ID, input.UserID, prize.ID, truncateColumn(prize.Name, 64), prize.Kind, reward,
-		prize.Position, source, pointsCost, pity, status, nullableString(input.RequestID),
-		nullableString(truncateColumn(input.DeviceID, 128)), nullableString(truncateColumn(input.ClientIP, 64)),
-		nullableString(truncateColumn(input.UserAgent, 256)), now, trace, ticketLot, ticket.Origin, ticket.Paid,
-		riskHits, riskAction, resultsJSON, nullableString(integralTxnNo), conversionJSON); err != nil {
-		return nil, err
-	}
-
-	// 计数全部随事务提交：本人的写状态行，风控聚集键与全站增量各插一行（只插入，没有全站共享的行要锁）
-	// 运气按控制层之前的公平中奖率累计（见 lottery.LuckZ）
-	counters = counters.advance(input.DayStart, now, source, prize, plan, lotterydomain.NextMissStreak(facts.MissStreak, prize))
-	if err := writeLotteryCounters(ctx, tx, activity.ID, input.UserID, counters, ""); err != nil {
-		return nil, err
-	}
-	if err := appendLotteryActivityDeltaTx(ctx, tx, activity.ID, input.DayStart, prize.Kind != lotterydomain.KindNone,
-		lotteryIssuedPoints(prize, conversion)); err != nil {
-		return nil, err
-	}
-	if lotteryRiskKeysNeeded(activity.Strategy.Risk) {
-		if err := recordLotteryRiskKeysTx(ctx, tx, activity.ID, input.UserID, input.DayStart, input.DeviceID,
-			input.ClientIP); err != nil {
-			return nil, err
-		}
-	}
-
-	draw, err := scanLotteryDraw(tx.QueryRow(ctx, `SELECT `+lotteryDrawColumns+` `+lotteryDrawJoins+` WHERE d.id = $1`, drawID))
-	if err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-	tx = nil
-	r.noteLotteryDraw(activity.ID, input.DayStart, prize.Kind != lotterydomain.KindNone, lotteryIssuedPoints(prize, conversion))
-	return &LotteryDrawOutcome{Draw: *draw, Activity: *activity, Prizes: prizes}, nil
 }
 
 // recordLotteryConversionTx 抽中已拥有的奖品、按活动的处理方式改发之后，记一条会员折算记录。

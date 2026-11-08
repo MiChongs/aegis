@@ -40,12 +40,20 @@ func scanFortuneControl(row interface{ Scan(dest ...any) error }, now time.Time)
 // 抽奖事务里用事务连接取，与出奖同一个快照。
 func lotteryFortuneControlsQ(ctx context.Context, q queryExecutor, activityID, userID int64, now time.Time) (
 	[]lotterydomain.FortuneControl, error) {
-	rows, err := q.Query(ctx, `SELECT `+fortuneControlColumns+` `+fortuneControlJoins+`
-WHERE c.activity_id = $1 AND (c.user_id IS NULL OR c.user_id = $2) AND c.revoked_at IS NULL AND c.ends_at > $3
-ORDER BY c.id`, activityID, userID, now)
+	rows, err := q.Query(ctx, lotteryFortuneControlsSQL, activityID, userID, now)
 	if err != nil {
 		return nil, err
 	}
+	return scanFortuneControlRows(rows, now)
+}
+
+// lotteryFortuneControlsSQL 见 lotteryFortuneControlsQ（$1 活动、$2 用户、$3 此刻）。
+const lotteryFortuneControlsSQL = `SELECT ` + fortuneControlColumns + ` ` + fortuneControlJoins + `
+WHERE c.activity_id = $1 AND (c.user_id IS NULL OR c.user_id = $2) AND c.revoked_at IS NULL AND c.ends_at > $3
+ORDER BY c.id`
+
+// scanFortuneControlRows 读完并关闭 rows（单发与批量管道共用）。
+func scanFortuneControlRows(rows pgx.Rows, now time.Time) ([]lotterydomain.FortuneControl, error) {
 	defer rows.Close()
 	out := []lotterydomain.FortuneControl{}
 	for rows.Next() {

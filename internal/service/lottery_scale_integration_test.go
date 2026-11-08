@@ -172,6 +172,14 @@ FROM lottery_draws WHERE activity_id = $1 AND user_id = $2`, activity.ID, userID
 		users[index] = insertTestUser(t, ctx, pool, appID, fmt.Sprintf("scale-u%02d", index), "0")
 		giveTickets(users[index], 20)
 	}
+	// 共用设备的前两个账号先各抽一次（已提交），第 3 个账号来抽时应看到同设备已有 2 个别的账号
+	for index := range 2 {
+		if _, err := lottery.Draw(ctx, LotteryDrawRequest{AppID: appID, UserID: users[index], ActivityID: activity.ID,
+			Source: lotterydomain.SourceBonus, DeviceID: "dev-shared", ClientIP: fmt.Sprintf("198.51.100.%d", index+1)}); err != nil {
+			t.Fatalf("共用设备的账号先抽一次失败：%v", err)
+		}
+		giveTickets(users[index], 1)
+	}
 	unexpected = nil
 	for index, userID := range users {
 		wg.Add(1)

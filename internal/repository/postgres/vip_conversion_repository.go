@@ -39,15 +39,23 @@ func (r *Repository) GetVipConversionPolicy(ctx context.Context, appID int64) (v
 	return vipConversionPolicyQ(ctx, r.pool, appID)
 }
 
+// vipConversionPolicySQL 应用的折算策略（$1 appid）。
+const vipConversionPolicySQL = `SELECT owned_policy, upgrade_policy, per_vip_day, per_feature_day, per_feature_hour,
+per_lifetime, restore_on_revoke, updated_by, updated_at
+FROM vip_conversion_policies WHERE appid = $1`
+
 func vipConversionPolicyQ(ctx context.Context, q queryExecutor, appID int64) (vipdomain.ConversionPolicy, error) {
+	return scanVipConversionPolicy(q.QueryRow(ctx, vipConversionPolicySQL, appID), appID)
+}
+
+// scanVipConversionPolicy 解析 vipConversionPolicySQL 的一行；没配过时返回默认策略（单发与批量管道共用）。
+func scanVipConversionPolicy(row pgx.Row, appID int64) (vipdomain.ConversionPolicy, error) {
 	policy := vipdomain.DefaultConversionPolicy(appID)
 	var (
 		updatedBy *string
 		updatedAt time.Time
 	)
-	err := q.QueryRow(ctx, `SELECT owned_policy, upgrade_policy, per_vip_day, per_feature_day, per_feature_hour,
-per_lifetime, restore_on_revoke, updated_by, updated_at
-FROM vip_conversion_policies WHERE appid = $1`, appID).Scan(&policy.Owned, &policy.Upgrade, &policy.PerVipDay,
+	err := row.Scan(&policy.Owned, &policy.Upgrade, &policy.PerVipDay,
 		&policy.PerFeatureDay, &policy.PerFeatureHour, &policy.PerLifetime, &policy.RestoreOnRevoke, &updatedBy, &updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return policy, nil

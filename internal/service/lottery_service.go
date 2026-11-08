@@ -836,7 +836,7 @@ type LotteryBatchRequest struct {
 	Count int
 }
 
-// DrawBatch 连抽。逐次抽、逐次到账（每一次一个事务，与单抽同一个 DrawLottery），不是一次算好十个结果：
+// DrawBatch 连抽。一个事务里逐次抽、逐次到账（每一次一个保存点，与单抽同一套逻辑），不是一次算好十个结果：
 // 保底、每日运气、库存、奖品限额在十次之间照常推进。第 i 次的 requestId 是「requestId#i」，
 // 网络重试带同一个 requestId 时已抽过的原样返回，没抽到的接着抽。
 //
@@ -865,34 +865,36 @@ func (s *LotteryService) DrawBatch(ctx context.Context, req LotteryBatchRequest)
 	}
 
 	input := s.drawInput(ctx, req.LotteryDrawRequest)
+	requestIDs := make([]string, req.Count)
+	if req.RequestID != "" {
+		for index := range requestIDs {
+			requestIDs[index] = req.RequestID + "#" + strconv.Itoa(index)
+		}
+	}
+	// 一个事务连抽 Count 次（pgrepo.DrawLotteryBatch）：一次加锁、一次提交，保底与库存在这几次之间照常推进
+	outcomes, stopErr, err := s.pg.DrawLotteryBatch(ctx, input, requestIDs)
+	if err != nil {
+		return nil, s.translate(err)
+	}
 	result := &lotterydomain.BatchResult{Draws: make([]lotterydomain.Draw, 0, req.Count), Requested: req.Count, Replayed: true}
 	var last *pgrepo.LotteryDrawOutcome
-	for index := 0; index < req.Count; index++ {
-		if req.RequestID != "" {
-			input.RequestID = req.RequestID + "#" + strconv.Itoa(index)
-		}
-		input.Now = time.Now()
-		input.DayStart = lotteryDayStart(input.Now)
-		outcome, err := s.pg.DrawLottery(ctx, input)
-		if err != nil {
-			translated := s.translate(err)
-			if index == 0 {
-				return nil, translated
-			}
-			stop := &lotterydomain.BatchStop{Code: errCodeLotterySourceUnavailable, Message: translated.Error()}
-			var appErr *apperrors.AppError
-			if errors.As(translated, &appErr) {
-				stop.Code = appErr.Code
-			}
-			result.Stopped = stop
-			break
-		}
+	for index := range outcomes {
+		outcome := &outcomes[index]
 		last = outcome
 		result.Draws = append(result.Draws, userLotteryDraw(outcome.Draw))
 		result.Replayed = result.Replayed && outcome.Replayed
 		if !outcome.Replayed {
 			s.afterDraw(outcome.Draw)
 		}
+	}
+	if stopErr != nil {
+		translated := s.translate(stopErr)
+		stop := &lotterydomain.BatchStop{Code: errCodeLotterySourceUnavailable, Message: translated.Error()}
+		var appErr *apperrors.AppError
+		if errors.As(translated, &appErr) {
+			stop.Code = appErr.Code
+		}
+		result.Stopped = stop
 	}
 	result.Chances, result.Pity = s.chancesAfter(ctx, req.LotteryDrawRequest, last)
 	return result, nil

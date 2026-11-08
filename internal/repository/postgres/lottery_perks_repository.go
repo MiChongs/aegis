@@ -23,9 +23,13 @@ const lotteryPerkFactsSQL = `SELECT
 FROM users u WHERE u.id = $1 AND u.appid = $2`
 
 func lotteryPerkFacts(ctx context.Context, q queryExecutor, appID, userID int64, now, today time.Time) (lotterydomain.PerkFacts, error) {
+	return scanLotteryPerkFacts(q.QueryRow(ctx, lotteryPerkFactsSQL, userID, appID, now, today.Format(time.DateOnly)), now)
+}
+
+// scanLotteryPerkFacts 解析 lotteryPerkFactsSQL 的一行（单发与批量管道共用）。
+func scanLotteryPerkFacts(row pgx.Row, now time.Time) (lotterydomain.PerkFacts, error) {
 	facts := lotterydomain.PerkFacts{Now: now}
-	if err := q.QueryRow(ctx, lotteryPerkFactsSQL, userID, appID, now, today.Format(time.DateOnly)).Scan(
-		&facts.Member, &facts.Lifetime, &facts.AdFree, &facts.SignedToday, &facts.OnlineMinutesToday); err != nil {
+	if err := row.Scan(&facts.Member, &facts.Lifetime, &facts.AdFree, &facts.SignedToday, &facts.OnlineMinutesToday); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return facts, ErrUserNotFound
 		}

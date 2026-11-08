@@ -330,22 +330,25 @@ FROM lottery_draws WHERE activity_id = $1 AND user_id = $2 ORDER BY created_at D
 	return c, rows.Err()
 }
 
+// lotteryCountersUpdateSQL 写回状态行（$1 活动、$2 用户，其余按列顺序）。
+const lotteryCountersUpdateSQL = `UPDATE lottery_user_states SET
+  miss_streak = $3, total_draws = $4, counted_draws = $5, last_draw_at = $6,
+  luck_expected = $7, luck_variance = $8, luck_skew = $9,
+  day_start = $10, free_today = $11, points_today = $12, draws_today = $13, wins_today = $14, wins_total = $15,
+  prize_wins = $16, prize_wins_today = $17, recent = $18, burst_start = $19, burst_count = $20, burst_prev = $21,
+  updated_at = NOW()
+WHERE activity_id = $1 AND user_id = $2`
+
 // writeLotteryCounters 写回状态行。guard 是附加在 WHERE 后面的条件（不加锁的写回用）。
 func writeLotteryCounters(ctx context.Context, q queryExecutor, activityID, userID int64, c lotteryCounters, guard string) error {
 	recent := c.Recent
 	if recent == nil {
 		recent = []int64{}
 	}
-	_, err := q.Exec(ctx, `UPDATE lottery_user_states SET
-  miss_streak = $3, total_draws = $4, counted_draws = $5, last_draw_at = $6,
-  luck_expected = $7, luck_variance = $8, luck_skew = $9,
-  day_start = $10, free_today = $11, points_today = $12, draws_today = $13, wins_today = $14, wins_total = $15,
-  prize_wins = $16, prize_wins_today = $17, recent = $18, burst_start = $19, burst_count = $20, burst_prev = $21,
-  updated_at = NOW()
-WHERE activity_id = $1 AND user_id = $2`+guard, activityID, userID, c.MissStreak, c.TotalDraws, c.Counted, c.LastDrawAt,
-		c.LuckExpected, c.LuckVariance, c.LuckSkew, c.DayStart, c.FreeToday, c.PointsToday, c.DrawsToday, c.WinsToday,
-		c.WinsTotal, encodePrizeCounts(c.PrizeWins), encodePrizeCounts(c.PrizeWinsToday), recent, c.BurstStart,
-		c.BurstCount, c.BurstPrev)
+	_, err := q.Exec(ctx, lotteryCountersUpdateSQL+guard, activityID, userID, c.MissStreak, c.TotalDraws, c.Counted,
+		c.LastDrawAt, c.LuckExpected, c.LuckVariance, c.LuckSkew, c.DayStart, c.FreeToday, c.PointsToday, c.DrawsToday,
+		c.WinsToday, c.WinsTotal, encodePrizeCounts(c.PrizeWins), encodePrizeCounts(c.PrizeWinsToday), recent,
+		c.BurstStart, c.BurstCount, c.BurstPrev)
 	return err
 }
 
@@ -386,15 +389,14 @@ type lotteryTotalsCache struct {
 	entries map[lotteryTotalsKey]*lotteryTotalsEntry
 }
 
-// appendLotteryActivityDeltaTx 这一次抽奖的全站增量（随抽奖事务提交）。
-func appendLotteryActivityDeltaTx(ctx context.Context, tx pgx.Tx, activityID int64, dayStart time.Time, win bool, points int64) error {
+// queueLotteryActivityDelta 这一次抽奖的全站增量（入批，随抽奖事务提交）。
+func queueLotteryActivityDelta(p *pgPipe, activityID int64, dayStart time.Time, win bool, points int64) {
 	var wins int
 	if win {
 		wins = 1
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO lottery_activity_deltas (activity_id, day_start, draws, wins, points_issued)
+	p.exec(`INSERT INTO lottery_activity_deltas (activity_id, day_start, draws, wins, points_issued)
 VALUES ($1, $2, 1, $3, $4)`, activityID, dayStart, wins, points)
-	return err
 }
 
 // noteLotteryDraw 抽奖提交之后，把这一次加到本进程的读缓存上（不是计数本身，计数已随事务落库）。
@@ -411,31 +413,33 @@ func (r *Repository) noteLotteryDraw(activityID int64, dayStart time.Time, win b
 	c.mu.Unlock()
 }
 
-// lotteryActivityTotals 本活动某一天全站抽了几次、中了几次、发了多少积分（日计数 + 还没合并的增量，读缓存 250 ms）。
-func (r *Repository) lotteryActivityTotals(ctx context.Context, q queryExecutor, activityID int64, dayStart time.Time) (int64, int64, int64, error) {
-	key := lotteryTotalsKey{activityID: activityID, day: dayStart.Unix()}
-	c := &r.lotteryTotals
-	now := time.Now()
-	c.mu.Lock()
-	if e := c.entries[key]; e != nil && now.Sub(e.at) < lotteryTotalsTTL {
-		total := e.base.plus(e.local)
-		c.mu.Unlock()
-		return total.draws, total.wins, total.points, nil
-	}
-	c.mu.Unlock()
-
-	var base lotteryTotals
-	if err := q.QueryRow(ctx, `SELECT
+// lotteryActivityTotalsSQL 本活动某一天的全站计数：日计数 + 还没合并的增量（$1 活动、$2 当天零点）。
+const lotteryActivityTotalsSQL = `SELECT
   COALESCE((SELECT SUM(draws) FROM lottery_activity_daily WHERE activity_id = $1 AND day_start = $2), 0)
     + COALESCE((SELECT SUM(draws) FROM lottery_activity_deltas WHERE activity_id = $1 AND day_start = $2), 0),
   COALESCE((SELECT SUM(wins) FROM lottery_activity_daily WHERE activity_id = $1 AND day_start = $2), 0)
     + COALESCE((SELECT SUM(wins) FROM lottery_activity_deltas WHERE activity_id = $1 AND day_start = $2), 0),
   COALESCE((SELECT SUM(points_issued) FROM lottery_activity_daily WHERE activity_id = $1 AND day_start = $2), 0)
-    + COALESCE((SELECT SUM(points_issued) FROM lottery_activity_deltas WHERE activity_id = $1 AND day_start = $2), 0)`,
-		activityID, dayStart).Scan(&base.draws, &base.wins, &base.points); err != nil {
-		return 0, 0, 0, err
-	}
+    + COALESCE((SELECT SUM(points_issued) FROM lottery_activity_deltas WHERE activity_id = $1 AND day_start = $2), 0)`
+
+// cachedLotteryTotals 读缓存里还新鲜的全站计数（含本进程缓存之后又提交的）。
+func (r *Repository) cachedLotteryTotals(activityID int64, dayStart time.Time) (lotteryTotals, bool) {
+	c := &r.lotteryTotals
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e := c.entries[lotteryTotalsKey{activityID: activityID, day: dayStart.Unix()}]; e != nil &&
+		time.Since(e.at) < lotteryTotalsTTL {
+		return e.base.plus(e.local), true
+	}
+	return lotteryTotals{}, false
+}
+
+// storeLotteryTotals 刚从库里读到的全站计数放进读缓存（顺手清掉一分钟前的）。
+func (r *Repository) storeLotteryTotals(activityID int64, dayStart time.Time, base lotteryTotals) {
+	c := &r.lotteryTotals
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.entries == nil {
 		c.entries = map[lotteryTotalsKey]*lotteryTotalsEntry{}
 	}
@@ -444,9 +448,7 @@ func (r *Repository) lotteryActivityTotals(ctx context.Context, q queryExecutor,
 			delete(c.entries, k)
 		}
 	}
-	c.entries[key] = &lotteryTotalsEntry{at: now, base: base}
-	c.mu.Unlock()
-	return base.draws, base.wins, base.points, nil
+	c.entries[lotteryTotalsKey{activityID: activityID, day: dayStart.Unix()}] = &lotteryTotalsEntry{at: now, base: base}
 }
 
 // CompactLotteryActivityDeltas 把已提交的增量并进日计数，返回并了多少行。一条语句里删掉、加上，原子；
@@ -493,26 +495,17 @@ func lotteryRiskKeysNeeded(guard *lotterydomain.RiskGuard) bool {
 		guard.Uses(lotterydomain.RiskSignalIPAccounts) || guard.Uses(lotterydomain.RiskSignalSubnetAccounts))
 }
 
-// lotteryRiskAccounts 本活动当天在这个键上抽过奖的其他账号数 + 1（自己）。
-func lotteryRiskAccounts(ctx context.Context, q queryExecutor, activityID int64, dayStart time.Time, kind int16, key string,
-	userID int64) (int, error) {
-	var count int
-	err := q.QueryRow(ctx, `SELECT COUNT(*) + 1 FROM lottery_risk_keys
-WHERE activity_id = $1 AND day_start = $2 AND kind = $3 AND key = $4 AND user_id <> $5`,
-		activityID, dayStart, kind, key, userID).Scan(&count)
-	return count, err
-}
+// lotteryRiskAccountsSQL 本活动当天在这个键上抽过奖的其他账号数 + 1（自己）（$1 活动、$2 当天、$3 种类、$4 键、$5 本人）。
+const lotteryRiskAccountsSQL = `SELECT COUNT(*) + 1 FROM lottery_risk_keys
+WHERE activity_id = $1 AND day_start = $2 AND kind = $3 AND key = $4 AND user_id <> $5`
 
-// recordLotteryRiskKeysTx 记下这个人今天在本活动用过的设备、IP、网段。
-func recordLotteryRiskKeysTx(ctx context.Context, tx pgx.Tx, activityID, userID int64, dayStart time.Time,
-	deviceID, clientIP string) error {
-	subnet := lotterydomain.SubnetOf(clientIP)
-	_, err := tx.Exec(ctx, `INSERT INTO lottery_risk_keys (activity_id, day_start, kind, key, user_id)
+// queueLotteryRiskKeys 记下这个人今天在本活动用过的设备、IP、网段（入批，随抽奖事务提交）。
+func queueLotteryRiskKeys(p *pgPipe, activityID, userID int64, dayStart time.Time, deviceID, clientIP string) {
+	p.exec(`INSERT INTO lottery_risk_keys (activity_id, day_start, kind, key, user_id)
 SELECT $1, $2, k.kind, k.key, $3 FROM (VALUES ($4::smallint, $5::text), ($6::smallint, $7::text), ($8::smallint, $9::text)) AS k(kind, key)
 WHERE k.key <> ''
 ON CONFLICT DO NOTHING`, activityID, dayStart, userID, lotteryRiskKeyDevice, truncateColumn(deviceID, 128),
-		lotteryRiskKeyIP, truncateColumn(clientIP, 64), lotteryRiskKeySubnet, subnet)
-	return err
+		lotteryRiskKeyIP, truncateColumn(clientIP, 64), lotteryRiskKeySubnet, lotterydomain.SubnetOf(clientIP))
 }
 
 // PurgeLotteryRiskKeys 删掉过期的风控聚集键，返回删了多少行。

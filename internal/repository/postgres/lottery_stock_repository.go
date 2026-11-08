@@ -236,26 +236,12 @@ func reserveLotteryPrizeTx(ctx context.Context, tx pgx.Tx, prize lotterydomain.P
 	return true, sp.Commit(ctx)
 }
 
-// lotteryPrizeDailyUsed 这些奖品某一天全站已出几份（分片之和；还没建分片的那天取 000149 之前的 lottery_prize_daily）。
-func lotteryPrizeDailyUsed(ctx context.Context, q queryExecutor, prizeIDs []int64, day time.Time) (map[int64]int64, error) {
-	out := make(map[int64]int64, len(prizeIDs))
-	rows, err := q.Query(ctx, `SELECT p.id, COALESCE(
+// lotteryPrizeDailyUsedSQL 这些奖品某一天全站已出几份：分片之和；还没建分片的那天取 000149 之前的 lottery_prize_daily
+// （$1 奖品 ID 数组、$2 当天零点）。
+const lotteryPrizeDailyUsedSQL = `SELECT p.id, COALESCE(
   (SELECT SUM(s.used) FROM lottery_prize_stock s WHERE s.prize_id = p.id AND s.scope = 1 AND s.day_start = $2),
   (SELECT d.used FROM lottery_prize_daily d WHERE d.prize_id = p.id AND d.day_start = $2), 0)
-FROM unnest($1::bigint[]) AS p(id)`, prizeIDs, day)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id, used int64
-		if err := rows.Scan(&id, &used); err != nil {
-			return nil, err
-		}
-		out[id] = used
-	}
-	return out, rows.Err()
-}
+FROM unnest($1::bigint[]) AS p(id)`
 
 // lotteryPrizeUsedSQL 奖品已出几份：限量的取总库存分片之和（还没建分片时取奖品行），不限量的取奖品行。
 const lotteryPrizeUsedSQL = `CASE WHEN p.quantity >= 0 THEN COALESCE(

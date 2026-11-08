@@ -15,10 +15,17 @@ import (
 
 // lotteryAppSettingsQ 应用的抽奖设置；没保存过时是零值（至尊加成关闭）。抽奖事务里用事务连接取。
 func lotteryAppSettingsQ(ctx context.Context, q queryExecutor, appID int64) (lotterydomain.AppSettings, error) {
+	return scanLotteryAppSettings(q.QueryRow(ctx, lotteryAppSettingsSQL, appID), appID)
+}
+
+// lotteryAppSettingsSQL 见 lotteryAppSettingsQ（$1 appid）。
+const lotteryAppSettingsSQL = `SELECT supreme, updated_by, updated_at FROM lottery_app_settings WHERE appid = $1`
+
+// scanLotteryAppSettings 解析一行；没保存过时是零值（单发与批量管道共用）。
+func scanLotteryAppSettings(row pgx.Row, appID int64) (lotterydomain.AppSettings, error) {
 	settings := lotterydomain.AppSettings{AppID: appID, Supreme: lotterydomain.Supreme{Scope: lotterydomain.SupremeScopeLifetime}}
 	var raw []byte
-	err := q.QueryRow(ctx, `SELECT supreme, updated_by, updated_at FROM lottery_app_settings WHERE appid = $1`, appID).
-		Scan(&raw, &settings.UpdatedBy, &settings.UpdatedAt)
+	err := row.Scan(&raw, &settings.UpdatedBy, &settings.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return settings, nil
 	}

@@ -343,17 +343,38 @@ func (r *Repository) PointsStoreCatalogRefs(ctx context.Context, appID int64) (m
 	return pointsStoreCatalogRefs(ctx, r.pool, appID)
 }
 
+// pointsStoreCatalogPlansSQL / pointsStoreCatalogFeaturesSQL 应用的会员套餐与功能目录（$1 appid）。
+const (
+	pointsStoreCatalogPlansSQL    = `SELECT ` + vipPlanColumns + ` FROM vip_plans WHERE appid = $1`
+	pointsStoreCatalogFeaturesSQL = `SELECT tag, name, is_active FROM vip_features WHERE appid = $1`
+)
+
 func pointsStoreCatalogRefs(ctx context.Context, q queryExecutor, appID int64) (map[int64]pointstore.PlanRef, map[string]pointstore.FeatureRef, error) {
-	plans := map[int64]pointstore.PlanRef{}
-	rows, err := q.Query(ctx, `SELECT `+vipPlanColumns+` FROM vip_plans WHERE appid = $1`, appID)
+	plans, features := map[int64]pointstore.PlanRef{}, map[string]pointstore.FeatureRef{}
+	rows, err := q.Query(ctx, pointsStoreCatalogPlansSQL, appID)
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := scanCatalogPlans(rows, plans); err != nil {
+		return nil, nil, err
+	}
+	featureRows, err := q.Query(ctx, pointsStoreCatalogFeaturesSQL, appID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := scanCatalogFeatures(featureRows, features); err != nil {
+		return nil, nil, err
+	}
+	return plans, features, nil
+}
+
+// scanCatalogPlans 解析 pointsStoreCatalogPlansSQL（读完并关闭 rows；单发与批量管道共用）。
+func scanCatalogPlans(rows pgx.Rows, plans map[int64]pointstore.PlanRef) error {
+	defer rows.Close()
 	for rows.Next() {
 		plan, err := scanVipPlan(rows)
 		if err != nil {
-			rows.Close()
-			return nil, nil, err
+			return err
 		}
 		if plan == nil {
 			continue
@@ -363,25 +384,20 @@ func pointsStoreCatalogRefs(ctx context.Context, q queryExecutor, appID int64) (
 			Trial: plan.IsTrial(), Features: vipdomain.NormalizeFeatureTags(plan.Features),
 		}
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, nil, err
-	}
+	return rows.Err()
+}
 
-	features := map[string]pointstore.FeatureRef{}
-	featureRows, err := q.Query(ctx, `SELECT tag, name, is_active FROM vip_features WHERE appid = $1`, appID)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer featureRows.Close()
-	for featureRows.Next() {
+// scanCatalogFeatures 解析 pointsStoreCatalogFeaturesSQL（读完并关闭 rows）。
+func scanCatalogFeatures(rows pgx.Rows, features map[string]pointstore.FeatureRef) error {
+	defer rows.Close()
+	for rows.Next() {
 		var ref pointstore.FeatureRef
-		if err := featureRows.Scan(&ref.Tag, &ref.Name, &ref.IsActive); err != nil {
-			return nil, nil, err
+		if err := rows.Scan(&ref.Tag, &ref.Name, &ref.IsActive); err != nil {
+			return err
 		}
 		features[ref.Tag] = ref
 	}
-	return plans, features, featureRows.Err()
+	return rows.Err()
 }
 
 // PointsStoreUserFacts 一个人兑换判定所需的事实（列表页用；兑换时在事务里另取一份）。

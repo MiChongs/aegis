@@ -111,12 +111,92 @@ func (r *Repository) LotteryBehaviorProfile(ctx context.Context, appID, userID i
 
 // ── 抽奖时的状态 ──
 
-// lotteryDrawState 选奖所需的、本活动里的事实（抽奖时在事务里、锁住状态行之后取；预览时不加锁）。
-//
-// 这个人的部分全部来自状态行的计数（counters 已对齐到今天）；全站的部分是分片计数求和与风控聚集键，
-// 都是 O(1)。只查策略用得到的：没开风控就不数同设备账号，没开预算 / 全站反馈就不读全站计数。
-func (r *Repository) lotteryDrawState(ctx context.Context, q queryExecutor, activity lotterydomain.Activity, prizes []lotterydomain.Prize,
-	input lotterydomain.DrawInput, counters lotteryCounters, now time.Time) (lotterydomain.DrawState, error) {
+// lotteryDrawFacts 选奖所需的、本人状态行以外的事实：全站计数、限量奖品今天已出几份、风控聚集信号。
+// 一次事务里取一次（queueLotteryDrawFacts 入批），十连抽的后几次在内存里接着推进。
+type lotteryDrawFacts struct {
+	totals lotteryTotals
+	// dailyUsed 设了每日限量的奖品今天全站已出几份
+	dailyUsed      map[int64]int64
+	deviceAccounts int
+	ipAccounts     int
+	subnetAccounts int
+	deviceHistory  int
+}
+
+// queueLotteryDrawFacts 把这些读排进管道（只读策略用得到的）。全站计数命中读缓存时不读库。
+func (r *Repository) queueLotteryDrawFacts(p *pgPipe, activity lotterydomain.Activity, prizes []lotterydomain.Prize,
+	input lotterydomain.DrawInput, out *lotteryDrawFacts) {
+	strategy := activity.Strategy
+	out.dailyUsed = map[int64]int64{}
+	out.deviceAccounts, out.ipAccounts = 1, 1
+	if strategy.WinRate != nil || strategy.Budget != nil {
+		if cached, ok := r.cachedLotteryTotals(activity.ID, input.DayStart); ok {
+			out.totals = cached
+		} else {
+			p.row(func(row pgx.Row) error {
+				if err := row.Scan(&out.totals.draws, &out.totals.wins, &out.totals.points); err != nil {
+					return err
+				}
+				r.storeLotteryTotals(activity.ID, input.DayStart, out.totals)
+				return nil
+			}, lotteryActivityTotalsSQL, activity.ID, input.DayStart)
+		}
+	}
+	limited := make([]int64, 0, len(prizes))
+	for _, prize := range prizes {
+		if prize.DailyLimit > 0 {
+			limited = append(limited, prize.ID)
+		}
+	}
+	if len(limited) > 0 {
+		p.rows(func(rows pgx.Rows) error {
+			defer rows.Close()
+			for rows.Next() {
+				var id, used int64
+				if err := rows.Scan(&id, &used); err != nil {
+					return err
+				}
+				out.dailyUsed[id] = used
+			}
+			return rows.Err()
+		}, lotteryPrizeDailyUsedSQL, limited, input.DayStart)
+	}
+	queueLotteryRiskFacts(p, activity, input, out)
+}
+
+// queueLotteryRiskFacts 风控聚集信号（同设备 / 同 IP / 同网段的其他账号、设备登录过的账号）。
+// 十连抽每一次之前都重读：别人刚提交的抽奖，这一批的后几次就能看到。
+func queueLotteryRiskFacts(p *pgPipe, activity lotterydomain.Activity, input lotterydomain.DrawInput, out *lotteryDrawFacts) {
+	guard := activity.Strategy.Risk
+	if guard == nil {
+		return
+	}
+	count := func(dest *int, kind int16, key string) {
+		p.row(func(row pgx.Row) error { return row.Scan(dest) }, lotteryRiskAccountsSQL,
+			activity.ID, input.DayStart, kind, key, input.UserID)
+	}
+	if input.DeviceID != "" && guard.Uses(lotterydomain.RiskSignalDeviceAccounts) {
+		count(&out.deviceAccounts, lotteryRiskKeyDevice, truncateColumn(input.DeviceID, 128))
+	}
+	if input.ClientIP != "" && guard.Uses(lotterydomain.RiskSignalIPAccounts) {
+		count(&out.ipAccounts, lotteryRiskKeyIP, truncateColumn(input.ClientIP, 64))
+	}
+	subnet := lotterydomain.SubnetOf(input.ClientIP)
+	if subnet != "" && guard.Uses(lotterydomain.RiskSignalSubnetAccounts) {
+		count(&out.subnetAccounts, lotteryRiskKeySubnet, subnet)
+	} else if subnet == "" && input.ClientIP != "" {
+		out.subnetAccounts = 1
+	}
+	if input.DeviceID != "" && guard.Uses(lotterydomain.RiskSignalDeviceHistory) {
+		p.row(func(row pgx.Row) error { return row.Scan(&out.deviceHistory) },
+			`SELECT COUNT(*) FROM user_login_devices WHERE appid = $1 AND device_key = $2`, input.AppID, input.DeviceID)
+	}
+}
+
+// buildLotteryDrawState 选奖用的状态（纯计算）：本人的部分来自状态行的计数（counters 已对齐到今天），
+// 其余来自 facts。
+func buildLotteryDrawState(activity lotterydomain.Activity, input lotterydomain.DrawInput, counters lotteryCounters,
+	facts lotteryDrawFacts, now time.Time) lotterydomain.DrawState {
 	strategy := activity.Strategy
 	state := lotterydomain.DrawState{
 		Now: now, Source: input.Source, MissStreak: counters.MissStreak, TotalDraws: int(counters.TotalDraws),
@@ -124,12 +204,16 @@ func (r *Repository) lotteryDrawState(ctx context.Context, q queryExecutor, acti
 		PrizeWins: counters.PrizeWins, PrizeWinsToday: counters.PrizeWinsToday, PrizeDailyUsed: map[int64]int64{},
 		DeviceAccounts: 1, IPAccounts: 1, Profile: input.Profile,
 		LuckExpected: counters.LuckExpected, LuckVariance: counters.LuckVariance, LuckSkew: counters.LuckSkew,
+		DeviceMissing: input.DeviceID == "", IPMissing: input.ClientIP == "",
 	}
 	if state.PrizeWins == nil {
 		state.PrizeWins = map[int64]int{}
 	}
 	if state.PrizeWinsToday == nil {
 		state.PrizeWinsToday = map[int64]int{}
+	}
+	for id, used := range facts.dailyUsed {
+		state.PrizeDailyUsed[id] = used
 	}
 	if input.Location != nil {
 		state.Now = now.In(input.Location)
@@ -138,76 +222,32 @@ func (r *Repository) lotteryDrawState(ctx context.Context, q queryExecutor, acti
 		state.DayProgress = math.Min(1, math.Max(0, now.Sub(input.DayStart).Hours()/24))
 	}
 	if strategy.WinRate != nil || strategy.Budget != nil {
-		draws, wins, points, err := r.lotteryActivityTotals(ctx, q, activity.ID, input.DayStart)
-		if err != nil {
-			return state, err
-		}
-		state.ActivityDrawsToday, state.ActivityWinsToday, state.PointsIssuedToday = int(draws), int(wins), points
+		state.ActivityDrawsToday, state.ActivityWinsToday = int(facts.totals.draws), int(facts.totals.wins)
+		state.PointsIssuedToday = facts.totals.points
 	}
 	if c := strategy.Cooldown; c != nil && c.Draws > 0 {
 		state.Recent = counters.Recent[:min(len(counters.Recent), c.Draws)]
 	}
-
-	limited := make([]int64, 0, len(prizes))
-	for _, prize := range prizes {
-		if prize.DailyLimit > 0 {
-			limited = append(limited, prize.ID)
+	if guard := strategy.Risk; guard != nil {
+		state.DeviceAccounts, state.IPAccounts = facts.deviceAccounts, facts.ipAccounts
+		state.SubnetAccounts, state.DeviceHistory = facts.subnetAccounts, facts.deviceHistory
+		if guard.Uses(lotterydomain.RiskSignalBurst) {
+			state.RecentDraws = counters.recentDraws(now)
 		}
 	}
-	if len(limited) > 0 {
-		used, err := lotteryPrizeDailyUsed(ctx, q, limited, input.DayStart)
-		if err != nil {
-			return state, err
-		}
-		state.PrizeDailyUsed = used
-	}
-
-	if err := lotteryRiskFacts(ctx, q, strategy.Risk, activity.ID, input, counters, now, &state); err != nil {
-		return state, err
-	}
-	return state, nil
+	return state
 }
 
-// lotteryRiskFacts 风控规则要用的事实。只数生效规则用得到的信号；聚集类数的是除了自己之外的账号，再加上自己。
-func lotteryRiskFacts(ctx context.Context, q queryExecutor, guard *lotterydomain.RiskGuard, activityID int64,
-	input lotterydomain.DrawInput, counters lotteryCounters, now time.Time, state *lotterydomain.DrawState) error {
-	state.DeviceMissing = input.DeviceID == ""
-	state.IPMissing = input.ClientIP == ""
-	if guard == nil {
-		return nil
+// lotteryDrawState 选奖用的状态（管理端预览用；抽奖事务里由 lotteryDrawRun 取一次、逐次推进）。
+func (r *Repository) lotteryDrawState(ctx context.Context, q batchSender, activity lotterydomain.Activity,
+	prizes []lotterydomain.Prize, input lotterydomain.DrawInput, counters lotteryCounters, now time.Time) (lotterydomain.DrawState, error) {
+	var facts lotteryDrawFacts
+	var p pgPipe
+	r.queueLotteryDrawFacts(&p, activity, prizes, input, &facts)
+	if err := p.send(ctx, q); err != nil {
+		return lotterydomain.DrawState{}, err
 	}
-	uses := func(signal string) bool { return guard.Uses(signal) }
-	var err error
-	if !state.DeviceMissing && uses(lotterydomain.RiskSignalDeviceAccounts) {
-		if state.DeviceAccounts, err = lotteryRiskAccounts(ctx, q, activityID, input.DayStart, lotteryRiskKeyDevice,
-			truncateColumn(input.DeviceID, 128), input.UserID); err != nil {
-			return err
-		}
-	}
-	if !state.IPMissing && uses(lotterydomain.RiskSignalIPAccounts) {
-		if state.IPAccounts, err = lotteryRiskAccounts(ctx, q, activityID, input.DayStart, lotteryRiskKeyIP,
-			truncateColumn(input.ClientIP, 64), input.UserID); err != nil {
-			return err
-		}
-	}
-	if subnet := lotterydomain.SubnetOf(input.ClientIP); subnet != "" && uses(lotterydomain.RiskSignalSubnetAccounts) {
-		if state.SubnetAccounts, err = lotteryRiskAccounts(ctx, q, activityID, input.DayStart, lotteryRiskKeySubnet,
-			subnet, input.UserID); err != nil {
-			return err
-		}
-	} else if subnet == "" && !state.IPMissing {
-		state.SubnetAccounts = 1
-	}
-	if !state.DeviceMissing && uses(lotterydomain.RiskSignalDeviceHistory) {
-		if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM user_login_devices WHERE appid = $1 AND device_key = $2`,
-			input.AppID, input.DeviceID).Scan(&state.DeviceHistory); err != nil {
-			return err
-		}
-	}
-	if uses(lotterydomain.RiskSignalBurst) {
-		state.RecentDraws = counters.recentDraws(now)
-	}
-	return nil
+	return buildLotteryDrawState(activity, input, counters, facts, now), nil
 }
 
 // ── 在线时长 ──

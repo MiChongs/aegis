@@ -94,6 +94,11 @@ func (r *Repository) GetVipEntitlementFacts(ctx context.Context, appID int64, us
 
 // vipEntitlementFactsQ 见 GetVipEntitlementFacts（事务里判「已拥有」也用它，与 /vip/status 同一份事实）。
 func vipEntitlementFactsQ(ctx context.Context, q queryExecutor, appID int64, userID int64) (*vipdomain.EvalInput, error) {
+	return scanVipEntitlementFacts(q.QueryRow(ctx, vipEntitlementFactsSQL, userID, appID), appID, userID)
+}
+
+// scanVipEntitlementFacts 解析 vipEntitlementFactsSQL 的一行（单发与批量管道共用）。
+func scanVipEntitlementFacts(row pgx.Row, appID, userID int64) (*vipdomain.EvalInput, error) {
 	var (
 		facts        vipdomain.EvalInput
 		segmentsRaw  []byte
@@ -103,11 +108,10 @@ func vipEntitlementFactsQ(ctx context.Context, q queryExecutor, appID int64, use
 		claimCreated *time.Time
 	)
 	claim := vipdomain.TrialClaim{AppID: appID, UserID: userID}
-	err := q.QueryRow(ctx, vipEntitlementFactsSQL, userID, appID).
-		Scan(&facts.ExpireAt, &facts.LifetimeSince,
-			&claimID, &claim.PlanID, &claim.PlanName, &claim.DurationDays, &claimEndsAt,
-			&claim.TransactionNo, &claim.DeviceID, &claim.DeviceLocked, &claimCreated,
-			&segmentsRaw, &facts.FeatureCatalog, &unlocksRaw)
+	err := row.Scan(&facts.ExpireAt, &facts.LifetimeSince,
+		&claimID, &claim.PlanID, &claim.PlanName, &claim.DurationDays, &claimEndsAt,
+		&claim.TransactionNo, &claim.DeviceID, &claim.DeviceLocked, &claimCreated,
+		&segmentsRaw, &facts.FeatureCatalog, &unlocksRaw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
