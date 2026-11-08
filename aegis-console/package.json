@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@ai-sdk/react": "^4.0.131",
+    "@antv/g6": "5.1.1",
     "@deck.gl/aggregation-layers": "^9.4.0",
     "@deck.gl/core": "^9.4.0",
     "@deck.gl/layers": "^9.4.0",
@@ -101,8 +102,8 @@
     "tailwindcss-animate": "^1.0.7",
     "three": "^0.186.1",
     "workbox-window": "^7.4.1",
-    "yet-another-react-lightbox": "^3.32.2",
     "yaml": "^2.9.1",
+    "yet-another-react-lightbox": "^3.32.2",
     "zod": "^4.6.5",
     "zustand": "^5.0.15"
   },

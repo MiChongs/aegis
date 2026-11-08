@@ -522,7 +522,7 @@ export function normalizeGraph(g: Partial<Subgraph> | null | undefined): Subgrap
   return { center: g?.center ?? "", nodes: g?.nodes ?? [], links: g?.links ?? [], truncated: g?.truncated ?? false };
 }
 
-export const getGraph = (t: string, q: { type: "user" | "device" | "ip" | "account" | "vid"; app?: number; user?: number; value?: string; depth?: number; fanout?: number; max?: number }) =>
+export const getGraph = (t: string, q: { type: "user" | "device" | "ip" | "account" | "vid"; app?: number; user?: number; value?: string; depth?: number; fanout?: number; max?: number; days?: number; subnets?: 0 | 1 }) =>
   get<Subgraph>(t, "/graph", q).then(normalizeGraph);
 export const getUserProfile = (t: string, app: number, user: number, days = 30) =>
   get<UserRiskProfile>(t, "/profile", { app, user, days }).then((p) => ({

@@ -24,7 +24,10 @@ import { ActionBadge, KindBadge, ScoreMeter } from "@/components/risk/kit/badges
 import {
   ACTION_COLOR, ACTION_LABEL, ACTION_ORDER, DURATION_PRESETS, EVENT_LABEL, NODE_KIND_LABEL, SEVERITY_LABEL, formatWindow,
 } from "@/components/risk/kit/labels";
-import { RelationGraph } from "@/components/risk/kit/relation-graph";
+import { analyze, displayName, narrative, peopleDegree } from "@/components/risk/graph/graph-model";
+import { NodeDetail } from "@/components/risk/graph/node-detail";
+import { RelationList, RelationNarrative } from "@/components/risk/graph/relation-summary";
+import { RiskGraph } from "@/components/risk/graph/risk-graph";
 import type { AdminAppUserDetail } from "@/lib/api/types";
 import type { DisposeInput, EntityUse, GraphNode, GraphNodeKind, ListEntry, RiskAction, Subgraph } from "@/lib/api/risk";
 import { formatDate, formatDateTime, formatRelative } from "@/lib/datetime";
@@ -85,7 +88,7 @@ export function UserRiskTab({ appKey, userId, user }: { appKey: string; userId: 
         )}
       </div>
 
-      <RiskGraphPanel appKey={appKey} appId={appId} graph={data?.graph} loading={profile.isLoading} error={data?.errors?.graph} />
+      <RiskGraphPanel appKey={appKey} appId={appId} graph={data?.graph} days={days} name={user.nickname || user.account || `用户 #${userId}`} loading={profile.isLoading} error={data?.errors?.graph} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <TimelinePanel timeline={data?.timeline ?? []} loading={profile.isLoading} />
@@ -116,32 +119,29 @@ export function UserRiskTab({ appKey, userId, user }: { appKey: string; userId: 
 
 // ── 关系图 ──
 
-/** 用户点 ID 是 u:<应用>:<用户>：别的应用的用户（经共用 IP / 设备关联进来的）不能用当前应用的地址打开 */
-function parseUserVid(id: string) {
-  const [, app, uid] = id.split(":");
-  return { app: Number(app), uid };
-}
-
-function RiskGraphPanel({ appKey, appId, graph, loading, error }: { appKey: string; appId: number; graph?: Subgraph; loading: boolean; error?: string }) {
+function RiskGraphPanel({ appKey, appId, graph, days, name, loading, error }: {
+  appKey: string; appId: number; graph?: Subgraph; days: number; name: string; loading: boolean; error?: string;
+}) {
   const [center, setCenter] = useState<string | null>(null);
   const [selected, setSelected] = useState<GraphNode | null>(null);
   const [depth, setDepth] = useState(2);
-  const recentered = useRiskGraph(center || depth !== 2 ? { type: "vid", value: center ?? graph?.center ?? "", depth, fanout: 40, max: 300 } : null);
+  const recentered = useRiskGraph(center || depth !== 2 ? { type: "vid", value: center ?? graph?.center ?? "", depth, fanout: 40, max: 300, days } : null);
   const shown = (center || depth !== 2) && recentered.data ? recentered.data : graph;
 
-  const counts = useMemo(() => {
-    const m = new Map<GraphNodeKind, number>();
-    for (const n of shown?.nodes ?? []) m.set(n.kind, (m.get(n.kind) ?? 0) + 1);
-    return m;
-  }, [shown]);
-  const banned = useMemo(() => (shown?.nodes ?? []).filter((n) => n.id !== shown?.center && (n.props?.banned === true || n.props?.status === "banned")), [shown]);
-  const otherUsers = useMemo(() => (shown?.nodes ?? []).filter((n) => n.kind === "user" && n.id !== graph?.center), [shown, graph]);
+  const stats = useMemo(() => (shown ? analyze(shown) : null), [shown]);
+  const degree = useMemo(() => (shown ? peopleDegree(shown) : new Map<string, number>()), [shown]);
+  const centerNode = shown?.nodes.find((n) => n.id === shown.center);
+  const centerName = center && centerNode ? displayName(centerNode) : name;
+  const expand = (n: GraphNode) => {
+    setSelected(null);
+    setCenter(n.id === graph?.center ? null : n.id);
+  };
 
   return (
     <Panel
-      title="关系图"
+      title="关系网络"
       icon={<Network className="size-4" />}
-      description="所选时间内的账号、设备、IP、第三方账号、手机号、邮箱、邀请与支付关系，两跳内展开。灰色虚线的 IP 是多人共用的出口或机房、代理地址，不作为关联依据，也不从它继续展开。红色描边为已封禁"
+      description="所选时间内与这位用户有关的设备、网络、第三方账号、邀请与支付关系。多人共用的出口和机房、代理地址只画成灰色虚线，不当作关联依据"
       action={
         <div className="flex items-center gap-2">
           <Select value={String(depth)} onValueChange={(v) => setDepth(Number(v))}>
@@ -158,74 +158,45 @@ function RiskGraphPanel({ appKey, appId, graph, loading, error }: { appKey: stri
           ) : null}
         </div>
       }
-      bodyClassName="p-0"
     >
       {loading ? (
-        <Skeleton className="m-4 h-[520px] rounded-xl" />
-      ) : !shown || shown.nodes.length === 0 ? (
-        <EmptyRow text={error ? `关系图不可用：${error}` : "还没有关系数据：用户评估或登录后才会出现在图里"} />
+        <div className="space-y-3">
+          <Skeleton className="h-24 rounded-xl" />
+          <Skeleton className="h-[560px] rounded-xl" />
+        </div>
+      ) : !shown || shown.nodes.length === 0 || !stats ? (
+        <EmptyRow text={error ? `关系网络暂时不可用：${error}` : "这段时间里还没有关系数据：用户登录或产生业务后才会出现"} />
       ) : (
-        <div className="grid lg:grid-cols-[minmax(0,1fr)_280px]">
-          <div className="relative min-w-0 border-b p-3 lg:border-r lg:border-b-0">
-            {recentered.isFetching ? <div className="absolute top-3 right-3 text-xs text-muted-foreground">展开中</div> : null}
-            <RelationGraph graph={shown} height={540} focusId={selected?.id} onNodeClick={(n) => { setSelected(n); if (n.id !== shown.center) setCenter(n.id); }} />
-            {shown.truncated ? <p className="px-1 pt-1 text-xs text-amber-600 dark:text-amber-400">节点过多，只展示了一部分；以某个点为中心可以看得更细</p> : null}
-          </div>
-          <div className="space-y-4 p-4">
-            <div>
-              <div className="mb-2 text-xs font-medium text-muted-foreground">图中节点</div>
-              <div className="flex flex-wrap gap-1.5">
-                {[...counts.entries()].map(([k, n]) => (
-                  <Badge key={k} variant="outline" size="sm">{NODE_KIND_LABEL[k]} {n}</Badge>
-                ))}
-                <Badge variant="outline" size="sm">关系 {shown.links.length}</Badge>
-              </div>
+        <div className="space-y-4">
+          <RelationNarrative text={narrative(centerName, days, stats)} stats={stats} />
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="relative min-w-0 rounded-xl border">
+              {recentered.isFetching ? (
+                <div className="absolute top-14 right-3 z-10 rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">展开中</div>
+              ) : null}
+              <RiskGraph graph={shown} height={600} selectedId={selected?.id} onSelect={setSelected} onExpand={expand} />
+              {shown.truncated ? (
+                <p className="border-t px-3 py-2 text-xs text-amber-600 dark:text-amber-400">关系太多，只画出了最近的一部分；双击某个点可以以它为中心看得更细</p>
+              ) : null}
             </div>
-            {selected ? <NodeFacts node={selected} appKey={appKey} appId={appId} /> : null}
-            <div>
-              <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                <Siren className="size-3.5" />
-                已封禁的关联对象
+            <div className="min-w-0 space-y-4">
+              {selected ? (
+                <NodeDetail
+                  node={selected}
+                  degree={degree.get(selected.id) ?? 0}
+                  appKey={appKey}
+                  appId={appId}
+                  onClose={() => setSelected(null)}
+                  onExpand={selected.id === shown.center ? undefined : expand}
+                />
+              ) : null}
+              <div>
+                <div className="mb-2 flex items-center justify-between px-1">
+                  <span className="text-sm font-medium">关联的人</span>
+                  <span className="text-xs text-muted-foreground">按关联强弱排列</span>
+                </div>
+                <RelationList relations={stats.relations} appKey={appKey} appId={appId} focusId={selected?.id} onFocus={setSelected} />
               </div>
-              {banned.length ? (
-                <ul className="space-y-1.5">
-                  {banned.slice(0, 12).map((n) => (
-                    <li key={n.id}>
-                      <button type="button" className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => { setSelected(n); setCenter(n.id); }}>
-                        <span className="truncate text-red-600 dark:text-red-400">{n.label}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground">{NODE_KIND_LABEL[n.kind]}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-muted-foreground">没有</p>
-              )}
-            </div>
-            <div>
-              <div className="mb-2 text-xs font-medium text-muted-foreground">关联的其他用户（{otherUsers.length}）</div>
-              <ul className="space-y-1">
-                {otherUsers.slice(0, 10).map((n) => {
-                  const { app, uid } = parseUserVid(n.id);
-                  if (app !== appId) {
-                    return (
-                      <li key={n.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm">
-                        <span className="truncate">{n.label}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground">应用 #{app}</span>
-                      </li>
-                    );
-                  }
-                  return (
-                    <li key={n.id}>
-                      <Link href={`/app-users/${appKey}/${uid}?tab=risk`} className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-muted">
-                        <span className="truncate">{n.label}</span>
-                        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                      </Link>
-                    </li>
-                  );
-                })}
-                {otherUsers.length === 0 ? <p className="text-sm text-muted-foreground">没有</p> : null}
-              </ul>
             </div>
           </div>
         </div>
@@ -233,42 +204,6 @@ function RiskGraphPanel({ appKey, appId, graph, loading, error }: { appKey: stri
     </Panel>
   );
 }
-
-function NodeFacts({ node, appKey, appId }: { node: GraphNode; appKey: string; appId: number }) {
-  const entries = Object.entries(node.props ?? {}).filter(([, v]) => v !== "" && v !== null && v !== 0 && v !== false);
-  const time = (v: unknown) => (typeof v === "number" && v > 0 ? formatDateTime(new Date(v * 1000).toISOString()) : String(v));
-  const uid = node.kind === "user" && parseUserVid(node.id).app === appId ? parseUserVid(node.id).uid : null;
-  return (
-    <div className="rounded-xl border p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-xs text-muted-foreground">{NODE_KIND_LABEL[node.kind]}</div>
-          <div className="truncate text-sm font-medium">{node.label}</div>
-        </div>
-        {uid ? (
-          <Button asChild size="sm" variant="outline" className="h-7">
-            <Link href={`/app-users/${appKey}/${uid}?tab=risk`}>打开</Link>
-          </Button>
-        ) : null}
-      </div>
-      <dl className="space-y-1 text-xs">
-        {entries.slice(0, 12).map(([k, v]) => (
-          <div key={k} className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">{PROP_LABEL[k] ?? k}</dt>
-            <dd className="truncate text-right">{k.endsWith("_seen") ? time(v) : typeof v === "boolean" ? "是" : String(v)}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}
-
-const PROP_LABEL: Record<string, string> = {
-  app_id: "应用", uid: "用户 ID", name: "名称", status: "状态", risk_level: "风险等级", banned: "已封禁", last_action: "最近处置",
-  first_seen: "首次出现", last_seen: "最近出现", device_id: "设备 ID", platform: "平台", brand: "品牌", model: "型号",
-  emulator: "模拟器", rooted: "已 Root", addr: "地址", country: "国家", province: "省份", city: "城市", isp: "运营商", asn: "ASN",
-  proxy: "代理", datacenter: "机房", cidr: "网段", masked: "号码", prefix: "号段", domain: "域名",
-};
 
 // ── 时间线 ──
 
