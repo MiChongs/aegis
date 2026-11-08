@@ -52,3 +52,6 @@ LICENSE
 AGENTS.md
 CLAUDE.md
 DESIGN.md
+
+# Flink 作业的本地 Maven 产物
+services/risk/cep/target
