@@ -517,8 +517,18 @@ export const reviewCase = (t: string, id: number, input: { verdict: "approve" | 
   send<{ case: number; dispose: Record<string, string> | null }>(t, "POST", `/cases/${id}/review`, input);
 export const dispose = (t: string, input: DisposeInput) => send<Record<string, string>>(t, "POST", "/dispose", input);
 
+/** 图数据兜底：没有边或点时服务端可能给 null，界面统一按空数组处理 */
+export function normalizeGraph(g: Partial<Subgraph> | null | undefined): Subgraph {
+  return { center: g?.center ?? "", nodes: g?.nodes ?? [], links: g?.links ?? [], truncated: g?.truncated ?? false };
+}
+
 export const getGraph = (t: string, q: { type: "user" | "device" | "ip" | "account" | "vid"; app?: number; user?: number; value?: string; depth?: number; fanout?: number; max?: number }) =>
-  get<Subgraph>(t, "/graph", q);
-export const getUserProfile = (t: string, app: number, user: number, days = 30) => get<UserRiskProfile>(t, "/profile", { app, user, days });
+  get<Subgraph>(t, "/graph", q).then(normalizeGraph);
+export const getUserProfile = (t: string, app: number, user: number, days = 30) =>
+  get<UserRiskProfile>(t, "/profile", { app, user, days }).then((p) => ({
+    ...p,
+    graph: p?.graph ? normalizeGraph(p.graph) : undefined,
+    timeline: p?.timeline ?? [],
+  }));
 export const getRiskStatus = (t: string) => get<RiskStatus>(t, "/status");
 export const listAudit = (t: string, limit = 100) => get<AuditEntry[]>(t, "/audit", { limit }).then((r) => r ?? []);

@@ -98,7 +98,7 @@ func (s *Server) wrap(h handler) app.HandlerFunc {
 			}
 			return
 		}
-		c.JSON(http.StatusOK, map[string]any{"code": 200, "message": "ok", "data": data})
+		c.JSON(http.StatusOK, map[string]any{"code": 200, "message": "ok", "data": emptyLists(data)})
 	}
 }
 
