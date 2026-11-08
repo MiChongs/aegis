@@ -218,6 +218,10 @@ func (s *Server) dashboard(ctx context.Context, c *app.RequestContext) (any, err
 			Action string `ch:"action" json:"action"`
 			Count  uint64 `ch:"n" json:"count"`
 		}
+		if userID > 0 {
+			err := conn.Select(ctx, &r, "SELECT scene, action, count() AS n FROM decisions WHERE ts >= ? AND ts < ? AND shadow = 0"+appCond+userCond+" GROUP BY scene, action ORDER BY n DESC", dargs()...)
+			return r, err
+		}
 		err := conn.Select(ctx, &r, "SELECT scene, action, sum(n) AS n FROM decisions_minute WHERE minute >= ? AND minute < ? AND shadow = 0"+appCond+" GROUP BY scene, action ORDER BY n DESC", args()...)
 		return r, err
 	})
