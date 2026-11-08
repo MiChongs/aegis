@@ -363,13 +363,13 @@ services:
     image: risingwavelabs/risingwave:v3.1.1
     restart: unless-stopped
     logging: *logging
-    mem_limit: 7g
+    mem_limit: 9g
     command:
       - single_node
       - --store-directory=/risingwave/data
       - --listen-addr=0.0.0.0:4566
-      # 低于约 6 GiB 时 compactor 启动断言失败
-      - --total-memory-bytes=6442450944
+      # 单节点把总内存的 1/8 给 compactor：6 GiB（768 MiB）时启动断言失败，8 GiB（1 GiB）可以
+      - --total-memory-bytes=8589934592
       # 免费许可证最多 4 核
       - --parallelism=4
     environment:

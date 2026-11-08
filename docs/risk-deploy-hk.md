@@ -30,7 +30,7 @@
 
 | 组件 | 上限 | 预计常驻 |
 |---|---|---|
-| RisingWave 单节点 | 7 GiB（总内存 6 GiB，低于此 compactor 起不来） | 4–6 GiB |
+| RisingWave 单节点 | 9 GiB（总内存 8 GiB：单节点给 compactor 1/8，6 GiB 时只有 768 MiB，启动断言失败） | 4–6 GiB |
 | Flink jobmanager + taskmanager | 1.5 + 2.5 GiB | 2.5 GiB |
 | Milvus standalone | 3 GiB | 1.5–2 GiB |
 | ClickHouse | 3 GiB | 0.8–1.5 GiB |
@@ -38,7 +38,7 @@
 | Redis Cluster 3 主 | 3 × 384 MiB | 0.3 GiB |
 | etcd、MinIO | 256 + 512 MiB | 0.3 GiB |
 | risk-decision × 2、risk-admin、risk-ingest | 4 × 512 MiB | 0.6 GiB |
-| **合计** | **约 21 GiB** | **约 11–14 GiB** |
+| **合计** | **约 23 GiB** | **约 11–14 GiB** |
 
 现有负载约 6 GiB，上线后常驻约 17–20 GiB，峰值上限加起来接近 27 GiB。**建议先加 8 GiB swapfile 兜底**（只防偶发峰值把内核逼到 OOM，不指望它承载常驻），或者把机器升到 64 GiB。
 
