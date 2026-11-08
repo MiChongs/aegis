@@ -1,7 +1,8 @@
 // risk-admin 风控管理接口（docs/risk-platform.md）。
 //
 //	risk-admin            起服务（Hertz :8891，注册到 etcd 服务名 aegis.risk.admin）
-//	risk-admin migrate    初始化全部存储：PG 库与表、内置场景与特征、JetStream 流、ClickHouse、Nebula、Milvus、MinIO，并从库里重建名单索引
+//	risk-admin migrate    初始化全部存储：PG 库与表、内置场景与特征、JetStream 流、ClickHouse、Nebula、Milvus、MinIO，
+//	                      导入旧风控中心仍有效的名单（主库 risk_lists），并从库里重建名单索引
 //	risk-admin probe URL  健康检查（镜像里没有 wget / curl）
 //	risk-admin eval JSON  经 etcd 发现 risk-decision 评估一次（排障用，JSON 是 EvaluateRequest）
 //	risk-admin emit JSON  往 RISK 流发一条业务事件（排障用，JSON 是 events.Event）
@@ -217,6 +218,21 @@ func migrate(logf func(string, ...any)) error {
 		defer m.Close(ctx)
 		_, err = m.Existing(ctx)
 		return err
+	}); err != nil {
+		return err
+	}
+	if err := retry("旧名单导入", func() error {
+		legacy, err := store.LegacyLists(ctx, cfg.PGAdminDSN)
+		if err != nil {
+			return err
+		}
+		for i := 0; i < len(legacy); i += 500 {
+			if err := st.PutEntries(ctx, legacy[i:min(i+500, len(legacy))]); err != nil {
+				return err
+			}
+		}
+		logf("migrate: 旧风控中心名单导入 %d 条", len(legacy))
+		return nil
 	}); err != nil {
 		return err
 	}
