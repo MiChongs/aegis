@@ -151,6 +151,8 @@ require (
 
 require (
 	connectrpc.com/connect/v2 v2.0.0 // indirect
+	github.com/ClickHouse/ch-go v0.74.0 // indirect
+	github.com/ClickHouse/clickhouse-go/v2 v2.50.0 // indirect
 	github.com/MicahParks/jwkset v0.11.3 // indirect
 	github.com/agnivade/levenshtein v1.2.1 // indirect
 	github.com/antithesishq/antithesis-sdk-go v0.8.0-default-no-op // indirect
@@ -171,6 +173,8 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/fatih/structtag v1.2.0 // indirect
 	github.com/getsentry/sentry-go v0.12.0 // indirect
+	github.com/go-faster/city v1.0.1 // indirect
+	github.com/go-faster/errors v0.7.1 // indirect
 	github.com/gobwas/glob v1.0.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0 // indirect
@@ -191,6 +195,7 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nats-io/jwt/v2 v2.8.2 // indirect
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
+	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
