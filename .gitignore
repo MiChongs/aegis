@@ -57,3 +57,6 @@ build/
 
 # Local archives
 *.7z
+
+# 风控 Flink 作业的 Maven 产物
+services/risk/cep/target/
