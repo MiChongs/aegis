@@ -271,7 +271,8 @@ func (p *Program) Evaluate(ctx context.Context, req Request, src Sources, opts O
 		res.Action = bundle.ActionPass
 	}
 	res.Level, _ = final["level"].(string)
-	if res.Level == "" {
+	// 护栏或策略把处置改重了，等级至少跟到这个处置对应的那一档
+	if levelRank(res.Level) < levelRank(levelFor(res.Action)) {
 		res.Level = levelFor(res.Action)
 	}
 	res.DecidedBy, _ = final["decided_by"].(string)
@@ -749,6 +750,20 @@ func levelFor(action string) string {
 		return bundle.LevelCritical
 	}
 	return bundle.LevelNone
+}
+
+func levelRank(level string) int {
+	switch level {
+	case bundle.LevelLow:
+		return 1
+	case bundle.LevelMedium:
+		return 2
+	case bundle.LevelHigh:
+		return 3
+	case bundle.LevelCritical:
+		return 4
+	}
+	return 0
 }
 
 func hitKeys(hits []RuleHit) []any {

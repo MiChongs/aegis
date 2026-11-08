@@ -484,6 +484,9 @@ services:
       - --auto-compaction-retention=1000
       - --quota-backend-bytes=4294967296
       - --snapshot-count=50000
+    ports:
+      # 只绑回环：本机 go run 的风控服务与主服务经它做服务发现
+      - "127.0.0.1:${RISK_ETCD_PORT:-2379}:2379"
     volumes:
       - risk_etcd_1:/etcd-data
 
