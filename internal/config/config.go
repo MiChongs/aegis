@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -1426,10 +1427,10 @@ func setDefaults(cfg *Config) {
 	cfg.Firewall = NormalizeFirewallConfig(cfg.Firewall)
 	cfg.LoginGuard = NormalizeLoginGuardConfig(cfg.LoginGuard)
 	if cfg.Postgres.MaxConns == 0 {
-		cfg.Postgres.MaxConns = 10
+		cfg.Postgres.MaxConns = DefaultPostgresMaxConns(runtime.GOMAXPROCS(0))
 	}
 	if cfg.Postgres.MinConns == 0 {
-		cfg.Postgres.MinConns = 2
+		cfg.Postgres.MinConns = 4
 	}
 	if cfg.Postgres.MaxConnLifetime == 0 {
 		cfg.Postgres.MaxConnLifetime = 30 * time.Minute
@@ -1722,4 +1723,13 @@ func parseFloatEnv(raw string, fallback float64) float64 {
 		return f
 	}
 	return fallback
+}
+
+// DefaultPostgresMaxConns 没配 POSTGRES_MAX_CONNS 时的连接池上限：每核 4 条，16–40 之间。
+//
+// 以前固定 10 条，整站所有功能共用：一个人并发抽奖、每个请求都在库里等锁时，10 条一下就被占满，
+// 别的请求全在池外排队超时（2026-11-08）。上限 40 是给滚动发布留的：新旧两个实例同时在线时是 80 条，
+// 仍在 Postgres 默认 max_connections=100 之内。库侧调大 max_connections 之后可以用环境变量再往上调。
+func DefaultPostgresMaxConns(procs int) int32 {
+	return int32(min(max(4*procs, 16), 40))
 }

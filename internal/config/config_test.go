@@ -127,3 +127,11 @@ func TestLoadWithViperParsesTrustedProxies(t *testing.T) {
 		t.Fatalf("ClientIP.Hops = %d, want %d", got, want)
 	}
 }
+
+func TestDefaultPostgresMaxConns(t *testing.T) {
+	for procs, want := range map[int]int32{1: 16, 4: 16, 8: 32, 10: 40, 64: 40} {
+		if got := DefaultPostgresMaxConns(procs); got != want {
+			t.Fatalf("%d 核：期望 %d，得到 %d", procs, want, got)
+		}
+	}
+}

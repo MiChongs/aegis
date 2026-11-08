@@ -61,5 +61,5 @@ CREATE TABLE IF NOT EXISTS lottery_draws (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_lottery_draws_activity_user ON lottery_draws(activity_id, user_id);
+-- (activity_id, user_id) 已被 000110 的 (activity_id, user_id, created_at) 覆盖，000149 删掉了它
 CREATE INDEX IF NOT EXISTS idx_lottery_draws_user ON lottery_draws(user_id, created_at DESC);

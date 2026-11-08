@@ -96,7 +96,7 @@ func TestLotteryStrategyIntegration(t *testing.T) {
 	}
 	wg.Wait()
 	var used int
-	if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(used), 0) FROM lottery_prize_daily WHERE prize_id = $1`,
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(used), 0) FROM lottery_prize_stock WHERE prize_id = $1 AND scope = 1`,
 		daily.Prizes[1].ID).Scan(&used); err != nil {
 		t.Fatal(err)
 	}

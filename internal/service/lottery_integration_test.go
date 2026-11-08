@@ -289,7 +289,8 @@ ON CONFLICT (appid, user_id) DO UPDATE SET balance = lottery_draw_grants.balance
 	}
 	wg.Wait()
 	var used int64
-	if err := pool.QueryRow(ctx, `SELECT used FROM lottery_prizes WHERE activity_id = $1 AND kind = 'points'`, stockActivity.ID).Scan(&used); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(s.used), 0) FROM lottery_prize_stock s JOIN lottery_prizes p ON p.id = s.prize_id
+WHERE p.activity_id = $1 AND p.kind = 'points' AND s.scope = 0`, stockActivity.ID).Scan(&used); err != nil {
 		t.Fatal(err)
 	}
 	if winners != 3 || used != 3 {
@@ -658,6 +659,9 @@ VALUES ($1, $2, $3, '{"name":"5积分"}', 'awarded'), ($1, $2, $4, '{"name":"马
 		}
 		if _, err := pool.Exec(ctx, read("000145_lottery_risk.up.sql")); err != nil {
 			t.Fatalf("round %d 000145: %v", round+1, err)
+		}
+		if _, err := pool.Exec(ctx, read("000149_lottery_scale.up.sql")); err != nil {
+			t.Fatalf("round %d 000149: %v", round+1, err)
 		}
 	}
 	pg := pgrepo.New(pool)

@@ -323,15 +323,8 @@ func (s *RiskService) EvaluateRisk(ctx context.Context, req securitydomain.RiskE
 		return result, nil
 	}
 
-	detached := context.WithoutCancel(ctx)
-	go func() {
-		writeCtx, cancel := context.WithTimeout(detached, 5*time.Second)
-		defer cancel()
-		if _, err := s.pg.CreateRiskAssessment(writeCtx, assessment); err != nil {
-			s.logWarn("写入风险评估记录失败", zap.Error(err))
-		}
-		s.persistSideEffects(writeCtx, assessment, env, d)
-	}()
+	// 留痕经 JetStream 可靠地异步写库（risk_trail.go）：发布拿到确认才返回，拿不到时直接写库
+	s.trail.record(ctx, riskTrailEventOf(assessment, env, d))
 	return result, nil
 }
 

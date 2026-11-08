@@ -37,6 +37,25 @@ func (s *LotteryService) drawProfile(ctx context.Context, activity lotterydomain
 	return profile
 }
 
+// cachedDrawProfile 抽奖用的行为画像：同一个人 30 秒内连抽复用上一次的（活动页与预览照常取最新的）。
+func (s *LotteryService) cachedDrawProfile(ctx context.Context, activity lotterydomain.Activity, appID, userID int64,
+	now time.Time) lotterydomain.BehaviorProfile {
+	if !strategyNeedsProfile(activity.Strategy) && !lotterydomain.PerksNeedProfile(activity.Perks) {
+		return lotterydomain.BehaviorProfile{}
+	}
+	key := lotteryProfileKey{appID: appID, userID: userID}
+	if profile, ok := s.profiles.Get(key); ok {
+		return profile
+	}
+	profile, err := s.pg.LotteryBehaviorProfile(ctx, appID, userID, now, lotteryDayStart(now))
+	if err != nil {
+		s.log.Warn("lottery behavior profile failed", zap.Error(err), zap.Int64("appId", appID), zap.Int64("userId", userID))
+		return lotterydomain.BehaviorProfile{}
+	}
+	s.profiles.Add(key, profile)
+	return profile
+}
+
 // LotterySimulation 管理端的模拟请求。
 type LotterySimulation struct {
 	AppID      int64

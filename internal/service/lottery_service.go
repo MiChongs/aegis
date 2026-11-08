@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	"go.uber.org/zap"
 
 	cardkeydomain "aegis/internal/domain/cardkey"
@@ -20,6 +21,7 @@ import (
 	vipdomain "aegis/internal/domain/vip"
 	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
+	"aegis/pkg/keyedgate"
 	"aegis/pkg/timeutil"
 )
 
@@ -56,14 +58,102 @@ type LotteryService struct {
 	risk       *RiskService
 	notifier   notificationDeliverer
 	userEvents UserEventPublisher
+	// gate 同一个人的抽奖在本实例内排队（见 lotteryGateDepth）
+	gate *keyedgate.Gate
+	// profiles 抽奖用的行为画像短时缓存：画像是十几张表的历史聚合，变化以天计，连抽时不必每次重算
+	profiles *expirable.LRU[lotteryProfileKey, lotterydomain.BehaviorProfile]
 }
+
+// 同一个人的抽奖：本实例内同时只跑一个，后面最多排 lotteryGateDepth 个、最多等 lotteryGateWait，
+// 超出的立刻回「抽奖正在处理，请稍后重试」（40925）。排队的请求不占数据库连接：
+// 2026-11-08 一个人并发打几十个十连抽，每个都在数据库里等他自己的用户行锁，把连接池占满拖垮了整站。
+const (
+	lotteryGateDepth = 4
+	lotteryGateWait  = 5 * time.Second
+	// lotteryProfileTTL / lotteryProfileCap 行为画像缓存多久、最多缓存多少人
+	lotteryProfileTTL = 30 * time.Second
+	lotteryProfileCap = 100_000
+)
+
+type lotteryProfileKey struct{ appID, userID int64 }
 
 // NewLotteryService 创建抽奖服务。rewarded 为空时视频抽奖不可用（活动页 video.enabled=false）。
 func NewLotteryService(log *zap.Logger, pg *pgrepo.Repository, rewarded *RewardedAdService) *LotteryService {
 	if log == nil {
 		log = zap.NewNop()
 	}
-	return &LotteryService{log: log, pg: pg, rewarded: rewarded}
+	return &LotteryService{log: log, pg: pg, rewarded: rewarded,
+		gate:     keyedgate.New(lotteryGateDepth, lotteryGateWait),
+		profiles: expirable.NewLRU[lotteryProfileKey, lotterydomain.BehaviorProfile](lotteryProfileCap, nil, lotteryProfileTTL),
+	}
+}
+
+// lotteryMaintenanceInterval 清理过期风控聚集键的周期；lotteryCompactInterval 合并全站增量的周期。
+const (
+	lotteryMaintenanceInterval = time.Hour
+	lotteryCompactInterval     = 500 * time.Millisecond
+)
+
+// Start 启动时补齐计数（000149 之前的历史记录，只做一次，在开始接请求之前做完），之后每 500 ms 合并全站增量、
+// 每小时清理过期的风控聚集键。
+func (s *LotteryService) Start(ctx context.Context) {
+	now := time.Now()
+	started := time.Now()
+	timezone := timeutil.DefaultTimezone()
+	if timezone == "" || timezone == "Local" {
+		timezone = timeutil.DefaultLocation().String()
+	}
+	if done, err := s.pg.BackfillLotteryCounters(ctx, timezone, lotteryDayStart(now)); err != nil {
+		s.log.Error("lottery: counter backfill failed", zap.Error(err))
+	} else if done {
+		s.log.Info("lottery: counters backfilled from history", zap.Duration("took", time.Since(started)))
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.log.Error("lottery maintenance panic", zap.Any("panic", r))
+			}
+		}()
+		ticker := time.NewTicker(lotteryMaintenanceInterval)
+		defer ticker.Stop()
+		compact := time.NewTicker(lotteryCompactInterval)
+		defer compact.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-compact.C:
+				if _, err := s.pg.CompactLotteryActivityDeltas(ctx); err != nil && ctx.Err() == nil {
+					s.log.Warn("lottery: compact deltas failed", zap.Error(err))
+				}
+			case <-ticker.C:
+				if removed, err := s.pg.PurgeLotteryRiskKeys(ctx, time.Now()); err != nil {
+					s.log.Warn("lottery: purge risk keys failed", zap.Error(err))
+				} else if removed > 0 {
+					s.log.Info("lottery: purged risk keys", zap.Int64("rows", removed))
+				}
+			}
+		}
+	}()
+}
+
+// Close 退出前把已提交的全站增量再合并一次（不合并也不丢：增量已随抽奖事务落库，下次启动接着合并）。
+func (s *LotteryService) Close(ctx context.Context) {
+	if _, err := s.pg.CompactLotteryActivityDeltas(ctx); err != nil {
+		s.log.Warn("lottery: compact deltas failed", zap.Error(err))
+	}
+}
+
+// enterDraw 排进这个人的抽奖队伍。返回的函数必须调用（释放）。
+func (s *LotteryService) enterDraw(ctx context.Context, userID int64) (func(), error) {
+	release, err := s.gate.Acquire(ctx, uint64(userID))
+	if err != nil {
+		if errors.Is(err, keyedgate.ErrBusy) {
+			return nil, apperrors.New(errCodeLotteryDrawing, http.StatusConflict, "抽奖正在处理，请稍后重试")
+		}
+		return nil, err
+	}
+	return release, nil
 }
 
 // SetRiskService 接上风控：抽奖前按 lottery 场景评估，block / ban 时拒绝。
@@ -718,6 +808,11 @@ func (s *LotteryService) Draw(ctx context.Context, req LotteryDrawRequest) (*lot
 	if req.Source != "" && !slices.Contains(lotterydomain.Sources(), req.Source) {
 		return nil, s.translate(lotteryReasonError(lotterydomain.ReasonUnknownSource))
 	}
+	release, err := s.enterDraw(ctx, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := s.guardDraw(ctx, req); err != nil {
 		return nil, err
 	}
@@ -760,6 +855,11 @@ func (s *LotteryService) DrawBatch(ctx context.Context, req LotteryBatchRequest)
 	if req.Source != "" && !slices.Contains(lotterydomain.Sources(), req.Source) {
 		return nil, s.translate(lotteryReasonError(lotterydomain.ReasonUnknownSource))
 	}
+	release, err := s.enterDraw(ctx, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := s.guardDraw(ctx, req.LotteryDrawRequest); err != nil {
 		return nil, err
 	}
@@ -822,7 +922,7 @@ func (s *LotteryService) drawInput(ctx context.Context, req LotteryDrawRequest) 
 		UserAgent: req.UserAgent, DayStart: lotteryDayStart(now), Now: now, Location: timeutil.DefaultLocation(),
 	}
 	if activity, err := s.pg.GetLotteryActivity(ctx, req.AppID, req.ActivityID); err == nil {
-		input.Profile = s.drawProfile(ctx, *activity, req.AppID, req.UserID, now)
+		input.Profile = s.cachedDrawProfile(ctx, *activity, req.AppID, req.UserID, now)
 		if lotterydomain.PerksAdSkip(activity.Perks) {
 			input.Video = s.videoChances(ctx, *activity, req.AppID, req.UserID)
 		}
@@ -982,6 +1082,10 @@ func (s *LotteryService) translate(err error) error {
 		return apperrors.New(errCodePointsInsufficient, http.StatusForbidden, lotterydomain.ReasonMessage(lotterydomain.ReasonPointsShort))
 	case errors.Is(err, pgrepo.ErrUserNotFound):
 		return apperrors.New(40401, http.StatusNotFound, "用户不存在")
+	case pgrepo.IsLockContention(err):
+		// 别的实例或别的功能正占着这个人的行（等锁超过 3 秒）：事务已回滚，次数与积分都没动
+		s.log.Warn("lottery draw lock contention", zap.Error(err))
+		return apperrors.New(errCodeLotteryDrawing, http.StatusConflict, "抽奖正在处理，请稍后重试")
 	case pgrepo.IsUniqueViolation(err):
 		// 同一个 requestId 的并发提交撞上唯一索引：没有重复抽，让客户端用同一个 requestId 重查
 		s.log.Warn("lottery draw hit unique constraint", zap.Error(err))

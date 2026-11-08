@@ -28,6 +28,8 @@ type Repository struct {
 	pool *pgxpool.Pool
 	// levels 按应用缓存的等级体系（level_repository.go）
 	levels levelSchemeCache
+	// lotteryTotals 抽奖全站计数的读缓存（lottery_counters_repository.go；只缓存读，计数本身随抽奖事务落库）
+	lotteryTotals lotteryTotalsCache
 }
 
 func New(pool *pgxpool.Pool) *Repository {

@@ -63,6 +63,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/inbucket/html2text v1.0.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jedib0t/go-pretty/v6 v6.8.3
@@ -75,8 +76,8 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/mojocn/base64Captcha v1.3.8
 	github.com/mozillazg/go-pinyin v0.21.0
-	github.com/nats-io/nats-server/v2 v2.15.0
-	github.com/nats-io/nats.go v1.52.0
+	github.com/nats-io/nats-server/v2 v2.15.2
+	github.com/nats-io/nats.go v1.55.0
 	github.com/openai/openai-go/v3 v3.54.0
 	github.com/osteele/liquid v1.9.2
 	github.com/panjf2000/ants/v2 v2.12.1
@@ -129,15 +130,15 @@ require (
 	go.uber.org/fx v1.24.0
 	go.uber.org/zap v1.28.0
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
-	golang.org/x/crypto v0.57.0
+	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.44.0
-	golang.org/x/net v0.58.0
+	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.23.0
-	golang.org/x/term v0.46.0
-	golang.org/x/text v0.42.0
+	golang.org/x/sync v0.24.0
+	golang.org/x/term v0.47.0
+	golang.org/x/text v0.43.0
 	golang.org/x/time v0.16.0
-	golang.org/x/tools v0.49.0
+	golang.org/x/tools v0.51.0
 	gonum.org/v1/gonum v0.17.0
 	google.golang.org/api v0.292.0
 	google.golang.org/genai v1.70.0
@@ -271,7 +272,7 @@ require (
 	github.com/kaptinlin/jsonpointer v0.4.17 // indirect
 	github.com/kaptinlin/jsonschema v0.7.6 // indirect
 	github.com/kaptinlin/messageformat-go v0.4.18 // indirect
-	github.com/klauspost/compress v1.20.0 // indirect
+	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
@@ -368,7 +369,7 @@ require (
 	golang.org/x/arch v0.25.0 // indirect
 	golang.org/x/exp v0.0.0-20240404231335-c0f41cb1a7a0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/grpc v1.83.0 // indirect

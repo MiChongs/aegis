@@ -5,6 +5,7 @@ import (
 	notificationdomain "aegis/internal/domain/notification"
 	userdomain "aegis/internal/domain/user"
 	auditmiddleware "aegis/internal/middleware"
+	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/response"
 	"aegis/pkg/timeutil"
@@ -21,6 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type appIDResolver interface {
@@ -908,6 +910,12 @@ func (h *Handler) writeError(c *gin.Context, err error) {
 	}
 	// 记录真实错误到 gin logger（控制台可见）
 	_ = c.Error(err)
+	// 锁等待超时、死锁、语句超时：库里一时挤不进去，不是程序错误。回 503 + Retry-After，客户端退避重试
+	if databaseBusy(err) {
+		c.Header("Retry-After", "1")
+		response.Error(c, http.StatusServiceUnavailable, errCodeDatabaseBusy, "服务繁忙，请稍后重试")
+		return
+	}
 	// 直接输出摘要信息（绕过 sanitizeMessage 对 500 的脱敏）
 	summary := err.Error()
 	if len(summary) > 200 {
@@ -983,4 +991,16 @@ func resolveAppID(c *gin.Context, appService appIDResolver) (int64, bool) {
 	}
 	response.Error(c, http.StatusNotFound, 40404, "应用不存在")
 	return 0, false
+}
+
+// errCodeDatabaseBusy 数据库一时繁忙（锁等待超时、死锁、语句超时）。
+const errCodeDatabaseBusy = 50310
+
+// databaseBusy 错误是不是「稍后重试就能成功」的数据库拥塞。
+func databaseBusy(err error) bool {
+	if pgrepo.IsLockContention(err) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "57014" // query_canceled：statement_timeout 到点
 }

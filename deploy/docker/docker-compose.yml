@@ -44,6 +44,8 @@ services:
     image: aegis-postgres:pg17-postgis
     container_name: aegis-postgres
     restart: unless-stopped
+    # 并行查询用 /dev/shm（docker 默认只给 64 MB）；库侧参数见 postgres/tuning.sql
+    shm_size: 1g
     logging: *default-logging
     environment:
       POSTGRES_DB: ${AEGIS_DB_NAME:-aegis}

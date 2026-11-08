@@ -30,14 +30,8 @@ CREATE TABLE IF NOT EXISTS lottery_prize_daily (
     PRIMARY KEY (prize_id, day_start)
 );
 
--- 个人上限、中奖冷却按人按奖品数
-CREATE INDEX IF NOT EXISTS idx_lottery_draws_user_prize
-    ON lottery_draws (activity_id, user_id, prize_id, created_at);
--- 同设备 / 同网络聚集
-CREATE INDEX IF NOT EXISTS idx_lottery_draws_device
-    ON lottery_draws (activity_id, device_id, created_at) WHERE device_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_lottery_draws_ip
-    ON lottery_draws (activity_id, client_ip, created_at) WHERE client_ip IS NOT NULL;
+-- 个人上限、中奖冷却、同设备 / 同网络聚集原来按记录现数，各有一个索引；000149 起改成计数
+-- （lottery_user_states、lottery_risk_keys），这三个索引已删除，这里不再建。
 
 CREATE TABLE IF NOT EXISTS user_online_daily (
     appid BIGINT NOT NULL,

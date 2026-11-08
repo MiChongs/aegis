@@ -57,7 +57,7 @@ Config
 | ADMIN_SESSION_TTL | 12h |
 | JWT_TTL | 720h (30天) |
 | JWT_REFRESH_TTL | 168h (7天) |
-| POSTGRES_MAX_CONNS | 10 |
+| POSTGRES_MAX_CONNS | 每核 4 条，16–40（DefaultPostgresMaxConns） |
 | REDIS_KEY_PREFIX | "aegis" |
 | NATS_STREAM_NAME | "AEGIS_EVENTS" |
 | TEMPORAL_TASK_QUEUE | "aegis-workflow" |

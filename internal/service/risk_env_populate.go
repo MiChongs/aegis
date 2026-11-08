@@ -121,18 +121,23 @@ func (s *RiskService) populateAccountEnv(ctx context.Context, env *RiskEvalEnv) 
 
 // rememberAccountFacts 评估之后更新账号维度的跨请求事实
 func (s *RiskService) rememberAccountFacts(ctx context.Context, env *RiskEvalEnv, level string) {
-	subject := riskSubjectKey(env)
-	if s.redis == nil || subject == "" {
+	s.rememberAccountFact(ctx, riskAccountFact{Subject: riskSubjectKey(env), Level: level, GeoKnown: env.GeoKnown,
+		GeoCountry: env.GeoCountry})
+}
+
+// rememberAccountFact 账号的近期高风险次数与上次归属地（风控留痕写库之后调用，见 risk_trail.go）
+func (s *RiskService) rememberAccountFact(ctx context.Context, fact riskAccountFact) {
+	if s.redis == nil || fact.Subject == "" {
 		return
 	}
 	pipe := s.redis.Pipeline()
-	if level == securitydomain.LevelHigh || level == securitydomain.LevelCritical {
-		key := s.riskKey("trail", "7d", subject)
+	if fact.Level == securitydomain.LevelHigh || fact.Level == securitydomain.LevelCritical {
+		key := s.riskKey("trail", "7d", fact.Subject)
 		pipe.Incr(ctx, key)
 		pipe.Expire(ctx, key, 7*24*time.Hour)
 	}
-	if env.GeoKnown && env.GeoCountry != "" {
-		pipe.Set(ctx, s.riskKey("lastgeo", "acct", subject), env.GeoCountry, 30*24*time.Hour)
+	if fact.GeoKnown && fact.GeoCountry != "" {
+		pipe.Set(ctx, s.riskKey("lastgeo", "acct", fact.Subject), fact.GeoCountry, 30*24*time.Hour)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		s.logWarn("更新账号风险事实失败", zap.Error(err))

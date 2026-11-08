@@ -17,6 +17,7 @@ import (
 	"aegis/pkg/timeutil"
 
 	redisrate "github.com/go-redis/redis_rate/v10"
+	"github.com/nats-io/nats.go"
 	redislib "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -43,6 +44,9 @@ type RiskService struct {
 	accountBans  riskAccountBanner
 	firewall     riskFirewall
 	captchaProbe func(ctx context.Context, appID int64) bool
+
+	// trail 评估留痕（JetStream 可靠队列 + 批量写库，risk_trail.go）
+	trail *riskTrail
 }
 
 // velocityWindow 账号扩散基数统计的窗口。
@@ -61,8 +65,30 @@ func NewRiskService(cfg config.RiskConfig, log *zap.Logger, pg *pgrepo.Repositor
 	if redis != nil {
 		service.rateLimiter = redisrate.NewLimiter(redis)
 	}
+	service.trail = newRiskTrail(pg, log, service.rememberAccountFact)
 	service.applyConfig(cfg)
 	return service
+}
+
+// AttachTrailStream 接上 NATS：评估留痕改走 JetStream（AEGIS_RISK_TRAIL）。不调用时留痕直接写库。
+func (s *RiskService) AttachTrailStream(conn *nats.Conn) error {
+	return s.trail.attach(conn)
+}
+
+// Start 建留痕流与消费者、启动写库协程（接了 NATS 时）。
+func (s *RiskService) Start(ctx context.Context) {
+	if s == nil || s.trail == nil {
+		return
+	}
+	s.trail.start(ctx)
+}
+
+// Close 停止取新的留痕；正在写的那一批写完、确认完（退出时调用；ctx 到点就不再等）。没取走的留在流里，下次启动接着写。
+func (s *RiskService) Close(ctx context.Context) {
+	if s == nil || s.trail == nil {
+		return
+	}
+	s.trail.stop(ctx)
 }
 
 // SetLocationService 注入地理定位服务。

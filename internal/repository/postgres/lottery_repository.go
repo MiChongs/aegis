@@ -55,6 +55,13 @@ func (e *LotteryStockError) Error() string {
 
 func lotteryUnavailable(reason string) error { return &LotteryUnavailableError{Reason: reason} }
 
+// lotteryActivityLockClass 活动咨询锁的类号（两段式键的第一段，第二段是活动 ID）：抽奖拿共享锁、改奖盘拿独占锁。
+const lotteryActivityLockClass int32 = 0x4C4F5454 // "LOTT"
+
+// lotteryLockTimeout 抽奖事务里等锁的上限。同一个人的抽奖在本实例内已经排队（LotteryService 的人级闸门），
+// 这里等的只会是别的实例或别的功能（兑换、签到）占着同一个人的行，等不到就报繁忙，不占连接池。
+const lotteryLockTimeout = "3s"
+
 // ── 扫描 ──
 
 const lotteryActivityColumns = `a.id, a.appid, a.name, a.description, a.rules, a.ui_mode, a.status, a.start_time, a.end_time,
@@ -90,7 +97,7 @@ func scanLotteryActivity(row interface{ Scan(dest ...any) error }, extra ...any)
 	return &item, nil
 }
 
-const lotteryPrizeColumns = `p.id, p.activity_id, p.name, p.kind, p.reward, COALESCE(p.image_url, ''), p.quantity, p.used,
+const lotteryPrizeColumns = `p.id, p.activity_id, p.name, p.kind, p.reward, COALESCE(p.image_url, ''), p.quantity, ` + lotteryPrizeUsedSQL + `,
 p.weight, p.position, p.is_default, p.lifetime_reward, p.daily_limit, p.user_limit, p.user_daily_limit, p.points_value, p.created_at,
 p.updated_at`
 
@@ -230,17 +237,22 @@ func (r *Repository) ListLotteryActivities(ctx context.Context, appID int64, act
 	return out, rows.Err()
 }
 
+// lotteryActivitySummarySQL 活动的汇总（$2 是今天零点）：抽奖次数取全站计数（日计数 + 还没合并的增量）、参与人数取状态行，
+// 不扫抽奖记录；待发放走 status = 'pending' 的部分索引。
+const lotteryActivitySummarySQL = `SELECT
+    COALESCE((SELECT SUM(x.draws) FROM lottery_activity_daily x WHERE x.activity_id = a.id), 0)
+      + COALESCE((SELECT SUM(x.draws) FROM lottery_activity_deltas x WHERE x.activity_id = a.id), 0) AS total_draws,
+    (SELECT COUNT(*) FROM lottery_user_states x WHERE x.activity_id = a.id) AS total_users,
+    COALESCE((SELECT SUM(x.draws) FROM lottery_activity_daily x WHERE x.activity_id = a.id AND x.day_start = $2), 0)
+      + COALESCE((SELECT SUM(x.draws) FROM lottery_activity_deltas x WHERE x.activity_id = a.id AND x.day_start = $2), 0) AS today_draws,
+    (SELECT COUNT(*) FROM lottery_draws d WHERE d.appid = a.appid AND d.activity_id = a.id AND d.status = 'pending') AS pending`
+
 // ListLotteryAdminActivities 管理端活动列表：活动、奖品与汇总。
 func (r *Repository) ListLotteryAdminActivities(ctx context.Context, appID int64, dayStart time.Time) ([]lotterydomain.AdminActivity, error) {
 	rows, err := r.pool.Query(ctx, `SELECT `+lotteryActivityColumns+`,
   COALESCE(s.total_draws, 0), COALESCE(s.total_users, 0), COALESCE(s.today_draws, 0), COALESCE(s.pending, 0)
 FROM lottery_activities a
-LEFT JOIN LATERAL (
-  SELECT COUNT(*) AS total_draws, COUNT(DISTINCT d.user_id) AS total_users,
-         COUNT(*) FILTER (WHERE d.created_at >= $2) AS today_draws,
-         COUNT(*) FILTER (WHERE d.status = 'pending') AS pending
-  FROM lottery_draws d WHERE d.activity_id = a.id
-) s ON TRUE
+LEFT JOIN LATERAL (`+lotteryActivitySummarySQL+`) s ON TRUE
 WHERE a.appid = $1
 ORDER BY a.sort_order, a.id DESC`, appID, dayStart)
 	if err != nil {
@@ -275,11 +287,10 @@ ORDER BY a.sort_order, a.id DESC`, appID, dayStart)
 func (r *Repository) GetLotteryAdminActivity(ctx context.Context, appID, activityID int64, dayStart time.Time) (*lotterydomain.AdminActivity, error) {
 	var item lotterydomain.AdminActivity
 	activity, err := scanLotteryActivity(r.pool.QueryRow(ctx, `SELECT `+lotteryActivityColumns+`,
-  (SELECT COUNT(*) FROM lottery_draws d WHERE d.activity_id = a.id),
-  (SELECT COUNT(DISTINCT d.user_id) FROM lottery_draws d WHERE d.activity_id = a.id),
-  (SELECT COUNT(*) FROM lottery_draws d WHERE d.activity_id = a.id AND d.created_at >= $3),
-  (SELECT COUNT(*) FROM lottery_draws d WHERE d.activity_id = a.id AND d.status = 'pending')
-FROM lottery_activities a WHERE a.id = $1 AND a.appid = $2`, activityID, appID, dayStart),
+  COALESCE(s.total_draws, 0), COALESCE(s.total_users, 0), COALESCE(s.today_draws, 0), COALESCE(s.pending, 0)
+FROM lottery_activities a
+LEFT JOIN LATERAL (`+strings.ReplaceAll(lotteryActivitySummarySQL, "$2", "$3")+`) s ON TRUE
+WHERE a.id = $1 AND a.appid = $2`, activityID, appID, dayStart),
 		&item.TotalDraws, &item.TotalUsers, &item.TodayDraws, &item.Pending)
 	if err != nil {
 		return nil, err
@@ -328,7 +339,11 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$
 			return nil, err
 		}
 	} else {
-		// 锁活动行：与进行中的抽奖（FOR SHARE）互斥，奖盘不会在一次抽奖的中途被换掉
+		// 独占活动的咨询锁：与进行中的抽奖（共享锁）互斥，奖盘不会在一次抽奖的中途被换掉
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, $2::int)`, lotteryActivityLockClass,
+			int32(activityID)); err != nil {
+			return nil, err
+		}
 		tag, err := tx.Exec(ctx, `UPDATE lottery_activities SET
   name = $3, description = $4, rules = $5, ui_mode = $6, status = $7, start_time = $8, end_time = $9,
   free_daily = $10, points_cost = $11, points_daily = $12, video_scene = $13, pity_threshold = $14,
@@ -381,6 +396,11 @@ WHERE id = $1`, prize.ID, prize.Name, prize.Reward.Type, reward, nullableString(
 				return nil, err
 			}
 			id = prize.ID
+			if old.Quantity != prize.Quantity || old.DailyLimit != prize.DailyLimit {
+				if err := rebalanceLotteryStockTx(ctx, tx, id, int64(prize.Quantity), int64(prize.DailyLimit)); err != nil {
+					return nil, err
+				}
+			}
 		} else {
 			// 带了不属于这个活动的 ID：按新建处理，不去碰别的活动的奖品
 			if err := tx.QueryRow(ctx, `INSERT INTO lottery_prizes
@@ -390,6 +410,11 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`, activityI
 				nullableString(prize.ImageURL), prize.Quantity, prize.Weight, prize.Position, prize.Fallback, swap,
 				prize.DailyLimit, prize.UserLimit, prize.UserDailyLimit, prize.Value).Scan(&id); err != nil {
 				return nil, err
+			}
+			if prize.Quantity >= 0 {
+				if err := rebalanceLotteryStockTx(ctx, tx, id, int64(prize.Quantity), int64(prize.DailyLimit)); err != nil {
+					return nil, err
+				}
 			}
 		}
 		kept[id] = true
@@ -448,18 +473,20 @@ AND NOT EXISTS (SELECT 1 FROM lottery_draws d WHERE d.activity_id = a.id)`, acti
 
 // LotteryUserFacts 一个人在一个活动里判定次数所需的事实（活动页用；抽奖时在事务里另取一份）。
 func (r *Repository) LotteryUserFacts(ctx context.Context, appID, activityID, userID int64, dayStart time.Time) (lotterydomain.UserFacts, error) {
-	return lotteryUserFacts(ctx, r.pool, appID, activityID, userID, dayStart, false)
+	counters, err := r.readLotteryCounters(ctx, activityID, userID, dayStart, time.Now())
+	if err != nil {
+		return lotterydomain.UserFacts{}, err
+	}
+	return lotteryUserFacts(ctx, r.pool, appID, userID, counters.today(dayStart), false)
 }
 
-func lotteryUserFacts(ctx context.Context, q queryExecutor, appID, activityID, userID int64, dayStart time.Time,
+// lotteryUserFacts 次数判定的事实：今天用了几次免费 / 积分（取自状态行的计数，counters 已对齐到今天）、
+// 次数余额（lock 时锁汇总行）、积分余额、连续未中。
+func lotteryUserFacts(ctx context.Context, q queryExecutor, appID, userID int64, counters lotteryCounters,
 	lock bool) (lotterydomain.UserFacts, error) {
-	var facts lotterydomain.UserFacts
-	if err := q.QueryRow(ctx, `SELECT
-  COUNT(*) FILTER (WHERE source = 'free'),
-  COUNT(*) FILTER (WHERE source = 'points')
-FROM lottery_draws WHERE activity_id = $1 AND user_id = $2 AND created_at >= $3`,
-		activityID, userID, dayStart).Scan(&facts.FreeUsedToday, &facts.PointsUsedToday); err != nil {
-		return facts, err
+	facts := lotterydomain.UserFacts{
+		FreeUsedToday: counters.FreeToday, PointsUsedToday: counters.PointsToday,
+		MissStreak: counters.MissStreak, TotalDraws: counters.TotalDraws,
 	}
 	var err error
 	if facts.Bonus, facts.BonusPurchased, err = lotteryTicketFactsQ(ctx, q, appID, userID, lock); err != nil {
@@ -470,14 +497,6 @@ FROM lottery_draws WHERE activity_id = $1 AND user_id = $2 AND created_at >= $3`
 		if errors.Is(err, pgx.ErrNoRows) {
 			return facts, ErrUserNotFound
 		}
-		return facts, err
-	}
-	stateSQL := `SELECT miss_streak, total_draws FROM lottery_user_states WHERE activity_id = $1 AND user_id = $2`
-	if lock {
-		stateSQL += ` FOR UPDATE`
-	}
-	if err := q.QueryRow(ctx, stateSQL, activityID, userID).Scan(&facts.MissStreak, &facts.TotalDraws); err != nil &&
-		!errors.Is(err, pgx.ErrNoRows) {
 		return facts, err
 	}
 	return facts, nil
@@ -618,18 +637,20 @@ func (r *Repository) drawLottery(ctx context.Context, input lotterydomain.DrawIn
 		}
 	}()
 
+	// 锁等待上限压到 lotteryLockTimeout：同一个人在别的实例上的抽奖、兑换占着用户行时快速失败（报「繁忙」让客户端
+	// 稍后重试），不在连接池里排队。活动用共享咨询锁与改奖盘互斥：行级 FOR SHARE 在高并发下会变成
+	// MultiXact，每一次都要写活动行的锁信息，几千个并发事务挤在同一行上。
+	if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true), pg_advisory_xact_lock_shared($2, $3::int)`,
+		lotteryLockTimeout, lotteryActivityLockClass, int32(input.ActivityID)); err != nil {
+		return nil, err
+	}
 	activity, err := scanLotteryActivity(tx.QueryRow(ctx, `SELECT `+lotteryActivityColumns+`
-FROM lottery_activities a WHERE a.id = $1 AND a.appid = $2 FOR SHARE`, input.ActivityID, input.AppID))
+FROM lottery_activities a WHERE a.id = $1 AND a.appid = $2`, input.ActivityID, input.AppID))
 	if err != nil {
 		return nil, err
 	}
 
-	var locked int64
-	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id = $1 AND appid = $2 FOR UPDATE`,
-		input.UserID, input.AppID).Scan(&locked); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrUserNotFound
-		}
+	if err := lockUserRowTx(ctx, tx, input.UserID, input.AppID); err != nil {
 		return nil, err
 	}
 
@@ -658,11 +679,12 @@ WHERE d.activity_id = $1 AND d.user_id = $2 AND d.request_id = $3`, activity.ID,
 		return nil, lotteryUnavailable(reason)
 	}
 
-	if _, err := tx.Exec(ctx, `INSERT INTO lottery_user_states (activity_id, user_id) VALUES ($1, $2)
-ON CONFLICT (activity_id, user_id) DO NOTHING`, activity.ID, input.UserID); err != nil {
+	counters, err := lockLotteryCountersTx(ctx, tx, activity.ID, input.UserID, input.DayStart, now)
+	if err != nil {
 		return nil, err
 	}
-	facts, err := lotteryUserFacts(ctx, tx, input.AppID, activity.ID, input.UserID, input.DayStart, true)
+	counters = counters.today(input.DayStart)
+	facts, err := lotteryUserFacts(ctx, tx, input.AppID, input.UserID, counters, true)
 	if err != nil {
 		return nil, err
 	}
@@ -742,12 +764,12 @@ ON CONFLICT (activity_id, user_id) DO NOTHING`, activity.ID, input.UserID); err 
 	rule = rule.WithEconomy(lotterydomain.EconomyOf(rule, coverage, personal, plans,
 		lotterydomain.DrawPrice(personalActivity, storePrice)))
 
-	state, err := lotteryDrawState(ctx, tx, personalActivity, personal, input, facts, now)
+	state, err := r.lotteryDrawState(ctx, tx, personalActivity, personal, input, counters, now)
 	if err != nil {
 		return nil, err
 	}
 	state.Source = source
-	prize, plan, err := pickLotteryPrize(ctx, tx, personalActivity, personal, state, input.DayStart)
+	prize, plan, err := pickLotteryPrize(ctx, tx, personalActivity, personal, state, input.DayStart, input.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -783,23 +805,15 @@ ON CONFLICT (activity_id, user_id) DO NOTHING`, activity.ID, input.UserID); err 
 	if err != nil {
 		return nil, err
 	}
-	prizeID := prize.ID
+	// 记录的 ID 先取号：积分流水、发放结果都引用它，等发完再一次写入整条记录（不再「先插后改」，
+	// 每一次抽奖少一个死元组、少一轮索引更新）。
 	var drawID int64
+	if err := tx.QueryRow(ctx, `SELECT nextval(pg_get_serial_sequence('lottery_draws', 'id'))`).Scan(&drawID); err != nil {
+		return nil, err
+	}
 	var ticketLot *int64
 	if ticket.LotID > 0 {
 		ticketLot = &ticket.LotID
-	}
-	if err := tx.QueryRow(ctx, `INSERT INTO lottery_draws
-(draw_no, appid, activity_id, user_id, prize_id, prize_name, prize_kind, reward, position, source, points_cost, pity,
- status, request_id, device_id, client_ip, user_agent, created_at, trace, ticket_lot_id, ticket_origin, ticket_paid,
- risk_rules, risk_action)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) RETURNING id`,
-		drawNo, input.AppID, activity.ID, input.UserID, prizeID, truncateColumn(prize.Name, 64), prize.Kind, reward,
-		prize.Position, source, pointsCost, pity, status, nullableString(input.RequestID),
-		nullableString(truncateColumn(input.DeviceID, 128)), nullableString(truncateColumn(input.ClientIP, 64)),
-		nullableString(truncateColumn(input.UserAgent, 256)), now, trace, ticketLot, ticket.Origin, ticket.Paid,
-		riskHits, riskAction).Scan(&drawID); err != nil {
-		return nil, err
 	}
 
 	meta := map[string]any{"drawNo": drawNo, "activityId": activity.ID, "prizeId": prize.ID}
@@ -854,19 +868,34 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$
 			return nil, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE lottery_draws SET results = $2, integral_transaction_no = $3, conversion = $4
-WHERE id = $1`, drawID, resultsJSON, nullableString(integralTxnNo), conversionJSON); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO lottery_draws
+(id, draw_no, appid, activity_id, user_id, prize_id, prize_name, prize_kind, reward, position, source, points_cost, pity,
+ status, request_id, device_id, client_ip, user_agent, created_at, trace, ticket_lot_id, ticket_origin, ticket_paid,
+ risk_rules, risk_action, results, integral_transaction_no, conversion)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
+		drawID, drawNo, input.AppID, activity.ID, input.UserID, prize.ID, truncateColumn(prize.Name, 64), prize.Kind, reward,
+		prize.Position, source, pointsCost, pity, status, nullableString(input.RequestID),
+		nullableString(truncateColumn(input.DeviceID, 128)), nullableString(truncateColumn(input.ClientIP, 64)),
+		nullableString(truncateColumn(input.UserAgent, 256)), now, trace, ticketLot, ticket.Origin, ticket.Paid,
+		riskHits, riskAction, resultsJSON, nullableString(integralTxnNo), conversionJSON); err != nil {
 		return nil, err
 	}
+
+	// 计数全部随事务提交：本人的写状态行，风控聚集键与全站增量各插一行（只插入，没有全站共享的行要锁）
 	// 运气按控制层之前的公平中奖率累计（见 lottery.LuckZ）
-	if _, err := tx.Exec(ctx, `UPDATE lottery_user_states
-SET miss_streak = $3, total_draws = total_draws + 1, last_draw_at = $4,
-  luck_expected = luck_expected + $5, luck_variance = luck_variance + $6, luck_skew = luck_skew + $7,
-  updated_at = NOW()
-WHERE activity_id = $1 AND user_id = $2`, activity.ID, input.UserID,
-		lotterydomain.NextMissStreak(facts.MissStreak, prize), now, plan.Fair, plan.Fair*(1-plan.Fair),
-		plan.Fair*(1-plan.Fair)*(1-2*plan.Fair)); err != nil {
+	counters = counters.advance(input.DayStart, now, source, prize, plan, lotterydomain.NextMissStreak(facts.MissStreak, prize))
+	if err := writeLotteryCounters(ctx, tx, activity.ID, input.UserID, counters, ""); err != nil {
 		return nil, err
+	}
+	if err := appendLotteryActivityDeltaTx(ctx, tx, activity.ID, input.DayStart, prize.Kind != lotterydomain.KindNone,
+		lotteryIssuedPoints(prize, conversion)); err != nil {
+		return nil, err
+	}
+	if lotteryRiskKeysNeeded(activity.Strategy.Risk) {
+		if err := recordLotteryRiskKeysTx(ctx, tx, activity.ID, input.UserID, input.DayStart, input.DeviceID,
+			input.ClientIP); err != nil {
+			return nil, err
+		}
 	}
 
 	draw, err := scanLotteryDraw(tx.QueryRow(ctx, `SELECT `+lotteryDrawColumns+` `+lotteryDrawJoins+` WHERE d.id = $1`, drawID))
@@ -877,6 +906,7 @@ WHERE activity_id = $1 AND user_id = $2`, activity.ID, input.UserID,
 		return nil, err
 	}
 	tx = nil
+	r.noteLotteryDraw(activity.ID, input.DayStart, prize.Kind != lotterydomain.KindNone, lotteryIssuedPoints(prize, conversion))
 	return &LotteryDrawOutcome{Draw: *draw, Activity: *activity, Prizes: prizes}, nil
 }
 
@@ -914,7 +944,7 @@ func recordLotteryConversionTx(ctx context.Context, tx pgx.Tx, appID, userID int
 // 硬保底到点且保底奖这一次有资格时直接给它；否则按方案的最终权重抽（gonum 加权抽样，
 // 随机源是 crypto/rand 播种的 ChaCha8）。选中后占每日限量与库存，被并发抢光时改发兜底奖，保底不算触发。
 func pickLotteryPrize(ctx context.Context, tx pgx.Tx, activity lotterydomain.Activity, prizes []lotterydomain.Prize,
-	state lotterydomain.DrawState, dayStart time.Time) (lotterydomain.Prize, lotterydomain.DrawPlan, error) {
+	state lotterydomain.DrawState, dayStart time.Time, userID int64) (lotterydomain.Prize, lotterydomain.DrawPlan, error) {
 	plan := lotterydomain.PlanDraw(activity, activity.Strategy, prizes, state)
 	if plan.RiskReport.Denied() {
 		return lotterydomain.Prize{}, plan, &LotteryRiskDeniedError{Plan: plan}
@@ -940,11 +970,12 @@ func pickLotteryPrize(ctx context.Context, tx pgx.Tx, activity lotterydomain.Act
 		}
 	}
 	chosen := prizes[index]
-	reserved, err := reserveLotteryPrize(ctx, tx, chosen, dayStart)
+	// 限量奖品在事务里从库存分片取一份（lottery_stock_repository.go）：分片按人错开，同一时刻抽中它的人分散在十几行上
+	ok, err := reserveLotteryPrizeTx(ctx, tx, chosen, dayStart, userID)
 	if err != nil {
 		return chosen, plan, err
 	}
-	if !reserved {
+	if !ok {
 		return fallback(lotterydomain.FallbackContended)
 	}
 	plan.Pity, plan.Picked = pity, chosen.ID
@@ -1373,7 +1404,7 @@ WHERE appid = $1 AND activity_id = $2 AND created_at >= $3 GROUP BY source ORDER
 	}
 
 	// 现存奖品按位置列出（含窗口内一次没抽中的），已删除奖品的记录按快照名字归到末尾
-	rows, err = r.pool.Query(ctx, `SELECT p.id, p.name, p.kind, p.quantity, p.used,
+	rows, err = r.pool.Query(ctx, `SELECT p.id, p.name, p.kind, p.quantity, `+lotteryPrizeUsedSQL+`,
   (SELECT COUNT(*) FROM lottery_draws d WHERE d.prize_id = p.id AND d.created_at >= $3),
   (SELECT COUNT(*) FROM lottery_draws d WHERE d.prize_id = p.id AND d.created_at >= $3 AND d.conversion IS NOT NULL)
 FROM lottery_prizes p WHERE p.activity_id = $2 AND EXISTS (SELECT 1 FROM lottery_activities a WHERE a.id = $2 AND a.appid = $1)

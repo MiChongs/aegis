@@ -79,6 +79,8 @@ type APIApp struct {
 	RegisterIP *service.RegisterIPService
 	// Leaderboard 积分排行榜：后台循环结算到期的周期榜并发放奖励，退出时必须 Stop
 	Leaderboard *service.LeaderboardService
+	// Lottery 抽奖：启动时补齐计数（只做一次），后台定时清理过期的风控聚集键
+	Lottery *service.LotteryService
 	// ItemGrant 物品发放：后台循环执行到点的定时规则、接管中断的执行，退出时必须 Stop
 	ItemGrant *service.ItemGrantService
 	// Level 等级体系：后台循环发放达成奖励、发送升级通知、接管中断的重算任务，退出时必须 Stop
@@ -571,6 +573,9 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 归属地走 LocationService：未采购外部 IP 情报源时，geo_* 系列变量若恒为空，
 	// 「归属地异常」这类规则配了也永不命中 —— 那是最典型的"看起来防住了"。
 	riskService.SetLocationService(locationService)
+	if err := riskService.AttachTrailStream(natsConn); err != nil {
+		log.Warn("风控留痕未接上 JetStream，改为直接写库", zap.Error(err))
+	}
 	authService.SetRiskService(riskService)
 	inviteService.SetRiskService(riskService)
 	lotteryService.SetRiskService(riskService)
@@ -873,6 +878,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		AccountDeletion:    accountDeletionService,
 		RegisterIP:         registerIPService,
 		Leaderboard:        leaderboardService,
+		Lottery:            lotteryService,
 		ItemGrant:          itemGrantService,
 		Level:              levelService,
 		AIGateway:          aiGatewayService,
@@ -919,6 +925,12 @@ func (a *APIApp) Start(ctx context.Context) error {
 	}
 	if a.Leaderboard != nil {
 		a.Leaderboard.Start(ctx)
+	}
+	if a.Lottery != nil {
+		a.Lottery.Start(ctx)
+	}
+	if a.Risk != nil {
+		a.Risk.Start(ctx)
 	}
 	if a.ItemGrant != nil {
 		a.ItemGrant.Start(ctx)
@@ -994,6 +1006,13 @@ func (a *APIApp) close(ctx context.Context) {
 	}
 	if a.RegisterIP != nil {
 		a.RegisterIP.Stop(ctx)
+	}
+	// 风控留痕在队列里攒批写入：在途请求结束后把剩下的写完
+	if a.Risk != nil {
+		a.Risk.Close(ctx)
+	}
+	if a.Lottery != nil {
+		a.Lottery.Close(ctx)
 	}
 	if a.Leaderboard != nil {
 		a.Leaderboard.Stop()
