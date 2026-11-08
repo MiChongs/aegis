@@ -6,13 +6,22 @@
 #
 #   docker build -f deploy/docker/risk-cep.Dockerfile -t aegis-risk-cep .
 #
+# MAVEN_MIRROR：Maven Central 的镜像地址（mirrorOf central），留空直连。HK 服务器到 repo.maven.apache.org
+# 的 IPv4 连接会被重置，生产编排传 Google 的 Maven Central 亚洲镜像。
+#
 FROM maven:3-eclipse-temurin-21 AS build
 WORKDIR /src
+ARG MAVEN_MIRROR=
+RUN if [ -n "$MAVEN_MIRROR" ]; then \
+      printf '<settings><mirrors><mirror><id>central-mirror</id><mirrorOf>central</mirrorOf><url>%s</url></mirror></mirrors></settings>\n' "$MAVEN_MIRROR"; \
+    else \
+      printf '<settings/>\n'; \
+    fi > /src/mvn-settings.xml
 COPY services/risk/cep/pom.xml ./
-RUN --mount=type=cache,target=/root/.m2,sharing=locked mvn -q -B dependency:go-offline -DexcludeScope=test || true
+RUN --mount=type=cache,target=/root/.m2,sharing=locked mvn -s /src/mvn-settings.xml -q -B dependency:go-offline -DexcludeScope=test || true
 COPY services/risk/cep/src ./src
 # 单测在 MiniCluster 上跑模式编译（几秒），构建时一起跑
-RUN --mount=type=cache,target=/root/.m2,sharing=locked mvn -q -B package
+RUN --mount=type=cache,target=/root/.m2,sharing=locked mvn -s /src/mvn-settings.xml -q -B package
 
 FROM flink:2.3.0-java21
 # 检查点与保存点目录：命名卷第一次挂载时沿用镜像里这个目录的属主，flink 用户才写得进去

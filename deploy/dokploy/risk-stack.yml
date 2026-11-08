@@ -498,6 +498,9 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/risk-cep.Dockerfile
+      args:
+        # 本机到 repo.maven.apache.org 的 IPv4 连接会被重置，走 Google 的 Maven Central 亚洲镜像
+        MAVEN_MIRROR: ${RISK_MAVEN_MIRROR:-https://maven-central-asia.storage-download.googleapis.com/maven2}
     image: aegis-risk-cep:latest
     restart: unless-stopped
     logging: *logging
