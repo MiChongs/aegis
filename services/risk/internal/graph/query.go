@@ -178,8 +178,9 @@ func (c *Client) ExpandWith(center string, o ExpandOptions) (*Subgraph, error) {
 		for i, v := range frontier {
 			quoted[i] = Quote(v)
 		}
+		// 超出条数时保留最近出现的关系（否则截断是随机的，几十个历史 IP 会把邀请、设备这类关系挤掉）
 		stmt := fmt.Sprintf(
-			"GO FROM %s OVER %s BIDIRECT%s YIELD src(edge) AS s, dst(edge) AS d, type(edge) AS t, properties(edge).first_seen AS f, properties(edge).last_seen AS l, properties(edge).count AS c | LIMIT %d",
+			"GO FROM %s OVER %s BIDIRECT%s YIELD src(edge) AS s, dst(edge) AS d, type(edge) AS t, properties(edge).first_seen AS f, properties(edge).last_seen AS l, properties(edge).count AS c | ORDER BY $-.l DESC | LIMIT %d",
 			strings.Join(quoted, ", "), edges, where, fanout*len(frontier))
 		rs, err := c.Exec(stmt)
 		if err != nil {
