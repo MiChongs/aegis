@@ -469,7 +469,8 @@ func (s *Store) ListEntries(ctx context.Context, q ListQuery) ([]lists.Entry, in
 		add("value LIKE ?", strings.ReplaceAll(strings.ReplaceAll(q.Value, `\`, `\\`), "%", `\%`)+"%")
 	}
 	if q.AppID != nil {
-		add("app_id = ?", *q.AppID)
+		// 按应用看名单时，全平台条目（app_id = 0）对这个应用同样生效，一并列出
+		add("(app_id = ? OR app_id = 0)", *q.AppID)
 	}
 	if q.Source != "" {
 		add("source = ?", q.Source)

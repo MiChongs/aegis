@@ -374,19 +374,22 @@ export const navigationGroups: NavigationGroup[] = [
         ]
       },
       {
-        title: "风控中心",
+        title: "风控平台",
         href: "/risk-control",
         icon: ShieldAlert,
-        summary: "风险规则与评估",
+        summary: "多场景决策、特征、名单、行为模式与关系图",
         // 首项必须是该页默认 Tab，否则无 ?tab= 时高亮会错位
         children: [
-          { title: "风控大盘", tab: "dashboard" },
-          { title: "评估记录", tab: "assessments" },
-          { title: "人工复核", tab: "reviews" },
-          { title: "规则策略", tab: "rules" },
-          { title: "名单库", tab: "lists" },
-          { title: "实体画像", tab: "entities" },
-          { title: "规则模拟", tab: "simulator" }
+          { title: "总览", tab: "overview" },
+          { title: "场景", tab: "scenes" },
+          { title: "特征", tab: "features" },
+          { title: "名单", tab: "lists" },
+          { title: "行为模式", tab: "patterns" },
+          { title: "模型", tab: "models" },
+          { title: "决策流水", tab: "decisions" },
+          { title: "复核", tab: "cases" },
+          { title: "关系图谱", tab: "graph" },
+          { title: "系统", tab: "system" }
         ]
       },
       {

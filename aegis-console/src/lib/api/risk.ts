@@ -1,158 +1,524 @@
 import { apiRequest, buildQuery } from "./client";
-import type {
-  RiskRule, RiskRuleDetail, RiskAssessment, RiskAssessmentDetail, RiskDeviceFingerprint,
-  RiskDeviceDetail, IPRiskRecord, IPRiskDetail, RiskAction, RiskDashboard, RiskEvalResult,
-  RiskMetadata, RiskExprValidation, RiskAssessmentQuery, RiskEntityQuery, RiskSimulatePayload,
-  RiskRuleInput, RiskActionInput, RiskListEnvelope, RiskListEntry, RiskListQuery,
-  RiskListCreateInput, RiskListUpdateInput, RiskListImportResult, RiskListCheckInput,
-  RiskAccountProfile, RiskAccountQuery, RiskAccountDetail, RiskDisposeInput, RiskEnforcement,
-  RiskReviewInput, RiskTemplateDetail, RiskTemplateApplyInput, RiskTemplateApplyResult,
-} from "./types";
+
+/**
+ * 风控平台管理端 API（docs/risk-platform.md）。
+ *
+ * 主服务把 /api/admin/system/risk/* 原样转发到独立服务 risk-admin 的 /v1/*。
+ * 类型逐字段对齐 services/risk 里的 Go 结构（bundle / store / admin 包的 JSON 标签）。
+ * 读接口对能进系统设置的管理员开放，写接口限超级管理员。
+ */
 
 const P = "/api/admin/system/risk";
 
-/**
- * 后端分页一律返回 `{ list, total }`（与平台其余管理端接口一致）。
- * 这一层负责把它转成前端惯用的 `{ items, total }` —— 重构前前端直接把响应
- * 当成 `{ items }` 用，于是评估记录 / 待复核 / 设备 / IP 四个页签
- * 无论后端有多少数据都永远显示空列表。
- */
-async function paged<T>(promise: Promise<RiskListEnvelope<T>>): Promise<{ items: T[]; total: number }> {
-  const data = await promise;
-  return { items: data?.list ?? [], total: data?.total ?? 0 };
+type Q = Record<string, string | number | boolean | undefined | null>;
+
+const get = <T,>(token: string, path: string, query?: Q) => apiRequest<T>(`${P}${path}${query ? buildQuery(query) : ""}`, { token });
+const send = <T,>(token: string, method: string, path: string, body?: unknown) =>
+  apiRequest<T>(`${P}${path}`, { method, token, body: body === undefined ? undefined : JSON.stringify(body) });
+
+export interface Paged<T> { list: T[]; total: number; page: number; pageSize: number }
+
+// ── 枚举 ──
+
+export type RiskAction = "pass" | "review" | "captcha" | "block" | "ban";
+export type RiskLevel = "none" | "low" | "medium" | "high" | "critical";
+export type RiskEntity = "user" | "account" | "device" | "ip" | "ip_subnet" | "phone" | "email_domain" | "app";
+export type ListType = "ip" | "cidr" | "device" | "account" | "user" | "email_domain" | "phone_prefix" | "asn" | "country" | "ua_keyword";
+export type ListKind = "block" | "allow" | "watch";
+export type FeatureKind = "velocity" | "stream" | "graph" | "vector" | "derived";
+export type Agg = "count" | "distinct" | "sum" | "max" | "avg";
+export type CondOp = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "not_in";
+export type RuleMode = "enforce" | "observe";
+export type FieldType = "string" | "number" | "bool" | "list" | "object";
+export type EnforceTarget = "device" | "ip" | "account" | "firewall";
+
+// ── 元数据 ──
+
+export interface RiskVariable { name: string; type: string; label: string }
+export interface RiskEventType { type: string; label: string }
+
+export interface RiskMeta {
+  variables: RiskVariable[];
+  entities: RiskEntity[];
+  dimensions: string[];
+  listTypes: ListType[];
+  eventTypes: RiskEventType[];
+  graphTemplates: string[];
+  streamColumns: string[];
+  actions: RiskAction[];
+  levels: RiskLevel[];
+  guardPolicy: string;
+  defaultBands: ScoreBand[];
+  graphEdges: string[];
 }
 
-type QueryParams = Record<string, string | number | boolean | undefined | null>;
+// ── 场景 ──
 
-const json = (method: string, token: string, body?: unknown) => ({
-  method, token, body: body === undefined ? undefined : JSON.stringify(body),
-});
+export interface SceneField { key: string; label: string; type: FieldType; required?: boolean }
+export interface Enforcement { targets: EnforceTarget[]; durationSeconds: number; autoBanAllowed: boolean }
+export interface ScoreBand { min: number; max: number; action: RiskAction; level: RiskLevel }
 
-// ── 自描述目录 ──
-export const getRiskMetadata = (token: string) =>
-  apiRequest<RiskMetadata>(`${P}/metadata`, { token });
+export interface Scene {
+  key: string;
+  name: string;
+  description?: string;
+  appIds?: number[];
+  fields?: SceneField[];
+  timeoutMs: number;
+  failMode: "open" | "closed";
+  captchaSupported: boolean;
+  defaultAction: RiskAction | "";
+  enforcement: Enforcement;
+  listTypes: ListType[];
+  features: string[];
+  models: string[];
+  bands: ScoreBand[];
+  flow?: JdmGraph | null;
+  policy: string;
+  builtin: boolean;
+  enabled: boolean;
+  updatedAt: string;
+  updatedBy: string;
+}
 
-export const validateRiskExpression = (token: string, expression: string) =>
-  apiRequest<RiskExprValidation>(`${P}/expression/validate`, json("POST", token, { expression }));
+export interface ReleaseState {
+  scene: string;
+  primaryId: number | null;
+  candidateId: number | null;
+  canaryPercent: number;
+  shadow: boolean;
+  updatedAt: string;
+  updatedBy: string;
+}
 
-// ── 大盘 ──
-export const getRiskDashboard = (token: string, start: string, end: string, appId?: number) =>
-  apiRequest<RiskDashboard>(`${P}/dashboard${buildQuery({ start, end, appId })}`, { token });
+export interface SceneView extends Scene { state?: ReleaseState; ruleCount?: number }
+
+/** zen JDM 决策图（只建模本控制台编辑器用到的部分，其余字段原样保留） */
+export interface JdmNode {
+  id: string;
+  type: "inputNode" | "outputNode" | "decisionTableNode" | "expressionNode" | "functionNode" | "switchNode" | string;
+  name: string;
+  position: { x: number; y: number };
+  content?: Record<string, unknown>;
+}
+export interface JdmEdge { id: string; sourceId: string; targetId: string; type: "edge"; sourceHandle?: string }
+export interface JdmGraph { nodes: JdmNode[]; edges: JdmEdge[] }
+
+export interface DecisionTableColumn { id: string; name: string; field: string; type: "expression" }
+export interface DecisionTableContent {
+  hitPolicy: "first" | "collect";
+  inputs: DecisionTableColumn[];
+  outputs: DecisionTableColumn[];
+  rules: Array<Record<string, string> & { _id: string; _description?: string }>;
+}
+
+// ── 特征 ──
+
+export interface Condition { field: string; op: CondOp; value: unknown }
+export interface VelocityDef { windowSeconds: number; agg: "count" | "distinct"; distinctOf?: RiskEntity; allScenes?: boolean }
+export interface StreamDef { events: string[]; scenes?: string[]; agg: Agg; field?: string; windowSeconds: number; conditions?: Condition[] }
+export interface GraphDef { template: string; withinDays?: number; cacheTtl?: number }
+export interface VectorDef { collection: string; topK: number; minScore: number; output: "similar_count" | "similar_banned" | "max_score" }
+
+export interface Feature {
+  key: string;
+  name: string;
+  kind: FeatureKind;
+  entity?: RiskEntity | "";
+  global?: boolean;
+  default: number;
+  velocity?: VelocityDef;
+  stream?: StreamDef;
+  graph?: GraphDef;
+  vector?: VectorDef;
+  expr?: string;
+  description?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
 
 // ── 规则 ──
-export const listRiskRules = (token: string, scene?: string, appId?: number) =>
-  apiRequest<RiskRule[] | null>(`${P}/rules${buildQuery({ scene, appId })}`, { token }).then((r) => r ?? []);
 
-export const getRiskRule = (token: string, id: number, start?: string, end?: string) =>
-  apiRequest<RiskRuleDetail>(`${P}/rules/${id}${buildQuery({ start, end })}`, { token });
+export interface Rule {
+  id: number;
+  scene: string; // * = 全部场景
+  key: string;
+  name: string;
+  description?: string;
+  dimension: string;
+  expr: string;
+  score: number;
+  mode: RuleMode;
+  decision?: RiskAction | "";
+  priority: number;
+  reason?: string;
+  tags?: string[];
+  enabled: boolean;
+  templateKey?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
 
-export const createRiskRule = (token: string, data: RiskRuleInput) =>
-  apiRequest<RiskRule>(`${P}/rules`, json("POST", token, data));
+export interface RuleTemplate { key: string; name: string; description: string; scenes: string[]; rules: Rule[] }
 
-export const updateRiskRule = (token: string, id: number, data: Partial<RiskRuleInput>) =>
-  apiRequest<void>(`${P}/rules/${id}`, json("PUT", token, data));
+// ── 模型 ──
 
-export const deleteRiskRule = (token: string, id: number) =>
-  apiRequest<void>(`${P}/rules/${id}`, { method: "DELETE", token });
+export interface RiskModel {
+  key: string;
+  name: string;
+  format: "lightgbm" | "xgboost";
+  objectKey: string;
+  checksum: string;
+  inputs: string[];
+  transform: boolean;
+  description?: string;
+  nFeatures: number;
+  sizeBytes: number;
+  updatedAt: string;
+  updatedBy: string;
+}
 
-// ── 规则模板 ──
-export const listRiskTemplates = (token: string, appId?: number) =>
-  apiRequest<RiskTemplateDetail[] | null>(`${P}/templates${buildQuery({ appId })}`, { token }).then((r) => r ?? []);
+// ── 名单 ──
 
-export const applyRiskTemplate = (token: string, data: RiskTemplateApplyInput) =>
-  apiRequest<RiskTemplateApplyResult>(`${P}/templates/apply`, json("POST", token, data));
+export interface ListEntry {
+  id: string;
+  type: ListType;
+  value: string;
+  kind: ListKind;
+  app?: number;
+  scenes?: string[];
+  reason?: string;
+  source?: string;
+  by?: string;
+  decision?: string;
+  exp?: string | null;
+  at: string;
+}
 
-// ── 模拟 / 评估 ──
-export const simulateRisk = (token: string, data: RiskSimulatePayload) =>
-  apiRequest<RiskEvalResult>(`${P}/simulate`, json("POST", token, data));
+export interface ListHit { listType: ListType; kind: ListKind; value: string; listKey?: string; reason?: string }
 
-export const simulateRule = (token: string, id: number, data: RiskSimulatePayload) =>
-  apiRequest<RiskEvalResult>(`${P}/rules/${id}/simulate`, json("POST", token, data));
+// ── 行为模式（Flink CEP）──
 
-export const replayAssessment = (token: string, id: number) =>
-  apiRequest<RiskEvalResult>(`${P}/assessments/${id}/replay`, { method: "POST", token });
+export interface CepStep {
+  name: string;
+  events: string[];
+  scenes?: string[];
+  actions?: string[];
+  conditions?: Condition[];
+  times: number;
+  contiguous?: boolean;
+  distinct?: string;
+  absent?: boolean;
+}
+export interface CepAction { kind: "list_add" | "case"; target?: "device" | "ip" | "account" | "user"; listKind?: "block" | "watch"; durationSeconds?: number }
+export interface CepPattern {
+  key: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  keyBy: "user" | "device" | "ip" | "account";
+  appIds?: number[];
+  steps: CepStep[];
+  withinSeconds: number;
+  severity: "low" | "medium" | "high" | "critical";
+  actions: CepAction[];
+  updatedAt?: string;
+  updatedBy?: string;
+}
 
-// ── 评估记录 ──
-export const listAssessments = (token: string, params?: RiskAssessmentQuery) =>
-  paged(apiRequest<RiskListEnvelope<RiskAssessment>>(`${P}/assessments${buildQuery(params as QueryParams)}`, { token }));
+// ── 发布 ──
 
-export const getAssessment = (token: string, id: number) =>
-  apiRequest<RiskAssessmentDetail>(`${P}/assessments/${id}`, { token });
+export interface Release {
+  id: number;
+  scene: string;
+  version: string;
+  bundle?: Record<string, unknown>;
+  checksum: string;
+  note: string;
+  publishedBy: string;
+  publishedAt: string;
+}
+export interface CompileIssue { stage: string; key?: string; message: string }
+export interface ValidateResult { ok: boolean; issues: CompileIssue[]; features: number; rules: number; models: number }
+export interface StreamSyncResult { created: string[] | null; dropped: string[] | null; failed: Record<string, string> }
+export interface PublishResult { release: { id: number; version: string; checksum: string }; state: ReleaseState; streams: StreamSyncResult }
 
-export const purgeAssessments = (token: string, days: number) =>
-  apiRequest<{ removed: number; before: string }>(`${P}/assessments`, json("DELETE", token, { days }));
+// ── 模拟与轨迹 ──
 
-// ── 复核 ──
-export const listPendingReviews = (token: string, params?: { page?: number; pageSize?: number; appId?: number }) =>
-  paged(apiRequest<RiskListEnvelope<RiskAssessment>>(`${P}/reviews/pending${buildQuery(params as QueryParams)}`, { token }));
+export interface SimRequest {
+  appId?: number;
+  userId?: number;
+  account?: string;
+  ip?: string;
+  userAgent?: string;
+  phone?: string;
+  email?: string;
+  amount?: number;
+  targetUserId?: number;
+  captchaPassed?: boolean;
+  captchaUnavailable?: boolean;
+  device?: { id?: string; platform?: string; brand?: string; model?: string; osVersion?: string; emulator?: boolean; rooted?: boolean; screen?: string };
+  geo?: { country?: string; province?: string; city?: string; isp?: string; asn?: number; proxy?: boolean; vpn?: boolean; tor?: boolean; datacenter?: boolean; ipScore?: number };
+  extra?: Record<string, unknown>;
+}
 
-export const reviewAssessment = (token: string, id: number, data: RiskReviewInput) =>
-  apiRequest<void>(`${P}/assessments/${id}/review`, json("POST", token, data));
+export interface RpcRuleHit { key: string; name: string; dimension: string; score: number; mode: RuleMode; decision?: string; reason?: string }
+export interface EvalResponse {
+  decision_id: string;
+  action: RiskAction;
+  risk_level: RiskLevel;
+  score: number;
+  reasons?: string[];
+  hits?: RpcRuleHit[];
+  dimension_scores?: Record<string, number>;
+  model_scores?: Record<string, number>;
+  list_hits?: Array<{ list_type: string; kind: string; value: string; reason?: string }>;
+  release: string;
+  latency_us: number;
+  decided_by: string;
+  commands?: Array<{ id: string; kind: string; target: string; value: string; duration_seconds?: number; reason?: string }>;
+  degraded?: string[];
+}
 
-// ── 处置 ──
-export const disposeRisk = (token: string, data: RiskDisposeInput) =>
-  apiRequest<{ enforcement: RiskEnforcement[] | null }>(`${P}/dispose`, json("POST", token, data));
+export interface TraceStage {
+  stage: string;
+  micros: number;
+  note?: string;
+  degraded?: boolean;
+  error?: string;
+  result?: unknown;
+  sources?: Array<{ source: string; micros: number; error?: string }>;
+}
+export interface TraceRule { key: string; name: string; dimension: string; score: number; mode: RuleMode; decision?: string; reason?: string; hit: boolean; error?: string }
+export interface Trace {
+  stages: TraceStage[];
+  env: Record<string, unknown>;
+  features: Record<string, number>;
+  rules: TraceRule[];
+  flow?: unknown;
+  policy?: Record<string, unknown>;
+  listHits?: ListHit[];
+  commands?: unknown[];
+  decidedBy?: string;
+  degraded?: string[];
+}
 
-// ── 名单库 ──
-export const listRiskLists = (token: string, params?: RiskListQuery) =>
-  paged(apiRequest<RiskListEnvelope<RiskListEntry>>(`${P}/lists${buildQuery(params as QueryParams)}`, { token }));
+export interface SimulateInput { request: SimRequest; draft: boolean; mode: "fixed" | "live"; features?: Record<string, number>; lists?: ListHit[] }
+export interface SimulateResult { result: EvalResponse; trace: Trace | null; features?: Record<string, number>; listHits?: ListHit[]; commands?: unknown[] }
 
-export const createRiskListEntries = (token: string, data: RiskListCreateInput) =>
-  apiRequest<RiskListImportResult>(`${P}/lists`, json("POST", token, data));
+// ── 流水与分析 ──
 
-export const updateRiskListEntry = (token: string, id: number, data: RiskListUpdateInput) =>
-  apiRequest<RiskListEntry>(`${P}/lists/${id}`, json("PUT", token, data));
+export interface DecisionRow {
+  id: string;
+  ts: string;
+  appId: number;
+  scene: string;
+  userId: number;
+  account: string;
+  ip: string;
+  deviceId: string;
+  country: string;
+  city: string;
+  action: RiskAction;
+  level: RiskLevel;
+  score: number;
+  release: string;
+  hits: string[];
+  reasons: string[];
+  latencyUs: number;
+  shadow: number;
+}
 
-export const deleteRiskListEntry = (token: string, id: number) =>
-  apiRequest<void>(`${P}/lists/${id}`, { method: "DELETE", token });
+export interface DecisionDetail {
+  decision: DecisionRow;
+  ua: string;
+  province: string;
+  isp: string;
+  asn: number;
+  features: Record<string, number>;
+  models: Record<string, number>;
+  extra: Record<string, unknown> | null;
+  trace: Trace | null;
+  device: Record<string, string> | null;
+}
 
-export const batchDeleteRiskListEntries = (token: string, ids: number[]) =>
-  apiRequest<{ removed: number }>(`${P}/lists/batch-delete`, json("POST", token, { ids }));
+export interface KV { key: string; count: number }
+export interface DashboardData {
+  from: string;
+  to: string;
+  byAction?: KV[];
+  byScene?: Array<{ scene: string; action: RiskAction; count: number }>;
+  series?: Array<{ t: string; action: RiskAction; count: number }>;
+  latency?: { avg: number; p50: number; p99: number };
+  topRules?: KV[];
+  topIPs?: KV[];
+  topCountries?: KV[];
+  alerts?: KV[];
+  pendingCases?: number;
+}
 
-export const checkRiskLists = (token: string, data: RiskListCheckInput) =>
-  apiRequest<{ hits: RiskListEntry[] | null }>(`${P}/lists/check`, json("POST", token, data));
+export interface EventRow {
+  id: string; ts: string; type: string; scene: string; appId: number; userId: number; account: string; ip: string;
+  deviceId: string; country: string; city: string; amount: number; targetUserId: number; props: string;
+}
 
-// ── 账号画像 ──
-export const listRiskAccounts = (token: string, params?: RiskAccountQuery) =>
-  paged(apiRequest<RiskListEnvelope<RiskAccountProfile>>(`${P}/accounts${buildQuery(params as QueryParams)}`, { token }));
+export interface AlertRow {
+  id: string; ts: string; appId: number; pattern: string; patternName: string; entity: string; value: string;
+  userId: number; deviceId: string; ip: string; severity: string; eventIds: string[]; detail: string;
+}
 
-export const getRiskAccountDetail = (token: string, params: { appId?: number | null; account?: string; userId?: number | null }) =>
-  apiRequest<RiskAccountDetail>(`${P}/accounts/detail${buildQuery(params as QueryParams)}`, { token });
+export interface RiskCase {
+  id: number; decisionId: string; appId: number; scene: string; userId: number; account: string; ip: string; deviceId: string;
+  action: RiskAction; score: number; reasons: string[]; source: string; status: "pending" | "closed"; verdict: "" | "approve" | "reject";
+  reviewer: string; note: string; createdAt: string; reviewedAt: string | null;
+}
 
-// ── 设备指纹 ──
-export const listDevices = (token: string, params?: RiskEntityQuery) =>
-  paged(apiRequest<RiskListEnvelope<RiskDeviceFingerprint>>(`${P}/devices${buildQuery(params as QueryParams)}`, { token }));
+export interface DisposeInput {
+  appId?: number; userId?: number; account?: string; deviceId?: string; ip?: string;
+  kind: ListKind; targets: Array<"device" | "ip" | "account" | "user" | "ban_account" | "firewall">; durationSeconds: number; reason: string;
+}
 
-export const getDeviceDetail = (token: string, deviceId: string) =>
-  apiRequest<RiskDeviceDetail>(`${P}/devices/${encodeURIComponent(deviceId)}`, { token });
+// ── 关系图与画像 ──
 
-// 后端 DTO 绑定的字段名是 `tag`（不是 `riskTag`）；写错会被 binding:"required" 挡下来
-// 并返回 400 —— 重构前前端发的正是 `riskTag`，于是"更新标记"这个动作从来没成功过。
-export const updateDeviceTag = (token: string, id: number, tag: string, note?: string) =>
-  apiRequest<void>(`${P}/devices/${id}/tag`, json("PUT", token, { tag, note }));
+export type GraphNodeKind = "user" | "account" | "device" | "ip" | "subnet" | "phone" | "email";
+export interface GraphNode { id: string; kind: GraphNodeKind; label: string; props: Record<string, unknown>; depth: number }
+export interface GraphLink { source: string; target: string; kind: string; firstSeen: number; lastSeen: number; count: number }
+export interface Subgraph { center: string; nodes: GraphNode[]; links: GraphLink[]; truncated: boolean }
 
-// ── IP 风险库 ──
-export const listIPs = (token: string, params?: RiskEntityQuery) =>
-  paged(apiRequest<RiskListEnvelope<IPRiskRecord>>(`${P}/ips${buildQuery(params as QueryParams)}`, { token }));
+export interface EntityUse {
+  value: string; lastSeen: string; firstSeen: string; count: number; country: string; city: string;
+  lists: ListEntry[] | null; fingerprint?: Record<string, string>; similar?: Array<{ deviceId: string; userId: number; banned: boolean; score: number }>;
+}
 
-export const getIPDetail = (token: string, ip: string) =>
-  apiRequest<IPRiskDetail>(`${P}/ips/${encodeURIComponent(ip)}`, { token });
+export interface UserRiskProfile {
+  appId: number;
+  userId: number;
+  days: number;
+  graph?: Subgraph;
+  timeline?: Array<{ day: string; action: RiskAction; count: number; maxScore: number; avgScore: number }>;
+  summary?: {
+    total: number; blocked: number; reviewed: number; captcha: number; maxScore: number; avgScore: number;
+    scenes: number; devices: number; ips: number; firstSeen: string; lastSeen: string;
+  };
+  scenes?: KV[];
+  rules?: KV[];
+  decisions?: DecisionRow[];
+  events?: EventRow[];
+  alerts?: AlertRow[];
+  features?: Array<{ scene: string; ts: string; features: Record<string, number>; models: Record<string, number> }>;
+  cases?: RiskCase[];
+  devices: EntityUse[];
+  ips: EntityUse[];
+  lists: ListEntry[];
+  errors: Record<string, string>;
+}
 
-export const updateIPTag = (token: string, id: number, tag: string, note?: string) =>
-  apiRequest<void>(`${P}/ips/${id}/tag`, json("PUT", token, { tag, note }));
+export interface RiskStatus {
+  components: Record<string, string>;
+  decision: { instance: string; scenes?: Array<{ scene: string; version: string; checksum: string; loaded_at: number; candidate?: string; canary_percent?: number; shadow?: boolean; error?: string }>; dependencies?: Record<string, string> } | null;
+  spoolPending: number;
+}
 
-export const refreshIPReputation = (token: string, ip: string) =>
-  apiRequest<IPRiskRecord>(`${P}/ips/${encodeURIComponent(ip)}/refresh`, { method: "POST", token });
+export interface AuditEntry { id: number; operator: string; action: string; target: string; detail: unknown; at: string }
 
-// ── 处置策略 ──
-export const listRiskActions = (token: string, scene?: string, appId?: number) =>
-  apiRequest<RiskAction[] | null>(`${P}/actions${buildQuery({ scene, appId })}`, { token }).then((r) => r ?? []);
+// ════════════════════════ 接口 ════════════════════════
 
-export const createRiskAction = (token: string, data: RiskActionInput) =>
-  apiRequest<RiskAction>(`${P}/actions`, json("POST", token, data));
+export const getRiskMeta = (t: string) => get<RiskMeta>(t, "/meta");
+export const validateExpr = (t: string, expr: string) => send<{ ok: boolean; error?: string }>(t, "POST", "/expr/validate", { expr });
 
-export const updateRiskAction = (token: string, id: number, data: Partial<RiskActionInput>) =>
-  apiRequest<void>(`${P}/actions/${id}`, json("PUT", token, data));
+export const listScenes = (t: string) => get<SceneView[]>(t, "/scenes").then((r) => r ?? []);
+export const getScene = (t: string, key: string) => get<SceneView>(t, `/scenes/${encodeURIComponent(key)}`);
+export const saveScene = (t: string, key: string, scene: Partial<Scene>) => send<Scene>(t, "PUT", `/scenes/${encodeURIComponent(key)}`, scene);
+export const deleteScene = (t: string, key: string) => send<void>(t, "DELETE", `/scenes/${encodeURIComponent(key)}`);
+export const getDraftBundle = (t: string, key: string) => get<Record<string, unknown>>(t, `/scenes/${encodeURIComponent(key)}/bundle`);
+export const validateScene = (t: string, key: string) => send<ValidateResult>(t, "POST", `/scenes/${encodeURIComponent(key)}/validate`);
+/**
+ * 决策服务的响应是 protobuf 结构直接转的 JSON：值为 0 / 空的字段会被省掉（omitempty），
+ * 这里补回默认值，组件里不必处处判空。
+ */
+export function normalizeEval(r: Partial<EvalResponse> | undefined): EvalResponse {
+  return {
+    decision_id: r?.decision_id ?? "",
+    action: r?.action ?? "pass",
+    risk_level: r?.risk_level ?? "none",
+    score: r?.score ?? 0,
+    reasons: r?.reasons ?? [],
+    hits: (r?.hits ?? []).map((h) => ({ ...h, score: h.score ?? 0, mode: h.mode ?? "enforce" })),
+    dimension_scores: r?.dimension_scores ?? {},
+    model_scores: r?.model_scores ?? {},
+    list_hits: r?.list_hits ?? [],
+    release: r?.release ?? "",
+    latency_us: r?.latency_us ?? 0,
+    decided_by: r?.decided_by ?? "default",
+    commands: r?.commands ?? [],
+    degraded: r?.degraded ?? [],
+  };
+}
 
-export const deleteRiskAction = (token: string, id: number) =>
-  apiRequest<void>(`${P}/actions/${id}`, { method: "DELETE", token });
+export const simulateScene = (t: string, key: string, input: SimulateInput) =>
+  send<SimulateResult>(t, "POST", `/scenes/${encodeURIComponent(key)}/simulate`, input).then((res) => ({ ...res, result: normalizeEval(res?.result) }));
+export const publishScene = (t: string, key: string, input: { note: string; mode: "full" | "canary" | "shadow"; canaryPercent?: number }) =>
+  send<PublishResult>(t, "POST", `/scenes/${encodeURIComponent(key)}/publish`, input);
+export const promoteScene = (t: string, key: string) => send<ReleaseState>(t, "POST", `/scenes/${encodeURIComponent(key)}/promote`);
+export const rollbackScene = (t: string, key: string, releaseId: number) => send<ReleaseState>(t, "POST", `/scenes/${encodeURIComponent(key)}/rollback`, { releaseId });
+export const withdrawScene = (t: string, key: string) => send<ReleaseState>(t, "POST", `/scenes/${encodeURIComponent(key)}/withdraw`);
+export const setSceneTraffic = (t: string, key: string, input: { canaryPercent?: number; shadow?: boolean; drop?: boolean }) =>
+  send<ReleaseState>(t, "POST", `/scenes/${encodeURIComponent(key)}/traffic`, input);
+export const listReleases = (t: string, key: string) => get<{ releases: Release[]; state?: ReleaseState }>(t, `/scenes/${encodeURIComponent(key)}/releases`);
+export const getRelease = (t: string, id: number) => get<Release>(t, `/releases/${id}`);
+
+export const listFeatures = (t: string) => get<Feature[]>(t, "/features").then((r) => r ?? []);
+export const saveFeature = (t: string, key: string, f: Partial<Feature>) => send<Feature>(t, "PUT", `/features/${encodeURIComponent(key)}`, f);
+export const deleteFeature = (t: string, key: string) => send<void>(t, "DELETE", `/features/${encodeURIComponent(key)}`);
+export const getFeatureSQL = (t: string, key: string) => get<{ sql: string; object: { feature: string; base: string } }>(t, `/features/${encodeURIComponent(key)}/sql`);
+export const syncStreams = (t: string) => send<StreamSyncResult>(t, "POST", "/features/sync");
+
+export const listRules = (t: string, scene?: string) => get<Rule[]>(t, "/rules", { scene }).then((r) => r ?? []);
+export const saveRule = (t: string, rule: Partial<Rule>) =>
+  rule.id ? send<Rule>(t, "PUT", `/rules/${rule.id}`, rule) : send<Rule>(t, "POST", "/rules", rule);
+export const deleteRule = (t: string, id: number) => send<void>(t, "DELETE", `/rules/${id}`);
+export const listTemplates = (t: string) => get<RuleTemplate[]>(t, "/templates").then((r) => r ?? []);
+export const applyTemplate = (t: string, input: { template: string; scene: string; observe: boolean }) =>
+  send<{ installed: number; skipped: number }>(t, "POST", "/templates/apply", input);
+
+export const listModels = (t: string) => get<RiskModel[]>(t, "/models").then((r) => r ?? []);
+export const uploadModel = (t: string, form: FormData) => apiRequest<RiskModel>(`${P}/models`, { method: "POST", token: t, body: form });
+export const updateModel = (t: string, key: string, input: { name?: string; description?: string; inputs?: string[]; transform?: boolean }) =>
+  send<RiskModel>(t, "PUT", `/models/${encodeURIComponent(key)}`, input);
+export const deleteModel = (t: string, key: string) => send<void>(t, "DELETE", `/models/${encodeURIComponent(key)}`);
+export const predictModel = (t: string, key: string, values: Record<string, number>) =>
+  send<{ score: number; inputs: string[]; values: number[] }>(t, "POST", `/models/${encodeURIComponent(key)}/predict`, { values });
+
+export const listEntries = (t: string, q: { type?: string; kind?: string; value?: string; app?: number; source?: string; active?: boolean; page?: number; limit?: number }) =>
+  get<Paged<ListEntry>>(t, "/lists", q);
+export const addEntries = (t: string, input: { listType: ListType; kind: ListKind; values: string[]; appId?: number; scenes?: string[]; reason?: string; durationSeconds?: number }) =>
+  send<{ added: number; invalid: string[] | null }>(t, "POST", "/lists", input);
+export const removeEntries = (t: string, ids: string[]) => send<{ removed: number }>(t, "POST", "/lists/remove", { ids });
+export const checkLists = (t: string, input: { appId?: number; scene?: string; values: Partial<Record<ListType, string>> }) =>
+  send<ListHit[] | null>(t, "POST", "/lists/check", input).then((r) => r ?? []);
+export const rebuildLists = (t: string) => send<{ entries: number }>(t, "POST", "/lists/rebuild");
+
+export const listPatterns = (t: string) => get<CepPattern[]>(t, "/cep/patterns").then((r) => r ?? []);
+export const savePattern = (t: string, key: string, p: Partial<CepPattern>) => send<CepPattern>(t, "PUT", `/cep/patterns/${encodeURIComponent(key)}`, p);
+export const deletePattern = (t: string, key: string) => send<void>(t, "DELETE", `/cep/patterns/${encodeURIComponent(key)}`);
+
+export const getDashboard = (t: string, q: { app?: number; from?: string; to?: string }) => get<DashboardData>(t, "/dashboard", q);
+export const listDecisions = (t: string, q: { app?: number; scene?: string; action?: string; user?: number; device?: string; ip?: string; account?: string; rule?: string; release?: string; shadow?: boolean; from?: string; to?: string; page?: number; limit?: number }) =>
+  get<Paged<DecisionRow>>(t, "/decisions", q);
+export const getDecision = (t: string, id: string) => get<DecisionDetail>(t, `/decisions/${encodeURIComponent(id)}`);
+export const listEvents = (t: string, q: { app?: number; user?: number; type?: string; device?: string; ip?: string; from?: string; to?: string; limit?: number }) =>
+  get<EventRow[]>(t, "/events", q).then((r) => r ?? []);
+export const listAlerts = (t: string, q: { app?: number; pattern?: string; user?: number; from?: string; to?: string; limit?: number }) =>
+  get<AlertRow[]>(t, "/alerts", q).then((r) => r ?? []);
+
+export const listCases = (t: string, q: { status?: string; app?: number; user?: number; scene?: string; page?: number; limit?: number }) =>
+  get<Paged<RiskCase>>(t, "/cases", q);
+export const reviewCase = (t: string, id: number, input: { verdict: "approve" | "reject"; note: string; allow?: boolean; dispose?: Omit<DisposeInput, "appId" | "userId" | "account" | "deviceId" | "ip"> }) =>
+  send<{ case: number; dispose: Record<string, string> | null }>(t, "POST", `/cases/${id}/review`, input);
+export const dispose = (t: string, input: DisposeInput) => send<Record<string, string>>(t, "POST", "/dispose", input);
+
+export const getGraph = (t: string, q: { type: "user" | "device" | "ip" | "account" | "vid"; app?: number; user?: number; value?: string; depth?: number; fanout?: number; max?: number }) =>
+  get<Subgraph>(t, "/graph", q);
+export const getUserProfile = (t: string, app: number, user: number, days = 30) => get<UserRiskProfile>(t, "/profile", { app, user, days });
+export const getRiskStatus = (t: string) => get<RiskStatus>(t, "/status");
+export const listAudit = (t: string, limit = 100) => get<AuditEntry[]>(t, "/audit", { limit }).then((r) => r ?? []);

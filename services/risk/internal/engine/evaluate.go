@@ -101,6 +101,8 @@ type Result struct {
 type Options struct {
 	DecisionID string
 	Explain    bool
+	// Overrides 模拟器手动给的特征值：取完数据源之后直接覆盖（主体缺失、本该取不到的特征也照样生效）
+	Overrides map[string]float64
 }
 
 // stage 计时器
@@ -145,6 +147,11 @@ func (p *Program) Evaluate(ctx context.Context, req Request, src Sources, opts O
 
 	// 1. 名单 + 2. 特征：并行
 	p.fetch(fetchCtx, &env, req, src, res, clock)
+	for k, v := range opts.Overrides {
+		if _, ok := p.features[k]; ok {
+			env.F[k] = v
+		}
+	}
 
 	// 3. 派生特征
 	for _, d := range p.derived {

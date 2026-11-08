@@ -329,7 +329,7 @@ func (s *Server) simulate(ctx context.Context, c *app.RequestContext) (any, erro
 		return nil, bad(err.Error())
 	}
 	defer p.Dispose()
-	res, err := p.Evaluate(ctx, in.Request, engine.FixedSources{Features: in.Features, Lists: in.Lists}, engine.Options{DecisionID: "sim", Explain: true})
+	res, err := p.Evaluate(ctx, in.Request, engine.FixedSources{Features: in.Features, Lists: in.Lists}, engine.Options{DecisionID: "sim", Explain: true, Overrides: in.Features})
 	if err != nil {
 		return nil, err
 	}

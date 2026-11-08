@@ -22,6 +22,7 @@ import {
   PencilLine,
   Receipt,
   Scale,
+  ShieldAlert,
   ShieldCheck,
   ShieldHalf,
   Sparkles,
@@ -59,6 +60,7 @@ import { cn } from "@/lib/utils";
 import { UserDeleteDialog } from "../user-delete-dialog";
 import { CopyButton, StateBlock, ToneIcon, copyToClipboard, formatInt, type Tone } from "./kit";
 import { UserActivityTab } from "./user-activity-tab";
+import { UserRiskTab } from "./user-risk-tab";
 import { UserAdPolicyTab } from "./user-ad-policy-tab";
 import { UserAssetsTab } from "./user-assets-tab";
 import { UserCloudTab } from "./user-cloud-tab";
@@ -118,7 +120,10 @@ const TAB_GROUPS: Array<{ label: string; tabs: TabDef[] }> = [
   },
   {
     label: "管理",
-    tabs: [{ value: "governance", label: "处置", icon: Gavel }]
+    tabs: [
+      { value: "risk", label: "风险", icon: ShieldAlert },
+      { value: "governance", label: "处置", icon: Gavel }
+    ]
   }
 ];
 
@@ -290,6 +295,8 @@ export function AppUserDetailPage({ appKey, userId, fromHref }: Props) {
                   <UserCloudTab appKey={appKey} userId={userId} />
                 ) : tab === "ad-policy" ? (
                   <UserAdPolicyTab appKey={appKey} userId={userId} />
+                ) : tab === "risk" ? (
+                  <UserRiskTab appKey={appKey} userId={userId} user={user} />
                 ) : (
                   <UserGovernanceTab
                     appKey={appKey}

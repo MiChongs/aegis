@@ -45,13 +45,11 @@ import { Button } from "@/components/ui/button";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ActionBadge, LEVEL_COLORS, LevelBadge, RiskCatalogProvider, SceneBadge } from "@/components/risk/risk-shared";
 import { useNow } from "@/components/users/ban-form";
 import { useAdminToken, useAdminUserSessionsQuery } from "@/lib/admin-hooks";
 import { useAdminUserLoginAuditsQuery } from "@/lib/app-user-hooks";
-import type { AdminAppUserDetail, RiskAssessment, UserLoginAuditRecord, UserSessionAuditRecord } from "@/lib/api/types";
+import type { AdminAppUserDetail, UserLoginAuditRecord, UserSessionAuditRecord } from "@/lib/api/types";
 import { formatDateTime, formatRelative, formatShortDateTime, formatWith, localDateKey } from "@/lib/datetime";
-import { useRiskAssessmentsQuery } from "@/lib/risk-hooks";
 import {
   listUserLoginAudits,
   listUserSessionAudits,
@@ -217,9 +215,6 @@ export function UserActivityTab({ appKey, userId, user }: { appKey: string; user
 
         <SessionEvents appKey={appKey} userId={userId} />
 
-        <RiskCatalogProvider>
-          <UserRiskPanel account={user.account} />
-        </RiskCatalogProvider>
       </div>
     </TooltipProvider>
   );
@@ -1040,207 +1035,4 @@ function SessionEvents({ appKey, userId }: { appKey: string; userId: number }) {
 }
 
 // ── 风控评估 ──────────────────────────
-
-/**
- * 风控评估。按 account 查 —— 风控引擎在登录成功前就已经打过分，
- * 那时还没有 userId，account 才是贯穿始终的那个标识。
- */
-function UserRiskPanel({ account }: { account?: string }) {
-  const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(10);
-  const [detail, setDetail] = useState<RiskAssessment | null>(null);
-  const query = useRiskAssessmentsQuery(account ? { account, page, pageSize: limit } : undefined);
-  const items = account ? (query.data?.items ?? []) : [];
-  const total = account ? (query.data?.total ?? 0) : 0;
-
-  const columns: Array<Column<RiskAssessment>> = [
-    {
-      id: "score",
-      header: "分数",
-      width: "64px",
-      cell: (r) => <ScoreRing score={r.totalScore} ratio={Math.max(0, Math.min(100, r.totalScore)) / 100} color={LEVEL_COLORS[r.riskLevel]?.light ?? "#a1a1aa"} />
-    },
-    {
-      id: "verdict",
-      header: "结论",
-      cell: (r) => (
-        <span className="flex flex-wrap items-center gap-1.5">
-          <SceneBadge scene={r.scene} />
-          <LevelBadge level={r.riskLevel} />
-          <ActionBadge action={r.action} />
-          {r.reviewed ? (
-            <Badge variant="outline" size="sm">
-              已复核
-            </Badge>
-          ) : null}
-        </span>
-      )
-    },
-    {
-      id: "rules",
-      header: "命中规则",
-      hideBelow: "lg",
-      cell: (r) =>
-        r.matchedRules?.length ? (
-          <span className="block max-w-[260px] truncate text-xs text-muted-foreground" title={r.matchedRules.map((m) => m.reason || m.ruleName).join("，")}>
-            {r.matchedRules
-              .slice(0, 2)
-              .map((m) => m.reason || m.ruleName)
-              .join("，")}
-            {r.matchedRules.length > 2 ? `，另 ${r.matchedRules.length - 2} 条` : ""}
-          </span>
-        ) : (
-          <span className="text-xs text-muted-foreground">无</span>
-        )
-    },
-    {
-      id: "ip",
-      header: "IP",
-      hideBelow: "md",
-      cell: (r) => (
-        <span className="flex flex-col">
-          <span className="font-mono text-xs">{textValue(r.ip)}</span>
-          {r.country ? <span className="text-xs text-muted-foreground">{r.country}</span> : null}
-        </span>
-      )
-    },
-    {
-      id: "time",
-      header: "时间",
-      cell: (r) => (
-        <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums" title={formatDateTime(r.createdAt)}>
-          {formatRelative(r.createdAt)}
-        </span>
-      )
-    }
-  ];
-
-  return (
-    <>
-      <Section
-        title="风控评估"
-        description="风控引擎按账号对登录、注册等场景的评分记录"
-        icon={Radar}
-        tone="warning"
-        flush
-        actions={
-          <Button asChild size="sm" variant="ghost">
-            <Link href="/risk-control?tab=assessments">
-              风控中心
-              <ArrowUpRight />
-            </Link>
-          </Button>
-        }
-        footer={account && total > 0 ? <Pager page={page} limit={limit} total={total} onPage={setPage} limits={[10, 20, 50]} onLimit={(next) => { setLimit(next); setPage(1); }} /> : undefined}
-      >
-        {!account ? (
-          <StateBlock compact icon={Radar} title="无账号标识" description="风控评估按账号查询，该用户没有账号字段" />
-        ) : (
-          <RecordTable
-            columns={columns}
-            rows={items}
-            rowKey={(r) => r.id}
-            loading={query.isLoading}
-            fetching={query.isFetching}
-            error={query.error}
-            onRetry={() => void query.refetch()}
-            onRowClick={setDetail}
-            skeletonRows={4}
-            minWidth={680}
-            empty={<StateBlock compact icon={ShieldCheck} title="暂无评估记录" />}
-          />
-        )}
-      </Section>
-
-      <RecordSheet
-        open={Boolean(detail)}
-        onOpenChange={(open) => !open && setDetail(null)}
-        title="风控评估"
-        description={detail ? `评估 #${detail.id}，${formatDateTime(detail.createdAt)}` : undefined}
-        hero={
-          detail ? (
-            <div className="flex items-center gap-4 rounded-xl border px-4 py-3">
-              <ScoreRing score={detail.totalScore} ratio={Math.max(0, Math.min(100, detail.totalScore)) / 100} color={LEVEL_COLORS[detail.riskLevel]?.light ?? "#a1a1aa"} />
-              <div className="flex flex-wrap items-center gap-1.5">
-                <SceneBadge scene={detail.scene} />
-                <LevelBadge level={detail.riskLevel} />
-                <ActionBadge action={detail.action} />
-                {detail.reviewed ? (
-                  <Badge variant="outline" size="sm">
-                    已复核
-                  </Badge>
-                ) : null}
-              </div>
-            </div>
-          ) : undefined
-        }
-        fields={
-          detail
-            ? [
-                { label: "账号", value: detail.account },
-                { label: "IP", value: detail.ip, mono: true, copy: detail.ip },
-                { label: "国家或地区", value: detail.country },
-                { label: "决策来源", value: detail.decisionBy },
-                { label: "动作说明", value: detail.actionDetail, wide: true },
-                { label: "设备标识", value: detail.deviceId, mono: true, copy: detail.deviceId, wide: true },
-                { label: "耗时", value: `${detail.latencyMs} ms` },
-                { label: "复核人", value: detail.reviewerName },
-                { label: "复核结论", value: detail.reviewResult },
-                { label: "复核意见", value: detail.reviewComment, wide: true },
-                { label: "User-Agent", value: detail.userAgent, mono: true, wide: true }
-              ]
-            : undefined
-        }
-        raw={detail}
-        actions={
-          <Button asChild size="sm" variant="outline">
-            <Link href="/risk-control?tab=assessments">
-              在风控中心查看
-              <ArrowUpRight />
-            </Link>
-          </Button>
-        }
-      >
-        {detail?.matchedRules?.length ? (
-          <div className="flex flex-col gap-2">
-            <div className="text-xs font-medium text-muted-foreground">命中规则</div>
-            <ul className="flex flex-col divide-y rounded-lg border">
-              {detail.matchedRules.map((rule, i) => (
-                <li key={`${rule.ruleId}-${i}`} className="flex items-start justify-between gap-3 px-3 py-2">
-                  <div className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-sm">{rule.ruleName}</span>
-                    {rule.reason ? <span className="text-xs text-muted-foreground">{rule.reason}</span> : null}
-                  </div>
-                  <span className="flex shrink-0 items-center gap-1.5">
-                    {rule.observe ? (
-                      <Badge variant="secondary" size="sm">
-                        观察
-                      </Badge>
-                    ) : null}
-                    <span className="text-sm font-medium tabular-nums">+{rule.score}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-      </RecordSheet>
-    </>
-  );
-}
-
-/** 风险分环：分值写在中间，弧长按 0-100 分归一，颜色取风险等级色。 */
-function ScoreRing({ score, ratio, color }: { score: number; ratio: number; color: string }): ReactNode {
-  const r = 15;
-  const c = 2 * Math.PI * r;
-  return (
-    <div className="relative grid size-10 shrink-0 place-items-center">
-      <svg viewBox="0 0 36 36" className="absolute inset-0 -rotate-90">
-        <circle cx="18" cy="18" r={r} fill="none" strokeWidth="3" className="stroke-muted" />
-        <circle cx="18" cy="18" r={r} fill="none" strokeWidth="3" stroke={color} strokeLinecap="round" strokeDasharray={`${c * ratio} ${c}`} />
-      </svg>
-      <span className="text-xs font-semibold tabular-nums">{score}</span>
-    </div>
-  );
-}
 
