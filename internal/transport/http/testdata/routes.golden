@@ -525,6 +525,7 @@ GET	/api/admin/system/plugins	AdminListPlugins
 GET	/api/admin/system/plugins/:id	AdminGetPlugin
 GET	/api/admin/system/plugins/executions	AdminListHookExecutions
 GET	/api/admin/system/plugins/registry	AdminGetHookRegistry
+GET	/api/admin/system/risk-ops/banned	AdminRiskOpsBanned
 GET	/api/admin/system/risk/*path	AdminRiskProxy
 GET	/api/admin/system/roles	AdminRoleCatalog
 GET	/api/admin/system/roles/:roleKey/impact	AdminGetRoleImpactPreview
@@ -1165,6 +1166,9 @@ POST	/api/admin/system/organizations/:orgId/transfer	TransferOrganization
 POST	/api/admin/system/plugins	AdminCreatePlugin
 POST	/api/admin/system/plugins/:id/disable	AdminDisablePlugin
 POST	/api/admin/system/plugins/:id/enable	AdminEnablePlugin
+POST	/api/admin/system/risk-ops/inspect	AdminRiskOpsInspect
+POST	/api/admin/system/risk-ops/purge	AdminRiskOpsPurge
+POST	/api/admin/system/risk-ops/release	AdminRiskOpsRelease
 POST	/api/admin/system/risk/*path	AdminRiskProxy
 POST	/api/admin/system/roles	AdminCreateCustomRole
 POST	/api/admin/system/saml/test	AdminSAMLTest

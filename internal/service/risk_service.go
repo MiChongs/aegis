@@ -62,6 +62,8 @@ type RiskService struct {
 	accountBans  riskAccountBanner
 	firewall     riskFirewall
 	sessions     riskSessionRevoker
+	opsStore     riskOpsStore
+	purger       riskUserPurger
 
 	stopCommands func()
 

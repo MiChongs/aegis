@@ -599,6 +599,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	riskService.SetAccountBanService(accountBanService)
 	riskService.SetFirewall(ipBanService)
 	riskService.SetSessionRevoker(userService)
+	riskService.SetOps(pg, userService)
 	riskService.SetCaptchaProbe(func(ctx context.Context, appID int64) bool {
 		cfg, err := appService.GetCaptchaConfig(ctx, appID)
 		return err == nil && service.IsCaptchaRequired(cfg)

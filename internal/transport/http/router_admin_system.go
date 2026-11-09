@@ -381,6 +381,11 @@ func registerAdminSystemRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 			adminSystem.Handle(method, "/risk/*path", h.AdminRiskProxy)
 		}
+		// 账号处置：一键解除风控、关联删除风险账号（主服务编排封号 / 防火墙 / 删号，风控侧经 risk-admin）
+		adminSystem.GET("/risk-ops/banned", h.AdminRiskOpsBanned)
+		adminSystem.POST("/risk-ops/inspect", h.AdminRiskOpsInspect)
+		adminSystem.POST("/risk-ops/release", h.AdminRiskOpsRelease)
+		adminSystem.POST("/risk-ops/purge", h.AdminRiskOpsPurge)
 
 		// 平台级 Banner 的"写"操作：统一套 RequireSuperAdmin，仅超管可进行 CRUD
 		platformBannerGroup := adminSystem.Group("/banners", middleware.RequireSuperAdmin())
