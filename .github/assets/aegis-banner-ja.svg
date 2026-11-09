@@ -1,78 +1,105 @@
-<svg width="1600" height="560" viewBox="0 0 1600 560" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="560" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#F3F5F7"/>
-      <stop offset="0.48" stop-color="#E8EDF1"/>
-      <stop offset="1" stop-color="#DEE6EC"/>
-    </linearGradient>
-    <radialGradient id="fogA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(320 170) rotate(10) scale(340 156)">
-      <stop stop-color="#8AA1B0" stop-opacity="0.18"/>
-      <stop offset="1" stop-color="#8AA1B0" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="fogB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1236 382) rotate(-8) scale(340 162)">
-      <stop stop-color="#627A88" stop-opacity="0.16"/>
-      <stop offset="1" stop-color="#627A88" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="ink" x1="1026" y1="98" x2="1380" y2="332" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#233B53"/>
-      <stop offset="1" stop-color="#5A7382"/>
-    </linearGradient>
-    <filter id="soft" x="-24%" y="-24%" width="150%" height="150%">
-      <feGaussianBlur stdDeviation="32"/>
-    </filter>
-    <filter id="shadow" x="-20%" y="-20%" width="150%" height="150%">
-      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#7C8F9C" flood-opacity="0.18"/>
-    </filter>
-  </defs>
-
-  <rect width="1600" height="560" rx="28" fill="url(#bg)"/>
-  <rect x="50" y="44" width="1500" height="472" rx="28" fill="#FFFFFF" fill-opacity="0.52" stroke="#22384D" stroke-opacity="0.1"/>
-
-  <g opacity="0.15">
-    <path d="M88 110H1512" stroke="#22384D" stroke-opacity="0.14"/>
-    <path d="M88 174H1512" stroke="#22384D" stroke-opacity="0.08"/>
-    <path d="M88 238H1512" stroke="#22384D" stroke-opacity="0.1"/>
-    <path d="M88 302H1512" stroke="#22384D" stroke-opacity="0.08"/>
-    <path d="M88 366H1512" stroke="#22384D" stroke-opacity="0.1"/>
-    <path d="M88 430H1512" stroke="#22384D" stroke-opacity="0.08"/>
-  </g>
-
-  <g filter="url(#soft)">
-    <ellipse cx="320" cy="170" rx="340" ry="156" fill="url(#fogA)"/>
-    <ellipse cx="1236" cy="382" rx="340" ry="162" fill="url(#fogB)"/>
-  </g>
-
-  <g>
-    <rect x="98" y="88" width="198" height="36" rx="18" fill="#FAFBFC" stroke="#22384D" stroke-opacity="0.1"/>
-    <circle cx="122" cy="106" r="5" fill="#30586A"/>
-    <text x="140" y="112" fill="#455B69" font-family="'Yu Gothic UI', 'Hiragino Sans', sans-serif" font-size="15" letter-spacing="1.8">PUBLIC REPOSITORY</text>
-  </g>
-
-  <g>
-    <text x="98" y="220" fill="#172532" font-family="'Segoe UI', Arial, sans-serif" font-size="112" font-weight="700" letter-spacing="8">Aegis</text>
-    <text x="100" y="294" fill="#22394E" font-family="'Yu Gothic UI', 'Hiragino Sans', sans-serif" font-size="48" font-weight="700">マルチテナントユーザープラットフォーム</text>
-    <text x="102" y="352" fill="#425A69" font-family="'Yu Gothic UI', 'Hiragino Sans', sans-serif" font-size="28" font-weight="600">高並列 / 低結合 / リアルタイム対応 / 運用志向</text>
-    <text x="102" y="400" fill="#607482" font-family="'Yu Gothic UI', 'Hiragino Sans', sans-serif" font-size="24">Gin · PostgreSQL · Redis · NATS · Temporal · Coraza</text>
-  </g>
-
-  <g filter="url(#shadow)">
-    <path d="M1044 106L1370 186L1250 334L924 254L1044 106Z" fill="#F7FAFC" fill-opacity="0.64" stroke="url(#ink)" stroke-width="2.3"/>
-    <path d="M1044 106L1208 146L1148 220L986 180L1044 106Z" fill="#FFFFFF" fill-opacity="0.58"/>
-    <path d="M1208 146L1370 186L1310 260L1148 220L1208 146Z" fill="#EFF4F7" fill-opacity="0.42"/>
-    <path d="M986 180L1148 220L1090 294L924 254L986 180Z" fill="#D7E0E7" fill-opacity="0.46"/>
-    <path d="M1148 220L1310 260L1250 334L1090 294L1148 220Z" fill="#E8EEF3" fill-opacity="0.32"/>
-    <path d="M1208 146L1090 294" stroke="#95A6B1" stroke-opacity="0.36"/>
-    <path d="M986 180L1310 260" stroke="#95A6B1" stroke-opacity="0.24"/>
-  </g>
-
-  <g>
-    <rect x="1030" y="348" width="426" height="104" rx="22" fill="#FFFFFF" fill-opacity="0.58" stroke="#22384D" stroke-opacity="0.1"/>
-    <path d="M1060 384H1426" stroke="#22384D" stroke-opacity="0.12"/>
-    <path d="M1060 420H1426" stroke="#22384D" stroke-opacity="0.08"/>
-    <path d="M1244 366V438" stroke="#22384D" stroke-opacity="0.08"/>
-    <text x="1080" y="379" fill="#203649" font-family="'Yu Gothic UI', 'Hiragino Sans', sans-serif" font-size="20" font-weight="600">統合ランタイム</text>
-    <text x="1264" y="379" fill="#203649" font-family="'Yu Gothic UI', 'Hiragino Sans', sans-serif" font-size="20" font-weight="600">Redis Presence</text>
-    <text x="1080" y="415" fill="#556C79" font-family="'Yu Gothic UI', 'Hiragino Sans', sans-serif" font-size="20">NATS Fan-out</text>
-    <text x="1264" y="415" fill="#556C79" font-family="'Yu Gothic UI', 'Hiragino Sans', sans-serif" font-size="20">Temporal Workflow</text>
-  </g>
+<svg width="1600" height="560" viewBox="0 0 1600 560" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Aegis" xml:lang="ja">
+<defs><pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.2" fill="#26324D"/></pattern><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#64748B"/></marker></defs>
+<rect x="0.0" y="0.0" width="1600.0" height="560.0" rx="28" fill="#0B1120"/>
+<rect x="0" y="0" width="1600" height="560" rx="28" fill="url(#dots)" opacity="0.55"/>
+<path d="M110 88 L135.8 99.4 L135.8 120.4 C135.8 136.6 122.6 145.6 110 151.0 C97.4 145.6 84.2 136.6 84.2 120.4 L84.2 99.4 Z" fill="#2DD4BF"/><path d="M99.2 119.2 L107.6 128.2 L122.6 110.8" stroke="#0B1120" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<rect x="160.0" y="96.0" width="323.7" height="34.0" rx="17" fill="#16213A" stroke="#26324D" stroke-width="1"/>
+<text x="174.0" y="119.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="15" font-weight="600" fill="#2DD4BF" text-anchor="start">マルチテナント ユーザープラットフォーム</text>
+<text x="76.0" y="262.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="118" font-weight="800" fill="#F1F5F9" text-anchor="start" letter-spacing="-3">Aegis</text>
+<text x="80.0" y="318.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="23" font-weight="400" fill="#94A3B8" text-anchor="start">ひとつの Go ランタイムが全業務を担い、</text>
+<text x="80.0" y="356.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="23" font-weight="400" fill="#94A3B8" text-anchor="start">マイクロサービスがミリ秒で審査する。</text>
+<rect x="80.0" y="410.0" width="172.0" height="38.0" rx="10" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<circle cx="98" cy="429" r="5" fill="#2DD4BF"/>
+<text x="112.0" y="435.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="14" font-weight="500" fill="#F1F5F9" text-anchor="start">認証とセッション</text>
+<rect x="266.0" y="410.0" width="172.0" height="38.0" rx="10" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<circle cx="284" cy="429" r="5" fill="#60A5FA"/>
+<text x="298.0" y="435.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="16" font-weight="500" fill="#F1F5F9" text-anchor="start">資産と決済</text>
+<rect x="452.0" y="410.0" width="172.0" height="38.0" rx="10" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<circle cx="470" cy="429" r="5" fill="#FBBF24"/>
+<text x="484.0" y="435.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="16" font-weight="500" fill="#F1F5F9" text-anchor="start">コンテンツ配信</text>
+<rect x="80.0" y="462.0" width="172.0" height="38.0" rx="10" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<circle cx="98" cy="481" r="5" fill="#A78BFA"/>
+<text x="112.0" y="487.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="16" font-weight="500" fill="#F1F5F9" text-anchor="start">リモート関数</text>
+<rect x="266.0" y="462.0" width="172.0" height="38.0" rx="10" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<circle cx="284" cy="481" r="5" fill="#FB7185"/>
+<text x="298.0" y="487.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="16" font-weight="500" fill="#F1F5F9" text-anchor="start">AI ゲートウェイ</text>
+<rect x="452.0" y="462.0" width="172.0" height="38.0" rx="10" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<circle cx="470" cy="481" r="5" fill="#2DD4BF"/>
+<text x="484.0" y="487.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="14" font-weight="500" fill="#F1F5F9" text-anchor="start">リアルタイム審査</text>
+<rect x="700.0" y="118.0" width="176.0" height="54.0" rx="12" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<rect x="700" y="132" width="4" height="26" rx="2" fill="#60A5FA"/>
+<text x="720.0" y="151.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="17" font-weight="500" fill="#F1F5F9" text-anchor="start">公式 SDK</text>
+<rect x="700.0" y="196.0" width="176.0" height="54.0" rx="12" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<rect x="700" y="210" width="4" height="26" rx="2" fill="#60A5FA"/>
+<text x="720.0" y="229.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="17" font-weight="500" fill="#F1F5F9" text-anchor="start">連携先サーバー</text>
+<rect x="700.0" y="274.0" width="176.0" height="54.0" rx="12" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<rect x="700" y="288" width="4" height="26" rx="2" fill="#60A5FA"/>
+<text x="720.0" y="307.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="17" font-weight="500" fill="#F1F5F9" text-anchor="start">管理コンソール</text>
+<rect x="930.0" y="98.0" width="186.0" height="250.0" rx="16" fill="#111A2E" stroke="#FBBF24" stroke-width="1.5"/>
+<path d="M956 117 L965.46 121.18 L965.46 128.88 C965.46 134.82 960.62 138.12 956 140.1 C951.38 138.12 946.54 134.82 946.54 128.88 L946.54 121.18 Z" fill="#FBBF24"/><path d="M952.04 128.44 L955.12 131.74 L960.62 125.36" stroke="#0B1120" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="976.0" y="134.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="18" font-weight="700" fill="#FBBF24" text-anchor="start">エッジ</text>
+<rect x="944.0" y="156.0" width="158.0" height="36.0" rx="8" fill="#16213A"/>
+<text x="956.0" y="179.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#64748B" text-anchor="start">1</text>
+<text x="974.0" y="179.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="13" font-weight="500" fill="#F1F5F9" text-anchor="start">実クライアント IP</text>
+<rect x="944.0" y="202.0" width="158.0" height="36.0" rx="8" fill="#16213A"/>
+<text x="956.0" y="225.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#64748B" text-anchor="start">2</text>
+<text x="974.0" y="225.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="15" font-weight="500" fill="#F1F5F9" text-anchor="start">Coraza WAF</text>
+<rect x="944.0" y="248.0" width="158.0" height="36.0" rx="8" fill="#16213A"/>
+<text x="956.0" y="271.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#64748B" text-anchor="start">3</text>
+<text x="974.0" y="271.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="13" font-weight="500" fill="#F1F5F9" text-anchor="start">トラフィック制御</text>
+<rect x="944.0" y="294.0" width="158.0" height="36.0" rx="8" fill="#16213A"/>
+<text x="956.0" y="317.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#64748B" text-anchor="start">4</text>
+<text x="974.0" y="317.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="13" font-weight="500" fill="#F1F5F9" text-anchor="start">ゲートウェイ検証</text>
+<rect x="1170.0" y="98.0" width="196.0" height="250.0" rx="16" fill="#111A2E" stroke="#2DD4BF" stroke-width="1.5"/>
+<text x="1188.0" y="134.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="18" font-weight="700" fill="#2DD4BF" text-anchor="start">Go ランタイム</text>
+<text x="1188.0" y="158.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="500" fill="#64748B" text-anchor="start">Gin + Uber Fx</text>
+<rect x="1184.0" y="176.0" width="168.0" height="42.0" rx="8" fill="#16213A"/>
+<circle cx="1202" cy="197" r="4" fill="#2DD4BF"/>
+<text x="1216.0" y="202.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="15" font-weight="500" fill="#F1F5F9" text-anchor="start">ドメインサービス</text>
+<rect x="1184.0" y="228.0" width="168.0" height="42.0" rx="8" fill="#16213A"/>
+<circle cx="1202" cy="249" r="4" fill="#2DD4BF"/>
+<text x="1216.0" y="254.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="15" font-weight="500" fill="#F1F5F9" text-anchor="start">Worker</text>
+<rect x="1184.0" y="280.0" width="168.0" height="42.0" rx="8" fill="#16213A"/>
+<circle cx="1202" cy="301" r="4" fill="#2DD4BF"/>
+<text x="1216.0" y="306.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="15" font-weight="500" fill="#F1F5F9" text-anchor="start">リアルタイムハブ</text>
+<rect x="1404.0" y="98.0" width="146.0" height="52.0" rx="10" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<rect x="1404" y="111" width="4" height="26" rx="2" fill="#60A5FA"/>
+<text x="1420.0" y="129.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#F1F5F9" text-anchor="start">PostgreSQL 17</text>
+<rect x="1404.0" y="164.0" width="146.0" height="52.0" rx="10" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<rect x="1404" y="177" width="4" height="26" rx="2" fill="#FB7185"/>
+<text x="1420.0" y="195.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="14" font-weight="600" fill="#F1F5F9" text-anchor="start">Redis 8</text>
+<rect x="1404.0" y="230.0" width="146.0" height="52.0" rx="10" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<rect x="1404" y="243" width="4" height="26" rx="2" fill="#2DD4BF"/>
+<text x="1420.0" y="261.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#F1F5F9" text-anchor="start">NATS JetStream</text>
+<rect x="1404.0" y="296.0" width="146.0" height="52.0" rx="10" fill="#111A2E" stroke="#26324D" stroke-width="1"/>
+<rect x="1404" y="309" width="4" height="26" rx="2" fill="#A78BFA"/>
+<text x="1420.0" y="327.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="14" font-weight="600" fill="#F1F5F9" text-anchor="start">Temporal</text>
+<path d="M876.0 145.0 C901.0 145.0 901.0 223.0 926.0 223.0" stroke="#26324D" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<path d="M876.0 223.0 C901.0 223.0 901.0 223.0 926.0 223.0" stroke="#26324D" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<path d="M876.0 301.0 C901.0 301.0 901.0 223.0 926.0 223.0" stroke="#26324D" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<path d="M1116.0 223.0 C1141.0 223.0 1141.0 223.0 1166.0 223.0" stroke="#FBBF24" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<path d="M1366.0 223.0 C1383.0 223.0 1383.0 124.0 1400.0 124.0" stroke="#26324D" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<path d="M1366.0 223.0 C1383.0 223.0 1383.0 190.0 1400.0 190.0" stroke="#26324D" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<path d="M1366.0 223.0 C1383.0 223.0 1383.0 256.0 1400.0 256.0" stroke="#26324D" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<path d="M1366.0 223.0 C1383.0 223.0 1383.0 322.0 1400.0 322.0" stroke="#26324D" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect x="930.0" y="392.0" width="620.0" height="108.0" rx="16" fill="#111A2E" stroke="#FB7185" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="948.0" y="424.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="18" font-weight="700" fill="#FB7185" text-anchor="start">リスク基盤</text>
+<path d="M1268.0 348.0 C1268.0 348.0 1268.0 388.0 1268.0 388.0" stroke="#FB7185" stroke-width="2" fill="none" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+<text x="1278.0" y="375.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="12" font-weight="600" fill="#FB7185" text-anchor="start">Kitex RPC</text>
+<rect x="948.0" y="440.0" width="90.7" height="42.0" rx="8" fill="#16213A"/>
+<text x="993.3" y="457.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="12" font-weight="500" fill="#94A3B8" text-anchor="middle">判定</text>
+<text x="993.3" y="474.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#F1F5F9" text-anchor="middle">Kitex</text>
+<rect x="1046.7" y="440.0" width="90.7" height="42.0" rx="8" fill="#16213A"/>
+<text x="1092.0" y="457.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="12" font-weight="500" fill="#94A3B8" text-anchor="middle">管理</text>
+<text x="1092.0" y="474.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#F1F5F9" text-anchor="middle">Hertz</text>
+<rect x="1145.3" y="440.0" width="90.7" height="42.0" rx="8" fill="#16213A"/>
+<text x="1190.7" y="457.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="12" font-weight="500" fill="#94A3B8" text-anchor="middle">グラフ</text>
+<text x="1190.7" y="474.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#F1F5F9" text-anchor="middle">Nebula</text>
+<rect x="1244.0" y="440.0" width="90.7" height="42.0" rx="8" fill="#16213A"/>
+<text x="1289.3" y="457.0" font-family="Inter, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif" font-size="12" font-weight="500" fill="#94A3B8" text-anchor="middle">ベクトル</text>
+<text x="1289.3" y="474.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#F1F5F9" text-anchor="middle">Milvus</text>
+<rect x="1342.7" y="440.0" width="90.7" height="42.0" rx="8" fill="#16213A"/>
+<text x="1388.0" y="466.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#F1F5F9" text-anchor="middle">Flink CEP</text>
+<rect x="1441.3" y="440.0" width="90.7" height="42.0" rx="8" fill="#16213A"/>
+<text x="1486.7" y="466.0" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#F1F5F9" text-anchor="middle">ClickHouse</text>
 </svg>
