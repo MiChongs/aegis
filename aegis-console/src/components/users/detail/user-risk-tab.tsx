@@ -3,12 +3,13 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import NumberFlow from "@number-flow/react";
 import { Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, XAxis, YAxis } from "recharts";
 import {
   Activity, AlertTriangle, Ban, CalendarCheck, ChevronDown, ChevronRight, ClipboardCheck, Fingerprint, Gift, Globe, History,
   KeyRound, Link2, LogIn, MapPin, Monitor, Network, QrCode, RotateCcw, ScrollText, ShieldAlert, ShieldCheck, ShieldQuestion,
-  Siren, Smartphone, Sparkles, Tablet, Ticket, UserCog, UserPlus, Users, Wallet, type LucideIcon,
+  Siren, Smartphone, Sparkles, Tablet, Ticket, UserCog, UserPlus, UserX, Users, Wallet, type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -19,6 +20,7 @@ import { analyze, displayName, narrative, peopleDegree } from "@/components/risk
 import { NodeDetail } from "@/components/risk/graph/node-detail";
 import { RelationList, RelationNarrative } from "@/components/risk/graph/relation-summary";
 import { RiskGraph } from "@/components/risk/graph/risk-graph";
+import { RiskOpsFlow, type RiskOpsMode } from "@/components/risk/ops/risk-ops-flow";
 import { ACTION_RESULT, countText, decisionReason, eventName, percent, remaining, scoreWord, when } from "@/components/risk/kit/humanize";
 import {
   ACTION_COLOR, ACTION_LABEL, ACTION_ORDER, DIM_LABEL, DURATION_PRESETS, ENTITY_LABEL, EVENT_LABEL, GRAPH_TEMPLATE_LABEL, KIND_LABEL,
@@ -109,6 +111,7 @@ export function UserRiskTab({ appKey, userId, user }: { appKey: string; userId: 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <TimelinePanel timeline={data?.timeline ?? []} days={days} loading={loading} error={errors.timeline} />
         <DisposePanel
+          appKey={appKey}
           appId={appId}
           userId={userId}
           name={name}
@@ -1045,11 +1048,13 @@ interface DisposeAction {
   input: Omit<DisposeInput, "durationSeconds" | "reason">;
 }
 
-function DisposePanel({ appId, userId, name, account, lists, devices, ips, look, loading }: {
-  appId: number; userId: number; name: string; account?: string; lists: ListEntry[]; devices: EntityUse[]; ips: EntityUse[];
+function DisposePanel({ appKey, appId, userId, name, account, lists, devices, ips, look, loading }: {
+  appKey: string; appId: number; userId: number; name: string; account?: string; lists: ListEntry[]; devices: EntityUse[]; ips: EntityUse[];
   look: Lookup; loading: boolean;
 }) {
   const dispose = useDispose();
+  const router = useRouter();
+  const [opsMode, setOpsMode] = useState<RiskOpsMode | null>(null);
   const [pending, setPending] = useState<DisposeAction | null>(null);
   const [reason, setReason] = useState("");
   const [duration, setDuration] = useState(86400);
@@ -1133,8 +1138,32 @@ function DisposePanel({ appId, userId, name, account, lists, devices, ips, look,
               </div>
             </div>
           )}
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setOpsMode("release")}
+              className="group flex min-w-0 items-start gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.06] px-3 py-3 text-left transition-colors hover:bg-emerald-500/10 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+            >
+              <TonalIcon icon={ShieldCheck} tone="emerald" size="sm" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">一键解除风控</span>
+                <span className="block text-xs leading-5 text-muted-foreground">撤销封号、防火墙与名单，可连同关联账号</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setOpsMode("purge")}
+              className="group flex min-w-0 items-start gap-3 rounded-xl border border-rose-500/30 bg-rose-500/[0.06] px-3 py-3 text-left transition-colors hover:bg-rose-500/10 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+            >
+              <TonalIcon icon={UserX} tone="rose" size="sm" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">删除风险账号</span>
+                <span className="block text-xs leading-5 text-muted-foreground">连同关联账号一起删除，可拉黑用过的设备</span>
+              </span>
+            </button>
+          </div>
           <div>
-            <div className="mb-2 text-xs font-medium text-muted-foreground">处置</div>
+            <div className="mb-2 text-xs font-medium text-muted-foreground">单项处置</div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
               {actions.map((a) => (
                 <button
@@ -1155,6 +1184,19 @@ function DisposePanel({ appId, userId, name, account, lists, devices, ips, look,
           </div>
         </div>
       )}
+      <RiskOpsFlow
+        open={!!opsMode}
+        onOpenChange={(o) => !o && setOpsMode(null)}
+        mode={opsMode ?? "release"}
+        appId={appId}
+        userIds={[userId]}
+        onFinished={({ mode, done }) => {
+          // 当前账号被删掉了：详情页已经没有内容，关闭对话框后回到用户列表
+          if (mode === "purge" && done.includes(userId)) {
+            setTimeout(() => router.replace(`/app-users?app=${encodeURIComponent(appKey)}`), 0);
+          }
+        }}
+      />
       <AlertDialog open={!!pending} onOpenChange={(o) => !o && close()}>
         <AlertDialogContent>
           <AlertDialogHeader>

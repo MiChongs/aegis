@@ -370,7 +370,7 @@ export const navigationGroups: NavigationGroup[] = [
         title: "风控平台",
         href: "/risk-control",
         icon: ShieldAlert,
-        summary: "多场景决策、特征、名单、行为模式与关系图",
+        summary: "多场景决策、特征、名单、行为模式、关系图与账号处置",
         // 首项必须是该页默认 Tab，否则无 ?tab= 时高亮会错位
         children: [
           { title: "总览", tab: "overview" },
@@ -381,6 +381,7 @@ export const navigationGroups: NavigationGroup[] = [
           { title: "模型", tab: "models" },
           { title: "决策流水", tab: "decisions" },
           { title: "复核", tab: "cases" },
+          { title: "账号处置", tab: "accounts" },
           { title: "关系图谱", tab: "graph" },
           { title: "系统", tab: "system" }
         ]

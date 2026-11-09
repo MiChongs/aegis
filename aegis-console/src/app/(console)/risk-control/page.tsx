@@ -3,7 +3,7 @@
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  Activity, Boxes, Brain, ClipboardCheck, Layers, ListChecks, Network, ScrollText, Server, Workflow,
+  Activity, Boxes, Brain, ClipboardCheck, Layers, ListChecks, Network, ScrollText, Server, UserCog, Workflow,
 } from "lucide-react";
 
 import { SectionHeading } from "@/components/ui/section-heading";
@@ -19,6 +19,7 @@ import { RiskDecisions } from "@/components/risk/decisions";
 import { RiskCases } from "@/components/risk/cases";
 import { RiskGraphExplorer } from "@/components/risk/graph-explorer";
 import { RiskSystem } from "@/components/risk/system";
+import { RiskAccounts } from "@/components/risk/ops/risk-accounts";
 
 /**
  * 风控平台（docs/risk-platform.md）。数据与配置都在独立服务 risk-admin 里，经主服务转发。
@@ -35,6 +36,7 @@ const TABS = [
   { value: "models", label: "模型", icon: Brain, scoped: false },
   { value: "decisions", label: "决策流水", icon: ScrollText, scoped: true },
   { value: "cases", label: "复核", icon: ClipboardCheck, scoped: true },
+  { value: "accounts", label: "账号处置", icon: UserCog, scoped: true },
   { value: "graph", label: "关系图谱", icon: Network, scoped: true },
   { value: "system", label: "系统", icon: Server, scoped: false },
 ] as const;
@@ -85,6 +87,7 @@ function RiskControlInner() {
         <TabsContent value="models">{tab === "models" && <RiskModels />}</TabsContent>
         <TabsContent value="decisions">{tab === "decisions" && <RiskDecisions app={app} />}</TabsContent>
         <TabsContent value="cases">{tab === "cases" && <RiskCases app={app} />}</TabsContent>
+        <TabsContent value="accounts">{tab === "accounts" && <RiskAccounts app={app} />}</TabsContent>
         <TabsContent value="graph">{tab === "graph" && <RiskGraphExplorer app={app} />}</TabsContent>
         <TabsContent value="system">{tab === "system" && <RiskSystem />}</TabsContent>
       </Tabs>
