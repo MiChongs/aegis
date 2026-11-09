@@ -235,6 +235,30 @@ func (c *Client) SetBanned(ctx context.Context, appID int64, deviceID string, ba
 	return err
 }
 
+// SetOwner 改设备向量记的用户与封禁标记（账号删除后，设备换到仍在用它的用户名下；没人用了 userID 传 0）
+func (c *Client) SetOwner(ctx context.Context, appID int64, deviceID string, userID int64, banned bool) error {
+	_, err := c.cli.Upsert(ctx, milvusclient.NewColumnBasedInsertOption(CollectionDevices).
+		WithVarcharColumn("key", []string{Key(appID, deviceID)}).WithInt64Column("app_id", []int64{appID}).
+		WithInt64Column("user_id", []int64{userID}).WithBoolColumn("banned", []bool{banned}).WithPartialUpdate(true))
+	if err != nil && strings.Contains(err.Error(), "does not exist") {
+		return nil
+	}
+	return err
+}
+
+// Delete 删设备向量（账号删除后设备没人用、也没被拉黑）
+func (c *Client) Delete(ctx context.Context, appID int64, deviceIDs []string) error {
+	if len(deviceIDs) == 0 {
+		return nil
+	}
+	keys := make([]string, len(deviceIDs))
+	for i, d := range deviceIDs {
+		keys[i] = Key(appID, d)
+	}
+	_, err := c.cli.Delete(ctx, milvusclient.NewDeleteOption(CollectionDevices).WithStringIDs("key", keys))
+	return err
+}
+
 // Neighbor 一个相似设备
 type Neighbor struct {
 	DeviceID string  `json:"deviceId"`

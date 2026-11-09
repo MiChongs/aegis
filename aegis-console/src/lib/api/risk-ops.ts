@@ -150,6 +150,8 @@ export interface OpsPurgeResult {
   deleted: number;
   devicesBlocked: number;
   casesClosed: number;
+  /** 关系图里删掉的节点：账号本身与只属于它们的登录名、手机号、设备、IP 等 */
+  graphRemoved: number;
   problems: string[];
 }
 

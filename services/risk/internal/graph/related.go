@@ -304,14 +304,79 @@ func (c *Client) Entities(appID, userID int64, since int64) ([]Node, error) {
 	return out, nil
 }
 
-// MarkUserDeleted 账号已删除：点留着（同设备、同手机号的新账号仍能关联到它），状态记为 deleted 并按封禁计入图特征
-func (c *Client) MarkUserDeleted(appID, userID int64) error {
-	_, err := c.Exec(fmt.Sprintf("UPSERT VERTEX ON user %s SET status = \"deleted\", banned = true;", Quote(UserVID(appID, userID))))
+// Neighbor 一个点的邻居（用于删号后判断实体是否成了孤点、IP 还剩多少用户）
+type Neighbor struct {
+	VID  string
+	Last int64
+}
+
+// NeighborUsers 和 vid 直接相连的用户点（按最近出现倒序），exclude 里的不算
+func (c *Client) NeighborUsers(vid string, exclude map[string]bool, limit int) ([]Neighbor, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rs, err := c.Exec(fmt.Sprintf(
+		"GO FROM %s OVER %s BIDIRECT YIELD src(edge) AS s, dst(edge) AS d, properties(edge).last_seen AS l | ORDER BY $-.l DESC | LIMIT %d",
+		Quote(vid), relatedEdges(), limit+len(exclude)+1))
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []Neighbor
+	for i := 0; i < rs.GetRowSize(); i++ {
+		rec, err := rs.GetRowValuesByIndex(i)
+		if err != nil {
+			continue
+		}
+		other := str(rec, 0)
+		if other == vid {
+			other = str(rec, 1)
+		}
+		if Kind(other) != TagUser || exclude[other] || seen[other] {
+			continue
+		}
+		seen[other] = true
+		out = append(out, Neighbor{VID: other, Last: num(rec, 2)})
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// CountUsers 和 vid 直接相连的不同用户数（IP 的 users 属性；最多数到 5000）
+func (c *Client) CountUsers(vid string) (int64, error) {
+	ns, err := c.NeighborUsers(vid, nil, 5000)
+	return int64(len(ns)), err
+}
+
+// DeleteVertices 删点并连带删边（分批，避免单条语句过长）
+func (c *Client) DeleteVertices(vids []string) error {
+	for i := 0; i < len(vids); i += 50 {
+		batch := vids[i:min(i+50, len(vids))]
+		quoted := make([]string, len(batch))
+		for k, v := range batch {
+			quoted[k] = Quote(v)
+		}
+		if _, err := c.Exec("DELETE VERTEX " + strings.Join(quoted, ", ") + " WITH EDGE;"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetIPUsers 重写 IP 点的用户数与共享出口标记
+func (c *Client) SetIPUsers(vid string, users int64, shared bool) error {
+	_, err := c.Exec(fmt.Sprintf("UPSERT VERTEX ON ip %s SET users = %d, shared = %t;", Quote(vid), users, shared))
 	return err
 }
 
-// MarkUserReleased 一键解除：用户点的封禁标记清掉，状态回到 active
-func (c *Client) MarkUserReleased(appID, userID int64) error {
-	_, err := c.Exec(fmt.Sprintf("UPSERT VERTEX ON user %s SET status = \"active\", banned = false;", Quote(UserVID(appID, userID))))
+// SetUserState 按实际情况重写用户点的封禁标记与状态
+func (c *Client) SetUserState(appID, userID int64, banned bool) error {
+	status := "active"
+	if banned {
+		status = "banned"
+	}
+	_, err := c.Exec(fmt.Sprintf("UPSERT VERTEX ON user %s SET status = %s, banned = %t;", Quote(UserVID(appID, userID)), Quote(status), banned))
 	return err
 }

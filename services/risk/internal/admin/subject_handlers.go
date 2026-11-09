@@ -23,7 +23,8 @@ import (
 //
 //   - inspect：一组账号身上的风控处置（名单、待复核单、近期拦截）与它们的关联账号；
 //   - release：撤掉选中的名单条目、复核单按「判定为正常」结案、可选加一段时间白名单、关系图封禁标记清掉；
-//   - forget：账号已在主服务删除之后的收尾：可选拉黑它们用过的设备、待复核单按「确认有风险」结案、关系图标记为已删除。
+//   - forget：账号已在主服务删除之后的收尾：可选拉黑它们用过的设备、待复核单按「确认有风险」结案、
+//     关系图删掉这些账号与只属于它们的点（subject_refresh.go）。
 //
 // 封号、防火墙、会话在主服务里，不经这里。
 
@@ -331,7 +332,9 @@ func (s *Server) releaseSubjects(ctx context.Context, c *app.RequestContext) (an
 	var in struct {
 		subjectInput
 		EntryIDs   []string `json:"entryIds"`
-		CloseCases bool     `json:"closeCases"`
+		// StillBanned 主服务执行完之后仍在封号中的账号（没勾选解封的人工封禁）：关系图上的封禁标记按它重写
+		StillBanned []int64 `json:"stillBanned"`
+		CloseCases  bool    `json:"closeCases"`
 		AllowDays  int      `json:"allowDays"`
 		Note       string   `json:"note"`
 	}
@@ -360,7 +363,7 @@ func (s *Server) releaseSubjects(ctx context.Context, c *app.RequestContext) (an
 	if err := s.Lists.Remove(ctx, removed); err != nil {
 		problems = append(problems, "名单已移除，索引更新失败（可在系统页重建索引）："+err.Error())
 	}
-	s.markGraphBanned(removed, false)
+	s.recomputeBanned(ctx, removed)
 	res["listsRemoved"] = len(removed)
 
 	closed := 0
@@ -400,14 +403,12 @@ func (s *Server) releaseSubjects(ctx context.Context, c *app.RequestContext) (an
 	}
 	res["allowed"] = allowed
 
-	if s.Graph != nil {
-		for _, uid := range in.UserIDs {
-			if err := s.Graph.MarkUserReleased(in.AppID, uid); err != nil {
-				problems = append(problems, "关系图标记没有更新："+err.Error())
-				break
-			}
-		}
+	// 关系图、设备向量、图特征缓存按现在的事实重写
+	still := map[int64]bool{}
+	for _, uid := range in.StillBanned {
+		still[uid] = true
 	}
+	problems = append(problems, s.refreshAfterRelease(ctx, s.collectNeighborhood(ctx, in.AppID, in.UserIDs), still)...)
 	res["problems"] = nonNilSlice(problems)
 	s.Store.Audit(ctx, by, "subjects.release", fmt.Sprintf("app %d users %v", in.AppID, in.UserIDs), map[string]any{
 		"entries": in.EntryIDs, "closeCases": in.CloseCases, "allowDays": in.AllowDays, "note": note, "result": res})
@@ -438,6 +439,8 @@ func (s *Server) forgetSubjects(ctx context.Context, c *app.RequestContext) (any
 	}
 	res := map[string]any{}
 	var problems []string
+	// 删点之前先把相关对象收集齐（设备、IP、登录名、关联账号）
+	nb := s.collectNeighborhood(ctx, in.AppID, in.UserIDs)
 
 	blocked := 0
 	var devices []string
@@ -479,17 +482,9 @@ func (s *Server) forgetSubjects(ctx context.Context, c *app.RequestContext) (any
 	}
 	res["casesClosed"] = closed
 
-	if s.Graph != nil {
-		var gerr error
-		for _, uid := range in.UserIDs {
-			if err := s.Graph.MarkUserDeleted(in.AppID, uid); err != nil && gerr == nil {
-				gerr = err
-			}
-		}
-		if gerr != nil {
-			problems = append(problems, "关系图标记没有更新："+gerr.Error())
-		}
-	}
+	removedVertices, ps := s.refreshAfterDelete(ctx, nb)
+	problems = append(problems, ps...)
+	res["graphRemoved"] = removedVertices
 	res["problems"] = nonNilSlice(problems)
 	s.Store.Audit(ctx, by, "subjects.forget", fmt.Sprintf("app %d users %v", in.AppID, in.UserIDs), map[string]any{
 		"blockDevices": len(devices), "blockDays": in.BlockDays, "note": note, "result": res})

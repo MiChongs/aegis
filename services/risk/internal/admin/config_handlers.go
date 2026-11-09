@@ -702,7 +702,8 @@ func (s *Server) removeEntries(ctx context.Context, c *app.RequestContext) (any,
 	if err := s.Lists.Remove(ctx, removed); err != nil {
 		return nil, err
 	}
-	s.markGraphBanned(removed, false)
+	// 同一个对象可能还在另一条黑名单里：按剩下的名单重算，而不是直接置为未封禁
+	s.recomputeBanned(ctx, removed)
 	s.Store.Audit(ctx, operator(c), "list.remove", "", in.IDs)
 	return map[string]int{"removed": len(removed)}, nil
 }

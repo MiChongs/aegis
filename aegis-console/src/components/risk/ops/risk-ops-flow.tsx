@@ -723,7 +723,7 @@ function PurgeStep({
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           <div className="space-y-1 text-xs leading-5">
             <p className="text-sm font-medium">删除后无法恢复</p>
-            <p>账号、资料、余额、积分、会员与登录会话一并清除，工单与订单留档但不再关联账号。风控关系图会保留这些账号的痕迹，换号再来仍能被关联到。</p>
+            <p>账号、资料、余额、积分、会员与登录会话一并清除，工单与订单留档但不再关联账号。风控关系图会同步删掉这些账号和只属于它们的登录名、手机号、设备等关系；拉黑的设备会保留，换号再来仍会被拦截。</p>
           </div>
         </div>
 
@@ -831,6 +831,7 @@ function ResultStep({ mode, result, onClose }: { mode: RiskOpsMode; result: OpsR
           return [
             { value: r.deleted, label: "个账号已删除", tone: "rose" as const },
             { value: r.devicesBlocked, label: "台设备已拉黑" },
+            { value: r.graphRemoved, label: "个关系图节点已清理" },
             { value: r.casesClosed, label: "张复核单已结案" },
           ];
         })();
@@ -841,11 +842,13 @@ function ResultStep({ mode, result, onClose }: { mode: RiskOpsMode; result: OpsR
         <div className="flex flex-col items-center gap-2 py-2 text-center">
           {allOk ? <CheckCircle2 className="size-10 text-emerald-500" /> : <AlertTriangle className="size-10 text-amber-500" />}
           <p className="text-base font-medium">{allOk ? (mode === "release" ? "风控已解除" : "账号已删除") : "已完成，部分没有成功"}</p>
-          {mode === "release" && (result as OpsReleaseResult).allowed ? (
-            <p className="text-xs text-muted-foreground">已加白名单保护，保护期内风控规则不再拦截这些账号</p>
-          ) : null}
+          <p className="text-xs text-muted-foreground">
+            {mode === "release"
+              ? `关系图与特征缓存已按最新状态更新${(result as OpsReleaseResult).allowed ? "，并加了白名单保护，保护期内风控规则不再拦截这些账号" : ""}`
+              : "关系图、设备向量与特征缓存已同步更新"}
+          </p>
         </div>
-        <div className={cn("grid gap-2", tiles.length === 4 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3")}>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {tiles.map((t) => (
             <StatTile key={t.label} value={<NumberFlow value={t.value} />} label={t.label} tone={"tone" in t ? t.tone : "default"} />
           ))}

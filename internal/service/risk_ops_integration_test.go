@@ -96,7 +96,7 @@ func TestRiskOpsIntegration(t *testing.T) {
 		case "subjects/release":
 			data = map[string]any{"listsRemoved": len(body["entryIds"].([]any)), "casesClosed": 2, "allowed": 1, "problems": []any{}}
 		case "subjects/forget":
-			data = map[string]any{"devicesBlocked": len(body["blockDevices"].([]any)), "casesClosed": 1, "problems": []any{}}
+			data = map[string]any{"devicesBlocked": len(body["blockDevices"].([]any)), "casesClosed": 1, "graphRemoved": 5, "problems": []any{}}
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -179,6 +179,10 @@ func TestRiskOpsIntegration(t *testing.T) {
 	if body := got["subjects/release"]; body["allowDays"] != float64(7) || body["closeCases"] != true || body["note"] != "误判" {
 		t.Fatalf("发给风控侧的解除请求不对：%+v", body)
 	}
+	// bob 的人工封禁没勾选：关系图上要继续按封禁算
+	if still, _ := got["subjects/release"]["stillBanned"].([]any); len(still) != 1 || int64(still[0].(float64)) != bob {
+		t.Fatalf("仍在封号中的应只有 bob：%v", got["subjects/release"]["stillBanned"])
+	}
 	if operators["subjects/release"] != "运营 小王" {
 		t.Fatalf("操作者应带到风控侧：%q", operators["subjects/release"])
 	}
@@ -192,7 +196,7 @@ func TestRiskOpsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if purge.Deleted != 2 || purge.DevicesBlocked != 2 || purge.CasesClosed != 1 || len(purge.Users) != 3 || purge.Users[2].OK {
+	if purge.Deleted != 2 || purge.DevicesBlocked != 2 || purge.CasesClosed != 1 || purge.GraphRemoved != 5 || len(purge.Users) != 3 || purge.Users[2].OK {
 		t.Fatalf("删除结果不对：%+v", purge)
 	}
 	var left int

@@ -30,7 +30,8 @@ import (
 //     以及经关系图找到的关联账号（共用设备、手机号、邮箱、第三方身份、付款账号、通行密钥、登录名、邀请；IP 线路算弱关联）。
 //   - Release：撤销选中的封号与防火墙封禁、移除选中的名单条目、复核单按「判定为正常」结案、可选加一段白名单保护。
 //   - Purge：硬删除账号（与管理员删除、账号注销同一条 PurgeUser 路径），可选同时拉黑它们用过的设备，
-//     风控侧的复核单按「确认有风险」结案、关系图上标记为已删除（点保留，换号再来仍能关联到）。
+//     风控侧的复核单按「确认有风险」结案，关系图删掉这些账号与只属于它们的点、设备向量改挂或删除、图特征缓存清掉。
+//     拉黑的设备点保留，换号再来仍会命中。
 
 const riskOpsMaxUsers = 100
 
@@ -334,6 +335,7 @@ func (s *RiskService) RiskOpsRelease(ctx context.Context, op RiskOpsOperator, in
 		known[u.ID] = u
 	}
 	operator := userdomain.BanOperator{AdminID: op.AdminID, AdminName: op.label()}
+	var stillBanned []int64 // 执行完仍在封号中的（没勾选解封的人工封禁、解封失败的）
 	for _, id := range ids {
 		u, ok := known[id]
 		r := RiskOpsUserResult{UserID: id, Name: opsName(u, id), OK: true}
@@ -353,8 +355,12 @@ func (s *RiskService) RiskOpsRelease(ctx context.Context, op RiskOpsOperator, in
 			r.Done = "已解封"
 			s.Report(ctx, riskevents.Event{Type: riskevents.TypeAccountUnban, AppID: in.AppID, UserID: id})
 		}
+		if ok && u.Ban != nil && r.Done != "已解封" {
+			stillBanned = append(stillBanned, id)
+		}
 		res.Users = append(res.Users, r)
 	}
+	s.forgetScoreCache(ctx, in.AppID, ids)
 	for _, banID := range uniqInt64(in.IPBanIDs) {
 		if firewall == nil {
 			res.Problems = append(res.Problems, "防火墙未接入，IP 封禁没有撤销")
@@ -373,9 +379,10 @@ func (s *RiskService) RiskOpsRelease(ctx context.Context, op RiskOpsOperator, in
 			Allowed      int      `json:"allowed"`
 			Problems     []string `json:"problems"`
 		}
-		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		err := s.adminDo(cctx, http.MethodPost, "subjects/release", map[string]any{
-			"appId": in.AppID, "userIds": ids, "entryIds": nonNilStrings(in.EntryIDs), "closeCases": in.CloseCases, "allowDays": in.AllowDays, "note": note,
+			"appId": in.AppID, "userIds": ids, "entryIds": nonNilStrings(in.EntryIDs), "stillBanned": uniqInt64(stillBanned),
+			"closeCases": in.CloseCases, "allowDays": in.AllowDays, "note": note,
 		}, op.label(), &out)
 		cancel()
 		if err != nil {
@@ -408,6 +415,7 @@ type RiskOpsPurgeResult struct {
 	Deleted        int                 `json:"deleted"`
 	DevicesBlocked int                 `json:"devicesBlocked"`
 	CasesClosed    int                 `json:"casesClosed"`
+	GraphRemoved   int                 `json:"graphRemoved"` // 关系图里删掉的点（账号与只属于它们的登录名、手机号、设备等）
 	Problems       []string            `json:"problems"`
 }
 
@@ -492,9 +500,11 @@ func (s *RiskService) RiskOpsPurge(ctx context.Context, op RiskOpsOperator, in R
 		var out struct {
 			DevicesBlocked int      `json:"devicesBlocked"`
 			CasesClosed    int      `json:"casesClosed"`
+			GraphRemoved   int      `json:"graphRemoved"`
 			Problems       []string `json:"problems"`
 		}
-		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		s.forgetScoreCache(ctx, in.AppID, deleted)
+		cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		err := s.adminDo(cctx, http.MethodPost, "subjects/forget", map[string]any{
 			"appId": in.AppID, "userIds": deleted, "blockDevices": nonNilStrings(block), "blockDays": in.BlockDays, "note": note,
 		}, op.label(), &out)
@@ -502,7 +512,7 @@ func (s *RiskService) RiskOpsPurge(ctx context.Context, op RiskOpsOperator, in R
 		if err != nil {
 			res.Problems = append(res.Problems, "账号已删除，但风控侧没有收尾（设备拉黑、复核单结案）："+err.Error())
 		} else {
-			res.DevicesBlocked, res.CasesClosed = out.DevicesBlocked, out.CasesClosed
+			res.DevicesBlocked, res.CasesClosed, res.GraphRemoved = out.DevicesBlocked, out.CasesClosed, out.GraphRemoved
 			res.Problems = append(res.Problems, out.Problems...)
 		}
 	}
@@ -522,6 +532,18 @@ func (s *RiskService) RiskOpsBanned(ctx context.Context, q userdomain.RiskBanned
 		items = []userdomain.RiskOpsUser{}
 	}
 	return items, total, err
+}
+
+// forgetScoreCache 清掉这些账号在主服务里缓存的风险分（UserMaxScore 的 5 分钟缓存），下次按风控平台现状重读
+func (s *RiskService) forgetScoreCache(ctx context.Context, appID int64, ids []int64) {
+	if s.redis == nil || len(ids) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(ids))
+	for _, id := range ids {
+		keys = append(keys, fmt.Sprintf("%srisk:maxscore:%d:%d:30", s.prefix, appID, id))
+	}
+	_ = s.redis.Del(ctx, keys...).Err()
 }
 
 func opsName(u userdomain.RiskOpsUser, id int64) string {
@@ -551,7 +573,7 @@ func nonNilStrings(v []string) []string {
 	return v
 }
 
-var riskAdminOpsHTTP = &http.Client{Timeout: 60 * time.Second}
+var riskAdminOpsHTTP = &http.Client{Timeout: 120 * time.Second}
 
 // adminDo 调 risk-admin /v1/<path>（带内部令牌与操作者），解开 {code, data} 信封
 func (s *RiskService) adminDo(ctx context.Context, method, path string, body any, operator string, out any) error {
