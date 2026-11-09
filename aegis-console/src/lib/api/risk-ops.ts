@@ -169,3 +169,42 @@ export const releaseAccounts = (t: string, input: OpsReleaseInput) => post<OpsRe
 export const purgeAccounts = (t: string, input: OpsPurgeInput) => post<OpsPurgeResult>(t, "/purge", input);
 export const listRiskBanned = (t: string, q: { app?: number; q?: string; page?: number; limit?: number }) =>
   apiRequest<OpsBannedPage>(`${P}/banned${buildQuery(q)}`, { token: t });
+
+// ── 风险账号发现（不需要先打开某个用户） ──
+
+export type CandidateSource = "banned" | "blocked" | "score" | "listed" | "confirmed" | "device";
+
+export interface OpsCandidate {
+  user: OpsUser;
+  count: number;
+  maxScore: number;
+  lastAt?: string | null;
+  reason?: string;
+  scene?: string;
+  expiresAt?: string | null;
+}
+
+export interface OpsCluster {
+  appid: number;
+  appName?: string;
+  deviceKey: string;
+  platform?: string;
+  model?: string;
+  name?: string;
+  users: number;
+  lastSeen: string;
+  userIds: number[];
+  members: OpsUser[];
+}
+
+export interface OpsCandidates {
+  source: CandidateSource;
+  total: number;
+  items: OpsCandidate[];
+  clusters: OpsCluster[];
+}
+
+export const findCandidates = (
+  t: string,
+  q: { app?: number; source: CandidateSource; days?: number; min?: number; q?: string; page?: number; limit?: number },
+) => apiRequest<OpsCandidates>(`${P}/candidates${buildQuery(q)}`, { token: t });
