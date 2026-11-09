@@ -1762,15 +1762,28 @@ func (r *Repository) DeleteApp(ctx context.Context, appID int64) error {
 }
 
 // DeleteUserByApp 硬删除指定应用下的用户（CASCADE 会清理关联表）
+// DeleteUserByApp 删除用户行，关联表随外键 CASCADE / SET NULL 清理。
+// 工单与会话留档（提单人置空，见迁移 000151），但提单时留下的联系方式属于这个人的个人信息，
+// 与删行放在同一事务里清空，避免账号注销后邮箱、手机号仍留在工单上。
 func (r *Repository) DeleteUserByApp(ctx context.Context, appID int64, userID int64) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM users WHERE id = $1 AND appid = $2`, userID, appID)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // 提交后回滚是空操作
+	if _, err := tx.Exec(ctx,
+		`UPDATE tickets SET requester_contact = '' WHERE requester_user_id = $1 AND requester_contact <> ''`,
+		userID); err != nil {
+		return fmt.Errorf("清理工单联系方式: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1 AND appid = $2`, userID, appID)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("用户不存在或已删除")
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (r *Repository) HasAnyUserRegisteredFromIP(ctx context.Context, ip string) (bool, error) {

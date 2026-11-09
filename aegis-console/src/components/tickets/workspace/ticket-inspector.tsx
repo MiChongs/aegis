@@ -168,6 +168,11 @@ export function TicketInspector({ ticket }: { ticket: TicketItem }) {
   );
 }
 
+// 提单人被删除（管理员删除用户、账号注销、删除管理员）后，数据库把对应 ID 置空，工单本身保留。
+function requesterRemoved(ticket: TicketItem) {
+  return ticket.requesterType === "admin" ? !ticket.requesterAdminId : !ticket.requesterUserId;
+}
+
 function RequesterCard({ ticket }: { ticket: TicketItem }) {
   const isFeedback = ticket.kind === "feedback";
   return (
@@ -190,6 +195,12 @@ function RequesterCard({ ticket }: { ticket: TicketItem }) {
                   <>
                     <dt className="text-muted-foreground">用户 ID</dt>
                     <dd className="font-mono">{ticket.requesterUserId}</dd>
+                  </>
+                ) : null}
+                {requesterRemoved(ticket) ? (
+                  <>
+                    <dt className="text-muted-foreground">账号</dt>
+                    <dd>已删除，工单留档</dd>
                   </>
                 ) : null}
                 <dt className="text-muted-foreground">应用</dt>
