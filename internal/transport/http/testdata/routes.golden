@@ -526,6 +526,7 @@ GET	/api/admin/system/plugins/:id	AdminGetPlugin
 GET	/api/admin/system/plugins/executions	AdminListHookExecutions
 GET	/api/admin/system/plugins/registry	AdminGetHookRegistry
 GET	/api/admin/system/risk-ops/banned	AdminRiskOpsBanned
+GET	/api/admin/system/risk-ops/candidates	AdminRiskOpsFind
 GET	/api/admin/system/risk/*path	AdminRiskProxy
 GET	/api/admin/system/roles	AdminRoleCatalog
 GET	/api/admin/system/roles/:roleKey/impact	AdminGetRoleImpactPreview

@@ -94,6 +94,7 @@ func (s *Server) routes(g *route.RouterGroup) {
 	g.POST("/dispose", s.wrap(s.dispose))
 	g.POST("/subjects/inspect", s.wrap(s.inspectSubjects))
 	g.GET("/subjects/related", s.wrap(s.relatedSubjects))
+	g.GET("/subjects/candidates", s.wrap(s.subjectCandidates))
 	g.POST("/subjects/release", s.wrap(s.releaseSubjects))
 	g.POST("/subjects/forget", s.wrap(s.forgetSubjects))
 }

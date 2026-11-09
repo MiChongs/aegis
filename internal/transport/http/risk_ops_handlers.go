@@ -46,6 +46,27 @@ func (h *Handler) AdminRiskOpsBanned(c *gin.Context) {
 	response.Success(c, 200, "获取成功", gin.H{"items": items, "total": total, "page": max(page, 1)})
 }
 
+// AdminRiskOpsFind 按风控信号发现风险账号（不需要先打开某个用户）
+func (h *Handler) AdminRiskOpsFind(c *gin.Context) {
+	if h.risk == nil {
+		response.Error(c, http.StatusServiceUnavailable, 50301, "风控未接入")
+		return
+	}
+	num := func(k string) int {
+		v, _ := strconv.Atoi(c.Query(k))
+		return v
+	}
+	appID, _ := strconv.ParseInt(c.Query("app"), 10, 64)
+	out, err := h.risk.RiskOpsFind(c.Request.Context(), service.RiskOpsCandidateQuery{
+		AppID: appID, Source: c.Query("source"), Days: num("days"), Min: num("min"), Limit: num("limit"), Query: c.Query("q"), Page: num("page"),
+	})
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	response.Success(c, 200, "获取成功", out)
+}
+
 // AdminRiskOpsInspect 一组账号的处置清单与关联账号
 func (h *Handler) AdminRiskOpsInspect(c *gin.Context) {
 	if h.risk == nil {

@@ -331,12 +331,12 @@ func (s *Server) inspectOne(ctx context.Context, appID, uid int64, since time.Ti
 func (s *Server) releaseSubjects(ctx context.Context, c *app.RequestContext) (any, error) {
 	var in struct {
 		subjectInput
-		EntryIDs   []string `json:"entryIds"`
+		EntryIDs []string `json:"entryIds"`
 		// StillBanned 主服务执行完之后仍在封号中的账号（没勾选解封的人工封禁）：关系图上的封禁标记按它重写
 		StillBanned []int64 `json:"stillBanned"`
 		CloseCases  bool    `json:"closeCases"`
-		AllowDays  int      `json:"allowDays"`
-		Note       string   `json:"note"`
+		AllowDays   int     `json:"allowDays"`
+		Note        string  `json:"note"`
 	}
 	if err := bind(c, &in); err != nil {
 		return nil, err

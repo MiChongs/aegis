@@ -383,6 +383,7 @@ func registerAdminSystemRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		}
 		// 账号处置：一键解除风控、关联删除风险账号（主服务编排封号 / 防火墙 / 删号，风控侧经 risk-admin）
 		adminSystem.GET("/risk-ops/banned", h.AdminRiskOpsBanned)
+		adminSystem.GET("/risk-ops/candidates", h.AdminRiskOpsFind)
 		adminSystem.POST("/risk-ops/inspect", h.AdminRiskOpsInspect)
 		adminSystem.POST("/risk-ops/release", h.AdminRiskOpsRelease)
 		adminSystem.POST("/risk-ops/purge", h.AdminRiskOpsPurge)

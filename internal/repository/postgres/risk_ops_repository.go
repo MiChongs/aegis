@@ -171,3 +171,47 @@ func (r *Repository) ActiveIPBansFor(ctx context.Context, ips []string) ([]firew
 	}
 	return out, rows.Err()
 }
+
+// RiskDeviceClusters 登录过至少 minUsers 个账号的设备（占位设备码、UA 摘要键不算，与 events.NormalizeDeviceID 一致）
+func (r *Repository) RiskDeviceClusters(ctx context.Context, appID int64, minUsers, limit int) ([]userdomain.RiskDeviceCluster, error) {
+	if minUsers < 2 {
+		minUsers = 2
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	args := []any{minUsers, limit}
+	where := `d.device_key !~ '^[0\-:_ .]*$' AND d.device_key NOT ILIKE 'ua:%'
+		AND lower(d.device_key) NOT IN ('9774d56d682e549c', 'unknown', 'null', 'nil', 'none', 'undefined')`
+	if appID > 0 {
+		args = append(args, appID)
+		where += " AND d.appid = $3"
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT d.appid, COALESCE(max(a.name), ''), d.device_key,
+			COALESCE((array_agg(NULLIF(d.platform, '') ORDER BY d.last_seen_at DESC) FILTER (WHERE d.platform <> ''))[1], ''),
+			COALESCE((array_agg(d.model ORDER BY d.last_seen_at DESC) FILTER (WHERE d.model <> ''))[1], ''),
+			COALESCE((array_agg(d.name ORDER BY d.last_seen_at DESC) FILTER (WHERE d.name <> ''))[1], ''),
+			count(*)::int, max(d.last_seen_at),
+			(array_agg(d.user_id ORDER BY d.last_seen_at DESC))[1:200]
+		FROM user_login_devices d
+		LEFT JOIN apps a ON a.id = d.appid
+		WHERE `+where+`
+		GROUP BY d.appid, d.device_key
+		HAVING count(*) >= $1
+		ORDER BY count(*) DESC, max(d.last_seen_at) DESC
+		LIMIT $2`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []userdomain.RiskDeviceCluster
+	for rows.Next() {
+		var c userdomain.RiskDeviceCluster
+		if err := rows.Scan(&c.AppID, &c.AppName, &c.DeviceKey, &c.Platform, &c.Model, &c.Name, &c.Users, &c.LastSeen, &c.UserIDs); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

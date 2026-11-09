@@ -95,6 +95,15 @@ func TestRiskOpsIntegration(t *testing.T) {
 			data = map[string]any{"days": 180, "subjects": subs, "related": related, "errors": map[string]any{}}
 		case "subjects/release":
 			data = map[string]any{"listsRemoved": len(body["entryIds"].([]any)), "casesClosed": 2, "allowed": 1, "problems": []any{}}
+		case "subjects/candidates":
+			if r.URL.Query().Get("source") != "blocked" || r.URL.Query().Get("min") != "5" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			data = map[string]any{"items": []any{
+				map[string]any{"appId": appID, "userId": bob, "count": 9, "maxScore": 95, "reason": "设备刷量"},
+				map[string]any{"appId": appID, "userId": 987654321, "count": 7},
+			}}
 		case "subjects/forget":
 			data = map[string]any{"devicesBlocked": len(body["blockDevices"].([]any)), "casesClosed": 1, "graphRemoved": 5, "problems": []any{}}
 		default:
@@ -156,6 +165,36 @@ func TestRiskOpsIntegration(t *testing.T) {
 	}
 	if _, total, _ := risk.RiskOpsBanned(ctx, userdomain.RiskBannedQuery{AppID: appID, Keyword: "bob"}); total != 0 {
 		t.Fatalf("人工封禁的 bob 不应出现")
+	}
+
+	// ── 风险账号发现：设备聚集（占位设备码不算）、风控侧多次被拦截 ──
+	for _, row := range []struct {
+		uid int64
+		key string
+	}{{carol, "farm-device-1"}, {dave, "farm-device-1"}, {alice, "farm-device-1"}, {carol, "0000-0000"}, {dave, "0000-0000"}, {bob, "solo-device"}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO user_login_devices (appid, user_id, device_key, model) VALUES ($1, $2, $3, 'Xiaomi Mi 10')`, appID, row.uid, row.key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	found, err := risk.RiskOpsFind(ctx, RiskOpsCandidateQuery{AppID: appID, Source: "device", Min: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found.Clusters) != 1 || found.Clusters[0].DeviceKey != "farm-device-1" || len(found.Clusters[0].Members) != 3 || found.Clusters[0].Model != "Xiaomi Mi 10" {
+		t.Fatalf("应只聚出 farm-device-1 上的 3 个账号：%+v", found.Clusters)
+	}
+	if f, _ := risk.RiskOpsFind(ctx, RiskOpsCandidateQuery{AppID: appID, Source: "device", Min: 4}); len(f.Clusters) != 0 {
+		t.Fatalf("门槛 4 时不应有聚集：%+v", f.Clusters)
+	}
+	blocked, err := risk.RiskOpsFind(ctx, RiskOpsCandidateQuery{AppID: appID, Source: "blocked", Min: 5, Days: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocked.Items) != 1 || blocked.Items[0].User.ID != bob || blocked.Items[0].Count != 9 || blocked.Items[0].Reason != "设备刷量" {
+		t.Fatalf("多次被拦截应只剩主库里存在的 bob：%+v", blocked.Items)
+	}
+	if b, _ := risk.RiskOpsFind(ctx, RiskOpsCandidateQuery{AppID: appID, Source: "banned"}); len(b.Items) != 1 || b.Items[0].User.ID != alice || b.Items[0].LastAt == nil {
+		t.Fatalf("风控封禁中应是 alice：%+v", b.Items)
 	}
 
 	// ── 一键解除 ──

@@ -26,3 +26,16 @@ type RiskBannedQuery struct {
 	Page    int
 	Limit   int
 }
+
+// RiskDeviceCluster 一台设备上登录过多个账号（批量注册、养号的典型特征）
+type RiskDeviceCluster struct {
+	AppID     int64     `json:"appid"`
+	AppName   string    `json:"appName,omitempty"`
+	DeviceKey string    `json:"deviceKey"`
+	Platform  string    `json:"platform,omitempty"`
+	Model     string    `json:"model,omitempty"`
+	Name      string    `json:"name,omitempty"`
+	Users     int       `json:"users"`
+	LastSeen  time.Time `json:"lastSeen"`
+	UserIDs   []int64   `json:"userIds"`
+}

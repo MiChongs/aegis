@@ -37,6 +37,7 @@ func init() {
 		Write("PATCH /api/admin/system/risk/*path", "修改风控平台配置", "风控平台", SeverityHigh),
 		Write("DELETE /api/admin/system/risk/*path", "删除风控平台配置", "风控平台", SeverityHigh),
 		View("GET /api/admin/system/risk-ops/banned", "查看风控封禁中的账号", ""),
+		View("GET /api/admin/system/risk-ops/candidates", "发现风险账号", ""),
 		View("POST /api/admin/system/risk-ops/inspect", "查看账号的风控处置与关联账号", "用户"),
 		Write("POST /api/admin/system/risk-ops/release", "一键解除风控", "用户", SeverityHigh),
 		Write("POST /api/admin/system/risk-ops/purge", "删除风险账号", "用户", SeverityCritical),

@@ -39,6 +39,7 @@ type riskOpsStore interface {
 	RiskOpsUsers(ctx context.Context, appID int64, ids []int64) ([]userdomain.RiskOpsUser, error)
 	RiskBannedUsers(ctx context.Context, q userdomain.RiskBannedQuery) ([]userdomain.RiskOpsUser, int64, error)
 	ActiveIPBansFor(ctx context.Context, ips []string) ([]firewalldomain.IPBan, error)
+	RiskDeviceClusters(ctx context.Context, appID int64, minUsers, limit int) ([]userdomain.RiskDeviceCluster, error)
 }
 
 type riskUserPurger interface {
@@ -519,6 +520,179 @@ func (s *RiskService) RiskOpsPurge(ctx context.Context, op RiskOpsOperator, in R
 	s.log.Warn("关联删除风险账号", zap.Int64("appid", in.AppID), zap.Int64s("users", deleted), zap.String("operator", op.label()),
 		zap.Int("devicesBlocked", res.DevicesBlocked), zap.String("note", note))
 	return res, nil
+}
+
+// ── 风险账号发现：不需要先打开某个用户 ──
+
+// RiskOpsCandidateQuery 按风控信号找账号
+type RiskOpsCandidateQuery struct {
+	AppID  int64
+	Source string // banned / blocked / score / listed / confirmed / device
+	Days   int
+	Min    int
+	Limit  int
+	Query  string
+	Page   int
+}
+
+// RiskOpsCandidate 一个风险账号与它被列出来的原因
+type RiskOpsCandidate struct {
+	User      userdomain.RiskOpsUser `json:"user"`
+	Count     uint64                 `json:"count"`
+	MaxScore  int32                  `json:"maxScore"`
+	LastAt    *time.Time             `json:"lastAt,omitempty"`
+	Reason    string                 `json:"reason,omitempty"`
+	Scene     string                 `json:"scene,omitempty"`
+	ExpiresAt *time.Time             `json:"expiresAt,omitempty"`
+}
+
+// RiskOpsCluster 一台设备与登录过它的账号
+type RiskOpsCluster struct {
+	userdomain.RiskDeviceCluster
+	Members []userdomain.RiskOpsUser `json:"members"`
+}
+
+// RiskOpsCandidates 发现结果
+type RiskOpsCandidates struct {
+	Source   string             `json:"source"`
+	Total    int64              `json:"total"`
+	Items    []RiskOpsCandidate `json:"items"`
+	Clusters []RiskOpsCluster   `json:"clusters"`
+}
+
+// RiskOpsFind 按来源列出风险账号：风控封禁中、多次被拦截、高风险分、在黑名单里、复核确认有风险、设备聚集
+func (s *RiskService) RiskOpsFind(ctx context.Context, q RiskOpsCandidateQuery) (*RiskOpsCandidates, error) {
+	store, _, err := s.ops()
+	if err != nil {
+		return nil, err
+	}
+	out := &RiskOpsCandidates{Source: q.Source, Items: []RiskOpsCandidate{}, Clusters: []RiskOpsCluster{}}
+	limit := q.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	switch q.Source {
+	case "", "banned":
+		out.Source = "banned"
+		users, total, err := store.RiskBannedUsers(ctx, userdomain.RiskBannedQuery{AppID: q.AppID, Keyword: q.Query, Page: q.Page, Limit: limit})
+		if err != nil {
+			return nil, err
+		}
+		out.Total = total
+		for _, u := range users {
+			c := RiskOpsCandidate{User: u, Count: 1}
+			if u.Ban != nil {
+				at := u.Ban.StartAt
+				c.LastAt, c.Reason, c.ExpiresAt = &at, u.Ban.Reason, u.Ban.EndAt
+			}
+			out.Items = append(out.Items, c)
+		}
+		return out, nil
+	case "device":
+		minUsers := q.Min
+		if minUsers <= 0 {
+			minUsers = 3
+		}
+		clusters, err := store.RiskDeviceClusters(ctx, q.AppID, minUsers, min(limit, 100))
+		if err != nil {
+			return nil, err
+		}
+		byApp := map[int64][]int64{}
+		for _, c := range clusters {
+			byApp[c.AppID] = append(byApp[c.AppID], c.UserIDs...)
+		}
+		users, err := s.opsUsersByApp(ctx, store, byApp)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range clusters {
+			item := RiskOpsCluster{RiskDeviceCluster: c, Members: []userdomain.RiskOpsUser{}}
+			for _, id := range c.UserIDs {
+				if u, ok := users[c.AppID][id]; ok {
+					item.Members = append(item.Members, u)
+				}
+			}
+			if len(item.Members) < 2 {
+				continue
+			}
+			out.Clusters = append(out.Clusters, item)
+		}
+		out.Total = int64(len(out.Clusters))
+		return out, nil
+	case "blocked", "score", "listed", "confirmed":
+		if !s.Enabled() {
+			return nil, apperrors.New(50301, http.StatusServiceUnavailable, "风控平台未接入")
+		}
+		query := url.Values{"source": {q.Source}, "limit": {fmt.Sprint(limit)}}
+		if q.AppID > 0 {
+			query.Set("app", fmt.Sprint(q.AppID))
+		}
+		if q.Days > 0 {
+			query.Set("days", fmt.Sprint(q.Days))
+		}
+		if q.Min > 0 {
+			query.Set("min", fmt.Sprint(q.Min))
+		}
+		var risk struct {
+			Items []struct {
+				AppID     int64      `json:"appId"`
+				UserID    int64      `json:"userId"`
+				Count     uint64     `json:"count"`
+				MaxScore  int32      `json:"maxScore"`
+				LastAt    *time.Time `json:"lastAt"`
+				Reason    string     `json:"reason"`
+				Scene     string     `json:"scene"`
+				ExpiresAt *time.Time `json:"expiresAt"`
+			} `json:"items"`
+		}
+		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := s.adminDo(cctx, http.MethodGet, "subjects/candidates?"+query.Encode(), nil, "aegis-server", &risk)
+		cancel()
+		if err != nil {
+			return nil, apperrors.New(50302, http.StatusBadGateway, "风控平台没有返回："+err.Error())
+		}
+		byApp := map[int64][]int64{}
+		for _, it := range risk.Items {
+			byApp[it.AppID] = append(byApp[it.AppID], it.UserID)
+		}
+		users, err := s.opsUsersByApp(ctx, store, byApp)
+		if err != nil {
+			return nil, err
+		}
+		kw := strings.ToLower(strings.TrimSpace(q.Query))
+		for _, it := range risk.Items {
+			u, ok := users[it.AppID][it.UserID]
+			if !ok {
+				continue // 账号已删除
+			}
+			if kw != "" && !strings.Contains(strings.ToLower(u.Account+" "+u.Nickname+" "+fmt.Sprint(u.ID)+" "+fmt.Sprint(u.PublicID)), kw) {
+				continue
+			}
+			out.Items = append(out.Items, RiskOpsCandidate{User: u, Count: it.Count, MaxScore: it.MaxScore, LastAt: it.LastAt,
+				Reason: it.Reason, Scene: it.Scene, ExpiresAt: it.ExpiresAt})
+		}
+		out.Total = int64(len(out.Items))
+		return out, nil
+	}
+	return nil, apperrors.New(40000, http.StatusBadRequest, "不支持的来源")
+}
+
+// opsUsersByApp 分应用批量取账号（每批 500）
+func (s *RiskService) opsUsersByApp(ctx context.Context, store riskOpsStore, byApp map[int64][]int64) (map[int64]map[int64]userdomain.RiskOpsUser, error) {
+	out := map[int64]map[int64]userdomain.RiskOpsUser{}
+	for app, ids := range byApp {
+		out[app] = map[int64]userdomain.RiskOpsUser{}
+		for i := 0; i < len(ids); i += 500 {
+			rows, err := store.RiskOpsUsers(ctx, app, ids[i:min(i+500, len(ids))])
+			if err != nil {
+				return nil, err
+			}
+			for _, u := range rows {
+				out[app][u.ID] = u
+			}
+		}
+	}
+	return out, nil
 }
 
 // RiskOpsBanned 正被风控平台封禁中的账号
