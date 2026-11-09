@@ -167,6 +167,20 @@ func (r *RealtimeRepository) RemoveConnection(ctx context.Context, appID int64, 
 	return r.refreshUserIndexes(ctx, appID, userID)
 }
 
+// RemoveUserConnections 一个用户的全部在线连接（账号删除后不该再算在线人数里）；返回删掉的连接数
+func (r *RealtimeRepository) RemoveUserConnections(ctx context.Context, appID int64, userID int64) (int, error) {
+	ids, err := r.client.ZRange(ctx, r.userConnectionsKey(appID, userID), 0, -1).Result()
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range ids {
+		if err := r.RemoveConnection(ctx, appID, userID, id); err != nil {
+			return 0, err
+		}
+	}
+	return len(ids), r.refreshUserIndexes(ctx, appID, userID)
+}
+
 // CleanupExpired 收拾到点未续期的连接（进程崩溃、网络中断没走正常关闭），
 // 返回被清掉的连接，调用方据此补发下线事件。
 func (r *RealtimeRepository) CleanupExpired(ctx context.Context) ([]realtimedomain.PresenceConnection, error) {

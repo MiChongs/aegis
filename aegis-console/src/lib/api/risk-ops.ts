@@ -133,6 +133,10 @@ export interface OpsReleaseResult {
   listsRemoved: number;
   casesClosed: number;
   allowed: number;
+  /** 风控平台侧删掉的滑窗计数、流式特征与图特征缓存键数 */
+  riskCounters?: number;
+  /** 主服务侧：注册准入计数组（含惩罚期）、登录防爆破锁定 */
+  counters?: { registerCounters: number; loginGuards: number };
   problems: string[];
 }
 
@@ -152,6 +156,8 @@ export interface OpsPurgeResult {
   casesClosed: number;
   /** 关系图里删掉的节点：账号本身与只属于它们的登录名、手机号、设备、IP 等 */
   graphRemoved: number;
+  /** 风控平台侧删掉的滑窗计数、流式特征与图特征缓存键数 */
+  riskCounters?: number;
   problems: string[];
 }
 

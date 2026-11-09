@@ -128,6 +128,8 @@ type UserService struct {
 	autoSign autoSignSettingsGuard
 	// publicIDs 主键 ↔ 对外用户 ID；全进程共用一份（PublicIDs），各处响应据此把主键换掉
 	publicIDs *UserPublicIDs
+	// purgeHooks 删号时各模块的计数收尾（AddPurgeHook）
+	purgeHooks []UserPurgeHook
 }
 
 // autoSignSettingsGuard 写入自动签到设置前的清洗与资格校验（AutoSignService.PrepareSettings）。
@@ -2256,9 +2258,30 @@ func (s *UserService) AdminDeleteUser(ctx context.Context, appID int64, userID i
 	return nil
 }
 
+// UserPurgeHook 删号前调用（账号还在，能查它的台账、登录名）；返回删号成功后执行的收尾，nil 表示不用收尾。
+// 各模块的计数（注册准入、登录防爆破、在线人数、排行榜缓存、风险分缓存）用它跟着账号删除一起更新。
+type UserPurgeHook func(ctx context.Context, appID, userID int64, account string) func(context.Context)
+
+// AddPurgeHook 登记删号收尾
+func (s *UserService) AddPurgeHook(h UserPurgeHook) {
+	if h != nil {
+		s.purgeHooks = append(s.purgeHooks, h)
+	}
+}
+
 // PurgeUser 硬删除一个用户：吊销会话、清理安全凭证、删行（CASCADE 清理关联表）、清缓存与搜索索引、
-// 触发 user.onDeleted 钩子。管理员删除与账号注销共用这一条路径。
+// 各模块计数收尾（UserPurgeHook）、触发 user.onDeleted 钩子。管理员删除、账号注销、风控关联删除共用这一条路径。
 func (s *UserService) PurgeUser(ctx context.Context, appID int64, userID int64) error {
+	account := ""
+	if u, err := s.pg.GetUserByID(ctx, userID); err == nil && u != nil {
+		account = u.Account
+	}
+	var afters []func(context.Context)
+	for _, h := range s.purgeHooks {
+		if after := h(ctx, appID, userID, account); after != nil {
+			afters = append(afters, after)
+		}
+	}
 	// 先吊销会话
 	s.revokeAllUserSessions(ctx, appID, userID)
 	// 清理安全凭证
@@ -2272,6 +2295,9 @@ func (s *UserService) PurgeUser(ctx context.Context, appID int64, userID int64) 
 	}
 	s.invalidateAdminUserCaches(ctx, appID, userID)
 	s.deleteAdminUserSearch(appID, userID)
+	for _, after := range afters {
+		after(context.WithoutCancel(ctx))
+	}
 	if s.plugin != nil {
 		go s.plugin.ExecuteHook(context.Background(), HookUserDeleted, map[string]any{
 			"userId": userID,

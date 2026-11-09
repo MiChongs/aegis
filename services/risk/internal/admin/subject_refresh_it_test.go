@@ -54,6 +54,10 @@ func TestSubjectRefreshIT(t *testing.T) {
 	suffix := strconv.FormatInt(now.UnixNano(), 36)
 	devA, devC := "it-dev-a-"+suffix, "it-dev-c-"+suffix
 	ipShared, ipCarol := "198.51.100."+strconv.Itoa(int(now.Unix()%200)+1), "203.0.113."+strconv.Itoa(int(now.Unix()%200)+1)
+	// IP 点不分应用：先清掉之前跑测试留下的同名测试地址，免得被别的测试账号连着
+	if err := g.DeleteVertices([]string{graph.IPVID(ipShared), graph.IPVID(ipCarol)}); err != nil {
+		t.Fatal(err)
+	}
 	if err := g.Apply([]events.Event{
 		{Type: events.TypeLoginSuccess, TS: ts, AppID: app, UserID: 1, Account: "alice-" + suffix, IP: ipShared, DeviceID: devA, Phone: "1390000" + suffix[len(suffix)-4:]},
 		{Type: events.TypeLoginSuccess, TS: ts, AppID: app, UserID: 2, Account: "bob-" + suffix, IP: ipShared, DeviceID: devA},
@@ -149,6 +153,23 @@ func TestSubjectRefreshIT(t *testing.T) {
 		}
 	}
 
+	// 滑窗计数、去重计数、流式特征：受影响对象的要删，别人的不动
+	appS := strconv.FormatInt(app, 10)
+	counterKeys := []string{
+		"rv:{it_dev_logins:" + appS + ":login:" + devA + "}:1",
+		"rvd:{it_dev_accounts:" + appS + ":*:" + devC + "}:2",
+		"rv:{it_user_logins:" + appS + ":login:3}:3",
+		"rf:it_ip_fails:" + appS + ":" + ipCarol,
+		"rf:it_net_fails:" + appS + ":" + ipSubnet(ipCarol),
+	}
+	keepKey := "rv:{it_dev_logins:" + appS + ":login:it-other-" + suffix + "}:1"
+	for _, k := range append(append([]string{}, counterKeys...), keepKey) {
+		if err := rdb.Set(ctx, k, "7", time.Hour).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { rdb.Del(context.Background(), keepKey) })
+
 	// ── 删号：carol 独有的设备、IP、登录名一起删；alice 的设备还有 bob 在用，留着并改挂到 bob ──
 	nbDel := s.collectNeighborhood(ctx, app, []int64{1, 3})
 	n, problems := s.refreshAfterDelete(ctx, nbDel)
@@ -162,6 +183,17 @@ func TestSubjectRefreshIT(t *testing.T) {
 		if exists(vid) {
 			t.Errorf("%s 应已删除", vid)
 		}
+	}
+	for _, k := range counterKeys {
+		if n, _ := rdb.Exists(ctx, k).Result(); n != 0 {
+			t.Errorf("计数 %s 应已删除", k)
+		}
+	}
+	if n, _ := rdb.Exists(ctx, keepKey).Result(); n != 1 {
+		t.Errorf("不相干的计数不应被删")
+	}
+	if nbDel.countersCleared < len(counterKeys) {
+		t.Errorf("清掉的计数键数不对：%d", nbDel.countersCleared)
 	}
 	if !exists(graph.DeviceVID(devA)) || !exists(graph.UserVID(app, 2)) {
 		t.Fatalf("bob 与仍在用的设备不应删除")

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,11 +11,18 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"aegis/internal/config"
 	firewalldomain "aegis/internal/domain/firewall"
+	realtimedomain "aegis/internal/domain/realtime"
+	"aegis/internal/domain/regip"
 	userdomain "aegis/internal/domain/user"
+	redisrepo "aegis/internal/repository/redis"
 	"aegis/services/risk/kitex_gen/aegis/risk/v1/decisionservice"
+
+	"github.com/alicebob/miniredis/v2"
+	redislib "github.com/redis/go-redis/v9"
 
 	"go.uber.org/zap"
 )
@@ -94,7 +102,8 @@ func TestRiskOpsIntegration(t *testing.T) {
 			}
 			data = map[string]any{"days": 180, "subjects": subs, "related": related, "errors": map[string]any{}}
 		case "subjects/release":
-			data = map[string]any{"listsRemoved": len(body["entryIds"].([]any)), "casesClosed": 2, "allowed": 1, "problems": []any{}}
+			data = map[string]any{"listsRemoved": len(body["entryIds"].([]any)), "casesClosed": 2, "allowed": 1, "countersCleared": 4,
+				"ips": []any{"198.51.100.99"}, "devices": []any{}, "problems": []any{}}
 		case "subjects/candidates":
 			if r.URL.Query().Get("source") != "blocked" || r.URL.Query().Get("min") != "5" {
 				w.WriteHeader(http.StatusBadRequest)
@@ -123,6 +132,61 @@ func TestRiskOpsIntegration(t *testing.T) {
 	risk.SetAccountBanService(bans)
 	risk.SetFirewall(fw)
 	op := RiskOpsOperator{AdminID: 1, Name: "运营 小王"}
+
+	// 主服务侧计数：注册准入、登录防爆破、在线连接、排行榜缓存（miniredis）
+	mr := miniredis.RunT(t)
+	rdb := redislib.NewClient(&redislib.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	regIP := NewRegisterIPService(log, env.pg, redisrepo.NewRegisterIPRepository(rdb, "t"), NewAppService(log, env.pg, env.sessions), nil)
+	guardRepo := redisrepo.NewLoginGuardRepository(rdb, "t")
+	guard := NewLoginGuardService(config.LoginGuardConfig{}, log, guardRepo, env.pg)
+	rt := redisrepo.NewRealtimeRepository(rdb, "t")
+	counters := NewAccountCounters(log, regIP, guard, rt, redisrepo.NewSessionRepository(rdb, "t"), risk)
+	users.AddPurgeHook(counters.PurgeHook)
+	risk.SetAccountCounters(counters)
+	policy, err := regIP.policyOf(ctx, appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var daveLedger int64
+	if err := pool.QueryRow(ctx, `INSERT INTO register_ip_ledger (appid, user_id, account, ip, device_id) VALUES ($1, $2, 'dave', '198.51.100.7', 'farm-device-0001') RETURNING id`,
+		appID, dave).Scan(&daveLedger); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO register_ip_ledger (appid, user_id, account, ip, device_id) VALUES ($1, $2, 'alice', '203.0.113.9', '')`, appID, alice); err != nil {
+		t.Fatal(err)
+	}
+	regKeys := func(ip, device string) []string {
+		addr, _ := regip.ParseAddress(ip, policy.Network)
+		dev := regip.ParseDevice(device, policy.Device.MinLength)
+		var keys []string
+		for _, rule := range policy.Rules {
+			if rule.Scope == regip.ScopeApp && !rule.Lifetime() {
+				continue
+			}
+			if subject := regip.SubjectKey(rule.Scope, addr, dev, regip.Location{}); subject != "" {
+				keys = append(keys, fmt.Sprintf("t{regip:%d}:w:%s:%s", appID, rule.ID, subject), fmt.Sprintf("t{regip:%d}:n:%s:%s", appID, rule.ID, subject))
+			}
+		}
+		return keys
+	}
+	daveRegKeys := regKeys("198.51.100.7", "farm-device-0001")
+	if len(daveRegKeys) == 0 {
+		t.Fatalf("默认策略里没有按地址或设备计数的规则")
+	}
+	for _, k := range daveRegKeys {
+		mr.Set(k, "5")
+	}
+	penaltyKey := fmt.Sprintf("t{regip:%d}:pen:203.0.113.9/32", appID)
+	mr.Set(penaltyKey, "1")
+	_ = guardRepo.SetLock(ctx, loginGuardKindAccount, appID, "alice", time.Hour)
+	_ = guardRepo.SetLock(ctx, loginGuardKindAccount, appID, "dave", time.Hour)
+	_ = guardRepo.SetLock(ctx, loginGuardKindIP, appID, "198.51.100.99", time.Hour)
+	if err := rt.UpsertConnection(ctx, realtimedomain.PresenceConnection{ConnectionID: "conn-dave", AppID: appID, UserID: dave, ConnectedAt: time.Now(), LastSeenAt: time.Now()}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	rankKey := fmt.Sprintf("t:rank:points:%d:integral:all:1:20", appID)
+	mr.Set(rankKey, "[]")
 
 	// ── 清单 ──
 	ins, err := risk.RiskOpsInspect(ctx, appID, []int64{alice, bob, alice, 0}, true)
@@ -218,6 +282,18 @@ func TestRiskOpsIntegration(t *testing.T) {
 	if body := got["subjects/release"]; body["allowDays"] != float64(7) || body["closeCases"] != true || body["note"] != "误判" {
 		t.Fatalf("发给风控侧的解除请求不对：%+v", body)
 	}
+	if rel.RiskCounters != 4 || rel.Counters.RegisterCounters == 0 || rel.Counters.LoginGuards < 3 {
+		t.Fatalf("解除时两边的计数都要清：%+v", rel)
+	}
+	if mr.Exists(penaltyKey) {
+		t.Fatalf("alice 注册地址的惩罚期应已解除")
+	}
+	if rem, _ := guardRepo.LockRemaining(ctx, loginGuardKindAccount, appID, "alice"); rem > 0 {
+		t.Fatalf("alice 的登录锁定应已清掉")
+	}
+	if rem, _ := guardRepo.LockRemaining(ctx, loginGuardKindIP, appID, "198.51.100.99"); rem > 0 {
+		t.Fatalf("风控记录到的地址的登录锁定应已清掉")
+	}
 	// bob 的人工封禁没勾选：关系图上要继续按封禁算
 	if still, _ := got["subjects/release"]["stillBanned"].([]any); len(still) != 1 || int64(still[0].(float64)) != bob {
 		t.Fatalf("仍在封号中的应只有 bob：%v", got["subjects/release"]["stillBanned"])
@@ -241,6 +317,25 @@ func TestRiskOpsIntegration(t *testing.T) {
 	var left int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE id = ANY($1)`, []int64{dave, carol}).Scan(&left); err != nil || left != 0 {
 		t.Fatalf("dave、carol 应已删除，还剩 %d（%v）", left, err)
+	}
+	// 删号收尾：dave 的注册台账标为已解除、相关计数清掉、登录锁定与在线连接清掉、排行榜缓存清掉
+	var releasedAt *time.Time
+	if err := pool.QueryRow(ctx, `SELECT released_at FROM register_ip_ledger WHERE id = $1`, daveLedger).Scan(&releasedAt); err != nil || releasedAt == nil {
+		t.Fatalf("dave 的注册台账应标为已解除：%v %v", releasedAt, err)
+	}
+	for _, k := range daveRegKeys {
+		if mr.Exists(k) {
+			t.Fatalf("注册计数 %s 应已清掉", k)
+		}
+	}
+	if rem, _ := guardRepo.LockRemaining(ctx, loginGuardKindAccount, appID, "dave"); rem > 0 {
+		t.Fatalf("dave 的登录锁定应已清掉")
+	}
+	if n, _ := rdb.ZCard(ctx, fmt.Sprintf("t:realtime:app:%d:user:%d:connections", appID, dave)).Result(); n != 0 {
+		t.Fatalf("dave 的在线连接应已清掉：%d", n)
+	}
+	if mr.Exists(rankKey) {
+		t.Fatalf("排行榜缓存应已清掉")
 	}
 	body := got["subjects/forget"]
 	devs, _ := body["blockDevices"].([]any)
@@ -270,4 +365,3 @@ func (f *fakeRiskFirewall) UnbanIP(_ context.Context, banID int64, _ int64) erro
 func (f *fakeRiskFirewall) ListBans(context.Context, firewalldomain.IPBanFilter) (*firewalldomain.IPBanPage, error) {
 	return &firewalldomain.IPBanPage{}, nil
 }
-

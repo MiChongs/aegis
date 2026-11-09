@@ -408,7 +408,10 @@ func (s *Server) releaseSubjects(ctx context.Context, c *app.RequestContext) (an
 	for _, uid := range in.StillBanned {
 		still[uid] = true
 	}
-	problems = append(problems, s.refreshAfterRelease(ctx, s.collectNeighborhood(ctx, in.AppID, in.UserIDs), still)...)
+	nb := s.collectNeighborhood(ctx, in.AppID, in.UserIDs)
+	problems = append(problems, s.refreshAfterRelease(ctx, nb, still)...)
+	// 主服务据此清注册准入与登录防爆破的计数
+	res["ips"], res["devices"], res["countersCleared"] = nb.list(nb.ips), nb.list(nb.devices), nb.countersCleared
 	res["problems"] = nonNilSlice(problems)
 	s.Store.Audit(ctx, by, "subjects.release", fmt.Sprintf("app %d users %v", in.AppID, in.UserIDs), map[string]any{
 		"entries": in.EntryIDs, "closeCases": in.CloseCases, "allowDays": in.AllowDays, "note": note, "result": res})
@@ -485,6 +488,7 @@ func (s *Server) forgetSubjects(ctx context.Context, c *app.RequestContext) (any
 	removedVertices, ps := s.refreshAfterDelete(ctx, nb)
 	problems = append(problems, ps...)
 	res["graphRemoved"] = removedVertices
+	res["countersCleared"] = nb.countersCleared
 	res["problems"] = nonNilSlice(problems)
 	s.Store.Audit(ctx, by, "subjects.forget", fmt.Sprintf("app %d users %v", in.AppID, in.UserIDs), map[string]any{
 		"blockDevices": len(devices), "blockDays": in.BlockDays, "note": note, "result": res})

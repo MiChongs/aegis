@@ -53,6 +53,13 @@ func (s *RiskService) SetOps(store riskOpsStore, purger riskUserPurger) {
 	s.mu.Unlock()
 }
 
+// SetAccountCounters 接主服务里随账号处置更新的计数（注册准入、登录防爆破、排行榜、在线人数）
+func (s *RiskService) SetAccountCounters(c *AccountCounters) {
+	s.mu.Lock()
+	s.counters = c
+	s.mu.Unlock()
+}
+
 // RiskOpsOperator 执行处置的管理员
 type RiskOpsOperator struct {
 	AdminID int64
@@ -299,7 +306,11 @@ type RiskOpsReleaseResult struct {
 	ListsRemoved int                 `json:"listsRemoved"`
 	CasesClosed  int                 `json:"casesClosed"`
 	Allowed      int                 `json:"allowed"`
-	Problems     []string            `json:"problems"`
+	// RiskCounters 风控平台侧删掉的滑窗计数、流式特征与图特征缓存键数
+	RiskCounters int `json:"riskCounters"`
+	// Counters 主服务侧清掉的注册准入计数与登录防爆破锁定
+	Counters RiskOpsCountersResult `json:"counters"`
+	Problems []string              `json:"problems"`
 }
 
 // RiskOpsRelease 一键解除风控
@@ -373,12 +384,16 @@ func (s *RiskService) RiskOpsRelease(ctx context.Context, op RiskOpsOperator, in
 		}
 		res.IPUnbanned++
 	}
+	var releaseIPs, releaseDevices []string
 	if s.Enabled() {
 		var out struct {
-			ListsRemoved int      `json:"listsRemoved"`
-			CasesClosed  int      `json:"casesClosed"`
-			Allowed      int      `json:"allowed"`
-			Problems     []string `json:"problems"`
+			ListsRemoved    int      `json:"listsRemoved"`
+			CasesClosed     int      `json:"casesClosed"`
+			Allowed         int      `json:"allowed"`
+			CountersCleared int      `json:"countersCleared"`
+			IPs             []string `json:"ips"`
+			Devices         []string `json:"devices"`
+			Problems        []string `json:"problems"`
 		}
 		cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		err := s.adminDo(cctx, http.MethodPost, "subjects/release", map[string]any{
@@ -389,11 +404,23 @@ func (s *RiskService) RiskOpsRelease(ctx context.Context, op RiskOpsOperator, in
 		if err != nil {
 			res.Problems = append(res.Problems, "风控名单与复核单没有处理："+err.Error())
 		} else {
-			res.ListsRemoved, res.CasesClosed, res.Allowed = out.ListsRemoved, out.CasesClosed, out.Allowed
+			res.ListsRemoved, res.CasesClosed, res.Allowed, res.RiskCounters = out.ListsRemoved, out.CasesClosed, out.Allowed, out.CountersCleared
 			res.Problems = append(res.Problems, out.Problems...)
+			releaseIPs, releaseDevices = out.IPs, out.Devices
 		}
 	} else if len(in.EntryIDs) > 0 || in.CloseCases || in.AllowDays > 0 {
 		res.Problems = append(res.Problems, "风控平台未接入，名单与复核单没有处理")
+	}
+	// 主服务侧计数：注册准入的窗口计数与惩罚期、登录防爆破锁定（登录名 + 风控记录到的地址与设备）
+	s.mu.RLock()
+	counters := s.counters
+	s.mu.RUnlock()
+	if counters != nil {
+		accounts := make([]string, 0, len(known))
+		for _, u := range known {
+			accounts = append(accounts, u.Account)
+		}
+		res.Counters = counters.Release(ctx, in.AppID, ids, accounts, releaseIPs, releaseDevices, op.label())
 	}
 	s.log.Info("一键解除风控", zap.Int64("appid", in.AppID), zap.Int64s("users", ids), zap.String("operator", op.label()),
 		zap.Int("unbanned", res.Unbanned), zap.Int("ipUnbanned", res.IPUnbanned), zap.Int("listsRemoved", res.ListsRemoved))
@@ -417,6 +444,7 @@ type RiskOpsPurgeResult struct {
 	DevicesBlocked int                 `json:"devicesBlocked"`
 	CasesClosed    int                 `json:"casesClosed"`
 	GraphRemoved   int                 `json:"graphRemoved"` // 关系图里删掉的点（账号与只属于它们的登录名、手机号、设备等）
+	RiskCounters   int                 `json:"riskCounters"` // 风控平台侧删掉的滑窗计数、流式特征与图特征缓存键数
 	Problems       []string            `json:"problems"`
 }
 
@@ -502,6 +530,7 @@ func (s *RiskService) RiskOpsPurge(ctx context.Context, op RiskOpsOperator, in R
 			DevicesBlocked int      `json:"devicesBlocked"`
 			CasesClosed    int      `json:"casesClosed"`
 			GraphRemoved   int      `json:"graphRemoved"`
+			Counters       int      `json:"countersCleared"`
 			Problems       []string `json:"problems"`
 		}
 		s.forgetScoreCache(ctx, in.AppID, deleted)
@@ -513,9 +542,16 @@ func (s *RiskService) RiskOpsPurge(ctx context.Context, op RiskOpsOperator, in R
 		if err != nil {
 			res.Problems = append(res.Problems, "账号已删除，但风控侧没有收尾（设备拉黑、复核单结案）："+err.Error())
 		} else {
-			res.DevicesBlocked, res.CasesClosed, res.GraphRemoved = out.DevicesBlocked, out.CasesClosed, out.GraphRemoved
+			res.DevicesBlocked, res.CasesClosed, res.GraphRemoved, res.RiskCounters = out.DevicesBlocked, out.CasesClosed, out.GraphRemoved, out.Counters
 			res.Problems = append(res.Problems, out.Problems...)
 		}
+	}
+	// 主服务侧计数在每个账号的 PurgeUser 收尾里已经更新；排行榜缓存批量过程中节流，这里兜底再清一次
+	s.mu.RLock()
+	counters := s.counters
+	s.mu.RUnlock()
+	if counters != nil && len(deleted) > 0 {
+		counters.AfterBatch(ctx, in.AppID)
 	}
 	s.log.Warn("关联删除风险账号", zap.Int64("appid", in.AppID), zap.Int64s("users", deleted), zap.String("operator", op.label()),
 		zap.Int("devicesBlocked", res.DevicesBlocked), zap.String("note", note))

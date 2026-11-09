@@ -2,13 +2,17 @@ package admin
 
 import (
 	"context"
+	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 
 	"aegis/services/risk/internal/bundle"
 	"aegis/services/risk/internal/graph"
 	"aegis/services/risk/internal/lists"
 	"aegis/services/risk/internal/proxyip"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // 解除风控、删除账号之后把关系图、设备向量和特征缓存一起改到与事实一致，不留旧状态：
@@ -30,6 +34,16 @@ type neighborhood struct {
 	devices  map[string]bool // 设备码
 	ips      map[string]bool // 具体 IP（名单与缓存按具体地址）
 	accounts map[string]bool
+	// countersCleared 收尾时删掉的特征缓存与计数键数
+	countersCleared int
+}
+
+func (nb *neighborhood) list(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func (s *Server) collectNeighborhood(ctx context.Context, appID int64, users []int64) *neighborhood {
@@ -331,7 +345,13 @@ func (s *Server) purgeFeatureCache(ctx context.Context, nb *neighborhood) {
 			keys = append(keys, "rg:"+d.template+":"+strconv.Itoa(d.days)+":"+app+":"+d.entity+":"+v)
 		}
 	}
-	// 集群模式下多键 DEL 不能跨槽：逐个删，管道批量发
+	s.delKeys(ctx, keys)
+	nb.countersCleared += len(keys)
+	s.purgeCounters(ctx, nb)
+}
+
+// delKeys 集群模式下多键 DEL 不能跨槽：逐个删，管道批量发
+func (s *Server) delKeys(ctx context.Context, keys []string) {
 	for i := 0; i < len(keys); i += 500 {
 		batch := keys[i:min(i+500, len(keys))]
 		p := s.Redis.Pipeline()
@@ -340,6 +360,109 @@ func (s *Server) purgeFeatureCache(ctx context.Context, nb *neighborhood) {
 		}
 		_, _ = p.Exec(ctx)
 	}
+}
+
+// purgeCounters 删受影响对象的滑窗计数（rv: / rvd:）与流式特征（rf:）。
+//
+// 滑窗键 rv:{特征:应用|g:场景|*:取值}:桶、rvd:{…}:桶（去重计数是 HyperLogLog，删不掉单个成员，只能整键删）；
+// 流式特征键 rf:特征:应用|g:取值（RisingWave 写回，下一笔事件到来时按物化视图重写）。
+// 场景与特征太多，逐个拼键不现实：各主节点 SCAN 一遍按取值匹配。取值涵盖账号 ID、登录名、设备码、具体 IP 与所在网段。
+func (s *Server) purgeCounters(ctx context.Context, nb *neighborhood) int {
+	values := map[string]bool{}
+	for _, uid := range nb.users {
+		values[strconv.FormatInt(uid, 10)] = true
+	}
+	for d := range nb.devices {
+		values[d] = true
+	}
+	for a := range nb.accounts {
+		values[strings.ToLower(a)] = true
+	}
+	for ip := range nb.ips {
+		values[ip] = true
+		if sn := ipSubnet(ip); sn != "" {
+			values[sn] = true
+		}
+	}
+	if len(values) == 0 {
+		return 0
+	}
+	var mu sync.Mutex
+	var doomed []string
+	scan := func(ctx context.Context, c redis.Cmdable) error {
+		var cursor uint64
+		for {
+			keys, next, err := c.Scan(ctx, cursor, "r[vf]*", 2000).Result()
+			if err != nil {
+				return err
+			}
+			for _, k := range keys {
+				if v, ok := counterValue(k); ok && values[v] {
+					mu.Lock()
+					doomed = append(doomed, k)
+					mu.Unlock()
+				}
+			}
+			cursor = next
+			if cursor == 0 {
+				return nil
+			}
+		}
+	}
+	var err error
+	if cc, ok := s.Redis.(*redis.ClusterClient); ok {
+		err = cc.ForEachMaster(ctx, func(ctx context.Context, c *redis.Client) error { return scan(ctx, c) })
+	} else {
+		err = scan(ctx, s.Redis)
+	}
+	if err != nil {
+		s.logf("清理滑窗与流式计数时扫描失败：%v", err)
+	}
+	s.delKeys(ctx, doomed)
+	nb.countersCleared += len(doomed)
+	return len(doomed)
+}
+
+// counterValue 从计数键里取出主体取值：rv:{特征:范围:场景:取值}:桶、rvd:{…}:桶、rf:特征:范围:取值
+func counterValue(key string) (string, bool) {
+	switch {
+	case strings.HasPrefix(key, "rv:{"), strings.HasPrefix(key, "rvd:{"):
+		open := strings.IndexByte(key, '{')
+		end := strings.LastIndexByte(key, '}')
+		if open < 0 || end <= open {
+			return "", false
+		}
+		parts := strings.SplitN(key[open+1:end], ":", 4)
+		if len(parts) != 4 {
+			return "", false
+		}
+		return parts[3], true
+	case strings.HasPrefix(key, "rf:"):
+		parts := strings.SplitN(strings.TrimPrefix(key, "rf:"), ":", 3)
+		if len(parts) != 3 {
+			return "", false
+		}
+		return parts[2], true
+	}
+	return "", false
+}
+
+// ipSubnet 与主服务上报事件时的网段一致：IPv4 /24、IPv6 /64
+func ipSubnet(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ""
+	}
+	addr = addr.Unmap()
+	bits := 24
+	if addr.Is6() {
+		bits = 64
+	}
+	p, err := addr.Prefix(bits)
+	if err != nil {
+		return ""
+	}
+	return p.String()
 }
 
 func (s *Server) logf(format string, args ...any) {

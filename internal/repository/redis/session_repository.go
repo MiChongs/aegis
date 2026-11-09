@@ -438,6 +438,11 @@ func (r *SessionRepository) getSessionByHash(ctx context.Context, tokenHash stri
 	return &session, nil
 }
 
+// DeleteRankingCaches 删一个应用的排行榜分页缓存（账号删除后榜单不该再出现它）
+func (r *SessionRepository) DeleteRankingCaches(ctx context.Context, appID int64) error {
+	return r.deleteByPattern(ctx, fmt.Sprintf("%s:rank:*:%d:*", r.keyPrefix, appID))
+}
+
 func (r *SessionRepository) deleteByPattern(ctx context.Context, pattern string) error {
 	var cursor uint64
 	for {

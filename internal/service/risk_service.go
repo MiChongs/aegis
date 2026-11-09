@@ -64,6 +64,7 @@ type RiskService struct {
 	sessions     riskSessionRevoker
 	opsStore     riskOpsStore
 	purger       riskUserPurger
+	counters     *AccountCounters
 
 	stopCommands func()
 

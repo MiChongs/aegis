@@ -215,3 +215,49 @@ func (r *Repository) RiskDeviceClusters(ctx context.Context, appID int64, minUse
 	}
 	return out, rows.Err()
 }
+
+// RegisterIPLedgerRef 一条注册台账（账号删除、解除风控时用它找到要重算的地址、设备与属地）
+type RegisterIPLedgerRef struct {
+	ID       int64
+	UserID   int64
+	IP       string
+	Device   string
+	Country  string
+	Province string
+	City     string
+	Released bool
+}
+
+// RegisterIPLedgerOfUsers 这些账号的注册台账
+func (r *Repository) RegisterIPLedgerOfUsers(ctx context.Context, appID int64, userIDs []int64) ([]RegisterIPLedgerRef, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx, `SELECT id, user_id, host(ip), device_id, country, province, city, released_at IS NOT NULL
+		FROM register_ip_ledger WHERE appid = $1 AND user_id = ANY($2)`, appID, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RegisterIPLedgerRef
+	for rows.Next() {
+		var x RegisterIPLedgerRef
+		if err := rows.Scan(&x.ID, &x.UserID, &x.IP, &x.Device, &x.Country, &x.Province, &x.City, &x.Released); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+// ReleaseRegisterIPLedgerIDs 把这几条台账标为已解除：不再计入地址、设备、属地的累计注册数
+func (r *Repository) ReleaseRegisterIPLedgerIDs(ctx context.Context, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	tag, err := r.pool.Exec(ctx, `UPDATE register_ip_ledger SET released_at = NOW() WHERE id = ANY($1) AND released_at IS NULL`, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

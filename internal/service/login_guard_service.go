@@ -141,6 +141,14 @@ func (s *LoginGuardService) ResetAccount(ctx context.Context, appID int64, accou
 	_ = s.redis.ResetSubject(ctx, loginGuardKindAccount, appID, account)
 }
 
+// ResetIP 清掉一个地址的失败计数、锁定与退避级别（解除风控时用）
+func (s *LoginGuardService) ResetIP(ctx context.Context, appID int64, ip string) {
+	if s == nil || s.redis == nil || strings.TrimSpace(ip) == "" {
+		return
+	}
+	_ = s.redis.ResetSubject(ctx, loginGuardKindIP, appID, ip)
+}
+
 // lock 触发一次锁定：指数退避定时长、清空计数、记录风控评估。
 func (s *LoginGuardService) lock(ctx context.Context, kind string, appID int64, subject, account, ip string, failCount int64) {
 	lvl, err := s.redis.EscalateLevel(ctx, kind, appID, subject, s.cfg.MaxLockDuration)

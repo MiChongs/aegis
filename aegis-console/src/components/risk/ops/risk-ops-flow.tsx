@@ -824,6 +824,10 @@ function ResultStep({ mode, result, onClose }: { mode: RiskOpsMode; result: OpsR
             { value: r.listsRemoved, label: "条名单已移出" },
             { value: r.ipUnbanned, label: "条防火墙封禁已撤销" },
             { value: r.casesClosed, label: "张复核单已结案" },
+            {
+              value: (r.riskCounters ?? 0) + (r.counters?.registerCounters ?? 0) + (r.counters?.loginGuards ?? 0),
+              label: "项计数与缓存已重置",
+            },
           ];
         })()
       : (() => {
@@ -833,6 +837,7 @@ function ResultStep({ mode, result, onClose }: { mode: RiskOpsMode; result: OpsR
             { value: r.devicesBlocked, label: "台设备已拉黑" },
             { value: r.graphRemoved, label: "个关系图节点已清理" },
             { value: r.casesClosed, label: "张复核单已结案" },
+            { value: r.riskCounters ?? 0, label: "项风控计数与缓存已清理" },
           ];
         })();
   const allOk = !failed.length && !result.problems.length;
@@ -844,11 +849,11 @@ function ResultStep({ mode, result, onClose }: { mode: RiskOpsMode; result: OpsR
           <p className="text-base font-medium">{allOk ? (mode === "release" ? "风控已解除" : "账号已删除") : "已完成，部分没有成功"}</p>
           <p className="text-xs text-muted-foreground">
             {mode === "release"
-              ? `关系图与特征缓存已按最新状态更新${(result as OpsReleaseResult).allowed ? "，并加了白名单保护，保护期内风控规则不再拦截这些账号" : ""}`
-              : "关系图、设备向量与特征缓存已同步更新"}
+              ? `关系图、风控计数、注册限制与登录锁定已按最新状态更新${(result as OpsReleaseResult).allowed ? "，并加了白名单保护，保护期内风控规则不再拦截这些账号" : ""}`
+              : "关系图、设备向量、风控计数、注册计数、在线人数与排行榜已同步更新"}
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
           {tiles.map((t) => (
             <StatTile key={t.label} value={<NumberFlow value={t.value} />} label={t.label} tone={"tone" in t ? t.tone : "default"} />
           ))}
