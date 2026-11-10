@@ -762,7 +762,7 @@ Authorization: Bearer <accessToken>
 - 弱网重复点击、连点器、多实例同时到达时，只有一个请求会实际执行签到写入
 - 其他并发请求会等待首个请求结果，成功时直接复用已签到结果；长时间未完成时返回处理中冲突错误
 
-## 6. JWT 与会话行为
+## 6. 登录令牌与会话行为
 
 ### 6.1 Token 类型
 
@@ -770,6 +770,29 @@ Authorization: Bearer <accessToken>
 
 - `access token`: 用于访问业务接口，类型为 `Bearer`
 - `refresh token`: 用于刷新访问令牌，不用于访问业务接口
+
+### 6.1.1 令牌格式（PASETO v4.local）
+
+用户登录令牌不再是 JWT，而是 [PASETO](https://github.com/paseto-standard/paseto-spec) v4.local（服务端实现 `pkg/sessiontoken`，库 `aidanwoods.dev/go-paseto`）：
+
+```
+v4.local.<加密载荷>.<页脚>
+```
+
+- **载荷加密**（XChaCha20 + BLAKE2b-MAC）：里面的 `jti`、`typ`、`fam`（刷新令牌族）、`app`、`iss`、`iat`、`nbf`、`exp` 客户端都读不到。**客户端必须把令牌当不透明字符串**，有效期以登录、刷新接口返回的 `expiresAt` / `refreshExpiresAt` 为准。
+- **页脚明文但受认证**：`{"kid":"…","app":<appid>}`。`kid` 选解密密钥，`app` 供加密传输中间件在解密前定位应用（7.5）；改动页脚令牌即失效。
+- **令牌种类绑定在隐式断言里**（`aegis/session/access`、`aegis/session/refresh`）：访问令牌不能当刷新令牌用，反之亦然；没有 JWT 的 `alg` 头，不存在算法混淆。
+- 长度约 300–400 字符，只含 base64url 字符与 `.`，可直接放进 `Authorization`、Cookie 与 WebSocket 子协议 `aegis.jwt.<token>`（子协议名沿用，兼容已发布客户端）。
+
+密钥配置：
+
+| 变量 | 说明 |
+| --- | --- |
+| `SESSION_TOKEN_KEY` | 当前加密密钥，32 字节（64 位十六进制或 base64）。生成：`openssl rand -hex 32`。为空时由 `JWT_SECRET` 经 HKDF-SHA256 派生。 |
+| `SESSION_TOKEN_PREVIOUS_KEYS` | 轮换后仍接受的旧密钥，逗号分隔；`jwt-secret` 表示「由 `JWT_SECRET` 派生的那把」。首次从派生密钥切到 `SESSION_TOKEN_KEY` 时填 `jwt-secret`，旧令牌可用到过期后再删掉。 |
+| `SESSION_TOKEN_ACCEPT_JWT` | 默认 `true`：过渡期内仍接受升级前签发的 HS256 JWT（它们的 Redis 会话还在），刷新时换成 PASETO。旧访问令牌最长 `JWT_TTL`（默认 30 天）后全部过期，届时设为 `false`。 |
+
+管理员令牌（控制台）不在此列，仍是 `JWT_SECRET` 签的 HS256 JWT。
 
 ### 6.2 默认有效期
 
@@ -780,9 +803,9 @@ Authorization: Bearer <accessToken>
 
 ### 6.3 服务端会话校验
 
-除了 JWT 签名外，服务端还会校验 Redis 中的 access/refresh 会话与黑名单状态，因此：
+除了令牌本身的认证与有效期外，服务端还会校验 Redis 中的 access/refresh 会话与黑名单状态，因此：
 
-- JWT 未过期但 Redis 会话不存在，仍会判定为失效
+- 令牌未过期但 Redis 会话不存在，仍会判定为失效
 - access token 登出后会进入黑名单
 - refresh token 刷新后，旧 refresh token 会被标记为已轮换，不能再次使用
 - 一旦检测到 refresh token 重放，服务端会吊销整个 refresh family
@@ -865,7 +888,7 @@ Content-Type: application/octet-stream
 中间件会按以下顺序解析 `appid`：
 
 1. `X-Aegis-Appid`
-2. `Authorization` 中 JWT 的 `appid`
+2. `Authorization` 中令牌页脚的 `app`（PASETO；过渡期的旧 JWT 读载荷里的 `appid`）
 3. 明文查询参数 `appid`
 4. 明文请求体中的 `appid`
 
@@ -877,7 +900,7 @@ Content-Type: application/octet-stream
 - `/api/app/public`
 - 任意 GET 加密查询接口
 
-原因是这些请求在中间件解密前，通常无法从 JWT 中反推出 `appid`。
+原因是这些请求在中间件解密前还没有登录令牌，无法从令牌中读出 `appid`。
 
 ## 7.6 当前可用算法
 

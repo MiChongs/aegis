@@ -19,6 +19,7 @@ import (
 
 	appdomain "aegis/internal/domain/app"
 	"aegis/pkg/response"
+	"aegis/pkg/sessiontoken"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -163,7 +164,7 @@ func resolveAppID(c *gin.Context) (int64, bool) {
 	if appID, ok := parseInt64(strings.TrimSpace(c.GetHeader(appEncryptionHeaderAppID))); ok {
 		return appID, true
 	}
-	if appID, ok := parseJWTAppID(c.GetHeader("Authorization")); ok {
+	if appID, ok := bearerAppID(c.GetHeader("Authorization")); ok {
 		return appID, true
 	}
 	if appID, ok := parseInt64(strings.TrimSpace(c.Query("appid"))); ok {
@@ -175,10 +176,15 @@ func resolveAppID(c *gin.Context) (int64, bool) {
 	return 0, false
 }
 
-func parseJWTAppID(header string) (int64, bool) {
+// bearerAppID 从会话令牌里读应用 ID（不校验，随后的鉴权会校验）：
+// PASETO v4.local 读受认证的页脚；过渡期内的旧 HS256 JWT 读载荷里的 appid。
+func bearerAppID(header string) (int64, bool) {
 	token := bearerToken(header)
 	if token == "" {
 		return 0, false
+	}
+	if appID, ok := sessiontoken.PeekAppID(token); ok {
+		return appID, true
 	}
 	claims := jwt.MapClaims{}
 	if _, _, err := new(jwt.Parser).ParseUnverified(token, claims); err != nil {

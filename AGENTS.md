@@ -134,7 +134,8 @@ bun run lint        # ESLint
 
 | 变量 | 说明 |
 |---|---|
-| `JWT_SECRET` | JWT 签名密钥 |
+| `JWT_SECRET` | 管理员 JWT 签名密钥，并派生用户令牌等密钥 |
+| `SESSION_TOKEN_KEY` | 用户登录令牌（PASETO v4.local）密钥，空则由 `JWT_SECRET` 派生；另有 `SESSION_TOKEN_PREVIOUS_KEYS`、`SESSION_TOKEN_ACCEPT_JWT` |
 | `POSTGRES_DSN` | PostgreSQL 连接串 |
 | `REDIS_ADDR` | Redis 地址 |
 | `NATS_URL` | NATS 连接地址 |

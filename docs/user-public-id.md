@@ -55,7 +55,7 @@
 | 激励广告 / 开屏的用户标识 | `{对外 ID}.{签名}`；回调两种形态都认（切换前发出、还没回调的是主键形态） |
 | OAuth2 / OIDC `sub` | 对外 ID；见下 |
 | 服务端会员校验 `/vip/verify` | `userId` 为对外 ID |
-| 访问令牌 JWT 的 `uid` claim | 对外 ID（服务端校验只认 `jti`，从不读它） |
+| 访问令牌 | 不再含用户标识：令牌已改为 PASETO v4.local，载荷加密、只有 `jti` 等会话字段（见 user-auth-and-app-transport-encryption.md 6.1.1）；升级前的 JWT 过渡期内 `uid` claim 为对外 ID |
 | 远程函数 | 用户对象多了 `publicId`；`aegis.user.get(id)` 等既收主键也收对外 ID |
 
 ### OAuth2 / OIDC

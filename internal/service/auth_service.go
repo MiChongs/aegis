@@ -3,6 +3,7 @@ package service
 import (
 	"aegis/internal/domain/accountdeletion"
 	"aegis/pkg/egress"
+	"aegis/pkg/sessiontoken"
 	riskevents "aegis/services/risk/events"
 	"context"
 	"crypto/rand"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"aegis/internal/config"
@@ -32,7 +34,6 @@ import (
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/timeutil"
 	"github.com/go-webauthn/webauthn/protocol"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -75,8 +76,11 @@ type AuthService struct {
 	recoveryCaptcha *CaptchaService
 	recoveryUsers   *UserService
 	registerFlight  singleflight.Group
-	// jwtSecret 预转换的签名密钥字节，避免每次签发/校验重复分配
-	jwtSecret []byte
+	// tokens 终端用户登录令牌（PASETO v4.local）的签发与校验，见 pkg/sessiontoken。
+	// 测试里直接以字面量构造 AuthService 时为空，按 cfg 懒构造一次。
+	tokens     *sessiontoken.Codec
+	tokensOnce sync.Once
+	tokensErr  error
 	// timingDummyHash 时序均衡用哑 bcrypt 哈希：账号不存在或账号无密码时，
 	// 也执行一次等价代价的 bcrypt 比较，使「账号不存在」与「密码错误」耗时不可区分，
 	// 防止通过响应时间差枚举有效账号
@@ -227,9 +231,38 @@ func NewAuthService(cfg config.Config, log *zap.Logger, pg *pgrepo.Repository, s
 		providers: providers,
 		// OAuth 令牌交换与用户信息拉取几乎都是境外端点，走出海网关
 		http:            egress.NewClient(egress.Profile{Name: "auth.oauth", Timeout: 8 * time.Second}),
-		jwtSecret:       []byte(cfg.JWT.Secret),
+		tokens:          mustSessionTokenCodec(cfg),
 		timingDummyHash: timingDummyHash,
 	}
+}
+
+func sessionTokenOptions(cfg config.Config) sessiontoken.Options {
+	return sessiontoken.Options{
+		Issuer:          cfg.JWT.Issuer,
+		Key:             cfg.JWT.SessionTokenKey,
+		PreviousKeys:    cfg.JWT.SessionTokenPreviousKeys,
+		Secret:          cfg.JWT.Secret,
+		AcceptLegacyJWT: cfg.JWT.AcceptLegacyJWT,
+	}
+}
+
+// mustSessionTokenCodec 配置在 config.Load 里已校验过，这里出错只可能是测试里的半截配置，交给懒构造报错。
+func mustSessionTokenCodec(cfg config.Config) *sessiontoken.Codec {
+	codec, err := sessiontoken.New(sessionTokenOptions(cfg))
+	if err != nil {
+		return nil
+	}
+	return codec
+}
+
+func (s *AuthService) tokenCodec() (*sessiontoken.Codec, error) {
+	if s.tokens != nil {
+		return s.tokens, nil
+	}
+	s.tokensOnce.Do(func() {
+		s.tokens, s.tokensErr = sessiontoken.New(sessionTokenOptions(s.cfg))
+	})
+	return s.tokens, s.tokensErr
 }
 
 // runDetached 在独立 goroutine 中执行非关键路径副作用（审计 / 计数清理 / 插件钩子等）。
@@ -1059,11 +1092,11 @@ func (s *AuthService) ChangePassword(ctx context.Context, session *authdomain.Se
 }
 
 func (s *AuthService) ValidateAccessToken(ctx context.Context, token string) (*authdomain.Session, error) {
-	claims, err := s.parseTokenClaims(token, "access")
+	claims, err := s.parseTokenClaims(token, sessiontoken.TypeAccess)
 	if err != nil {
 		return nil, err
 	}
-	tokenID, _ := claims["jti"].(string)
+	tokenID := claims.TokenID
 	reason, blacklisted, err := s.sessions.TokenBlacklistReason(ctx, tokenID)
 	if err != nil {
 		return nil, err
@@ -1089,11 +1122,11 @@ func (s *AuthService) ValidateAccessToken(ctx context.Context, token string) (*a
 }
 
 func (s *AuthService) validateRefreshToken(ctx context.Context, token string) (*authdomain.RefreshSession, error) {
-	claims, err := s.parseTokenClaims(token, "refresh")
+	claims, err := s.parseTokenClaims(token, sessiontoken.TypeRefresh)
 	if err != nil {
 		return nil, err
 	}
-	tokenID, _ := claims["jti"].(string)
+	tokenID := claims.TokenID
 	reason, blacklisted, err := s.sessions.TokenBlacklistReason(ctx, tokenID)
 	if err != nil {
 		return nil, err
@@ -1133,20 +1166,15 @@ func revokedTokenError(reason, fallback string) error {
 	return apperrors.New(40104, http.StatusUnauthorized, fallback)
 }
 
-func (s *AuthService) parseTokenClaims(token string, expectedType string) (jwt.MapClaims, error) {
-	claims := jwt.MapClaims{}
-	parsed, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
-		return s.signingKey(), nil
-	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer(s.cfg.JWT.Issuer))
-	if err != nil || !parsed.Valid {
+// parseTokenClaims 校验令牌（PASETO v4.local；过渡期内也接受旧 HS256 JWT）并要求种类一致。
+func (s *AuthService) parseTokenClaims(token string, expectedType string) (*sessiontoken.Claims, error) {
+	codec, err := s.tokenCodec()
+	if err != nil {
+		return nil, apperrors.New(50000, http.StatusInternalServerError, "登录令牌密钥未配置")
+	}
+	claims, err := codec.Parse(token, expectedType)
+	if err != nil {
 		return nil, apperrors.New(40102, http.StatusUnauthorized, "Token 无效")
-	}
-	tokenType, _ := claims["typ"].(string)
-	if expectedType == "access" && tokenType == "" {
-		return claims, nil
-	}
-	if tokenType != expectedType {
-		return nil, apperrors.New(40102, http.StatusUnauthorized, "Token 类型不匹配")
 	}
 	return claims, nil
 }
@@ -1453,30 +1481,13 @@ func (s *AuthService) ResolveDeviceLimitChallenge(ctx context.Context, appID int
 	return result, nil
 }
 
-// signSessionToken 统一构造并签名访问/刷新令牌（消除两段重复的 claims 组装）。
+// signSessionToken 签发访问/刷新令牌：PASETO v4.local，载荷加密，客户端读不到内容（pkg/sessiontoken）。
 func (s *AuthService) signSessionToken(tokenType string, user *userdomain.User, tokenID, familyID string, issuedAt, expiresAt time.Time) (string, error) {
-	claims := jwt.MapClaims{
-		// 令牌是客户端能解开看的，uid 只放对外 ID。服务端校验只认 jti，从不读这一项
-		"uid":     user.PublicID,
-		"appid":   user.AppID,
-		"account": user.Account,
-		"sv":      1,
-		"jti":     tokenID,
-		"typ":     tokenType,
-		"family":  familyID,
-		"iss":     s.cfg.JWT.Issuer,
-		"iat":     issuedAt.Unix(),
-		"exp":     expiresAt.Unix(),
+	codec, err := s.tokenCodec()
+	if err != nil {
+		return "", err
 	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.signingKey())
-}
-
-// signingKey 返回预计算密钥；兼容测试中直接以字面量构造 AuthService 的场景
-func (s *AuthService) signingKey() []byte {
-	if len(s.jwtSecret) > 0 {
-		return s.jwtSecret
-	}
-	return []byte(s.cfg.JWT.Secret)
+	return codec.Issue(tokenType, tokenID, familyID, user.AppID, issuedAt, expiresAt)
 }
 
 type issuedSessionBundle struct {

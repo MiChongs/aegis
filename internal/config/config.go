@@ -3,6 +3,7 @@ package config
 import (
 	"aegis/pkg/clientip"
 	"aegis/pkg/egress"
+	"aegis/pkg/sessiontoken"
 	"aegis/pkg/timeutil"
 	"errors"
 	"fmt"
@@ -224,6 +225,13 @@ type JWTConfig struct {
 	Issuer     string
 	TTL        time.Duration
 	RefreshTTL time.Duration
+	// 终端用户登录令牌是 PASETO v4.local（pkg/sessiontoken），以下三项只管它；管理员令牌仍用 Secret 签 HS256。
+	// SessionTokenKey 当前加密密钥（32 字节，十六进制或 base64）；为空时由 Secret 派生。
+	SessionTokenKey string
+	// SessionTokenPreviousKeys 轮换后仍接受的旧密钥；"jwt-secret" 表示由 Secret 派生的那把。
+	SessionTokenPreviousKeys []string
+	// AcceptLegacyJWT 过渡期内仍接受升级前签发的 HS256 用户令牌，默认开。
+	AcceptLegacyJWT bool
 }
 
 type FirewallConfig struct {
@@ -827,6 +835,10 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 			Issuer:     v.GetString("JWT_ISSUER"),
 			TTL:        v.GetDuration("JWT_TTL"),
 			RefreshTTL: v.GetDuration("JWT_REFRESH_TTL"),
+
+			SessionTokenKey:          strings.TrimSpace(v.GetString("SESSION_TOKEN_KEY")),
+			SessionTokenPreviousKeys: csvList(v.GetString("SESSION_TOKEN_PREVIOUS_KEYS")),
+			AcceptLegacyJWT:          getBool(v, "SESSION_TOKEN_ACCEPT_JWT", true),
 		},
 		Firewall: FirewallConfig{
 			Enabled:                getBool(v, "FIREWALL_ENABLED", true),
@@ -1155,6 +1167,14 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 
 	if cfg.JWT.Secret == "" {
 		return Config{}, fmt.Errorf("JWT_SECRET is required")
+	}
+	for _, key := range append([]string{cfg.JWT.SessionTokenKey}, cfg.JWT.SessionTokenPreviousKeys...) {
+		if key == "" || strings.EqualFold(key, sessiontoken.DerivedKeyName) {
+			continue
+		}
+		if _, err := sessiontoken.ParseKey(key); err != nil {
+			return Config{}, fmt.Errorf("SESSION_TOKEN_KEY / SESSION_TOKEN_PREVIOUS_KEYS: %w", err)
+		}
 	}
 	if cfg.Postgres.DSN == "" {
 		return Config{}, fmt.Errorf("POSTGRES_DSN is required")

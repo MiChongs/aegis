@@ -753,8 +753,8 @@ func registerSecuritySchemes(spec *openapi3.T) {
 	spec.Components.SecuritySchemes["bearerAuth"] = &openapi3.SecuritySchemeRef{Value: &openapi3.SecurityScheme{
 		Type:         "http",
 		Scheme:       "bearer",
-		BearerFormat: "JWT",
-		Description:  "User access token passed through the Authorization header.",
+		BearerFormat: "PASETO v4.local",
+		Description:  "User access token (opaque PASETO v4.local) passed through the Authorization header.",
 	}}
 	spec.Components.SecuritySchemes["adminBearerAuth"] = &openapi3.SecuritySchemeRef{Value: &openapi3.SecurityScheme{
 		Type:         "http",

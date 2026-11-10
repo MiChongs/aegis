@@ -150,6 +150,8 @@ require (
 )
 
 require (
+	aidanwoods.dev/go-paseto v1.6.0 // indirect
+	aidanwoods.dev/go-result v0.3.1 // indirect
 	connectrpc.com/connect/v2 v2.0.0 // indirect
 	github.com/ClickHouse/ch-go v0.74.0 // indirect
 	github.com/ClickHouse/clickhouse-go/v2 v2.50.0 // indirect

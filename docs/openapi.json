@@ -8,8 +8,8 @@
         "type": "http"
       },
       "bearerAuth": {
-        "bearerFormat": "JWT",
-        "description": "User access token passed through the Authorization header.",
+        "bearerFormat": "PASETO v4.local",
+        "description": "User access token (opaque PASETO v4.local) passed through the Authorization header.",
         "scheme": "bearer",
         "type": "http"
       },
