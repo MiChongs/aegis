@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsClient } from "@/lib/use-client-value";
 import { useThemeTransition } from "@/lib/theme-transition";
+import { cn } from "@/lib/utils";
 
 /**
  * 登录页的深浅色切换。
@@ -16,7 +17,7 @@ import { useThemeTransition } from "@/lib/theme-transition";
  * 服务端渲染阶段主题未知，先占位同尺寸空盒 —— 与 `PortalShell` 同一处理，
  * 否则首帧图标会闪一次错的。
  */
-export function LoginThemeToggle() {
+export function LoginThemeToggle({ className }: { className?: string }) {
   const { isDark, toggle } = useThemeTransition();
   const isClient = useIsClient();
   const reduced = useReducedMotion();
@@ -35,7 +36,7 @@ export function LoginThemeToggle() {
             variant="ghost"
             size="icon"
             aria-label={label}
-            className="relative overflow-hidden text-muted-foreground hover:text-foreground"
+            className={cn("relative overflow-hidden text-muted-foreground hover:text-foreground", className)}
             onClick={(event) => toggle(event)}
           >
             <AnimatePresence mode="wait" initial={false}>

@@ -41,7 +41,7 @@ type FormPhase = "login" | "mfa" | "success";
 
 /** 三态的抬头文案。集中一处，省得三个分支各写一遍 `phase === ...`。 */
 const PHASE_COPY: Record<FormPhase, { title: string; desc: string }> = {
-  login: { title: "欢迎回来", desc: "使用管理员账号登录 Aegis 控制台" },
+  login: { title: "登录", desc: "" },
   mfa: { title: "两步验证", desc: "输入认证器中的验证码" },
   success: { title: "登录成功", desc: "正在进入控制台" }
 };

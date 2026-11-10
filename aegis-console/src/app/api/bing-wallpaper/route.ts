@@ -1,54 +1,18 @@
 import { NextResponse } from "next/server";
+import { BING_WALLPAPER_REVALIDATE, getBingWallpaper } from "@/lib/bing-wallpaper";
 
-const BING_ENDPOINT = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=zh-CN";
-const FALLBACK_COLORS = ["#0b1320", "#0d1b2a", "#111827"];
-
-type BingArchiveResponse = {
-  images?: Array<{
-    url?: string;
-    title?: string;
-    copyright?: string;
-  }>;
-};
-
-export const revalidate = 3600;
+/**
+ * 必应每日一图元数据。登录页在服务端直接调 `getBingWallpaper`，这里留给需要在客户端取的地方。
+ * `imageUrl` 是 UHD 原图（3840×2160）；取其它尺寸见 `components/auth/auth-wallpaper.ts`。
+ */
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-  try {
-    const response = await fetch(BING_ENDPOINT, {
-      next: { revalidate: 3600 },
-      headers: {
-        "User-Agent": "Aegis Console/1.0"
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`bing upstream ${response.status}`);
-    }
-
-    const payload = (await response.json()) as BingArchiveResponse;
-    const image = payload.images?.[0];
-
-    if (!image?.url) {
-      throw new Error("bing image missing");
-    }
-
-    const imageUrl = image.url.startsWith("http") ? image.url : `https://www.bing.com${image.url}`;
-
-    return NextResponse.json({
-      ok: true,
-      imageUrl,
-      title: image.title ?? null,
-      copyright: image.copyright ?? null,
-      fallbackColors: FALLBACK_COLORS
-    });
-  } catch {
-    return NextResponse.json({
-      ok: false,
-      imageUrl: null,
-      title: null,
-      copyright: null,
-      fallbackColors: FALLBACK_COLORS
-    });
-  }
+  const wallpaper = await getBingWallpaper();
+  return NextResponse.json(
+    wallpaper
+      ? { ok: true, imageUrl: wallpaper.base, ...wallpaper, copyright: [wallpaper.caption, wallpaper.credit].filter(Boolean).join(" © ") }
+      : { ok: false, imageUrl: null },
+    { headers: { "Cache-Control": `public, max-age=${BING_WALLPAPER_REVALIDATE}` } }
+  );
 }
