@@ -229,7 +229,9 @@ func applyAnthropicThinking(params *anthropic.MessageNewParams, req aidomain.Cha
 
 // anthropicInputSchema 把任意 JSON Schema 塞进 SDK 的 input_schema 参数。
 // SDK 只给 properties / required 建了型，其余键（additionalProperties、
-// definitions、oneOf …）走 ExtraFields 原样透传。
+// definitions …）走 ExtraFields 原样透传。顶层的 oneOf/anyOf/allOf 例外：
+// Anthropic 一律 400（input_schema does not support oneOf, allOf, or anyOf
+// at the top level），只能丢掉，约束交给工具执行端校验。属性内部的组合照常保留。
 func anthropicInputSchema(raw json.RawMessage) anthropic.ToolInputSchemaParam {
 	schema := anthropic.ToolInputSchemaParam{Properties: map[string]any{}}
 	if len(raw) == 0 {
@@ -252,7 +254,7 @@ func anthropicInputSchema(raw json.RawMessage) anthropic.ToolInputSchemaParam {
 	extras := map[string]any{}
 	for key, value := range parsed {
 		switch key {
-		case "type", "properties", "required":
+		case "type", "properties", "required", "oneOf", "anyOf", "allOf":
 			continue
 		}
 		extras[key] = value
