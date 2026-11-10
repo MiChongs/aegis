@@ -310,6 +310,8 @@ var gatewayOperations = []authprotocol.Operation{
 		Summary: "修改 API 密钥：名称、启用 / 停用、可用模型、消费上限、到期时间（clearExpiry 清除）"},
 	{Key: "aiKeyDelete", Method: "DELETE", Path: "/ai/keys/{keyId}", Auth: true,
 		Summary: "删除 API 密钥，立即失效；进行中的调用照常结算"},
+	{Key: "aiUsage", Method: "GET", Path: "/ai/usage", Auth: true,
+		Summary: "我的用量统计：range 为 today / 24h / 7d / 30d / 90d；合计、token、按时间分桶与按模型 / 密钥 / 接口 / 来源的分布"},
 	{Key: "aiRequests", Method: "GET", Path: "/ai/requests", Auth: true,
 		Summary: "我的调用记录：用量、价格、从哪些来源扣了多少；失败的调用不扣费也会列出"},
 	{Key: "aiRequest", Method: "GET", Path: "/ai/requests/{requestNo}", Auth: true,

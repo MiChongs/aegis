@@ -493,6 +493,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/system/plugins"):                                                                      PluginCreateRequest{},                    // AdminCreatePlugin
 		routeKey("GET", "/api/admin/system/plugins/executions"):                                                            HookExecutionQueryParams{},               // AdminListHookExecutions
 		routeKey("PUT", "/api/admin/system/plugins/{id}"):                                                                  PluginUpdateRequest{},                    // AdminUpdatePlugin
+		routeKey("POST", "/api/admin/system/risk-ops/purge"):                                                               service.RiskOpsPurgeInput{},              // AdminRiskOpsPurge
+		routeKey("POST", "/api/admin/system/risk-ops/release"):                                                             service.RiskOpsReleaseInput{},            // AdminRiskOpsRelease
 		routeKey("POST", "/api/admin/system/roles"):                                                                        CreateCustomRoleRequest{},                // AdminCreateCustomRole
 		routeKey("PUT", "/api/admin/system/roles/{roleKey}"):                                                               UpdateCustomRoleRequest{},                // AdminUpdateCustomRole
 		routeKey("POST", "/api/admin/system/saml/test"):                                                                    AdminSAMLTestRequest{},                   // AdminSAMLTest

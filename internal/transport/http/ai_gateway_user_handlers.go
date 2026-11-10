@@ -174,6 +174,30 @@ func (h *Handler) AppDeleteAIKey(c *gin.Context) {
 	response.Success(c, http.StatusOK, "ok", gin.H{"deleted": true})
 }
 
+// AppAIUsage GET /api/v1/apps/:appkey/ai/usage?range=today|24h|7d|30d|90d&keyId=&model=
+// keyId 不传统计全部，传 0 只统计登录令牌发起的调用。
+func (h *Handler) AppAIUsage(c *gin.Context) {
+	session, ok := h.aiGatewaySession(c)
+	if !ok {
+		return
+	}
+	var keyID *int64
+	if raw := strings.TrimSpace(c.Query("keyId")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 {
+			response.Error(c, http.StatusBadRequest, 40000, "keyId 无效")
+			return
+		}
+		keyID = &parsed
+	}
+	usage, err := h.aiGateway.MyUsage(c.Request.Context(), session, c.Query("range"), keyID, c.Query("model"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "ok", usage)
+}
+
 // AppAIRequests GET /api/v1/apps/:appkey/ai/requests
 func (h *Handler) AppAIRequests(c *gin.Context) {
 	session, ok := h.aiGatewaySession(c)

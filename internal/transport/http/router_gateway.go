@@ -285,6 +285,7 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.POST("/ai/keys", h.AppCreateAIKey)
 		appGatewayAuthed.PUT("/ai/keys/:keyId", h.AppUpdateAIKey)
 		appGatewayAuthed.DELETE("/ai/keys/:keyId", h.AppDeleteAIKey)
+		appGatewayAuthed.GET("/ai/usage", h.AppAIUsage)
 		appGatewayAuthed.GET("/ai/requests", h.AppAIRequests)
 		appGatewayAuthed.GET("/ai/requests/:requestNo", h.AppAIRequest)
 		appGatewayAuthed.GET("/ai/credits", h.AppAICredits)

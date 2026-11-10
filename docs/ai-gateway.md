@@ -290,6 +290,7 @@ Cloudflare 约 100 秒读超时），推理模型出第一个字前可能想上�
 | `GET /ai/overview` | 是否开放、扣费顺序、各额度余量、积分与余额、倍率、今日已用、`baseUrl` |
 | `GET /ai/models` | 可调用模型与**有效单价**（已乘本人倍率），会员专享而非会员时 `available=false` |
 | `GET/POST /ai/keys`、`PUT/DELETE /ai/keys/{keyId}` | 密钥管理；修改只改传了的字段 |
+| `GET /ai/usage` | 用量统计：`range` 为 `today` / `24h`（按小时）或 `7d` / `30d` / `90d`（按日），日界按应用时区；可带 `keyId`（0 为登录令牌）与 `model` 过滤。返回合计（各状态调用数、输入输出 token、图片 / 字符 / 音频、扣费与退款、平均与 P95 延迟、平均首字延迟）、补零的时间序列，以及按模型、密钥、接口、扣费来源的分布 |
 | `GET /ai/requests`、`/ai/requests/{requestNo}` | 调用记录（用户端不含上游通道与上游模型名） |
 | `GET /ai/credits` | 赠送额度流水 |
 

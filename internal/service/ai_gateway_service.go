@@ -607,6 +607,21 @@ func (s *AIGatewayService) ListMyRequests(ctx context.Context, session *authdoma
 	return page, nil
 }
 
+// MyUsage 我的用量统计：rangeName 为 today / 24h / 7d / 30d / 90d，日界按应用设置的时区。
+// keyID 为空统计全部，0 表示登录令牌发起的调用；model 为空统计全部模型。
+func (s *AIGatewayService) MyUsage(ctx context.Context, session *authdomain.Session, rangeName string, keyID *int64, model string) (*aigateway.Usage, error) {
+	settings, err := s.pg.GetAIGatewaySettings(ctx, session.AppID)
+	if err != nil {
+		return nil, err
+	}
+	loc := settings.Location()
+	name, from, to, bucket := aigateway.ResolveUsageRange(rangeName, s.now(), loc)
+	return s.pg.AIGatewayUserUsage(ctx, aigateway.UsageQuery{
+		AppID: session.AppID, UserID: session.UserID, Range: name, From: from, To: to, Bucket: bucket,
+		Location: loc, KeyID: keyID, Model: strings.TrimSpace(model),
+	})
+}
+
 // GetMyRequest 我的一条调用记录。
 func (s *AIGatewayService) GetMyRequest(ctx context.Context, session *authdomain.Session, requestNo string) (*aigateway.Request, error) {
 	record, err := s.pg.GetAIGatewayRequest(ctx, session.AppID, session.UserID, strings.TrimSpace(requestNo))

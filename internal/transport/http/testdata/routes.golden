@@ -682,6 +682,7 @@ GET	/api/v1/apps/:appkey/ai/models	AppAIModels
 GET	/api/v1/apps/:appkey/ai/overview	AppAIOverview
 GET	/api/v1/apps/:appkey/ai/requests	AppAIRequests
 GET	/api/v1/apps/:appkey/ai/requests/:requestNo	AppAIRequest
+GET	/api/v1/apps/:appkey/ai/usage	AppAIUsage
 GET	/api/v1/apps/:appkey/auth/oauth/bindings	ListMyOAuthBindings
 GET	/api/v1/apps/:appkey/auth/oauth/callback	AppOAuthCallback
 GET	/api/v1/apps/:appkey/banners	AppBanners

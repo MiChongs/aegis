@@ -2232,6 +2232,23 @@ class AegisAIGatewayApi internal constructor(private val client: AegisClient) {
     fun deleteKey(keyId: Long): JsonElement = client.call("DELETE", "/ai/keys/$keyId", requireAuth = true)
 
     /**
+     * 我的用量统计：[range] 为 `today` / `24h`（按小时分桶）或 `7d` / `30d` / `90d`（按日分桶），日界按应用设置的时区。
+     * 返回合计（调用数、各状态、输入输出 token、图片、扣费、平均与 P95 延迟、首字延迟）、时间序列，
+     * 以及按模型、密钥（keyId 0 为登录令牌）、接口、扣费来源的分布。[keyId] / [model] 只统计这把密钥 / 这个模型。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun usage(range: String = "7d", keyId: Long? = null, model: String? = null): JsonElement = client.call(
+        "GET", "/ai/usage",
+        query = buildQuery(
+            "range" to range,
+            "keyId" to keyId?.toString(),
+            "model" to model,
+        ),
+        requireAuth = true,
+    )
+
+    /**
      * 我的调用记录（新的在前）。[status]：`succeeded` / `aborted`（流式中途断开，按已生成的内容计费）/
      * `failed` / `expired`（这两种不扣费）/ `refunded` / `reserved`（进行中）。[start] / [end] 为 RFC 3339。
      */
