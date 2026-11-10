@@ -74,7 +74,7 @@ AEGIS_BASE_URL=https://aegis.example.com aegis-mcp --transport http --host 0.0.0
 
 ## 工具
 
-共 448 个，按领域分 26 个模块，工具名前缀即模块：完整清单见 [TOOLS.md](TOOLS.md)（脚本生成）。
+共 464 个，按领域分 26 个模块，工具名前缀即模块：完整清单见 [TOOLS.md](TOOLS.md)（脚本生成）。
 
 | 模块 | 覆盖 |
 |---|---|

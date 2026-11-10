@@ -1,0 +1,12 @@
+-- +migrate Up
+-- 激励广告按广告位验签（docs/rewarded-ads.md「广告位与 Security Key」）。
+--
+-- Apex 的 Security Key 是按广告位签发的，一个应用只存一把 Key，第二个广告位的回调就永远验不过签。
+-- 广告位登记成列表，各自可带一把 Key（AES-GCM 密文，与 security_key_cipher 同一把派生密钥）；
+-- security_key_cipher 保留为应用的默认 Key，给没单独配 Key 的广告位兜底。
+--
+-- 元素形如 {"id": "5736335593863633", "name": "激励视频", "keyCipher": "…", "keyHint": "…cvym", "keyUpdatedAt": "…"}。
+-- 老配置不在这里回填：读配置时把场景里用到的广告位补进列表（不带 Key，走默认 Key），首次保存即落库。
+--
+-- 迁移器每次启动都会重跑全部 *.up.sql，语句必须可重复执行。
+ALTER TABLE app_rewarded_ad_configs ADD COLUMN IF NOT EXISTS placements JSONB NOT NULL DEFAULT '[]'::jsonb;

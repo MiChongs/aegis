@@ -80,16 +80,29 @@ type RewardedAdMembershipRequest struct {
 	AdFree   *bool    `json:"adFree"`
 }
 
-// SaveRewardedAdConfigRequest 保存激励广告配置。securityKey 留空表示不修改。
+// SaveRewardedAdConfigRequest 保存激励广告配置。securityKey（默认 Key）留空表示不修改。
+//
+// placements 不传表示不改广告位列表；传了就整体替换（空数组即清空，场景用到的广告位会被补登回来）。
 type SaveRewardedAdConfigRequest struct {
-	Enabled          bool                     `json:"enabled"`
-	Provider         string                   `json:"provider"`
-	ProviderAppID    string                   `json:"providerAppId"`
-	SecurityKey      string                   `json:"securityKey"`
-	ClearSecurityKey bool                     `json:"clearSecurityKey"`
-	VerifyMode       string                   `json:"verifyMode"`
-	DailyLimit       int                      `json:"dailyLimit"`
-	Scenes           []RewardedAdSceneRequest `json:"scenes"`
+	Enabled          bool                          `json:"enabled"`
+	Provider         string                        `json:"provider"`
+	ProviderAppID    string                        `json:"providerAppId"`
+	SecurityKey      string                        `json:"securityKey"`
+	ClearSecurityKey bool                          `json:"clearSecurityKey"`
+	VerifyMode       string                        `json:"verifyMode"`
+	DailyLimit       int                           `json:"dailyLimit"`
+	Placements       *[]RewardedAdPlacementRequest `json:"placements"`
+	Scenes           []RewardedAdSceneRequest      `json:"scenes"`
+}
+
+// RewardedAdPlacementRequest 一个广告位。securityKey 留空表示沿用已存的 Key；
+// 改了广告位 ID 时用 previousId 指明原来的 ID，已存的 Key 随之带过去。
+type RewardedAdPlacementRequest struct {
+	ID               string `json:"id"`
+	PreviousID       string `json:"previousId"`
+	Name             string `json:"name"`
+	SecurityKey      string `json:"securityKey"`
+	ClearSecurityKey bool   `json:"clearSecurityKey"`
 }
 
 // GrantRewardedAdViewRequest 管理端补发。scene 留空时沿用记录上的场景。
@@ -133,8 +146,23 @@ func (req SaveRewardedAdConfigRequest) toInput(appID int64, operator string) rew
 			Lifetime: item.Lifetime.toDomain(),
 		})
 	}
+	var placements *[]rewardedad.PlacementInput
+	if req.Placements != nil {
+		items := make([]rewardedad.PlacementInput, 0, len(*req.Placements))
+		for _, item := range *req.Placements {
+			items = append(items, rewardedad.PlacementInput{
+				ID:               item.ID,
+				PreviousID:       item.PreviousID,
+				Name:             item.Name,
+				SecurityKey:      item.SecurityKey,
+				ClearSecurityKey: item.ClearSecurityKey,
+			})
+		}
+		placements = &items
+	}
 	return rewardedad.SaveConfigInput{
 		AppID:            appID,
+		Placements:       placements,
 		Enabled:          req.Enabled,
 		Provider:         req.Provider,
 		ProviderAppID:    req.ProviderAppID,

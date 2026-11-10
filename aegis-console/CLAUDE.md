@@ -973,14 +973,20 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 | `components/apps/rewarded-ad/app-rewarded-ad-panel.tsx` | 骨架 + 概览 / 记录 / 配置三个视图的内部切换 |
 | `components/apps/rewarded-ad/rewarded-ad-overview-panel.tsx` | 今日观看 / 发放 / 人数 / 待确认 + 趋势图 + 各场景的窗口内表现 |
 | `components/apps/rewarded-ad/rewarded-ad-views-panel.tsx` | 观看记录：两方（回调 / 上报）各自到没到、原因、补发 |
-| `components/apps/rewarded-ad/rewarded-ad-config-panel.tsx` | 接入（平台、应用 ID、Security Key、回调地址）+ 校验模式与总限额 + 奖励场景（含会员权益：会员天数带的功能、会员期间是否免广告） |
+| `components/apps/rewarded-ad/rewarded-ad-config-panel.tsx` | 配置页骨架：上线检查 + 接入（平台、应用 ID、回调地址）+ 校验与限额，串起下面两块，底部常驻保存栏 |
+| `components/apps/rewarded-ad/rewarded-ad-placements-section.tsx` | 广告位与 Security Key：每个广告位的 Key 状态、使用场景、近 7 天回调，默认 Key，批量粘贴 |
+| `components/apps/rewarded-ad/rewarded-ad-scenes-section.tsx` | 奖励场景：可折叠卡片，广告位从登记列表里选 |
+| `components/apps/rewarded-ad/rewarded-ad-scene-fields.tsx` | 场景字段：奖励选择、功能时长、会员功能、已拥有权益 |
+| `components/apps/rewarded-ad/rewarded-ad-config-draft.ts` | 草稿：播种、保存载荷、保存前检查（上线检查与标红同源）、粘贴解析 |
 | `components/apps/rewarded-ad/rewarded-ad-shared.tsx` | 状态徽标、拒发原因、校验模式文案、权益摘要 |
 
 四条硬约束：
 
 1. **权益表单由后端目录驱动**（配置接口随附 `catalog`，是卡密目录的子集）。前端另抄一份，
    就会出现「控制台能勾、保存时报激励广告不能发放该权益」。
-2. **Security Key 留空即不修改**，与其它密钥字段一致；后端只回 `hasSecurityKey` 与末 4 位提示。
+2. **Security Key 按广告位存，留空即不修改**，与其它密钥字段一致；后端只回 `hasSecurityKey` 与末 4 位提示。
+   顶层的是默认 Key（给没单独配 Key 的广告位兜底）。改广告位 ID 时载荷带 `previousId`，否则已存的 Key 会丢；
+   场景只能从登记的广告位里选，手填的 ID 对不上登记的广告位就找不到验签用的 Key。
 3. **会员权益跟随场景当前配置**：改了对已领到的会员同样生效（后端在判定时实时取，见 docs/rewarded-ads.md）。
    功能只对「会员天数」生效，保存时没勾会员天数就把功能清空，否则后端拒收；「免广告」不填时后端按免广告，
    草稿里没设置过的场景同样按开着展示。

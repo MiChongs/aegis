@@ -11,7 +11,7 @@
 
 | 一方 | 证明什么 | 怎么鉴别 |
 |---|---|---|
-| 平台服务端回调 | 这次观看真的发生了 | `sign = sha256(securityKey + ":" + transId)` |
+| 平台服务端回调 | 这次观看真的发生了 | `sign = sha256(securityKey + ":" + transId)`，Key 按回调里的 `placementId` 选（见下文「广告位与 Security Key」） |
 | 客户端上报 | 这次是为哪个场景、哪个账号看的 | 网关用户令牌 |
 
 只信客户端等于谁都能伪造一次观看；只信回调则不知道是为哪个场景看的，也无法拒绝
@@ -84,9 +84,30 @@ GET /api/apps/{appKey}/ads/apex/callback?userId={{USER_ID}}&transId={{TRANS_ID}}
 
 ## 配置
 
-存放在 `app_rewarded_ad_configs`（一应用一行），场景以 JSONB 整体保存。Security Key 以 AES-GCM 密文落库，
+存放在 `app_rewarded_ad_configs`（一应用一行），广告位与场景各以 JSONB 整体保存。Security Key 以 AES-GCM 密文落库，
 派生自 `SECURITY_MASTER_KEY`，留空表示不修改。开启开关前会挡下「开了也发不出去」的配置：
-没有启用中的场景，或非 `client` 模式却没有 Security Key。
+没有启用中的场景，或非 `client` 模式下某个启用场景的广告位既没有自己的 Key、也没有默认 Key。
+
+## 广告位与 Security Key
+
+Apex 的 Security Key **按广告位签发**：同一个平台应用下，「激励视频」与「激励视频2」各有一把，回调签名用的是观看所在广告位的那一把。
+所以 Key 挂在广告位上（迁移 `000152_rewarded_ad_placements`，配置表的 `placements` 列）：
+
+- 广告位登记成列表 `{id, name, keyCipher, keyHint, keyUpdatedAt}`，最多 20 个；场景的 `placementId` 必须是登记过的广告位。
+  场景里用到却没登记的广告位，读配置与保存时自动补登（不带 Key）—— 老配置、只改场景的调用方（老控制台、MCP 全局保存）因此不会丢广告位。
+- 应用级的 `security_key_cipher` 保留为**默认 Key**，给没单独配 Key 的广告位兜底；整个应用只有一把 Key 时只填它即可。
+- 回调验签按 `rewardedad.Config.CallbackKeyCiphers` 选 Key：
+  1. 回调里的广告位登记过且有自己的 Key：**只认它**（别的广告位的 Key 签出来的回调说明 `placementId` 被改过）；
+  2. 否则用默认 Key；
+  3. 连默认 Key 都没有、且广告位没登记（或回调没带 `placementId`）：逐一试各广告位的 Key，任一对上即说明回调出自本应用的某个广告位。
+     登记过却没有 Key 的广告位不走这一步，直接答 `key_missing`。
+- 管理端 `PUT config` 的 `placements` 不传表示不改广告位列表；传了整体替换。每项 `securityKey` 留空沿用、`clearSecurityKey` 清除；
+  改广告位 ID 时用 `previousId` 指明原 ID，已存的 Key 随之带过去。
+- `GET config` 的 `placements` 每项给 `keySource`（`own` / `default` / `missing`，验签实际用哪一把）、`scenes`（哪些场景在用）、
+  以及近 `activityDays`（7）天验签通过的回调次数 `callbacks` 与最近一次 `lastCallbackAt` —— 有回调即说明这个广告位的 Key 与回调地址都配对了。
+- MCP：`ads_rewarded_save_placement` / `ads_rewarded_delete_placement`。
+
+测法：`TestRewardedAdPlacementKeysIntegration`（两个广告位各用各的 Key、拿别的广告位的 Key 签被拒、不传列表时保留、改 ID 带 Key、清 Key 回落默认 Key）。
 
 权益复用卡密的权益目录与数据形态，但只开放 `vip_plan` / `vip_days` / `integral` / `experience` / `lottery_draws`
 （余额是真钱、设备位挂在授权卡上，都不该由广告发），另加广告独有的 `feature_minutes`（功能时长，带 `feature`，
@@ -147,9 +168,11 @@ GET /api/apps/{appKey}/ads/apex/callback?userId={{USER_ID}}&transId={{TRANS_ID}}
 
 ## Apex 后台怎么配
 
-1. 在 Apex 后台的激励视频广告位上开启服务端回调，回调地址填控制台「激励广告 → 配置 → 回调地址」复制出的那一条（已带参数宏）；
-2. 把 Apex 后台给出的 Security Key 填进控制台同一处（两边必须一致，签名是 `sha256(SecurityKey + ":" + transId)`）；
-3. 控制台里「平台应用 ID」填 Apex 应用 ID（只作核对展示），场景的「广告位 ID」填该广告位的 ID。
+1. 在 Apex 后台的每个激励视频广告位上开启服务端回调，回调地址都填控制台「激励广告 → 配置 → 服务端回调地址」复制出的那一条（已带参数宏，`placementId` 不能删）；
+2. 在控制台「广告位与 Security Key」登记每个广告位的名称、ID 与它在 Apex 后台的 Security Key（可把后台复制出的三项直接批量粘贴）；
+   两边必须一致，签名是 `sha256(SecurityKey + ":" + transId)`；
+3. 控制台里「平台应用 ID」填 Apex 应用 ID（只作核对展示），每个场景从登记的广告位里选一个；
+4. 保存后看广告位卡片上的「近 7 天回调」：有验签通过的回调即配对成功。
 
 Voyage 的正式 Apex 应用 ID 是 `84371`（包名 `com.cityray.aihrplus.vgjx`）：「平台应用 ID」填它，Security Key 与场景广告位都用这个应用下的。
 Voyage 的所有构建都用这个应用，不再使用 Apex 的测试应用（`68758`）与测试广告位，测试广告位也不要填进配置。

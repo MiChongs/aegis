@@ -43,6 +43,8 @@ const (
 	// rewardedAdUserTagLen 用户标识里签名部分的长度（十六进制位）。
 	// 64 位足以挡住猜测，又不至于让平台后台的用户列里全是一长串。
 	rewardedAdUserTagLen = 16
+	// rewardedAdActivityDays 配置页里各广告位「最近回调 / 回调次数」的统计窗口。
+	rewardedAdActivityDays = 7
 )
 
 // RewardedAdService 应用级激励广告。
@@ -88,7 +90,7 @@ func (s *RewardedAdService) AdminConfig(ctx context.Context, appID int64, appKey
 	if err != nil {
 		return nil, err
 	}
-	return s.adminView(cfg, appKey), nil
+	return s.adminView(ctx, cfg, appKey), nil
 }
 
 // SaveConfig 保存配置。密钥留空表示不修改。
@@ -141,7 +143,8 @@ func (s *RewardedAdService) SaveConfig(ctx context.Context, input rewardedad.Sav
 		return nil, err
 	}
 
-	// 密钥：留空沿用、显式清除、或替换。
+	// 默认 Key：留空沿用、显式清除、或替换。
+	now := time.Now().UTC()
 	if current != nil {
 		next.SecurityKeyCipher = current.SecurityKeyCipher
 		next.SecurityKeyHint = current.SecurityKeyHint
@@ -151,7 +154,7 @@ func (s *RewardedAdService) SaveConfig(ctx context.Context, input rewardedad.Sav
 		next.SecurityKeyHint = ""
 	}
 	if key := strings.TrimSpace(input.SecurityKey); key != "" {
-		if utf8.RuneCountInString(key) > 256 {
+		if utf8.RuneCountInString(key) > rewardedad.MaxSecurityKeyLength {
 			return nil, apperrors.New(40000, http.StatusBadRequest, "Security Key 过长")
 		}
 		cipher, err := encryptSecret(s.secretKey, key)
@@ -160,6 +163,19 @@ func (s *RewardedAdService) SaveConfig(ctx context.Context, input rewardedad.Sav
 		}
 		next.SecurityKeyCipher = cipher
 		next.SecurityKeyHint = rewardedAdKeyHint(key)
+	}
+
+	placements, err := s.mergePlacements(current, input.Placements, now)
+	if err != nil {
+		return nil, err
+	}
+	next.Placements = placements
+	// 场景里用到的广告位必须在列表里：没登记的补登（不带 Key，走默认 Key），
+	// 这样只改场景、不传广告位列表的调用方也能保存。
+	next.EnsureScenePlacements()
+	if len(next.Placements) > rewardedad.MaxPlacements {
+		return nil, apperrors.New(40000, http.StatusBadRequest,
+			"最多登记 "+strconv.Itoa(rewardedad.MaxPlacements)+" 个广告位")
 	}
 
 	// 开关打开前把「开了也发不出去」的配置挡下来：配置项必须有执行点，
@@ -175,9 +191,18 @@ func (s *RewardedAdService) SaveConfig(ctx context.Context, input rewardedad.Sav
 		if !hasScene {
 			return nil, apperrors.New(40000, http.StatusBadRequest, "启用前至少需要一个启用中的奖励场景")
 		}
-		if next.VerifyMode != rewardedad.VerifyClient && next.SecurityKeyCipher == "" {
-			return nil, apperrors.New(40000, http.StatusBadRequest,
-				"当前校验模式要验证平台回调签名，请先填写 Security Key")
+		if next.VerifyMode != rewardedad.VerifyClient {
+			for _, scene := range next.Scenes {
+				if !scene.Enabled || next.KeySource(scene.PlacementID) != rewardedad.KeySourceMissing {
+					continue
+				}
+				label := scene.PlacementID
+				if placement, ok := next.FindPlacement(scene.PlacementID); ok && placement.Name != "" {
+					label = placement.Name + "（" + placement.ID + "）"
+				}
+				return nil, apperrors.New(40000, http.StatusBadRequest,
+					"广告位「"+label+"」还没有 Security Key：当前校验模式要验证平台回调签名，请给它填写 Key 或填写默认 Key")
+			}
 		}
 	}
 
@@ -185,7 +210,58 @@ func (s *RewardedAdService) SaveConfig(ctx context.Context, input rewardedad.Sav
 	if err != nil {
 		return nil, err
 	}
-	return s.adminView(saved, appKey), nil
+	return s.adminView(ctx, saved, appKey), nil
+}
+
+// mergePlacements 把提交的广告位列表与已存的合并成新列表。
+//
+// input 为 nil 表示调用方没管广告位（老版本控制台、MCP 的全局保存），原样沿用。
+// 每个广告位的 Key 按 PreviousID（改了 ID 时）或 ID 找到已存的那一把：留空沿用、显式清除、或替换。
+func (s *RewardedAdService) mergePlacements(current *rewardedad.Config, input *[]rewardedad.PlacementInput,
+	now time.Time) ([]rewardedad.Placement, error) {
+	if input == nil {
+		if current == nil {
+			return []rewardedad.Placement{}, nil
+		}
+		return append([]rewardedad.Placement{}, current.Placements...), nil
+	}
+	items := make([]rewardedad.PlacementInput, 0, len(*input))
+	for _, item := range *input {
+		items = append(items, rewardedad.NormalizePlacement(item))
+	}
+	if err := rewardedad.ValidatePlacements(items); err != nil {
+		return nil, apperrors.New(40000, http.StatusBadRequest, err.Error())
+	}
+	result := make([]rewardedad.Placement, 0, len(items))
+	for _, item := range items {
+		placement := rewardedad.Placement{ID: item.ID, Name: item.Name}
+		previous := item.PreviousID
+		if previous == "" {
+			previous = item.ID
+		}
+		if existing, ok := current.FindPlacement(previous); ok {
+			placement.SecurityKeyCipher = existing.SecurityKeyCipher
+			placement.SecurityKeyHint = existing.SecurityKeyHint
+			placement.KeyUpdatedAt = existing.KeyUpdatedAt
+		}
+		if item.ClearSecurityKey {
+			placement.SecurityKeyCipher = ""
+			placement.SecurityKeyHint = ""
+			placement.KeyUpdatedAt = nil
+		}
+		if item.SecurityKey != "" {
+			cipher, err := encryptSecret(s.secretKey, item.SecurityKey)
+			if err != nil {
+				return nil, err
+			}
+			placement.SecurityKeyCipher = cipher
+			placement.SecurityKeyHint = rewardedAdKeyHint(item.SecurityKey)
+			updated := now
+			placement.KeyUpdatedAt = &updated
+		}
+		result = append(result, placement)
+	}
+	return result, nil
 }
 
 func (s *RewardedAdService) checkPlansExist(ctx context.Context, appID int64, scenes []rewardedad.Scene) error {
@@ -265,11 +341,13 @@ func (s *RewardedAdService) checkFeaturesExist(ctx context.Context, appID int64,
 	return nil
 }
 
-func (s *RewardedAdService) adminView(cfg *rewardedad.Config, appKey string) *rewardedad.AdminConfig {
+func (s *RewardedAdService) adminView(ctx context.Context, cfg *rewardedad.Config, appKey string) *rewardedad.AdminConfig {
 	callback, absolute := s.callbackURL(appKey)
 	view := &rewardedad.AdminConfig{
 		Provider:         rewardedad.ProviderApex,
 		VerifyMode:       rewardedad.VerifyDual,
+		Placements:       []rewardedad.AdminPlacement{},
+		ActivityDays:     rewardedAdActivityDays,
 		Scenes:           []rewardedad.Scene{},
 		CallbackURL:      callback,
 		CallbackAbsolute: absolute,
@@ -293,7 +371,42 @@ func (s *RewardedAdService) adminView(cfg *rewardedad.Config, appKey string) *re
 	view.UpdatedBy = cfg.UpdatedBy
 	updated := cfg.UpdatedAt
 	view.UpdatedAt = &updated
+
+	// 回调统计只是辅助判断「Key 配对了没有」，查不出来不影响读写配置。
+	since := time.Now().AddDate(0, 0, -rewardedAdActivityDays)
+	activity, err := s.pg.RewardedAdPlacementActivity(ctx, cfg.AppID, since)
+	if err != nil {
+		s.log.Warn("rewarded ad placement activity failed", zap.Int64("appid", cfg.AppID), zap.Error(err))
+		activity = nil
+	}
+	view.Placements = buildAdminPlacements(cfg, activity)
 	return view
+}
+
+// buildAdminPlacements 管理端的广告位列表：Key 只给提示，附上验签实际用哪一把、哪些场景在用、最近的回调。
+func buildAdminPlacements(cfg *rewardedad.Config, activity map[string]rewardedad.PlacementActivity) []rewardedad.AdminPlacement {
+	scenes := cfg.ScenesByPlacement()
+	result := make([]rewardedad.AdminPlacement, 0, len(cfg.Placements))
+	for _, placement := range cfg.Placements {
+		item := rewardedad.AdminPlacement{
+			ID:              placement.ID,
+			Name:            placement.Name,
+			HasSecurityKey:  placement.HasKey(),
+			SecurityKeyHint: placement.SecurityKeyHint,
+			KeyUpdatedAt:    placement.KeyUpdatedAt,
+			KeySource:       cfg.KeySource(placement.ID),
+			Scenes:          scenes[placement.ID],
+		}
+		if item.Scenes == nil {
+			item.Scenes = []string{}
+		}
+		if stat, ok := activity[placement.ID]; ok {
+			item.LastCallbackAt = stat.LastCallbackAt
+			item.Callbacks = stat.Callbacks
+		}
+		result = append(result, item)
+	}
+	return result
 }
 
 // callbackURL 填进广告平台「配置回调URL」的地址。
@@ -691,22 +804,20 @@ func (s *RewardedAdService) AdCallback(ctx context.Context, input AdCallbackInpu
 	if !rewardedad.ValidTransID(transID) {
 		return false, "trans_invalid"
 	}
-	if cfg.SecurityKeyCipher == "" {
+	// 验签用回调所在广告位的 Key（没单独配就用默认 Key），见 rewardedad.Config.CallbackKeyCiphers。
+	placementID := strings.TrimSpace(input.PlacementID)
+	keys := cfg.CallbackKeyCiphers(placementID)
+	if len(keys) == 0 {
 		// client 模式不验签；回调仍然记一笔，供对账。
 		if cfg.VerifyMode != rewardedad.VerifyClient {
+			s.log.Warn("rewarded ad callback: no security key for placement",
+				zap.Int64("appid", input.AppID), zap.String("placementId", placementID))
 			return false, "key_missing"
 		}
-	} else {
-		key, err := decryptSecret(s.secretKey, cfg.SecurityKeyCipher)
-		if err != nil {
-			s.log.Error("rewarded ad callback: decrypt key failed", zap.Int64("appid", input.AppID), zap.Error(err))
-			return false, "internal"
-		}
-		if !rewardedad.VerifyCallbackSign(key, transID, input.Sign) {
-			s.log.Warn("rewarded ad callback: bad signature",
-				zap.Int64("appid", input.AppID), zap.String("transId", transID))
-			return false, "bad_sign"
-		}
+	} else if !s.verifyCallbackSign(keys, transID, input.Sign, input.AppID) {
+		s.log.Warn("rewarded ad callback: bad signature",
+			zap.Int64("appid", input.AppID), zap.String("placementId", placementID), zap.String("transId", transID))
+		return false, "bad_sign"
 	}
 
 	now := time.Now()
@@ -717,7 +828,7 @@ func (s *RewardedAdService) AdCallback(ctx context.Context, input AdCallbackInpu
 		TransID:      transID,
 		Side:         rewardedad.SideServer,
 		Scene:        rewardedad.SceneFromExtra(input.Extra),
-		PlacementID:  strings.TrimSpace(input.PlacementID),
+		PlacementID:  placementID,
 		RewardName:   strings.TrimSpace(input.RewardName),
 		RewardAmount: input.RewardAmount,
 		NetworkID:    strings.TrimSpace(input.NetworkID),
@@ -736,6 +847,21 @@ func (s *RewardedAdService) AdCallback(ctx context.Context, input AdCallbackInpu
 }
 
 // ── 内部 ──
+
+// verifyCallbackSign 逐一用候选 Key 验签，任一通过即可。解不开的密文跳过（记日志），不让一把坏 Key 挡住其余的。
+func (s *RewardedAdService) verifyCallbackSign(ciphers []string, transID, sign string, appID int64) bool {
+	for _, cipher := range ciphers {
+		key, err := decryptSecret(s.secretKey, cipher)
+		if err != nil {
+			s.log.Error("rewarded ad callback: decrypt key failed", zap.Int64("appid", appID), zap.Error(err))
+			continue
+		}
+		if rewardedad.VerifyCallbackSign(key, transID, sign) {
+			return true
+		}
+	}
+	return false
+}
 
 func (s *RewardedAdService) policy(cfg *rewardedad.Config, now time.Time) rewardedad.SettlePolicy {
 	policy := rewardedad.SettlePolicy{DayStart: rewardedAdDayStart(now, timeutil.DefaultLocation())}

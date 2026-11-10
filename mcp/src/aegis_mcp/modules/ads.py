@@ -50,8 +50,9 @@ CONFIG_KEYS = ("enabled", "provider", "providerAppId", "verifyMode", "dailyLimit
 
 @server.tool(**READ("ads"))
 async def rewarded_config(app: AppRef) -> Any:
-    """激励广告配置：开关、广告平台与应用 ID、校验模式、每日总上限、全部场景（权益、次数、冷却、会员权益、已拥有处理方式），
-    以及回调地址、权益目录（catalog）、可选校验模式 / 平台 / 已拥有处理方式与折算去处。密钥只给提示（securityKeyHint）。"""
+    """激励广告配置：开关、广告平台与应用 ID、校验模式、每日总上限、广告位（各自的 Key 状态 keySource、使用场景、近 7 天回调）、
+    全部场景（权益、次数、冷却、会员权益、已拥有处理方式），以及回调地址、权益目录（catalog）、可选校验模式 / 平台 / 已拥有处理方式与折算去处。
+    密钥只给提示（securityKeyHint）：顶层的是默认 Key，广告位里的是各自的 Key。"""
     return await REWARDED_CONFIG(appkey=app)
 
 
@@ -68,8 +69,8 @@ async def rewarded_save_config(
     enabled: Annotated[bool | None, Field(description="是否开启激励广告")] = None,
     provider: Annotated[str | None, Field(description="广告平台（目前为 apex，可选值见 ads_rewarded_config 的 providers）")] = None,
     provider_app_id: Annotated[str | None, Field(description="广告平台的应用 ID")] = None,
-    security_key: Annotated[str | None, Field(description="广告平台回调验签密钥；不传则不修改")] = None,
-    clear_security_key: Annotated[bool | None, Field(description="清除已保存的回调密钥")] = None,
+    security_key: Annotated[str | None, Field(description="默认 Key：没单独配 Key 的广告位用它验签；不传则不修改。各广告位的 Key 用 ads_rewarded_save_placement")] = None,
+    clear_security_key: Annotated[bool | None, Field(description="清除已保存的默认 Key")] = None,
     verify_mode: Annotated[Literal["dual", "server", "client"] | None, Field(description="发奖校验模式：dual 回调与客户端都到才发 / server 只认平台回调 / client 只认 SDK 结论")] = None,
     daily_limit: Annotated[int | None, Field(ge=0, description="每人每天全部场景合计最多领取次数，0 为不限")] = None,
     scenes: Annotated[list[dict[str, Any]] | None, Field(description="整体替换全部场景（字段同 ads_rewarded_save_scene 的请求体）；只改一个场景请用 ads_rewarded_save_scene")] = None,
@@ -83,6 +84,71 @@ async def rewarded_save_config(
         enabled=enabled, provider=provider, providerAppId=provider_app_id, verifyMode=verify_mode,
         dailyLimit=daily_limit, scenes=scenes, securityKey=security_key or None, clearSecurityKey=clear_security_key,
     ))
+    return await REWARDED_CONFIG_SAVE(appkey=app, body=config)
+
+
+def _current_placements(current: Any) -> list[dict[str, Any]]:
+    """配置里的广告位，转成保存载荷的形态（Key 不回传，留空即沿用）。"""
+    current = current if isinstance(current, dict) else {}
+    return [{"id": item["id"], "name": item.get("name", "")} for item in (current.get("placements") or []) if item.get("id")]
+
+
+@server.tool(**WRITE("ads"))
+async def rewarded_save_placement(
+    app: AppRef,
+    id: Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="广告位 ID（Apex 后台的聚合广告位 ID）。已登记即修改，否则新增")],
+    name: Annotated[str | None, Field(max_length=32, description="广告位名称（如 激励视频）")] = None,
+    security_key: Annotated[str | None, Field(description="这个广告位在 Apex 后台的 Security Key；不传则不修改")] = None,
+    clear_security_key: Annotated[bool | None, Field(description="清除这个广告位的 Key，改用默认 Key 验签")] = None,
+    previous_id: Annotated[str | None, Field(description="改广告位 ID 时填原 ID：已存的 Key 随之带过去，引用原 ID 的场景一并改到新 ID")] = None,
+) -> Any:
+    """登记或修改一个激励广告位及其 Security Key（其余广告位、场景与全局配置原样保留）。
+
+    Apex 按广告位签发 Security Key，回调按回调里的 placementId 选 Key 验签；没单独配 Key 的广告位用默认 Key。
+    Key 填错会让这个广告位的全部回调验签失败、用户领不到奖，执行前向用户复述广告位与 Key 末 4 位。
+    """
+    current = await REWARDED_CONFIG(appkey=app)
+    config = _current_config(current)
+    placements = _current_placements(current)
+    locate = previous_id or id
+    target = next((item for item in placements if item["id"] == locate), None)
+    if target is None:
+        if previous_id:
+            raise ToolError(f"找不到广告位 {previous_id}，请先用 ads_rewarded_config 核对")
+        target = {"id": id, "name": ""}
+        placements.append(target)
+    if previous_id and previous_id != id:
+        target["previousId"] = previous_id
+        target["id"] = id
+        for scene in config["scenes"]:
+            if scene.get("placementId") == previous_id:
+                scene["placementId"] = id
+    if name is not None:
+        target["name"] = name
+    if security_key:
+        target["securityKey"] = security_key
+    if clear_security_key:
+        target["clearSecurityKey"] = True
+    config["placements"] = placements
+    return await REWARDED_CONFIG_SAVE(appkey=app, body=config)
+
+
+@server.tool(**DESTRUCTIVE("ads"))
+async def rewarded_delete_placement(
+    app: AppRef,
+    id: Annotated[str, Field(min_length=1, description="要删除的广告位 ID")],
+) -> Any:
+    """删除一个激励广告位及其 Key。还有场景在用的广告位不能删（先用 ads_rewarded_save_scene 给场景换广告位）。执行前先向用户确认。"""
+    current = await REWARDED_CONFIG(appkey=app)
+    config = _current_config(current)
+    placements = _current_placements(current)
+    remaining = [item for item in placements if item["id"] != id]
+    if len(remaining) == len(placements):
+        raise ToolError(f"找不到广告位 {id}，请先用 ads_rewarded_config 核对")
+    users = [scene.get("key") for scene in config["scenes"] if scene.get("placementId") == id]
+    if users:
+        raise ToolError(f"广告位 {id} 仍被场景 {', '.join(users)} 使用，请先给这些场景换广告位")
+    config["placements"] = remaining
     return await REWARDED_CONFIG_SAVE(appkey=app, body=config)
 
 

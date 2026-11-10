@@ -70,14 +70,40 @@ export type RewardedAdMembership = {
   adFree?: boolean;
 };
 
+/** 广告位的回调验签实际用哪一把 Key：自己的 / 应用默认的 / 都没有（回调会验签失败） */
+export type RewardedAdKeySource = "own" | "default" | "missing";
+
+/**
+ * 平台上的一个激励广告位。Apex 的 Security Key 按广告位签发，各广告位的回调用各自的 Key 验签；
+ * 没单独配 Key 的广告位用应用的默认 Key。Key 只回「配没配」与末 4 位提示。
+ */
+export type RewardedAdPlacement = {
+  id: string;
+  name: string;
+  hasSecurityKey: boolean;
+  securityKeyHint?: string;
+  keyUpdatedAt?: string;
+  keySource: RewardedAdKeySource;
+  /** 用这个广告位的场景标识 */
+  scenes: string[];
+  /** 统计窗口（activityDays）内最近一次验签通过的回调 */
+  lastCallbackAt?: string;
+  /** 统计窗口内验签通过的回调次数 */
+  callbacks: number;
+};
+
 export type RewardedAdConfig = {
   enabled: boolean;
   provider: string;
   providerAppId: string;
+  /** 应用的默认 Key（给没单独配 Key 的广告位兜底） */
   hasSecurityKey: boolean;
   securityKeyHint?: string;
   verifyMode: RewardedAdVerifyMode;
   dailyLimit: number;
+  placements?: RewardedAdPlacement[];
+  /** placements 里回调统计的窗口（天） */
+  activityDays?: number;
   scenes: RewardedAdScene[];
   /** 填进广告平台「配置回调URL」的地址；未配 API_BASE_URL 时只有路径 */
   callbackUrl: string;
@@ -91,15 +117,26 @@ export type RewardedAdConfig = {
   convertTargets?: string[];
 };
 
+/** 保存时的一个广告位。securityKey 留空沿用；改了 ID 时 previousId 填原 ID，已存的 Key 随之带过去 */
+export type SaveRewardedAdPlacement = {
+  id: string;
+  previousId?: string;
+  name: string;
+  securityKey?: string;
+  clearSecurityKey?: boolean;
+};
+
 export type SaveRewardedAdConfigPayload = {
   enabled: boolean;
   provider: string;
   providerAppId: string;
-  /** 留空表示不修改 */
+  /** 默认 Key，留空表示不修改 */
   securityKey?: string;
   clearSecurityKey?: boolean;
   verifyMode: RewardedAdVerifyMode;
   dailyLimit: number;
+  /** 不传表示不改广告位列表；传了整体替换 */
+  placements?: SaveRewardedAdPlacement[];
   scenes: RewardedAdScene[];
 };
 

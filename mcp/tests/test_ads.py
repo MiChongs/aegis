@@ -42,6 +42,32 @@ async def test_rewarded_delete_scene(backend, call, call_error):
     assert "找不到" in await call_error("ads_rewarded_delete_scene", {"app": "demo", "key": "nope"})
 
 
+async def test_rewarded_save_placement(backend, call, call_error):
+    placements = [{"id": "p1", "name": "激励视频", "hasSecurityKey": True, "keySource": "own", "scenes": ["draw"], "callbacks": 3},
+                  {"id": "p2", "name": "", "hasSecurityKey": False, "keySource": "default", "scenes": [], "callbacks": 0}]
+    backend.reply("GET", f"{RA}/config", {**CONFIG, "placements": placements})
+    await call("ads_rewarded_save_placement", {"app": "demo", "id": "p2", "name": "激励视频2", "security_key": "k2"})
+    assert backend.last().json == {**SAVED, "placements": [{"id": "p1", "name": "激励视频"},
+                                                           {"id": "p2", "name": "激励视频2", "securityKey": "k2"}]}
+    await call("ads_rewarded_save_placement", {"app": "demo", "id": "p3", "security_key": "k3"})
+    assert backend.last().json["placements"][-1] == {"id": "p3", "name": "", "securityKey": "k3"}
+    # 改 ID：Key 随 previousId 带过去，引用原 ID 的场景一并改
+    await call("ads_rewarded_save_placement", {"app": "demo", "id": "p9", "previous_id": "p1"})
+    saved = backend.last().json
+    assert saved["placements"][0] == {"id": "p9", "name": "激励视频", "previousId": "p1"}
+    assert saved["scenes"][0]["placementId"] == "p9"
+    assert "找不到" in await call_error("ads_rewarded_save_placement", {"app": "demo", "id": "x", "previous_id": "nope"})
+
+
+async def test_rewarded_delete_placement(backend, call, call_error):
+    placements = [{"id": "p1", "name": "a", "scenes": ["draw"]}, {"id": "p2", "name": "b", "scenes": []}]
+    backend.reply("GET", f"{RA}/config", {**CONFIG, "placements": placements})
+    await call("ads_rewarded_delete_placement", {"app": "demo", "id": "p2"})
+    assert backend.last().json["placements"] == [{"id": "p1", "name": "a"}]
+    assert "仍被场景" in await call_error("ads_rewarded_delete_placement", {"app": "demo", "id": "p1"})
+    assert "找不到" in await call_error("ads_rewarded_delete_placement", {"app": "demo", "id": "p9"})
+
+
 async def test_rewarded_views_stats_grant(backend, call):
     await call("ads_rewarded_views", {"app": "demo", "user_id": 7, "status": "rejected", "start": "2026-10-01", "limit": 50})
     assert (backend.last().path, backend.last().query) == (f"{RA}/views", {"userId": "7", "status": "rejected", "start": "2026-10-01", "page": "1", "limit": "50"})

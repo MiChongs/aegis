@@ -31,16 +31,28 @@ type rewardedAdQuerier interface {
 
 // ── 配置 ──
 
+// placementRecord 广告位在 JSONB 里的形态。密文只在这一层与服务层之间流转，
+// 领域类型的 json 标签不带它（防止哪天被直接序列化出网），所以落库另用一份结构。
+type placementRecord struct {
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	KeyCipher    string     `json:"keyCipher,omitempty"`
+	KeyHint      string     `json:"keyHint,omitempty"`
+	KeyUpdatedAt *time.Time `json:"keyUpdatedAt,omitempty"`
+}
+
 // GetRewardedAdConfig 读取应用的激励广告配置；没配过时返回 (nil, nil)。
+//
+// 场景里用到却没登记的广告位会补进 Placements（见 rewardedad.Config.EnsureScenePlacements）。
 func (r *Repository) GetRewardedAdConfig(ctx context.Context, appID int64) (*rewardedad.Config, error) {
 	var cfg rewardedad.Config
-	var scenes []byte
+	var scenes, placements []byte
 	var updatedBy *string
 	err := r.pool.QueryRow(ctx, `SELECT appid, enabled, provider, provider_app_id, security_key_cipher,
-security_key_hint, verify_mode, daily_limit, scenes, updated_by, updated_at
+security_key_hint, verify_mode, daily_limit, placements, scenes, updated_by, updated_at
 FROM app_rewarded_ad_configs WHERE appid = $1`, appID).Scan(
 		&cfg.AppID, &cfg.Enabled, &cfg.Provider, &cfg.ProviderAppID, &cfg.SecurityKeyCipher,
-		&cfg.SecurityKeyHint, &cfg.VerifyMode, &cfg.DailyLimit, &scenes, &updatedBy, &cfg.UpdatedAt)
+		&cfg.SecurityKeyHint, &cfg.VerifyMode, &cfg.DailyLimit, &placements, &scenes, &updatedBy, &cfg.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -53,6 +65,23 @@ FROM app_rewarded_ad_configs WHERE appid = $1`, appID).Scan(
 	if cfg.Scenes == nil {
 		cfg.Scenes = []rewardedad.Scene{}
 	}
+	var records []placementRecord
+	if len(placements) > 0 {
+		if err := json.Unmarshal(placements, &records); err != nil {
+			return nil, fmt.Errorf("decode rewarded ad placements: %w", err)
+		}
+	}
+	cfg.Placements = make([]rewardedad.Placement, 0, len(records))
+	for _, record := range records {
+		cfg.Placements = append(cfg.Placements, rewardedad.Placement{
+			ID:                record.ID,
+			Name:              record.Name,
+			SecurityKeyCipher: record.KeyCipher,
+			SecurityKeyHint:   record.KeyHint,
+			KeyUpdatedAt:      record.KeyUpdatedAt,
+		})
+	}
+	cfg.EnsureScenePlacements()
 	cfg.UpdatedBy = derefString(updatedBy)
 	return &cfg, nil
 }
@@ -67,10 +96,24 @@ func (r *Repository) SaveRewardedAdConfig(ctx context.Context, cfg rewardedad.Co
 	if err != nil {
 		return nil, err
 	}
+	records := make([]placementRecord, 0, len(cfg.Placements))
+	for _, placement := range cfg.Placements {
+		records = append(records, placementRecord{
+			ID:           placement.ID,
+			Name:         placement.Name,
+			KeyCipher:    placement.SecurityKeyCipher,
+			KeyHint:      placement.SecurityKeyHint,
+			KeyUpdatedAt: placement.KeyUpdatedAt,
+		})
+	}
+	placements, err := json.Marshal(records)
+	if err != nil {
+		return nil, err
+	}
 	_, err = r.pool.Exec(ctx, `INSERT INTO app_rewarded_ad_configs
 (appid, enabled, provider, provider_app_id, security_key_cipher, security_key_hint, verify_mode,
- daily_limit, scenes, updated_by, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+ daily_limit, placements, scenes, updated_by, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
 ON CONFLICT (appid) DO UPDATE SET
   enabled = EXCLUDED.enabled,
   provider = EXCLUDED.provider,
@@ -79,15 +122,41 @@ ON CONFLICT (appid) DO UPDATE SET
   security_key_hint = EXCLUDED.security_key_hint,
   verify_mode = EXCLUDED.verify_mode,
   daily_limit = EXCLUDED.daily_limit,
+  placements = EXCLUDED.placements,
   scenes = EXCLUDED.scenes,
   updated_by = EXCLUDED.updated_by,
   updated_at = NOW()`,
 		cfg.AppID, cfg.Enabled, cfg.Provider, cfg.ProviderAppID, cfg.SecurityKeyCipher,
-		cfg.SecurityKeyHint, cfg.VerifyMode, cfg.DailyLimit, payload, nullableString(cfg.UpdatedBy))
+		cfg.SecurityKeyHint, cfg.VerifyMode, cfg.DailyLimit, placements, payload, nullableString(cfg.UpdatedBy))
 	if err != nil {
 		return nil, err
 	}
 	return r.GetRewardedAdConfig(ctx, cfg.AppID)
+}
+
+// RewardedAdPlacementActivity 各广告位自 since 起验签通过的回调：次数与最近一次。
+//
+// 只看窗口内（走 appid + created_at 索引），控制台据此回答「这个广告位的 Key 配对了没有」。
+func (r *Repository) RewardedAdPlacementActivity(ctx context.Context, appID int64, since time.Time) (map[string]rewardedad.PlacementActivity, error) {
+	rows, err := r.pool.Query(ctx, `SELECT placement_id, MAX(server_verified_at), COUNT(*)
+FROM app_rewarded_ad_views
+WHERE appid = $1 AND created_at >= $2 AND server_verified_at IS NOT NULL AND placement_id <> ''
+GROUP BY placement_id`, appID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[string]rewardedad.PlacementActivity{}
+	for rows.Next() {
+		var id string
+		var last *time.Time
+		var count int64
+		if err := rows.Scan(&id, &last, &count); err != nil {
+			return nil, err
+		}
+		result[id] = rewardedad.PlacementActivity{LastCallbackAt: last, Callbacks: count}
+	}
+	return result, rows.Err()
 }
 
 // ── 观看记录 ──

@@ -131,17 +131,20 @@ func (m SceneMembership) AdFreeOrDefault() bool {
 
 // Config 一个应用的激励广告配置（含密文，只在服务端内部流转）。
 type Config struct {
-	AppID             int64     `json:"appid"`
-	Enabled           bool      `json:"enabled"`
-	Provider          string    `json:"provider"`
-	ProviderAppID     string    `json:"providerAppId"`
-	SecurityKeyCipher string    `json:"-"`
-	SecurityKeyHint   string    `json:"securityKeyHint"`
-	VerifyMode        string    `json:"verifyMode"`
-	DailyLimit        int       `json:"dailyLimit"`
-	Scenes            []Scene   `json:"scenes"`
-	UpdatedBy         string    `json:"updatedBy,omitempty"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	AppID         int64  `json:"appid"`
+	Enabled       bool   `json:"enabled"`
+	Provider      string `json:"provider"`
+	ProviderAppID string `json:"providerAppId"`
+	// SecurityKeyCipher 应用的默认 Key（密文）：给没单独配 Key 的广告位兜底，见 placement.go。
+	SecurityKeyCipher string `json:"-"`
+	SecurityKeyHint   string `json:"securityKeyHint"`
+	VerifyMode        string `json:"verifyMode"`
+	DailyLimit        int    `json:"dailyLimit"`
+	// Placements 登记的广告位，各自可以有自己的 Security Key。
+	Placements []Placement `json:"placements"`
+	Scenes     []Scene     `json:"scenes"`
+	UpdatedBy  string      `json:"updatedBy,omitempty"`
+	UpdatedAt  time.Time   `json:"updatedAt"`
 }
 
 // FindScene 按 key 取场景。
@@ -171,14 +174,19 @@ func (c *Config) SceneForPlacement(placementID string) (Scene, bool) {
 }
 
 // AdminConfig 管理端看到的配置：密钥只回答「配没配」。
+//
+// HasSecurityKey / SecurityKeyHint 说的是应用的默认 Key；各广告位自己的 Key 在 Placements 里。
 type AdminConfig struct {
-	Enabled          bool                       `json:"enabled"`
-	Provider         string                     `json:"provider"`
-	ProviderAppID    string                     `json:"providerAppId"`
-	HasSecurityKey   bool                       `json:"hasSecurityKey"`
-	SecurityKeyHint  string                     `json:"securityKeyHint"`
-	VerifyMode       string                     `json:"verifyMode"`
-	DailyLimit       int                        `json:"dailyLimit"`
+	Enabled         bool             `json:"enabled"`
+	Provider        string           `json:"provider"`
+	ProviderAppID   string           `json:"providerAppId"`
+	HasSecurityKey  bool             `json:"hasSecurityKey"`
+	SecurityKeyHint string           `json:"securityKeyHint"`
+	VerifyMode      string           `json:"verifyMode"`
+	DailyLimit      int              `json:"dailyLimit"`
+	Placements      []AdminPlacement `json:"placements"`
+	// ActivityDays Placements 里回调次数与最近回调的统计窗口（天）
+	ActivityDays     int                        `json:"activityDays"`
 	Scenes           []Scene                    `json:"scenes"`
 	CallbackURL      string                     `json:"callbackUrl"`
 	CallbackAbsolute bool                       `json:"callbackAbsolute"`
@@ -192,7 +200,10 @@ type AdminConfig struct {
 	ConvertTargets   []string             `json:"convertTargets"`
 }
 
-// SaveConfigInput 保存配置。SecurityKey 留空表示不修改。
+// SaveConfigInput 保存配置。SecurityKey（默认 Key）留空表示不修改。
+//
+// Placements 为 nil 表示不改广告位列表（老版本控制台与 MCP 不传这一项）；
+// 传了就整体替换，各广告位的 Key 同样留空沿用。
 type SaveConfigInput struct {
 	AppID            int64
 	Enabled          bool
@@ -200,6 +211,7 @@ type SaveConfigInput struct {
 	ProviderAppID    string
 	SecurityKey      string
 	ClearSecurityKey bool
+	Placements       *[]PlacementInput
 	VerifyMode       string
 	DailyLimit       int
 	Scenes           []Scene
