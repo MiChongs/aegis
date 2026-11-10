@@ -122,11 +122,13 @@ function FlowBody({
     return s;
   }, [related]);
   const chosen = picked ?? defaults;
+  // 起点账号默认一起处置，但不是必选：取消勾选后只处置选中的关联账号
+  const [dropped, setDropped] = useState<Set<number>>(new Set());
   const targets = useMemo(() => {
-    const ids = [...seed];
+    const ids = seed.filter((id) => !dropped.has(id));
     for (const r of related) if (chosen.has(r.userId) && !ids.includes(r.userId)) ids.push(r.userId);
     return ids;
-  }, [seed, related, chosen]);
+  }, [seed, dropped, related, chosen]);
 
   const [result, setResult] = useState<OpsReleaseResult | OpsPurgeResult | null>(null);
 
@@ -155,6 +157,8 @@ function FlowBody({
           related={related}
           chosen={chosen}
           setChosen={(next) => setPicked(next)}
+          dropped={dropped}
+          setDropped={setDropped}
           targets={targets}
           onCancel={onClose}
           onNext={() => setStep(1)}
@@ -272,11 +276,17 @@ function SoftErrors({ errors }: { errors?: Record<string, string> }) {
 
 // ── 第一步：选择账号 ──
 
-function SubjectCard({ subject }: { subject: OpsSubject }) {
+function SubjectCard({ subject, checked, onToggle }: { subject: OpsSubject; checked: boolean; onToggle: (v: boolean) => void }) {
   const r = subject.recent;
   const blocked = r && (r.blocked > 0 || r.reviewed > 0);
   return (
-    <div className="flex items-start gap-3 rounded-xl border bg-card p-3">
+    <label
+      className={cn(
+        "flex cursor-pointer items-start gap-3 rounded-xl border bg-card p-3 transition-colors hover:bg-muted/40",
+        checked ? "border-primary/40 bg-primary/[0.03]" : "opacity-70",
+      )}
+    >
+      <Checkbox checked={checked} onCheckedChange={(v) => onToggle(v === true)} className="mt-2.5" aria-label={`处置 ${accountName(subject.user, subject.userId)}`} />
       <AccountAvatar user={subject.user} id={subject.userId} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -292,7 +302,7 @@ function SubjectCard({ subject }: { subject: OpsSubject }) {
           </p>
         ) : null}
       </div>
-    </div>
+    </label>
   );
 }
 
@@ -320,7 +330,7 @@ function RelatedRow({ item, checked, onToggle }: { item: OpsRelated; checked: bo
 }
 
 function ScopeStep({
-  mode, inspection, loading, error, onRetry, related, chosen, setChosen, targets, onCancel, onNext,
+  mode, inspection, loading, error, onRetry, related, chosen, setChosen, dropped, setDropped, targets, onCancel, onNext,
 }: {
   mode: RiskOpsMode;
   inspection?: OpsInspection;
@@ -330,6 +340,8 @@ function ScopeStep({
   related: OpsRelated[];
   chosen: Set<number>;
   setChosen: (next: Set<number>) => void;
+  dropped: Set<number>;
+  setDropped: (next: Set<number>) => void;
   targets: number[];
   onCancel: () => void;
   onNext: () => void;
@@ -346,14 +358,33 @@ function ScopeStep({
     setChosen(next);
   };
   const pick = (pred: (r: OpsRelated) => boolean) => setChosen(new Set(related.filter(pred).map((r) => r.userId)));
-  const extra = targets.length - subjects.length;
+  const toggleSeed = (id: number, v: boolean) => {
+    const next = new Set(dropped);
+    if (v) next.delete(id);
+    else next.add(id);
+    setDropped(next);
+  };
+  const keptSeeds = subjects.filter((s) => !dropped.has(s.userId)).length;
+  const extra = targets.length - keptSeeds;
+  const verb = mode === "release" ? "解除" : "删除";
 
   return (
     <>
       <Body>
         {error ? <LoadError error={error} onRetry={onRetry} /> : null}
-        <Section title={subjects.length > 1 ? `选中的 ${subjects.length} 个账号` : "这个账号"}>
-          {loading ? <LoadingRows n={1} /> : <div className="grid gap-2">{subjects.map((s) => <SubjectCard key={s.userId} subject={s} />)}</div>}
+        <Section
+          title={subjects.length > 1 ? `选中的 ${subjects.length} 个账号` : "当前账号"}
+          hint={`默认一起${verb}；取消勾选则不${verb}${subjects.length > 1 ? "这些账号" : "它"}，只${verb}下面勾选的关联账号`}
+        >
+          {loading ? (
+            <LoadingRows n={1} />
+          ) : (
+            <div className="grid gap-2">
+              {subjects.map((s) => (
+                <SubjectCard key={s.userId} subject={s} checked={!dropped.has(s.userId)} onToggle={(v) => toggleSeed(s.userId, v)} />
+              ))}
+            </div>
+          )}
         </Section>
 
         <Section
@@ -362,7 +393,7 @@ function ScopeStep({
             loading
               ? "正在从关系图里找共用设备、手机号、邮箱、第三方账号或付款账号的账号"
               : related.length
-                ? `关系图找到 ${strong.length} 个强关联${weak.length ? `、${weak.length} 个只共用网络线路的弱关联` : ""}账号，勾选后会${mode === "release" ? "一起解除" : "一起删除"}`
+                ? `关系图找到 ${strong.length} 个强关联${weak.length ? `、${weak.length} 个只共用网络线路的弱关联` : ""}账号，勾选的会一起${verb}`
                 : "关系图里没有找到与它共用设备、手机号、邮箱、第三方账号或付款账号的账号"
           }
           action={
@@ -407,9 +438,17 @@ function ScopeStep({
         </Section>
         <SoftErrors errors={inspection?.errors} />
       </Body>
-      <Footer hint={extra > 0 ? `共 ${targets.length} 个账号，含 ${extra} 个关联账号` : `共 ${targets.length} 个账号`}>
+      <Footer
+        hint={
+          !targets.length
+            ? `没有选中任何账号，至少勾选一个才能${verb}`
+            : extra > 0
+              ? `共 ${targets.length} 个账号，含 ${extra} 个关联账号${keptSeeds < subjects.length ? `，不含${subjects.length > 1 ? `取消勾选的 ${subjects.length - keptSeeds} 个` : "当前账号"}` : ""}`
+              : `共 ${targets.length} 个账号`
+        }
+      >
         <Button variant="ghost" onClick={onCancel}>取消</Button>
-        <Button onClick={onNext} disabled={loading || !!error || !subjects.length}>
+        <Button onClick={onNext} disabled={loading || !!error || !subjects.length || !targets.length}>
           下一步
           <ArrowRight className="size-4" />
         </Button>
