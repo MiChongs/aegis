@@ -129,6 +129,55 @@ func (h *Handler) AdminVerifyMFA(c *gin.Context) {
 	})
 }
 
+// AdminPasskeyLoginOptions POST /api/admin/auth/passkey/options
+// 发起通行密钥登录，返回挑战与 navigator.credentials.get 的选项（可发现凭据，不需要账号）。
+func (h *Handler) AdminPasskeyLoginOptions(c *gin.Context) {
+	loginSession, options, err := h.admin.BeginPasskeyLogin(c.Request.Context(), c.ClientIP(), c.GetHeader("User-Agent"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "获取成功", gin.H{"session": loginSession, "options": options})
+}
+
+// AdminPasskeyLogin POST /api/admin/auth/passkey/login
+// 校验断言并签发会话；返回体与密码登录成功时相同。
+func (h *Handler) AdminPasskeyLogin(c *gin.Context) {
+	rawBody, _ := snapshotRequestBody(c)
+	var req AdminPasskeyLoginRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	payload := credentialPayload(rawBody, req.Credential, req.Payload)
+	if len(payload) == 0 {
+		response.Error(c, http.StatusBadRequest, 40000, "通行密钥凭证数据不能为空")
+		return
+	}
+	result, err := h.admin.LoginWithPasskey(c.Request.Context(), req.ChallengeID, payload, c.ClientIP(), c.GetHeader("User-Agent"))
+	if err != nil {
+		params := AuthAuditParams{Provider: "passkey", Event: "login", Status: "failed", Reason: err.Error()}
+		if result != nil {
+			params.AdminID = result.Admin.ID
+			params.AdminName = result.Admin.Account
+			params.DisplayName = result.Admin.DisplayName
+		}
+		h.recordAuditAuth(c, params)
+		h.writeError(c, err)
+		return
+	}
+	h.attachAdminAccountAvatar(c, &result.Admin)
+	response.Success(c, 200, "登录成功", result)
+	h.recordAuditAuth(c, AuthAuditParams{
+		AdminID:     result.Admin.ID,
+		AdminName:   result.Admin.Account,
+		DisplayName: result.Admin.DisplayName,
+		Provider:    "passkey",
+		Event:       "login",
+		Status:      systemdomain.AuditStatusSuccess,
+	})
+}
+
 func (h *Handler) AdminLogout(c *gin.Context) {
 	token := middlewareBearer(c.GetHeader("Authorization"))
 	if token == "" {

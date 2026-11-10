@@ -7,6 +7,8 @@ func init() {
 		Auth("POST /api/admin/auth/logout", "退出登录", SeverityLow),
 		Auth("POST /api/admin/auth/register", "注册管理员账号", SeverityMedium),
 		Auth("POST /api/admin/auth/verify-mfa", "完成二次验证", SeverityLow),
+		Auth("POST /api/admin/auth/passkey/options", "发起通行密钥登录", SeverityLow),
+		Auth("POST /api/admin/auth/passkey/login", "通行密钥登录", SeverityLow),
 		View("GET /api/admin/auth/me", "查看当前登录身份", ""),
 		View("GET /api/admin/auth/self-service", "查看自助注册配置", ""),
 		View("GET /api/admin/auth/ldap/config", "查看 LDAP 登录配置", ""),

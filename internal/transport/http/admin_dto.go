@@ -1,6 +1,7 @@
 package httptransport
 
 import (
+	"encoding/json"
 	"time"
 
 	admindomain "aegis/internal/domain/admin"
@@ -33,6 +34,14 @@ type AdminVerifyMFARequest struct {
 	ChallengeID  string `json:"challengeId" form:"challengeId" binding:"required"`
 	Code         string `json:"code" form:"code"`
 	RecoveryCode string `json:"recoveryCode" form:"recoveryCode"`
+}
+
+// AdminPasskeyLoginRequest 通行密钥登录：challengeId 来自 /passkey/options，credential 是
+// navigator.credentials.get 的结果按 WebAuthn JSON 编码（PublicKeyCredential.toJSON 的形态）。
+type AdminPasskeyLoginRequest struct {
+	ChallengeID string          `json:"challengeId" form:"challengeId" binding:"required"`
+	Credential  json.RawMessage `json:"credential"`
+	Payload     json.RawMessage `json:"payload"`
 }
 
 type AdminCreateRequest struct {

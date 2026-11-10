@@ -140,6 +140,25 @@ RETURNING id, admin_id, credential_id, COALESCE(credential_name, ''), credential
 	))
 }
 
+// GetAdminPasskeyByCredentialID 按凭据 ID 找管理员通行密钥（credential_id 全表唯一），没有时返回 (nil, nil)。
+// 通行密钥登录不带账号，靠它从凭据反查是哪位管理员。
+func (r *Repository) GetAdminPasskeyByCredentialID(ctx context.Context, credentialID []byte) (*admindomain.PasskeyRecord, error) {
+	return scanAdminPasskey(r.pool.QueryRow(ctx, `SELECT id, admin_id, credential_id, COALESCE(credential_name, ''), credential_json, aaguid, sign_count, last_used_at, created_at, updated_at
+FROM admin_passkeys
+WHERE credential_id = $1`, credentialID))
+}
+
+// UpdateAdminPasskeyCredential 登录成功后回写凭据（签名计数、备份状态等）与最近使用时间。
+func (r *Repository) UpdateAdminPasskeyCredential(ctx context.Context, adminID int64, credentialID []byte, credentialJSON []byte, signCount uint32, lastUsedAt time.Time) error {
+	_, err := r.pool.Exec(ctx, `UPDATE admin_passkeys
+SET credential_json = $3,
+    sign_count = $4,
+    last_used_at = $5,
+    updated_at = NOW()
+WHERE admin_id = $1 AND credential_id = $2`, adminID, credentialID, json.RawMessage(credentialJSON), signCount, lastUsedAt.UTC())
+	return err
+}
+
 func (r *Repository) DeleteAdminPasskey(ctx context.Context, adminID int64, credentialID []byte) (int64, error) {
 	result, err := r.pool.Exec(ctx, `DELETE FROM admin_passkeys WHERE admin_id = $1 AND credential_id = $2`, adminID, credentialID)
 	if err != nil {

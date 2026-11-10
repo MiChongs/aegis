@@ -8,6 +8,7 @@ import {
   Check,
   Eye,
   EyeOff,
+  Fingerprint,
   KeyRound,
   LoaderCircle,
   ShieldAlert
@@ -20,6 +21,7 @@ import { useAdminCaptchaPublicConfigQuery, useOIDCPublicConfigQuery } from "@/li
 import { getOIDCAuthURL } from "@/lib/api/system";
 import { CaptchaField } from "./captcha-field";
 import { AUTH_EASE } from "./auth-motion";
+import { usePasskeyLogin } from "./use-passkey-login";
 import { LegalLinks } from "@/components/legal/legal-links";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -151,6 +153,9 @@ export function LoginForm() {
     [mfaChallenge, mfaLoading, showSuccess]
   );
 
+  // 通行密钥：账号框的自动填充 + 下方按钮，成功与密码登录同一出口
+  const passkey = usePasskeyLogin({ active: phase === "login", onSuccess: showSuccess, onError: setError });
+
   const backToLogin = useCallback(() => {
     setPhase("login");
     setMfaChallenge(null);
@@ -220,7 +225,7 @@ export function LoginForm() {
                       <Input
                         id="account"
                         name="account"
-                        autoComplete="username"
+                        autoComplete="username webauthn"
                         placeholder="管理员账号"
                         aria-invalid={Boolean(error)}
                         className="h-11"
@@ -270,12 +275,32 @@ export function LoginForm() {
 
                     <ErrorAlert error={error} reduced={reduced} />
 
-                    <Button type="submit" className="mt-1 h-11 w-full" disabled={loading}>
+                    <Button type="submit" className="mt-1 h-11 w-full" disabled={loading || passkey.pending}>
                       {loading ? <LoaderCircle className="size-4 animate-spin" /> : null}
                       {loading ? "登录中…" : "登录"}
                     </Button>
 
-                    <SSOSection />
+                    {passkey.supported ? (
+                      <>
+                        <OrDivider />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-11 w-full"
+                          onClick={() => void passkey.start()}
+                          disabled={loading || passkey.pending}
+                        >
+                          {passkey.pending ? (
+                            <LoaderCircle className="size-4 animate-spin" />
+                          ) : (
+                            <Fingerprint className="size-4" />
+                          )}
+                          {passkey.pending ? "等待验证…" : "使用通行密钥登录"}
+                        </Button>
+                      </>
+                    ) : null}
+
+                    <SSOSection divider={!passkey.supported} />
 
                     <p className="text-center text-[13px] text-muted-foreground">
                       还没有账号？{" "}
@@ -549,7 +574,18 @@ function ErrorAlert({ error, reduced }: { error: string | null; reduced: boolean
  * 单点登录入口。开关来自 `/api/admin/auth/oidc/config`（免登录可读）。
  * **没启用就整段不渲染** —— 一个点了会报错的按钮比没有这个按钮更糟。
  */
-function SSOSection() {
+function OrDivider() {
+  return (
+    <div className="flex items-center gap-3">
+      <Separator className="flex-1" />
+      <span className="text-[11px] text-muted-foreground/60 select-none">或</span>
+      <Separator className="flex-1" />
+    </div>
+  );
+}
+
+/** `divider`：上方没有通行密钥按钮时由它自己画「或」分隔线 */
+function SSOSection({ divider }: { divider: boolean }) {
   const { data } = useOIDCPublicConfigQuery();
   const [redirecting, setRedirecting] = useState(false);
 
@@ -567,11 +603,7 @@ function SSOSection() {
 
   return (
     <>
-      <div className="flex items-center gap-3">
-        <Separator className="flex-1" />
-        <span className="text-[11px] text-muted-foreground/60 select-none">或</span>
-        <Separator className="flex-1" />
-      </div>
+      {divider ? <OrDivider /> : null}
       <Button
         type="button"
         variant="outline"

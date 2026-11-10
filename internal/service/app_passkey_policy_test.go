@@ -91,8 +91,14 @@ func (a *softAuthenticator) register(t *testing.T, rpID, challenge, origin strin
 
 func (a *softAuthenticator) assert(t *testing.T, rpID, challenge, origin string, userHandle []byte) []byte {
 	t.Helper()
+	return a.assertWithFlags(t, rpID, challenge, origin, userHandle, 0x05) // UP | UV
+}
+
+// assertWithFlags 同 assert，可指定认证器数据的标志位（例如只有 UP、没有 UV 的 0x01）。
+func (a *softAuthenticator) assertWithFlags(t *testing.T, rpID, challenge, origin string, userHandle []byte, flags byte) []byte {
+	t.Helper()
 	a.signCount++
-	authData := a.authData(rpID, 0x05, false) // UP | UV
+	authData := a.authData(rpID, flags, false)
 	cdj := clientData(t, "webauthn.get", challenge, origin)
 	cdjHash := sha256.Sum256(cdj)
 	digest := sha256.Sum256(append(append([]byte{}, authData...), cdjHash[:]...))

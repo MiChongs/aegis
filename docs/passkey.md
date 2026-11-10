@@ -75,6 +75,22 @@ Voyage 官网的实现见 `website/app/.well-known/assetlinks.json/route.ts`。
 Kotlin SDK：`auth.passkeyOptions(deviceId)`、`auth.passkeyLogin(credential: JsonElement, challengeId, deviceId, device)`、
 `me.passkeyRegisterOptions()`、`me.registerPasskey(challengeId, credential: JsonElement, name)`、`me.deletePasskey(id)`。
 
+## 控制台管理员登录
+
+管理员在「账户安全」绑定的通行密钥（`/api/admin/profile/passkey/*`，平台依赖方，要求可发现凭据）可以直接登录控制台：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/admin/auth/passkey/options` | 发起：返回 `session.challengeId` 与 `options`（`navigator.credentials.get` 的选项，不带 `allowCredentials`，不需要账号） |
+| POST | `/api/admin/auth/passkey/login` | `{challengeId, credential}`，`credential` 是断言的 WebAuthn JSON；成功返回体与密码登录相同 |
+
+- 用户验证定为**必须**（指纹、面容或 PIN）。通行密钥本身就是多因素，通过后直接签发会话，开着 TOTP 也不再要第二步；没有用户验证的断言被拒。
+- 凭据 ID 全表唯一，从它与 user handle（`a:<管理员 ID>`）反查管理员；两者对不上、凭据未登记一律 40107。
+- 挑战在校验前用 GETDEL 取走，同一份断言只能交一次，失败也要重新发起（40057）。挑战与应用用户的登录挑战同一存储，靠 `admin_passkey_login` 前缀与 AppID=0 区分，互相不能冒用。
+- 风控走管理员登录场景（`SceneAdminLogin`，`extra.method = passkey`）：发起时按 IP / UA 评估一次，认出管理员后带上账号再评估一次；插件的登录前钩子与会话签发钩子照常触发；账号停用照常拒绝（40310）。不要求图形验证码。
+- 审计：`auth.passkey.login`（成功）与 `auth.passkey.login.failed`，失败时若已认出管理员会带上账号。
+- 登录页两个入口：账号输入框 `autocomplete="username webauthn"` 的自动填充（条件式 UI，挑战快过期时自动换新），以及「使用通行密钥登录」按钮（挑战预取，按下后直接调起选择框，满足 Safari 的用户手势要求）。
+
 ## 错误码
 
 | 码 | 含义 |
@@ -90,3 +106,6 @@ Kotlin SDK：`auth.passkeyOptions(deviceId)`、`auth.passkeyLogin(credential: Js
 
 `go test ./internal/service -run 'TestAndroidPasskey|TestAndroidApkKeyHash|TestNormalizePasskeyPolicy'`：
 用软件认证器按规范拼出注册与登录响应，以 `android:apk-key-hash` 来源走应用级依赖方完整验签，并确认别的证书签的 App 被拒。
+
+`TestAdminPasskeyLoginIntegration`（Postgres + miniredis）：管理员注册通行密钥后登录直接签发会话（开着 TOTP 也不要第二步），
+并确认重放、来源不符、缺少用户验证、user handle 不符、未登记凭据、非管理员挑战、停用账号都被拒。

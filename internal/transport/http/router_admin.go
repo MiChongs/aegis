@@ -38,6 +38,9 @@ func registerAdminAuthRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		// 关掉之后提交会拿到 40317 而不是一个看起来像地址写错的 40400。
 		adminAuth.GET("/self-service", h.AdminSelfServiceConfig)
 		adminAuth.POST("/verify-mfa", h.AdminVerifyMFA)
+		// 通行密钥登录（可发现凭据，不填账号）：先取挑战，再交断言换会话
+		adminAuth.POST("/passkey/options", h.AdminPasskeyLoginOptions)
+		adminAuth.POST("/passkey/login", h.AdminPasskeyLogin)
 		adminAuth.GET("/ldap/config", h.AdminLDAPPublicConfig)
 		adminAuth.GET("/oidc/config", h.AdminOIDCPublicConfig)
 		adminAuth.GET("/oidc/authorize", h.AdminOIDCAuthorize)

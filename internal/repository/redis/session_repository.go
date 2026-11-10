@@ -423,6 +423,21 @@ func (r *SessionRepository) getJSON(ctx context.Context, key string, target any)
 	return true, nil
 }
 
+// takeJSON 原子地取出并删除一个 JSON 值（GETDEL）：一次性凭据用它，两个并发请求只会有一个拿到。
+func (r *SessionRepository) takeJSON(ctx context.Context, key string, target any) (bool, error) {
+	value, err := r.client.GetDel(ctx, key).Result()
+	if err != nil {
+		if err == redislib.Nil {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := json.Unmarshal([]byte(value), target); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *SessionRepository) getSessionByHash(ctx context.Context, tokenHash string) (*auth.Session, error) {
 	value, err := r.client.Get(ctx, r.sessionKeyByHash(tokenHash)).Result()
 	if err != nil {

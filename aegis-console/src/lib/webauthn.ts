@@ -154,3 +154,91 @@ export async function createPasskeyRegistrationCredential(options: Record<string
 
   return serializeRegistrationCredential(credential);
 }
+
+// ── 登录（断言） ──
+
+function mapRequestOptions(input: Record<string, unknown>): PublicKeyCredentialRequestOptions {
+  const publicKey = structuredClone(input) as Record<string, any>;
+  publicKey.challenge = base64UrlToBytes(String(publicKey.challenge));
+  if (Array.isArray(publicKey.allowCredentials)) {
+    publicKey.allowCredentials = publicKey.allowCredentials.map((item: Record<string, unknown>) => ({
+      ...item,
+      id: base64UrlToBytes(String(item.id))
+    }));
+  }
+  return publicKey as unknown as PublicKeyCredentialRequestOptions;
+}
+
+function serializeAssertionCredential(credential: PublicKeyCredential) {
+  const response = credential.response as AuthenticatorAssertionResponse;
+  return {
+    id: credential.id,
+    rawId: bytesToBase64Url(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: (credential as PublicKeyCredential & { authenticatorAttachment?: string | null })
+      .authenticatorAttachment ?? undefined,
+    response: {
+      clientDataJSON: bytesToBase64Url(response.clientDataJSON),
+      authenticatorData: bytesToBase64Url(response.authenticatorData),
+      signature: bytesToBase64Url(response.signature),
+      userHandle: response.userHandle ? bytesToBase64Url(response.userHandle) : undefined
+    },
+    clientExtensionResults: credential.getClientExtensionResults()
+  };
+}
+
+/**
+ * 浏览器是否支持「条件式 UI」：在账号输入框的自动填充建议里列出通行密钥
+ * （输入框需带 `autocomplete="username webauthn"`）。
+ */
+export async function passkeyAutofillAvailable(): Promise<boolean> {
+  if (!passkeyRegistrationSupported() || passkeySecureContextIssue()) return false;
+  const api = PublicKeyCredential as typeof PublicKeyCredential & {
+    isConditionalMediationAvailable?: () => Promise<boolean>;
+  };
+  if (typeof api.isConditionalMediationAvailable !== "function") return false;
+  try {
+    return await api.isConditionalMediationAvailable();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 调起通行密钥验证，返回按 WebAuthn JSON 编码的断言（可直接交给服务端）。
+ *
+ * - `mediation: "conditional"` 不弹窗，挂在账号输入框的自动填充上，用户选了才返回；
+ * - 不传时弹出系统的通行密钥选择框。
+ * 同一时刻只能有一个挂起的请求：弹窗之前要先 abort 掉挂着的条件式请求。
+ * WebAuthn 自己的异常（取消、超时、被中断）原样抛出，调用方用 `describePasskeyError` 翻译。
+ */
+export async function getPasskeyAssertion(
+  options: Record<string, unknown>,
+  init: { mediation?: "conditional"; signal?: AbortSignal } = {}
+): Promise<Record<string, unknown>> {
+  const insecure = passkeySecureContextIssue();
+  if (insecure) throw new Error(insecure);
+  if (!passkeyRegistrationSupported()) throw new Error("当前环境不支持通行密钥");
+
+  // 后端返回 { publicKey: { challenge, rpId, userVerification, ... } }
+  const requestOptions = (options.publicKey as Record<string, unknown>) || options;
+  const api = PublicKeyCredential as typeof PublicKeyCredential & {
+    parseRequestOptionsFromJSON?: (options: Record<string, unknown>) => PublicKeyCredentialRequestOptions;
+  };
+  const publicKey =
+    typeof api.parseRequestOptionsFromJSON === "function"
+      ? api.parseRequestOptionsFromJSON(requestOptions)
+      : mapRequestOptions(requestOptions);
+
+  const credential = (await navigator.credentials.get({
+    publicKey,
+    signal: init.signal,
+    ...(init.mediation ? { mediation: init.mediation as CredentialMediationRequirement } : {})
+  })) as PublicKeyCredential | null;
+  if (!credential) throw new Error("通行密钥验证未完成");
+
+  const withJSON = credential as PublicKeyCredential & { toJSON?: () => Record<string, unknown> };
+  return typeof withJSON.toJSON === "function"
+    ? (withJSON.toJSON() as unknown as Record<string, unknown>)
+    : serializeAssertionCredential(credential);
+}

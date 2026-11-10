@@ -72,6 +72,17 @@ func (r *SessionRepository) GetPasskeyLoginState(ctx context.Context, challengeI
 	return &state, nil
 }
 
+// TakePasskeyLoginState 取出并删除登录挑战：挑战只能用一次，校验失败也要重新发起。
+// 管理员通行密钥登录用它，避免同一份断言被并发重放。
+func (r *SessionRepository) TakePasskeyLoginState(ctx context.Context, challengeID string) (*securitydomain.PasskeyLoginState, error) {
+	var state securitydomain.PasskeyLoginState
+	found, err := r.takeJSON(ctx, r.passkeyLoginKey(challengeID), &state)
+	if err != nil || !found {
+		return nil, err
+	}
+	return &state, nil
+}
+
 func (r *SessionRepository) DeletePasskeyLoginState(ctx context.Context, challengeID string) error {
 	return r.client.Del(ctx, r.passkeyLoginKey(challengeID)).Err()
 }

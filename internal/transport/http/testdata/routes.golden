@@ -1033,6 +1033,8 @@ POST	/api/admin/apps/:appkey/wallet/receipt/email	AdminAppWalletReceiptEmail
 POST	/api/admin/auth/login	AdminLogin
 POST	/api/admin/auth/logout	AdminLogout
 POST	/api/admin/auth/oidc/exchange	AdminOIDCExchange
+POST	/api/admin/auth/passkey/login	AdminPasskeyLogin
+POST	/api/admin/auth/passkey/options	AdminPasskeyLoginOptions
 POST	/api/admin/auth/register	AdminRegister
 POST	/api/admin/auth/saml/callback	AdminSAMLCallback
 POST	/api/admin/auth/saml/exchange	AdminSAMLExchange
