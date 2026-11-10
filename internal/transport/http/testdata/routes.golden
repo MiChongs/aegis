@@ -168,6 +168,10 @@ GET	/api/admin/apps/:appkey/audits/sessions/export	ExportAdminAppSessionAudits
 GET	/api/admin/apps/:appkey/auth-protocol	AdminGetAppAuthProtocol
 GET	/api/admin/apps/:appkey/auth-protocol/transport/keys	AdminListAppTransportKeys
 GET	/api/admin/apps/:appkey/auto-sign	AdminAppAutoSign
+GET	/api/admin/apps/:appkey/ban-appeals	AdminListBanAppeals
+GET	/api/admin/apps/:appkey/ban-appeals/:appealId	AdminGetBanAppeal
+GET	/api/admin/apps/:appkey/ban-appeals/settings	AdminBanAppealSettings
+GET	/api/admin/apps/:appkey/ban-appeals/stats	AdminBanAppealStats
 GET	/api/admin/apps/:appkey/banners	AdminBanners
 GET	/api/admin/apps/:appkey/banners/export	ExportAdminBanners
 GET	/api/admin/apps/:appkey/captcha-config	AdminGetCaptchaConfig
@@ -435,6 +439,8 @@ GET	/api/admin/system/audit-logs/stats	GetAuditStats
 GET	/api/admin/system/authz/model	AdminAuthzModel
 GET	/api/admin/system/authz/policies	AdminAuthzPolicies
 GET	/api/admin/system/authz/policies/subject	AdminAuthzSubjectPolicies
+GET	/api/admin/system/ban-appeals	AdminListAllBanAppeals
+GET	/api/admin/system/ban-appeals/stats	AdminAllBanAppealStats
 GET	/api/admin/system/banners	ListPlatformBanners
 GET	/api/admin/system/banners/:id	GetPlatformBanner
 GET	/api/admin/system/banners/active	GetActivePlatformBanners
@@ -521,6 +527,8 @@ GET	/api/admin/system/organizations/:orgId/positions	ListPositions
 GET	/api/admin/system/organizations/:orgId/roles	ListOrgRoles
 GET	/api/admin/system/organizations/:orgId/roles/:roleId/grants	ListOrgRoleGrants
 GET	/api/admin/system/organizations/tree	OrganizationTree
+GET	/api/admin/system/platform-bans	AdminListPlatformBans
+GET	/api/admin/system/platform-bans/:platformBanId	AdminGetPlatformBan
 GET	/api/admin/system/plugins	AdminListPlugins
 GET	/api/admin/system/plugins/:id	AdminGetPlugin
 GET	/api/admin/system/plugins/executions	AdminListHookExecutions
@@ -895,6 +903,9 @@ POST	/api/admin/apps/:appkey/ai/skills	AdminAppAISkillCreate
 POST	/api/admin/apps/:appkey/auth-protocol/secret/rotate	AdminRotateAppSigningSecret
 POST	/api/admin/apps/:appkey/auth-protocol/selftest	AdminAppIntegrationSelfTest
 POST	/api/admin/apps/:appkey/auth-protocol/transport/rotate	AdminRotateAppTransportKey
+POST	/api/admin/apps/:appkey/ban-appeals/:appealId/approve	AdminApproveBanAppeal
+POST	/api/admin/apps/:appkey/ban-appeals/:appealId/reject	AdminRejectBanAppeal
+POST	/api/admin/apps/:appkey/ban-appeals/:appealId/review	AdminRerunBanAppealReview
 POST	/api/admin/apps/:appkey/banners	CreateAdminBanner
 POST	/api/admin/apps/:appkey/banners/image	UploadAdminBannerImage
 POST	/api/admin/apps/:appkey/captcha-config/preview	AdminPreviewDynamicCaptcha
@@ -1167,6 +1178,7 @@ POST	/api/admin/system/organizations/:orgId/positions	CreatePosition
 POST	/api/admin/system/organizations/:orgId/roles	CreateOrgRole
 POST	/api/admin/system/organizations/:orgId/roles/:roleId/grants	GrantOrgRole
 POST	/api/admin/system/organizations/:orgId/transfer	TransferOrganization
+POST	/api/admin/system/platform-bans/:platformBanId/revoke	AdminRevokePlatformBan
 POST	/api/admin/system/plugins	AdminCreatePlugin
 POST	/api/admin/system/plugins/:id/disable	AdminDisablePlugin
 POST	/api/admin/system/plugins/:id/enable	AdminEnablePlugin
@@ -1461,6 +1473,9 @@ POST	/api/v1/apps/:appkey/releases/events	AppReleaseEvent
 POST	/api/v1/apps/:appkey/signin	SignIn
 POST	/api/v1/apps/:appkey/storage/object-link	StorageObjectLink
 POST	/api/v1/apps/:appkey/storage/upload	StorageUpload
+POST	/api/v1/apps/:appkey/suspension	AppSuspensionStatus
+POST	/api/v1/apps/:appkey/suspension/appeal	AppSubmitSuspensionAppeal
+POST	/api/v1/apps/:appkey/suspension/appeal/withdraw	AppWithdrawSuspensionAppeal
 POST	/api/v1/apps/:appkey/tickets	UserCreateTicket
 POST	/api/v1/apps/:appkey/tickets/:ticketId/cancel	UserCancelTicket
 POST	/api/v1/apps/:appkey/tickets/:ticketId/rating	UserRateTicket
@@ -1492,6 +1507,7 @@ PUT	/api/admin/apps/:appkey/ai/mcp-servers/:serverId	AdminAppAIMCPUpdate
 PUT	/api/admin/apps/:appkey/ai/skills/:skillId	AdminAppAISkillUpdate
 PUT	/api/admin/apps/:appkey/auth-protocol	AdminUpdateAppAuthProtocol
 PUT	/api/admin/apps/:appkey/auto-sign	UpdateAdminAppAutoSign
+PUT	/api/admin/apps/:appkey/ban-appeals/settings	AdminSaveBanAppealSettings
 PUT	/api/admin/apps/:appkey/banners/:bannerId	UpdateAdminBanner
 PUT	/api/admin/apps/:appkey/banners/order	ReorderAdminBanners
 PUT	/api/admin/apps/:appkey/captcha-config	AdminUpdateCaptchaConfig

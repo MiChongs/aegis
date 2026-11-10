@@ -433,7 +433,7 @@ class AegisClient private constructor(
             }
 
             val descriptor = configHolder.get()?.errors?.firstOrNull { it.code == envelope.code }
-            val failure = AegisException.fromCode(envelope.code, envelope.message, descriptor)
+            val failure = AegisException.fromCode(envelope.code, envelope.message, descriptor, envelope.data)
             // 本机登录已被收回（被挤下线 / 被移除）：令牌全部作废，刷新也没用，清掉并通知一次
             if (failure.isSignedOut) {
                 tokens.clear()

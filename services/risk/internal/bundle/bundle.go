@@ -93,6 +93,12 @@ type Enforcement struct {
 	Targets         []string `json:"targets"` // device / ip / account / firewall
 	DurationSeconds int64    `json:"durationSeconds"`
 	AutoBanAllowed  bool     `json:"autoBanAllowed"` // false 时 ban 降为 block（只拦不封）
+	// Level 封号范围：app（默认，只封这个应用的账号）/ platform（全站封禁这个人，见 docs/account-suspension.md）
+	Level string `json:"level,omitempty"`
+	// PublicReason 给用户看的封禁说明（为空用原因类别的标准文案）
+	PublicReason string `json:"publicReason,omitempty"`
+	// ReasonCode 原因类别，默认 fraud
+	ReasonCode string `json:"reasonCode,omitempty"`
 }
 
 // 场景字段类型

@@ -221,7 +221,7 @@ func (h *Handler) execute(ctx context.Context, req engine.Request, decisionID st
 	}
 	for _, c := range cmds {
 		cmd := events.Command{ID: c.ID, Kind: c.Kind, Target: c.Target, Value: c.Value, AppID: req.AppID, DurationSeconds: c.DurationSeconds,
-			Reason: c.Reason, Source: "decision", DecisionID: decisionID}
+			Reason: c.Reason, Source: "decision", DecisionID: decisionID, Level: c.Level, PublicReason: c.PublicReason, ReasonCode: c.ReasonCode}
 		if err := h.Bus.PublishCommand(ctx, cmd); err != nil && h.Logf != nil {
 			h.Logf("处置命令发布失败：%v", err)
 		}

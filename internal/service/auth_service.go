@@ -145,6 +145,12 @@ func (s *AuthService) SetAccountDeletion(deletion *AccountDeletionService) {
 
 // checkReregister 注册前核对：刚注销、还在限制期内的标识不能再注册。
 func (s *AuthService) checkReregister(ctx context.Context, appID int64, identifiers ...RegisterIdentifier) error {
+	// 全站封禁：邮箱、手机号、第三方身份撞上了就不让注册
+	if sus := suspensionHooks.Load(); sus != nil {
+		if err := sus.CheckRegistration(ctx, identifiers...); err != nil {
+			return err
+		}
+	}
 	if s.deletion == nil {
 		return nil
 	}
@@ -1240,6 +1246,8 @@ func (s *AuthService) finalizeLogin(ctx context.Context, app *appdomain.App, use
 	if err := s.enforceLoginConsistency(ctx, app, user, deviceID, ip); err != nil {
 		return nil, err
 	}
+	// 记下用户语言：之后的封禁通知、申诉结果按它发
+	rememberLocale(ctx, s.pg, user.ID)
 	record := authdomain.FirstDevice{
 		UserID:      user.ID,
 		AppID:       user.AppID,

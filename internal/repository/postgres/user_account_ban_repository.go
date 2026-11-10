@@ -31,7 +31,13 @@ start_at,
 end_at,
 revoked_at,
 created_at,
-updated_at`
+updated_at,
+level,
+platform_ban_id,
+reason_code,
+public_reason,
+appealable,
+source`
 
 func (r *Repository) CreateUserAccountBan(ctx context.Context, appID int64, userID int64, input userdomain.AccountBanCreateInput) (*userdomain.AccountBan, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -62,11 +68,14 @@ func (r *Repository) CreateUserAccountBan(ctx context.Context, appID int64, user
 		endAt = value
 	}
 	evidenceJSON, _ := json.Marshal(cloneMap(input.Evidence))
+	appealable := input.Appealable == nil || *input.Appealable
 	ban, err := scanAccountBan(tx.QueryRow(ctx, `INSERT INTO user_account_bans (
     appid, user_id, ban_type, ban_scope, status, reason, evidence,
-    banned_by_admin_id, banned_by_admin_name, start_at, end_at, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
-RETURNING `+userAccountBanColumns, appID, userID, input.BanType, input.BanScope, userdomain.AccountBanStatusActive, strings.TrimSpace(input.Reason), evidenceJSON, nullableInt64(input.Operator.AdminID), strings.TrimSpace(input.Operator.AdminName), startAt, endAt))
+    banned_by_admin_id, banned_by_admin_name, start_at, end_at, created_at, updated_at,
+    level, platform_ban_id, reason_code, public_reason, appealable, source
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), $12, $13, $14, $15, $16, $17)
+RETURNING `+userAccountBanColumns, appID, userID, input.BanType, input.BanScope, userdomain.AccountBanStatusActive, strings.TrimSpace(input.Reason), evidenceJSON, nullableInt64(input.Operator.AdminID), strings.TrimSpace(input.Operator.AdminName), startAt, endAt,
+		input.Level, input.PlatformBanID, input.ReasonCode, strings.TrimSpace(input.PublicReason), appealable, input.Source))
 	if err != nil {
 		return nil, err
 	}
@@ -458,6 +467,12 @@ func scanAccountBan(row interface{ Scan(dest ...any) error }) (*userdomain.Accou
 		&revokedAt,
 		&item.CreatedAt,
 		&item.UpdatedAt,
+		&item.Level,
+		&item.PlatformBanID,
+		&item.ReasonCode,
+		&item.PublicReason,
+		&item.Appealable,
+		&item.Source,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil

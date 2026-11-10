@@ -1,0 +1,12 @@
+DROP TABLE IF EXISTS ban_appeal_settings;
+DROP TABLE IF EXISTS ban_appeals;
+DROP INDEX IF EXISTS idx_user_account_bans_platform;
+DROP TABLE IF EXISTS platform_ban_subjects;
+DROP TABLE IF EXISTS platform_bans;
+ALTER TABLE user_account_bans DROP CONSTRAINT IF EXISTS chk_user_account_bans_level;
+ALTER TABLE user_account_bans DROP COLUMN IF EXISTS source;
+ALTER TABLE user_account_bans DROP COLUMN IF EXISTS appealable;
+ALTER TABLE user_account_bans DROP COLUMN IF EXISTS public_reason;
+ALTER TABLE user_account_bans DROP COLUMN IF EXISTS reason_code;
+ALTER TABLE user_account_bans DROP COLUMN IF EXISTS platform_ban_id;
+ALTER TABLE user_account_bans DROP COLUMN IF EXISTS level;

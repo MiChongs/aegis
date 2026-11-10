@@ -72,6 +72,8 @@ var typeCategories = map[string]string{
 	"password_reset": CategorySecurity,
 	"two_factor":     CategorySecurity,
 	"passkey":        CategorySecurity,
+	// 账号封禁、解封、申诉受理与结果（docs/account-suspension.md）
+	"account_suspension": CategorySecurity,
 
 	"vip":              CategoryMembership,
 	"payment":          CategoryMembership,
@@ -241,6 +243,8 @@ const (
 	RouteProfile     = "profile"
 	RouteLevel       = "level"
 	RoutePromo       = "promo"
+	// RouteSuspension 账号封禁与申诉页
+	RouteSuspension = "account/suspension"
 )
 
 var routes = []RouteSpec{
@@ -258,6 +262,7 @@ var routes = []RouteSpec{
 	{Key: RouteProfile, Label: "个人资料"},
 	{Key: RouteLevel, Label: "我的等级"},
 	{Key: RoutePromo, Label: "推广活动"},
+	{Key: RouteSuspension, Label: "封禁与申诉"},
 }
 
 // Routes 全部路由键（副本）。

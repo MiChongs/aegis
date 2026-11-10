@@ -147,6 +147,23 @@ func Error(c *gin.Context, httpStatus int, code int, message string) {
 	c.Abort()
 }
 
+// ErrorData 错误响应带 data（例如封禁详情）；data 为 nil 时与 Error 相同。
+func ErrorData(c *gin.Context, httpStatus int, code int, message string, data any) {
+	if data == nil {
+		Error(c, httpStatus, code, message)
+		return
+	}
+	publicMessage := sanitizeMessage(httpStatus, message)
+	c.Header("Cache-Control", "no-store")
+	if wantsHTML(c) {
+		renderHTMLPage(c, httpStatus, publicMessage)
+		c.Abort()
+		return
+	}
+	writeJSON(c, httpStatus, Envelope{Code: code, Message: publicMessage, Data: data})
+	c.Abort()
+}
+
 // ErrorE 自动展开 *apperrors.AppError → HTTP 状态码 + 业务码；
 // 其他错误视为 500。返回 true 表示已写入响应。
 func ErrorE(c *gin.Context, err error) bool {
@@ -154,7 +171,7 @@ func ErrorE(c *gin.Context, err error) bool {
 		return false
 	}
 	if ae, ok := err.(*apperrors.AppError); ok {
-		Error(c, ae.HTTPStatus, ae.Code, ae.Message)
+		ErrorData(c, ae.HTTPStatus, ae.Code, ae.Message, ae.Data)
 		return true
 	}
 	Error(c, http.StatusInternalServerError, codeInternalError, err.Error())

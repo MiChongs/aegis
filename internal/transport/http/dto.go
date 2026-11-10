@@ -905,7 +905,7 @@ func (h *Handler) writeError(c *gin.Context, err error) {
 	auditmiddleware.SetAuditFailure(c, err)
 
 	if appErr, ok := errors.AsType[*apperrors.AppError](err); ok {
-		response.Error(c, appErr.HTTPStatus, appErr.Code, appErr.Message)
+		response.ErrorData(c, appErr.HTTPStatus, appErr.Code, appErr.Message, appErr.Data)
 		return
 	}
 	// 客户端先断开了（连点取消、超时离开）：请求上下文被取消，事务已回滚。不是服务端错误，回 499

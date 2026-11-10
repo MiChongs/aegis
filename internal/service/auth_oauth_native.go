@@ -295,6 +295,7 @@ func (s *AuthService) createOAuthUser(ctx context.Context, appID int64, profile 
 	if err := s.checkReregister(ctx, appID,
 		RegisterIdentifier{Kind: accountdeletion.TombstoneAccount, Value: base},
 		RegisterIdentifier{Kind: accountdeletion.TombstoneEmail, Value: profile.Email},
+		RegisterIdentifier{Kind: RegisterIdentifierIdentity, Value: strings.ToLower(profile.Provider) + ":" + profile.ProviderUserID},
 	); err != nil {
 		return nil, err
 	}

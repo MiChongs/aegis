@@ -78,6 +78,7 @@ type Handler struct {
 	promo           *service.PromoService
 	leaderboard     *service.LeaderboardService
 	accountDeletion *service.AccountDeletionService
+	suspension      *service.SuspensionService
 	cloudStorage    *service.CloudStorageService
 	authProtocol    *service.AuthProtocolService
 	dashboard       *service.DashboardService
@@ -191,6 +192,13 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		middleware.ClientControlGate(deps.ClientControlGate),
 		middleware.AppEncryption(appService),
 		middleware.Location(locationService),
+		// 请求语言：封禁提示、申诉、通知按它本地化（docs/account-suspension.md）
+		func(c *gin.Context) {
+			if al := c.GetHeader("Accept-Language"); al != "" {
+				c.Request = c.Request.WithContext(service.WithRequestLocale(c.Request.Context(), al))
+			}
+			c.Next()
+		},
 	)
 	router.NoRoute(func(c *gin.Context) {
 		response.Error(c, http.StatusNotFound, 40400, "请求的页面不存在")

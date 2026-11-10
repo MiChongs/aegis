@@ -143,9 +143,18 @@ func (s *RiskService) execute(ctx context.Context, cmd riskevents.Command) error
 			if until == nil {
 				banType = userdomain.AccountBanTypePermanent
 			}
+			level := cmd.Level
+			if level != userdomain.AccountBanLevelPlatform {
+				level = userdomain.AccountBanLevelApp
+			}
+			reasonCode := cmd.ReasonCode
+			if !userdomain.ValidBanReasonCode(reasonCode) {
+				reasonCode = "fraud"
+			}
 			if _, err := bans.BanUser(ctx, cmd.AppID, uid, userdomain.AccountBanCreateInput{
 				BanType: banType, BanScope: userdomain.AccountBanScopeAll, Reason: reason, EndAt: until, Operator: operator,
 				Evidence: map[string]any{"source": "risk", "commandId": cmd.ID, "decisionId": cmd.DecisionID, "via": cmd.Source},
+				Level:    level, ReasonCode: reasonCode, PublicReason: cmd.PublicReason, Source: userdomain.AccountBanSourceRisk,
 			}); err != nil {
 				return err
 			}

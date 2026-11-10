@@ -176,6 +176,10 @@ type Command struct {
 	DecisionID      string `json:"decision_id,omitempty"`
 	Operator        string `json:"operator,omitempty"`
 	TS              int64  `json:"ts"`
+	// 封号命令（account_ban）：Level app / platform、给用户看的说明与原因类别
+	Level        string `json:"level,omitempty"`
+	PublicReason string `json:"public_reason,omitempty"`
+	ReasonCode   string `json:"reason_code,omitempty"`
 }
 
 // CommandSubject 命令主题：主服务执行的（account_* / firewall_* / revoke_sessions）与风控自己执行的（list_*）分开

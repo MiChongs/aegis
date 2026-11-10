@@ -14,7 +14,30 @@ const (
 	AccountBanStatusActive  = "active"
 	AccountBanStatusExpired = "expired"
 	AccountBanStatusRevoked = "revoked"
+
+	// AccountBanLevelApp 只封当前应用里的这个账号
+	AccountBanLevelApp = "app"
+	// AccountBanLevelPlatform 全站封禁连带的账号封禁（PlatformBanID 指向那条全站封禁）
+	AccountBanLevelPlatform = "platform"
+
+	// 封禁来源
+	AccountBanSourceManual   = "manual"
+	AccountBanSourceRisk     = "risk"
+	AccountBanSourcePlatform = "platform"
 )
+
+// BanReasonCodes 原因类别（给用户看的标准文案见 domain/suspension）
+var BanReasonCodes = []string{"policy", "fraud", "spam", "abuse", "security", "payment", "other"}
+
+// ValidBanReasonCode 原因类别是否认识
+func ValidBanReasonCode(code string) bool {
+	for _, c := range BanReasonCodes {
+		if c == code {
+			return true
+		}
+	}
+	return false
+}
 
 // AccountBanCheckpoint 是封禁的执行点。两档范围的区别完全落在这里：
 // 仅登录的封禁只在 SignIn 生效，全部访问的封禁两处都生效。
@@ -63,6 +86,15 @@ type AccountBan struct {
 	RevokedAt          *time.Time     `json:"revokedAt,omitempty"`
 	CreatedAt          time.Time      `json:"createdAt"`
 	UpdatedAt          time.Time      `json:"updatedAt"`
+	// Level app 应用级 / platform 全站封禁连带
+	Level         string `json:"level"`
+	PlatformBanID *int64 `json:"platformBanId,omitempty"`
+	// ReasonCode 原因类别；PublicReason 给用户看的说明（空时用类别标准文案），Reason 是内部原因
+	ReasonCode   string `json:"reasonCode"`
+	PublicReason string `json:"publicReason,omitempty"`
+	Appealable   bool   `json:"appealable"`
+	// Source manual / risk / platform
+	Source string `json:"source"`
 }
 
 type AccountBanCreateInput struct {
@@ -73,11 +105,24 @@ type AccountBanCreateInput struct {
 	StartAt  *time.Time     `json:"startAt,omitempty"`
 	EndAt    *time.Time     `json:"endAt,omitempty"`
 	Operator BanOperator    `json:"operator"`
+	// Level app（默认）/ platform：全站封禁这个人（邮箱、手机号、第三方身份、设备），连带所有应用里的账号
+	Level        string `json:"level,omitempty"`
+	ReasonCode   string `json:"reasonCode,omitempty"`
+	PublicReason string `json:"publicReason,omitempty"`
+	// Appealable 默认允许申诉（nil = true）
+	Appealable *bool `json:"appealable,omitempty"`
+	// Notify 默认发封禁通知（nil = true）
+	Notify *bool `json:"notify,omitempty"`
+	// Source manual（默认）/ risk / platform；PlatformBanID 由全站封禁连带时填
+	Source        string `json:"source,omitempty"`
+	PlatformBanID *int64 `json:"platformBanId,omitempty"`
 }
 
 type AccountBanRevokeInput struct {
 	Reason   string      `json:"reason"`
 	Operator BanOperator `json:"operator"`
+	// Notify 默认发解封通知（nil = true）
+	Notify *bool `json:"notify,omitempty"`
 }
 
 type AccountBanQuery struct {

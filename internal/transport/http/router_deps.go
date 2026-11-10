@@ -60,6 +60,7 @@ type RouterDeps struct {
 	Promo            *service.PromoService
 	Leaderboard      *service.LeaderboardService
 	AccountDeletion  *service.AccountDeletionService
+	Suspension       *service.SuspensionService
 	CloudStorage     *service.CloudStorageService
 	Site             *service.SiteService
 	Version          *service.VersionService
@@ -222,6 +223,7 @@ func (d RouterDeps) newHandler() *Handler {
 		promo:              d.Promo,
 		leaderboard:        d.Leaderboard,
 		accountDeletion:    d.AccountDeletion,
+		suspension:         d.Suspension,
 		cloudStorage:       d.CloudStorage,
 		authProtocol:       d.AuthProtocol,
 		dashboard:          d.Dashboard,

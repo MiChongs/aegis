@@ -34,6 +34,7 @@ func (h *Handler) CreateAdminAppUserBan(c *gin.Context) {
 		StartAt:  req.StartAt,
 		EndAt:    req.EndAt,
 		Operator: userdomain.BanOperator{AdminID: adminID, AdminName: adminName},
+		Level:    req.Level, ReasonCode: req.ReasonCode, PublicReason: req.PublicReason, Appealable: req.Appealable, Notify: req.Notify,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -64,6 +65,7 @@ func (h *Handler) BatchCreateAdminAppUserBan(c *gin.Context) {
 			StartAt:  req.StartAt,
 			EndAt:    req.EndAt,
 			Operator: userdomain.BanOperator{AdminID: adminID, AdminName: adminName},
+			Level:    req.Level, ReasonCode: req.ReasonCode, PublicReason: req.PublicReason, Appealable: req.Appealable, Notify: req.Notify,
 		},
 	})
 	if err != nil {

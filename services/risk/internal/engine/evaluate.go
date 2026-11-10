@@ -40,6 +40,9 @@ type Command struct {
 	DurationSeconds int64  `json:"durationSeconds,omitempty"`
 	Reason          string `json:"reason,omitempty"`
 	AppID           int64  `json:"appId,omitempty"`
+	Level           string `json:"level,omitempty"`
+	PublicReason    string `json:"publicReason,omitempty"`
+	ReasonCode      string `json:"reasonCode,omitempty"`
 }
 
 // 命令种类
@@ -582,7 +585,11 @@ func (p *Program) commands(decisionID string, env *Env, action string, extra []a
 		if value == "" {
 			return
 		}
-		out = append(out, Command{ID: decisionID + ":" + kind + ":" + target, Kind: kind, Target: target, Value: value, DurationSeconds: duration, Reason: reason, AppID: env.AppID})
+		c := Command{ID: decisionID + ":" + kind + ":" + target, Kind: kind, Target: target, Value: value, DurationSeconds: duration, Reason: reason, AppID: env.AppID}
+		if kind == CmdAccountBan {
+			c.Level, c.PublicReason, c.ReasonCode = enf.Level, enf.PublicReason, enf.ReasonCode
+		}
+		out = append(out, c)
 	}
 	if action == bundle.ActionBan {
 		for _, t := range enf.Targets {

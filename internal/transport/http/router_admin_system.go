@@ -387,6 +387,12 @@ func registerAdminSystemRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		adminSystem.POST("/risk-ops/inspect", h.AdminRiskOpsInspect)
 		adminSystem.POST("/risk-ops/release", h.AdminRiskOpsRelease)
 		adminSystem.POST("/risk-ops/purge", h.AdminRiskOpsPurge)
+		// 全站封禁与全部应用的封禁申诉（docs/account-suspension.md）
+		adminSystem.GET("/platform-bans", h.AdminListPlatformBans)
+		adminSystem.GET("/platform-bans/:platformBanId", h.AdminGetPlatformBan)
+		adminSystem.POST("/platform-bans/:platformBanId/revoke", h.AdminRevokePlatformBan)
+		adminSystem.GET("/ban-appeals", h.AdminListAllBanAppeals)
+		adminSystem.GET("/ban-appeals/stats", h.AdminAllBanAppealStats)
 
 		// 平台级 Banner 的"写"操作：统一套 RequireSuperAdmin，仅超管可进行 CRUD
 		platformBannerGroup := adminSystem.Group("/banners", middleware.RequireSuperAdmin())

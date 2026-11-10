@@ -393,6 +393,10 @@ type disposeInput struct {
 	Targets         []string `json:"targets"` // device / ip / account / user / ban_account / firewall
 	DurationSeconds int64    `json:"durationSeconds"`
 	Reason          string   `json:"reason"`
+	// Level 封号范围 app / platform（只对 ban_account 有效）；PublicReason 给用户看的说明；ReasonCode 原因类别
+	Level        string `json:"level"`
+	PublicReason string `json:"publicReason"`
+	ReasonCode   string `json:"reasonCode"`
 }
 
 // applyDispose 人工处置：名单类直接落库 + 索引；封号与防火墙发命令给主服务
@@ -431,6 +435,9 @@ func (s *Server) applyDispose(ctx context.Context, in disposeInput, source, by, 
 			}
 			cmd := events.Command{ID: events.NewID(), Kind: kind, Target: target, Value: val, AppID: in.AppID, DurationSeconds: in.DurationSeconds,
 				Reason: in.Reason, Source: source, DecisionID: decisionID, Operator: by}
+			if kind == "account_ban" {
+				cmd.Level, cmd.PublicReason, cmd.ReasonCode = in.Level, in.PublicReason, in.ReasonCode
+			}
 			if err := s.Bus.PublishCommand(ctx, cmd); err != nil {
 				result[t] = err.Error()
 			} else {

@@ -75,6 +75,8 @@ type APIApp struct {
 	Storage *service.StorageService
 	// AccountDeletion 账号注销：后台循环执行到期的冷静期申请并发到期提醒，退出时必须 Stop
 	AccountDeletion *service.AccountDeletionService
+	// Suspension 封禁申诉与全站封禁：后台每分钟兜底跑没审过的申诉，退出时必须 Stop
+	Suspension *service.SuspensionService
 	// RegisterIP 注册 IP 控制：台账与拦截记录批量写入协程，退出时必须 Stop 把队列写完
 	RegisterIP *service.RegisterIPService
 	// Leaderboard 积分排行榜：后台循环结算到期的周期榜并发放奖励，退出时必须 Stop
@@ -600,6 +602,10 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	riskService.SetFirewall(ipBanService)
 	riskService.SetSessionRevoker(userService)
 	riskService.SetOps(pg, userService)
+	// 封禁对用户的那一面：被拒时带封禁详情与申诉凭证、全站封禁、申诉复审、多语言封禁通知（docs/account-suspension.md）
+	suspensionService := service.NewSuspensionService(log, pg, cfg.Security.MasterKey)
+	suspensionService.SetDependencies(accountBanService, emailService, notificationService, aiProviderService, riskService)
+	service.InstallSuspensionHooks(suspensionService)
 	riskService.SetCaptchaProbe(func(ctx context.Context, appID int64) bool {
 		cfg, err := appService.GetCaptchaConfig(ctx, appID)
 		return err == nil && service.IsCaptchaRequired(cfg)
@@ -765,6 +771,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Promo:            promoService,
 		Leaderboard:      leaderboardService,
 		AccountDeletion:  accountDeletionService,
+		Suspension:       suspensionService,
 		CloudStorage:     cloudStorageService,
 		Site:             siteService,
 		Version:          versionService,
@@ -893,6 +900,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		CloudStorage:       cloudStorageService,
 		Storage:            storageService,
 		AccountDeletion:    accountDeletionService,
+		Suspension:         suspensionService,
 		RegisterIP:         registerIPService,
 		Leaderboard:        leaderboardService,
 		Lottery:            lotteryService,
@@ -936,6 +944,9 @@ func (a *APIApp) Start(ctx context.Context) error {
 	}
 	if a.AccountDeletion != nil {
 		a.AccountDeletion.Start(ctx)
+	}
+	if a.Suspension != nil {
+		a.Suspension.Start(ctx)
 	}
 	if a.RegisterIP != nil {
 		a.RegisterIP.Start(ctx)
@@ -1022,6 +1033,9 @@ func (a *APIApp) close(ctx context.Context) {
 	}
 	if a.AccountDeletion != nil {
 		a.AccountDeletion.Stop()
+	}
+	if a.Suspension != nil {
+		a.Suspension.Stop()
 	}
 	if a.RegisterIP != nil {
 		a.RegisterIP.Stop(ctx)

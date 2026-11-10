@@ -35,6 +35,20 @@ type AccountBanService struct {
 	cron             *cron.Cron
 	cleanupBatchSize int
 	started          bool
+	suspension       *SuspensionService
+}
+
+// SetSuspensionService 接全站封禁与封禁通知（SuspensionService.SetDependencies 会调）
+func (s *AccountBanService) SetSuspensionService(suspension *SuspensionService) {
+	s.mu.Lock()
+	s.suspension = suspension
+	s.mu.Unlock()
+}
+
+func (s *AccountBanService) suspensionService() *SuspensionService {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.suspension
 }
 
 func NewAccountBanService(cfg config.AccountBanConfig, log *zap.Logger, pg *pgrepo.Repository, sessions *redisrepo.SessionRepository) (*AccountBanService, error) {
@@ -110,11 +124,31 @@ func (s *AccountBanService) Reload(cfg config.AccountBanConfig) error {
 	return nil
 }
 
+// BanUser 封禁一个账号。level=platform 时转给全站封禁（封这个人在所有应用的账号）；默认发封禁通知。
 func (s *AccountBanService) BanUser(ctx context.Context, appID int64, userID int64, input userdomain.AccountBanCreateInput) (*userdomain.AccountBan, error) {
 	normalized, err := normalizeAccountBanCreateInput(input)
 	if err != nil {
 		return nil, err
 	}
+	sus := s.suspensionService()
+	if normalized.Level == userdomain.AccountBanLevelPlatform && normalized.PlatformBanID == nil {
+		if sus == nil {
+			return nil, apperrors.New(50330, http.StatusServiceUnavailable, "全站封禁未接入")
+		}
+		return sus.BanPlatform(ctx, appID, userID, normalized)
+	}
+	item, err := s.createOne(ctx, appID, userID, normalized)
+	if err != nil {
+		return nil, err
+	}
+	if sus != nil && (normalized.Notify == nil || *normalized.Notify) {
+		go sus.notifySuspended(context.WithoutCancel(ctx), item, map[string]bool{})
+	}
+	return item, nil
+}
+
+// createOne 落一条账号封禁并执行封禁后的动作（撤会话、钩子），不发通知、不转全站
+func (s *AccountBanService) createOne(ctx context.Context, appID int64, userID int64, normalized userdomain.AccountBanCreateInput) (*userdomain.AccountBan, error) {
 	item, err := s.pg.CreateUserAccountBan(ctx, appID, userID, normalized)
 	if err != nil {
 		return nil, err
@@ -151,7 +185,7 @@ func (s *AccountBanService) BatchBanUsers(ctx context.Context, appID int64, inpu
 		}
 		seen[userID] = struct{}{}
 		result.ProcessedUserIDs = append(result.ProcessedUserIDs, userID)
-		item, err := s.pg.CreateUserAccountBan(ctx, appID, userID, normalized)
+		item, err := s.BanUser(ctx, appID, userID, normalized)
 		if err != nil {
 			s.log.Warn("batch create account ban failed", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.Error(err))
 			result.FailedUserIDs = append(result.FailedUserIDs, userID)
@@ -162,13 +196,44 @@ func (s *AccountBanService) BatchBanUsers(ctx context.Context, appID int64, inpu
 			continue
 		}
 		result.Created++
-		s.afterBanCreated(ctx, appID, userID, item)
 	}
 	result.Failed = len(result.FailedUserIDs)
 	return result, nil
 }
 
+// RevokeBan 解除一条账号封禁。全站封禁连带的（level=platform）会解除整条全站封禁与它连带的所有账号，
+// 否则下次登录又会按全站封禁被连带封上。默认发解封通知。
 func (s *AccountBanService) RevokeBan(ctx context.Context, appID int64, userID int64, banID int64, input userdomain.AccountBanRevokeInput) (*userdomain.AccountBan, error) {
+	sus := s.suspensionService()
+	notify := input.Notify == nil || *input.Notify
+	if sus != nil {
+		// 全站封禁连带的：整条全站封禁一起解除（包括这一条），通知统一发、同一邮箱只发一封
+		if current, err := s.pg.GetUserAccountBan(ctx, appID, banID); err == nil && current != nil && current.UserID == userID &&
+			current.Status == userdomain.AccountBanStatusActive && current.Level == userdomain.AccountBanLevelPlatform && current.PlatformBanID != nil {
+			if _, err := sus.RevokePlatform(ctx, *current.PlatformBanID, input.Operator, input.Reason, notify); err == nil {
+				if item, err := s.pg.GetUserAccountBan(ctx, appID, banID); err == nil && item != nil && item.Status != userdomain.AccountBanStatusActive {
+					return item, nil
+				}
+			} else {
+				var appErr *apperrors.AppError
+				if !errors.As(err, &appErr) || appErr.Code != 40934 {
+					s.log.Warn("解除全站封禁失败", zap.Int64("platformBanId", *current.PlatformBanID), zap.Error(err))
+				}
+			}
+		}
+	}
+	item, err := s.revokeOne(ctx, appID, userID, banID, input)
+	if err != nil {
+		return nil, err
+	}
+	if sus != nil && notify {
+		go sus.notifyReinstated(context.WithoutCancel(ctx), item, map[string]bool{})
+	}
+	return item, nil
+}
+
+// revokeOne 只解除这一条，不连带、不通知
+func (s *AccountBanService) revokeOne(ctx context.Context, appID int64, userID int64, banID int64, input userdomain.AccountBanRevokeInput) (*userdomain.AccountBan, error) {
 	item, err := s.pg.RevokeUserAccountBan(ctx, appID, userID, banID, input)
 	if errors.Is(err, pgrepo.ErrAccountBanNotActive) {
 		return nil, apperrors.New(40934, http.StatusConflict, "该封禁已到期或已撤销，无需解除")
@@ -333,6 +398,32 @@ func normalizeAccountBanCreateInput(input userdomain.AccountBanCreateInput) (use
 	if output.BanScope == "" {
 		output.BanScope = userdomain.AccountBanScopeAll
 	}
+	output.Level = strings.TrimSpace(strings.ToLower(output.Level))
+	if output.Level == "" {
+		output.Level = userdomain.AccountBanLevelApp
+	}
+	if output.Level != userdomain.AccountBanLevelApp && output.Level != userdomain.AccountBanLevelPlatform {
+		return output, apperrors.New(40000, http.StatusBadRequest, "封禁级别只能是 app 或 platform")
+	}
+	output.ReasonCode = strings.TrimSpace(strings.ToLower(output.ReasonCode))
+	if output.ReasonCode == "" {
+		output.ReasonCode = "policy"
+	}
+	if !userdomain.ValidBanReasonCode(output.ReasonCode) {
+		return output, apperrors.New(40000, http.StatusBadRequest, "不支持的原因类别")
+	}
+	output.PublicReason = strings.TrimSpace(output.PublicReason)
+	if utf8.RuneCountInString(output.PublicReason) > accountBanReasonMaxRunes {
+		return output, apperrors.New(40000, http.StatusBadRequest, fmt.Sprintf("对用户显示的说明不能超过 %d 个字", accountBanReasonMaxRunes))
+	}
+	output.Source = strings.TrimSpace(strings.ToLower(output.Source))
+	switch output.Source {
+	case "":
+		output.Source = userdomain.AccountBanSourceManual
+	case userdomain.AccountBanSourceManual, userdomain.AccountBanSourceRisk, userdomain.AccountBanSourcePlatform:
+	default:
+		return output, apperrors.New(40000, http.StatusBadRequest, "不支持的封禁来源")
+	}
 	switch output.BanType {
 	case userdomain.AccountBanTypeTemporary, userdomain.AccountBanTypePermanent:
 	default:
@@ -411,9 +502,19 @@ func enforceAccountBan(ctx context.Context, pg *pgrepo.Repository, log *zap.Logg
 		log.Warn("refresh user account ban state failed", zap.Int64("appid", user.AppID), zap.Int64("userId", user.ID), zap.Error(err))
 	} else if ban != nil {
 		if ban.Blocks(checkpoint) {
-			return accountBanError(ban)
+			return banErrorFor(ctx, ban)
 		}
 		return nil
+	}
+	// 登录时核对全站封禁：这个账号的邮箱、手机号、第三方身份、设备撞上了，就当场连带封上
+	if err == nil && checkpoint == userdomain.AccountBanCheckpointSignIn {
+		if sus := suspensionHooks.Load(); sus != nil {
+			if pbBan, perr := sus.checkPlatformAtSignIn(ctx, user); perr != nil {
+				log.Warn("check platform ban failed", zap.Int64("appid", user.AppID), zap.Int64("userId", user.ID), zap.Error(perr))
+			} else if pbBan != nil {
+				return banErrorFor(ctx, pbBan)
+			}
+		}
 	}
 	if !user.Enabled {
 		return apperrors.New(40301, http.StatusForbidden, "用户账户已被禁用")

@@ -9199,5 +9199,96 @@
     "permission": "system:admin:manage",
     "appScoped": false,
     "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/ban-appeals",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/ban-appeals/stats",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/ban-appeals/settings",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/apps/:appkey/ban-appeals/settings",
+    "permission": "app:user:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/apps/:appkey/ban-appeals/:appealId",
+    "permission": "app:user:read",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/ban-appeals/:appealId/approve",
+    "permission": "app:user:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/ban-appeals/:appealId/reject",
+    "permission": "app:user:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/apps/:appkey/ban-appeals/:appealId/review",
+    "permission": "app:user:write",
+    "appScoped": true,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/platform-bans",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/platform-bans/:platformBanId",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/system/platform-bans/:platformBanId/revoke",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/ban-appeals",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/system/ban-appeals/stats",
+    "permission": "system:admin:manage",
+    "appScoped": false,
+    "unmapped": false
   }
 ]

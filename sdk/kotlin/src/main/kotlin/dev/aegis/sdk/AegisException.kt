@@ -1,6 +1,8 @@
 package dev.aegis.sdk
 
 import java.io.IOException
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 
 /**
  * 所有失败都收敛到这一个异常类型上，按 [kind] 分类。
@@ -31,6 +33,11 @@ class AegisException private constructor(
     val networkReason: String = AegisNetworkReason.NONE,
     /** 收到了 HTTP 响应但不是平台信封时的状态码（如 CDN 的 502）；其余为 0。 */
     val httpStatus: Int = 0,
+    /**
+     * 业务失败时信封里的 `data`（多数错误没有，为 null）。少数错误在这里带结构化详情，
+     * 例如 40301 / 40302 的 `data.suspension`（封禁详情与申诉凭证）、42921 的 `data.nextAllowedAt`。
+     */
+    val data: JsonElement? = null,
 ) : IOException(message, cause) {
 
     enum class Kind { TRANSPORT, AUTH, BUSINESS, NETWORK }
@@ -87,7 +94,13 @@ class AegisException private constructor(
          * 有它就能给出「该怎么办」，没有也不影响归类。
          */
         @JvmStatic
-        fun fromCode(code: Int, message: String, descriptor: ErrorDescriptor? = null): AegisException {
+        @JvmOverloads
+        fun fromCode(
+            code: Int,
+            message: String,
+            descriptor: ErrorDescriptor? = null,
+            data: JsonElement? = null,
+        ): AegisException {
             val kind = when (code) {
                 in AUTH_CODES, in SIGNED_OUT_CODES -> Kind.AUTH
                 in TRANSPORT_CODES -> Kind.TRANSPORT
@@ -100,6 +113,7 @@ class AegisException private constructor(
                 recovery = descriptor?.recovery
                     ?: if (code in SIGNED_OUT_CODES) AegisRecovery.REAUTH else defaultRecovery(kind),
                 hint = descriptor?.hint.orEmpty(),
+                data = data?.takeUnless { it is JsonNull },
             )
         }
 

@@ -410,6 +410,11 @@ var gatewayOperations = []authprotocol.Operation{
 	// ── 版本管控（免登录；上报与裁决走独立加密通道，见 docs/client-control.md）──
 	{Key: "clientControlCheck", Method: "POST", Path: "/client-control/check", Summary: "加密上报包名、版本与签名，取回签名裁决：放行 / 提醒 / 强制更新 / 停用"},
 	{Key: "clientControlWatch", Method: "GET", Path: "/client-control/watch", Summary: "长轮询：策略版本变化时立即返回，客户端随即重新校验"},
+
+	// ── 账号封禁与申诉（凭证是请求体 token 或会话，见 docs/account-suspension.md）──
+	{Key: "suspension", Method: "POST", Path: "/suspension", Summary: "封禁详情（原因、期限、范围、申诉状态与凭证）与申诉记录；没有封禁时 suspension 为 null"},
+	{Key: "suspensionAppeal", Method: "POST", Path: "/suspension/appeal", Summary: "提交申诉：content 必填，contactEmail 选填；随后由决策模型复审，置信度不够转人工"},
+	{Key: "suspensionAppealWithdraw", Method: "POST", Path: "/suspension/appeal/withdraw", Summary: "撤回还没结案的申诉（appealId）"},
 }
 
 // gatewayErrors 机器可读的错误码目录。
@@ -418,6 +423,25 @@ var gatewayOperations = []authprotocol.Operation{
 // 后者会在任何一次文案调整时静默失效，而且中文文案对多语言客户端毫无意义。
 // Recovery 明确告诉客户端「这个错能不能自动重试、重试前要先做什么」。
 var gatewayErrors = []authprotocol.ErrorDescriptor{
+	// ── 账号封禁与申诉（docs/account-suspension.md）──
+	{Code: 40301, Name: "ACCOUNT_SUSPENDED", Message: "您的账号已被封禁。", Recovery: authprotocol.RecoveryNone,
+		Hint: "data.suspension 带原因、期限、范围与申诉凭证（appeal.token）：打开封禁页，凭证调 /suspension 系列接口；message 按 Accept-Language 本地化"},
+	{Code: 40302, Name: "ACCOUNT_TEMPORARILY_SUSPENDED", Message: "您的账号已被暂时封禁。", Recovery: authprotocol.RecoveryNone,
+		Hint: "同 40301，data.suspension.endAt 是解封时间"},
+	{Code: 40150, Name: "APPEAL_TOKEN_INVALID", Message: "申诉凭证无效或已过期", Recovery: authprotocol.RecoveryNone,
+		Hint: "凭证 7 天有效；重新登录会在 40301 / 40302 里拿到新的"},
+	{Code: 40422, Name: "SUSPENSION_NOT_FOUND", Message: "没有可申诉的封禁", Recovery: authprotocol.RecoveryNone, Hint: "账号已解封或封禁不存在，回到登录页"},
+	{Code: 40423, Name: "APPEAL_NOT_FOUND", Message: "申诉不存在", Recovery: authprotocol.RecoveryNone},
+	{Code: 40933, Name: "APPEAL_OPEN_EXISTS", Message: "已有进行中的申诉", Recovery: authprotocol.RecoveryNone, Hint: "重新拉 /suspension 展示进度"},
+	{Code: 40935, Name: "APPEAL_NOT_ALLOWED", Message: "这条封禁不允许申诉", Recovery: authprotocol.RecoveryNone},
+	{Code: 40949, Name: "APPEAL_CLOSED", Message: "申诉已结案，不能撤回", Recovery: authprotocol.RecoveryNone},
+	{Code: 42220, Name: "APPEAL_CONTENT_LENGTH", Message: "申诉内容字数不在范围内", Recovery: authprotocol.RecoveryNone,
+		Hint: "data.minLength / data.maxLength；也在 suspension.appeal 里"},
+	{Code: 42221, Name: "APPEAL_EMAIL_INVALID", Message: "联系邮箱格式不正确", Recovery: authprotocol.RecoveryNone},
+	{Code: 42222, Name: "APPEAL_DISABLED", Message: "应用未开放申诉", Recovery: authprotocol.RecoveryNone},
+	{Code: 42920, Name: "APPEAL_LIMIT_REACHED", Message: "申诉次数已用完", Recovery: authprotocol.RecoveryNone},
+	{Code: 42921, Name: "APPEAL_COOLDOWN", Message: "请稍后再提交申诉", Recovery: authprotocol.RecoveryNone, Hint: "data.nextAllowedAt 是下次可申诉的时间"},
+	{Code: 45100, Name: "PLATFORM_SUSPENDED", Message: "这个邮箱、手机号或第三方账号已被全站封禁，不能注册", Recovery: authprotocol.RecoveryNone},
 	{Code: 40071, Name: "TIMESTAMP_INVALID", Message: "请求时间戳无效或已过期",
 		Recovery: authprotocol.RecoverySyncClock,
 		Hint:     "用 /config 的 serverTime 算出与服务端的偏移量，之后的请求带校准后的时间戳"},
