@@ -3038,6 +3038,12 @@ export type AccountBanType = "temporary" | "permanent";
 /** login=只拦新的登录，已登录的设备照常使用；all=立即撤销全部会话并拒绝任何访问 */
 export type AccountBanScope = "login" | "all";
 export type AccountBanStatus = "active" | "expired" | "revoked";
+/** app=只封本应用的这个账号；platform=全站封禁（同一人的所有账号与其邮箱、手机号、第三方账号、设备），见 docs/account-suspension.md */
+export type AccountBanLevel = "app" | "platform";
+/** 原因类别：用户看到的标准说明按它取；对外说明 publicReason 优先 */
+export type AccountBanReasonCode = "policy" | "fraud" | "spam" | "abuse" | "security" | "payment" | "other";
+/** manual=管理员；risk=风控平台；platform=全站封禁连带 */
+export type AccountBanSource = "manual" | "risk" | "platform";
 
 export type AdminUserBan = {
   id: number;
@@ -3053,6 +3059,15 @@ export type AdminUserBan = {
   revokedByAdminId?: number | null;
   revokedByAdminName?: string;
   revokeReason?: string;
+  /** 旧数据没有这几个字段，按 app / other / manual 处理 */
+  level?: AccountBanLevel | string;
+  reasonCode?: AccountBanReasonCode | string;
+  /** 给用户看的说明；内部原因 reason 只在控制台显示 */
+  publicReason?: string;
+  source?: AccountBanSource | string;
+  /** level=platform 时指向全站封禁 */
+  platformBanId?: number | null;
+  appealable?: boolean;
   startAt: string;
   endAt?: string | null;
   revokedAt?: string | null;
@@ -3084,6 +3099,14 @@ export type AdminUserBanCreateInput = {
   evidence?: Record<string, unknown>;
   startAt?: string;
   endAt?: string | null;
+  /** 缺省 app */
+  level?: AccountBanLevel;
+  reasonCode?: AccountBanReasonCode;
+  publicReason?: string;
+  /** 缺省 true */
+  appealable?: boolean;
+  /** 是否发封禁通知（邮件与站内消息），缺省 true */
+  notify?: boolean;
 };
 
 // ── 用户钱包 ──────────────────────────

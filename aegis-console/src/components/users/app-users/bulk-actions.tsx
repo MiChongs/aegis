@@ -15,6 +15,10 @@ import {
 } from "@/components/ui/dialog";
 import {
   BanDurationField,
+  BanLevelField,
+  BanNoticeField,
+  BanPublicReasonField,
+  BanReasonCodeField,
   BanReasonField,
   BanScopeField,
   describeBanDraft,
@@ -195,13 +199,20 @@ function BulkBanDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>批量封禁 {selectedIds.length} 个账号</DialogTitle>
-          <DialogDescription>已有生效封禁的账号会被新的封禁替代。</DialogDescription>
+          <DialogDescription>
+            已有生效封禁的账号会被新的封禁替代。
+            {draft.level === "platform" ? "选择全站时，每个账号的主人在所有应用的账号都会被封。" : ""}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5">
           <BanDurationField draft={draft} now={now} />
           <BanScopeField draft={draft} />
+          <BanLevelField draft={draft} />
+          <BanReasonCodeField draft={draft} />
           <BanReasonField draft={draft} rows={3} />
+          <BanPublicReasonField draft={draft} rows={2} />
+          <BanNoticeField draft={draft} />
         </div>
 
         <DialogFooter className="items-center gap-3 sm:justify-between">

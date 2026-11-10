@@ -3,8 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import {
-  AtSign, Ban, Bot, Brain, CircleCheck, Code2, ExternalLink, Eye, Flag, Gavel, Globe, Info, Layers, ListChecks, Mail, Network, Phone, Plus, Search, Server, Settings2,
-  ShieldOff, Smartphone, Sigma, Timer, Trash2, User, Workflow, type LucideIcon,
+  AtSign, Ban, Bot, Brain, CircleCheck, Code2, ExternalLink, Eye, Flag, Gavel, Globe, Globe2, Info, Layers, ListChecks, Mail, Network, Phone, Plus, Search, Server, Settings2,
+  ShieldOff, Smartphone, Sigma, Timer, Trash2, User, UserRound, Workflow, type LucideIcon,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -577,13 +577,18 @@ export function EnforcementPanel({ scene, patch }: PanelProps) {
   const presets = DURATION_PRESETS.some((p) => p.seconds === enf.durationSeconds)
     ? DURATION_PRESETS
     : [...DURATION_PRESETS, { label: formatWindow(enf.durationSeconds), seconds: enf.durationSeconds }];
-  const targetText = TARGETS.filter((t) => enf.targets.includes(t.value)).map((t) => t.label).join("、");
+  const level = enf.level ?? "app";
+  const bansAccount = enf.targets.includes("account");
+  const targetText = TARGETS.filter((t) => enf.targets.includes(t.value))
+    .map((t) => (t.value === "account" && level === "platform" ? "账号（全站）" : t.label))
+    .join("、");
   const durationText = enf.durationSeconds ? `，期限 ${formatWindow(enf.durationSeconds)}` : "，长期有效";
   const sentence = !enf.autoBanAllowed
     ? "结论为封禁时，只拦截本次请求，不执行封禁。"
     : enf.targets.length
       ? `结论为封禁时，立即处置${targetText}${durationText}，无需人工确认。`
       : "已允许自动封禁，但还没有选择处置对象。";
+  const levelActive = enf.autoBanAllowed && bansAccount;
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
@@ -617,6 +622,34 @@ export function EnforcementPanel({ scene, patch }: PanelProps) {
             );
           })}
         </div>
+      </StudioSection>
+
+      <StudioSection
+        title="封禁范围"
+        description={levelActive ? "封禁账号时生效。" : "勾选「账号」并开启自动封禁后生效。"}
+        className={cn(!levelActive && "opacity-70")}
+      >
+        <div role="radiogroup" aria-label="封禁范围" className="grid gap-2 sm:grid-cols-2">
+          <OptionCard selected={level === "app"} onSelect={() => set({ level: "app" })} icon={UserRound} title="本应用" description="只封禁这个应用里的这个账号" />
+          <OptionCard
+            selected={level === "platform"}
+            onSelect={() => set({ level: "platform" })}
+            icon={Globe2}
+            accent="ban"
+            title="全站"
+            description="同一人在所有应用的账号都封，并拦截用这些邮箱、手机号、第三方账号、设备再注册或登录"
+          />
+        </div>
+        <Field label="对用户显示的说明">
+          <Textarea
+            rows={2}
+            maxLength={500}
+            value={enf.publicReason ?? ""}
+            placeholder="留空时显示「欺诈或作弊」类别的标准说明"
+            onChange={(e) => set({ publicReason: e.target.value })}
+            className="resize-none"
+          />
+        </Field>
       </StudioSection>
 
       <StudioSection title="封禁期限" className={cn(!enf.autoBanAllowed && "opacity-70")}>

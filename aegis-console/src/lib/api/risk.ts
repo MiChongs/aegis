@@ -55,7 +55,15 @@ export interface RiskMeta {
 // ── 场景 ──
 
 export interface SceneField { key: string; label: string; type: FieldType; required?: boolean }
-export interface Enforcement { targets: EnforceTarget[]; durationSeconds: number; autoBanAllowed: boolean }
+/** 封禁账号的级别：app=只封本应用的账号；platform=全站封禁（docs/account-suspension.md） */
+export type BanLevel = "app" | "platform";
+export interface Enforcement {
+  targets: EnforceTarget[]; durationSeconds: number; autoBanAllowed: boolean;
+  /** 封号的级别，缺省 app */
+  level?: BanLevel;
+  /** 给用户看的说明；为空时用原因类别（风控默认 fraud）的标准文案 */
+  publicReason?: string;
+}
 export interface ScoreBand { min: number; max: number; action: RiskAction; level: RiskLevel }
 
 export interface Scene {
@@ -385,6 +393,8 @@ export interface RiskCase {
 export interface DisposeInput {
   appId?: number; userId?: number; account?: string; deviceId?: string; ip?: string;
   kind: ListKind; targets: Array<"device" | "ip" | "account" | "user" | "ban_account" | "firewall">; durationSeconds: number; reason: string;
+  /** targets 含 ban_account 时的封禁级别，缺省 app */
+  level?: BanLevel;
 }
 
 // ── 关系图与画像 ──

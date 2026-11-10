@@ -223,7 +223,9 @@ function StudioInner({ sceneKey }: { sceneKey: string }) {
     { key: "policy", phase: "decide", title: "场景策略", icon: Gavel, issues: ic("policy"), idle: !form.policy.trim(), summary: [form.policy.trim() ? "已启用" : "未启用", "内置护栏始终生效"] },
     {
       key: "enforcement", phase: "act", title: "处置方式", icon: Ban, issues: 0,
-      summary: enf.autoBanAllowed ? ["自动封禁", `${enf.targets.length} 类对象，${durationLabel}`] : ["只拦截不封禁"],
+      summary: enf.autoBanAllowed
+        ? ["自动封禁", `${enf.targets.length} 类对象，${durationLabel}`, enf.level === "platform" && enf.targets.includes("account") ? "账号全站封禁" : ""].filter(Boolean)
+        : ["只拦截不封禁"],
     },
   ];
 

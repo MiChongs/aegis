@@ -16,6 +16,8 @@ export interface OpsBan {
   banScope: "login" | "all";
   status: string;
   reason: string;
+  /** platform = 全站封禁连带 */
+  level?: "app" | "platform";
   evidence?: Record<string, unknown>;
   bannedByAdminName?: string;
   startAt: string;

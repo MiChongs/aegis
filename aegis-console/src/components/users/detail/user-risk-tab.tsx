@@ -42,7 +42,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { AdminAppUserDetail } from "@/lib/api/types";
 import type {
-  AlertRow, DecisionRow, DisposeInput, EntityUse, EventRow, Feature, GraphNode, KV, ListEntry, RiskAction, RiskCase, RiskEntity,
+  AlertRow, BanLevel, DecisionRow, DisposeInput, EntityUse, EventRow, Feature, GraphNode, KV, ListEntry, RiskAction, RiskCase, RiskEntity,
   Rule, SceneUse, SimilarDevice, Subgraph, UserRiskProfile,
 } from "@/lib/api/risk";
 import { getRiskMeta, listModels, listRules } from "@/lib/api/risk";
@@ -1058,6 +1058,7 @@ function DisposePanel({ appKey, appId, userId, name, account, lists, devices, ip
   const [pending, setPending] = useState<DisposeAction | null>(null);
   const [reason, setReason] = useState("");
   const [duration, setDuration] = useState(86400);
+  const [banLevel, setBanLevel] = useState<BanLevel>("app");
   const device = devices[0]?.value;
   const ip = ips[0]?.value;
   const deviceName = device ? look.deviceLabel(device) : "";
@@ -1099,7 +1100,9 @@ function DisposePanel({ appKey, appId, userId, name, account, lists, devices, ip
   const close = () => {
     setPending(null);
     setReason("");
+    setBanLevel("app");
   };
+  const bansAccount = !!pending?.input.targets.includes("ban_account");
 
   return (
     <Panel title="名单与处置" icon={<ShieldCheck className="size-4" />} description="用户、最近设备与 IP 当前所在的名单">
@@ -1215,6 +1218,25 @@ function DisposePanel({ appKey, appId, userId, name, account, lists, devices, ip
                 ariaLabel="期限"
               />
             </div>
+            {bansAccount ? (
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">封禁范围</Label>
+                <Segmented
+                  value={banLevel}
+                  onChange={setBanLevel}
+                  options={[
+                    { value: "app", label: "本应用" },
+                    { value: "platform", label: "全站" },
+                  ]}
+                  ariaLabel="封禁范围"
+                />
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {banLevel === "platform"
+                    ? "同一人在所有应用的账号都封，并拦截用这些邮箱、手机号、第三方账号、设备再注册或登录。"
+                    : "只封禁这个应用里的这个账号。"}
+                </p>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="risk-dispose-reason" className="text-xs text-muted-foreground">原因</Label>
               <Textarea id="risk-dispose-reason" placeholder="会显示在名单与封禁记录上" value={reason} onChange={(e) => setReason(e.target.value)} rows={3} />
@@ -1227,14 +1249,14 @@ function DisposePanel({ appKey, appId, userId, name, account, lists, devices, ip
               className={cn(pending?.tone === "danger" && "bg-destructive text-white hover:bg-destructive/90")}
               onClick={() => {
                 if (!pending) return;
-                dispose.mutate({ ...pending.input, durationSeconds: duration, reason: reason.trim() || pending.title }, {
+                dispose.mutate({ ...pending.input, durationSeconds: duration, reason: reason.trim() || pending.title, ...(bansAccount ? { level: banLevel } : {}) }, {
                   onSuccess: (res) => toast.success("已处置", { description: Object.values(res ?? {}).join("，") || undefined }),
                   onError: (e) => toast.error("处置失败", { description: (e as Error).message }),
                 });
                 close();
               }}
             >
-              确认，期限{duration ? ` ${formatWindow(duration)}` : "为永久"}
+              确认{bansAccount && banLevel === "platform" ? "全站封禁" : ""}，期限{duration ? ` ${formatWindow(duration)}` : "为永久"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -484,7 +484,7 @@ export function deriveUserSignals(
       id: "ban-active",
       tone: "danger",
       icon: <Ban className="size-4" />,
-      title: `封禁中（${BAN_SCOPE_LABEL[activeBan.banScope] ?? activeBan.banScope}）`,
+      title: `${activeBan.level === "platform" ? "全站" : ""}封禁中（${BAN_SCOPE_LABEL[activeBan.banScope] ?? activeBan.banScope}）`,
       detail: [
         textValue(activeBan.reason, "无原因"),
         permanent ? "永久" : `至 ${formatTime(activeBan.endAt)}`,

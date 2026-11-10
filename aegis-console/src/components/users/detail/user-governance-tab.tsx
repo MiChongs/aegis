@@ -41,7 +41,14 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  BAN_LEVEL_LABEL,
+  BAN_REASON_CODE_LABEL,
+  BAN_SOURCE_LABEL,
   BanDurationField,
+  BanLevelField,
+  BanNoticeField,
+  BanPublicReasonField,
+  BanReasonCodeField,
   BanReasonField,
   BanScopeField,
   describeBanDraft,
@@ -85,6 +92,26 @@ type HistoryFilter = "" | "active" | "expired" | "revoked";
 
 const banTypeLabel = (ban: AdminUserBan) => BAN_TYPE_LABEL[ban.banType] ?? ban.banType;
 const banScopeLabel = (ban: AdminUserBan) => BAN_SCOPE_LABEL[ban.banScope] ?? ban.banScope;
+const isPlatformBan = (ban: AdminUserBan) => ban.level === "platform";
+
+/** 全站封禁的标记；本应用级不显示，避免每条记录都多一个徽标 */
+function LevelBadge({ ban }: { ban: AdminUserBan }) {
+  if (!isPlatformBan(ban)) return null;
+  return (
+    <Badge variant="danger" size="sm" title="同一人在所有应用的账号都被封禁">
+      {BAN_LEVEL_LABEL.platform}
+    </Badge>
+  );
+}
+
+/** 原因类别与来源，拼成一句：「欺诈或作弊，由风控平台下发」 */
+function banOrigin(ban: AdminUserBan) {
+  const parts = [
+    ban.reasonCode ? BAN_REASON_CODE_LABEL[ban.reasonCode] ?? ban.reasonCode : "",
+    ban.source && ban.source !== "manual" ? `由${BAN_SOURCE_LABEL[ban.source] ?? ban.source}下发` : ""
+  ].filter(Boolean);
+  return parts.join("，");
+}
 
 /**
  * 处置：这个账号现在被怎么处置着、要怎么处置、以前被怎么处置过。
@@ -321,9 +348,10 @@ function StatusBanner({
       <BannerShell
         tone="danger"
         icon={ShieldBan}
-        title={`${banTypeLabel(activeBan)}封禁中`}
+        title={`${isPlatformBan(activeBan) ? "全站" : ""}${banTypeLabel(activeBan)}封禁中`}
         badges={
           <>
+            <LevelBadge ban={activeBan} />
             <Badge variant="danger" size="sm">
               {banScopeLabel(activeBan)}
             </Badge>
@@ -332,7 +360,12 @@ function StatusBanner({
             ) : null}
           </>
         }
-        description={<span className="text-foreground/90">{textValue(activeBan.reason, "未填写原因")}</span>}
+        description={
+          <span className="text-foreground/90">
+            {textValue(activeBan.reason, "未填写原因")}
+            {banOrigin(activeBan) ? <span className="text-muted-foreground">（{banOrigin(activeBan)}）</span> : null}
+          </span>
+        }
         action={
           <Button size="sm" variant="outline" onClick={() => onRevoke(activeBan)}>
             <Undo2 />
@@ -479,8 +512,16 @@ function BanComposer({
         <div className="flex flex-col gap-5">
           <BanDurationField draft={draft} now={now} />
           <BanScopeField draft={draft} />
+          <BanLevelField draft={draft} />
         </div>
-        <BanReasonField draft={draft} rows={6} />
+        <div className="flex flex-col gap-5">
+          <BanReasonCodeField draft={draft} />
+          <BanReasonField draft={draft} rows={3} />
+          <BanPublicReasonField draft={draft} rows={3} />
+        </div>
+      </div>
+      <div className="mt-5">
+        <BanNoticeField draft={draft} />
       </div>
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
@@ -491,9 +532,29 @@ function BanComposer({
               {describeBanDraft(draft)}。
               {end ? `将于 ${formatBanTime(end)} 自动解除。` : end === null ? "永久有效，只能手动解除。" : ""}
               {activeBan ? "当前生效的封禁会被立即替代。" : ""}
+              {draft.level === "platform"
+                ? "全站封禁会连带这个人在所有应用的账号，并拦截用相同邮箱、手机号、第三方账号、设备再注册或登录。"
+                : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="rounded-xl border bg-muted/30 px-3 py-2.5 text-sm leading-6 break-words">{draft.reason.trim() || "—"}</div>
+          <dl className="flex flex-col gap-2 rounded-xl border bg-muted/30 px-3 py-2.5 text-sm leading-6">
+            <div className="flex gap-3">
+              <dt className="w-16 shrink-0 text-xs leading-6 text-muted-foreground">内部原因</dt>
+              <dd className="min-w-0 break-words">{draft.reason.trim() || "—"}</dd>
+            </div>
+            <div className="flex gap-3">
+              <dt className="w-16 shrink-0 text-xs leading-6 text-muted-foreground">对用户</dt>
+              <dd className="min-w-0 break-words">
+                {draft.publicReason.trim() || `${BAN_REASON_CODE_LABEL[draft.reasonCode]}（标准说明）`}
+              </dd>
+            </div>
+            <div className="flex gap-3">
+              <dt className="w-16 shrink-0 text-xs leading-6 text-muted-foreground">通知</dt>
+              <dd className="min-w-0">
+                {draft.notify ? "发送邮件与站内消息" : "不通知"}，{draft.appealable ? "允许申诉" : "不可申诉"}
+              </dd>
+            </div>
+          </dl>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction
@@ -695,6 +756,7 @@ function BanEntry({
           >
             {banTypeLabel(ban)}封禁
           </button>
+          <LevelBadge ban={ban} />
           <Badge variant="outline" size="sm">
             {banScopeLabel(ban)}
           </Badge>
@@ -705,8 +767,12 @@ function BanEntry({
         </div>
 
         <p className="text-sm leading-6 break-words">{textValue(ban.reason, "未填写原因")}</p>
+        {ban.publicReason ? (
+          <p className="text-xs leading-5 break-words text-muted-foreground">对用户：{ban.publicReason}</p>
+        ) : null}
 
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          {banOrigin(ban) ? <span>{banOrigin(ban)}</span> : null}
           <span className="tabular-nums">
             {formatDateTime(ban.startAt)} 至 {ban.endAt ? formatDateTime(ban.endAt) : "永久"}
           </span>
@@ -747,6 +813,12 @@ function BanDetailSheet({
     ? [
         { label: "类型", value: banTypeLabel(ban) },
         { label: "范围", value: banScopeLabel(ban) },
+        { label: "封禁级别", value: BAN_LEVEL_LABEL[ban.level ?? "app"] ?? ban.level },
+        { label: "原因类别", value: ban.reasonCode ? BAN_REASON_CODE_LABEL[ban.reasonCode] ?? ban.reasonCode : null },
+        { label: "来源", value: ban.source ? BAN_SOURCE_LABEL[ban.source] ?? ban.source : null },
+        { label: "允许申诉", value: ban.appealable === undefined ? null : ban.appealable ? "是" : "否" },
+        ...(ban.platformBanId ? [{ label: "全站封禁 ID", value: String(ban.platformBanId), mono: true }] : []),
+        { label: "对用户显示的说明", value: ban.publicReason || null, wide: true },
         { label: "开始", value: formatDateTime(ban.startAt) },
         { label: "到期", value: ban.endAt ? formatDateTime(ban.endAt) : "永久" },
         { label: "操作人", value: textValue(ban.bannedByAdminName, "系统") },
@@ -773,6 +845,7 @@ function BanDetailSheet({
           <div className="flex flex-col gap-2 rounded-xl border bg-muted/30 px-3.5 py-3">
             <div className="flex items-center gap-2">
               <BanStatusBadge status={ban.status} />
+              <LevelBadge ban={ban} />
               <Badge variant="outline" size="sm">
                 {banScopeLabel(ban)}
               </Badge>
@@ -840,7 +913,11 @@ function RevokeBanDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>解除封禁</DialogTitle>
-          <DialogDescription>解除后立即生效，用户可以重新登录。</DialogDescription>
+          <DialogDescription>
+            {ban && isPlatformBan(ban)
+              ? "这是全站封禁连带的记录。只解除这一条时，用户仍会因邮箱、手机号或设备被全站封禁拦截；要整体恢复，请到风控平台的「全站封禁」解除。"
+              : "解除后立即生效，用户可以重新登录。"}
+          </DialogDescription>
         </DialogHeader>
         {ban ? (
           <div className="flex items-start gap-3 rounded-xl border bg-muted/30 px-3 py-2.5">

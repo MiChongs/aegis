@@ -39,7 +39,7 @@ export function AccountState({ user, graphBanned }: { user?: OpsUser | null; gra
     const until = user.ban.endAt ? `至 ${formatDateTime(user.ban.endAt)}` : "永久";
     return (
       <Badge variant={user.banFromRisk ? "danger" : "warning"} size="sm" title={until}>
-        {user.banFromRisk ? "风控封禁中" : "人工封禁中"}
+        {user.ban.level === "platform" ? "全站封禁中" : user.banFromRisk ? "风控封禁中" : "人工封禁中"}
       </Badge>
     );
   }
