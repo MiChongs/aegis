@@ -915,7 +915,7 @@ function RevokeBanDialog({
           <DialogTitle>解除封禁</DialogTitle>
           <DialogDescription>
             {ban && isPlatformBan(ban)
-              ? "这是全站封禁连带的记录。只解除这一条时，用户仍会因邮箱、手机号或设备被全站封禁拦截；要整体恢复，请到风控平台的「全站封禁」解除。"
+              ? "这是全站封禁连带的记录。解除后整条全站封禁一并解除，所有被连带的账号都会恢复，并按各自的语言收到解封通知。"
               : "解除后立即生效，用户可以重新登录。"}
           </DialogDescription>
         </DialogHeader>
