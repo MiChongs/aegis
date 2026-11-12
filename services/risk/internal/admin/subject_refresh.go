@@ -2,17 +2,17 @@ package admin
 
 import (
 	"context"
-	"net/netip"
 	"strconv"
 	"strings"
-	"sync"
+	"time"
 
 	"aegis/services/risk/internal/bundle"
+	"aegis/services/risk/internal/engine"
 	"aegis/services/risk/internal/graph"
 	"aegis/services/risk/internal/lists"
 	"aegis/services/risk/internal/proxyip"
-
-	"github.com/redis/go-redis/v9"
+	"aegis/services/risk/internal/sources"
+	"aegis/services/risk/internal/stream"
 )
 
 // 解除风控、删除账号之后把关系图、设备向量和特征缓存一起改到与事实一致，不留旧状态：
@@ -124,6 +124,13 @@ func (s *Server) hasBlock(ctx context.Context, appID int64, listType, value stri
 // recomputeBanned 名单条目移除后，按剩下的名单重算对应设备、IP、用户的封禁标记（图与向量）
 func (s *Server) recomputeBanned(ctx context.Context, removed []lists.Entry) {
 	seen := map[string]bool{}
+	var fs forgetSet
+	defer func() {
+		// 从黑名单解除的对象，它自己的计数一并清零：否则计数还在高位，下一次请求又会被同一条规则拉回名单
+		if _, problems := s.forget(ctx, fs); len(problems) > 0 {
+			s.logf("名单移除后清理计数：%s", strings.Join(problems, "；"))
+		}
+	}()
 	for _, e := range removed {
 		if e.Kind != bundle.KindBlock {
 			continue
@@ -134,6 +141,20 @@ func (s *Server) recomputeBanned(ctx context.Context, removed []lists.Entry) {
 		}
 		seen[key] = true
 		blocked := s.hasBlock(ctx, e.AppID, e.ListType, e.Value)
+		if !blocked {
+			switch e.ListType {
+			case bundle.ListDevice:
+				fs.subject(bundle.EntityDevice, e.AppID, e.Value)
+			case bundle.ListIP:
+				fs.subject(bundle.EntityIP, e.AppID, e.Value)
+			case bundle.ListUser:
+				fs.subject(bundle.EntityUser, e.AppID, e.Value)
+			case bundle.ListAccount:
+				if e.AppID > 0 {
+					fs.subject(bundle.EntityAccount, e.AppID, e.Value)
+				}
+			}
+		}
 		switch e.ListType {
 		case bundle.ListDevice:
 			if s.Graph != nil {
@@ -198,16 +219,18 @@ func (s *Server) refreshAfterRelease(ctx context.Context, nb *neighborhood, stil
 		}
 	}
 	s.purgeFeatureCache(ctx, nb)
-	return problems
+	return append(problems, s.forgetCounters(ctx, nb, nil)...)
 }
 
 // refreshAfterDelete 删号之后：删用户点与只属于它们的点，设备与 IP 按剩下的使用者重写
 func (s *Server) refreshAfterDelete(ctx context.Context, nb *neighborhood) (removed int, problems []string) {
 	if s.Graph == nil {
 		s.purgeFeatureCache(ctx, nb)
-		return 0, nil
+		return 0, s.forgetCounters(ctx, nb, nil)
 	}
 	var drop []string
+	// 删号以后没有别人在用的设备：以它为主体的计数整个清掉
+	var orphanDevices []string
 	var gerr error
 	keep := func(err error) {
 		if err != nil && gerr == nil {
@@ -224,6 +247,9 @@ func (s *Server) refreshAfterDelete(ctx context.Context, nb *neighborhood) (remo
 				continue
 			}
 			blocked := d != "" && s.hasBlock(ctx, nb.appID, bundle.ListDevice, d)
+			if len(rest) == 0 && d != "" {
+				orphanDevices = append(orphanDevices, d)
+			}
 			switch {
 			case len(rest) > 0:
 				if s.Vector != nil && d != "" {
@@ -279,7 +305,7 @@ func (s *Server) refreshAfterDelete(ctx context.Context, nb *neighborhood) (remo
 		problems = append(problems, "关系图没有全部更新："+gerr.Error())
 	}
 	s.purgeFeatureCache(ctx, nb)
-	return removed, problems
+	return removed, append(problems, s.forgetCounters(ctx, nb, orphanDevices)...)
 }
 
 // purgeFeatureCache 删受影响对象的图特征缓存（rg:<模板>:<天数>:<应用>:<对象类型>:<取值>）
@@ -347,7 +373,6 @@ func (s *Server) purgeFeatureCache(ctx context.Context, nb *neighborhood) {
 	}
 	s.delKeys(ctx, keys)
 	nb.countersCleared += len(keys)
-	s.purgeCounters(ctx, nb)
 }
 
 // delKeys 集群模式下多键 DEL 不能跨槽：逐个删，管道批量发
@@ -362,107 +387,110 @@ func (s *Server) delKeys(ctx context.Context, keys []string) {
 	}
 }
 
-// purgeCounters 删受影响对象的滑窗计数（rv: / rvd:）与流式特征（rf:）。
-//
-// 滑窗键 rv:{特征:应用|g:场景|*:取值}:桶、rvd:{…}:桶（去重计数是 HyperLogLog，删不掉单个成员，只能整键删）；
-// 流式特征键 rf:特征:应用|g:取值（RisingWave 写回，下一笔事件到来时按物化视图重写）。
-// 场景与特征太多，逐个拼键不现实：各主节点 SCAN 一遍按取值匹配。取值涵盖账号 ID、登录名、设备码、具体 IP 与所在网段。
-func (s *Server) purgeCounters(ctx context.Context, nb *neighborhood) int {
-	values := map[string]bool{}
-	for _, uid := range nb.users {
-		values[strconv.FormatInt(uid, 10)] = true
+// forgetSet 要从计数里拿掉的对象：滑窗计数的标签（Redis）与流式特征的遗忘记录（RisingWave）
+type forgetSet struct {
+	subjects []string
+	stones   []stream.Tombstone
+}
+
+// subject 被解除或删除的对象本身：以它为主体的计数整个清掉，它在别的计数里的贡献减掉
+func (f *forgetSet) subject(entity string, appID int64, value string) {
+	if value = strings.TrimSpace(value); value == "" {
+		return
 	}
-	for d := range nb.devices {
-		values[d] = true
+	if tag := engine.CounterTag(entity, appID, value); tag != "" {
+		f.subjects = append(f.subjects, tag)
+	}
+	if stream.ForgetKind(entity) {
+		f.stones = append(f.stones, stream.Tombstone{Kind: entity, AppID: appID, Value: value})
+	}
+}
+
+// forget 执行。滑窗计数按反向索引定位，只动这些对象的那一份；流式特征写遗忘表，由 RisingWave 重算后改写 Redis。
+func (s *Server) forget(ctx context.Context, f forgetSet) (res sources.ForgetResult, problems []string) {
+	if len(f.subjects) > 0 && s.Redis != nil {
+		var err error
+		if res, err = sources.NewRedis(s.Redis).Forget(ctx, f.subjects, nil); err != nil {
+			problems = append(problems, "滑窗计数没有全部更新："+err.Error())
+		}
+	}
+	if len(f.stones) > 0 && s.Cfg.RisingWaveDSN != "" {
+		m, err := s.streamManager(ctx)
+		if err == nil {
+			err = m.Forget(ctx, f.stones, time.Now())
+			m.Close(ctx)
+		}
+		if err != nil {
+			problems = append(problems, "流式特征没有更新："+err.Error())
+		}
+	}
+	return res, problems
+}
+
+// forgetCounters 解除或删号之后更新计数。
+//
+// 账号与它的登录名是主体：它们自己的计数清零，它们在地址、网段、共用设备、应用等计数里的贡献减掉，别人的不动。
+// orphanDevices 是删号后已经没人用的设备，同样按主体处理；还有别人在用的设备只减这些账号的贡献（靠账号标签认出）。
+func (s *Server) forgetCounters(ctx context.Context, nb *neighborhood, orphanDevices []string) []string {
+	var fs forgetSet
+	for _, uid := range nb.users {
+		fs.subject(bundle.EntityUser, nb.appID, strconv.FormatInt(uid, 10))
 	}
 	for a := range nb.accounts {
-		values[strings.ToLower(a)] = true
+		fs.subject(bundle.EntityAccount, nb.appID, a)
 	}
-	for ip := range nb.ips {
-		values[ip] = true
-		if sn := ipSubnet(ip); sn != "" {
-			values[sn] = true
-		}
+	for _, d := range orphanDevices {
+		fs.subject(bundle.EntityDevice, nb.appID, d)
 	}
-	if len(values) == 0 {
-		return 0
-	}
-	var mu sync.Mutex
-	var doomed []string
-	scan := func(ctx context.Context, c redis.Cmdable) error {
-		var cursor uint64
-		for {
-			keys, next, err := c.Scan(ctx, cursor, "r[vf]*", 2000).Result()
-			if err != nil {
-				return err
-			}
-			for _, k := range keys {
-				if v, ok := counterValue(k); ok && values[v] {
-					mu.Lock()
-					doomed = append(doomed, k)
-					mu.Unlock()
-				}
-			}
-			cursor = next
-			if cursor == 0 {
-				return nil
-			}
-		}
-	}
-	var err error
-	if cc, ok := s.Redis.(*redis.ClusterClient); ok {
-		err = cc.ForEachMaster(ctx, func(ctx context.Context, c *redis.Client) error { return scan(ctx, c) })
-	} else {
-		err = scan(ctx, s.Redis)
-	}
-	if err != nil {
-		s.logf("清理滑窗与流式计数时扫描失败：%v", err)
-	}
-	s.delKeys(ctx, doomed)
-	nb.countersCleared += len(doomed)
-	return len(doomed)
+	res, problems := s.forget(ctx, fs)
+	nb.countersCleared += res.Counters
+	return problems
 }
 
-// counterValue 从计数键里取出主体取值：rv:{特征:范围:场景:取值}:桶、rvd:{…}:桶、rf:特征:范围:取值
-func counterValue(key string) (string, bool) {
-	switch {
-	case strings.HasPrefix(key, "rv:{"), strings.HasPrefix(key, "rvd:{"):
-		open := strings.IndexByte(key, '{')
-		end := strings.LastIndexByte(key, '}')
-		if open < 0 || end <= open {
-			return "", false
-		}
-		parts := strings.SplitN(key[open+1:end], ":", 4)
-		if len(parts) != 4 {
-			return "", false
-		}
-		return parts[3], true
-	case strings.HasPrefix(key, "rf:"):
-		parts := strings.SplitN(strings.TrimPrefix(key, "rf:"), ":", 3)
-		if len(parts) != 3 {
-			return "", false
-		}
-		return parts[2], true
+// MigrateCounters 把旧格式的滑窗次数并进新键（升级后第一次启动时有活干，之后是空转）
+func (s *Server) MigrateCounters(ctx context.Context) {
+	if s.Redis == nil {
+		return
 	}
-	return "", false
-}
-
-// ipSubnet 与主服务上报事件时的网段一致：IPv4 /24、IPv6 /64
-func ipSubnet(ip string) string {
-	addr, err := netip.ParseAddr(ip)
+	type def struct {
+		entity string
+		window int
+	}
+	defs := map[string]def{}
+	add := func(fs []bundle.Feature) {
+		for _, f := range fs {
+			if f.Kind == bundle.FeatureVelocity && f.Velocity != nil {
+				defs[f.Key] = def{f.Entity, f.Velocity.WindowSeconds}
+			}
+		}
+	}
+	// 已发布版本里的定义优先于目录（计数是按已发布的定义写的）
+	if fs, err := s.Store.ListFeatures(ctx); err == nil {
+		plain := make([]bundle.Feature, len(fs))
+		for i, f := range fs {
+			plain[i] = f.Feature
+		}
+		add(plain)
+	}
+	if states, err := s.Store.ListStates(ctx); err == nil {
+		for _, st := range states {
+			if st.PrimaryID == nil {
+				continue
+			}
+			if rel, err := s.Store.GetRelease(ctx, *st.PrimaryID); err == nil && rel != nil {
+				add(rel.Bundle.Features)
+			}
+		}
+	}
+	n, err := sources.NewRedis(s.Redis).MigrateLegacy(ctx, func(feature string) (string, int, bool) {
+		d, ok := defs[feature]
+		return d.entity, d.window, ok
+	})
 	if err != nil {
-		return ""
+		s.logf("旧滑窗计数并入新格式：并入 %d 个桶后出错：%v", n, err)
+	} else if n > 0 {
+		s.logf("旧滑窗计数并入新格式：%d 个桶", n)
 	}
-	addr = addr.Unmap()
-	bits := 24
-	if addr.Is6() {
-		bits = 64
-	}
-	p, err := addr.Prefix(bits)
-	if err != nil {
-		return ""
-	}
-	return p.String()
 }
 
 func (s *Server) logf(format string, args ...any) {

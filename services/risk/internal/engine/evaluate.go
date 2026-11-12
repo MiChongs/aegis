@@ -383,6 +383,7 @@ func (p *Program) fetch(ctx context.Context, env *Env, req Request, src Sources,
 		graph  []GraphQuery
 		vector []VectorQuery
 	)
+	actors := CounterActors(env)
 	for _, f := range p.Bundle.Features {
 		if f.Kind != bundle.FeatureDerived {
 			env.F[f.Key] = f.Default
@@ -393,12 +394,14 @@ func (p *Program) fetch(ctx context.Context, env *Env, req Request, src Sources,
 			if value == "" {
 				continue
 			}
-			q := VelocityQuery{Feature: f.Key, WindowSeconds: f.Velocity.WindowSeconds, Key: p.counterKey(f, env, value)}
+			q := VelocityQuery{Feature: f.Key, WindowSeconds: f.Velocity.WindowSeconds, Key: p.counterKey(f, env, value),
+				Subject: CounterTag(f.Entity, env.AppID, value), Actors: actors}
 			if f.Velocity.Agg == bundle.AggDistinct {
 				q.Distinct = EntityValue(env, f.Velocity.DistinctOf)
 				if q.Distinct == "" {
 					continue
 				}
+				q.Member = CounterTag(f.Velocity.DistinctOf, env.AppID, q.Distinct)
 			}
 			vel = append(vel, q)
 		case bundle.FeatureStream:

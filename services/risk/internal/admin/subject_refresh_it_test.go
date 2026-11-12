@@ -10,9 +10,11 @@ import (
 	"aegis/services/risk/events"
 	"aegis/services/risk/internal/bundle"
 	"aegis/services/risk/internal/config"
+	"aegis/services/risk/internal/engine"
 	"aegis/services/risk/internal/graph"
 	"aegis/services/risk/internal/lists"
 	"aegis/services/risk/internal/redisx"
+	"aegis/services/risk/internal/sources"
 	"aegis/services/risk/internal/store"
 	"aegis/services/risk/internal/vector"
 )
@@ -153,22 +155,57 @@ func TestSubjectRefreshIT(t *testing.T) {
 		}
 	}
 
-	// 滑窗计数、去重计数、流式特征：受影响对象的要删，别人的不动
+	// 滑窗计数与去重计数：被删账号的那一份要减掉，别人的不动
 	appS := strconv.FormatInt(app, 10)
-	counterKeys := []string{
-		"rv:{it_dev_logins:" + appS + ":login:" + devA + "}:1",
-		"rvd:{it_dev_accounts:" + appS + ":*:" + devC + "}:2",
-		"rv:{it_user_logins:" + appS + ":login:3}:3",
-		"rf:it_ip_fails:" + appS + ":" + ipCarol,
-		"rf:it_net_fails:" + appS + ":" + ipSubnet(ipCarol),
+	counters := sources.NewRedis(rdb)
+	type who struct {
+		uid     int64
+		account string
+		device  string
 	}
-	keepKey := "rv:{it_dev_logins:" + appS + ":login:it-other-" + suffix + "}:1"
-	for _, k := range append(append([]string{}, counterKeys...), keepKey) {
-		if err := rdb.Set(ctx, k, "7", time.Hour).Err(); err != nil {
+	alice, bob, carol := who{1, "alice-" + suffix, devA}, who{2, "bob-" + suffix, devA}, who{3, "carol-" + suffix, devC}
+	query := func(feature, entity, value string, w who) engine.VelocityQuery {
+		q := engine.VelocityQuery{Feature: feature, Key: feature + ":" + appS + ":login:" + value, WindowSeconds: 600,
+			Subject: engine.CounterTag(entity, app, value)}
+		for e, v := range map[string]string{bundle.EntityUser: strconv.FormatInt(w.uid, 10), bundle.EntityAccount: w.account, bundle.EntityDevice: w.device} {
+			if w.uid == 0 && e == bundle.EntityUser {
+				continue
+			}
+			if tag := engine.CounterTag(e, app, v); tag != "" {
+				q.Actors = append(q.Actors, tag)
+			}
+		}
+		return q
+	}
+	hit := func(q engine.VelocityQuery) float64 {
+		t.Helper()
+		v, err := counters.Velocity(ctx, []engine.VelocityQuery{q})
+		if err != nil {
 			t.Fatal(err)
 		}
+		return v[q.Feature]
 	}
-	t.Cleanup(func() { rdb.Del(context.Background(), keepKey) })
+	// read 用一次匿名请求读数，结果减去自己这一次
+	read := func(feature, value string) float64 {
+		t.Helper()
+		return hit(engine.VelocityQuery{Feature: feature, Key: feature + ":" + appS + ":login:" + value, WindowSeconds: 600}) - 1
+	}
+	devLogins, ipLogins, userLogins, devAccounts := "it_dev_logins_"+suffix, "it_ip_logins_"+suffix, "it_user_logins_"+suffix, "it_dev_accounts_"+suffix
+	hit(query(devLogins, bundle.EntityDevice, devA, alice))
+	hit(query(devLogins, bundle.EntityDevice, devA, alice))
+	for i := 0; i < 3; i++ {
+		hit(query(devLogins, bundle.EntityDevice, devA, bob))
+	}
+	hit(query(devLogins, bundle.EntityDevice, devC, carol))
+	hit(query(ipLogins, bundle.EntityIP, ipShared, alice))
+	hit(query(ipLogins, bundle.EntityIP, ipShared, bob))
+	hit(query(userLogins, bundle.EntityUser, "3", carol))
+	hit(query(userLogins, bundle.EntityUser, "2", bob))
+	for _, w := range []who{alice, bob} {
+		q := query(devAccounts, bundle.EntityDevice, devA, w)
+		q.Distinct, q.Member = w.account, engine.CounterTag(bundle.EntityAccount, app, w.account)
+		hit(q)
+	}
 
 	// ── 删号：carol 独有的设备、IP、登录名一起删；alice 的设备还有 bob 在用，留着并改挂到 bob ──
 	nbDel := s.collectNeighborhood(ctx, app, []int64{1, 3})
@@ -184,16 +221,27 @@ func TestSubjectRefreshIT(t *testing.T) {
 			t.Errorf("%s 应已删除", vid)
 		}
 	}
-	for _, k := range counterKeys {
-		if n, _ := rdb.Exists(ctx, k).Result(); n != 0 {
-			t.Errorf("计数 %s 应已删除", k)
+	for _, c := range []struct {
+		what, feature, value string
+		want                 float64
+	}{
+		{"共用设备上的登录次数（只剩 bob 的 3 次）", devLogins, devA, 3},
+		{"carol 独有设备上的登录次数", devLogins, devC, 0},
+		{"共用地址上的登录次数（只剩 bob 的 1 次）", ipLogins, ipShared, 1},
+		{"被删账号自己的登录次数", userLogins, "3", 0},
+		{"没被删的账号自己的登录次数", userLogins, "2", 1},
+	} {
+		if got := read(c.feature, c.value); got != c.want {
+			t.Errorf("%s = %v，应为 %v", c.what, got, c.want)
 		}
 	}
-	if n, _ := rdb.Exists(ctx, keepKey).Result(); n != 1 {
-		t.Errorf("不相干的计数不应被删")
+	bq := query(devAccounts, bundle.EntityDevice, devA, bob)
+	bq.Distinct, bq.Member = bob.account, engine.CounterTag(bundle.EntityAccount, app, bob.account)
+	if got := hit(bq); got != 1 {
+		t.Errorf("共用设备上的账号数 = %v，应为 1", got)
 	}
-	if nbDel.countersCleared < len(counterKeys) {
-		t.Errorf("清掉的计数键数不对：%d", nbDel.countersCleared)
+	if nbDel.countersCleared == 0 {
+		t.Errorf("没有更新任何计数")
 	}
 	if !exists(graph.DeviceVID(devA)) || !exists(graph.UserVID(app, 2)) {
 		t.Fatalf("bob 与仍在用的设备不应删除")

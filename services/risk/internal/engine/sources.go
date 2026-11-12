@@ -3,6 +3,9 @@ package engine
 import (
 	"context"
 	"strconv"
+	"strings"
+
+	"aegis/services/risk/internal/bundle"
 )
 
 // ListHit 一次名单命中
@@ -27,6 +30,47 @@ type VelocityQuery struct {
 	Key           string // 已拼好主体与作用域的计数键（不含前缀）
 	WindowSeconds int
 	Distinct      string // 非空时数去重的成员
+
+	// 以下三项让计数可以按对象回退（解除风控、删除账号或设备时只减掉它的那一份，见 sources/counters.go）。
+	// 都是 CounterTag 生成的标签；为空表示这一项不可索引。
+	Subject string   // 计数键的主体
+	Actors  []string // 这次事件的贡献者：账号、登录名、设备
+	Member  string   // 去重成员
+}
+
+// CounterTag 计数索引用的对象标签。用户 ID 全平台唯一；登录名按应用区分；设备码、地址、网段、手机号是全局的。
+// 应用、邮箱域名这类不会被单独解除或删除的主体不建索引，返回空。
+func CounterTag(entity string, appID int64, value string) string {
+	if value == "" {
+		return ""
+	}
+	switch entity {
+	case bundle.EntityUser:
+		return "u:" + value
+	case bundle.EntityAccount:
+		return "a:" + itoa(appID) + ":" + strings.ToLower(value)
+	case bundle.EntityDevice:
+		return "d:" + value
+	case bundle.EntityIP:
+		return "i:" + value
+	case bundle.EntityIPSubnet:
+		return "n:" + value
+	case bundle.EntityPhone:
+		return "p:" + value
+	}
+	return ""
+}
+
+// CounterActors 这次请求的贡献者标签：账号（已登录时）、登录名、设备。
+// 注册时还没有账号 ID，靠登录名与设备认人。地址是共用的，不算贡献者。
+func CounterActors(env *Env) []string {
+	var out []string
+	for _, e := range []string{bundle.EntityUser, bundle.EntityAccount, bundle.EntityDevice} {
+		if t := CounterTag(e, env.AppID, EntityValue(env, e)); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // LookupQuery 流式特征：读 RisingWave 写回的值

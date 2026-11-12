@@ -7,6 +7,10 @@
 //	rf_<键>_<摘要>_sink Redis Sink（UPSERT）：k → v 写进 Redis Cluster；分组被清空时键随之删除
 //
 // 决策服务读 rf:<键>:<应用或 g>:<主体取值>，与 engine.StreamKey 一致。
+//
+// 解除风控、删除账号或设备时要把它过去的事件从聚合里撤掉：事件流只能追加，所以另有一张遗忘表 rf_forget
+// （对象类型、应用、取值、截止毫秒），每个物化视图都反连接它 —— 截止时刻之前、出自被遗忘对象的事件不参与聚合，
+// 之后的新事件照常计数。往表里写一行，RisingWave 自己把受影响的分组重算并改写 Redis，别人的事件不受影响。
 // SQL 全部由结构化定义生成，取值逐个转义，不拼接控制台上的原文。
 package stream
 
@@ -19,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"aegis/services/risk/events"
 	"aegis/services/risk/internal/bundle"
@@ -153,11 +158,13 @@ func (o Object) Sink() string   { return o.Base + "_sink" }
 
 // ObjectFor 特征对应的对象名（定义摘要取前 10 位）
 func ObjectFor(f bundle.Feature) Object {
+	// V 生成规则的版本：规则一变（2 = 反连接遗忘表），所有特征的对象都要重建
 	raw, _ := json.Marshal(struct {
 		E string
 		G bool
 		S *bundle.StreamDef
-	}{f.Entity, f.Global, f.Stream})
+		V int
+	}{f.Entity, f.Global, f.Stream, 2})
 	sum := sha256.Sum256(raw)
 	return Object{Feature: f.Key, Base: "rf_" + f.Key + "_" + hex.EncodeToString(sum[:])[:10]}
 }
@@ -229,6 +236,7 @@ func SQL(f bundle.Feature, t Target) ([]string, error) {
 		}
 		where = append(where, s)
 	}
+	where = append(where, forgetFilters(f.Entity)...)
 	scope := "app_id::varchar"
 	group := "app_id, " + ent
 	if f.Global {
@@ -257,12 +265,105 @@ func SQL(f bundle.Feature, t Target) ([]string, error) {
 		Literal(t.DurablePrefix+obj.Base), Literal(startup))
 	view := fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS %s AS
 SELECT %s || ':' || %s || ':' || %s AS k, (%s)::double precision AS v
-FROM %s WHERE %s GROUP BY %s`, obj.View(), Literal(f.Key), scope, ent, agg, obj.Source(), strings.Join(where, " AND "), group)
+FROM %s s WHERE %s GROUP BY %s`, obj.View(), Literal(f.Key), scope, ent, agg, obj.Source(), strings.Join(where, " AND "), group)
 	urls, _ := json.Marshal(t.RedisURLs)
 	sink := fmt.Sprintf(`CREATE SINK IF NOT EXISTS %s FROM %s WITH (
   connector = 'redis', primary_key = 'k', redis.url = %s
 ) FORMAT UPSERT ENCODE TEMPLATE (key_format = 'rf:{k}', value_format = '{v}')`, obj.Sink(), obj.View(), Literal(string(urls)))
 	return []string{src, view, sink}, nil
+}
+
+// ForgetTable 遗忘表
+const ForgetTable = "rf_forget"
+
+const forgetDDL = `CREATE TABLE IF NOT EXISTS ` + ForgetTable + ` (kind varchar, app_id bigint, value varchar, until_ts bigint, PRIMARY KEY (kind, app_id, value))`
+
+// 贡献者：出自这些对象的事件在任何特征里都撤掉。登录名按应用区分，其余全局（app_id 记 0）。
+var forgetActors = []struct{ kind, on string }{
+	{bundle.EntityUser, "g.value = s.user_id::varchar"},
+	{bundle.EntityAccount, "g.app_id = s.app_id AND g.value = lower(s.account)"},
+	{bundle.EntityDevice, "g.value = s.device_id"},
+}
+
+// 主体：地址、网段、手机号是多人共用的，只在以它为主体的特征里撤掉（例如从名单解除一个地址）
+var forgetSubjects = map[string]string{
+	bundle.EntityIP:       "g.value = s.ip",
+	bundle.EntityIPSubnet: "g.value = s.ip_subnet",
+	bundle.EntityPhone:    "g.value = s.phone",
+}
+
+func forgetFilters(entity string) []string {
+	clause := func(kind, on string) string {
+		return fmt.Sprintf("NOT EXISTS (SELECT 1 FROM %s g WHERE g.kind = %s AND %s AND s.ts <= g.until_ts)", ForgetTable, Literal(kind), on)
+	}
+	out := make([]string, 0, len(forgetActors)+1)
+	for _, a := range forgetActors {
+		out = append(out, clause(a.kind, a.on))
+	}
+	if on, ok := forgetSubjects[entity]; ok {
+		out = append(out, clause(entity, on))
+	}
+	return out
+}
+
+// Tombstone 要遗忘的对象。Kind 是主体类型（bundle.Entity*）；AppID 只有登录名用，其余填 0。
+type Tombstone struct {
+	Kind  string
+	AppID int64
+	Value string
+}
+
+// ForgetKind 这种对象能不能写进遗忘表
+func ForgetKind(kind string) bool {
+	if _, ok := forgetSubjects[kind]; ok {
+		return true
+	}
+	for _, a := range forgetActors {
+		if a.kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// EnsureForget 建遗忘表（物化视图依赖它，要先于特征对象）
+func (m *Manager) EnsureForget(ctx context.Context) error {
+	_, err := m.conn.Exec(ctx, forgetDDL)
+	return err
+}
+
+// Forget 把一批对象截至现在的事件从全部流式特征里撤掉。同一对象再写一次是把截止时刻往后推。
+// 顺手清掉早于最长窗口（90 天）的旧行。
+func (m *Manager) Forget(ctx context.Context, ts []Tombstone, until time.Time) error {
+	if len(ts) == 0 {
+		return nil
+	}
+	if err := m.EnsureForget(ctx); err != nil {
+		return err
+	}
+	ms := until.UnixMilli()
+	seen := map[Tombstone]bool{}
+	var rows []string
+	for _, t := range ts {
+		if t.Value == "" || !ForgetKind(t.Kind) || seen[t] {
+			continue
+		}
+		seen[t] = true
+		if t.Kind == bundle.EntityAccount {
+			t.Value = strings.ToLower(t.Value)
+		} else {
+			t.AppID = 0
+		}
+		rows = append(rows, fmt.Sprintf("(%s, %d, %s, %d)", Literal(t.Kind), t.AppID, Literal(t.Value), ms))
+	}
+	for i := 0; i < len(rows); i += 200 {
+		if _, err := m.conn.Exec(ctx, "INSERT INTO "+ForgetTable+" VALUES "+strings.Join(rows[i:min(i+200, len(rows))], ", ")); err != nil {
+			return err
+		}
+	}
+	_, _ = m.conn.Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE until_ts < %d", ForgetTable, until.Add(-91*24*time.Hour).UnixMilli()))
+	_, err := m.conn.Exec(ctx, "FLUSH")
+	return err
 }
 
 // Manager 把一组流式特征同步到 RisingWave
@@ -315,6 +416,9 @@ type SyncResult struct {
 
 // Sync 建出 features 里缺的、删掉不再需要的
 func (m *Manager) Sync(ctx context.Context, features []bundle.Feature) (*SyncResult, error) {
+	if err := m.EnsureForget(ctx); err != nil {
+		return nil, err
+	}
 	existing, err := m.Existing(ctx)
 	if err != nil {
 		return nil, err

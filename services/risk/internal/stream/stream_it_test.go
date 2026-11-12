@@ -111,6 +111,33 @@ func TestStreamIT(t *testing.T) {
 	if got != "4" || amt != "42.5" {
 		t.Fatalf("redis values: count=%q sum=%q", got, amt)
 	}
+	// 遗忘：登录名过去的失败次数撤掉（分组清空，键随之删除）；用户 77 的付款也撤掉。之后的新事件重新计数
+	if err := m.Forget(ctx, []Tombstone{{Kind: bundle.EntityAccount, AppID: 9, Value: acc}, {Kind: bundle.EntityUser, Value: "77"}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	gone := false
+	for i := 0; i < 60 && !gone; i++ {
+		n, _ := rdb.Exists(ctx, "rf:"+key+":9:"+acc, "rf:"+key+"_amt:9:77").Result()
+		if gone = n == 0; !gone {
+			time.Sleep(time.Second)
+		}
+	}
+	if !gone {
+		t.Fatal("遗忘之后流式特征的键还在")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := bus.PublishEvent(ctx, events.Event{Type: events.TypeLoginFail, AppID: 9, Account: acc}); err != nil {
+		t.Fatal(err)
+	}
+	got = ""
+	for i := 0; i < 60 && got != "1"; i++ {
+		if got, _ = rdb.Get(ctx, "rf:"+key+":9:"+acc).Result(); got != "1" {
+			time.Sleep(time.Second)
+		}
+	}
+	if got != "1" {
+		t.Fatalf("遗忘之后的新事件应从 1 数起，得到 %q", got)
+	}
 	// 删掉特征：对象一并删除
 	res, err = m.Sync(ctx, nil)
 	if err != nil {

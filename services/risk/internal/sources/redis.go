@@ -5,34 +5,13 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"time"
 
 	"aegis/services/risk/internal/engine"
 
 	"github.com/redis/go-redis/v9"
 )
-
-// 滑窗计数：窗口切成最多 60 个桶，每桶一个键，键名用 {主体} 哈希标签落在同一个槽，
-// 一条脚本里「本桶加一 + 读全部桶」。本次请求算在内。
-//
-// KEYS[1] 是当前桶，KEYS[2..] 是窗口内的其余桶。ARGV[1] 是桶的存活秒数。
-var velocityCount = redis.NewScript(`
-redis.call('INCR', KEYS[1])
-redis.call('EXPIRE', KEYS[1], ARGV[1])
-local vals = redis.call('MGET', unpack(KEYS))
-local sum = 0
-for _, v in ipairs(vals) do
-  if v then sum = sum + tonumber(v) end
-end
-return sum
-`)
-
-// 去重计数：每桶一个 HyperLogLog，PFCOUNT 跨桶合并。ARGV[2] 是要记的成员。
-var velocityDistinct = redis.NewScript(`
-redis.call('PFADD', KEYS[1], ARGV[2])
-redis.call('EXPIRE', KEYS[1], ARGV[1])
-return redis.call('PFCOUNT', unpack(KEYS))
-`)
 
 // bucketWidth 桶宽：窗口 / 60，至少 1 秒
 func bucketWidth(window int) int64 {
@@ -59,28 +38,54 @@ func bucketKeys(prefix string, window int, now time.Time) []string {
 type Redis struct {
 	rdb redis.UniversalClient
 	now func() time.Time
+
+	cutoverOnce sync.Once
+	cutover     int64
 }
 
 // NewRedis 新建
 func NewRedis(rdb redis.UniversalClient) *Redis { return &Redis{rdb: rdb, now: time.Now} }
 
-// Velocity 一个管道里跑完全部滑窗特征
+// Velocity 一个管道里跑完全部滑窗特征，并登记反向索引（存法见 counters.go）。本次请求算在内。
+//
+// 次数：窗口切成最多 60 个桶，每桶一个键。去重：一个精确集合，窗口按秒滑动。
+// 计数与索引不在一个槽里，做不到一起成功或失败：索引写丢的那一次贡献回退不掉，会随窗口自然过期。
 func (r *Redis) Velocity(ctx context.Context, qs []engine.VelocityQuery) (map[string]float64, error) {
 	now := r.now()
+	since := r.legacySince(ctx)
 	cmds := make([]*redis.Cmd, len(qs))
+	index := map[string][]any{}
+	note := func(tag string, role, kind byte, q engine.VelocityQuery, expire int64) {
+		if tag = clean(tag); tag != "" {
+			index[tag] = append(index[tag], expire, indexEntry(role, kind, q.WindowSeconds, q.Key))
+		}
+	}
 	_, err := r.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for i, q := range qs {
-			prefix := "rv:{" + q.Key + "}:"
+			width := bucketWidth(q.WindowSeconds)
+			ttl := int64(q.WindowSeconds) + width + 5
+			expire := now.Unix() + ttl
+			tuple := actorTuple(q.Actors)
+			kind := byte(kindCount)
 			if q.Distinct != "" {
-				prefix = "rvd:{" + q.Key + "}:"
-			}
-			keys := bucketKeys(prefix, q.WindowSeconds, now)
-			ttl := int64(q.WindowSeconds) + bucketWidth(q.WindowSeconds) + 5
-			if q.Distinct != "" {
-				cmds[i] = velocityDistinct.Eval(ctx, p, keys, ttl, q.Distinct)
+				kind = kindSet
+				set := distinctPrefix + q.Key + "}"
+				keys := []string{set, set + ":w"}
+				if now.Unix() < since+ttl {
+					keys = append(keys, bucketKeys(legacyHLLPrefix+q.Key+"}:", q.WindowSeconds, now)...)
+				}
+				cmds[i] = distinctAdd.Eval(ctx, p, keys, now.Unix(), now.Unix()-int64(q.WindowSeconds), ttl, clean(q.Distinct), tuple)
+				note(q.Member, roleMember, kind, q, expire)
 			} else {
-				cmds[i] = velocityCount.Eval(ctx, p, keys, ttl)
+				cmds[i] = countAdd.Eval(ctx, p, bucketKeys(countPrefix+q.Key+"}:", q.WindowSeconds, now), ttl, tuple)
 			}
+			note(q.Subject, roleSubject, kind, q, expire)
+			for _, a := range q.Actors {
+				note(a, roleActor, kind, q, expire)
+			}
+		}
+		for tag, pairs := range index {
+			indexAdd.Eval(ctx, p, []string{indexPrefix + tag + "}"}, append([]any{now.Unix()}, pairs...)...)
 		}
 		return nil
 	})
