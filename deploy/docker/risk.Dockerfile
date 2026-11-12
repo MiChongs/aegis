@@ -8,7 +8,10 @@
 #
 #   docker build -f deploy/docker/risk.Dockerfile -t aegis-risk --build-arg GOPROXY=https://goproxy.cn,direct .
 #
-FROM golang:1.26-bookworm AS build
+# Go 固定在 1.26.10：1.26.11 起 cmd/go 拒绝模块缓存里带 LTO 位码段（.llvmbc）的静态库，
+# 而 zen-go v0.20.0 的 libzen_ffi.a 带着这个段，构建会报 disallowed LTO section。
+# 等 zen-go 发布不带位码的静态库以后再放开补丁版本。
+FROM golang:1.26.10-bookworm AS build
 WORKDIR /app
 ARG GOPROXY=https://proxy.golang.org,direct
 ARG VERSION=dev
