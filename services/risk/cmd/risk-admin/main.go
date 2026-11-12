@@ -324,6 +324,7 @@ func serve(logf func(string, ...any)) error {
 		}
 	}()
 	go srv.DailyBackfill(ctx)
+	go srv.SyncStreamsOnStart(ctx)
 	// 旧格式的滑窗次数并进新键：启动时一次；滚动升级期间旧版决策服务可能还写了几笔，过几分钟再扫一次
 	go func() {
 		srv.MigrateCounters(ctx)

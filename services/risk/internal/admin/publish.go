@@ -92,6 +92,21 @@ func (s *Server) syncStreamsFor(ctx context.Context, extra *bundle.Bundle) (*str
 	return m.Sync(ctx, fs)
 }
 
+// SyncStreamsOnStart 启动时把流式特征对齐到当前定义。物化视图的名字带定义摘要，定义（含视图模板）一变，
+// 旧视图就要换成新的；只靠"发布时同步"的话，升级后到下一次发布之前跑的还是旧视图。
+func (s *Server) SyncStreamsOnStart(ctx context.Context) {
+	res, err := s.syncStreamsFor(ctx, nil)
+	if s.Logf == nil {
+		return
+	}
+	switch {
+	case err != nil:
+		s.Logf("启动时同步流式特征失败：%v", err)
+	case len(res.Created)+len(res.Dropped)+len(res.Failed) > 0:
+		s.Logf("启动时同步流式特征：新建 %d 个，删除 %d 个，失败 %d 个 %v", len(res.Created), len(res.Dropped), len(res.Failed), res.Failed)
+	}
+}
+
 func (s *Server) streamManager(ctx context.Context) (*stream.Manager, error) {
 	m, err := stream.Connect(ctx, s.Cfg.RisingWaveDSN, s.Stream)
 	if err != nil {
