@@ -578,6 +578,7 @@ GET	/api/admin/system/user-master/tags	AdminListUserTags
 GET	/api/admin/system/user-master/user-lists	AdminListUserListEntries
 GET	/api/admin/tickets	AdminListTickets
 GET	/api/admin/tickets/:ticketId	AdminGetTicket
+GET	/api/admin/tickets/:ticketId/requester	AdminTicketRequester
 GET	/api/admin/tickets/agents	AdminTicketAgentStats
 GET	/api/admin/tickets/categories	AdminListTicketCategories
 GET	/api/admin/tickets/export	ExportAdminTickets

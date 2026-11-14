@@ -67,6 +67,7 @@ func (h *Handler) AdminListTickets(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	h.resolveTicketAvatars(c, result.Items)
 	response.Success(c, http.StatusOK, "获取成功", result)
 }
 
@@ -88,6 +89,7 @@ func (h *Handler) AdminGetTicket(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	h.resolveTicketDetailAvatars(c, item)
 	response.Success(c, http.StatusOK, "获取成功", item)
 }
 

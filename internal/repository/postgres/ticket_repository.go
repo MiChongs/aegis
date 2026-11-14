@@ -35,7 +35,16 @@ const ticketColumns = `t.id, t.ticket_no, t.appid,
 	t.created_by_admin_id, t.created_at, t.updated_at,
 	COALESCE(c.name, ''), COALESCE(g.name, ''), COALESCE(a.display_name, a.account, ''), COALESCE(ap.name, ''),
 	t.kind, COALESCE(c.key, ''),
+	COALESCE(rp.avatar, ra.avatar, ''), COALESCE(rp.email, ra.email, ''), COALESCE(ru.account, ra.account, ''),
+	COALESCE(a.avatar, ''), COALESCE(a.email, ''), COALESCE(a.account, ''),
+	` + ticketPreviewColumn + `,
 	` + ticketAttachmentCountColumns
+
+// ticketPreviewColumn 提单人首条内容的开头。列表行靠它不点开就能读到正文，
+// 走 ticket_messages(ticket_id) 索引取第一行，代价与附件计数那两个子查询同级。
+const ticketPreviewColumn = `COALESCE((SELECT LEFT(pm.content, 160) FROM ticket_messages pm
+		WHERE pm.ticket_id = t.id AND pm.internal = FALSE AND pm.author_type = 'requester'
+		ORDER BY pm.id ASC LIMIT 1), '')`
 
 // ticketAttachmentCountColumns 对外可见附件的分类计数（挂在内部备注上的不算）。
 // 列表页要显示「几张图、几个附件」，逐单再查一次附件表太贵，这里用相关子查询一次带出。
@@ -54,7 +63,10 @@ const ticketJoins = `FROM tickets t
 	LEFT JOIN ticket_categories c ON c.id = t.category_id
 	LEFT JOIN ticket_groups g ON g.id = t.group_id
 	LEFT JOIN admin_accounts a ON a.id = t.assignee_admin_id
-	LEFT JOIN apps ap ON ap.id = t.appid`
+	LEFT JOIN apps ap ON ap.id = t.appid
+	LEFT JOIN users ru ON ru.id = t.requester_user_id
+	LEFT JOIN user_profiles rp ON rp.user_id = t.requester_user_id
+	LEFT JOIN admin_accounts ra ON ra.id = t.requester_admin_id`
 
 func scanTicket(row interface{ Scan(dest ...any) error }) (*ticketdomain.Ticket, error) {
 	item := &ticketdomain.Ticket{}
@@ -75,6 +87,9 @@ func scanTicket(row interface{ Scan(dest ...any) error }) (*ticketdomain.Ticket,
 		&item.CreatedByAdminID, &item.CreatedAt, &item.UpdatedAt,
 		&item.CategoryName, &item.GroupName, &item.AssigneeName, &item.AppName,
 		&item.Kind, &item.CategoryKey,
+		&item.RequesterAvatarRef.Raw, &item.RequesterAvatarRef.Email, &item.RequesterAvatarRef.Account,
+		&item.AssigneeAvatarRef.Raw, &item.AssigneeAvatarRef.Email, &item.AssigneeAvatarRef.Account,
+		&item.Preview,
 		&item.ImageCount, &item.AttachmentCount,
 	)
 	if err != nil {
@@ -834,6 +849,44 @@ func (r *Repository) ListTicketWatchers(ctx context.Context, ticketID int64) ([]
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// ListAdminAvatarRefs 一批管理员的头像引用与标识（会话里客服的头像、关注人头像用）。
+func (r *Repository) ListAdminAvatarRefs(ctx context.Context, adminIDs []int64) (map[int64]ticketdomain.AvatarRef, error) {
+	refs := make(map[int64]ticketdomain.AvatarRef, len(adminIDs))
+	if len(adminIDs) == 0 {
+		return refs, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, COALESCE(avatar, ''), COALESCE(email, ''), COALESCE(account, '')
+		FROM admin_accounts WHERE id = ANY($1)`, adminIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			id  int64
+			ref ticketdomain.AvatarRef
+		)
+		if err := rows.Scan(&id, &ref.Raw, &ref.Email, &ref.Account); err != nil {
+			return nil, err
+		}
+		refs[id] = ref
+	}
+	return refs, rows.Err()
+}
+
+// CountRequesterTickets 某应用用户提交过的工单 / 反馈数量（提单人资料卡用）。
+func (r *Repository) CountRequesterTickets(ctx context.Context, appID int64, userID int64) (ticketdomain.RequesterTicketStats, error) {
+	var stats ticketdomain.RequesterTicketStats
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*),
+			COUNT(*) FILTER (WHERE status NOT IN ('resolved', 'closed', 'cancelled')),
+			COUNT(*) FILTER (WHERE kind = 'feedback')
+		FROM tickets WHERE appid = $1 AND requester_user_id = $2`, appID, userID).
+		Scan(&stats.Total, &stats.Open, &stats.Feedback)
+	return stats, err
 }
 
 // ListTicketNotifyTargets 汇总某工单需要通知的管理员：受理人 + 关注人 + 处理组成员。

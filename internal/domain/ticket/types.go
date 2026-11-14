@@ -138,6 +138,10 @@ type Ticket struct {
 	RequesterAdminID *int64 `json:"requesterAdminId,omitempty"`
 	RequesterName    string `json:"requesterName"`
 	RequesterContact string `json:"requesterContact,omitempty"`
+	// RequesterAvatar 提单人头像的出网地址。库里存的是引用，由管理端 Handler 解析后回填；用户端不下发
+	RequesterAvatar string `json:"requesterAvatar,omitempty"`
+	// RequesterAvatarRef 解析头像用的原始引用与标识，不出网
+	RequesterAvatarRef AvatarRef `json:"-"`
 
 	CategoryID   *int64 `json:"categoryId,omitempty"`
 	CategoryName string `json:"categoryName,omitempty"`
@@ -149,8 +153,11 @@ type Ticket struct {
 
 	AssigneeAdminID *int64 `json:"assigneeAdminId,omitempty"`
 	AssigneeName    string `json:"assigneeName,omitempty"`
-	GroupID         *int64 `json:"groupId,omitempty"`
-	GroupName       string `json:"groupName,omitempty"`
+	// AssigneeAvatar 受理人头像，回填方式同 RequesterAvatar
+	AssigneeAvatar    string    `json:"assigneeAvatar,omitempty"`
+	AssigneeAvatarRef AvatarRef `json:"-"`
+	GroupID           *int64    `json:"groupId,omitempty"`
+	GroupName         string    `json:"groupName,omitempty"`
 
 	SLAPolicyID        *int64     `json:"slaPolicyId,omitempty"`
 	FirstResponseDueAt *time.Time `json:"firstResponseDueAt,omitempty"`
@@ -167,6 +174,8 @@ type Ticket struct {
 	// 对外可见（不挂在内部备注上）的附件数，按类型分开计
 	ImageCount      int `json:"imageCount"`
 	AttachmentCount int `json:"attachmentCount"`
+	// Preview 提单人首条内容的开头，列表行里不点开就能看到说了什么
+	Preview string `json:"preview,omitempty"`
 
 	Rating        *int16     `json:"rating,omitempty"`
 	RatingComment string     `json:"ratingComment,omitempty"`
@@ -192,19 +201,21 @@ type Ticket struct {
 
 // Message 工单会话消息。
 type Message struct {
-	ID            int64          `json:"id"`
-	TicketID      int64          `json:"ticketId"`
-	AuthorType    string         `json:"authorType"`
-	AuthorUserID  *int64         `json:"authorUserId,omitempty"`
-	AuthorAdminID *int64         `json:"authorAdminId,omitempty"`
-	AuthorName    string         `json:"authorName"`
-	Internal      bool           `json:"internal"`
-	Content       string         `json:"content"`
-	ContentType   string         `json:"contentType"`
-	Metadata      map[string]any `json:"metadata,omitempty"`
-	EditedAt      *time.Time     `json:"editedAt,omitempty"`
-	CreatedAt     time.Time      `json:"createdAt"`
-	Attachments   []Attachment   `json:"attachments,omitempty"`
+	ID            int64  `json:"id"`
+	TicketID      int64  `json:"ticketId"`
+	AuthorType    string `json:"authorType"`
+	AuthorUserID  *int64 `json:"authorUserId,omitempty"`
+	AuthorAdminID *int64 `json:"authorAdminId,omitempty"`
+	AuthorName    string `json:"authorName"`
+	// AuthorAvatar 发言人头像，管理端详情回填
+	AuthorAvatar string         `json:"authorAvatar,omitempty"`
+	Internal     bool           `json:"internal"`
+	Content      string         `json:"content"`
+	ContentType  string         `json:"contentType"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	EditedAt     *time.Time     `json:"editedAt,omitempty"`
+	CreatedAt    time.Time      `json:"createdAt"`
+	Attachments  []Attachment   `json:"attachments,omitempty"`
 }
 
 // Attachment 附件。DownloadURL 为即时换取的带票据代理地址，不落库。
@@ -245,7 +256,84 @@ type Watcher struct {
 	AdminID     int64     `json:"adminId"`
 	Account     string    `json:"account,omitempty"`
 	DisplayName string    `json:"displayName,omitempty"`
+	Avatar      string    `json:"avatar,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
+}
+
+// AvatarRef 解析头像所需的原始材料：库里的引用（可能为空）+ 生成默认头像用的标识。
+type AvatarRef struct {
+	Raw     string
+	Email   string
+	Account string
+}
+
+// ─────────────── 提单人资料 ───────────────
+
+// RequesterProfile 提单人 / 反馈人资料卡：处理反馈时不离开当前页就能看清对方是谁。
+//
+// 能看到这条工单的人都能拿到 Name / Avatar 与历史提交计数；
+// 账号资料（User）只在调用者对该应用有 app:user:read 时下发，
+// 处理组成员不会因为被指派了一条反馈就看到用户的邮箱、手机号与登录地址。
+type RequesterProfile struct {
+	// Type user 应用用户 / admin 管理员代提
+	Type string `json:"type"`
+	// Removed 账号已删除（用户注销或被删），工单上只剩留名
+	Removed bool   `json:"removed"`
+	AppID   int64  `json:"appid"`
+	AppKey  string `json:"appKey,omitempty"`
+	AppName string `json:"appName,omitempty"`
+	Name    string `json:"name"`
+	Contact string `json:"contact,omitempty"`
+	Avatar  string `json:"avatar,omitempty"`
+	// CanViewUser 调用者是否有该应用的用户查看权限；为假时 User / LastLogin 不下发
+	CanViewUser bool                 `json:"canViewUser"`
+	User        *RequesterAccount    `json:"user,omitempty"`
+	LastLogin   *RequesterLogin      `json:"lastLogin,omitempty"`
+	Tickets     RequesterTicketStats `json:"tickets"`
+}
+
+// RequesterAccount 应用用户的账号资料摘要。
+type RequesterAccount struct {
+	ID               int64      `json:"id"`
+	PublicID         int64      `json:"publicId"`
+	Account          string     `json:"account"`
+	Nickname         string     `json:"nickname,omitempty"`
+	Email            string     `json:"email,omitempty"`
+	Phone            string     `json:"phone,omitempty"`
+	Enabled          bool       `json:"enabled"`
+	DisabledReason   string     `json:"disabledReason,omitempty"`
+	DisabledEndTime  *time.Time `json:"disabledEndTime,omitempty"`
+	Integral         int64      `json:"integral"`
+	Experience       int64      `json:"experience"`
+	VIPExpireAt      *time.Time `json:"vipExpireAt,omitempty"`
+	VIPLifetimeAt    *time.Time `json:"vipLifetimeAt,omitempty"`
+	RegisterTime     *time.Time `json:"registerTime,omitempty"`
+	RegisterIP       string     `json:"registerIp,omitempty"`
+	RegisterProvince string     `json:"registerProvince,omitempty"`
+	RegisterCity     string     `json:"registerCity,omitempty"`
+	RegisterISP      string     `json:"registerIsp,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+}
+
+// RequesterLogin 最近一次成功登录。
+type RequesterLogin struct {
+	At         time.Time `json:"at"`
+	IP         string    `json:"ip,omitempty"`
+	Location   string    `json:"location,omitempty"`
+	ISP        string    `json:"isp,omitempty"`
+	LoginType  string    `json:"loginType,omitempty"`
+	Provider   string    `json:"provider,omitempty"`
+	DeviceName string    `json:"deviceName,omitempty"`
+	Platform   string    `json:"platform,omitempty"`
+	OSVersion  string    `json:"osVersion,omitempty"`
+	AppVersion string    `json:"appVersion,omitempty"`
+}
+
+// RequesterTicketStats 此人在本应用下的提交计数（不受调用者可见范围约束，只是数量）。
+type RequesterTicketStats struct {
+	Total    int64 `json:"total"`
+	Open     int64 `json:"open"`
+	Feedback int64 `json:"feedback"`
 }
 
 // ─────────────── 配置实体 ───────────────
@@ -350,7 +438,7 @@ type QuickReply struct {
 
 // ListQuery 管理端列表查询条件。Scope 由服务层根据会话注入，不由前端传入。
 type ListQuery struct {
-	AppID      *int64   `json:"appid,omitempty"`
+	AppID *int64 `json:"appid,omitempty"`
 	// Kind 为空表示不区分（管理端「全部」）；用户端各入口固定传值
 	Kind       string   `json:"kind,omitempty"`
 	Statuses   []string `json:"statuses,omitempty"`
@@ -463,22 +551,22 @@ type RatingCommand struct {
 
 // BulkCommand 批量操作。
 type BulkCommand struct {
-	IDs             []int64 `json:"ids"`
-	Action          string  `json:"action"` // assign / status / priority / tag / close / delete
-	AssigneeAdminID *int64  `json:"assigneeAdminId,omitempty"`
-	GroupID         *int64  `json:"groupId,omitempty"`
-	Status          string  `json:"status,omitempty"`
-	Priority        string  `json:"priority,omitempty"`
+	IDs             []int64  `json:"ids"`
+	Action          string   `json:"action"` // assign / status / priority / tag / close / delete
+	AssigneeAdminID *int64   `json:"assigneeAdminId,omitempty"`
+	GroupID         *int64   `json:"groupId,omitempty"`
+	Status          string   `json:"status,omitempty"`
+	Priority        string   `json:"priority,omitempty"`
 	Tags            []string `json:"tags,omitempty"`
-	Reason          string  `json:"reason,omitempty"`
+	Reason          string   `json:"reason,omitempty"`
 }
 
 // BulkResult 批量操作结果。Failed 记录逐条失败原因，前端可精确提示。
 type BulkResult struct {
-	Requested int             `json:"requested"`
-	Succeeded int             `json:"succeeded"`
-	Failed    []BulkFailure   `json:"failed,omitempty"`
-	Action    string          `json:"action"`
+	Requested int           `json:"requested"`
+	Succeeded int           `json:"succeeded"`
+	Failed    []BulkFailure `json:"failed,omitempty"`
+	Action    string        `json:"action"`
 }
 
 // BulkFailure 单条失败详情。
@@ -514,18 +602,18 @@ type ScopeInfo struct {
 
 // ActionSet 当前访问者对某工单的可执行操作。
 type ActionSet struct {
-	View            bool `json:"view"`
-	Reply           bool `json:"reply"`
-	InternalNote    bool `json:"internalNote"`
-	ViewInternal    bool `json:"viewInternal"`
-	Edit            bool `json:"edit"`
-	Assign          bool `json:"assign"`
-	ChangeStatus    bool `json:"changeStatus"`
-	Close           bool `json:"close"`
-	Reopen          bool `json:"reopen"`
-	Delete          bool `json:"delete"`
-	Watch           bool `json:"watch"`
-	ManageWatchers  bool `json:"manageWatchers"`
+	View             bool `json:"view"`
+	Reply            bool `json:"reply"`
+	InternalNote     bool `json:"internalNote"`
+	ViewInternal     bool `json:"viewInternal"`
+	Edit             bool `json:"edit"`
+	Assign           bool `json:"assign"`
+	ChangeStatus     bool `json:"changeStatus"`
+	Close            bool `json:"close"`
+	Reopen           bool `json:"reopen"`
+	Delete           bool `json:"delete"`
+	Watch            bool `json:"watch"`
+	ManageWatchers   bool `json:"manageWatchers"`
 	UploadAttachment bool `json:"uploadAttachment"`
 }
 
