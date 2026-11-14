@@ -223,6 +223,10 @@ type EvaluateRequest struct {
 	Geo                *Geo    `protobuf:"bytes,16,opt,name=geo" json:"geo,omitempty"`
 	Explain            bool    `protobuf:"varint,17,opt,name=explain" json:"explain,omitempty"`                         // 返回完整轨迹（管理端调用）
 	CaptchaUnavailable bool    `protobuf:"varint,18,opt,name=captcha_unavailable" json:"captcha_unavailable,omitempty"` // 这个应用拿不到图形验证码（验证码处置转人工复核）
+
+	// 登录名对应的已有账号（登录、找回密码在校验前查到的）。只说明账号存在，不代表是本人：
+	// 不当成 user_id 用，只让「出现的账号」这类计数认得出这是哪个真实账号。0 = 不存在或没查。
+	AccountUserId int64 `protobuf:"varint,19,opt,name=account_user_id" json:"account_user_id,omitempty"`
 }
 
 func (x *EvaluateRequest) Reset() { *x = EvaluateRequest{} }
@@ -355,6 +359,13 @@ func (x *EvaluateRequest) GetCaptchaUnavailable() bool {
 		return x.CaptchaUnavailable
 	}
 	return false
+}
+
+func (x *EvaluateRequest) GetAccountUserId() int64 {
+	if x != nil {
+		return x.AccountUserId
+	}
+	return 0
 }
 
 type RuleHit struct {

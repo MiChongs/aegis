@@ -52,10 +52,13 @@ type RiskEvalRequest struct {
 	UserID     *int64 `json:"userId,omitempty"`
 	IdentityID *int64 `json:"identityId,omitempty"`
 	// Account 登录名 / 邮箱 / 手机号。为空时回退读 Extra["account"]（旧调用方）
-	Account   string `json:"account,omitempty"`
-	IP        string `json:"ip"`
-	DeviceID  string `json:"deviceId"`
-	UserAgent string `json:"userAgent"`
+	Account string `json:"account,omitempty"`
+	// AccountUserID 登录名对应的已有账号（登录、找回密码在校验前查到的）。只说明账号存在、不代表是本人，
+	// 风控据此把「出现的账号」数成真实账号；不存在的登录名留 0
+	AccountUserID int64  `json:"accountUserId,omitempty"`
+	IP            string `json:"ip"`
+	DeviceID      string `json:"deviceId"`
+	UserAgent     string `json:"userAgent"`
 	// CaptchaPassed 本次请求已经通过了图形验证码。命中「验证码」处置时据此放行，
 	// 而不是让用户在同一个关卡上无限循环。
 	CaptchaPassed bool `json:"captchaPassed,omitempty"`

@@ -57,6 +57,9 @@ message EvaluateRequest {
   Geo geo = 16;
   bool explain = 17;        // 返回完整轨迹（管理端调用）
   bool captcha_unavailable = 18; // 这个应用拿不到图形验证码（验证码处置转人工复核）
+  // 登录名对应的已有账号（登录、找回密码在校验前查到的）。只说明账号存在，不代表是本人：
+  // 不当成 user_id 用，只让「出现的账号」这类计数认得出这是哪个真实账号。0 = 不存在或没查。
+  int64 account_user_id = 19;
 }
 
 message RuleHit {

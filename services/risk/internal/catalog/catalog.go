@@ -22,39 +22,15 @@ func distinct(key, name, entity, of string, window int, all bool) store.Feature 
 		Velocity: &bundle.VelocityDef{WindowSeconds: window, Agg: bundle.AggDistinct, DistinctOf: of, AllScenes: all}}}
 }
 
-func stream(key, name, entity string, events []string, agg, field string, window int, conds ...bundle.Condition) store.Feature {
-	return store.Feature{Feature: bundle.Feature{Key: key, Name: name, Kind: bundle.FeatureStream, Entity: entity,
-		Stream: &bundle.StreamDef{Events: events, Agg: agg, Field: field, WindowSeconds: window, Conditions: conds}}}
-}
-
-// failedAccounts 一个地址（或网段）上登录失败过的不同账号数。
-//
-// 只数确实存在的账号：login.fail 只在账号存在、凭据不对时上报，并带上 user_id；不存在的登录名没有 user_id，不算。
-// 以前这是决策时的去重计数（成员是校验前输入的登录名），一个地址上打错几次名字、或是正常登录的几个人，
-// 都会被数成「多个账号」。
-func failedAccounts(key, name, entity string) store.Feature {
-	f := stream(key, name, entity, []string{"login.fail"}, bundle.AggDistinct, "user_id", 3600,
-		bundle.Condition{Field: "user_id", Op: "gt", Value: 0})
-	f.Description = "登录失败（账号存在、密码不对）的不同账号数；不存在的登录名与登录成功都不计"
+// accounts 「出现的账号数」的说明：只数确认存在的账号，按账号 ID 去重（engine.RecordsVelocity / DistinctMember）
+func accounts(f store.Feature) store.Feature {
+	f.Description = "登录前（登录名对应已有账号）、登录成功、登录失败与已登录请求里出现的不同账号，按账号 ID 去重；不存在的登录名不计"
 	return f
 }
 
-// upgrades 内置特征换了口径时，线上还停在旧内置定义（没被人改过）的那一条要换成新的。
-// legacy 判断存着的是不是旧内置定义；被人在控制台改过的不动。
-var upgrades = []struct {
-	key    string
-	legacy func(store.Feature) bool
-}{
-	{"ip_accounts_1h", legacyAccountsDistinct(bundle.EntityIP)},
-	{"subnet_accounts_1h", legacyAccountsDistinct(bundle.EntityIPSubnet)},
-}
-
-func legacyAccountsDistinct(entity string) func(store.Feature) bool {
-	return func(f store.Feature) bool {
-		v := f.Velocity
-		return f.Kind == bundle.FeatureVelocity && f.Entity == entity && v != nil &&
-			v.Agg == bundle.AggDistinct && v.DistinctOf == bundle.EntityAccount && v.WindowSeconds == 3600 && v.AllScenes
-	}
+func stream(key, name, entity string, events []string, agg, field string, window int, conds ...bundle.Condition) store.Feature {
+	return store.Feature{Feature: bundle.Feature{Key: key, Name: name, Kind: bundle.FeatureStream, Entity: entity,
+		Stream: &bundle.StreamDef{Events: events, Agg: agg, Field: field, WindowSeconds: window, Conditions: conds}}}
 }
 
 func graphF(key, name, entity, tpl string, days int) store.Feature {
@@ -80,15 +56,15 @@ func Features() []store.Feature {
 		vel("user_scene_1h", "用户 1 小时请求数", bundle.EntityUser, 3600),
 		vel("user_scene_1d", "用户 1 天请求数", bundle.EntityUser, 86400),
 		vel("phone_scene_1h", "手机号 1 小时请求数", bundle.EntityPhone, 3600),
+		accounts(distinct("ip_accounts_1h", "IP 1 小时出现的账号数", bundle.EntityIP, bundle.EntityAccount, 3600, true)),
 		distinct("device_accounts_1h", "设备 1 小时出现的账号数", bundle.EntityDevice, bundle.EntityAccount, 3600, true),
 		distinct("device_accounts_1d", "设备 1 天出现的账号数", bundle.EntityDevice, bundle.EntityAccount, 86400, true),
 		distinct("account_devices_1d", "账号 1 天用过的设备数", bundle.EntityAccount, bundle.EntityDevice, 86400, true),
 		distinct("account_ips_1d", "账号 1 天用过的 IP 数", bundle.EntityAccount, bundle.EntityIP, 86400, true),
+		accounts(distinct("subnet_accounts_1h", "网段 1 小时出现的账号数", bundle.EntityIPSubnet, bundle.EntityAccount, 3600, true)),
 
 		stream("account_login_fail_1h", "账号 1 小时登录失败次数", bundle.EntityAccount, []string{"login.fail"}, bundle.AggCount, "", 3600),
 		stream("ip_login_fail_1h", "IP 1 小时登录失败次数", bundle.EntityIP, []string{"login.fail"}, bundle.AggCount, "", 3600),
-		failedAccounts("ip_accounts_1h", "IP 1 小时登录失败的账号数", bundle.EntityIP),
-		failedAccounts("subnet_accounts_1h", "网段 1 小时登录失败的账号数", bundle.EntityIPSubnet),
 		stream("ip_register_1d", "IP 1 天注册数", bundle.EntityIP, []string{"register.success"}, bundle.AggCount, "", 86400),
 		stream("subnet_register_1d", "网段 1 天注册数", bundle.EntityIPSubnet, []string{"register.success"}, bundle.AggCount, "", 86400),
 		stream("device_register_7d", "设备 7 天注册数", bundle.EntityDevice, []string{"register.success"}, bundle.AggCount, "", 7*86400),
@@ -203,7 +179,7 @@ func Templates() []Template {
 		}},
 		{Key: "account_security", Name: "账号安全", Description: "撞库、爆破、一号多机", Scenes: []string{"login", "password_reset", "admin_login", "oauth_login", "passkey_login", "qr_login", "password_change", "contact_change", "account_delete", "oauth_bind", "oauth2_authorize"}, Rules: []store.Rule{
 			rule("ip_burst", "IP 请求突增", bundle.DimBehavior, "F.ip_scene_10m > 30", 40, "", "IP 10 分钟请求 {{F.ip_scene_10m}} 次"),
-			rule("ip_many_accounts", "一 IP 多账号", bundle.DimBehavior, "F.ip_accounts_1h > 10", 50, "", "IP 1 小时有 {{F.ip_accounts_1h}} 个账号登录失败"),
+			rule("ip_many_accounts", "一 IP 多账号", bundle.DimBehavior, "F.ip_accounts_1h > 10", 50, "", "IP 1 小时出现 {{F.ip_accounts_1h}} 个账号"),
 			rule("account_bruteforce", "账号被爆破", bundle.DimAccount, "F.account_login_fail_1h >= 5", 60, "", "账号 1 小时登录失败 {{F.account_login_fail_1h}} 次"),
 			rule("ip_bruteforce", "IP 撞库", bundle.DimBehavior, "F.ip_login_fail_1h >= 20", 80, "", "IP 1 小时登录失败 {{F.ip_login_fail_1h}} 次"),
 			rule("account_many_devices", "一号多机", bundle.DimAccount, "F.account_devices_1d >= 5", 30, "", "账号 1 天用了 {{F.account_devices_1d}} 台设备"),
@@ -234,39 +210,15 @@ func Templates() []Template {
 	}
 }
 
-// Seed 写入缺的内置场景与起步特征（已存在的不动，只把仍是旧内置定义的特征升级到新口径，见 upgrades）。
-// 升级只改草稿里的特征；已发布的版本带着旧定义，要重新发布用到它的场景才生效。
+// Seed 写入缺的内置场景与起步特征（已存在的不动）
 func Seed(ctx context.Context, s *store.Store) error {
-	legacy := map[string]func(store.Feature) bool{}
-	for _, u := range upgrades {
-		legacy[u.key] = u.legacy
-	}
 	for _, f := range Features() {
-		cur, err := s.GetFeature(ctx, f.Key)
-		switch {
-		case errors.Is(err, store.ErrNotFound):
+		if _, err := s.GetFeature(ctx, f.Key); errors.Is(err, store.ErrNotFound) {
 			if err := s.UpsertFeature(ctx, &f, "system"); err != nil {
 				return err
 			}
-		case err != nil:
+		} else if err != nil {
 			return err
-		case legacy[f.Key] != nil && legacy[f.Key](*cur):
-			if err := s.UpsertFeature(ctx, &f, "system"); err != nil {
-				return err
-			}
-		}
-	}
-	// 已装的「一 IP 多账号」规则文案还是旧口径的，跟着改（被人改过文案的不动）
-	rules, err := s.ListRules(ctx, "")
-	if err != nil {
-		return err
-	}
-	for _, r := range rules {
-		if r.Key == "ip_many_accounts" && r.Reason == "IP 1 小时出现 {{F.ip_accounts_1h}} 个账号" {
-			r.Reason = "IP 1 小时有 {{F.ip_accounts_1h}} 个账号登录失败"
-			if err := s.SaveRule(ctx, &r, "system"); err != nil {
-				return err
-			}
 		}
 	}
 	for _, sc := range Scenes() {

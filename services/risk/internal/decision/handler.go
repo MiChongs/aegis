@@ -37,7 +37,7 @@ var _ riskv1.DecisionService = (*Handler)(nil)
 // ToRequest RPC 请求 → 引擎请求
 func ToRequest(in *riskv1.EvaluateRequest) (engine.Request, error) {
 	req := engine.Request{
-		Scene: in.GetScene(), AppID: in.GetAppId(), UserID: in.GetUserId(), IdentityID: in.GetIdentityId(), Account: in.GetAccount(),
+		Scene: in.GetScene(), AppID: in.GetAppId(), UserID: in.GetUserId(), IdentityID: in.GetIdentityId(), Account: in.GetAccount(), AccountUserID: in.GetAccountUserId(),
 		IP: in.GetIp(), UserAgent: in.GetUserAgent(), CaptchaPassed: in.GetCaptchaPassed(), CaptchaUnavailable: in.GetCaptchaUnavailable(), RequestID: in.GetRequestId(),
 		Phone: in.GetPhone(), Email: in.GetEmail(), TargetUserID: in.GetTargetUserId(), Amount: in.GetAmount(),
 		// 在这里定下评估时刻：引擎、事件、流水用同一个时间（引擎里的 Normalize 只改它自己那份副本）

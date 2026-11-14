@@ -283,7 +283,7 @@ func (s *RiskService) buildRequest(ctx context.Context, req securitydomain.RiskE
 	in := &riskv1.EvaluateRequest{
 		Scene: req.Scene, Account: strings.TrimSpace(req.Account), Ip: strings.TrimSpace(req.IP), UserAgent: req.UserAgent,
 		CaptchaPassed: req.CaptchaPassed || riskCaptchaPassed(ctx), RequestId: req.RequestID, Phone: req.Phone, Email: req.Email,
-		TargetUserId: req.TargetUserID,
+		TargetUserId: req.TargetUserID, AccountUserId: req.AccountUserID,
 	}
 	if req.AppID != nil {
 		in.AppId = *req.AppID

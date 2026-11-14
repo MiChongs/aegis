@@ -210,17 +210,21 @@ func (s *AuthService) StartPasswordRecovery(ctx context.Context, input PasswordR
 		24*time.Hour, passwordRecoveryStartsPerIdentifierDay, "该账号今日找回密码次数已达上限"); err != nil {
 		return nil, err
 	}
+	// 先查账号再评估：风控据此只把真实存在的账号数进「出现的账号」。找不到账号的错误仍排在风控之后返回
+	user, err := s.resolveRecoveryUser(ctx, input.AppID, identifier)
 	if s.risk != nil {
 		appID := input.AppID
-		if _, err := s.risk.Guard(ctx, securitydomain.RiskEvalRequest{
+		req := securitydomain.RiskEvalRequest{
 			Scene: securitydomain.ScenePasswordReset, AppID: &appID, IP: input.IP, DeviceID: input.DeviceID,
 			UserAgent: input.UserAgent, Account: identifier,
-		}, RiskGuardOption{Message: "当前请求被风控拦截，请稍后重试"}); err != nil {
-			return nil, err
+		}
+		if err == nil && user != nil {
+			req.AccountUserID = user.ID
+		}
+		if _, gerr := s.risk.Guard(ctx, req, RiskGuardOption{Message: "当前请求被风控拦截，请稍后重试"}); gerr != nil {
+			return nil, gerr
 		}
 	}
-
-	user, err := s.resolveRecoveryUser(ctx, input.AppID, identifier)
 	if err != nil {
 		return nil, err
 	}

@@ -324,7 +324,7 @@ func (s *AuthService) authenticatePassword(ctx context.Context, appID int64, acc
 		}
 	}
 
-	// 阶段 1 —— 并行前置检查：风控评估、插件钩子、应用策略、用户查询彼此独立，
+	// 阶段 1 —— 并行前置检查：风控评估（等用户查询给出已有账号）、插件钩子、应用策略、用户查询，
 	// 用 errgroup 并发执行，总耗时从「各 RTT 之和」降为「最慢一项」；
 	// 任一分支失败即取消其余分支（gctx），错误按原串行顺序的优先级返回
 	var (
@@ -336,11 +336,25 @@ func (s *AuthService) authenticatePassword(ctx context.Context, appID int64, acc
 		userErr error
 	)
 	g, gctx := errgroup.WithContext(ctx)
+	// 风控要知道登录名对应的是不是已有账号（「出现的账号」只数真实账号），所以等用户查询出结果再评估；
+	// 插件与应用策略照旧并行。查询失败时整组已取消，评估跳过，错误按下面的优先级返回用户查询的那个
+	resolved := make(chan struct{})
+	var candidates []*userdomain.User
 	if s.risk != nil {
 		g.Go(func() error {
+			select {
+			case <-resolved:
+			case <-gctx.Done():
+				return nil
+			}
+			var accountUserID int64
+			if len(candidates) > 0 {
+				accountUserID = candidates[0].ID
+			}
 			// 风控内部错误放行（Guard 内部处理）；拦截 / 封禁 → 40398，需要验证码 → 40015
 			if _, err := s.risk.Guard(gctx, securitydomain.RiskEvalRequest{
 				Scene: securitydomain.SceneLogin, AppID: &appID, IP: ip, DeviceID: deviceID, UserAgent: userAgent, Account: account,
+				AccountUserID: accountUserID,
 			}, RiskGuardOption{Message: "当前请求被风控拦截，请稍后重试"}); err != nil {
 				riskErr = err
 				return riskErr
@@ -378,7 +392,6 @@ func (s *AuthService) authenticatePassword(ctx context.Context, appID int64, acc
 			return nil
 		})
 	}
-	var candidates []*userdomain.User
 	g.Go(func() error {
 		loaded, err := s.resolveLoginCandidates(gctx, appID, account)
 		if err != nil {
@@ -386,6 +399,7 @@ func (s *AuthService) authenticatePassword(ctx context.Context, appID int64, acc
 			return err
 		}
 		candidates = loaded
+		close(resolved)
 		return nil
 	})
 	_ = g.Wait()

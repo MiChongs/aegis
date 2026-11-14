@@ -48,6 +48,8 @@ type Request struct {
 	UserID        int64  `json:"userId,omitempty"`
 	IdentityID    int64  `json:"identityId,omitempty"`
 	Account       string `json:"account,omitempty"`
+	// AccountUserID 登录名对应的已有账号（校验前查到的，不代表是本人；0 = 不存在或没查）
+	AccountUserID int64 `json:"accountUserId,omitempty"`
 	IP            string `json:"ip,omitempty"`
 	UserAgent     string `json:"userAgent,omitempty"`
 	Device        Device `json:"device"`
@@ -121,6 +123,7 @@ type Env struct {
 	AppID         int64              `expr:"app_id" json:"app_id"`
 	UserID        int64              `expr:"user_id" json:"user_id"`
 	Account       string             `expr:"account" json:"account"`
+	AccountUserID int64              `expr:"account_user_id" json:"account_user_id"`
 	IP            string             `expr:"ip" json:"ip"`
 	DeviceID      string             `expr:"device_id" json:"device_id"`
 	UA            string             `expr:"ua" json:"ua"`
@@ -155,7 +158,7 @@ type Variable struct {
 func Variables() []Variable {
 	return []Variable{
 		{"scene", "string", "场景"}, {"app_id", "int", "应用 ID"}, {"user_id", "int", "用户 ID（未登录为 0）"},
-		{"account", "string", "登录名 / 邮箱 / 手机号"}, {"ip", "string", "客户端 IP"}, {"device_id", "string", "设备 ID"},
+		{"account", "string", "登录名 / 邮箱 / 手机号"}, {"account_user_id", "int", "登录名对应的已有账号（校验前，不存在为 0）"}, {"ip", "string", "客户端 IP"}, {"device_id", "string", "设备 ID"},
 		{"ua", "string", "User-Agent"}, {"phone", "string", "手机号"}, {"phone_prefix", "string", "手机号段（前 7 位）"},
 		{"email", "string", "邮箱"}, {"email_domain", "string", "邮箱域名"}, {"amount", "float", "金额"},
 		{"target_user_id", "int", "对方用户 ID"}, {"captcha_passed", "bool", "已通过图形验证码"}, {"captcha_available", "bool", "应用能出图形验证码"}, {"logged_in", "bool", "已登录"},
@@ -281,7 +284,7 @@ func BuildEnv(r Request) Env {
 		weekday = 7
 	}
 	env := Env{
-		Scene: r.Scene, AppID: r.AppID, UserID: r.UserID, Account: r.Account, IP: r.IP, DeviceID: r.Device.ID,
+		Scene: r.Scene, AppID: r.AppID, UserID: r.UserID, Account: r.Account, AccountUserID: r.AccountUserID, IP: r.IP, DeviceID: r.Device.ID,
 		UA: r.UserAgent, Phone: r.Phone, PhonePrefix: PhonePrefix(r.Phone), Email: r.Email, EmailDomain: EmailDomain(r.Email),
 		Amount: r.Amount, TargetUserID: r.TargetUserID, CaptchaPassed: r.CaptchaPassed, CaptchaReady: !r.CaptchaUnavailable, LoggedIn: r.UserID > 0,
 		Hour: r.Now.Hour(), Weekday: weekday,

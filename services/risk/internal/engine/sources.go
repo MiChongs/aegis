@@ -43,20 +43,41 @@ type VelocityQuery struct {
 
 // RecordsVelocity 这次请求能不能记进这个滑窗计数。
 //
-// 登录名（account）只有在账号确认存在时才可信：登录、找回密码这些接入点在校验之前就做决策，
-// 那时的登录名只是对方输入的字符串——打错的、根本不存在的、或是冒用别人的都会进来。
-// 拿它当计数的主体或去重成员，一个地址上随手试几个名字就成了「多个账号」，
-// 别人也能用受害者的登录名从各处请求，把受害者的「一号多机 / 多 IP」刷上去。
-// 所以只在已解析到账号（UserID > 0，即已登录的请求）时记入，其余只读。
-// 登录失败这类「账号存在且出了问题」的计数走事件（login.fail 带 user_id，见流式特征），不靠决策时的输入。
+// 登录名（account）只有对应着真实存在的账号时才可信：登录、找回密码这些接入点在校验之前就做决策，
+// 那时的登录名只是对方输入的字符串——打错的、根本不存在的都会进来，
+// 拿它当计数的主体或去重成员，一个地址上随手试几个名字就成了「多个账号」。
+// 所以只在账号确认存在时记入：已登录（UserID），或主服务查到了登录名对应的账号（AccountUserID）。
+// 登录前、登录成功、登录失败都会经过带着已有账号的决策，于是都会被数到；不存在的登录名只读。
 func RecordsVelocity(f bundle.Feature, env *Env) bool {
-	if env.UserID > 0 {
+	if ConfirmedAccount(env) > 0 {
 		return true
 	}
 	if f.Entity == bundle.EntityAccount {
 		return false
 	}
 	return !(f.Velocity != nil && f.Velocity.Agg == bundle.AggDistinct && f.Velocity.DistinctOf == bundle.EntityAccount)
+}
+
+// ConfirmedAccount 这次请求确认存在的账号：已登录的用户优先，其次是登录名对应的已有账号；0 = 没有
+func ConfirmedAccount(env *Env) int64 {
+	if env.UserID > 0 {
+		return env.UserID
+	}
+	return env.AccountUserID
+}
+
+// DistinctMember 去重计数这次的成员取值与索引标签。
+// 数「账号」时按确认存在的账号 ID 去重：同一个人用登录名、邮箱、手机号登录，或登录前后，都只算一个；
+// 没有确认的账号时退回登录名（这时请求只读，见 RecordsVelocity）。
+func DistinctMember(of string, env *Env) (value, tag string) {
+	if of == bundle.EntityAccount {
+		if id := ConfirmedAccount(env); id > 0 {
+			v := itoa(id)
+			return v, CounterTag(bundle.EntityUser, env.AppID, v)
+		}
+	}
+	v := EntityValue(env, of)
+	return v, CounterTag(of, env.AppID, v)
 }
 
 // CounterTag 计数索引用的对象标签。用户 ID 全平台唯一；登录名按应用区分；设备码、地址、网段、手机号是全局的。
