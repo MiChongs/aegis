@@ -32,6 +32,9 @@
 | pinyin-pro | ^3.28.2（命令面板的拼音检索，**动态 import 按需加载**，见下方侧边栏一节） |
 | screenfull | ^6.0.2（顶栏全屏开关；跨浏览器前缀差异交给它，见下方顶栏一节） |
 | auto-skeleton-react | ^1.0.5（自动骨架屏，按子树真实 DOM 量出骨架；**只经 `components/ui/auto-skeleton.tsx` 使用**，见下方骨架屏一节） |
+| nuqs | 2.10.3（地址栏状态；**只有 `/feedback` 用**，`NuqsAdapter` 包在那一页里，见下方「意见反馈」一节） |
+| use-stick-to-bottom | 1.1.6（会话流贴底跟随，反馈详情用） |
+| @tiptap/markdown | 3.31.4（Tiptap 的 Markdown 读写；**版本必须与 `@tiptap/core` 完全一致**，它的 peer 是精确版本号） |
 | ESLint | ^9.39.5 |
 | bun | 1.4.1（包管理与脚本运行；运行时仍是 Node，见下方「包管理：bun」） |
 
@@ -1424,6 +1427,50 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 
 渠道配置表单由 `/api/admin/notify/catalog` 返回的元数据动态渲染，
 后端新增一种 IM 时前端零改动 —— 不要把渠道字段硬编码回组件里。
+
+## 意见反馈（/feedback）
+
+反馈就是 `kind=feedback` 的工单，接口与 hooks 全部复用工单那套（`lib/api/tickets.ts`、`lib/ticket-hooks.ts`），
+界面是独立的一套「反馈台」：左边收件箱、中间会话、右边反馈人资料。工单中心仍用 `components/tickets/workspace/`。
+
+| 文件 | 职责 |
+|---|---|
+| `(console)/feedback/page.tsx` | 只挂 `NuqsAdapter` 与边界 |
+| `components/feedback/feedback-workspace.tsx` | 装配：三栏、快捷键、资料面板的并排 / 浮层切换 |
+| `components/feedback/feedback-state.ts` | 地址栏状态（nuqs）与「状态 → 列表接口参数」 |
+| `components/feedback/feedback-inbox.tsx` | 收件箱：搜索、视图页签、筛选菜单（cmdk）、虚拟列表行 |
+| `components/feedback/feedback-thread.tsx` | 页头（人 → 标题 → 属性胶囊）与会话流 |
+| `components/feedback/feedback-composer.tsx` | 回复框（Tiptap，产出 Markdown） |
+| `components/feedback/feedback-context-panel.tsx` | 右栏：「用户」资料卡与「详情」（时效、标签、关注人、附件、操作记录） |
+| `components/feedback/feedback-action-menu.tsx` | 操作菜单（cmdk），页头「⋯」与快捷键 `.` 共用 |
+| `components/feedback/feedback-overview.tsx` | 页头一行摘要、没选中时的概览、快捷键清单 |
+| `components/feedback/use-feedback-actions.ts` | 对一条反馈的全部写操作，胶囊 / 菜单 / 快捷键三处入口共用 |
+| `components/feedback/feedback-kit.tsx` | `PropertyMenu`（属性胶囊）、`Facts`/`Fact`、分类色点 |
+
+七条硬约束：
+
+1. **页面状态全在地址栏**（`id` / `view` / `q` / `sort` / `app` / `category` / `priority` / `assignee`）。
+   不要再加本地 state 存筛选：刷新会丢，链接发给同事对不上，站内信的 `/feedback?id=` 深链也会和页面内点击走成两条路径。
+   默认值不写进地址栏（`clearOnDefault`），更新用 `replace`，不占历史记录。
+2. **「待处理」视图显式传四个未结状态。** 后端不传 `status` 时只排除已关闭与已撤销，已解决的会混进来，
+   列表条数就和页签上的计数对不上（旧版的「未结单 127」对着「共 134 条」就是这么来的）。
+3. **头像与正文摘要由列表接口直接带出**（`requesterAvatar` / `assigneeAvatar` / `preview`，详情里还有每条消息的
+   `authorAvatar`）。不要为了头像逐行去调用户接口。头像地址恒可用：没传头像时是按账号生成的默认图。
+4. **反馈人资料走 `GET /api/admin/tickets/:id/requester`，不走 `/apps/:appkey/users/:userId`。**
+   处理组成员可能只凭「被指派」看得到这条反馈，却没有该应用的用户查看权限：前者按「能看到这条工单」放行，
+   返回里的 `user` / `lastLogin`（邮箱、手机号、登录地址）只在 `canViewUser` 为真时下发。
+   界面按 `canViewUser` 与 `removed` 分情况展示，不要自己拿角色推断。
+5. **回复框发出去的是 Markdown，不是 HTML。** `editor.getMarkdown()` 取值，`contentType: "markdown"` 提交；
+   App 端按 Markdown 渲染客服回复。下划线没有对应的 Markdown 写法，所以在 StarterKit 里关掉了，不要加回来。
+   编辑器的按键 / 粘贴回调只在创建时绑定一次，最新状态经 `live` ref 递进去；占位文字经 `ReplyHint` 扩展的
+   `setReplyHint` 命令更新（直接改 `editor.storage` 过不了 `react-hooks/immutability`）。
+6. **属性改动一处实现。** 状态、分类、优先级、受理人、锁定、删除都在 `use-feedback-actions.ts`；
+   新增入口（比如再加一个快捷键）调它，不要在组件里再写一遍 mutation 与提示文案。
+7. **资料面板的并排 / 浮层靠量详情区宽度决定**（`WIDE_DETAIL`），不是视口断点：
+   列表栏可拖宽，侧边栏可折叠，同一个视口宽度下详情区可以差出三四百像素。
+
+快捷键：`J`/`K` 上下一条，`/` 搜索，`R` 回复，`N` 备注，`E` 解决，`A` 指派给我，`I` 资料面板，`.` 操作菜单，
+`Ctrl/⌘ + Enter` 发送，空回复框里敲 `/` 出快捷回复。
 
 ## 应用用户详情（/users/app-users/[appKey]/[userId]）
 

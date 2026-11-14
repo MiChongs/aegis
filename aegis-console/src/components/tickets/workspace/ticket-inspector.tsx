@@ -432,7 +432,7 @@ function useNow(intervalMs: number) {
 }
 
 /** 时效条：从创建到时限的已用比例；完成后变绿并显示实际用时 */
-function SlaMeter({ label, start, due, doneAt }: { label: string; start: string; due?: string; doneAt?: string }) {
+export function SlaMeter({ label, start, due, doneAt }: { label: string; start: string; due?: string; doneAt?: string }) {
   const now = useNow(30_000);
   const startMs = new Date(start).getTime();
   if (doneAt) {
@@ -479,7 +479,7 @@ function SlaMeter({ label, start, due, doneAt }: { label: string; start: string;
   );
 }
 
-function TagEditor({ ticket, editable }: { ticket: TicketItem; editable: boolean }) {
+export function TagEditor({ ticket, editable }: { ticket: TicketItem; editable: boolean }) {
   const updateMut = useUpdateTicketMutation();
   const [draft, setDraft] = useState("");
   const tags = ticket.tags ?? [];
@@ -548,7 +548,7 @@ function TagEditor({ ticket, editable }: { ticket: TicketItem; editable: boolean
   );
 }
 
-function Watchers({ ticket }: { ticket: TicketItem }) {
+export function Watchers({ ticket }: { ticket: TicketItem }) {
   const operatorId = useAuthStore((state) => Number(state.operator?.id) || 0);
   const watchMut = useWatchTicketMutation();
   const watchers = ticket.watchers ?? [];
@@ -571,7 +571,7 @@ function Watchers({ ticket }: { ticket: TicketItem }) {
             <Tooltip key={watcher.adminId}>
               <TooltipTrigger asChild>
                 <span>
-                  <PersonAvatar name={watcher.displayName || watcher.account} size="sm" />
+                  <PersonAvatar name={watcher.displayName || watcher.account} src={watcher.avatar} size="sm" />
                 </span>
               </TooltipTrigger>
               <TooltipContent>{watcher.displayName || watcher.account}</TooltipContent>
@@ -591,7 +591,7 @@ function Watchers({ ticket }: { ticket: TicketItem }) {
   );
 }
 
-function Timeline({ ticket }: { ticket: TicketItem }) {
+export function Timeline({ ticket }: { ticket: TicketItem }) {
   const events = [...(ticket.events ?? [])].reverse();
   if (!events.length) return <p className="text-xs text-muted-foreground">暂无操作记录</p>;
   return (

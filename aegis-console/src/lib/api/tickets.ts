@@ -75,6 +75,8 @@ export type TicketMessage = {
   authorUserId?: number;
   authorAdminId?: number;
   authorName: string;
+  /** 发言人头像，详情接口回填 */
+  authorAvatar?: string;
   internal: boolean;
   content: string;
   contentType: string;
@@ -103,6 +105,7 @@ export type TicketWatcher = {
   adminId: number;
   account?: string;
   displayName?: string;
+  avatar?: string;
   createdAt: string;
 };
 
@@ -118,14 +121,18 @@ export type TicketItem = {
   requesterAdminId?: number;
   requesterName: string;
   requesterContact?: string;
+  /** 提单人头像地址（恒可用：没传头像时是按账号生成的默认图） */
+  requesterAvatar?: string;
   categoryId?: number;
   categoryName?: string;
+  categoryKey?: string;
   title: string;
   status: TicketStatus;
   priority: TicketPriority;
   source: TicketSource;
   assigneeAdminId?: number;
   assigneeName?: string;
+  assigneeAvatar?: string;
   groupId?: number;
   groupName?: string;
   slaPolicyId?: number;
@@ -139,6 +146,8 @@ export type TicketItem = {
   /** 列表接口若返回附件计数则在行内展示，未返回时回落到 attachments 数组 */
   attachmentCount?: number;
   imageCount?: number;
+  /** 提单人首条内容的开头，列表行用 */
+  preview?: string;
   lastMessageAt?: string;
   lastMessageRole?: string;
   reopenedCount: number;
@@ -325,6 +334,8 @@ export type TicketListParams = {
   groupId?: number;
   assigneeId?: number;
   unassigned?: boolean;
+  /** 提单人：应用用户 ID 或管理员 ID */
+  requesterId?: number;
   keyword?: string;
   tags?: string;
   slaState?: string;
@@ -338,6 +349,65 @@ export type TicketListParams = {
   page?: number;
   limit?: number;
 };
+
+// ─────────────── 提单人资料 ───────────────
+
+/** 应用用户的账号资料摘要；只在调用者有该应用的用户查看权限时下发 */
+export type TicketRequesterAccount = {
+  id: number;
+  /** 对外用户 ID：用户在 App 里看到、报给客服的那个号 */
+  publicId: number;
+  account: string;
+  nickname?: string;
+  email?: string;
+  phone?: string;
+  enabled: boolean;
+  disabledReason?: string;
+  disabledEndTime?: string | null;
+  integral: number;
+  experience: number;
+  vipExpireAt?: string | null;
+  vipLifetimeAt?: string | null;
+  registerTime?: string | null;
+  registerIp?: string;
+  registerProvince?: string;
+  registerCity?: string;
+  registerIsp?: string;
+  createdAt: string;
+};
+
+export type TicketRequesterLogin = {
+  at: string;
+  ip?: string;
+  location?: string;
+  isp?: string;
+  loginType?: string;
+  provider?: string;
+  deviceName?: string;
+  platform?: string;
+  osVersion?: string;
+  appVersion?: string;
+};
+
+export type TicketRequesterProfile = {
+  type: "user" | "admin";
+  /** 账号已删除或注销，工单上只剩留名 */
+  removed: boolean;
+  appid: number;
+  appKey?: string;
+  appName?: string;
+  name: string;
+  contact?: string;
+  avatar?: string;
+  canViewUser: boolean;
+  user?: TicketRequesterAccount;
+  lastLogin?: TicketRequesterLogin;
+  tickets: { total: number; open: number; feedback: number };
+};
+
+export function getTicketRequester(token: string, id: number | string) {
+  return apiRequest<TicketRequesterProfile>(`/api/admin/tickets/${id}/requester`, { token });
+}
 
 // ─────────────── 工单读接口 ───────────────
 

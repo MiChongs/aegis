@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { joinApiUrl } from "@/lib/api/client";
@@ -312,15 +312,22 @@ export function nameInitials(name?: string) {
 
 export function PersonAvatar({
   name,
+  src,
   size = "default",
+  preview = false,
   className
 }: {
   name?: string;
+  /** 头像地址；没有或加载失败时退回按名字散列的色块 */
+  src?: string;
   size?: "sm" | "default" | "lg";
+  /** 点击放大查看 */
+  preview?: boolean;
   className?: string;
 }) {
   return (
-    <Avatar size={size} preview={false} className={className}>
+    <Avatar size={size} preview={preview} className={className}>
+      {src ? <AvatarImage src={src} alt={name || "头像"} /> : null}
       <AvatarFallback className={cn("font-medium", avatarTone(name || "?"))}>{nameInitials(name)}</AvatarFallback>
     </Avatar>
   );

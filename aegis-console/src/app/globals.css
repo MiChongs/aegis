@@ -2031,6 +2031,83 @@
 }
 
 /* ==================================================================== */
+/*  反馈台回复框（components/feedback/feedback-composer.tsx）           */
+/* ==================================================================== */
+
+/* Tiptap 的可编辑区。排版与会话里渲染出来的 Markdown 保持同一套间距，写的时候就是发出去的样子 */
+.reply-editor {
+  min-height: 3.5rem;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  outline: none;
+  overflow-wrap: anywhere;
+}
+
+.reply-editor p {
+  margin: 0;
+}
+
+.reply-editor > * + * {
+  margin-top: 0.5rem;
+}
+
+.reply-editor ul,
+.reply-editor ol {
+  padding-left: 1.25rem;
+}
+
+.reply-editor ul {
+  list-style: disc;
+}
+
+.reply-editor ol {
+  list-style: decimal;
+}
+
+.reply-editor a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.reply-editor code {
+  border-radius: 0.25rem;
+  background: var(--muted);
+  padding: 0.125rem 0.25rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.85em;
+}
+
+.reply-editor pre {
+  border-radius: 0.5rem;
+  background: var(--muted);
+  padding: 0.625rem 0.75rem;
+  overflow-x: auto;
+}
+
+.reply-editor pre code {
+  background: none;
+  padding: 0;
+}
+
+.reply-editor blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.reply-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+/* ==================================================================== */
 /*  自动骨架屏（components/ui/auto-skeleton.tsx）                       */
 /* ==================================================================== */
 

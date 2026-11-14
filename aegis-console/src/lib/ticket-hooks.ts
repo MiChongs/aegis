@@ -17,6 +17,7 @@ import {
   getTicket,
   getTicketAgentStats,
   getTicketMetadata,
+  getTicketRequester,
   getTicketStats,
   getTicketTrend,
   getTicketWorkbench,
@@ -151,6 +152,17 @@ export function useTicketDetailQuery(id?: number | null) {
     queryKey: ["ticket-detail", token, id],
     queryFn: () => getTicket(token as string, id as number),
     enabled: Boolean(token && id)
+  });
+}
+
+/** 提单人资料卡：头像、账号资料、最近登录、历史提交数 */
+export function useTicketRequesterQuery(id?: number | null) {
+  const token = useToken();
+  return useQuery({
+    queryKey: ["ticket-requester", token, id],
+    queryFn: () => getTicketRequester(token as string, id as number),
+    enabled: Boolean(token && id),
+    staleTime: 60_000
   });
 }
 
