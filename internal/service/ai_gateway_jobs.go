@@ -12,6 +12,7 @@ import (
 
 	aidomain "aegis/internal/domain/ai"
 	"aegis/internal/domain/aigateway"
+	pgrepo "aegis/internal/repository/postgres"
 
 	"go.uber.org/zap"
 )
@@ -36,6 +37,9 @@ const (
 	aiGatewayJobMaxWait = 25 * time.Second
 	// aiGatewayJobPollAfter 建议客户端的轮询间隔。
 	aiGatewayJobPollAfter = 2 * time.Second
+	// aiGatewayJobReplayWait / aiGatewayJobReplayPoll 同键重复提交时，等原任务行写进来最多多久、多久查一次。
+	aiGatewayJobReplayWait = 3 * time.Second
+	aiGatewayJobReplayPoll = 150 * time.Millisecond
 	// aiGatewayJobDrainTimeout 进程退出时等进行中的任务收尾多久，超过就取消（取消即放回、不扣费）。
 	aiGatewayJobDrainTimeout = 20 * time.Second
 )
@@ -136,23 +140,56 @@ func (r *aiGatewayJobRegistry) drain(timeout time.Duration) {
 }
 
 // SubmitJob 异步提交一次原样转发：暂扣成功后立刻返回进行中的任务，上游调用在后台跑。
-func (s *AIGatewayService) SubmitJob(ctx context.Context, principal *AIGatewayPrincipal, in AIGatewayJobInput) (*aigateway.JobView, error) {
+//
+// 带 Idempotency-Key 重复提交（客户端没收到上一次的响应、断网后续交、进程被杀后恢复）时不再建新任务、
+// 不再暂扣，而是原样返回上一次提交建立的那个任务，replayed 为真。这样客户端可以放心地用同一个键重发，
+// 结论只有一个：要么拿到原任务接着轮询，要么上一次确实没成（失败或过期的不占键），这次正常提交。
+func (s *AIGatewayService) SubmitJob(ctx context.Context, principal *AIGatewayPrincipal, in AIGatewayJobInput) (view *aigateway.JobView, replayed bool, err error) {
 	prepared, err := s.preparePassthrough(ctx, principal, in.Passthrough)
 	if err != nil {
-		return nil, err
+		if existing := s.replayJob(ctx, principal, err); existing != nil {
+			return existing, true, nil
+		}
+		return nil, false, err
 	}
 	now := s.now()
 	if err := s.pg.CreateAIGatewayJob(context.WithoutCancel(ctx), prepared.requestNo, in.Passthrough.Endpoint, now); err != nil {
 		// 还没调上游：放回暂扣，本次不扣费。
 		cause := fmt.Errorf("登记异步任务失败：%w", err)
 		prepared.call.finish(ctx, s.release(ctx, prepared.requestNo, cause, nil, now), nil, aidomain.FinishError)
-		return nil, cause
+		return nil, false, cause
 	}
 	jobCtx, cancel := context.WithTimeout(context.Background(), aiGatewayJobTimeout)
 	s.jobs.add(prepared.requestNo, cancel)
 	go s.runJob(jobCtx, cancel, prepared, in)
 	return aiGatewayJobView(&aigateway.Job{RequestNo: prepared.requestNo, AppID: principal.AppID, UserID: principal.UserID,
-		Endpoint: in.Passthrough.Endpoint, Status: aigateway.JobInProgress, CreatedAt: now}, now), nil
+		Endpoint: in.Passthrough.Endpoint, Status: aigateway.JobInProgress, CreatedAt: now}, now), false, nil
+}
+
+// replayJob 提交撞上同键的已有调用时，找出那次调用的任务。
+//
+// 暂扣与登记任务是两步：同键的第二次请求可能恰好落在两步之间，这时任务行还没写进去，稍等再查。
+// 那次调用不是异步任务（同步调用占了这个键）或者等不到任务行时返回 nil，调用方照常回 40213（带 request_no）。
+func (s *AIGatewayService) replayJob(ctx context.Context, principal *AIGatewayPrincipal, err error) *aigateway.JobView {
+	conflict, ok := AIGatewayIdempotencyConflictOf(err)
+	if !ok {
+		return nil
+	}
+	deadline := time.Now().Add(aiGatewayJobReplayWait)
+	for {
+		job, loadErr := s.pg.GetAIGatewayJob(ctx, principal.AppID, principal.UserID, conflict.RequestNo)
+		if loadErr == nil {
+			return aiGatewayJobView(job, s.now())
+		}
+		if !errors.Is(loadErr, pgrepo.ErrAIGatewayJobNotFound) || !time.Now().Before(deadline) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(aiGatewayJobReplayPoll):
+		}
+	}
 }
 
 func (s *AIGatewayService) runJob(ctx context.Context, cancel context.CancelFunc, prepared *preparedPassthrough, in AIGatewayJobInput) {

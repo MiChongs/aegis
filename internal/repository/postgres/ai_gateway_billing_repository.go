@@ -498,7 +498,12 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'reserved',$12,$13,$14,$15,$16,$17,$1
 		nullableString(truncateColumn(in.UserAgent, 256)), now, now.Add(ttl)); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, "idempotency") {
-			return nil, &AIGatewayIdempotencyError{Status: aigateway.StatusReserved}
+			// 并发的同键请求先插进去了：事务已中止，另开连接查它的编号，调用方据此重放那一次。
+			conflict := &AIGatewayIdempotencyError{Status: aigateway.StatusReserved}
+			_ = r.pool.QueryRow(context.WithoutCancel(ctx), `SELECT request_no, status FROM ai_gateway_requests
+WHERE user_id = $1 AND idempotency_key = $2 AND status NOT IN ('failed', 'expired') LIMIT 1`, in.UserID, idempotencyKey).
+				Scan(&conflict.RequestNo, &conflict.Status)
+			return nil, conflict
 		}
 		return nil, err
 	}

@@ -79,6 +79,8 @@ type aiRelayErrorShape struct {
 	openAI    string
 	code      string
 	anthropic string
+	// requestNo 40213：占用这个 Idempotency-Key 的那次调用，客户端拿它接着取结果。
+	requestNo string
 }
 
 func aiRelayErrorOf(err error) aiRelayErrorShape {
@@ -119,6 +121,9 @@ func aiRelayErrorOf(err error) aiRelayErrorShape {
 	if shape.aegisCode == 40203 {
 		shape.code = "model_not_found"
 	}
+	if conflict, ok := service.AIGatewayIdempotencyConflictOf(err); ok {
+		shape.requestNo = conflict.RequestNo
+	}
 	return shape
 }
 
@@ -137,11 +142,17 @@ func aiRelayErrorBody(protocol string, shape aiRelayErrorShape) gin.H {
 		if shape.aegisCode != 0 {
 			inner["aegis_code"] = shape.aegisCode
 		}
+		if shape.requestNo != "" {
+			inner["request_no"] = shape.requestNo
+		}
 		return gin.H{"type": "error", "error": inner}
 	}
 	body := gin.H{"message": shape.message, "type": shape.openAI, "code": shape.code, "param": nil}
 	if shape.aegisCode != 0 {
 		body["aegis_code"] = shape.aegisCode
+	}
+	if shape.requestNo != "" {
+		body["request_no"] = shape.requestNo
 	}
 	return gin.H{"error": body}
 }
@@ -288,7 +299,7 @@ func (h *Handler) relayPassthrough(c *gin.Context, principal *service.AIGatewayP
 	input service.AIGatewayPassthroughInput, render aiRelayRender, keepalive bool) {
 	ctx := c.Request.Context()
 	if aiRelayWantsAsync(c) {
-		job, err := h.aiGateway.SubmitJob(ctx, principal, service.AIGatewayJobInput{
+		job, replayed, err := h.aiGateway.SubmitJob(ctx, principal, service.AIGatewayJobInput{
 			Passthrough: input, Render: render, Fail: aiRelayJobError,
 		})
 		if err != nil {
@@ -296,6 +307,12 @@ func (h *Handler) relayPassthrough(c *gin.Context, principal *service.AIGatewayP
 			return
 		}
 		c.Header("Location", service.RelayBasePath+"/jobs/"+job.ID)
+		if replayed {
+			// 同一个 Idempotency-Key 的重复提交：回的是上一次建立的任务，没有新建、没有再扣费。
+			c.Header("Idempotent-Replayed", "true")
+			c.JSON(http.StatusOK, job)
+			return
+		}
 		c.JSON(http.StatusAccepted, job)
 		return
 	}

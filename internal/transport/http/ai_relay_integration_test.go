@@ -392,6 +392,36 @@ func TestAIRelayHTTPIntegration(t *testing.T) {
 	if after := integral(); after != before-2 {
 		t.Fatalf("异步生图应扣 2 积分：%d → %d", before, after)
 	}
+	// 同一个 Idempotency-Key 重复提交（客户端没收到响应、断网后续交）：回原任务（200 + Idempotent-Replayed），只扣一次。
+	before = integral()
+	keyed := map[string]string{"Authorization": "Bearer " + secret, "Prefer": "respond-async", "Idempotency-Key": "img-replay-1"}
+	resp, body = do("POST", "/api/ai/v1/images/generations", "application/json",
+		strings.NewReader(`{"model":"draw","prompt":"a keyed cat","n":1}`), keyed)
+	var keyedJob aigateway.JobView
+	if err := json.Unmarshal(body, &keyedJob); err != nil || resp.StatusCode != 202 {
+		t.Fatalf("带键提交应回 202：%d %s", resp.StatusCode, body)
+	}
+	resp, body = do("POST", "/api/ai/v1/images/generations", "application/json",
+		strings.NewReader(`{"model":"draw","prompt":"a keyed cat","n":1}`), keyed)
+	var replay aigateway.JobView
+	if err := json.Unmarshal(body, &replay); err != nil || resp.StatusCode != 200 || replay.ID != keyedJob.ID ||
+		resp.Header.Get("Idempotent-Replayed") != "true" || resp.Header.Get("Location") != "/api/ai/v1/jobs/"+keyedJob.ID {
+		t.Fatalf("同键重复提交应原样回第一次的任务：%d %s", resp.StatusCode, body)
+	}
+	if resp, body = do("GET", "/api/ai/v1/jobs/"+keyedJob.ID+"?wait=5", "", nil, bearer); resp.StatusCode != 200 {
+		t.Fatalf("取同键任务失败：%d %s", resp.StatusCode, body)
+	}
+	if after := integral(); after != before-2 {
+		t.Fatalf("同键提交两次只应扣一次（2 积分）：%d → %d", before, after)
+	}
+	// 同步调用撞上同一个键：仍回 40213，但带结构化的 request_no。
+	resp, body = do("POST", "/api/ai/v1/images/generations", "application/json",
+		strings.NewReader(`{"model":"draw","prompt":"a keyed cat","n":1}`),
+		map[string]string{"Authorization": "Bearer " + secret, "Idempotency-Key": "img-replay-1"})
+	if resp.StatusCode != 409 || !strings.Contains(string(body), `"aegis_code":40213`) ||
+		!strings.Contains(string(body), `"request_no":"`+keyedJob.ID+`"`) {
+		t.Fatalf("同步调用撞键应回 40213 并带 request_no：%d %s", resp.StatusCode, body)
+	}
 	other, err := gw.CreateKey(ctx, &authdomain.Session{AppID: appID, UserID: userID}, aigateway.KeyInput{})
 	if err != nil {
 		t.Fatal(err)
