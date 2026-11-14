@@ -1,7 +1,9 @@
 package httptransport
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 
 	"aegis/internal/authz"
 	"aegis/internal/service"
@@ -35,9 +37,45 @@ func (h *Handler) AdminAuthzModel(c *gin.Context) {
 		})
 	}
 	response.Success(c, 200, "ok", gin.H{
+		"tree":             authz.PermissionTree(),
+		"legacy":           authz.LegacyPermissionNames(),
 		"permissionGroups": authz.PermissionCatalog(),
 		"builtinRoles":     authz.BuiltinRoles(),
 		"routeRules":       routes,
+	})
+}
+
+// AdminAuthzCatalog 权限树（目录 → 菜单 → 操作）与旧权限点的中文名。
+//
+// 角色编辑器、个人授权、临时权限、MCP 密钥签发都要这一份，且它是编译进二进制的静态目录，
+// 不含任何租户数据，因此任意已登录管理员可读（不跟着「角色权限：查看」走，否则持有
+// 「个人授权」的人打不开授权树）。
+func (h *Handler) AdminAuthzCatalog(c *gin.Context) {
+	response.Success(c, 200, "ok", gin.H{
+		"tree":   authz.PermissionTree(),
+		"legacy": authz.LegacyPermissionNames(),
+	})
+}
+
+// AdminAuthzPermissionRoutes 某个权限点覆盖的接口（权限点详情里列出来）。
+func (h *Handler) AdminAuthzPermissionRoutes(c *gin.Context) {
+	code := c.Query("code")
+	rules := authz.RoutesForPermission(code)
+	items := make([]gin.H, 0, len(rules))
+	for _, rule := range rules {
+		scope := "platform"
+		if rule.Scope == authz.ScopeApp {
+			scope = "app"
+		}
+		items = append(items, gin.H{"methods": rule.Methods, "pattern": rule.Pattern, "scope": scope, "note": rule.Note})
+	}
+	response.Success(c, 200, "ok", gin.H{
+		"code":   code,
+		"name":   authz.PermissionName(code),
+		"path":   authz.PermissionPath(code),
+		"legacy": authz.LegacyOf(code),
+		"danger": authz.PermissionIsDanger(code),
+		"routes": items,
 	})
 }
 
@@ -71,14 +109,28 @@ func (h *Handler) AdminAuthzSetRoleOverride(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
+	session, _ := adminAccessSession(c)
 	var actor *int64
-	if session, ok := adminAccessSession(c); ok && session != nil {
+	if session != nil {
 		actor = &session.AdminID
+	}
+	// 授权上限：override 里新增的允许项必须是操作者自己持有的
+	if err := h.admin.EnsureCanGrant(c.Request.Context(), session, req.Allow, nil); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	for _, parent := range req.Inherits {
+		if err := h.admin.EnsureCanAssignRole(c.Request.Context(), session, parent, nil); err != nil {
+			h.writeError(c, err)
+			return
+		}
 	}
 	if err := h.admin.SetRoleOverride(c.Request.Context(), req, actor); err != nil {
 		h.writeError(c, err)
 		return
 	}
+	h.recordAudit(c, "role.override", "role", req.RoleKey,
+		fmt.Sprintf("调整角色 %s：额外允许 %d 项，禁止 %d 项", req.RoleKey, len(req.Allow), len(req.Deny)))
 	response.Success(c, 200, "已保存", gin.H{"roleKey": req.RoleKey})
 }
 
@@ -109,15 +161,29 @@ func (h *Handler) AdminAuthzSetAdminGrants(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	var actor *int64
-	if session, ok := adminAccessSession(c); ok && session != nil {
-		actor = &session.AdminID
-	}
-	if err := h.admin.SetAdminGrants(c.Request.Context(), adminID, req.Grants, actor); err != nil {
+	session, _ := adminAccessSession(c)
+	if err := h.admin.SetAdminGrants(c.Request.Context(), session, adminID, req.Grants); err != nil {
 		h.writeError(c, err)
 		return
 	}
 	response.Success(c, 200, "已保存", gin.H{"adminId": adminID, "count": len(req.Grants)})
+	h.recordAudit(c, "admin.grants", "admin", strconv.FormatInt(adminID, 10),
+		fmt.Sprintf("保存管理员 #%d 的个人授权 %d 项", adminID, len(req.Grants)))
+}
+
+// AdminAuthzGetAdminGrants 某个管理员的个人授权（直接授予 / 禁止）。
+func (h *Handler) AdminAuthzGetAdminGrants(c *gin.Context) {
+	adminID, err := pathInt64(c, "adminId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40058, "无效的管理员标识")
+		return
+	}
+	items, err := h.admin.ListAdminGrants(c.Request.Context(), adminID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, 200, "ok", items)
 }
 
 // AdminAuthzExplain 回答「某人在某作用域下能不能做某事，为什么」。

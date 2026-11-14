@@ -1,0 +1,12 @@
+ALTER TABLE admin_role_permissions DROP CONSTRAINT IF EXISTS admin_role_permissions_effect_chk;
+ALTER TABLE admin_role_permissions DROP COLUMN IF EXISTS effect;
+ALTER TABLE admin_roles DROP CONSTRAINT IF EXISTS admin_roles_data_scope_chk;
+ALTER TABLE admin_roles DROP CONSTRAINT IF EXISTS admin_roles_status_chk;
+ALTER TABLE admin_roles DROP COLUMN IF EXISTS updated_by;
+ALTER TABLE admin_roles DROP COLUMN IF EXISTS data_app_ids;
+ALTER TABLE admin_roles DROP COLUMN IF EXISTS data_scope;
+ALTER TABLE admin_roles DROP COLUMN IF EXISTS sort_order;
+ALTER TABLE admin_roles DROP COLUMN IF EXISTS status;
+DROP INDEX IF EXISTS idx_admin_accounts_tier;
+ALTER TABLE admin_accounts DROP CONSTRAINT IF EXISTS admin_accounts_system_implies_super_chk;
+ALTER TABLE admin_accounts DROP COLUMN IF EXISTS is_system_admin;

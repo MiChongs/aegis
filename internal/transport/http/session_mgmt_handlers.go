@@ -7,6 +7,7 @@ import (
 	"time"
 
 	admindomain "aegis/internal/domain/admin"
+	"aegis/internal/service"
 	"aegis/pkg/response"
 
 	"github.com/gin-gonic/gin"
@@ -71,6 +72,17 @@ func (h *Handler) RevokeSession(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, "缺少会话 ID")
 		return
 	}
+	owner, err := h.sessionMgmt.SessionOwner(c.Request.Context(), sessionID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	if owner > 0 {
+		if _, err := h.admin.GuardAdminTarget(c.Request.Context(), session, owner, service.AdminActionSession); err != nil {
+			h.writeError(c, err)
+			return
+		}
+	}
 	if err := h.sessionMgmt.ForceLogout(c.Request.Context(), sessionID, session.AdminID); err != nil {
 		h.writeError(c, err)
 		return
@@ -93,6 +105,10 @@ func (h *Handler) ForceLogoutAdmin(c *gin.Context) {
 	adminID, err := strconv.ParseInt(c.Param("adminId"), 10, 64)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, "无效的管理员 ID")
+		return
+	}
+	if _, err := h.admin.GuardAdminTarget(c.Request.Context(), session, adminID, service.AdminActionSession); err != nil {
+		h.writeError(c, err)
 		return
 	}
 	count, err := h.sessionMgmt.ForceLogoutAll(c.Request.Context(), adminID, session.AdminID)
@@ -171,6 +187,19 @@ func (h *Handler) GrantTempPermission(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, "过期时间不能早于当前时间")
 		return
 	}
+	// 档位守卫 + 授权上限：临时权限同样只能授给自己管得了的人、只能授自己持有的权限点
+	if _, err := h.admin.GuardAdminTarget(c.Request.Context(), session, req.AdminID, service.AdminActionTempPerm); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	if err := h.admin.ValidatePermissionPattern(req.Permission); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	if err := h.admin.EnsureCanGrant(c.Request.Context(), session, []string{req.Permission}, req.AppID); err != nil {
+		h.writeError(c, err)
+		return
+	}
 	tp, err := h.sessionMgmt.GrantTempPermission(c.Request.Context(), req.AdminID, req.Permission, req.AppID, session.AdminID, req.Reason, expiresAt)
 	if err != nil {
 		h.writeError(c, err)
@@ -183,7 +212,8 @@ func (h *Handler) GrantTempPermission(c *gin.Context) {
 
 // RevokeTempPermission POST /api/admin/system/temp-permissions/:permId/revoke — 撤销临时权限
 func (h *Handler) RevokeTempPermission(c *gin.Context) {
-	if _, ok := requireSuperAdminSession(c); !ok {
+	session, ok := requireSuperAdminSession(c)
+	if !ok {
 		response.Error(c, http.StatusForbidden, 40311, "需要超级管理员权限")
 		return
 	}
@@ -195,6 +225,15 @@ func (h *Handler) RevokeTempPermission(c *gin.Context) {
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, "无效的权限 ID")
 		return
+	}
+	if owner, err := h.sessionMgmt.TempPermissionOwner(c.Request.Context(), permID); err != nil {
+		h.writeError(c, err)
+		return
+	} else if owner > 0 {
+		if _, err := h.admin.GuardAdminTarget(c.Request.Context(), session, owner, service.AdminActionTempPerm); err != nil {
+			h.writeError(c, err)
+			return
+		}
 	}
 	if err := h.sessionMgmt.RevokeTempPermission(c.Request.Context(), permID); err != nil {
 		h.writeError(c, err)
@@ -257,6 +296,12 @@ func (h *Handler) CreateDelegation(c *gin.Context) {
 	if expiresAt.Before(time.Now()) {
 		response.Error(c, http.StatusBadRequest, 40000, "过期时间不能早于当前时间")
 		return
+	}
+	for _, target := range []int64{req.DelegatorID, req.DelegateID} {
+		if _, err := h.admin.GuardAdminTarget(c.Request.Context(), session, target, service.AdminActionAccess); err != nil {
+			h.writeError(c, err)
+			return
+		}
 	}
 	delegation := admindomain.AdminDelegation{
 		DelegatorID: req.DelegatorID,

@@ -9,6 +9,7 @@ import (
 	admindomain "aegis/internal/domain/admin"
 	captchadomain "aegis/internal/domain/captcha"
 	systemdomain "aegis/internal/domain/system"
+	"aegis/internal/service"
 	"aegis/pkg/response"
 	"aegis/pkg/timeutil"
 	"github.com/gin-gonic/gin"
@@ -310,28 +311,21 @@ func (h *Handler) AdminListAccounts(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	session, _ := adminAccessSession(c)
+
+	// 第三方认证源的 loginAvailability 只给超管看（避免暴露 LDAP/OIDC/SAML 的健康信息）；
+	// Snapshot() 纯内存读，实际探测由后台 30s 定时循环完成。
+	var health *service.AuthProviderHealthSnapshot
+	if session != nil && session.IsSuperAdmin && h.authProviderHealth != nil {
+		snapshot := h.authProviderHealth.Snapshot()
+		health = &snapshot
+	}
+	enriched := make([]AdminListItem, 0, len(items))
 	for i := range items {
 		h.attachAdminProfileAvatar(c, &items[i])
-	}
-
-	// 附加第三方认证源的 loginAvailability 字段 —— 仅超管可见
-	//   - 非超管：直接返回原始列表，避免暴露 LDAP/OIDC/SAML 的健康信息
-	//   - 超管：调用一次 AuthProviderHealthService.Snapshot（30s TTL 缓存 + 单飞），
-	//     N 个管理员只触发 ≤1 次实际外呼探测
-	session, ok := adminAccessSession(c)
-	if !ok || session == nil || !session.IsSuperAdmin || h.authProviderHealth == nil {
-		response.Success(c, 200, "获取成功", items)
-		return
-	}
-
-	// Snapshot() 纯内存读，不阻塞请求；实际探测由后台 30s 定时循环完成
-	snapshot := h.authProviderHealth.Snapshot()
-	enriched := make([]AdminListItem, 0, len(items))
-	for _, p := range items {
-		item := AdminListItem{Profile: p}
-		src := strings.ToLower(strings.TrimSpace(p.Account.AuthSource))
-		if src != "" && src != "password" {
-			status := snapshot.ForSource(src)
+		item := AdminListItem{Profile: items[i], Capabilities: h.admin.AdminCapabilities(c.Request.Context(), session, items[i].Account)}
+		if src := strings.ToLower(strings.TrimSpace(items[i].Account.AuthSource)); health != nil && src != "" && src != "password" {
+			status := health.ForSource(src)
 			item.LoginAvailability = &AdminLoginAvailability{
 				Source:    src,
 				Available: status.Available,
@@ -344,18 +338,37 @@ func (h *Handler) AdminListAccounts(c *gin.Context) {
 	response.Success(c, 200, "获取成功", enriched)
 }
 
+// AdminGetAccount 管理员详情：资料、角色分配、按数据权限展开后的分配、生效权限、个人授权与能力。
+func (h *Handler) AdminGetAccount(c *gin.Context) {
+	adminID, err := pathInt64(c, "adminId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的管理员标识")
+		return
+	}
+	session, _ := adminAccessSession(c)
+	detail, err := h.admin.GetAdminDetail(c.Request.Context(), session, adminID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	h.attachAdminProfileAvatar(c, &detail.Profile)
+	response.Success(c, 200, "ok", detail)
+}
+
 func (h *Handler) AdminCreateAccount(c *gin.Context) {
 	var req AdminCreateRequest
 	if err := bind(c, &req); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	item, err := h.admin.CreateAdmin(c.Request.Context(), admindomain.CreateInput{
+	session, _ := adminAccessSession(c)
+	item, err := h.admin.CreateAdmin(c.Request.Context(), session, admindomain.CreateInput{
 		Account:      req.Account,
 		Password:     req.Password,
 		DisplayName:  req.DisplayName,
 		Email:        req.Email,
 		IsSuperAdmin: req.IsSuperAdmin,
+		Tier:         req.Tier,
 		Assignments:  req.Assignments,
 	})
 	if err != nil {
@@ -364,7 +377,8 @@ func (h *Handler) AdminCreateAccount(c *gin.Context) {
 	}
 	h.attachAdminProfileAvatar(c, item)
 	response.Success(c, 200, "创建成功", item)
-	h.recordAudit(c, "admin.create", "admin", strconv.FormatInt(item.Account.ID, 10), "创建管理员 "+req.Account)
+	h.recordAudit(c, "admin.create", "admin", strconv.FormatInt(item.Account.ID, 10),
+		fmt.Sprintf("创建%s %s", admindomain.TierName(item.Account.Tier), req.Account))
 }
 
 func (h *Handler) AdminUpdateAccountStatus(c *gin.Context) {
@@ -383,7 +397,7 @@ func (h *Handler) AdminUpdateAccountStatus(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	if err := h.admin.UpdateAdminStatus(c.Request.Context(), session.AdminID, adminID, req.Status); err != nil {
+	if err := h.admin.UpdateAdminStatus(c.Request.Context(), session, adminID, req.Status); err != nil {
 		h.writeError(c, err)
 		return
 	}
@@ -402,15 +416,22 @@ func (h *Handler) AdminUpdateAccountAccess(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	if err := h.admin.UpdateAdminAccess(c.Request.Context(), adminID, admindomain.UpdateAccessInput{
+	session, _ := adminAccessSession(c)
+	if err := h.admin.UpdateAdminAccess(c.Request.Context(), session, adminID, admindomain.UpdateAccessInput{
 		IsSuperAdmin: req.IsSuperAdmin,
+		Tier:         req.Tier,
 		Assignments:  req.Assignments,
 	}); err != nil {
 		h.writeError(c, err)
 		return
 	}
 	response.Success(c, 200, "更新成功", gin.H{"id": adminID})
-	h.recordAudit(c, "admin.update_access", "admin", strconv.FormatInt(adminID, 10), fmt.Sprintf("修改管理员 #%d 权限", adminID))
+	tier := req.Tier
+	if tier == "" && req.IsSuperAdmin {
+		tier = admindomain.TierSuper
+	}
+	h.recordAudit(c, "admin.update_access", "admin", strconv.FormatInt(adminID, 10),
+		fmt.Sprintf("修改管理员 #%d 授权：身份 %s，角色 %d 项", adminID, admindomain.TierName(tier), len(req.Assignments)))
 }
 
 func (h *Handler) AdminRoleCatalog(c *gin.Context) {

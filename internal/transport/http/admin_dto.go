@@ -21,6 +21,8 @@ type AdminLoginAvailability struct {
 type AdminListItem struct {
 	admindomain.Profile
 	LoginAvailability *AdminLoginAvailability `json:"loginAvailability,omitempty"`
+	// Capabilities 当前操作者对这位管理员能做什么（档位守卫 + 权限点），控制台据此显隐按钮与锁定原因。
+	Capabilities admindomain.AdminCapabilities `json:"capabilities"`
 }
 
 type AdminLoginRequest struct {
@@ -51,6 +53,8 @@ type AdminCreateRequest struct {
 	Email        string                           `json:"email"`
 	IsSuperAdmin bool                             `json:"isSuperAdmin"`
 	Assignments  []admindomain.AssignmentMutation `json:"assignments"`
+	// Tier 身份档位 system / super / admin；留空时按 isSuperAdmin 推导。
+	Tier string `json:"tier"`
 }
 
 type AdminStatusUpdateRequest struct {
@@ -60,6 +64,7 @@ type AdminStatusUpdateRequest struct {
 type AdminAccessUpdateRequest struct {
 	IsSuperAdmin bool                             `json:"isSuperAdmin"`
 	Assignments  []admindomain.AssignmentMutation `json:"assignments"`
+	Tier         string                           `json:"tier"`
 }
 
 type AdminRegisterRequest struct {

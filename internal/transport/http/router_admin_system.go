@@ -57,6 +57,7 @@ func registerAdminSystemRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		adminSystem.POST("/admins", h.AdminCreateAccount)
 		// 会话管理（注意：/admins/online 必须在 /admins/:adminId 之前注册）
 		adminSystem.GET("/admins/online", h.ListOnlineAdmins)
+		adminSystem.GET("/admins/:adminId", h.AdminGetAccount)
 		adminSystem.PUT("/admins/:adminId/status", h.AdminUpdateAccountStatus)
 		adminSystem.PUT("/admins/:adminId/access", h.AdminUpdateAccountAccess)
 		adminSystem.GET("/admins/:adminId/sessions", h.ListAdminSessions)
@@ -188,23 +189,34 @@ func registerAdminSystemRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		adminSystem.POST("/plugins/:id/enable", h.AdminEnablePlugin)
 		adminSystem.POST("/plugins/:id/disable", h.AdminDisablePlugin)
 		adminSystem.POST("/roles", h.AdminCreateCustomRole)
-		adminSystem.PUT("/roles/:roleKey", h.AdminUpdateCustomRole)
-		adminSystem.DELETE("/roles/:roleKey", h.AdminDeleteCustomRole)
 		adminSystem.GET("/roles/matrix", h.AdminGetRoleMatrix)
 		adminSystem.GET("/roles/graph", h.AdminGetRoleGraph)
+		adminSystem.GET("/roles/:roleKey", h.AdminGetRoleDetail)
+		adminSystem.PUT("/roles/:roleKey", h.AdminUpdateCustomRole)
+		adminSystem.DELETE("/roles/:roleKey", h.AdminDeleteCustomRole)
 		adminSystem.GET("/roles/:roleKey/impact", h.AdminGetRoleImpactPreview)
+		// 角色编辑器：功能权限整组保存、启停、复制、成员
+		adminSystem.PUT("/roles/:roleKey/permissions", h.AdminSetRolePermissions)
+		adminSystem.PUT("/roles/:roleKey/status", h.AdminSetRoleStatus)
+		adminSystem.POST("/roles/:roleKey/copy", h.AdminCopyRole)
+		adminSystem.GET("/roles/:roleKey/members", h.AdminListRoleMembers)
+		adminSystem.POST("/roles/:roleKey/members", h.AdminAddRoleMembers)
+		adminSystem.DELETE("/roles/:roleKey/members/:adminId", h.AdminRemoveRoleMember)
 		// ── 授权策略管理面 ──
 		//
-		// 「不能灵活配置」的落点。写操作一律叠加 RequireSuperAdmin：
-		// 一条 allow 策略就能给自己提权，把这个入口交给普通管理员
-		// 等于让整套 RBAC 可以被它管辖的对象自行改写。
+		// 写操作按细分权限点放行（角色编辑 / 个人授权 / 重载策略），自我提权由两道闸挡住：
+		// 授权上限（只能授予自己持有的权限）与档位守卫（不能改自己、不能改同档或更高档的人），
+		// 见 service/admin_tier.go。
 		adminSystem.GET("/authz/model", h.AdminAuthzModel)
+		adminSystem.GET("/authz/catalog", h.AdminAuthzCatalog)
+		adminSystem.GET("/authz/permission-routes", h.AdminAuthzPermissionRoutes)
 		adminSystem.GET("/authz/policies", h.AdminAuthzPolicies)
 		adminSystem.GET("/authz/policies/subject", h.AdminAuthzSubjectPolicies)
 		adminSystem.POST("/authz/explain", h.AdminAuthzExplain)
-		adminSystem.POST("/authz/roles/override", middleware.RequireSuperAdmin(), h.AdminAuthzSetRoleOverride)
-		adminSystem.PUT("/authz/admins/:adminId/grants", middleware.RequireSuperAdmin(), h.AdminAuthzSetAdminGrants)
-		adminSystem.POST("/authz/reload", middleware.RequireSuperAdmin(), h.AdminAuthzReload)
+		adminSystem.POST("/authz/roles/override", h.AdminAuthzSetRoleOverride)
+		adminSystem.GET("/authz/admins/:adminId/grants", h.AdminAuthzGetAdminGrants)
+		adminSystem.PUT("/authz/admins/:adminId/grants", h.AdminAuthzSetAdminGrants)
+		adminSystem.POST("/authz/reload", h.AdminAuthzReload)
 		registerOrgRoutes(adminSystem, h)
 
 		adminSystem.GET("/templates", h.ListTemplates)

@@ -228,12 +228,16 @@ func (h *Handler) AdminGetPublicBranding(c *gin.Context) {
 	response.Success(c, 200, "ok", settings.Branding.BrandingConfig)
 }
 
+// requireSuperAdminSession 处理函数里的「仅超管」二次把关。
+//
+// 本次请求已经按某个具体权限点通过了 AdminAccess 时认可该授权（权限细分之后这些接口都有
+// 自己的权限点，见 authz/tree.go）；未经权限点判定的接口仍然只放行超级管理员。
 func requireSuperAdminSession(c *gin.Context) (*admindomain.AccessContext, bool) {
 	session, ok := adminAccessSession(c)
 	if !ok || session == nil {
 		return nil, false
 	}
-	if !session.IsSuperAdmin {
+	if !session.IsSuperAdmin && auditmiddleware.AuthorizedPermission(c) == "" {
 		return nil, false
 	}
 	return session, true

@@ -540,3 +540,38 @@ func RunPrintRoutes(_ context.Context, args []string) error {
 
 	return routetable.Print(inventory, opts)
 }
+
+// RunPromoteSystemAdmin 运维命令：把指定账号提升为系统管理员。
+//
+// 系统管理员不能被任何超级管理员停用或降级，最后一位也不能被系统管理员自己降级，
+// 因此正常情况下不会出现「没有系统管理员」；这条命令留给从备份恢复、账号被直接在库里改坏
+// 之类的现场。它绕过会话与权限判定，只能在能直接连库的机器上执行。
+//
+//	aegis-server promote-system-admin <account>
+func RunPromoteSystemAdmin(ctx context.Context, args []string) error {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return fmt.Errorf("usage: aegis-server promote-system-admin <account>")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	postgres, err := db.NewPostgres(ctx, cfg.Postgres)
+	if err != nil {
+		return err
+	}
+	defer postgres.Close()
+	pg := pgrepo.New(postgres)
+	record, err := pg.GetAdminAuthByAccount(ctx, strings.TrimSpace(args[0]))
+	if err != nil {
+		return err
+	}
+	if record == nil {
+		return fmt.Errorf("管理员 %q 不存在", args[0])
+	}
+	if err := pg.PromoteSystemAdmin(ctx, record.Account.ID); err != nil {
+		return err
+	}
+	fmt.Printf("已将管理员 %s（#%d）提升为系统管理员\n", record.Account.Account, record.Account.ID)
+	return nil
+}

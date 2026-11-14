@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"aegis/internal/authz"
@@ -88,16 +89,13 @@ func (s *AdminService) SetRoleOverride(ctx context.Context, input PolicyOverride
 //
 // 传空数组即清空 —— 与角色编辑一样是"提交一份完整状态"而不是增量指令：
 // 增量接口在两个人同时编辑时会算出谁也没想要的第三种结果。
-func (s *AdminService) SetAdminGrants(ctx context.Context, adminID int64, grants []AdminGrantInput, updatedBy *int64) error {
-	if adminID <= 0 {
-		return apperrors.New(40058, http.StatusBadRequest, "缺少有效的管理员标识")
-	}
-	profile, err := s.pg.GetAdminAccessByID(ctx, adminID)
-	if err != nil {
+func (s *AdminService) SetAdminGrants(ctx context.Context, actor *admindomain.AccessContext, adminID int64, grants []AdminGrantInput) error {
+	if _, err := s.GuardAdminTarget(ctx, actor, adminID, AdminActionGrant); err != nil {
 		return err
 	}
-	if profile == nil {
-		return apperrors.New(40450, http.StatusNotFound, "管理员不存在")
+	var updatedBy *int64
+	if actor != nil {
+		updatedBy = &actor.AdminID
 	}
 	items := make([]authz.DirectGrant, 0, len(grants))
 	for _, grant := range grants {
@@ -115,6 +113,11 @@ func (s *AdminService) SetAdminGrants(ctx context.Context, adminID int64, grants
 				return apperrors.New(40058, http.StatusBadRequest, "缺少有效的应用标识")
 			}
 			domain = authz.AppDomain(*grant.AppID)
+		}
+		if effect != authz.EffectDeny {
+			if err := s.EnsureCanGrant(ctx, actor, []string{permission}, grant.AppID); err != nil {
+				return err
+			}
 		}
 		items = append(items, authz.DirectGrant{
 			Domain: domain, Permission: permission, Effect: effect, Note: grant.Note,
@@ -156,13 +159,7 @@ func (s *AdminService) ExplainAuthorization(ctx context.Context, adminID int64, 
 	if profile == nil {
 		return nil, apperrors.New(40450, http.StatusNotFound, "管理员不存在")
 	}
-	access := &admindomain.AccessContext{
-		Session: admindomain.Session{
-			AdminID: profile.Account.ID, Account: profile.Account.Account,
-			IsSuperAdmin: profile.Account.IsSuperAdmin,
-		},
-		Assignments: profile.Assignments,
-	}
+	access := s.accessFromProfile(ctx, profile)
 
 	result := &AuthorizationExplain{
 		AdminID: adminID, Permission: permission,
@@ -172,7 +169,7 @@ func (s *AdminService) ExplainAuthorization(ctx context.Context, adminID int64, 
 	}
 	if access.IsSuperAdmin {
 		result.Allowed = true
-		result.Summary = "超级管理员，不受权限点约束"
+		result.Summary = admindomain.TierName(access.Tier) + "，不受权限点约束"
 		return result, nil
 	}
 
@@ -192,7 +189,7 @@ func (s *AdminService) ExplainAuthorization(ctx context.Context, adminID int64, 
 	tempPerms, err := s.pg.GetActiveTempPermissions(ctx, adminID)
 	if err == nil {
 		for _, tp := range tempPerms {
-			if scopeMatches(tp.AppID, appID) && tp.Permission == permission {
+			if scopeMatches(tp.AppID, appID) && authz.Implies(tp.Permission, permission) {
 				result.Allowed = true
 				result.TempPermission = true
 				result.Summary = "由一条未过期的临时权限放行"
@@ -255,11 +252,46 @@ func validatePermissionPatterns(patterns []string) error {
 			}
 			continue
 		}
-		if !authz.PermissionExists(pattern) {
+		if !authz.PermissionExists(pattern) && !authz.IsLegacyPermission(pattern) {
 			return apperrors.New(40060, http.StatusBadRequest, fmt.Sprintf("权限代码不存在: %s", pattern))
 		}
 	}
 	return nil
+}
+
+// AdminGrantView 某个管理员的一条直接授予 / 禁止（控制台「个人授权」页签）。
+type AdminGrantView struct {
+	AppID      *int64 `json:"appid,omitempty"`
+	Permission string `json:"permission"`
+	Effect     string `json:"effect"`
+	Note       string `json:"note,omitempty"`
+}
+
+// ListAdminGrants 某个管理员的直接授予 / 禁止。
+func (s *AdminService) ListAdminGrants(ctx context.Context, adminID int64) ([]AdminGrantView, error) {
+	rules, err := s.pg.ListAuthzPoliciesBySubject(ctx, authz.AdminSubject(adminID))
+	if err != nil {
+		return nil, err
+	}
+	items := make([]AdminGrantView, 0, len(rules))
+	for _, rule := range rules {
+		if rule.PType != "p" || rule.Source != authz.SourceGrant || len(rule.Values) < 4 {
+			continue
+		}
+		view := AdminGrantView{Permission: rule.Values[2], Effect: rule.Values[3], Note: rule.Note}
+		if strings.HasPrefix(rule.Values[1], "app:") {
+			if id, err := strconv.ParseInt(strings.TrimPrefix(rule.Values[1], "app:"), 10, 64); err == nil {
+				view.AppID = &id
+			}
+		}
+		items = append(items, view)
+	}
+	return items, nil
+}
+
+// ValidatePermissionPattern 校验一条权限点写法（临时权限等单项入口用）。
+func (s *AdminService) ValidatePermissionPattern(pattern string) error {
+	return validatePermissionPatterns([]string{pattern})
 }
 
 // ListAdminPolicies 列出某个主体名下的策略行（角色或管理员）。

@@ -319,7 +319,7 @@ func (s *liveSubscriber) watch() {
 				// 基础设施抖动（Redis / PG 超时）不踢人，下一轮再查
 				continue
 			}
-			if err := s.hub.admin.Authorize(ctx, access, authz.PermSystemAdminManage, nil); err != nil {
+			if err := s.hub.admin.Authorize(ctx, access, authz.PermSystemOnlineRead, nil); err != nil {
 				cancel()
 				s.closeWith(liveCloseForbidden, "permission revoked")
 				return

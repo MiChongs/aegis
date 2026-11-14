@@ -32,7 +32,7 @@ import (
 
 const (
 	mcpKeyMaxPerAdmin     = 20
-	mcpKeyMaxPermissions  = 200
+	mcpKeyMaxPermissions  = 400
 	mcpKeyMaxApps         = 200
 	mcpKeyMaxAllowIPs     = 50
 	mcpKeyDefaultRate     = 120
@@ -287,27 +287,20 @@ func (s *AdminService) ValidateMCPKey(ctx context.Context, secret, clientIP stri
 	if key.ExpiresAt != nil {
 		expiresAt = *key.ExpiresAt
 	}
-	return &admindomain.AccessContext{
-		Session: admindomain.Session{
-			AdminID:     profile.Account.ID,
-			Account:     profile.Account.Account,
-			DisplayName: profile.Account.DisplayName,
-			// 审计里的会话列写成 mcp:<前缀>，一眼能看出这条操作是哪把密钥做的
-			TokenID:      "mcp:" + key.KeyPrefix,
-			IssuedAt:     key.CreatedAt,
-			ExpiresAt:    expiresAt,
-			IsSuperAdmin: profile.Account.IsSuperAdmin,
-		},
-		Assignments: profile.Assignments,
-		MCPKey: &admindomain.MCPKeyScope{
-			KeyID:       key.ID,
-			Name:        key.Name,
-			KeyPrefix:   key.KeyPrefix,
-			Permissions: append([]string(nil), key.Permissions...),
-			AppIDs:      append([]int64(nil), key.AppIDs...),
-			ReadOnly:    key.ReadOnly,
-		},
-	}, nil
+	access := s.accessFromProfile(ctx, profile)
+	// 审计里的会话列写成 mcp:<前缀>，一眼能看出这条操作是哪把密钥做的
+	access.TokenID = "mcp:" + key.KeyPrefix
+	access.IssuedAt = key.CreatedAt
+	access.ExpiresAt = expiresAt
+	access.MCPKey = &admindomain.MCPKeyScope{
+		KeyID:       key.ID,
+		Name:        key.Name,
+		KeyPrefix:   key.KeyPrefix,
+		Permissions: append([]string(nil), key.Permissions...),
+		AppIDs:      append([]int64(nil), key.AppIDs...),
+		ReadOnly:    key.ReadOnly,
+	}
+	return access, nil
 }
 
 // authorizeMCPScope Authorize 的第一道：权限点与应用是否落在密钥范围里。
@@ -397,10 +390,7 @@ func (s *AdminService) mcpKeyOwnerAccess(ctx context.Context, adminID int64) (*a
 	if profile == nil {
 		return nil, mcpKeyNotFound()
 	}
-	return &admindomain.AccessContext{
-		Session:     admindomain.Session{AdminID: profile.Account.ID, Account: profile.Account.Account, IsSuperAdmin: profile.Account.IsSuperAdmin},
-		Assignments: profile.Assignments,
-	}, nil
+	return s.accessFromProfile(ctx, profile), nil
 }
 
 func mcpKeyNotFound() error {
@@ -498,7 +488,8 @@ func validMCPPermissionPattern(pattern string) bool {
 		}
 		return false
 	}
-	return authz.PermissionExists(pattern)
+	// 旧的合并权限点（app:read 之类）仍然合法：权限拆分之前签发的密钥要能原样编辑保存
+	return authz.PermissionExists(pattern) || authz.IsLegacyPermission(pattern)
 }
 
 func (s *AdminService) normalizeMCPApps(ctx context.Context, owner *admindomain.AccessContext, ids []int64) ([]int64, error) {

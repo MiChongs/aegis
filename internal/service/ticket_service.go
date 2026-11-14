@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"errors"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"aegis/internal/authz"
 	admindomain "aegis/internal/domain/admin"
 	authdomain "aegis/internal/domain/auth"
 	storagedomain "aegis/internal/domain/storage"
@@ -115,8 +116,8 @@ func (s *TicketService) Detail(ctx context.Context, access *admindomain.AccessCo
 	return item, nil
 }
 
-// permAppUserRead 应用用户查看权限点（与 authz.PermAppUserRead 同值）。
-const permAppUserRead = "app:user:read"
+// permAppUserRead 应用用户查看权限点（细分后的「用户：查看」；旧的 app:user:read 经兼容关系同样满足）。
+const permAppUserRead = authz.PermAppUserInfoRead
 
 // RequesterContext 提单人资料卡的取数前提：能看到这条工单才往下走。
 //

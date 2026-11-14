@@ -15,7 +15,7 @@ import (
 )
 
 func (r *Repository) GetAdminAuthByAccount(ctx context.Context, account string) (*admindomain.AuthRecord, error) {
-	query := `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at, password_hash
+	query := `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, COALESCE(is_system_admin, FALSE), last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at, password_hash
 FROM admin_accounts
 WHERE account = $1
 LIMIT 1`
@@ -23,7 +23,7 @@ LIMIT 1`
 }
 
 func (r *Repository) GetAdminAuthByID(ctx context.Context, adminID int64) (*admindomain.AuthRecord, error) {
-	query := `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at, password_hash
+	query := `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, COALESCE(is_system_admin, FALSE), last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at, password_hash
 FROM admin_accounts
 WHERE id = $1
 LIMIT 1`
@@ -31,7 +31,7 @@ LIMIT 1`
 }
 
 func (r *Repository) GetAdminAccessByID(ctx context.Context, adminID int64) (*admindomain.Profile, error) {
-	query := `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at
+	query := `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, COALESCE(is_system_admin, FALSE), last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at
 FROM admin_accounts
 WHERE id = $1
 LIMIT 1`
@@ -68,10 +68,10 @@ func (r *Repository) CreateAdminAccount(ctx context.Context, input admindomain.C
 		return nil, apperrors.New(40950, http.StatusConflict, "管理员账号已存在")
 	}
 
-	query := `INSERT INTO admin_accounts (account, password_hash, display_name, email, status, is_super_admin, created_at, updated_at)
-VALUES ($1, $2, $3, $4, 'active', $5, NOW(), NOW())
-RETURNING id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at`
-	account, err := scanAdminAccount(tx.QueryRow(ctx, query, strings.TrimSpace(input.Account), passwordHash, strings.TrimSpace(input.DisplayName), strings.TrimSpace(input.Email), input.IsSuperAdmin))
+	query := `INSERT INTO admin_accounts (account, password_hash, display_name, email, status, is_super_admin, is_system_admin, created_at, updated_at)
+VALUES ($1, $2, $3, $4, 'active', $5, $6, NOW(), NOW())
+RETURNING id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, COALESCE(is_system_admin, FALSE), last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at`
+	account, err := scanAdminAccount(tx.QueryRow(ctx, query, strings.TrimSpace(input.Account), passwordHash, strings.TrimSpace(input.DisplayName), strings.TrimSpace(input.Email), input.IsSuperAdmin || input.IsSystemAdmin, input.IsSystemAdmin))
 	if err != nil {
 		if isDuplicateKeyError(err) {
 			return nil, apperrors.New(40950, http.StatusConflict, "管理员账号已存在")
@@ -109,7 +109,8 @@ func (r *Repository) UpdateAdminAccess(ctx context.Context, adminID int64, input
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	tag, err := tx.Exec(ctx, `UPDATE admin_accounts SET is_super_admin = $2, updated_at = NOW() WHERE id = $1`, adminID, input.IsSuperAdmin)
+	tag, err := tx.Exec(ctx, `UPDATE admin_accounts SET is_super_admin = $2, is_system_admin = $3, updated_at = NOW() WHERE id = $1`,
+		adminID, input.IsSuperAdmin || input.IsSystemAdmin, input.IsSystemAdmin)
 	if err != nil {
 		return err
 	}
@@ -208,7 +209,7 @@ func (r *Repository) UpsertBootstrapAdmin(ctx context.Context, input admindomain
 }
 
 func (r *Repository) ListAdminAccounts(ctx context.Context) ([]admindomain.Profile, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at FROM admin_accounts ORDER BY id ASC`)
+	rows, err := r.pool.Query(ctx, `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, COALESCE(is_system_admin, FALSE), last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at FROM admin_accounts ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -298,6 +299,7 @@ func scanAdminAccount(row pgx.Row) (*admindomain.Account, error) {
 		&item.Status,
 		&item.AuthSource,
 		&item.IsSuperAdmin,
+		&item.IsSystemAdmin,
 		&item.LastLoginAt,
 		&item.CreatedAt,
 		&item.UpdatedAt,
@@ -335,6 +337,7 @@ func scanAdminAuthRecord(row pgx.Row) (*admindomain.AuthRecord, error) {
 		&item.Account.Status,
 		&item.Account.AuthSource,
 		&item.Account.IsSuperAdmin,
+		&item.Account.IsSystemAdmin,
 		&item.Account.LastLoginAt,
 		&item.Account.CreatedAt,
 		&item.Account.UpdatedAt,
@@ -372,7 +375,7 @@ func isDuplicateKeyError(err error) bool {
 func (r *Repository) CreateExternalAdminAccount(ctx context.Context, account, displayName, email, phone, authSource string) (*admindomain.Profile, error) {
 	query := `INSERT INTO admin_accounts (account, password_hash, display_name, email, phone, auth_source, status, is_super_admin, created_at, updated_at)
 VALUES ($1, '', $2, $3, $4, $5, 'active', false, NOW(), NOW())
-RETURNING id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at`
+RETURNING id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, COALESCE(is_system_admin, FALSE), last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at`
 	acct, err := scanAdminAccount(r.pool.QueryRow(ctx, query,
 		strings.TrimSpace(account),
 		strings.TrimSpace(displayName),

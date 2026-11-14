@@ -72,6 +72,10 @@ type Engine struct {
 	enforcer *casbin.SyncedEnforcer
 	watcher  persist.Watcher
 
+	// reloadHooks 每次成功重载后回调（AdminService 借它刷新角色元数据缓存）。
+	hooksMu     sync.Mutex
+	reloadHooks []func()
+
 	// reloadMu 串行化重载：并发重载会让两次 LoadPolicy 交错，
 	// 中间态是一份"少了一半策略"的表，而那半秒里的判定会拒掉合法请求。
 	reloadMu sync.Mutex
@@ -95,6 +99,7 @@ func New(ctx context.Context, log *zap.Logger, store Store, builtin []PolicyRule
 	if err != nil {
 		return nil, fmt.Errorf("授权引擎构造失败: %w", err)
 	}
+	enforcer.AddFunction("objMatch", objMatchFunc)
 	// 写入一律走 Engine 的方法（要记 source / owner / updated_by），
 	// 让 Casbin 自己回写会产出没有归属的行 —— 那种行在下次重刷内置策略时
 	// 既不会被更新也不会被清掉，最后沉淀成谁也不敢删的幽灵授权。
@@ -150,11 +155,34 @@ func (e *Engine) SeedBuiltin(ctx context.Context, builtin []PolicyRule) error {
 	return nil
 }
 
+// OnReload 注册一个重载成功后的回调。
+func (e *Engine) OnReload(hook func()) {
+	if e == nil || hook == nil {
+		return
+	}
+	e.hooksMu.Lock()
+	e.reloadHooks = append(e.reloadHooks, hook)
+	e.hooksMu.Unlock()
+}
+
 // Reload 从库里重新装载全部策略。
 func (e *Engine) Reload(ctx context.Context) error {
 	if e == nil {
 		return nil
 	}
+	if err := e.reload(); err != nil {
+		return err
+	}
+	e.hooksMu.Lock()
+	hooks := append([]func(){}, e.reloadHooks...)
+	e.hooksMu.Unlock()
+	for _, hook := range hooks {
+		hook()
+	}
+	return nil
+}
+
+func (e *Engine) reload() error {
 	e.reloadMu.Lock()
 	defer e.reloadMu.Unlock()
 	if e.store == nil {
@@ -245,7 +273,12 @@ func (e *Engine) matchDeny(subjects []string, domain, permission string) (bool, 
 		if len(rule) < 4 {
 			continue
 		}
-		if !util.KeyMatch(domain, rule[1]) || !util.KeyMatch(permission, rule[2]) {
+		if !util.KeyMatch(domain, rule[1]) {
+			continue
+		}
+		// 拒绝同样认资源层级：一条禁止旧代码 `app:write` 的策略要压住它名下的每个细分项，
+		// 否则拆分之后，历史上的 deny 会悄悄失效。
+		if !Implies(rule[2], permission) {
 			continue
 		}
 		for _, subject := range subjects {

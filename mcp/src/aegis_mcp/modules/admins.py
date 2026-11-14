@@ -69,18 +69,22 @@ async def create(
     password: Annotated[str, Field(min_length=8, description="初始密码（由用户提供；建议对方首次登录后修改）")],
     display_name: str = "",
     email: str = "",
-    is_super_admin: Annotated[bool, Field(description="超级管理员（拥有一切权限，谨慎）")] = False,
+    tier: Annotated[Literal["admin", "super", "system"], Field(description="身份：admin 管理员 / super 超级管理员 / system 系统管理员（后两者只有系统管理员能授予）")] = "admin",
     assignments: Annotated[list[dict[str, Any]] | None, Field(description="角色分配：[{roleKey, appid}]")] = None,
 ) -> Any:
-    """新建管理员账号。需要 system:admin:manage。授予超级管理员前务必与用户确认。"""
+    """新建管理员账号。需要「管理员：新增」（system:admin:create）。授予超级管理员 / 系统管理员前务必与用户确认。"""
     return await ADMIN_CREATE(body=body(account=account, password=password, displayName=display_name, email=email,
-                                        isSuperAdmin=is_super_admin, assignments=assignments or []))
+                                        tier=tier, isSuperAdmin=tier != "admin", assignments=assignments or []))
 
 
 @server.tool(**DESTRUCTIVE("admins"))
-async def set_access(admin_id: AdminID, assignments: Assignments, is_super_admin: bool = False) -> Any:
-    """整体替换一个管理员的角色分配与超管身份（立即生效）。先用 admins_list 看清现状并向用户确认。"""
-    return await ADMIN_ACCESS(adminId=admin_id, body={"assignments": assignments, "isSuperAdmin": is_super_admin})
+async def set_access(
+    admin_id: AdminID,
+    assignments: Assignments,
+    tier: Annotated[Literal["admin", "super", "system"], Field(description="身份档位；只有系统管理员能授予或收回 super / system")] = "admin",
+) -> Any:
+    """整体替换一个管理员的身份档位与角色分配（立即生效）。只能管理档位低于自己的人，不能改自己。先用 admins_list 看清现状并向用户确认。"""
+    return await ADMIN_ACCESS(adminId=admin_id, body={"assignments": assignments, "tier": tier, "isSuperAdmin": tier != "admin"})
 
 
 @server.tool(**DESTRUCTIVE("admins"))

@@ -25,7 +25,7 @@ func (r *Repository) getAdminAuthByPreviousAccount(ctx context.Context, account 
 	if account == "" {
 		return nil, nil
 	}
-	query := `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at, password_hash
+	query := `SELECT id, account, display_name, email, avatar, phone, birthday, bio, COALESCE(contacts,'[]'::jsonb), status, COALESCE(auth_source,'password'), is_super_admin, COALESCE(is_system_admin, FALSE), last_login_at, created_at, updated_at, previous_account, account_changed_at, password_changed_at, password_hash
 FROM admin_accounts
 WHERE lower(previous_account) = lower($1)
 ORDER BY id ASC

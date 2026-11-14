@@ -274,3 +274,17 @@ func latestAdminSessionActivity(items []admindomain.AdminSessionRecord) time.Tim
 	}
 	return latest
 }
+
+// SessionOwner 会话所属的管理员（档位守卫要先知道「踢的是谁」）；不存在时返回 0。
+func (s *SessionMgmtService) SessionOwner(ctx context.Context, sessionID string) (int64, error) {
+	record, err := s.pg.GetAdminSessionByID(ctx, sessionID)
+	if err != nil || record == nil {
+		return 0, err
+	}
+	return record.AdminID, nil
+}
+
+// TempPermissionOwner 临时权限所属的管理员；不存在时返回 0。
+func (s *SessionMgmtService) TempPermissionOwner(ctx context.Context, permID int64) (int64, error) {
+	return s.pg.TempPermissionOwner(ctx, permID)
+}

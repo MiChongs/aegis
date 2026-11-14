@@ -98,6 +98,11 @@ func AdminAccess(adminService *service.AdminService, appService *service.AppServ
 			c.Abort()
 			return
 		}
+		// 记下这次请求已经通过了哪个具体权限点：处理函数里那些「仅超管」的二次把关
+		// （RequireSuperAdmin / requireSuperAdminSession）据此认可细分授权，见 AuthorizedPermission。
+		if permission != "" {
+			c.Set(AdminAuthorizedPermissionKey, permission)
+		}
 		// 平台治理的 blockAdminWrite 执行点：被停运 / 封禁 / 归档的应用对**应用管理员**只读。
 		// 平台级管理员（超管或持 platform:app:govern）必须放行 —— 否则谁都改不动，
 		// 连解除治理本身都做不到。
@@ -159,13 +164,31 @@ func isPlatformGovernor(c *gin.Context, adminService *service.AdminService, acce
 	return adminService.Authorize(c.Request.Context(), access, authz.PermPlatformAppGovern, nil) == nil
 }
 
+// AdminAuthorizedPermissionKey AdminAccess 判定通过的权限点（gin 上下文键）。
+const AdminAuthorizedPermissionKey = "admin.authorizedPermission"
+
+// AuthorizedPermission 本次请求经 AdminAccess 判定通过的具体权限点；没有（只挂了 AdminAuth，
+// 或路由不要求权限点）时返回空串。
+//
+// 权限细分之前，平台运维类接口只挂一个粗粒度的 system:admin:manage，处理函数里再叠一道
+// 「必须是超管」。细分之后这道二次把关改为：**已经按某个具体权限点放行的请求认可该授权**，
+// 否则（未经权限点判定的接口）仍然要求超管。于是被授予「出海网关：查看」的人能打开网关页，
+// 而一条只挂了 AdminAuth 的接口不会因此对所有管理员敞开。
+func AuthorizedPermission(c *gin.Context) string {
+	value, _ := c.Get(AdminAuthorizedPermissionKey)
+	permission, _ := value.(string)
+	return permission
+}
+
 // RequireSuperAdmin 必须在 AdminAuth / AdminAccess 之后挂载使用。
-// 校验当前会话属于超级管理员；不通过返回 403。
-// 专用于平台级敏感资源（如 /api/admin/system/banners 的写操作），
-// 不走 Casbin 权限点，防止因授权表漂移被误赋权。
+// 校验当前会话属于超级管理员，或本次请求已经按某个具体权限点通过了 AdminAccess；不通过返回 403。
 func RequireSuperAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		session, ok := adminSession(c)
+		if ok && session != nil && !session.IsSuperAdmin && AuthorizedPermission(c) != "" {
+			c.Next()
+			return
+		}
 		if !ok || session == nil || !session.IsSuperAdmin {
 			response.Error(c, http.StatusForbidden, 40301, "需要超级管理员权限")
 			c.Abort()

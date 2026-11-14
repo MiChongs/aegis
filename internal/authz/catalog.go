@@ -1,23 +1,23 @@
 package authz
 
 import (
+	"sort"
+	"strings"
+	"sync"
+
 	admindomain "aegis/internal/domain/admin"
 )
 
 // 权限点词汇表。
 //
-// 这份目录此前住在 internal/service/admin_service.go 里，与「角色定义」「判定逻辑」
-// 挤在同一个 1400 行的文件中，而「路由 → 权限点」的映射又在 internal/middleware。
-// 于是加一个权限点要改三个包，且没有任何机制保证三处对得上 ——
-// 少改一处的表现不是编译错误，而是一条谁也点不动、或者谁都点得动的接口。
+// 树形目录（目录 → 菜单 → 操作）定义在 tree.go，本文件只放：
+//   - 被业务代码直接引用的权限点常量（service / middleware / handler 里的显式判定）；
+//   - 基于树的查询函数（全部代码、中文名、旧权限点兼容关系、扁平分组）。
 //
-// 现在权限词汇、角色、路由映射、判定引擎同属一个包，彼此的一致性由本包的测试守住。
+// 新增接口时在 tree.go 的某个操作节点里登记它的路由，忘了登记的表现是
+// 40315「该管理端接口尚未登记权限规则」，而不是静默放行。
 
-// 平台治理权限点。
-//
-// 与应用级权限点的区别是**判定作用域**：这些只在平台域（DomainForApp(nil)）下有意义 ——
-// 一个只管着自己那个应用的管理员即便被授了 platform:app:govern，
-// 也只能"治理自己"，那等于自己给自己解封。因此读它们的地方一律传 appID = nil。
+// 平台治理权限点：只在平台域判定。
 const (
 	PermPlatformAppRead      = "platform:app:read"
 	PermPlatformAppGovern    = "platform:app:govern"
@@ -27,19 +27,53 @@ const (
 	PermPlatformStorageWrite = "platform:storage:write"
 )
 
-// 系统与应用权限点。
+// 系统管理权限点（原 system:admin:manage 拆分而来）。
 const (
-	PermSystemAdminManage      = "system:admin:manage"
+	PermSystemAdminRead        = "system:admin:read"
+	PermSystemAdminCreate      = "system:admin:create"
+	PermSystemAdminEdit        = "system:admin:edit"
+	PermSystemAdminStatus      = "system:admin:status"
+	PermSystemAdminGrant       = "system:admin:grant"
+	PermSystemSessionRead      = "system:session:read"
+	PermSystemSessionRevoke    = "system:session:revoke"
+	PermSystemRoleRead         = "system:role:read"
+	PermSystemRoleCreate       = "system:role:create"
+	PermSystemRoleEdit         = "system:role:edit"
+	PermSystemRoleDelete       = "system:role:delete"
+	PermSystemRoleReload       = "system:role:reload"
+	PermSystemTempPermRead     = "system:temp_perm:read"
+	PermSystemTempPermGrant    = "system:temp_perm:grant"
+	PermSystemTempPermRevoke   = "system:temp_perm:revoke"
+	PermSystemDelegationRead   = "system:delegation:read"
+	PermSystemDelegationCreate = "system:delegation:create"
+	PermSystemDelegationRevoke = "system:delegation:revoke"
+	PermSystemOnlineRead       = "system:online:read"
+
 	PermSystemLegalManage      = "system:legal:manage"
-	PermSystemSettingsRead     = "system:settings:read"
-	PermSystemSettingsWrite    = "system:settings:write"
 	PermSystemUserSettingRead  = "system:user_setting:read"
 	PermSystemUserSettingWrite = "system:user_setting:write"
 
-	PermAppRead             = "app:read"
-	PermAppWrite            = "app:write"
-	PermAppUserRead         = "app:user:read"
-	PermAppUserWrite        = "app:user:write"
+	// PermSystemAdminManage 旧的「系统管理」大桶，现为兼容组。保留常量名是为了让
+	// 尚未迁移的调用点仍能编译，但**判定请求一律用细分权限点**：请求旧代码时，
+	// 只持有细分权限点的人是满足不了它的（g2 的方向是「细分 → 旧组」）。
+	PermSystemAdminManage   = LegacySystemAdminManage
+	PermSystemSettingsRead  = LegacySettingsRead
+	PermSystemSettingsWrite = LegacySettingsWrite
+)
+
+// 应用权限点。
+const (
+	// PermAppCreate 平台级持有时建应用不受自助配额约束。
+	PermAppCreate = "app:create"
+	// PermAppRead / PermAppWrite 旧的应用读写大桶（兼容组），只在策略里出现。
+	PermAppRead  = LegacyAppRead
+	PermAppWrite = LegacyAppWrite
+	// PermAppUserRead / PermAppUserWrite 旧的应用用户读写大桶（兼容组）。
+	PermAppUserRead  = LegacyAppUserRead
+	PermAppUserWrite = LegacyAppUserWrite
+	// PermAppUserInfoRead 应用用户查看（细分后的「用户列表 / 详情」）。
+	PermAppUserInfoRead = "app:user:info:read"
+
 	PermAppNotificationRead = "app:notification:read"
 	PermAppNotifWrite       = "app:notification:write"
 
@@ -57,8 +91,8 @@ const (
 	PermWorkflowRead  = "workflow:read"
 	PermWorkflowWrite = "workflow:write"
 
-	PermVersionRead  = "version:read"
-	PermVersionWrite = "version:write"
+	PermVersionRead  = LegacyVersionRead
+	PermVersionWrite = LegacyVersionWrite
 
 	PermSiteRead  = "site:read"
 	PermSiteWrite = "site:write"
@@ -103,145 +137,268 @@ const (
 	PermOrgMemberInvite = "org:member:invite"
 )
 
-// PermissionCatalog 返回全部权限点分组。
-//
-// 它同时驱动三件事：角色编辑器的勾选树、权限矩阵、以及拒绝文案里的中文名。
-// 新增权限点只改这里 —— 分组信息缺失时前端会把它丢在"未分组"里，
-// 而权限矩阵会少一行，两者都不会报错。
-func PermissionCatalog() []admindomain.PermissionGroup {
-	return []admindomain.PermissionGroup{
-		{Key: "platform", Name: "平台治理", Permissions: []admindomain.Permission{
-			{Code: PermPlatformAppRead, Name: "全站应用总览", Description: "跨应用查看治理状态与用量指标"},
-			{Code: PermPlatformAppGovern, Name: "应用治理", Description: "限制 / 冻结 / 停运 / 解除，应用管理员无法自行撤销"},
-			{Code: PermPlatformAppDanger, Name: "危险治理操作", Description: "封禁 / 归档 / 强制下线全站会话 / 删除被治理应用"},
-			{Code: PermPlatformAppealReview, Name: "治理申诉审批"},
-			{Code: PermPlatformStorageRead, Name: "平台存储配置查看"},
-			{Code: PermPlatformStorageWrite, Name: "平台存储配置修改"},
-		}},
-		{Key: "system", Name: "系统管理", Permissions: []admindomain.Permission{
-			{Code: PermSystemAdminManage, Name: "管理员管理"},
-			{Code: PermSystemLegalManage, Name: "法律文本管理"},
-			{Code: PermSystemSettingsRead, Name: "系统设置查看"},
-			{Code: PermSystemSettingsWrite, Name: "系统设置修改"},
-			{Code: PermSystemUserSettingRead, Name: "用户设置查看"},
-			{Code: PermSystemUserSettingWrite, Name: "用户设置修改"},
-		}},
-		{Key: "app", Name: "应用管理", Permissions: []admindomain.Permission{
-			{Code: PermAppRead, Name: "应用信息查看"},
-			{Code: PermAppWrite, Name: "应用信息修改", Description: "全局作用域下同时意味着「可无限制创建应用」，不受自助配额约束"},
-			{Code: PermAppUserRead, Name: "应用用户查看"},
-			{Code: PermAppUserWrite, Name: "应用用户管理"},
-			{Code: PermAppNotificationRead, Name: "通知查看"},
-			{Code: PermAppNotifWrite, Name: "通知管理"},
-		}},
-		{Key: "content", Name: "内容管理", Permissions: []admindomain.Permission{
-			{Code: PermContentBannerRead, Name: "Banner 查看"},
-			{Code: PermContentBannerWrite, Name: "Banner 管理"},
-			{Code: PermContentNoticeRead, Name: "公告查看"},
-			{Code: PermContentNoticeWrite, Name: "公告管理"},
-		}},
-		{Key: "audit", Name: "审计日志", Permissions: []admindomain.Permission{
-			{Code: PermAuditLoginRead, Name: "登录审计查看"},
-			{Code: PermAuditSessionRead, Name: "会话审计查看"},
-		}},
-		{Key: "storage", Name: "存储管理", Permissions: []admindomain.Permission{
-			{Code: PermStorageRead, Name: "存储配置查看"},
-			{Code: PermStorageWrite, Name: "存储配置修改"},
-		}},
-		{Key: "workflow", Name: "工作流", Permissions: []admindomain.Permission{
-			{Code: PermWorkflowRead, Name: "工作流查看"},
-			{Code: PermWorkflowWrite, Name: "工作流管理"},
-		}},
-		{Key: "version", Name: "版本管理", Permissions: []admindomain.Permission{
-			{Code: PermVersionRead, Name: "版本查看"},
-			{Code: PermVersionWrite, Name: "版本管理"},
-		}},
-		{Key: "site", Name: "站点管理", Permissions: []admindomain.Permission{
-			{Code: PermSiteRead, Name: "站点查看"},
-			{Code: PermSiteWrite, Name: "站点管理"},
-			{Code: PermSiteAudit, Name: "站点审核"},
-		}},
-		{Key: "role_application", Name: "角色申请", Permissions: []admindomain.Permission{
-			{Code: PermRoleApplicationRead, Name: "申请查看"},
-			{Code: PermRoleApplicationReview, Name: "申请审批"},
-		}},
-		{Key: "points", Name: "积分管理", Permissions: []admindomain.Permission{
-			{Code: PermPointsRead, Name: "积分查看"},
-			{Code: PermPointsWrite, Name: "积分调整"},
-		}},
-		{Key: "email", Name: "邮件服务", Permissions: []admindomain.Permission{
-			{Code: PermEmailRead, Name: "邮件配置查看"},
-			{Code: PermEmailWrite, Name: "邮件配置修改"},
-		}},
-		{Key: "ai", Name: "AI 服务", Permissions: []admindomain.Permission{
-			{Code: PermAIRead, Name: "AI 配置查看", Description: "查看 AI 通道 / 技能 / MCP 配置（密钥恒不回显）"},
-			{Code: PermAIWrite, Name: "AI 配置修改", Description: "增删改 AI 通道 / 技能 / MCP，含连通性测试（会产生真实调用计费）"},
-		}},
-		{Key: "payment", Name: "支付管理", Permissions: []admindomain.Permission{
-			{Code: PermPaymentRead, Name: "支付配置查看"},
-			{Code: PermPaymentWrite, Name: "支付配置修改"},
-		}},
-		{Key: "ticket", Name: "工单系统", Permissions: []admindomain.Permission{
-			{Code: PermTicketRead, Name: "工单查看", Description: "决定可见范围：全局作用域=全部工单，应用作用域=该应用工单"},
-			{Code: PermTicketWrite, Name: "工单编辑", Description: "建单、改标题/分类/优先级/标签"},
-			{Code: PermTicketReply, Name: "工单回复", Description: "对提单人可见的回复"},
-			{Code: PermTicketInternal, Name: "内部备注", Description: "查看并发表仅内部可见的备注"},
-			{Code: PermTicketAssign, Name: "工单指派", Description: "指派受理人 / 转派处理组 / 管理关注人"},
-			{Code: PermTicketClose, Name: "工单结单", Description: "解决、关闭、重开"},
-			{Code: PermTicketDelete, Name: "工单删除"},
-			{Code: PermTicketManage, Name: "工单配置", Description: "分类、SLA、处理组、快捷回复"},
-			{Code: PermTicketExport, Name: "工单导出"},
-		}},
-		{Key: "notify", Name: "通知出口", Permissions: []admindomain.Permission{
-			{Code: PermNotifyChannelRead, Name: "通知渠道查看"},
-			{Code: PermNotifyChannelWrite, Name: "通知渠道管理", Description: "飞书/钉钉/企微/Webhook 等渠道与订阅配置"},
-			{Code: PermNotifyDeliveryRead, Name: "投递记录查看"},
-			{Code: PermNotifyTest, Name: "测试发送"},
-		}},
-		{Key: "org", Name: "组织架构", Permissions: []admindomain.Permission{
-			{Code: PermOrgCreate, Name: "创建组织"},
-			{Code: PermOrgWrite, Name: "修改/删除组织"},
-			{Code: PermOrgDeptRead, Name: "查看部门"},
-			{Code: PermOrgDeptWrite, Name: "管理部门"},
-			{Code: PermOrgMemberRead, Name: "查看成员"},
-			{Code: PermOrgMemberWrite, Name: "管理成员"},
-			{Code: PermOrgMemberInvite, Name: "邀请成员"},
-		}},
-	}
+// serviceLevelPermissions 没有路由、只在 service 层判定的权限点（工单动作、组织成员等）。
+// 目录测试据此区分「故意没有路由」与「忘了登记路由」。
+var serviceLevelPermissions = map[string]bool{
+	PermAppCreate:       true,
+	PermTicketRead:      true,
+	PermTicketWrite:     true,
+	PermTicketReply:     true,
+	PermTicketInternal:  true,
+	PermTicketAssign:    true,
+	PermTicketClose:     true,
+	PermTicketDelete:    true,
+	PermOrgDeptRead:     true,
+	PermOrgDeptWrite:    true,
+	PermOrgMemberRead:   true,
+	PermOrgMemberWrite:  true,
+	PermOrgMemberInvite: true,
+	PermNotifyTest:      true,
 }
 
-// AllPermissionCodes 返回目录里的全部权限点代码（有序，供权限展开与校验使用）。
-func AllPermissionCodes() []string {
-	groups := PermissionCatalog()
-	codes := make([]string, 0, 96)
-	for _, group := range groups {
-		for _, item := range group.Permissions {
-			codes = append(codes, item.Code)
+// catalogIndex 树的派生索引，首次使用时构造一次（树是编译期常量）。
+type catalogIndex struct {
+	tree     []PermissionNode
+	codes    []string
+	nodes    map[string]*PermissionNode
+	paths    map[string][]string // code → 祖先节点名（目录 / 菜单）
+	legacy   map[string]string   // code → 旧权限点
+	children map[string][]string // 旧权限点 → 细分权限点
+}
+
+var (
+	catalogOnce sync.Once
+	catalogData *catalogIndex
+)
+
+func catalog() *catalogIndex {
+	catalogOnce.Do(func() {
+		idx := &catalogIndex{
+			tree:     permissionTree(),
+			nodes:    map[string]*PermissionNode{},
+			paths:    map[string][]string{},
+			legacy:   map[string]string{},
+			children: map[string][]string{},
 		}
-	}
-	return codes
-}
-
-// PermissionExists 判定权限点是否登记在目录里。
-func PermissionExists(code string) bool {
-	for _, group := range PermissionCatalog() {
-		for _, item := range group.Permissions {
-			if item.Code == code {
-				return true
+		counts := routeCountsByPermission()
+		var walk func(nodes []PermissionNode, scope PermScope, path []string)
+		walk = func(nodes []PermissionNode, scope PermScope, path []string) {
+			for i := range nodes {
+				node := &nodes[i]
+				if node.Scope == "" {
+					node.Scope = scope
+				}
+				if node.Kind == NodeAction {
+					node.Routes = counts[node.Code]
+					idx.codes = append(idx.codes, node.Code)
+					idx.nodes[node.Code] = node
+					idx.paths[node.Code] = append([]string(nil), path...)
+					if node.Legacy != "" {
+						idx.legacy[node.Code] = node.Legacy
+						idx.children[node.Legacy] = append(idx.children[node.Legacy], node.Code)
+					}
+					continue
+				}
+				walk(node.Children, node.Scope, append(append([]string(nil), path...), node.Name))
 			}
 		}
+		walk(idx.tree, ScopeBoth, nil)
+		catalogData = idx
+	})
+	return catalogData
+}
+
+// PermissionTree 返回权限树的深拷贝（带每个操作节点覆盖的接口数）。
+func PermissionTree() []PermissionNode {
+	return cloneNodes(catalog().tree)
+}
+
+func cloneNodes(nodes []PermissionNode) []PermissionNode {
+	out := make([]PermissionNode, len(nodes))
+	for i, node := range nodes {
+		node.routes = nil
+		node.Children = cloneNodes(node.Children)
+		out[i] = node
+	}
+	return out
+}
+
+// AllPermissionCodes 树上全部操作节点的代码（树序）。
+func AllPermissionCodes() []string {
+	return append([]string(nil), catalog().codes...)
+}
+
+// PermissionExists 代码是否为树上的操作节点。
+func PermissionExists(code string) bool {
+	_, ok := catalog().nodes[code]
+	return ok
+}
+
+// IsLegacyPermission 代码是否为旧权限点（兼容组）。
+func IsLegacyPermission(code string) bool {
+	_, ok := legacyPermissionNames[code]
+	return ok
+}
+
+// LegacyPermissionNames 旧权限点 → 中文名。
+func LegacyPermissionNames() map[string]string {
+	out := make(map[string]string, len(legacyPermissionNames))
+	for code, name := range legacyPermissionNames {
+		out[code] = name
+	}
+	return out
+}
+
+// LegacyOf 细分权限点所替换的旧权限点；未拆分的权限点返回空串。
+func LegacyOf(code string) string { return catalog().legacy[code] }
+
+// LegacyChildren 旧权限点名下的全部细分权限点。
+func LegacyChildren(legacy string) []string {
+	return append([]string(nil), catalog().children[legacy]...)
+}
+
+// PermissionScope 权限点的判定作用域。
+func PermissionScope(code string) PermScope {
+	if node, ok := catalog().nodes[code]; ok {
+		return node.Scope
+	}
+	return ScopeBoth
+}
+
+// PermissionIsDanger 是否为高危操作。
+func PermissionIsDanger(code string) bool {
+	node, ok := catalog().nodes[code]
+	return ok && node.Danger
+}
+
+// PermissionName 权限点的完整中文名（「菜单 · 操作」）；旧权限点给出兼容说明；都不是时原样返回。
+func PermissionName(code string) string {
+	idx := catalog()
+	if node, ok := idx.nodes[code]; ok {
+		path := idx.paths[code]
+		if len(path) > 0 {
+			return path[len(path)-1] + "：" + node.Name
+		}
+		return node.Name
+	}
+	if name, ok := legacyPermissionNames[code]; ok {
+		return name
+	}
+	if strings.HasSuffix(code, ":*") {
+		return "「" + strings.TrimSuffix(code, ":*") + "」下的全部权限"
+	}
+	if code == AnyPermission {
+		return "全部权限"
+	}
+	return code
+}
+
+// PermissionPath 权限点在树上的位置（目录 / 菜单名）。
+func PermissionPath(code string) []string {
+	return append([]string(nil), catalog().paths[code]...)
+}
+
+// Implies 判定一条授予模式是否覆盖某个被请求的权限点。
+//
+// 规则与授权引擎完全一致：前缀通配（`ticket:*` / `*`）、全等、
+// 以及「细分权限点 → 旧权限点」的兼容关系。临时权限与 MCP 密钥范围都用它，
+// 两处自己写字符串比较的话，持有旧代码 `app:read` 的密钥会调不动 `app:lottery:read`。
+func Implies(granted, requested string) bool {
+	granted = strings.TrimSpace(granted)
+	requested = strings.TrimSpace(requested)
+	if granted == "" || requested == "" {
+		return false
+	}
+	if patternMatches(granted, requested) {
+		return true
+	}
+	if legacy := LegacyOf(requested); legacy != "" {
+		return patternMatches(granted, legacy)
 	}
 	return false
 }
 
-// PermissionName 返回权限点的中文名；未登记时原样返回代码。
-func PermissionName(code string) string {
-	for _, group := range PermissionCatalog() {
-		for _, item := range group.Permissions {
-			if item.Code == code {
-				return item.Name
-			}
+func patternMatches(pattern, code string) bool {
+	if pattern == AnyPermission || pattern == code {
+		return true
+	}
+	if strings.HasSuffix(pattern, "*") {
+		return strings.HasPrefix(code, strings.TrimSuffix(pattern, "*"))
+	}
+	return false
+}
+
+// ExpandPattern 把一条授予模式展开成它覆盖的全部细分权限点（有序）。
+func ExpandPattern(pattern string) []string {
+	result := make([]string, 0)
+	for _, code := range catalog().codes {
+		if Implies(pattern, code) {
+			result = append(result, code)
 		}
 	}
-	return code
+	return result
+}
+
+// resourceEdges 资源层级（g2）：细分权限点 → 旧权限点。
+func resourceEdges() [][]string {
+	idx := catalog()
+	edges := make([][]string, 0, len(idx.legacy))
+	for _, code := range idx.codes {
+		if legacy := idx.legacy[code]; legacy != "" {
+			edges = append(edges, []string{code, legacy})
+		}
+	}
+	return edges
+}
+
+// PermissionCatalog 扁平的「菜单 → 操作」分组。
+//
+// 旧接口（权限矩阵、MCP 密钥签发页）按分组消费，这里把树压平到菜单一级：
+// 每个菜单一组，组名带上所属目录。
+func PermissionCatalog() []admindomain.PermissionGroup {
+	idx := catalog()
+	groups := make([]admindomain.PermissionGroup, 0, 96)
+	var walk func(nodes []PermissionNode, parent string)
+	walk = func(nodes []PermissionNode, parent string) {
+		for _, node := range nodes {
+			if node.Kind == NodeMenu {
+				group := admindomain.PermissionGroup{Key: node.Key, Name: node.Name}
+				if parent != "" {
+					group.Name = parent + " · " + node.Name
+				}
+				for _, child := range node.Children {
+					if child.Kind == NodeAction {
+						group.Permissions = append(group.Permissions, admindomain.Permission{
+							Code: child.Code, Name: child.Name, Description: child.Description,
+						})
+					}
+				}
+				groups = append(groups, group)
+				continue
+			}
+			walk(node.Children, node.Name)
+		}
+	}
+	walk(idx.tree, "")
+	return groups
+}
+
+// sortedCodes 去重排序。
+func sortedCodes(items []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		out = append(out, item)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func init() {
+	// domain 层不能 import 本包（会成环），MCP 密钥范围的匹配经由这个钩子拿到兼容关系。
+	admindomain.PermissionImplies = Implies
 }

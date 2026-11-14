@@ -42,11 +42,11 @@ import (
 const (
 	// PermissionAppRead 应用信息查看。
 	PermissionAppRead = "app:read"
-	// PermissionAppWrite 应用信息修改。
-	//
-	// 它同时是「常规授权能不能建应用」的判据：持有全局作用域的 app:write
-	// 即为平台侧管理员，建应用不走自助配额。
+	// PermissionAppWrite 旧的「应用信息修改」合并权限点（兼容组）。
 	PermissionAppWrite = "app:write"
+	// PermissionAppCreate「常规授权能不能建应用」的判据：平台级持有即为平台侧管理员，
+	// 建应用不走自助配额。旧策略里的全局 app:write 经兼容关系同样满足它。
+	PermissionAppCreate = authz.PermAppCreate
 )
 
 // SetPlatformSettings 注入平台设置服务（在 bootstrap 中调用，避免循环初始化）。
@@ -84,12 +84,16 @@ func (s *AdminService) Authorize(ctx context.Context, access *admindomain.Access
 	// 临时权限**刻意不进策略表**：策略是带缓存的（进程内 + 跨实例广播），
 	// 而临时授权的价值恰恰在于"到点自动失效"。放进缓存意味着过期时刻起
 	// 还有一个窗口它仍然有效，那正是这类授权最不能接受的性质。
-	tempPerms, err := s.pg.GetActiveTempPermissions(ctx, access.AdminID)
-	if err != nil {
-		return err
+	var tempPerms []admindomain.TempPermission
+	if s.pg != nil {
+		var err error
+		if tempPerms, err = s.pg.GetActiveTempPermissions(ctx, access.AdminID); err != nil {
+			return err
+		}
 	}
 	for _, tp := range tempPerms {
-		if scopeMatches(tp.AppID, appID) && tp.Permission == permission {
+		// 临时权限与策略同一套匹配：前缀通配、旧权限点覆盖细分权限点
+		if scopeMatches(tp.AppID, appID) && authz.Implies(tp.Permission, permission) {
 			return nil
 		}
 	}
@@ -107,10 +111,13 @@ func (s *AdminService) Authorize(ctx context.Context, access *admindomain.Access
 func (s *AdminService) subjectsFor(access *admindomain.AccessContext, appID *int64) []string {
 	subjects := make([]string, 0, len(access.Assignments)+1)
 	subjects = append(subjects, authz.AdminSubject(access.AdminID))
+	seen := map[string]bool{}
 	for _, assignment := range access.Assignments {
-		if scopeMatches(assignment.AppID, appID) {
-			subjects = append(subjects, authz.RoleSubject(assignment.RoleKey))
+		if !assignmentMatches(assignment, appID) || seen[assignment.RoleKey] {
+			continue
 		}
+		seen[assignment.RoleKey] = true
+		subjects = append(subjects, authz.RoleSubject(assignment.RoleKey))
 	}
 	return subjects
 }
@@ -193,7 +200,7 @@ func (s *AdminService) EffectivePermissions(ctx context.Context, access *admindo
 // 任何自行并集的实现都会与判定结果对不上，表现为控制台显示的按钮点了才 403
 // （或者更糟：真正有权限的按钮被藏起来）。
 func (s *AdminService) expandPermissions(access *admindomain.AccessContext, temp []admindomain.TempPermission) admindomain.PermissionSnapshot {
-	snapshot := admindomain.PermissionSnapshot{Global: []string{}, Apps: map[string][]string{}}
+	snapshot := admindomain.PermissionSnapshot{Global: []string{}, Apps: map[string][]string{}, AnyApp: []string{}}
 	if access == nil {
 		return snapshot
 	}
@@ -203,12 +210,18 @@ func (s *AdminService) expandPermissions(access *admindomain.AccessContext, temp
 		snapshot.All = true
 		snapshot.Global = append([]string(nil), catalog...)
 		sort.Strings(snapshot.Global)
+		snapshot.AnyApp = snapshot.Global
 		return snapshot
 	}
 
 	// 全局作用域
 	snapshot.Global = mergeTempPermissions(
 		s.authz.PermissionsFor(s.subjectsFor(access, nil), authz.PlatformDomain, catalog), temp, nil)
+
+	// 任意一个未单独列出的应用：全局角色 + 「全部应用」数据权限 + 不限应用的临时权限
+	sentinel := anyAppSentinel
+	snapshot.AnyApp = mergeTempPermissions(
+		s.authz.PermissionsFor(s.subjectsFor(access, &sentinel), authz.AppDomain(sentinel), catalog), temp, &sentinel)
 
 	// 每个"这个人在里面有点什么"的应用各展开一次。Apps[x] 是该应用下的**完整**集合
 	// （全局授权在 subjectsFor 里已经并进去了），不是增量：
@@ -219,6 +232,9 @@ func (s *AdminService) expandPermissions(access *admindomain.AccessContext, temp
 	// 「临时进去处理一下」），只扫角色分配会让那个应用整个不出现在快照里，
 	// 于是控制台把他确实能点的按钮全藏了。
 	for _, appID := range scopedAppIDs(access.Assignments, temp) {
+		if appID == anyAppSentinel {
+			continue
+		}
 		permissions := s.authz.PermissionsFor(s.subjectsFor(access, &appID), authz.AppDomain(appID), catalog)
 		snapshot.Apps[strconv.FormatInt(appID, 10)] = mergeTempPermissions(permissions, temp, &appID)
 	}
@@ -262,11 +278,23 @@ func mergeTempPermissions(permissions []string, temp []admindomain.TempPermissio
 		set[item] = true
 	}
 	for _, tp := range temp {
-		if scopeMatches(tp.AppID, appID) {
-			set[tp.Permission] = true
+		if !tempPermissionApplies(tp.AppID, appID) {
+			continue
+		}
+		// 临时权限可以是旧权限点或前缀通配：展开成细分权限点，快照里只出现目录里的代码
+		for _, code := range authz.ExpandPattern(tp.Permission) {
+			set[code] = true
 		}
 	}
 	return sortedPermissionCodes(set)
+}
+
+// tempPermissionApplies 临时权限是否落在某个作用域里；哨兵「任意应用」只认不限应用的临时权限。
+func tempPermissionApplies(tpAppID, appID *int64) bool {
+	if appID != nil && *appID == anyAppSentinel {
+		return tpAppID == nil
+	}
+	return scopeMatches(tpAppID, appID)
 }
 
 func sortedPermissionCodes(set map[string]bool) []string {
@@ -333,7 +361,7 @@ func (s *AdminService) decideSelfServiceAppCreation(ctx context.Context, access 
 	}
 	// 持有全局 app:write 的（超管 / 平台管理员）不受自助配额约束 ——
 	// 那是常规授权路径，配额管的是"没有授权的人"。
-	if s.HasPermission(ctx, access, PermissionAppWrite, nil) {
+	if s.HasPermission(ctx, access, PermissionAppCreate, nil) {
 		return selfServiceAppDecision{Allowed: true, Privileged: true}, policy, 0
 	}
 	created, err := s.pg.CountAppsCreatedBy(ctx, access.AdminID)

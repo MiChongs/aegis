@@ -71,7 +71,7 @@ func TestResolveAdminPermissionSignInRewardAppScoped(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
-		if permission != "app:read" {
+		if !permissionIs(permission, "app:read") {
 			t.Fatalf("expected app:read, got %q", permission)
 		}
 		if !appScoped {

@@ -35,7 +35,8 @@ func (h *Handler) requireAuditReader(c *gin.Context) (*admindomain.AccessContext
 		response.Error(c, http.StatusUnauthorized, 40110, "管理员未认证")
 		return nil, false
 	}
-	if session.IsSuperAdmin {
+	// 经 AdminAccess 按「审计日志：查看 / 导出」放行的请求认可该授权
+	if session.IsSuperAdmin || auditmiddleware.AuthorizedPermission(c) != "" {
 		return session, true
 	}
 	for _, a := range session.Assignments {

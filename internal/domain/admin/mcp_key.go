@@ -133,11 +133,21 @@ func (s *MCPKeyScope) AllowsApp(appID int64) bool {
 // RestrictsApps 是否限定了应用。
 func (s *MCPKeyScope) RestrictsApps() bool { return s != nil && len(s.AppIDs) > 0 }
 
+// PermissionImplies 由授权包（internal/authz）在初始化时注入：判定一条授予模式是否覆盖
+// 被请求的权限点，含「细分权限点 → 旧权限点」的兼容关系。domain 层不能反向 import authz。
+var PermissionImplies func(granted, requested string) bool
+
 // MCPPermissionMatches 单条模式与权限点的匹配。
+//
+// 签发于权限拆分之前的密钥范围里写的是旧代码（app:read / system:admin:manage …），
+// 它们必须继续覆盖拆分出来的细分权限点，否则升级之后这些密钥会突然什么都调不动。
 func MCPPermissionMatches(pattern, permission string) bool {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
 		return false
+	}
+	if PermissionImplies != nil {
+		return PermissionImplies(pattern, permission)
 	}
 	if pattern == MCPKeyAllPermissions || pattern == permission {
 		return true

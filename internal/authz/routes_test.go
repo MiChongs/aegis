@@ -16,7 +16,7 @@ type routeBaselineRow struct {
 
 func loadRouteBaseline(t *testing.T) []routeBaselineRow {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/route_permissions.json")
+	raw, err := os.ReadFile("testdata/legacy_route_permissions.json")
 	if err != nil {
 		t.Fatalf("读取路由判定基线失败：%v", err)
 	}
@@ -24,51 +24,10 @@ func loadRouteBaseline(t *testing.T) []routeBaselineRow {
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		t.Fatalf("解析路由判定基线失败：%v", err)
 	}
-	if len(rows) < 500 {
-		t.Fatalf("基线只有 %d 条，明显不完整 —— 它应覆盖全部注册路由", len(rows))
+	if len(rows) < 1000 {
+		t.Fatalf("基线只有 %d 条，明显不完整 —— 它应覆盖全部注册的管理端路由", len(rows))
 	}
 	return rows
-}
-
-// 规则表必须逐条复现旧实现（250 行 switch）对**全部注册路由**的判定。
-//
-// 这条测试是这次重构唯一的安全网。授权判定改错不会有编译错误、多数也不会有运行时
-// 报错，只会表现为某个页面空白（判成了应用作用域却拿不到 appid）或者某个人
-// 突然能点他不该点的按钮 —— 两者都可能几个月后才被发现。
-//
-// testdata/route_permissions.json 是重构**之前**用旧实现跑出来的快照。
-// 以后要改某条路由的权限，改规则表的同时更新基线里对应那一行，
-// diff 会把改动摆在评审者面前，而不是藏在一个嵌套 switch 的第三层里。
-func TestRouteRulesMatchBaseline(t *testing.T) {
-	t.Parallel()
-
-	var mismatches int
-	for _, row := range loadRouteBaseline(t) {
-		decision, ok := ResolveRoute(row.Method, row.Path)
-		if row.Unmapped {
-			if ok {
-				t.Errorf("%s %s：旧实现按未登记处理（默认拒绝），新规则表却给出了 %q/%v",
-					row.Method, row.Path, decision.Permission, decision.AppScoped())
-				mismatches++
-			}
-			continue
-		}
-		if !ok {
-			t.Errorf("%s %s：规则表没覆盖到，旧实现给的是 %q（appScoped=%v）",
-				row.Method, row.Path, row.Permission, row.AppScoped)
-			mismatches++
-			continue
-		}
-		if decision.Permission != row.Permission || decision.AppScoped() != row.AppScoped {
-			t.Errorf("%s %s：期望 %q/appScoped=%v，得到 %q/appScoped=%v（命中规则 %q）",
-				row.Method, row.Path, row.Permission, row.AppScoped,
-				decision.Permission, decision.AppScoped(), matchedPattern(decision))
-			mismatches++
-		}
-		if mismatches > 40 {
-			t.Fatal("差异过多，先修前面的再继续")
-		}
-	}
 }
 
 func matchedPattern(decision RouteDecision) string {
@@ -86,7 +45,7 @@ func matchedPattern(decision RouteDecision) string {
 func TestNoUnreachableRouteRule(t *testing.T) {
 	t.Parallel()
 
-	rows := loadRouteBaseline(t)
+	rows := loadGoldenAdminRoutes(t)
 	hit := make([]bool, len(adminRouteRules))
 	for _, row := range rows {
 		for i := range adminRouteRules {

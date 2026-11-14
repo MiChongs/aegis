@@ -28,6 +28,7 @@ import (
 	"aegis/internal/domain/egressgraph"
 	"aegis/internal/domain/regip"
 	"aegis/internal/domain/storage"
+	"aegis/internal/domain/suspension"
 	"aegis/internal/domain/system"
 	"aegis/internal/service"
 )
@@ -138,6 +139,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/apps/{appkey}/auth-protocol"):                                                          authprotocol.PolicyPatch{},               // AdminUpdateAppAuthProtocol
 		routeKey("POST", "/api/admin/apps/{appkey}/auth-protocol/selftest"):                                                AppIntegrationSelfTestRequest{},          // AdminAppIntegrationSelfTest
 		routeKey("PUT", "/api/admin/apps/{appkey}/auto-sign"):                                                              AdminAutoSignPolicyRequest{},             // UpdateAdminAppAutoSign
+		routeKey("PUT", "/api/admin/apps/{appkey}/ban-appeals/settings"):                                                   suspension.Settings{},                    // AdminSaveBanAppealSettings
 		routeKey("DELETE", "/api/admin/apps/{appkey}/banners"):                                                             AdminBatchIDsRequest{},                   // DeleteAdminBanners
 		routeKey("GET", "/api/admin/apps/{appkey}/banners"):                                                                AdminBannerListQuery{},                   // AdminBanners
 		routeKey("PUT", "/api/admin/apps/{appkey}/banners/order"):                                                          AdminBannerReorderRequest{},              // ReorderAdminBanners
@@ -498,6 +500,10 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/system/risk-ops/release"):                                                             service.RiskOpsReleaseInput{},            // AdminRiskOpsRelease
 		routeKey("POST", "/api/admin/system/roles"):                                                                        CreateCustomRoleRequest{},                // AdminCreateCustomRole
 		routeKey("PUT", "/api/admin/system/roles/{roleKey}"):                                                               UpdateCustomRoleRequest{},                // AdminUpdateCustomRole
+		routeKey("POST", "/api/admin/system/roles/{roleKey}/copy"):                                                         RoleCopyRequest{},                        // AdminCopyRole
+		routeKey("POST", "/api/admin/system/roles/{roleKey}/members"):                                                      RoleMembersRequest{},                     // AdminAddRoleMembers
+		routeKey("PUT", "/api/admin/system/roles/{roleKey}/permissions"):                                                   RolePermissionsRequest{},                 // AdminSetRolePermissions
+		routeKey("PUT", "/api/admin/system/roles/{roleKey}/status"):                                                        RoleStatusRequest{},                      // AdminSetRoleStatus
 		routeKey("POST", "/api/admin/system/saml/test"):                                                                    AdminSAMLTestRequest{},                   // AdminSAMLTest
 		routeKey("PUT", "/api/admin/system/settings"):                                                                      AdminSystemSettingsUpdateRequest{},       // AdminUpdateSystemSettings
 		routeKey("PUT", "/api/admin/system/storage/cdn/{configId}"):                                                        UpsertCDNConfigRequest{},                 // UpsertCDNConfig
@@ -803,6 +809,9 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/v1/apps/{appkey}/signin"):                                                                   SignInRequest{},                          // SignIn
 		routeKey("GET", "/api/v1/apps/{appkey}/signin/history"):                                                            PaginationQuery{},                        // SignInHistory
 		routeKey("POST", "/api/v1/apps/{appkey}/storage/object-link"):                                                      StorageObjectLinkRequest{},               // StorageObjectLink
+		routeKey("POST", "/api/v1/apps/{appkey}/suspension"):                                                               suspensionClientRequest{},                // AppSuspensionStatus
+		routeKey("POST", "/api/v1/apps/{appkey}/suspension/appeal"):                                                        suspensionClientRequest{},                // AppSubmitSuspensionAppeal
+		routeKey("POST", "/api/v1/apps/{appkey}/suspension/appeal/withdraw"):                                               suspensionClientRequest{},                // AppWithdrawSuspensionAppeal
 		routeKey("GET", "/api/v1/apps/{appkey}/tickets"):                                                                   TicketListQuery{},                        // UserListTickets
 		routeKey("POST", "/api/v1/apps/{appkey}/tickets"):                                                                  UserTicketCreateRequest{},                // UserCreateTicket
 		routeKey("POST", "/api/v1/apps/{appkey}/tickets/{ticketId}/cancel"):                                                TicketCancelRequest{},                    // UserCancelTicket

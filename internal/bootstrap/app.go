@@ -388,6 +388,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	if err := adminService.LoadCustomRoles(ctx); err != nil {
 		log.Warn("加载自定义角色失败", zap.Error(err))
 	}
+	// 其余实例改了角色会广播策略变更，这里跟着刷新角色元数据（数据权限、启停状态）
+	adminService.SetupRoleSync()
 	firewallLogService := service.NewFirewallLogService(log, pg, locationService, ipBanService)
 	monitorService = service.NewMonitorService(cfg, log, postgres, redisClient, natsConn, temporalClient, authService, adminService, userService, signInService, pointsService, notificationService, appService, siteService, versionService, roleApplicationService, emailService, paymentService, workflowService, storageService, avatarService, realtimeService, firewall, systemService, locationService)
 	monitorRepo := redisrepo.NewMonitorRepository(redisClient, cfg.Redis.KeyPrefix)

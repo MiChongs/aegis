@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"aegis/internal/authz"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -79,7 +80,7 @@ func TestAppResourcesStayAppScoped(t *testing.T) {
 			if !appScoped {
 				t.Errorf("%s 必须按 appScoped 判定，否则跨应用授权隔离失效", tc.path)
 			}
-			if permission != tc.want {
+			if !permissionIs(permission, tc.want) {
 				t.Errorf("%s 权限点应为 %q，得到 %q", tc.path, tc.want, permission)
 			}
 		})
@@ -119,7 +120,7 @@ func TestPlatformGovernanceRoutesAreGlobalScoped(t *testing.T) {
 			if appScoped {
 				t.Errorf("%s 绝不能按 appScoped 判定：会让被治理应用的管理员自己解自己的封", tc.path)
 			}
-			if permission != tc.want {
+			if !permissionIs(permission, tc.want) {
 				t.Errorf("%s 权限点应为 %q，得到 %q", tc.path, tc.want, permission)
 			}
 		})
@@ -158,7 +159,7 @@ func TestAppGovernanceViewStaysAppScoped(t *testing.T) {
 			if !appScoped {
 				t.Errorf("%s 必须按 appScoped 判定，否则跨应用隔离失效", tc.path)
 			}
-			if permission != tc.want {
+			if !permissionIs(permission, tc.want) {
 				t.Errorf("%s 权限点应为 %q，得到 %q", tc.path, tc.want, permission)
 			}
 		})
@@ -241,7 +242,7 @@ func TestExistingAppRoutesKeepTheirGates(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resolveAdminPermission 返回错误：%v", err)
 			}
-			if permission != tc.want {
+			if !permissionIs(permission, tc.want) {
 				t.Errorf("权限点应为 %q，得到 %q", tc.want, permission)
 			}
 			if appScoped != tc.appScoped {
@@ -259,4 +260,10 @@ func TestUnregisteredAdminRouteDefaultsToDeny(t *testing.T) {
 		newPermissionTestContext(http.MethodPost, "/api/admin/brand-new-module/do-something")); err == nil {
 		t.Fatal("未登记的管理端路由必须返回错误以触发默认拒绝")
 	}
+}
+
+// permissionIs 权限细分之后，路由判到的是细分权限点；断言「是它或隶属于它」即可——
+// 逐条的新旧对照由 internal/authz 的 TestNewPermissionDescendsFromLegacy 钉住。
+func permissionIs(got, want string) bool {
+	return got == want || (got != "" && authz.LegacyOf(got) == want)
 }

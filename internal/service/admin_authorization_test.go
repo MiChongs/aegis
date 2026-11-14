@@ -133,8 +133,12 @@ func TestDenyPermissionExplainsWhatIsMissing(t *testing.T) {
 func TestPermissionDisplayNameUsesCatalog(t *testing.T) {
 	t.Parallel()
 
-	if got := permissionDisplayName(authz.PermAppWrite); got != "应用信息修改" {
-		t.Fatalf("app:write 应翻成「应用信息修改」，得到 %q", got)
+	if got := permissionDisplayName("app:lottery:write"); got != "抽奖：编辑" {
+		t.Fatalf("app:lottery:write 应翻成「抽奖：编辑」，得到 %q", got)
+	}
+	// 旧的合并权限点仍能翻成中文（历史策略、拒绝文案里会出现它们）
+	if got := permissionDisplayName(authz.PermAppWrite); got != "应用信息修改（旧版合并权限）" {
+		t.Fatalf("app:write 应翻成旧版合并权限的说明，得到 %q", got)
 	}
 	// 未登记的权限点原样返回，绝不能翻成空串 —— 那会得到「缺少「」」这种句子。
 	if got := permissionDisplayName("not:registered"); got != "not:registered" {
@@ -161,15 +165,19 @@ func TestExpandPermissionsMergesGlobalIntoAppScope(t *testing.T) {
 		{Permission: "points:write", AppID: &otherApp},
 	})
 
-	if !containsPermission(snapshot.Global, authz.PermAppWrite) {
-		t.Fatal("平台管理员的 app:write 应出现在全局集合里")
+	// 快照里只出现细分权限点：旧的 app:write / app:read 经兼容关系展开成它们名下的每一项
+	if !containsPermission(snapshot.Global, "app:lottery:write") {
+		t.Fatal("平台管理员的 app:*（含旧 app:write）应展开到全局集合里")
 	}
 	appScoped := snapshot.Apps["42"]
-	if !containsPermission(appScoped, authz.PermAppRead) {
+	if !containsPermission(appScoped, "app:info:read") {
 		t.Fatal("应用级角色自己的权限应出现在该应用的集合里")
 	}
-	if !containsPermission(appScoped, authz.PermAppWrite) {
+	if !containsPermission(appScoped, "app:lottery:write") {
 		t.Fatal("全局权限必须并入每个应用的集合，否则控制台要自己复现 scopeMatches")
+	}
+	if !containsPermission(snapshot.AnyApp, "app:lottery:write") || containsPermission(snapshot.AnyApp, "app:info:read") && !containsPermission(snapshot.Global, "app:info:read") {
+		t.Fatal("AnyApp 应只含全局授权带来的权限，不含绑定到应用 42 的那部分")
 	}
 	if !containsPermission(snapshot.Apps["43"], "points:write") {
 		t.Fatal("临时权限与角色授权同权，展开时不能漏掉 —— 漏掉会把确实能点的按钮藏起来")

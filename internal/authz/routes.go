@@ -2,6 +2,7 @@ package authz
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -139,294 +140,110 @@ func splitPath(path string) []string {
 	return strings.Split(path, "/")
 }
 
-// adminRouteRules 规则表。**先到先得**，因此排列顺序是从具体到宽泛。
+// adminRouteRules 规则表：开放接口 + 权限树上每个操作节点登记的接口，按特异性排序。
 //
-// 加一条新的管理端路由时往这里补一行即可；忘了补的表现是 40315
-// 「该管理端接口尚未登记权限规则」，而不是静默放行。
-var adminRouteRules = []RouteRule{
-	// ── MCP 服务端自述（docs/mcp.md）──
-	//
-	// 实际挂的是 AdminAuth：「我是谁、我能调哪些接口」对任何凭证都该答得上来，
-	// 判定结果本身就是按调用者的权限与密钥范围算出来的。登记在这里是为了不让它落进默认拒绝。
-	{Methods: readMethods, Pattern: "/api/admin/mcp/*", Note: "自述接口，内容按调用者的权限与密钥范围裁剪"},
+// 不再手排顺序。排序键（先到先得）：
+//  1. 精确模式（不含 `*`）先于前缀模式；
+//  2. 字面段多的先于少的（`/apps/:appkey/users/:userId/bans/*` 先于 `/apps/:appkey/users/*`）；
+//  3. 总段数多的在前；
+//  4. 限定了方法的先于不限方法的（`GET /x/*` 先于 `* /x/*`）；
+//  5. 其余按声明顺序（开放接口在前，然后是树序）。
+//
+// 手排的老问题是「新规则被上面一条更宽的规则整个遮住、永不生效且不报错」，
+// 排序之后剩下的歧义由 TestNoUnreachableRouteRule 与逐条基线比对兜住。
+var adminRouteRules = buildRouteRules()
 
-	// ── 工作台 ──
-	{Pattern: "/api/admin/dashboard", Note: "任意已登录管理员可见，内容按身份裁剪"},
+func buildRouteRules() []RouteRule {
+	rules := make([]RouteRule, 0, 1024)
+	rules = append(rules, openRoutes...)
+	var walk func(nodes []PermissionNode)
+	walk = func(nodes []PermissionNode) {
+		for _, node := range nodes {
+			if node.Kind == NodeAction {
+				for _, spec := range node.routes {
+					rules = append(rules, RouteRule{
+						Methods:    spec.methods,
+						Pattern:    spec.pattern,
+						Permission: node.Code,
+						Scope:      scopeForPattern(spec.pattern),
+						Note:       spec.note,
+					})
+				}
+				continue
+			}
+			walk(node.Children)
+		}
+	}
+	walk(permissionTree())
+	sort.SliceStable(rules, func(i, j int) bool {
+		return routeRuleLess(rules[i], rules[j])
+	})
+	return rules
+}
 
-	// ── 平台治理：恒全局作用域 ──
-	//
-	// 这一组接口的语义就是"跨应用"。带上 appid 会让作用域匹配认可
-	// 「绑定到该应用的角色」所持有的权限点，于是被治理应用自己的管理员
-	// 就能给自己解封 —— 而那正是这套机制存在的意义所反对的。
-	{Pattern: "/api/admin/platform/catalog", Note: "状态/能力目录是编译进二进制的静态表，被治理方也要靠它读懂自己的处境"},
-	{Pattern: "/api/admin/platform/storage-config/list", Permission: PermPlatformStorageRead},
-	{Pattern: "/api/admin/platform/storage-config/detail", Permission: PermPlatformStorageRead},
-	{Pattern: "/api/admin/platform/storage-config/*", Permission: PermPlatformStorageWrite},
-	// 存储中心：读（总览、池、事件、迁移进度、CORS 现状）与写（池、检测、CORS、迁移、转向）。
-	// 深度检测会真的往桶里写一个探测对象，所以算写。
-	{Methods: readMethods, Pattern: "/api/admin/platform/storage/*", Permission: PermPlatformStorageRead},
-	{Pattern: "/api/admin/platform/storage/*", Permission: PermPlatformStorageWrite},
-	{Pattern: "/api/admin/platform/apps/:appkey/revoke-sessions", Permission: PermPlatformAppDanger},
-	{Pattern: "/api/admin/platform/governance/appeals/:appealId/review", Permission: PermPlatformAppealReview},
-	{Methods: readMethods, Pattern: "/api/admin/platform/*", Permission: PermPlatformAppRead},
-	{Pattern: "/api/admin/platform/*", Permission: PermPlatformAppGovern},
+func routeRuleLess(a, b RouteRule) bool {
+	aw, bw := strings.Contains(a.Pattern, "*"), strings.Contains(b.Pattern, "*")
+	if aw != bw {
+		return !aw
+	}
+	al, bl := literalSegments(a.Pattern), literalSegments(b.Pattern)
+	if al != bl {
+		return al > bl
+	}
+	at, bt := len(splitPath(a.Pattern)), len(splitPath(b.Pattern))
+	if at != bt {
+		return at > bt
+	}
+	am, bm := len(a.Methods) > 0, len(b.Methods) > 0
+	if am != bm {
+		return am
+	}
+	return false
+}
 
-	// ── 工单：中间件只做"能不能进模块"的粗粒度闸门 ──
-	//
-	// 「能不能看/改这一条工单」由 TicketService 的 Scope + ActionSet 判定，
-	// 因此不带任何权限点、但属于某处理组的管理员也必须放行进来。
-	{Methods: readMethods, Pattern: "/api/admin/tickets/export", Permission: PermTicketExport},
-	{Methods: readMethods, Pattern: "/api/admin/tickets/categories/*"},
-	{Methods: readMethods, Pattern: "/api/admin/tickets/groups/*"},
-	{Methods: readMethods, Pattern: "/api/admin/tickets/sla-policies/*"},
-	{Methods: readMethods, Pattern: "/api/admin/tickets/quick-replies/*"},
-	{Pattern: "/api/admin/tickets/categories/*", Permission: PermTicketManage},
-	{Pattern: "/api/admin/tickets/groups/*", Permission: PermTicketManage},
-	{Pattern: "/api/admin/tickets/sla-policies/*", Permission: PermTicketManage},
-	{Pattern: "/api/admin/tickets/quick-replies/*", Permission: PermTicketManage},
-	{Pattern: "/api/admin/tickets/*", Note: "列表/详情/回复/指派等：进模块即可，细粒度在 TicketService"},
+func literalSegments(pattern string) int {
+	count := 0
+	for _, segment := range splitPath(pattern) {
+		if segment != "*" && !strings.HasPrefix(segment, ":") {
+			count++
+		}
+	}
+	return count
+}
 
-	// ── 统一通知出口：渠道内含 IM 凭据 ──
-	// 读要权限点，写由 RequireSuperAdmin 二次把关。
-	{Pattern: "/api/admin/notify/catalog", Note: "静态目录，任意已登录管理员可读"},
-	{Methods: readMethods, Pattern: "/api/admin/notify/deliveries/*", Permission: PermNotifyDeliveryRead},
-	{Pattern: "/api/admin/notify/deliveries/*", Permission: PermNotifyChannelWrite},
-	{Methods: readMethods, Pattern: "/api/admin/notify/*", Permission: PermNotifyChannelRead},
-	{Pattern: "/api/admin/notify/*", Permission: PermNotifyChannelWrite},
+// scopeForPattern 由路由前缀决定作用域。
+func scopeForPattern(pattern string) Scope {
+	for _, exception := range globalScopeExceptions {
+		if pattern == exception {
+			return ScopeGlobal
+		}
+	}
+	for _, prefix := range appScopedPrefixes {
+		if pattern == prefix || strings.HasPrefix(pattern, strings.TrimSuffix(prefix, "/")+"/") {
+			return ScopeApp
+		}
+	}
+	return ScopeGlobal
+}
 
-	// ── 组织架构：GET 所有管理员可读，写操作需权限 ──
-	{Methods: readMethods, Pattern: "/api/admin/system/organizations/*"},
-	{Methods: []string{http.MethodPost}, Pattern: "/api/admin/system/organizations/*", Permission: PermOrgCreate},
-	{Pattern: "/api/admin/system/organizations/*", Permission: PermOrgWrite},
+// routeCountsByPermission 每个权限点覆盖的规则条数（控制台在树上展示「涵盖 N 个接口」）。
+func routeCountsByPermission() map[string]int {
+	counts := map[string]int{}
+	for _, rule := range adminRouteRules {
+		if rule.Permission != "" {
+			counts[rule.Permission]++
+		}
+	}
+	return counts
+}
 
-	// ── 用户设置 ──
-	{Pattern: "/api/admin/user-settings/stats", Permission: PermSystemUserSettingRead},
-	{Pattern: "/api/admin/user-settings/user", Permission: PermSystemUserSettingRead},
-	{Pattern: "/api/admin/user-settings/check-integrity", Permission: PermSystemUserSettingRead},
-	{Pattern: "/api/admin/user-settings/*", Permission: PermSystemUserSettingWrite},
-
-	// ── 法律文本 ──
-	//
-	// 单独一条而不是落进下面那个大桶：桶对应的权限点叫「管理员管理」，
-	// 被它挡下时错误信息会说「缺少管理员管理权限」—— 而管理员想改的是隐私政策，
-	// 这句提示会把人引到完全无关的地方去要权限。
-	{Pattern: "/api/admin/system/legal/*", Permission: PermSystemLegalManage},
-
-	// ── 平台级邮件通道 ──
-	//
-	// 与法律文本同理，单独登记而不是落进下面那个大桶：桶对应的权限点叫
-	// 「管理员管理」，被它挡下时错误信息会说「缺少管理员管理权限」——
-	// 而管理员想改的是发信配置，这句提示会把人引到完全无关的地方去要权限。
-	//
-	// 作用域恒为全局。平台通道对所有应用生效（还能被共享成应用的兜底出口），
-	// 按应用作用域判定的话，任何一个应用管理员都能改到全站的发信出口 ——
-	// 与 /api/admin/platform/* 那条「恒全局」是同一个理由。
-	{Pattern: "/api/admin/system/email/providers", Note: "邮件服务商静态目录，不含租户数据与凭据"},
-	{Pattern: "/api/admin/system/email/scenes", Note: "邮件场景静态目录（默认文案与可用变量）"},
-	// 预览用 POST 只是因为要带一份草稿策略，不落库也不发信
-	{Methods: []string{"POST"}, Pattern: "/api/admin/system/email/preview", Permission: PermEmailRead},
-	{Methods: readMethods, Pattern: "/api/admin/system/email/*", Permission: PermEmailRead},
-	{Pattern: "/api/admin/system/email/*", Permission: PermEmailWrite},
-
-	// ── 平台级 AI 通道 ──
-	//
-	// 与平台级邮件通道逐条同构：作用域恒为全局（平台通道可共享给全部应用兜底），
-	// 单独登记是为了拒绝文案说「缺少 AI 配置权限」而不是「缺少管理员管理权限」。
-	{Pattern: "/api/admin/system/ai/providers", Note: "AI 供应商静态目录，不含租户数据与凭据"},
-	{Methods: readMethods, Pattern: "/api/admin/system/ai/*", Permission: PermAIRead},
-	{Pattern: "/api/admin/system/ai/*", Permission: PermAIWrite},
-
-	// ── 其余 /api/admin/system/*：管理员与平台运维 ──
-	//
-	// 这是一个很粗的桶（两百多条路由共用一个权限点）。保持原样是为了让这次
-	// 重构可逐条比对；要细化的话现在只需在上面按需插入更具体的规则，
-	// 不必再动任何 Go 控制流。
-	{Pattern: "/api/admin/system/*", Permission: PermSystemAdminManage},
-
-	// ── 静态目录：不含租户数据与凭据，任意已登录管理员可读 ──
-	//
-	// 这类接口控制台是**不带 appid** 调用的，按 ScopeApp 判定会被 40058 拦掉；
-	// 而只把作用域改成全局仍不够 —— 全局作用域只认全局授权，
-	// 应用级管理员会从 400 变成 403，页面同样是空的。因此权限点也要一并去掉。
-	{Pattern: "/api/admin/oauth-providers/templates", Note: "第三方登录渠道模板"},
-	{Pattern: "/api/admin/app/payment-config/methods", Note: "平台支持哪些支付渠道（Provider.Describe() 的静态目录）"},
-	{Pattern: "/api/app/workflow/node-types", Note: "工作流节点类型目录"},
-	{Pattern: "/api/app/workflow/engine/status", Note: "Temporal 连通性"},
-
-	// ── 策略模板（平台级只读目录）──
-	{Pattern: "/api/app/password-policy/templates", Permission: PermPlatformAppRead},
-	{Pattern: "/api/admin/apps/password-policy/templates", Permission: PermPlatformAppRead},
-	{Pattern: "/api/admin/apps/signin-reward/templates", Permission: PermPlatformAppRead},
-
-	// ── 应用兼容命名空间（POST 动词式旧接口）──
-	{Pattern: "/api/app/password-policy/get", Permission: PermAppRead, Scope: ScopeApp},
-	{Pattern: "/api/app/password-policy/*", Permission: PermAppWrite, Scope: ScopeApp},
-	{Pattern: "/api/app/points/stats", Permission: PermPointsRead, Scope: ScopeApp},
-	{Pattern: "/api/app/points/*", Permission: PermPointsWrite, Scope: ScopeApp},
-
-	{Pattern: "/api/app/workflow/list", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/detail", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/info", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/instances", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/instances/list", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/instances/info", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/instance/detail", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/tasks/todo", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/task/detail", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/task/history", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/templates", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/templates/list", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/validate", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/statistics", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/logs", Permission: PermWorkflowRead, Scope: ScopeApp},
-	{Pattern: "/api/app/workflow/*", Permission: PermWorkflowWrite, Scope: ScopeApp},
-
-	{Pattern: "/api/admin/app/version/list", Permission: PermVersionRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/version/detail", Permission: PermVersionRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/version/stats", Permission: PermVersionRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/version/channel/list", Permission: PermVersionRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/version/channel/detail", Permission: PermVersionRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/version/channel/users", Permission: PermVersionRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/version/channel/preview-match", Permission: PermVersionRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/version/*", Permission: PermVersionWrite, Scope: ScopeApp},
-
-	{Pattern: "/api/admin/app/site/list", Permission: PermSiteRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/site/detail", Permission: PermSiteRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/site/audit-list", Permission: PermSiteRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/site/audit-stats", Permission: PermSiteRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/site/user-sites", Permission: PermSiteRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/site/audit", Permission: PermSiteAudit, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/site/batch-audit", Permission: PermSiteWrite, Scope: ScopeApp,
-		Note: "批量审核落在写权限：与旧实现一致（/audit 后缀判定只吃精确的 /audit）"},
-	{Pattern: "/api/admin/app/site/*", Permission: PermSiteWrite, Scope: ScopeApp},
-
-	{Pattern: "/api/admin/app/role-application/list", Permission: PermRoleApplicationRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/role-application/detail", Permission: PermRoleApplicationRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/role-application/statistics", Permission: PermRoleApplicationRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/role-application/*", Permission: PermRoleApplicationReview, Scope: ScopeApp},
-
-	// 服务商目录是静态自述，不含租户数据也不含凭据；控制台**不带 appid** 调它，
-	// 按 ScopeApp 判定会被 40058 拦掉（与支付渠道目录同一条）。
-	{Pattern: "/api/admin/app/email-config/providers", Note: "平台支持哪些邮件服务商（发送器 Describe() 的静态目录）"},
-	{Pattern: "/api/admin/app/email-config/list", Permission: PermEmailRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/email-config/detail", Permission: PermEmailRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/email-config/deliveries", Permission: PermEmailRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/email-config/stats", Permission: PermEmailRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/email-config/channel", Permission: PermEmailRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/email-config/scenes", Note: "邮件场景静态目录（默认文案与可用变量）"},
-	{Pattern: "/api/admin/app/email-config/policy", Permission: PermEmailRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/email-config/preview", Permission: PermEmailRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/email-config/overview", Permission: PermEmailRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/email-config/deliveries/detail", Permission: PermEmailRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/email-config/suppressions", Permission: PermEmailRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/email-config/*", Permission: PermEmailWrite, Scope: ScopeApp},
-
-	{Pattern: "/api/admin/app/storage-config/providers", Note: "存储提供商静态目录（字段声明与能力），不含任何配置值"},
-	{Pattern: "/api/admin/app/storage-config/list", Permission: PermStorageRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/storage-config/detail", Permission: PermStorageRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/storage-config/*", Permission: PermStorageWrite, Scope: ScopeApp},
-
-	{Pattern: "/api/admin/app/payment-config/list", Permission: PermPaymentRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/payment-config/detail", Permission: PermPaymentRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/payment-config/orders/list", Permission: PermPaymentRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/payment-config/orders/detail", Permission: PermPaymentRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/payment-config/refunds/list", Permission: PermPaymentRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/payment-config/refunds/order", Permission: PermPaymentRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/payment-config/refunds/refundable", Permission: PermPaymentRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/app/payment-config/*", Permission: PermPaymentWrite, Scope: ScopeApp},
-
-	// ── 应用集合根：列表按 app:read（handler 内按授权过滤），建应用见下 ──
-	{Methods: readMethods, Pattern: "/api/admin/apps", Permission: PermAppRead},
-	// 建应用**不要求权限点**：要求 app:write 会造出死锁 —— 自助注册出来的管理员
-	// 一条角色都没有，而唯一能让他拿到权限的动作（建自己的第一个应用、成为它的
-	// app_admin）本身就被 app:write 挡住。真正的闸门（平台开关 + 每人配额）
-	// 在 AdminService.EnsureCanCreateApp，它要打库，这张纯内存表做不了。
-	{Pattern: "/api/admin/apps", Note: "自助创建：闸门在 AdminService.EnsureCanCreateApp"},
-
-	// ── 单个应用下的子资源（全部为应用作用域）──
-	{Pattern: "/api/admin/apps/:appkey/users/:userId/audits/login", Permission: PermAuditLoginRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/users/:userId/audits/*", Permission: PermAuditSessionRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/audits/login/*", Permission: PermAuditLoginRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/audits/*", Permission: PermAuditSessionRead, Scope: ScopeApp},
-
-	// 绑定记录是用户数据，按用户权限点判定；渠道配置本身按应用配置权限点判定
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/oauth-bindings/*", Permission: PermAppUserRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/oauth-bindings/*", Permission: PermAppUserWrite, Scope: ScopeApp},
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/oauth-providers/*", Permission: PermAppRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/oauth-providers/*", Permission: PermAppWrite, Scope: ScopeApp},
-	// 对外 OAuth2 授权服务器的客户端：与第三方登录渠道同属应用配置。
-	// 用户的授权记录挂在 users/:userId/oauth2-grants 下，由下面的用户规则按用户权限点判定
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/oauth2/*", Permission: PermAppRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/oauth2/*", Permission: PermAppWrite, Scope: ScopeApp},
-
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/users/*", Permission: PermAppUserRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/users/*", Permission: PermAppUserWrite, Scope: ScopeApp},
-	// 账号注销的申请、审核与重新注册限制都是用户数据，配置也决定「用户能不能删掉自己」，同归用户权限点
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/account-deletion/*", Permission: PermAppUserRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/account-deletion/*", Permission: PermAppUserWrite, Scope: ScopeApp},
-	// 封禁申诉（docs/account-suspension.md）：查看按用户读、结案与设置按用户写
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/ban-appeals/*", Permission: PermAppUserRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/ban-appeals/*", Permission: PermAppUserWrite, Scope: ScopeApp},
-	// 渠道下的用户名单同样是用户数据（旧实现里靠 Contains "/users" 覆盖到）
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/channels/:cid/users/*", Permission: PermAppUserRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/channels/:cid/users/*", Permission: PermAppUserWrite, Scope: ScopeApp},
-
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/notifications/*", Permission: PermAppNotificationRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/notifications/*", Permission: PermAppNotifWrite, Scope: ScopeApp},
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/banners/*", Permission: PermContentBannerRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/banners/*", Permission: PermContentBannerWrite, Scope: ScopeApp},
-	// 发布中心。模拟检测只读不写，按查看权限放行
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/releases/*", Permission: PermVersionRead, Scope: ScopeApp},
-	{Methods: []string{"POST"}, Pattern: "/api/admin/apps/:appkey/releases/simulate", Permission: PermVersionRead, Scope: ScopeApp},
-	{Methods: []string{"POST"}, Pattern: "/api/admin/apps/:appkey/releases/notes/preview", Permission: PermVersionRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/releases/*", Permission: PermVersionWrite, Scope: ScopeApp},
-	// 版本管控：读、模拟判定只要读权限；设置、规则、密钥轮换、删除设备记录、通知复查要写权限
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/client-control", Permission: PermVersionRead, Scope: ScopeApp},
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/client-control/*", Permission: PermVersionRead, Scope: ScopeApp},
-	{Methods: []string{"POST"}, Pattern: "/api/admin/apps/:appkey/client-control/simulate", Permission: PermVersionRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/client-control/*", Permission: PermVersionWrite, Scope: ScopeApp},
-	// 登录设备数控制：查看（含模拟）是用户数据的读；改策略是应用配置的写；例外、下线、整理、清台账是用户数据的写
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/device-limit", Permission: PermAppUserRead, Scope: ScopeApp},
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/device-limit/*", Permission: PermAppUserRead, Scope: ScopeApp},
-	{Methods: []string{"POST"}, Pattern: "/api/admin/apps/:appkey/device-limit/simulate", Permission: PermAppUserRead, Scope: ScopeApp},
-	{Methods: []string{"PUT"}, Pattern: "/api/admin/apps/:appkey/device-limit/policy", Permission: PermAppWrite, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/device-limit/*", Permission: PermAppUserWrite, Scope: ScopeApp},
-	// 注册 IP 控制：查看（含模拟、IP 查询）是用户数据的读；策略与名单是应用配置的写；解除限制是用户数据的写
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/register-ip", Permission: PermAppUserRead, Scope: ScopeApp},
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/register-ip/*", Permission: PermAppUserRead, Scope: ScopeApp},
-	{Methods: []string{"POST"}, Pattern: "/api/admin/apps/:appkey/register-ip/simulate", Permission: PermAppUserRead, Scope: ScopeApp},
-	{Methods: []string{"PUT"}, Pattern: "/api/admin/apps/:appkey/register-ip/policy", Permission: PermAppWrite, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/register-ip/lists", Permission: PermAppWrite, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/register-ip/lists/*", Permission: PermAppWrite, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/register-ip/device-lists", Permission: PermAppWrite, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/register-ip/device-lists/*", Permission: PermAppWrite, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/register-ip/*", Permission: PermAppUserWrite, Scope: ScopeApp},
-	// 崩溃报告：查看（列表、筛选项、含正文的详情）要应用读权限，标记已处理与删除要应用写权限。
-	// 显式写出来而不是落进下面的兜底：报告里带设备标识与 IP，权限改动应当在这里一眼看见。
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/crash-reports", Permission: PermAppRead, Scope: ScopeApp},
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/crash-reports/*", Permission: PermAppRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/crash-reports/*", Permission: PermAppWrite, Scope: ScopeApp},
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/notices/*", Permission: PermContentNoticeRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/notices/*", Permission: PermContentNoticeWrite, Scope: ScopeApp},
-
-	// 用户云存储的应用级部分（配置 / 概览 / 用户列表 / 清理回收站）归存储权限：
-	// 配置决定内容写到哪个存储配置、占多少配额，与存储配置本身是同一类决定。
-	// 某个用户的条目在 users/:userId/cloud-storage 下，由上面的用户数据规则判定。
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/cloud-storage/*", Permission: PermStorageRead, Scope: ScopeApp,
-		Note: "云存储应用级视图与存储配置同属存储权限"},
-	{Pattern: "/api/admin/apps/:appkey/cloud-storage/*", Permission: PermStorageWrite, Scope: ScopeApp},
-
-	// 应用自己的治理视图：看自己被怎么了、以及提交申诉。
-	// 只读用 app:read、申诉用 app:write，都留在应用作用域 ——
-	// 应用管理员在这里改不了治理结论，改结论要走 /api/admin/platform/*。
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/governance/*", Permission: PermAppRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/governance/*", Permission: PermAppWrite, Scope: ScopeApp},
-
-	// AI Agent 的 WebSocket 对话通道：握手是 GET，但一轮对话可执行建函数、
-	// 改设置、发版等写操作，权限必须对齐 SSE 流（app:write）——
-	// 不能落进下面 readMethods 的 app:read 兜底。
-	{Pattern: "/api/admin/apps/:appkey/ai/agent/ws", Permission: PermAppWrite, Scope: ScopeApp},
-
-	{Methods: readMethods, Pattern: "/api/admin/apps/:appkey/*", Permission: PermAppRead, Scope: ScopeApp},
-	{Pattern: "/api/admin/apps/:appkey/*", Permission: PermAppWrite, Scope: ScopeApp},
+// RoutesForPermission 某个权限点覆盖的路由规则（控制台的权限点详情里列出来）。
+func RoutesForPermission(code string) []RouteRule {
+	items := make([]RouteRule, 0, 4)
+	for _, rule := range adminRouteRules {
+		if rule.Permission == code {
+			items = append(items, rule)
+		}
+	}
+	return items
 }

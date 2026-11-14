@@ -34,6 +34,17 @@ import (
 // 显式拒绝压倒放行。旧模型只有 `some(allow)`，**表达不了任何形式的拒绝** ——
 // 要收回某人一个能力只能把他从角色里整个摘掉。
 //
+//   - `objMatch(r.obj, p.obj)` —— 权限点匹配（前缀通配 + 资源层级）。
+//     细分权限点是旧粗粒度权限点的「成员」：`app:lottery:read` ∈ `app:read`。
+//     于是一条授予 `app:read`（或 `app:*`、`system:admin:*` 这类旧前缀通配）的历史策略 ——
+//     内置角色、自定义角色、override、按人授权 —— 原样覆盖拆分之后的全部细分项，
+//     生产库里的策略一行都不用改；而新角色只勾细分项，拿到的就只是那几项。
+//     层级由 tree.go 的权限树派生，随二进制发布。
+//
+//     不用 Casbin 的 g2 表达这层关系：g2 只认精确的边，`system:admin:*` 这样的旧前缀通配
+//     匹配不到 `system:announcement:read`（它的旧代码是 system:admin:manage，前缀却不同），
+//     拆分后这类策略会静默失效。objMatch 与 Implies 是同一段代码，临时权限、MCP 密钥范围也用它。
+//
 // 注意 `p` 的第四列 `eft` 必须显式写在策略行里（Casbin 不会给缺省值），
 // 因此 Engine 的写入口一律补齐这一列，adapter 读到三列的历史行也会补成 allow。
 const modelText = `
@@ -50,10 +61,20 @@ g = _, _
 e = some(where (p.eft == allow)) && !some(where (p.eft == deny))
 
 [matchers]
-m = g(r.sub, p.sub) && keyMatch(r.dom, p.dom) && keyMatch(r.obj, p.obj)
+m = g(r.sub, p.sub) && keyMatch(r.dom, p.dom) && objMatch(r.obj, p.obj)
 `
 
-// newModel 构造模型实例。keyMatch 是 Casbin 内置函数，无需注册。
+// objMatchFunc 注册给 Casbin 的 objMatch。
+func objMatchFunc(args ...interface{}) (interface{}, error) {
+	if len(args) != 2 {
+		return false, nil
+	}
+	requested, _ := args[0].(string)
+	granted, _ := args[1].(string)
+	return Implies(granted, requested), nil
+}
+
+// newModel 构造模型实例。keyMatch 是 Casbin 内置函数，objMatch 由 Engine 注册。
 func newModel() (model.Model, error) {
 	return model.NewModelFromString(modelText)
 }

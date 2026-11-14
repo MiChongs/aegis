@@ -87,6 +87,7 @@ DELETE	/api/admin/system/organizations/:orgId/roles/:roleId/grants/:adminId	Revo
 DELETE	/api/admin/system/plugins/:id	AdminDeletePlugin
 DELETE	/api/admin/system/risk/*path	AdminRiskProxy
 DELETE	/api/admin/system/roles/:roleKey	AdminDeleteCustomRole
+DELETE	/api/admin/system/roles/:roleKey/members/:adminId	AdminRemoveRoleMember
 DELETE	/api/admin/system/storage/cdn/:configId	DeleteCDNConfig
 DELETE	/api/admin/system/storage/image-rules/:ruleId	DeleteImageRule
 DELETE	/api/admin/system/storage/objects/:objectId	SoftDeleteStorageObject
@@ -421,6 +422,7 @@ GET	/api/admin/profile/roles/permissions	AdminRolePermissionTree
 GET	/api/admin/profile/security	AdminSecurity
 GET	/api/admin/profile/two-factor/recovery-codes	ListAdminRecoveryCodes
 GET	/api/admin/system/admins	AdminListAccounts
+GET	/api/admin/system/admins/:adminId	AdminGetAccount
 GET	/api/admin/system/admins/:adminId/sessions	ListAdminSessions
 GET	/api/admin/system/admins/online	ListOnlineAdmins
 GET	/api/admin/system/ai/channel	AdminPlatformAIChannel
@@ -436,7 +438,10 @@ GET	/api/admin/system/audit-logs/export	ExportAuditLogs
 GET	/api/admin/system/audit-logs/facets	GetAuditFacets
 GET	/api/admin/system/audit-logs/overview	GetAuditOverview
 GET	/api/admin/system/audit-logs/stats	GetAuditStats
+GET	/api/admin/system/authz/admins/:adminId/grants	AdminAuthzGetAdminGrants
+GET	/api/admin/system/authz/catalog	AdminAuthzCatalog
 GET	/api/admin/system/authz/model	AdminAuthzModel
+GET	/api/admin/system/authz/permission-routes	AdminAuthzPermissionRoutes
 GET	/api/admin/system/authz/policies	AdminAuthzPolicies
 GET	/api/admin/system/authz/policies/subject	AdminAuthzSubjectPolicies
 GET	/api/admin/system/ban-appeals	AdminListAllBanAppeals
@@ -537,7 +542,9 @@ GET	/api/admin/system/risk-ops/banned	AdminRiskOpsBanned
 GET	/api/admin/system/risk-ops/candidates	AdminRiskOpsFind
 GET	/api/admin/system/risk/*path	AdminRiskProxy
 GET	/api/admin/system/roles	AdminRoleCatalog
+GET	/api/admin/system/roles/:roleKey	AdminGetRoleDetail
 GET	/api/admin/system/roles/:roleKey/impact	AdminGetRoleImpactPreview
+GET	/api/admin/system/roles/:roleKey/members	AdminListRoleMembers
 GET	/api/admin/system/roles/graph	AdminGetRoleGraph
 GET	/api/admin/system/roles/matrix	AdminGetRoleMatrix
 GET	/api/admin/system/roles/permissions	AdminRolePermissionTree
@@ -1188,6 +1195,8 @@ POST	/api/admin/system/risk-ops/purge	AdminRiskOpsPurge
 POST	/api/admin/system/risk-ops/release	AdminRiskOpsRelease
 POST	/api/admin/system/risk/*path	AdminRiskProxy
 POST	/api/admin/system/roles	AdminCreateCustomRole
+POST	/api/admin/system/roles/:roleKey/copy	AdminCopyRole
+POST	/api/admin/system/roles/:roleKey/members	AdminAddRoleMembers
 POST	/api/admin/system/saml/test	AdminSAMLTest
 POST	/api/admin/system/sessions/:sessionId/revoke	RevokeSession
 POST	/api/admin/system/storage/image-rules	CreateImageRule
@@ -1601,6 +1610,8 @@ PUT	/api/admin/system/organizations/:orgId/roles/:roleId	UpdateOrgRole
 PUT	/api/admin/system/plugins/:id	AdminUpdatePlugin
 PUT	/api/admin/system/risk/*path	AdminRiskProxy
 PUT	/api/admin/system/roles/:roleKey	AdminUpdateCustomRole
+PUT	/api/admin/system/roles/:roleKey/permissions	AdminSetRolePermissions
+PUT	/api/admin/system/roles/:roleKey/status	AdminSetRoleStatus
 PUT	/api/admin/system/settings	AdminUpdateSystemSettings
 PUT	/api/admin/system/storage/cdn/:configId	UpsertCDNConfig
 PUT	/api/admin/system/storage/rules/:ruleId	UpdateStorageRule

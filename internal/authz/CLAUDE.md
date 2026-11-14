@@ -11,9 +11,10 @@
 |---|---|
 | `model.go` | Casbin 模型（一份，全平台共用） |
 | `keys.go` | 主体 / 域 的命名空间构造函数 —— **拼这些字符串的地方只有这一处** |
-| `catalog.go` | 权限点词汇表（约 90 个权限点 + 分组 + 中文名） |
+| `tree.go` | **权限树**（目录 → 菜单 → 操作，约 270 个操作节点）与每个操作覆盖的路由 —— 新增接口在这里登记 |
+| `catalog.go` | 业务代码直接引用的权限点常量、基于树的查询（中文名、旧权限点兼容关系、`Implies`） |
 | `roles.go` | 内置角色定义 → `BuiltinPolicies()` |
-| `routes.go` | 路由 → (权限点, 作用域) 规则表 |
+| `routes.go` | 路由匹配；规则表由权限树生成，按特异性排序 |
 | `engine.go` | `Engine`：判定 / 展开 / 策略维护 / 重载 |
 | `adapter.go` | Casbin `persist.Adapter`（读 `authz_policies` 表） |
 | `watcher.go` | Casbin `persist.Watcher`（NATS 广播，跨实例同步） |
@@ -46,7 +47,7 @@
 [policy_definition]   p = sub, dom, obj, eft
 [role_definition]     g = _, _
 [policy_effect]       e = some(where (p.eft == allow)) && !some(where (p.eft == deny))
-[matchers]            m = g(r.sub, p.sub) && keyMatch(r.dom, p.dom) && keyMatch(r.obj, p.obj)
+[matchers]            m = g(r.sub, p.sub) && keyMatch(r.dom, p.dom) && objMatch(r.obj, p.obj)
 ```
 
 三个维度全部走 `keys.go` 的构造函数，**不允许在别处拼这些字符串** ——
@@ -57,7 +58,7 @@
 |---|---|
 | 主体 `sub` | `role:<key>`（平台/应用角色）、`admin:<id>`（具体某人）、`orgrole:<key>`、`orgrole:<orgID>:<key>` |
 | 域 `dom` | 请求侧：`platform` / `app:N` / `org:N`；策略侧另可用 `*`、`app:*` |
-| 客体 `obj` | 权限点，支持结尾通配：`ticket:*` / `*` |
+| 客体 `obj` | 权限点，支持结尾通配：`ticket:*` / `*`；`objMatch` 另认资源层级（细分权限点 ∈ 旧权限点） |
 | 效果 `eft` | `allow` / `deny` |
 
 `platform` 取一个不可能与 `app:` / `org:` 前缀相撞的字面量是有意的：
@@ -106,6 +107,17 @@ AdminService.Authorize(access, permission, appID)
 `AddPolicy`/`RemovePolicy` 传不了 `source` 与 `owner`，经它写进去的行没有归属，
 下次重刷内置策略时既不会被更新也不会被清理，最后沉淀成谁也不敢删的幽灵授权。
 
+## 权限细分与兼容（2026-11）
+
+详见 [docs/admin-permissions.md](../../docs/admin-permissions.md)。要点：
+
+- 旧的粗粒度权限点（`app:read` / `app:write` / `app:user:*` / `system:admin:manage` / `version:*`）
+  拆成约 270 个细分权限点，旧代码成为「兼容组」，不在树上、只在策略里出现。
+- `objMatch(r.obj, p.obj)` = `Implies(granted, requested)`：前缀通配 + 细分 → 旧代码。
+  持有旧代码（或旧前缀通配）的一切策略原样生效，旧代码上的 deny 压住名下细分项。
+- **请求侧一律用细分代码**：只持有细分代码的人满足不了一次对旧代码的请求（方向是细分 → 旧组）。
+- `compat_test.go` 用拆分前快照逐条钉住：每个旧授予模式、每个内置角色的路由访问不变。
+
 ## 路由规则表
 
 按段锚定匹配：`:param` 吃一段，`*` 吃剩余任意段数（**含零段**）。
@@ -114,17 +126,14 @@ AdminService.Authorize(access, permission, appID)
 
 顺序即优先级（从具体到宽泛），两条测试守着：
 
-- `TestRouteRulesMatchBaseline` —— `testdata/route_permissions.json` 是重构**之前**
-  用旧 switch 跑出来的快照，逐条钉住 941 条真实路由的判定结果不变。
-  以后要改某条路由的权限，改规则表的同时更新基线里那一行，
-  diff 会把改动摆在评审者面前。
+- `TestLegacyRoutesKeepScopeAndOpenness` / `TestNewPermissionDescendsFromLegacy` ——
+  `testdata/legacy_route_permissions.json` 是权限细分**之前**的快照（全部 1112 条管理路由），
+  钉住作用域、开放性不变，且每条路由的新权限点「是或隶属于」旧权限点。
 - `TestNoUnreachableRouteRule` —— 没有哪条规则被上面的规则完全遮住。
   被遮住的规则不报错，只是永不生效（旧实现里就沉淀了三段这样的死代码）。
 
-另有 `TestBuiltinRolePermissionsUnchanged`：`roles.go` 把一批显式权限列表换成了
-`content:*` 这类前缀通配，通配写宽一格（比如把 app_admin 的工单列表写成 `ticket:*`）
-就会多出一个 `ticket:delete`，而这种越权不会有任何报错。
-`testdata/builtin_roles.json` 是改动前的快照，逐个角色比对展开结果。
+另有 `TestBuiltinRolesKeepRouteAccess`：内置角色定义（仍用旧代码与前缀通配）在新体系下
+逐条路由的访问与拆分前一致；`testdata/legacy_builtin_role_definitions.json` 是拆分前的定义。
 
 ## 管理面
 
@@ -134,15 +143,15 @@ AdminService.Authorize(access, permission, appID)
 | `GET /api/admin/system/authz/policies` | 引擎**内存里**当前生效的策略 |
 | `GET /api/admin/system/authz/policies/subject` | 某个主体名下的策略行 |
 | `POST /api/admin/system/authz/explain` | 「某人在某作用域下能不能做某事，为什么」 |
-| `POST /api/admin/system/authz/roles/override` | 角色的人工增减（超管） |
-| `PUT /api/admin/system/authz/admins/:adminId/grants` | 按人授予/禁止（超管） |
-| `POST /api/admin/system/authz/reload` | 手动重载（超管，排障用） |
+| `POST /api/admin/system/authz/roles/override` | 角色的人工增减（角色权限：编辑，受授权上限约束） |
+| `PUT /api/admin/system/authz/admins/:adminId/grants` | 按人授予/禁止（管理员：个人授权，受档位守卫与授权上限约束） |
+| `POST /api/admin/system/authz/reload` | 手动重载（角色权限：重载策略，排障用） |
 
 `explain` 是这次补上的最有用的一件工具：一次 403 的排查以前要翻四个地方
 （角色定义、权限点常量、路由映射、作用域），且四处都在代码里。
 
-写操作一律叠加 `RequireSuperAdmin`：一条 allow 策略就能给自己提权，
-把这个入口交给普通管理员等于让整套 RBAC 可以被它管辖的对象自行改写。
+写操作按细分权限点放行（角色编辑 / 个人授权 / 重载策略）。自我提权由 service 层两道闸挡住：
+授权上限（只能授予自己持有的权限）与档位守卫（不能改自己、不能改同档或更高档的人）。
 
 策略快照给的是**引擎里的**而不是库里的：两者不一致（比如某个实例重载失败）
 恰恰是最需要看见的那种故障，而查库看不出来。

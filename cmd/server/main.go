@@ -72,6 +72,11 @@ func main() {
 				panic(err)
 			}
 			return
+		case "promote-system-admin":
+			if err := bootstrap.RunPromoteSystemAdmin(ctx, os.Args[2:]); err != nil {
+				panic(err)
+			}
+			return
 		case "mock-users":
 			if err := bootstrap.RunGenerateMockUsers(ctx, os.Args[2:]); err != nil {
 				panic(err)

@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,12 +41,14 @@ type AdminService struct {
 	roles       map[string]admindomain.RoleDefinition
 	rolesMu     sync.RWMutex
 	customRoles map[string]admindomain.RoleDefinition
-	security    *SecurityService // 用于 MFA 验证（通过 SetSecurityService 注入，避免循环初始化）
-	ldap        *LDAPService     // LDAP 认证（通过 SetLDAPService 注入）
-	oidc        *OIDCService     // OIDC 认证（通过 SetOIDCService 注入）
-	saml        *SAMLService     // SAML 认证（通过 SetSAMLService 注入）
-	plugin      *PluginService   // 插件系统（通过 SetPluginService 注入）
-	risk        *RiskService     // 风控服务（通过 SetRiskService 注入）
+	// dataAppNames 自定义角色「指定应用」数据权限里各应用的名称（随角色元数据刷新）
+	dataAppNames map[int64]string
+	security     *SecurityService // 用于 MFA 验证（通过 SetSecurityService 注入，避免循环初始化）
+	ldap         *LDAPService     // LDAP 认证（通过 SetLDAPService 注入）
+	oidc         *OIDCService     // OIDC 认证（通过 SetOIDCService 注入）
+	saml         *SAMLService     // SAML 认证（通过 SetSAMLService 注入）
+	plugin       *PluginService   // 插件系统（通过 SetPluginService 注入）
+	risk         *RiskService     // 风控服务（通过 SetRiskService 注入）
 	// settings 平台设置（通过 SetPlatformSettings 注入）：自助注册开关与建应用配额存在这里
 	settings *PlatformSettingsService
 	// mcpUsage MCP 密钥使用记录的节流写入（见 admin_mcp_key_service.go）
@@ -107,7 +108,7 @@ func (s *AdminService) SetPluginService(plugin *PluginService) {
 func (s *AdminService) EnsureBootstrapSuperAdmin(ctx context.Context) error {
 	password := strings.TrimSpace(s.cfg.AdminBootstrap.Password)
 	if password == "" {
-		return nil
+		return s.EnsureSystemAdmin(ctx)
 	}
 	input := admindomain.CreateInput{
 		Account:      strings.TrimSpace(s.cfg.AdminBootstrap.Account),
@@ -130,7 +131,7 @@ func (s *AdminService) EnsureBootstrapSuperAdmin(ctx context.Context) error {
 			zap.String("account", profile.Account.Account),
 		)
 	}
-	return nil
+	return s.EnsureSystemAdmin(ctx)
 }
 
 func (s *AdminService) Login(ctx context.Context, account, password, ip, userAgent string) (*admindomain.LoginResult, error) {
@@ -463,18 +464,11 @@ func (s *AdminService) ValidateAccessToken(ctx context.Context, token string) (*
 		return nil, apperrors.New(40310, http.StatusForbidden, "管理员账户不可用")
 	}
 	s.touchAdminSessionAsync(session.AdminID, session.TokenID)
-	return &admindomain.AccessContext{
-		Session: admindomain.Session{
-			AdminID:      profile.Account.ID,
-			Account:      profile.Account.Account,
-			DisplayName:  profile.Account.DisplayName,
-			TokenID:      session.TokenID,
-			IssuedAt:     session.IssuedAt,
-			ExpiresAt:    session.ExpiresAt,
-			IsSuperAdmin: profile.Account.IsSuperAdmin,
-		},
-		Assignments: profile.Assignments,
-	}, nil
+	access := s.accessFromProfile(ctx, profile)
+	access.TokenID = session.TokenID
+	access.IssuedAt = session.IssuedAt
+	access.ExpiresAt = session.ExpiresAt
+	return access, nil
 }
 
 func (s *AdminService) Logout(ctx context.Context, token string) error {
@@ -575,20 +569,39 @@ func (s *AdminService) UpdateProfile(ctx context.Context, adminID int64, input a
 	return s.pg.UpdateAdminProfile(ctx, adminID, input)
 }
 
-func (s *AdminService) CreateAdmin(ctx context.Context, input admindomain.CreateInput) (*admindomain.Profile, error) {
+func (s *AdminService) CreateAdmin(ctx context.Context, actor *admindomain.AccessContext, input admindomain.CreateInput) (*admindomain.Profile, error) {
 	input.Account = strings.TrimSpace(input.Account)
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	input.Email = strings.TrimSpace(input.Email)
 	if err := s.validateCreateInput(input); err != nil {
 		return nil, err
 	}
+	tier, err := normalizeTier(input.Tier, input.IsSuperAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if actor != nil {
+		// 新建等同于把一个「管理员」档位的空账号调到目标档位
+		if err := s.ensureTierChangeAllowed(ctx, actor, nil, tier); err != nil {
+			return nil, err
+		}
+	}
+	input.IsSuperAdmin = tier != admindomain.TierAdmin
+	input.IsSystemAdmin = tier == admindomain.TierSystem
 	hash, err := adminHashPassword(input.Password)
 	if err != nil {
 		return nil, err
 	}
-	input.Assignments, err = s.normalizeAssignments(input.Assignments, input.IsSuperAdmin)
+	input.Assignments, err = s.normalizeAssignments(input.Assignments, input.IsSuperAdmin, false)
 	if err != nil {
 		return nil, err
+	}
+	if actor != nil {
+		for _, item := range input.Assignments {
+			if err := s.EnsureCanAssignRole(ctx, actor, item.RoleKey, item.AppID); err != nil {
+				return nil, err
+			}
+		}
 	}
 	profile, err := s.pg.CreateAdminAccount(ctx, input, hash)
 	if err == nil && profile != nil && s.plugin != nil {
@@ -651,28 +664,29 @@ func (s *AdminService) AutoAssignAppRole(ctx context.Context, adminID, appID int
 	return s.pg.AddAdminAssignment(ctx, adminID, roleKey, &appID)
 }
 
-func (s *AdminService) UpdateAdminStatus(ctx context.Context, actorID int64, adminID int64, status string) error {
+// UpdateAdminStatus 启用 / 停用管理员。
+//
+// 守卫顺序：档位（不能动自己、不能动同档或更高档的人）→ 兜底（不能停用最后一位系统管理员 /
+// 超级管理员）。超级管理员停用不了系统管理员，也停用不了自己。
+func (s *AdminService) UpdateAdminStatus(ctx context.Context, actor *admindomain.AccessContext, adminID int64, status string) error {
 	status = strings.TrimSpace(strings.ToLower(status))
 	if status != "active" && status != "disabled" {
 		return apperrors.New(40050, http.StatusBadRequest, "无效的管理员状态")
 	}
-
-	// 停用操作需要安全检查
-	if status == "disabled" {
-		// 禁止停用自身
-		if actorID == adminID {
-			return apperrors.New(40392, http.StatusForbidden, "无法停用自身账户")
+	target, err := s.GuardAdminTarget(ctx, actor, adminID, AdminActionStatus)
+	if err != nil {
+		return err
+	}
+	if status == "disabled" && target.Account.Status == "active" {
+		if target.Account.IsSystemAdmin {
+			count, err := s.pg.CountActiveSystemAdmins(ctx)
+			if err != nil {
+				return err
+			}
+			if count <= 1 {
+				return apperrors.New(40391, http.StatusForbidden, "无法停用最后一位系统管理员")
+			}
 		}
-
-		target, err := s.pg.GetAdminAccessByID(ctx, adminID)
-		if err != nil {
-			return err
-		}
-		if target == nil {
-			return apperrors.New(40450, http.StatusNotFound, "管理员不存在")
-		}
-
-		// 超级管理员停用保护：确保系统中至少保留一个活跃超级管理员
 		if target.Account.IsSuperAdmin {
 			activeSuperCount, err := s.pg.CountActiveSuperAdmins(ctx)
 			if err != nil {
@@ -693,10 +707,50 @@ func (s *AdminService) UpdateAdminStatus(ctx context.Context, actorID int64, adm
 	return nil
 }
 
-func (s *AdminService) UpdateAdminAccess(ctx context.Context, adminID int64, input admindomain.UpdateAccessInput) error {
-	assignments, err := s.normalizeAssignments(input.Assignments, input.IsSuperAdmin)
+// UpdateAdminAccess 整组替换某个管理员的身份档位与角色分配。
+//
+// 三道闸：档位守卫（谁能动谁）→ 档位变更规则（只有系统管理员能授予 / 收回超管与系统管理员，
+// 最后一位系统管理员不能降级）→ 授权上限（新增的每个角色都必须是操作者自己持有的权限）。
+// 授权上限只核对**新增**的分配：操作者本来就动不了别人已有的角色，那不该挡住他改其余部分。
+func (s *AdminService) UpdateAdminAccess(ctx context.Context, actor *admindomain.AccessContext, adminID int64, input admindomain.UpdateAccessInput) error {
+	tier, err := normalizeTier(input.Tier, input.IsSuperAdmin)
 	if err != nil {
 		return err
+	}
+	action := AdminActionAccess
+	target, err := s.pg.GetAdminAccessByID(ctx, adminID)
+	if err != nil {
+		return err
+	}
+	if target == nil {
+		return apperrors.New(40450, http.StatusNotFound, "管理员不存在")
+	}
+	if admindomain.TierOf(target.Account.IsSuperAdmin, target.Account.IsSystemAdmin) != tier {
+		action = AdminActionTier
+	}
+	if _, err := s.GuardAdminTarget(ctx, actor, adminID, action); err != nil {
+		return err
+	}
+	if err := s.ensureTierChangeAllowed(ctx, actor, &target.Account, tier); err != nil {
+		return err
+	}
+	input.IsSuperAdmin = tier != admindomain.TierAdmin
+	input.IsSystemAdmin = tier == admindomain.TierSystem
+	assignments, err := s.normalizeAssignments(input.Assignments, input.IsSuperAdmin, true)
+	if err != nil {
+		return err
+	}
+	existing := map[string]bool{}
+	for _, item := range target.Assignments {
+		existing[assignmentKey(item.RoleKey, item.AppID)] = true
+	}
+	for _, item := range assignments {
+		if existing[assignmentKey(item.RoleKey, item.AppID)] {
+			continue
+		}
+		if err := s.EnsureCanAssignRole(ctx, actor, item.RoleKey, item.AppID); err != nil {
+			return err
+		}
 	}
 	input.Assignments = assignments
 	if err := s.pg.UpdateAdminAccess(ctx, adminID, input); err != nil {
@@ -708,74 +762,11 @@ func (s *AdminService) UpdateAdminAccess(ctx context.Context, adminID int64, inp
 	return nil
 }
 
-// ListRoles 返回全部角色，`Permissions` 是**展开后的生效集合**。
-//
-// 展开是必须的：角色定义里现在可以写前缀通配（`content:*`）、可以继承父角色、
-// 还可能被一条 override 的 deny 砍掉一项。直接把定义里的字符串发出去，
-// 权限矩阵会把 `content:*` 当成一个查无此项的权限点，于是
-// app_admin 在矩阵里看起来几乎什么都没有 —— 而它其实什么都有。
-//
-// 展开走的是与真实判定完全相同的那段代码，因此矩阵上打勾的每一项，
-// 点下去一定不会 403。
-func (s *AdminService) ListRoles() []admindomain.RoleDefinition {
-	items := make([]admindomain.RoleDefinition, 0, len(s.roles)+len(s.customRoles))
-	for _, item := range s.roles {
-		items = append(items, item)
+func assignmentKey(roleKey string, appID *int64) string {
+	if appID == nil {
+		return roleKey + ":*"
 	}
-	s.rolesMu.RLock()
-	for _, item := range s.customRoles {
-		items = append(items, item)
-	}
-	s.rolesMu.RUnlock()
-	catalog := authz.AllPermissionCodes()
-	for i := range items {
-		// 用应用域展开：应用级角色的权限只在应用域下成立，
-		// 用平台域展开会让它们看起来一个权限都没有。
-		items[i].Permissions = s.authz.PermissionsFor(
-			[]string{authz.RoleSubject(items[i].Key)}, authz.AppDomain(1), catalog)
-	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Level == items[j].Level {
-			return items[i].Key < items[j].Key
-		}
-		return items[i].Level > items[j].Level
-	})
-	return items
-}
-
-// ListRolesWithPermissionTree 返回所有角色及其权限树
-func (s *AdminService) ListRolesWithPermissionTree() []admindomain.RoleWithPermissions {
-	roles := s.ListRoles()
-	allGroups := allPermissionGroups()
-	result := make([]admindomain.RoleWithPermissions, 0, len(roles))
-	for _, role := range roles {
-		// role.Permissions 已由 ListRoles 展开成生效集合（含通配展开、继承与拒绝），
-		// 因此这里不再需要"超管特判"那一行 —— 它的 `*` 策略会如实展开成全部权限点。
-		granted := make(map[string]bool, len(role.Permissions))
-		for _, p := range role.Permissions {
-			granted[p] = true
-		}
-
-		groups := make([]admindomain.PermissionGroup, 0, len(allGroups))
-		for _, g := range allGroups {
-			perms := make([]admindomain.Permission, len(g.Permissions))
-			copy(perms, g.Permissions)
-			groups = append(groups, admindomain.PermissionGroup{
-				Key: g.Key, Name: g.Name, Permissions: perms,
-			})
-			// 标记哪些权限是授权的（通过 Description 字段传递，前端读取）
-			for i := range groups[len(groups)-1].Permissions {
-				if granted[groups[len(groups)-1].Permissions[i].Code] {
-					groups[len(groups)-1].Permissions[i].Description = "granted"
-				}
-			}
-		}
-		result = append(result, admindomain.RoleWithPermissions{
-			RoleDefinition:   role,
-			PermissionGroups: groups,
-		})
-	}
-	return result
+	return roleKey + ":" + strconvInt64(*appID)
 }
 
 // 权限点常量的兼容别名。唯一事实源是 internal/authz 的权限目录 ——
@@ -810,7 +801,13 @@ func (s *AdminService) validateCreateInput(input admindomain.CreateInput) error 
 	return nil
 }
 
-func (s *AdminService) normalizeAssignments(assignments []admindomain.AssignmentMutation, isSuperAdmin bool) ([]admindomain.AssignmentMutation, error) {
+// normalizeAssignments 校验并规范化一组角色分配。
+//
+// 规则：超管 / 系统管理员不持有角色（不走权限点判定）；super_admin 不能当作普通角色分配；
+// 平台级角色不绑定应用；应用级角色按数据权限决定是否绑定 —— 「按授权绑定」必须选应用，
+// 其余三种（全部 / 本人创建 / 指定应用）由角色自己决定范围，分配时不带应用。
+// allowEmpty 为真时允许清空全部角色（编辑时把人降成零授权是合法的）。
+func (s *AdminService) normalizeAssignments(assignments []admindomain.AssignmentMutation, isSuperAdmin, allowEmpty bool) ([]admindomain.AssignmentMutation, error) {
 	if isSuperAdmin {
 		return nil, nil
 	}
@@ -818,27 +815,26 @@ func (s *AdminService) normalizeAssignments(assignments []admindomain.Assignment
 	seen := map[string]struct{}{}
 	for _, item := range assignments {
 		roleKey := strings.TrimSpace(item.RoleKey)
-		role, ok := s.roles[roleKey]
-		if !ok || roleKey == "super_admin" {
-			return nil, apperrors.New(40053, http.StatusBadRequest, "包含无效的管理员角色")
+		role, ok := s.roleMeta(roleKey)
+		if !ok || roleKey == authz.RoleSuperAdmin {
+			return nil, apperrors.New(40053, http.StatusBadRequest, "包含无效的管理员角色："+roleKey)
 		}
-		if role.Scope == "app" && item.AppID == nil {
-			return nil, apperrors.New(40054, http.StatusBadRequest, "应用级角色必须绑定应用")
-		}
-		if role.Scope == "global" {
+		switch {
+		case role.Scope == "global":
 			item.AppID = nil
+		case role.DataScope != "" && role.DataScope != admindomain.DataScopeAssigned:
+			item.AppID = nil
+		case item.AppID == nil || *item.AppID <= 0:
+			return nil, apperrors.New(40054, http.StatusBadRequest, "应用级角色「"+role.Name+"」必须绑定应用")
 		}
-		key := roleKey + ":*"
-		if item.AppID != nil {
-			key = roleKey + ":" + strconvInt64(*item.AppID)
-		}
+		key := assignmentKey(roleKey, item.AppID)
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
 		items = append(items, admindomain.AssignmentMutation{RoleKey: roleKey, AppID: item.AppID})
 	}
-	if len(items) == 0 {
+	if len(items) == 0 && !allowEmpty {
 		return nil, apperrors.New(40055, http.StatusBadRequest, "至少需要一个管理员角色")
 	}
 	return items, nil
@@ -864,13 +860,15 @@ func (s *AdminService) issueSession(ctx context.Context, profile *admindomain.Pr
 		return nil, err
 	}
 	session := admindomain.Session{
-		AdminID:      profile.Account.ID,
-		Account:      profile.Account.Account,
-		DisplayName:  profile.Account.DisplayName,
-		TokenID:      tokenID,
-		IssuedAt:     now,
-		ExpiresAt:    expiresAt,
-		IsSuperAdmin: profile.Account.IsSuperAdmin,
+		AdminID:       profile.Account.ID,
+		Account:       profile.Account.Account,
+		DisplayName:   profile.Account.DisplayName,
+		TokenID:       tokenID,
+		IssuedAt:      now,
+		ExpiresAt:     expiresAt,
+		IsSuperAdmin:  profile.Account.IsSuperAdmin,
+		IsSystemAdmin: profile.Account.IsSystemAdmin,
+		Tier:          profile.Account.Tier,
 	}
 	if err := s.sessions.SetAdminSession(ctx, signed, session, timeutil.Until(expiresAt)); err != nil {
 		return nil, err
@@ -898,6 +896,17 @@ func (s *AdminService) issueSession(ctx context.Context, profile *admindomain.Pr
 // 让既有调用方不必一次性全改。
 
 func builtInAdminRoles() map[string]admindomain.RoleDefinition { return authz.BuiltinRoles() }
+
+// assignmentMatches 一条（已按数据权限展开的）分配在某个请求作用域下是否生效。
+//
+// 与 scopeMatches 的区别只有一处：「全部应用」数据权限展开出的分配 AppID 为空，
+// 却**不满足平台级请求** —— 它是「每个应用里都有」，不是「平台级」。
+func assignmentMatches(assignment admindomain.Assignment, requestAppID *int64) bool {
+	if requestAppID == nil && assignment.AllApps {
+		return false
+	}
+	return scopeMatches(assignment.AppID, requestAppID)
+}
 
 func scopeMatches(assignmentAppID *int64, requestAppID *int64) bool {
 	if requestAppID == nil {
@@ -940,251 +949,4 @@ func validateAdminPassword(password string) error {
 
 func strconvInt64(value int64) string {
 	return strconv.FormatInt(value, 10)
-}
-
-// ── 自定义角色 CRUD ──
-
-// LoadCustomRoles 装载自定义角色的展示元数据，并把它们的权限同步进授权引擎。
-//
-// 名字沿用旧的（调用点在 bootstrap），但做的事变了：策略本身现在存在
-// authz_policies 表里，引擎自己会装载。这里只负责两件事 ——
-// 把角色的展示元数据缓进内存供列表用，以及把 admin_roles/admin_role_permissions
-// 这份"角色编辑器写的东西"投影成策略。
-func (s *AdminService) LoadCustomRoles(ctx context.Context) error {
-	return s.syncCustomRoles(ctx, true)
-}
-
-// syncCustomRoles 重建自定义角色的展示缓存；syncPolicies 为真时一并回写策略。
-func (s *AdminService) syncCustomRoles(ctx context.Context, syncPolicies bool) error {
-	customRoles, err := s.pg.ListCustomRoles(ctx)
-	if err != nil {
-		return err
-	}
-	customMap := make(map[string]admindomain.RoleDefinition, len(customRoles))
-	for _, cr := range customRoles {
-		customMap[cr.RoleKey] = admindomain.RoleDefinition{
-			Key: cr.RoleKey, Name: cr.Name, Description: cr.Description,
-			Level: cr.Level, Scope: cr.Scope, Permissions: cr.Permissions,
-			IsCustom: true, BaseRole: cr.BaseRole, CreatedBy: cr.CreatedBy,
-		}
-		if !syncPolicies {
-			continue
-		}
-		if err := s.writeCustomRolePolicy(ctx, cr, nil); err != nil {
-			return err
-		}
-	}
-	s.rolesMu.Lock()
-	s.customRoles = customMap
-	s.rolesMu.Unlock()
-	s.log.Info("自定义角色已装载", zap.Int("customRoles", len(customMap)))
-	return nil
-}
-
-// writeCustomRolePolicy 把一个自定义角色写成策略。
-//
-// base_role 终于是**执行点**而不只是一根装饰线：它落成一条角色继承边，
-// 于是父角色加一个权限点，所有继承它的自定义角色跟着有。
-// 此前这一列只被拿去画关系图，判定完全不看 —— 控制台上标着
-// 「继承自应用运营管理员」的角色，实际一个继承来的权限都没有。
-func (s *AdminService) writeCustomRolePolicy(ctx context.Context, role admindomain.CustomRole, updatedBy *int64) error {
-	policy := authz.RolePolicy{Allow: role.Permissions, Note: role.Name}
-	if base := strings.TrimSpace(role.BaseRole); base != "" && base != role.RoleKey {
-		policy.Inherits = []string{authz.RoleSubject(base)}
-	}
-	return s.authz.SetRolePolicy(ctx, authz.SourceCustom, authz.RoleSubject(role.RoleKey), policy, updatedBy)
-}
-
-func (s *AdminService) CreateCustomRole(ctx context.Context, input admindomain.CreateCustomRoleInput, createdBy int64) (*admindomain.CustomRole, error) {
-	if !strings.HasPrefix(input.RoleKey, "custom_") {
-		return nil, apperrors.New(40058, http.StatusBadRequest, "自定义角色标识必须以 custom_ 开头")
-	}
-	if input.Level < 1 || input.Level >= 20 {
-		return nil, apperrors.New(40059, http.StatusBadRequest, "自定义角色级别必须在 1-19 之间")
-	}
-	if _, ok := s.roles[input.RoleKey]; ok {
-		return nil, apperrors.New(40960, http.StatusConflict, "角色标识与内置角色冲突")
-	}
-	allPerms := s.allPermissionCodes()
-	for _, p := range input.Permissions {
-		if _, ok := allPerms[p]; !ok {
-			return nil, apperrors.New(40060, http.StatusBadRequest, fmt.Sprintf("权限代码不存在: %s", p))
-		}
-	}
-
-	cr, err := s.pg.CreateCustomRole(ctx, input, createdBy)
-	if err != nil {
-		return nil, err
-	}
-	// 策略写入失败必须**上抛**：角色已经建出来了却没有任何策略，
-	// 表现是"角色在列表里、勾了一堆权限、授给谁都不生效"。
-	// 旧实现这里只记一行 error 就返回成功，于是这种半成品状态没有任何人会发现。
-	if err := s.writeCustomRolePolicy(ctx, *cr, &createdBy); err != nil {
-		return nil, err
-	}
-	if err := s.syncCustomRoles(ctx, false); err != nil {
-		s.log.Warn("自定义角色元数据刷新失败", zap.Error(err))
-	}
-	return cr, nil
-}
-
-func (s *AdminService) UpdateCustomRole(ctx context.Context, roleKey string, input admindomain.UpdateCustomRoleInput) (*admindomain.CustomRole, error) {
-	if !strings.HasPrefix(roleKey, "custom_") {
-		return nil, apperrors.New(40061, http.StatusBadRequest, "仅可编辑自定义角色")
-	}
-	if input.Level < 1 || input.Level >= 20 {
-		return nil, apperrors.New(40059, http.StatusBadRequest, "自定义角色级别必须在 1-19 之间")
-	}
-	allPerms := s.allPermissionCodes()
-	for _, p := range input.Permissions {
-		if _, ok := allPerms[p]; !ok {
-			return nil, apperrors.New(40060, http.StatusBadRequest, fmt.Sprintf("权限代码不存在: %s", p))
-		}
-	}
-
-	cr, err := s.pg.UpdateCustomRole(ctx, roleKey, input)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.writeCustomRolePolicy(ctx, *cr, nil); err != nil {
-		return nil, err
-	}
-	if err := s.syncCustomRoles(ctx, false); err != nil {
-		s.log.Warn("自定义角色元数据刷新失败", zap.Error(err))
-	}
-	return cr, nil
-}
-
-func (s *AdminService) DeleteCustomRole(ctx context.Context, roleKey string, force bool) error {
-	if !strings.HasPrefix(roleKey, "custom_") {
-		return apperrors.New(40061, http.StatusBadRequest, "仅可删除自定义角色")
-	}
-	count, err := s.pg.CountAdminsByRoleKey(ctx, roleKey)
-	if err != nil {
-		return err
-	}
-	if count > 0 && !force {
-		return apperrors.New(40962, http.StatusConflict, fmt.Sprintf("该角色正在被 %d 位管理员使用，请先移除分配或使用强制删除", count))
-	}
-	if err := s.pg.DeleteCustomRole(ctx, roleKey); err != nil {
-		return err
-	}
-	if err := s.authz.RemoveRolePolicy(ctx, authz.SourceCustom, authz.RoleSubject(roleKey)); err != nil {
-		return err
-	}
-	if err := s.syncCustomRoles(ctx, false); err != nil {
-		s.log.Warn("自定义角色元数据刷新失败", zap.Error(err))
-	}
-	return nil
-}
-
-func (s *AdminService) GetRoleImpactPreview(ctx context.Context, roleKey string) (*admindomain.ImpactPreview, error) {
-	admins, err := s.pg.ListAdminsByRoleKey(ctx, roleKey)
-	if err != nil {
-		return nil, err
-	}
-	return &admindomain.ImpactPreview{AffectedAdmins: admins, TotalAffected: len(admins)}, nil
-}
-
-// ── 权限矩阵 + 角色关系图 ──
-
-func (s *AdminService) GetRoleMatrix() admindomain.RoleMatrix {
-	roles := s.ListRoles()
-	groups := allPermissionGroups()
-	permSets := make(map[string]map[string]bool, len(roles))
-	for _, r := range roles {
-		m := make(map[string]bool, len(r.Permissions))
-		for _, p := range r.Permissions {
-			m[p] = true
-		}
-		permSets[r.Key] = m
-	}
-
-	var rows []admindomain.RoleMatrixRow
-	for _, g := range groups {
-		for _, p := range g.Permissions {
-			grants := make(map[string]bool, len(roles))
-			for _, r := range roles {
-				grants[r.Key] = permSets[r.Key][p.Code]
-			}
-			rows = append(rows, admindomain.RoleMatrixRow{
-				PermissionCode: p.Code, PermissionName: p.Name,
-				GroupKey: g.Key, GroupName: g.Name, Grants: grants,
-			})
-		}
-	}
-	return admindomain.RoleMatrix{Roles: roles, Groups: groups, Rows: rows}
-}
-
-func (s *AdminService) GetRoleGraph() admindomain.RoleGraph {
-	roles := s.ListRoles()
-	permSets := make(map[string]map[string]bool, len(roles))
-	for _, r := range roles {
-		m := make(map[string]bool, len(r.Permissions))
-		for _, p := range r.Permissions {
-			m[p] = true
-		}
-		permSets[r.Key] = m
-	}
-
-	var nodes []admindomain.RoleGraphNode
-	for _, r := range roles {
-		nodes = append(nodes, admindomain.RoleGraphNode{
-			Key: r.Key, Name: r.Name, Level: r.Level,
-			Scope: r.Scope, IsCustom: r.IsCustom, PermCount: len(r.Permissions),
-		})
-	}
-
-	var edges []admindomain.RoleGraphEdge
-	// BaseRole 继承边
-	for _, r := range roles {
-		if r.BaseRole != "" {
-			edges = append(edges, admindomain.RoleGraphEdge{Source: r.BaseRole, Target: r.Key, Relation: "inherits"})
-		}
-	}
-	// 权限包含关系边（A 是 B 的超集且 A.level > B.level）
-	for i, a := range roles {
-		for j, b := range roles {
-			if i == j || a.Level <= b.Level {
-				continue
-			}
-			if isSuperset(permSets[a.Key], permSets[b.Key]) && len(permSets[a.Key]) > len(permSets[b.Key]) {
-				// 只保留直接包含（排除传递关系）
-				direct := true
-				for k, c := range roles {
-					if k == i || k == j || c.Level <= b.Level || c.Level >= a.Level {
-						continue
-					}
-					if isSuperset(permSets[a.Key], permSets[c.Key]) && isSuperset(permSets[c.Key], permSets[b.Key]) {
-						direct = false
-						break
-					}
-				}
-				if direct {
-					edges = append(edges, admindomain.RoleGraphEdge{Source: a.Key, Target: b.Key, Relation: "includes"})
-				}
-			}
-		}
-	}
-	return admindomain.RoleGraph{Nodes: nodes, Edges: edges}
-}
-
-func isSuperset(a, b map[string]bool) bool {
-	for k := range b {
-		if !a[k] {
-			return false
-		}
-	}
-	return true
-}
-
-func (s *AdminService) allPermissionCodes() map[string]bool {
-	groups := allPermissionGroups()
-	result := make(map[string]bool)
-	for _, g := range groups {
-		for _, p := range g.Permissions {
-			result[p.Code] = true
-		}
-	}
-	return result
 }
