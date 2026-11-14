@@ -177,16 +177,29 @@ class AegisAIRelay internal constructor(
     /**
      * 以异步任务提交任意原样转发的接口（[path] 如 `images/generations`）。鉴权、余额等错误在这里直接抛出；
      * 成功返回进行中的任务。请求带幂等键：连接阶段失败时自动重发，不会重复扣费。
+     *
+     * 调用方拿不准上一次提交有没有到达（读超时、断网、进程被杀）时，用**同一个** [AegisAIJobOptions.idempotencyKey]
+     * 再调一次：网关回放上一次建立的任务（[AegisAIJob.replayed] 为真），不会新建、不会再扣费。
      */
     @Throws(IOException::class)
     @JvmOverloads
     fun submitJob(path: String, body: RequestBody, options: AegisAIJobOptions = AegisAIJobOptions()): AegisAIJob {
         val idempotencyKey = options.idempotencyKey ?: UUID.randomUUID().toString()
-        val response = request(
-            "POST", path, body = body, cancellation = options.cancellation,
-            headers = mapOf("Prefer" to "respond-async", "Idempotency-Key" to idempotencyKey),
-        )
-        return response.use { decodeJob(it) }
+        val response = try {
+            request(
+                "POST", path, body = body, cancellation = options.cancellation,
+                headers = mapOf("Prefer" to "respond-async", "Idempotency-Key" to idempotencyKey),
+            )
+        } catch (failure: AegisException) {
+            // 网关没能回放（旧版本网关，或任务行还没写进去）时回 409（40213），信封里带占用这个键的调用编号：
+            // 那就是上一次建立的任务，接着轮询它。状态先当进行中，第一次轮询就会拿到真实状态。
+            val existing = failure.idempotentRequestNo() ?: throw failure
+            return AegisAIJob(id = existing, endpoint = path, status = AegisAIJob.IN_PROGRESS, replayed = true)
+        }
+        return response.use {
+            val replayed = it.header(IDEMPOTENT_REPLAYED).equals("true", ignoreCase = true)
+            decodeJob(it).copy(replayed = replayed)
+        }
     }
 
     /** 取任务。[waitSeconds] > 0 时长轮询（≤ 25）：任务还在进行中就由服务端挂着，有结论立刻返回。 */
@@ -418,6 +431,10 @@ class AegisAIRelay internal constructor(
     internal companion object {
         val JSON: MediaType = "application/json; charset=utf-8".toMediaType()
         const val REQUEST_NO = "X-Aegis-Request-No"
+        /** 网关对同键重复提交原样回放上一次的任务时带的头。 */
+        const val IDEMPOTENT_REPLAYED = "Idempotent-Replayed"
+        /** 幂等键已被一次进行中或已成功的调用占用。 */
+        const val IDEMPOTENCY_IN_USE = 40213
         const val MAX_WAIT_SECONDS = 25
         const val POLL_WAIT_SECONDS = 20
         /** 同步调用（对话、嵌入）的读超时：网关在 20 秒后开始每 15 秒写保活，这个值只需盖过一次间隔。 */
@@ -428,7 +445,14 @@ class AegisAIRelay internal constructor(
             val message = error?.get("message")?.jsonPrimitive?.contentOrNull.orEmpty()
             val code = error?.get("aegis_code")?.jsonPrimitive?.intOrNull ?: 0
             val status = error?.get("status")?.jsonPrimitive?.intOrNull ?: fallbackStatus
-            return AegisException.relay(code, message, status)
+            return AegisException.relay(code, message, status, data = error)
+        }
+
+        /** 40213（幂等键已被占用）里占用方的调用编号；网关没给（旧版本）时为 null。 */
+        internal fun AegisException.idempotentRequestNo(): String? {
+            if (code != IDEMPOTENCY_IN_USE) return null
+            val error = data as? JsonObject ?: return null
+            return error["request_no"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
         }
 
         private fun encodeSegment(value: String): String =
@@ -559,6 +583,11 @@ data class AegisAIJob(
     @SerialName("result_url") val resultUrl: String? = null,
     val error: AegisAIJobError? = null,
     @SerialName("poll_after_ms") val pollAfterMs: Int? = null,
+    /**
+     * 提交时为真：这次提交的幂等键已经有过一次提交，网关回的是那一次建立的任务（没有新建、没有再扣费）。
+     * 只在 [AegisAIRelay.submitJob] 的返回值上有意义。
+     */
+    @kotlinx.serialization.Transient val replayed: Boolean = false,
 ) {
     val isFinished: Boolean get() = status == COMPLETED || status == FAILED || status == CANCELED
 

@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.InetSocketAddress
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -54,6 +55,19 @@ class AegisAIRelayTest {
                     else -> exchange.reply(200,
                         """{"id":"AIG1","status":"completed","created_at":1,"content_type":"application/json","result":{"data":[{"b64_json":"AQID"}]}}""")
                 }
+                path.endsWith("/images/edits") -> {
+                    submits.incrementAndGet()
+                    when (exchange.requestHeaders.getFirst("Idempotency-Key")) {
+                        // 新网关：同键重复提交原样回放上一次的任务。
+                        "replay" -> {
+                            exchange.responseHeaders.add("Idempotent-Replayed", "true")
+                            exchange.reply(200, """{"id":"AIG1","object":"aegis.job","status":"in_progress","created_at":1}""")
+                        }
+                        // 旧网关（或任务行还没写进去）：409 + 信封里带占用方的编号。
+                        else -> exchange.reply(409,
+                            """{"error":{"message":"相同的 Idempotency-Key 已有一次进行中或已成功的调用（AIG1）","type":"invalid_request_error","code":"conflict","aegis_code":40213,"request_no":"AIG1"}}""")
+                    }
+                }
                 path.endsWith("/jobs/AIG2") -> exchange.reply(200,
                     """{"id":"AIG2","status":"failed","created_at":1,"error":{"message":"余额不足","type":"insufficient_quota","code":"insufficient_quota","aegis_code":40201,"status":402}}""")
                 path.endsWith("/chat/completions") ->
@@ -82,6 +96,24 @@ class AegisAIRelayTest {
         assertEquals(listOf(1, 2, 3), images.images.single().bytes()!!.map { it.toInt() })
         assertEquals(1, submits.get())
         assertEquals(3, polls.get())
+    }
+
+    @Test
+    fun replayedSubmitIsMarked() {
+        val body = "{}".toByteArray().toRequestBody(null)
+        val job = client().ai.relay("sk-ag-test").submitJob("images/edits", body, AegisAIJobOptions(idempotencyKey = "replay"))
+        assertEquals("AIG1", job.id)
+        assertTrue(job.replayed)
+    }
+
+    @Test
+    fun conflictingSubmitContinuesWithTheExistingJob() {
+        val body = "{}".toByteArray().toRequestBody(null)
+        val job = client().ai.relay("sk-ag-test").submitJob("images/edits", body, AegisAIJobOptions(idempotencyKey = "conflict"))
+        assertEquals("AIG1", job.id)
+        assertEquals(AegisAIJob.IN_PROGRESS, job.status)
+        assertTrue(job.replayed)
+        assertEquals(1, submits.get())
     }
 
     @Test

@@ -121,7 +121,7 @@ class AegisException private constructor(
          * AI 中转（`/api/ai/v1`）的错误：那一组接口回 OpenAI / Anthropic 形状的错误信封而不是平台信封。
          * [code] 是信封里的 `aegis_code`（上游自己的错误没有，为 0），[httpStatus] 是同步调用会回的状态码。
          */
-        internal fun relay(code: Int, message: String, httpStatus: Int): AegisException {
+        internal fun relay(code: Int, message: String, httpStatus: Int, data: JsonElement? = null): AegisException {
             val kind = when (code) {
                 in AUTH_CODES, in SIGNED_OUT_CODES -> Kind.AUTH
                 else -> Kind.BUSINESS
@@ -132,6 +132,7 @@ class AegisException private constructor(
                 message = message.ifEmpty { "AI 调用失败（HTTP $httpStatus）" },
                 recovery = if (code in SIGNED_OUT_CODES) AegisRecovery.REAUTH else defaultRecovery(kind),
                 httpStatus = httpStatus,
+                data = data,
             )
         }
 
