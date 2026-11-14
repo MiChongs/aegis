@@ -40,6 +40,7 @@ import {
   useTrafficOverviewQuery,
   trafficErrorMessage
 } from "@/lib/traffic-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { FlowGate, type FlowGateRule } from "./flow-gate";
 import { TrafficStateBanner } from "./plugin-banner";
@@ -110,6 +111,7 @@ function FlowPanel({ overview, paused }: { overview: TrafficOverview; paused: bo
   const local = overview.local;
   const last = local.lastSecond;
   const reset = useResetTrafficStatsMutation();
+  const canWrite = usePermissionChecker()("system:traffic:write");
   const gates: FlowGateRule[] = (local.rules ?? [])
     .filter((rule) => rule.enabled)
     .map((rule) => ({
@@ -134,23 +136,25 @@ function FlowPanel({ overview, paused }: { overview: TrafficOverview; paused: bo
           <Badge variant="outline" size="sm" className="font-mono">
             r{overview.revision}
           </Badge>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button size="icon-sm" variant="ghost" aria-label="重置统计" disabled={reset.isPending}>
-                {reset.isPending ? <Loader2 className="animate-spin" /> : <RotateCcw />}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>重置统计</AlertDialogTitle>
-                <AlertDialogDescription>本实例的累计计数与分位将清零。</AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>取消</AlertDialogCancel>
-                <AlertDialogAction onClick={() => reset.mutate()}>重置</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          {canWrite ? (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="icon-sm" variant="ghost" aria-label="重置统计" disabled={reset.isPending}>
+                  {reset.isPending ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>重置统计</AlertDialogTitle>
+                  <AlertDialogDescription>本实例的累计计数与分位将清零。</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>取消</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => reset.mutate()}>重置</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          ) : null}
         </>
       }
     >

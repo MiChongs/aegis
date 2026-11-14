@@ -697,6 +697,12 @@ func (s *AdminService) DeleteCustomRole(ctx context.Context, roleKey string, for
 	if err := s.pg.DeleteCustomRole(ctx, roleKey); err != nil {
 		return err
 	}
+	// 授权关系没有外键：不一并删掉的话，这些分配会指向一个不存在的角色，留在名单里成为谁也解释不了的残留
+	if count > 0 {
+		if _, err := s.pg.DeleteAssignmentsByRole(ctx, roleKey); err != nil {
+			return err
+		}
+	}
 	if err := s.authz.RemoveRolePolicy(ctx, authz.SourceCustom, authz.RoleSubject(roleKey)); err != nil {
 		return err
 	}

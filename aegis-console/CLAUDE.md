@@ -1428,6 +1428,37 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 渠道配置表单由 `/api/admin/notify/catalog` 返回的元数据动态渲染，
 后端新增一种 IM 时前端零改动 —— 不要把渠道字段硬编码回组件里。
 
+## 管理员与权限（/users）
+
+后端设计见 `docs/admin-permissions.md`。页签（`?tab=`，各挂权限，看不到的页签不渲染）：
+管理员 `admins` · 角色 `roles` · 权限目录 `permissions` · 权限诊断 `diagnose` · 临时权限 `temp` · 在线会话 `online`。
+`/roles` 只做跳转（旧书签）。
+
+| 文件 | 职责 |
+|---|---|
+| `lib/api/access.ts` | 类型与接口：档位、权限树、角色详情、管理员详情、个人授权、诊断 |
+| `lib/access-hooks.ts` | React Query 封装；写操作成功后统一刷新角色 / 管理员 / 会话快照 |
+| `lib/permissions.tsx` | 权限上下文：**只读 `/auth/me` 的生效权限快照**（global / apps / anyApp / all） |
+| `components/access/tree-model.ts` | 权限树索引、通配与旧代码展开（与后端 `authz.Implies` 同口径）、搜索、三态统计 |
+| `components/access/permission-tree-editor.tsx` | 勾选树：edit（允许 / 禁止两种落笔）/ view / pick 三种用法 |
+| `components/access/role-*.tsx` | 角色工作台：列表 + 功能权限 / 数据权限 / 成员 / 基本信息 + 新建、复制、删除 |
+| `components/access/admin-*.tsx` | 管理员工作台：身份分布、列表、详情抽屉（授权、个人授权、临时权限、生效权限、会话） |
+| `components/access/permission-catalog-view.tsx` | 权限目录（树形表格 + 接口与持有角色） |
+| `components/access/diagnose-view.tsx` | 判定解释 + 角色覆盖热力图 |
+
+硬约束：
+
+1. **判权限一律用细分代码**（`system:egress:read`、`app:lottery:write` …，全表在后端 `internal/authz/tree.go`）。
+   `usePermissionChecker()` 不带应用、任意作用域持有即算；按应用判定用 `useAppPermissionChecker(appId)`。
+   旧的合并代码（`app:read`、`system:admin:manage`）还能传，等于「名下任意一个细分项」，新代码不要再用。
+2. **不在前端推导角色 → 权限**。旧实现靠 `/profile/roles/permissions` 里 `description === "granted"` 拼，
+   已删；需要「谁有什么」时读 `/auth/me` 或管理员详情的 `permissions`。
+3. **按钮显隐看后端下发的 `capabilities`**（`canStatus` / `canAccess` / `canGrant` / `canSession` / `canTier`
+   与 `manageReason`），不要自己用档位比大小：档位守卫与「不能改自己」都在后端，前端复刻迟早漂移。
+4. 编辑器只和细分代码打交道：载入时把通配 / 旧代码展开（`expandPatterns`），保存时提交细分代码。
+   内置角色的代码定义经 `locked` 锁定，额外允许与禁止写进 override。
+5. 角色列表走 `/api/admin/profile/roles`（任意已登录管理员可读）：授权编辑者不必另持「角色权限：查看」。
+
 ## 意见反馈（/feedback）
 
 反馈就是 `kind=feedback` 的工单，接口与 hooks 全部复用工单那套（`lib/api/tickets.ts`、`lib/ticket-hooks.ts`），

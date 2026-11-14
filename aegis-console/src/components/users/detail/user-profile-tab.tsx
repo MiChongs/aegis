@@ -53,7 +53,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useNow } from "@/components/users/ban-form";
 import { ApiError } from "@/lib/api-client";
-import { usePermissionChecker } from "@/lib/permissions";
+import { useAppKeyPermissionChecker } from "@/lib/app-permission-hooks";
 import {
   useRemoveAdminAppUserAvatarMutation,
   useUpdateAdminAppUserProfileMutation,
@@ -383,8 +383,8 @@ function BasicSection({
   children?: ReactNode;
 }) {
   const profile = user.profile;
-  const can = usePermissionChecker();
-  const canRename = can("app:user:write");
+  const can = useAppKeyPermissionChecker(appKey);
+  const canRename = can("app:user:edit");
   const [renaming, setRenaming] = useState(false);
   const nickname = (user.nickname || profile?.nickname || "").trim();
   const birthday = describeBirthday(birthdayInputValue(profile?.birthday), now);

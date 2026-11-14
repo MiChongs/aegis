@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Ban, Inbox, LayoutDashboard, LayoutTemplate, Mail, Server, ShieldCheck } from "lucide-react";
 import { NoAppSelected } from "@/components/apps/app-config-primitives";
 import { useEmailProviderCatalogQuery, type EmailScope } from "@/lib/email-hooks";
-import { usePermissionChecker } from "@/lib/permissions";
+import { useAppPermissionChecker } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { EmailChannelsPanel } from "./email-channels-panel";
 import { EmailDeliveryTable } from "./email-delivery-table";
@@ -51,7 +51,8 @@ function Workspace({ scope }: { scope: EmailScope }) {
   const [view, setView] = useState<ViewKey>("overview");
   // 从概览跳到投递记录时带过去的筛选；每次跳转换一个 key，让列表按新筛选重新初始化
   const [deliveryFilter, setDeliveryFilter] = useState<{ key: number; status?: string; purpose?: string }>({ key: 0 });
-  const can = usePermissionChecker();
+  // 应用级按该应用判定，平台级不带应用（任一作用域持有即可）
+  const can = useAppPermissionChecker(scope.kind === "app" ? scope.appId : null);
   const canWrite = can("email:write");
   const catalogQuery = useEmailProviderCatalogQuery();
   const providers = catalogQuery.data?.providers ?? [];

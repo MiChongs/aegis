@@ -5,7 +5,7 @@ import { Database, Plus, RefreshCw, Save, Shield, Trash2, X } from "lucide-react
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
 import { useAdminSystemSettingsQuery, useUpdateAdminSystemSettingsMutation } from "@/lib/admin-hooks";
-import { useAuthStore } from "@/lib/auth-store";
+import { usePermissionChecker } from "@/lib/permissions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingState } from "@/components/ui/data-state";
@@ -74,8 +74,10 @@ function fmtDate(v?: string | null) {
 // ── 主组件 ──
 
 export function FirewallConfigPanel() {
-  const operator = useAuthStore((s) => s.operator);
-  const settingsQ = useAdminSystemSettingsQuery(Boolean(operator?.isSuperAdmin));
+  const can = usePermissionChecker();
+  const canRead = can("system:config:read");
+  const canWrite = can("system:config:write");
+  const settingsQ = useAdminSystemSettingsQuery(canRead);
   const updateMut = useUpdateAdminSystemSettingsMutation();
   const fw = settingsQ.data?.firewall;
   const seed = useMemo(() => fw ? makeSeed(fw as unknown as Record<string, unknown>) : null, [fw]);
@@ -121,7 +123,7 @@ export function FirewallConfigPanel() {
     }
   }
 
-  if (!operator?.isSuperAdmin) return <EmptyState title="无访问权限" description="仅超级管理员可配置" />;
+  if (!canRead) return <EmptyState title="缺少「平台设置：查看」权限" />;
   if (settingsQ.isLoading || !draft || !fw) return <LoadingState title="加载防火墙配置" />;
 
   return (
@@ -139,14 +141,16 @@ export function FirewallConfigPanel() {
       {/* 操作栏 */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">防火墙配置</h2>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => { setDraft(seed); setSyncedKey(seedKey); }} disabled={updateMut.isPending}>
-            重置
-          </Button>
-          <Button size="sm" onClick={() => void handleSave()} disabled={updateMut.isPending}>
-            <Save className="size-3.5" /> {updateMut.isPending ? "保存中..." : "保存"}
-          </Button>
-        </div>
+        {canWrite ? (
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setDraft(seed); setSyncedKey(seedKey); }} disabled={updateMut.isPending}>
+              重置
+            </Button>
+            <Button size="sm" onClick={() => void handleSave()} disabled={updateMut.isPending}>
+              <Save className="size-3.5" /> {updateMut.isPending ? "保存中..." : "保存"}
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {/* 主开关 */}

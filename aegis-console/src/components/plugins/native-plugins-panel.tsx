@@ -21,6 +21,7 @@ import { PluginStateBadge } from "@/components/traffic/traffic-kit";
 import type { NativePlugin } from "@/lib/api/traffic";
 import { formatRelative } from "@/lib/datetime";
 import { trafficErrorMessage, useNativePluginActionMutation, useNativePluginsQuery } from "@/lib/traffic-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 
 /** 有控制台页面的内置插件 */
 const PLUGIN_PAGES: Record<string, { href: string; label: string }> = {
@@ -33,6 +34,7 @@ const PLUGIN_PAGES: Record<string, { href: string; label: string }> = {
 export function NativePluginsPanel() {
   const pluginsQuery = useNativePluginsQuery();
   const action = useNativePluginActionMutation();
+  const canManage = usePermissionChecker()("system:native_plugin:manage");
   const [pendingDisable, setPendingDisable] = useState<NativePlugin | null>(null);
   const plugins = pluginsQuery.data ?? [];
   const busyId = action.isPending ? action.variables?.id : undefined;
@@ -92,7 +94,7 @@ export function NativePluginsPanel() {
                     </Link>
                   </Button>
                 ) : null}
-                {plugin.enabled ? (
+                {!canManage ? null : plugin.enabled ? (
                   <>
                     <Button
                       size="sm"

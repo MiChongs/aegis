@@ -1,138 +1,250 @@
 "use client";
 
-import { type ReactNode, createContext, useCallback, useContext, useMemo } from "react";
+import {
+  type ReactNode,
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+} from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@/lib/auth-store";
-import { useAdminRolePermissionTreeQuery } from "@/lib/admin-hooks";
+import { usePermissionCatalogQuery } from "@/lib/access-hooks";
+import {
+  getAccessSnapshot,
+  tierOf,
+  type AccessSnapshot,
+  type AdminTier,
+  type PermissionNode,
+} from "@/lib/api/access";
 
-// ── 权限上下文 ──────────────────────────
+/**
+ * 控制台的权限上下文。
+ *
+ * 唯一来源是后端 `/api/admin/auth/me` 下发的**生效权限快照**：服务端用与真实判定同一段代码
+ * 展开（含通配、继承、禁止、数据权限、临时权限），前端不再自己维护「角色 → 权限」的副本 ——
+ * 那份副本一旦漂移，表现就是「按钮在、点了 403」。
+ *
+ * 判定口径：
+ *   - 超级管理员 / 系统管理员：一切放行；
+ *   - 不带应用：平台级、任意应用、或任意一个应用里持有即算（用于导航与页面入口）；
+ *   - 带应用：该应用的完整集合（已并入全局授权），没单独列出的应用用「任意应用」集合。
+ *
+ * 旧的合并权限点（app:read、system:admin:manage …）仍可传入：它等于「名下任意一个细分项」，
+ * 映射关系来自权限树。新代码请直接用细分权限点。
+ */
 
 type PermissionContextValue = {
-  isSuperAdmin: boolean;
-  roles: string[];
-  permissions: Set<string>;
   loading: boolean;
+  isSuperAdmin: boolean;
+  isSystemAdmin: boolean;
+  tier: AdminTier;
+  roles: string[];
+  /** 平台级生效集合 */
+  global: Set<string>;
+  /** 未单独列出的任意应用里生效的集合 */
+  anyApp: Set<string>;
+  /** 每个应用的完整集合 */
+  apps: Map<number, Set<string>>;
+  /** 所有作用域的并集 */
+  union: Set<string>;
+  /** 旧合并权限点 → 名下细分项 */
+  legacy: Map<string, string[]>;
 };
 
+const EMPTY = new Set<string>();
+
 const PermissionContext = createContext<PermissionContextValue>({
+  loading: true,
   isSuperAdmin: false,
+  isSystemAdmin: false,
+  tier: "admin",
   roles: [],
-  permissions: new Set(),
-  loading: true
+  global: EMPTY,
+  anyApp: EMPTY,
+  apps: new Map(),
+  union: EMPTY,
+  legacy: new Map(),
 });
 
-// ── Provider ──────────────────────────
+function collectLegacy(
+  nodes: PermissionNode[] | undefined,
+  out: Map<string, string[]>,
+) {
+  for (const node of nodes ?? []) {
+    if (node.kind === "action" && node.code && node.legacy) {
+      const list = out.get(node.legacy) ?? [];
+      list.push(node.code);
+      out.set(node.legacy, list);
+    }
+    collectLegacy(node.children, out);
+  }
+}
 
 export function PermissionProvider({ children }: { children: ReactNode }) {
+  const token = useAuthStore((s) => s.accessToken);
   const operator = useAuthStore((s) => s.operator);
-  const permTreeQuery = useAdminRolePermissionTreeQuery();
+  const snapshotQuery = useQuery({
+    queryKey: ["admin-session", token],
+    queryFn: () => getAccessSnapshot(token as string),
+    enabled: Boolean(token),
+    retry: false,
+    staleTime: 30 * 1000,
+  });
+  const catalogQuery = usePermissionCatalogQuery();
 
   const value = useMemo<PermissionContextValue>(() => {
-    const isSuperAdmin = !!operator?.isSuperAdmin;
-    const assignments = operator?.assignments || [];
-    const roleKeys = assignments.map((a) => a.roleKey).filter(Boolean) as string[];
-
-    // 从权限树中解析当前用户拥有的所有权限代码
-    const permissions = new Set<string>();
-    if (permTreeQuery.data && roleKeys.length > 0) {
-      for (const role of permTreeQuery.data) {
-        if (roleKeys.includes(role.key)) {
-          for (const group of role.permissionGroups || []) {
-            for (const perm of group.permissions || []) {
-              if (perm.description === "granted") {
-                permissions.add(perm.code);
-              }
-            }
-          }
-        }
-      }
+    const snapshot = snapshotQuery.data as AccessSnapshot | undefined;
+    const isSuperAdmin = Boolean(
+      snapshot?.isSuperAdmin ?? operator?.isSuperAdmin,
+    );
+    const tier = snapshot ? tierOf(snapshot) : isSuperAdmin ? "super" : "admin";
+    const global = new Set(snapshot?.permissions?.global ?? []);
+    const anyApp = new Set(snapshot?.permissions?.anyApp ?? []);
+    const apps = new Map<number, Set<string>>();
+    const union = new Set<string>([...global, ...anyApp]);
+    for (const [id, items] of Object.entries(
+      snapshot?.permissions?.apps ?? {},
+    )) {
+      apps.set(Number(id), new Set(items));
+      for (const item of items) union.add(item);
     }
-
+    const legacy = new Map<string, string[]>();
+    collectLegacy(catalogQuery.data?.tree, legacy);
+    const roleKeys = (snapshot?.assignments ?? operator?.assignments ?? [])
+      .map((a) => a.roleKey)
+      .filter((key): key is string => Boolean(key));
     return {
-      isSuperAdmin,
+      loading: snapshotQuery.isLoading,
+      isSuperAdmin: isSuperAdmin || Boolean(snapshot?.permissions?.all),
+      isSystemAdmin: tier === "system",
+      tier,
       roles: isSuperAdmin ? ["super_admin", ...roleKeys] : roleKeys,
-      permissions,
-      loading: permTreeQuery.isLoading
+      global,
+      anyApp,
+      apps,
+      union,
+      legacy,
     };
-  }, [operator, permTreeQuery.data, permTreeQuery.isLoading]);
+  }, [
+    snapshotQuery.data,
+    snapshotQuery.isLoading,
+    catalogQuery.data,
+    operator,
+  ]);
 
-  return <PermissionContext.Provider value={value}>{children}</PermissionContext.Provider>;
+  return (
+    <PermissionContext.Provider value={value}>
+      {children}
+    </PermissionContext.Provider>
+  );
 }
 
-// ── Hooks ──────────────────────────
+// ── 判定 ──
 
-/**
- * 检查当前管理员是否拥有指定权限
- *
- * @param permission - 权限代码，如 "system:admin:manage"
- * @param appId - 可选，检查特定应用范围的权限
- * @returns { allowed, loading }
- */
-export function usePermission(permission?: string, appId?: number | null): { allowed: boolean; loading: boolean } {
-  const ctx = useContext(PermissionContext);
+function holds(set: Set<string>, code: string, legacy: Map<string, string[]>) {
+  if (set.has(code)) return true;
+  if (code.endsWith(":*")) {
+    const prefix = code.slice(0, -1);
+    for (const item of set) if (item.startsWith(prefix)) return true;
+    return false;
+  }
+  const children = legacy.get(code);
+  return Boolean(children?.some((child) => set.has(child)));
+}
 
-  return useMemo(() => {
-    // 超管拥有所有权限
-    if (ctx.isSuperAdmin) return { allowed: true, loading: false };
-
-    // 无权限要求则放行
-    if (!permission) return { allowed: true, loading: ctx.loading };
-
-    // 检查权限代码
-    if (ctx.permissions.has(permission)) {
-      // 如果需要检查应用范围
-      if (appId != null) {
-        const operator = useAuthStore.getState().operator;
-        const hasAppScope = (operator?.assignments || []).some(
-          (a) => a.appid === appId || a.appid == null // null = 全局范围
-        );
-        return { allowed: hasAppScope, loading: false };
-      }
-      return { allowed: true, loading: false };
-    }
-
-    return { allowed: false, loading: ctx.loading };
-  }, [ctx, permission, appId]);
+function evaluate(
+  ctx: PermissionContextValue,
+  permission: string | string[] | undefined,
+  appId?: number | null,
+) {
+  if (ctx.isSuperAdmin) return true;
+  if (!permission || (Array.isArray(permission) && permission.length === 0))
+    return true;
+  const codes = Array.isArray(permission) ? permission : [permission];
+  const set = appId != null ? (ctx.apps.get(appId) ?? ctx.anyApp) : ctx.union;
+  // 应用集合已由服务端并入全局授权，这里不再自己做并集
+  return codes.some((code) => holds(set, code, ctx.legacy));
 }
 
 /**
- * 返回一个可复用的鉴权判定函数，用于批量过滤（如侧边栏导航分组）。
+ * 检查当前管理员是否拥有指定权限（数组表示「任意一项」）。
  *
- * `usePermission` 是 Hook，无法在列表循环里逐项调用；此处返回纯函数，
- * 可在 `useMemo` 内对任意长度的数组做过滤。
+ * @param permission 权限代码，如 "system:admin:read"
+ * @param appId 可选：按某个应用判定
  */
-export function usePermissionChecker(): (permission?: string, superAdmin?: boolean) => boolean {
+export function usePermission(
+  permission?: string | string[],
+  appId?: number | null,
+): { allowed: boolean; loading: boolean } {
   const ctx = useContext(PermissionContext);
-
-  return useCallback(
-    (permission?: string, superAdmin?: boolean) => {
-      if (ctx.isSuperAdmin) return true;
-      if (superAdmin) return false;
-      if (!permission) return true;
-      return ctx.permissions.has(permission);
-    },
-    [ctx]
+  return useMemo(
+    () => ({ allowed: evaluate(ctx, permission, appId), loading: ctx.loading }),
+    [ctx, permission, appId],
   );
 }
 
 /**
- * 检查是否为超级管理员
+ * 返回一个可复用的判定函数，用于批量过滤（侧边栏导航、按钮组）。
+ * 不带应用：任何作用域持有即算。`superAdmin` 为真时只放行超管（及系统管理员）。
  */
+export function usePermissionChecker(): (
+  permission?: string | string[],
+  superAdmin?: boolean,
+) => boolean {
+  const ctx = useContext(PermissionContext);
+  return useCallback(
+    (permission?: string | string[], superAdmin?: boolean) => {
+      if (ctx.isSuperAdmin) return true;
+      if (superAdmin) return false;
+      return evaluate(ctx, permission);
+    },
+    [ctx],
+  );
+}
+
+/** 按某个应用判定的检查函数（应用详情页、应用用户等页面用）。 */
+export function useAppPermissionChecker(
+  appId?: number | null,
+): (permission?: string | string[]) => boolean {
+  const ctx = useContext(PermissionContext);
+  return useCallback(
+    (permission?: string | string[]) =>
+      evaluate(ctx, permission, appId ?? null),
+    [ctx, appId],
+  );
+}
+
+/** 是否为超级管理员（含系统管理员） */
 export function useIsSuperAdmin(): boolean {
   return useContext(PermissionContext).isSuperAdmin;
 }
 
-/**
- * 获取当前管理员的所有角色 key
- */
+/** 是否为系统管理员 */
+export function useIsSystemAdmin(): boolean {
+  return useContext(PermissionContext).isSystemAdmin;
+}
+
+/** 当前身份档位 */
+export function useTier(): AdminTier {
+  return useContext(PermissionContext).tier;
+}
+
+/** 当前管理员的全部角色 key */
 export function useRoles(): string[] {
   return useContext(PermissionContext).roles;
 }
 
-// ── 条件渲染组件 ──────────────────────────
+/** 权限快照是否仍在加载（首屏用来避免「先显示无权限、再闪成有权限」） */
+export function usePermissionsLoading(): boolean {
+  return useContext(PermissionContext).loading;
+}
+
+// ── 条件渲染 ──
 
 type RequirePermissionProps = {
-  /** 权限代码，如 "system:admin:manage" */
-  permission?: string;
+  /** 权限代码；数组表示任意一项 */
+  permission?: string | string[];
   /** 可选应用范围 */
   appId?: number | null;
   /** 是否要求超管 */
@@ -143,25 +255,23 @@ type RequirePermissionProps = {
 };
 
 /**
- * 条件渲染：仅在拥有权限时显示 children
+ * 条件渲染：仅在拥有权限时显示 children。
  *
- * 用法：
  * ```tsx
- * <RequirePermission permission="system:admin:manage">
- *   <AdminPanel />
- * </RequirePermission>
- *
- * <RequirePermission superAdmin>
- *   <DangerZone />
- * </RequirePermission>
+ * <RequirePermission permission="system:admin:read"><AdminPanel /></RequirePermission>
+ * <RequirePermission superAdmin><DangerZone /></RequirePermission>
  * ```
  */
-export function RequirePermission({ permission, appId, superAdmin, fallback, children }: RequirePermissionProps) {
-  const { allowed } = usePermission(permission);
+export function RequirePermission({
+  permission,
+  appId,
+  superAdmin,
+  fallback,
+  children,
+}: RequirePermissionProps) {
+  const { allowed } = usePermission(permission, appId);
   const isSuperAdmin = useIsSuperAdmin();
-
   if (superAdmin && !isSuperAdmin) return <>{fallback ?? null}</>;
   if (permission && !allowed) return <>{fallback ?? null}</>;
-
   return <>{children}</>;
 }

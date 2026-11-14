@@ -247,6 +247,9 @@ VALUES ($1, 'x', $1, $2) RETURNING id`, row.account, row.super).Scan(row.target)
 	if err := svc.DeleteCustomRole(ctx, "custom_lottery_ops", true); err != nil {
 		t.Fatal(err)
 	}
+	if count, _ := pg.CountAdminsByRoleKey(ctx, "custom_lottery_ops"); count != 0 {
+		t.Fatalf("强制删除后应清掉成员授权，还剩 %d 条", count)
+	}
 
 	// ── 兜底：没有系统管理员时启动会自动指定 ──
 	if _, err := pool.Exec(ctx, `UPDATE admin_accounts SET is_system_admin = FALSE`); err != nil {

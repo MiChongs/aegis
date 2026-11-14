@@ -22,7 +22,7 @@ import type { PlatformBan, PlatformBanDetail, PlatformBanSubject } from "@/lib/a
 import { useAdminAppsQuery } from "@/lib/admin-hooks";
 import { usePlatformBan, usePlatformBans, useRevokePlatformBan } from "@/lib/ban-appeal-hooks";
 import { formatDateTime, formatRelative } from "@/lib/datetime";
-import { useCanOperateRisk } from "@/lib/risk-ops-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
 
@@ -55,26 +55,26 @@ const subjectMeta = (kind: string) => SUBJECT[kind] ?? { label: kind, icon: Fing
 const ACCOUNT_STATUS: Record<string, string> = { active: "封禁中", revoked: "已解除", expired: "已到期" };
 
 /**
- * 风控平台 → 全站封禁（超级管理员）。
+ * 风控平台 → 全站封禁（查看 system:platform_ban:read，解除 system:platform_ban:revoke）。
  *
  * 一条全站封禁封的是「这个人」：他绑定的邮箱、手机号、第三方账号与用过的设备（只存打码值），
  * 以及所有应用里与这些主体相连的账号。解除会一并解除所有连带的账号封禁。
  */
 export function PlatformBans() {
-  const isSuper = useCanOperateRisk();
+  const canRead = usePermissionChecker()("system:platform_ban:read");
   const [status, setStatus] = useState<StatusFilter>("active");
   const [keyword, setKeyword] = useState("");
   const q = useDebouncedValue(keyword.trim(), 300);
   const [page, setPage] = useState(1);
   const [openId, setOpenId] = useState<number | null>(null);
-  const list = usePlatformBans({ status: status === "all" ? undefined : status, q: q || undefined, page, pageSize: PAGE_SIZE }, isSuper);
+  const list = usePlatformBans({ status: status === "all" ? undefined : status, q: q || undefined, page, pageSize: PAGE_SIZE }, canRead);
   const items = list.data?.items ?? [];
   const total = list.data?.total ?? 0;
 
-  if (!isSuper) {
+  if (!canRead) {
     return (
       <section className="rounded-xl border bg-card">
-        <CardEmpty icon={Globe2} title="仅超级管理员可查看全站封禁" description="全站封禁跨越所有应用，查看与解除都需要超级管理员。" />
+        <CardEmpty icon={Globe2} title="缺少「平台封禁：查看」权限" />
       </section>
     );
   }
@@ -241,6 +241,7 @@ function DetailBody({ data, onClose }: { data: PlatformBanDetail; onClose: () =>
   }, [data.subjects]);
   const st = STATUS_BADGE[ban.status] ?? { label: ban.status, variant: "secondary" as const };
   const [revoking, setRevoking] = useState(false);
+  const canRevoke = usePermissionChecker()("system:platform_ban:revoke");
 
   return (
     <>
@@ -338,7 +339,7 @@ function DetailBody({ data, onClose }: { data: PlatformBanDetail; onClose: () =>
 
       <DialogFooter>
         <Button variant="ghost" onClick={onClose}>关闭</Button>
-        {ban.status === "active" ? (
+        {ban.status === "active" && canRevoke ? (
           <Button variant="outline" onClick={() => setRevoking(true)}>
             <Undo2 />
             解除全站封禁

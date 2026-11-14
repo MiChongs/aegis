@@ -18,6 +18,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
+import { usePermissionChecker } from "@/lib/permissions";
 import {
   getMemorySnapshot,
   forceGC,
@@ -79,14 +80,16 @@ function TrendIcon({ trending }: { trending: string }) {
 
 export function MemoryPanel() {
   const accessToken = useAuthStore((s) => s.accessToken);
-  const operator = useAuthStore((s) => s.operator);
+  const can = usePermissionChecker();
+  const canRead = can("system:memory:read");
+  const canManage = can("system:memory:manage");
   const queryClient = useQueryClient();
   const [gogcInput, setGogcInput] = useState("");
 
   const query = useQuery({
     queryKey: ["memory-snapshot", accessToken],
     queryFn: () => getMemorySnapshot(accessToken!),
-    enabled: Boolean(accessToken && operator?.isSuperAdmin),
+    enabled: Boolean(accessToken && canRead),
     refetchInterval: 15_000,
   });
 
@@ -118,7 +121,7 @@ export function MemoryPanel() {
     onError: () => toast.error("缓存清空失败"),
   });
 
-  if (!operator?.isSuperAdmin) return null;
+  if (!canRead) return null;
   if (query.isLoading) return <LoadingState title="加载内存管理信息" />;
   if (!query.data) return null;
 
@@ -185,41 +188,43 @@ export function MemoryPanel() {
       )}
 
       {/* GC 调优器 + 操作按钮 */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" className="text-xs" onClick={() => gcMutation.mutate()} disabled={gcMutation.isPending}>
-          <RefreshCw className={gcMutation.isPending ? "animate-spin" : undefined} />
-          强制 GC
-        </Button>
-        <Button size="sm" variant="outline" className="text-xs" onClick={() => flushMutation.mutate()} disabled={flushMutation.isPending}>
-          <Trash2 />
-          清空缓存
-        </Button>
-        <div className="flex items-center gap-1.5">
-          <Input
-            type="number"
-            min={10}
-            max={500}
-            placeholder="GOGC"
-            value={gogcInput}
-            onChange={(e) => setGogcInput(e.target.value)}
-            className="h-8 w-24 text-xs"
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-xs"
-            onClick={() => {
-              const v = parseInt(gogcInput);
-              if (v >= 10 && v <= 500) gogcMutation.mutate(v);
-              else toast.error("GOGC 值必须在 10 到 500 之间");
-            }}
-            disabled={gogcMutation.isPending}
-          >
-            <Settings2 />
-            设置 GOGC
+      {canManage ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" className="text-xs" onClick={() => gcMutation.mutate()} disabled={gcMutation.isPending}>
+            <RefreshCw className={gcMutation.isPending ? "animate-spin" : undefined} />
+            强制 GC
           </Button>
+          <Button size="sm" variant="outline" className="text-xs" onClick={() => flushMutation.mutate()} disabled={flushMutation.isPending}>
+            <Trash2 />
+            清空缓存
+          </Button>
+          <div className="flex items-center gap-1.5">
+            <Input
+              type="number"
+              min={10}
+              max={500}
+              placeholder="GOGC"
+              value={gogcInput}
+              onChange={(e) => setGogcInput(e.target.value)}
+              className="h-8 w-24 text-xs"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs"
+              onClick={() => {
+                const v = parseInt(gogcInput);
+                if (v >= 10 && v <= 500) gogcMutation.mutate(v);
+                else toast.error("GOGC 值必须在 10 到 500 之间");
+              }}
+              disabled={gogcMutation.isPending}
+            >
+              <Settings2 />
+              设置 GOGC
+            </Button>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {/* 对象池统计 */}
       {snap.pools.length > 0 && (

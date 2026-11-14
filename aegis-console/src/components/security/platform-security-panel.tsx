@@ -5,7 +5,7 @@ import { KeyRound, Fingerprint, ShieldCheck, RotateCcw, Save, Clock, RefreshCw, 
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
 import { useAdminSystemSettingsQuery, useUpdateAdminSystemSettingsMutation } from "@/lib/admin-hooks";
-import { useAuthStore } from "@/lib/auth-store";
+import { usePermissionChecker } from "@/lib/permissions";
 import { useOrigin } from "@/lib/use-client-value";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -89,8 +89,10 @@ function fmtDate(v?: string | null) {
 // ── 组件 ──
 
 export function PlatformSecurityPanel() {
-  const operator = useAuthStore((s) => s.operator);
-  const settingsQuery = useAdminSystemSettingsQuery(Boolean(operator?.isSuperAdmin));
+  const can = usePermissionChecker();
+  const canRead = can("system:config:read");
+  const canWrite = can("system:config:write");
+  const settingsQuery = useAdminSystemSettingsQuery(canRead);
   const updateMutation = useUpdateAdminSystemSettingsMutation();
   const security = settingsQuery.data?.security;
   const seed = useMemo(() => security ? makeSeed(security) : null, [security]);
@@ -132,7 +134,7 @@ export function PlatformSecurityPanel() {
     }
   }
 
-  if (!operator?.isSuperAdmin) return <EmptyState title="无访问权限" description="仅超级管理员可配置" />;
+  if (!canRead) return <EmptyState title="缺少「平台设置：查看」权限" />;
   if (settingsQuery.isLoading || !draft || !security) return <LoadingState title="加载安全配置" />;
 
   return (
@@ -167,14 +169,16 @@ export function PlatformSecurityPanel() {
       {/* ── 配置表单 ── */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">安全策略配置</h2>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => { setDraft(seed); setSyncedKey(seedKey); }} disabled={updateMutation.isPending}>
-            <RotateCcw className="size-3.5" /> 重置
-          </Button>
-          <Button size="sm" onClick={() => void handleSave()} disabled={updateMutation.isPending}>
-            <Save className="size-3.5" /> {updateMutation.isPending ? "保存中..." : "保存"}
-          </Button>
-        </div>
+        {canWrite ? (
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setDraft(seed); setSyncedKey(seedKey); }} disabled={updateMutation.isPending}>
+              <RotateCcw className="size-3.5" /> 重置
+            </Button>
+            <Button size="sm" onClick={() => void handleSave()} disabled={updateMutation.isPending}>
+              <Save className="size-3.5" /> {updateMutation.isPending ? "保存中..." : "保存"}
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {/* 全局设置 */}

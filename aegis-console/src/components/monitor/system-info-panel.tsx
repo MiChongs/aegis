@@ -13,6 +13,7 @@ import {
   SiGo,
 } from "@icons-pack/react-simple-icons";
 import { useAuthStore } from "@/lib/auth-store";
+import { usePermissionChecker } from "@/lib/permissions";
 import { getSystemRuntimeInfo, type SystemRuntimeInfo } from "@/lib/api/system";
 import { LoadingState } from "@/components/ui/data-state";
 
@@ -65,16 +66,16 @@ function ProgressBar({ value, color = "bg-primary" }: { value: number; color?: s
 
 export function SystemInfoPanel() {
   const accessToken = useAuthStore((s) => s.accessToken);
-  const operator = useAuthStore((s) => s.operator);
+  const canRead = usePermissionChecker()("system:config:read");
 
   const query = useQuery({
     queryKey: ["system-runtime-info", accessToken],
     queryFn: () => getSystemRuntimeInfo(accessToken!),
-    enabled: Boolean(accessToken && operator?.isSuperAdmin),
+    enabled: Boolean(accessToken && canRead),
     refetchInterval: 30_000,
   });
 
-  if (!operator?.isSuperAdmin) return null;
+  if (!canRead) return null;
   if (query.isLoading) return <LoadingState title="加载系统信息" />;
   if (!query.data) return null;
 

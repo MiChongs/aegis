@@ -1,26 +1,16 @@
 "use client";
 
-import { Shield } from "lucide-react";
-import { SectionHeading } from "@/components/ui/section-heading";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RoleMatrixEditor } from "@/components/roles/role-matrix-editor";
-import { RoleGraphCanvas } from "@/components/roles/role-graph-canvas";
-import { RoleManagePanel } from "@/components/roles/role-manage-panel";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { LoadingState } from "@/components/ui/data-state";
 
+/**
+ * 角色管理已并入「管理员与权限」（/users?tab=roles）。保留这个路由只为旧书签与审计记录里的链接。
+ */
 export default function RolesPage() {
-  return (
-    <div className="page-stack">
-      <SectionHeading eyebrow="控制台" title="角色权限" />
-      <Tabs defaultValue="matrix">
-        <TabsList>
-          <TabsTrigger value="matrix"><Shield className="size-4" />权限矩阵</TabsTrigger>
-          <TabsTrigger value="graph"><Shield className="size-4" />角色关系图</TabsTrigger>
-          <TabsTrigger value="manage"><Shield className="size-4" />角色管理</TabsTrigger>
-        </TabsList>
-        <TabsContent value="matrix"><RoleMatrixEditor /></TabsContent>
-        <TabsContent value="graph"><RoleGraphCanvas /></TabsContent>
-        <TabsContent value="manage"><RoleManagePanel /></TabsContent>
-      </Tabs>
-    </div>
-  );
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/users?tab=roles");
+  }, [router]);
+  return <LoadingState title="正在打开角色…" />;
 }

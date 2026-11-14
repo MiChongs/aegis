@@ -39,6 +39,7 @@ import {
   useDeleteGeoBanMutation,
   useIPBanModesQuery
 } from "@/lib/admin-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import type { GeoBanEntry, GeoBanScope, IPBanMode } from "@/lib/api/types";
 
 const scopeLabels: Record<GeoBanScope, string> = {
@@ -147,6 +148,7 @@ export function GeoBanPanel() {
   const upsert = useUpsertGeoBanMutation();
   const toggleMut = useToggleGeoBanMutation();
   const del = useDeleteGeoBanMutation();
+  const canBan = usePermissionChecker()("system:firewall:ban");
   const modesQ = useIPBanModesQuery();
 
   const data = q.data ?? [];
@@ -250,10 +252,12 @@ export function GeoBanPanel() {
               <RefreshCw className={cn("size-3.5", q.isFetching && "animate-spin")} />
               刷新
             </Button>
-            <Button size="sm" className="h-8 gap-1.5" onClick={openCreate}>
-              <Plus className="size-3.5" />
-              新增规则
-            </Button>
+            {canBan ? (
+              <Button size="sm" className="h-8 gap-1.5" onClick={openCreate}>
+                <Plus className="size-3.5" />
+                新增规则
+              </Button>
+            ) : null}
           </div>
         </div>
 
@@ -269,9 +273,11 @@ export function GeoBanPanel() {
             <EmptyState
               title="暂无地域封禁规则"
             />
-            <div className="flex justify-center">
-              <Button size="sm" onClick={openCreate}><Plus className="size-3.5" />新增规则</Button>
-            </div>
+            {canBan ? (
+              <div className="flex justify-center">
+                <Button size="sm" onClick={openCreate}><Plus className="size-3.5" />新增规则</Button>
+              </div>
+            ) : null}
           </div>
         ) : (
           <Card className="overflow-hidden">
@@ -338,7 +344,7 @@ export function GeoBanPanel() {
                         <Switch
                           checked={row.enabled}
                           onCheckedChange={(v) => handleToggle(row, v)}
-                          disabled={toggleMut.isPending}
+                          disabled={!canBan || toggleMut.isPending}
                           aria-label={row.enabled ? "禁用规则" : "启用规则"}
                         />
                       </TableCell>
@@ -346,25 +352,27 @@ export function GeoBanPanel() {
                         {fmtTime(row.updatedAt)}
                       </TableCell>
                       <TableCell className="pr-4 text-right">
-                        <div className="inline-flex items-center gap-1">
-                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => openEdit(row)}>
-                            编辑
-                          </Button>
-                          <UITooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="size-7 text-muted-foreground hover:text-destructive"
-                                onClick={() => handleDelete(row)}
-                              >
-                                <Trash2 className="size-3.5" />
-                                <span className="sr-only">删除</span>
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent side="left" className="text-xs">删除</TooltipContent>
-                          </UITooltip>
-                        </div>
+                        {canBan ? (
+                          <div className="inline-flex items-center gap-1">
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => openEdit(row)}>
+                              编辑
+                            </Button>
+                            <UITooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="size-7 text-muted-foreground hover:text-destructive"
+                                  onClick={() => handleDelete(row)}
+                                >
+                                  <Trash2 className="size-3.5" />
+                                  <span className="sr-only">删除</span>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="left" className="text-xs">删除</TooltipContent>
+                            </UITooltip>
+                          </div>
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}

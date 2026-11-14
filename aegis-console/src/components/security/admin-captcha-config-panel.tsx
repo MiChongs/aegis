@@ -5,7 +5,7 @@ import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
 import { useAdminSystemSettingsQuery, useUpdateAdminSystemSettingsMutation } from "@/lib/admin-hooks";
-import { useAuthStore } from "@/lib/auth-store";
+import { usePermissionChecker } from "@/lib/permissions";
 import type { CaptchaDynamicConfig } from "@/lib/api/captcha";
 import { DynamicCaptchaDesigner, normalizeDynamicConfig } from "@/components/captcha/dynamic-captcha-designer";
 import { Button } from "@/components/ui/button";
@@ -43,8 +43,10 @@ const captchaTypeOptions = [
 ];
 
 export function AdminCaptchaConfigPanel() {
-  const operator = useAuthStore((s) => s.operator);
-  const settingsQuery = useAdminSystemSettingsQuery(Boolean(operator?.isSuperAdmin));
+  const can = usePermissionChecker();
+  const canRead = can("system:config:read");
+  const canWrite = can("system:config:write");
+  const settingsQuery = useAdminSystemSettingsQuery(canRead);
   const updateMutation = useUpdateAdminSystemSettingsMutation();
   const [draft, setDraft] = useState<Draft>(defaultDraft);
   const [synced, setSynced] = useState(false);
@@ -82,8 +84,8 @@ export function AdminCaptchaConfigPanel() {
     }
   }
 
-  if (!operator?.isSuperAdmin) {
-    return <EmptyState title="无访问权限" description="仅超级管理员可配置" />;
+  if (!canRead) {
+    return <EmptyState title="缺少「平台设置：查看」权限" />;
   }
 
   if (settingsQuery.isLoading) {
@@ -144,10 +146,12 @@ export function AdminCaptchaConfigPanel() {
           </div>
         ) : null}
 
-        <Button className="h-9 gap-1.5" disabled={updateMutation.isPending} onClick={handleSave}>
-          {updateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-          {updateMutation.isPending ? "保存中..." : "保存"}
-        </Button>
+        {canWrite ? (
+          <Button className="h-9 gap-1.5" disabled={updateMutation.isPending} onClick={handleSave}>
+            {updateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            {updateMutation.isPending ? "保存中..." : "保存"}
+          </Button>
+        ) : null}
       </div>
     </SurfaceCard>
   );

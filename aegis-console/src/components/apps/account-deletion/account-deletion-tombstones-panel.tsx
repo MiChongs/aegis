@@ -30,7 +30,7 @@ import { ApiError } from "@/lib/api/client";
 import type { DeletionTombstone, DeletionTombstoneKind } from "@/lib/api/account-deletion";
 import { useDeletionTombstonesQuery, useReleaseDeletionTombstoneMutation } from "@/lib/account-deletion-hooks";
 import { formatDateTimeMinute, formatRelative } from "@/lib/datetime";
-import { usePermissionChecker } from "@/lib/permissions";
+import { useAppKeyPermissionChecker } from "@/lib/app-permission-hooks";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 
 const LIMIT = 20;
@@ -56,8 +56,8 @@ const PLACEHOLDER_ROWS: DeletionTombstone[] = Array.from({ length: 5 }, (_, inde
  * 只存摘要与打码提示，搜索匹配的是提示与对应申请的账号名。解除后可立即用该标识重新注册。
  */
 export function DeletionTombstonesPanel({ appKey }: { appKey: string }) {
-  const can = usePermissionChecker();
-  const canWrite = can("app:user:write");
+  const can = useAppKeyPermissionChecker(appKey);
+  const canWrite = can("app:user:deletion:release");
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(1);
   const [releasing, setReleasing] = useState<DeletionTombstone | null>(null);

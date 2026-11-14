@@ -4,7 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 
 import * as ops from "@/lib/api/risk-ops";
 import { useAdminToken } from "@/lib/admin-hooks";
-import { useAuthStore } from "@/lib/auth-store";
+import { usePermissionChecker } from "@/lib/permissions";
 import { RISK_KEYS } from "@/lib/risk-hooks";
 
 export const RISK_OPS_KEYS = {
@@ -13,9 +13,9 @@ export const RISK_OPS_KEYS = {
   inspect: ["risk-ops", "inspect"] as const,
 };
 
-/** 解除与删除限超级管理员 */
+/** 解除风控与删除账号：system:risk_ops:manage */
 export function useCanOperateRisk() {
-  return useAuthStore((s) => !!s.operator?.isSuperAdmin);
+  return usePermissionChecker()("system:risk_ops:manage");
 }
 
 /** 正被风控平台封禁的账号 */

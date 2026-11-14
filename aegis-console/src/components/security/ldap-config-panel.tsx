@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { ApiError } from "@/lib/api/client";
 import { testLDAPConnection } from "@/lib/api/system";
 import { useAdminSystemSettingsQuery, useUpdateAdminSystemSettingsMutation } from "@/lib/admin-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import { useAuthStore } from "@/lib/auth-store";
 import type { LDAPSettings, LDAPTestResult } from "@/lib/api/types";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -122,6 +123,9 @@ function TestStep({ label, ok }: { label: string; ok: boolean | null }) {
 
 export function LDAPConfigPanel() {
   const settingsQuery = useAdminSystemSettingsQuery();
+  const can = usePermissionChecker();
+  const canWrite = can("system:config:write");
+  const canTest = can("system:identity_source:test");
   const updateMutation = useUpdateAdminSystemSettingsMutation();
   const token = useAuthStore((s) => s.accessToken);
   const ldap = settingsQuery.data?.ldap;
@@ -236,15 +240,17 @@ export function LDAPConfigPanel() {
       {/* 操作栏 */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h3 className="text-sm font-semibold">LDAP 认证配置</h3>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setDraft(seedDraft(ldap))} disabled={updateMutation.isPending}>
-            <RotateCcw className="size-3.5" /> 重置
-          </Button>
-          <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
-            {updateMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-            保存
-          </Button>
-        </div>
+        {canWrite ? (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setDraft(seedDraft(ldap))} disabled={updateMutation.isPending}>
+              <RotateCcw className="size-3.5" /> 重置
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+              保存
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <Accordion type="multiple" defaultValue={["connection"]} className="space-y-2">
@@ -296,10 +302,12 @@ export function LDAPConfigPanel() {
             <div className="space-y-3">
               <div className="flex items-end gap-2">
                 <Row label="测试用户（可选）"><Input value={testAccount} onChange={(e) => setTestAccount(e.target.value)} placeholder="admin" className="w-48" /></Row>
-                <Button variant="outline" size="sm" onClick={handleTest} disabled={testing}>
-                  {testing ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
-                  测试连接
-                </Button>
+                {canTest ? (
+                  <Button variant="outline" size="sm" onClick={handleTest} disabled={testing}>
+                    {testing ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+                    测试连接
+                  </Button>
+                ) : null}
               </div>
               {(testing || testResult) && (
                 <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5">

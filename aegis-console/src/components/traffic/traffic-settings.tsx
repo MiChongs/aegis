@@ -10,6 +10,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import type { TrafficSettings } from "@/lib/api/traffic";
 import { useSaveTrafficSettingsMutation, useTrafficConfigQuery } from "@/lib/traffic-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { ChipInput, NumberField, Panel, Segmented, SettingRow, TabStack } from "./traffic-kit";
 import { STATUS_OPTIONS, fmtDuration, fmtNum } from "./traffic-format";
@@ -29,6 +30,7 @@ const onOff = (on: boolean) => (on ? "开启" : "关闭");
 export function TrafficSettingsTab() {
   const configQuery = useTrafficConfigQuery();
   const save = useSaveTrafficSettingsMutation();
+  const canWrite = usePermissionChecker()("system:traffic:write");
   // 草稿绑定修订号：别人先改了配置（修订号变化）时自动丢弃本地草稿，而不是覆盖回去
   const [draft, setDraft] = useState<{ revision: number; value: TrafficSettings } | null>(null);
   const config = configQuery.data;
@@ -190,7 +192,7 @@ export function TrafficSettingsTab() {
         </div>
       </Panel>
 
-      {dirty ? (
+      {dirty && canWrite ? (
         <div className="sticky bottom-4 z-20 flex min-w-0 flex-wrap items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 sm:px-5">
           <span className="size-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
           <span className="min-w-0 flex-1 text-sm">未保存</span>

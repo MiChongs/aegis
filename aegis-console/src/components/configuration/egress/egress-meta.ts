@@ -10,6 +10,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 import type { Tone } from "@/components/users/detail/kit";
+import { usePermissionChecker } from "@/lib/permissions";
 import type {
   EgressAction,
   EgressEndpoint,
@@ -337,4 +338,15 @@ export function delayTone(delay: number | undefined): Tone {
   if (delay < 200) return "success";
   if (delay < 500) return "warning";
   return "danger";
+}
+
+/** 出海网关的细分权限：查看、编辑草稿与测试、应用回滚与重置、核心运维。 */
+export function useEgressAccess() {
+  const can = usePermissionChecker();
+  return {
+    read: can("system:egress:read"),
+    write: can("system:egress:write"),
+    apply: can("system:egress:apply"),
+    core: can("system:egress:core")
+  };
 }

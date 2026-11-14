@@ -1,175 +1,154 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, KeyRound, Layers, ShieldUser, Sparkles } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { AppWindow, Globe2, KeyRound, Layers, ShieldAlert, Sparkles } from "lucide-react";
 
-import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Panel, StatTile } from "@/components/users/detail/user-detail-shared";
-import { PermissionTree } from "@/components/users/permission-tree";
-import { cn } from "@/lib/utils";
-import type { AdminAssignment, PermissionGroup, RoleWithPermissions } from "@/lib/api/types";
+import { TierBadge } from "@/components/access/access-kit";
+import { PermissionTreeEditor, type GrantState } from "@/components/access/permission-tree-editor";
+import { useAppOptions } from "@/components/access/pickers";
+import { buildTreeIndex } from "@/components/access/tree-model";
+import { usePermissionCatalogQuery } from "@/lib/access-hooks";
+import { DATA_SCOPE_LABEL, getAccessSnapshot, tierOf } from "@/lib/api/access";
+import type { AdminAssignment, RoleWithPermissions } from "@/lib/api/types";
+import { useAuthStore } from "@/lib/auth-store";
 
 /**
- * 合并当前管理员实际生效的权限组。
+ * 「我的权限」：身份档位、按数据权限展开后的角色、各作用域的生效权限树。
  *
- * 同一个权限点可能被多个角色覆盖，只要**任一角色**授予了它就算有 ——
- * 逐组求并集时"授予"必须能覆盖"未授予"，反过来不行。
- * `description === "granted"` 是后端在这棵树上表达授予与否的方式（不是描述文案）。
+ * 数据只来自 `/auth/me` 的生效权限快照（与真实判定同一段展开代码），不再拿角色树拼「已授予」。
+ * 旧的 props（roleTree / loading）保留签名兼容调用方，只用 roleTree 补角色名称。
  */
-function mergeGroups(roles: RoleWithPermissions[]): PermissionGroup[] {
-  const merged: PermissionGroup[] = [];
-  for (const role of roles) {
-    for (const group of role.permissionGroups || []) {
-      const existing = merged.find((item) => item.key === group.key);
-      if (!existing) {
-        merged.push({ ...group, permissions: group.permissions.map((item) => ({ ...item })) });
-        continue;
-      }
-      for (const permission of group.permissions) {
-        const hit = existing.permissions.find((item) => item.code === permission.code);
-        if (!hit) existing.permissions.push({ ...permission });
-        else if (permission.description === "granted") hit.description = "granted";
-      }
-    }
-  }
-  return merged;
-}
-
-function grantedCount(groups: PermissionGroup[]) {
-  return groups.reduce(
-    (total, group) => total + group.permissions.filter((item) => item.description === "granted").length,
-    0
-  );
-}
-
 export function ProfileAccessPanel({
   isSuperAdmin,
   assignments,
-  roleTree,
-  loading
+  roleTree
 }: {
   isSuperAdmin: boolean;
   assignments: AdminAssignment[];
   roleTree?: RoleWithPermissions[];
-  loading: boolean;
+  loading?: boolean;
 }) {
-  const [open, setOpen] = React.useState(false);
+  const token = useAuthStore((s) => s.accessToken);
+  const snapshotQuery = useQuery({
+    queryKey: ["admin-session", token],
+    queryFn: () => getAccessSnapshot(token as string),
+    enabled: Boolean(token),
+    staleTime: 30 * 1000
+  });
+  const catalogQuery = usePermissionCatalogQuery();
+  const index = React.useMemo(() => buildTreeIndex(catalogQuery.data), [catalogQuery.data]);
+  const apps = useAppOptions();
+  const snapshot = snapshotQuery.data;
+  const tier = snapshot ? tierOf(snapshot) : isSuperAdmin ? "super" : "admin";
+  const resolved = snapshot?.assignments ?? assignments;
+  const appIds = Object.keys(snapshot?.permissions?.apps ?? {});
+  const [scope, setScope] = React.useState("platform");
 
-  const myRoleKeys = assignments.map((item) => item.roleKey).filter(Boolean) as string[];
-  const myRoles = (roleTree || []).filter((role) => isSuperAdmin || myRoleKeys.includes(role.key));
-  const groups = mergeGroups(myRoles);
-  const granted = grantedCount(groups);
-  const total = groups.reduce((sum, group) => sum + group.permissions.length, 0);
+  const union = React.useMemo(() => {
+    const set = new Set<string>([...(snapshot?.permissions?.global ?? []), ...(snapshot?.permissions?.anyApp ?? [])]);
+    for (const items of Object.values(snapshot?.permissions?.apps ?? {})) for (const item of items) set.add(item);
+    return set;
+  }, [snapshot]);
+
+  const value = React.useMemo<GrantState>(() => {
+    if (tier !== "admin" || snapshot?.permissions?.all) return new Map(index.codes.map((code) => [code, "allow" as const]));
+    const codes =
+      scope === "platform"
+        ? snapshot?.permissions?.global ?? []
+        : scope === "any"
+          ? snapshot?.permissions?.anyApp ?? []
+          : snapshot?.permissions?.apps?.[scope] ?? snapshot?.permissions?.anyApp ?? [];
+    return new Map(codes.map((code) => [code, "allow" as const]));
+  }, [tier, snapshot, scope, index.codes]);
+
+  const danger = React.useMemo(
+    () => [...union].filter((code) => index.entries.get(index.codeKey.get(code) ?? "")?.node.danger).length,
+    [union, index]
+  );
+  const roleName = (key?: string) => roleTree?.find((role) => role.key === key)?.name ?? key;
+  const appName = (id: string) => apps.find((app) => String(app.id) === id)?.name ?? `应用 #${id}`;
 
   return (
     <div className="space-y-4">
-      {isSuperAdmin ? (
-        <Alert>
-          <ShieldUser />
-          <AlertTitle>超级管理员</AlertTitle>
-        </Alert>
-      ) : null}
-
-      <Panel
-        title="我的角色"
-        icon={<KeyRound className="size-4" />}
-        bodyClassName="space-y-4 px-5 py-5"
-      >
+      <Panel title="我的身份" icon={<KeyRound className="size-4" />} action={<TierBadge tier={tier} />} bodyClassName="space-y-4 px-5 py-5">
         <div className="grid gap-3 sm:grid-cols-3">
-          <StatTile label="角色" value={isSuperAdmin ? "—" : assignments.length} icon={<KeyRound className="size-3.5" />} />
-          <StatTile label="权限组" value={loading ? "…" : groups.length} icon={<Layers className="size-3.5" />} />
+          <StatTile label="角色" value={tier !== "admin" ? "—" : resolved.length} icon={<Layers className="size-3.5" />} />
           <StatTile
-            label="已授予权限"
-            value={loading ? "…" : granted}
-            hint={total ? `共 ${total} 项中` : undefined}
-            tone={granted > 0 ? "success" : "default"}
+            label="生效权限"
+            value={snapshotQuery.isLoading ? "…" : tier !== "admin" ? "全部" : union.size}
+            tone={union.size > 0 || tier !== "admin" ? "success" : "default"}
             icon={<Sparkles className="size-3.5" />}
           />
+          <StatTile label="高危操作" value={tier !== "admin" ? "全部" : danger} tone={danger > 0 ? "warning" : "default"} icon={<ShieldAlert className="size-3.5" />} />
         </div>
 
-        {loading ? (
-          <div className="space-y-2">
+        {tier === "admin" &&
+          (snapshotQuery.isLoading ? (
             <Skeleton className="h-11 w-full rounded-lg" />
-            <Skeleton className="h-11 w-full rounded-lg" />
-          </div>
-        ) : assignments.length === 0 ? (
-          <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-            暂无角色分配
-          </p>
-        ) : (
-          <div className="space-y-1.5">
-            {assignments.map((assignment, index) => {
-              const role = (roleTree || []).find((item) => item.key === assignment.roleKey);
-              const scoped = assignment.appid != null;
-              return (
-                <div
-                  key={`${assignment.roleKey}-${assignment.appid ?? "global"}-${index}`}
-                  className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{role?.name || assignment.roleKey}</p>
-                    {/* 角色目录里查不到时，name 会退回 key —— 那就别把同一串字重复两遍 */}
-                    {role?.name ? (
+          ) : resolved.length === 0 ? (
+            <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">暂无角色分配</p>
+          ) : (
+            <div className="space-y-1.5">
+              {resolved.map((assignment, i) => {
+                const extra = assignment as typeof assignment & { allApps?: boolean; dataScope?: keyof typeof DATA_SCOPE_LABEL };
+                return (
+                  <div key={`${assignment.roleKey}-${assignment.appid ?? "g"}-${i}`} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{roleName(assignment.roleKey)}</p>
                       <p className="truncate font-mono text-[11px] text-muted-foreground">{assignment.roleKey}</p>
-                    ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {extra.dataScope && extra.dataScope !== "assigned" && (
+                        <Badge variant="outline" size="sm">
+                          {DATA_SCOPE_LABEL[extra.dataScope]}
+                        </Badge>
+                      )}
+                      <Badge variant={assignment.appid != null ? "secondary" : "info"} size="sm" className="gap-1">
+                        {extra.allApps ? <Globe2 className="size-3" /> : <AppWindow className="size-3" />}
+                        {extra.allApps ? "全部应用" : assignment.appid != null ? assignment.appName || `应用 ${assignment.appid}` : "平台级"}
+                      </Badge>
+                    </div>
                   </div>
-                  <Badge variant={scoped ? "secondary" : "info"} size="sm" className="shrink-0">
-                    {scoped ? assignment.appName || `应用 ${assignment.appid}` : "全局作用域"}
-                  </Badge>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          ))}
       </Panel>
 
-      {groups.length > 0 ? (
-        <Collapsible open={open} onOpenChange={setOpen}>
-          <Panel
-            title="权限明细"
-            icon={<Layers className="size-4" />}
-            action={
-              <CollapsibleTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
-                  {open ? "收起" : `展开 ${groups.length} 组`}
-                  <ChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />
-                </Button>
-              </CollapsibleTrigger>
-            }
-            bodyClassName="px-5 py-0"
-          >
-            <CollapsibleContent>
-              <div className="py-4">
-                <PermissionTree groups={groups} compact />
-              </div>
-            </CollapsibleContent>
-            {!open ? (
-              <div className="flex flex-wrap gap-1.5 py-4">
-                {groups.map((group) => {
-                  const count = group.permissions.filter((item) => item.description === "granted").length;
-                  return (
-                    <Badge
-                      key={group.key}
-                      variant={count > 0 ? "secondary" : "outline"}
-                      size="sm"
-                      className={cn("gap-1", count === 0 && "text-muted-foreground/60")}
-                    >
-                      {group.name}
-                      <span className="tabular-nums opacity-70">
-                        {count}/{group.permissions.length}
-                      </span>
-                    </Badge>
-                  );
-                })}
-              </div>
-            ) : null}
-          </Panel>
-        </Collapsible>
-      ) : null}
+      {catalogQuery.data ? (
+        <Panel
+          title="权限明细"
+          icon={<Layers className="size-4" />}
+          action={
+            tier === "admin" && (
+              <Select value={scope} onValueChange={setScope}>
+                <SelectTrigger size="sm" className="h-8 w-40 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="platform">平台级</SelectItem>
+                  <SelectItem value="any">任意应用</SelectItem>
+                  {appIds.map((id) => (
+                    <SelectItem key={id} value={id}>
+                      {appName(id)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )
+          }
+          bodyClassName="px-0 py-0"
+        >
+          <PermissionTreeEditor index={index} mode="view" value={value} allowDeny={false} heightClassName="max-h-[60vh] min-h-64" />
+        </Panel>
+      ) : (
+        <Skeleton className="h-64 w-full rounded-2xl" />
+      )}
     </div>
   );
 }

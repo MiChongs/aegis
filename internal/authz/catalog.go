@@ -364,7 +364,7 @@ func PermissionCatalog() []admindomain.PermissionGroup {
 			if node.Kind == NodeMenu {
 				group := admindomain.PermissionGroup{Key: node.Key, Name: node.Name}
 				if parent != "" {
-					group.Name = parent + " · " + node.Name
+					group.Name = parent + " / " + node.Name
 				}
 				for _, child := range node.Children {
 					if child.Kind == NodeAction {

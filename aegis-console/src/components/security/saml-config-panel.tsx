@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { ApiError } from "@/lib/api/client";
 import { testSAMLMetadata } from "@/lib/api/system";
 import { useAdminSystemSettingsQuery, useUpdateAdminSystemSettingsMutation } from "@/lib/admin-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import { useAuthStore } from "@/lib/auth-store";
 import type { SAMLSettings, SAMLTestResult } from "@/lib/api/types";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -132,6 +133,9 @@ function SwitchRow({
 
 export function SAMLConfigPanel() {
   const settingsQuery = useAdminSystemSettingsQuery();
+  const can = usePermissionChecker();
+  const canWrite = can("system:config:write");
+  const canTest = can("system:identity_source:test");
   const updateMutation = useUpdateAdminSystemSettingsMutation();
   const token = useAuthStore((s) => s.accessToken);
   const saml = settingsQuery.data?.saml;
@@ -244,15 +248,17 @@ export function SAMLConfigPanel() {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-sm font-semibold">SAML 2.0 认证配置</h3>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setLocalDraft(null)} disabled={updateMutation.isPending}>
-            <RotateCcw className="size-3.5" /> 重置
-          </Button>
-          <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
-            {updateMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-            保存
-          </Button>
-        </div>
+        {canWrite ? (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setLocalDraft(null)} disabled={updateMutation.isPending}>
+              <RotateCcw className="size-3.5" /> 重置
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+              保存
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <Accordion type="multiple" defaultValue={["idp", "sp"]} className="space-y-2">
@@ -460,10 +466,12 @@ export function SAMLConfigPanel() {
             </div>
           </AccordionTrigger>
           <AccordionContent className="space-y-4 px-4 pb-4">
-            <Button variant="outline" size="sm" onClick={handleTest} disabled={testing}>
-              {testing ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
-              解析 IdP 元数据
-            </Button>
+            {canTest ? (
+              <Button variant="outline" size="sm" onClick={handleTest} disabled={testing}>
+                {testing ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+                解析 IdP 元数据
+              </Button>
+            ) : null}
             {(testing || testResult) && (
               <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
                 <div className="flex items-center gap-2 text-xs">

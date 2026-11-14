@@ -46,7 +46,7 @@ import {
   useUserDeletionQuery
 } from "@/lib/account-deletion-hooks";
 import { formatDateTimeMinute, formatRelative } from "@/lib/datetime";
-import { usePermissionChecker } from "@/lib/permissions";
+import { useAppKeyPermissionChecker } from "@/lib/app-permission-hooks";
 import { cn } from "@/lib/utils";
 import { InfoGrid, RecordTable, Section, StateBlock, ToneIcon, errorMessage, type Column, type Tone } from "./kit";
 
@@ -72,8 +72,11 @@ export function UserAccountDeletionCard({
   account: string;
   onUserDeleted: () => void;
 }) {
-  const can = usePermissionChecker();
-  const canWrite = can("app:user:write");
+  const can = useAppKeyPermissionChecker(appKey);
+  // 发起注销走 /users/:id/account-deletion（删除与注销）；处置进行中的申请走申请接口（审核 / 立即执行）
+  const canCreate = can("app:user:delete");
+  const canReview = can("app:user:deletion:review");
+  const canExecute = can("app:user:deletion:execute");
   const viewQuery = useUserDeletionQuery(appKey, userId);
   const catalogQuery = useDeletionCatalogQuery(appKey);
   const view = viewQuery.data;
@@ -157,11 +160,12 @@ export function UserAccountDeletionCard({
         <OpenRequest
           item={open}
           config={view.config}
-          canWrite={canWrite}
+          canReview={canReview}
+          canExecute={canExecute}
           onAction={setAction}
           onShowDetail={() => showSheet(open)}
         />
-      ) : canWrite ? (
+      ) : canCreate ? (
         <CreateForm
           appKey={appKey}
           userId={userId}
@@ -204,7 +208,8 @@ export function UserAccountDeletionCard({
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         config={view?.config}
-        canWrite={canWrite}
+        canReview={canReview}
+        canExecute={canExecute}
         onCompleted={handleDone}
       />
     </Section>
@@ -267,13 +272,15 @@ const OPEN_TONE: Record<string, { tone: Tone; icon: ComponentType<{ className?: 
 function OpenRequest({
   item,
   config,
-  canWrite,
+  canReview,
+  canExecute,
   onAction,
   onShowDetail
 }: {
   item: DeletionRequest;
   config?: DeletionConfig | null;
-  canWrite: boolean;
+  canReview: boolean;
+  canExecute: boolean;
   onAction: (kind: DeletionActionKind) => void;
   onShowDetail: () => void;
 }) {
@@ -319,31 +326,31 @@ function OpenRequest({
         <Button size="sm" variant="ghost" onClick={onShowDetail} className="mr-auto">
           查看详情
         </Button>
-        {canWrite && actions.cancel ? (
+        {canReview && actions.cancel ? (
           <Button size="sm" variant="outline" onClick={() => onAction("cancel")}>
             <Undo2 />
             撤销
           </Button>
         ) : null}
-        {canWrite && actions.reschedule ? (
+        {canReview && actions.reschedule ? (
           <Button size="sm" variant="outline" onClick={() => onAction("reschedule")}>
             <CalendarClock />
             改期
           </Button>
         ) : null}
-        {canWrite && actions.reject ? (
+        {canReview && actions.reject ? (
           <Button size="sm" variant="outline" onClick={() => onAction("reject")}>
             <XCircle />
             驳回
           </Button>
         ) : null}
-        {canWrite && actions.approve ? (
+        {canReview && actions.approve ? (
           <Button size="sm" onClick={() => onAction("approve")}>
             <CheckCircle2 />
             批准
           </Button>
         ) : null}
-        {canWrite && actions.execute ? (
+        {canExecute && actions.execute ? (
           <Button size="sm" variant="destructive" onClick={() => onAction("execute")}>
             <OctagonAlert />
             立即执行

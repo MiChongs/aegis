@@ -3,8 +3,8 @@
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Flame, Globe, Globe2, KeyRound, Mail, Network, Palette, ShieldCheck, Sparkles } from "lucide-react";
-import { useAuthStore } from "@/lib/auth-store";
-import { EmptyState } from "@/components/ui/data-state";
+import { usePermissionChecker, usePermissionsLoading } from "@/lib/permissions";
+import { EmptyState, LoadingState } from "@/components/ui/data-state";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BrandingPanel } from "@/components/configuration/branding-panel";
@@ -33,36 +33,34 @@ import { PLATFORM_AI_SCOPE } from "@/lib/api/ai";
  * /security 管**运行态**（发生了什么：拦截日志、封禁、地理风控）。
  */
 const TABS = [
-  { value: "branding", label: "品牌与外观", icon: Palette },
-  { value: "firewall", label: "防火墙与限流", icon: Flame },
-  { value: "egress", label: "出海代理", icon: Globe2 },
-  { value: "email", label: "邮件", icon: Mail },
-  { value: "ai", label: "AI 服务", icon: Sparkles },
-  { value: "security", label: "安全模块", icon: ShieldCheck },
-  { value: "ldap", label: "LDAP", icon: Network },
-  { value: "oidc", label: "OIDC", icon: Globe },
-  { value: "saml", label: "SAML", icon: ShieldCheck },
-  { value: "admin-captcha", label: "管理员验证码", icon: KeyRound }
+  { value: "branding", label: "品牌与外观", icon: Palette, permission: "system:config:read" },
+  { value: "firewall", label: "防火墙与限流", icon: Flame, permission: "system:config:read" },
+  { value: "egress", label: "出海代理", icon: Globe2, permission: "system:egress:read" },
+  { value: "email", label: "邮件", icon: Mail, permission: "email:read" },
+  { value: "ai", label: "AI 服务", icon: Sparkles, permission: "ai:read" },
+  { value: "security", label: "安全模块", icon: ShieldCheck, permission: "system:config:read" },
+  { value: "ldap", label: "LDAP", icon: Network, permission: "system:config:read" },
+  { value: "oidc", label: "OIDC", icon: Globe, permission: "system:config:read" },
+  { value: "saml", label: "SAML", icon: ShieldCheck, permission: "system:config:read" },
+  { value: "admin-captcha", label: "管理员验证码", icon: KeyRound, permission: "system:config:read" }
 ] as const;
-
-const VALID_TABS = new Set(TABS.map((t) => t.value as string));
 
 function ConfigurationPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const operator = useAuthStore((state) => state.operator);
-  const isSuperAdmin = Boolean(operator?.isSuperAdmin);
+  const can = usePermissionChecker();
+  const loading = usePermissionsLoading();
+  const visible = TABS.filter((t) => can(t.permission));
+  const shown = new Set<string>(visible.map((t) => t.value));
 
   const rawTab = searchParams.get("tab");
-  const tab = rawTab && VALID_TABS.has(rawTab) ? rawTab : "branding";
+  const tab = rawTab && shown.has(rawTab) ? rawTab : visible[0]?.value;
 
-  if (!isSuperAdmin) {
+  if (!tab) {
     return (
       <div className="page-stack">
         <SectionHeading eyebrow="Configuration" title="配置" />
-        <EmptyState
-          title="需要超级管理员权限" 
-        />
+        {loading ? <LoadingState title="加载中" /> : <EmptyState title="缺少「平台设置：查看」权限" />}
       </div>
     );
   }
@@ -77,11 +75,12 @@ function ConfigurationPageInner() {
         className="space-y-5"
       >
         <TabsList className="w-full justify-start overflow-x-auto">
-          {TABS.map(({ value, label, icon: Icon }, index) => (
+          {visible.map(({ value, label, icon: Icon }, index) => (
             <div key={value} className="flex items-center">
               {/* 认证联邦三项（LDAP/OIDC/SAML）与前面的平台防护分开 */}
-              {index === 6 && <span aria-hidden className="mx-1.5 h-4 w-px shrink-0 bg-border" />}
-              {index === 9 && <span aria-hidden className="mx-1.5 h-4 w-px shrink-0 bg-border" />}
+              {index > 0 && (value === "ldap" || value === "admin-captcha") && (
+                <span aria-hidden className="mx-1.5 h-4 w-px shrink-0 bg-border" />
+              )}
               <TabsTrigger value={value}>
                 <Icon className="size-4" />
                 {label}
@@ -90,16 +89,16 @@ function ConfigurationPageInner() {
           ))}
         </TabsList>
 
-        <TabsContent value="branding"><BrandingPanel /></TabsContent>
-        <TabsContent value="firewall"><FirewallConfigPanel /></TabsContent>
-        <TabsContent value="egress"><EgressGatewayPanel /></TabsContent>
-        <TabsContent value="email"><EmailWorkspace scope={PLATFORM_EMAIL_SCOPE} /></TabsContent>
-        <TabsContent value="ai"><AIChannelPanel scope={PLATFORM_AI_SCOPE} /></TabsContent>
-        <TabsContent value="security"><PlatformSecurityPanel /></TabsContent>
-        <TabsContent value="ldap"><LDAPConfigPanel /></TabsContent>
-        <TabsContent value="oidc"><OIDCConfigPanel /></TabsContent>
-        <TabsContent value="saml"><SAMLConfigPanel /></TabsContent>
-        <TabsContent value="admin-captcha"><AdminCaptchaConfigPanel /></TabsContent>
+        {shown.has("branding") ? <TabsContent value="branding"><BrandingPanel /></TabsContent> : null}
+        {shown.has("firewall") ? <TabsContent value="firewall"><FirewallConfigPanel /></TabsContent> : null}
+        {shown.has("egress") ? <TabsContent value="egress"><EgressGatewayPanel /></TabsContent> : null}
+        {shown.has("email") ? <TabsContent value="email"><EmailWorkspace scope={PLATFORM_EMAIL_SCOPE} /></TabsContent> : null}
+        {shown.has("ai") ? <TabsContent value="ai"><AIChannelPanel scope={PLATFORM_AI_SCOPE} /></TabsContent> : null}
+        {shown.has("security") ? <TabsContent value="security"><PlatformSecurityPanel /></TabsContent> : null}
+        {shown.has("ldap") ? <TabsContent value="ldap"><LDAPConfigPanel /></TabsContent> : null}
+        {shown.has("oidc") ? <TabsContent value="oidc"><OIDCConfigPanel /></TabsContent> : null}
+        {shown.has("saml") ? <TabsContent value="saml"><SAMLConfigPanel /></TabsContent> : null}
+        {shown.has("admin-captcha") ? <TabsContent value="admin-captcha"><AdminCaptchaConfigPanel /></TabsContent> : null}
       </Tabs>
     </div>
   );

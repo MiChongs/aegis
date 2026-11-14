@@ -26,7 +26,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { useIsSuperAdmin } from "@/lib/permissions";
+import { usePermissionChecker } from "@/lib/permissions";
 import {
   useDeleteNotifyChannelMutation,
   useDeleteNotifySubscriptionMutation,
@@ -66,7 +66,8 @@ function reportError(error: unknown, fallback: string) {
 }
 
 export function NotifyCenterPanel() {
-  const isSuperAdmin = useIsSuperAdmin();
+  const can = usePermissionChecker();
+  const canWrite = can("notify:channel:write");
 
   return (
     <Tabs defaultValue="channels" className="space-y-4">
@@ -77,16 +78,16 @@ export function NotifyCenterPanel() {
         <TabsTrigger value="deliveries">投递记录</TabsTrigger>
       </TabsList>
       <TabsContent value="channels">
-        <ChannelsSection canWrite={isSuperAdmin} />
+        <ChannelsSection canWrite={canWrite} canTest={can("notify:test")} />
       </TabsContent>
       <TabsContent value="subscriptions">
-        <SubscriptionsSection canWrite={isSuperAdmin} />
+        <SubscriptionsSection canWrite={canWrite} />
       </TabsContent>
       <TabsContent value="templates">
-        <TemplatesSection canWrite={isSuperAdmin} />
+        <TemplatesSection canWrite={canWrite} />
       </TabsContent>
       <TabsContent value="deliveries">
-        <DeliveriesSection canWrite={isSuperAdmin} />
+        <DeliveriesSection canWrite={canWrite} />
       </TabsContent>
     </Tabs>
   );
@@ -94,7 +95,7 @@ export function NotifyCenterPanel() {
 
 // ─────────────── 渠道 ───────────────
 
-function ChannelsSection({ canWrite }: { canWrite: boolean }) {
+function ChannelsSection({ canWrite, canTest }: { canWrite: boolean; canTest: boolean }) {
   const catalogQuery = useNotifyCatalogQuery();
   const channelsQuery = useNotifyChannelsQuery();
   const saveMut = useSaveNotifyChannelMutation();
@@ -193,7 +194,7 @@ function ChannelsSection({ canWrite }: { canWrite: boolean }) {
 
       {!canWrite ? (
         <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
-          仅超级管理员可编辑
+          缺少「渠道与订阅：管理」权限
         </p>
       ) : null}
 
@@ -245,30 +246,36 @@ function ChannelsSection({ canWrite }: { canWrite: boolean }) {
                     ) : null}
                   </div>
 
-                  {canWrite ? (
+                  {canWrite || canTest ? (
                     <div className="flex flex-wrap gap-1">
-                      <Button size="sm" variant="outline" onClick={() => handleTest(channel)} disabled={testMut.isPending}>
-                        <Send className="mr-1 size-3.5" />
-                        测试发送
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => openEdit(channel)}>
-                        编辑
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive"
-                        onClick={async () => {
-                          try {
-                            await deleteMut.mutateAsync(channel.id);
-                            notify.success("渠道已删除");
-                          } catch (error) {
-                            reportError(error, "删除失败");
-                          }
-                        }}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                      {canTest ? (
+                        <Button size="sm" variant="outline" onClick={() => handleTest(channel)} disabled={testMut.isPending}>
+                          <Send className="mr-1 size-3.5" />
+                          测试发送
+                        </Button>
+                      ) : null}
+                      {canWrite ? (
+                        <>
+                          <Button size="sm" variant="outline" onClick={() => openEdit(channel)}>
+                            编辑
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive"
+                            onClick={async () => {
+                              try {
+                                await deleteMut.mutateAsync(channel.id);
+                                notify.success("渠道已删除");
+                              } catch (error) {
+                                reportError(error, "删除失败");
+                              }
+                            }}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </>
+                      ) : null}
                     </div>
                   ) : null}
                 </CardContent>

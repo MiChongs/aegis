@@ -22,6 +22,8 @@ import { RiskSystem } from "@/components/risk/system";
 import { RiskAccounts } from "@/components/risk/ops/risk-accounts";
 import { BanAppeals } from "@/components/risk/appeals/ban-appeals";
 import { PlatformBans } from "@/components/risk/appeals/platform-bans";
+import { EmptyState } from "@/components/ui/data-state";
+import { usePermissionChecker } from "@/lib/permissions";
 
 /**
  * 风控平台（docs/risk-platform.md）。数据与配置都在独立服务 risk-admin 里，经主服务转发。
@@ -30,29 +32,31 @@ import { PlatformBans } from "@/components/risk/appeals/platform-bans";
  * 场景的完整配置（管线、规则、决策流、策略、模拟、发布）在 /risk-control/scenes/[key]。
  */
 const TABS = [
-  { value: "overview", label: "总览", icon: Activity, scoped: true },
-  { value: "scenes", label: "场景", icon: Workflow, scoped: false },
-  { value: "features", label: "特征", icon: Layers, scoped: false },
-  { value: "lists", label: "名单", icon: ListChecks, scoped: true },
-  { value: "patterns", label: "行为模式", icon: Boxes, scoped: false },
-  { value: "models", label: "模型", icon: Brain, scoped: false },
-  { value: "decisions", label: "决策流水", icon: ScrollText, scoped: true },
-  { value: "cases", label: "复核", icon: ClipboardCheck, scoped: true },
-  { value: "accounts", label: "账号处置", icon: UserCog, scoped: true },
-  { value: "appeals", label: "封禁申诉", icon: Scale, scoped: true },
-  { value: "platform-bans", label: "全站封禁", icon: Globe2, scoped: false },
-  { value: "graph", label: "关系图谱", icon: Network, scoped: true },
-  { value: "system", label: "系统", icon: Server, scoped: false },
+  { value: "overview", label: "总览", icon: Activity, scoped: true, permission: "system:risk:read" },
+  { value: "scenes", label: "场景", icon: Workflow, scoped: false, permission: "system:risk:read" },
+  { value: "features", label: "特征", icon: Layers, scoped: false, permission: "system:risk:read" },
+  { value: "lists", label: "名单", icon: ListChecks, scoped: true, permission: "system:risk:read" },
+  { value: "patterns", label: "行为模式", icon: Boxes, scoped: false, permission: "system:risk:read" },
+  { value: "models", label: "模型", icon: Brain, scoped: false, permission: "system:risk:read" },
+  { value: "decisions", label: "决策流水", icon: ScrollText, scoped: true, permission: "system:risk:read" },
+  { value: "cases", label: "复核", icon: ClipboardCheck, scoped: true, permission: "system:risk:read" },
+  { value: "accounts", label: "账号处置", icon: UserCog, scoped: true, permission: "system:risk_ops:read" },
+  { value: "appeals", label: "封禁申诉", icon: Scale, scoped: true, permission: ["app:user:appeal:read", "system:platform_ban:read"] },
+  { value: "platform-bans", label: "全站封禁", icon: Globe2, scoped: false, permission: "system:platform_ban:read" },
+  { value: "graph", label: "关系图谱", icon: Network, scoped: true, permission: "system:risk:read" },
+  { value: "system", label: "系统", icon: Server, scoped: false, permission: "system:risk:read" },
 ] as const;
 
 type TabValue = (typeof TABS)[number]["value"];
-const VALID = new Set<string>(TABS.map((t) => t.value));
 
 function RiskControlInner() {
   const params = useSearchParams();
   const router = useRouter();
+  const can = usePermissionChecker();
+  const visible = TABS.filter((t) => can(typeof t.permission === "string" ? t.permission : [...t.permission]));
+  const shown = new Set<string>(visible.map((t) => t.value));
   const raw = params.get("tab");
-  const tab: TabValue = raw && VALID.has(raw) ? (raw as TabValue) : "overview";
+  const tab: TabValue | undefined = raw && shown.has(raw) ? (raw as TabValue) : visible[0]?.value;
   const appRaw = Number(params.get("app"));
   const app = Number.isFinite(appRaw) && appRaw > 0 ? appRaw : undefined;
   const scoped = TABS.find((t) => t.value === tab)?.scoped;
@@ -67,6 +71,15 @@ function RiskControlInner() {
     router.replace(`/risk-control?${q.toString()}`, { scroll: false });
   };
 
+  if (!tab) {
+    return (
+      <div className="page-stack">
+        <SectionHeading eyebrow="安全" title="风控平台" />
+        <EmptyState title="缺少「风控平台：查看」权限" />
+      </div>
+    );
+  }
+
   return (
     <div className="page-stack">
       <SectionHeading
@@ -76,7 +89,7 @@ function RiskControlInner() {
       />
       <Tabs value={tab} onValueChange={(v) => go({ tab: v })} className="gap-4">
         <TabsList className="w-full justify-start overflow-x-auto sm:w-fit">
-          {TABS.map((t) => (
+          {visible.map((t) => (
             <TabsTrigger key={t.value} value={t.value} className="gap-1.5">
               <t.icon className="size-4" />
               {t.label}

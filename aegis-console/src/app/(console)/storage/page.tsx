@@ -30,7 +30,7 @@ import { providerName } from "@/components/storage/storage-shared";
 import { StorageSourcesPanel } from "@/components/storage/storage-sources-panel";
 import { StorageUsagePanel } from "@/components/storage/storage-usage-panel";
 import { useAdminAppsQuery } from "@/lib/admin-hooks";
-import { useAuthStore } from "@/lib/auth-store";
+import { usePermissionChecker } from "@/lib/permissions";
 import { useStorageOverviewQuery, useStorageProvidersQuery, useStorageSourcesQuery } from "@/lib/storage-center-hooks";
 import { cn } from "@/lib/utils";
 
@@ -85,8 +85,9 @@ function StoragePageInner() {
       })),
     [allSources, providers]
   );
-  // 永久删除与回收站清理在后端都要求超管，前端据此隐藏按钮。
-  const isSuperAdmin = Boolean(useAuthStore((state) => state.operator)?.isSuperAdmin);
+  // 永久删除与回收站清理对应 system:storage:purge，前端据此隐藏按钮。
+  const can = usePermissionChecker();
+  const canPurge = can("system:storage:purge");
   const unhealthy = overview.data?.totals.unhealthy ?? 0;
 
   return (
@@ -187,7 +188,7 @@ function StoragePageInner() {
         </TabsContent>
 
         <TabsContent value="files">
-          <FileManagerPanel configs={fileOptions} canPurge={isSuperAdmin} />
+          <FileManagerPanel configs={fileOptions} canPurge={canPurge} />
         </TabsContent>
 
         <TabsContent value="rules">

@@ -20,7 +20,7 @@ import {
   useUpdatePlatformBannerMutation,
   useUploadPlatformBannerImageMutation
 } from "@/lib/admin-hooks";
-import { RequirePermission } from "@/lib/permissions";
+import { RequirePermission, usePermissionChecker } from "@/lib/permissions";
 import type { PlatformBannerItem, PlatformBannerMutation, PlatformBannerType } from "@/lib/api/types";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Badge } from "@/components/ui/badge";
@@ -106,9 +106,9 @@ function toMutation(form: FormState): PlatformBannerMutation {
 export default function PlatformBannersPage() {
   return (
     <RequirePermission
-      superAdmin
+      permission="system:banner:read"
       fallback={
-        <EmptyState title="需要超级管理员权限" />
+        <EmptyState title="缺少「平台 Banner：查看」权限" />
       }
     >
       <WidgetBoundary title="平台横幅加载失败">
@@ -142,6 +142,9 @@ function PlatformBannersInner() {
   const updateMut = useUpdatePlatformBannerMutation();
   const deleteMut = useDeletePlatformBannerMutation();
   const uploadMut = useUploadPlatformBannerImageMutation();
+  const can = usePermissionChecker();
+  const canWrite = can("system:banner:write");
+  const canDelete = can("system:banner:delete");
 
   const handleUpload = useCallback(
     async (file: File) => {
@@ -227,9 +230,11 @@ function PlatformBannersInner() {
         eyebrow="控制台"
         title="平台横幅"
         action={
-          <Button size="sm" onClick={openCreate} className="gap-1.5">
-            <Plus className="size-4" /> 新建
-          </Button>
+          canWrite ? (
+            <Button size="sm" onClick={openCreate} className="gap-1.5">
+              <Plus className="size-4" /> 新建
+            </Button>
+          ) : undefined
         }
       />
 
@@ -276,16 +281,16 @@ function PlatformBannersInner() {
       {listQuery.isLoading ? (
         <LoadingState title="加载中" />
       ) : items.length === 0 ? (
-        <EmptyBannersState onCreate={openCreate} hasFilter={hasAnyFilter} onReset={resetFilters} />
+        <EmptyBannersState onCreate={canWrite ? openCreate : undefined} hasFilter={hasAnyFilter} onReset={resetFilters} />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {items.map((item) => (
             <BannerCard
               key={item.id}
               item={item}
-              onEdit={() => openEdit(item)}
-              onDelete={() => handleDelete(item)}
-              onToggle={() => handleQuickToggle(item)}
+              onEdit={canWrite ? () => openEdit(item) : undefined}
+              onDelete={canDelete ? () => handleDelete(item) : undefined}
+              onToggle={canWrite ? () => handleQuickToggle(item) : undefined}
               toggling={updateMut.isPending}
             />
           ))}
@@ -339,7 +344,7 @@ function EmptyBannersState({
   hasFilter,
   onReset
 }: {
-  onCreate: () => void;
+  onCreate?: () => void;
   hasFilter: boolean;
   onReset: () => void;
 }) {
@@ -359,9 +364,11 @@ function EmptyBannersState({
             重置筛选
           </Button>
         ) : null}
-        <Button size="sm" onClick={onCreate} className="gap-1.5">
-          <Plus className="size-4" /> 新建横幅
-        </Button>
+        {onCreate ? (
+          <Button size="sm" onClick={onCreate} className="gap-1.5">
+            <Plus className="size-4" /> 新建横幅
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -506,9 +513,9 @@ function BannerCard({
   toggling
 }: {
   item: PlatformBannerItem;
-  onEdit: () => void;
-  onDelete: () => void;
-  onToggle: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onToggle?: () => void;
   toggling: boolean;
 }) {
   const typeLabel = TYPE_OPTIONS.find((o) => o.value === item.type)?.label ?? item.type;
@@ -546,21 +553,27 @@ function BannerCard({
           <ClickUrlLink url={item.clickUrl} />
         ) : null}
         <div className="mt-auto flex flex-wrap items-center gap-1 pt-2">
-          <Button size="sm" variant="ghost" className="h-7 gap-1" onClick={onToggle} disabled={toggling}>
-            {item.status ? <XCircle className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
-            {item.status ? "停用" : "启用"}
-          </Button>
-          <Button size="sm" variant="ghost" className="h-7 gap-1" onClick={onEdit}>
-            <Pencil className="size-3.5" /> 编辑
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 gap-1 text-destructive hover:text-destructive"
-            onClick={onDelete}
-          >
-            <Trash2 className="size-3.5" /> 删除
-          </Button>
+          {onToggle ? (
+            <Button size="sm" variant="ghost" className="h-7 gap-1" onClick={onToggle} disabled={toggling}>
+              {item.status ? <XCircle className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
+              {item.status ? "停用" : "启用"}
+            </Button>
+          ) : null}
+          {onEdit ? (
+            <Button size="sm" variant="ghost" className="h-7 gap-1" onClick={onEdit}>
+              <Pencil className="size-3.5" /> 编辑
+            </Button>
+          ) : null}
+          {onDelete ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 gap-1 text-destructive hover:text-destructive"
+              onClick={onDelete}
+            >
+              <Trash2 className="size-3.5" /> 删除
+            </Button>
+          ) : null}
         </div>
       </div>
     </article>

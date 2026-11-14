@@ -11,7 +11,6 @@ import {
   FileCheck2,
   GalleryHorizontalEnd,
   Gavel,
-  KeyRound,
   LayoutDashboard,
   LifeBuoy,
   MailOpen,
@@ -41,6 +40,9 @@ export type NavigationChild = {
   title: string;
   /** 页面 Tab 值，最终链接为 `${item.href}?tab=${tab}`；数组首项即该页默认 Tab */
   tab: string;
+  /** 子项自己的权限（数组为任意一项）；缺省继承所属页面 */
+  permission?: string | string[];
+  superAdmin?: boolean;
 };
 
 /** 导航页面（二级） */
@@ -49,8 +51,8 @@ export type NavigationItem = {
   href: string;
   icon: NavIcon;
   summary: string;
-  /** 需要的权限代码（空 = 所有管理员可见） */
-  permission?: string;
+  /** 需要的权限代码，数组表示任意一项（空 = 所有管理员可见） */
+  permission?: string | string[];
   /** 是否要求超管 */
   superAdmin?: boolean;
   /** 页内子项，权限继承自本项 */
@@ -146,16 +148,16 @@ export const navigationGroups: NavigationGroup[] = [
       {
         title: "平台横幅",
         href: "/platform-banners",
+        permission: "system:banner:read",
         icon: GalleryHorizontalEnd,
-        summary: "总览页轮播 Banner",
-        superAdmin: true
+        summary: "总览页轮播 Banner"
       },
       {
         title: "模板",
         href: "/templates",
+        permission: "system:template:read",
         icon: MailOpen,
-        summary: "消息模板管理",
-        superAdmin: true
+        summary: "消息模板管理"
       },
       {
         title: "发布",
@@ -168,7 +170,7 @@ export const navigationGroups: NavigationGroup[] = [
         href: "/client-control",
         icon: ShieldCheck,
         summary: "停用版本与非官方安装包",
-        permission: "version:read",
+        permission: "version:control:read",
         children: [
           { title: "概览", tab: "overview" },
           { title: "规则", tab: "rules" },
@@ -239,14 +241,20 @@ export const navigationGroups: NavigationGroup[] = [
         summary: "应用终端用户管理"
       },
       {
-        title: "用户",
+        // 管理员、角色、权限目录与诊断同属一页（对标若依「系统管理」下的用户 / 角色 / 菜单）。
+        // 子项各自挂权限：只被授了「角色权限：查看」的人看得到角色页签，看不到管理员列表。
+        title: "管理员与权限",
         href: "/users",
         icon: Users2,
-        summary: "账号权限",
+        summary: "管理员、角色与权限",
+        permission: ["system:admin:read", "system:role:read", "system:session:read", "system:temp_perm:read", "system:online:read"],
         children: [
-          { title: "管理员", tab: "admins" },
-          { title: "在线会话", tab: "online" },
-          { title: "角色权限", tab: "roles" }
+          { title: "管理员", tab: "admins", permission: "system:admin:read" },
+          { title: "角色", tab: "roles", permission: "system:role:read" },
+          { title: "权限目录", tab: "permissions", permission: "system:role:read" },
+          { title: "权限诊断", tab: "diagnose", permission: "system:role:read" },
+          { title: "临时权限", tab: "temp", permission: "system:temp_perm:read" },
+          { title: "在线会话", tab: "online", permission: ["system:online:read", "system:session:read"] }
         ]
       },
       {
@@ -270,13 +278,6 @@ export const navigationGroups: NavigationGroup[] = [
           { title: "操作日志", tab: "activity" },
           { title: "设置", tab: "settings" }
         ]
-      },
-      {
-        title: "角色",
-        href: "/roles",
-        icon: KeyRound,
-        summary: "RBAC 权限管理",
-        superAdmin: true
       },
       {
         title: "审核",
@@ -344,11 +345,11 @@ export const navigationGroups: NavigationGroup[] = [
         href: "/security",
         icon: ShieldCheck,
         summary: "安全运行态与留痕",
-        superAdmin: true,
+        permission: ["system:firewall:read", "system:geo:read"],
         children: [
           { title: "账户安全", tab: "account" },
-          { title: "防火墙", tab: "firewall" },
-          { title: "地理风控", tab: "geo-intel" }
+          { title: "防火墙", tab: "firewall", permission: "system:firewall:read" },
+          { title: "地理风控", tab: "geo-intel", permission: "system:geo:read" }
         ]
       },
       {
@@ -357,7 +358,7 @@ export const navigationGroups: NavigationGroup[] = [
         href: "/traffic",
         icon: Waves,
         summary: "限流、削峰与过载保护",
-        superAdmin: true,
+        permission: "system:traffic:read",
         children: [
           { title: "总览", tab: "overview" },
           { title: "规则", tab: "rules" },
@@ -371,6 +372,7 @@ export const navigationGroups: NavigationGroup[] = [
         href: "/risk-control",
         icon: ShieldAlert,
         summary: "多场景决策、特征、名单、行为模式、关系图、账号处置与封禁申诉",
+        permission: ["system:risk:read", "system:risk_ops:read", "system:platform_ban:read"],
         // 首项必须是该页默认 Tab，否则无 ?tab= 时高亮会错位
         children: [
           { title: "总览", tab: "overview" },
@@ -393,7 +395,7 @@ export const navigationGroups: NavigationGroup[] = [
         href: "/audit",
         icon: ClipboardList,
         summary: "操作日志追溯",
-        superAdmin: true
+        permission: "system:audit_log:read"
       }
     ]
   },
@@ -409,17 +411,17 @@ export const navigationGroups: NavigationGroup[] = [
         href: "/configuration",
         icon: Settings2,
         summary: "平台级配置",
-        superAdmin: true,
+        permission: ["system:config:read", "system:egress:read", "email:read", "ai:read"],
         children: [
-          { title: "品牌与外观", tab: "branding" },
-          { title: "防火墙与限流", tab: "firewall" },
-          { title: "出海代理", tab: "egress" },
-          { title: "邮件", tab: "email" },
-          { title: "安全模块", tab: "security" },
-          { title: "LDAP", tab: "ldap" },
-          { title: "OIDC", tab: "oidc" },
-          { title: "SAML", tab: "saml" },
-          { title: "管理员验证码", tab: "admin-captcha" }
+          { title: "品牌与外观", tab: "branding", permission: "system:config:read" },
+          { title: "防火墙与限流", tab: "firewall", permission: "system:config:read" },
+          { title: "出海代理", tab: "egress", permission: "system:egress:read" },
+          { title: "邮件", tab: "email", permission: "email:read" },
+          { title: "安全模块", tab: "security", permission: "system:config:read" },
+          { title: "LDAP", tab: "ldap", permission: "system:config:read" },
+          { title: "OIDC", tab: "oidc", permission: "system:config:read" },
+          { title: "SAML", tab: "saml", permission: "system:config:read" },
+          { title: "管理员验证码", tab: "admin-captcha", permission: "system:config:read" }
         ]
       },
       {
@@ -451,14 +453,14 @@ export const navigationGroups: NavigationGroup[] = [
         href: "/plugins",
         icon: Puzzle,
         summary: "扩展与钩子",
-        superAdmin: true
+        permission: ["system:plugin:read", "system:native_plugin:read"]
       },
       {
         title: "设备字典",
         href: "/device-marketing",
         icon: Smartphone,
         summary: "机型营销名",
-        superAdmin: true
+        permission: "system:device_name:read"
       }
     ]
   }
@@ -486,8 +488,8 @@ export type NavigationTarget = {
   summary?: string;
   /** 是否为页内子项（三级） */
   isChild: boolean;
-  /** 鉴权继承自所属页面 */
-  permission?: string;
+  /** 鉴权：子项自己声明的优先，否则继承所属页面 */
+  permission?: string | string[];
   superAdmin?: boolean;
 };
 
@@ -511,6 +513,8 @@ export const navigationTargets: NavigationTarget[] = navigationGroups.flatMap((g
     };
     const children = (item.children ?? []).map<NavigationTarget>((child) => ({
       ...base,
+      permission: child.permission ?? item.permission,
+      superAdmin: child.superAdmin ?? item.superAdmin,
       key: childHref(item, child),
       title: child.title,
       isChild: true

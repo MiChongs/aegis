@@ -38,7 +38,8 @@ func (s *AdminService) GetAdminDetail(ctx context.Context, actor *admindomain.Ac
 	if detail.Grants, err = s.ListAdminGrants(ctx, adminID); err != nil {
 		return nil, err
 	}
-	if temp, err := s.pg.GetActiveTempPermissions(ctx, adminID); err == nil && temp != nil {
+	// 用带 ID、授予人、原因的完整列表：详情页要能逐条撤销
+	if temp, err := s.pg.ListTempPermissions(ctx, adminID); err == nil && temp != nil {
 		detail.TempPermissions = temp
 	}
 	return detail, nil

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuthStore } from "@/lib/auth-store";
+import { usePermissionChecker } from "@/lib/permissions";
 import { ApiError } from "@/lib/api/client";
 import {
   listPlugins, createPlugin, deletePlugin, enablePlugin, disablePlugin,
@@ -475,7 +476,13 @@ const domainLabels: Record<string, string> = {
   payment: "支付", notification: "通知", storage: "存储", system: "系统",
 };
 
-const PLUGIN_TABS = new Set(["plugins", "native", "hooks", "logs"]);
+// 插件管理、钩子注册表、执行日志都在 /system/plugins 下；内置插件是单独的权限点
+const PLUGIN_TABS = [
+  { value: "plugins", permission: "system:plugin:read" },
+  { value: "native", permission: "system:native_plugin:read" },
+  { value: "hooks", permission: "system:plugin:read" },
+  { value: "logs", permission: "system:plugin:read" }
+] as const;
 
 export default function PluginsPage() {
   return (
@@ -488,8 +495,14 @@ export default function PluginsPage() {
 function PluginsPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const can = usePermissionChecker();
+  const canRead = can("system:plugin:read");
+  const canWrite = can("system:plugin:write");
+  const canToggle = can("system:plugin:toggle");
+  const canDelete = can("system:plugin:delete");
+  const shown = new Set<string>(PLUGIN_TABS.filter((t) => can(t.permission)).map((t) => t.value));
   const rawTab = searchParams.get("tab");
-  const tab = rawTab && PLUGIN_TABS.has(rawTab) ? rawTab : "plugins";
+  const tab = rawTab && shown.has(rawTab) ? rawTab : (PLUGIN_TABS.find((t) => shown.has(t.value))?.value ?? "plugins");
   const token = useAuthStore((s) => s.accessToken) || "";
   const qc = useQueryClient();
   const [keyword, setKeyword] = useState("");
@@ -505,19 +518,19 @@ function PluginsPageInner() {
       type: typeFilter === "all" ? undefined : typeFilter,
       page, limit: 20,
     }),
-    enabled: !!token,
+    enabled: !!token && canRead,
   });
 
   const registryQuery = useQuery({
     queryKey: ["hook-registry"],
     queryFn: () => getHookRegistry(token),
-    enabled: !!token,
+    enabled: !!token && canRead,
   });
 
   const execQuery = useQuery({
     queryKey: ["hook-executions"],
     queryFn: () => listHookExecutions(token, { page: 1, limit: 20 }),
-    enabled: !!token,
+    enabled: !!token && canRead,
   });
 
   const toggleMutation = useMutation({
@@ -539,16 +552,25 @@ function PluginsPageInner() {
   const registry = registryQuery.data;
   const executions = execQuery.data;
 
+  if (!shown.size) {
+    return (
+      <div className="page-stack">
+        <SectionHeading eyebrow="控制台" title="插件系统" />
+        <EmptyState title="缺少「插件：查看」权限" />
+      </div>
+    );
+  }
+
   return (
     <div className="page-stack">
       <SectionHeading eyebrow="控制台" title="插件系统" />
 
       <Tabs value={tab} onValueChange={(v) => router.replace(`/plugins?tab=${v}`, { scroll: false })}>
         <TabsList>
-          <TabsTrigger value="plugins"><Puzzle className="size-4" />插件管理</TabsTrigger>
-          <TabsTrigger value="native"><Boxes className="size-4" />内置插件</TabsTrigger>
-          <TabsTrigger value="hooks"><Activity className="size-4" />钩子注册表</TabsTrigger>
-          <TabsTrigger value="logs"><Code2 className="size-4" />执行日志</TabsTrigger>
+          {shown.has("plugins") ? <TabsTrigger value="plugins"><Puzzle className="size-4" />插件管理</TabsTrigger> : null}
+          {shown.has("native") ? <TabsTrigger value="native"><Boxes className="size-4" />内置插件</TabsTrigger> : null}
+          {shown.has("hooks") ? <TabsTrigger value="hooks"><Activity className="size-4" />钩子注册表</TabsTrigger> : null}
+          {shown.has("logs") ? <TabsTrigger value="logs"><Code2 className="size-4" />执行日志</TabsTrigger> : null}
         </TabsList>
 
         {/* ── 插件管理 ── */}
@@ -577,7 +599,7 @@ function PluginsPageInner() {
               </SelectContent>
             </Select>
             <Button variant="outline" size="sm" onClick={() => pluginsQuery.refetch()}><RefreshCw className="size-3.5" /></Button>
-            <PluginCreateSheet token={token} onCreated={() => qc.invalidateQueries({ queryKey: ["plugins"] })} />
+            {canWrite ? <PluginCreateSheet token={token} onCreated={() => qc.invalidateQueries({ queryKey: ["plugins"] })} /> : null}
           </div>
 
           {pluginsQuery.isLoading ? <LoadingState title="加载中" /> : !data?.items.length ? <EmptyState title="暂无插件" /> : (
@@ -599,14 +621,18 @@ function PluginsPageInner() {
                       {p.errorMessage && <p className="text-[10px] text-red-500 truncate">{p.errorMessage}</p>}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
-                        onClick={() => toggleMutation.mutate({ id: p.id, enabled: p.status === "enabled" })}>
-                        {p.status === "enabled" ? <PowerOff className="size-3.5" /> : <Power className="size-3.5" />}
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 hover:text-red-600"
-                        onClick={() => { if (confirm("确认删除?")) deleteMutation.mutate(p.id); }}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                      {canToggle ? (
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+                          onClick={() => toggleMutation.mutate({ id: p.id, enabled: p.status === "enabled" })}>
+                          {p.status === "enabled" ? <PowerOff className="size-3.5" /> : <Power className="size-3.5" />}
+                        </Button>
+                      ) : null}
+                      {canDelete ? (
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 hover:text-red-600"
+                          onClick={() => { if (confirm("确认删除?")) deleteMutation.mutate(p.id); }}>
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      ) : null}
                     </div>
                   </CardContent>
                 </Card>

@@ -68,7 +68,7 @@ import {
   useSaveDeletionSettingsMutation
 } from "@/lib/account-deletion-hooks";
 import { formatDateTimeMinute } from "@/lib/datetime";
-import { usePermissionChecker } from "@/lib/permissions";
+import { useAppKeyPermissionChecker } from "@/lib/app-permission-hooks";
 import { cn } from "@/lib/utils";
 
 const REASON_CODE_PATTERN = /^[a-z0-9_-]{1,64}$/;
@@ -242,8 +242,8 @@ const PLACEHOLDER_FORM = seed(undefined, {
  * 没保存过时后端回的就是默认配置，界面上标「未配置」。
  */
 export function DeletionConfigPanel({ appKey }: { appKey: string }) {
-  const can = usePermissionChecker();
-  const canWrite = can("app:user:write");
+  const can = useAppKeyPermissionChecker(appKey);
+  const canWrite = can("app:user:deletion:settings");
   const catalogQuery = useDeletionCatalogQuery(appKey);
   const settingsQuery = useDeletionSettingsQuery(appKey);
   const saveMutation = useSaveDeletionSettingsMutation(appKey);

@@ -14,7 +14,22 @@ export function useVisibleGroups(): NavigationGroup[] {
   return useMemo(
     () =>
       navigationGroups
-        .map((group) => ({ ...group, items: group.items.filter((item) => can(item.permission, item.superAdmin)) }))
+        .map((group) => ({
+          ...group,
+          items: group.items
+            .filter((item) => can(item.permission, item.superAdmin))
+            .map((item) =>
+              item.children
+                ? {
+                    ...item,
+                    // 子项可以各自收窄权限；缺省继承页面
+                    children: item.children.filter((child) =>
+                      can(child.permission ?? item.permission, child.superAdmin ?? item.superAdmin)
+                    )
+                  }
+                : item
+            )
+        }))
         .filter((group) => group.items.length > 0),
     [can]
   );

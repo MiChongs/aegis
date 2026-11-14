@@ -53,6 +53,7 @@ import {
   useFirewallStatsQuery,
   useDeleteFirewallLogsMutation
 } from "@/lib/admin-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import { AttackFlightMap } from "@/components/security/attack-flight-map";
 import type { FirewallLogEntry, FirewallRankedItem } from "@/lib/api/types";
 import type { FirewallLogListParams } from "@/lib/api/system";
@@ -184,6 +185,7 @@ export function FirewallLogsPanel() {
   const statsQuery = useFirewallStatsQuery(statsParams);
   const detailQuery = useFirewallLogDetailQuery(selectedLogId);
   const deleteMutation = useDeleteFirewallLogsMutation();
+  const canClean = usePermissionChecker()("system:firewall:log_clean");
 
   const logData = logsQuery.data;
   const stats = statsQuery.data;
@@ -254,10 +256,12 @@ export function FirewallLogsPanel() {
               <RefreshCw className={`size-3 ${logsQuery.isFetching ? "animate-spin" : ""}`} />
               刷新
             </Button>
-            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs text-destructive hover:text-destructive" onClick={() => setShowCleanup(true)}>
-              <Trash2 className="size-3" />
-              清理
-            </Button>
+            {canClean ? (
+              <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs text-destructive hover:text-destructive" onClick={() => setShowCleanup(true)}>
+                <Trash2 className="size-3" />
+                清理
+              </Button>
+            ) : null}
           </div>
         </div>
 

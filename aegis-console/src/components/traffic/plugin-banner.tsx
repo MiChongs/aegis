@@ -5,6 +5,7 @@ import { Loader2, Power, PowerOff, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { NativePlugin, TrafficSettings } from "@/lib/api/traffic";
 import { useNativePluginActionMutation, useSaveTrafficSettingsMutation } from "@/lib/traffic-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { PLUGIN_STATE_LABEL } from "./traffic-format";
 
@@ -21,6 +22,9 @@ export function TrafficStateBanner({
 }) {
   const action = useNativePluginActionMutation();
   const saveSettings = useSaveTrafficSettingsMutation();
+  const can = usePermissionChecker();
+  const canManagePlugin = can("system:native_plugin:manage");
+  const canWrite = can("system:traffic:write");
 
   const pluginDown = !plugin || plugin.state !== "running";
   const switchedOff = !pluginDown && settings && !settings.enabled;
@@ -59,19 +63,19 @@ export function TrafficStateBanner({
         ) : null}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        {pluginDown && plugin && !plugin.enabled ? (
+        {canManagePlugin && pluginDown && plugin && !plugin.enabled ? (
           <Button size="sm" disabled={action.isPending} onClick={() => action.mutate({ id: plugin.id, action: "enable" })}>
             {action.isPending ? <Loader2 className="animate-spin" /> : <Power />}
             启用插件
           </Button>
         ) : null}
-        {pluginDown && plugin && plugin.enabled && !transitioning ? (
+        {canManagePlugin && pluginDown && plugin && plugin.enabled && !transitioning ? (
           <Button size="sm" disabled={action.isPending} onClick={() => action.mutate({ id: plugin.id, action: "restart" })}>
             {action.isPending ? <Loader2 className="animate-spin" /> : <RotateCw />}
             重启插件
           </Button>
         ) : null}
-        {switchedOff && settings ? (
+        {canWrite && switchedOff && settings ? (
           <Button size="sm" disabled={saveSettings.isPending} onClick={() => saveSettings.mutate({ ...settings, enabled: true })}>
             {saveSettings.isPending ? <Loader2 className="animate-spin" /> : <Power />}
             开启

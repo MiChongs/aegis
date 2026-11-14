@@ -161,3 +161,12 @@ func (r *Repository) TempPermissionOwner(ctx context.Context, permID int64) (int
 	}
 	return adminID, err
 }
+
+// DeleteAssignmentsByRole 删除某个角色的全部分配（强制删除角色时用）。
+func (r *Repository) DeleteAssignmentsByRole(ctx context.Context, roleKey string) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM admin_assignments WHERE role_key = $1`, roleKey)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

@@ -18,7 +18,7 @@ import { useIsSuperAdmin } from "@/lib/permissions";
  * 手机上单列，顺序按「先看要处理的，再看数据」：待处理 → 趋势 → 平台状态 → 排行 → 最近操作。
  * 桌面三列：左两列放趋势与最近操作，右列依次是待处理、平台状态、排行；
  * 网格位置写死在 lg 断点上，DOM 顺序因此可以只照顾手机。
- * 趋势、平台状态、排行与系统运行的数据只有超管拿得到，其他角色只有待处理与最近操作两块并排。
+ * 趋势、平台状态与排行的数据只有超管拿得到，其他角色只有待处理与最近操作两块并排；系统运行按细分权限显示。
  */
 const SLOT = {
   trend: "lg:col-span-2 lg:col-start-1 lg:row-start-1",
@@ -74,8 +74,8 @@ export default function OverviewPage() {
 
       <QuickActions />
 
-      {/* 运行信息接口要求超管，非超管挂载只会拿到 401 */}
-      {isSuperAdmin ? <RuntimeSection /> : null}
+      {/* 各运行面板按自己的查看权限显示，一块都看不了时整张卡片不渲染 */}
+      <RuntimeSection />
     </div>
   );
 }

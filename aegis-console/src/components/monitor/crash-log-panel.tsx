@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Eye, FileText, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuthStore } from "@/lib/auth-store";
+import { usePermissionChecker } from "@/lib/permissions";
 import { formatDateTime } from "@/lib/datetime";
 import { getCrashLogs, getCrashLogContent, deleteCrashLog, type CrashLogFile } from "@/lib/api/system";
 import { Button } from "@/components/ui/button";
@@ -51,7 +52,9 @@ function parseCrashRecords(text: string): CrashRecord[] {
 
 export function CrashLogPanel() {
   const token = useAuthStore((s) => s.accessToken);
-  const operator = useAuthStore((s) => s.operator);
+  const can = usePermissionChecker();
+  const canRead = can("system:crashlog:read");
+  const canDelete = can("system:crashlog:delete");
   const queryClient = useQueryClient();
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [content, setContent] = useState<string>("");
@@ -60,7 +63,7 @@ export function CrashLogPanel() {
   const filesQuery = useQuery({
     queryKey: ["admin", "crashlogs"],
     queryFn: () => getCrashLogs(token!),
-    enabled: Boolean(token && operator?.isSuperAdmin),
+    enabled: Boolean(token && canRead),
     refetchInterval: 30_000,
   });
 
@@ -87,8 +90,8 @@ export function CrashLogPanel() {
     }
   }
 
-  if (!operator?.isSuperAdmin) {
-    return <EmptyState title="无权查看" description="仅超级管理员可查看崩溃日志" />;
+  if (!canRead) {
+    return <EmptyState title="缺少「服务端崩溃日志：查看」权限" />;
   }
 
   if (filesQuery.isLoading) {
@@ -124,16 +127,18 @@ export function CrashLogPanel() {
                     <Eye />
                     查看
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="删除"
-                    className="text-destructive hover:text-destructive"
-                    disabled={deleteMutation.isPending}
-                    onClick={() => deleteMutation.mutate(f.name)}
-                  >
-                    <Trash2 />
-                  </Button>
+                  {canDelete ? (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="删除"
+                      className="text-destructive hover:text-destructive"
+                      disabled={deleteMutation.isPending}
+                      onClick={() => deleteMutation.mutate(f.name)}
+                    >
+                      <Trash2 />
+                    </Button>
+                  ) : null}
                 </span>
               </li>
             ))}

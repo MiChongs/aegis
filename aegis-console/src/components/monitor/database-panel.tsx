@@ -33,6 +33,7 @@ import {
   useTerminateDatabaseSessionMutation,
   useWarmupDatabaseMutation
 } from "@/lib/admin-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -101,6 +102,7 @@ export function DatabasePanel() {
   const snapshotQuery = useDatabaseSnapshotQuery({ refetchInterval: autoRefresh ? 15_000 : undefined });
   const refreshMutation = useRefreshDatabaseMutation();
   const warmupMutation = useWarmupDatabaseMutation();
+  const canManage = usePermissionChecker()("system:database:manage");
 
   const snapshot = snapshotQuery.data;
   const metrics = snapshot?.metrics;
@@ -170,30 +172,34 @@ export function DatabasePanel() {
             <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} aria-label="自动刷新" />
             自动刷新
           </label>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 gap-1 text-[11px]"
-            disabled={warmupMutation.isPending}
-            onClick={handleWarmup}
-          >
-            <Zap className="size-3" />
-            预热连接池
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 gap-1 text-[11px]"
-            disabled={refreshMutation.isPending}
-            onClick={handleRefresh}
-          >
-            {refreshMutation.isPending ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : (
-              <RefreshCw className="size-3" />
-            )}
-            立即采集
-          </Button>
+          {canManage ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1 text-[11px]"
+              disabled={warmupMutation.isPending}
+              onClick={handleWarmup}
+            >
+              <Zap className="size-3" />
+              预热连接池
+            </Button>
+          ) : null}
+          {canManage ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1 text-[11px]"
+              disabled={refreshMutation.isPending}
+              onClick={handleRefresh}
+            >
+              {refreshMutation.isPending ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3" />
+              )}
+              立即采集
+            </Button>
+          ) : null}
         </div>
       </header>
 
@@ -448,6 +454,7 @@ function SessionsSection() {
   const [onlyProblematic, setOnlyProblematic] = useState(true);
   const sessionsQuery = useDatabaseSessionsQuery({ onlyProblematic, limit: 100 });
   const actionMutation = useTerminateDatabaseSessionMutation();
+  const canSession = usePermissionChecker()("system:database:session");
   const [pending, setPending] = useState<{ session: DBSession; mode: "terminate" | "cancel" } | null>(null);
 
   const items = sessionsQuery.data?.items ?? [];
@@ -557,7 +564,7 @@ function SessionsSection() {
                     </div>
                   </td>
                   <td className="px-2 py-2 text-right">
-                    {!session.isSelf && (
+                    {!session.isSelf && canSession && (
                       <div className="flex justify-end gap-1">
                         <Button
                           size="sm"

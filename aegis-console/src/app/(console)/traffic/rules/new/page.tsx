@@ -25,7 +25,7 @@ function NewRuleInner() {
 
 export default function NewTrafficRulePage() {
   return (
-    <TrafficGate title="新建规则">
+    <TrafficGate title="新建规则" write>
       <Suspense>
         <NewRuleInner />
       </Suspense>

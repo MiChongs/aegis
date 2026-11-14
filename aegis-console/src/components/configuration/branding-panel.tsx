@@ -5,6 +5,7 @@ import { Globe, Image as ImageIcon, Loader2, Palette, RotateCcw, Save, Type } fr
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api/client";
 import { useAdminSystemSettingsQuery, useUpdateAdminSystemSettingsMutation } from "@/lib/admin-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import type { BrandingSettings } from "@/lib/api/types";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
@@ -77,6 +78,8 @@ function ColorRow({ label, value, onChange }: { label: string; value: string; on
 
 export function BrandingPanel() {
   const settingsQuery = useAdminSystemSettingsQuery();
+  const can = usePermissionChecker();
+  const canWrite = can("system:config:write");
   const updateMutation = useUpdateAdminSystemSettingsMutation();
   const branding = settingsQuery.data?.branding;
   const [draft, setDraft] = useState<Draft>(() => seedDraft(branding));
@@ -113,15 +116,17 @@ export function BrandingPanel() {
 
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold">品牌自定义</h3>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setDraft(seedDraft(branding))} disabled={updateMutation.isPending}>
-            <RotateCcw className="size-3.5" /> 重置
-          </Button>
-          <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
-            {updateMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-            保存
-          </Button>
-        </div>
+        {canWrite ? (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setDraft(seedDraft(branding))} disabled={updateMutation.isPending}>
+              <RotateCcw className="size-3.5" /> 重置
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+              保存
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <Accordion type="multiple" defaultValue={["identity"]} className="space-y-2">

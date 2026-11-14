@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useIsSuperAdmin } from "@/lib/permissions";
+import { usePermissionChecker } from "@/lib/permissions";
 import {
   type DeviceMarketingName,
   type DevicePlatform,
@@ -58,7 +58,9 @@ const SOURCE_OPTIONS = [
 // ─── 主页面 ────────────────────────────────────
 
 export default function DeviceMarketingPage() {
-  const isSuperAdmin = useIsSuperAdmin();
+  const can = usePermissionChecker();
+  const canRead = can("system:device_name:read");
+  const canWrite = can("system:device_name:write");
   const [platform, setPlatform] = useState<DevicePlatform | "">("");
   const [source, setSource] = useState<DeviceSource | "">("");
   const [manufacturer, setManufacturer] = useState("");
@@ -99,12 +101,12 @@ export default function DeviceMarketingPage() {
     return Math.max(1, Math.ceil(data.total / data.limit));
   }, [data]);
 
-  if (!isSuperAdmin) {
+  if (!canRead) {
     return (
       <div className="page-stack">
         <SectionHeading eyebrow="控制台" title="设备营销名称字典" />
         <div className="rounded-xl border bg-card px-6 py-12 text-center">
-          <p className="text-sm text-muted-foreground">仅超级管理员可访问此页面</p>
+          <p className="text-sm text-muted-foreground">缺少「设备型号库：查看」权限</p>
         </div>
       </div>
     );
@@ -208,24 +210,28 @@ export default function DeviceMarketingPage() {
             </SelectContent>
           </Select>
           <div className="flex-1" />
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8"
-            onClick={handleReseed}
-            disabled={reseedMutation.isPending}
-          >
-            {reseedMutation.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="size-3.5" />
-            )}
-            重新种子
-          </Button>
-          <Button size="sm" className="h-8" onClick={openCreate}>
-            <Plus className="size-3.5" />
-            新增
-          </Button>
+          {canWrite ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={handleReseed}
+                disabled={reseedMutation.isPending}
+              >
+                {reseedMutation.isPending ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-3.5" />
+                )}
+                重新种子
+              </Button>
+              <Button size="sm" className="h-8" onClick={openCreate}>
+                <Plus className="size-3.5" />
+                新增
+              </Button>
+            </>
+          ) : null}
         </div>
 
         {data && (
@@ -258,8 +264,8 @@ export default function DeviceMarketingPage() {
           {(data?.items ?? []).map((row) => (
             <div
               key={row.id}
-              className="group flex items-center gap-4 px-4 py-3 hover:bg-accent/40 cursor-pointer transition-colors"
-              onClick={() => openEdit(row)}
+              className={cn("group flex items-center gap-4 px-4 py-3 transition-colors", canWrite && "cursor-pointer hover:bg-accent/40")}
+              onClick={canWrite ? () => openEdit(row) : undefined}
             >
               {/* 设备图 */}
               <DeviceThumb url={row.deviceImageUrl} platform={row.platform} />

@@ -22,7 +22,7 @@ import { toast } from "sonner";
 import { Field } from "@/components/apps/item-grant/item-grant-fields";
 import type { EgressEditorSeed } from "@/components/configuration/egress/egress-editor";
 import { OptionSelect } from "@/components/configuration/egress/egress-fields";
-import { ACTION_LABEL, delayTone, formatBytes } from "@/components/configuration/egress/egress-meta";
+import { ACTION_LABEL, delayTone, formatBytes, useEgressAccess } from "@/components/configuration/egress/egress-meta";
 import { ConfirmActionDialog } from "@/components/users/detail/records/records-shared";
 import { TONE_TEXT } from "@/components/users/detail/kit";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +78,7 @@ export function GroupsPanel({ view }: { view: EgressGraphView }) {
   const query = useMihomoProxiesQuery(true);
   const delay = useMihomoDelayMutation();
   const select = useSelectMihomoMutation();
+  const { core } = useEgressAccess();
   const [testing, setTesting] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
@@ -136,15 +137,17 @@ export function GroupsPanel({ view }: { view: EgressGraphView }) {
                     {group.fixed ? "（已固定）" : ""}，共 {(group.all ?? []).length} 个成员
                   </div>
                 </div>
-                {group.fixed ? (
+                {group.fixed && core ? (
                   <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => select.mutate({ group: group.name, name: "" }, { onSuccess: () => void query.refetch(), onError: fail })}>
                     取消固定
                   </Button>
                 ) : null}
-                <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={testing === group.name} onClick={() => testGroup(group.name)}>
-                  {testing === group.name ? <Loader2 className="animate-spin" /> : <Gauge />}
-                  测速
-                </Button>
+                {core ? (
+                  <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={testing === group.name} onClick={() => testGroup(group.name)}>
+                    {testing === group.name ? <Loader2 className="animate-spin" /> : <Gauge />}
+                    测速
+                  </Button>
+                ) : null}
               </div>
               <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
                 {members.map((member) => {
@@ -155,7 +158,7 @@ export function GroupsPanel({ view }: { view: EgressGraphView }) {
                     <button
                       key={member}
                       type="button"
-                      disabled={!selectable || select.isPending}
+                      disabled={!core || !selectable || select.isPending}
                       onClick={() =>
                         select.mutate(
                           { group: group.name, name: member },
@@ -165,7 +168,7 @@ export function GroupsPanel({ view }: { view: EgressGraphView }) {
                       className={cn(
                         "rounded-xl border px-2.5 py-2 text-left transition-colors",
                         active ? "border-amber-500/70 bg-amber-500/8" : "hover:border-foreground/20",
-                        selectable ? "cursor-pointer" : "cursor-default"
+                        core && selectable ? "cursor-pointer" : "cursor-default"
                       )}
                     >
                       <div className="truncate text-xs font-medium" title={member}>
@@ -193,6 +196,7 @@ export function ProvidersPanel() {
   const query = useMihomoProxiesQuery(true);
   const action = useMihomoProviderMutation();
   const maintenance = useMihomoMaintenanceMutation();
+  const { core } = useEgressAccess();
   const [busy, setBusy] = useState<string | null>(null);
   if (query.isLoading) return <LoadingState title="读取订阅" />;
   if (query.error || !query.data) return <CoreUnavailable error={query.error} />;
@@ -244,14 +248,18 @@ export function ProvidersPanel() {
                     </div>
                   ) : null}
                 </div>
-                <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={busy !== null} onClick={() => run("proxy", provider.name, "healthcheck")}>
-                  {busy === `proxy:${provider.name}:healthcheck` ? <Loader2 className="animate-spin" /> : <HeartPulse />}
-                  健康检查
-                </Button>
-                <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={busy !== null} onClick={() => run("proxy", provider.name, "update")}>
-                  {busy === `proxy:${provider.name}:update` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                  更新
-                </Button>
+                {core ? (
+                  <>
+                    <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={busy !== null} onClick={() => run("proxy", provider.name, "healthcheck")}>
+                      {busy === `proxy:${provider.name}:healthcheck` ? <Loader2 className="animate-spin" /> : <HeartPulse />}
+                      健康检查
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={busy !== null} onClick={() => run("proxy", provider.name, "update")}>
+                      {busy === `proxy:${provider.name}:update` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                      更新
+                    </Button>
+                  </>
+                ) : null}
               </div>
             );
           })}
@@ -272,34 +280,38 @@ export function ProvidersPanel() {
                   {provider.behavior} {provider.format}，{provider.ruleCount.toLocaleString()} 条，{provider.updatedAt ? `${formatRelative(provider.updatedAt)}更新` : "尚未更新"}
                 </div>
               </div>
-              <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={busy !== null} onClick={() => run("rule", provider.name, "update")}>
-                {busy === `rule:${provider.name}:update` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                更新
-              </Button>
+              {core ? (
+                <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={busy !== null} onClick={() => run("rule", provider.name, "update")}>
+                  {busy === `rule:${provider.name}:update` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                  更新
+                </Button>
+              ) : null}
             </div>
           ))}
         </div>
       </section>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1 text-xs"
-          disabled={maintenance.isPending}
-          onClick={() => maintenance.mutate("geo", { onSuccess: () => toast.success("Geo 数据库已更新"), onError: fail })}
-        >
-          <Database /> 更新 Geo 数据库
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1 text-xs"
-          disabled={maintenance.isPending}
-          onClick={() => maintenance.mutate("flush-dns", { onSuccess: () => toast.success("DNS 缓存已清空"), onError: fail })}
-        >
-          <Trash2 /> 清空 DNS 缓存
-        </Button>
-      </div>
+      {core ? (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1 text-xs"
+            disabled={maintenance.isPending}
+            onClick={() => maintenance.mutate("geo", { onSuccess: () => toast.success("Geo 数据库已更新"), onError: fail })}
+          >
+            <Database /> 更新 Geo 数据库
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1 text-xs"
+            disabled={maintenance.isPending}
+            onClick={() => maintenance.mutate("flush-dns", { onSuccess: () => toast.success("DNS 缓存已清空"), onError: fail })}
+          >
+            <Trash2 /> 清空 DNS 缓存
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -324,6 +336,7 @@ export function ConnectionsPanel() {
   const [search, setSearch] = useState("");
   const query = useMihomoConnectionsQuery(true, paused);
   const close = useCloseMihomoConnectionMutation();
+  const { core } = useEgressAccess();
   const [confirmAll, setConfirmAll] = useState(false);
   if (query.isLoading) return <LoadingState title="读取连接" />;
   if (query.error || !query.data) return <CoreUnavailable error={query.error} />;
@@ -349,9 +362,11 @@ export function ConnectionsPanel() {
             {paused ? <Play /> : <Pause />}
             {paused ? "继续" : "暂停"}
           </Button>
-          <Button size="sm" variant="outline" className="gap-1 text-xs hover:text-destructive" disabled={!(data.connections ?? []).length} onClick={() => setConfirmAll(true)}>
-            <X /> 全部关闭
-          </Button>
+          {core ? (
+            <Button size="sm" variant="outline" className="gap-1 text-xs hover:text-destructive" disabled={!(data.connections ?? []).length} onClick={() => setConfirmAll(true)}>
+              <X /> 全部关闭
+            </Button>
+          ) : null}
         </div>
       </div>
       <div className="overflow-x-auto rounded-2xl border bg-card">
@@ -382,9 +397,11 @@ export function ConnectionsPanel() {
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{duration(connection.start, now)}</td>
                 <td className="px-2 py-2">
-                  <Button size="icon" variant="ghost" className="size-6 hover:text-destructive" onClick={() => close.mutate(connection.id, { onError: fail })} aria-label="关闭连接">
-                    <X className="size-3" />
-                  </Button>
+                  {core ? (
+                    <Button size="icon" variant="ghost" className="size-6 hover:text-destructive" onClick={() => close.mutate(connection.id, { onError: fail })} aria-label="关闭连接">
+                      <X className="size-3" />
+                    </Button>
+                  ) : null}
                 </td>
               </tr>
             ))}
@@ -467,6 +484,7 @@ export function DiagnosticsPanel({ view }: { view: EgressGraphView }) {
   const test = useEgressTestMutation();
   const explain = useEgressExplainMutation();
   const dns = useMihomoDNSMutation();
+  const access = useEgressAccess();
   const coreRunning = view.core.status === "running";
   const rules = useMihomoRulesQuery(coreRunning);
   const [network, setNetwork] = useState<"tcp" | "udp">("tcp");
@@ -517,7 +535,7 @@ export function DiagnosticsPanel({ view }: { view: EgressGraphView }) {
         </div>
         <Button
           size="sm"
-          disabled={test.isPending}
+          disabled={!access.write || test.isPending}
           onClick={() =>
             test.mutate(
               network === "tcp"
@@ -595,7 +613,7 @@ export function DiagnosticsPanel({ view }: { view: EgressGraphView }) {
           </div>
           <div className="flex gap-2">
             <Input className="h-8 font-mono text-xs" value={dnsName} onChange={(event) => setDnsName(event.target.value)} />
-            <Button size="sm" disabled={!dnsName.trim() || dns.isPending} onClick={() => dns.mutate({ name: dnsName.trim(), type: "A" }, { onSuccess: setDnsResult, onError: fail })}>
+            <Button size="sm" disabled={!access.core || !dnsName.trim() || dns.isPending} onClick={() => dns.mutate({ name: dnsName.trim(), type: "A" }, { onSuccess: setDnsResult, onError: fail })}>
               {dns.isPending ? <Loader2 className="animate-spin" /> : <Search />}
               解析
             </Button>
@@ -647,20 +665,23 @@ export function VersionsPanel({ view, onOpen }: { view: EgressGraphView; onOpen:
   const rollback = useRollbackEgressGraphMutation();
   const discard = useDiscardEgressGraphMutation();
   const reset = useResetEgressSettingsMutation();
+  const access = useEgressAccess();
   const [pending, setPending] = useState<number | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const items = history.data?.items ?? [];
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
-        {view.dirty ? (
+        {view.dirty && access.write ? (
           <Button size="sm" variant="outline" className="gap-1 text-xs" disabled={discard.isPending} onClick={() => discard.mutate(undefined, { onSuccess: () => toast.success("草稿已恢复为已应用的版本"), onError: fail })}>
             <Undo2 /> 丢弃草稿
           </Button>
         ) : null}
-        <Button size="sm" variant="outline" className="gap-1 text-xs hover:text-destructive" onClick={() => setConfirmReset(true)}>
-          <RotateCcw /> 恢复为环境变量配置
-        </Button>
+        {access.apply ? (
+          <Button size="sm" variant="outline" className="gap-1 text-xs hover:text-destructive" onClick={() => setConfirmReset(true)}>
+            <RotateCcw /> 恢复为环境变量配置
+          </Button>
+        ) : null}
       </div>
       {history.isLoading ? <LoadingState title="读取版本记录" /> : null}
       {!history.isLoading && !items.length ? <EmptyState title="还没有应用过画布" description="每次应用记一个版本，保留最近 20 个。" /> : null}
@@ -692,9 +713,11 @@ export function VersionsPanel({ view, onOpen }: { view: EgressGraphView; onOpen:
             >
               <FolderOpen /> 载入画布
             </Button>
-            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={item.version === view.appliedVersion && view.active} onClick={() => setPending(item.version)}>
-              <RotateCcw /> 回滚
-            </Button>
+            {access.apply ? (
+              <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={item.version === view.appliedVersion && view.active} onClick={() => setPending(item.version)}>
+                <RotateCcw /> 回滚
+              </Button>
+            ) : null}
           </div>
         ))}
       </div>

@@ -27,6 +27,7 @@ import {
   useTrafficRevisionsQuery,
   trafficErrorMessage
 } from "@/lib/traffic-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { diffConfigs, type FieldChange, type RuleChange } from "./traffic-diff";
 import { Panel, TabStack } from "./traffic-kit";
@@ -129,6 +130,7 @@ function RevisionItem({
 function RevisionDetailPanel({ revision, current }: { revision: number; current: TrafficConfig }) {
   const detailQuery = useTrafficRevisionQuery(revision);
   const rollback = useRollbackTrafficMutation();
+  const canWrite = usePermissionChecker()("system:traffic:write");
   const detail = detailQuery.data;
   const diff = useMemo(() => (detail ? diffConfigs(current, detail.config) : null), [current, detail]);
   const isCurrent = revision === current.revision;
@@ -145,26 +147,28 @@ function RevisionDetailPanel({ revision, current }: { revision: number; current:
         </span>
       }
       aside={
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button size="sm" variant="outline" disabled={isCurrent || !detail || rollback.isPending}>
-              {rollback.isPending ? <Loader2 className="animate-spin" /> : <RotateCcw />}
-              回滚
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>回滚到 r{revision}</AlertDialogTitle>
-              <AlertDialogDescription>该版本的内容将发布为新版本，立即对全部实例生效。</AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
-              <AlertDialogAction onClick={() =>
-                  rollback.mutate({ revision, note: `回滚到 r${revision}` }, { onSuccess: (config) => toast.success(`已回滚，当前 r${config.revision}`) })
-                }>回滚</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        canWrite ? (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button size="sm" variant="outline" disabled={isCurrent || !detail || rollback.isPending}>
+                {rollback.isPending ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+                回滚
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>回滚到 r{revision}</AlertDialogTitle>
+                <AlertDialogDescription>该版本的内容将发布为新版本，立即对全部实例生效。</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>取消</AlertDialogCancel>
+                <AlertDialogAction onClick={() =>
+                    rollback.mutate({ revision, note: `回滚到 r${revision}` }, { onSuccess: (config) => toast.success(`已回滚，当前 r${config.revision}`) })
+                  }>回滚</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : undefined
       }
     >
       {detailQuery.isLoading ? (

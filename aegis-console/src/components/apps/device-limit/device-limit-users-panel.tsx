@@ -55,7 +55,7 @@ import {
   useRemoveDeviceLimitDevicesMutation,
   useResetDeviceLimitLedgerMutation
 } from "@/lib/device-limit-hooks";
-import { usePermissionChecker } from "@/lib/permissions";
+import { useAppKeyPermissionChecker } from "@/lib/app-permission-hooks";
 import { cn } from "@/lib/utils";
 
 type Confirm =
@@ -76,8 +76,8 @@ export function DeviceLimitUsersPanel({
   user: PickedUser | null;
   onUserChange: (user: PickedUser | null) => void;
 }) {
-  const can = usePermissionChecker();
-  const canWrite = can("app:user:write");
+  const can = useAppKeyPermissionChecker(appKey);
+  const canWrite = can("app:user:device:manage");
   const query = useDeviceLimitUserQuery(appKey, user?.id);
   const view = query.data;
   const [selected, setSelected] = useState<string[]>([]);

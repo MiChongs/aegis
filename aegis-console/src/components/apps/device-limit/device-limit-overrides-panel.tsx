@@ -30,7 +30,7 @@ import { ApiError } from "@/lib/api-client";
 import type { DeviceLimitOverride } from "@/lib/api/device-limit";
 import { formatDateTime, formatRelative, parseInstant } from "@/lib/datetime";
 import { useDeleteDeviceLimitOverrideMutation, useDeviceLimitOverridesQuery } from "@/lib/device-limit-hooks";
-import { usePermissionChecker } from "@/lib/permissions";
+import { useAppKeyPermissionChecker } from "@/lib/app-permission-hooks";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
 
@@ -44,8 +44,8 @@ export function DeviceLimitOverridesPanel({
   appKey: string;
   onOpenUser: (user: PickedUser) => void;
 }) {
-  const can = usePermissionChecker();
-  const canWrite = can("app:user:write");
+  const can = useAppKeyPermissionChecker(appKey);
+  const canWrite = can("app:user:device:manage");
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<{ user: PickedUser | null; override: DeviceLimitOverride | null } | null>(null);

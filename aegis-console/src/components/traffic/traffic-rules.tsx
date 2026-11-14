@@ -55,6 +55,7 @@ import {
   useTrafficOverviewQuery,
   useTrafficTemplatesQuery
 } from "@/lib/traffic-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { RulePipeline } from "./rule-pipeline";
 import { ClassBadge, ModeBadge, Panel, Spark, TabStack } from "./traffic-kit";
@@ -66,6 +67,7 @@ export function TrafficRulesTab() {
   const reorder = useReorderTrafficRulesMutation();
   const toggle = useToggleTrafficRuleMutation();
   const remove = useDeleteTrafficRuleMutation();
+  const canWrite = usePermissionChecker()("system:traffic:write");
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<TrafficRule | null>(null);
 
@@ -114,10 +116,12 @@ export function TrafficRulesTab() {
             </span>
           ) : null}
         </div>
-        <Button size="sm" className="ml-auto" onClick={() => setGalleryOpen(true)}>
-          <Plus />
-          新建规则
-        </Button>
+        {canWrite ? (
+          <Button size="sm" className="ml-auto" onClick={() => setGalleryOpen(true)}>
+            <Plus />
+            新建规则
+          </Button>
+        ) : null}
       </div>
 
       {configQuery.isLoading ? (
@@ -141,7 +145,8 @@ export function TrafficRulesTab() {
                   index={index}
                   stats={statsById.get(rule.id)}
                   defaultResponse={config?.settings.response}
-                  dragDisabled={reorder.isPending}
+                  canWrite={canWrite}
+                  dragDisabled={!canWrite || reorder.isPending}
                   onToggle={(enabled) => toggle.mutate({ ruleId: rule.id, enabled })}
                   onDelete={() => setPendingDelete(rule)}
                 />
@@ -184,6 +189,7 @@ function RuleCard({
   index,
   stats,
   defaultResponse,
+  canWrite,
   dragDisabled,
   onToggle,
   onDelete
@@ -192,6 +198,7 @@ function RuleCard({
   index: number;
   stats?: RuleStats;
   defaultResponse?: ResponseSpec;
+  canWrite: boolean;
   dragDisabled: boolean;
   onToggle: (enabled: boolean) => void;
   onDelete: () => void;
@@ -247,27 +254,29 @@ function RuleCard({
           </div>
           {rule.description ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{rule.description}</p> : null}
         </div>
-        <Switch checked={rule.enabled} onCheckedChange={onToggle} aria-label={rule.enabled ? "停用" : "启用"} className="mt-1.5" />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="icon-sm" variant="ghost" aria-label="更多">
-              <MoreHorizontal />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem asChild>
-              <Link href={href}>
-                <Pencil />
-                编辑
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-              <Trash2 />
-              删除
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <Switch checked={rule.enabled} onCheckedChange={onToggle} disabled={!canWrite} aria-label={rule.enabled ? "停用" : "启用"} className="mt-1.5" />
+        {canWrite ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon-sm" variant="ghost" aria-label="更多">
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem asChild>
+                <Link href={href}>
+                  <Pencil />
+                  编辑
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                <Trash2 />
+                删除
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
       </div>
       <div className="flex min-w-0 flex-wrap items-end gap-x-4 gap-y-3 px-3 pt-3 pb-3 sm:px-4 sm:pb-4 sm:pl-[68px]">
         <RulePipeline rule={rule} defaultResponse={defaultResponse} className={cn("min-w-0 flex-1", !rule.enabled && "opacity-60")} />

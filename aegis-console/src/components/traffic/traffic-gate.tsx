@@ -3,16 +3,25 @@
 import type { ReactNode } from "react";
 import { EmptyState } from "@/components/ui/data-state";
 import { SectionHeading } from "@/components/ui/section-heading";
-import { useAuthStore } from "@/lib/auth-store";
+import { usePermission } from "@/lib/permissions";
 
-/** 流量管理的全部接口只对超级管理员开放 */
-export function TrafficGate({ title, children }: { title: string; children: ReactNode }) {
-  const operator = useAuthStore((state) => state.operator);
-  if (!operator?.isSuperAdmin) {
+/** 流量管理的页面入口：查看用 system:traffic:read，新建规则用 system:traffic:write */
+export function TrafficGate({
+  title,
+  write,
+  children
+}: {
+  title: string;
+  /** 页面本身就是写操作（新建规则） */
+  write?: boolean;
+  children: ReactNode;
+}) {
+  const { allowed } = usePermission(write ? "system:traffic:write" : "system:traffic:read");
+  if (!allowed) {
     return (
       <div className="page-stack">
         <SectionHeading eyebrow="流量管理" title={title} />
-        <EmptyState title="需要超级管理员权限" />
+        <EmptyState title={write ? "缺少「流量管理：编辑规则与回滚」权限" : "缺少「流量管理：查看」权限"} />
       </div>
     );
   }

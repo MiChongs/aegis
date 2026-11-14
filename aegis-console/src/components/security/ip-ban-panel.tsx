@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/tooltip";
 
 import { useIPBansQuery, useCreateIPBanMutation, useDeleteIPBanMutation, useIPBanModesQuery } from "@/lib/admin-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import type { IPBanEntry, IPBanMode } from "@/lib/api/types";
 import type { IPBanListParams } from "@/lib/api/system";
 
@@ -162,6 +163,7 @@ export function IPBanPanel() {
   const bansQuery = useIPBansQuery(queryParams);
   const createMutation = useCreateIPBanMutation();
   const deleteMutation = useDeleteIPBanMutation();
+  const canBan = usePermissionChecker()("system:firewall:ban");
 
   const banData = bansQuery.data;
 
@@ -242,10 +244,12 @@ export function IPBanPanel() {
               <RefreshCw className={`size-3.5 ${bansQuery.isFetching ? "animate-spin" : ""}`} />
               刷新
             </Button>
-            <Button size="sm" className="h-8 gap-1.5" onClick={() => setShowBanDialog(true)}>
-              <Plus className="size-3.5" />
-              封禁 IP
-            </Button>
+            {canBan ? (
+              <Button size="sm" className="h-8 gap-1.5" onClick={() => setShowBanDialog(true)}>
+                <Plus className="size-3.5" />
+                封禁 IP
+              </Button>
+            ) : null}
           </div>
         </div>
 
@@ -400,7 +404,7 @@ export function IPBanPanel() {
                       </TableCell>
 
                       <TableCell className="pr-4 text-right align-middle">
-                        {ban.status === "active" ? (
+                        {ban.status === "active" && canBan ? (
                           <UITooltip>
                             <TooltipTrigger asChild>
                               <Button

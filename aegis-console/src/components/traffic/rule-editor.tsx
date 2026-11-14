@@ -55,6 +55,7 @@ import {
   useUpdateTrafficRuleMutation,
   validateRuleNow
 } from "@/lib/traffic-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import { AppKeyPicker } from "./app-key-picker";
 import { RuleLiveStats } from "./rule-live-stats";
 import { RulePipeline } from "./rule-pipeline";
@@ -107,6 +108,7 @@ export function RuleEditor({
   const queryClient = useQueryClient();
   const create = useCreateTrafficRuleMutation();
   const update = useUpdateTrafficRuleMutation();
+  const canWrite = usePermissionChecker()("system:traffic:write");
   const [draft, setDraft] = useState<TrafficRule | null>(null);
   const [checking, setChecking] = useState(false);
   const rule = draft ?? initial;
@@ -191,10 +193,12 @@ export function RuleEditor({
                 返回
               </Link>
             </Button>
-            <Button size="sm" onClick={save} disabled={saving}>
-              {saving ? <Loader2 className="animate-spin" /> : <Save />}
-              保存
-            </Button>
+            {canWrite ? (
+              <Button size="sm" onClick={save} disabled={saving}>
+                {saving ? <Loader2 className="animate-spin" /> : <Save />}
+                保存
+              </Button>
+            ) : null}
           </>
         }
       />

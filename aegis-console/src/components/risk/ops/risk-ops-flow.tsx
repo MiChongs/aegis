@@ -703,7 +703,7 @@ function ReleaseStep({
         <Button
           onClick={submit}
           disabled={!canOperate || release.isPending || q.isLoading || !!q.error || !summary.length}
-          title={canOperate ? undefined : "仅超级管理员可解除风控"}
+          title={canOperate ? undefined : "缺少「风控运维：清理与解除」权限"}
           className="bg-emerald-600 text-white hover:bg-emerald-600/90"
         >
           {release.isPending ? <Loader2 className="size-4 animate-spin" /> : <ShieldOff className="size-4" />}
@@ -839,7 +839,7 @@ function PurgeStep({
           variant="destructive"
           onClick={submit}
           disabled={!canOperate || !ready || purge.isPending || q.isLoading}
-          title={canOperate ? undefined : "仅超级管理员可删除账号"}
+          title={canOperate ? undefined : "缺少「风控运维：清理与解除」权限"}
         >
           {purge.isPending ? <Loader2 className="size-4 animate-spin" /> : <UserX className="size-4" />}
           删除 {targets.length} 个账号

@@ -57,7 +57,8 @@ export function DeletionRequestSheet({
   open,
   onOpenChange,
   config,
-  canWrite,
+  canReview,
+  canExecute,
   onCompleted
 }: {
   appKey: string;
@@ -66,15 +67,25 @@ export function DeletionRequestSheet({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   config?: DeletionConfig | null;
-  canWrite: boolean;
+  /** 撤销、改期、驳回、批准 */
+  canReview: boolean;
+  /** 立即执行 */
+  canExecute: boolean;
   /** 账号在这里被注销之后（立即执行、批准立即注销） */
   onCompleted?: (result: DeletionRequest) => void;
 }) {
   const detailQuery = useDeletionRequestQuery(appKey, open ? request?.id : null, request);
   const item = detailQuery.data ?? request;
   const [action, setAction] = useState<DeletionActionKind | null>(null);
-  const actions = availableActions(item?.status ?? "");
-  const hasActions = canWrite && Object.values(actions).some(Boolean);
+  const available = availableActions(item?.status ?? "");
+  const actions = {
+    approve: canReview && available.approve,
+    reject: canReview && available.reject,
+    cancel: canReview && available.cancel,
+    reschedule: canReview && available.reschedule,
+    execute: canExecute && available.execute
+  };
+  const hasActions = Object.values(actions).some(Boolean);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

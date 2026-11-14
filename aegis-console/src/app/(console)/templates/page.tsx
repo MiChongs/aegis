@@ -12,12 +12,13 @@ import {
   useDeleteMessageTemplateMutation,
 } from "@/lib/admin-hooks";
 import { useAuthStore } from "@/lib/auth-store";
+import { usePermissionChecker } from "@/lib/permissions";
 import type { MessageTemplate, RenderResult, TemplateVariable } from "@/lib/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { LoadingState } from "@/components/ui/data-state";
+import { EmptyState, LoadingState } from "@/components/ui/data-state";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
@@ -30,6 +31,19 @@ const channelLabel: Record<string, string> = { email: "邮件", sms: "短信", n
 const channelIcon: Record<string, typeof Mail> = { email: Mail, sms: MessageSquare, notification: FileText };
 
 export default function TemplatesPage() {
+  const can = usePermissionChecker();
+  if (!can("system:template:read")) {
+    return (
+      <div className="page-stack">
+        <SectionHeading eyebrow="控制台" title="消息模板" />
+        <EmptyState title="缺少「消息模板：查看」权限" />
+      </div>
+    );
+  }
+  return <TemplatesInner canWrite={can("system:template:write")} />;
+}
+
+function TemplatesInner({ canWrite }: { canWrite: boolean }) {
   const templatesQuery = useMessageTemplatesQuery();
   const deleteMutation = useDeleteMessageTemplateMutation();
   const [editing, setEditing] = useState<MessageTemplate | null>(null);
@@ -41,9 +55,11 @@ export default function TemplatesPage() {
   return (
     <div className="page-stack">
       <SectionHeading eyebrow="控制台" title="消息模板" />
-      <div className="flex items-center justify-end">
-        <Button size="sm" onClick={() => setCreating(true)}><Plus className="size-3.5" />创建模板</Button>
-      </div>
+      {canWrite ? (
+        <div className="flex items-center justify-end">
+          <Button size="sm" onClick={() => setCreating(true)}><Plus className="size-3.5" />创建模板</Button>
+        </div>
+      ) : null}
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {templates.map((t) => {
@@ -73,7 +89,7 @@ export default function TemplatesPage() {
       {/* 编辑 Sheet */}
       <Sheet open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }}>
         <SheetContent className="w-[640px] sm:max-w-2xl overflow-y-auto">
-          {editing && <TemplateEditor template={editing} onClose={() => setEditing(null)} />}
+          {editing && <TemplateEditor template={editing} canWrite={canWrite} onClose={() => setEditing(null)} />}
         </SheetContent>
       </Sheet>
 
@@ -87,7 +103,7 @@ export default function TemplatesPage() {
   );
 }
 
-function TemplateEditor({ template, onClose }: { template: MessageTemplate; onClose: () => void }) {
+function TemplateEditor({ template, canWrite, onClose }: { template: MessageTemplate; canWrite: boolean; onClose: () => void }) {
   const updateMutation = useUpdateMessageTemplateMutation();
   const token = useAuthStore((s) => s.accessToken);
   const [subject, setSubject] = useState(template.subject);
@@ -169,10 +185,12 @@ function TemplateEditor({ template, onClose }: { template: MessageTemplate; onCl
             <Textarea value={bodyText} onChange={(e) => setBodyText(e.target.value)} rows={4} className="font-mono text-xs" />
           </div>
 
-          <Button className="w-full" onClick={handleSave} disabled={updateMutation.isPending}>
-            {updateMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-            保存
-          </Button>
+          {canWrite ? (
+            <Button className="w-full" onClick={handleSave} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+              保存
+            </Button>
+          ) : null}
         </TabsContent>
 
         <TabsContent value="preview" className="space-y-4">

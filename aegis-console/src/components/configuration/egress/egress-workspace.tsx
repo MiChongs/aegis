@@ -61,7 +61,7 @@ import { EgressNodeCard, EgressOverlayContext, type EgressCanvasOverlay } from "
 import { EgressImportDialog } from "@/components/configuration/egress/egress-import-dialog";
 import { EgressInspector } from "@/components/configuration/egress/egress-inspector";
 import { readNodeValues } from "@/components/configuration/egress/egress-inspector-shared";
-import { ACTION_LABEL, CORE_STATUS_LABEL, NODE_VISUAL, PORT_COLOR, defaultNodeData, nodeTitle } from "@/components/configuration/egress/egress-meta";
+import { ACTION_LABEL, CORE_STATUS_LABEL, NODE_VISUAL, PORT_COLOR, defaultNodeData, nodeTitle, useEgressAccess } from "@/components/configuration/egress/egress-meta";
 import { ToneIcon } from "@/components/users/detail/kit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -432,6 +432,7 @@ function Workspace({
   const [importOpen, setImportOpen] = useState(false);
   const [trace, setTrace] = useState<{ explanation: EgressExplanation; nodes: Set<string>; edges: Set<string> } | null>(null);
   const [testing, setTesting] = useState<Set<string>>(new Set());
+  const access = useEgressAccess();
   const save = useSaveEgressGraphMutation();
   const validate = useValidateEgressGraphMutation();
   const exporter = useExportEgressGraphMutation();
@@ -737,10 +738,10 @@ function Workspace({
       onPortClick: openPortMenu,
       onDuplicate: (node) => void duplicateNodes(ctx, [node], catalog),
       onDelete: removeNode,
-      onDelay: runDelay,
-      onSelect: runSelect
+      onDelay: access.core ? runDelay : undefined,
+      onSelect: access.core ? runSelect : undefined
     }),
-    [catalog, issueMap, chainIndex, compile, endpointStats, ruleStats, proxies.data, status.data, trace, testing, openPortMenu, ctx, removeNode, runDelay, runSelect]
+    [catalog, issueMap, chainIndex, compile, endpointStats, ruleStats, proxies.data, status.data, trace, testing, openPortMenu, ctx, removeNode, runDelay, runSelect, access.core]
   );
 
   const saveDraft = () => {
@@ -763,7 +764,7 @@ function Workspace({
     "mod+s",
     (event) => {
       event.preventDefault();
-      if (!save.isPending) saveDraft();
+      if (access.write && !save.isPending) saveDraft();
     },
     { enableOnFormTags: true, enableOnContentEditable: true }
   );
@@ -845,9 +846,11 @@ function Workspace({
               {validate.isPending ? <Loader2 className="animate-spin" /> : errorCount ? <CircleAlert /> : warningCount ? <AlertTriangle /> : <CircleCheck />}
               <span className="hidden sm:inline">{errorCount ? `${errorCount} 个错误` : warningCount ? `${warningCount} 个提醒` : "校验通过"}</span>
             </Button>
-            <ToolbarButton label="导入 mihomo / Clash 配置或分享链接" onClick={() => setImportOpen(true)}>
-              <FileUp />
-            </ToolbarButton>
+            {access.write ? (
+              <ToolbarButton label="导入 mihomo / Clash 配置或分享链接" onClick={() => setImportOpen(true)}>
+                <FileUp />
+              </ToolbarButton>
+            ) : null}
             <ToolbarButton label="导出核心配置 YAML" disabled={!summary.mihomoEnabled || exporter.isPending} onClick={exportYaml}>
               {exporter.isPending ? <Loader2 className="animate-spin" /> : <FileDown />}
             </ToolbarButton>
@@ -855,14 +858,18 @@ function Workspace({
               <PanelRight />
             </ToolbarButton>
             <span className="mx-1 h-5 w-px bg-border" />
-            <Button size="sm" variant="outline" onClick={saveDraft} disabled={save.isPending || !dirty}>
-              {save.isPending ? <Loader2 className="animate-spin" /> : <Save />}
-              保存草稿
-            </Button>
-            <Button size="sm" onClick={() => setApplyOpen(true)} disabled={errorCount > 0 || !loaded}>
-              <Rocket />
-              应用
-            </Button>
+            {access.write ? (
+              <Button size="sm" variant="outline" onClick={saveDraft} disabled={save.isPending || !dirty}>
+                {save.isPending ? <Loader2 className="animate-spin" /> : <Save />}
+                保存草稿
+              </Button>
+            ) : null}
+            {access.apply ? (
+              <Button size="sm" onClick={() => setApplyOpen(true)} disabled={errorCount > 0 || !loaded}>
+                <Rocket />
+                应用
+              </Button>
+            ) : null}
           </div>
         </header>
 
@@ -872,7 +879,7 @@ function Workspace({
 
             <div className="pointer-events-none absolute top-3 left-3 z-20 flex max-h-[calc(100%-5.5rem)] flex-col">
               {paletteOpen ? (
-                <NodePalette catalog={catalog} graph={graph} onCollapse={() => setPaletteOpen(false)} onAdd={(type) => addNodeAt(type, canvasCenter())} onImport={() => setImportOpen(true)} />
+                <NodePalette catalog={catalog} graph={graph} onCollapse={() => setPaletteOpen(false)} onAdd={(type) => addNodeAt(type, canvasCenter())} onImport={access.write ? () => setImportOpen(true) : undefined} />
               ) : (
                 <Button variant="outline" size="sm" className="pointer-events-auto gap-1.5 rounded-xl bg-background/95 shadow-sm" onClick={() => setPaletteOpen(true)}>
                   <PanelLeft /> 节点库
@@ -949,7 +956,7 @@ function Workspace({
                       revision,
                       endpointStat: compile.bindings?.[selectedNode.id] ? endpointStats.get(compile.bindings[selectedNode.id]) : undefined,
                       ruleStat: selectedNode.flowNodeType === "rule" ? ruleStats.get(String(readNodeValues(selectedNode).name ?? "")) : undefined,
-                      onDelay: coreStatus.status === "running" ? runDelay : undefined
+                      onDelay: access.core && coreStatus.status === "running" ? runDelay : undefined
                     }}
                     onDuplicate={() => void duplicateNodes(ctx, [selectedNode], catalog)}
                     onDelete={() => removeNode(selectedNode)}
@@ -1111,7 +1118,7 @@ function NodePalette({
   graph: EgressGraph | null;
   onAdd: (type: EgressNodeType) => void;
   onCollapse: () => void;
-  onImport: () => void;
+  onImport?: () => void;
 }) {
   const dragService = useService(WorkflowDragService);
   const pressed = useRef<{ type: EgressNodeType; x: number; y: number; dragging: boolean } | null>(null);
@@ -1188,17 +1195,19 @@ function NodePalette({
             </div>
           );
         })}
-        <button
-          type="button"
-          onClick={onImport}
-          className="flex w-full items-center gap-2.5 rounded-xl border border-dashed px-2 py-2 text-left transition-colors hover:bg-accent/50"
-        >
-          <ToneIcon icon={FileUp} tone="primary" size="sm" />
-          <div className="min-w-0">
-            <div className="truncate text-xs font-medium">导入配置</div>
-            <div className="truncate text-[11px] text-muted-foreground">Clash / mihomo YAML、分享链接、订阅</div>
-          </div>
-        </button>
+        {onImport ? (
+          <button
+            type="button"
+            onClick={onImport}
+            className="flex w-full items-center gap-2.5 rounded-xl border border-dashed px-2 py-2 text-left transition-colors hover:bg-accent/50"
+          >
+            <ToneIcon icon={FileUp} tone="primary" size="sm" />
+            <div className="min-w-0">
+              <div className="truncate text-xs font-medium">导入配置</div>
+              <div className="truncate text-[11px] text-muted-foreground">Clash / mihomo YAML、分享链接、订阅</div>
+            </div>
+          </button>
+        ) : null}
         <div className="rounded-xl border border-dashed p-2.5 text-[11px] leading-5 text-muted-foreground">
           <div className="font-medium text-foreground">怎么搭</div>
           <ol className="mt-1 list-decimal space-y-0.5 pl-4">

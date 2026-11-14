@@ -43,7 +43,7 @@ import type {
 } from "@/lib/api/account-deletion";
 import { useDeletionRequestsQuery, useDeletionSettingsQuery } from "@/lib/account-deletion-hooks";
 import { formatDateTimeMinute, formatRelative, formatShortDateTime } from "@/lib/datetime";
-import { usePermissionChecker } from "@/lib/permissions";
+import { useAppKeyPermissionChecker } from "@/lib/app-permission-hooks";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 
 const LIMIT = 20;
@@ -93,8 +93,9 @@ export function DeletionRequestsPanel({
   status?: DeletionStatus;
   onStatusChange: (status?: DeletionStatus) => void;
 }) {
-  const can = usePermissionChecker();
-  const canWrite = can("app:user:write");
+  const can = useAppKeyPermissionChecker(appKey);
+  const canReview = can("app:user:deletion:review");
+  const canExecute = can("app:user:deletion:execute");
   const [mode, setMode] = useState<DeletionMode | undefined>(undefined);
   const [source, setSource] = useState<DeletionSource | undefined>(undefined);
   const [keyword, setKeyword] = useState("");
@@ -285,7 +286,8 @@ export function DeletionRequestsPanel({
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         config={config}
-        canWrite={canWrite}
+        canReview={canReview}
+        canExecute={canExecute}
       />
     </SectionCard>
   );

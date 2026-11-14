@@ -44,6 +44,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { MapLibreMap as BaseMap } from "@/components/maps/maplibre-map";
 import { useAdminAppsQuery, useAdminToken, useIPBanModesQuery } from "@/lib/admin-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import {
   createGeoFence,
   deleteGeoFence,
@@ -483,6 +484,7 @@ export function GeoFencePanel() {
     return null;
   }, [fName, fApp, fMode, fBanMode, fReason, fEnabled, fExpires, pendingGeometry, editingFence, fCircleLat, fCircleLng, fCircleRadius]);
 
+  const canFence = usePermissionChecker()("system:firewall:fence");
   const saveMutation = useMutation({
     mutationFn: async (payload: GeoFencePayload) => {
       if (editingFence) return updateGeoFence(token as string, editingFence.id, payload);
@@ -1029,7 +1031,7 @@ export function GeoFencePanel() {
           grabCursor={dragging}
         >
           <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-1.5">
-            {drawMode === "idle" ? (
+            {drawMode === "idle" && !canFence ? null : drawMode === "idle" ? (
               <div className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5">
                 <button
                   type="button"
@@ -1111,10 +1113,12 @@ export function GeoFencePanel() {
             ) : fences.length === 0 ? (
               <div className="px-3 py-8 text-center">
                 <p className="text-xs font-medium text-foreground">暂无地理围栏</p>
-                <Button size="sm" className="mt-3 h-7 gap-1 text-[11px]" onClick={startPolygon}>
-                  <Plus className="size-3" />
-                  开始绘制
-                </Button>
+                {canFence ? (
+                  <Button size="sm" className="mt-3 h-7 gap-1 text-[11px]" onClick={startPolygon}>
+                    <Plus className="size-3" />
+                    开始绘制
+                  </Button>
+                ) : null}
               </div>
             ) : (
               <ul className="space-y-1.5">
@@ -1160,16 +1164,18 @@ export function GeoFencePanel() {
                           >
                             <LocateFixed className="size-3.5" />
                           </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="size-6 text-muted-foreground hover:text-foreground"
-                            title="编辑信息"
-                            onClick={() => openEditDialog(f)}
-                          >
-                            <Pencil className="size-3.5" />
-                          </Button>
-                          {f.fence && (
+                          {canFence ? (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="size-6 text-muted-foreground hover:text-foreground"
+                              title="编辑信息"
+                              onClick={() => openEditDialog(f)}
+                            >
+                              <Pencil className="size-3.5" />
+                            </Button>
+                          ) : null}
+                          {f.fence && canFence && (
                             <Button
                               size="icon"
                               variant="ghost"
@@ -1180,20 +1186,22 @@ export function GeoFencePanel() {
                               <Spline className="size-3.5" />
                             </Button>
                           )}
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="size-6 text-muted-foreground hover:text-destructive"
-                            title="删除"
-                            onClick={() => handleDelete(f)}
-                          >
-                            <Trash2 className="size-3.5" />
-                          </Button>
+                          {canFence ? (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="size-6 text-muted-foreground hover:text-destructive"
+                              title="删除"
+                              onClick={() => handleDelete(f)}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          ) : null}
                         </div>
                         <Switch
                           checked={f.enabled}
                           onCheckedChange={(v) => toggleMutation.mutate({ id: f.id, enabled: v })}
-                          disabled={toggleMutation.isPending}
+                          disabled={!canFence || toggleMutation.isPending}
                           className="scale-90"
                           aria-label={f.enabled ? "禁用围栏" : "启用围栏"}
                         />

@@ -40,7 +40,7 @@ import { ApiError } from "@/lib/api-client";
 import type { AdminAccountSetupView } from "@/lib/api/account-setup";
 import { appSectionHref } from "@/lib/app-sections";
 import { formatDateTime, formatRelative } from "@/lib/datetime";
-import { usePermissionChecker } from "@/lib/permissions";
+import { useAppKeyPermissionChecker } from "@/lib/app-permission-hooks";
 import { InfoGrid, Section, StateBlock, type InfoItem } from "./kit";
 import { isPast } from "./user-detail-shared";
 
@@ -233,8 +233,8 @@ export function UserAccountSetupSection({
 }) {
   const query = useUserAccountSetupQuery(appKey, userId);
   const resetMutation = useResetUserAccountSetupMutation(appKey, userId);
-  const can = usePermissionChecker();
-  const canWrite = can("app:user:write");
+  const can = useAppKeyPermissionChecker(appKey);
+  const canWrite = can("app:user:edit");
   const [renaming, setRenaming] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetAccount, setResetAccount] = useState(false);

@@ -15,7 +15,7 @@ import type { AppealQueue, BanAppeal } from "@/lib/api/ban-appeals";
 import { useAdminAppsQuery } from "@/lib/admin-hooks";
 import { useBanAppeals, useBanAppealStats } from "@/lib/ban-appeal-hooks";
 import { formatDateTime, formatRelative } from "@/lib/datetime";
-import { useCanOperateRisk } from "@/lib/risk-ops-hooks";
+import { usePermissionChecker } from "@/lib/permissions";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
 
@@ -29,14 +29,15 @@ const PAGE_SIZE = 20;
  * 风控平台 → 封禁申诉。
  *
  * 左边是按状态分好的申诉队列（每条一句话：谁、什么时候、申诉哪条封禁、模型怎么看），右边是复审面板；
- * 窄屏时复审面板改用对话框。选了应用就走应用级接口并可改申诉设置，没选时看全部应用（超级管理员）。
+ * 窄屏时复审面板改用对话框。选了应用就走应用级接口并可改申诉设置，没选时看全部应用（system:platform_ban:read）。
  */
 export function BanAppeals({ app }: { app?: number }) {
   const apps = useAdminAppsQuery();
   const byId = useMemo(() => new Map((apps.data ?? []).map((a) => [a.id, a])), [apps.data]);
   const scoped = app ? byId.get(app) : undefined;
   const appKey = scoped?.appKey;
-  const isSuper = useCanOperateRisk();
+  // 跨应用申诉列表挂在 /system/ban-appeals 下，归「平台封禁：查看」
+  const canCrossApp = usePermissionChecker()("system:platform_ban:read");
   const wide = useWideScreen();
 
   const [queue, setQueue] = useState<AppealQueue>("open");
@@ -48,7 +49,7 @@ export function BanAppeals({ app }: { app?: number }) {
 
   // 选了应用但应用列表还没回来：先别用跨应用接口查
   const waiting = !!app && !appKey;
-  const blocked = !app && !isSuper;
+  const blocked = !app && !canCrossApp;
   const list = useBanAppeals(appKey, { status: queue, q: q || undefined, page, pageSize: PAGE_SIZE }, !waiting && !blocked);
   const stats = useBanAppealStats(appKey, !waiting && !blocked);
   const items = list.data?.items ?? [];
@@ -74,7 +75,7 @@ export function BanAppeals({ app }: { app?: number }) {
   if (blocked) {
     return (
       <section className="rounded-xl border bg-card">
-        <CardEmpty icon={Scale} title="请先选择应用" description="在右上角选择一个应用查看它的封禁申诉；查看全部应用的申诉需要超级管理员。" />
+        <CardEmpty icon={Scale} title="请先选择应用" description="查看全部应用的申诉需要「平台封禁：查看」权限" />
       </section>
     );
   }

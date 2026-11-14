@@ -12,6 +12,8 @@ import {
   useExportAuditLogsMutation
 } from "@/lib/audit-hooks";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { EmptyState } from "@/components/ui/data-state";
+import { usePermissionChecker } from "@/lib/permissions";
 import { AuditDetail } from "@/components/audit/audit-detail";
 import { HIGH_RISK_SEVERITIES } from "@/components/audit/audit-shared";
 import {
@@ -27,21 +29,30 @@ import { AuditList } from "@/components/audit/audit-list";
 import { AuditOverview } from "@/components/audit/audit-overview";
 
 /**
- * 审计日志（仅超级管理员）。
+ * 审计日志（查看 system:audit_log:read，导出 system:audit_log:export）。
  *
  * 操作名、模块、对象由后端的操作目录给出，这里只负责筛选与排版。
  * 默认只看「操作」（不含查看类请求）；筛选状态写在 URL 上，复制地址即可分享当前视图。
  */
 export default function AuditPage() {
+  const can = usePermissionChecker();
+  if (!can("system:audit_log:read")) {
+    return (
+      <div className="page-stack">
+        <SectionHeading eyebrow="控制台" title="审计日志" />
+        <EmptyState title="缺少「审计日志：查看」权限" />
+      </div>
+    );
+  }
   // 筛选读写 URL 查询参数，useSearchParams 必须包在 Suspense 边界内
   return (
     <Suspense>
-      <AuditPageContent />
+      <AuditPageContent canExport={can("system:audit_log:export")} />
     </Suspense>
   );
 }
 
-function AuditPageContent() {
+function AuditPageContent({ canExport }: { canExport: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -110,7 +121,7 @@ function AuditPageContent() {
         facets={facets}
         exporting={exportMutation.isPending}
         onChange={patchFilters}
-        onExport={exportCsv}
+        onExport={canExport ? exportCsv : undefined}
       />
 
       <AuditList

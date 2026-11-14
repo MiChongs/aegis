@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { EgressEditor, type EgressEditorSeed } from "@/components/configuration/egress/egress-editor";
-import { ACTION_LABEL, CORE_STATUS_LABEL, PROTOCOL_LABEL, delayTone, formatBytes, formatSpeed } from "@/components/configuration/egress/egress-meta";
+import { ACTION_LABEL, CORE_STATUS_LABEL, PROTOCOL_LABEL, delayTone, formatBytes, formatSpeed, useEgressAccess } from "@/components/configuration/egress/egress-meta";
 import {
   ConnectionsPanel,
   DiagnosticsPanel,
@@ -42,7 +42,6 @@ import { EmptyState, LoadingState } from "@/components/ui/data-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { EgressGraphView, MihomoCoreStatusView } from "@/lib/api/egress";
 import { ApiError } from "@/lib/api/client";
-import { useAuthStore } from "@/lib/auth-store";
 import { formatClockSeconds, formatDateTime, formatRelative } from "@/lib/datetime";
 import {
   useEgressGraphQuery,
@@ -59,17 +58,17 @@ import { cn } from "@/lib/utils";
  *
  * 上半部分是网关与 mihomo 核心的运行态（实时速率曲线、内存、判定计数），入口是全屏画布编辑器；
  * 下半部分按页签看线路健康、策略组（测速与切换）、订阅与规则集、在途连接、核心日志、诊断与版本回滚。
- * 全部接口限超级管理员。
+ * 查看、编辑草稿、应用与核心运维各自对应一个 system:egress 权限点。
  */
 
 export function EgressGatewayPanel() {
-  const isSuperAdmin = useAuthStore((state) => Boolean(state.operator?.isSuperAdmin));
-  const query = useEgressGraphQuery(isSuperAdmin);
+  const access = useEgressAccess();
+  const query = useEgressGraphQuery(access.read);
   const [editorOpen, setEditorOpen] = useState(false);
   const [seed, setSeed] = useState<EgressEditorSeed | null>(null);
   const [tab, setTab] = useState("lines");
 
-  if (!isSuperAdmin) return <EmptyState title="仅超级管理员可配置出海网关" description="路由表决定平台所有对外调用走哪条线，影响面等同于防火墙。" />;
+  if (!access.read) return <EmptyState title="缺少「出海网关：查看」权限" />;
   if (query.isLoading) return <LoadingState title="加载出海网关" />;
   if (query.error || !query.data) return <EmptyState title="出海网关不可用" description={query.error instanceof Error ? query.error.message : undefined} />;
 
@@ -140,6 +139,7 @@ function GatewayCard({ view, onOpen }: { view: EgressGraphView; onOpen: () => vo
   const runtime = view.runtime;
   const summary = view.compile.summary;
   const probe = useEgressProbeMutation();
+  const access = useEgressAccess();
   const errors = view.compile.issues.filter((issue) => issue.level === "error").length;
   const source =
     runtime.source === "graph" ? `画布第 ${view.appliedVersion} 版` : runtime.source === "database" ? "旧版控制台配置" : runtime.source === "disabled" ? "未配置" : "环境变量";
@@ -205,28 +205,30 @@ function GatewayCard({ view, onOpen }: { view: EgressGraphView; onOpen: () => vo
       <div className="mt-auto flex flex-wrap gap-2 pt-5">
         <Button onClick={onOpen} className="gap-1.5">
           <Network />
-          打开画布编辑
+          {access.write ? "打开画布编辑" : "查看画布"}
         </Button>
-        <Button
-          variant="outline"
-          className="gap-1.5"
-          disabled={probe.isPending || !runtime.endpoints.length}
-          onClick={() =>
-            probe.mutate(undefined, {
-              onSuccess: (data) => {
-                const udp = data.results.filter((item) => item.udpChecked);
-                toast.success(
-                  `探测完成：TCP ${data.results.filter((item) => item.ok).length} / ${data.results.length} 条可用` +
-                    (udp.length ? `，UDP ${udp.filter((item) => item.udpOk).length} / ${udp.length} 条可用` : "")
-                );
-              },
-              onError: (error) => toast.error(error instanceof ApiError ? error.message : "探测失败")
-            })
-          }
-        >
-          {probe.isPending ? <Loader2 className="animate-spin" /> : <Activity />}
-          立即探测线路
-        </Button>
+        {access.write ? (
+          <Button
+            variant="outline"
+            className="gap-1.5"
+            disabled={probe.isPending || !runtime.endpoints.length}
+            onClick={() =>
+              probe.mutate(undefined, {
+                onSuccess: (data) => {
+                  const udp = data.results.filter((item) => item.udpChecked);
+                  toast.success(
+                    `探测完成：TCP ${data.results.filter((item) => item.ok).length} / ${data.results.length} 条可用` +
+                      (udp.length ? `，UDP ${udp.filter((item) => item.udpOk).length} / ${udp.length} 条可用` : "")
+                  );
+                },
+                onError: (error) => toast.error(error instanceof ApiError ? error.message : "探测失败")
+              })
+            }
+          >
+            {probe.isPending ? <Loader2 className="animate-spin" /> : <Activity />}
+            立即探测线路
+          </Button>
+        ) : null}
         {errors ? <span className="self-center text-xs text-red-600 dark:text-red-400">草稿里有 {errors} 个错误</span> : null}
       </div>
     </section>
@@ -244,6 +246,7 @@ function CoreCard({ view }: { view: EgressGraphView }) {
   const install = useInstallMihomoMutation();
   const restart = useRestartMihomoMutation();
   const stop = useStopMihomoMutation();
+  const access = useEgressAccess();
   const core: MihomoCoreStatusView = status.data ?? { ...view.core, traffic: [] };
   const label = CORE_STATUS_LABEL[core.status] ?? CORE_STATUS_LABEL.disabled;
   const rows = useMemo(
@@ -280,7 +283,7 @@ function CoreCard({ view }: { view: EgressGraphView }) {
           </p>
         </div>
         <div className="flex shrink-0 gap-1">
-          {!core.binaryPresent || core.status === "missing" ? (
+          {!access.core ? null : !core.binaryPresent || core.status === "missing" ? (
             <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => run("install")}>
               {install.isPending ? <Loader2 className="animate-spin" /> : <Download />}
               安装核心

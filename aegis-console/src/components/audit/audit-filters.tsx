@@ -125,7 +125,8 @@ export function AuditFilters({
   facets?: AuditFacets;
   exporting: boolean;
   onChange: (patch: Partial<AuditFilterState>) => void;
-  onExport: () => void;
+  /** 不传则不显示导出按钮 */
+  onExport?: () => void;
 }) {
   // 搜索框本地输入，停顿 350ms 再提交，避免每敲一个字就查一次
   // 外部清除搜索（点筛选标签、清除全部）时同步回输入框：渲染期比较上一次的值，不用 effect
@@ -171,10 +172,12 @@ export function AuditFilters({
           />
         </div>
 
-        <Button variant="outline" size="sm" className="h-8" onClick={onExport} disabled={exporting}>
-          {exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-          导出 CSV
-        </Button>
+        {onExport ? (
+          <Button variant="outline" size="sm" className="h-8" onClick={onExport} disabled={exporting}>
+            {exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+            导出 CSV
+          </Button>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
