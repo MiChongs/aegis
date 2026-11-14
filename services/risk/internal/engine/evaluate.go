@@ -395,7 +395,7 @@ func (p *Program) fetch(ctx context.Context, env *Env, req Request, src Sources,
 				continue
 			}
 			q := VelocityQuery{Feature: f.Key, WindowSeconds: f.Velocity.WindowSeconds, Key: p.counterKey(f, env, value),
-				Subject: CounterTag(f.Entity, env.AppID, value), Actors: actors}
+				Subject: CounterTag(f.Entity, env.AppID, value), Actors: actors, ReadOnly: !RecordsVelocity(f, env)}
 			if f.Velocity.Agg == bundle.AggDistinct {
 				q.Distinct = EntityValue(env, f.Velocity.DistinctOf)
 				if q.Distinct == "" {

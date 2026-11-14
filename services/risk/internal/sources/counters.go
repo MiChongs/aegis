@@ -82,6 +82,28 @@ end
 return n
 `)
 
+// 只读次数：窗口内各桶合计之和。KEYS 窗口内全部桶。
+var countRead = redis.NewScript(`
+local sum = 0
+for i = 1, #KEYS do
+  local v = redis.call('HGET', KEYS[i], '#')
+  if v then sum = sum + tonumber(v) end
+end
+return sum
+`)
+
+// 只读去重：窗口内的成员数（不写入、不清理）。KEYS[1] 成员集合，KEYS[2..] 旧格式的桶。ARGV[1] 窗口起点秒数。
+var distinctRead = redis.NewScript(`
+local n = redis.call('ZCOUNT', KEYS[1], '(' .. ARGV[1], '+inf')
+if #KEYS > 1 then
+  local legacy = {}
+  for i = 2, #KEYS do legacy[#legacy + 1] = KEYS[i] end
+  local ok, old = pcall(redis.call, 'PFCOUNT', unpack(legacy))
+  if ok and type(old) == 'number' and old > n then n = old end
+end
+return n
+`)
+
 // 反向索引：登记这个对象参与的计数，顺手清掉已过期的登记，键的寿命跟最晚到期的一条走。
 // KEYS[1] 索引键。ARGV[1] 现在秒数，其后成对的（到期秒数, 登记项）。
 var indexAdd = redis.NewScript(`

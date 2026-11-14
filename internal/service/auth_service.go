@@ -442,7 +442,8 @@ func (s *AuthService) authenticatePassword(ctx context.Context, appID int64, acc
 		})
 		if s.plugin != nil {
 			s.runDetached("login.failed_hook", 5*time.Second, func(actx context.Context) {
-				s.plugin.ExecuteHook(actx, HookAuthLoginFailed, map[string]any{"account": account, "appId": appID, "ip": ip}, plugindomain.HookMetadata{IP: ip, AppID: &appID})
+				// 带上账号 ID：风控按「登录失败的已有账号」去重计数（IP / 网段多账号），不存在的登录名不会走到这里
+				s.plugin.ExecuteHook(actx, HookAuthLoginFailed, map[string]any{"account": account, "appId": appID, "ip": ip, "userId": userID}, plugindomain.HookMetadata{IP: ip, AppID: &appID, UserID: &userID})
 			})
 		}
 		return nil, nil, "", apperrors.New(40101, http.StatusUnauthorized, "账号或密码错误")

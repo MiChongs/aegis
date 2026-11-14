@@ -169,7 +169,8 @@ const (
 	AggAvg      = "avg"
 )
 
-// VelocityDef 滑窗计数：本次请求算在内
+// VelocityDef 滑窗计数：本次请求算在内。
+// 主体或去重成员是登录名时，只有已确认存在的账号（已登录的请求）才记入，校验前的输入只读（engine.RecordsVelocity）。
 type VelocityDef struct {
 	WindowSeconds int    `json:"windowSeconds"`
 	Agg           string `json:"agg"`                  // count / distinct

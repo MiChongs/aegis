@@ -36,6 +36,27 @@ type VelocityQuery struct {
 	Subject string   // 计数键的主体
 	Actors  []string // 这次事件的贡献者：账号、登录名、设备
 	Member  string   // 去重成员
+
+	// ReadOnly 只读当前值，这次请求不记入。见 RecordsVelocity。
+	ReadOnly bool
+}
+
+// RecordsVelocity 这次请求能不能记进这个滑窗计数。
+//
+// 登录名（account）只有在账号确认存在时才可信：登录、找回密码这些接入点在校验之前就做决策，
+// 那时的登录名只是对方输入的字符串——打错的、根本不存在的、或是冒用别人的都会进来。
+// 拿它当计数的主体或去重成员，一个地址上随手试几个名字就成了「多个账号」，
+// 别人也能用受害者的登录名从各处请求，把受害者的「一号多机 / 多 IP」刷上去。
+// 所以只在已解析到账号（UserID > 0，即已登录的请求）时记入，其余只读。
+// 登录失败这类「账号存在且出了问题」的计数走事件（login.fail 带 user_id，见流式特征），不靠决策时的输入。
+func RecordsVelocity(f bundle.Feature, env *Env) bool {
+	if env.UserID > 0 {
+		return true
+	}
+	if f.Entity == bundle.EntityAccount {
+		return false
+	}
+	return !(f.Velocity != nil && f.Velocity.Agg == bundle.AggDistinct && f.Velocity.DistinctOf == bundle.EntityAccount)
 }
 
 // CounterTag 计数索引用的对象标签。用户 ID 全平台唯一；登录名按应用区分；设备码、地址、网段、手机号是全局的。

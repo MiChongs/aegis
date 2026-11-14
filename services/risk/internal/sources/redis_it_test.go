@@ -52,6 +52,26 @@ func TestRedisIT(t *testing.T) {
 		}
 	}
 
+	// 只读：读到窗口内的值，但不记入、不登记索引
+	for i := 0; i < 3; i++ {
+		v, err := r.Velocity(ctx, []engine.VelocityQuery{
+			{Feature: "c", Key: "it:" + tag, WindowSeconds: 600, ReadOnly: true, Actors: []string{"a:1:ro" + tag}},
+			{Feature: "d", Key: "itd:" + tag, WindowSeconds: 600, Distinct: "never" + tag, ReadOnly: true, Member: "a:1:never" + tag},
+			{Feature: "e", Key: "itempty:" + tag, WindowSeconds: 600, Distinct: "x", ReadOnly: true},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v["c"] != 5 || v["d"] != 3 || v["e"] != 0 {
+			t.Fatalf("只读 #%d = %v", i, v)
+		}
+	}
+	for _, k := range []string{indexPrefix + "a:1:ro" + tag + "}", indexPrefix + "a:1:never" + tag + "}", distinctPrefix + "itempty:" + tag + "}"} {
+		if n, _ := rdb.Exists(ctx, k).Result(); n != 0 {
+			t.Fatalf("只读不该写 %s", k)
+		}
+	}
+
 	// 流式特征：RisingWave 写回的值
 	if err := rdb.Set(ctx, StreamPrefix+"pay_24h:1:"+tag, "128.5", time.Minute).Err(); err != nil {
 		t.Fatal(err)

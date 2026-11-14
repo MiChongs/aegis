@@ -46,7 +46,8 @@ type Redis struct {
 // NewRedis 新建
 func NewRedis(rdb redis.UniversalClient) *Redis { return &Redis{rdb: rdb, now: time.Now} }
 
-// Velocity 一个管道里跑完全部滑窗特征，并登记反向索引（存法见 counters.go）。本次请求算在内。
+// Velocity 一个管道里跑完全部滑窗特征，并登记反向索引（存法见 counters.go）。本次请求算在内，
+// ReadOnly 的只读不记。
 //
 // 次数：窗口切成最多 60 个桶，每桶一个键。去重：一个精确集合，窗口按秒滑动。
 // 计数与索引不在一个槽里，做不到一起成功或失败：索引写丢的那一次贡献回退不掉，会随窗口自然过期。
@@ -65,6 +66,19 @@ func (r *Redis) Velocity(ctx context.Context, qs []engine.VelocityQuery) (map[st
 			width := bucketWidth(q.WindowSeconds)
 			ttl := int64(q.WindowSeconds) + width + 5
 			expire := now.Unix() + ttl
+			if q.ReadOnly {
+				// 不记入：只读当前值，也不登记索引（这次请求没有留下任何贡献）
+				if q.Distinct != "" {
+					keys := []string{distinctPrefix + q.Key + "}"}
+					if now.Unix() < since+ttl {
+						keys = append(keys, bucketKeys(legacyHLLPrefix+q.Key+"}:", q.WindowSeconds, now)...)
+					}
+					cmds[i] = distinctRead.Eval(ctx, p, keys, now.Unix()-int64(q.WindowSeconds))
+				} else {
+					cmds[i] = countRead.Eval(ctx, p, bucketKeys(countPrefix+q.Key+"}:", q.WindowSeconds, now))
+				}
+				continue
+			}
 			tuple := actorTuple(q.Actors)
 			kind := byte(kindCount)
 			if q.Distinct != "" {
