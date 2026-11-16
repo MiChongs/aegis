@@ -2765,11 +2765,17 @@ data class AegisMusicRecommendations(
     val variant: String = "",
 )
 
+/**
+ * 推荐结果里的一首。[resolve] 为 true 时是待解析项（服务端推荐了曲库里还没有的歌）：[track] 只有歌名与歌手，
+ * source、songId 为空，客户端按「歌名 歌手」在自己的音源里搜出真实曲目再播放，搜不到时跳过并上报 dislike
+ * （props.reason = wrong_song、props.resolve = failed）。
+ */
 @kotlinx.serialization.Serializable
 data class AegisMusicRecItem(
     val track: AegisMusicTrack = AegisMusicTrack(),
     val score: Double = 0.0,
     val reason: AegisMusicRecReason? = null,
+    val resolve: Boolean = false,
 )
 
 /** 推荐原因：[kind] 为 because_track / artist / similar_users / trending / explore / seed，[text] 可直接展示。 */
