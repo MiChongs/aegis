@@ -1,0 +1,47 @@
+[project]
+name = "music-deep"
+version = "0.1.0"
+description = "Aegis 音乐个性化第三期：深度序列模型（SASRec）与 LightGBM LambdaRank 精排训练服务"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch>=2.5",
+    "lightgbm>=4.5",
+    "numpy>=2.0",
+    "safetensors>=0.4",
+    "psycopg[binary]>=3.2",
+    "clickhouse-connect>=0.8",
+    "nats-py>=2.9",
+]
+
+[project.scripts]
+music-deep = "music_deep.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["uv_build>=0.8,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv]
+# 只在 Linux 上跑（开发机与镜像），锁文件不必解出 macOS / Windows 的轮子
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+# CPU 版 torch 只从 PyTorch 官方 CPU 索引取（不带 CUDA，镜像小几个 GB）
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]

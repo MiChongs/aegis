@@ -88,6 +88,29 @@ services:
       retries: 10
       start_period: 30s
 
+  # 第三期深度模型训练（Python，docs/music-personalization-3.md「三、深度模型」）：消费 music.job.deep.>，
+  # ClickHouse 走 HTTP（默认取 MUSIC_CLICKHOUSE_ADDR 的主机 + 8123，即 risk-clickhouse:8123）
+  music-deep:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/music-deep.Dockerfile
+    image: aegis-music-deep:latest
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      <<: *music-env
+      MUSIC_DEEP_THREADS: "4"
+    networks: [dokploy-network]
+    deploy:
+      resources:
+        limits: {memory: 6g}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/readyz', timeout=3)"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+      start_period: 60s
+
 networks:
   dokploy-network:
     external: true

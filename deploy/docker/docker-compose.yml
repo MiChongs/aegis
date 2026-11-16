@@ -552,6 +552,30 @@ services:
       retries: 10
       start_period: 15s
 
+  # 第三期深度模型训练（Python：SASRec + LightGBM LambdaRank，docs/music-personalization-3.md）。
+  # 消费 MUSIC_JOBS 的 music.job.deep.>；ClickHouse 走 HTTP（默认同主机 8123，即 music-clickhouse:8123）
+  music-deep:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/music-deep.Dockerfile
+    image: aegis-music-deep:latest
+    profiles: ["music"]
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      <<: *music-env
+      MUSIC_DEEP_THREADS: "4"
+    depends_on: *music-deps
+    deploy:
+      resources:
+        limits: {memory: 6g}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/readyz', timeout=3)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
   # ════════════════════════════ 风控平台（profile: risk）════════════════════════════
   #  docs/risk-platform.md。基础设施在前，三个 Go 服务与 Flink 作业在后。
 
