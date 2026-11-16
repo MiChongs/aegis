@@ -11,10 +11,10 @@ import { useMusicModelQuery } from "@/lib/music-hooks";
 import { STAGE_LABEL, TRIGGER_LABEL, bytesText, compact, elapsedText, num, runDuration } from "./music-format";
 import { CONFIG_GROUPS, formatFieldValue, getPath } from "./music-config-fields";
 import { EmptyLine, MusicError } from "./music-kit";
-import { ModelMetricsCompare, ModelStatusBadge } from "./music-model-parts";
+import { ModelMetricsCompare, ModelStatusBadge, RankerSummary } from "./music-model-parts";
 
 /**
- * 训练详情抽屉：指标对比基线、规模、各阶段耗时、训练时的参数快照与日志。
+ * 训练详情抽屉：指标对比基线、精排（第二期）、规模、各阶段耗时、训练时的参数快照与日志。
  * 训练中的版本每 5 秒刷新（日志随之变长），结束后停止。
  */
 export function MusicModelSheet({
@@ -110,6 +110,13 @@ function Detail({
       <Section title="离线评估">
         {run.metrics ? <ModelMetricsCompare metrics={run.metrics} /> : <EmptyLine>暂无评估结果</EmptyLine>}
       </Section>
+
+      {run.status === "succeeded" ? (
+        <Section title="精排">
+          {/* 服务端升级前没有这个字段，按 null 处理 */}
+          <RankerSummary ranker={run.ranker ?? null} />
+        </Section>
+      ) : null}
 
       <Section title="阶段耗时">
         {run.stages.length ? (

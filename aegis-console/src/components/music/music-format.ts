@@ -4,7 +4,16 @@
  * 规则同风控平台（components/risk/kit/humanize.ts）：文案正式简洁，不用「·」分隔；给运营看的地方不露字段名，
  * 只有模型指标保留 Recall@20 / NDCG@20 这类业内通用名，并配一句短说明。
  */
-import type { MusicEvent, MusicModelRun, MusicScene, MusicTrackSort } from "@/lib/api/music";
+import type {
+  MusicEvent,
+  MusicExperimentStatus,
+  MusicFeedbackKind,
+  MusicModelRun,
+  MusicReportPeriod,
+  MusicRuleKind,
+  MusicScene,
+  MusicTrackSort
+} from "@/lib/api/music";
 
 export const EVENT_LABEL: Record<string, string> = {
   play_start: "开始播放",
@@ -22,7 +31,11 @@ export const EVENT_LABEL: Record<string, string> = {
   search_click: "点击搜索结果",
   click: "点击歌曲",
   impression: "推荐展示",
-  lyrics_open: "打开歌词"
+  lyrics_open: "打开歌词",
+  undislike: "撤销不感兴趣",
+  autoplay: "智能续播",
+  report_view: "查看听歌报告",
+  onboarding: "新用户偏好"
 };
 
 export const EVENT_TYPES = Object.keys(EVENT_LABEL);
@@ -35,10 +48,14 @@ export const SCENE_LABEL: Record<string, string> = {
   home: "为你推荐",
   daily: "每日推荐",
   radio: "私人电台",
-  similar: "相似歌曲"
+  similar: "相似歌曲",
+  autoplay: "智能续播",
+  discover: "每周雷达",
+  mix: "风格歌单",
+  artist: "歌手热门"
 };
 
-export const SCENES: MusicScene[] = ["home", "daily", "radio", "similar"];
+export const SCENES: MusicScene[] = ["home", "daily", "radio", "similar", "autoplay", "discover", "mix", "artist"];
 
 export function sceneLabel(scene: string) {
   return SCENE_LABEL[scene] ?? scene;
@@ -88,10 +105,18 @@ export const CHANNEL_LABEL: Record<string, string> = {
   artist: "常听歌手",
   trending: "近期热门",
   explore: "探索",
-  penalty: "降权"
+  penalty: "降权",
+  foldin: "实时口味",
+  ranker: "精排",
+  rule: "运营干预",
+  fatigue: "曝光疲劳"
 };
 
-export const CHANNEL_ORDER = ["als", "itemcf", "artist", "trending", "explore"] as const;
+/** 叠加成融合分的通道（堆叠条按这个顺序画）；foldin 为第二期的实时折入 */
+export const CHANNEL_ORDER = ["als", "itemcf", "artist", "trending", "explore", "foldin"] as const;
+
+/** 第二期：作用在融合分之后的调整项，单独列出不进堆叠条 */
+export const ADJUST_CHANNELS = ["ranker", "rule", "fatigue"] as const;
 
 /** 通道配色：同一通道在各页面同一个颜色 */
 export const CHANNEL_COLOR: Record<string, string> = {
@@ -100,6 +125,7 @@ export const CHANNEL_COLOR: Record<string, string> = {
   artist: "bg-amber-500",
   trending: "bg-rose-500",
   explore: "bg-emerald-500",
+  foldin: "bg-teal-500",
   penalty: "bg-zinc-400"
 };
 
@@ -151,6 +177,95 @@ export const METRIC_META = [
   { key: "hitRate20", label: "命中率", note: "前 20 条推荐里至少命中一首的用户占比" },
   { key: "coverage", label: "覆盖率", note: "推荐结果覆盖了曲库里多少作品，越高越不扎堆" }
 ] as const;
+
+/* ── 第二期：反馈原因、规则、实验、精排特征、语种 ── */
+
+/** 不感兴趣的原因（事件 props.reason） */
+export const DISLIKE_REASON_LABEL: Record<string, string> = {
+  not_interested: "不喜欢这首",
+  heard_too_much: "听腻了",
+  dislike_artist: "不喜欢这位歌手",
+  poor_quality: "音质差",
+  wrong_song: "歌曲不对"
+};
+
+export function dislikeReasonLabel(reason: string) {
+  if (!reason) return DISLIKE_REASON_LABEL.not_interested;
+  return DISLIKE_REASON_LABEL[reason] ?? reason;
+}
+
+export const FEEDBACK_KIND_LABEL: Record<MusicFeedbackKind, string> = {
+  track: "不喜欢的歌",
+  artist: "不喜欢的歌手",
+  suppressed: "暂不推荐",
+  version: "屏蔽的版本"
+};
+
+export const RULE_KIND: Record<MusicRuleKind, { label: string; tone: "danger" | "info" | "warning"; note: string }> = {
+  block: { label: "屏蔽", tone: "danger", note: "全部场景直接过滤" },
+  boost: { label: "加权", tone: "info", note: "分数乘以权重" },
+  pin: { label: "置顶", tone: "warning", note: "插入到指定位置，每人每天最多一次" }
+};
+
+export const EXPERIMENT_STATUS: Record<MusicExperimentStatus, { label: string; tone: "secondary" | "success" | "outline" }> = {
+  draft: { label: "草稿", tone: "secondary" },
+  running: { label: "运行中", tone: "success" },
+  stopped: { label: "已停止", tone: "outline" }
+};
+
+/** 精排特征（model.RankFeatures 的顺序与名字） */
+export const RANK_FEATURE_LABEL: Record<string, string> = {
+  als: "口味模型",
+  itemcf: "相似歌曲",
+  artist: "常听歌手",
+  trending: "近期热门",
+  explore: "探索",
+  foldin: "实时口味",
+  pop: "作品热度",
+  complete: "作品完播率",
+  skip: "作品早跳率",
+  artist_aff: "歌手偏好",
+  recent: "近期播放过",
+  fatigue: "曝光疲劳",
+  lang_match: "语种匹配",
+  fresh: "从没听过",
+  pref_artist: "偏好里选过的歌手",
+  position: "展示位置"
+};
+
+export function rankFeatureLabel(name: string) {
+  return RANK_FEATURE_LABEL[name] ?? name;
+}
+
+export const LANG_LABEL: Record<string, string> = {
+  zh: "华语",
+  en: "欧美",
+  ja: "日语",
+  ko: "韩语",
+  other: "其他"
+};
+
+export function langLabel(lang: string) {
+  return LANG_LABEL[lang] ?? lang;
+}
+
+export const REPORT_PERIOD_LABEL: Record<MusicReportPeriod, string> = { week: "周报", month: "月报", year: "年报" };
+
+/** 显著性阈值：p 值低于它算显著 */
+export const SIGNIFICANCE = 0.05;
+
+export function pValueText(p: number | null | undefined) {
+  if (typeof p !== "number" || !Number.isFinite(p)) return "—";
+  if (p < 0.001) return "< 0.001";
+  return p.toFixed(3);
+}
+
+/** 相对提升：0.123 → 「+12.3%」 */
+export function signedPct(ratio: number | null | undefined) {
+  if (typeof ratio !== "number" || !Number.isFinite(ratio)) return "—";
+  const v = ratio * 100;
+  return `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(Math.abs(v) >= 100 ? 0 : 1)}%`;
+}
 
 /* ── 数值 ── */
 
@@ -278,7 +393,18 @@ export function eventSummary(event: MusicEvent): string {
       return `${sceneLabel(ctx.scene ?? "")}展示${count ? ` ${count} 首` : ""}`;
     }
     case "dislike":
-      return event.props?.scope === "artist" ? "不喜欢这位歌手" : "不喜欢这首";
+      if (event.props?.scope === "artist") return DISLIKE_REASON_LABEL.dislike_artist;
+      return dislikeReasonLabel(event.props?.reason ?? "");
+    case "undislike":
+      return event.props?.scope === "artist" ? `撤销不喜欢歌手${event.props?.artist ? `「${event.props.artist}」` : ""}` : "撤销不感兴趣";
+    case "report_view": {
+      const period = event.props?.period as MusicReportPeriod | undefined;
+      return period && REPORT_PERIOD_LABEL[period] ? `打开${REPORT_PERIOD_LABEL[period]}` : "打开听歌报告";
+    }
+    case "onboarding":
+      return event.props?.action === "skip" ? "跳过偏好选择" : event.props?.artists ? `选了 ${event.props.artists.split(",").filter(Boolean).length} 位歌手` : "完成偏好选择";
+    case "autoplay":
+      return "接上一批续播";
     case "playlist_add":
       return ctx.playlistId ? `加入歌单 ${ctx.playlistId}` : "加入歌单";
     case "click": {

@@ -2,7 +2,24 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CalendarClock, Gauge, Layers, Loader2, RotateCcw, Save, Scale, Settings2, Shuffle, Sparkles, ToggleRight, Waypoints, type LucideIcon } from "lucide-react";
+import {
+  CalendarClock,
+  Cpu,
+  Gauge,
+  Layers,
+  ListMusic,
+  Loader2,
+  RotateCcw,
+  Save,
+  Scale,
+  Settings2,
+  Shuffle,
+  Sparkles,
+  Timer,
+  ToggleRight,
+  Waypoints,
+  type LucideIcon
+} from "lucide-react";
 import { Panel, SettingRow, TabStack } from "@/components/traffic/traffic-kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,7 +50,10 @@ const GROUP_ICON: Record<string, LucideIcon> = {
   itemcf: Waypoints,
   blend: Layers,
   diversity: Shuffle,
-  publish: Gauge
+  publish: Gauge,
+  ranker: Cpu,
+  fatigue: Timer,
+  scenes: ListMusic
 };
 
 /**

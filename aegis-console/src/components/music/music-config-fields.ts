@@ -1,10 +1,10 @@
-import type { MusicConfig, MusicConfigInput } from "@/lib/api/music";
+import { MUSIC_CONFIG_V2_DEFAULTS, type MusicConfig, type MusicConfigInput } from "@/lib/api/music";
 
 /**
  * 音乐推荐配置项目录：配置表单与训练详情里的「参数快照」共用一份，叫法与取值范围只在这里定义。
  *
- * 取值范围照抄契约「PUT /config 校验」：前端先拦一次，越界时保存按钮不可用、字段下方给出范围；
- * 后端仍会再校验（40000，message 指出哪一项）。
+ * 取值范围照抄契约「PUT /config 校验」（第二期的几组见 docs/music-personalization-2.md「应用配置增量」）：
+ * 前端先拦一次，越界时保存按钮不可用、字段下方给出范围；后端仍会再校验（40000，message 指出哪一项）。
  */
 
 export type NumberFieldSpec = {
@@ -113,6 +113,37 @@ export const CONFIG_GROUPS: FieldGroup[] = [
       { kind: "bool", path: "autoPublish", label: "达标后自动发布" },
       n("minLift", "自动发布要求 NDCG@20 不低于基线的倍数", 0, 3, 0.05, "倍")
     ]
+  },
+  {
+    key: "ranker",
+    title: "实时口味与精排",
+    fields: [
+      { kind: "bool", path: "foldIn", label: "实时折入（训练间隙按最新行为更新口味）" },
+      { kind: "bool", path: "ranker.enabled", label: "精排（达标后才会真正启用）" },
+      n("ranker.minSamples", "精排至少需要的样本数", 200, 1000000, 1, "条"),
+      n("ranker.l2", "精排正则强度", 0, 1, 0.0001),
+      n("ranker.epochs", "精排训练轮数", 1, 50, 1, "轮")
+    ]
+  },
+  {
+    key: "fatigue",
+    title: "曝光疲劳与暂不推荐",
+    fields: [
+      n("fatigue.threshold", "近 7 天展示未点击达到多少次开始降权", 1, 20, 1, "次"),
+      n("fatigue.decay", "每多一次的衰减系数", 0.1, 1, 0.05),
+      n("suppressDays", "「听腻了」之后暂不推荐", 1, 180, 1, "天")
+    ]
+  },
+  {
+    key: "scenes",
+    title: "每周雷达、风格歌单与智能续播",
+    fields: [
+      n("discover.size", "每周雷达的歌曲数", 10, 50, 1, "首"),
+      n("discover.popularityPenalty", "每周雷达偏向冷门的强度", 0, 2, 0.05),
+      n("mixes.max", "风格歌单最多几个（0 为关闭）", 0, 10, 1, "个"),
+      n("mixes.size", "每个风格歌单的歌曲数", 10, 50, 1, "首"),
+      n("autoplay.size", "智能续播每批的歌曲数", 5, 30, 1, "首")
+    ]
   }
 ];
 
@@ -172,12 +203,24 @@ export function validateConfig(config: MusicConfigInput): Record<string, string>
 export function toConfigInput(config: MusicConfig): MusicConfigInput {
   // 去掉服务端写的两个字段，其余原样提交（含将来后端新增、前端尚未展示的字段）
   const { updatedAt, updatedBy, ...rest } = config;
-  return rest;
+  // 第二期字段在服务端升级前缺省：按契约默认值补齐，免得表单出现空值而无法保存
+  const d = MUSIC_CONFIG_V2_DEFAULTS;
+  return {
+    ...rest,
+    foldIn: rest.foldIn ?? d.foldIn,
+    ranker: { ...d.ranker, ...rest.ranker },
+    fatigue: { ...d.fatigue, ...rest.fatigue },
+    suppressDays: rest.suppressDays ?? d.suppressDays,
+    discover: { ...d.discover, ...rest.discover },
+    mixes: { ...d.mixes, ...rest.mixes },
+    autoplay: { ...d.autoplay, ...rest.autoplay }
+  };
 }
 
 /** 数值的展示：小数位跟着步长走 */
 export function formatFieldValue(spec: FieldSpec, value: unknown): string {
-  if (spec.kind === "bool") return value ? "开启" : "关闭";
+  // 旧版本的参数快照没有第二期字段，显示「—」而不是「关闭」
+  if (spec.kind === "bool") return typeof value === "boolean" ? (value ? "开启" : "关闭") : "—";
   if (spec.kind === "cron") return cronLabel(String(value ?? "")) || "不定时";
   const v = typeof value === "number" ? value : Number.NaN;
   if (!Number.isFinite(v)) return "—";

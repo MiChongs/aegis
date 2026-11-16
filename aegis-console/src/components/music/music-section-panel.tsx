@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Brain, Disc3, ListMusic, ScrollText, Settings2, Users } from "lucide-react";
+import { ArrowRight, Brain, Disc3, FlaskConical, ListMusic, MicVocal, ScrollText, Search, Settings2, ShieldBan, Users } from "lucide-react";
 import { DetailPanel, Metric } from "@/components/apps/detail/app-detail-kit";
 import { Button } from "@/components/ui/button";
 import { formatRelative } from "@/lib/datetime";
@@ -13,6 +13,10 @@ import { useMusicAccess } from "./music-shell";
 const LINKS = [
   { tab: "listeners", label: "听众", icon: Users },
   { tab: "tracks", label: "作品", icon: Disc3 },
+  { tab: "artists", label: "歌手", icon: MicVocal },
+  { tab: "search", label: "搜索", icon: Search },
+  { tab: "rules", label: "运营干预", icon: ShieldBan },
+  { tab: "experiments", label: "实验", icon: FlaskConical },
   { tab: "events", label: "事件", icon: ScrollText },
   { tab: "models", label: "模型", icon: Brain },
   { tab: "config", label: "配置", icon: Settings2 }

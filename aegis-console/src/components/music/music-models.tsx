@@ -113,6 +113,7 @@ export function MusicModels({ appKey, canManage }: { appKey: string; canManage: 
                   <TableHead>触发</TableHead>
                   <TableHead className="text-right">NDCG@20</TableHead>
                   <TableHead className="text-right">Recall@20</TableHead>
+                  <TableHead className="text-right">精排 AUC</TableHead>
                   <TableHead className="text-right">规模</TableHead>
                   <TableHead className="text-right">耗时</TableHead>
                   <TableHead className="text-right">创建</TableHead>
@@ -180,6 +181,9 @@ export function MusicModels({ appKey, canManage }: { appKey: string; canManage: 
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums">
+                        {typeof m?.auc === "number" && m.auc > 0 ? m.auc.toFixed(3) : <span className="text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell className="text-right text-[11px] leading-4 text-muted-foreground tabular-nums">
                         {run.users ? (

@@ -7,7 +7,23 @@ import { getAdminAppUsers } from "@/lib/api/apps";
 import { ApiError } from "@/lib/api/client";
 import {
   MUSIC_SERVICE_CODES,
+  createMusicExperiment,
+  createMusicRule,
+  deleteMusicExperiment,
+  deleteMusicRule,
   forgetMusicUser,
+  getMusicArtist,
+  getMusicExperimentResults,
+  getMusicSearchStats,
+  getMusicUserMixes,
+  getMusicUserReport,
+  listMusicArtists,
+  listMusicExperiments,
+  listMusicRules,
+  startMusicExperiment,
+  stopMusicExperiment,
+  updateMusicExperiment,
+  updateMusicRule,
   getMusicConfig,
   getMusicModel,
   getMusicOverview,
@@ -24,8 +40,11 @@ import {
   updateMusicConfig,
   type MusicConfigInput,
   type MusicEventQuery,
+  type MusicExperimentInput,
   type MusicModelRun,
-  type MusicScene,
+  type MusicRecPreviewParams,
+  type MusicReportPeriod,
+  type MusicRuleInput,
   type MusicTrackSort
 } from "@/lib/api/music";
 
@@ -39,7 +58,26 @@ import {
 
 const ROOT = "admin-music";
 
-type Kind = "overview" | "users" | "user" | "timeline" | "recs" | "tracks" | "track" | "events" | "models" | "model" | "config";
+type Kind =
+  | "overview"
+  | "users"
+  | "user"
+  | "timeline"
+  | "recs"
+  | "tracks"
+  | "track"
+  | "events"
+  | "models"
+  | "model"
+  | "config"
+  | "rules"
+  | "experiments"
+  | "experimentResults"
+  | "search"
+  | "artists"
+  | "artist"
+  | "mixes"
+  | "report";
 
 function noRetryOnService(failureCount: number, error: unknown) {
   if (error instanceof ApiError) {
@@ -112,7 +150,7 @@ export function useMusicUserTimelineQuery(appKey: string | null | undefined, use
 export function useMusicUserRecommendationsQuery(
   appKey: string | null | undefined,
   userId: number | null,
-  params: { scene: MusicScene; limit: number; source?: string; songId?: string },
+  params: MusicRecPreviewParams,
   enabled = true
 ) {
   const token = useAdminToken();
@@ -130,7 +168,7 @@ export function useForgetMusicUserMutation(appKey: string | null | undefined) {
   const invalidate = useInvalidateMusic(appKey);
   return useMutation({
     mutationFn: (userId: number) => forgetMusicUser(token as string, appKey as string, userId),
-    onSuccess: () => invalidate(["user", "users", "timeline", "recs", "overview", "events"])
+    onSuccess: () => invalidate(["user", "users", "timeline", "recs", "overview", "events", "mixes", "report"])
   });
 }
 
@@ -207,7 +245,7 @@ export function usePublishMusicModelMutation(appKey: string | null | undefined) 
   return useMutation({
     mutationFn: (runId: number) => publishMusicModel(token as string, appKey as string, runId),
     // 发布后推荐结果与用户画像里的「模型口味」都会变
-    onSuccess: () => invalidate(["models", "model", "overview", "recs", "user"])
+    onSuccess: () => invalidate(["models", "model", "overview", "recs", "user", "mixes", "artist"])
   });
 }
 
@@ -227,6 +265,149 @@ export function useUpdateMusicConfigMutation(appKey: string | null | undefined) 
   return useMutation({
     mutationFn: (config: MusicConfigInput) => updateMusicConfig(token as string, appKey as string, config),
     onSuccess: () => invalidate(["config", "recs"])
+  });
+}
+
+/* ── 第二期：运营干预 ── */
+
+export function useMusicRulesQuery(appKey: string | null | undefined) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "rules", token, appKey],
+    queryFn: () => listMusicRules(token as string, appKey as string),
+    enabled: Boolean(token && appKey),
+    retry: noRetryOnService
+  });
+}
+
+/** 新建（id 为空）或修改一条规则；规则改了推荐预览随之变 */
+export function useSaveMusicRuleMutation(appKey: string | null | undefined) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateMusic(appKey);
+  return useMutation({
+    mutationFn: ({ id, input }: { id?: number | null; input: MusicRuleInput }) =>
+      id ? updateMusicRule(token as string, appKey as string, id, input) : createMusicRule(token as string, appKey as string, input),
+    onSuccess: () => invalidate(["rules", "recs"])
+  });
+}
+
+export function useDeleteMusicRuleMutation(appKey: string | null | undefined) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateMusic(appKey);
+  return useMutation({
+    mutationFn: (id: number) => deleteMusicRule(token as string, appKey as string, id),
+    onSuccess: () => invalidate(["rules", "recs"])
+  });
+}
+
+/* ── 第二期：A/B 实验 ── */
+
+export function useMusicExperimentsQuery(appKey: string | null | undefined) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "experiments", token, appKey],
+    queryFn: () => listMusicExperiments(token as string, appKey as string),
+    enabled: Boolean(token && appKey),
+    retry: noRetryOnService
+  });
+}
+
+export function useSaveMusicExperimentMutation(appKey: string | null | undefined) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateMusic(appKey);
+  return useMutation({
+    mutationFn: ({ id, input }: { id?: number | null; input: MusicExperimentInput }) =>
+      id ? updateMusicExperiment(token as string, appKey as string, id, input) : createMusicExperiment(token as string, appKey as string, input),
+    onSuccess: () => invalidate(["experiments", "experimentResults", "overview", "recs", "user"])
+  });
+}
+
+export function useDeleteMusicExperimentMutation(appKey: string | null | undefined) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateMusic(appKey);
+  return useMutation({
+    mutationFn: (id: number) => deleteMusicExperiment(token as string, appKey as string, id),
+    onSuccess: () => invalidate(["experiments", "experimentResults", "overview"])
+  });
+}
+
+/** 开始 / 停止：分桶立即生效，推荐预览、用户详情里的「所在实验」与总览都跟着变 */
+export function useMusicExperimentActionMutation(appKey: string | null | undefined) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateMusic(appKey);
+  return useMutation({
+    mutationFn: ({ id, action }: { id: number; action: "start" | "stop" }) =>
+      action === "start" ? startMusicExperiment(token as string, appKey as string, id) : stopMusicExperiment(token as string, appKey as string, id),
+    onSuccess: () => invalidate(["experiments", "experimentResults", "overview", "recs", "user"])
+  });
+}
+
+export function useMusicExperimentResultsQuery(appKey: string | null | undefined, id: number | null, days: number) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "experimentResults", token, appKey, id, days],
+    queryFn: () => getMusicExperimentResults(token as string, appKey as string, id as number, days),
+    enabled: Boolean(token && appKey && id),
+    placeholderData: keepPreviousData,
+    retry: noRetryOnService
+  });
+}
+
+/* ── 第二期：搜索与歌手 ── */
+
+export function useMusicSearchStatsQuery(appKey: string | null | undefined, days: number, limit = 50) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "search", token, appKey, days, limit],
+    queryFn: () => getMusicSearchStats(token as string, appKey as string, { days, limit }),
+    enabled: Boolean(token && appKey),
+    placeholderData: keepPreviousData,
+    retry: noRetryOnService
+  });
+}
+
+export function useMusicArtistsQuery(appKey: string | null | undefined, params: { days: number; q: string; page: number; pageSize: number }) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "artists", token, appKey, params],
+    queryFn: () => listMusicArtists(token as string, appKey as string, params),
+    enabled: Boolean(token && appKey),
+    placeholderData: keepPreviousData,
+    retry: noRetryOnService
+  });
+}
+
+export function useMusicArtistQuery(appKey: string | null | undefined, name: string | null, days: number) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "artist", token, appKey, name, days],
+    queryFn: () => getMusicArtist(token as string, appKey as string, name as string, days),
+    enabled: Boolean(token && appKey && name),
+    placeholderData: keepPreviousData,
+    retry: noRetryOnService
+  });
+}
+
+/* ── 第二期：用户的风格歌单与听歌报告 ── */
+
+export function useMusicUserMixesQuery(appKey: string | null | undefined, userId: number | null) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "mixes", token, appKey, userId],
+    queryFn: () => getMusicUserMixes(token as string, appKey as string, userId as number),
+    enabled: Boolean(token && appKey && userId),
+    retry: noRetryOnService
+  });
+}
+
+export function useMusicUserReportQuery(appKey: string | null | undefined, userId: number | null, period: MusicReportPeriod, offset: number) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "report", token, appKey, userId, period, offset],
+    queryFn: () => getMusicUserReport(token as string, appKey as string, userId as number, { period, offset }),
+    enabled: Boolean(token && appKey && userId),
+    placeholderData: keepPreviousData,
+    retry: noRetryOnService
   });
 }
 

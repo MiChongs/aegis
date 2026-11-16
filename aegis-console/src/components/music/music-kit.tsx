@@ -1,7 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowDownRight, ArrowUpRight, Music2, RefreshCw, ServerOff, type LucideIcon } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, MicVocal, Music2, RefreshCw, ServerOff, type LucideIcon } from "lucide-react";
 import { Panel, Segmented } from "@/components/traffic/traffic-kit";
 import { ErrorState } from "@/components/risk/decisions";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,7 @@ import { ApiError } from "@/lib/api/client";
 import { MUSIC_SERVICE_CODES, type MusicTrack } from "@/lib/api/music";
 import type { MusicUserName } from "@/lib/music-hooks";
 import { cn } from "@/lib/utils";
-import { sourceLabel } from "./music-format";
+import { SCENES, sceneLabel, sourceLabel } from "./music-format";
 
 /**
  * 音乐推荐页面共用的展示件：服务状态提示、歌曲与用户单元格、分页条、周期切换、环比。
@@ -27,6 +28,8 @@ export const musicUserHref = (appKey: string, userId: number) => `/apps/${encode
 export const musicTrackHref = (appKey: string, workKey: string) =>
   `/apps/${encodeURIComponent(appKey)}/music/tracks/${encodeURIComponent(workKey)}`;
 export const appUserHref = (appKey: string, userId: number) => `/app-users/${encodeURIComponent(appKey)}/${userId}`;
+export const musicArtistHref = (appKey: string, name: string) =>
+  `/apps/${encodeURIComponent(appKey)}/music/artists/${encodeURIComponent(name)}`;
 
 /* ── 服务状态 ── */
 
@@ -114,6 +117,79 @@ export function TrackCover({ track, size = 36, className }: { track?: MusicTrack
         <img src={track.cover} alt="" loading="lazy" referrerPolicy="no-referrer" className="absolute inset-0 size-full object-cover" />
       ) : null}
     </span>
+  );
+}
+
+/** 歌手头像：圆形，取不到图时显示话筒图标 */
+export function ArtistCover({ cover, size = 36, className }: { cover?: string | null; size?: number; className?: string }) {
+  return (
+    <span
+      className={cn("relative grid shrink-0 place-items-center overflow-hidden rounded-full bg-muted text-muted-foreground", className)}
+      style={{ width: size, height: size }}
+    >
+      <MicVocal className="size-4" />
+      {cover ? (
+        // 头像来自各音源 CDN，域名不固定，不走 next/image
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={cover} alt="" loading="lazy" referrerPolicy="no-referrer" className="absolute inset-0 size-full object-cover" />
+      ) : null}
+    </span>
+  );
+}
+
+/** 歌手名（+ 头像），可选跳歌手详情 */
+export function ArtistCell({ name, cover, href, sub, className }: { name: string; cover?: string | null; href?: string; sub?: React.ReactNode; className?: string }) {
+  const body = (
+    <>
+      <ArtistCover cover={cover} />
+      <span className="flex min-w-0 flex-col">
+        <span className={cn("truncate text-xs font-medium", href && "group-hover:underline")} title={name}>
+          {name || "未知歌手"}
+        </span>
+        {sub ? <span className="truncate text-[11px] text-muted-foreground">{sub}</span> : null}
+      </span>
+    </>
+  );
+  const cls = cn("group flex min-w-0 items-center gap-2.5", className);
+  return href ? (
+    <Link href={href} className={cls} onClick={(e) => e.stopPropagation()}>
+      {body}
+    </Link>
+  ) : (
+    <span className={cls}>{body}</span>
+  );
+}
+
+/** 歌曲列表：歌名 + 歌手，右侧主次两行数字；有作品键时可跳作品详情 */
+export function TrackList({
+  appKey,
+  items,
+  empty = "暂无"
+}: {
+  appKey: string;
+  items: Array<{ key: string; track: MusicTrack | null; workKey?: string; right?: React.ReactNode; sub?: React.ReactNode }>;
+  empty?: string;
+}) {
+  if (!items.length) return <EmptyLine>{empty}</EmptyLine>;
+  return (
+    <ul className="flex min-w-0 flex-col divide-y divide-border/60">
+      {items.map((item) => (
+        <li key={item.key} className="flex min-w-0 items-center gap-3 py-2 first:pt-0 last:pb-0">
+          <TrackCell
+            track={item.track}
+            fallback={item.workKey ? `作品 ${item.workKey}` : "未知歌曲"}
+            href={item.workKey ? musicTrackHref(appKey, item.workKey) : undefined}
+            className="flex-1"
+          />
+          {item.right || item.sub ? (
+            <span className="flex shrink-0 flex-col items-end text-[11px] leading-4 text-muted-foreground tabular-nums">
+              {item.right ? <span className="text-xs text-foreground">{item.right}</span> : null}
+              {item.sub}
+            </span>
+          ) : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -221,6 +297,72 @@ export function Delta({ ratio, badWhenUp, className }: { ratio: number | null | 
       {v >= 100 ? Math.round(v) : v.toFixed(1)}%
     </span>
   );
+}
+
+/* ── 场景多选 ── */
+
+/**
+ * 推荐场景多选：规则与实验共用。`allowAll` 时多一个「全部场景」，选中它等于空数组（契约：空 = 全部场景）。
+ */
+export function SceneToggles({
+  value,
+  onChange,
+  allowAll,
+  disabled,
+  invalid
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  allowAll?: boolean;
+  disabled?: boolean;
+  invalid?: boolean;
+}) {
+  const set = new Set(value);
+  const toggle = (scene: string) => {
+    const next = new Set(set);
+    if (next.has(scene)) next.delete(scene);
+    else next.add(scene);
+    onChange(SCENES.filter((s) => next.has(s)));
+  };
+  return (
+    <div className={cn("flex flex-wrap gap-1.5 rounded-md", invalid && "ring-1 ring-rose-500/60 ring-offset-2 ring-offset-background")}>
+      {allowAll ? (
+        <Button type="button" size="xs" variant={value.length === 0 ? "secondary" : "outline"} disabled={disabled} onClick={() => onChange([])}>
+          全部场景
+        </Button>
+      ) : null}
+      {SCENES.map((scene) => (
+        <Button
+          key={scene}
+          type="button"
+          size="xs"
+          variant={set.has(scene) ? "secondary" : "outline"}
+          aria-pressed={set.has(scene)}
+          disabled={disabled}
+          onClick={() => toggle(scene)}
+        >
+          {sceneLabel(scene)}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/** 场景列表的一句话：空数组为「全部场景」 */
+export function scenesText(scenes: string[]) {
+  return scenes.length ? scenes.map(sceneLabel).join("、") : "全部场景";
+}
+
+/* ── 时间 ── */
+
+/** 每隔 `interval` 毫秒刷新一次的当前时间：渲染里判断「生效中 / 已结束」用，不在渲染时直接读 Date.now() */
+export function useNow(interval = 30_000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), interval);
+    return () => window.clearInterval(timer);
+  }, [interval]);
+  return now;
 }
 
 /* ── 占位 ── */

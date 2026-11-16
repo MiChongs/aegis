@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import NumberFlow, { type Format } from "@number-flow/react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, XAxis, YAxis } from "recharts";
-import { Activity, ArrowRight, Brain, Clock3, Disc3, Gauge, Layers, MicVocal, Smartphone, TrendingUp } from "lucide-react";
+import { Activity, ArrowRight, Brain, Clock3, Disc3, FlaskConical, Gauge, GitCompareArrows, Layers, MicVocal, Smartphone, ThumbsDown, TrendingUp } from "lucide-react";
 import { shortDay, longDay } from "@/components/overview/overview-kit";
 import { Panel, Segmented, TabStack } from "@/components/traffic/traffic-kit";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,7 @@ import {
   changeOf,
   changeWord,
   compact,
+  dislikeReasonLabel,
   eventLabel,
   lagText,
   minutesText,
@@ -28,12 +29,12 @@ import {
   sceneLabel,
   sourceLabel
 } from "./music-format";
-import { DaysSwitch, Delta, EmptyLine, MusicErrorPanel, PanelSkeleton, RankBars, TrackCell, musicTrackHref } from "./music-kit";
+import { DaysSwitch, Delta, EmptyLine, MusicErrorPanel, PanelSkeleton, RankBars, TrackCell, musicTrackHref, scenesText } from "./music-kit";
 import { ModelMetricsCompare } from "./music-model-parts";
 
 /**
- * 音乐推荐总览：先用一句话说清这段时间的听歌情况，再按「趋势 → 行为构成 → 推荐效果 → 内容 → 模型与管道」展开。
- * 全部数据来自一个接口（/overview），同一时间窗下各块数字互相对得上。
+ * 音乐推荐总览：先用一句话说清这段时间的听歌情况，再按「趋势 → 行为构成 → 推荐效果（含按模型版本、运行中的实验）
+ * → 内容与反馈 → 模型与管道」展开。全部数据来自一个接口（/overview），同一时间窗下各块数字互相对得上。
  */
 
 const TREND_VIEWS = [
@@ -95,12 +96,17 @@ export function MusicOverview({ appKey, onNavigate }: { appKey: string; onNaviga
       </div>
       <ScenesPanel data={data} />
       <div className="grid min-w-0 gap-4 @4xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <ModelVersionsPanel data={data} />
+        <ExperimentsPanel data={data} onNavigate={onNavigate} />
+      </div>
+      <div className="grid min-w-0 gap-4 @4xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <TopTracksPanel appKey={appKey} data={data} onNavigate={onNavigate} />
         <TopArtistsPanel data={data} />
       </div>
-      <div className="grid min-w-0 gap-4 @4xl:grid-cols-2">
+      <div className="grid min-w-0 gap-4 @4xl:grid-cols-2 @6xl:grid-cols-3">
         <SourcesPanel data={data} />
         <PlatformsPanel data={data} />
+        <FeedbackReasonsPanel data={data} />
       </div>
       <div className="grid min-w-0 gap-4 @4xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <ModelPanel data={data} onNavigate={onNavigate} />
@@ -390,6 +396,91 @@ function ScenesPanel({ data }: { data: Overview }) {
   );
 }
 
+/* ── 按模型版本与实验 ── */
+
+function ModelVersionsPanel({ data }: { data: Overview }) {
+  // 服务端升级前没有这个字段，按空处理
+  const rows = [...(data.models ?? [])].sort((a, b) => b.version - a.version);
+  const maxCtr = Math.max(0.0001, ...rows.map((r) => r.ctr));
+  const current = data.model?.id;
+  const best = rows.filter((r) => r.impressions > 0).sort((a, b) => b.ctr - a.ctr)[0];
+  return (
+    <Panel icon={GitCompareArrows} tone="violet" title="按模型版本的效果">
+      {!rows.length ? (
+        <EmptyLine>暂无推荐请求</EmptyLine>
+      ) : (
+        <div className="flex min-w-0 flex-col gap-3">
+          <p className="text-sm leading-5 text-muted-foreground">
+            {best
+              ? `${best.version ? `第 ${best.version} 版` : "未使用模型的请求"}点击率最高，为 ${pct(best.ctr)}${rows.length > 1 ? `；这段时间共有 ${rows.length} 个版本在线上出过推荐` : ""}。`
+              : "推荐结果还没有被展示过。"}
+          </p>
+          <ul className="flex min-w-0 flex-col gap-2">
+            {rows.map((r) => (
+              <li key={r.version} className="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)_auto] items-center gap-3">
+                <span className="flex min-w-0 items-center gap-1.5 text-xs">
+                  <span className="truncate font-medium">{r.version ? `第 ${r.version} 版` : "未使用模型"}</span>
+                  {r.version && r.version === current ? (
+                    <Badge variant="success" size="sm">
+                      当前
+                    </Badge>
+                  ) : null}
+                </span>
+                <span className="h-2 min-w-0 overflow-hidden rounded-full bg-muted" title={`点击率 ${pct(r.ctr)}`}>
+                  <span className="block h-full rounded-full bg-violet-500 transition-[width] duration-500" style={{ width: `${(r.ctr / maxCtr) * 100}%` }} />
+                </span>
+                <span className="flex flex-col items-end text-[11px] leading-4 text-muted-foreground tabular-nums">
+                  <span className="text-xs font-medium text-foreground">点击率 {pct(r.ctr)}</span>
+                  <span>
+                    播放率 {pct(r.playRate)}，曝光 {compact(r.impressions)}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function ExperimentsPanel({ data, onNavigate }: { data: Overview; onNavigate: (tab: string) => void }) {
+  const items = data.experiments ?? [];
+  return (
+    <Panel
+      icon={FlaskConical}
+      tone="emerald"
+      title="运行中的实验"
+      aside={
+        <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => onNavigate("experiments")}>
+          全部实验
+          <ArrowRight />
+        </Button>
+      }
+    >
+      {!items.length ? (
+        <EmptyLine>没有运行中的实验</EmptyLine>
+      ) : (
+        <ul className="flex min-w-0 flex-col divide-y divide-border/60">
+          {items.map((e) => (
+            <li key={e.id} className="flex min-w-0 flex-col gap-0.5 py-2 first:pt-0 last:pb-0">
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <span className="truncate text-sm font-medium">{e.name}</span>
+                <Badge variant="secondary" size="sm">
+                  {e.variants} 个变体
+                </Badge>
+              </div>
+              <span className="truncate text-[11px] text-muted-foreground" title={formatDateTimeMinute(e.startedAt)}>
+                {scenesText(e.scenes)}，{formatRelative(e.startedAt)}开始
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
 /* ── 热门内容 ── */
 
 function TopTracksPanel({ appKey, data, onNavigate }: { appKey: string; data: Overview; onNavigate: (tab: string) => void }) {
@@ -492,6 +583,25 @@ function PlatformsPanel({ data }: { data: Overview }) {
         barClassName="bg-emerald-500"
         empty="暂无听众"
         items={rows.map((r) => ({ key: r.platform || "unknown", label: platformLabel(r.platform), value: r.listeners, display: `${num(r.listeners)} 人` }))}
+      />
+    </Panel>
+  );
+}
+
+function FeedbackReasonsPanel({ data }: { data: Overview }) {
+  const rows = [...(data.feedbackReasons ?? [])].sort((a, b) => b.count - a.count);
+  const total = rows.reduce((s, r) => s + r.count, 0);
+  return (
+    <Panel icon={ThumbsDown} tone="rose" title="不感兴趣的原因">
+      <RankBars
+        barClassName="bg-rose-500"
+        empty="暂无不感兴趣"
+        items={rows.map((r) => ({
+          key: r.reason || "not_interested",
+          label: dislikeReasonLabel(r.reason),
+          value: r.count,
+          display: `${compact(r.count)}  ${pct(total ? r.count / total : 0, 0)}`
+        }))}
       />
     </Panel>
   );
