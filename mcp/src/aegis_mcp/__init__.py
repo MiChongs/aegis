@@ -1,3 +1,3 @@
 """Aegis 管理端 MCP 服务。"""
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
