@@ -125,6 +125,32 @@ func TestMusicServiceIT(t *testing.T) {
 	if ae, ok := err.(*apperrors.AppError); !ok || ae.Code != errCodeMusicRateLimited {
 		t.Fatalf("rate limit not hit: %v", err)
 	}
+	// 第二期：用户侧操作经 UserOp 透传
+	if _, err := svc.UserOp(ctx, app, session, "prefs_put", map[string]any{"languages": []string{"zh"}, "autoplay": false}, true); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = svc.UserOp(ctx, app, session, "prefs_get", map[string]any{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prefs struct {
+		Languages []string `json:"languages"`
+		Autoplay  bool     `json:"autoplay"`
+	}
+	_ = json.Unmarshal(raw, &prefs)
+	if len(prefs.Languages) != 1 || prefs.Autoplay {
+		t.Fatalf("prefs = %s", raw)
+	}
+	if _, err := svc.UserOp(ctx, app, session, "prefs_put", map[string]any{"languages": []string{"xx"}}, true); err == nil {
+		t.Fatal("bad language accepted")
+	}
+	if _, err := svc.UserOp(ctx, app, session, "hack", nil, true); err == nil {
+		t.Fatal("unknown op accepted")
+	}
+	if _, err := svc.Recommend(ctx, app, session, MusicRecommendQuery{Scene: "autoplay", Personalized: true,
+		Seeds: []contract.Track{{Source: "wy", SongID: "770", Title: "主服务测试0", Artist: "测试"}}}); err != nil {
+		t.Fatalf("autoplay: %v", err)
+	}
 	if err := svc.ClearProfile(ctx, app, session); err != nil {
 		t.Fatal(err)
 	}

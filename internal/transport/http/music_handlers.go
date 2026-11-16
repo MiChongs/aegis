@@ -92,16 +92,144 @@ func (h *Handler) AppMusicRecommendations(c *gin.Context) {
 	if v := strings.TrimSpace(c.Query("personalized")); v != "" {
 		personalized, _ = strconv.ParseBool(v)
 	}
-	result, err := h.music.Recommend(c.Request.Context(), app, session, service.MusicRecommendQuery{
-		Scene: scene, Limit: queryInt(c, "limit", 20), Cursor: strings.TrimSpace(c.Query("cursor")),
+	q := service.MusicRecommendQuery{
+		Scene: scene, Limit: queryInt(c, "limit", 0), Cursor: strings.TrimSpace(c.Query("cursor")),
 		Source: strings.TrimSpace(c.Query("source")), SongID: strings.TrimSpace(c.Query("songId")), Personalized: personalized,
-	})
+		MixID: strings.TrimSpace(c.Query("mixId")), Artist: strings.TrimSpace(c.Query("artist")),
+	}
+	if c.Request.Method == http.MethodPost {
+		body := struct {
+			service.MusicRecommendQuery
+			Personalized *bool `json:"personalized"`
+		}{}
+		if err := json.NewDecoder(io.LimitReader(c.Request.Body, 128<<10)).Decode(&body); err != nil {
+			response.Error(c, http.StatusBadRequest, 40000, "请求体格式不正确")
+			return
+		}
+		q = body.MusicRecommendQuery
+		q.Personalized = body.Personalized == nil || *body.Personalized
+		if q.Scene = strings.TrimSpace(q.Scene); q.Scene == "" {
+			q.Scene = contract.SceneHome
+		}
+	}
+	result, err := h.music.Recommend(c.Request.Context(), app, session, q)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
 	c.Header("Cache-Control", "no-store")
 	response.Success(c, http.StatusOK, "获取推荐成功", result)
+}
+
+// musicUserOp 第二期用户侧接口的公共部分：登录、应用、开关，然后把参数透传给 music-rec。
+func (h *Handler) musicUserOp(c *gin.Context, op string, params map[string]any, okMsg string) {
+	session, ok := authSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40100, "未认证")
+		return
+	}
+	if _, ok := h.musicGatewayContext(c); !ok {
+		return
+	}
+	app, _, ok := h.resolveGatewayApp(c)
+	if !ok {
+		return
+	}
+	if session.AppID != app.ID {
+		response.Error(c, http.StatusUnauthorized, 40100, "令牌不属于该应用")
+		return
+	}
+	personalized := true
+	if v := strings.TrimSpace(c.Query("personalized")); v != "" {
+		personalized, _ = strconv.ParseBool(v)
+	}
+	result, err := h.music.UserOp(c.Request.Context(), app, session, op, params, personalized)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	response.Success(c, http.StatusOK, okMsg, result)
+}
+
+// musicBody 读 JSON 请求体（≤ 64 KB）；格式不对时已回 400。
+func musicBody(c *gin.Context) (map[string]any, bool) {
+	body := map[string]any{}
+	if err := json.NewDecoder(io.LimitReader(c.Request.Body, 64<<10)).Decode(&body); err != nil && err != io.EOF {
+		response.Error(c, http.StatusBadRequest, 40000, "请求体格式不正确")
+		return nil, false
+	}
+	return body, true
+}
+
+// AppMusicMixes GET /music/mixes：风格歌单列表。
+func (h *Handler) AppMusicMixes(c *gin.Context) {
+	h.musicUserOp(c, "mixes", map[string]any{}, "获取风格歌单成功")
+}
+
+// AppMusicArtists GET /music/artists/recommended?limit=12：推荐歌手。
+func (h *Handler) AppMusicArtists(c *gin.Context) {
+	h.musicUserOp(c, "artists", map[string]any{"limit": queryInt(c, "limit", 12)}, "获取推荐歌手成功")
+}
+
+// AppMusicOnboarding GET /music/onboarding：新用户偏好选择。
+func (h *Handler) AppMusicOnboarding(c *gin.Context) {
+	h.musicUserOp(c, "onboarding", map[string]any{}, "获取偏好选择成功")
+}
+
+// AppMusicPreferences GET /music/preferences。
+func (h *Handler) AppMusicPreferences(c *gin.Context) {
+	h.musicUserOp(c, "prefs_get", map[string]any{}, "获取音乐偏好成功")
+}
+
+// AppMusicSavePreferences PUT /music/preferences（缺省字段保持原值）。
+func (h *Handler) AppMusicSavePreferences(c *gin.Context) {
+	body, ok := musicBody(c)
+	if !ok {
+		return
+	}
+	h.musicUserOp(c, "prefs_put", body, "音乐偏好已保存")
+}
+
+// AppMusicFeedback GET /music/feedback?kind=track|artist|suppressed&page=&pageSize=：我的不喜欢。
+func (h *Handler) AppMusicFeedback(c *gin.Context) {
+	h.musicUserOp(c, "feedback_list", map[string]any{"kind": strings.TrimSpace(c.Query("kind")),
+		"page": queryInt(c, "page", 1), "pageSize": queryInt(c, "pageSize", 50)}, "获取不感兴趣的内容成功")
+}
+
+// AppMusicUndoFeedback DELETE /music/feedback {kind, workKey | artist}：撤销。
+func (h *Handler) AppMusicUndoFeedback(c *gin.Context) {
+	body, ok := musicBody(c)
+	if !ok {
+		return
+	}
+	h.musicUserOp(c, "feedback_undo", body, "已撤销")
+}
+
+// AppMusicReport GET /music/report?period=week|month|year&offset=0：听歌报告。
+func (h *Handler) AppMusicReport(c *gin.Context) {
+	h.musicUserOp(c, "report", map[string]any{"period": strings.TrimSpace(c.DefaultQuery("period", "week")),
+		"offset": queryInt(c, "offset", 0)}, "获取听歌报告成功")
+}
+
+// AppMusicTrendingSearches GET /music/search/trending?limit=10：热搜。
+func (h *Handler) AppMusicTrendingSearches(c *gin.Context) {
+	h.musicUserOp(c, "trending", map[string]any{"limit": queryInt(c, "limit", 10)}, "获取热搜成功")
+}
+
+// AppMusicRerank POST /music/search/rerank {query, items}：搜索结果按口味轻度重排。
+func (h *Handler) AppMusicRerank(c *gin.Context) {
+	body, ok := musicBody(c)
+	if !ok {
+		return
+	}
+	h.musicUserOp(c, "rerank", body, "重排成功")
+}
+
+// AppMusicExport GET /music/export?before=&limit=500：导出我的听歌记录。
+func (h *Handler) AppMusicExport(c *gin.Context) {
+	before, _ := strconv.ParseInt(strings.TrimSpace(c.Query("before")), 10, 64)
+	h.musicUserOp(c, "export", map[string]any{"before": before, "limit": queryInt(c, "limit", 500)}, "导出听歌记录成功")
 }
 
 // AppMusicProfile GET /api/v1/apps/{appkey}/music/profile?days=30

@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS music_tracks (
   last_seen   TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (app_id, work_key)
 );
+ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS music_track_variants (
   app_id    BIGINT      NOT NULL,
   source    TEXT        NOT NULL,
@@ -166,6 +167,9 @@ func (p *PG) migrate(ctx context.Context) error {
 	if _, err := conn.Exec(ctx, pgSchema); err != nil {
 		return fmt.Errorf("PostgreSQL 建表失败：%w", err)
 	}
+	if _, err := conn.Exec(ctx, pgSchema2); err != nil {
+		return fmt.Errorf("PostgreSQL 建表失败（第二期）：%w", err)
+	}
 	return nil
 }
 
@@ -189,9 +193,10 @@ func (p *PG) UpsertTracks(ctx context.Context, appTracks map[int64]map[string]Tr
 		for _, row := range rows {
 			t := row.Track
 			batch.Queue(`
-INSERT INTO music_tracks (app_id, work_key, source, song_id, title, artist, album, cover, duration_ms, first_seen, last_seen)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
+INSERT INTO music_tracks (app_id, work_key, source, song_id, title, artist, album, cover, duration_ms, first_seen, last_seen, lang)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11)
 ON CONFLICT (app_id, work_key) DO UPDATE SET
+  lang = CASE WHEN music_tracks.lang = '' OR EXCLUDED.last_seen >= music_tracks.last_seen THEN EXCLUDED.lang ELSE music_tracks.lang END,
   source = CASE WHEN EXCLUDED.last_seen >= music_tracks.last_seen THEN EXCLUDED.source ELSE music_tracks.source END,
   song_id = CASE WHEN EXCLUDED.last_seen >= music_tracks.last_seen THEN EXCLUDED.song_id ELSE music_tracks.song_id END,
   title = CASE WHEN EXCLUDED.last_seen >= music_tracks.last_seen THEN EXCLUDED.title ELSE music_tracks.title END,
@@ -201,7 +206,8 @@ ON CONFLICT (app_id, work_key) DO UPDATE SET
   duration_ms = CASE WHEN EXCLUDED.duration_ms > 0 THEN EXCLUDED.duration_ms ELSE music_tracks.duration_ms END,
   first_seen = LEAST(music_tracks.first_seen, EXCLUDED.first_seen),
   last_seen = GREATEST(music_tracks.last_seen, EXCLUDED.last_seen)`,
-				appID, row.WorkKey, t.Source, t.SongID, t.Title, t.Artist, t.Album, t.Cover, t.DurationMs, row.LastSeen)
+				appID, row.WorkKey, t.Source, t.SongID, t.Title, t.Artist, t.Album, t.Cover, t.DurationMs, row.LastSeen,
+				contract.DetectLang(t.Title, t.Artist))
 			batch.Queue(`
 INSERT INTO music_track_variants (app_id, source, song_id, work_key, last_seen) VALUES ($1,$2,$3,$4,$5)
 ON CONFLICT (app_id, source, song_id) DO UPDATE SET work_key = EXCLUDED.work_key,
@@ -379,6 +385,7 @@ type Metrics struct {
 	Coverage  float64     `json:"coverage"`
 	Baseline  BaseMetrics `json:"baseline"`
 	TestUsers int         `json:"testUsers"`
+	AUC       float64     `json:"auc,omitempty"` // 精排留出集 AUC（启用精排时才有）
 }
 
 // BaseMetrics 热度基线。
@@ -407,6 +414,7 @@ type Run struct {
 	Interactions int64          `json:"interactions"`
 	SizeBytes    int64          `json:"sizeBytes"`
 	Metrics      *Metrics       `json:"metrics"`
+	Ranker       *RankerInfo    `json:"ranker"`
 	Error        string         `json:"error"`
 	Params       *appcfg.Config `json:"params,omitempty"`
 	Stages       []Stage        `json:"stages,omitempty"`
@@ -454,17 +462,21 @@ func (p *PG) activeRun(ctx context.Context, appID int64) (*Run, error) {
 }
 
 const runColumns = `id, app_id, status, trigger, note, operator, params, metrics, stages, log, users, items, interactions,
-size_bytes, error, created_at, started_at, finished_at, published_at, heartbeat_at,
+size_bytes, error, created_at, started_at, finished_at, published_at, heartbeat_at, ranker,
 published_at IS NOT NULL AND published_at = (SELECT max(published_at) FROM music_model_runs c WHERE c.app_id = r.app_id)`
 
 func scanRun(row pgx.Row, full bool) (*Run, error) {
 	var r Run
-	var params, metrics, stages, logs []byte
+	var params, metrics, stages, logs, ranker []byte
 	var created time.Time
 	var started, finished, published, heartbeat *time.Time
 	if err := row.Scan(&r.ID, &r.AppID, &r.Status, &r.Trigger, &r.Note, &r.Operator, &params, &metrics, &stages, &logs,
-		&r.Users, &r.Items, &r.Interactions, &r.SizeBytes, &r.Error, &created, &started, &finished, &published, &heartbeat, &r.Current); err != nil {
+		&r.Users, &r.Items, &r.Interactions, &r.SizeBytes, &r.Error, &created, &started, &finished, &published, &heartbeat, &ranker, &r.Current); err != nil {
 		return nil, err
+	}
+	if len(ranker) > 0 && string(ranker) != "null" {
+		r.Ranker = &RankerInfo{}
+		_ = json.Unmarshal(ranker, r.Ranker)
 	}
 	r.CreatedAt = created.UnixMilli()
 	r.StartedAt, r.FinishedAt, r.PublishedAt = millis(started), millis(finished), millis(published)
@@ -593,7 +605,7 @@ func (p *PG) Heartbeat(ctx context.Context, id int64, line string) error {
 }
 
 // FinishRun 训练成功：写指标、规模、模型。
-func (p *PG) FinishRun(ctx context.Context, id int64, metrics *Metrics, stages []Stage, users, items int, interactions int64, blob []byte) error {
+func (p *PG) FinishRun(ctx context.Context, id int64, metrics *Metrics, ranker *RankerInfo, stages []Stage, users, items int, interactions int64, blob []byte) error {
 	tx, err := p.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -605,9 +617,10 @@ ON CONFLICT (run_id) DO UPDATE SET data=EXCLUDED.data`, id, blob); err != nil {
 	}
 	m, _ := json.Marshal(metrics)
 	s, _ := json.Marshal(stages)
+	rk, _ := json.Marshal(ranker)
 	if _, err := tx.Exec(ctx, `UPDATE music_model_runs SET status='succeeded', finished_at=now(), heartbeat_at=now(),
-metrics=$2, stages=$3, users=$4, items=$5, interactions=$6, size_bytes=$7 WHERE id=$1`,
-		id, m, s, users, items, interactions, len(blob)); err != nil {
+metrics=$2, stages=$3, users=$4, items=$5, interactions=$6, size_bytes=$7, ranker=$8 WHERE id=$1`,
+		id, m, s, users, items, interactions, len(blob), rk); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

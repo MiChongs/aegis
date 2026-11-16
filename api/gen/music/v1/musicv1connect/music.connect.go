@@ -50,6 +50,8 @@ const (
 	// MusicServiceGetSwitchesProcedure is the fully-qualified name of the MusicService's GetSwitches
 	// RPC.
 	MusicServiceGetSwitchesProcedure = "/music.v1.MusicService/GetSwitches"
+	// MusicServiceUserOpProcedure is the fully-qualified name of the MusicService's UserOp RPC.
+	MusicServiceUserOpProcedure = "/music.v1.MusicService/UserOp"
 )
 
 // MusicServiceClient is a client for the music.v1.MusicService service.
@@ -62,6 +64,10 @@ type MusicServiceClient interface {
 	ForgetUser(context.Context, *connect.Request[v1.ForgetUserRequest]) (*connect.Response[v1.ForgetUserResponse], error)
 	// 应用配置里的两个开关（主服务上报接口用，带缓存）
 	GetSwitches(context.Context, *connect.Request[v1.GetSwitchesRequest]) (*connect.Response[v1.GetSwitchesResponse], error)
+	// 用户侧的其他操作（第二期，docs/music-personalization-2.md）：参数与结果都是 JSON，主服务原样透传。
+	// op：mixes / artists / onboarding / prefs_get / prefs_put / feedback_list / feedback_undo / report /
+	//     trending / rerank / export
+	UserOp(context.Context, *connect.Request[v1.UserOpRequest]) (*connect.Response[v1.UserOpResponse], error)
 }
 
 // NewMusicServiceClient constructs a client for the music.v1.MusicService service. By default, it
@@ -99,6 +105,12 @@ func NewMusicServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(musicServiceMethods.ByName("GetSwitches")),
 			connect.WithClientOptions(opts...),
 		),
+		userOp: connect.NewClient[v1.UserOpRequest, v1.UserOpResponse](
+			httpClient,
+			baseURL+MusicServiceUserOpProcedure,
+			connect.WithSchema(musicServiceMethods.ByName("UserOp")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -108,6 +120,7 @@ type musicServiceClient struct {
 	getProfile  *connect.Client[v1.GetProfileRequest, v1.GetProfileResponse]
 	forgetUser  *connect.Client[v1.ForgetUserRequest, v1.ForgetUserResponse]
 	getSwitches *connect.Client[v1.GetSwitchesRequest, v1.GetSwitchesResponse]
+	userOp      *connect.Client[v1.UserOpRequest, v1.UserOpResponse]
 }
 
 // Recommend calls music.v1.MusicService.Recommend.
@@ -130,6 +143,11 @@ func (c *musicServiceClient) GetSwitches(ctx context.Context, req *connect.Reque
 	return c.getSwitches.CallUnary(ctx, req)
 }
 
+// UserOp calls music.v1.MusicService.UserOp.
+func (c *musicServiceClient) UserOp(ctx context.Context, req *connect.Request[v1.UserOpRequest]) (*connect.Response[v1.UserOpResponse], error) {
+	return c.userOp.CallUnary(ctx, req)
+}
+
 // MusicServiceHandler is an implementation of the music.v1.MusicService service.
 type MusicServiceHandler interface {
 	// 推荐：home / daily / radio / similar
@@ -140,6 +158,10 @@ type MusicServiceHandler interface {
 	ForgetUser(context.Context, *connect.Request[v1.ForgetUserRequest]) (*connect.Response[v1.ForgetUserResponse], error)
 	// 应用配置里的两个开关（主服务上报接口用，带缓存）
 	GetSwitches(context.Context, *connect.Request[v1.GetSwitchesRequest]) (*connect.Response[v1.GetSwitchesResponse], error)
+	// 用户侧的其他操作（第二期，docs/music-personalization-2.md）：参数与结果都是 JSON，主服务原样透传。
+	// op：mixes / artists / onboarding / prefs_get / prefs_put / feedback_list / feedback_undo / report /
+	//     trending / rerank / export
+	UserOp(context.Context, *connect.Request[v1.UserOpRequest]) (*connect.Response[v1.UserOpResponse], error)
 }
 
 // NewMusicServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -173,6 +195,12 @@ func NewMusicServiceHandler(svc MusicServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(musicServiceMethods.ByName("GetSwitches")),
 		connect.WithHandlerOptions(opts...),
 	)
+	musicServiceUserOpHandler := connect.NewUnaryHandler(
+		MusicServiceUserOpProcedure,
+		svc.UserOp,
+		connect.WithSchema(musicServiceMethods.ByName("UserOp")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/music.v1.MusicService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case MusicServiceRecommendProcedure:
@@ -183,6 +211,8 @@ func NewMusicServiceHandler(svc MusicServiceHandler, opts ...connect.HandlerOpti
 			musicServiceForgetUserHandler.ServeHTTP(w, r)
 		case MusicServiceGetSwitchesProcedure:
 			musicServiceGetSwitchesHandler.ServeHTTP(w, r)
+		case MusicServiceUserOpProcedure:
+			musicServiceUserOpHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -206,4 +236,8 @@ func (UnimplementedMusicServiceHandler) ForgetUser(context.Context, *connect.Req
 
 func (UnimplementedMusicServiceHandler) GetSwitches(context.Context, *connect.Request[v1.GetSwitchesRequest]) (*connect.Response[v1.GetSwitchesResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("music.v1.MusicService.GetSwitches is not implemented"))
+}
+
+func (UnimplementedMusicServiceHandler) UserOp(context.Context, *connect.Request[v1.UserOpRequest]) (*connect.Response[v1.UserOpResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("music.v1.MusicService.UserOp is not implemented"))
 }

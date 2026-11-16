@@ -38,6 +38,8 @@ type Registry struct {
 	byApp map[int64]*Loaded
 	// loading 同一应用同一时刻只加载一次
 	loading sync.Map
+	// pinned 实验固定的模型版本（runID → 模型）
+	pinned map[int64]*pinnedRun
 }
 
 // NewRegistry 构造。
@@ -67,27 +69,78 @@ func (r *Registry) Sync(ctx context.Context) {
 	}
 }
 
-// Load 加载某个版本（失败保留旧模型）。
+// Load 加载某个版本作为当前发布（失败保留旧模型）。
 func (r *Registry) Load(ctx context.Context, appID, runID int64) {
 	if _, busy := r.loading.LoadOrStore(appID, true); busy {
 		return
 	}
 	defer r.loading.Delete(appID)
 	begin := time.Now()
+	loaded, err := r.loadRun(ctx, appID, runID)
+	if err != nil {
+		r.log.Warn("load model failed", zap.Int64("app", appID), zap.Int64("run", runID), zap.Error(err))
+		return
+	}
+	r.mu.Lock()
+	r.byApp[appID] = loaded
+	r.mu.Unlock()
+	r.log.Info("model loaded", zap.Int64("app", appID), zap.Int64("run", runID), zap.Int("items", len(loaded.Snap.Items)),
+		zap.Int("users", len(loaded.Snap.Users)), zap.Duration("took", time.Since(begin)))
+}
+
+// GetRun 实验固定的某个版本：与当前发布相同直接复用，否则按需加载并缓存（最多 4 个，按最近使用淘汰）。
+func (r *Registry) GetRun(ctx context.Context, appID, runID int64) *Loaded {
+	if cur := r.Get(appID); cur != nil && cur.RunID == runID {
+		return cur
+	}
+	r.mu.Lock()
+	if r.pinned == nil {
+		r.pinned = map[int64]*pinnedRun{}
+	}
+	if p := r.pinned[runID]; p != nil && p.l.Snap.AppID == appID {
+		p.used = time.Now()
+		r.mu.Unlock()
+		return p.l
+	}
+	r.mu.Unlock()
+	loaded, err := r.loadRun(ctx, appID, runID)
+	if err != nil {
+		r.log.Warn("load pinned model failed", zap.Int64("app", appID), zap.Int64("run", runID), zap.Error(err))
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.pinned) >= 4 {
+		var oldest int64
+		var at time.Time
+		for id, p := range r.pinned {
+			if oldest == 0 || p.used.Before(at) {
+				oldest, at = id, p.used
+			}
+		}
+		delete(r.pinned, oldest)
+	}
+	r.pinned[runID] = &pinnedRun{l: loaded, used: time.Now()}
+	return loaded
+}
+
+type pinnedRun struct {
+	l    *Loaded
+	used time.Time
+}
+
+func (r *Registry) loadRun(ctx context.Context, appID, runID int64) (*Loaded, error) {
 	run, err := r.pg.Run(ctx, appID, runID)
 	if err != nil {
-		r.log.Warn("load model run failed", zap.Int64("app", appID), zap.Int64("run", runID), zap.Error(err))
-		return
+		return nil, err
 	}
 	blob, err := r.pg.Blob(ctx, runID)
 	if err != nil {
-		r.log.Warn("load model blob failed", zap.Int64("app", appID), zap.Int64("run", runID), zap.Error(err))
-		return
+		return nil, err
 	}
 	snap, err := model.Decode(blob)
 	if err != nil {
-		r.log.Error("decode model failed", zap.Int64("app", appID), zap.Int64("run", runID), zap.Error(err))
-		return
+		return nil, err
 	}
 	// 训练开始之后才清除数据的人：事件已经删了，但这版模型里还有他，加载时抹掉
 	forgotten, err := r.pg.ForgottenSince(ctx, appID, time.UnixMilli(run.CreatedAt).Add(-time.Hour))
@@ -99,24 +152,27 @@ func (r *Registry) Load(ctx context.Context, appID, runID int64) {
 	}
 	tracks, err := r.pg.Tracks(ctx, appID, snap.Items)
 	if err != nil {
-		r.log.Warn("load model tracks failed", zap.Error(err))
-		return
+		return nil, err
 	}
 	loaded := &Loaded{Snap: snap, RunID: runID, LoadedAt: time.Now(), Tracks: make([]contract.Track, len(snap.Items))}
 	for i, key := range snap.Items {
 		loaded.Tracks[i] = tracks[key]
 	}
-	r.mu.Lock()
-	r.byApp[appID] = loaded
-	r.mu.Unlock()
-	r.log.Info("model loaded", zap.Int64("app", appID), zap.Int64("run", runID), zap.Int("items", len(snap.Items)),
-		zap.Int("users", len(snap.Users)), zap.Duration("took", time.Since(begin)))
+	snap.AppID = appID
+	return loaded, nil
 }
 
 // Forget 内存里的模型立即不再用这个人。
 func (r *Registry) Forget(appID, userID int64) {
 	if l := r.Get(appID); l != nil {
 		l.forgotten.Store(userID, true)
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, p := range r.pinned {
+		if p.l.Snap.AppID == appID {
+			p.l.forgotten.Store(userID, true)
+		}
 	}
 }
 

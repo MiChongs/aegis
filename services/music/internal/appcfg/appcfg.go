@@ -64,8 +64,47 @@ type Config struct {
 	Schedule          string  `json:"schedule"`
 	AutoPublish       bool    `json:"autoPublish"`
 	MinLift           float64 `json:"minLift"`
-	UpdatedAt         int64   `json:"updatedAt"`
-	UpdatedBy         string  `json:"updatedBy"`
+	// 第二期（docs/music-personalization-2.md「应用配置增量」）
+	FoldIn       bool     `json:"foldIn"`
+	Ranker       Ranker   `json:"ranker"`
+	Fatigue      Fatigue  `json:"fatigue"`
+	SuppressDays int      `json:"suppressDays"`
+	Discover     Discover `json:"discover"`
+	Mixes        Mixes    `json:"mixes"`
+	Autoplay     Autoplay `json:"autoplay"`
+	UpdatedAt    int64    `json:"updatedAt"`
+	UpdatedBy    string   `json:"updatedBy"`
+}
+
+// Ranker 精排。
+type Ranker struct {
+	Enabled    bool    `json:"enabled"`
+	MinSamples int     `json:"minSamples"`
+	L2         float64 `json:"l2"`
+	Epochs     int     `json:"epochs"`
+}
+
+// Fatigue 曝光疲劳。
+type Fatigue struct {
+	Threshold int     `json:"threshold"`
+	Decay     float64 `json:"decay"`
+}
+
+// Discover 每周雷达。
+type Discover struct {
+	Size              int     `json:"size"`
+	PopularityPenalty float64 `json:"popularityPenalty"`
+}
+
+// Mixes 风格歌单。
+type Mixes struct {
+	Max  int `json:"max"`
+	Size int `json:"size"`
+}
+
+// Autoplay 智能续播。
+type Autoplay struct {
+	Size int `json:"size"`
 }
 
 // Default 新应用的默认配置（docs「应用配置」）。
@@ -86,6 +125,13 @@ func Default() Config {
 		Schedule:          "0 4 * * *",
 		AutoPublish:       true,
 		MinLift:           1.0,
+		FoldIn:            true,
+		Ranker:            Ranker{Enabled: true, MinSamples: 2000, L2: 0.001, Epochs: 8},
+		Fatigue:           Fatigue{Threshold: 3, Decay: 0.6},
+		SuppressDays:      30,
+		Discover:          Discover{Size: 30, PopularityPenalty: 0.5},
+		Mixes:             Mixes{Max: 6, Size: 25},
+		Autoplay:          Autoplay{Size: 10},
 	}
 }
 
@@ -111,6 +157,17 @@ func (c *Config) Validate() error {
 		{"近期播放降权天数", float64(c.RecentExcludeDays), 0, 30},
 		{"探索比例", c.ExploreRatio, 0, 0.5},
 		{"发布门槛", c.MinLift, 0, 3},
+		{"精排最少样本数", float64(c.Ranker.MinSamples), 200, 1000000},
+		{"精排正则", c.Ranker.L2, 0, 1},
+		{"精排训练轮数", float64(c.Ranker.Epochs), 1, 50},
+		{"曝光疲劳阈值", float64(c.Fatigue.Threshold), 1, 20},
+		{"曝光疲劳衰减", c.Fatigue.Decay, 0.1, 1},
+		{"暂不推荐天数", float64(c.SuppressDays), 1, 180},
+		{"每周雷达首数", float64(c.Discover.Size), 10, 50},
+		{"每周雷达热度惩罚", c.Discover.PopularityPenalty, 0, 2},
+		{"风格歌单数量", float64(c.Mixes.Max), 0, 10},
+		{"风格歌单首数", float64(c.Mixes.Size), 10, 50},
+		{"智能续播每批首数", float64(c.Autoplay.Size), 5, 30},
 	}
 	w := c.Weights
 	for _, item := range []struct {

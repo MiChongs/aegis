@@ -25,11 +25,13 @@ type Entry struct {
 
 // itemStat 作品统计（热度、筛选用）。
 type itemStat struct {
-	key, title, artist, artistN string
-	posUsers                    int32 // 窗口内正反馈人数
-	listeners7, completes7      int32
-	plays7                      int32
-	listeners1, listenersPrev   int32
+	key, title, artist, artistN   string
+	posUsers                      int32 // 窗口内正反馈人数
+	listeners7, completes7        int32
+	plays7                        int32
+	listeners1, listenersPrev     int32
+	plays30, completes30, skips30 int32
+	lang                          uint8
 }
 
 // Builder 从按 (user, ts) 排好序的事件流累计交互矩阵。
@@ -74,7 +76,8 @@ func (b *Builder) item(r *store.InteractionRow) int32 {
 	i := int32(len(b.stats))
 	b.items[r.WorkKey] = i
 	first := contract.FirstArtist(r.Artist)
-	b.stats = append(b.stats, itemStat{key: r.WorkKey, title: r.Title, artist: contract.NormalizeArtist(first), artistN: first})
+	b.stats = append(b.stats, itemStat{key: r.WorkKey, title: r.Title, artist: contract.NormalizeArtist(first), artistN: first,
+		lang: uint8(contract.LangIndex(contract.DetectLang(r.Title, r.Artist)))})
 	return i
 }
 
@@ -90,7 +93,8 @@ func (b *Builder) Add(r *store.InteractionRow) {
 	}
 	i := b.item(r)
 	ev := contract.Event{Type: r.Type, PlayedMs: r.PlayedMs, PositionMs: r.PositionMs, Reason: r.Reason,
-		Track: &contract.Track{DurationMs: r.DurationMs}, Props: map[string]string{"from": r.SeekFrom}}
+		Track: &contract.Track{DurationMs: r.DurationMs},
+		Props: map[string]string{"from": r.SeekFrom, "reason": r.DislikeReason, "scope": r.DislikeScope}}
 	k := signal.Classify(&ev)
 	if k == signal.KindNone {
 		return
@@ -105,6 +109,16 @@ func (b *Builder) Add(r *store.InteractionRow) {
 	e.Score += float32(score)
 	if r.TS > e.Last {
 		e.Last = r.TS
+	}
+	if r.Type == contract.TypePlayEnd && age <= 30 && (k == signal.KindComplete || k == signal.KindPartial || k == signal.KindSkip) {
+		st := &b.stats[i]
+		st.plays30++
+		switch k {
+		case signal.KindComplete:
+			st.completes30++
+		case signal.KindSkip:
+			st.skips30++
+		}
 	}
 	if r.Type == contract.TypePlayEnd && (k == signal.KindComplete || k == signal.KindPartial) {
 		st := &b.stats[i]
@@ -606,12 +620,23 @@ func Build(ctx context.Context, m *Matrix, cfg appcfg.Config, workers int, seed 
 		Trending: trend, Rising: rising, ItemPop: pop,
 		UserArtists: userArtists(m.Rows, m.Items), ArtistTop: artistTop(m.Items),
 	}
+	s.Gram = gramian(als.Y, cfg.ALS.Factors)
+	s.Lambda, s.Alpha = float32(cfg.ALS.Regularization), float32(cfg.ALS.Alpha)
+	s.ArtistName = map[string]string{}
 	for _, st := range m.Items {
 		s.Items = append(s.Items, st.key)
 		s.ItemArtist = append(s.ItemArtist, st.artist)
 		s.ItemArtistN = append(s.ItemArtistN, st.artistN)
 		s.ItemTitle = append(s.ItemTitle, st.title)
+		s.ItemLang = append(s.ItemLang, st.lang)
+		// 贝叶斯平滑：先验完播 0.6、早跳 0.2，各相当于 5 次播放
+		s.ItemComplete = append(s.ItemComplete, float32((float64(st.completes30)+3)/(float64(st.plays30)+5)))
+		s.ItemSkip = append(s.ItemSkip, float32((float64(st.skips30)+1)/(float64(st.plays30)+5)))
+		if st.artist != "" && s.ArtistName[st.artist] == "" {
+			s.ArtistName[st.artist] = st.artistN
+		}
 	}
+	s.ArtistSim = artistSimilarity(s.UserArtists, 20)
 	for _, row := range m.Rows {
 		s.UserCounts = append(s.UserCounts, int32(len(row)))
 	}

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/nats-io/nats.go"
 
 	"aegis/services/music/contract"
+	"aegis/services/music/internal/store"
 )
 
 // Forget 清除一个人的全部听歌数据：ClickHouse 事件与曝光、Redis 实时状态与缓存、模型里的向量（全部实例）。
@@ -33,6 +35,10 @@ func (s *Service) Forget(ctx context.Context, nc *nats.Conn, appID, userID int64
 	if err := s.RT.Forget(ctx, appID, userID); err != nil {
 		errs = append(errs, fmt.Errorf("清除实时状态失败：%w", err))
 	}
+	if err := s.PG.DeleteUserPrefs(ctx, appID, userID); err != nil {
+		errs = append(errs, fmt.Errorf("清除偏好设置失败：%w", err))
+	}
+	s.invalidatePrefs(appID, userID)
 	return errors.Join(errs...)
 }
 
@@ -42,6 +48,21 @@ type RealtimeView struct {
 	Positive        []TrackWeight `json:"positive"`
 	Negative        []TrackAt     `json:"negative"`
 	DislikedArtists []ArtistAt    `json:"dislikedArtists"`
+	Fatigue         []TrackCount  `json:"fatigue"`
+}
+
+// TrackCount 作品与次数（曝光疲劳）。
+type TrackCount struct {
+	WorkKey string          `json:"workKey"`
+	Track   *contract.Track `json:"track"`
+	Count   int             `json:"count"`
+}
+
+// ExperimentRef 用户所在的实验。
+type ExperimentRef struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Variant string `json:"variant"`
 }
 
 // TrackAt 作品与时刻。
@@ -66,10 +87,12 @@ type ArtistAt struct {
 
 // ModelView 模型里的这个人。
 type ModelView struct {
-	InModel      bool           `json:"inModel"`
-	Version      int64          `json:"version"`
-	Interactions int            `json:"interactions"`
-	TopArtists   []ArtistWeight `json:"topArtists"`
+	InModel      bool            `json:"inModel"`
+	Version      int64           `json:"version"`
+	Interactions int             `json:"interactions"`
+	TopArtists   []ArtistWeight  `json:"topArtists"`
+	FoldIn       bool            `json:"foldIn"`
+	Experiments  []ExperimentRef `json:"experiments"`
 }
 
 // ArtistWeight 歌手偏好。
@@ -80,10 +103,12 @@ type ArtistWeight struct {
 
 // UserDetail 控制台用户画像页。
 type UserDetail struct {
-	UserID   int64        `json:"userId"`
-	Profile  *Profile     `json:"profile"`
-	Realtime RealtimeView `json:"realtime"`
-	Model    ModelView    `json:"model"`
+	UserID      int64          `json:"userId"`
+	Profile     *Profile       `json:"profile"`
+	Realtime    RealtimeView   `json:"realtime"`
+	Model       ModelView      `json:"model"`
+	Preferences *store.Prefs   `json:"preferences"`
+	Feedback    []FeedbackItem `json:"feedback"`
 }
 
 // UserDetail 画像 + 实时状态 + 模型里的口味。
@@ -106,6 +131,15 @@ func (s *Service) UserDetail(ctx context.Context, appID, userID int64, days int)
 	for k := range st.Negative {
 		keys = append(keys, k)
 	}
+	for k := range st.Disliked {
+		keys = append(keys, k)
+	}
+	for k := range st.Suppressed {
+		keys = append(keys, k)
+	}
+	for k := range st.Fatigue {
+		keys = append(keys, k)
+	}
 	tracks, err := s.PG.Tracks(ctx, appID, keys)
 	if err != nil {
 		return nil, err
@@ -117,8 +151,30 @@ func (s *Service) UserDetail(ctx context.Context, appID, userID int64, days int)
 		return nil
 	}
 	out := &UserDetail{UserID: userID, Profile: profile, Realtime: RealtimeView{
-		Recent: []TrackAt{}, Positive: []TrackWeight{}, Negative: []TrackAt{}, DislikedArtists: []ArtistAt{}},
-		Model: ModelView{TopArtists: []ArtistWeight{}}}
+		Recent: []TrackAt{}, Positive: []TrackWeight{}, Negative: []TrackAt{}, DislikedArtists: []ArtistAt{}, Fatigue: []TrackCount{}},
+		Model: ModelView{TopArtists: []ArtistWeight{}, Experiments: []ExperimentRef{}}, Feedback: []FeedbackItem{}}
+	if prefs, ok, err := s.PG.UserPrefs(ctx, appID, userID); err == nil && ok {
+		out.Preferences = &prefs
+	}
+	cfg, _ := s.Cfgs.Get(ctx, appID)
+	for _, f := range FeedbackList(st, "", cfg.SuppressDays) {
+		if f.WorkKey != "" {
+			f.Track = trackOf(f.WorkKey)
+		}
+		out.Feedback = append(out.Feedback, f)
+	}
+	for key, n := range st.Fatigue {
+		out.Realtime.Fatigue = append(out.Realtime.Fatigue, TrackCount{WorkKey: key, Track: trackOf(key), Count: n})
+	}
+	sort.Slice(out.Realtime.Fatigue, func(a, b int) bool {
+		if out.Realtime.Fatigue[a].Count != out.Realtime.Fatigue[b].Count {
+			return out.Realtime.Fatigue[a].Count > out.Realtime.Fatigue[b].Count
+		}
+		return out.Realtime.Fatigue[a].WorkKey < out.Realtime.Fatigue[b].WorkKey
+	})
+	for _, asg := range s.Assignments(ctx, appID, userID) {
+		out.Model.Experiments = append(out.Model.Experiments, ExperimentRef{ID: asg.ExperimentID, Name: asg.Name, Variant: asg.Variant})
+	}
 	for k, e := range st.Recent {
 		if k >= 50 {
 			break
@@ -138,6 +194,7 @@ func (s *Service) UserDetail(ctx context.Context, appID, userID int64, days int)
 	sortArtistAt(out.Realtime.DislikedArtists)
 	if l := s.Reg.Get(appID); l != nil {
 		out.Model.Version = l.RunID
+		out.Model.FoldIn = cfg.FoldIn && len(l.Snap.Gram) > 0 && (len(st.Positive) > 0 || len(st.Recent) > 0)
 		if u, ok := l.Snap.User(userID); ok && !l.Forgotten(userID) {
 			out.Model.InModel = true
 			out.Model.Interactions = int(l.Snap.UserCounts[u])

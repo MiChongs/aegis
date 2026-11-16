@@ -30,6 +30,128 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type UserOpRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	AppId  int64                  `protobuf:"varint,1,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	UserId int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Op     string                 `protobuf:"bytes,3,opt,name=op,proto3" json:"op,omitempty"`
+	// 查询参数或请求体（JSON 对象）
+	ParamsJson []byte `protobuf:"bytes,4,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
+	// 客户端本地的个性化开关（与服务端偏好取「与」）
+	Personalized  bool `protobuf:"varint,5,opt,name=personalized,proto3" json:"personalized,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UserOpRequest) Reset() {
+	*x = UserOpRequest{}
+	mi := &file_music_v1_music_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UserOpRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UserOpRequest) ProtoMessage() {}
+
+func (x *UserOpRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_music_v1_music_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UserOpRequest.ProtoReflect.Descriptor instead.
+func (*UserOpRequest) Descriptor() ([]byte, []int) {
+	return file_music_v1_music_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *UserOpRequest) GetAppId() int64 {
+	if x != nil {
+		return x.AppId
+	}
+	return 0
+}
+
+func (x *UserOpRequest) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *UserOpRequest) GetOp() string {
+	if x != nil {
+		return x.Op
+	}
+	return ""
+}
+
+func (x *UserOpRequest) GetParamsJson() []byte {
+	if x != nil {
+		return x.ParamsJson
+	}
+	return nil
+}
+
+func (x *UserOpRequest) GetPersonalized() bool {
+	if x != nil {
+		return x.Personalized
+	}
+	return false
+}
+
+type UserOpResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ResultJson    []byte                 `protobuf:"bytes,1,opt,name=result_json,json=resultJson,proto3" json:"result_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UserOpResponse) Reset() {
+	*x = UserOpResponse{}
+	mi := &file_music_v1_music_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UserOpResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UserOpResponse) ProtoMessage() {}
+
+func (x *UserOpResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_music_v1_music_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UserOpResponse.ProtoReflect.Descriptor instead.
+func (*UserOpResponse) Descriptor() ([]byte, []int) {
+	return file_music_v1_music_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *UserOpResponse) GetResultJson() []byte {
+	if x != nil {
+		return x.ResultJson
+	}
+	return nil
+}
+
 type Track struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
@@ -45,7 +167,7 @@ type Track struct {
 
 func (x *Track) Reset() {
 	*x = Track{}
-	mi := &file_music_v1_music_proto_msgTypes[0]
+	mi := &file_music_v1_music_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -57,7 +179,7 @@ func (x *Track) String() string {
 func (*Track) ProtoMessage() {}
 
 func (x *Track) ProtoReflect() protoreflect.Message {
-	mi := &file_music_v1_music_proto_msgTypes[0]
+	mi := &file_music_v1_music_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -70,7 +192,7 @@ func (x *Track) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Track.ProtoReflect.Descriptor instead.
 func (*Track) Descriptor() ([]byte, []int) {
-	return file_music_v1_music_proto_rawDescGZIP(), []int{0}
+	return file_music_v1_music_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Track) GetSource() string {
@@ -134,7 +256,7 @@ type Reason struct {
 
 func (x *Reason) Reset() {
 	*x = Reason{}
-	mi := &file_music_v1_music_proto_msgTypes[1]
+	mi := &file_music_v1_music_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -146,7 +268,7 @@ func (x *Reason) String() string {
 func (*Reason) ProtoMessage() {}
 
 func (x *Reason) ProtoReflect() protoreflect.Message {
-	mi := &file_music_v1_music_proto_msgTypes[1]
+	mi := &file_music_v1_music_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -159,7 +281,7 @@ func (x *Reason) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Reason.ProtoReflect.Descriptor instead.
 func (*Reason) Descriptor() ([]byte, []int) {
-	return file_music_v1_music_proto_rawDescGZIP(), []int{1}
+	return file_music_v1_music_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Reason) GetKind() string {
@@ -197,7 +319,7 @@ type RecItem struct {
 
 func (x *RecItem) Reset() {
 	*x = RecItem{}
-	mi := &file_music_v1_music_proto_msgTypes[2]
+	mi := &file_music_v1_music_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -209,7 +331,7 @@ func (x *RecItem) String() string {
 func (*RecItem) ProtoMessage() {}
 
 func (x *RecItem) ProtoReflect() protoreflect.Message {
-	mi := &file_music_v1_music_proto_msgTypes[2]
+	mi := &file_music_v1_music_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -222,7 +344,7 @@ func (x *RecItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecItem.ProtoReflect.Descriptor instead.
 func (*RecItem) Descriptor() ([]byte, []int) {
-	return file_music_v1_music_proto_rawDescGZIP(), []int{2}
+	return file_music_v1_music_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *RecItem) GetWorkKey() string {
@@ -273,14 +395,19 @@ type RecommendRequest struct {
 	// false：只给热度，不读任何个人数据
 	Personalized bool `protobuf:"varint,8,opt,name=personalized,proto3" json:"personalized,omitempty"`
 	// true：管理端预览，带分数拆解、不发 served 事件、不写电台去重与每日缓存
-	Explain       bool `protobuf:"varint,9,opt,name=explain,proto3" json:"explain,omitempty"`
+	Explain bool `protobuf:"varint,9,opt,name=explain,proto3" json:"explain,omitempty"`
+	// 第二期：autoplay 的种子（最近放的在后）与排除（source:songId）、mix 的歌单 ID、artist 的歌手名
+	Seeds         []*Track `protobuf:"bytes,10,rep,name=seeds,proto3" json:"seeds,omitempty"`
+	Exclude       []string `protobuf:"bytes,11,rep,name=exclude,proto3" json:"exclude,omitempty"`
+	MixId         string   `protobuf:"bytes,12,opt,name=mix_id,json=mixId,proto3" json:"mix_id,omitempty"`
+	Artist        string   `protobuf:"bytes,13,opt,name=artist,proto3" json:"artist,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RecommendRequest) Reset() {
 	*x = RecommendRequest{}
-	mi := &file_music_v1_music_proto_msgTypes[3]
+	mi := &file_music_v1_music_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -292,7 +419,7 @@ func (x *RecommendRequest) String() string {
 func (*RecommendRequest) ProtoMessage() {}
 
 func (x *RecommendRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_music_v1_music_proto_msgTypes[3]
+	mi := &file_music_v1_music_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -305,7 +432,7 @@ func (x *RecommendRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecommendRequest.ProtoReflect.Descriptor instead.
 func (*RecommendRequest) Descriptor() ([]byte, []int) {
-	return file_music_v1_music_proto_rawDescGZIP(), []int{3}
+	return file_music_v1_music_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *RecommendRequest) GetAppId() int64 {
@@ -371,6 +498,34 @@ func (x *RecommendRequest) GetExplain() bool {
 	return false
 }
 
+func (x *RecommendRequest) GetSeeds() []*Track {
+	if x != nil {
+		return x.Seeds
+	}
+	return nil
+}
+
+func (x *RecommendRequest) GetExclude() []string {
+	if x != nil {
+		return x.Exclude
+	}
+	return nil
+}
+
+func (x *RecommendRequest) GetMixId() string {
+	if x != nil {
+		return x.MixId
+	}
+	return ""
+}
+
+func (x *RecommendRequest) GetArtist() string {
+	if x != nil {
+		return x.Artist
+	}
+	return ""
+}
+
 type RecommendResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RecId         string                 `protobuf:"bytes,1,opt,name=rec_id,json=recId,proto3" json:"rec_id,omitempty"`
@@ -383,13 +538,15 @@ type RecommendResponse struct {
 	Items         []*RecItem             `protobuf:"bytes,8,rep,name=items,proto3" json:"items,omitempty"`
 	ColdStart     bool                   `protobuf:"varint,9,opt,name=cold_start,json=coldStart,proto3" json:"cold_start,omitempty"`
 	TookMs        int64                  `protobuf:"varint,10,opt,name=took_ms,json=tookMs,proto3" json:"took_ms,omitempty"`
+	ExperimentId  int64                  `protobuf:"varint,11,opt,name=experiment_id,json=experimentId,proto3" json:"experiment_id,omitempty"`
+	Variant       string                 `protobuf:"bytes,12,opt,name=variant,proto3" json:"variant,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RecommendResponse) Reset() {
 	*x = RecommendResponse{}
-	mi := &file_music_v1_music_proto_msgTypes[4]
+	mi := &file_music_v1_music_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -401,7 +558,7 @@ func (x *RecommendResponse) String() string {
 func (*RecommendResponse) ProtoMessage() {}
 
 func (x *RecommendResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_music_v1_music_proto_msgTypes[4]
+	mi := &file_music_v1_music_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -414,7 +571,7 @@ func (x *RecommendResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecommendResponse.ProtoReflect.Descriptor instead.
 func (*RecommendResponse) Descriptor() ([]byte, []int) {
-	return file_music_v1_music_proto_rawDescGZIP(), []int{4}
+	return file_music_v1_music_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RecommendResponse) GetRecId() string {
@@ -487,6 +644,20 @@ func (x *RecommendResponse) GetTookMs() int64 {
 	return 0
 }
 
+func (x *RecommendResponse) GetExperimentId() int64 {
+	if x != nil {
+		return x.ExperimentId
+	}
+	return 0
+}
+
+func (x *RecommendResponse) GetVariant() string {
+	if x != nil {
+		return x.Variant
+	}
+	return ""
+}
+
 type GetProfileRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AppId         int64                  `protobuf:"varint,1,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
@@ -498,7 +669,7 @@ type GetProfileRequest struct {
 
 func (x *GetProfileRequest) Reset() {
 	*x = GetProfileRequest{}
-	mi := &file_music_v1_music_proto_msgTypes[5]
+	mi := &file_music_v1_music_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -510,7 +681,7 @@ func (x *GetProfileRequest) String() string {
 func (*GetProfileRequest) ProtoMessage() {}
 
 func (x *GetProfileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_music_v1_music_proto_msgTypes[5]
+	mi := &file_music_v1_music_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -523,7 +694,7 @@ func (x *GetProfileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProfileRequest.ProtoReflect.Descriptor instead.
 func (*GetProfileRequest) Descriptor() ([]byte, []int) {
-	return file_music_v1_music_proto_rawDescGZIP(), []int{5}
+	return file_music_v1_music_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetProfileRequest) GetAppId() int64 {
@@ -557,7 +728,7 @@ type GetProfileResponse struct {
 
 func (x *GetProfileResponse) Reset() {
 	*x = GetProfileResponse{}
-	mi := &file_music_v1_music_proto_msgTypes[6]
+	mi := &file_music_v1_music_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -569,7 +740,7 @@ func (x *GetProfileResponse) String() string {
 func (*GetProfileResponse) ProtoMessage() {}
 
 func (x *GetProfileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_music_v1_music_proto_msgTypes[6]
+	mi := &file_music_v1_music_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -582,7 +753,7 @@ func (x *GetProfileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProfileResponse.ProtoReflect.Descriptor instead.
 func (*GetProfileResponse) Descriptor() ([]byte, []int) {
-	return file_music_v1_music_proto_rawDescGZIP(), []int{6}
+	return file_music_v1_music_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *GetProfileResponse) GetProfileJson() []byte {
@@ -605,7 +776,7 @@ type ForgetUserRequest struct {
 
 func (x *ForgetUserRequest) Reset() {
 	*x = ForgetUserRequest{}
-	mi := &file_music_v1_music_proto_msgTypes[7]
+	mi := &file_music_v1_music_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -617,7 +788,7 @@ func (x *ForgetUserRequest) String() string {
 func (*ForgetUserRequest) ProtoMessage() {}
 
 func (x *ForgetUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_music_v1_music_proto_msgTypes[7]
+	mi := &file_music_v1_music_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -630,7 +801,7 @@ func (x *ForgetUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForgetUserRequest.ProtoReflect.Descriptor instead.
 func (*ForgetUserRequest) Descriptor() ([]byte, []int) {
-	return file_music_v1_music_proto_rawDescGZIP(), []int{7}
+	return file_music_v1_music_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ForgetUserRequest) GetAppId() int64 {
@@ -670,7 +841,7 @@ type ForgetUserResponse struct {
 
 func (x *ForgetUserResponse) Reset() {
 	*x = ForgetUserResponse{}
-	mi := &file_music_v1_music_proto_msgTypes[8]
+	mi := &file_music_v1_music_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -682,7 +853,7 @@ func (x *ForgetUserResponse) String() string {
 func (*ForgetUserResponse) ProtoMessage() {}
 
 func (x *ForgetUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_music_v1_music_proto_msgTypes[8]
+	mi := &file_music_v1_music_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -695,7 +866,7 @@ func (x *ForgetUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForgetUserResponse.ProtoReflect.Descriptor instead.
 func (*ForgetUserResponse) Descriptor() ([]byte, []int) {
-	return file_music_v1_music_proto_rawDescGZIP(), []int{8}
+	return file_music_v1_music_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ForgetUserResponse) GetDeleted() bool {
@@ -714,7 +885,7 @@ type GetSwitchesRequest struct {
 
 func (x *GetSwitchesRequest) Reset() {
 	*x = GetSwitchesRequest{}
-	mi := &file_music_v1_music_proto_msgTypes[9]
+	mi := &file_music_v1_music_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -726,7 +897,7 @@ func (x *GetSwitchesRequest) String() string {
 func (*GetSwitchesRequest) ProtoMessage() {}
 
 func (x *GetSwitchesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_music_v1_music_proto_msgTypes[9]
+	mi := &file_music_v1_music_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -739,7 +910,7 @@ func (x *GetSwitchesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSwitchesRequest.ProtoReflect.Descriptor instead.
 func (*GetSwitchesRequest) Descriptor() ([]byte, []int) {
-	return file_music_v1_music_proto_rawDescGZIP(), []int{9}
+	return file_music_v1_music_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GetSwitchesRequest) GetAppId() int64 {
@@ -759,7 +930,7 @@ type GetSwitchesResponse struct {
 
 func (x *GetSwitchesResponse) Reset() {
 	*x = GetSwitchesResponse{}
-	mi := &file_music_v1_music_proto_msgTypes[10]
+	mi := &file_music_v1_music_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -771,7 +942,7 @@ func (x *GetSwitchesResponse) String() string {
 func (*GetSwitchesResponse) ProtoMessage() {}
 
 func (x *GetSwitchesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_music_v1_music_proto_msgTypes[10]
+	mi := &file_music_v1_music_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -784,7 +955,7 @@ func (x *GetSwitchesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSwitchesResponse.ProtoReflect.Descriptor instead.
 func (*GetSwitchesResponse) Descriptor() ([]byte, []int) {
-	return file_music_v1_music_proto_rawDescGZIP(), []int{10}
+	return file_music_v1_music_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GetSwitchesResponse) GetEnabled() bool {
@@ -805,7 +976,17 @@ var File_music_v1_music_proto protoreflect.FileDescriptor
 
 const file_music_v1_music_proto_rawDesc = "" +
 	"\n" +
-	"\x14music/v1/music.proto\x12\bmusic.v1\"\xb3\x01\n" +
+	"\x14music/v1/music.proto\x12\bmusic.v1\"\x94\x01\n" +
+	"\rUserOpRequest\x12\x15\n" +
+	"\x06app_id\x18\x01 \x01(\x03R\x05appId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x0e\n" +
+	"\x02op\x18\x03 \x01(\tR\x02op\x12\x1f\n" +
+	"\vparams_json\x18\x04 \x01(\fR\n" +
+	"paramsJson\x12\"\n" +
+	"\fpersonalized\x18\x05 \x01(\bR\fpersonalized\"1\n" +
+	"\x0eUserOpResponse\x12\x1f\n" +
+	"\vresult_json\x18\x01 \x01(\fR\n" +
+	"resultJson\"\xb3\x01\n" +
 	"\x05Track\x12\x16\n" +
 	"\x06source\x18\x01 \x01(\tR\x06source\x12\x17\n" +
 	"\asong_id\x18\x02 \x01(\tR\x06songId\x12\x14\n" +
@@ -827,7 +1008,7 @@ const file_music_v1_music_proto_rawDesc = "" +
 	"\bchannels\x18\x05 \x03(\v2\x1f.music.v1.RecItem.ChannelsEntryR\bchannels\x1a;\n" +
 	"\rChannelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"\x87\x02\n" +
+	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"\xf7\x02\n" +
 	"\x10RecommendRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\x03R\x05appId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x14\n" +
@@ -839,7 +1020,12 @@ const file_music_v1_music_proto_rawDesc = "" +
 	"\fseed_song_id\x18\a \x01(\tR\n" +
 	"seedSongId\x12\"\n" +
 	"\fpersonalized\x18\b \x01(\bR\fpersonalized\x12\x18\n" +
-	"\aexplain\x18\t \x01(\bR\aexplain\"\xd7\x02\n" +
+	"\aexplain\x18\t \x01(\bR\aexplain\x12%\n" +
+	"\x05seeds\x18\n" +
+	" \x03(\v2\x0f.music.v1.TrackR\x05seeds\x12\x18\n" +
+	"\aexclude\x18\v \x03(\tR\aexclude\x12\x15\n" +
+	"\x06mix_id\x18\f \x01(\tR\x05mixId\x12\x16\n" +
+	"\x06artist\x18\r \x01(\tR\x06artist\"\x96\x03\n" +
 	"\x11RecommendResponse\x12\x15\n" +
 	"\x06rec_id\x18\x01 \x01(\tR\x05recId\x12\x14\n" +
 	"\x05scene\x18\x02 \x01(\tR\x05scene\x12#\n" +
@@ -853,7 +1039,9 @@ const file_music_v1_music_proto_rawDesc = "" +
 	"\n" +
 	"cold_start\x18\t \x01(\bR\tcoldStart\x12\x17\n" +
 	"\atook_ms\x18\n" +
-	" \x01(\x03R\x06tookMs\"W\n" +
+	" \x01(\x03R\x06tookMs\x12#\n" +
+	"\rexperiment_id\x18\v \x01(\x03R\fexperimentId\x12\x18\n" +
+	"\avariant\x18\f \x01(\tR\avariant\"W\n" +
 	"\x11GetProfileRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\x03R\x05appId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x12\n" +
@@ -871,14 +1059,15 @@ const file_music_v1_music_proto_rawDesc = "" +
 	"\x06app_id\x18\x01 \x01(\x03R\x05appId\"X\n" +
 	"\x13GetSwitchesResponse\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12'\n" +
-	"\x0fcollect_enabled\x18\x02 \x01(\bR\x0ecollectEnabled2\xb2\x02\n" +
+	"\x0fcollect_enabled\x18\x02 \x01(\bR\x0ecollectEnabled2\xef\x02\n" +
 	"\fMusicService\x12D\n" +
 	"\tRecommend\x12\x1a.music.v1.RecommendRequest\x1a\x1b.music.v1.RecommendResponse\x12G\n" +
 	"\n" +
 	"GetProfile\x12\x1b.music.v1.GetProfileRequest\x1a\x1c.music.v1.GetProfileResponse\x12G\n" +
 	"\n" +
 	"ForgetUser\x12\x1b.music.v1.ForgetUserRequest\x1a\x1c.music.v1.ForgetUserResponse\x12J\n" +
-	"\vGetSwitches\x12\x1c.music.v1.GetSwitchesRequest\x1a\x1d.music.v1.GetSwitchesResponseB Z\x1eaegis/api/gen/music/v1;musicv1b\x06proto3"
+	"\vGetSwitches\x12\x1c.music.v1.GetSwitchesRequest\x1a\x1d.music.v1.GetSwitchesResponse\x12;\n" +
+	"\x06UserOp\x12\x17.music.v1.UserOpRequest\x1a\x18.music.v1.UserOpResponseB Z\x1eaegis/api/gen/music/v1;musicv1b\x06proto3"
 
 var (
 	file_music_v1_music_proto_rawDescOnce sync.Once
@@ -892,39 +1081,44 @@ func file_music_v1_music_proto_rawDescGZIP() []byte {
 	return file_music_v1_music_proto_rawDescData
 }
 
-var file_music_v1_music_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_music_v1_music_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_music_v1_music_proto_goTypes = []any{
-	(*Track)(nil),               // 0: music.v1.Track
-	(*Reason)(nil),              // 1: music.v1.Reason
-	(*RecItem)(nil),             // 2: music.v1.RecItem
-	(*RecommendRequest)(nil),    // 3: music.v1.RecommendRequest
-	(*RecommendResponse)(nil),   // 4: music.v1.RecommendResponse
-	(*GetProfileRequest)(nil),   // 5: music.v1.GetProfileRequest
-	(*GetProfileResponse)(nil),  // 6: music.v1.GetProfileResponse
-	(*ForgetUserRequest)(nil),   // 7: music.v1.ForgetUserRequest
-	(*ForgetUserResponse)(nil),  // 8: music.v1.ForgetUserResponse
-	(*GetSwitchesRequest)(nil),  // 9: music.v1.GetSwitchesRequest
-	(*GetSwitchesResponse)(nil), // 10: music.v1.GetSwitchesResponse
-	nil,                         // 11: music.v1.RecItem.ChannelsEntry
+	(*UserOpRequest)(nil),       // 0: music.v1.UserOpRequest
+	(*UserOpResponse)(nil),      // 1: music.v1.UserOpResponse
+	(*Track)(nil),               // 2: music.v1.Track
+	(*Reason)(nil),              // 3: music.v1.Reason
+	(*RecItem)(nil),             // 4: music.v1.RecItem
+	(*RecommendRequest)(nil),    // 5: music.v1.RecommendRequest
+	(*RecommendResponse)(nil),   // 6: music.v1.RecommendResponse
+	(*GetProfileRequest)(nil),   // 7: music.v1.GetProfileRequest
+	(*GetProfileResponse)(nil),  // 8: music.v1.GetProfileResponse
+	(*ForgetUserRequest)(nil),   // 9: music.v1.ForgetUserRequest
+	(*ForgetUserResponse)(nil),  // 10: music.v1.ForgetUserResponse
+	(*GetSwitchesRequest)(nil),  // 11: music.v1.GetSwitchesRequest
+	(*GetSwitchesResponse)(nil), // 12: music.v1.GetSwitchesResponse
+	nil,                         // 13: music.v1.RecItem.ChannelsEntry
 }
 var file_music_v1_music_proto_depIdxs = []int32{
-	0,  // 0: music.v1.RecItem.track:type_name -> music.v1.Track
-	1,  // 1: music.v1.RecItem.reason:type_name -> music.v1.Reason
-	11, // 2: music.v1.RecItem.channels:type_name -> music.v1.RecItem.ChannelsEntry
-	2,  // 3: music.v1.RecommendResponse.items:type_name -> music.v1.RecItem
-	3,  // 4: music.v1.MusicService.Recommend:input_type -> music.v1.RecommendRequest
-	5,  // 5: music.v1.MusicService.GetProfile:input_type -> music.v1.GetProfileRequest
-	7,  // 6: music.v1.MusicService.ForgetUser:input_type -> music.v1.ForgetUserRequest
-	9,  // 7: music.v1.MusicService.GetSwitches:input_type -> music.v1.GetSwitchesRequest
-	4,  // 8: music.v1.MusicService.Recommend:output_type -> music.v1.RecommendResponse
-	6,  // 9: music.v1.MusicService.GetProfile:output_type -> music.v1.GetProfileResponse
-	8,  // 10: music.v1.MusicService.ForgetUser:output_type -> music.v1.ForgetUserResponse
-	10, // 11: music.v1.MusicService.GetSwitches:output_type -> music.v1.GetSwitchesResponse
-	8,  // [8:12] is the sub-list for method output_type
-	4,  // [4:8] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	2,  // 0: music.v1.RecItem.track:type_name -> music.v1.Track
+	3,  // 1: music.v1.RecItem.reason:type_name -> music.v1.Reason
+	13, // 2: music.v1.RecItem.channels:type_name -> music.v1.RecItem.ChannelsEntry
+	2,  // 3: music.v1.RecommendRequest.seeds:type_name -> music.v1.Track
+	4,  // 4: music.v1.RecommendResponse.items:type_name -> music.v1.RecItem
+	5,  // 5: music.v1.MusicService.Recommend:input_type -> music.v1.RecommendRequest
+	7,  // 6: music.v1.MusicService.GetProfile:input_type -> music.v1.GetProfileRequest
+	9,  // 7: music.v1.MusicService.ForgetUser:input_type -> music.v1.ForgetUserRequest
+	11, // 8: music.v1.MusicService.GetSwitches:input_type -> music.v1.GetSwitchesRequest
+	0,  // 9: music.v1.MusicService.UserOp:input_type -> music.v1.UserOpRequest
+	6,  // 10: music.v1.MusicService.Recommend:output_type -> music.v1.RecommendResponse
+	8,  // 11: music.v1.MusicService.GetProfile:output_type -> music.v1.GetProfileResponse
+	10, // 12: music.v1.MusicService.ForgetUser:output_type -> music.v1.ForgetUserResponse
+	12, // 13: music.v1.MusicService.GetSwitches:output_type -> music.v1.GetSwitchesResponse
+	1,  // 14: music.v1.MusicService.UserOp:output_type -> music.v1.UserOpResponse
+	10, // [10:15] is the sub-list for method output_type
+	5,  // [5:10] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_music_v1_music_proto_init() }
@@ -938,7 +1132,7 @@ func file_music_v1_music_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_music_v1_music_proto_rawDesc), len(file_music_v1_music_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -61,6 +61,7 @@ func (a *Admin) Mount(mux *http.ServeMux) {
 	route("POST /v1/apps/{app}/models/{run}/publish", a.publish)
 	route("GET /v1/apps/{app}/config", a.getConfig)
 	route("PUT /v1/apps/{app}/config", a.putConfig)
+	a.mountOps(route)
 }
 
 func (a *Admin) authorized(r *http.Request) bool {
@@ -134,8 +135,20 @@ func pathInt(r *http.Request, key string) (int64, bool) {
 // OverviewView 总览。
 type OverviewView struct {
 	*store.Overview
-	Model    *store.Run  `json:"model"`
-	Pipeline PipelineLag `json:"pipeline"`
+	Model           *store.Run          `json:"model"`
+	Pipeline        PipelineLag         `json:"pipeline"`
+	Models          []store.ModelRow    `json:"models"`
+	Experiments     []ExperimentSummary `json:"experiments"`
+	FeedbackReasons []store.ReasonCount `json:"feedbackReasons"`
+}
+
+// ExperimentSummary 总览里运行中的实验摘要。
+type ExperimentSummary struct {
+	ID        int64    `json:"id"`
+	Name      string   `json:"name"`
+	Scenes    []string `json:"scenes"`
+	Variants  int      `json:"variants"`
+	StartedAt int64    `json:"startedAt"`
 }
 
 func (a *Admin) overview(w http.ResponseWriter, r *http.Request, appID int64) {
@@ -149,7 +162,29 @@ func (a *Admin) overview(w http.ResponseWriter, r *http.Request, appID int64) {
 		a.fail(w, err)
 		return
 	}
-	writeOK(w, "获取音乐总览成功", OverviewView{Overview: ov, Model: run, Pipeline: a.Svc.Lag(r.Context(), ov.LastEvent)})
+	view := OverviewView{Overview: ov, Model: run, Pipeline: a.Svc.Lag(r.Context(), ov.LastEvent),
+		Models: []store.ModelRow{}, Experiments: []ExperimentSummary{}, FeedbackReasons: []store.ReasonCount{}}
+	from := time.UnixMilli(ov.From)
+	if rows, err := a.Svc.CH.ModelFunnel(r.Context(), appID, from); err == nil {
+		view.Models = rows
+	} else {
+		a.Log.Warn("model funnel failed", zap.Error(err))
+	}
+	if rows, err := a.Svc.CH.FeedbackReasons(r.Context(), appID, from); err == nil {
+		view.FeedbackReasons = rows
+	} else {
+		a.Log.Warn("feedback reasons failed", zap.Error(err))
+	}
+	if exps, err := a.Svc.PG.Experiments(r.Context(), appID, store.ExpRunning); err == nil {
+		for _, e := range exps {
+			started := int64(0)
+			if e.StartedAt != nil {
+				started = *e.StartedAt
+			}
+			view.Experiments = append(view.Experiments, ExperimentSummary{ID: e.ID, Name: e.Name, Scenes: e.Scenes, Variants: len(e.Variants), StartedAt: started})
+		}
+	}
+	writeOK(w, "获取音乐总览成功", view)
 }
 
 func (a *Admin) users(w http.ResponseWriter, r *http.Request, appID int64) {
@@ -224,8 +259,33 @@ func (a *Admin) preview(w http.ResponseWriter, r *http.Request, appID int64) {
 	if scene == "" {
 		scene = contract.SceneHome
 	}
-	res, err := a.Svc.Recommend(r.Context(), Request{AppID: appID, UserID: uid, Scene: scene, Limit: qInt(r, "limit", 20, 1, 50),
-		SeedSource: q.Get("source"), SeedSongID: q.Get("songId"), Personalized: true, Explain: true})
+	req := Request{AppID: appID, UserID: uid, Scene: scene, Limit: qInt(r, "limit", 0, 1, 50),
+		SeedSource: q.Get("source"), SeedSongID: q.Get("songId"), MixID: q.Get("mixId"), Artist: q.Get("artist"),
+		Personalized: true, Explain: true}
+	if seeds := strings.TrimSpace(q.Get("seeds")); seeds != "" {
+		var keys []string
+		for _, tk := range strings.Split(seeds, ",") {
+			if tk = strings.TrimSpace(tk); tk != "" {
+				keys = append(keys, tk)
+			}
+		}
+		works, _ := a.Svc.PG.WorkKeysOf(r.Context(), appID, keys)
+		var wk []string
+		for _, k := range works {
+			wk = append(wk, k)
+		}
+		tracks, _ := a.Svc.PG.Tracks(r.Context(), appID, wk)
+		for _, tk := range keys {
+			src, id, _ := strings.Cut(tk, ":")
+			t := contract.Track{Source: src, SongID: id}
+			if full, ok := tracks[works[tk]]; ok {
+				t.Title, t.Artist = full.Title, full.Artist
+			}
+			req.Seeds = append(req.Seeds, t)
+		}
+		req.Exclude = keys
+	}
+	res, err := a.Svc.Recommend(r.Context(), req)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -428,7 +488,11 @@ func (a *Admin) getConfig(w http.ResponseWriter, r *http.Request, appID int64) {
 }
 
 func (a *Admin) putConfig(w http.ResponseWriter, r *http.Request, appID int64) {
-	cfg := appcfg.Default()
+	// 在当前配置上覆盖：请求里没带的字段（包括旧控制台不认识的新字段）保持原值
+	cfg, err := a.Svc.PG.Config(r.Context(), appID)
+	if err != nil {
+		cfg = appcfg.Default()
+	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&cfg); err != nil {
 		writeErr(w, http.StatusBadRequest, 40000, "配置格式不正确")
 		return

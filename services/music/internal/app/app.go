@@ -266,7 +266,11 @@ func startRec(lc fx.Lifecycle, cfg config.Config, svc *rec.Service, pg *store.PG
 			if err != nil {
 				return err
 			}
-			subs = append(s, c)
+			o, err := svc.SubscribeOps(nc)
+			if err != nil {
+				return err
+			}
+			subs = append(s, c, o)
 			return nil
 		},
 		OnStop: func(context.Context) error {

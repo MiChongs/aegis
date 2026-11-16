@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"aegis/services/music/contract"
+	"aegis/services/music/internal/appcfg"
 	"aegis/services/music/internal/model"
 	"aegis/services/music/internal/store"
 )
@@ -191,12 +193,23 @@ func (t *Trainer) Run(ctx context.Context, runID int64) error {
 		return fail(fmt.Errorf("训练失败：%w", err))
 	}
 	snap.AppID, snap.RunID, snap.CreatedAt = run.AppID, runID, now.UnixMilli()
+
+	// 精排：用近 30 天被展示过的推荐（出推荐时记下的特征）训练逻辑回归，胜过融合分才启用
+	var rankInfo *store.RankerInfo
+	if cfg.Ranker.Enabled {
+		start = time.Now()
+		rankInfo = t.trainRanker(ctx, run.AppID, cfg, snap, logf)
+		stage("ranker", start)
+		if rankInfo != nil && rankInfo.Enabled && metrics != nil {
+			metrics.AUC = rankInfo.AUC
+		}
+	}
 	start = time.Now()
 	blob, err := snap.Encode()
 	if err != nil {
 		return fail(fmt.Errorf("模型序列化失败：%w", err))
 	}
-	if err := t.PG.FinishRun(ctx, runID, metrics, append(stages, store.Stage{Name: "save", Ms: time.Since(start).Milliseconds()}),
+	if err := t.PG.FinishRun(ctx, runID, metrics, rankInfo, append(stages, store.Stage{Name: "save", Ms: time.Since(start).Milliseconds()}),
 		len(m.Users), len(m.Items), m.Interact, blob); err != nil {
 		return fail(fmt.Errorf("保存模型失败：%w", err))
 	}
@@ -283,4 +296,44 @@ func (t *Trainer) tick(ctx context.Context, parser cron.Parser, prev, minute tim
 			t.Log.Info("scheduled train", zap.Int64("app", appID), zap.Int64("run", run.ID))
 		}
 	}
+}
+
+// trainRanker 读样本、训练、把结果挂到快照上；读不到样本或训练失败只记日志，不影响主模型。
+func (t *Trainer) trainRanker(ctx context.Context, appID int64, cfg appcfg.Config, snap *model.Snapshot, logf func(string, ...any)) *store.RankerInfo {
+	raw, err := t.CH.RankSamples(ctx, appID, 30, 1_000_000)
+	if err != nil {
+		logf("读取精排样本失败：%v", err)
+		return nil
+	}
+	blend := [5]float32{float32(cfg.Blend.ALS), float32(cfg.Blend.ItemCF), float32(cfg.Blend.Artist), float32(cfg.Blend.Trending), float32(cfg.Blend.Explore)}
+	samples := make([]model.Sample, 0, len(raw))
+	for _, r := range raw {
+		if len(r.Features) != model.NumRankFeatures {
+			continue // 特征版本不一致的旧样本
+		}
+		var base float32
+		for k := 0; k < 5; k++ {
+			base += blend[k] * r.Features[k]
+		}
+		samples = append(samples, model.Sample{X: r.Features, Y: r.Label, TS: r.TS, Base: base})
+	}
+	rk := model.TrainRanker(samples, model.RankerParams{MinSamples: cfg.Ranker.MinSamples, L2: cfg.Ranker.L2, Epochs: cfg.Ranker.Epochs})
+	info := &store.RankerInfo{Enabled: rk.Enabled, Samples: rk.Samples, Positives: rk.Positives, AUC: rk.AUC,
+		BaselineAUC: rk.BaselineAUC, Reason: rk.Reason, Features: []store.FeatureWeight{}}
+	if math.IsNaN(info.AUC) {
+		info.AUC = 0
+	}
+	if math.IsNaN(info.BaselineAUC) {
+		info.BaselineAUC = 0
+	}
+	for i, w := range rk.Weights {
+		info.Features = append(info.Features, store.FeatureWeight{Name: model.RankFeatures[i], Weight: float64(w)})
+	}
+	if rk.Enabled {
+		snap.Ranker = rk
+		logf("精排：样本 %d 条（正 %d），AUC %.4f，融合分基线 %.4f，已启用", rk.Samples, rk.Positives, rk.AUC, rk.BaselineAUC)
+	} else {
+		logf("精排未启用：%s", rk.Reason)
+	}
+	return info
 }

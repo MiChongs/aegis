@@ -122,6 +122,20 @@ var chSchema = []string{
 	PARTITION BY toYYYYMM(ts)
 	ORDER BY (app_id, user_id, rec_id)
 	TTL toDateTime(ts) + INTERVAL 180 DAY`,
+	// 第二期：实验分桶、精排、运营规则
+	`ALTER TABLE impressions ADD COLUMN IF NOT EXISTS experiment_id UInt64 DEFAULT 0`,
+	`ALTER TABLE impressions ADD COLUMN IF NOT EXISTS variant LowCardinality(String) DEFAULT ''`,
+	`ALTER TABLE impressions ADD COLUMN IF NOT EXISTS ranker UInt8 DEFAULT 0`,
+	`ALTER TABLE impressions ADD COLUMN IF NOT EXISTS rules Array(UInt64) DEFAULT []`,
+	// 精排训练样本：出推荐时逐首记录特征（与线上打分用的完全一致），训练时按 rec_id + work_key 关联后续行为得到标签
+	`CREATE TABLE IF NOT EXISTS rank_samples (
+		app_id UInt64, user_id UInt64, rec_id String, scene LowCardinality(String),
+		position UInt16, work_key String, model_version UInt64, features Array(Float32),
+		ts DateTime64(3, 'UTC')
+	) ENGINE = ReplacingMergeTree(ts)
+	PARTITION BY toYYYYMM(ts)
+	ORDER BY (app_id, rec_id, work_key)
+	TTL toDateTime(ts) + INTERVAL 60 DAY`,
 }
 
 func ms(v int64) time.Time { return time.UnixMilli(v).UTC() }
@@ -164,27 +178,65 @@ func (c *CH) InsertServed(ctx context.Context, served []contract.Served) error {
 	if len(served) == 0 {
 		return nil
 	}
-	b, err := c.conn.PrepareBatch(ctx, `INSERT INTO impressions (app_id, user_id, rec_id, scene, model_version, personalized, cold_start, items, ts)`)
+	b, err := c.conn.PrepareBatch(ctx, `INSERT INTO impressions (app_id, user_id, rec_id, scene, model_version, personalized, cold_start, items, ts,
+		experiment_id, variant, ranker, rules)`)
 	if err != nil {
 		return err
 	}
+	samples := 0
 	for _, s := range served {
 		items := s.Items
 		if items == nil {
 			items = []string{}
 		}
+		rules := make([]uint64, len(items))
+		for k := range items {
+			if k < len(s.Rules) && s.Rules[k] > 0 {
+				rules[k] = uint64(s.Rules[k])
+			}
+		}
 		if err := b.Append(uint64(s.AppID), uint64(s.UserID), s.RecID, s.Scene, uint64(max(s.ModelVersion, 0)),
-			boolU8(s.Personalized), boolU8(s.ColdStart), items, ms(s.TS)); err != nil {
+			boolU8(s.Personalized), boolU8(s.ColdStart), items, ms(s.TS),
+			uint64(max(s.ExperimentID, 0)), s.Variant, boolU8(s.Ranker), rules); err != nil {
 			_ = b.Abort()
 			return err
 		}
+		if len(s.Features) == len(items) {
+			samples += len(items)
+		}
 	}
-	return b.Send()
+	if err := b.Send(); err != nil {
+		return err
+	}
+	if samples == 0 {
+		return nil
+	}
+	sb, err := c.conn.PrepareBatch(ctx, `INSERT INTO rank_samples (app_id, user_id, rec_id, scene, position, work_key, model_version, features, ts)`)
+	if err != nil {
+		return err
+	}
+	for _, s := range served {
+		if len(s.Features) != len(s.Items) {
+			continue
+		}
+		for k, key := range s.Items {
+			f := s.Features[k]
+			if f == nil {
+				f = []float32{}
+			}
+			if err := sb.Append(uint64(s.AppID), uint64(s.UserID), s.RecID, s.Scene, uint16(min(k, 65535)), key,
+				uint64(max(s.ModelVersion, 0)), f, ms(s.TS)); err != nil {
+				_ = sb.Abort()
+				return err
+			}
+		}
+	}
+	return sb.Send()
 }
 
 // ForgetUser 删掉一个人的事件与曝光（轻量删除，立即对查询不可见）。
 func (c *CH) ForgetUser(ctx context.Context, appID, userID int64) error {
-	for _, table := range []string{"events", "impressions"} {
+	for _, table := range []string{"events", "impressions", "rank_samples"} {
 		if err := c.conn.Exec(ctx, "DELETE FROM "+table+" WHERE app_id = ? AND user_id = ?", uint64(appID), uint64(userID)); err != nil {
 			return fmt.Errorf("删除 %s 失败：%w", table, err)
 		}
@@ -232,16 +284,20 @@ type InteractionRow struct {
 	SessionID  string
 	Title      string
 	Artist     string
+	// 第二期：dislike / undislike 的原因（props.reason / props.scope）与音源版本
+	DislikeReason string
+	DislikeScope  string
+	TrackKey      string
 }
 
 // StreamInteractions 按 (user_id, ts) 顺序流式读出窗口内与偏好有关的事件。
 func (c *CH) StreamInteractions(ctx context.Context, appID int64, from time.Time, fn func(*InteractionRow) error) error {
 	rows, err := c.conn.Query(ctx, `
 SELECT user_id, work_key, type, toUnixTimestamp64Milli(ts), played_ms, duration_ms, position_ms, reason,
-       props['from'], session_id, title, artist
+       props['from'], session_id, title, artist, props['reason'], props['scope'], track_key
 FROM events FINAL
 WHERE app_id = ? AND ts >= ? AND work_key != ''
-  AND type IN ('play_end','like','unlike','dislike','playlist_add','download','share','search_click','click','seek')
+  AND type IN ('play_end','like','unlike','dislike','undislike','playlist_add','download','share','search_click','click','seek')
 ORDER BY user_id, ts`, uint64(appID), from.UTC())
 	if err != nil {
 		return err
@@ -251,7 +307,8 @@ ORDER BY user_id, ts`, uint64(appID), from.UTC())
 	for rows.Next() {
 		var uid uint64
 		var played, dur, pos uint32
-		if err := rows.Scan(&uid, &r.WorkKey, &r.Type, &r.TS, &played, &dur, &pos, &r.Reason, &r.SeekFrom, &r.SessionID, &r.Title, &r.Artist); err != nil {
+		if err := rows.Scan(&uid, &r.WorkKey, &r.Type, &r.TS, &played, &dur, &pos, &r.Reason, &r.SeekFrom, &r.SessionID, &r.Title, &r.Artist,
+			&r.DislikeReason, &r.DislikeScope, &r.TrackKey); err != nil {
 			return err
 		}
 		r.UserID, r.PlayedMs, r.DurationMs, r.PositionMs = int64(uid), int64(played), int64(dur), int64(pos)

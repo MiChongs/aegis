@@ -43,8 +43,9 @@ type Ingest struct {
 }
 
 type cfgEntry struct {
-	w  appcfg.Weights
-	at time.Time
+	w        appcfg.Weights
+	suppress int
+	at       time.Time
 }
 
 // Metrics 落地指标。
@@ -194,16 +195,16 @@ func (in *Ingest) write(ctx context.Context, events []contract.Event, served []c
 		in.fail("pg_tracks")
 		return fmt.Errorf("写曲库：%w", err)
 	}
-	if err := in.RT.Apply(wctx, events, in.weight(wctx)); err != nil {
+	if err := in.RT.Apply(wctx, events, in.params(wctx)); err != nil {
 		in.fail("redis_realtime")
 		return fmt.Errorf("写实时状态：%w", err)
 	}
 	return nil
 }
 
-// weight 应用的事件权重（缓存一分钟）。
-func (in *Ingest) weight(ctx context.Context) func(appID int64, k signal.Kind) float64 {
-	return func(appID int64, k signal.Kind) float64 {
+// params 应用的事件权重与暂不推荐天数（配置缓存一分钟）。
+func (in *Ingest) params(ctx context.Context) func(appID int64) realtime.Params {
+	return func(appID int64) realtime.Params {
 		in.cfgMu.Lock()
 		if in.cfgs == nil {
 			in.cfgs = map[int64]cfgEntry{}
@@ -215,12 +216,13 @@ func (in *Ingest) weight(ctx context.Context) func(appID int64, k signal.Kind) f
 			if err != nil {
 				cfg = appcfg.Default()
 			}
-			entry = cfgEntry{w: cfg.Weights, at: time.Now()}
+			entry = cfgEntry{w: cfg.Weights, suppress: cfg.SuppressDays, at: time.Now()}
 			in.cfgMu.Lock()
 			in.cfgs[appID] = entry
 			in.cfgMu.Unlock()
 		}
-		return signal.Weight(k, entry.w)
+		w := entry.w
+		return realtime.Params{Weight: func(k signal.Kind) float64 { return signal.Weight(k, w) }, SuppressDays: entry.suppress}
 	}
 }
 

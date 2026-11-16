@@ -25,6 +25,11 @@ const (
 	KindSearchClick
 	KindClick
 	KindSeekBack
+	KindDislikeMild    // 不感兴趣：听腻了（暂不推荐，轻微负分）
+	KindDislikeVersion // 不感兴趣：音质差 / 歌曲不对（只屏蔽这个音源版本，不算口味）
+	KindUndislike      // 撤销不感兴趣（这首或这位歌手）
+	KindUndislikeMild  // 撤销「听腻了」
+	KindUndislikeVersion
 )
 
 // 跳过与听完的判据（与客户端 MusicListenTracker 一致）。
@@ -50,7 +55,21 @@ func Classify(ev *contract.Event) Kind {
 	case contract.TypeUnlike:
 		return KindUnlike
 	case contract.TypeDislike:
+		switch contract.DislikeReasonOf(ev.Props) {
+		case contract.DislikeHeardTooMuch:
+			return KindDislikeMild
+		case contract.DislikePoorQuality, contract.DislikeWrongSong:
+			return KindDislikeVersion
+		}
 		return KindDislike
+	case contract.TypeUndislike:
+		switch contract.DislikeReasonOf(ev.Props) {
+		case contract.DislikeHeardTooMuch:
+			return KindUndislikeMild
+		case contract.DislikePoorQuality, contract.DislikeWrongSong:
+			return KindUndislikeVersion
+		}
+		return KindUndislike
 	case contract.TypePlaylistAdd:
 		return KindPlaylistAdd
 	case contract.TypeDownload:
@@ -112,6 +131,12 @@ func Weight(k Kind, w appcfg.Weights) float64 {
 		return -w.Like
 	case KindDislike:
 		return w.Dislike
+	case KindUndislike:
+		return -w.Dislike
+	case KindDislikeMild:
+		return MildDislike
+	case KindUndislikeMild:
+		return -MildDislike
 	case KindPlaylistAdd:
 		return w.PlaylistAdd
 	case KindDownload:
@@ -127,6 +152,9 @@ func Weight(k Kind, w appcfg.Weights) float64 {
 	}
 	return 0
 }
+
+// MildDislike「听腻了」的分：不当成不喜欢，只轻微降低偏好。
+const MildDislike = -1.0
 
 // Decay 时间衰减：0.5^(ageDays / halfLife)。
 func Decay(ageDays, halfLifeDays float64) float64 {

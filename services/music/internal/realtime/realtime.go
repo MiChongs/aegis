@@ -9,6 +9,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -93,8 +94,30 @@ if pos and tonumber(pos) < tonumber(ARGV[2]) then
 end
 return 1`
 
-// Apply 把一批事件写进实时状态。weight 函数给出某类反馈的分（应用配置里的权重）。
-func (s *Store) Apply(ctx context.Context, events []contract.Event, weight func(appID int64, k signal.Kind) float64) error {
+// 撤销：删掉早于撤销时刻的标记（重投的旧撤销删不掉之后的新标记）。KEYS 任意个 ZSET。
+const applyUndo = `
+local ts = tonumber(ARGV[2])
+for i = 1, #KEYS do
+  local v = redis.call('ZSCORE', KEYS[i], ARGV[1])
+  if v and tonumber(v) <= ts then redis.call('ZREM', KEYS[i], ARGV[1]) end
+end
+return 1`
+
+// 暂不推荐：分数是到期时刻，按事件时刻 + 天数算（GT，重投结果不变）；同时记下标记时刻用于撤销比较。
+const applySuppress = `
+redis.call('ZADD', KEYS[1], 'GT', tonumber(ARGV[2]), ARGV[1])
+redis.call('ZADD', KEYS[2], 'GT', tonumber(ARGV[3]), ARGV[1])
+for i = 1, 2 do redis.call('PEXPIRE', KEYS[i], ARGV[4]) end
+return 1`
+
+// Params 每个应用影响实时状态的参数。
+type Params struct {
+	Weight       func(k signal.Kind) float64
+	SuppressDays int
+}
+
+// Apply 把一批事件写进实时状态。params 给出某应用的权重与「听腻了」暂不推荐天数（应用配置）。
+func (s *Store) Apply(ctx context.Context, events []contract.Event, params func(appID int64) Params) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -103,48 +126,132 @@ func (s *Store) Apply(ctx context.Context, events []contract.Event, weight func(
 	touched := map[string]bool{}
 	for i := range events {
 		e := &events[i]
-		if e.WorkKey == "" || e.UserID <= 0 {
+		if e.UserID <= 0 {
 			continue
 		}
-		ts := strconv.FormatInt(e.TS, 10)
-		recent := s.key(e.AppID, e.UserID, "recent")
-		pos := s.key(e.AppID, e.UserID, "pos")
-		posw := s.key(e.AppID, e.UserID, "posw")
-		neg := s.key(e.AppID, e.UserID, "neg")
-		if e.Type == contract.TypePlayStart || e.Type == contract.TypePlayEnd {
-			pipe.ZAddGT(ctx, recent, redis.Z{Score: float64(e.TS), Member: e.WorkKey})
-			touched[recent] = true
-		}
 		k := signal.Classify(e)
+		ts := strconv.FormatInt(e.TS, 10)
+		key := func(kind string) string { return s.key(e.AppID, e.UserID, kind) }
+		// 歌手级不感兴趣 / 撤销：不需要作品键
+		artist := ""
+		if e.Track != nil {
+			artist = contract.FirstArtist(e.Track.Artist)
+		}
+		if a := strings.TrimSpace(e.Props["artist"]); a != "" {
+			artist = contract.FirstArtist(a)
+		}
+		reason := contract.DislikeReasonOf(e.Props)
+		if reason == contract.DislikeArtist && artist != "" {
+			switch e.Type {
+			case contract.TypeDislike:
+				pipe.ZAddGT(ctx, key("artneg"), redis.Z{Score: float64(e.TS), Member: artist})
+				touched[key("artneg")] = true
+			case contract.TypeUndislike:
+				pipe.Eval(ctx, applyUndo, []string{key("artneg")}, artist, ts)
+			}
+		}
+		if e.WorkKey == "" {
+			continue
+		}
+		if e.Type == contract.TypePlayStart || e.Type == contract.TypePlayEnd {
+			pipe.ZAddGT(ctx, key("recent"), redis.Z{Score: float64(e.TS), Member: e.WorkKey})
+			touched[key("recent")] = true
+		}
+		// 点了、放了、收藏了：这首的曝光疲劳清零
+		if e.Type == contract.TypePlayStart || e.Type == contract.TypeClick || signal.Positive(k) {
+			pipe.HDel(ctx, key("expo"), e.WorkKey)
+		}
+		p := params(e.AppID)
 		switch {
 		case k == signal.KindUnlike:
-			pipe.Eval(ctx, applyUnlike, []string{pos, posw}, e.WorkKey, ts)
+			pipe.Eval(ctx, applyUnlike, []string{key("pos"), key("posw")}, e.WorkKey, ts)
 		case signal.Positive(k):
-			w := strconv.FormatFloat(weight(e.AppID, k), 'f', 3, 64)
-			pipe.Eval(ctx, applyPositive, []string{pos, posw, neg}, e.WorkKey, ts, w, keepPositive, ttl)
+			w := strconv.FormatFloat(p.Weight(k), 'f', 3, 64)
+			pipe.Eval(ctx, applyPositive, []string{key("pos"), key("posw"), key("neg")}, e.WorkKey, ts, w, keepPositive, ttl)
 		case signal.Negative(k):
 			strong := "0"
 			if k == signal.KindDislike {
 				strong = "1"
+				// 明确的不感兴趣单独记一份（「我的不喜欢」列表只列这些，不列早跳）
+				if reason != contract.DislikeArtist {
+					pipe.ZAddGT(ctx, key("dis"), redis.Z{Score: float64(e.TS), Member: e.WorkKey})
+					touched[key("dis")] = true
+				}
 			}
-			pipe.Eval(ctx, applyNegative, []string{neg, pos, posw}, e.WorkKey, ts, strong, keepNegative, ttl)
-		}
-		if e.Type == contract.TypeDislike && e.Props["scope"] == "artist" && e.Track != nil {
-			if a := contract.FirstArtist(e.Track.Artist); a != "" {
-				key := s.key(e.AppID, e.UserID, "artneg")
-				pipe.ZAddGT(ctx, key, redis.Z{Score: float64(e.TS), Member: a})
-				touched[key] = true
+			pipe.Eval(ctx, applyNegative, []string{key("neg"), key("pos"), key("posw")}, e.WorkKey, ts, strong, keepNegative, ttl)
+		case k == signal.KindDislikeMild:
+			days := p.SuppressDays
+			if days <= 0 {
+				days = 30
 			}
+			until := strconv.FormatInt(e.TS+int64(days)*24*3600*1000, 10)
+			pipe.Eval(ctx, applySuppress, []string{key("sup"), key("supat")}, e.WorkKey, until, ts, ttl)
+		case k == signal.KindDislikeVersion && e.TrackKey != "":
+			pipe.ZAddGT(ctx, key("badver"), redis.Z{Score: float64(e.TS), Member: e.TrackKey})
+			touched[key("badver")] = true
+		case k == signal.KindUndislike:
+			pipe.Eval(ctx, applyUndo, []string{key("neg"), key("dis")}, e.WorkKey, ts)
+		case k == signal.KindUndislikeMild:
+			// sup 的分是到期时刻，按 supat（标记时刻）比较后两边一起删
+			pipe.Eval(ctx, applyUndoSuppress, []string{key("sup"), key("supat")}, e.WorkKey, ts)
+		case k == signal.KindUndislikeVersion && e.TrackKey != "":
+			pipe.Eval(ctx, applyUndo, []string{key("badver")}, e.TrackKey, ts)
 		}
 	}
 	for key := range touched {
 		limit := keepRecent
-		if strings.HasSuffix(key, ":artneg") {
+		switch {
+		case strings.HasSuffix(key, ":artneg"):
 			limit = keepArtists
+		case strings.HasSuffix(key, ":dis"), strings.HasSuffix(key, ":badver"):
+			limit = keepNegative
 		}
 		pipe.ZRemRangeByRank(ctx, key, 0, int64(-(limit + 1)))
 		pipe.PExpire(ctx, key, stateTTL)
 	}
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+const applyUndoSuppress = `
+local at = redis.call('ZSCORE', KEYS[2], ARGV[1])
+if at and tonumber(at) <= tonumber(ARGV[2]) then
+  redis.call('ZREM', KEYS[1], ARGV[1])
+  redis.call('ZREM', KEYS[2], ARGV[1])
+end
+return 1`
+
+// Undo 撤销接口直接改状态（同时会有一条 undislike 事件经流落地，两边幂等）。kind：track / artist / suppressed / version。
+func (s *Store) Undo(ctx context.Context, appID, userID int64, kind, member string, at int64) error {
+	key := func(k string) string { return s.key(appID, userID, k) }
+	ts := strconv.FormatInt(at, 10)
+	switch kind {
+	case "track":
+		return s.rdb.Eval(ctx, applyUndo, []string{key("neg"), key("dis")}, member, ts).Err()
+	case "artist":
+		return s.rdb.Eval(ctx, applyUndo, []string{key("artneg")}, member, ts).Err()
+	case "suppressed":
+		return s.rdb.Eval(ctx, applyUndoSuppress, []string{key("sup"), key("supat")}, member, ts).Err()
+	case "version":
+		return s.rdb.Eval(ctx, applyUndo, []string{key("badver")}, member, ts).Err()
+	}
+	return nil
+}
+
+// fatigueTTL 曝光疲劳计数的保留时长（近 7 天：最后一次曝光后 7 天整体过期）。
+const fatigueTTL = 7 * 24 * time.Hour
+
+// AddExposure 记一次推荐曝光（出推荐时调，每首 +1）。
+func (s *Store) AddExposure(ctx context.Context, appID, userID int64, workKeys []string) error {
+	if len(workKeys) == 0 {
+		return nil
+	}
+	key := s.key(appID, userID, "expo")
+	pipe := s.rdb.Pipeline()
+	for _, k := range workKeys {
+		pipe.HIncrBy(ctx, key, k, 1)
+	}
+	pipe.PExpire(ctx, key, fatigueTTL)
 	_, err := pipe.Exec(ctx)
 	return err
 }
@@ -160,8 +267,18 @@ type Entry struct {
 type State struct {
 	Recent          []Entry          // 最近播放，新在前
 	Positive        []Entry          // 正反馈，新在前
-	Negative        map[string]int64 // 负反馈 → 时刻
-	DislikedArtists map[string]int64 // 歌手（原名）→ 时刻
+	Negative        map[string]int64 // 负反馈（不感兴趣 + 早跳）→ 时刻
+	Disliked        map[string]int64 // 明确的不感兴趣（作品）→ 时刻
+	DislikedArtists map[string]int64 // 歌手（第一歌手名）→ 时刻
+	Suppressed      map[string]int64 // 听腻了：作品 → 到期时刻
+	BadVersions     map[string]int64 // 音质差 / 歌曲不对：音源版本 source:songId → 时刻
+	Fatigue         map[string]int   // 近 7 天被推荐展示的次数（点了就清零）
+}
+
+// Empty 空状态（不读个人数据时用）。
+func Empty() *State {
+	return &State{Negative: map[string]int64{}, Disliked: map[string]int64{}, DislikedArtists: map[string]int64{},
+		Suppressed: map[string]int64{}, BadVersions: map[string]int64{}, Fatigue: map[string]int{}}
 }
 
 // Load 读一个人的实时状态。
@@ -172,10 +289,28 @@ func (s *Store) Load(ctx context.Context, appID, userID int64) (*State, error) {
 	posw := pipe.HGetAll(ctx, s.key(appID, userID, "posw"))
 	neg := pipe.ZRangeWithScores(ctx, s.key(appID, userID, "neg"), 0, -1)
 	art := pipe.ZRangeWithScores(ctx, s.key(appID, userID, "artneg"), 0, -1)
+	dis := pipe.ZRangeWithScores(ctx, s.key(appID, userID, "dis"), 0, -1)
+	sup := pipe.ZRangeByScoreWithScores(ctx, s.key(appID, userID, "sup"), &redis.ZRangeBy{Min: strconv.FormatInt(time.Now().UnixMilli(), 10), Max: "+inf"})
+	bad := pipe.ZRangeWithScores(ctx, s.key(appID, userID, "badver"), 0, -1)
+	expo := pipe.HGetAll(ctx, s.key(appID, userID, "expo"))
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return nil, err
 	}
-	st := &State{Negative: map[string]int64{}, DislikedArtists: map[string]int64{}}
+	st := Empty()
+	for _, z := range dis.Val() {
+		st.Disliked[member(z)] = int64(z.Score)
+	}
+	for _, z := range sup.Val() {
+		st.Suppressed[member(z)] = int64(z.Score)
+	}
+	for _, z := range bad.Val() {
+		st.BadVersions[member(z)] = int64(z.Score)
+	}
+	for k, v := range expo.Val() {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			st.Fatigue[k] = n
+		}
+	}
 	for _, z := range recent.Val() {
 		st.Recent = append(st.Recent, Entry{WorkKey: member(z), At: int64(z.Score)})
 	}
@@ -201,22 +336,44 @@ func member(z redis.Z) string {
 	return ""
 }
 
-// Forget 删掉一个人的全部实时状态与缓存（每日推荐、电台去重按日期命名，删今天与前两天；画像缓存按天数）。
+// Forget 删掉一个人名下的全部键（实时状态、各种缓存）。同一个人的键都带 {app:user} 哈希标签，
+// Redis Cluster 下落在同一个槽，所以扫描每个主节点、按前缀匹配即可。
 func (s *Store) Forget(ctx context.Context, appID, userID int64) error {
-	kinds := []string{"recent", "pos", "posw", "neg", "artneg"}
-	for _, d := range []int{7, 30, 90, 365} {
-		kinds = append(kinds, "profile:"+strconv.Itoa(d))
+	pattern := s.key(appID, userID, "*")
+	var keys []string
+	scan := func(ctx context.Context, c redis.UniversalClient) error {
+		it := c.Scan(ctx, 0, pattern, 500).Iterator()
+		for it.Next(ctx) {
+			keys = append(keys, it.Val())
+		}
+		return it.Err()
 	}
-	now := time.Now()
-	for i := -1; i <= 2; i++ {
-		day := now.AddDate(0, 0, -i).Format("20060102")
-		kinds = append(kinds, "daily:"+day, "radio:"+day)
+	var err error
+	if cc, ok := s.rdb.(*redis.ClusterClient); ok {
+		var mu sync.Mutex
+		err = cc.ForEachMaster(ctx, func(ctx context.Context, node *redis.Client) error {
+			var local []string
+			it := node.Scan(ctx, 0, pattern, 500).Iterator()
+			for it.Next(ctx) {
+				local = append(local, it.Val())
+			}
+			mu.Lock()
+			keys = append(keys, local...)
+			mu.Unlock()
+			return it.Err()
+		})
+	} else {
+		err = scan(ctx, s.rdb)
 	}
-	keys := make([]string, 0, len(kinds))
-	for _, k := range kinds {
-		keys = append(keys, s.key(appID, userID, k))
+	if err != nil {
+		return err
 	}
-	return s.rdb.Del(ctx, keys...).Err()
+	for start := 0; start < len(keys); start += 200 {
+		if err := s.rdb.Del(ctx, keys[start:min(start+200, len(keys))]...).Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // UserKey 这个人名下的其它键（每日推荐缓存、电台去重、画像缓存）。

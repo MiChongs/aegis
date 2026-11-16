@@ -292,12 +292,16 @@ func (s *MusicService) switchesOf(ctx context.Context, appID int64) (enabled, co
 
 // MusicRecommendQuery GET /music/recommendations 的参数。
 type MusicRecommendQuery struct {
-	Scene        string
-	Limit        int
-	Cursor       string
-	Source       string
-	SongID       string
-	Personalized bool
+	Scene        string           `json:"scene"`
+	Limit        int              `json:"limit"`
+	Cursor       string           `json:"cursor"`
+	Source       string           `json:"source"`
+	SongID       string           `json:"songId"`
+	Personalized bool             `json:"personalized"`
+	Seeds        []contract.Track `json:"seeds"`   // autoplay：最近放的在后（≤ 20）
+	Exclude      []string         `json:"exclude"` // autoplay：source:songId（≤ 300）
+	MixID        string           `json:"mixId"`
+	Artist       string           `json:"artist"`
 }
 
 // MusicRecReason 推荐原因。
@@ -323,6 +327,8 @@ type MusicRecommendations struct {
 	NextCursor   string         `json:"nextCursor,omitempty"`
 	GeneratedAt  int64          `json:"generatedAt"`
 	ExpiresAt    int64          `json:"expiresAt"`
+	ExperimentID int64          `json:"experimentId"`
+	Variant      string         `json:"variant"`
 	Items        []MusicRecItem `json:"items"`
 }
 
@@ -331,11 +337,20 @@ func (s *MusicService) Recommend(ctx context.Context, app *appdomain.App, sessio
 	if !contract.ValidScene(q.Scene) {
 		return nil, apperrors.New(40000, http.StatusBadRequest, "未知的推荐场景")
 	}
+	if len(q.Seeds) > 20 || len(q.Exclude) > 300 {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "seeds 最多 20 首、exclude 最多 300 首")
+	}
+	req := &musicv1.RecommendRequest{
+		AppId: app.ID, UserId: session.UserID, Scene: q.Scene, Limit: int32(q.Limit), Cursor: q.Cursor,
+		SeedSource: q.Source, SeedSongId: q.SongID, Personalized: q.Personalized,
+		Exclude: q.Exclude, MixId: q.MixID, Artist: q.Artist,
+	}
+	for _, t := range q.Seeds {
+		req.Seeds = append(req.Seeds, &musicv1.Track{Source: t.Source, SongId: t.SongID, Title: t.Title, Artist: t.Artist,
+			Album: t.Album, Cover: t.Cover, DurationMs: t.DurationMs})
+	}
 	resp, err := musicCall(s, ctx, func(ctx context.Context) (*connect.Response[musicv1.RecommendResponse], error) {
-		return s.client.Recommend(ctx, connect.NewRequest(&musicv1.RecommendRequest{
-			AppId: app.ID, UserId: session.UserID, Scene: q.Scene, Limit: int32(q.Limit), Cursor: q.Cursor,
-			SeedSource: q.Source, SeedSongId: q.SongID, Personalized: q.Personalized,
-		}))
+		return s.client.Recommend(ctx, connect.NewRequest(req))
 	})
 	if err != nil {
 		return nil, err
@@ -343,7 +358,8 @@ func (s *MusicService) Recommend(ctx context.Context, app *appdomain.App, sessio
 	m := resp.Msg
 	out := &MusicRecommendations{RecID: m.GetRecId(), Scene: m.GetScene(), ModelVersion: m.GetModelVersion(),
 		Personalized: m.GetPersonalized(), NextCursor: m.GetNextCursor(), GeneratedAt: m.GetGeneratedAtMs(),
-		ExpiresAt: m.GetExpiresAtMs(), Items: make([]MusicRecItem, 0, len(m.GetItems()))}
+		ExpiresAt: m.GetExpiresAtMs(), ExperimentID: m.GetExperimentId(), Variant: m.GetVariant(),
+		Items: make([]MusicRecItem, 0, len(m.GetItems()))}
 	for _, it := range m.GetItems() {
 		t := it.GetTrack()
 		out.Items = append(out.Items, MusicRecItem{
@@ -354,6 +370,31 @@ func (s *MusicService) Recommend(ctx context.Context, app *appdomain.App, sessio
 		})
 	}
 	return out, nil
+}
+
+// MusicUserOps 第二期用户侧操作（docs/music-personalization-2.md「客户端接口增量」）。
+var MusicUserOps = map[string]bool{
+	"mixes": true, "artists": true, "onboarding": true, "prefs_get": true, "prefs_put": true, "feedback_list": true,
+	"feedback_undo": true, "report": true, "trending": true, "rerank": true, "export": true,
+}
+
+// UserOp 用户侧的其他操作：参数与结果都是 JSON，原样透传 music-rec。
+func (s *MusicService) UserOp(ctx context.Context, app *appdomain.App, session *authdomain.Session, op string, params any, personalized bool) (json.RawMessage, error) {
+	if !MusicUserOps[op] {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "未知的音乐操作")
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "参数格式不正确")
+	}
+	resp, err := musicCall(s, ctx, func(ctx context.Context) (*connect.Response[musicv1.UserOpResponse], error) {
+		return s.client.UserOp(ctx, connect.NewRequest(&musicv1.UserOpRequest{AppId: app.ID, UserId: session.UserID, Op: op,
+			ParamsJson: raw, Personalized: personalized}))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(resp.Msg.GetResultJson()), nil
 }
 
 // Profile 听歌画像（music-rec 的 JSON 原样透传）。

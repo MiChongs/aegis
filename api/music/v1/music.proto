@@ -21,6 +21,24 @@ service MusicService {
   rpc ForgetUser(ForgetUserRequest) returns (ForgetUserResponse);
   // 应用配置里的两个开关（主服务上报接口用，带缓存）
   rpc GetSwitches(GetSwitchesRequest) returns (GetSwitchesResponse);
+  // 用户侧的其他操作（第二期，docs/music-personalization-2.md）：参数与结果都是 JSON，主服务原样透传。
+  // op：mixes / artists / onboarding / prefs_get / prefs_put / feedback_list / feedback_undo / report /
+  //     trending / rerank / export
+  rpc UserOp(UserOpRequest) returns (UserOpResponse);
+}
+
+message UserOpRequest {
+  int64 app_id = 1;
+  int64 user_id = 2;
+  string op = 3;
+  // 查询参数或请求体（JSON 对象）
+  bytes params_json = 4;
+  // 客户端本地的个性化开关（与服务端偏好取「与」）
+  bool personalized = 5;
+}
+
+message UserOpResponse {
+  bytes result_json = 1;
 }
 
 message Track {
@@ -62,6 +80,11 @@ message RecommendRequest {
   bool personalized = 8;
   // true：管理端预览，带分数拆解、不发 served 事件、不写电台去重与每日缓存
   bool explain = 9;
+  // 第二期：autoplay 的种子（最近放的在后）与排除（source:songId）、mix 的歌单 ID、artist 的歌手名
+  repeated Track seeds = 10;
+  repeated string exclude = 11;
+  string mix_id = 12;
+  string artist = 13;
 }
 
 message RecommendResponse {
@@ -75,6 +98,8 @@ message RecommendResponse {
   repeated RecItem items = 8;
   bool cold_start = 9;
   int64 took_ms = 10;
+  int64 experiment_id = 11;
+  string variant = 12;
 }
 
 message GetProfileRequest {

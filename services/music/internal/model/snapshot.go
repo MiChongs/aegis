@@ -13,7 +13,7 @@ import (
 )
 
 // FormatVersion 快照格式版本：结构变了就加一，旧快照加载失败时 music-rec 继续用热度兜底并提示重新训练。
-const FormatVersion = 1
+const FormatVersion = 2
 
 // Neighbor ItemCF 邻居。
 type Neighbor struct {
@@ -59,9 +59,26 @@ type Snapshot struct {
 	Rising    []ScoredItem       // 近 1 天飙升，降序
 	ArtistTop map[string][]int32 // 规范化歌手 → 热门作品
 
+	// 第二期（格式 2）
+	ItemLang     []uint8                     // 语种下标（contract.Langs）
+	ItemComplete []float32                   // 近 30 天完播率（平滑）
+	ItemSkip     []float32                   // 近 30 天早跳率（平滑）
+	Gram         []float32                   // YᵀY（f × f），实时折入用
+	Lambda       float32                     // ALS 正则
+	Alpha        float32                     // ALS 置信度系数
+	ArtistSim    map[string][]ArtistNeighbor // 规范化歌手 → 相似歌手
+	ArtistName   map[string]string           // 规范化歌手 → 展示名
+	Ranker       *Ranker                     // 精排（没启用为 nil）
+
 	itemIndex map[string]int32
 	userIndex map[int64]int32
 	itemNorm  []float32
+}
+
+// ArtistNeighbor 相似歌手。
+type ArtistNeighbor struct {
+	Artist string // 规范化名
+	Score  float32
 }
 
 // Index 建索引（加载后、训练产出后各调一次）。

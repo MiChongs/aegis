@@ -95,3 +95,26 @@ func TestEnrich(t *testing.T) {
 		t.Fatal("subjects")
 	}
 }
+
+func TestDetectLang(t *testing.T) {
+	cases := map[[2]string]string{
+		{"晴天", "周杰伦"}:                  LangZh,
+		{"Lemon", "米津玄師"}:              LangZh,
+		{"打上花火", "DAOKO×米津玄師"}:         LangZh,
+		{"さよならの夏", "森山良子"}:             LangJa,
+		{"봄날", "BTS"}:                  LangKo,
+		{"Shape of You", "Ed Sheeran"}: LangEn,
+		{"Despacito", "Luis Fonsi"}:    LangEn,
+		{"Кукушка", "Кино"}:            LangOther,
+		{"123", ""}:                    LangOther,
+	}
+	for in, want := range cases {
+		if got := DetectLang(in[0], in[1]); got != want {
+			t.Errorf("DetectLang(%q, %q) = %s, want %s", in[0], in[1], got, want)
+		}
+	}
+	if DislikeReasonOf(map[string]string{"scope": "artist"}) != DislikeArtist || DislikeReasonOf(nil) != DislikeNotInterested ||
+		DislikeReasonOf(map[string]string{"reason": "heard_too_much"}) != DislikeHeardTooMuch {
+		t.Fatal("DislikeReasonOf")
+	}
+}

@@ -28,7 +28,37 @@ const (
 	TypeClick       = "click"
 	TypeImpression  = "impression"
 	TypeLyricsOpen  = "lyrics_open"
+	TypeUndislike   = "undislike"   // 撤销不感兴趣（一般由服务端「撤销」接口生成）
+	TypeAutoplay    = "autoplay"    // 智能续播接上了一批
+	TypeReportView  = "report_view" // 打开听歌报告
+	TypeOnboarding  = "onboarding"  // 完成 / 跳过新用户偏好选择
 )
+
+// dislike 的原因（props.reason，docs/music-personalization-2.md「事件协议增量」）。
+const (
+	DislikeNotInterested = "not_interested"
+	DislikeHeardTooMuch  = "heard_too_much"
+	DislikeArtist        = "dislike_artist"
+	DislikePoorQuality   = "poor_quality"
+	DislikeWrongSong     = "wrong_song"
+)
+
+// DislikeReasons 全部不感兴趣原因。
+var DislikeReasons = []string{DislikeNotInterested, DislikeHeardTooMuch, DislikeArtist, DislikePoorQuality, DislikeWrongSong}
+
+// DislikeReasonOf dislike / undislike 事件的原因：props.scope=artist 等同 dislike_artist，未知值当 not_interested。
+func DislikeReasonOf(props map[string]string) string {
+	if props["scope"] == "artist" {
+		return DislikeArtist
+	}
+	r := props["reason"]
+	for _, v := range DislikeReasons {
+		if v == r {
+			return r
+		}
+	}
+	return DislikeNotInterested
+}
 
 // play_end 的结束原因。
 const (
@@ -41,14 +71,18 @@ const (
 
 // 推荐场景。
 const (
-	SceneHome    = "home"
-	SceneDaily   = "daily"
-	SceneRadio   = "radio"
-	SceneSimilar = "similar"
+	SceneHome     = "home"
+	SceneDaily    = "daily"
+	SceneRadio    = "radio"
+	SceneSimilar  = "similar"
+	SceneAutoplay = "autoplay" // 智能续播
+	SceneDiscover = "discover" // 每周雷达
+	SceneMix      = "mix"      // 风格歌单里的歌
+	SceneArtist   = "artist"   // 某位歌手的个性化热门
 )
 
 // Scenes 全部场景（控制台、校验用）。
-var Scenes = []string{SceneHome, SceneDaily, SceneRadio, SceneSimilar}
+var Scenes = []string{SceneHome, SceneDaily, SceneRadio, SceneSimilar, SceneAutoplay, SceneDiscover, SceneMix, SceneArtist}
 
 // ValidScene 场景是否合法。
 func ValidScene(scene string) bool {
@@ -65,13 +99,14 @@ var typeNeedsTrack = map[string]bool{
 	TypePlayStart: true, TypePlayEnd: true, TypePause: true, TypeResume: true, TypeSeek: true,
 	TypeLike: true, TypeUnlike: true, TypeDislike: true, TypePlaylistAdd: true, TypeDownload: true,
 	TypeShare: true, TypeSearch: false, TypeSearchClick: true, TypeClick: true, TypeImpression: false,
-	TypeLyricsOpen: true,
+	TypeLyricsOpen: true, TypeUndislike: false, TypeAutoplay: false, TypeReportView: false, TypeOnboarding: false,
 }
 
 // Types 全部事件类型（排序与控制台展示用）。
 var Types = []string{
 	TypePlayStart, TypePlayEnd, TypePause, TypeResume, TypeSeek, TypeLike, TypeUnlike, TypeDislike,
 	TypePlaylistAdd, TypeDownload, TypeShare, TypeSearch, TypeSearchClick, TypeClick, TypeImpression, TypeLyricsOpen,
+	TypeUndislike, TypeAutoplay, TypeReportView, TypeOnboarding,
 }
 
 // ValidType 事件类型是否合法。
@@ -179,6 +214,12 @@ type Served struct {
 	ColdStart    bool     `json:"cold_start"`
 	Items        []string `json:"items"`
 	TS           int64    `json:"ts"`
+	// 第二期：实验分桶、精排、运营规则、逐首特征（落 ClickHouse rank_samples，训练精排用）。
+	ExperimentID int64       `json:"experiment_id,omitempty"`
+	Variant      string      `json:"variant,omitempty"`
+	Ranker       bool        `json:"ranker,omitempty"` // 这次用了精排
+	Rules        []int64     `json:"rules,omitempty"`  // 与 Items 等长，影响这首的规则 ID（0 = 没有）
+	Features     [][]float32 `json:"features,omitempty"`
 }
 
 // 拒绝原因（响应 rejected[].reason）。
@@ -291,6 +332,16 @@ func Normalize(ev *ClientEvent, now time.Time) string {
 			props[k] = cleanText(v, MaxPropValue)
 		}
 		ev.Props = props
+	}
+	switch ev.Type {
+	case TypeAutoplay:
+		if c.RecID == "" {
+			return RejectMissingField
+		}
+	case TypeUndislike:
+		if ev.Track == nil && ev.Props["artist"] == "" {
+			return RejectMissingField
+		}
 	}
 	return ""
 }

@@ -34,6 +34,7 @@ type env struct {
 	base   string
 	token  string
 	client musicv1connect.MusicServiceClient
+	app    int64 // 0 = itApp
 }
 
 func (e *env) admin(method, path string, body any, out any) int {
@@ -43,7 +44,11 @@ func (e *env) admin(method, path string, body any, out any) int {
 		raw, _ := json.Marshal(body)
 		rd = strings.NewReader(string(raw))
 	}
-	req, _ := http.NewRequest(method, fmt.Sprintf("%s/v1/apps/%d/%s", e.base, itApp, path), rd)
+	app := e.app
+	if app == 0 {
+		app = itApp
+	}
+	req, _ := http.NewRequest(method, fmt.Sprintf("%s/v1/apps/%d/%s", e.base, app, path), rd)
 	req.Header.Set("X-Music-Token", e.token)
 	req.Header.Set("X-Music-Operator", "e2e")
 	resp, err := http.DefaultClient.Do(req)

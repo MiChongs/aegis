@@ -61,16 +61,23 @@ func (h *RPC) Recommend(ctx context.Context, req *connect.Request[musicv1.Recomm
 	if m.GetAppId() <= 0 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("app_id required"))
 	}
-	res, err := h.Svc.Recommend(ctx, Request{
+	r := Request{
 		AppID: m.GetAppId(), UserID: m.GetUserId(), Scene: m.GetScene(), Limit: int(m.GetLimit()), Cursor: m.GetCursor(),
 		SeedSource: m.GetSeedSource(), SeedSongID: m.GetSeedSongId(), Personalized: m.GetPersonalized(), Explain: m.GetExplain(),
-	})
+		Exclude: m.GetExclude(), MixID: m.GetMixId(), Artist: m.GetArtist(),
+	}
+	for _, t := range m.GetSeeds() {
+		r.Seeds = append(r.Seeds, contract.Track{Source: t.GetSource(), SongID: t.GetSongId(), Title: t.GetTitle(), Artist: t.GetArtist(),
+			Album: t.GetAlbum(), Cover: t.GetCover(), DurationMs: t.GetDurationMs()})
+	}
+	res, err := h.Svc.Recommend(ctx, r)
 	if err != nil {
 		return nil, rpcErr(err)
 	}
 	out := &musicv1.RecommendResponse{
 		RecId: res.RecID, Scene: res.Scene, ModelVersion: res.ModelVersion, Personalized: res.Personalized,
 		NextCursor: res.NextCursor, GeneratedAtMs: res.GeneratedAt, ExpiresAtMs: res.ExpiresAt, ColdStart: res.ColdStart, TookMs: res.TookMs,
+		ExperimentId: res.ExperimentID, Variant: res.Variant,
 	}
 	for _, it := range res.Items {
 		out.Items = append(out.Items, &musicv1.RecItem{
@@ -130,4 +137,21 @@ func (h *RPC) GetSwitches(ctx context.Context, req *connect.Request[musicv1.GetS
 		return nil, rpcErr(err)
 	}
 	return connect.NewResponse(&musicv1.GetSwitchesResponse{Enabled: cfg.Enabled, CollectEnabled: cfg.Enabled && cfg.CollectEnabled}), nil
+}
+
+// UserOp 用户侧的其他操作（JSON 进、JSON 出）。
+func (h *RPC) UserOp(ctx context.Context, req *connect.Request[musicv1.UserOpRequest]) (*connect.Response[musicv1.UserOpResponse], error) {
+	m := req.Msg
+	if m.GetAppId() <= 0 || m.GetUserId() <= 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("app_id and user_id required"))
+	}
+	result, err := h.Svc.UserOp(ctx, m.GetAppId(), m.GetUserId(), m.GetOp(), m.GetParamsJson(), m.GetPersonalized())
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+	return connect.NewResponse(&musicv1.UserOpResponse{ResultJson: raw}), nil
 }
