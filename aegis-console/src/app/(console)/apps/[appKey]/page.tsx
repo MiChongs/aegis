@@ -41,6 +41,7 @@ import { AppRegisterIPPanel } from "@/components/apps/register-ip/app-register-i
 import { AppPasskeyPanel } from "@/components/apps/app-passkey-panel";
 import { AppCrashReportsPanel } from "@/components/apps/crash-reports/app-crash-reports-panel";
 import { AppListenTogetherPanel } from "@/components/apps/listen-together/app-listen-together-panel";
+import { AppMusicSectionPanel } from "@/components/music/music-section-panel";
 import { AppLeaderboardPanel } from "@/components/apps/leaderboard/app-leaderboard-panel";
 import { AppAccountSetupPanel } from "@/components/apps/account-setup/app-account-setup-panel";
 import { AppAccountDeletionPanel } from "@/components/apps/account-deletion/app-account-deletion-panel";
@@ -193,6 +194,8 @@ function AppSectionPanel({ section, app, onDelete }: { section: string; app: App
       return <AppCrashReportsPanel appKey={app.appKey} />;
     case "listen-together":
       return <AppListenTogetherPanel appKey={app.appKey} />;
+    case "music":
+      return <AppMusicSectionPanel appKey={app.appKey} />;
     case "policy":
       return <AppAuthSessionPanel appKey={app.appKey} />;
     case "device-limit":

@@ -12,6 +12,7 @@ import {
   Info,
   KeyRound,
   LayoutDashboard,
+  ListMusic,
   Mail,
   Megaphone,
   MonitorSmartphone,
@@ -113,6 +114,8 @@ export const appSectionGroups: AppSectionGroup[] = [
       { key: "payment", title: "支付", summary: "收款渠道、订单与交易设置", icon: CreditCard },
       { key: "cloud-storage", title: "云存储", summary: "用户数据云端备份与配额", icon: Cloud },
       { key: "listen-together", title: "一起听", summary: "多人同步收听：服务状态、房间与成员", icon: Headphones },
+      // 完整功能在独立整页 /apps/{appKey}/music，这个区块只放摘要与入口
+      { key: "music", title: "音乐推荐", summary: "个性化推荐、听歌画像与模型训练", icon: ListMusic },
       { key: "settings", title: "用户设置", summary: "资料字段与默认值", icon: SlidersHorizontal }
     ]
   },
