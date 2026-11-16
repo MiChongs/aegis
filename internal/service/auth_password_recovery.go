@@ -747,7 +747,7 @@ func (s *AuthService) CompletePasswordRecovery(ctx context.Context, input Passwo
 	}
 	signedOut := s.revokeUserCredentials(ctx, user.AppID, user.ID, keepToken, keepFamily, "password_reset")
 	if s.loginGuard != nil {
-		s.loginGuard.ResetAccount(ctx, user.AppID, user.Account)
+		s.loginGuard.ResetAccount(ctx, user.AppID, user.Account, user.ID)
 	}
 	_ = s.sessions.DeleteSecurityStatus(ctx, user.AppID, user.ID)
 	_ = s.sessions.DeleteUserProfile(ctx, user.AppID, user.ID)

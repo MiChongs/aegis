@@ -390,12 +390,12 @@ func (p *Program) fetch(ctx context.Context, env *Env, req Request, src Sources,
 		}
 		switch f.Kind {
 		case bundle.FeatureVelocity:
-			value := EntityValue(env, f.Entity)
+			value := CounterValue(env, f.Entity)
 			if value == "" {
 				continue
 			}
 			q := VelocityQuery{Feature: f.Key, WindowSeconds: f.Velocity.WindowSeconds, Key: p.counterKey(f, env, value),
-				Subject: CounterTag(f.Entity, env.AppID, value), Actors: actors, ReadOnly: !RecordsVelocity(f, env)}
+				Subject: counterSubjectTag(f.Entity, env, value), Actors: actors, ReadOnly: !RecordsVelocity(f, env)}
 			if f.Velocity.Agg == bundle.AggDistinct {
 				q.Distinct, q.Member = DistinctMember(f.Velocity.DistinctOf, env)
 				if q.Distinct == "" {
@@ -404,7 +404,7 @@ func (p *Program) fetch(ctx context.Context, env *Env, req Request, src Sources,
 			}
 			vel = append(vel, q)
 		case bundle.FeatureStream:
-			if value := EntityValue(env, f.Entity); value != "" {
+			if value := CounterValue(env, f.Entity); value != "" {
 				stream = append(stream, LookupQuery{Feature: f.Key, Key: StreamKey(f, env.AppID, value)})
 			}
 		case bundle.FeatureGraph:

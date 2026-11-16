@@ -173,3 +173,41 @@ func TestLockDurationForLevel(t *testing.T) {
 		}
 	}
 }
+
+// 同一账号的登录名、邮箱、手机号共用一份失败次数与锁；输入 #ID 形式的登录名锁不到别人
+func TestLoginGuardAccountKeyMergesBoundIdentifiers(t *testing.T) {
+	if got := LoginGuardAccountKey("Alice@Example.com", 42); got != "#42" {
+		t.Fatalf("已有账号 = %q", got)
+	}
+	if got := LoginGuardAccountKey(" Bob ", 0); got != "bob" {
+		t.Fatalf("登录名 = %q", got)
+	}
+	if got := LoginGuardAccountKey("#42", 0); got != "##42" {
+		t.Fatalf("# 开头的登录名 = %q", got)
+	}
+	if loginGuardUserID("#42") != 42 || loginGuardUserID("##42") != 0 || loginGuardUserID("bob") != 0 {
+		t.Fatal("loginGuardUserID 取值不对")
+	}
+
+	svc, _ := newLoginGuardForTest(t)
+	ctx := context.Background()
+	const appID = int64(9)
+	// 阈值 3：用三种标识各错一次，就该锁住这个账号
+	for range []string{"alice", "alice@example.com", "13800000000"} {
+		svc.RegisterFailure(ctx, appID, LoginGuardAccountKey("", 42), "")
+	}
+	if err := svc.Check(ctx, appID, LoginGuardAccountKey("", 42), ""); err == nil {
+		t.Fatal("同一账号换着标识失败三次应当锁定")
+	}
+	// 别人输入 #42 当登录名失败，不影响账号 43 / 不落在 #42 上
+	for i := 0; i < 3; i++ {
+		svc.RegisterFailure(ctx, appID, LoginGuardAccountKey("#43", 0), "")
+	}
+	if err := svc.Check(ctx, appID, LoginGuardAccountKey("", 43), ""); err != nil {
+		t.Fatalf("输入 #43 不该锁住账号 43：%v", err)
+	}
+	svc.ResetAccount(ctx, appID, "alice", 42)
+	if err := svc.Check(ctx, appID, LoginGuardAccountKey("", 42), ""); err != nil {
+		t.Fatalf("解除后不该再锁：%v", err)
+	}
+}

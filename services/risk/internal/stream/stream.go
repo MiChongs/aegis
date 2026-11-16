@@ -55,7 +55,11 @@ func entityExpr(entity string) (expr, notEmpty string, err error) {
 	case bundle.EntityUser:
 		return "user_id::varchar", "user_id > 0", nil
 	case bundle.EntityAccount:
-		return "lower(account)", "account <> ''", nil
+		// 带账号 ID 的事件按账号归并（登录名、邮箱、手机号绑在同一个账号上只算一个），写法同 engine.CounterValue（bundle.AccountKeyPrefix）
+		p := Literal(bundle.AccountKeyPrefix)
+		return "CASE WHEN user_id > 0 THEN " + p + " || user_id::varchar WHEN starts_with(lower(account), " + p + ") THEN " + p +
+				" || lower(account) ELSE lower(account) END",
+			"(user_id > 0 OR account <> '')", nil
 	case bundle.EntityDevice:
 		return "device_id", "device_id <> ''", nil
 	case bundle.EntityIP:
@@ -159,12 +163,18 @@ func (o Object) Sink() string   { return o.Base + "_sink" }
 // ObjectFor 特征对应的对象名（定义摘要取前 10 位）
 func ObjectFor(f bundle.Feature) Object {
 	// V 生成规则的版本：规则一变（2 = 反连接遗忘表），所有特征的对象都要重建
+	// A 登录名主体的取法版本（1 = 按账号 ID 归并）。只放在登录名主体的特征里，其余特征的对象名不变、不用重建
+	a := 0
+	if f.Entity == bundle.EntityAccount {
+		a = 1
+	}
 	raw, _ := json.Marshal(struct {
 		E string
 		G bool
 		S *bundle.StreamDef
 		V int
-	}{f.Entity, f.Global, f.Stream, 2})
+		A int `json:",omitempty"`
+	}{f.Entity, f.Global, f.Stream, 2, a})
 	sum := sha256.Sum256(raw)
 	return Object{Feature: f.Key, Base: "rf_" + f.Key + "_" + hex.EncodeToString(sum[:])[:10]}
 }

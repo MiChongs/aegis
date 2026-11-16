@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -299,7 +300,8 @@ func (w *Worker) handleAlerts(ctx context.Context, msgs []jetstream.Msg) error {
 					}
 				case "account":
 					if a.Entity == bundle.EntityAccount {
-						listType, value, appID = bundle.ListAccount, a.Value, a.AppID
+						listType, value = accountListTarget(a.Value)
+						appID = a.AppID
 					}
 				}
 				if value == "" {
@@ -494,4 +496,18 @@ func (w *Worker) sweep(ctx context.Context) error {
 		}
 		w.logf("清理过期名单 %d 条", len(removed))
 	}
+}
+
+// accountListTarget 按登录名分组的告警落名单：#<ID> 是归并后的账号，落用户名单；
+// 其余是登录名（以 # 开头的被补过一个 #，去掉），落登录名名单。两种都按告警的应用落。
+func accountListTarget(value string) (listType, v string) {
+	if rest, ok := strings.CutPrefix(value, bundle.AccountKeyPrefix); ok && !strings.HasPrefix(rest, bundle.AccountKeyPrefix) {
+		if _, err := strconv.ParseInt(rest, 10, 64); err == nil {
+			return bundle.ListUser, rest
+		}
+	}
+	if strings.HasPrefix(value, bundle.AccountKeyPrefix+bundle.AccountKeyPrefix) {
+		value = value[len(bundle.AccountKeyPrefix):]
+	}
+	return bundle.ListAccount, value
 }

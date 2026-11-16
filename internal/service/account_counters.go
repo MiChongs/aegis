@@ -51,8 +51,8 @@ func (c *AccountCounters) PurgeHook(ctx context.Context, appID, userID int64, ac
 		if regAfter != nil {
 			regAfter(ctx)
 		}
-		if c.loginGuard != nil && account != "" {
-			c.loginGuard.ResetAccount(ctx, appID, account)
+		if c.loginGuard != nil {
+			c.loginGuard.ResetAccount(ctx, appID, account, userID)
 		}
 		if c.realtime != nil {
 			if _, err := c.realtime.RemoveUserConnections(ctx, appID, userID); err != nil {
@@ -107,7 +107,13 @@ func (c *AccountCounters) Release(ctx context.Context, appID int64, userIDs []in
 	if c.loginGuard != nil {
 		for _, a := range accounts {
 			if a != "" {
-				c.loginGuard.ResetAccount(ctx, appID, a)
+				c.loginGuard.ResetAccount(ctx, appID, a, 0)
+				out.LoginGuards++
+			}
+		}
+		for _, id := range userIDs {
+			if id > 0 {
+				c.loginGuard.ResetAccount(ctx, appID, "", id)
 				out.LoginGuards++
 			}
 		}

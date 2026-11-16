@@ -111,6 +111,21 @@ func TestStreamIT(t *testing.T) {
 	if got != "4" || amt != "42.5" {
 		t.Fatalf("redis values: count=%q sum=%q", got, amt)
 	}
+	// 同一个账号用两个绑定的标识失败：归并成 #<账号 ID> 一个主体
+	for _, a := range []string{"alias" + acc, "alias" + acc + "@example.com"} {
+		if err := bus.PublishEvent(ctx, events.Event{Type: events.TypeLoginFail, AppID: 9, UserID: 88, Account: a}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var merged string
+	for i := 0; i < 60 && merged != "2"; i++ {
+		if merged, _ = rdb.Get(ctx, "rf:"+key+":9:#88").Result(); merged != "2" {
+			time.Sleep(time.Second)
+		}
+	}
+	if merged != "2" {
+		t.Fatalf("同一账号的两个标识应归并计 2，得到 %q", merged)
+	}
 	// 遗忘：登录名过去的失败次数撤掉（分组清空，键随之删除）；用户 77 的付款也撤掉。之后的新事件重新计数
 	if err := m.Forget(ctx, []Tombstone{{Kind: bundle.EntityAccount, AppID: 9, Value: acc}, {Kind: bundle.EntityUser, Value: "77"}}, time.Now()); err != nil {
 		t.Fatal(err)

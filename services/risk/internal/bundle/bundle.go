@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -138,6 +139,21 @@ const (
 	EntityEmailDomain = "email_domain"
 	EntityApp         = "app"
 )
+
+// AccountKeyPrefix 计数里「已确认账号」这个主体的取值前缀：#<账号 ID>。
+// 登录名、邮箱、手机号可能绑在同一个账号上，账号确认存在时滑窗（engine.CounterValue）、
+// 流式特征（stream.entityExpr）、CEP 分组（RiskEvent.key）都按它归成一个主体；登录名里不会出现 #。
+const AccountKeyPrefix = "#"
+
+// LoginNameKey 没确认账号时登录名的取值：小写；以 # 开头的再补一个 #（#123 → ##123），
+// 这样输入的登录名永远撞不上 #<账号 ID>。流式特征与 CEP 的写法与它一致。
+func LoginNameKey(account string) string {
+	v := strings.ToLower(account)
+	if strings.HasPrefix(v, AccountKeyPrefix) {
+		v = AccountKeyPrefix + v
+	}
+	return v
+}
 
 // Entities 全部特征主体
 func Entities() []string {

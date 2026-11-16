@@ -299,7 +299,8 @@ func (s *AuthService) PasswordLogin(ctx context.Context, appID int64, account, p
 func (s *AuthService) afterPasswordLoginSuccess(appID int64, user *userdomain.User, account, ip string) {
 	if s.loginGuard != nil {
 		s.runDetached("login.guard_success", 3*time.Second, func(actx context.Context) {
-			s.loginGuard.RegisterSuccess(actx, appID, account, ip)
+			s.loginGuard.RegisterSuccess(actx, appID, LoginGuardAccountKey(account, 0), ip)
+			s.loginGuard.RegisterSuccess(actx, appID, LoginGuardAccountKey("", user.ID), "")
 		})
 	}
 	if s.plugin != nil {
@@ -319,7 +320,7 @@ func (s *AuthService) authenticatePassword(ctx context.Context, appID int64, acc
 	// 阶段 0 —— 防爆破快速失败：锁定期内直接拒绝，不触发任何下游查询，
 	// 保证爆破攻击下 PG / 风控 / 插件零负载（Redis 故障 fail-open）
 	if s.loginGuard != nil {
-		if err := s.loginGuard.Check(ctx, appID, account, ip); err != nil {
+		if err := s.loginGuard.Check(ctx, appID, LoginGuardAccountKey(account, 0), ip); err != nil {
 			return nil, nil, "", err
 		}
 	}
@@ -421,8 +422,9 @@ func (s *AuthService) authenticatePassword(ctx context.Context, appID int64, acc
 			}
 		}
 		if user == nil {
+			// 分不出是哪个账号：按输入的登录名计
 			if s.loginGuard != nil {
-				s.loginGuard.RegisterFailure(ctx, appID, account, ip)
+				s.loginGuard.RegisterFailure(ctx, appID, LoginGuardAccountKey(account, 0), ip)
 			}
 			return nil, nil, "", apperrors.New(40101, http.StatusUnauthorized, "账号或密码错误")
 		}
@@ -438,9 +440,15 @@ func (s *AuthService) authenticatePassword(ctx context.Context, appID int64, acc
 		// 时序均衡：账号不存在也执行一次等价 bcrypt 比较，并与密码错误统一计失败（防账号枚举）
 		_ = bcrypt.CompareHashAndPassword(s.timingDummyHash, []byte(password))
 		if s.loginGuard != nil {
-			s.loginGuard.RegisterFailure(ctx, appID, account, ip)
+			s.loginGuard.RegisterFailure(ctx, appID, LoginGuardAccountKey(account, 0), ip)
 		}
 		return nil, nil, "", apperrors.New(40101, http.StatusUnauthorized, "账号或密码错误")
+	}
+	// 账号维度按账号 ID 锁：换用同一账号的邮箱、手机号登录也躲不开。放在核对密码之前，锁定期内不透露密码对错
+	if s.loginGuard != nil {
+		if err := s.loginGuard.Check(ctx, appID, LoginGuardAccountKey("", user.ID), ""); err != nil {
+			return nil, nil, "", err
+		}
 	}
 	if err := s.ensureUserLoginState(ctx, user); err != nil {
 		return nil, nil, "", err
@@ -448,7 +456,7 @@ func (s *AuthService) authenticatePassword(ctx context.Context, appID int64, acc
 	if !s.verifyCredential(user.PasswordHash, password) {
 		// 失败计数同步执行（保证防爆破窗口准确），审计与插件钩子移出关键路径
 		if s.loginGuard != nil {
-			s.loginGuard.RegisterFailure(ctx, appID, account, ip)
+			s.loginGuard.RegisterFailure(ctx, appID, LoginGuardAccountKey("", user.ID), ip)
 		}
 		userID := user.ID
 		s.runDetached("login.failed_audit", 3*time.Second, func(actx context.Context) {

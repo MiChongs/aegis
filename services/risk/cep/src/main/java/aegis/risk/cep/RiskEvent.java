@@ -74,10 +74,20 @@ public class RiskEvent implements Serializable {
             case "user" -> userId > 0 ? Long.toString(userId) : "";
             case "device" -> deviceId == null ? "" : deviceId;
             case "ip" -> ip == null ? "" : ip;
-            case "account" -> account == null ? "" : account.toLowerCase();
+            case "account" -> accountKey();
             default -> "";
         };
         return v.isEmpty() ? "" : appId + ":" + v;
+    }
+
+    /**
+     * 登录名主体的键，与 Go 侧 bundle.AccountKeyPrefix / LoginNameKey 一致：带账号 ID 的事件按账号归并成 #ID
+     * （登录名、邮箱、手机号绑在同一个账号上只算一个）；否则用小写登录名，以 # 开头的再补一个 #。
+     */
+    String accountKey() {
+        if (userId > 0) return "#" + userId;
+        String v = nz(account).toLowerCase(java.util.Locale.ROOT);
+        return v.startsWith("#") ? "#" + v : v;
     }
 
     private static String nz(String s) { return s == null ? "" : s; }

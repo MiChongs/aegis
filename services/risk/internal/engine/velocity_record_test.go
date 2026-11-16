@@ -76,6 +76,15 @@ func TestVelocityRecordsOnlyConfirmedAccounts(t *testing.T) {
 		if q := qs["ip_accounts"]; q.Distinct != "42" || q.Member != "u:42" {
 			t.Errorf("%s 账号去重成员 = %q / %q，想要按账号 ID", name, q.Distinct, q.Member)
 		}
+		// 以登录名为主体的计数也按账号归并：登录名、邮箱、手机号是同一个主体
+		if q := qs["account_ips"]; q.Key != "account_ips:1:*:#42" || q.Subject != "u:42" {
+			t.Errorf("%s 登录名主体 = %q / %q，想要按账号 ID 归并", name, q.Key, q.Subject)
+		}
+	}
+
+	// 没确认账号时用登录名；以 # 开头的补一个 #，撞不上 #<ID>
+	if q := queries(Request{Scene: "login", AppID: 1, Account: "#42", IP: "203.0.113.7"})["account_ips"]; q.Key != "account_ips:1:*:##42" || !q.ReadOnly {
+		t.Errorf("# 开头的登录名主体 = %q（只读 %v）", q.Key, q.ReadOnly)
 	}
 
 	// 已有账号 ID 只用于计数，不当成登录用户

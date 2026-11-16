@@ -66,6 +66,30 @@ func ConfirmedAccount(env *Env) int64 {
 	return env.AccountUserID
 }
 
+// AccountPrefix 见 bundle.AccountKeyPrefix
+const AccountPrefix = bundle.AccountKeyPrefix
+
+// CounterValue 计数（滑窗、流式特征）里主体的取值。
+// 登录名、邮箱、手机号可能都绑在同一个账号上：账号确认存在时一律按账号 ID 归成一个主体（#<ID>），
+// 否则才用输入的登录名（这时滑窗只读，见 RecordsVelocity）。其余主体同 EntityValue。
+func CounterValue(env *Env, entity string) string {
+	if entity == bundle.EntityAccount {
+		if id := ConfirmedAccount(env); id > 0 {
+			return AccountPrefix + itoa(id)
+		}
+		return bundle.LoginNameKey(env.Account)
+	}
+	return EntityValue(env, entity)
+}
+
+// counterSubjectTag 计数主体的索引标签：确认的账号挂在用户标签下，删号、解除时整条计数一起处理
+func counterSubjectTag(entity string, env *Env, value string) string {
+	if entity == bundle.EntityAccount && strings.HasPrefix(value, AccountPrefix) {
+		return CounterTag(bundle.EntityUser, env.AppID, value[len(AccountPrefix):])
+	}
+	return CounterTag(entity, env.AppID, value)
+}
+
 // DistinctMember 去重计数这次的成员取值与索引标签。
 // 数「账号」时按确认存在的账号 ID 去重：同一个人用登录名、邮箱、手机号登录，或登录前后，都只算一个；
 // 没有确认的账号时退回登录名（这时请求只读，见 RecordsVelocity）。
@@ -103,11 +127,14 @@ func CounterTag(entity string, appID int64, value string) string {
 	return ""
 }
 
-// CounterActors 这次请求的贡献者标签：账号（已登录时）、登录名、设备。
+// CounterActors 这次请求的贡献者标签：账号（已登录，或登录名对应的已有账号）、登录名、设备。
 // 注册时还没有账号 ID，靠登录名与设备认人。地址是共用的，不算贡献者。
 func CounterActors(env *Env) []string {
 	var out []string
-	for _, e := range []string{bundle.EntityUser, bundle.EntityAccount, bundle.EntityDevice} {
+	if id := ConfirmedAccount(env); id > 0 {
+		out = append(out, CounterTag(bundle.EntityUser, env.AppID, itoa(id)))
+	}
+	for _, e := range []string{bundle.EntityAccount, bundle.EntityDevice} {
 		if t := CounterTag(e, env.AppID, EntityValue(env, e)); t != "" {
 			out = append(out, t)
 		}

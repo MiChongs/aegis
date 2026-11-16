@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,36 @@ const (
 	loginGuardKindAccount = "acct"
 	loginGuardKindIP      = "ip"
 )
+
+// LoginGuardAccountKey 账号维度的计数主体。
+//
+// 登录名、邮箱、手机号可能绑在同一个账号上：账号存在时一律按账号 ID 计（#<ID>），换着用也只算一个人，
+// 不会各自攒一份失败次数、多出几轮尝试。账号不存在（或邮箱挂在多个账号上分不出是谁）时按输入的登录名计；
+// 以 # 开头的登录名补一个 #，撞不上别人的 #<ID>，也就没法用它去锁别人的账号。
+// 与风控平台的 bundle.AccountKeyPrefix 写法一致。
+func LoginGuardAccountKey(account string, userID int64) string {
+	if userID > 0 {
+		return "#" + strconv.FormatInt(userID, 10)
+	}
+	v := strings.ToLower(strings.TrimSpace(account))
+	if strings.HasPrefix(v, "#") {
+		v = "#" + v
+	}
+	return v
+}
+
+// loginGuardUserID 从 #<ID> 主体里取回账号 ID；不是这种写法返回 0
+func loginGuardUserID(subject string) int64 {
+	rest, ok := strings.CutPrefix(subject, "#")
+	if !ok || strings.HasPrefix(rest, "#") {
+		return 0
+	}
+	id, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
+}
 
 // SceneLoginBruteforce 防爆破锁定写入 risk_assessments 的场景标识。
 const SceneLoginBruteforce = "login_bruteforce"
@@ -133,12 +164,17 @@ func (s *LoginGuardService) RegisterSuccess(ctx context.Context, appID int64, ac
 }
 
 // ResetAccount 本人完成找回密码后解除账号维度的锁定与计数（IP 维度不动：
-// 同一个 IP 上可能还有别人在猜别的账号）。
-func (s *LoginGuardService) ResetAccount(ctx context.Context, appID int64, account string) {
-	if s == nil || s.redis == nil || strings.TrimSpace(account) == "" {
+// 同一个 IP 上可能还有别人在猜别的账号）。账号 ID 与登录名两种主体都清（升级前的锁按登录名记）。
+func (s *LoginGuardService) ResetAccount(ctx context.Context, appID int64, account string, userID int64) {
+	if s == nil || s.redis == nil {
 		return
 	}
-	_ = s.redis.ResetSubject(ctx, loginGuardKindAccount, appID, account)
+	if userID > 0 {
+		_ = s.redis.ResetSubject(ctx, loginGuardKindAccount, appID, LoginGuardAccountKey("", userID))
+	}
+	if strings.TrimSpace(account) != "" {
+		_ = s.redis.ResetSubject(ctx, loginGuardKindAccount, appID, LoginGuardAccountKey(account, 0))
+	}
 }
 
 // ResetIP 清掉一个地址的失败计数、锁定与退避级别（解除风控时用）
@@ -185,8 +221,13 @@ func (s *LoginGuardService) recordAssessment(kind string, appID int64, account, 
 	if kind == loginGuardKindIP {
 		kindLabel = "ip"
 	}
+	// 按账号 ID 计的锁：事件带账号 ID 而不是 #<ID>（风控那边按账号 ID 归并）
+	var userID int64
+	if id := loginGuardUserID(account); id > 0 {
+		userID, account = id, ""
+	}
 	s.riskReport(context.Background(), riskevents.Event{
-		Type: riskevents.TypeLoginLocked, Scene: SceneLoginBruteforce, AppID: appID, Account: account, IP: ip,
+		Type: riskevents.TypeLoginLocked, Scene: SceneLoginBruteforce, AppID: appID, UserID: userID, Account: account, IP: ip,
 		Props: map[string]any{"dimension": kindLabel, "failCount": failCount, "level": level, "lockSeconds": int64(duration.Seconds())},
 	})
 	s.log.Info("登录防爆破锁定", zap.String("dimension", kindLabel), zap.Int64("fails", failCount), zap.Int64("level", level),
