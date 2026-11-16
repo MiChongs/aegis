@@ -9,10 +9,10 @@ async def test_admins_and_access(backend, call):
     await call("admins_list", {"online": True})
     assert backend.last().path == f"{S}/admins/online"
     await call("admins_create", {"account": "ops01", "password": "Passw0rd!x", "assignments": [{"roleKey": "app_operator", "appid": 3}]})
-    assert backend.last().json == {"account": "ops01", "password": "Passw0rd!x", "displayName": "", "email": "", "isSuperAdmin": False,
+    assert backend.last().json == {"account": "ops01", "password": "Passw0rd!x", "displayName": "", "email": "", "tier": "admin", "isSuperAdmin": False,
                                    "assignments": [{"roleKey": "app_operator", "appid": 3}]}
     await call("admins_set_access", {"admin_id": 4, "assignments": []})
-    assert (backend.last().method, backend.last().path, backend.last().json) == ("PUT", f"{S}/admins/4/access", {"assignments": [], "isSuperAdmin": False})
+    assert (backend.last().method, backend.last().path, backend.last().json) == ("PUT", f"{S}/admins/4/access", {"assignments": [], "tier": "admin", "isSuperAdmin": False})
     await call("admins_set_status", {"admin_id": 4, "status": "disabled"})
     assert backend.last().json == {"status": "disabled"}
 
