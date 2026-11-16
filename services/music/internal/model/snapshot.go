@@ -13,7 +13,7 @@ import (
 )
 
 // FormatVersion 快照格式版本：结构变了就加一，旧快照加载失败时 music-rec 继续用热度兜底并提示重新训练。
-const FormatVersion = 2
+const FormatVersion = 3
 
 // Neighbor ItemCF 邻居。
 type Neighbor struct {

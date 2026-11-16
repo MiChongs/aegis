@@ -19,6 +19,7 @@ import (
 
 	"aegis/services/music/contract"
 	"aegis/services/music/internal/appcfg"
+	"aegis/services/music/internal/llm"
 	"aegis/services/music/internal/model"
 	"aegis/services/music/internal/realtime"
 	"aegis/services/music/internal/store"
@@ -36,6 +37,10 @@ const (
 	chRule     = "rule"
 	chFatigue  = "fatigue"
 	chPenalty  = "penalty"
+	chSeq      = "seq"
+	chLLM      = "llm"
+	chTagMatch = "tag_match"
+	chSemantic = "semantic"
 )
 
 var channelOrder = []string{chALS, chItemCF, chArtist, chTrending, chExplore}
@@ -64,6 +69,12 @@ type Service struct {
 
 	opsOnce sync.Once
 	opsC    *opsCache
+
+	// 第三期
+	Deep        *DeepRegistry
+	LLM         *llm.Client
+	contentOnce sync.Once
+	contentC    *contentCache
 }
 
 type popCache struct {
@@ -101,6 +112,8 @@ type Item struct {
 	Reason   Reason             `json:"reason"`
 	Channels map[string]float64 `json:"channels,omitempty"`
 
+	Resolve bool `json:"resolve,omitempty"` // 待客户端按歌名歌手搜索解析（大模型扩展、曲库里没有）
+
 	rule     int64     // 影响这首的运营规则
 	features []float32 // 精排特征（记录训练样本）
 }
@@ -125,7 +138,9 @@ type Result struct {
 type cand struct {
 	ch     [5]float64
 	fold   float64
-	seed   int32 // ItemCF 贡献最大的种子
+	seq    float64 // 深度序列模型分
+	llm    bool    // 来自大模型扩展
+	seed   int32   // ItemCF 贡献最大的种子
 	seedW  float64
 	artist string // 歌手通道贡献最大的歌手展示名
 	artW   float64
@@ -261,6 +276,27 @@ func (s *Service) Recommend(ctx context.Context, req Request) (*Result, error) {
 		items, err := s.popularFallback(ctx, req, cfg, state, rules, limit, page)
 		if err != nil {
 			return nil, err
+		}
+		// 还没有模型（新应用、数据很少）：大模型按口味推荐的歌也插进来（待客户端解析）
+		if page == 0 {
+			var extra []Item
+			for _, e := range s.llmExpand(ctx, req, cfg, state, prefs, personal, true, day) {
+				if until, sup := state.Suppressed[e.WorkKey]; sup && until > now.UnixMilli() {
+					continue
+				}
+				extra = append(extra, Item{WorkKey: e.WorkKey, Track: contract.Track{Title: e.Title, Artist: e.Artist},
+					Reason: Reason{Kind: "llm", Text: "你可能会喜欢"}, Resolve: true})
+			}
+			disliked := map[string]bool{}
+			for a := range state.DislikedArtists {
+				disliked[contract.NormalizeArtist(a)] = true
+			}
+			_, blockA, _ := ruleIndex(rules, req.Scene)
+			ratio := cfg.Content.ExpandRatio
+			if len(items) < limit/2 {
+				ratio = 0.5 // 热度也凑不满一页时多给一些
+			}
+			items = insertResolve(items, extra, limit, ratio, disliked, blockA, req.Explain)
 		}
 		res.Items = items
 	} else {
@@ -737,7 +773,111 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 		addTrending()
 		addExplore()
 	}
-	cold := !uc.inModel && uc.fold == nil && len(uc.seeds) == 0 && len(uc.prefArtists) == 0
+	// ── 第三期召回：深度序列模型（seq）与大模型扩展（llm） ──
+	// 候选下标 < nSnap 是 ALS 快照里的作品；≥ nSnap 的是只在深度模型物品表里的作品（曲库里有、还没人听过的新歌）。
+	nSnap := int32(len(snap.Items))
+	deep := s.Deep.Get(req.AppID)
+	var toSnap []int32
+	if deep != nil {
+		toSnap = deep.snapIndex(snap, l.RunID)
+	}
+	keyOf := func(i int32) string {
+		if i < nSnap {
+			return snap.Items[i]
+		}
+		return deep.M.ItemKey(i - nSnap)
+	}
+	trackOf := func(i int32) contract.Track {
+		if i < nSnap {
+			return l.Tracks[i]
+		}
+		return deep.Tracks[i-nSnap]
+	}
+	artistOf := func(i int32) string {
+		if i < nSnap {
+			return snap.ItemArtist[i]
+		}
+		return contract.NormalizeArtist(contract.FirstArtist(deep.Tracks[i-nSnap].Artist))
+	}
+	candOf := func(key string) (int32, bool) {
+		if i, ok := snap.Item(key); ok {
+			return i, true
+		}
+		if deep != nil {
+			if d, ok := deep.M.Item(key); ok {
+				if j := toSnap[d]; j >= 0 {
+					return j, true
+				}
+				return nSnap + d, true
+			}
+		}
+		return -1, false
+	}
+	usedSeq := false
+	if deep != nil {
+		var seq []int32
+		switch req.Scene {
+		case contract.SceneAutoplay:
+			for _, t := range req.Seeds {
+				if d, ok := deep.M.Item(contract.WorkKey(t.Title, t.Artist)); ok {
+					seq = append(seq, d)
+				}
+			}
+			if len(seq) == 0 && uc.personal {
+				seq = deepSequence(deep.M, state)
+			}
+		case contract.SceneSimilar:
+			if seedItem >= 0 {
+				if d, ok := deep.M.Item(snap.Items[seedItem]); ok {
+					seq = []int32{d}
+				}
+			}
+		default:
+			if uc.personal {
+				seq = deepSequence(deep.M, state)
+			}
+		}
+		if u := deep.M.Encode(seq); u != nil {
+			usedSeq = true
+			if req.Scene == contract.SceneArtist {
+				for i, c := range cands {
+					if d, ok := deep.M.Item(keyOf(i)); ok {
+						c.seq = math.Max(0, float64(model.Dot(u, deep.M.ItemVec(d))))
+					}
+				}
+			} else {
+				for _, p := range deep.M.TopK(u, 400, nil) {
+					if p.Score <= 0 {
+						continue
+					}
+					ci := toSnap[p.Item]
+					if ci < 0 {
+						ci = nSnap + p.Item
+					}
+					get(ci).seq = float64(p.Score)
+				}
+			}
+		}
+	}
+	var resolveList []Item
+	if exp := s.llmExpand(ctx, req, cfg, state, uc.prefs, uc.personal, !uc.inModel || snapCount(snap, uc.u) < 30, day); len(exp) > 0 {
+		for _, e := range exp {
+			if ci, ok := candOf(e.WorkKey); ok {
+				get(ci).llm = true
+				continue
+			}
+			if until, sup := state.Suppressed[e.WorkKey]; sup && until > now.UnixMilli() {
+				continue // 解析失败过或听腻了
+			}
+			if _, bad := state.Negative[e.WorkKey]; bad {
+				continue
+			}
+			resolveList = append(resolveList, Item{WorkKey: e.WorkKey, Track: contract.Track{Title: e.Title, Artist: e.Artist},
+				Reason: Reason{Kind: "llm", Text: "你可能会喜欢"}, Resolve: true})
+		}
+	}
+
+	cold := !uc.inModel && uc.fold == nil && len(uc.seeds) == 0 && len(uc.prefArtists) == 0 && !usedSeq
 	if !uc.personal && req.Scene != contract.SceneSimilar && req.Scene != contract.SceneAutoplay {
 		for _, c := range cands {
 			c.ch[0], c.ch[1], c.ch[2] = 0, 0, 0
@@ -745,30 +885,36 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 	}
 	if uc.fold != nil {
 		for i, c := range cands {
-			c.fold = math.Max(0, float64(model.Dot(uc.fold, snap.ItemVec(i))))
+			if i < nSnap {
+				c.fold = math.Max(0, float64(model.Dot(uc.fold, snap.ItemVec(i))))
+			}
 		}
 	}
 
 	// ── 归一、特征、打分、过滤 ──
 	var maxCh [5]float64
-	var maxFold float64
+	var maxFold, maxSeq float64
 	for _, c := range cands {
 		for k, v := range c.ch {
 			maxCh[k] = math.Max(maxCh[k], v)
 		}
 		maxFold = math.Max(maxFold, c.fold)
+		maxSeq = math.Max(maxSeq, c.seq)
 	}
 	blend := [5]float64{cfg.Blend.ALS, cfg.Blend.ItemCF, cfg.Blend.Artist, cfg.Blend.Trending, cfg.Blend.Explore}
+	seqW := cfg.Blend.Seq
 	switch req.Scene {
 	case contract.SceneSimilar:
-		blend = [5]float64{0.8, 1.2, 0.4, 0, 0}
+		blend, seqW = [5]float64{0.8, 1.2, 0.4, 0, 0}, 1.0
 	case contract.SceneAutoplay:
-		blend = [5]float64{0.8, 1.2, 0.6, 0.2, 0}
+		blend, seqW = [5]float64{0.8, 1.2, 0.6, 0.2, 0}, 1.4
 	case contract.SceneArtist:
-		blend = [5]float64{1, 0.6, 0, 0.5, 0}
+		blend, seqW = [5]float64{1, 0.6, 0, 0.5, 0}, 0.8
 	}
+	const llmW = 0.6
 	ranker := snap.Ranker
-	useRanker := cfg.Ranker.Enabled && ranker != nil && ranker.Enabled && uc.personal && len(ranker.Weights) == model.NumRankFeatures
+	lgb := deep != nil && deep.M.RankerEnabled() && cfg.Ranker.Enabled && uc.personal
+	useLR := !lgb && cfg.Ranker.Enabled && ranker != nil && ranker.Enabled && uc.personal && len(ranker.Weights) == model.NumRankFeatures
 	disliked := map[string]bool{}
 	for a := range state.DislikedArtists {
 		disliked[contract.NormalizeArtist(a)] = true
@@ -785,11 +931,18 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 	negCut := now.Add(-30 * 24 * time.Hour).UnixMilli()
 	nowMs := now.UnixMilli()
 	blockW, blockA, boosts := ruleIndex(rules, req.Scene)
+	var prof contentProfile
+	ct := s.content(ctx, req.AppID)
+	if uc.personal {
+		prof = buildContentProfile(ct, state)
+	}
 
 	type scored struct {
 		i       int32
+		total   float64
 		score   float64
 		norm    [5]float64
+		seqN    float64
 		pen     float64
 		ranker  float64
 		fatigue float64
@@ -799,24 +952,28 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 	}
 	var list []scored
 	for i, c := range cands {
-		if i == seedItem || l.Tracks[i].Source == "" {
+		tr := trackOf(i)
+		if i == seedItem || tr.Source == "" {
 			continue
 		}
-		key := snap.Items[i]
-		art := snap.ItemArtist[i]
+		key := keyOf(i)
+		art := artistOf(i)
 		if at, bad := state.Negative[key]; bad && at >= negCut {
 			continue
 		}
-		if disliked[art] || radioServed[key] || exclude[key] || excludeT[l.Tracks[i].Key()] || blockW[key] || blockA[art] {
+		if disliked[art] || radioServed[key] || exclude[key] || excludeT[tr.Key()] || blockW[key] || blockA[art] {
 			continue
 		}
 		if until, ok := state.Suppressed[key]; ok && until > nowMs {
 			continue
 		}
-		if _, bad := state.BadVersions[l.Tracks[i].Key()]; bad {
+		if _, bad := state.BadVersions[tr.Key()]; bad {
 			continue
 		}
 		if history != nil && history[key] {
+			continue
+		}
+		if req.Scene == contract.SceneArtist && art != contract.NormalizeArtist(contract.FirstArtist(req.Artist)) {
 			continue
 		}
 		var norm [5]float64
@@ -826,6 +983,14 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 				norm[k] = c.ch[k] / maxCh[k]
 			}
 			total += blend[k] * norm[k]
+		}
+		seqN := 0.0
+		if maxSeq > 0 {
+			seqN = c.seq / maxSeq
+			total += seqW * seqN
+		}
+		if c.llm {
+			total += llmW
 		}
 		if total <= 0 {
 			continue
@@ -837,9 +1002,16 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 		if maxFold > 0 {
 			x[5] = float32(c.fold / maxFold)
 		}
-		x[6] = snap.ItemPop[i]
-		if int(i) < len(snap.ItemComplete) {
-			x[7], x[8] = snap.ItemComplete[i], snap.ItemSkip[i]
+		lang := uint8(contract.LangIndex(contract.DetectLang(tr.Title, tr.Artist)))
+		x[7], x[8] = 0.6, 0.2
+		if i < nSnap {
+			x[6] = snap.ItemPop[i]
+			if int(i) < len(snap.ItemComplete) {
+				x[7], x[8] = snap.ItemComplete[i], snap.ItemSkip[i]
+			}
+			if int(i) < len(snap.ItemLang) {
+				lang = snap.ItemLang[i]
+			}
 		}
 		x[9] = float32(uc.artists[art])
 		if at, ok := recent[key]; ok && at >= recentCut {
@@ -847,24 +1019,17 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 		}
 		fat := state.Fatigue[key]
 		x[11] = float32(math.Log1p(float64(fat)))
-		if int(i) < len(snap.ItemLang) {
-			x[12] = float32(uc.langMatch(snap.ItemLang[i]))
-		}
+		x[12] = float32(uc.langMatch(lang))
 		if !uc.known[key] && (history == nil || !history[key]) {
 			x[13] = 1
 		}
 		if uc.prefArtists[art] {
 			x[14] = 1
 		}
-		score := total
-		rs := 0.0
-		if useRanker {
-			// 精排调整融合分而不是替换它：融合分保证召回通道的排序基本盘，精排在 0.5–1.5 倍之间调整。
-			// 只用精排概率时，从没被展示过的候选（训练分布之外）会被打出不可靠的分，把个性化结果挤下去。
-			rs = ranker.Score(x)
-			score = total * (0.5 + rs)
-		} else if len(uc.prefLangs) > 0 && int(i) < len(snap.ItemLang) && uc.prefLangs[int(snap.ItemLang[i])] {
-			score *= 1.15 // 没有精排时，偏好语种直接加成
+		x[16] = float32(seqN)
+		x[17], x[18] = prof.match(ct.items[key])
+		if c.llm {
+			x[19] = 1
 		}
 		pen := 1.0
 		if at, ok := state.Negative[key]; ok && at < negCut {
@@ -880,12 +1045,15 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 				pen *= 0.25
 			}
 		}
+		if !lgb && !useLR && len(uc.prefLangs) > 0 && uc.prefLangs[int(lang)] {
+			pen *= 1.15 // 没有精排时，偏好语种直接加成
+		}
 		fatPen := 1.0
 		if th := cfg.Fatigue.Threshold; th > 0 && fat >= th {
 			fatPen = math.Pow(cfg.Fatigue.Decay, float64(fat-th+1))
 		}
 		if req.Scene == contract.SceneDiscover {
-			pen *= math.Pow(math.Max(1-float64(snap.ItemPop[i]), 0.05), cfg.Discover.PopularityPenalty)
+			pen *= math.Pow(math.Max(1-float64(x[6]), 0.05), cfg.Discover.PopularityPenalty)
 		}
 		boost, rule := 1.0, int64(0)
 		if b, ok := boosts.work[key]; ok {
@@ -893,8 +1061,41 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 		} else if b, ok := boosts.artist[art]; ok {
 			boost, rule = b.w, b.id
 		}
-		list = append(list, scored{i: i, score: score * pen * fatPen * boost, norm: norm, pen: pen, ranker: rs,
-			fatigue: fatPen, boost: boost, rule: rule, x: x})
+		list = append(list, scored{i: i, total: total, norm: norm, seqN: seqN, pen: pen, fatigue: fatPen, boost: boost, rule: rule, x: x})
+	}
+	// 精排：LightGBM（深度模型一起导出的）优先，其次快照里的逻辑回归；都在融合分上做 0.5–1.5 倍调整
+	switch {
+	case lgb && len(list) > 0:
+		rows := make([][]float32, len(list))
+		for k := range list {
+			rows[k] = list[k].x
+		}
+		raw := deep.M.RankScores(rows)
+		order := make([]int, len(raw))
+		for k := range order {
+			order[k] = k
+		}
+		sort.Slice(order, func(a, b int) bool { return raw[order[a]] < raw[order[b]] })
+		for rank, k := range order {
+			p := 1.0
+			if len(order) > 1 {
+				p = float64(rank) / float64(len(order)-1)
+			}
+			list[k].ranker = p
+		}
+	case useLR:
+		for k := range list {
+			list[k].ranker = ranker.Score(list[k].x)
+		}
+	}
+	useRanker := lgb || useLR
+	for k := range list {
+		sc := &list[k]
+		base := sc.total
+		if useRanker {
+			base *= 0.5 + sc.ranker
+		}
+		sc.score = base * sc.pen * sc.fatigue * sc.boost
 	}
 	sort.Slice(list, func(a, b int) bool {
 		if list[a].score != list[b].score {
@@ -917,7 +1118,7 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 		if req.Scene == contract.SceneArtist {
 			return ""
 		}
-		return snap.ItemArtist[list[k].i]
+		return artistOf(list[k].i)
 	}, need, capN)
 	start := 0
 	switch req.Scene {
@@ -931,14 +1132,29 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 		}
 		sc := list[k]
 		c := cands[sc.i]
-		item := Item{WorkKey: snap.Items[sc.i], Track: l.Tracks[sc.i], Score: round4(sc.score),
-			Reason: s.reason(snap, req.Scene, c, sc.norm, blend, seedItem, uc), rule: sc.rule, features: sc.x}
+		item := Item{WorkKey: keyOf(sc.i), Track: trackOf(sc.i), Score: round4(sc.score), rule: sc.rule, features: sc.x}
+		switch {
+		case c.llm && sc.norm == [5]float64{} && sc.seqN == 0:
+			item.Reason = Reason{Kind: "llm", Text: "你可能会喜欢"}
+		case seqW*sc.seqN > maxContribution(sc.norm, blend) && sc.i >= 0:
+			item.Reason = seqReason(req.Scene, sc.i >= nSnap)
+		case sc.i >= nSnap:
+			item.Reason = Reason{Kind: "new", Text: "新歌推荐"}
+		default:
+			item.Reason = s.reason(snap, req.Scene, c, sc.norm, blend, seedItem, uc)
+		}
 		if req.Explain {
 			item.Channels = map[string]float64{chPenalty: round4(sc.pen), chFatigue: round4(sc.fatigue), chRule: round4(sc.boost)}
 			for k, name := range channelOrder {
 				item.Channels[name] = round4(sc.norm[k] * blend[k])
 			}
 			item.Channels[chFoldIn] = round4(float64(sc.x[5]))
+			item.Channels[chSeq] = round4(seqW * sc.seqN)
+			item.Channels[chTagMatch] = round4(float64(sc.x[17]))
+			item.Channels[chSemantic] = round4(float64(sc.x[18]))
+			if c.llm {
+				item.Channels[chLLM] = llmW
+			}
 			if useRanker {
 				item.Channels[chRanker] = round4(sc.ranker)
 			}
@@ -947,8 +1163,9 @@ func (s *Service) rank(ctx context.Context, l *Loaded, cfg appcfg.Config, req Re
 	}
 	if page == 0 {
 		out = s.applyPins(ctx, l, req, rules, out, state, disliked, limit, day)
+		out = insertResolve(out, resolveList, limit, cfg.Content.ExpandRatio, disliked, blockA, req.Explain)
 	}
-	return out, cold, useRanker, nil
+	return out, cold && len(resolveList) == 0, useRanker, nil
 }
 
 // ── 运营规则 ──

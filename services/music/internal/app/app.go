@@ -28,6 +28,7 @@ import (
 	"aegis/services/music/contract"
 	"aegis/services/music/internal/config"
 	"aegis/services/music/internal/ingest"
+	"aegis/services/music/internal/llm"
 	"aegis/services/music/internal/realtime"
 	"aegis/services/music/internal/rec"
 	"aegis/services/music/internal/store"
@@ -162,6 +163,8 @@ func newService(cfg config.Config, pg *store.PG, ch *store.CH, rt *realtime.Stor
 	return &rec.Service{
 		Reg: rec.NewRegistry(pg, log.Named("models")), Cfgs: rec.NewConfigs(pg),
 		PG: pg, CH: ch, RT: rt, JS: js, Log: log.Named("rec"), Loc: loc,
+		Deep: rec.NewDeepRegistry(pg, log.Named("deep")),
+		LLM:  llm.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, cfg.EmbedModel, cfg.EmbedDim, cfg.LLMConcurrency),
 	}
 }
 
@@ -270,7 +273,11 @@ func startRec(lc fx.Lifecycle, cfg config.Config, svc *rec.Service, pg *store.PG
 			if err != nil {
 				return err
 			}
-			subs = append(s, c, o)
+			d, err := svc.Deep.Subscribe(nc)
+			if err != nil {
+				return err
+			}
+			subs = append(s, c, o, d)
 			return nil
 		},
 		OnStop: func(context.Context) error {
@@ -282,6 +289,7 @@ func startRec(lc fx.Lifecycle, cfg config.Config, svc *rec.Service, pg *store.PG
 	})
 	background(lc, func(ctx context.Context) {
 		svc.Reg.Sync(ctx)
+		svc.Deep.Sync(ctx)
 		ticker := time.NewTicker(cfg.ModelPoll)
 		defer ticker.Stop()
 		for {
@@ -290,6 +298,7 @@ func startRec(lc fx.Lifecycle, cfg config.Config, svc *rec.Service, pg *store.PG
 				return
 			case <-ticker.C:
 				svc.Reg.Sync(ctx)
+				svc.Deep.Sync(ctx)
 			}
 		}
 	})
@@ -325,6 +334,8 @@ func startTrainer(lc fx.Lifecycle, cfg config.Config, pg *store.PG, ch *store.CH
 	mux.Handle("GET /metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{Registry: reg}))
 	probes(mux, ready(pg, ch, rdb, nc))
 	serve(lc, cfg.MetricsAddr, mux, log)
+	enricher := &trainer.Enricher{T: t, LLM: llm.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, cfg.EmbedModel, cfg.EmbedDim, cfg.LLMConcurrency)}
+	background(lc, enricher.Run)
 	background(lc,
 		func(ctx context.Context) {
 			for ctx.Err() == nil {

@@ -179,7 +179,7 @@ func (s *Store) Apply(ctx context.Context, events []contract.Event, params func(
 				}
 			}
 			pipe.Eval(ctx, applyNegative, []string{key("neg"), key("pos"), key("posw")}, e.WorkKey, ts, strong, keepNegative, ttl)
-		case k == signal.KindDislikeMild:
+		case k == signal.KindDislikeMild || k == signal.KindResolveFailed:
 			days := p.SuppressDays
 			if days <= 0 {
 				days = 30

@@ -118,3 +118,20 @@ func TestDetectLang(t *testing.T) {
 		t.Fatal("DislikeReasonOf")
 	}
 }
+
+func TestResolveFailedDislike(t *testing.T) {
+	now := time.Now()
+	ev := ClientEvent{ID: "abcdefgh", Type: TypeDislike, TS: now.UnixMilli(), Track: &Track{Title: "晴天", Artist: "周杰伦"},
+		Props: map[string]string{"reason": "wrong_song", "resolve": "failed"}}
+	if r := Normalize(&ev, now); r != "" {
+		t.Fatalf("resolve-failed dislike rejected: %s", r)
+	}
+	out := Enrich(ev, ClientInfo{}, 1, 2, "", "", now)
+	if out.WorkKey != WorkKey("晴天", "周杰伦") || out.TrackKey != "" {
+		t.Fatalf("enrich = %+v", out)
+	}
+	plain := ClientEvent{ID: "abcdefgi", Type: TypeDislike, TS: now.UnixMilli(), Track: &Track{Title: "晴天", Artist: "周杰伦"}}
+	if Normalize(&plain, now) != RejectInvalidTrack {
+		t.Fatal("dislike without source must still be rejected")
+	}
+}

@@ -45,6 +45,7 @@ type Blend struct {
 	Artist   float64 `json:"artist"`
 	Trending float64 `json:"trending"`
 	Explore  float64 `json:"explore"`
+	Seq      float64 `json:"seq"` // 第三期：深度序列模型
 }
 
 // Config 应用配置。
@@ -72,8 +73,11 @@ type Config struct {
 	Discover     Discover `json:"discover"`
 	Mixes        Mixes    `json:"mixes"`
 	Autoplay     Autoplay `json:"autoplay"`
-	UpdatedAt    int64    `json:"updatedAt"`
-	UpdatedBy    string   `json:"updatedBy"`
+	// 第三期（docs/music-personalization-3.md）
+	Deep      Deep    `json:"deep"`
+	Content   Content `json:"content"`
+	UpdatedAt int64   `json:"updatedAt"`
+	UpdatedBy string  `json:"updatedBy"`
 }
 
 // Ranker 精排。
@@ -107,6 +111,26 @@ type Autoplay struct {
 	Size int `json:"size"`
 }
 
+// Deep 深度序列模型（music-deep 训练）。
+type Deep struct {
+	Enabled      bool    `json:"enabled"`
+	D            int     `json:"d"`
+	Layers       int     `json:"layers"`
+	Heads        int     `json:"heads"`
+	MaxLen       int     `json:"maxLen"`
+	Epochs       int     `json:"epochs"`
+	MinItemCount int     `json:"minItemCount"`
+	MinLift      float64 `json:"minLift"`
+}
+
+// Content 内容理解与大模型曲库扩展。
+type Content struct {
+	Enabled     bool    `json:"enabled"`
+	DailyLimit  int     `json:"dailyLimit"`
+	LLMExpand   bool    `json:"llmExpand"`
+	ExpandRatio float64 `json:"expandRatio"`
+}
+
 // Default 新应用的默认配置（docs「应用配置」）。
 func Default() Config {
 	return Config{
@@ -118,7 +142,7 @@ func Default() Config {
 		},
 		ALS:               ALS{Factors: 48, Iterations: 12, Regularization: 0.05, Alpha: 20},
 		ItemCF:            ItemCF{Neighbors: 50, SessionBoost: 0.3},
-		Blend:             Blend{ALS: 1.0, ItemCF: 0.8, Artist: 0.5, Trending: 0.3, Explore: 0.1},
+		Blend:             Blend{ALS: 1.0, ItemCF: 0.8, Artist: 0.5, Trending: 0.3, Explore: 0.1, Seq: 1.2},
 		ArtistCap:         2,
 		RecentExcludeDays: 2,
 		ExploreRatio:      0.1,
@@ -132,6 +156,8 @@ func Default() Config {
 		Discover:          Discover{Size: 30, PopularityPenalty: 0.5},
 		Mixes:             Mixes{Max: 6, Size: 25},
 		Autoplay:          Autoplay{Size: 10},
+		Deep:              Deep{Enabled: true, D: 64, Layers: 2, Heads: 2, MaxLen: 50, Epochs: 20, MinItemCount: 3, MinLift: 1.0},
+		Content:           Content{Enabled: true, DailyLimit: 5000, LLMExpand: true, ExpandRatio: 0.3},
 	}
 }
 
@@ -168,6 +194,14 @@ func (c *Config) Validate() error {
 		{"风格歌单数量", float64(c.Mixes.Max), 0, 10},
 		{"风格歌单首数", float64(c.Mixes.Size), 10, 50},
 		{"智能续播每批首数", float64(c.Autoplay.Size), 5, 30},
+		{"融合权重「序列模型」", c.Blend.Seq, 0, 5},
+		{"深度模型层数", float64(c.Deep.Layers), 1, 4},
+		{"深度模型序列长度", float64(c.Deep.MaxLen), 10, 200},
+		{"深度模型训练轮数", float64(c.Deep.Epochs), 1, 100},
+		{"深度模型最少交互人数", float64(c.Deep.MinItemCount), 1, 50},
+		{"深度模型发布门槛", c.Deep.MinLift, 0, 3},
+		{"每天打标签上限", float64(c.Content.DailyLimit), 100, 200000},
+		{"扩展歌占比", c.Content.ExpandRatio, 0, 0.5},
 	}
 	w := c.Weights
 	for _, item := range []struct {
@@ -186,6 +220,14 @@ func (c *Config) Validate() error {
 		v    float64
 	}{{"ALS", b.ALS}, {"ItemCF", b.ItemCF}, {"歌手偏好", b.Artist}, {"热度", b.Trending}, {"探索", b.Explore}} {
 		checks = append(checks, rng{"融合权重「" + item.name + "」", item.v, 0, 5})
+	}
+	switch c.Deep.D {
+	case 32, 48, 64, 96, 128:
+	default:
+		return fmt.Errorf("深度模型维度只能是 32、48、64、96、128")
+	}
+	if c.Deep.Heads != 1 && c.Deep.Heads != 2 && c.Deep.Heads != 4 || c.Deep.D%c.Deep.Heads != 0 {
+		return fmt.Errorf("深度模型注意力头数只能是 1、2、4，且要能整除维度")
 	}
 	for _, ch := range checks {
 		if ch.v < ch.min || ch.v > ch.max || ch.v != ch.v {

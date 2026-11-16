@@ -55,6 +55,14 @@ type Config struct {
 	TZ string
 
 	OTLPEndpoint string
+
+	// 第三期：内容理解与曲库扩展用的大模型（OpenAI 兼容；为空时关闭，docs/music-personalization-3.md）
+	LLMBaseURL     string
+	LLMAPIKey      string
+	LLMModel       string
+	EmbedModel     string
+	EmbedDim       int
+	LLMConcurrency int
 }
 
 // Load 读取环境变量。
@@ -74,6 +82,10 @@ func Load() (Config, error) {
 	v.SetDefault("TRAIN_TIMEOUT", "45m")
 	v.SetDefault("MODEL_POLL", "2m")
 	v.SetDefault("TZ", "Asia/Shanghai")
+	v.SetDefault("LLM_MODEL", "gpt-4o-mini")
+	v.SetDefault("EMBED_MODEL", "text-embedding-3-small")
+	v.SetDefault("EMBED_DIM", 256)
+	v.SetDefault("LLM_CONCURRENCY", 2)
 
 	cfg := Config{
 		Env:                v.GetString("ENV"),
@@ -97,6 +109,18 @@ func Load() (Config, error) {
 		ModelPoll:          v.GetDuration("MODEL_POLL"),
 		TZ:                 strings.TrimSpace(v.GetString("TZ")),
 		OTLPEndpoint:       strings.TrimSpace(v.GetString("OTLP_ENDPOINT")),
+		LLMBaseURL:         strings.TrimRight(strings.TrimSpace(v.GetString("LLM_BASE_URL")), "/"),
+		LLMAPIKey:          strings.TrimSpace(v.GetString("LLM_API_KEY")),
+		LLMModel:           strings.TrimSpace(v.GetString("LLM_MODEL")),
+		EmbedModel:         strings.TrimSpace(v.GetString("EMBED_MODEL")),
+		EmbedDim:           v.GetInt("EMBED_DIM"),
+		LLMConcurrency:     v.GetInt("LLM_CONCURRENCY"),
+	}
+	if cfg.EmbedDim < 16 || cfg.EmbedDim > 4096 {
+		cfg.EmbedDim = 256
+	}
+	if cfg.LLMConcurrency <= 0 || cfg.LLMConcurrency > 32 {
+		cfg.LLMConcurrency = 2
 	}
 	if cfg.InstanceID == "" {
 		host, _ := os.Hostname()

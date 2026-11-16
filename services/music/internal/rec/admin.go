@@ -62,6 +62,7 @@ func (a *Admin) Mount(mux *http.ServeMux) {
 	route("GET /v1/apps/{app}/config", a.getConfig)
 	route("PUT /v1/apps/{app}/config", a.putConfig)
 	a.mountOps(route)
+	a.mountDeep(route)
 }
 
 func (a *Admin) authorized(r *http.Request) bool {
@@ -140,6 +141,16 @@ type OverviewView struct {
 	Models          []store.ModelRow    `json:"models"`
 	Experiments     []ExperimentSummary `json:"experiments"`
 	FeedbackReasons []store.ReasonCount `json:"feedbackReasons"`
+	Deep            *store.DeepRun      `json:"deep"`
+	Content         *ContentCoverage    `json:"content"`
+}
+
+// ContentCoverage 总览里的内容理解覆盖率。
+type ContentCoverage struct {
+	Tracks        int64   `json:"tracks"`
+	Tagged        int64   `json:"tagged"`
+	Coverage      float64 `json:"coverage"`
+	LLMConfigured bool    `json:"llmConfigured"`
 }
 
 // ExperimentSummary 总览里运行中的实验摘要。
@@ -183,6 +194,16 @@ func (a *Admin) overview(w http.ResponseWriter, r *http.Request, appID int64) {
 			}
 			view.Experiments = append(view.Experiments, ExperimentSummary{ID: e.ID, Name: e.Name, Scenes: e.Scenes, Variants: len(e.Variants), StartedAt: started})
 		}
+	}
+	if dr, err := a.Svc.PG.CurrentDeepRun(r.Context(), appID); err == nil && dr != nil {
+		view.Deep = dr
+	}
+	if cs, err := a.Svc.PG.Content(r.Context(), appID, 1); err == nil {
+		cov := 0.0
+		if cs.Tracks > 0 {
+			cov = float64(cs.Tagged) / float64(cs.Tracks)
+		}
+		view.Content = &ContentCoverage{Tracks: cs.Tracks, Tagged: cs.Tagged, Coverage: round4(cov), LLMConfigured: a.Svc.LLM.Enabled()}
 	}
 	writeOK(w, "获取音乐总览成功", view)
 }
@@ -325,6 +346,7 @@ type TrackDetailView struct {
 	Stats    *store.TrackStats `json:"stats"`
 	Daily    []store.TrackDay  `json:"daily"`
 	Similar  []Similar         `json:"similar"`
+	Tags     *store.TagInfo    `json:"tags"`
 }
 
 // VariantView 音源版本。
@@ -370,6 +392,11 @@ func (a *Admin) track(w http.ResponseWriter, r *http.Request, appID int64) {
 		count[v.Source+":"+v.SongID] = v.Plays
 	}
 	view := TrackDetailView{WorkKey: work, Track: t, Variants: []VariantView{}, Stats: stats, Daily: daily, Similar: a.Svc.SimilarOf(appID, work)}
+	if tags, err := a.Svc.PG.TrackTags(ctx, appID, []string{work}); err == nil {
+		if ti, ok := tags[work]; ok {
+			view.Tags = &ti
+		}
+	}
 	for _, v := range variants {
 		view.Variants = append(view.Variants, VariantView{Source: v.Source, SongID: v.SongID, Plays: count[v.Source+":"+v.SongID], LastSeenAt: v.LastSeenAt})
 	}

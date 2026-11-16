@@ -172,7 +172,8 @@ func (in *Ingest) write(ctx context.Context, events []contract.Event, served []c
 	tracks := map[int64]map[string]store.TrackRow{}
 	for i := range events {
 		e := &events[i]
-		if e.Track == nil || e.WorkKey == "" {
+		// 没有音源的（解析失败的大模型推荐）不进曲库，免得把同一作品已有的音源版本覆盖成空
+		if e.Track == nil || e.WorkKey == "" || e.Track.Source == "" || e.Track.SongID == "" {
 			continue
 		}
 		byApp := tracks[e.AppID]

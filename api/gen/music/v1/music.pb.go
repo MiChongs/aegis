@@ -312,7 +312,9 @@ type RecItem struct {
 	Score   float64                `protobuf:"fixed64,3,opt,name=score,proto3" json:"score,omitempty"`
 	Reason  *Reason                `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
 	// 各通道归一后的分数（als / itemcf / artist / trending / explore / penalty），只有 explain=true 时填
-	Channels      map[string]float64 `protobuf:"bytes,5,rep,name=channels,proto3" json:"channels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"fixed64,2,opt,name=value"`
+	Channels map[string]float64 `protobuf:"bytes,5,rep,name=channels,proto3" json:"channels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"fixed64,2,opt,name=value"`
+	// 第三期：true 时 track 只有 title / artist，客户端按歌名歌手搜索解析后再播（docs/music-personalization-3.md）
+	Resolve       bool `protobuf:"varint,6,opt,name=resolve,proto3" json:"resolve,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -380,6 +382,13 @@ func (x *RecItem) GetChannels() map[string]float64 {
 		return x.Channels
 	}
 	return nil
+}
+
+func (x *RecItem) GetResolve() bool {
+	if x != nil {
+		return x.Resolve
+	}
+	return false
 }
 
 type RecommendRequest struct {
@@ -999,13 +1008,14 @@ const file_music_v1_music_proto_rawDesc = "" +
 	"\x06Reason\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
 	"\x04text\x18\x02 \x01(\tR\x04text\x12\x1b\n" +
-	"\tref_title\x18\x03 \x01(\tR\brefTitle\"\x85\x02\n" +
+	"\tref_title\x18\x03 \x01(\tR\brefTitle\"\x9f\x02\n" +
 	"\aRecItem\x12\x19\n" +
 	"\bwork_key\x18\x01 \x01(\tR\aworkKey\x12%\n" +
 	"\x05track\x18\x02 \x01(\v2\x0f.music.v1.TrackR\x05track\x12\x14\n" +
 	"\x05score\x18\x03 \x01(\x01R\x05score\x12(\n" +
 	"\x06reason\x18\x04 \x01(\v2\x10.music.v1.ReasonR\x06reason\x12;\n" +
-	"\bchannels\x18\x05 \x03(\v2\x1f.music.v1.RecItem.ChannelsEntryR\bchannels\x1a;\n" +
+	"\bchannels\x18\x05 \x03(\v2\x1f.music.v1.RecItem.ChannelsEntryR\bchannels\x12\x18\n" +
+	"\aresolve\x18\x06 \x01(\bR\aresolve\x1a;\n" +
 	"\rChannelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"\xf7\x02\n" +

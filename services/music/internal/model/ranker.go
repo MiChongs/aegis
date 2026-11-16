@@ -6,7 +6,7 @@ import (
 	"sort"
 )
 
-// RankFeatures 精排特征（顺序固定，docs/music-personalization-2.md「模型增量」）。改了顺序或个数要升快照格式。
+// RankFeatures 精排特征（顺序固定，第二期 16 个 + 第三期 4 个，与 music-deep 的 LightGBM 一致）。改了顺序或个数要升快照格式。
 var RankFeatures = []string{
 	"als", "itemcf", "artist", "trending", "explore", // 0–4 各通道归一化分
 	"foldin",      // 5 折入向量点积（归一化）
@@ -20,6 +20,11 @@ var RankFeatures = []string{
 	"fresh",       // 13 从没听过
 	"pref_artist", // 14 偏好里选过的歌手
 	"position",    // 15 展示位置 log1p（线上置 0）
+	// 第三期（docs/music-personalization-3.md「第三期精排特征」）
+	"seq",       // 16 序列模型分（本次候选里按最大值归一）
+	"tag_match", // 17 物品标签与用户近期标签分布的余弦
+	"semantic",  // 18 物品语义向量与用户近期正反馈语义均值的余弦（0–1）
+	"llm",       // 19 来自大模型扩展
 }
 
 // FeatPosition 位置特征的下标。

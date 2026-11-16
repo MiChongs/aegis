@@ -105,7 +105,7 @@ func (s *Service) mixes(ctx context.Context, appID, userID int64, personalized, 
 	if err != nil {
 		return nil, err
 	}
-	built := s.buildMixes(l, cfg, state, top, local.Format("20060102"), userID, s.activeRules(ctx, appID, now))
+	built := s.buildMixes(l, cfg, state, top, local.Format("20060102"), userID, s.activeRules(ctx, appID, now), s.content(ctx, appID))
 	out := &mixCache{GeneratedAt: now.UnixMilli(), ExpiresAt: end.UnixMilli(), Mixes: built}
 	if !preview {
 		raw, _ := json.Marshal(out)
@@ -118,7 +118,7 @@ func (s *Service) mixes(ctx context.Context, appID, userID int64, personalized, 
 
 // buildMixes 这个人近 90 天加权 Top 作品的向量做余弦 k-means，每簇一个歌单：40% 自己常听的 + 60% 簇中心附近没听过的。
 func (s *Service) buildMixes(l *Loaded, cfg appcfg.Config, state *realtime.State, top []store.Scored, day string, userID int64,
-	rules []store.Rule) []mixFull {
+	rules []store.Rule, ct *appContent) []mixFull {
 	snap := l.Snap
 	type own struct {
 		i int32
@@ -279,6 +279,13 @@ func (s *Service) buildMixes(l *Loaded, cfg appcfg.Config, state *realtime.State
 			continue
 		}
 		title := strings.Join(shown[:min(2, len(shown))], "、") + " 等"
+		mem := make([]mixMember, len(cl.members))
+		for x, m := range cl.members {
+			mem[x] = mixMember{m.i, m.w}
+		}
+		if t := mixTitleFromTags(ct, snap, mem, langCnt); t != "" {
+			title = t
+		}
 		lang := 0
 		for x := range langCnt {
 			if langCnt[x] > langCnt[lang] {
@@ -401,6 +408,25 @@ func (s *Service) RecommendedArtists(ctx context.Context, appID, userID int64, p
 				score[n.Artist] += v
 				if v > viaW[n.Artist] {
 					via[n.Artist], viaW[n.Artist] = uc.artistNames[a], v
+				}
+			}
+		}
+		// 大模型的歌手知识补充（数据少时 ArtistSim 很稀）：只要曲库里有这位歌手的歌
+		ct := s.content(ctx, appID)
+		for a, w := range uc.artists {
+			k, ok := ct.artists[a]
+			if !ok {
+				continue
+			}
+			for rank, name := range k.Similar {
+				na := contract.NormalizeArtist(contract.FirstArtist(name))
+				if _, has := snap.ArtistTop[na]; !has || uc.artists[na] >= 0.3 || disliked[na] || blockA[na] {
+					continue
+				}
+				v := 0.6 * w / (1 + 0.1*float64(rank))
+				score[na] += v
+				if v > viaW[na] {
+					via[na], viaW[na] = uc.artistNames[a], v
 				}
 			}
 		}
@@ -599,4 +625,58 @@ func (s *Service) GetOnboarding(ctx context.Context, appID, userID int64) (*Onbo
 		}
 	}
 	return out, nil
+}
+
+// mixTitleFromTags 簇里一半以上的歌有标签时，用「语种 + 主曲风，主情绪」做标题，如「华语流行，治愈」。
+type mixMember struct {
+	i int32
+	w float64
+}
+
+func mixTitleFromTags(ct *appContent, snap *model.Snapshot, members []mixMember, langCnt [5]int) string {
+	if ct == nil || len(ct.items) == 0 {
+		return ""
+	}
+	genres, moods := map[string]float64{}, map[string]float64{}
+	tagged := 0
+	for _, m := range members {
+		ic := ct.items[snap.Items[m.i]]
+		if ic == nil {
+			continue
+		}
+		tagged++
+		for k, g := range ic.Tags.Genres {
+			genres[g] += m.w / float64(k+1)
+		}
+		for k, g := range ic.Tags.Moods {
+			moods[g] += m.w / float64(k+1)
+		}
+	}
+	if tagged*2 < len(members) || len(genres) == 0 {
+		return ""
+	}
+	top := func(m map[string]float64) string {
+		best, bw := "", -1.0
+		for k, w := range m {
+			if w > bw || w == bw && k < best {
+				best, bw = k, w
+			}
+		}
+		return best
+	}
+	lang := 0
+	for x := range langCnt {
+		if langCnt[x] > langCnt[lang] {
+			lang = x
+		}
+	}
+	prefix := ""
+	if l := contract.Langs[lang]; l != contract.LangOther {
+		prefix = contract.LangTitles[l]
+	}
+	title := prefix + contract.TagTitle(top(genres))
+	if m := top(moods); m != "" {
+		title += "，" + contract.TagTitle(m)
+	}
+	return title
 }

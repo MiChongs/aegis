@@ -268,7 +268,12 @@ func Normalize(ev *ClientEvent, now time.Time) string {
 		if t.DurationMs < 0 || t.DurationMs > maxDurationMs {
 			t.DurationMs = 0
 		}
-		if !sourcePattern.MatchString(t.Source) || !songIDPattern.MatchString(t.SongID) || t.Title == "" || t.Source == "local" {
+		// 第三期：客户端解析不到大模型推荐的歌时上报的 dislike（props.resolve=failed）没有音源与歌曲 ID，只有歌名歌手
+		resolveFailed := ev.Type == TypeDislike && strings.TrimSpace(ev.Props["resolve"]) == "failed" && t.Title != "" &&
+			t.Source == "" && t.SongID == ""
+		if resolveFailed {
+			t.Cover, t.DurationMs = "", 0
+		} else if !sourcePattern.MatchString(t.Source) || !songIDPattern.MatchString(t.SongID) || t.Title == "" || t.Source == "local" {
 			if needsTrack {
 				return RejectInvalidTrack
 			}
@@ -356,7 +361,9 @@ func Enrich(ev ClientEvent, client ClientInfo, appID, userID int64, deviceID, ip
 		Network: cleanToken(strings.ToLower(client.Network)),
 	}
 	if ev.Track != nil {
-		out.TrackKey = ev.Track.Key()
+		if ev.Track.Source != "" {
+			out.TrackKey = ev.Track.Key()
+		}
 		out.WorkKey = WorkKey(ev.Track.Title, ev.Track.Artist)
 	}
 	return out

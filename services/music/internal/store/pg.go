@@ -170,6 +170,9 @@ func (p *PG) migrate(ctx context.Context) error {
 	if _, err := conn.Exec(ctx, pgSchema2); err != nil {
 		return fmt.Errorf("PostgreSQL 建表失败（第二期）：%w", err)
 	}
+	if _, err := conn.Exec(ctx, pgSchema3); err != nil {
+		return fmt.Errorf("PostgreSQL 建表失败（第三期）：%w", err)
+	}
 	return nil
 }
 

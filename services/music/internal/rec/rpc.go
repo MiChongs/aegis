@@ -84,6 +84,7 @@ func (h *RPC) Recommend(ctx context.Context, req *connect.Request[musicv1.Recomm
 			WorkKey: it.WorkKey, Track: trackPB(it.Track), Score: it.Score,
 			Reason:   &musicv1.Reason{Kind: it.Reason.Kind, Text: it.Reason.Text, RefTitle: it.Reason.RefTitle},
 			Channels: it.Channels,
+			Resolve:  it.Resolve,
 		})
 	}
 	return connect.NewResponse(out), nil

@@ -21,6 +21,10 @@ const (
 	SubjectServedPrefix = "music.served." // + app_id
 	SubjectDeadPrefix   = "music.dead."   // + app_id，投递多次仍失败的事件
 	SubjectTrainPrefix  = "music.job.train."
+	SubjectDeepPrefix   = "music.job.deep." // + app_id，music-deep（Python）消费
+
+	// SubjectDeepPublished 深度模型发布通知（普通发布订阅）：music-rec 收到后热加载。
+	SubjectDeepPublished = "music.deep.published"
 
 	// SubjectModelPublished 模型发布通知（普通 NATS 发布订阅，不进流）：music-rec 收到后热加载。
 	SubjectModelPublished = "music.model.published"
@@ -41,6 +45,9 @@ func EventSubject(appID int64) string { return SubjectEventPrefix + strconv.Form
 
 // ServedSubject 某应用的推荐结果主题。
 func ServedSubject(appID int64) string { return SubjectServedPrefix + strconv.FormatInt(appID, 10) }
+
+// DeepSubject 某应用的深度模型训练任务主题。
+func DeepSubject(appID int64) string { return SubjectDeepPrefix + strconv.FormatInt(appID, 10) }
 
 // TrainSubject 某应用的训练任务主题。
 func TrainSubject(appID int64) string { return SubjectTrainPrefix + strconv.FormatInt(appID, 10) }
@@ -83,7 +90,7 @@ func EnsureStreams(ctx context.Context, js jetstream.JetStream) error {
 		{
 			Name:        StreamJobs,
 			Description: "音乐个性化：训练任务",
-			Subjects:    []string{SubjectTrainPrefix + ">"},
+			Subjects:    []string{SubjectTrainPrefix + ">", SubjectDeepPrefix + ">"},
 			Retention:   jetstream.WorkQueuePolicy,
 			Storage:     jetstream.FileStorage,
 			MaxAge:      24 * time.Hour,

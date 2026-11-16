@@ -65,6 +65,8 @@ message RecItem {
   Reason reason = 4;
   // 各通道归一后的分数（als / itemcf / artist / trending / explore / penalty），只有 explain=true 时填
   map<string, double> channels = 5;
+  // 第三期：true 时 track 只有 title / artist，客户端按歌名歌手搜索解析后再播（docs/music-personalization-3.md）
+  bool resolve = 6;
 }
 
 message RecommendRequest {

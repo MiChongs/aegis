@@ -30,6 +30,7 @@ const (
 	KindUndislike      // 撤销不感兴趣（这首或这位歌手）
 	KindUndislikeMild  // 撤销「听腻了」
 	KindUndislikeVersion
+	KindResolveFailed // 客户端解析不到大模型推荐的歌：暂不推荐，不算口味
 )
 
 // 跳过与听完的判据（与客户端 MusicListenTracker 一致）。
@@ -55,6 +56,9 @@ func Classify(ev *contract.Event) Kind {
 	case contract.TypeUnlike:
 		return KindUnlike
 	case contract.TypeDislike:
+		if ev.Props["resolve"] == "failed" {
+			return KindResolveFailed
+		}
 		switch contract.DislikeReasonOf(ev.Props) {
 		case contract.DislikeHeardTooMuch:
 			return KindDislikeMild

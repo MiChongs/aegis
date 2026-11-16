@@ -226,6 +226,13 @@ func (t *Trainer) Run(ctx context.Context, runID int64) error {
 			logf("已自动发布")
 		}
 	}
+	if cfg.Deep.Enabled {
+		if dr, err := EnqueueDeep(context.Background(), t.PG, t.JS, run.AppID, "auto", fmt.Sprintf("跟随第 %d 次训练", runID), "", cfg.Deep); err != nil {
+			logf("没有排上深度模型训练：%v", err)
+		} else {
+			logf("已排上深度模型训练（第 %d 次）", dr.ID)
+		}
+	}
 	if err := t.PG.PruneBlobs(context.Background(), run.AppID, 5); err != nil {
 		t.Log.Warn("prune model blobs failed", zap.Error(err))
 	}
@@ -336,4 +343,17 @@ func (t *Trainer) trainRanker(ctx context.Context, appID int64, cfg appcfg.Confi
 		logf("精排未启用：%s", rk.Reason)
 	}
 	return info
+}
+
+// EnqueueDeep 新建一次深度模型训练并投给 music-deep（主题 music.job.deep.<app>）。
+func EnqueueDeep(ctx context.Context, pg *store.PG, js jetstream.JetStream, appID int64, trigger, note, operator string, params any) (*store.DeepRun, error) {
+	run, err := pg.CreateDeepRun(ctx, appID, trigger, note, operator, params)
+	if err != nil {
+		return nil, err
+	}
+	payload, _ := json.Marshal(contract.TrainJob{RunID: run.ID, AppID: appID})
+	if _, err := js.Publish(ctx, contract.DeepSubject(appID), payload, jetstream.WithMsgID("deep-"+strconv.FormatInt(run.ID, 10))); err != nil {
+		return nil, fmt.Errorf("投递深度模型训练任务失败：%w", err)
+	}
+	return run, nil
 }
