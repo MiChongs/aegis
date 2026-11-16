@@ -272,6 +272,11 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.POST("/vip/feature-ticket", h.VipFeatureTicket)
 		// 一起听：签短期票据并给出一起听微服务的连接地址（docs/listen-together.md）
 		appGatewayAuthed.POST("/listen-together/ticket", h.AppListenTogetherTicket)
+		// 音乐个性化：行为上报、推荐、听歌画像（独立微服务，docs/music-personalization.md）
+		appGatewayAuthed.POST("/music/events", h.AppMusicEvents)
+		appGatewayAuthed.GET("/music/recommendations", h.AppMusicRecommendations)
+		appGatewayAuthed.GET("/music/profile", h.AppMusicProfile)
+		appGatewayAuthed.DELETE("/music/profile", h.AppMusicClearProfile)
 		appGatewayAuthed.GET("/vip/transactions", h.MyVipTransactions)
 		appGatewayAuthed.GET("/vip/conversions", h.MyVipConversions)
 		appGatewayAuthed.POST("/vip/purchase", h.PurchaseVip)

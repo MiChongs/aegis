@@ -1,0 +1,93 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  Aegis 音乐个性化：HK Dokploy 生产编排（docs/music-personalization.md）
+# ══════════════════════════════════════════════════════════════════════════
+#
+#  Dokploy compose 项目 aegis-music（compose 路径就是本文件）。与开发用 compose（profile music）的区别：
+#    - 复用 aegis-infra 的 Postgres（库 aegis_music，首次启动自动建）、Redis 与 NATS（同一账户），不另起；
+#    - ClickHouse 复用风控栈的 risk-clickhouse（库 aegis_music，表与风控互不相干），不再多起一个；
+#    - 全部只挂 dokploy-network，不映射宿主端口；aegis-api 用 MUSIC_RPC_URL=http://music-rec:8096 访问；
+#    - 每个容器设内存上限；trainer 的上限按最大应用的作品数 × 维度估（10 万首 × 48 维约 20 MB，训练峰值约十倍）。
+#
+#  必填环境变量（Dokploy 环境变量页）：
+#    MUSIC_INTERNAL_TOKEN                       与 aegis-api 的 MUSIC_INTERNAL_TOKEN 一致
+#    MUSIC_PG_USER / MUSIC_PG_PASSWORD           现有 Postgres 账号（需要 CREATEDB，或先手动建库 aegis_music）
+#    MUSIC_REDIS_URL                             如 redis://:密码@aegis-redis:6379/0
+#    MUSIC_NATS_USER / MUSIC_NATS_PASSWORD       现有 NATS 账户 APP 的用户（JetStream 建流权限）
+#    MUSIC_CLICKHOUSE_PASSWORD                   risk-clickhouse 里 aegis 用户的密码（= RISK_CLICKHOUSE_PASSWORD）
+#  密码只用 URL 安全字符（字母数字），因为会拼进 DSN。
+# ══════════════════════════════════════════════════════════════════════════
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+x-music-env: &music-env
+  MUSIC_PG_DSN: postgres://${MUSIC_PG_USER:?}:${MUSIC_PG_PASSWORD:?}@aegis-postgres:5432/aegis_music?sslmode=disable
+  MUSIC_CLICKHOUSE_ADDR: ${MUSIC_CLICKHOUSE_ADDR:-risk-clickhouse:9000}
+  MUSIC_CLICKHOUSE_USER: ${MUSIC_CLICKHOUSE_USER:-aegis}
+  MUSIC_CLICKHOUSE_PASSWORD: ${MUSIC_CLICKHOUSE_PASSWORD:?}
+  MUSIC_CLICKHOUSE_DB: aegis_music
+  MUSIC_REDIS_URL: ${MUSIC_REDIS_URL:?}
+  MUSIC_NATS_URL: nats://${MUSIC_NATS_USER:?}:${MUSIC_NATS_PASSWORD:?}@aegis-nats:4222
+  MUSIC_INTERNAL_TOKEN: ${MUSIC_INTERNAL_TOKEN:?}
+  MUSIC_TZ: Asia/Shanghai
+  TZ: Asia/Shanghai
+
+x-music: &music
+  build:
+    context: ../..
+    dockerfile: deploy/docker/music.Dockerfile
+  image: aegis-music:latest
+  restart: unless-stopped
+  logging: *logging
+  environment: *music-env
+  networks: [dokploy-network]
+
+services:
+  music-rec:
+    <<: *music
+    entrypoint: ["/usr/local/bin/music-rec"]
+    deploy:
+      resources:
+        limits: {memory: 1g}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8096/readyz || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+  music-ingest:
+    <<: *music
+    entrypoint: ["/usr/local/bin/music-ingest"]
+    deploy:
+      resources:
+        limits: {memory: 384m}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8097/readyz || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+  music-trainer:
+    <<: *music
+    entrypoint: ["/usr/local/bin/music-trainer"]
+    environment:
+      <<: *music-env
+      MUSIC_TRAIN_WORKERS: "2"
+    deploy:
+      resources:
+        limits: {memory: 2g}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8097/readyz || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+networks:
+  dokploy-network:
+    external: true

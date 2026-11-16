@@ -531,6 +531,12 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/listen-together/rooms/:roomId/close", h.AdminListenTogetherCloseRoom)
 		admin.POST("/apps/:appkey/listen-together/rooms/:roomId/kick", h.AdminListenTogetherKick)
 
+		// 音乐个性化（独立微服务 music-rec，反向代理；逐个方法注册，Any 会带上 CONNECT / TRACE）
+		admin.GET("/apps/:appkey/music/*path", h.AdminMusicProxy)
+		admin.POST("/apps/:appkey/music/*path", h.AdminMusicProxy)
+		admin.PUT("/apps/:appkey/music/*path", h.AdminMusicProxy)
+		admin.DELETE("/apps/:appkey/music/*path", h.AdminMusicProxy)
+
 		admin.GET("/apps/:appkey/lottery/catalog", h.AdminLotteryCatalog)
 		admin.GET("/apps/:appkey/lottery/settings", h.AdminLotterySettings)
 		admin.PUT("/apps/:appkey/lottery/settings", h.AdminSaveLotterySettings)

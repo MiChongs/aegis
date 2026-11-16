@@ -392,6 +392,9 @@ services:
       HYDRA_ADMIN_URL: http://hydra:4445
       # 一起听微服务的内部管理接口（Connect/gRPC，只在容器网络内可达）
       LISTEN_TOGETHER_RPC_URL: http://listen-together:8091
+      # 音乐个性化（profile: music）：推荐 / 画像 / 管理端走 music-rec；没起时推荐回 50396，上报照收（事件进 JetStream 排队）
+      MUSIC_RPC_URL: ${MUSIC_RPC_URL:-http://music-rec:8096}
+      MUSIC_INTERNAL_TOKEN: ${MUSIC_INTERNAL_TOKEN:-}
       # 风控平台（profile: risk）：经 etcd 发现 risk-decision / risk-admin；没起风控时按场景失败策略放行
       RISK_ETCD_ENDPOINTS: ${RISK_ETCD_ENDPOINTS:-risk-etcd-1:2379,risk-etcd-2:2379,risk-etcd-3:2379}
       RISK_INTERNAL_TOKEN: ${RISK_INTERNAL_TOKEN:-}
@@ -462,6 +465,92 @@ services:
       timeout: 3s
       retries: 10
       start_period: 10s
+
+  # ════════════════════════════ 音乐个性化（profile: music）════════════════════════════
+  #  docs/music-personalization.md。复用主栈的 postgres（库 aegis_music，首次启动自动建）、redis、nats；
+  #  ClickHouse 单独一个（与风控的不共用，开发机上不必起整套风控）。三个服务同一个镜像。
+  music-clickhouse:
+    image: clickhouse/clickhouse-server:26.8
+    container_name: aegis-music-clickhouse
+    profiles: ["music"]
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      CLICKHOUSE_DB: aegis_music
+      CLICKHOUSE_USER: ${MUSIC_CLICKHOUSE_USER:-aegis}
+      CLICKHOUSE_PASSWORD: ${MUSIC_CLICKHOUSE_PASSWORD:-aegis-music}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    ports:
+      - "127.0.0.1:${MUSIC_CLICKHOUSE_PORT:-19100}:9000"
+    volumes:
+      - music_clickhouse:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  music-rec:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/music.Dockerfile
+    image: aegis-music:latest
+    profiles: ["music"]
+    restart: unless-stopped
+    logging: *default-logging
+    entrypoint: ["/usr/local/bin/music-rec"]
+    environment: &music-env
+      MUSIC_PG_DSN: postgres://${AEGIS_DB_USER:-aegis}:${AEGIS_DB_PASSWORD:-aegis}@postgres:5432/aegis_music?sslmode=disable
+      MUSIC_CLICKHOUSE_ADDR: music-clickhouse:9000
+      MUSIC_CLICKHOUSE_USER: ${MUSIC_CLICKHOUSE_USER:-aegis}
+      MUSIC_CLICKHOUSE_PASSWORD: ${MUSIC_CLICKHOUSE_PASSWORD:-aegis-music}
+      MUSIC_REDIS_URL: redis://redis:6379/0
+      MUSIC_NATS_URL: nats://nats:4222
+      MUSIC_INTERNAL_TOKEN: ${MUSIC_INTERNAL_TOKEN:-}
+      MUSIC_TZ: Asia/Shanghai
+    depends_on: &music-deps
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      nats: {condition: service_healthy}
+      music-clickhouse: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8096/readyz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+  music-ingest:
+    image: aegis-music:latest
+    profiles: ["music"]
+    restart: unless-stopped
+    logging: *default-logging
+    entrypoint: ["/usr/local/bin/music-ingest"]
+    environment: *music-env
+    depends_on: *music-deps
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8097/readyz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+  music-trainer:
+    image: aegis-music:latest
+    profiles: ["music"]
+    restart: unless-stopped
+    logging: *default-logging
+    entrypoint: ["/usr/local/bin/music-trainer"]
+    environment: *music-env
+    depends_on: *music-deps
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8097/readyz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
 
   # ════════════════════════════ 风控平台（profile: risk）════════════════════════════
   #  docs/risk-platform.md。基础设施在前，三个 Go 服务与 Flink 作业在后。
@@ -1018,6 +1107,7 @@ volumes:
   risk_nebula_meta:
   risk_nebula_storage:
   risk_clickhouse:
+  music_clickhouse:
   risk_risingwave:
   risk_flink:
   risk_decision_spool:

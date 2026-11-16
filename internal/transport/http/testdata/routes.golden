@@ -28,6 +28,7 @@ DELETE	/api/admin/apps/:appkey/item-grants/rules/:ruleId	AdminDeleteItemGrantRul
 DELETE	/api/admin/apps/:appkey/leaderboard/exclusions/:userId	AdminRemoveLeaderboardExclusion
 DELETE	/api/admin/apps/:appkey/login-baseline/:userid	ResetAdminAppLoginBaseline
 DELETE	/api/admin/apps/:appkey/lottery/activities/:activityId	AdminDeleteLotteryActivity
+DELETE	/api/admin/apps/:appkey/music/*path	AdminMusicProxy
 DELETE	/api/admin/apps/:appkey/notices	DeleteAdminNotices
 DELETE	/api/admin/apps/:appkey/notices/:noticeId	DeleteAdminNotice
 DELETE	/api/admin/apps/:appkey/notifications	DeleteAdminAppNotifications
@@ -122,6 +123,7 @@ DELETE	/api/v1/apps/:appkey/me/avatar	RemoveUserAvatar
 DELETE	/api/v1/apps/:appkey/me/oauth2/grants/:clientId	AppRevokeMyOAuth2Grant
 DELETE	/api/v1/apps/:appkey/me/passkeys/:credentialId	DeletePasskey
 DELETE	/api/v1/apps/:appkey/me/sessions/:tokenHash	RevokeUserSession
+DELETE	/api/v1/apps/:appkey/music/profile	AppMusicClearProfile
 DELETE	/api/v1/apps/:appkey/notifications/:notificationId	DeleteNotification
 GET	/	Homepage
 GET	/announcements	AnnouncementsPage
@@ -274,6 +276,7 @@ GET	/api/admin/apps/:appkey/lottery/tickets	AdminLotteryTicketOverview
 GET	/api/admin/apps/:appkey/lottery/tickets/accounts	AdminListLotteryTicketAccounts
 GET	/api/admin/apps/:appkey/lottery/tickets/ledger	AdminListLotteryTicketLedger
 GET	/api/admin/apps/:appkey/lottery/tickets/users/:userId	AdminLotteryTicketAccount
+GET	/api/admin/apps/:appkey/music/*path	AdminMusicProxy
 GET	/api/admin/apps/:appkey/notices	AdminNotices
 GET	/api/admin/apps/:appkey/notices/export	ExportAdminNotices
 GET	/api/admin/apps/:appkey/notifications	AdminAppNotifications
@@ -745,6 +748,8 @@ GET	/api/v1/apps/:appkey/me/profile	Profile
 GET	/api/v1/apps/:appkey/me/security	Security
 GET	/api/v1/apps/:appkey/me/sessions	UserSessions
 GET	/api/v1/apps/:appkey/me/settings	Settings
+GET	/api/v1/apps/:appkey/music/profile	AppMusicProfile
+GET	/api/v1/apps/:appkey/music/recommendations	AppMusicRecommendations
 GET	/api/v1/apps/:appkey/notices	AppNotices
 GET	/api/v1/apps/:appkey/notifications	Notifications
 GET	/api/v1/apps/:appkey/notifications/:notificationId	NotificationDetail
@@ -986,6 +991,7 @@ POST	/api/admin/apps/:appkey/lottery/activities/:activityId/fortune/controls/rev
 POST	/api/admin/apps/:appkey/lottery/draws/:drawId/fulfill	AdminFulfillLotteryDraw
 POST	/api/admin/apps/:appkey/lottery/simulate	AdminSimulateLottery
 POST	/api/admin/apps/:appkey/lottery/tickets/users/:userId/adjust	AdminAdjustLotteryTickets
+POST	/api/admin/apps/:appkey/music/*path	AdminMusicProxy
 POST	/api/admin/apps/:appkey/notices	CreateAdminNotice
 POST	/api/admin/apps/:appkey/notifications/bulk	AdminBulkNotifyUsers
 POST	/api/admin/apps/:appkey/notifications/delete-by-filter	DeleteAdminAppNotificationsByFilter
@@ -1466,6 +1472,7 @@ POST	/api/v1/apps/:appkey/me/passkeys/options	BeginPasskeyRegistration
 POST	/api/v1/apps/:appkey/me/password/recovery	AppMyPasswordRecoveryStart
 POST	/api/v1/apps/:appkey/me/profile/changes/confirm	ConfirmProfileChange
 POST	/api/v1/apps/:appkey/me/sessions/revoke-all	RevokeAllUserSessions
+POST	/api/v1/apps/:appkey/music/events	AppMusicEvents
 POST	/api/v1/apps/:appkey/notifications/clear	ClearNotifications
 POST	/api/v1/apps/:appkey/notifications/delete-batch	DeleteNotificationsBatch
 POST	/api/v1/apps/:appkey/notifications/read	ReadNotification
@@ -1545,6 +1552,7 @@ PUT	/api/admin/apps/:appkey/lottery/activities/:activityId	AdminUpdateLotteryAct
 PUT	/api/admin/apps/:appkey/lottery/activities/:activityId/fortune/settings	AdminSetLotteryFortuneSettings
 PUT	/api/admin/apps/:appkey/lottery/activities/:activityId/status	AdminSetLotteryActivityStatus
 PUT	/api/admin/apps/:appkey/lottery/settings	AdminSaveLotterySettings
+PUT	/api/admin/apps/:appkey/music/*path	AdminMusicProxy
 PUT	/api/admin/apps/:appkey/notices/:noticeId	UpdateAdminNotice
 PUT	/api/admin/apps/:appkey/oauth-providers/:provider	AdminUpdateAppOAuthProvider
 PUT	/api/admin/apps/:appkey/oauth-providers/:provider/enabled	AdminSetAppOAuthProviderEnabled

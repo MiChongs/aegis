@@ -75,6 +75,12 @@ func init() {
 		Write("POST /api/admin/apps/:appkey/listen-together/rooms/:roomId/close", "解散一起听房间", "一起听房间", SeverityMedium),
 		Write("POST /api/admin/apps/:appkey/listen-together/rooms/:roomId/kick", "移出一起听成员", "一起听房间", SeverityMedium),
 
+		// 音乐个性化（独立微服务 music-rec，反向代理）
+		View("GET /api/admin/apps/:appkey/music/*path", "查看音乐推荐", ""),
+		Write("POST /api/admin/apps/:appkey/music/*path", "操作音乐推荐（训练、发布、清除听歌数据）", "音乐推荐", SeverityMedium),
+		Write("PUT /api/admin/apps/:appkey/music/*path", "修改音乐推荐配置", "音乐推荐", SeverityMedium),
+		Write("DELETE /api/admin/apps/:appkey/music/*path", "删除音乐推荐数据", "音乐推荐", SeverityMedium),
+
 		// 激励广告
 		View("GET /api/admin/apps/:appkey/rewarded-ads/config", "查看激励广告配置", ""),
 		Write("PUT /api/admin/apps/:appkey/rewarded-ads/config", "修改激励广告配置", "", SeverityHigh),

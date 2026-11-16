@@ -96,6 +96,8 @@ type Config struct {
 
 	// ListenTogether 一起听微服务的对接配置（票据、JWKS、内部 RPC），见 listen_together.go
 	ListenTogether ListenTogetherConfig
+	// Music 音乐个性化微服务的对接配置（事件发布、内部 RPC、管理端反代），见 music.go
+	Music MusicConfig
 
 	// AIRelay 用户 AI 中转的请求体上限、读请求体期限、上游空闲看门狗，见 ai_relay.go
 	AIRelay AIRelayConfig
@@ -1150,6 +1152,7 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 	setDefaults(&cfg)
 	cfg.OAuth2Server = loadOAuth2ServerConfig(v, cfg.APIBaseURL, cfg.Security.MasterKey, cfg.JWT.Secret)
 	cfg.ListenTogether = loadListenTogetherConfig(v, cfg.JWT.Secret)
+	cfg.Music = loadMusicConfig(v)
 	for name, defaults := range oauthDefaults {
 		prefix := strings.ToUpper(name)
 		cfg.OAuth[name] = OAuthProviderConfig{

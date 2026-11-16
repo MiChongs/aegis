@@ -116,6 +116,9 @@ class AegisClient private constructor(
     /** 一起听：换取连接一起听服务的票据，见 [AegisListenTogetherApi]。 */
     val listenTogether: AegisListenTogetherApi = AegisListenTogetherApi(this)
 
+    /** 音乐个性化：行为上报、推荐、听歌画像，见 [AegisMusicApi]。 */
+    val music: AegisMusicApi = AegisMusicApi(this)
+
     // ── /config ───────────────────────────────────────────────────────
 
     /**

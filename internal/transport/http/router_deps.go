@@ -67,6 +67,7 @@ type RouterDeps struct {
 	Release          *service.ReleaseService
 	ClientControl    ClientControlAPI
 	ListenTogether   *service.ListenTogetherService
+	Music            *service.MusicService
 	DeviceLimit      *service.DeviceLimitService
 	RegisterIP       *service.RegisterIPService
 	PlatformSettings *service.PlatformSettingsService
@@ -175,6 +176,7 @@ func (d RouterDeps) newHandler() *Handler {
 		release:            d.Release,
 		clientControl:      d.ClientControl,
 		listenTogether:     d.ListenTogether,
+		music:              d.Music,
 		deviceLimit:        d.DeviceLimit,
 		registerIP:         d.RegisterIP,
 		roleApp:            d.RoleApplication,

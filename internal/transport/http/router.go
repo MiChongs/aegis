@@ -30,6 +30,7 @@ type Handler struct {
 	release         *service.ReleaseService
 	clientControl   ClientControlAPI
 	listenTogether  *service.ListenTogetherService
+	music           *service.MusicService
 	deviceLimit     *service.DeviceLimitService
 	registerIP      *service.RegisterIPService
 	roleApp         *service.RoleApplicationService

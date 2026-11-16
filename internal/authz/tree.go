@@ -344,6 +344,10 @@ func permissionTree() []PermissionNode {
 				act("app:listen:read", "查看", LegacyAppRead, routes(under(mRead, pApp+"/listen-together"))),
 				act("app:listen:manage", "关闭房间与踢人", LegacyAppWrite, routes(under(mWrite, pApp+"/listen-together"))),
 			),
+			menu("app.music", "音乐推荐", "list-music", ScopeAppOnly,
+				act("app:music:read", "查看", LegacyAppRead, routes(under(mRead, pApp+"/music"))),
+				act("app:music:manage", "训练、发布与配置", LegacyAppWrite, routes(under(mWrite, pApp+"/music"))),
+			),
 			menu("service.user_setting", "用户设置", "sliders-horizontal", ScopePlatform,
 				act(PermSystemUserSettingRead, "查看", PermSystemUserSettingRead, routes(
 					rt(mAny, pAdmin+"/user-settings/stats"), rt(mAny, pAdmin+"/user-settings/user"),

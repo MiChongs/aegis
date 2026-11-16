@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+// 音乐个性化服务（music-rec）的内部接口（Connect，同时兼容 gRPC / gRPC-Web）。
+//
+// 调用方只有 Aegis 主服务：客户端的推荐、画像、清除数据经主服务网关转进来，
+// 主服务负责登录、应用与限额，这里只认内部服务令牌（Authorization: Bearer <MUSIC_INTERNAL_TOKEN>）。
+// 控制台的管理接口不走这里，走 music-rec 的 HTTP /v1/apps/{appId}/*（主服务反向代理）。
+//
+// 用户 ID 一律是应用内主键（users.id），与上报事件里的 user_id 一致。
+// 详见 docs/music-personalization.md。
+package music.v1;
+
+option go_package = "aegis/api/gen/music/v1;musicv1";
+
+service MusicService {
+  // 推荐：home / daily / radio / similar
+  rpc Recommend(RecommendRequest) returns (RecommendResponse);
+  // 听歌画像（最近 N 天）
+  rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
+  // 清除一个人的全部听歌数据（用户自己清除、账号删除、管理员操作）
+  rpc ForgetUser(ForgetUserRequest) returns (ForgetUserResponse);
+  // 应用配置里的两个开关（主服务上报接口用，带缓存）
+  rpc GetSwitches(GetSwitchesRequest) returns (GetSwitchesResponse);
+}
+
+message Track {
+  string source = 1;
+  string song_id = 2;
+  string title = 3;
+  string artist = 4;
+  string album = 5;
+  string cover = 6;
+  int64 duration_ms = 7;
+}
+
+message Reason {
+  // because_track / artist / similar_users / trending / explore / seed
+  string kind = 1;
+  string text = 2;
+  string ref_title = 3;
+}
+
+message RecItem {
+  string work_key = 1;
+  Track track = 2;
+  double score = 3;
+  Reason reason = 4;
+  // 各通道归一后的分数（als / itemcf / artist / trending / explore / penalty），只有 explain=true 时填
+  map<string, double> channels = 5;
+}
+
+message RecommendRequest {
+  int64 app_id = 1;
+  int64 user_id = 2;
+  string scene = 3;
+  int32 limit = 4;
+  string cursor = 5;
+  // similar 场景的种子
+  string seed_source = 6;
+  string seed_song_id = 7;
+  // false：只给热度，不读任何个人数据
+  bool personalized = 8;
+  // true：管理端预览，带分数拆解、不发 served 事件、不写电台去重与每日缓存
+  bool explain = 9;
+}
+
+message RecommendResponse {
+  string rec_id = 1;
+  string scene = 2;
+  int64 model_version = 3;
+  bool personalized = 4;
+  string next_cursor = 5;
+  int64 generated_at_ms = 6;
+  int64 expires_at_ms = 7;
+  repeated RecItem items = 8;
+  bool cold_start = 9;
+  int64 took_ms = 10;
+}
+
+message GetProfileRequest {
+  int64 app_id = 1;
+  int64 user_id = 2;
+  int32 days = 3;
+}
+
+message GetProfileResponse {
+  // 画像本身结构多变，主服务原样透传给客户端：JSON（见文档「画像」）
+  bytes profile_json = 1;
+}
+
+message ForgetUserRequest {
+  int64 app_id = 1;
+  int64 user_id = 2;
+  // user / account_deleted / admin
+  string reason = 3;
+  string operator = 4;
+}
+
+message ForgetUserResponse {
+  bool deleted = 1;
+}
+
+message GetSwitchesRequest {
+  int64 app_id = 1;
+}
+
+message GetSwitchesResponse {
+  bool enabled = 1;
+  bool collect_enabled = 2;
+}

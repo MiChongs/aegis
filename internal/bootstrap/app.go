@@ -627,6 +627,17 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	}
 	accountBanService.SetListenTogether(listenTogetherService)
 
+	// 音乐个性化（独立微服务 services/music）：主服务校验并发布行为事件、转发推荐与画像、反代管理端。
+	// 配置错误只让音乐个性化不可用（docs/music-personalization.md）。
+	musicService, err := service.NewMusicService(log, cfg.Music, natsConn, redisClient, cfg.Redis.KeyPrefix)
+	if err != nil {
+		log.Error("音乐个性化配置无效，音乐推荐不可用", zap.Error(err))
+		musicService = nil
+	}
+	if musicService != nil {
+		userService.AddPurgeHook(musicService.PurgeHook)
+	}
+
 	// 设备营销名称字典：启动时幂等种子（表空则解析嵌入的 kt 源并批量写入）
 	deviceMarketingService := service.NewDeviceMarketingService(log, pg)
 	// 设备字典映射到用户接口：会话、登录记录、扫码登录发起端的 deviceInfo 读取时按字典现查
@@ -780,6 +791,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Release:          releaseService,
 		ClientControl:    clientControlService,
 		ListenTogether:   listenTogetherService,
+		Music:            musicService,
 		DeviceLimit:      deviceLimitService,
 		RegisterIP:       registerIPService,
 		PlatformSettings: systemService,

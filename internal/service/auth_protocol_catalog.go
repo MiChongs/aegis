@@ -329,6 +329,12 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "vipFeatureTicket", Method: "POST", Path: "/vip/feature-ticket", Auth: true, Summary: "权益凭证：拥有某项权益时签发绑定账号与设备的 Ed25519 凭证，客户端离线验签"},
 	{Key: "listenTogetherTicket", Method: "POST", Path: "/listen-together/ticket", Auth: true,
 		Summary: "一起听票据：拥有 listen_together 权益时签发短期 EdDSA 票据并给出一起听服务的 wss 地址（docs/listen-together.md）"},
+	{Key: "musicEvents", Method: "POST", Path: "/music/events", Auth: true,
+		Summary: "音乐行为批量上报（≤100 条，事件 ID 去重；rejected 不重传，50397 整批重传，docs/music-personalization.md）"},
+	{Key: "musicRecommendations", Method: "GET", Path: "/music/recommendations", Auth: true,
+		Summary: "音乐个性化推荐：scene=home / daily / radio / similar，带 recId 供曝光与点击归因"},
+	{Key: "musicProfile", Method: "GET", Path: "/music/profile", Auth: true, Summary: "我的听歌画像（days=7 / 30 / 90 / 365）"},
+	{Key: "musicProfileClear", Method: "DELETE", Path: "/music/profile", Auth: true, Summary: "清除我的听歌数据（事件、实时状态、模型里的口味）"},
 	{Key: "vipTransactions", Method: "GET", Path: "/vip/transactions", Auth: true, Summary: "会员流水"},
 	{Key: "vipConversions", Method: "GET", Path: "/vip/conversions", Auth: true, Summary: "会员折算记录（已拥有的发放、开通永久时折掉的存量）"},
 	{Key: "vipPurchase", Method: "POST", Path: "/vip/purchase", Auth: true, Summary: "购买会员"},
@@ -813,6 +819,13 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 		Recovery: authprotocol.RecoveryNone, Hint: "服务端没有配置 LISTEN_TOGETHER_ENDPOINTS；客户端隐藏一起听入口"},
 	{Code: errCodeListenUnavailable, Name: "LISTEN_TOGETHER_UNAVAILABLE", Message: "一起听服务暂时不可用",
 		Recovery: authprotocol.RecoveryNone, Hint: "稍后重试"},
+	// ── 音乐个性化（docs/music-personalization.md）──
+	{Code: errCodeMusicNotEnabled, Name: "MUSIC_NOT_ENABLED", Message: "音乐个性化服务尚未开通",
+		Recovery: authprotocol.RecoveryNone, Hint: "未配置 MUSIC_RPC_URL 或应用关闭了音乐个性化；客户端隐藏推荐入口"},
+	{Code: errCodeMusicUnavailable, Name: "MUSIC_UNAVAILABLE", Message: "音乐服务暂时不可用",
+		Recovery: authprotocol.RecoveryNone, Hint: "上报整批稍后重传（事件 ID 去重）；推荐稍后重试"},
+	{Code: errCodeMusicRateLimited, Name: "MUSIC_RATE_LIMITED", Message: "上报过于频繁",
+		Recovery: authprotocol.RecoveryNone, Hint: "退避后重传；每人每分钟 600 条、每天 20000 条"},
 }
 
 // GatewayOperations 供 transport 层做「目录与路由是否一致」的漂移检查。
