@@ -2433,7 +2433,8 @@ class AegisMusicApi internal constructor(private val client: AegisClient) {
     /**
      * 取一批推荐。[scene] 见 [SCENE_HOME] 等；[limit] 1–50（daily 固定 30）；
      * [cursor] 是上一批的 [AegisMusicRecommendations.nextCursor]（私人电台翻页用）；
-     * [source] + [songId] 只在 [SCENE_SIMILAR] 时指定种子歌曲；
+     * [source] + [songId] 只在 [SCENE_SIMILAR] 时指定种子歌曲；[mixId] 只在 [SCENE_MIX] 时用（风格歌单的 ID）；
+     * [artist] 只在 [SCENE_ARTIST] 时用（歌手名）；
      * [personalized] 为 false 时服务端只给热度，不读个人数据（用户关了个性化推荐）。
      */
     @Throws(IOException::class)
@@ -2445,6 +2446,8 @@ class AegisMusicApi internal constructor(private val client: AegisClient) {
         source: String? = null,
         songId: String? = null,
         personalized: Boolean = true,
+        mixId: String? = null,
+        artist: String? = null,
     ): AegisMusicRecommendations = client.decodeAs(
         client.call(
             "GET", "/music/recommendations",
@@ -2455,10 +2458,155 @@ class AegisMusicApi internal constructor(private val client: AegisClient) {
                 "source" to source?.takeIf { it.isNotEmpty() },
                 "songId" to songId?.takeIf { it.isNotEmpty() },
                 "personalized" to personalized.toString(),
+                "mixId" to mixId?.takeIf { it.isNotEmpty() },
+                "artist" to artist?.takeIf { it.isNotEmpty() },
             ),
             requireAuth = true,
         ),
         AegisMusicRecommendations.serializer(),
+    )
+
+    /**
+     * 以 POST 取一批推荐，智能续播（[SCENE_AUTOPLAY]）用它：种子与排除列表放在请求体里。也可以发其他场景。
+     * 只读，没确认送达时允许 SDK 自动重发。
+     */
+    @Throws(IOException::class)
+    fun recommend(request: AegisMusicRecRequest): AegisMusicRecommendations = client.decodeAs(
+        client.send(
+            "POST", "/music/recommendations",
+            body = musicJson.encodeToJsonElement(AegisMusicRecRequest.serializer(), request),
+            requireAuth = true,
+            retrySafe = true,
+        ),
+        AegisMusicRecommendations.serializer(),
+    )
+
+    /** 风格歌单：按这个人近 90 天常听的作品聚成几簇，每簇一个歌单。数据不足时 items 为空。 */
+    @Throws(IOException::class)
+    fun mixes(): AegisMusicMixes = client.decodeAs(
+        client.call("GET", "/music/mixes", requireAuth = true),
+        AegisMusicMixes.serializer(),
+    )
+
+    /** 推荐歌手，每位带一句原因与 3 首可直接播放的代表作。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun recommendedArtists(limit: Int = 12): AegisMusicArtistRecs = client.decodeAs(
+        client.call("GET", "/music/artists/recommended", query = mapOf("limit" to limit.toString()), requireAuth = true),
+        AegisMusicArtistRecs.serializer(),
+    )
+
+    /** 新用户偏好选择：要不要弹（[AegisMusicOnboarding.needed]）、可选的歌手与语种。 */
+    @Throws(IOException::class)
+    fun onboarding(): AegisMusicOnboarding = client.decodeAs(
+        client.call("GET", "/music/onboarding", requireAuth = true),
+        AegisMusicOnboarding.serializer(),
+    )
+
+    /** 偏好设置（多端同步）。 */
+    @Throws(IOException::class)
+    fun preferences(): AegisMusicPreferences = client.decodeAs(
+        client.call("GET", "/music/preferences", requireAuth = true),
+        AegisMusicPreferences.serializer(),
+    )
+
+    /**
+     * 改偏好设置：整体替换，[update] 里为 null 的字段保持原值。`artists` ≤ 50、每个 ≤ 64 字，
+     * `languages` 只能是 [AegisMusicLanguage] 里的五个键。返回改后的完整偏好。
+     */
+    @Throws(IOException::class)
+    fun updatePreferences(update: AegisMusicPreferencesUpdate): AegisMusicPreferences = client.decodeAs(
+        client.send(
+            "PUT", "/music/preferences",
+            body = musicJson.encodeToJsonElement(AegisMusicPreferencesUpdate.serializer(), update),
+            requireAuth = true,
+            retrySafe = true,
+        ),
+        AegisMusicPreferences.serializer(),
+    )
+
+    /** 我的不喜欢：[kind] 为 [FEEDBACK_TRACK]、[FEEDBACK_ARTIST] 或 [FEEDBACK_SUPPRESSED]（听腻了、暂不推荐）。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun feedback(kind: String, page: Int = 1, pageSize: Int = 50): AegisMusicFeedbackPage = client.decodeAs(
+        client.call(
+            "GET", "/music/feedback",
+            query = mapOf("kind" to kind, "page" to page.toString(), "pageSize" to pageSize.toString()),
+            requireAuth = true,
+        ),
+        AegisMusicFeedbackPage.serializer(),
+    )
+
+    /**
+     * 撤销一条不喜欢：歌曲与暂不推荐给 [workKey]，歌手给 [artist]。服务端同时写一条 undislike 事件，训练时抵消。
+     * 重复撤销无害，没确认送达时允许 SDK 自动重发。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun removeFeedback(kind: String, workKey: String? = null, artist: String? = null): AegisMusicFeedbackRemoved = client.decodeAs(
+        client.send(
+            "DELETE", "/music/feedback",
+            body = buildBody("kind" to kind, "workKey" to workKey, "artist" to artist),
+            requireAuth = true,
+            retrySafe = true,
+        ),
+        AegisMusicFeedbackRemoved.serializer(),
+    )
+
+    /**
+     * 听歌报告。[period] 为 [PERIOD_WEEK]、[PERIOD_MONTH] 或 [PERIOD_YEAR]；[offset] 0 是本期，1 是上一期，
+     * 最多回看 52 周 / 24 月 / 5 年。没有数据时 [AegisMusicReport.empty] 为 true。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun report(period: String, offset: Int = 0): AegisMusicReport = client.decodeAs(
+        client.call(
+            "GET", "/music/report",
+            query = mapOf("period" to period, "offset" to offset.toString()),
+            requireAuth = true,
+        ),
+        AegisMusicReport.serializer(),
+    )
+
+    /** 热搜：近 24 小时按搜索人数排序，至少 3 个不同用户搜过才出现。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun trendingSearches(limit: Int = 10): AegisMusicTrendingSearches = client.decodeAs(
+        client.call("GET", "/music/search/trending", query = mapOf("limit" to limit.toString()), requireAuth = true),
+        AegisMusicTrendingSearches.serializer(),
+    )
+
+    /**
+     * 搜索结果按口味重排：[items] ≤ 100 首，返回原下标的新顺序（只做轻度调整，不删除）。关了个性化时原样返回。
+     * 只读，没确认送达时允许 SDK 自动重发。
+     */
+    @Throws(IOException::class)
+    fun rerankSearch(query: String, items: List<AegisMusicTrack>): AegisMusicRerank = client.decodeAs(
+        client.send(
+            "POST", "/music/search/rerank",
+            body = musicJson.encodeToJsonElement(
+                AegisMusicRerankRequest.serializer(),
+                AegisMusicRerankRequest(query = query, items = items.take(MAX_RERANK)),
+            ),
+            requireAuth = true,
+            retrySafe = true,
+        ),
+        AegisMusicRerank.serializer(),
+    )
+
+    /**
+     * 导出我的听歌记录：按时间倒序分页，[before] 为上一页的 [AegisMusicExportPage.nextBefore]（第一页为空），
+     * [limit] ≤ 1000。nextBefore 为空表示没有更早的了。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun export(before: Long? = null, limit: Int = 500): AegisMusicExportPage = client.decodeAs(
+        client.call(
+            "GET", "/music/export",
+            query = buildQuery("before" to before?.toString(), "limit" to limit.coerceIn(1, MAX_EXPORT).toString()),
+            requireAuth = true,
+        ),
+        AegisMusicExportPage.serializer(),
     )
 
     /** 听歌画像，[days] 取 7 / 30 / 90 / 365。 */
@@ -2493,6 +2641,32 @@ class AegisMusicApi internal constructor(private val client: AegisClient) {
         const val SCENE_DAILY = "daily"
         const val SCENE_RADIO = "radio"
         const val SCENE_SIMILAR = "similar"
+
+        /** 智能续播：队列快放完时接着放（POST，带种子与排除列表）。 */
+        const val SCENE_AUTOPLAY = "autoplay"
+
+        /** 每周雷达：没听过的新歌，按 ISO 周固定。 */
+        const val SCENE_DISCOVER = "discover"
+
+        /** 风格歌单里的歌（带 mixId）。 */
+        const val SCENE_MIX = "mix"
+
+        /** 某位歌手的个性化热门（带 artist）。 */
+        const val SCENE_ARTIST = "artist"
+
+        const val FEEDBACK_TRACK = "track"
+        const val FEEDBACK_ARTIST = "artist"
+        const val FEEDBACK_SUPPRESSED = "suppressed"
+
+        const val PERIOD_WEEK = "week"
+        const val PERIOD_MONTH = "month"
+        const val PERIOD_YEAR = "year"
+
+        /** 重排一次最多的首数。 */
+        const val MAX_RERANK = 100
+
+        /** 导出每页最多的条数。 */
+        const val MAX_EXPORT = 1000
 
         private val musicJson = kotlinx.serialization.json.Json {
             explicitNulls = false
@@ -2586,6 +2760,9 @@ data class AegisMusicRecommendations(
     val generatedAt: Long = 0,
     val expiresAt: Long = 0,
     val items: List<AegisMusicRecItem> = emptyList(),
+    /** 命中的 A/B 实验与变体；不在实验里时为 0 与空串。 */
+    val experimentId: Long = 0,
+    val variant: String = "",
 )
 
 @kotlinx.serialization.Serializable
@@ -2686,6 +2863,18 @@ object AegisMusicEventType {
     const val CLICK = "click"
     const val IMPRESSION = "impression"
     const val LYRICS_OPEN = "lyrics_open"
+
+    /** 撤销不感兴趣（一般由服务端在撤销接口里生成，客户端不必发）。 */
+    const val UNDISLIKE = "undislike"
+
+    /** 智能续播接上了一批（每批一次，带 context.recId）。 */
+    const val AUTOPLAY = "autoplay"
+
+    /** 打开听歌报告（props.period）。 */
+    const val REPORT_VIEW = "report_view"
+
+    /** 完成或跳过新用户偏好选择（props.action = done / skip，props.artists 逗号分隔）。 */
+    const val ONBOARDING = "onboarding"
 }
 
 /** play_end 的结束原因（[AegisMusicEvent.reason]）。 */
@@ -2695,6 +2884,285 @@ object AegisMusicEndReason {
     const val SWITCHED = "switched"
     const val STOPPED = "stopped"
     const val ERROR = "error"
+}
+
+// ── 音乐个性化第二期（服务端 docs/music-personalization-2.md）──
+
+/**
+ * POST 推荐的请求体。[seeds] 是最近放的歌（最近的在后，≤ 20），带上标题与歌手，服务端曲库还没有这首时也能按作品键找到；
+ * [exclude] 是不要再出的歌（`音源:编号`，≤ 300）。其余字段同 GET 推荐。
+ */
+@kotlinx.serialization.Serializable
+data class AegisMusicRecRequest(
+    val scene: String,
+    val limit: Int = 10,
+    val personalized: Boolean = true,
+    val seeds: List<AegisMusicTrack> = emptyList(),
+    val exclude: List<String> = emptyList(),
+    val cursor: String? = null,
+    val mixId: String? = null,
+    val artist: String? = null,
+    val source: String? = null,
+    val songId: String? = null,
+)
+
+/** 风格歌单列表。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicMixes(
+    val items: List<AegisMusicMix> = emptyList(),
+    val generatedAt: Long = 0,
+    val expiresAt: Long = 0,
+)
+
+/** 一个风格歌单：[id] 一天内稳定，取里面的歌用 [AegisMusicApi.SCENE_MIX] 加 mixId；[lang] 为簇里占多数的语种。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicMix(
+    val id: String = "",
+    val title: String = "",
+    val subtitle: String = "",
+    val covers: List<String> = emptyList(),
+    val artists: List<String> = emptyList(),
+    val size: Int = 0,
+    val lang: String = "",
+)
+
+@kotlinx.serialization.Serializable
+data class AegisMusicArtistRecs(
+    val items: List<AegisMusicArtistRec> = emptyList(),
+)
+
+/** 一位推荐歌手：一句原因（可直接展示）与 3 首代表作。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicArtistRec(
+    val name: String = "",
+    val cover: String = "",
+    val reason: String = "",
+    val tracks: List<AegisMusicTrack> = emptyList(),
+)
+
+/** 新用户偏好选择。[needed]：没选过也没跳过、且听歌记录少于 20 次。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicOnboarding(
+    val needed: Boolean = false,
+    val artists: List<AegisMusicOnboardingArtist> = emptyList(),
+    val languages: List<AegisMusicLanguageOption> = emptyList(),
+)
+
+@kotlinx.serialization.Serializable
+data class AegisMusicOnboardingArtist(
+    val name: String = "",
+    val cover: String = "",
+    val lang: String = "",
+)
+
+/** 语种选项：[key] 见 [AegisMusicLanguage]，[title] 为服务端给的名称。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicLanguageOption(
+    val key: String = "",
+    val title: String = "",
+)
+
+/** 偏好设置。[personalized] 为 false 时服务端所有推荐都不读个人数据（与客户端本地开关取「与」）。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicPreferences(
+    val personalized: Boolean = true,
+    val languages: List<String> = emptyList(),
+    val artists: List<String> = emptyList(),
+    val autoplay: Boolean = true,
+    val onboarded: Boolean = false,
+    val updatedAt: Long = 0,
+)
+
+/** 改偏好设置的请求体：为 null 的字段不发送，服务端保持原值。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicPreferencesUpdate(
+    val personalized: Boolean? = null,
+    val languages: List<String>? = null,
+    val artists: List<String>? = null,
+    val autoplay: Boolean? = null,
+    val onboarded: Boolean? = null,
+)
+
+@kotlinx.serialization.Serializable
+data class AegisMusicFeedbackPage(
+    val items: List<AegisMusicFeedbackItem> = emptyList(),
+    val total: Int = 0,
+)
+
+/**
+ * 一条不喜欢。[kind] 为 track / artist / suppressed（/ version，只在管理端出现）；歌曲与暂不推荐有 [workKey] 与 [track]，
+ * 歌手有 [artist]；[reason] 见 [AegisMusicDislikeReason]；[until] 是暂不推荐的到期时刻（毫秒），其余为 0。
+ */
+@kotlinx.serialization.Serializable
+data class AegisMusicFeedbackItem(
+    val kind: String = "",
+    val workKey: String = "",
+    val track: AegisMusicTrack? = null,
+    val artist: String = "",
+    val reason: String = "",
+    val at: Long = 0,
+    val until: Long = 0,
+)
+
+@kotlinx.serialization.Serializable
+data class AegisMusicFeedbackRemoved(
+    val removed: Boolean = false,
+)
+
+/**
+ * 听歌报告。[from] / [to] 为毫秒区间，[label] 为服务端写好的区间文字；[hours] 24 个、[weekdays] 7 个（周一起）、
+ * [months] 12 个（只有年报告有），都是分钟。[firstTrack]、[latestNight]、[mostRepeated]、[peakDay] 没有时为 null。
+ */
+@kotlinx.serialization.Serializable
+data class AegisMusicReport(
+    val period: String = "",
+    val from: Long = 0,
+    val to: Long = 0,
+    val label: String = "",
+    val listeningMinutes: Double = 0.0,
+    val plays: Long = 0,
+    val tracks: Long = 0,
+    val artists: Long = 0,
+    val newTracks: Long = 0,
+    val newArtists: Long = 0,
+    val activeDays: Int = 0,
+    val previous: AegisMusicReportPrevious? = null,
+    val topTracks: List<AegisMusicTopTrack> = emptyList(),
+    val topArtists: List<AegisMusicReportArtist> = emptyList(),
+    val discoveries: List<AegisMusicReportDiscovery> = emptyList(),
+    val firstTrack: AegisMusicReportMoment? = null,
+    val latestNight: AegisMusicReportMoment? = null,
+    val mostRepeated: AegisMusicReportRepeat? = null,
+    val peakDay: AegisMusicReportDay? = null,
+    val hours: List<Double> = emptyList(),
+    val weekdays: List<Double> = emptyList(),
+    val months: List<Double> = emptyList(),
+    val persona: AegisMusicPersona? = null,
+    val highlights: List<String> = emptyList(),
+    val empty: Boolean = false,
+)
+
+/** 上一期的两项，算环比用。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicReportPrevious(
+    val listeningMinutes: Double = 0.0,
+    val plays: Long = 0,
+)
+
+@kotlinx.serialization.Serializable
+data class AegisMusicReportArtist(
+    val name: String = "",
+    val plays: Long = 0,
+    val minutes: Double = 0.0,
+    val cover: String = "",
+)
+
+/** 这一期新认识的歌手：[firstAt] 第一次听的时刻。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicReportDiscovery(
+    val name: String = "",
+    val firstAt: Long = 0,
+    val plays: Long = 0,
+    val cover: String = "",
+)
+
+/** 某一刻放的一首（第一首、最晚的一次）。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicReportMoment(
+    val track: AegisMusicTrack = AegisMusicTrack(),
+    val at: Long = 0,
+)
+
+/** 单曲循环最多的一天：[day] 为 YYYY-MM-DD。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicReportRepeat(
+    val track: AegisMusicTrack = AegisMusicTrack(),
+    val day: String = "",
+    val plays: Long = 0,
+)
+
+/** 听得最多的一天：[day] 为 YYYY-MM-DD。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicReportDay(
+    val day: String = "",
+    val minutes: Double = 0.0,
+)
+
+@kotlinx.serialization.Serializable
+data class AegisMusicTrendingSearches(
+    val items: List<AegisMusicTrendingSearch> = emptyList(),
+    val updatedAt: Long = 0,
+)
+
+/** 一条热搜：[users] 近 24 小时搜过的人数；[rising] 比前 24 小时人数翻倍。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicTrendingSearch(
+    val query: String = "",
+    val users: Long = 0,
+    val rising: Boolean = false,
+)
+
+@kotlinx.serialization.Serializable
+internal data class AegisMusicRerankRequest(
+    val query: String,
+    val items: List<AegisMusicTrack>,
+)
+
+/** 重排结果：[order] 是原下标的新顺序。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicRerank(
+    val order: List<Int> = emptyList(),
+    val personalized: Boolean = false,
+)
+
+/** 导出的一页：[nextBefore] 为空表示没有更早的了。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicExportPage(
+    val items: List<AegisMusicExportEvent> = emptyList(),
+    val nextBefore: Long? = null,
+)
+
+/** 导出的一条事件（不含 IP 与设备 ID）。 */
+@kotlinx.serialization.Serializable
+data class AegisMusicExportEvent(
+    val id: String = "",
+    val type: String = "",
+    val ts: Long = 0,
+    val track: AegisMusicTrack? = null,
+    val playedMs: Long? = null,
+    val positionMs: Long? = null,
+    val reason: String? = null,
+    val context: AegisMusicEventContext? = null,
+    val props: Map<String, String>? = null,
+)
+
+/** 不感兴趣的原因（dislike 事件的 `props.reason`）。 */
+object AegisMusicDislikeReason {
+    /** 不喜欢这首（默认）。 */
+    const val NOT_INTERESTED = "not_interested"
+
+    /** 听腻了：暂不推荐一段时间，不当成不喜欢。 */
+    const val HEARD_TOO_MUCH = "heard_too_much"
+
+    /** 不喜欢这位歌手（等同 `props.scope=artist`）。 */
+    const val DISLIKE_ARTIST = "dislike_artist"
+
+    /** 音质差：只屏蔽这个音源版本。 */
+    const val POOR_QUALITY = "poor_quality"
+
+    /** 歌曲不对、版本错：只屏蔽这个音源版本。 */
+    const val WRONG_SONG = "wrong_song"
+}
+
+/** 作品语种（偏好设置里的 languages）。 */
+object AegisMusicLanguage {
+    const val ZH = "zh"
+    const val EN = "en"
+    const val JA = "ja"
+    const val KO = "ko"
+    const val OTHER = "other"
+
+    val ALL = listOf(ZH, EN, JA, KO, OTHER)
 }
 
 private fun buildQuery(vararg pairs: Pair<String, String?>): Map<String, String> =
