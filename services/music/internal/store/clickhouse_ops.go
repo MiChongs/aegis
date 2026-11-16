@@ -139,7 +139,11 @@ WHERE app_id = ? AND ts >= ? AND r > 0 GROUP BY r`, app, from.UTC())
 	rows.Close()
 	rows, err = c.conn.Query(ctx, `
 SELECT x.r, uniqExact(e.rec_id, e.work_key)
-FROM (SELECT rec_id, r, w FROM impressions FINAL ARRAY JOIN rules AS r, items AS w WHERE app_id = ? AND ts >= ? AND r > 0) AS x
+FROM (SELECT rec_id, r, w FROM (
+        -- 第二期之前的曝光 rules 为空数组，与 items 长度不同不能一起展开，先筛掉
+        SELECT rec_id, rules, items FROM impressions FINAL
+        WHERE app_id = ? AND ts >= ? AND length(rules) = length(items) AND length(rules) > 0)
+      ARRAY JOIN rules AS r, items AS w WHERE r > 0) AS x
 INNER JOIN (SELECT rec_id, work_key FROM events WHERE app_id = ? AND ts >= ? AND rec_id != '' AND type IN `+sqlClickTypes+`) AS e
   ON e.rec_id = x.rec_id AND e.work_key = x.w
 GROUP BY x.r`, app, from.UTC(), app, from.UTC())
