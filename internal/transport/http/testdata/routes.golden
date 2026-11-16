@@ -124,6 +124,7 @@ DELETE	/api/v1/apps/:appkey/me/avatar	RemoveUserAvatar
 DELETE	/api/v1/apps/:appkey/me/oauth2/grants/:clientId	AppRevokeMyOAuth2Grant
 DELETE	/api/v1/apps/:appkey/me/passkeys/:credentialId	DeletePasskey
 DELETE	/api/v1/apps/:appkey/me/sessions/:tokenHash	RevokeUserSession
+DELETE	/api/v1/apps/:appkey/music/feedback	AppMusicUndoFeedback
 DELETE	/api/v1/apps/:appkey/music/profile	AppMusicClearProfile
 DELETE	/api/v1/apps/:appkey/notifications/:notificationId	DeleteNotification
 GET	/	Homepage
@@ -751,8 +752,16 @@ GET	/api/v1/apps/:appkey/me/profile	Profile
 GET	/api/v1/apps/:appkey/me/security	Security
 GET	/api/v1/apps/:appkey/me/sessions	UserSessions
 GET	/api/v1/apps/:appkey/me/settings	Settings
+GET	/api/v1/apps/:appkey/music/artists/recommended	AppMusicArtists
+GET	/api/v1/apps/:appkey/music/export	AppMusicExport
+GET	/api/v1/apps/:appkey/music/feedback	AppMusicFeedback
+GET	/api/v1/apps/:appkey/music/mixes	AppMusicMixes
+GET	/api/v1/apps/:appkey/music/onboarding	AppMusicOnboarding
+GET	/api/v1/apps/:appkey/music/preferences	AppMusicPreferences
 GET	/api/v1/apps/:appkey/music/profile	AppMusicProfile
 GET	/api/v1/apps/:appkey/music/recommendations	AppMusicRecommendations
+GET	/api/v1/apps/:appkey/music/report	AppMusicReport
+GET	/api/v1/apps/:appkey/music/search/trending	AppMusicTrendingSearches
 GET	/api/v1/apps/:appkey/notices	AppNotices
 GET	/api/v1/apps/:appkey/notifications	Notifications
 GET	/api/v1/apps/:appkey/notifications/:notificationId	NotificationDetail
@@ -1479,6 +1488,8 @@ POST	/api/v1/apps/:appkey/me/password/recovery	AppMyPasswordRecoveryStart
 POST	/api/v1/apps/:appkey/me/profile/changes/confirm	ConfirmProfileChange
 POST	/api/v1/apps/:appkey/me/sessions/revoke-all	RevokeAllUserSessions
 POST	/api/v1/apps/:appkey/music/events	AppMusicEvents
+POST	/api/v1/apps/:appkey/music/recommendations	AppMusicRecommendations
+POST	/api/v1/apps/:appkey/music/search/rerank	AppMusicRerank
 POST	/api/v1/apps/:appkey/notifications/clear	ClearNotifications
 POST	/api/v1/apps/:appkey/notifications/delete-batch	DeleteNotificationsBatch
 POST	/api/v1/apps/:appkey/notifications/read	ReadNotification
@@ -1660,4 +1671,5 @@ PUT	/api/v1/apps/:appkey/leaderboard/preference	AppUpdateLeaderboardPreference
 PUT	/api/v1/apps/:appkey/me/auto-sign	AppUpdateAutoSign
 PUT	/api/v1/apps/:appkey/me/profile	UpdateProfile
 PUT	/api/v1/apps/:appkey/me/settings	UpdateSettings
+PUT	/api/v1/apps/:appkey/music/preferences	AppMusicSavePreferences
 PUT	/api/v1/apps/:appkey/notifications/preferences	UpdateNotificationPreferences
