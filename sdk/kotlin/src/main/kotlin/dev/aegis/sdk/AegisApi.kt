@@ -1584,10 +1584,40 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
     @Throws(IOException::class)
     fun wallet(): JsonElement = client.call("GET", "/wallet", requireAuth = true)
 
+    /**
+     * 钱包总览：钱包（含充值余额 / 赠送余额拆分）、充值选项与档位、兑换额度、当前积分、说明文字。
+     * 钱包页一次请求拿齐。
+     */
+    @Throws(IOException::class)
+    fun walletOverview(): JsonElement = client.call("GET", "/wallet/overview", requireAuth = true)
+
+    /**
+     * 充值余额兑换积分。只扣充值余额（本金），赠送余额不能兑换。
+     *
+     * [amount] 是十进制字符串；[all] 为 true 时忽略 [amount]，按此刻能兑的上限兑换。
+     * 积分 = floor(金额 × 比例)，比例见 [walletOverview] 的 `exchange.rate`。
+     * [idempotencyKey] 必填（≤64 字符）：同一个 key 重复提交只兑换一次。
+     */
+    @Throws(IOException::class)
+    fun walletExchange(amount: String?, all: Boolean, idempotencyKey: String): JsonElement = client.call(
+        "POST", "/wallet/exchange",
+        buildBody(
+            "amount" to amount?.takeUnless { all },
+            "all" to all.takeIf { it },
+            "idempotencyKey" to idempotencyKey,
+        ),
+        requireAuth = true,
+    )
+
+    /** 钱包流水。[type] 可传逗号分隔的多个类型（如 `recharge_bonus,points_exchange`），空表示全部。 */
     @Throws(IOException::class)
     @JvmOverloads
-    fun walletTransactions(page: Int = 1, limit: Int = 20): JsonElement =
-        client.call("GET", "/wallet/transactions", query = pageQuery(page, limit), requireAuth = true)
+    fun walletTransactions(page: Int = 1, limit: Int = 20, type: String? = null): JsonElement =
+        client.call(
+            "GET", "/wallet/transactions",
+            query = pageQuery(page, limit) + buildQuery("type" to type?.takeIf { it.isNotBlank() }),
+            requireAuth = true,
+        )
 
     @Throws(IOException::class)
     /**
