@@ -285,6 +285,15 @@ export type AdjustFormProps = {
    * 参数是当前输入的有效扣减数量（十进制字符串），无效时为 null。
    */
   deductExtra?: (amount: string | null) => { form?: React.ReactNode; confirm?: React.ReactNode };
+  /**
+   * 两个方向都有的附加选项（余额的落桶）：`form` 放在数量下方；`confirm` 作为确认框里的一行；
+   * `error` 非空时拦下提交并显示在预览区（如按桶扣减超过该桶余额）。
+   */
+  extra?: (input: { direction: "add" | "deduct"; amount: string | null }) => {
+    form?: React.ReactNode;
+    confirm?: { label: string; value: React.ReactNode };
+    error?: string | null;
+  };
   /** 单次调整数量上限（十进制字符串） */
   maxAmount?: string;
   /** 调整后余额上限（十进制字符串） */
@@ -314,6 +323,7 @@ export function AdjustForm({
   shortageText,
   addOnly = false,
   deductExtra,
+  extra: optionExtra,
   maxAmount,
   maxBalance,
   pending,
@@ -335,7 +345,9 @@ export function AdjustForm({
   const overAmount = amountValid && maxAmount !== undefined && (compareDecimal(trimmed, maxAmount) ?? 0) > 0;
   const overBalance = !shortage && after !== null && maxBalance !== undefined && (compareDecimal(after, maxBalance) ?? 0) > 0;
   const blocked = Boolean(unavailable) || loading;
-  const disabled = blocked || pending || !amountValid || shortage || overAmount || overBalance;
+  const option = optionExtra ? optionExtra({ direction, amount: amountValid ? trimmed : null }) : null;
+  const optionError = option?.error || null;
+  const disabled = blocked || pending || !amountValid || shortage || overAmount || overBalance || Boolean(optionError);
 
   const verb = direction === "add" ? "增加" : "扣减";
   const extra = direction === "deduct" && deductExtra ? deductExtra(amountValid ? trimmed : null) : null;
@@ -372,7 +384,9 @@ export function AdjustForm({
     `${shortageText}，最多扣减 ${current !== undefined ? format(current) : ""}`
   ) : overBalance ? (
     `调整后将超过上限 ${formatIntegerString(maxBalance ?? "")}`
-  ) : null;
+  ) : (
+    optionError
+  );
 
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
@@ -457,6 +471,8 @@ export function AdjustForm({
           />
         </div>
 
+        {option?.form ? <div className="flex flex-col gap-2">{option.form}</div> : null}
+
         {extra?.form ? <div className="flex flex-col gap-2">{extra.form}</div> : null}
 
         <div className="flex flex-col gap-2">
@@ -503,6 +519,12 @@ export function AdjustForm({
                   </span>
                 </dd>
               </div>
+              {option?.confirm ? (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-xs text-muted-foreground">{option.confirm.label}</dt>
+                  <dd className="min-w-0 text-right">{option.confirm.value}</dd>
+                </div>
+              ) : null}
               {extra?.confirm ? (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-xs text-muted-foreground">等级</dt>

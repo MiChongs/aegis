@@ -857,7 +857,8 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 
 ## 交易中心（/commerce）
 
-五个页签同步到 URL（`?tab=overview|orders|refunds|wallet|vip`）：
+六个页签同步到 URL（`?tab=overview|orders|refunds|wallet|vip|wallet-config`）。
+`wallet-config` 是唯一的配置页签：钱包设置与充值档位只服务于钱包，放在流水旁边比放进应用「支付」更好找（契约见后端 docs/wallet.md）：
 
 | 文件 | 职责 |
 |---|---|
@@ -873,6 +874,10 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 | `components/commerce/receipt-email-dialog.tsx` | 凭证寄送弹窗（订单与流水共用，收件人一键填入） |
 | `components/commerce/vip-transactions-panel.tsx` | 会员开通记录 |
 | `components/commerce/commerce-format.tsx` | 金额 / 方向 / 类型徽标的**统一口径** |
+| `components/commerce/wallet-config-panel.tsx` | 钱包设置页签容器，按 `app:wallet:config` 判只读 |
+| `components/commerce/wallet-settings-section.tsx` | 充值开关与范围、兑换开关与额度、说明文字（兑换比例只读，在「交易设置」改） |
+| `components/commerce/wallet-packages-section.tsx` / `wallet-package-editor.tsx` / `wallet-package-sort-list.tsx` | 充值档位：列表与销售统计、编辑对话框、拖拽排序 |
+| `components/commerce/wallet-config-fields.tsx` | 钱包设置的小表单部件、金额校验、档位状态徽标 |
 | `components/payment/payment-orders-panel.tsx` | 订单台（原本写好却没有任何页面挂载） |
 | `components/payment/payment-refunds-panel.tsx` | 退款台（同上） |
 | `lib/api/commerce.ts` / `lib/commerce-hooks.ts` | 交易域 API 与 React Query hooks |

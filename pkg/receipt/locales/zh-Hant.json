@@ -112,6 +112,8 @@
   "wallet.type.admin_adjust": "管理員餘額調整",
   "wallet.type.vip_purchase": "會員開通",
   "wallet.type.order_pay": "餘額支付訂單",
+  "wallet.type.recharge_bonus": "儲值贈送",
+  "wallet.type.integral_exchange": "餘額兌換積分",
   "wallet.direction.in": "入帳",
   "wallet.direction.out": "出帳",
 

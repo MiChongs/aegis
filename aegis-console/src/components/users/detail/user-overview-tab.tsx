@@ -47,7 +47,8 @@ import {
   isPast,
   joinText,
   numberValue,
-  textValue
+  textValue,
+  walletSplitLabel
 } from "./user-detail-shared";
 
 type Navigate = (tab: string, sub?: string) => void;
@@ -103,7 +104,7 @@ export function UserOverviewTab({
           value={walletReady ? `¥ ${formatMoney(wallet?.balance)}` : "—"}
           icon={Wallet}
           tone="success"
-          sub={walletReady ? `冻结 ¥ ${formatMoney(wallet?.frozen)}` : "钱包数据不可用"}
+          sub={walletReady ? (walletSplitLabel(wallet) ?? `冻结 ¥ ${formatMoney(wallet?.frozen)}`) : "钱包数据不可用"}
           onClick={() => onNavigate("ledger", "wallet")}
         />
         <MetricCard

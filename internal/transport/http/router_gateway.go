@@ -264,6 +264,8 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 
 		// 钱包 / 会员 / 支付
 		appGatewayAuthed.GET("/wallet", h.MyWallet)
+		appGatewayAuthed.GET("/wallet/overview", h.MyWalletOverview)
+		appGatewayAuthed.POST("/wallet/exchange", h.WalletExchange)
 		appGatewayAuthed.GET("/wallet/transactions", h.MyWalletTransactions)
 		appGatewayAuthed.POST("/wallet/consume", h.WalletConsume)
 		appGatewayAuthed.GET("/vip/plans", h.VipPlans)
@@ -277,6 +279,19 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/music/recommendations", h.AppMusicRecommendations)
 		appGatewayAuthed.GET("/music/profile", h.AppMusicProfile)
 		appGatewayAuthed.DELETE("/music/profile", h.AppMusicClearProfile)
+		// 第二期（docs/music-personalization-2.md）
+		appGatewayAuthed.POST("/music/recommendations", h.AppMusicRecommendations)
+		appGatewayAuthed.GET("/music/mixes", h.AppMusicMixes)
+		appGatewayAuthed.GET("/music/artists/recommended", h.AppMusicArtists)
+		appGatewayAuthed.GET("/music/onboarding", h.AppMusicOnboarding)
+		appGatewayAuthed.GET("/music/preferences", h.AppMusicPreferences)
+		appGatewayAuthed.PUT("/music/preferences", h.AppMusicSavePreferences)
+		appGatewayAuthed.GET("/music/feedback", h.AppMusicFeedback)
+		appGatewayAuthed.DELETE("/music/feedback", h.AppMusicUndoFeedback)
+		appGatewayAuthed.GET("/music/report", h.AppMusicReport)
+		appGatewayAuthed.GET("/music/search/trending", h.AppMusicTrendingSearches)
+		appGatewayAuthed.POST("/music/search/rerank", h.AppMusicRerank)
+		appGatewayAuthed.GET("/music/export", h.AppMusicExport)
 		appGatewayAuthed.GET("/vip/transactions", h.MyVipTransactions)
 		appGatewayAuthed.GET("/vip/conversions", h.MyVipConversions)
 		appGatewayAuthed.POST("/vip/purchase", h.PurchaseVip)

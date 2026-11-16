@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import * as commerce from "@/lib/api/commerce";
 import { useAdminAppUserQuery, useAdminProfileQuery, useAdminToken } from "@/lib/admin-hooks";
+import type { WalletAdjustBucket, WalletPackagePayload, WalletSettings } from "@/lib/api/types";
 
 /**
  * 交易中心的 React Query hooks。
@@ -17,6 +18,8 @@ const COMMERCE_KEYS = {
   walletTransactions: ["commerce-wallet-transactions"] as const,
   walletStats: ["commerce-wallet-stats"] as const,
   receiptCapability: ["commerce-receipt-capability"] as const,
+  walletSettings: ["commerce-wallet-settings"] as const,
+  walletPackages: ["commerce-wallet-packages"] as const,
 };
 
 function useInvalidate() {
@@ -89,10 +92,77 @@ export function useAdjustWalletMutation(appKey?: string | null) {
   const token = useAdminToken();
   const invalidate = useInvalidate();
   return useMutation({
-    mutationFn: (payload: { userId: number; amount: string; reason?: string }) =>
+    mutationFn: (payload: { userId: number; amount: string; reason?: string; bucket?: WalletAdjustBucket }) =>
       commerce.adjustAdminWallet(token!, appKey!, payload),
     onSuccess: () =>
-      invalidate(COMMERCE_KEYS.walletTransactions, COMMERCE_KEYS.walletStats, COMMERCE_KEYS.overview),
+      invalidate(
+        COMMERCE_KEYS.walletTransactions,
+        COMMERCE_KEYS.walletStats,
+        COMMERCE_KEYS.overview,
+        // 调账弹窗里显示的「当前余额」与用户详情页共用这把 key
+        ["admin-user-wallet"],
+        ["admin-user-wallet-txns"]
+      ),
+  });
+}
+
+// ── 钱包设置与充值档位 ──
+
+export function useWalletSettingsQuery(appKey?: string | null) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [...COMMERCE_KEYS.walletSettings, token, appKey],
+    queryFn: () => commerce.getWalletSettings(token!, appKey!),
+    enabled: Boolean(token && appKey),
+  });
+}
+
+export function useUpdateWalletSettingsMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (payload: WalletSettings) => commerce.updateWalletSettings(token!, appKey!, payload),
+    onSuccess: () => invalidate(COMMERCE_KEYS.walletSettings),
+  });
+}
+
+export function useWalletPackagesQuery(appKey?: string | null) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [...COMMERCE_KEYS.walletPackages, token, appKey],
+    queryFn: () => commerce.listWalletPackages(token!, appKey!),
+    enabled: Boolean(token && appKey),
+  });
+}
+
+/** 新建（packageId 不给）或更新档位 */
+export function useSaveWalletPackageMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ packageId, payload }: { packageId?: number; payload: WalletPackagePayload }) =>
+      packageId
+        ? commerce.updateWalletPackage(token!, appKey!, packageId, payload)
+        : commerce.createWalletPackage(token!, appKey!, payload),
+    onSuccess: () => invalidate(COMMERCE_KEYS.walletPackages),
+  });
+}
+
+export function useDeleteWalletPackageMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (packageId: number) => commerce.deleteWalletPackage(token!, appKey!, packageId),
+    onSuccess: () => invalidate(COMMERCE_KEYS.walletPackages),
+  });
+}
+
+export function useReorderWalletPackagesMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (ids: number[]) => commerce.reorderWalletPackages(token!, appKey!, ids),
+    onSuccess: () => invalidate(COMMERCE_KEYS.walletPackages),
   });
 }
 

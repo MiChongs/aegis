@@ -4,6 +4,12 @@ import { useState, type ComponentType, type ReactNode } from "react";
 import { Coins, Crown, Infinity as InfinityIcon, Receipt, SlidersHorizontal, Sparkles, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  WALLET_BUCKET_OPTIONS,
+  toAdjustBucket,
+  walletBucketHint,
+  type BucketChoice
+} from "@/components/commerce/commerce-format";
 import { useNow } from "@/components/users/ban-form";
 import { ApiError } from "@/lib/api-client";
 import { useAdjustUserExperienceMutation, useAdjustUserIntegralMutation } from "@/lib/admin-hooks";
@@ -16,8 +22,23 @@ import type { ExperienceLevelMode } from "@/lib/api/apps";
 import type { AdminAppUserDetail, UserWallet, VipEntitlement } from "@/lib/api/types";
 import { useUserPointSummaryQuery } from "@/lib/user-ledger-hooks";
 import { InfoGrid, MetricCard, Section, StateBlock, type Tone } from "./kit";
-import { AdjustForm, Segmented, formatIntegerString, type AdjustFormProps, type SegmentOption } from "./user-assets-adjust";
-import { EMPTY, formatMoney, formatTime, hasWallet, isNegativeAmount, isZeroTime } from "./user-detail-shared";
+import {
+  AdjustForm,
+  Segmented,
+  compareDecimal,
+  formatIntegerString,
+  type AdjustFormProps,
+  type SegmentOption
+} from "./user-assets-adjust";
+import {
+  EMPTY,
+  formatMoney,
+  formatTime,
+  hasWallet,
+  isNegativeAmount,
+  isZeroTime,
+  walletSplitLabel
+} from "./user-detail-shared";
 import { ExperienceLevelChoice, ExperienceLevelConfirm } from "./user-experience-level";
 import { UserFeatureUnlocksPanel } from "./user-feature-unlocks-panel";
 import { UserVipPanel } from "./user-vip-panel";
@@ -87,6 +108,8 @@ export function UserAssetsTab({
   const [kind, setKind] = useState<AssetKind>("integral");
   /** 扣减经验时的等级处理，默认保留现有等级 */
   const [levelMode, setLevelMode] = useState<ExperienceLevelMode>("keep");
+  /** 余额调整落在哪一桶，默认按后端规则（入账进赠送余额、扣减先扣赠送余额） */
+  const [bucket, setBucket] = useState<BucketChoice>("default");
 
   const viewLedger = onNavigate ? (sub: LedgerSub) => () => onNavigate("ledger", sub) : undefined;
 
@@ -133,9 +156,14 @@ export function UserAssetsTab({
 
   async function adjustWallet(signed: string, reason: string) {
     try {
-      const result = await walletMutation.mutateAsync({ amount: signed, reason: reason || undefined });
+      const result = await walletMutation.mutateAsync({
+        amount: signed,
+        reason: reason || undefined,
+        bucket: toAdjustBucket(bucket)
+      });
+      const split = walletSplitLabel(result.wallet);
       toast.success(isNegativeAmount(signed) ? "余额已扣减" : "余额已增加", {
-        description: `当前余额 ¥${formatMoney(result.wallet?.balance)}`
+        description: `当前余额 ¥${formatMoney(result.wallet?.balance)}${split ? `（${split}）` : ""}`
       });
       return true;
     } catch (error) {
@@ -210,7 +238,36 @@ export function UserAssetsTab({
       loading: walletQuery.isLoading,
       current: walletReady ? wallet?.balance : undefined,
       format: (value) => `¥${formatMoney(value)}`,
-      hint: walletReady ? `冻结 ¥${formatMoney(wallet?.frozen)}` : undefined,
+      hint: walletReady
+        ? [walletSplitLabel(wallet), `冻结 ¥${formatMoney(wallet?.frozen)}`].filter(Boolean).join("，")
+        : undefined,
+      extra: ({ direction, amount }) => {
+        const credit = direction === "add";
+        // 按桶扣减时够不够扣看那一桶；默认扣减先扣赠送再扣本金，总余额的检查由表单自己做
+        const cap = bucket === "cash" ? wallet?.cashBalance : bucket === "bonus" ? wallet?.bonusBalance : undefined;
+        const short = !credit && amount !== null && cap != null && (compareDecimal(amount, cap) ?? 0) > 0;
+        const capLabel = bucket === "cash" ? "充值余额" : "赠送余额";
+        return {
+          form: (
+            <>
+              <span className="text-xs text-muted-foreground">落在哪一桶</span>
+              <Segmented
+                value={bucket}
+                onChange={setBucket}
+                options={WALLET_BUCKET_OPTIONS}
+                ariaLabel="余额调整落在哪一桶"
+                className="self-start"
+              />
+              <p className="text-xs text-muted-foreground">{walletBucketHint(bucket, credit)}</p>
+            </>
+          ),
+          confirm: {
+            label: "落在哪一桶",
+            value: WALLET_BUCKET_OPTIONS.find((option) => option.value === bucket)?.label ?? "默认"
+          },
+          error: short ? `${capLabel}不足，最多扣减 ¥${formatMoney(cap)}` : null
+        };
+      },
       unavailable: walletUnavailable,
       quick: MONEY_QUICK,
       reasons: MONEY_REASONS,
@@ -249,7 +306,13 @@ export function UserAssetsTab({
           tone="success"
           loading={walletQuery.isLoading}
           value={walletReady ? `¥${formatMoney(wallet?.balance)}` : EMPTY}
-          sub={walletReady ? `冻结 ¥${formatMoney(wallet?.frozen)}` : walletQuery.isError ? "加载失败" : "钱包数据不可用"}
+          sub={
+            walletReady
+              ? (walletSplitLabel(wallet) ?? `冻结 ¥${formatMoney(wallet?.frozen)}`)
+              : walletQuery.isError
+                ? "加载失败"
+                : "钱包数据不可用"
+          }
           onClick={viewLedger?.("wallet")}
         />
         <VipMetric
@@ -379,9 +442,23 @@ function KindFacts({ kind, wallet, summary }: { kind: AssetKind; wallet?: UserWa
         <InfoGrid
           columns={3}
           items={[
-            { label: "冻结金额", value: `¥${formatMoney(wallet.frozen)}` },
+            ...(wallet.cashBalance != null && wallet.bonusBalance != null
+              ? [
+                  { label: "充值余额", value: `¥${formatMoney(wallet.cashBalance)}`, hint: "可消费，可兑换积分" },
+                  { label: "赠送余额", value: `¥${formatMoney(wallet.bonusBalance)}`, hint: "只能消费，不能兑换积分" }
+                ]
+              : []),
+            {
+              label: "冻结金额",
+              value: `¥${formatMoney(wallet.frozen)}`,
+              hint: wallet.frozenBonus != null ? `其中赠送 ¥${formatMoney(wallet.frozenBonus)}` : undefined
+            },
             { label: "累计充值", value: `¥${formatMoney(wallet.totalRecharged)}` },
+            ...(wallet.totalBonus != null ? [{ label: "累计获赠", value: `¥${formatMoney(wallet.totalBonus)}` }] : []),
             { label: "累计消费", value: `¥${formatMoney(wallet.totalConsumed)}` },
+            ...(wallet.totalExchanged != null
+              ? [{ label: "累计兑换积分", value: `¥${formatMoney(wallet.totalExchanged)}`, hint: "兑换掉的充值余额，不计入累计消费" }]
+              : []),
             { label: "开户时间", value: wallet.createdAt && !isZeroTime(wallet.createdAt) ? formatTime(wallet.createdAt) : "未开户" },
             { label: "最近变动", value: wallet.updatedAt && !isZeroTime(wallet.updatedAt) ? formatTime(wallet.updatedAt) : EMPTY }
           ]}

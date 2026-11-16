@@ -159,10 +159,25 @@ func (l *aiGatewayLedger) freezeWallet(ctx context.Context, cents int64) error {
 	if l.walletCents-cents < 0 {
 		return fmt.Errorf("ai gateway: wallet hold would go negative (balance %d, hold %d)", l.walletCents, cents)
 	}
-	amount := decimal.New(cents, -2).StringFixed(2)
-	if _, err := l.tx.Exec(ctx, `UPDATE user_wallets SET balance = balance - $3::numeric, frozen = frozen + $3::numeric,
+	// 分桶：暂扣先冻赠送余额（与正式扣费「先扣赠送」一致），放回时先把冻住的赠送余额还回去。
+	// UPDATE 右侧读的都是旧值，两列在同一条语句里此消彼长，不变量
+	// bonus_balance ≤ balance、frozen_bonus ≤ frozen 在每一步都成立。
+	if cents > 0 {
+		amount := decimal.New(cents, -2).StringFixed(2)
+		if _, err := l.tx.Exec(ctx, `UPDATE user_wallets SET balance = balance - $3::numeric, frozen = frozen + $3::numeric,
+bonus_balance = bonus_balance - LEAST(bonus_balance, $3::numeric),
+frozen_bonus = frozen_bonus + LEAST(bonus_balance, $3::numeric),
 updated_at = NOW() WHERE user_id = $1 AND appid = $2`, l.userID, l.appID, amount); err != nil {
-		return err
+			return err
+		}
+	} else {
+		amount := decimal.New(-cents, -2).StringFixed(2)
+		if _, err := l.tx.Exec(ctx, `UPDATE user_wallets SET balance = balance + $3::numeric, frozen = frozen - $3::numeric,
+bonus_balance = bonus_balance + LEAST(frozen_bonus, $3::numeric),
+frozen_bonus = frozen_bonus - LEAST(frozen_bonus, $3::numeric),
+updated_at = NOW() WHERE user_id = $1 AND appid = $2`, l.userID, l.appID, amount); err != nil {
+			return err
+		}
 	}
 	l.walletCents -= cents
 	return nil
@@ -1019,6 +1034,8 @@ func (r *Repository) RefundAIGatewayRequest(ctx context.Context, in aigateway.Re
 					UserID: req.UserID, AppID: req.AppID, Amount: decimal.New(units, -2),
 					Type: walletdomain.TxnTypeAIRefund, Title: "AI 调用退款", Remark: remark,
 					IdempotencyKey: "aig-refund:" + req.RequestNo, Operator: in.Operator, Metadata: extra,
+					// 按原扣费的拆分退回：扣了多少赠送余额就先补回多少，余下进本金
+					Restores: &walletdomain.RestoreRef{IdempotencyKey: "aig:" + req.RequestNo},
 				}); err != nil {
 					return nil, err
 				}

@@ -50,6 +50,7 @@ DELETE	/api/admin/apps/:appkey/vip/features/:tag	AdminDeleteAppVipFeature
 DELETE	/api/admin/apps/:appkey/vip/plans/:planId	AdminDeleteAppVipPlan
 DELETE	/api/admin/apps/:appkey/vip/tiers/:tierId	AdminDeleteAppVipTier
 DELETE	/api/admin/apps/:appkey/vip/trial/claims/:userId	AdminResetAppVipTrial
+DELETE	/api/admin/apps/:appkey/wallet/packages/:packageId	DeleteAdminAppWalletPackage
 DELETE	/api/admin/notify/channels/:id	AdminDeleteNotifyChannel
 DELETE	/api/admin/notify/deliveries	AdminPurgeNotifyDeliveries
 DELETE	/api/admin/notify/subscriptions/:id	AdminDeleteNotifySubscription
@@ -123,6 +124,7 @@ DELETE	/api/v1/apps/:appkey/me/avatar	RemoveUserAvatar
 DELETE	/api/v1/apps/:appkey/me/oauth2/grants/:clientId	AppRevokeMyOAuth2Grant
 DELETE	/api/v1/apps/:appkey/me/passkeys/:credentialId	DeletePasskey
 DELETE	/api/v1/apps/:appkey/me/sessions/:tokenHash	RevokeUserSession
+DELETE	/api/v1/apps/:appkey/music/feedback	AppMusicUndoFeedback
 DELETE	/api/v1/apps/:appkey/music/profile	AppMusicClearProfile
 DELETE	/api/v1/apps/:appkey/notifications/:notificationId	DeleteNotification
 GET	/	Homepage
@@ -373,6 +375,8 @@ GET	/api/admin/apps/:appkey/vip/plans	AdminAppVipPlans
 GET	/api/admin/apps/:appkey/vip/tiers	AdminAppVipTiers
 GET	/api/admin/apps/:appkey/vip/transactions	AdminAppVipTransactions
 GET	/api/admin/apps/:appkey/vip/trial/claims	AdminAppVipTrialClaims
+GET	/api/admin/apps/:appkey/wallet/packages	AdminAppWalletPackages
+GET	/api/admin/apps/:appkey/wallet/settings	AdminAppWalletSettings
 GET	/api/admin/apps/:appkey/wallet/stats	AdminAppWalletStats
 GET	/api/admin/apps/:appkey/wallet/transactions	AdminAppWalletTransactions
 GET	/api/admin/apps/password-policy/templates	PasswordPolicyTemplates
@@ -748,8 +752,16 @@ GET	/api/v1/apps/:appkey/me/profile	Profile
 GET	/api/v1/apps/:appkey/me/security	Security
 GET	/api/v1/apps/:appkey/me/sessions	UserSessions
 GET	/api/v1/apps/:appkey/me/settings	Settings
+GET	/api/v1/apps/:appkey/music/artists/recommended	AppMusicArtists
+GET	/api/v1/apps/:appkey/music/export	AppMusicExport
+GET	/api/v1/apps/:appkey/music/feedback	AppMusicFeedback
+GET	/api/v1/apps/:appkey/music/mixes	AppMusicMixes
+GET	/api/v1/apps/:appkey/music/onboarding	AppMusicOnboarding
+GET	/api/v1/apps/:appkey/music/preferences	AppMusicPreferences
 GET	/api/v1/apps/:appkey/music/profile	AppMusicProfile
 GET	/api/v1/apps/:appkey/music/recommendations	AppMusicRecommendations
+GET	/api/v1/apps/:appkey/music/report	AppMusicReport
+GET	/api/v1/apps/:appkey/music/search/trending	AppMusicTrendingSearches
 GET	/api/v1/apps/:appkey/notices	AppNotices
 GET	/api/v1/apps/:appkey/notifications	Notifications
 GET	/api/v1/apps/:appkey/notifications/:notificationId	NotificationDetail
@@ -788,12 +800,14 @@ GET	/api/v1/apps/:appkey/vip/plans	VipPlans
 GET	/api/v1/apps/:appkey/vip/status	MyVipStatus
 GET	/api/v1/apps/:appkey/vip/transactions	MyVipTransactions
 GET	/api/v1/apps/:appkey/wallet	MyWallet
+GET	/api/v1/apps/:appkey/wallet/overview	MyWalletOverview
 GET	/api/v1/apps/:appkey/wallet/transactions	MyWalletTransactions
 GET	/api/vip/conversions	MyVipConversions
 GET	/api/vip/plans	VipPlans
 GET	/api/vip/status	MyVipStatus
 GET	/api/vip/transactions	MyVipTransactions
 GET	/api/wallet	MyWallet
+GET	/api/wallet/overview	MyWalletOverview
 GET	/api/wallet/transactions	MyWalletTransactions
 GET	/api/wallet/transactions/:transactionNo	MyWalletTransactionDetail
 GET	/api/wallet/transactions/:transactionNo/bill	ExportWalletBill
@@ -1053,6 +1067,7 @@ POST	/api/admin/apps/:appkey/vip/revoke	AdminRevokeAppUserVip
 POST	/api/admin/apps/:appkey/vip/tiers	AdminSaveAppVipTier
 POST	/api/admin/apps/:appkey/vip/trial/claims	AdminClaimAppVipTrial
 POST	/api/admin/apps/:appkey/wallet/adjust	AdminAdjustAppUserWallet
+POST	/api/admin/apps/:appkey/wallet/packages	CreateAdminAppWalletPackage
 POST	/api/admin/apps/:appkey/wallet/receipt	AdminAppWalletReceipt
 POST	/api/admin/apps/:appkey/wallet/receipt/email	AdminAppWalletReceiptEmail
 POST	/api/admin/auth/login	AdminLogin
@@ -1473,6 +1488,8 @@ POST	/api/v1/apps/:appkey/me/password/recovery	AppMyPasswordRecoveryStart
 POST	/api/v1/apps/:appkey/me/profile/changes/confirm	ConfirmProfileChange
 POST	/api/v1/apps/:appkey/me/sessions/revoke-all	RevokeAllUserSessions
 POST	/api/v1/apps/:appkey/music/events	AppMusicEvents
+POST	/api/v1/apps/:appkey/music/recommendations	AppMusicRecommendations
+POST	/api/v1/apps/:appkey/music/search/rerank	AppMusicRerank
 POST	/api/v1/apps/:appkey/notifications/clear	ClearNotifications
 POST	/api/v1/apps/:appkey/notifications/delete-batch	DeleteNotificationsBatch
 POST	/api/v1/apps/:appkey/notifications/read	ReadNotification
@@ -1502,9 +1519,11 @@ POST	/api/v1/apps/:appkey/vip/feature-ticket	VipFeatureTicket
 POST	/api/v1/apps/:appkey/vip/purchase	PurchaseVip
 POST	/api/v1/apps/:appkey/vip/trial	ClaimVipTrial
 POST	/api/v1/apps/:appkey/wallet/consume	WalletConsume
+POST	/api/v1/apps/:appkey/wallet/exchange	WalletExchange
 POST	/api/vip/purchase	PurchaseVip
 POST	/api/vip/trial	ClaimVipTrial
 POST	/api/wallet/consume	WalletConsume
+POST	/api/wallet/exchange	WalletExchange
 POST	/api/wallet/transactions/:transactionNo/bill	ExportWalletBill
 POST	/api/wallet/transactions/:transactionNo/receipt/email	EmailWalletReceipt
 POST	/oauth2/consent	OAuth2ConsentSubmit
@@ -1581,6 +1600,9 @@ PUT	/api/admin/apps/:appkey/users/:userId/status	UpdateAdminAppUserStatus
 PUT	/api/admin/apps/:appkey/users/status/batch	BatchUpdateAdminAppUserStatus
 PUT	/api/admin/apps/:appkey/versions/:vid	AdminUpdateVersion
 PUT	/api/admin/apps/:appkey/vip/conversion-policy	AdminSaveAppVipConversionPolicy
+PUT	/api/admin/apps/:appkey/wallet/packages-order	ReorderAdminAppWalletPackages
+PUT	/api/admin/apps/:appkey/wallet/packages/:packageId	UpdateAdminAppWalletPackage
+PUT	/api/admin/apps/:appkey/wallet/settings	UpdateAdminAppWalletSettings
 PUT	/api/admin/notify/channels/:id	AdminSaveNotifyChannel
 PUT	/api/admin/notify/subscriptions/:id	AdminSaveNotifySubscription
 PUT	/api/admin/notify/templates/:id	AdminSaveNotifyTemplate
@@ -1649,4 +1671,5 @@ PUT	/api/v1/apps/:appkey/leaderboard/preference	AppUpdateLeaderboardPreference
 PUT	/api/v1/apps/:appkey/me/auto-sign	AppUpdateAutoSign
 PUT	/api/v1/apps/:appkey/me/profile	UpdateProfile
 PUT	/api/v1/apps/:appkey/me/settings	UpdateSettings
+PUT	/api/v1/apps/:appkey/music/preferences	AppMusicSavePreferences
 PUT	/api/v1/apps/:appkey/notifications/preferences	UpdateNotificationPreferences

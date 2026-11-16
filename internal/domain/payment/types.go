@@ -82,14 +82,14 @@ const (
 
 // metadata 中的字段键
 const (
-	MetaKeyPurpose        = "purpose"
-	MetaKeyVipPlanID      = "vipPlanId"
-	MetaKeyVipPlanName    = "vipPlanName"
-	MetaKeyVipDays = "vipDurationDays"
-	MetaKeyVipBonus       = "vipBonusIntegral"
+	MetaKeyPurpose     = "purpose"
+	MetaKeyVipPlanID   = "vipPlanId"
+	MetaKeyVipPlanName = "vipPlanName"
+	MetaKeyVipDays     = "vipDurationDays"
+	MetaKeyVipBonus    = "vipBonusIntegral"
 	// MetaKeyVipLifetime 下单那一刻套餐是不是永久套餐（此时 vipDurationDays 为 0）。
 	// 与天数一样是快照：用户付的是「永久」这份钱，下单后套餐怎么改都不影响这一单。
-	MetaKeyVipLifetime    = "vipLifetime"
+	MetaKeyVipLifetime = "vipLifetime"
 	// MetaKeyVipFeatures 下单那一刻套餐包含的功能标识。
 	//
 	// 天数与价格是快照（用户付的就是下单时看到的那一份），功能**不是**：
@@ -97,6 +97,11 @@ const (
 	// 只在下单之后套餐被删除的那种订单上才会被用到。
 	MetaKeyVipFeatures    = "vipFeatures"
 	MetaKeyIntegralAmount = "integralAmount"
+	// 充值档位快照（wallet_recharge）：下单时由服务端按档位固化，客户端传入的同名键一律被覆盖或删除。
+	MetaKeyWalletPackageID     = "walletPackageId"
+	MetaKeyWalletPackageTitle  = "walletPackageTitle"
+	MetaKeyWalletBonus         = "walletBonus"
+	MetaKeyWalletBonusIntegral = "walletBonusIntegral"
 )
 
 // FulfillmentInstruction 履约指令：服务层从订单 metadata 快照解析而来，
@@ -111,6 +116,11 @@ type FulfillmentInstruction struct {
 	VipLifetime    bool // 永久开通：VipDays 为 0
 	VipBonus       int64
 	IntegralAmount int64 // integral_purchase：发放积分
+	// wallet_recharge 按档位充值时的附赠（快照）：赠送余额与赠送积分
+	WalletPackageID     int64
+	WalletPackageTitle  string
+	WalletBonus         decimal.Decimal
+	WalletBonusIntegral int64
 }
 
 // ── 提供商元数据 ──
@@ -549,22 +559,22 @@ type Order struct {
 	Amount          decimal.Decimal `json:"amount"`
 	// Currency ISO 4217 币种，下单时按渠道配置固化。历史订单为空串，
 	// 开凭证时按渠道推断 —— 配置随时会改，已发生的交易不能跟着改。
-	Currency      string `json:"currency,omitempty"`
-	PaymentMethod string `json:"payment_method"`
-	ProviderType    string          `json:"provider_type"`
-	Status          string          `json:"status"`
-	NotifyStatus    string          `json:"notify_status"`
-	ClientIP        string          `json:"client_ip,omitempty"`
-	NotifyURL       string          `json:"notify_url,omitempty"`
-	ReturnURL       string          `json:"return_url,omitempty"`
-	Metadata        map[string]any  `json:"metadata,omitempty"`
-	RawCallback     map[string]any  `json:"raw_callback,omitempty"`
-	RefundedAmount  decimal.Decimal `json:"refunded_amount"`
-	RefundStatus    string          `json:"refund_status"`
-	PaidAt          *time.Time      `json:"paid_at,omitempty"`
-	ExpireAt        *time.Time      `json:"expire_at,omitempty"`
-	CreatedAt       time.Time       `json:"createdAt"`
-	UpdatedAt       time.Time       `json:"updatedAt"`
+	Currency       string          `json:"currency,omitempty"`
+	PaymentMethod  string          `json:"payment_method"`
+	ProviderType   string          `json:"provider_type"`
+	Status         string          `json:"status"`
+	NotifyStatus   string          `json:"notify_status"`
+	ClientIP       string          `json:"client_ip,omitempty"`
+	NotifyURL      string          `json:"notify_url,omitempty"`
+	ReturnURL      string          `json:"return_url,omitempty"`
+	Metadata       map[string]any  `json:"metadata,omitempty"`
+	RawCallback    map[string]any  `json:"raw_callback,omitempty"`
+	RefundedAmount decimal.Decimal `json:"refunded_amount"`
+	RefundStatus   string          `json:"refund_status"`
+	PaidAt         *time.Time      `json:"paid_at,omitempty"`
+	ExpireAt       *time.Time      `json:"expire_at,omitempty"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
 	// PaidAmount 渠道报的实付金额（结单或标记待人工处理时记下）；与 Amount 不同时就是多付或少付
 	PaidAmount *decimal.Decimal `json:"paid_amount,omitempty"`
 	// ReviewReason 需要人工处理的原因（ReviewAmountMismatch）；有值的订单不再自动查单补单

@@ -114,6 +114,8 @@
   "wallet.type.admin_adjust": "Manuelle Guthabenanpassung",
   "wallet.type.vip_purchase": "Mitgliedschaft",
   "wallet.type.order_pay": "Bestellung per Guthaben bezahlt",
+  "wallet.type.recharge_bonus": "Aufladebonus",
+  "wallet.type.integral_exchange": "Guthaben in Punkte getauscht",
   "wallet.direction.in": "Gutschrift",
   "wallet.direction.out": "Belastung",
 

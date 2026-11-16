@@ -568,6 +568,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 钱包流水与会员直购也要能出凭证：凭证引擎只有 PaymentService 持有，
 	// 这两个服务通过它把自己的资金记录接进同一套排版与寄送链路
 	walletService.SetPaymentService(paymentService)
+	walletService.SetAppService(appService)
+	paymentService.SetWalletService(walletService)
 	vipService.SetPaymentService(paymentService)
 	sessionMgmtService := service.NewSessionMgmtService(log, pg, sessions, realtimeService)
 	storageResourceService := service.NewStorageResourceService(log, pg)

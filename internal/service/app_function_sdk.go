@@ -1188,7 +1188,7 @@ func (s *ScriptSDK) bindWalletNamespace(vm *goja.Runtime, object *goja.Object) e
 			return vm.ToValue(walletPayload(userID, balance.Add(amount),
 				decimal.Zero, decimal.Zero, decimal.Zero))
 		}
-		result, err := s.deps.Wallet.AdminAdjust(s.ctx, userID, s.appID, amount, reason, s.operatorLabel(), "")
+		result, err := s.deps.Wallet.AdminAdjust(s.ctx, userID, s.appID, amount, "", reason, s.operatorLabel(), "")
 		if err != nil {
 			throw(vm, err)
 		}

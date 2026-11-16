@@ -38,7 +38,7 @@ import {
 } from "@/lib/api/vip";
 import { useInvalidateMembershipScope } from "@/lib/vip-hooks";
 import type { AdminAppUserListParams } from "@/lib/api/apps";
-import type { AdminUserBanCreateInput } from "@/lib/api/types";
+import type { AdminUserBanCreateInput, WalletAdjustBucket } from "@/lib/api/types";
 
 /** 处置动作（封禁 / 撤销）之后要一起失效的所有查询。 */
 const USER_SCOPE_KEYS = [
@@ -149,11 +149,12 @@ export function useAdjustAdminUserWalletMutation(appKey?: Key, userId?: Id) {
   const token = useAdminToken();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { amount: string; reason?: string }) =>
+    mutationFn: (payload: { amount: string; reason?: string; bucket?: WalletAdjustBucket }) =>
       adjustAdminUserWallet(token as string, appKey as string, {
         userId: Number(userId),
         amount: payload.amount,
-        reason: payload.reason
+        reason: payload.reason,
+        bucket: payload.bucket || undefined
       }),
     onSuccess: async () => {
       await Promise.all([

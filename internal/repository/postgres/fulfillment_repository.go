@@ -50,6 +50,10 @@ RETURNING id`,
 
 	switch instr.Purpose {
 	case paymentdomain.PurposeWalletRecharge:
+		// 锁序 users → wallets：附赠积分要锁 users，先锁住再动钱包，与全库其它事务同序
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 AND appid = $2 FOR UPDATE`, userID, order.AppID); err != nil {
+			return false, err
+		}
 		if _, err := applyWalletChangeTx(ctx, tx, walletdomain.Change{
 			UserID:         userID,
 			AppID:          order.AppID,
@@ -60,8 +64,11 @@ RETURNING id`,
 			Title:          "余额充值",
 			Remark:         order.Subject,
 			ClientIP:       order.ClientIP,
-			Metadata:       map[string]any{"paymentMethod": order.PaymentMethod},
+			Metadata:       rechargeMetadata(order, instr),
 		}); err != nil {
+			return false, err
+		}
+		if err := grantRechargeBonusTx(ctx, tx, order, instr, userID); err != nil {
 			return false, err
 		}
 	case paymentdomain.PurposeVipPurchase:
@@ -226,3 +233,42 @@ WHERE status = 'pending' AND expire_at IS NOT NULL AND expire_at < NOW()`)
 	return result.RowsAffected(), nil
 }
 
+// rechargeMetadata 充值流水上留档的订单信息（档位名称让流水列表能显示「充 100 送 20」是哪一档）。
+func rechargeMetadata(order *paymentdomain.Order, instr paymentdomain.FulfillmentInstruction) map[string]any {
+	meta := map[string]any{"paymentMethod": order.PaymentMethod}
+	if instr.WalletPackageID > 0 {
+		meta["packageId"] = instr.WalletPackageID
+		meta["packageTitle"] = instr.WalletPackageTitle
+	}
+	return meta
+}
+
+// grantRechargeBonusTx 发放充值档位的附赠：赠送余额（进赠送余额桶）与赠送积分。
+// 幂等键挂在订单号上，与本金入账同事务，要么一起到账要么都不到。
+func grantRechargeBonusTx(ctx context.Context, tx pgx.Tx, order *paymentdomain.Order, instr paymentdomain.FulfillmentInstruction, userID int64) error {
+	meta := map[string]any{"orderNo": order.OrderNo, "packageId": instr.WalletPackageID, "packageTitle": instr.WalletPackageTitle}
+	if instr.WalletBonus.IsPositive() {
+		if _, err := applyWalletChangeTx(ctx, tx, walletdomain.Change{
+			UserID:         userID,
+			AppID:          order.AppID,
+			Type:           walletdomain.TxnTypeRechargeBonus,
+			Amount:         instr.WalletBonus,
+			Bucket:         walletdomain.BucketBonus,
+			RelatedOrderNo: order.OrderNo,
+			IdempotencyKey: "orderbonus:" + order.OrderNo,
+			Title:          "充值赠送",
+			Remark:         instr.WalletPackageTitle,
+			ClientIP:       order.ClientIP,
+			Metadata:       meta,
+		}); err != nil {
+			return err
+		}
+	}
+	if instr.WalletBonusIntegral > 0 {
+		if _, _, _, err := applyIntegralChangeTx(ctx, tx, userID, order.AppID, instr.WalletBonusIntegral,
+			"earn", "wallet_recharge_bonus", "充值赠送积分", instr.WalletPackageTitle, "wallet_recharge", &order.ID, meta); err != nil {
+			return err
+		}
+	}
+	return nil
+}

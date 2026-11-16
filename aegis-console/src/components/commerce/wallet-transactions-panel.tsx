@@ -32,7 +32,14 @@ import {
   type CommerceWindow
 } from "@/lib/commerce-hooks";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
-import { SignedAmount, WalletTypeBadge, formatMoney, formatTime, transactionActor } from "./commerce-format";
+import {
+  SignedAmount,
+  WalletTypeBadge,
+  formatMoney,
+  formatTime,
+  transactionActor,
+  transactionSplitText
+} from "./commerce-format";
 import { WalletAdjustDialog } from "./wallet-adjust-dialog";
 import { ReceiptEmailDialog } from "./receipt-email-dialog";
 import { UserPicker, type PickedUser } from "./user-picker";
@@ -41,7 +48,9 @@ const ALL = "__all__";
 
 const typeOptions = [
   { value: "recharge", label: "余额充值" },
+  { value: "recharge_bonus", label: "充值赠送" },
   { value: "consume", label: "余额消费" },
+  { value: "integral_exchange", label: "兑换积分" },
   { value: "refund", label: "退款入账" },
   { value: "admin_adjust", label: "管理员调整" },
   { value: "vip_purchase", label: "会员开通" },
@@ -311,6 +320,9 @@ export function WalletTransactionsPanel({
                   </TableCell>
                   <TableCell className="text-right text-xs tabular-nums">
                     <SignedAmount value={item.amount} currency={walletCurrency} />
+                    {transactionSplitText(item) ? (
+                      <div className="text-[11px] text-muted-foreground">{transactionSplitText(item)}</div>
+                    ) : null}
                   </TableCell>
                   <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
                     {formatMoney(item.balanceAfter)}

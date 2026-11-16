@@ -114,6 +114,8 @@
   "wallet.type.admin_adjust": "Ajustement manuel du solde",
   "wallet.type.vip_purchase": "Achat d'abonnement",
   "wallet.type.order_pay": "Commande payée par solde",
+  "wallet.type.recharge_bonus": "Bonus de rechargement",
+  "wallet.type.integral_exchange": "Solde échangé contre des points",
   "wallet.direction.in": "Crédit",
   "wallet.direction.out": "Débit",
 

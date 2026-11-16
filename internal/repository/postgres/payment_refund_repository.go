@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -245,6 +246,7 @@ func applyFulfillmentReversalTx(
 			AppID:          order.AppID,
 			Type:           walletdomain.TxnTypeRefund,
 			Amount:         refundAmount.Neg(),
+			Spend:          walletdomain.SpendCashFirst,
 			RelatedOrderNo: order.OrderNo,
 			IdempotencyKey: "refundrev:" + order.OrderNo + ":" + refundAmount.StringFixed(2),
 			Title:          "充值退款冲正",
@@ -253,7 +255,7 @@ func applyFulfillmentReversalTx(
 		}); err != nil {
 			return paymentdomain.ReversalFailed, "扣回充值余额失败：" + err.Error()
 		}
-		return paymentdomain.ReversalDone, ""
+		return reverseRechargeBonusTx(ctx, tx, order, reverse, userID, refundAmount, fullRefund)
 
 	case paymentdomain.PurposeIntegralPurchase:
 		// 部分退款不按比例扣积分：积分可能已被消费，比例回收既难解释也易失败
@@ -394,9 +396,11 @@ func (r *Repository) RefundPaymentOrderToWallet(
 		Amount:         amount,
 		RelatedOrderNo: order.OrderNo,
 		IdempotencyKey: "refund:" + refundNo,
-		Title:          "订单退款",
-		Remark:         order.Subject,
-		Metadata:       map[string]any{"orderNo": order.OrderNo, "refundNo": refundNo},
+		// 余额支付的订单退回余额：按原扣款的拆分退回，赠送余额不会因为退款变成本金
+		Restores: &walletdomain.RestoreRef{OrderNo: order.OrderNo, Type: walletdomain.TxnTypeOrderPay},
+		Title:    "订单退款",
+		Remark:   order.Subject,
+		Metadata: map[string]any{"orderNo": order.OrderNo, "refundNo": refundNo},
 	})
 	if err != nil {
 		return nil, nil, err
@@ -546,4 +550,68 @@ func orderRefundStatus(refunded decimal.Decimal, orderAmount decimal.Decimal) st
 	default:
 		return paymentdomain.OrderRefundPartial
 	}
+}
+
+// reverseRechargeBonusTx 充值退款后回收档位附赠。
+//
+// 本金已经按退款额扣回；附赠的余额按退款比例回收（向下取到分），积分只在全额退款时回收。
+// 两者都是尽力而为：附赠余额可能已被花掉、积分可能已被用掉，回收不足的部分如实写进冲正说明，
+// 不让一笔已经退到渠道的退款因为「送的东西收不回来」整单失败。
+func reverseRechargeBonusTx(ctx context.Context, tx pgx.Tx, order *paymentdomain.Order, reverse *paymentdomain.FulfillmentInstruction,
+	userID int64, refundAmount decimal.Decimal, fullRefund bool) (string, string) {
+	if reverse.WalletPackageID <= 0 || (!reverse.WalletBonus.IsPositive() && reverse.WalletBonusIntegral <= 0) {
+		return paymentdomain.ReversalDone, ""
+	}
+	var notes []string
+	if reverse.WalletBonus.IsPositive() && order.Amount.IsPositive() {
+		want := reverse.WalletBonus
+		if !fullRefund {
+			want = reverse.WalletBonus.Mul(refundAmount).Div(order.Amount).Truncate(2)
+		}
+		w, err := lockWalletTx(ctx, tx, userID, order.AppID)
+		if err != nil {
+			return paymentdomain.ReversalFailed, "读取钱包失败：" + err.Error()
+		}
+		take := decimal.Min(want, w.Balance)
+		if take.IsPositive() {
+			if _, err := applyWalletChangeTx(ctx, tx, walletdomain.Change{
+				UserID: userID, AppID: order.AppID, Type: walletdomain.TxnTypeRechargeBonus, Amount: take.Neg(),
+				RelatedOrderNo: order.OrderNo,
+				IdempotencyKey: "refundbonus:" + order.OrderNo + ":" + refundAmount.StringFixed(2),
+				Title:          "充值赠送回收", Remark: reverse.WalletPackageTitle,
+				Metadata: map[string]any{"reason": "payment_refund", "orderNo": order.OrderNo},
+			}); err != nil {
+				return paymentdomain.ReversalFailed, "回收赠送余额失败：" + err.Error()
+			}
+		}
+		if take.LessThan(want) {
+			notes = append(notes, "赠送余额应回收 "+want.StringFixed(2)+"，余额不足只回收了 "+take.StringFixed(2))
+		}
+	}
+	if reverse.WalletBonusIntegral > 0 {
+		if !fullRefund {
+			notes = append(notes, "部分退款不自动回收赠送积分")
+		} else {
+			var current int64
+			if err := tx.QueryRow(ctx, `SELECT integral FROM users WHERE id = $1 AND appid = $2`, userID, order.AppID).Scan(&current); err != nil {
+				return paymentdomain.ReversalFailed, "读取积分失败：" + err.Error()
+			}
+			take := min(reverse.WalletBonusIntegral, max(current, 0))
+			if take > 0 {
+				if _, _, _, err := applyIntegralChangeTx(ctx, tx, userID, order.AppID, -take,
+					"consume", "wallet_recharge_bonus_refund", "充值退款回收赠送积分", order.Subject, "payment_order", &order.ID,
+					map[string]any{"orderNo": order.OrderNo, "reason": "payment_refund"}); err != nil {
+					return paymentdomain.ReversalFailed, "回收赠送积分失败：" + err.Error()
+				}
+			}
+			if take < reverse.WalletBonusIntegral {
+				notes = append(notes, "赠送积分应回收 "+strconv.FormatInt(reverse.WalletBonusIntegral, 10)+
+					"，积分不足只回收了 "+strconv.FormatInt(take, 10))
+			}
+		}
+	}
+	if len(notes) > 0 {
+		return paymentdomain.ReversalDone, strings.Join(notes, "；")
+	}
+	return paymentdomain.ReversalDone, ""
 }

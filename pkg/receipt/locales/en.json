@@ -114,6 +114,8 @@
   "wallet.type.admin_adjust": "Manual balance adjustment",
   "wallet.type.vip_purchase": "Membership purchase",
   "wallet.type.order_pay": "Order paid with balance",
+  "wallet.type.recharge_bonus": "Top-up bonus",
+  "wallet.type.integral_exchange": "Balance exchanged for points",
   "wallet.direction.in": "Credit",
   "wallet.direction.out": "Debit",
 

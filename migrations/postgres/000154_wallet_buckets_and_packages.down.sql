@@ -1,0 +1,12 @@
+DROP INDEX IF EXISTS idx_payment_orders_wallet_package;
+DROP TABLE IF EXISTS wallet_recharge_packages;
+DROP INDEX IF EXISTS idx_wallet_transactions_restores;
+DROP INDEX IF EXISTS idx_wallet_transactions_user_type_time;
+ALTER TABLE user_wallets DROP CONSTRAINT IF EXISTS ck_user_wallets_frozen_bonus;
+ALTER TABLE user_wallets DROP CONSTRAINT IF EXISTS ck_user_wallets_bonus_balance;
+ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS restores_txn_no;
+ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS bonus_amount;
+ALTER TABLE user_wallets DROP COLUMN IF EXISTS total_exchanged;
+ALTER TABLE user_wallets DROP COLUMN IF EXISTS total_bonus;
+ALTER TABLE user_wallets DROP COLUMN IF EXISTS frozen_bonus;
+ALTER TABLE user_wallets DROP COLUMN IF EXISTS bonus_balance;

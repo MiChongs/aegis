@@ -18,15 +18,25 @@ import (
 // ErrInsufficientBalance 钱包余额不足
 var ErrInsufficientBalance = errors.New("postgres: insufficient wallet balance")
 
+// ErrInsufficientCashBalance 充值余额（本金）不足：只扣本金的出账（兑换积分、管理员按桶扣减）
+var ErrInsufficientCashBalance = errors.New("postgres: insufficient wallet cash balance")
+
+// ErrInsufficientBonusBalance 赠送余额不足：管理员指定只从赠送余额扣减
+var ErrInsufficientBonusBalance = errors.New("postgres: insufficient wallet bonus balance")
+
 const walletTxnColumns = `id, transaction_no, user_id, appid, type, amount, balance_before, balance_after,
 COALESCE(related_order_no, ''), COALESCE(idempotency_key, ''), title, COALESCE(remark, ''),
-COALESCE(operator, ''), COALESCE(client_ip, ''), COALESCE(metadata, '{}'::jsonb), created_at`
+COALESCE(operator, ''), COALESCE(client_ip, ''), COALESCE(metadata, '{}'::jsonb), created_at,
+bonus_amount, COALESCE(restores_txn_no, '')`
+
+// walletColumns user_wallets 的读取列，顺序与 scanWallet 一致。
+const walletColumns = `user_id, appid, balance, frozen, total_recharged, total_consumed, created_at, updated_at,
+bonus_balance, frozen_bonus, total_bonus, total_exchanged`
 
 // GetWalletByUser 查询用户钱包；从未发生过余额变动时返回零值钱包（不落库）
 func (r *Repository) GetWalletByUser(ctx context.Context, userID int64, appID int64) (*walletdomain.Wallet, error) {
 	w, err := scanWallet(r.pool.QueryRow(ctx,
-		`SELECT user_id, appid, balance, frozen, total_recharged, total_consumed, created_at, updated_at
-FROM user_wallets WHERE user_id = $1 AND appid = $2 LIMIT 1`, userID, appID))
+		`SELECT `+walletColumns+` FROM user_wallets WHERE user_id = $1 AND appid = $2 LIMIT 1`, userID, appID))
 	if err != nil {
 		return nil, err
 	}
@@ -40,8 +50,10 @@ FROM user_wallets WHERE user_id = $1 AND appid = $2 LIMIT 1`, userID, appID))
 			return nil, ErrUserNotFound
 		}
 		return &walletdomain.Wallet{UserID: userID, AppID: appID,
-			Balance: decimal.Zero, Frozen: decimal.Zero,
-			TotalRecharged: decimal.Zero, TotalConsumed: decimal.Zero}, nil
+			Balance: decimal.Zero, CashBalance: decimal.Zero, BonusBalance: decimal.Zero,
+			Frozen: decimal.Zero, FrozenBonus: decimal.Zero,
+			TotalRecharged: decimal.Zero, TotalConsumed: decimal.Zero,
+			TotalBonus: decimal.Zero, TotalExchanged: decimal.Zero}, nil
 	}
 	return w, nil
 }
@@ -73,33 +85,16 @@ func (r *Repository) ApplyWalletChange(ctx context.Context, change walletdomain.
 //  1. 惰性建钱包（仅当用户存在且属于该应用）
 //  2. SELECT ... FOR UPDATE 锁定钱包行（同一用户的所有变更串行化）
 //  3. 幂等检查：idempotency_key 已存在则原样返回首次流水，不重复入账
-//  4. 余额校验（出账不允许为负）→ 更新余额与累计值 → 写入流水
+//  4. 按桶分配（walletdomain.Allocate）：入账落本金还是赠送余额、出账先扣哪一桶，
+//     不够则拒绝 → 更新余额、赠送余额与累计值 → 写入流水（记下赠送余额上的那一份）
 func applyWalletChangeTx(ctx context.Context, tx pgx.Tx, change walletdomain.Change) (*walletdomain.ChangeResult, error) {
 	if change.Amount.IsZero() {
 		return nil, fmt.Errorf("wallet change amount cannot be zero")
 	}
-	// 惰性建行：用户校验与建行合一，FK + appid 匹配双保险
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO user_wallets (user_id, appid) SELECT id, appid FROM users WHERE id = $1 AND appid = $2
-ON CONFLICT (user_id) DO NOTHING`, change.UserID, change.AppID); err != nil {
-		return nil, err
-	}
-	var w walletdomain.Wallet
-	var balance, frozen, recharged, consumed string
-	err := tx.QueryRow(ctx,
-		`SELECT user_id, appid, balance, frozen, total_recharged, total_consumed, created_at, updated_at
-FROM user_wallets WHERE user_id = $1 AND appid = $2 FOR UPDATE`, change.UserID, change.AppID).
-		Scan(&w.UserID, &w.AppID, &balance, &frozen, &recharged, &consumed, &w.CreatedAt, &w.UpdatedAt)
+	w, err := lockWalletTx(ctx, tx, change.UserID, change.AppID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, ErrUserNotFound
-		}
 		return nil, err
 	}
-	w.Balance = decimal.RequireFromString(balance)
-	w.Frozen = decimal.RequireFromString(frozen)
-	w.TotalRecharged = decimal.RequireFromString(recharged)
-	w.TotalConsumed = decimal.RequireFromString(consumed)
 
 	// 幂等命中：钱包行已锁定，此检查与插入之间不存在并发窗口
 	idemKey := strings.TrimSpace(change.IdempotencyKey)
@@ -110,43 +105,80 @@ FROM user_wallets WHERE user_id = $1 AND appid = $2 FOR UPDATE`, change.UserID, 
 			return nil, err
 		}
 		if existing != nil {
-			return &walletdomain.ChangeResult{Transaction: *existing, Wallet: w, Replayed: true}, nil
+			return &walletdomain.ChangeResult{Transaction: *existing, Wallet: *w, Replayed: true}, nil
+		}
+	}
+
+	// 退回：找到原出账，算出它扣掉的赠送余额还剩多少没退回
+	var restorable *decimal.Decimal
+	restoresNo := ""
+	if change.Amount.IsPositive() && change.Restores != nil {
+		origNo, remaining, err := restorableBonusTx(ctx, tx, change.UserID, change.AppID, *change.Restores)
+		if err != nil {
+			return nil, err
+		}
+		if origNo != "" {
+			restoresNo = origNo
+			restorable = &remaining
+		}
+	}
+
+	alloc, err := walletdomain.Allocate(w.Balance, w.BonusBalance, change, restorable)
+	if err != nil {
+		switch {
+		case errors.Is(err, walletdomain.ErrInsufficientCash):
+			return nil, ErrInsufficientCashBalance
+		case errors.Is(err, walletdomain.ErrInsufficientBonus):
+			return nil, ErrInsufficientBonusBalance
+		default:
+			return nil, ErrInsufficientBalance
 		}
 	}
 
 	before := w.Balance
 	after := before.Add(change.Amount)
-	if after.IsNegative() {
-		return nil, ErrInsufficientBalance
-	}
+	bonusAfter := w.BonusBalance.Add(alloc.Bonus)
 
-	// 累计值：入账计入 total_recharged（仅充值/退款类），出账计入 total_consumed
-	addRecharged := decimal.Zero
-	addConsumed := decimal.Zero
+	// 累计值：充值 / 退款入账计入 total_recharged；兑换积分计入 total_exchanged，
+	// 其余出账计入 total_consumed；非退回的赠送入账计入 total_bonus。
+	addRecharged, addConsumed, addExchanged, addBonus := decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero
 	if change.Amount.IsPositive() {
 		if change.Type == walletdomain.TxnTypeRecharge || change.Type == walletdomain.TxnTypeRefund {
 			addRecharged = change.Amount
 		}
+		if restoresNo == "" {
+			addBonus = alloc.Bonus
+		}
+	} else if change.Type == walletdomain.TxnTypeIntegralExchange {
+		addExchanged = change.Amount.Neg()
 	} else {
 		addConsumed = change.Amount.Neg()
 	}
 	if _, err := tx.Exec(ctx,
-		`UPDATE user_wallets SET balance = $3, total_recharged = total_recharged + $4,
-total_consumed = total_consumed + $5, updated_at = NOW() WHERE user_id = $1 AND appid = $2`,
-		change.UserID, change.AppID, after.StringFixed(2), addRecharged.StringFixed(2), addConsumed.StringFixed(2)); err != nil {
+		`UPDATE user_wallets SET balance = $3, bonus_balance = $4, total_recharged = total_recharged + $5,
+total_consumed = total_consumed + $6, total_exchanged = total_exchanged + $7, total_bonus = total_bonus + $8,
+updated_at = NOW() WHERE user_id = $1 AND appid = $2`,
+		change.UserID, change.AppID, after.StringFixed(2), bonusAfter.StringFixed(2), addRecharged.StringFixed(2),
+		addConsumed.StringFixed(2), addExchanged.StringFixed(2), addBonus.StringFixed(2)); err != nil {
 		return nil, err
 	}
 
 	metaJSON, _ := json.Marshal(change.Metadata)
+	if change.Metadata == nil {
+		metaJSON = []byte("{}")
+	}
 	txn := walletdomain.Transaction{
 		TransactionNo:  generateTransactionNo("WAL"),
 		UserID:         change.UserID,
 		AppID:          change.AppID,
 		Type:           change.Type,
 		Amount:         change.Amount,
+		CashAmount:     alloc.Cash,
+		BonusAmount:    alloc.Bonus,
 		BalanceBefore:  before,
 		BalanceAfter:   after,
 		RelatedOrderNo: strings.TrimSpace(change.RelatedOrderNo),
+		RestoresTxnNo:  restoresNo,
 		IdempotencyKey: idemKey,
 		Title:          change.Title,
 		Remark:         change.Remark,
@@ -156,21 +188,83 @@ total_consumed = total_consumed + $5, updated_at = NOW() WHERE user_id = $1 AND 
 	}
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO wallet_transactions (transaction_no, user_id, appid, type, amount, balance_before, balance_after,
-related_order_no, idempotency_key, title, remark, operator, client_ip, metadata, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+related_order_no, idempotency_key, title, remark, operator, client_ip, metadata, bonus_amount, restores_txn_no, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
 RETURNING id, created_at`,
 		txn.TransactionNo, txn.UserID, txn.AppID, txn.Type,
 		txn.Amount.StringFixed(2), before.StringFixed(2), after.StringFixed(2),
 		nullableString(txn.RelatedOrderNo), nullableString(idemKey),
-		txn.Title, nullableString(txn.Remark), nullableString(txn.Operator), nullableString(txn.ClientIP), metaJSON).
+		txn.Title, nullableString(txn.Remark), nullableString(txn.Operator), nullableString(txn.ClientIP), metaJSON,
+		alloc.Bonus.StringFixed(2), nullableString(restoresNo)).
 		Scan(&txn.ID, &txn.CreatedAt); err != nil {
 		return nil, err
 	}
 
 	w.Balance = after
+	w.BonusBalance = bonusAfter
 	w.TotalRecharged = w.TotalRecharged.Add(addRecharged)
 	w.TotalConsumed = w.TotalConsumed.Add(addConsumed)
-	return &walletdomain.ChangeResult{Transaction: txn, Wallet: w}, nil
+	w.TotalExchanged = w.TotalExchanged.Add(addExchanged)
+	w.TotalBonus = w.TotalBonus.Add(addBonus)
+	w.Normalize()
+	return &walletdomain.ChangeResult{Transaction: txn, Wallet: *w}, nil
+}
+
+// lockWalletTx 惰性建行并锁定钱包行（用户校验与建行合一，FK + appid 匹配双保险）。
+func lockWalletTx(ctx context.Context, tx pgx.Tx, userID, appID int64) (*walletdomain.Wallet, error) {
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO user_wallets (user_id, appid) SELECT id, appid FROM users WHERE id = $1 AND appid = $2
+ON CONFLICT (user_id) DO NOTHING`, userID, appID); err != nil {
+		return nil, err
+	}
+	w, err := scanWallet(tx.QueryRow(ctx,
+		`SELECT `+walletColumns+` FROM user_wallets WHERE user_id = $1 AND appid = $2 FOR UPDATE`, userID, appID))
+	if err != nil {
+		return nil, err
+	}
+	if w == nil {
+		return nil, ErrUserNotFound
+	}
+	return w, nil
+}
+
+// restorableBonusTx 定位被退回的原出账，返回其流水号与「扣掉的赠送余额里还没退回的部分」。
+// 找不到原出账返回空流水号，调用方按入账类型的默认桶处理。
+func restorableBonusTx(ctx context.Context, tx pgx.Tx, userID, appID int64, ref walletdomain.RestoreRef) (string, decimal.Decimal, error) {
+	var query string
+	args := []any{userID, appID}
+	switch {
+	case strings.TrimSpace(ref.TransactionNo) != "":
+		query = `transaction_no = $3`
+		args = append(args, strings.TrimSpace(ref.TransactionNo))
+	case strings.TrimSpace(ref.IdempotencyKey) != "":
+		query = `idempotency_key = $3`
+		args = append(args, strings.TrimSpace(ref.IdempotencyKey))
+	case strings.TrimSpace(ref.OrderNo) != "" && ref.Type != "":
+		query = `related_order_no = $3 AND type = $4`
+		args = append(args, strings.TrimSpace(ref.OrderNo), ref.Type)
+	default:
+		return "", decimal.Zero, nil
+	}
+	var txnNo, spent string
+	err := tx.QueryRow(ctx,
+		`SELECT transaction_no, (-bonus_amount)::text FROM wallet_transactions
+WHERE user_id = $1 AND appid = $2 AND amount < 0 AND `+query+` ORDER BY id LIMIT 1`, args...).
+		Scan(&txnNo, &spent)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", decimal.Zero, nil
+	}
+	if err != nil {
+		return "", decimal.Zero, err
+	}
+	var restored string
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(SUM(bonus_amount), 0)::text FROM wallet_transactions
+WHERE restores_txn_no = $1 AND amount > 0`, txnNo).Scan(&restored); err != nil {
+		return "", decimal.Zero, err
+	}
+	remaining := decimal.RequireFromString(spent).Sub(decimal.RequireFromString(restored))
+	return txnNo, decimal.Max(remaining, decimal.Zero), nil
 }
 
 // ListWalletTransactions 分页查询钱包流水
@@ -183,9 +277,9 @@ func (r *Repository) ListWalletTransactions(ctx context.Context, userID int64, a
 	}
 	args := []any{userID, appID}
 	where := ` WHERE user_id = $1 AND appid = $2`
-	if txnType = strings.TrimSpace(txnType); txnType != "" {
-		args = append(args, txnType)
-		where += fmt.Sprintf(" AND type = $%d", len(args))
+	if types := splitWalletTypes(txnType); len(types) > 0 {
+		args = append(args, types)
+		where += fmt.Sprintf(" AND type = ANY($%d)", len(args))
 	}
 	var total int64
 	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM wallet_transactions`+where, args...).Scan(&total); err != nil {
@@ -238,7 +332,7 @@ WHERE appid = $1 AND user_id = $2 AND transaction_no = $3 LIMIT 1`,
 const walletTxnColumnsAliased = `wt.id, wt.transaction_no, wt.user_id, wt.appid, wt.type, wt.amount,
 wt.balance_before, wt.balance_after, COALESCE(wt.related_order_no, ''), COALESCE(wt.idempotency_key, ''),
 wt.title, COALESCE(wt.remark, ''), COALESCE(wt.operator, ''), COALESCE(wt.client_ip, ''),
-COALESCE(wt.metadata, '{}'::jsonb), wt.created_at`
+COALESCE(wt.metadata, '{}'::jsonb), wt.created_at, wt.bonus_amount, COALESCE(wt.restores_txn_no, '')`
 
 // walletAdminWhere 拼出管理端流水查询的过滤条件与参数。
 // 计数与取数必须用同一份条件，因此单独成函数 —— 两处各拼一遍，
@@ -250,9 +344,9 @@ func walletAdminWhere(appID int64, query walletdomain.AdminListQuery) (string, [
 		args = append(args, query.UserID)
 		where += fmt.Sprintf(" AND wt.user_id = $%d", len(args))
 	}
-	if txnType := strings.TrimSpace(query.Type); txnType != "" {
-		args = append(args, txnType)
-		where += fmt.Sprintf(" AND wt.type = $%d", len(args))
+	if types := splitWalletTypes(query.Type); len(types) > 0 {
+		args = append(args, types)
+		where += fmt.Sprintf(" AND wt.type = ANY($%d)", len(args))
 	}
 	switch strings.TrimSpace(query.Direction) {
 	case walletdomain.DirectionIn:
@@ -376,26 +470,46 @@ COUNT(*), COUNT(DISTINCT user_id) FROM wallet_transactions`+where, args...).
 
 func scanWallet(row interface{ Scan(dest ...any) error }) (*walletdomain.Wallet, error) {
 	var w walletdomain.Wallet
-	var balance, frozen, recharged, consumed string
-	if err := row.Scan(&w.UserID, &w.AppID, &balance, &frozen, &recharged, &consumed, &w.CreatedAt, &w.UpdatedAt); err != nil {
+	var balance, frozen, recharged, consumed, bonus, frozenBonus, totalBonus, exchanged string
+	if err := row.Scan(&w.UserID, &w.AppID, &balance, &frozen, &recharged, &consumed, &w.CreatedAt, &w.UpdatedAt,
+		&bonus, &frozenBonus, &totalBonus, &exchanged); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	w.Balance = decimal.RequireFromString(balance)
 	w.Frozen = decimal.RequireFromString(frozen)
 	w.TotalRecharged = decimal.RequireFromString(recharged)
 	w.TotalConsumed = decimal.RequireFromString(consumed)
+	w.BonusBalance = decimal.RequireFromString(bonus)
+	w.FrozenBonus = decimal.RequireFromString(frozenBonus)
+	w.TotalBonus = decimal.RequireFromString(totalBonus)
+	w.TotalExchanged = decimal.RequireFromString(exchanged)
+	w.Normalize()
 	return &w, nil
+}
+
+// splitWalletTypes 流水类型筛选：支持逗号分隔多个类型（钱包页「赠送」一栏是好几种入账）。
+func splitWalletTypes(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" && len(out) < 20 {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func scanWalletTxn(row interface{ Scan(dest ...any) error }) (*walletdomain.Transaction, error) {
 	var t walletdomain.Transaction
-	var amount, before, after string
+	var amount, before, after, bonus string
 	var meta []byte
 	if err := row.Scan(&t.ID, &t.TransactionNo, &t.UserID, &t.AppID, &t.Type, &amount, &before, &after,
-		&t.RelatedOrderNo, &t.IdempotencyKey, &t.Title, &t.Remark, &t.Operator, &t.ClientIP, &meta, &t.CreatedAt); err != nil {
+		&t.RelatedOrderNo, &t.IdempotencyKey, &t.Title, &t.Remark, &t.Operator, &t.ClientIP, &meta, &t.CreatedAt,
+		&bonus, &t.RestoresTxnNo); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	t.Amount = decimal.RequireFromString(amount)
+	t.BonusAmount = decimal.RequireFromString(bonus)
+	t.CashAmount = t.Amount.Sub(t.BonusAmount)
 	t.BalanceBefore = decimal.RequireFromString(before)
 	t.BalanceAfter = decimal.RequireFromString(after)
 	_ = json.Unmarshal(meta, &t.Metadata)
@@ -406,15 +520,17 @@ func scanWalletTxn(row interface{ Scan(dest ...any) error }) (*walletdomain.Tran
 // walletTxnColumnsAliased + 两个 COALESCE 一一对应。
 func scanAdminWalletTxn(row interface{ Scan(dest ...any) error }) (*walletdomain.AdminTransactionItem, error) {
 	var item walletdomain.AdminTransactionItem
-	var amount, before, after string
+	var amount, before, after, bonus string
 	var meta []byte
 	if err := row.Scan(&item.ID, &item.TransactionNo, &item.UserID, &item.AppID, &item.Type,
 		&amount, &before, &after, &item.RelatedOrderNo, &item.IdempotencyKey, &item.Title,
-		&item.Remark, &item.Operator, &item.ClientIP, &meta, &item.CreatedAt,
+		&item.Remark, &item.Operator, &item.ClientIP, &meta, &item.CreatedAt, &bonus, &item.RestoresTxnNo,
 		&item.Account, &item.Nickname); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	item.Amount = decimal.RequireFromString(amount)
+	item.BonusAmount = decimal.RequireFromString(bonus)
+	item.CashAmount = item.Amount.Sub(item.BonusAmount)
 	item.BalanceBefore = decimal.RequireFromString(before)
 	item.BalanceAfter = decimal.RequireFromString(after)
 	_ = json.Unmarshal(meta, &item.Metadata)

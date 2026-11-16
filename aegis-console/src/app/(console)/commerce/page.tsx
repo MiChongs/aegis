@@ -2,7 +2,7 @@
 
 import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { BarChart3, Crown, Receipt, Undo2, Wallet } from "lucide-react";
+import { BarChart3, Crown, Receipt, Settings2, Undo2, Wallet } from "lucide-react";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,6 +14,7 @@ import {
 } from "@/components/commerce/commerce-range-picker";
 import { ReceiptLocaleSelect } from "@/components/commerce/receipt-locale-select";
 import { VipTransactionsPanel } from "@/components/commerce/vip-transactions-panel";
+import { WalletConfigPanel } from "@/components/commerce/wallet-config-panel";
 import { WalletTransactionsPanel } from "@/components/commerce/wallet-transactions-panel";
 import { PaymentOrdersPanel } from "@/components/payment/payment-orders-panel";
 import { PaymentRefundsPanel } from "@/components/payment/payment-refunds-panel";
@@ -33,10 +34,14 @@ import { useAppScopeStore } from "@/lib/app-scope-store";
  *   - 余额直购会员、业务消费、管理员调账**不产生订单**，只在钱包流水里；
  *   - 退款是反向资金流，不看它算出来的实收永远偏高。
  *
+ * 例外是「钱包设置」页签（充值开关、自定义金额范围、兑换额度、充值档位）：
+ * 它们只作用于钱包，与流水放在一起便于对照档位销量调整配置；
+ * 兑换比例与币种仍在应用「支付」的「交易设置」里，这里只读展示。
+ *
  * 时间窗与凭证语言提到页面级：它们对每个页签都成立，放到各面板里
- * 会让人在切页签时反复设置同一件事。
+ * 会让人在切页签时反复设置同一件事（「钱包设置」页签不受时间窗影响）。
  */
-const TABS = ["overview", "orders", "refunds", "wallet", "vip"] as const;
+const TABS = ["overview", "orders", "refunds", "wallet", "wallet-config", "vip"] as const;
 type CommerceTab = (typeof TABS)[number];
 
 function resolveTab(value?: string | null): CommerceTab {
@@ -124,6 +129,10 @@ function CommercePageInner() {
             <Wallet className="size-3.5" />
             钱包流水
           </TabsTrigger>
+          <TabsTrigger value="wallet-config">
+            <Settings2 className="size-3.5" />
+            钱包设置
+          </TabsTrigger>
           <TabsTrigger value="vip">
             <Crown className="size-3.5" />
             会员
@@ -157,6 +166,9 @@ function CommercePageInner() {
             receiptLocaleLabel={receiptLocaleLabel}
             walletCurrency={walletCurrency}
           />
+        </TabsContent>
+        <TabsContent value="wallet-config" className="pt-4">
+          <WalletConfigPanel appKey={appKey} walletCurrency={walletCurrency} />
         </TabsContent>
         <TabsContent value="vip" className="pt-4">
           <VipTransactionsPanel appId={appId} />

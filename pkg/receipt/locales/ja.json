@@ -115,6 +115,8 @@
   "wallet.type.admin_adjust": "管理者による残高調整",
   "wallet.type.vip_purchase": "会員登録",
   "wallet.type.order_pay": "残高による注文決済",
+  "wallet.type.recharge_bonus": "チャージ特典",
+  "wallet.type.integral_exchange": "残高をポイントに交換",
   "wallet.direction.in": "入金",
   "wallet.direction.out": "出金",
 

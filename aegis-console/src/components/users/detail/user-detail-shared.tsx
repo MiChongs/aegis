@@ -385,6 +385,8 @@ export function BanStatusBadge({ status }: { status?: string }) {
 
 export const WALLET_TXN_LABEL: Record<string, string> = {
   recharge: "充值",
+  recharge_bonus: "充值赠送",
+  integral_exchange: "兑换积分",
   consume: "消费",
   refund: "退款",
   admin_adjust: "管理员调整",
@@ -394,6 +396,7 @@ export const WALLET_TXN_LABEL: Record<string, string> = {
   points_exchange: "积分兑换",
   invite: "邀请奖励",
   leaderboard: "排行榜奖励",
+  item_grant: "物品发放",
   ai_refund: "AI 调用退款"
 };
 
@@ -599,4 +602,28 @@ export function deriveUserSignals(
  */
 export function hasWallet(wallet: UserWallet | undefined | null) {
   return Boolean(wallet && typeof wallet.balance === "string");
+}
+
+function isZeroAmount(value?: string | null) {
+  return !value || /^[+-]?0*(\.0*)?$/.test(value.trim());
+}
+
+/**
+ * 余额的两桶拆分「充值 ¥x / 赠送 ¥y」（docs/wallet.md）。
+ * 本金与赠送余额由后端分别下发，前端不做减法；字段缺失（旧后端）时返回 null。
+ */
+export function walletSplitLabel(wallet?: UserWallet | null) {
+  if (!wallet || wallet.cashBalance == null || wallet.bonusBalance == null) return null;
+  return `充值 ¥${formatMoney(wallet.cashBalance)} / 赠送 ¥${formatMoney(wallet.bonusBalance)}`;
+}
+
+/**
+ * 一笔流水在两桶上的拆分：只动本金不标注，只动赠送余额标「赠送余额」，两桶都动写「充值 ¥x / 赠送 ¥y」。
+ * 符号由主金额表达，这里只写绝对值；字段缺失时返回 null。
+ */
+export function txnSplitLabel(row: { cashAmount?: string; bonusAmount?: string }) {
+  if (row.bonusAmount == null || isZeroAmount(row.bonusAmount)) return null;
+  if (isZeroAmount(row.cashAmount)) return "赠送余额";
+  const abs = (value?: string) => formatMoney((value ?? "0").trim().replace(/^[+-]/, ""));
+  return `充值 ¥${abs(row.cashAmount)} / 赠送 ¥${abs(row.bonusAmount)}`;
 }

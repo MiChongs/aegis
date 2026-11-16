@@ -100,12 +100,16 @@ var integralCategories = []CategoryRule{
 	{Category: "invite", Label: "邀请奖励", Rule: CategoryCounted},
 	{Category: "vip_bonus", Label: "会员套餐赠送", Rule: CategoryCounted},
 	{Category: "purchase", Label: "积分充值", Rule: CategoryCounted},
+	// 钱包：充值余额兑换积分与在线直购积分同价同性质；充值档位附赠的积分与会员套餐赠送同性质
+	{Category: "wallet_exchange", Label: "余额兑换积分", Rule: CategoryCounted},
+	{Category: "wallet_recharge_bonus", Label: "充值赠送积分", Rule: CategoryCounted},
 	// 抽奖：抽中的积分计入；积分抽奖的消耗是扣减，天然不进周期榜
 	{Category: "lottery", Label: "抽奖", Rule: CategoryCounted},
 	{Category: CategoryAdminAdjust, Label: "管理员调整", Rule: CategoryAdmin},
 	{Category: "points_store", Label: "积分兑换（扣减）", Rule: CategoryExcluded},
 	{Category: "points_store_refund", Label: "积分兑换取消退回", Rule: CategoryExcluded},
 	{Category: "refund", Label: "订单退款回收（扣减）", Rule: CategoryExcluded},
+	{Category: "wallet_recharge_bonus_refund", Label: "充值退款回收赠送积分（扣减）", Rule: CategoryExcluded},
 	{Category: IntegralCategory, Label: "排行榜奖励", Rule: CategoryExcluded},
 	// AI 中转网关：调用扣积分是扣减；管理员退款是把扣掉的还回去，不是「获得」
 	{Category: "ai_gateway", Label: "AI 调用（扣减）", Rule: CategoryExcluded},

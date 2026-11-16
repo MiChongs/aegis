@@ -26,6 +26,8 @@ type WalletService struct {
 	// payments 凭证引擎的持有者。nil 表示未接入，流水上就不带凭证入口 ——
 	// 而不是给出一个点了会 500 的按钮。
 	payments *PaymentService
+	// apps 读写应用设置（钱包设置存在应用 settings 里）；nil 时直读数据库、不能保存设置
+	apps *AppService
 }
 
 func NewWalletService(log *zap.Logger, pg *pgrepo.Repository) *WalletService {
@@ -184,7 +186,11 @@ func (s *WalletService) attachReceiptEntry(ctx context.Context, session *authdom
 }
 
 // AdminAdjust 管理员调整余额（正数充入 / 负数扣减），用于人工补偿、退款等场景
-func (s *WalletService) AdminAdjust(ctx context.Context, userID int64, appID int64, amount decimal.Decimal, reason string, operator string, clientIP string) (*walletdomain.ChangeResult, error) {
+//
+// bucket 指定落在哪一桶：cash（充值余额）/ bonus（赠送余额）/ 空。
+// 空时入账进赠送余额（人工发的钱默认不能兑积分），扣减先扣赠送余额。
+// 指定 cash 的入账就是「人工补一笔充值」（如线下收款），能兑积分；指定桶的扣减只扣那一桶，不够就拒绝。
+func (s *WalletService) AdminAdjust(ctx context.Context, userID int64, appID int64, amount decimal.Decimal, bucket string, reason string, operator string, clientIP string) (*walletdomain.ChangeResult, error) {
 	if userID <= 0 || appID <= 0 {
 		return nil, apperrors.New(40000, http.StatusBadRequest, "用户ID与应用ID不能为空")
 	}
@@ -193,6 +199,17 @@ func (s *WalletService) AdminAdjust(ctx context.Context, userID int64, appID int
 	}
 	if err := validateAdjustAmount(amount); err != nil {
 		return nil, err
+	}
+	bucket = strings.TrimSpace(bucket)
+	spend := walletdomain.SpendBonusFirst
+	switch bucket {
+	case "":
+	case walletdomain.BucketCash:
+		spend = walletdomain.SpendCashOnly
+	case walletdomain.BucketBonus:
+		spend = walletdomain.SpendBonusOnly
+	default:
+		return nil, apperrors.New(40000, http.StatusBadRequest, "bucket 只能是 cash 或 bonus")
 	}
 	title := "管理员余额调整"
 	if strings.TrimSpace(reason) == "" {
@@ -203,6 +220,8 @@ func (s *WalletService) AdminAdjust(ctx context.Context, userID int64, appID int
 		AppID:    appID,
 		Type:     walletdomain.TxnTypeAdminAdjust,
 		Amount:   amount,
+		Bucket:   bucket,
+		Spend:    spend,
 		Title:    title,
 		Remark:   strings.TrimSpace(reason),
 		Operator: operator,
@@ -270,6 +289,10 @@ func (s *WalletService) translateWalletError(result *walletdomain.ChangeResult, 
 	switch {
 	case errors.Is(err, pgrepo.ErrInsufficientBalance):
 		return nil, apperrors.New(40083, http.StatusBadRequest, "余额不足")
+	case errors.Is(err, pgrepo.ErrInsufficientCashBalance):
+		return nil, apperrors.New(errCodeWalletCashInsufficient, http.StatusBadRequest, "可兑换的充值余额不足（赠送余额不能兑换）")
+	case errors.Is(err, pgrepo.ErrInsufficientBonusBalance):
+		return nil, apperrors.New(errCodeWalletBonusInsuffic, http.StatusBadRequest, "赠送余额不足")
 	case errors.Is(err, pgrepo.ErrUserNotFound):
 		return nil, apperrors.New(40401, http.StatusNotFound, "用户不存在")
 	case isNumericOverflow(err):

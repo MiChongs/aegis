@@ -1,9 +1,15 @@
 import { ApiError, apiRequest, buildQuery, joinApiUrl } from "./client";
 import type {
+  AdminWalletPackage,
   AdminWalletTransactionList,
   CommerceOverview,
   PaymentReceiptCapability,
   PaymentReceiptEmailResult,
+  WalletAdjustBucket,
+  WalletPackage,
+  WalletPackagePayload,
+  WalletSettings,
+  WalletSettingsView,
   WalletStats
 } from "./types";
 
@@ -54,15 +60,73 @@ export function getAdminWalletStats(
   return apiRequest<WalletStats>(`${app(appKey)}/wallet/stats${buildQuery(params)}`, { token });
 }
 
+/** bucket：cash 充值余额 / bonus 赠送余额 / 不传即默认（入账进赠送余额、扣减先扣赠送余额） */
 export function adjustAdminWallet(
   token: string,
   appKey: string | number,
-  payload: { userId: number; amount: string; reason?: string }
+  payload: { userId: number; amount: string; reason?: string; bucket?: WalletAdjustBucket }
 ) {
   return apiRequest<unknown>(`${app(appKey)}/wallet/adjust`, {
     method: "POST",
     token,
     body: JSON.stringify(payload)
+  });
+}
+
+// ── 钱包设置与充值档位（docs/wallet.md）──
+//
+// 读走 app:wallet:read，写走 app:wallet:config。
+
+export function getWalletSettings(token: string, appKey: string | number) {
+  return apiRequest<WalletSettingsView>(`${app(appKey)}/wallet/settings`, { token });
+}
+
+/** 全量覆盖：九个字段整体提交（rate、currency 只读，不提交） */
+export function updateWalletSettings(token: string, appKey: string | number, payload: WalletSettings) {
+  return apiRequest<WalletSettingsView>(`${app(appKey)}/wallet/settings`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function listWalletPackages(token: string, appKey: string | number) {
+  const data = await apiRequest<{ items?: AdminWalletPackage[] | null }>(`${app(appKey)}/wallet/packages`, { token });
+  return data.items ?? [];
+}
+
+export function createWalletPackage(token: string, appKey: string | number, payload: WalletPackagePayload) {
+  return apiRequest<WalletPackage>(`${app(appKey)}/wallet/packages`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateWalletPackage(
+  token: string,
+  appKey: string | number,
+  packageId: number,
+  payload: WalletPackagePayload
+) {
+  return apiRequest<WalletPackage>(`${app(appKey)}/wallet/packages/${packageId}`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+/** 删除档位；已下的订单按快照履约，不受影响 */
+export function deleteWalletPackage(token: string, appKey: string | number, packageId: number) {
+  return apiRequest<{ id: number }>(`${app(appKey)}/wallet/packages/${packageId}`, { method: "DELETE", token });
+}
+
+/** 按 ids 的先后重写排序 */
+export function reorderWalletPackages(token: string, appKey: string | number, ids: number[]) {
+  return apiRequest<{ ids: number[] }>(`${app(appKey)}/wallet/packages-order`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify({ ids })
   });
 }
 

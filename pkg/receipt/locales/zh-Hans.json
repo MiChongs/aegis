@@ -115,6 +115,8 @@
   "wallet.type.admin_adjust": "管理员余额调整",
   "wallet.type.vip_purchase": "会员开通",
   "wallet.type.order_pay": "余额支付订单",
+  "wallet.type.recharge_bonus": "充值赠送",
+  "wallet.type.integral_exchange": "余额兑换积分",
   "wallet.direction.in": "入账",
   "wallet.direction.out": "出账",
 

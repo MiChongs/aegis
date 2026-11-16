@@ -344,8 +344,12 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/vip/tiers"):                                                             AdminVipTierRequest{},                    // AdminSaveAppVipTier
 		routeKey("POST", "/api/admin/apps/{appkey}/vip/trial/claims"):                                                      AdminVipTrialClaimRequest{},              // AdminClaimAppVipTrial
 		routeKey("POST", "/api/admin/apps/{appkey}/wallet/adjust"):                                                         AdminWalletAdjustRequest{},               // AdminAdjustAppUserWallet
+		routeKey("POST", "/api/admin/apps/{appkey}/wallet/packages"):                                                       AdminWalletPackageRequest{},              // CreateAdminAppWalletPackage
+		routeKey("PUT", "/api/admin/apps/{appkey}/wallet/packages-order"):                                                  AdminWalletPackageOrderRequest{},         // ReorderAdminAppWalletPackages
+		routeKey("PUT", "/api/admin/apps/{appkey}/wallet/packages/{packageId}"):                                            AdminWalletPackageRequest{},              // UpdateAdminAppWalletPackage
 		routeKey("POST", "/api/admin/apps/{appkey}/wallet/receipt"):                                                        AdminWalletReceiptRequest{},              // AdminAppWalletReceipt
 		routeKey("POST", "/api/admin/apps/{appkey}/wallet/receipt/email"):                                                  AdminWalletReceiptEmailRequest{},         // AdminAppWalletReceiptEmail
+		routeKey("PUT", "/api/admin/apps/{appkey}/wallet/settings"):                                                        AdminWalletSettingsRequest{},             // UpdateAdminAppWalletSettings
 		routeKey("GET", "/api/admin/apps/{appkey}/wallet/stats"):                                                           AdminWalletStatsQuery{},                  // AdminAppWalletStats
 		routeKey("GET", "/api/admin/apps/{appkey}/wallet/transactions"):                                                    AdminWalletTransactionsQuery{},           // AdminAppWalletTransactions
 		routeKey("POST", "/api/admin/auth/login"):                                                                          AdminLoginRequest{},                      // AdminLogin
@@ -820,9 +824,11 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/v1/apps/{appkey}/vip/feature-ticket"):                                                       service.FeatureTicketRequest{},           // VipFeatureTicket
 		routeKey("POST", "/api/v1/apps/{appkey}/vip/purchase"):                                                             VipPurchaseRequest{},                     // PurchaseVip
 		routeKey("POST", "/api/v1/apps/{appkey}/wallet/consume"):                                                           WalletConsumeRequest{},                   // WalletConsume
+		routeKey("POST", "/api/v1/apps/{appkey}/wallet/exchange"):                                                          WalletExchangeRequest{},                  // WalletExchange
 		routeKey("GET", "/api/v1/apps/{appkey}/wallet/transactions"):                                                       WalletTransactionsQuery{},                // MyWalletTransactions
 		routeKey("POST", "/api/vip/purchase"):                                                                              VipPurchaseRequest{},                     // PurchaseVip
 		routeKey("POST", "/api/wallet/consume"):                                                                            WalletConsumeRequest{},                   // WalletConsume
+		routeKey("POST", "/api/wallet/exchange"):                                                                           WalletExchangeRequest{},                  // WalletExchange
 		routeKey("GET", "/api/wallet/transactions"):                                                                        WalletTransactionsQuery{},                // MyWalletTransactions
 		routeKey("GET", "/api/wallet/transactions/{transactionNo}"):                                                        PaymentBillExportRequest{},               // MyWalletTransactionDetail
 		routeKey("GET", "/api/wallet/transactions/{transactionNo}/bill"):                                                   PaymentBillExportRequest{},               // ExportWalletBill

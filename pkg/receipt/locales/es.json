@@ -114,6 +114,8 @@
   "wallet.type.admin_adjust": "Ajuste manual de saldo",
   "wallet.type.vip_purchase": "Compra de membresía",
   "wallet.type.order_pay": "Pedido pagado con saldo",
+  "wallet.type.recharge_bonus": "Bonificación de recarga",
+  "wallet.type.integral_exchange": "Saldo canjeado por puntos",
   "wallet.direction.in": "Abono",
   "wallet.direction.out": "Cargo",
 

@@ -38,6 +38,8 @@ type AdminWalletAdjustRequest struct {
 	UserID int64  `json:"userId" binding:"required"`
 	Amount string `json:"amount" binding:"required"`
 	Reason string `json:"reason"`
+	// Bucket cash（充值余额）/ bonus（赠送余额）/ 空（入账进赠送余额、扣减先扣赠送余额）
+	Bucket string `json:"bucket"`
 }
 
 type AdminVipPlanRequest struct {
@@ -865,7 +867,7 @@ func (h *Handler) AdminAdjustAppUserWallet(c *gin.Context) {
 		return
 	}
 	_, operator := adminAccount(c)
-	result, err := h.wallet.AdminAdjust(c.Request.Context(), req.UserID, appID, amount, req.Reason, operator, c.ClientIP())
+	result, err := h.wallet.AdminAdjust(c.Request.Context(), req.UserID, appID, amount, req.Bucket, req.Reason, operator, c.ClientIP())
 	if err != nil {
 		h.writeError(c, err)
 		return

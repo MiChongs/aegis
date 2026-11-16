@@ -742,8 +742,7 @@ func (r *Repository) PurchaseVipWithWallet(ctx context.Context, userID int64, ap
 				return nil, err
 			}
 			wallet, err := scanWallet(tx.QueryRow(ctx,
-				`SELECT user_id, appid, balance, frozen, total_recharged, total_consumed, created_at, updated_at
-FROM user_wallets WHERE user_id = $1 AND appid = $2 LIMIT 1`, userID, appID))
+				`SELECT `+walletColumns+` FROM user_wallets WHERE user_id = $1 AND appid = $2 LIMIT 1`, userID, appID))
 			if err != nil {
 				return nil, err
 			}

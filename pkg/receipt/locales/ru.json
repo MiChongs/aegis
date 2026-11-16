@@ -118,6 +118,8 @@
   "wallet.type.admin_adjust": "Ручная корректировка баланса",
   "wallet.type.vip_purchase": "Покупка подписки",
   "wallet.type.order_pay": "Заказ оплачен с баланса",
+  "wallet.type.recharge_bonus": "Бонус за пополнение",
+  "wallet.type.integral_exchange": "Обмен баланса на баллы",
   "wallet.direction.in": "Приход",
   "wallet.direction.out": "Расход",
 

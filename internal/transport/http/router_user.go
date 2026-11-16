@@ -292,6 +292,9 @@ func registerCommerceRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 	wallet.Use(middleware.Auth(authService))
 	{
 		wallet.GET("", h.MyWallet)
+		// 钱包页一次取齐（本金 / 赠送拆分、充值档位、兑换额度）与充值余额兑换积分（docs/wallet.md）
+		wallet.GET("/overview", h.MyWalletOverview)
+		wallet.POST("/exchange", h.WalletExchange)
 		wallet.GET("/transactions", h.MyWalletTransactions)
 		wallet.POST("/consume", h.WalletConsume)
 		// 流水凭证：与订单凭证同构的三条入口（直接取 PDF / 导出可分享凭据 / 寄邮箱）。

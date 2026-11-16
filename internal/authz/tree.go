@@ -599,6 +599,11 @@ func permissionTree() []PermissionNode {
 				act("app:wallet:read", "查看", LegacyAppRead, routes(under(mRead, pApp+"/wallet"))),
 				act("app:wallet:adjust", "调账", LegacyAppWrite, routes(rt(mPost, pApp+"/wallet/adjust")), danger()),
 				act("app:wallet:receipt", "回单", LegacyAppWrite, routes(under(mPost, pApp+"/wallet/receipt"))),
+				act("app:wallet:config", "钱包设置与充值档位", LegacyAppWrite, routes(
+					rt(mPut, pApp+"/wallet/settings"),
+					rt(mPost, pApp+"/wallet/packages"), under(mWrite, pApp+"/wallet/packages"),
+					rt(mPut, pApp+"/wallet/packages-order"),
+				)),
 			),
 		),
 

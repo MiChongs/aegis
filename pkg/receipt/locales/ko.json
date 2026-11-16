@@ -112,6 +112,8 @@
   "wallet.type.admin_adjust": "관리자 잔액 조정",
   "wallet.type.vip_purchase": "멤버십 구매",
   "wallet.type.order_pay": "잔액으로 주문 결제",
+  "wallet.type.recharge_bonus": "충전 보너스",
+  "wallet.type.integral_exchange": "잔액 포인트 교환",
   "wallet.direction.in": "입금",
   "wallet.direction.out": "출금",
 

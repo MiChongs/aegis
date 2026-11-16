@@ -29,38 +29,68 @@ const (
 	// TxnTypeAIRefund AI 中转网关的调用退款（管理员整笔退回）。把消费退回来，不是充值，
 	// 因此同样不计入累计充值。
 	TxnTypeAIRefund = "ai_refund"
+	// TxnTypeRechargeBonus 充值档位附赠的余额，进赠送余额，不计入累计充值。
+	TxnTypeRechargeBonus = "recharge_bonus"
+	// TxnTypeIntegralExchange 余额兑换积分（出账），只扣充值余额（本金）。
+	// 计入 total_exchanged 而不是 total_consumed：钱没花在业务上，只是换成了积分。
+	TxnTypeIntegralExchange = "integral_exchange"
 )
 
 // Wallet 用户钱包
+//
+// Balance 是可用总余额 = CashBalance + BonusBalance。两个分项都随响应下发，
+// 客户端不必自己相减（也就不会出现小数尾差）。
 type Wallet struct {
-	UserID         int64           `json:"userId"`
-	AppID          int64           `json:"appid"`
-	Balance        decimal.Decimal `json:"balance"`
+	UserID  int64           `json:"userId"`
+	AppID   int64           `json:"appid"`
+	Balance decimal.Decimal `json:"balance"`
+	// CashBalance 充值余额（本金）：可兑换积分
+	CashBalance decimal.Decimal `json:"cashBalance"`
+	// BonusBalance 赠送余额：可消费，不可兑换积分
+	BonusBalance   decimal.Decimal `json:"bonusBalance"`
 	Frozen         decimal.Decimal `json:"frozen"`
+	FrozenBonus    decimal.Decimal `json:"frozenBonus"`
 	TotalRecharged decimal.Decimal `json:"totalRecharged"`
 	TotalConsumed  decimal.Decimal `json:"totalConsumed"`
+	// TotalBonus 累计获赠（不含退回）
+	TotalBonus decimal.Decimal `json:"totalBonus"`
+	// TotalExchanged 累计兑换成积分的本金
+	TotalExchanged decimal.Decimal `json:"totalExchanged"`
 	CreatedAt      time.Time       `json:"createdAt"`
 	UpdatedAt      time.Time       `json:"updatedAt"`
 }
 
+// Normalize 由 Balance 与 BonusBalance 推出 CashBalance。
+func (w *Wallet) Normalize() {
+	if w.BonusBalance.GreaterThan(w.Balance) {
+		w.BonusBalance = w.Balance
+	}
+	w.CashBalance = w.Balance.Sub(w.BonusBalance)
+}
+
 // Transaction 钱包流水
 type Transaction struct {
-	ID             int64           `json:"id"`
-	TransactionNo  string          `json:"transactionNo"`
-	UserID         int64           `json:"userId"`
-	AppID          int64           `json:"appid"`
-	Type           string          `json:"type"`
-	Amount         decimal.Decimal `json:"amount"`
+	ID            int64           `json:"id"`
+	TransactionNo string          `json:"transactionNo"`
+	UserID        int64           `json:"userId"`
+	AppID         int64           `json:"appid"`
+	Type          string          `json:"type"`
+	Amount        decimal.Decimal `json:"amount"`
+	// CashAmount / BonusAmount 这笔变动在本金与赠送余额上的拆分（与 Amount 同号，两者之和恒等于 Amount）
+	CashAmount     decimal.Decimal `json:"cashAmount"`
+	BonusAmount    decimal.Decimal `json:"bonusAmount"`
 	BalanceBefore  decimal.Decimal `json:"balanceBefore"`
 	BalanceAfter   decimal.Decimal `json:"balanceAfter"`
 	RelatedOrderNo string          `json:"relatedOrderNo,omitempty"`
-	IdempotencyKey string          `json:"-"`
-	Title          string          `json:"title"`
-	Remark         string          `json:"remark,omitempty"`
-	Operator       string          `json:"operator,omitempty"`
-	ClientIP       string          `json:"clientIp,omitempty"`
-	Metadata       map[string]any  `json:"metadata,omitempty"`
-	CreatedAt      time.Time       `json:"createdAt"`
+	// RestoresTxnNo 退回类流水指向被退回的那笔出账
+	RestoresTxnNo  string         `json:"restoresTransactionNo,omitempty"`
+	IdempotencyKey string         `json:"-"`
+	Title          string         `json:"title"`
+	Remark         string         `json:"remark,omitempty"`
+	Operator       string         `json:"operator,omitempty"`
+	ClientIP       string         `json:"clientIp,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+	CreatedAt      time.Time      `json:"createdAt"`
 }
 
 // Change 一次余额变更指令（仓储层在单事务中执行：锁钱包 → 校验 → 更新 → 记账）
@@ -76,6 +106,21 @@ type Change struct {
 	Operator       string
 	ClientIP       string
 	Metadata       map[string]any
+	// Bucket 入账落哪个桶（cash / bonus）；空表示按类型默认（DefaultInflowBucket）
+	Bucket string
+	// Spend 出账扣款策略；空表示按类型默认（DefaultSpend）
+	Spend string
+	// Restores 非 nil 表示这笔入账是在退回某笔出账：按原出账的拆分先补回赠送余额
+	Restores *RestoreRef
+}
+
+// RestoreRef 定位被退回的那笔出账。三个字段按顺序取第一个非空的：
+// 流水号 → 幂等键 → 关联订单号（配合 Type）。
+type RestoreRef struct {
+	TransactionNo  string
+	IdempotencyKey string
+	OrderNo        string
+	Type           string
 }
 
 // ChangeResult 变更结果

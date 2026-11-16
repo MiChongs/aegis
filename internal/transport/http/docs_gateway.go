@@ -157,6 +157,7 @@ func gatewayRequestModels() map[string]any {
 		// 钱包 / 会员 / 支付
 		"walletTransactions": WalletTransactionsQuery{},
 		"walletConsume":      WalletConsumeRequest{},
+		"walletExchange":     WalletExchangeRequest{},
 		"vipPurchase":        VipPurchaseRequest{},
 		"payMethods":         PaymentMethodsQuery{},
 		"payOrders":          UserPaymentOrdersQuery{},

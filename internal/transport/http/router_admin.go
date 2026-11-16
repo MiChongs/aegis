@@ -193,6 +193,14 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/users/:userId/points/integral/transactions/:transactionNo/reverse", h.AdminReverseAppUserIntegral)
 		admin.POST("/apps/:appkey/users/:userId/points/experience/transactions/:transactionNo/reverse", h.AdminReverseAppUserExperience)
 		admin.POST("/apps/:appkey/wallet/adjust", h.AdminAdjustAppUserWallet)
+		// 钱包设置与充值档位（docs/wallet.md）
+		admin.GET("/apps/:appkey/wallet/settings", h.AdminAppWalletSettings)
+		admin.PUT("/apps/:appkey/wallet/settings", h.UpdateAdminAppWalletSettings)
+		admin.GET("/apps/:appkey/wallet/packages", h.AdminAppWalletPackages)
+		admin.POST("/apps/:appkey/wallet/packages", h.CreateAdminAppWalletPackage)
+		admin.PUT("/apps/:appkey/wallet/packages-order", h.ReorderAdminAppWalletPackages)
+		admin.PUT("/apps/:appkey/wallet/packages/:packageId", h.UpdateAdminAppWalletPackage)
+		admin.DELETE("/apps/:appkey/wallet/packages/:packageId", h.DeleteAdminAppWalletPackage)
 		// 全应用资金视图：按用户一个个点过去无法对账
 		admin.GET("/apps/:appkey/wallet/transactions", h.AdminAppWalletTransactions)
 		admin.GET("/apps/:appkey/wallet/stats", h.AdminAppWalletStats)

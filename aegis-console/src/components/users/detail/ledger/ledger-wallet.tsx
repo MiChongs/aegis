@@ -29,7 +29,14 @@ import {
   errorMessage,
   type Column
 } from "../kit";
-import { WALLET_TXN_LABEL, formatMoney, hasWallet, isNegativeAmount } from "../user-detail-shared";
+import {
+  WALLET_TXN_LABEL,
+  formatMoney,
+  hasWallet,
+  isNegativeAmount,
+  txnSplitLabel,
+  walletSplitLabel
+} from "../user-detail-shared";
 
 const TYPE_OPTIONS = Object.entries(WALLET_TXN_LABEL).map(([value, label]) => ({ value, label }));
 
@@ -84,6 +91,8 @@ export function WalletLedgerView({ appKey, userId, onAdjust }: { appKey: string;
         { header: "类型", value: (r) => WALLET_TXN_LABEL[r.type] ?? r.type },
         { header: "标题", value: (r) => r.title },
         { header: "金额", value: (r) => r.amount },
+        { header: "充值余额部分", value: (r) => r.cashAmount },
+        { header: "赠送余额部分", value: (r) => r.bonusAmount },
         { header: "变动前", value: (r) => r.balanceBefore },
         { header: "变动后", value: (r) => r.balanceAfter },
         { header: "关联订单", value: (r) => r.relatedOrderNo },
@@ -124,7 +133,21 @@ export function WalletLedgerView({ appKey, userId, onAdjust }: { appKey: string;
         </div>
       )
     },
-    { id: "amount", header: "金额", align: "right", width: "130px", cell: (row) => <Money value={row.amount} signed /> },
+    {
+      id: "amount",
+      header: "金额",
+      align: "right",
+      width: "150px",
+      cell: (row) => {
+        const split = txnSplitLabel(row);
+        return (
+          <div className="flex flex-col items-end">
+            <Money value={row.amount} signed />
+            {split ? <span className="text-xs text-muted-foreground tabular-nums">{split}</span> : null}
+          </div>
+        );
+      }
+    },
     {
       id: "after",
       header: "变动后",
@@ -157,10 +180,33 @@ export function WalletLedgerView({ appKey, userId, onAdjust }: { appKey: string;
   return (
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <MetricCard label="可用余额" value={ready ? `¥ ${formatMoney(wallet?.balance)}` : "—"} icon={Wallet} tone="primary" loading={walletQuery.isLoading} sub={ready ? undefined : "钱包数据不可用"} />
-        <MetricCard label="冻结金额" value={ready ? `¥ ${formatMoney(wallet?.frozen)}` : "—"} icon={Lock} tone="warning" loading={walletQuery.isLoading} />
-        <MetricCard label="累计充值" value={ready ? `¥ ${formatMoney(wallet?.totalRecharged)}` : "—"} icon={ArrowDownLeft} tone="success" loading={walletQuery.isLoading} onClick={() => setType("recharge")} />
-        <MetricCard label="累计消费" value={ready ? `¥ ${formatMoney(wallet?.totalConsumed)}` : "—"} icon={ArrowUpRight} tone="danger" loading={walletQuery.isLoading} onClick={() => setType("consume")} />
+        <MetricCard label="可用余额" value={ready ? `¥ ${formatMoney(wallet?.balance)}` : "—"} icon={Wallet} tone="primary" loading={walletQuery.isLoading} sub={ready ? (walletSplitLabel(wallet) ?? undefined) : "钱包数据不可用"} />
+        <MetricCard
+          label="冻结金额"
+          value={ready ? `¥ ${formatMoney(wallet?.frozen)}` : "—"}
+          icon={Lock}
+          tone="warning"
+          loading={walletQuery.isLoading}
+          sub={ready && wallet?.frozenBonus != null ? `其中赠送 ¥ ${formatMoney(wallet.frozenBonus)}` : undefined}
+        />
+        <MetricCard
+          label="累计充值"
+          value={ready ? `¥ ${formatMoney(wallet?.totalRecharged)}` : "—"}
+          icon={ArrowDownLeft}
+          tone="success"
+          loading={walletQuery.isLoading}
+          sub={ready && wallet?.totalBonus != null ? `累计获赠 ¥ ${formatMoney(wallet.totalBonus)}` : undefined}
+          onClick={() => setType("recharge")}
+        />
+        <MetricCard
+          label="累计消费"
+          value={ready ? `¥ ${formatMoney(wallet?.totalConsumed)}` : "—"}
+          icon={ArrowUpRight}
+          tone="danger"
+          loading={walletQuery.isLoading}
+          sub={ready && wallet?.totalExchanged != null ? `累计兑换积分 ¥ ${formatMoney(wallet.totalExchanged)}` : undefined}
+          onClick={() => setType("consume")}
+        />
       </div>
 
       <Section
@@ -233,6 +279,7 @@ export function WalletLedgerView({ appKey, userId, onAdjust }: { appKey: string;
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground">金额</span>
                 <Money value={txn.amount} signed className="text-2xl font-semibold" />
+                {txnSplitLabel(txn) ? <span className="text-xs text-muted-foreground tabular-nums">{txnSplitLabel(txn)}</span> : null}
               </div>
               <span className="text-xs text-muted-foreground tabular-nums">
                 ¥ {formatMoney(txn.balanceBefore)} → ¥ {formatMoney(txn.balanceAfter)}
@@ -245,8 +292,25 @@ export function WalletLedgerView({ appKey, userId, onAdjust }: { appKey: string;
             ? [
                 { label: "流水号", value: txn.transactionNo, mono: true, copy: txn.transactionNo, wide: true },
                 { label: "类型", value: WALLET_TXN_LABEL[txn.type] ?? txn.type, hint: txn.type },
+                ...(txn.cashAmount != null && txn.bonusAmount != null
+                  ? [
+                      { label: "充值余额部分", value: `¥ ${formatMoney(txn.cashAmount)}` },
+                      { label: "赠送余额部分", value: `¥ ${formatMoney(txn.bonusAmount)}` }
+                    ]
+                  : []),
                 { label: "操作人", value: txn.operator },
                 { label: "关联订单", value: txn.relatedOrderNo, mono: true, copy: txn.relatedOrderNo || null, wide: true },
+                ...(txn.restoresTransactionNo
+                  ? [
+                      {
+                        label: "退回的出账",
+                        value: txn.restoresTransactionNo,
+                        mono: true,
+                        copy: txn.restoresTransactionNo,
+                        wide: true
+                      }
+                    ]
+                  : []),
                 { label: "备注", value: txn.remark, wide: true },
                 { label: "IP", value: txn.clientIp, mono: true },
                 { label: "时间", value: formatDateTime(txn.createdAt), hint: formatRelative(txn.createdAt) }

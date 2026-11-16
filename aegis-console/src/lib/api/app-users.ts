@@ -18,6 +18,7 @@ import type {
   UserSessionAuditList,
   UserWallet,
   UserWalletTransactionList,
+  WalletAdjustBucket,
   WalletAdjustResult
 } from "./types";
 import type { UserNotificationAction } from "@/lib/user-notification-meta";
@@ -89,12 +90,13 @@ export function getAdminUserWalletTransactions(
 
 /**
  * 调整余额。amount 是**字符串**且可为负（"-12.50" 即扣款）。
+ * bucket 指定落在哪一桶（cash / bonus），不传即默认：入账进赠送余额，扣减先扣赠送余额。
  * 走应用维度的路由（调整目标由 body 里的 userId 指定），不是 /users/:userId 下。
  */
 export function adjustAdminUserWallet(
   token: string,
   appKey: string,
-  payload: { userId: number; amount: string; reason?: string }
+  payload: { userId: number; amount: string; reason?: string; bucket?: WalletAdjustBucket }
 ) {
   return apiRequest<WalletAdjustResult>(
     `/api/admin/apps/${encodeURIComponent(appKey)}/wallet/adjust`,

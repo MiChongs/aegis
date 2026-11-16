@@ -13,7 +13,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useAdjustWalletMutation } from "@/lib/commerce-hooks";
 import { useAdminUserWalletQuery } from "@/lib/app-user-hooks";
-import { formatMoney } from "./commerce-format";
+import {
+  WALLET_BUCKET_OPTIONS,
+  formatMoney,
+  toAdjustBucket,
+  walletBucketHint,
+  walletSplitText,
+  type BucketChoice
+} from "./commerce-format";
 import { UserPicker, displayName, type PickedUser } from "./user-picker";
 
 /** 常用面额。覆盖了绝大多数客服补偿场景，剩下的才需要手打。 */
@@ -63,20 +70,29 @@ export function WalletAdjustDialog({
   const mutation = useAdjustWalletMutation(appKey);
   const [user, setUser] = useState<PickedUser | null>(null);
   const [direction, setDirection] = useState<Direction>("credit");
+  const [bucket, setBucket] = useState<BucketChoice>("default");
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
 
   // 选中用户后立刻显示当前余额：扣减时「够不够扣」不该等到提交被拒才知道
   const walletQuery = useAdminUserWalletQuery(user ? appKey : null, user?.id);
   const balance = walletQuery.data?.balance;
+  const split = walletSplitText(walletQuery.data, walletCurrency);
+  // 按桶扣减时，够不够扣看的是那一桶，而不是总余额
+  const debitCap =
+    bucket === "cash"
+      ? walletQuery.data?.cashBalance
+      : bucket === "bonus"
+        ? walletQuery.data?.bonusBalance
+        : balance;
 
   const parsedAmount = Number(amount.trim());
   const amountValid = Number.isFinite(parsedAmount) && parsedAmount > 0;
   const reasonValid = reason.trim().length > 0;
   const overdraft = useMemo(() => {
-    if (direction !== "debit" || !amountValid || balance == null) return false;
-    return parsedAmount > Number(balance);
-  }, [direction, amountValid, parsedAmount, balance]);
+    if (direction !== "debit" || !amountValid || debitCap == null) return false;
+    return parsedAmount > Number(debitCap);
+  }, [direction, amountValid, parsedAmount, debitCap]);
   const valid = Boolean(user) && amountValid && reasonValid && !overdraft;
 
   const afterBalance = useMemo(() => {
@@ -92,10 +108,11 @@ export function WalletAdjustDialog({
         userId: user.id,
         // 符号在这里统一拼上，输入框永远只收正数
         amount: direction === "credit" ? amount.trim() : `-${amount.trim()}`,
-        reason: reason.trim()
+        reason: reason.trim(),
+        bucket: toAdjustBucket(bucket) || undefined
       });
       toast.success(direction === "credit" ? "已充入余额" : "已扣减余额", {
-        description: `${displayName(user)} · ${formatMoney(amount.trim(), walletCurrency)}`
+        description: `${displayName(user)}，${formatMoney(amount.trim(), walletCurrency)}`
       });
       onOpenChange(false);
     } catch (err) {
@@ -133,6 +150,7 @@ export function WalletAdjustDialog({
                 ) : null}
               </div>
             ) : null}
+            {user && split ? <p className="px-1 text-[11px] text-muted-foreground">{split}</p> : null}
           </div>
 
           <div className="space-y-1.5">
@@ -161,6 +179,24 @@ export function WalletAdjustDialog({
           </div>
 
           <div className="space-y-1.5">
+            <Label className="text-xs">落在哪一桶</Label>
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              value={bucket}
+              onValueChange={(value) => value && setBucket(value as BucketChoice)}
+              className="grid w-full grid-cols-3"
+            >
+              {WALLET_BUCKET_OPTIONS.map((option) => (
+                <ToggleGroupItem key={option.value} value={option.value} className="h-8 text-xs">
+                  {option.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            <p className="text-[11px] text-muted-foreground">{walletBucketHint(bucket, direction === "credit")}</p>
+          </div>
+
+          <div className="space-y-1.5">
             <Label htmlFor="wallet-adjust-amount" className="text-xs">
               金额
             </Label>
@@ -186,7 +222,11 @@ export function WalletAdjustDialog({
               value={amount}
               onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ""))}
             />
-            {overdraft ? <p className="text-[11px] text-destructive">超过当前余额</p> : null}
+            {overdraft ? (
+              <p className="text-[11px] text-destructive">
+                {bucket === "cash" ? "超过当前充值余额" : bucket === "bonus" ? "超过当前赠送余额" : "超过当前余额"}
+              </p>
+            ) : null}
           </div>
 
           <div className="space-y-1.5">

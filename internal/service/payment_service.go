@@ -60,6 +60,8 @@ type PaymentService struct {
 	settleAttempts sync.Map
 	// inbox 管理员站内信：订单需要人工处理时通知应用管理员与超级管理员
 	inbox *AdminInboxService
+	// wallets 充值订单的档位与金额校验；nil 时只按 1:1 入账、不做限制（与旧行为一致）
+	wallets *WalletService
 }
 
 // SetAdminInbox 接上管理员站内信（订单待人工处理的通知）。
@@ -83,6 +85,9 @@ func (s *PaymentService) SetEmailService(e *EmailService) { s.email = e }
 
 // SetAppService 注入应用服务，用于读取应用级交易设置。
 func (s *PaymentService) SetAppService(a *AppService) { s.apps = a }
+
+// SetWalletService 注入钱包服务：充值订单下单时按钱包设置与充值档位校验。
+func (s *PaymentService) SetWalletService(w *WalletService) { s.wallets = w }
 
 func NewPaymentService(log *zap.Logger, pg *pgrepo.Repository, receiptCfg config.PaymentReceiptConfig) *PaymentService {
 	// 所有 REST 渠道共用这一个 resty 客户端：把它的 transport 换成出海网关，
@@ -942,7 +947,24 @@ func (s *PaymentService) prepareFulfillmentMetadata(ctx context.Context, appID i
 	}
 	switch purpose {
 	case paymentdomain.PurposeWalletRecharge:
-		// 金额 1:1 入账，无附加快照
+		// 本金 1:1 入账；档位附赠（余额、积分）由服务端按档位固化，客户端传入的同名键一律不认
+		delete(out, paymentdomain.MetaKeyWalletPackageTitle)
+		delete(out, paymentdomain.MetaKeyWalletBonus)
+		delete(out, paymentdomain.MetaKeyWalletBonusIntegral)
+		packageID := metaInt64(metadata, paymentdomain.MetaKeyWalletPackageID)
+		delete(out, paymentdomain.MetaKeyWalletPackageID)
+		if s.wallets != nil {
+			snap, err := s.wallets.validateRecharge(ctx, appID, userID, amount, packageID)
+			if err != nil {
+				return nil, err
+			}
+			if snap.PackageID > 0 {
+				out[paymentdomain.MetaKeyWalletPackageID] = snap.PackageID
+				out[paymentdomain.MetaKeyWalletPackageTitle] = snap.PackageTitle
+				out[paymentdomain.MetaKeyWalletBonus] = snap.Bonus.StringFixed(2)
+				out[paymentdomain.MetaKeyWalletBonusIntegral] = snap.BonusIntegral
+			}
+		}
 	case paymentdomain.PurposeVipPurchase:
 		planID := metaInt64(metadata, paymentdomain.MetaKeyVipPlanID)
 		if planID <= 0 {
@@ -1023,6 +1045,14 @@ func (s *PaymentService) buildFulfillmentInstruction(order *paymentdomain.Order)
 	switch purpose {
 	case paymentdomain.PurposeWalletRecharge:
 		instr.WalletAmount = order.Amount
+		if id := metaInt64(order.Metadata, paymentdomain.MetaKeyWalletPackageID); id > 0 {
+			instr.WalletPackageID = id
+			instr.WalletPackageTitle = metaString(order.Metadata, paymentdomain.MetaKeyWalletPackageTitle)
+			if bonus, err := decimal.NewFromString(metaString(order.Metadata, paymentdomain.MetaKeyWalletBonus)); err == nil && bonus.IsPositive() {
+				instr.WalletBonus = bonus
+			}
+			instr.WalletBonusIntegral = metaInt64(order.Metadata, paymentdomain.MetaKeyWalletBonusIntegral)
+		}
 	case paymentdomain.PurposeVipPurchase:
 		planID := metaInt64(order.Metadata, paymentdomain.MetaKeyVipPlanID)
 		instr.VipPlanID = &planID
