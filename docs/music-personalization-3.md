@@ -84,7 +84,7 @@ music_llm_usage (app_id, day date, kind text /* tag | embed | expand */, calls i
   部分唯一索引：一个应用同时只有一个 queued / running。产物表 `music_deep_blobs (run_id, kind text, data bytea, PRIMARY KEY (run_id, kind))`，
   kind：`model`（safetensors）、`meta`（JSON）、`ranker`（LightGBM 文本，可无）、`parity`（JSON）。
 - 发布：`published_at = now()` 后发 NATS（普通发布订阅）`music.deep.published`：`{ "app_id": 10000, "run_id": 12 }`。
-  自动发布条件：留出集 NDCG@20 ≥ 热度基线 × `deep.minLift`（默认 1.0）且（有上一版时）≥ 上一版 × 0.97。
+  自动发布条件：留出集 NDCG@20 > 0、≥ 热度基线 × `deep.minLift`（默认 1.0）且（有上一版时）≥ 上一版 × 0.97。
 
 ### 数据
 

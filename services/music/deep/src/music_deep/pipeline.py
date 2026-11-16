@@ -219,6 +219,9 @@ def _run(run_id, app_id, cfg: AppConfig, pg: PG, ch: CH, publish, threads, cance
         prev_ndcg = float(prev[1]["ndcg20"])
     if not cfg.autoPublish:
         logf("未开启自动发布，等待手动发布")
+    elif ndcg <= 0:
+        # 数据太少时模型与热度都可能一首没命中（0 ≥ 0 × minLift 也成立），这种版本不能上线
+        logf(f"NDCG@20 为 {ndcg:.4f}，留出集上一首都没命中，不自动发布")
     elif ndcg < base * p.minLift:
         logf(f"NDCG@20 未达到发布门槛（热度 × {p.minLift:.2f} = {base * p.minLift:.4f}），保留为待发布")
     elif prev_ndcg is not None and ndcg < prev_ndcg * PREV_RATIO:

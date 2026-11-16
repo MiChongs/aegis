@@ -79,6 +79,15 @@ func (r *DeepRegistry) Sync(ctx context.Context) {
 		r.log.Warn("list published deep models failed", zap.Error(err))
 		return
 	}
+	// 撤销了发布（published_at 清空）的应用：内存里的模型一起卸掉
+	r.mu.Lock()
+	for app := range r.m {
+		if _, ok := published[app]; !ok {
+			delete(r.m, app)
+			r.log.Info("deep model unloaded (no published run)", zap.Int64("app", app))
+		}
+	}
+	r.mu.Unlock()
 	for app, run := range published {
 		if cur := r.Get(app); cur != nil && cur.RunID == run {
 			continue
