@@ -73,10 +73,12 @@ func EnsureStreams(ctx context.Context, js jetstream.JetStream) error {
 			Retention:   jetstream.LimitsPolicy,
 			Storage:     jetstream.FileStorage,
 			MaxAge:      7 * 24 * time.Hour,
-			MaxBytes:    8 << 30,
-			Discard:     jetstream.DiscardOld,
-			Duplicates:  Duplicates,
-			Replicas:    1,
+			// 只是上报到落地之间的缓冲（落地后以 ClickHouse 为准），约 100 万条事件。生产 NATS 整机
+			// JetStream 文件配额 8 GB、风控等流已预留 6 GiB，MaxBytes 会计入预留，给多了建流报 10047。
+			MaxBytes:   1 << 30,
+			Discard:    jetstream.DiscardOld,
+			Duplicates: Duplicates,
+			Replicas:   1,
 		},
 		{
 			Name:        StreamJobs,
