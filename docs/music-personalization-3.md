@@ -150,6 +150,7 @@ Go 加载时逐个对比，`user` 每维误差 > 1e-3 就拒绝加载该版本�
   与「融合分」（前 5 个特征按应用配置 blend 加权求和）排序的 NDCG@10 比较，更好才导出 `ranker`。
 - 不导出时 meta 里 `ranker` 写 `{ "enabled": false, "reason": "…" }`；导出时 `{ "enabled": true, "ndcg10": …, "baselineNdcg10": …,
   "samples": …, "groups": …, "importance": [{ "name": "seq", "gain": 123.4 }, …] }`。
+- LightGBM 4.x 的文本头是 `version=v4`，leaves 只认 v2 / v3：导出时改写为 `version=v3`（树格式没变，分数一致，`model/testdata` 有对齐用例）；lambdarank 加载时不做输出变换。
 - Go 推理（leaves）：每个候选算原始分，**在本次候选里转成百分位 p ∈ [0, 1]**，最终分 = 融合分 × (0.5 + p)。
 
 ### 第三期精排特征（20 个，顺序固定，Go `model.RankFeatures` 与 Python 一致）

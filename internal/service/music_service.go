@@ -313,6 +313,7 @@ type MusicRecReason struct {
 
 // MusicRecItem 一首推荐。
 type MusicRecItem struct {
+	WorkKey string         `json:"workKey"` // 作品键（歌名|歌手，跨音源一致）
 	Track   contract.Track `json:"track"`
 	Score   float64        `json:"score"`
 	Reason  MusicRecReason `json:"reason"`
@@ -364,6 +365,7 @@ func (s *MusicService) Recommend(ctx context.Context, app *appdomain.App, sessio
 	for _, it := range m.GetItems() {
 		t := it.GetTrack()
 		out.Items = append(out.Items, MusicRecItem{
+			WorkKey: it.GetWorkKey(),
 			Track: contract.Track{Source: t.GetSource(), SongID: t.GetSongId(), Title: t.GetTitle(), Artist: t.GetArtist(),
 				Album: t.GetAlbum(), Cover: t.GetCover(), DurationMs: t.GetDurationMs()},
 			Score:   it.GetScore(),

@@ -167,6 +167,14 @@ func TestMusicPhase2IT(t *testing.T) {
 		if err != nil {
 			t.Fatalf("recommend %s for %d: %v", scene, user, err)
 		}
+		// 第三期的待解析项（服务配了大模型时才有）不在第二期的断言范围内
+		kept := resp.Msg.Items[:0]
+		for _, it := range resp.Msg.Items {
+			if !it.Resolve {
+				kept = append(kept, it)
+			}
+		}
+		resp.Msg.Items = kept
 		return resp.Msg
 	}
 	itemOf := func(t *musicv1.Track) int {
@@ -213,7 +221,7 @@ func TestMusicPhase2IT(t *testing.T) {
 		}
 	}
 	e.admin("GET", fmt.Sprintf("models/%d", run2), nil, &detail)
-	if detail.Ranker == nil || detail.Ranker.Samples < 200 || len(detail.Ranker.Features) != 16 {
+	if detail.Ranker == nil || detail.Ranker.Samples < 200 || len(detail.Ranker.Features) != 20 {
 		t.Fatalf("ranker info = %+v", detail.Ranker)
 	}
 	t.Logf("ranker: enabled=%v samples=%d auc=%.3f baseline=%.3f %s", detail.Ranker.Enabled, detail.Ranker.Samples,

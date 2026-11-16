@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"math"
+	"os"
 	"sort"
 	"testing"
 )
@@ -141,5 +142,43 @@ func TestRankFeatureCount(t *testing.T) {
 	// 第三期特征版本：20 个，与 music-deep 的 LightGBM、rank_samples 里记录的长度一致
 	if NumRankFeatures != 20 || RankFeatures[16] != "seq" || RankFeatures[19] != "llm" || RankFeatures[FeatPosition] != "position" {
 		t.Fatalf("rank features = %d %v", NumRankFeatures, RankFeatures)
+	}
+}
+
+// 用 music-deep（LightGBM 4.x 导出后改写为 v3 文本头）产出的精排文件：leaves 加载后的原始分与 LightGBM 一致。
+func TestDeepLightGBMFixture(t *testing.T) {
+	txt, err := os.ReadFile("testdata/ranker_v3.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile("testdata/ranker_cases.json")
+	var cases struct {
+		X   [][]float64 `json:"x"`
+		Raw []float64   `json:"raw"`
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	blobs, _ := tinyDeep(t)
+	blobs["ranker"] = txt
+	m, err := LoadDeep(blobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := make([][]float32, len(cases.X))
+	for i, x := range cases.X {
+		rows[i] = make([]float32, len(x))
+		for k, v := range x {
+			rows[i][k] = float32(v)
+		}
+	}
+	got := m.RankScores(rows)
+	for i := range got {
+		if math.Abs(got[i]-cases.Raw[i]) > 1e-4 {
+			t.Fatalf("case %d: leaves %.6f, lightgbm %.6f", i, got[i], cases.Raw[i])
+		}
+	}
+	if !m.RankerEnabled() {
+		t.Fatal("ranker should be enabled when meta has no disabled flag")
 	}
 }
