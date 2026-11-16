@@ -25,26 +25,36 @@ import {
   updateMusicExperiment,
   updateMusicRule,
   getMusicConfig,
+  getMusicContentOverview,
+  getMusicDeepRun,
   getMusicModel,
   getMusicOverview,
   getMusicTrack,
   getMusicUser,
   getMusicUserRecommendations,
   getMusicUserTimeline,
+  listMusicContentTracks,
+  listMusicDeepRuns,
   listMusicEvents,
   listMusicModels,
   listMusicTracks,
   listMusicUsers,
+  publishMusicDeepRun,
   publishMusicModel,
+  retagMusicTracks,
+  trainMusicDeepModel,
   trainMusicModel,
   updateMusicConfig,
+  updateMusicTrackTags,
   type MusicConfigInput,
+  type MusicContentStatus,
   type MusicEventQuery,
   type MusicExperimentInput,
   type MusicModelRun,
   type MusicRecPreviewParams,
   type MusicReportPeriod,
   type MusicRuleInput,
+  type MusicTagsInput,
   type MusicTrackSort
 } from "@/lib/api/music";
 
@@ -53,7 +63,8 @@ import {
  *
  * 查询键统一为 `["admin-music", 种类, token, appKey, ...参数]`，写操作成功后按「种类 + appKey」成组失效，
  * 不碰别的应用的缓存。音乐服务未开通或暂不可用（50396 / 50397）时不重试，免得面板一直转圈；
- * 其它错误按全局默认处理。训练记录里有排队中 / 训练中的版本时每 5 秒刷新一次，全部结束后停止。
+ * 其它错误按全局默认处理。训练记录（含第三期的深度模型）里有排队中 / 训练中的版本时每 5 秒刷新一次，
+ * 全部结束后停止。
  */
 
 const ROOT = "admin-music";
@@ -77,7 +88,11 @@ type Kind =
   | "artists"
   | "artist"
   | "mixes"
-  | "report";
+  | "report"
+  | "deepRuns"
+  | "deepRun"
+  | "content"
+  | "contentTracks";
 
 function noRetryOnService(failureCount: number, error: unknown) {
   if (error instanceof ApiError) {
@@ -408,6 +423,100 @@ export function useMusicUserReportQuery(appKey: string | null | undefined, userI
     enabled: Boolean(token && appKey && userId),
     placeholderData: keepPreviousData,
     retry: noRetryOnService
+  });
+}
+
+/* ── 第三期：深度模型 ── */
+
+export function useMusicDeepRunsQuery(appKey: string | null | undefined, page: number, pageSize: number) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "deepRuns", token, appKey, page, pageSize],
+    queryFn: () => listMusicDeepRuns(token as string, appKey as string, { page, pageSize }),
+    enabled: Boolean(token && appKey),
+    placeholderData: keepPreviousData,
+    refetchInterval: (query) => (query.state.data?.items.some(isRunning) ? 5_000 : false),
+    retry: noRetryOnService
+  });
+}
+
+export function useMusicDeepRunQuery(appKey: string | null | undefined, runId: number | null) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "deepRun", token, appKey, runId],
+    queryFn: () => getMusicDeepRun(token as string, appKey as string, runId as number),
+    enabled: Boolean(token && appKey && runId),
+    refetchInterval: (query) => (isRunning(query.state.data) ? 5_000 : false),
+    retry: noRetryOnService
+  });
+}
+
+export function useTrainMusicDeepMutation(appKey: string | null | undefined) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateMusic(appKey);
+  return useMutation({
+    mutationFn: (note?: string) => trainMusicDeepModel(token as string, appKey as string, note),
+    onSuccess: () => invalidate(["deepRuns"])
+  });
+}
+
+export function usePublishMusicDeepMutation(appKey: string | null | undefined) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateMusic(appKey);
+  return useMutation({
+    mutationFn: (runId: number) => publishMusicDeepRun(token as string, appKey as string, runId),
+    // 序列通道与 LightGBM 精排都随发布切换，推荐预览与风格歌单跟着变
+    onSuccess: () => invalidate(["deepRuns", "deepRun", "overview", "recs", "mixes"])
+  });
+}
+
+/* ── 第三期：内容理解 ── */
+
+export function useMusicContentQuery(appKey: string | null | undefined, days = 14) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "content", token, appKey, days],
+    queryFn: () => getMusicContentOverview(token as string, appKey as string, days),
+    enabled: Boolean(token && appKey),
+    placeholderData: keepPreviousData,
+    // 打标签在后台持续进行，一分钟刷一次进度
+    refetchInterval: 60_000,
+    retry: noRetryOnService
+  });
+}
+
+export function useMusicContentTracksQuery(
+  appKey: string | null | undefined,
+  params: { status?: MusicContentStatus; q: string; page: number; pageSize: number }
+) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [ROOT, "contentTracks", token, appKey, params],
+    queryFn: () => listMusicContentTracks(token as string, appKey as string, params),
+    enabled: Boolean(token && appKey),
+    placeholderData: keepPreviousData,
+    retry: noRetryOnService
+  });
+}
+
+/** 人工修改标签：服务端重算语义向量，作品详情、标签列表、推荐预览的标签匹配与语义特征都会变 */
+export function useUpdateMusicTagsMutation(appKey: string | null | undefined) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateMusic(appKey);
+  return useMutation({
+    mutationFn: ({ workKey, input }: { workKey: string; input: MusicTagsInput }) =>
+      updateMusicTrackTags(token as string, appKey as string, workKey, input),
+    onSuccess: () => invalidate(["contentTracks", "content", "track", "recs", "overview"])
+  });
+}
+
+/** 重新打标签：选中的作品（workKeys）或全部（all） */
+export function useRetagMusicMutation(appKey: string | null | undefined) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateMusic(appKey);
+  return useMutation({
+    mutationFn: (input: { workKeys?: string[]; all?: boolean }) => retagMusicTracks(token as string, appKey as string, input),
+    onSuccess: () => invalidate(["contentTracks", "content", "track", "overview"])
   });
 }
 

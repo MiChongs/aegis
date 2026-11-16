@@ -1,9 +1,10 @@
-import { MUSIC_CONFIG_V2_DEFAULTS, type MusicConfig, type MusicConfigInput } from "@/lib/api/music";
+import { MUSIC_CONFIG_V2_DEFAULTS, MUSIC_CONFIG_V3_DEFAULTS, type MusicConfig, type MusicConfigInput } from "@/lib/api/music";
 
 /**
  * 音乐推荐配置项目录：配置表单与训练详情里的「参数快照」共用一份，叫法与取值范围只在这里定义。
  *
- * 取值范围照抄契约「PUT /config 校验」（第二期的几组见 docs/music-personalization-2.md「应用配置增量」）：
+ * 取值范围照抄契约「PUT /config 校验」（第二期的几组见 docs/music-personalization-2.md「应用配置增量」，
+ * 第三期的深度模型、内容理解与 blend.seq 见 docs/music-personalization-3.md「五、管理端增量」）：
  * 前端先拦一次，越界时保存按钮不可用、字段下方给出范围；后端仍会再校验（40000，message 指出哪一项）。
  */
 
@@ -20,8 +21,10 @@ export type NumberFieldSpec = {
 
 export type BoolFieldSpec = { kind: "bool"; path: string; label: string };
 export type CronFieldSpec = { kind: "cron"; path: string; label: string };
+/** 只能取几个固定数值（第三期的表示维度、注意力头数） */
+export type SelectFieldSpec = { kind: "select"; path: string; label: string; options: number[]; unit?: string };
 
-export type FieldSpec = NumberFieldSpec | BoolFieldSpec | CronFieldSpec;
+export type FieldSpec = NumberFieldSpec | BoolFieldSpec | CronFieldSpec | SelectFieldSpec;
 
 export type FieldGroup = { key: string; title: string; fields: FieldSpec[] };
 
@@ -93,7 +96,8 @@ export const CONFIG_GROUPS: FieldGroup[] = [
       n("blend.itemcf", "相似歌曲", 0, 5, 0.05),
       n("blend.artist", "常听歌手", 0, 5, 0.05),
       n("blend.trending", "近期热门", 0, 5, 0.05),
-      n("blend.explore", "探索", 0, 5, 0.05)
+      n("blend.explore", "探索", 0, 5, 0.05),
+      n("blend.seq", "序列模型", 0, 5, 0.05)
     ]
   },
   {
@@ -144,8 +148,35 @@ export const CONFIG_GROUPS: FieldGroup[] = [
       n("mixes.size", "每个风格歌单的歌曲数", 10, 50, 1, "首"),
       n("autoplay.size", "智能续播每批的歌曲数", 5, 30, 1, "首")
     ]
+  },
+  {
+    key: "deep",
+    title: "深度序列模型",
+    fields: [
+      { kind: "bool", path: "deep.enabled", label: "深度模型（口味模型训练成功后自动训练）" },
+      { kind: "select", path: "deep.d", label: "表示维度", options: [32, 48, 64, 96, 128] },
+      n("deep.layers", "Transformer 层数", 1, 4, 1, "层"),
+      { kind: "select", path: "deep.heads", label: "注意力头数（需能整除表示维度）", options: [1, 2, 4], unit: "个" },
+      n("deep.maxLen", "序列最多取最近几首", 10, 200, 1, "首"),
+      n("deep.epochs", "最多训练轮数", 1, 100, 1, "轮"),
+      n("deep.minItemCount", "作品至少被多少人听过才有独立 ID 向量", 1, 50, 1, "人"),
+      n("deep.minLift", "自动发布要求 NDCG@20 不低于热度基线的倍数", 0, 3, 0.05, "倍")
+    ]
+  },
+  {
+    key: "content",
+    title: "内容理解与曲库扩展",
+    fields: [
+      { kind: "bool", path: "content.enabled", label: "内容理解（大模型打标签与语义向量）" },
+      n("content.dailyLimit", "每天最多给多少首新歌打标签", 100, 200000, 1, "首"),
+      { kind: "bool", path: "content.llmExpand", label: "大模型曲库扩展（行为少的人补推曲库外的歌）" },
+      n("content.expandRatio", "一页里扩展歌最多占比", 0, 0.5, 0.01)
+    ]
   }
 ];
+
+/** 只属于深度模型与内容理解的分组：口味模型的参数快照里不列 */
+export const V3_GROUP_KEYS = new Set(["deep", "content"]);
 
 export const CRON_PRESETS = [
   { value: "0 4 * * *", label: "每天 4 点" },
@@ -187,15 +218,33 @@ export function numberError(spec: NumberFieldSpec, value: unknown): string | und
   return undefined;
 }
 
+export function selectError(spec: SelectFieldSpec, value: unknown): string | undefined {
+  if (typeof value !== "number" || !spec.options.includes(value)) return `只能选 ${spec.options.join("、")}`;
+  return undefined;
+}
+
 /** 全部字段的校验结果：path → 错误 */
 export function validateConfig(config: MusicConfigInput): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const group of CONFIG_GROUPS) {
     for (const field of group.fields) {
       const value = getPath(config, field.path);
-      const error = field.kind === "number" ? numberError(field, value) : field.kind === "cron" ? cronError(String(value ?? "")) : undefined;
+      const error =
+        field.kind === "number"
+          ? numberError(field, value)
+          : field.kind === "select"
+            ? selectError(field, value)
+            : field.kind === "cron"
+              ? cronError(String(value ?? ""))
+              : undefined;
       if (error) errors[field.path] = error;
     }
+  }
+  // 跨字段：注意力头数要能整除表示维度（每个头 d / heads 维）
+  const d = config.deep?.d;
+  const heads = config.deep?.heads;
+  if (!errors["deep.heads"] && !errors["deep.d"] && typeof d === "number" && typeof heads === "number" && heads > 0 && d % heads !== 0) {
+    errors["deep.heads"] = `需要能整除表示维度 ${d}`;
   }
   return errors;
 }
@@ -213,7 +262,11 @@ export function toConfigInput(config: MusicConfig): MusicConfigInput {
     suppressDays: rest.suppressDays ?? d.suppressDays,
     discover: { ...d.discover, ...rest.discover },
     mixes: { ...d.mixes, ...rest.mixes },
-    autoplay: { ...d.autoplay, ...rest.autoplay }
+    autoplay: { ...d.autoplay, ...rest.autoplay },
+    // 第三期字段同理
+    blend: { ...rest.blend, seq: rest.blend?.seq ?? MUSIC_CONFIG_V3_DEFAULTS.blendSeq },
+    deep: { ...MUSIC_CONFIG_V3_DEFAULTS.deep, ...rest.deep },
+    content: { ...MUSIC_CONFIG_V3_DEFAULTS.content, ...rest.content }
   };
 }
 
@@ -222,6 +275,7 @@ export function formatFieldValue(spec: FieldSpec, value: unknown): string {
   // 旧版本的参数快照没有第二期字段，显示「—」而不是「关闭」
   if (spec.kind === "bool") return typeof value === "boolean" ? (value ? "开启" : "关闭") : "—";
   if (spec.kind === "cron") return cronLabel(String(value ?? "")) || "不定时";
+  if (spec.kind === "select") return typeof value === "number" ? `${value}${spec.unit ? ` ${spec.unit}` : ""}` : "—";
   const v = typeof value === "number" ? value : Number.NaN;
   if (!Number.isFinite(v)) return "—";
   const decimals = spec.step >= 1 ? 0 : Math.min(4, String(spec.step).split(".")[1]?.length ?? 2);

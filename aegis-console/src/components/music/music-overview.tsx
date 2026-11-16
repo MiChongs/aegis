@@ -3,14 +3,15 @@
 import { useMemo, useState, type ReactNode } from "react";
 import NumberFlow, { type Format } from "@number-flow/react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, XAxis, YAxis } from "recharts";
-import { Activity, ArrowRight, Brain, Clock3, Disc3, FlaskConical, Gauge, GitCompareArrows, Layers, MicVocal, Smartphone, ThumbsDown, TrendingUp } from "lucide-react";
+import { Activity, ArrowRight, Brain, Clock3, Disc3, FlaskConical, Gauge, GitCompareArrows, Layers, MicVocal, Network, ScanText, Smartphone, ThumbsDown, TrendingUp } from "lucide-react";
+import { RingGauge } from "@/components/apps/detail/app-detail-kit";
 import { shortDay, longDay } from "@/components/overview/overview-kit";
 import { Panel, Segmented, TabStack } from "@/components/traffic/traffic-kit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { MusicOverview as Overview } from "@/lib/api/music";
+import type { MusicOverviewContent, MusicOverview as Overview } from "@/lib/api/music";
 import { formatDateTimeMinute, formatRelative } from "@/lib/datetime";
 import { useMusicOverviewQuery } from "@/lib/music-hooks";
 import { cn } from "@/lib/utils";
@@ -30,11 +31,13 @@ import {
   sourceLabel
 } from "./music-format";
 import { DaysSwitch, Delta, EmptyLine, MusicErrorPanel, PanelSkeleton, RankBars, TrackCell, musicTrackHref, scenesText } from "./music-kit";
+import { DeepRankerBadge } from "./music-deep-parts";
 import { ModelMetricsCompare } from "./music-model-parts";
 
 /**
  * 音乐推荐总览：先用一句话说清这段时间的听歌情况，再按「趋势 → 行为构成 → 推荐效果（含按模型版本、运行中的实验）
- * → 内容与反馈 → 模型与管道」展开。全部数据来自一个接口（/overview），同一时间窗下各块数字互相对得上。
+ * → 内容与反馈 → 模型与管道 → 深度模型与内容理解（第三期）」展开。全部数据来自一个接口（/overview），
+ * 同一时间窗下各块数字互相对得上。
  */
 
 const TREND_VIEWS = [
@@ -111,6 +114,10 @@ export function MusicOverview({ appKey, onNavigate }: { appKey: string; onNaviga
       <div className="grid min-w-0 gap-4 @4xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <ModelPanel data={data} onNavigate={onNavigate} />
         <PipelinePanel data={data} />
+      </div>
+      <div className="grid min-w-0 gap-4 @4xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <DeepModelPanel data={data} onNavigate={onNavigate} />
+        <ContentCoveragePanel content={data.content} onNavigate={onNavigate} />
       </div>
     </TabStack>
   );
@@ -668,6 +675,112 @@ function PipelinePanel({ data }: { data: Overview }) {
           </span>
         </div>
       </dl>
+    </Panel>
+  );
+}
+
+/* ── 第三期：深度模型与内容理解 ── */
+
+const DEEP_METRIC_KEYS = ["ndcg20", "recall20", "hitRate20"] as const;
+
+function DeepModelPanel({ data, onNavigate }: { data: Overview; onNavigate: (tab: string) => void }) {
+  // 服务端升级前没有这个字段，按「未发布」处理
+  const deep = data.deep ?? null;
+  return (
+    <Panel
+      icon={Network}
+      tone="violet"
+      title="当前深度模型"
+      aside={
+        <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => onNavigate("deep")}>
+          训练记录
+          <ArrowRight />
+        </Button>
+      }
+    >
+      {!deep ? (
+        <EmptyLine>尚未发布深度模型，序列模型通道与 LightGBM 精排暂不参与推荐</EmptyLine>
+      ) : (
+        <div className="flex min-w-0 flex-col gap-4">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1">
+            <span className="text-2xl font-semibold tracking-tight tabular-nums">第 {deep.id} 版</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-xs text-muted-foreground">发布于 {formatRelative(deep.publishedAt)}</span>
+              </TooltipTrigger>
+              <TooltipContent>{formatDateTimeMinute(deep.publishedAt)}</TooltipContent>
+            </Tooltip>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {num(deep.users)} 位用户，{num(deep.items)} 首作品，{compact(deep.sequences ?? 0)} 条序列
+            </span>
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              精排
+              <DeepRankerBadge ranker={deep.ranker ?? null} />
+            </span>
+          </div>
+          {deep.metrics ? (
+            <ModelMetricsCompare metrics={deep.metrics} keys={DEEP_METRIC_KEYS} note="以每人最后一个正向行为为目标、在全部作品上打分" />
+          ) : (
+            <EmptyLine>这个版本没有评估结果</EmptyLine>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+/** 契约只写了「已打标签占比」：兼容比例数字与带计数的对象两种形状 */
+function contentCoverage(content: MusicOverviewContent) {
+  if (typeof content === "number") return Number.isFinite(content) ? { ratio: content } : null;
+  if (!content || typeof content !== "object") return null;
+  const { tracks, tagged, embedded } = content;
+  const ratio = typeof content.ratio === "number" ? content.ratio : tracks ? (tagged ?? 0) / tracks : null;
+  if (ratio === null || !Number.isFinite(ratio)) return null;
+  return { ratio, tracks, tagged, embeddedRatio: tracks && typeof embedded === "number" ? embedded / tracks : undefined };
+}
+
+function ContentCoveragePanel({ content, onNavigate }: { content: MusicOverviewContent; onNavigate: (tab: string) => void }) {
+  const cov = contentCoverage(content);
+  return (
+    <Panel
+      icon={ScanText}
+      tone="sky"
+      title="内容理解覆盖率"
+      aside={
+        <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => onNavigate("content")}>
+          内容理解
+          <ArrowRight />
+        </Button>
+      }
+    >
+      {!cov ? (
+        <EmptyLine>暂无内容理解数据</EmptyLine>
+      ) : (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-6 gap-y-4">
+          <div className="flex items-center gap-3">
+            <RingGauge value={cov.ratio * 100} tone="sky" size={88} stroke={9}>
+              <span className="text-sm font-semibold tabular-nums">{pct(cov.ratio, 0)}</span>
+            </RingGauge>
+            <span className="flex flex-col">
+              <span className="text-sm font-medium">已打标签</span>
+              {typeof cov.tracks === "number" ? (
+                <span className="text-[11px] text-muted-foreground tabular-nums">
+                  {num(cov.tagged ?? 0)} / {num(cov.tracks)} 首
+                </span>
+              ) : null}
+            </span>
+          </div>
+          {typeof cov.embeddedRatio === "number" ? (
+            <div className="flex items-center gap-3">
+              <RingGauge value={cov.embeddedRatio * 100} tone="violet" size={88} stroke={9}>
+                <span className="text-sm font-semibold tabular-nums">{pct(cov.embeddedRatio, 0)}</span>
+              </RingGauge>
+              <span className="text-sm font-medium">有语义向量</span>
+            </div>
+          ) : null}
+          <p className="w-full text-[11px] text-muted-foreground">没有标签的作品在序列模型里只靠行为与歌手、语种表示，冷门与新歌更难被推荐。</p>
+        </div>
+      )}
     </Panel>
   );
 }

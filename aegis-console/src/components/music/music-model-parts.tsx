@@ -3,7 +3,7 @@
 import { Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { MusicModelMetrics, MusicModelRun, MusicRanker } from "@/lib/api/music";
+import type { MusicModelRun, MusicRanker } from "@/lib/api/music";
 import { cn } from "@/lib/utils";
 import { METRIC_META, MODEL_STATUS, liftText, pct, rankFeatureLabel } from "./music-format";
 import { EmptyLine } from "./music-kit";
@@ -22,18 +22,29 @@ export function ModelStatusBadge({ run }: { run: Pick<MusicModelRun, "status"> }
   );
 }
 
-/** 指标 vs 热度基线：每项一行，模型值、基线值、提升幅度与对比条 */
+type MetricKey = (typeof METRIC_META)[number]["key"];
+type MetricValues = Partial<Record<MetricKey, number>>;
+
+/**
+ * 指标 vs 热度基线：每项一行，模型值、基线值、提升幅度与对比条。
+ * 第三期的深度模型没有覆盖率，用 `keys` 只列它有的三项，`note` 换成它自己的留出方式。
+ */
 export function ModelMetricsCompare({
   metrics,
+  keys,
+  note,
   className
 }: {
-  metrics: MusicModelMetrics & { baseline: MusicModelMetrics; testUsers: number };
+  metrics: MetricValues & { baseline: MetricValues; testUsers: number };
+  keys?: readonly MetricKey[];
+  note?: string;
   className?: string;
 }) {
+  const metas = keys ? METRIC_META.filter((m) => keys.includes(m.key)) : METRIC_META;
   return (
     <div className={cn("flex min-w-0 flex-col gap-3", className)}>
       <ul className="flex min-w-0 flex-col gap-3">
-        {METRIC_META.map((meta) => {
+        {metas.map((meta) => {
           const value = metrics[meta.key] ?? 0;
           const base = metrics.baseline?.[meta.key] ?? 0;
           const max = Math.max(value, base, 0.0001);
@@ -72,7 +83,7 @@ export function ModelMetricsCompare({
         })}
       </ul>
       <p className="text-[11px] text-muted-foreground">
-        按每人最后 20% 的正反馈留出测试，评估 {metrics.testUsers.toLocaleString("zh-CN")} 位用户；基线为「只推近期热门」。
+        {note ?? "按每人最后 20% 的正反馈留出测试"}，评估 {metrics.testUsers.toLocaleString("zh-CN")} 位用户；基线为「只推近期热门」。
       </p>
     </div>
   );

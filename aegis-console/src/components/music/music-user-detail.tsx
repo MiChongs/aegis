@@ -54,6 +54,7 @@ import {
   ADJUST_CHANNELS,
   CHANNEL_COLOR,
   CHANNEL_ORDER,
+  CONTENT_CHANNELS,
   EVENT_TYPES,
   SCENES,
   WEEKDAY_LABEL,
@@ -522,6 +523,7 @@ function RecPreviewPanel({ appKey, userId, data }: { appKey: string; userId: num
     ...(preview?.items ?? []).map((item) => CHANNEL_ORDER.reduce((s, k) => s + Math.max(0, item.channels?.[k] ?? 0), 0))
   );
   const experiment = preview?.experimentId ? (data.model.experiments ?? []).find((e) => e.id === preview.experimentId) : undefined;
+  const pendingCount = (preview?.items ?? []).filter((item) => item.resolve).length;
 
   return (
     <Panel
@@ -609,6 +611,11 @@ function RecPreviewPanel({ appKey, userId, data }: { appKey: string; userId: num
                   {experiment ? experiment.name : `实验 #${preview.experimentId}`}，{preview.variant} 组
                 </Badge>
               ) : null}
+              {pendingCount ? (
+                <Badge variant="warning" size="sm" title="大模型推荐的曲库外歌曲，客户端按歌名歌手搜索后播放">
+                  {pendingCount} 首待客户端解析
+                </Badge>
+              ) : null}
               <span>耗时 {elapsedText(preview.tookMs)}</span>
               <span className="ml-auto flex flex-wrap gap-x-3 gap-y-1">
                 {CHANNEL_ORDER.map((k) => (
@@ -639,6 +646,7 @@ function RecPreviewPanel({ appKey, userId, data }: { appKey: string; userId: num
  * 融合之后的调整项：精排分只要有就显示；运营干预与曝光疲劳是乘数，等于 1（或缺省为 0）时没起作用，不显示。
  * 契约只给了通道名，没写取值含义，这里按「精排为分数、另两项为乘数」展示原始值。
  */
+
 function adjustTags(channels: Record<string, number>) {
   return ADJUST_CHANNELS.flatMap((k) => {
     const v = channels[k];
@@ -648,13 +656,33 @@ function adjustTags(channels: Record<string, number>) {
   });
 }
 
+/**
+ * 第三期的内容特征：标签匹配、语义相似为 0–1 的相似度，大于 0 才显示；大模型扩展为 1 时显示一个标记。
+ */
+function contentTags(channels: Record<string, number>) {
+  return CONTENT_CHANNELS.flatMap((k) => {
+    const v = channels[k];
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return [];
+    return [{ key: k, text: k === "llm" ? channelLabel(k) : `${channelLabel(k)} ${v.toFixed(2)}` }];
+  });
+}
+
 function RecRow({ appKey, item, index, maxTotal }: { appKey: string; item: MusicRecItem; index: number; maxTotal: number }) {
   const channels = item.channels ?? {};
   const penalty = channels.penalty ?? 0;
+  // 待解析项不在曲库里（没有 source、songId），不跳作品详情
+  const pending = Boolean(item.resolve);
   return (
     <li className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-3 py-2 first:pt-0 last:pb-0 @3xl:grid-cols-[1.5rem_minmax(0,16rem)_minmax(0,1fr)_minmax(0,14rem)_5.5rem]">
       <span className="text-xs text-muted-foreground tabular-nums">{index + 1}</span>
-      <TrackCell track={item.track} href={musicTrackHref(appKey, item.workKey)} />
+      <span className="flex min-w-0 flex-col gap-1">
+        <TrackCell track={item.track} href={pending ? undefined : musicTrackHref(appKey, item.workKey)} />
+        {pending ? (
+          <Badge variant="warning" size="sm" className="w-fit" title="大模型推荐、曲库里还没有的歌：客户端按歌名歌手搜索，搜不到就跳过">
+            待客户端解析
+          </Badge>
+        ) : null}
+      </span>
       <span className="col-start-2 truncate text-[11px] text-muted-foreground @3xl:col-start-auto">{item.reason?.text || "—"}</span>
       <Tooltip>
         <TooltipTrigger asChild>
@@ -667,7 +695,7 @@ function RecRow({ appKey, item, index, maxTotal }: { appKey: string; item: Music
         </TooltipTrigger>
         <TooltipContent>
           <div className="flex flex-col gap-0.5 text-xs">
-            {[...CHANNEL_ORDER, "penalty", ...ADJUST_CHANNELS].map((k) =>
+            {[...CHANNEL_ORDER, "penalty", ...ADJUST_CHANNELS, ...CONTENT_CHANNELS].map((k) =>
               channels[k] ? (
                 <span key={k} className="flex justify-between gap-4">
                   <span>{channelLabel(k)}</span>
@@ -683,6 +711,11 @@ function RecRow({ appKey, item, index, maxTotal }: { appKey: string; item: Music
         {penalty < 0 ? <span className="block text-[11px] font-normal text-rose-600 dark:text-rose-400">降权 {penalty.toFixed(2)}</span> : null}
         {adjustTags(channels).map((t) => (
           <span key={t.key} className={cn("block text-[11px] font-normal whitespace-nowrap", t.bad ? "text-rose-600 dark:text-rose-400" : "text-sky-600 dark:text-sky-400")}>
+            {t.text}
+          </span>
+        ))}
+        {contentTags(channels).map((t) => (
+          <span key={t.key} className="block text-[11px] font-normal whitespace-nowrap text-indigo-600 dark:text-indigo-400">
             {t.text}
           </span>
         ))}

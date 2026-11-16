@@ -9,7 +9,8 @@ import { apiRequest, buildQuery } from "@/lib/api/client";
  * 昵称由控制台另按 ID 批量取。
  *
  * 下面的类型照抄契约文末「管理端返回结构」，改动时两边一起改；第二期（docs/music-personalization-2.md
- * 「六、管理端增量」）新增的结构放在文件后半，已有结构只加字段。
+ * 「六、管理端增量」）与第三期（docs/music-personalization-3.md「五、管理端增量」）新增的结构放在文件后半，
+ * 已有结构只加字段。
  */
 
 export type MusicTrack = { source: string; songId: string; title: string; artist?: string; album?: string; cover?: string; durationMs?: number };
@@ -51,6 +52,10 @@ export type MusicOverview = {
   experiments: Array<{ id: number; name: string; scenes: string[]; variants: number; startedAt: number }>;
   /** 第二期：不感兴趣的原因分布 */
   feedbackReasons: Array<{ reason: string; count: number }>;
+  /** 第三期：当前发布的深度模型摘要，没有为 null（服务端升级前缺省） */
+  deep?: MusicDeepRun | null;
+  /** 第三期：内容理解覆盖率，见 MusicOverviewContent */
+  content?: MusicOverviewContent;
 };
 
 export type MusicUserRow = { userId: number; minutes: number; plays: number; tracks: number; likes: number; skipRate: number; lastActiveAt: number };
@@ -149,8 +154,13 @@ export type MusicRecItem = {
   track: MusicTrack;
   score: number;
   reason: { kind: string; text: string; refTitle?: string };
-  /** 预览才有：als / itemcf / artist / trending / explore / penalty；第二期加 foldin / ranker / rule / fatigue */
+  /**
+   * 预览才有：als / itemcf / artist / trending / explore / penalty；第二期加 foldin / ranker / rule / fatigue；
+   * 第三期加 seq（序列模型，参与融合）、llm（来自大模型扩展为 1）、tag_match、semantic（0–1 的相似度）
+   */
   channels: Record<string, number>;
+  /** 第三期：待客户端解析的大模型扩展歌。这时 track 只有 title、artist，source、songId 为空 */
+  resolve?: boolean;
 };
 export type MusicRecPreview = {
   recId: string;
@@ -183,6 +193,8 @@ export type MusicTrackDetail = {
   stats: { plays: number; listeners: number; minutes: number; completionRate: number; skipRate: number; likes: number; dislikes: number };
   daily: Array<{ day: string; plays: number; listeners: number }>;
   similar: Array<{ workKey: string; track: MusicTrack | null; score: number; via: "itemcf" | "als" }>;
+  /** 第三期：内容标签，没打过为 null（服务端升级前缺省） */
+  tags?: MusicTags | null;
 };
 
 export type MusicModelMetrics = { recall20: number; ndcg20: number; hitRate20: number; coverage: number };
@@ -238,7 +250,8 @@ export type MusicConfig = {
   };
   als: { factors: number; iterations: number; regularization: number; alpha: number };
   itemcf: { neighbors: number; sessionBoost: number };
-  blend: { als: number; itemcf: number; artist: number; trending: number; explore: number };
+  /** seq 为第三期新增（序列模型），0–5，默认 1.2 */
+  blend: { als: number; itemcf: number; artist: number; trending: number; explore: number; seq: number };
   artistCap: number;
   recentExcludeDays: number;
   exploreRatio: number;
@@ -253,6 +266,9 @@ export type MusicConfig = {
   discover: { size: number; popularityPenalty: number };
   mixes: { max: number; size: number };
   autoplay: { size: number };
+  /* ── 第三期 ── */
+  deep: MusicDeepConfig;
+  content: MusicContentConfig;
   updatedAt: number;
   updatedBy: string;
 };
@@ -454,7 +470,8 @@ export type MusicRuleInput = {
 
 /* ── A/B 实验 ── */
 
-export type MusicBlend = MusicConfig["blend"];
+/** 实验能覆盖的融合权重：契约只列了第二期的五个通道，第三期的 seq 不在实验覆盖项里 */
+export type MusicBlend = Omit<MusicConfig["blend"], "seq">;
 export type MusicExperimentOverrides = {
   blend?: Partial<MusicBlend>;
   exploreRatio?: number;
@@ -676,3 +693,194 @@ export const MUSIC_CONFIG_V2_DEFAULTS: Pick<MusicConfig, "foldIn" | "ranker" | "
   mixes: { max: 6, size: 25 },
   autoplay: { size: 10 }
 };
+
+
+/* ───────────────────────── 第三期（docs/music-personalization-3.md「五、管理端增量」） ───────────────────────── */
+
+export type MusicDeepConfig = {
+  enabled: boolean;
+  /** 32 / 48 / 64 / 96 / 128 */
+  d: number;
+  /** 1–4 */
+  layers: number;
+  /** 1 / 2 / 4，且能整除 d */
+  heads: number;
+  /** 10–200 */
+  maxLen: number;
+  /** 1–100 */
+  epochs: number;
+  /** 1–50：被多少人交互过才有独立 ID 向量 */
+  minItemCount: number;
+  /** 0–3：自动发布要求 NDCG@20 不低于热度基线的倍数 */
+  minLift: number;
+};
+
+export type MusicContentConfig = {
+  enabled: boolean;
+  /** 100–200000：每天最多给多少首新歌打标签 */
+  dailyLimit: number;
+  llmExpand: boolean;
+  /** 0–0.5：一页里扩展歌最多占比 */
+  expandRatio: number;
+};
+
+/** 作品的内容标签；键固定，见契约「二、内容理解」的标签表 */
+export type MusicTags = {
+  genres: string[];
+  moods: string[];
+  scenes: string[];
+  /** 1960s … 2020s 或空 */
+  era: string;
+  /** 0–1 */
+  energy: number;
+  /** male / female / group / none / 空 */
+  vocal: string;
+  /** live / cover / instrumental / remix / acoustic 的子集 */
+  flags: string[];
+  /** 0–1：大模型对这首歌熟不熟 */
+  confidence: number;
+  model: string;
+  taggedAt: number;
+  /** 人工改过 */
+  manual: boolean;
+};
+
+/** PUT /content/tracks/:workKey 的请求体：改后服务端重算语义向量 */
+export type MusicTagsInput = Pick<MusicTags, "genres" | "moods" | "scenes" | "era" | "energy" | "vocal" | "flags">;
+
+export type MusicDeepMetrics = {
+  recall20: number;
+  ndcg20: number;
+  hitRate20: number;
+  baseline: { recall20: number; ndcg20: number; hitRate20: number };
+  testUsers: number;
+  epochs: number;
+  trainMs: number;
+};
+
+/** LightGBM LambdaRank 精排：没导出时只有 enabled=false 与 reason */
+export type MusicDeepRanker = {
+  enabled: boolean;
+  reason?: string;
+  ndcg10?: number;
+  baselineNdcg10?: number;
+  samples?: number;
+  groups?: number;
+  importance?: Array<{ name: string; gain: number }>;
+} | null;
+
+export type MusicDeepRun = {
+  id: number;
+  status: "queued" | "running" | "succeeded" | "failed";
+  /** auto：ALS 训练成功后自动投递 */
+  trigger: "manual" | "auto" | "schedule";
+  note: string;
+  operator: string;
+  createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  publishedAt: number | null;
+  current: boolean;
+  users: number;
+  items: number;
+  sequences: number;
+  error: string;
+  metrics: MusicDeepMetrics | null;
+  ranker: MusicDeepRanker;
+};
+/** 外层同 /models，取 `{ items, total }` */
+export type MusicDeepRunPage = { items: MusicDeepRun[]; total: number };
+export type MusicDeepRunDetail = MusicDeepRun & {
+  params: Record<string, unknown>;
+  stages: Array<{ name: string; ms: number }>;
+  log: string[];
+  /** 数值对齐：Go 推理与 PyTorch 逐用例对比，每维误差 > 1e-3 即不通过 */
+  parity: { cases: number; maxError: number; ok: boolean } | null;
+};
+
+export type MusicContentUsage = { calls: number; tokens: number; items: number };
+export type MusicContentOverview = {
+  tracks: number;
+  tagged: number;
+  embedded: number;
+  pending: number;
+  failed: number;
+  /** 服务端没配 MUSIC_LLM_*：不打标签、不做曲库扩展 */
+  llmConfigured: boolean;
+  today: MusicContentUsage;
+  daily: Array<{ day: string } & MusicContentUsage>;
+  genres: Array<{ key: string; count: number }>;
+  moods: Array<{ key: string; count: number }>;
+};
+
+export type MusicContentStatus = "tagged" | "pending" | "failed";
+export type MusicContentTrack = { workKey: string; track: MusicTrack | null; tags: MusicTags | null; status: MusicContentStatus; attempts: number };
+/** 外层同其它分页列表，取 `{ items, total }` */
+export type MusicContentTrackPage = { items: MusicContentTrack[]; total: number };
+
+/**
+ * 总览里的内容理解覆盖率。契约只写了「已打标签占比」，没给形状：
+ * 可能是 0–1 的比例，也可能是带计数的对象，界面经 `contentCoverage()` 统一读。
+ */
+export type MusicOverviewContent =
+  | number
+  | { ratio?: number; tracks?: number; tagged?: number; embedded?: number }
+  | null
+  | undefined;
+
+/** 第三期配置项的默认值：服务端尚未返回这些字段时用来补齐表单 */
+export const MUSIC_CONFIG_V3_DEFAULTS: Pick<MusicConfig, "deep" | "content"> & { blendSeq: number } = {
+  deep: { enabled: true, d: 64, layers: 2, heads: 2, maxLen: 50, epochs: 20, minItemCount: 3, minLift: 1 },
+  content: { enabled: true, dailyLimit: 5000, llmExpand: true, expandRatio: 0.3 },
+  blendSeq: 1.2
+};
+
+export function listMusicDeepRuns(token: string, appKey: string, params: { page?: number; pageSize?: number }) {
+  return apiRequest<MusicDeepRunPage>(`${base(appKey)}/deep/runs${buildQuery(params)}`, { token });
+}
+
+export function getMusicDeepRun(token: string, appKey: string, runId: number) {
+  return apiRequest<MusicDeepRunDetail>(`${base(appKey)}/deep/runs/${runId}`, { token });
+}
+
+export function trainMusicDeepModel(token: string, appKey: string, note?: string) {
+  return apiRequest<MusicDeepRun>(`${base(appKey)}/deep/train`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(note ? { note } : {})
+  });
+}
+
+/** 发布与回滚是同一个接口：发布比当前旧的版本就是回滚 */
+export function publishMusicDeepRun(token: string, appKey: string, runId: number) {
+  return apiRequest<unknown>(`${base(appKey)}/deep/runs/${runId}/publish`, { method: "POST", token });
+}
+
+export function getMusicContentOverview(token: string, appKey: string, days?: number) {
+  return apiRequest<MusicContentOverview>(`${base(appKey)}/content${buildQuery({ days })}`, { token });
+}
+
+export function listMusicContentTracks(
+  token: string,
+  appKey: string,
+  params: { status?: MusicContentStatus; q?: string; page?: number; pageSize?: number }
+) {
+  return apiRequest<MusicContentTrackPage>(`${base(appKey)}/content/tracks${buildQuery(params)}`, { token });
+}
+
+export function updateMusicTrackTags(token: string, appKey: string, workKey: string, input: MusicTagsInput) {
+  return apiRequest<unknown>(`${base(appKey)}/content/tracks/${encodeURIComponent(workKey)}`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify(input)
+  });
+}
+
+/** 契约没写返回结构；有 `queued` 时界面显示加入队列的首数 */
+export function retagMusicTracks(token: string, appKey: string, input: { workKeys?: string[]; all?: boolean }) {
+  return apiRequest<{ queued?: number } | null>(`${base(appKey)}/content/retag`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(input)
+  });
+}

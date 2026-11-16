@@ -1,11 +1,13 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Activity, Brain, Disc3, FlaskConical, MicVocal, ScrollText, Search, Settings2, ShieldBan, Users } from "lucide-react";
+import { Activity, Brain, Disc3, FlaskConical, MicVocal, Network, ScanText, ScrollText, Search, Settings2, ShieldBan, Users } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { appSectionHref } from "@/lib/app-sections";
 import { MusicArtists } from "./music-artists";
 import { MusicConfigPanel } from "./music-config";
+import { MusicContent } from "./music-content";
+import { MusicDeep } from "./music-deep";
 import { MusicEvents } from "./music-events";
 import { MusicExperiments } from "./music-experiments";
 import { MusicListeners } from "./music-listeners";
@@ -31,6 +33,8 @@ export const MUSIC_TABS = [
   { value: "experiments", label: "实验", icon: FlaskConical },
   { value: "events", label: "事件", icon: ScrollText },
   { value: "models", label: "模型", icon: Brain },
+  { value: "deep", label: "深度模型", icon: Network },
+  { value: "content", label: "内容理解", icon: ScanText },
   { value: "config", label: "配置", icon: Settings2 }
 ] as const;
 
@@ -82,6 +86,8 @@ function WorkspaceTabs({ appKey }: { appKey: string }) {
       <TabsContent value="experiments">{tab === "experiments" && <MusicExperiments appKey={appKey} canManage={canManage} />}</TabsContent>
       <TabsContent value="events">{tab === "events" && <MusicEvents appKey={appKey} initialUserId={Number(params.get("userId")) || undefined} />}</TabsContent>
       <TabsContent value="models">{tab === "models" && <MusicModels appKey={appKey} canManage={canManage} />}</TabsContent>
+      <TabsContent value="deep">{tab === "deep" && <MusicDeep appKey={appKey} canManage={canManage} />}</TabsContent>
+      <TabsContent value="content">{tab === "content" && <MusicContent appKey={appKey} canManage={canManage} />}</TabsContent>
       <TabsContent value="config">{tab === "config" && <MusicConfigPanel appKey={appKey} canManage={canManage} />}</TabsContent>
     </Tabs>
   );

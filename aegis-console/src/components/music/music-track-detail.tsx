@@ -2,10 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { Disc3, Layers, Sparkles, TrendingUp, Waypoints } from "lucide-react";
+import { Disc3, Layers, Pencil, Sparkles, Tags, TrendingUp, Waypoints } from "lucide-react";
 import { CopyField } from "@/components/apps/detail/app-detail-kit";
 import { shortDay } from "@/components/overview/overview-kit";
 import { Panel, Segmented, TabStack } from "@/components/traffic/traffic-kit";
+import { Button } from "@/components/ui/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { MusicTrackDetail } from "@/lib/api/music";
@@ -13,7 +14,8 @@ import { formatDateTimeMinute, formatRelative } from "@/lib/datetime";
 import { useMusicTrackQuery } from "@/lib/music-hooks";
 import { clockText, compact, minutesText, num, pct, sourceLabel } from "./music-format";
 import { EmptyLine, MusicError, PanelSkeleton, TrackCell, TrackCover, musicHref, musicTrackHref } from "./music-kit";
-import { MusicAccessGate, MusicPageHeader } from "./music-shell";
+import { MusicAccessGate, MusicPageHeader, useMusicAccess } from "./music-shell";
+import { TagEditorDialog, TagsDetail } from "./music-tag-parts";
 
 const DAILY_CONFIG = {
   plays: { label: "播放次数", color: "var(--color-violet-500, #8b5cf6)" },
@@ -23,6 +25,7 @@ const DAILY_CONFIG = {
 /**
  * 作品详情（/apps/{appKey}/music/tracks/{workKey}）。一个作品是同一首歌在各音源的全部版本，
  * 统计按作品合并；相似作品分两路列出：「常被一起听」来自 ItemCF 邻居，「口味相近」来自 ALS 向量近邻。
+ * 第三期加内容标签（大模型生成或人工修改），有写权限时可以在这里直接修改。
  */
 export function MusicTrackDetailPage({ appKey, workKey }: { appKey: string; workKey: string }) {
   const query = useMusicTrackQuery(appKey, workKey);
@@ -85,6 +88,8 @@ function TrackBody({ appKey, data }: { appKey: string; data: MusicTrackDetail })
         <CopyField label="作品键" value={data.workKey} />
       </section>
 
+      <TagsPanel appKey={appKey} data={data} />
+
       <DailyPanel data={data} />
 
       <Panel icon={Layers} tone="sky" title="各音源版本" aside={<span className="text-xs text-muted-foreground tabular-nums">{data.variants.length}</span>}>
@@ -125,6 +130,35 @@ function TrackBody({ appKey, data }: { appKey: string; data: MusicTrackDetail })
         <SimilarPanel appKey={appKey} icon={Sparkles} title="口味相近" items={als} barClassName="bg-sky-500" />
       </div>
     </TabStack>
+  );
+}
+
+function TagsPanel({ appKey, data }: { appKey: string; data: MusicTrackDetail }) {
+  const { canManage } = useMusicAccess(appKey);
+  const [editing, setEditing] = useState(false);
+  // 服务端升级前没有这个字段，按「未打标签」处理
+  const tags = data.tags ?? null;
+  return (
+    <Panel
+      icon={Tags}
+      tone="sky"
+      title="内容标签"
+      aside={
+        canManage ? (
+          <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+            <Pencil />
+            修改标签
+          </Button>
+        ) : null
+      }
+    >
+      <TagsDetail tags={tags} />
+      <TagEditorDialog
+        appKey={appKey}
+        target={editing ? { workKey: data.workKey, track: data.track, tags } : null}
+        onOpenChange={(open) => !open && setEditing(false)}
+      />
+    </Panel>
   );
 }
 

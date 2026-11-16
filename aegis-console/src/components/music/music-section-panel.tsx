@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Brain, Disc3, FlaskConical, ListMusic, MicVocal, ScrollText, Search, Settings2, ShieldBan, Users } from "lucide-react";
+import { ArrowRight, Brain, Disc3, FlaskConical, ListMusic, MicVocal, Network, ScanText, ScrollText, Search, Settings2, ShieldBan, Users } from "lucide-react";
 import { DetailPanel, Metric } from "@/components/apps/detail/app-detail-kit";
 import { Button } from "@/components/ui/button";
 import { formatRelative } from "@/lib/datetime";
@@ -19,6 +19,8 @@ const LINKS = [
   { tab: "experiments", label: "实验", icon: FlaskConical },
   { tab: "events", label: "事件", icon: ScrollText },
   { tab: "models", label: "模型", icon: Brain },
+  { tab: "deep", label: "深度模型", icon: Network },
+  { tab: "content", label: "内容理解", icon: ScanText },
   { tab: "config", label: "配置", icon: Settings2 }
 ] as const;
 
@@ -63,7 +65,7 @@ export function AppMusicSectionPanel({ appKey }: { appKey: string }) {
           <p className="text-xs text-muted-foreground">
             {data
               ? data.model
-                ? `当前使用第 ${data.model.id} 版模型，${formatRelative(data.model.publishedAt)}发布。`
+                ? `当前使用第 ${data.model.id} 版模型，${formatRelative(data.model.publishedAt)}发布${data.deep ? `；深度模型第 ${data.deep.id} 版` : ""}。`
                 : "尚未发布模型，推荐暂时只给近期热门。"
               : " "}
           </p>

@@ -9,7 +9,7 @@ import type { MusicModelDetail, MusicModelRun } from "@/lib/api/music";
 import { formatDateTime } from "@/lib/datetime";
 import { useMusicModelQuery } from "@/lib/music-hooks";
 import { STAGE_LABEL, TRIGGER_LABEL, bytesText, compact, elapsedText, num, runDuration } from "./music-format";
-import { CONFIG_GROUPS, formatFieldValue, getPath } from "./music-config-fields";
+import { CONFIG_GROUPS, V3_GROUP_KEYS, formatFieldValue, getPath } from "./music-config-fields";
 import { EmptyLine, MusicError } from "./music-kit";
 import { ModelMetricsCompare, ModelStatusBadge, RankerSummary } from "./music-model-parts";
 
@@ -138,7 +138,7 @@ function Detail({
 
       <Section title="参数快照">
         <div className="flex min-w-0 flex-col gap-4">
-          {CONFIG_GROUPS.filter((g) => g.key !== "switch").map((group) => (
+          {CONFIG_GROUPS.filter((g) => g.key !== "switch" && !V3_GROUP_KEYS.has(g.key)).map((group) => (
             <div key={group.key} className="min-w-0">
               <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">{group.title}</p>
               <dl className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">

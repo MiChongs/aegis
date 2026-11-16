@@ -9,9 +9,11 @@ import {
   Layers,
   ListMusic,
   Loader2,
+  Network,
   RotateCcw,
   Save,
   Scale,
+  ScanText,
   Settings2,
   Shuffle,
   Sparkles,
@@ -23,6 +25,7 @@ import {
 import { Panel, SettingRow, TabStack } from "@/components/traffic/traffic-kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ApiError } from "@/lib/api/client";
 import type { MusicConfigInput } from "@/lib/api/music";
@@ -53,7 +56,9 @@ const GROUP_ICON: Record<string, LucideIcon> = {
   publish: Gauge,
   ranker: Cpu,
   fatigue: Timer,
-  scenes: ListMusic
+  scenes: ListMusic,
+  deep: Network,
+  content: ScanText
 };
 
 /**
@@ -163,6 +168,26 @@ function ConfigField({
     return (
       <SettingRow title={field.label}>
         <Switch checked={Boolean(value)} disabled={disabled} onCheckedChange={onChange} aria-label={field.label} />
+      </SettingRow>
+    );
+  }
+  if (field.kind === "select") {
+    const current = typeof value === "number" ? String(value) : "";
+    return (
+      <SettingRow title={field.label} error={error}>
+        <Select value={current} disabled={disabled} onValueChange={(v) => onChange(Number(v))}>
+          <SelectTrigger size="sm" className="h-8 w-32 text-xs tabular-nums" aria-label={field.label} aria-invalid={Boolean(error) || undefined}>
+            <SelectValue placeholder="请选择" />
+          </SelectTrigger>
+          <SelectContent>
+            {field.options.map((option) => (
+              <SelectItem key={option} value={String(option)}>
+                {option}
+                {field.unit ? ` ${field.unit}` : ""}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </SettingRow>
     );
   }

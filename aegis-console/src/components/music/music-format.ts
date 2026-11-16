@@ -5,6 +5,8 @@
  * 只有模型指标保留 Recall@20 / NDCG@20 这类业内通用名，并配一句短说明。
  */
 import type {
+  MusicContentStatus,
+  MusicDeepRun,
   MusicEvent,
   MusicExperimentStatus,
   MusicFeedbackKind,
@@ -109,14 +111,21 @@ export const CHANNEL_LABEL: Record<string, string> = {
   foldin: "实时口味",
   ranker: "精排",
   rule: "运营干预",
-  fatigue: "曝光疲劳"
+  fatigue: "曝光疲劳",
+  seq: "序列模型",
+  llm: "大模型扩展",
+  tag_match: "标签匹配",
+  semantic: "语义相似"
 };
 
-/** 叠加成融合分的通道（堆叠条按这个顺序画）；foldin 为第二期的实时折入 */
-export const CHANNEL_ORDER = ["als", "itemcf", "artist", "trending", "explore", "foldin"] as const;
+/** 叠加成融合分的通道（堆叠条按这个顺序画）；foldin 为第二期的实时折入，seq 为第三期的序列模型 */
+export const CHANNEL_ORDER = ["als", "itemcf", "artist", "trending", "explore", "foldin", "seq"] as const;
 
 /** 第二期：作用在融合分之后的调整项，单独列出不进堆叠条 */
 export const ADJUST_CHANNELS = ["ranker", "rule", "fatigue"] as const;
+
+/** 第三期：内容特征。tag_match、semantic 为 0–1 的相似度，llm 为 1 表示来自大模型扩展；只进精排，不进堆叠条 */
+export const CONTENT_CHANNELS = ["tag_match", "semantic", "llm"] as const;
 
 /** 通道配色：同一通道在各页面同一个颜色 */
 export const CHANNEL_COLOR: Record<string, string> = {
@@ -126,6 +135,7 @@ export const CHANNEL_COLOR: Record<string, string> = {
   trending: "bg-rose-500",
   explore: "bg-emerald-500",
   foldin: "bg-teal-500",
+  seq: "bg-indigo-500",
   penalty: "bg-zinc-400"
 };
 
@@ -230,7 +240,11 @@ export const RANK_FEATURE_LABEL: Record<string, string> = {
   lang_match: "语种匹配",
   fresh: "从没听过",
   pref_artist: "偏好里选过的歌手",
-  position: "展示位置"
+  position: "展示位置",
+  seq: "序列模型",
+  tag_match: "标签匹配",
+  semantic: "语义相似",
+  llm: "大模型扩展"
 };
 
 export function rankFeatureLabel(name: string) {
@@ -433,3 +447,54 @@ export function peakHour(hours: number[]) {
   });
   return best >= 0 ? best : null;
 }
+
+/* ── 第三期：深度模型与内容理解 ── */
+
+export const DEEP_TRIGGER_LABEL: Record<MusicDeepRun["trigger"], string> = {
+  manual: "手动",
+  auto: "随口味模型",
+  schedule: "定时"
+};
+
+/** 深度模型的训练阶段。契约没列阶段名，这里收常见叫法，未收录的原样显示 */
+export const DEEP_STAGE_LABEL: Record<string, string> = {
+  load: "读取数据",
+  items: "整理曲库",
+  sequences: "构建序列",
+  features: "物品特征",
+  train: "训练序列模型",
+  eval: "离线评估",
+  final: "全量再训练",
+  ranker: "训练精排",
+  export: "导出模型",
+  parity: "数值对齐",
+  save: "保存产物",
+  publish: "发布"
+};
+
+/** 深度模型参数快照的叫法；未收录的键原样显示 */
+export const DEEP_PARAM_LABEL: Record<string, string> = {
+  enabled: "深度模型",
+  d: "表示维度",
+  heads: "注意力头数",
+  layers: "层数",
+  ffn: "前馈层宽度",
+  maxLen: "序列最大长度",
+  dropout: "Dropout",
+  epochs: "最多训练轮数",
+  lr: "学习率",
+  learningRate: "学习率",
+  batchSize: "批大小",
+  negatives: "负例数",
+  minItemCount: "独立 ID 向量的最少交互人数",
+  minLift: "自动发布要求的基线倍数",
+  windowDays: "行为窗口",
+  threads: "CPU 线程数",
+  embedDim: "语义向量维度"
+};
+
+export const CONTENT_STATUS: Record<MusicContentStatus, { label: string; tone: "success" | "secondary" | "danger" }> = {
+  tagged: { label: "已打标签", tone: "success" },
+  pending: { label: "待打标签", tone: "secondary" },
+  failed: { label: "失败", tone: "danger" }
+};
