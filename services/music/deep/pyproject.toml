@@ -37,9 +37,10 @@ name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+# 其余用官方 PyPI：生产在 HK 构建，清华镜像拒绝境外访问（403）。本机在国内构建慢时可临时设 UV_DEFAULT_INDEX 换镜像。
 [[tool.uv.index]]
-name = "tuna"
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+name = "pypi"
+url = "https://pypi.org/simple"
 default = true
 
 [tool.pytest.ini_options]

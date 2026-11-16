@@ -2,12 +2,12 @@
 #
 # 音乐个性化第三期：深度模型训练服务 music-deep（services/music/deep，docs/music-personalization-3.md「三、深度模型」）。
 # Python 3.12 + PyTorch（CPU 版）+ LightGBM，依赖锁在 services/music/deep/uv.lock：
-#   torch 来自 https://download.pytorch.org/whl/cpu（不带 CUDA），其余来自清华 PyPI 镜像（锁文件里记着地址）。
+#   torch 来自 https://download.pytorch.org/whl/cpu（不带 CUDA），其余来自官方 PyPI（锁文件里记着地址；清华镜像拒绝境外的 HK 构建机，403）。
 #
 #   docker build -f deploy/docker/music-deep.Dockerfile -t aegis-music-deep .
 #
 FROM python:3.12-slim AS build
-ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG PIP_INDEX_URL=https://pypi.org/simple
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_PROJECT_ENVIRONMENT=/opt/venv
 RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} "uv>=0.8,<0.13"
 WORKDIR /src
