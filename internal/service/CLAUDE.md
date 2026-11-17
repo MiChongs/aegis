@@ -96,6 +96,8 @@
 | `password_strength.go` | — | 强度评估引擎：PRECIS 归一化 + zxcvbn 猜测次数估算 + 0~100 映射 + 模式中文化 |
 | `password_dictionary_zh.go` | — | 中文语境与通用弱口令补充词表（zxcvbn 内置词表零覆盖中文） |
 | `payment_service.go` | `PaymentService` | 支付网关：渠道注册表、订单创建/查询/回调、统一限额、履约 |
+| `payment_order_intent.go` | — | 下单用途归一化（`type: "vip"`、`metadata.planId` 等写法收成规范 purpose）+ 按套餐 / 档位服务端定价 |
+| `payment_fulfillment.go` | — | 履约兜底（后台重试写清用途的已付订单）+ 管理端补履约 / 标记已在别处补发，见 [docs](../../docs/payment-fulfillment.md) |
 | `payment_receipt.go` | — | 支付凭证：订单 → 凭证文档装配、语言/时区/币种解析、导出落盘与清理、订单上的凭证入口 |
 | `payment_receipt_wallet.go` | — | 钱包流水凭证：流水 → 凭证文档装配、订单委派判定、流水上的凭证入口 |
 | `payment_receipt_email.go` | — | 凭证邮件：签名下载链接、与 PDF 同语言的正文、频次限制、支付成功自动寄送 |

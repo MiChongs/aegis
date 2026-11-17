@@ -168,9 +168,18 @@ type AdminPaymentInitEpayRequest struct {
 }
 
 type CreatePaymentOrderRequest struct {
-	Subject string `json:"subject" form:"subject" binding:"required"`
+	// Subject 商品名称；带了 purpose 时可不填（会员取套餐名，充值为「余额充值」）
+	Subject string `json:"subject" form:"subject"`
 	Body    string `json:"body" form:"body"`
-	Amount  string `json:"amount" form:"amount" binding:"required"`
+	// Amount 十进制金额字符串；买会员、按档位充值时可不填，由服务端按套餐 / 档位定价
+	Amount string `json:"amount" form:"amount"`
+	// Purpose 订单用途：vip_purchase / wallet_recharge / integral_purchase（也认 vip、recharge 等写法，
+	// 与 metadata.purpose 等价）。不带用途的订单是普通商品单，付款后不会自动发放任何东西。
+	Purpose string `json:"purpose" form:"purpose"`
+	// PlanID 会员套餐 ID（vip_purchase），与 metadata.vipPlanId 等价
+	PlanID int64 `json:"plan_id" form:"plan_id"`
+	// PackageID 充值档位 ID（wallet_recharge），与 metadata.walletPackageId 等价
+	PackageID int64 `json:"package_id" form:"package_id"`
 	// Type 子支付类型（alipay / wxpay / qqpay …），取自 /pay/methods 的 type。
 	Type string `json:"type" form:"type"`
 	// PaymentMethod 与 ConfigName 一起定位支付配置，取自 /pay/methods 的 method / configName。

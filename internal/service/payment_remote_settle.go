@@ -17,7 +17,7 @@ import (
 // 丢了推送，用户付过的钱就一直挂在「待支付」上，所以这里从两头补：
 //
 //	用户查单（GET /pay/orders/:orderNo）：待支付订单当场去上游核实一次，节流 15 秒
-//	后台每 2 分钟：最近 24 小时内未结的订单按配置分组，每份配置翻一轮上游订单
+//	后台每 2 分钟：最近 24 小时内未结的订单按配置分组，指向同一上游账号的配置合并，每组翻一轮上游订单
 //
 // 核实到的结果走 applyVerifiedResult，与异步通知同一段交叉校验与履约。
 // 过期订单也在范围内：用户在收银台磨蹭超过 30 分钟再付款，钱照样到了，单就该认。
@@ -129,23 +129,52 @@ func (s *PaymentService) syncUnsettledOrders() {
 		s.log.Warn("list unsettled payment orders failed", zap.Error(err))
 		return
 	}
+	// 先按支付配置分组，再把指向同一上游账号的配置并成一轮（多个应用共用一个爱发电账号时，
+	// 每个应用各翻一遍最近订单只是重复消耗接口频次，结果完全一样）。
 	type configKey struct{ appID, configID int64 }
-	groups := map[configKey][]*paymentdomain.Order{}
-	keys := make([]configKey, 0)
+	byConfig := map[configKey][]*paymentdomain.Order{}
+	configKeys := make([]configKey, 0)
 	for i := range orders {
 		key := configKey{orders[i].AppID, orders[i].ConfigID}
-		if _, ok := groups[key]; !ok {
-			keys = append(keys, key)
+		if _, ok := byConfig[key]; !ok {
+			configKeys = append(configKeys, key)
 		}
-		groups[key] = append(groups[key], &orders[i])
+		byConfig[key] = append(byConfig[key], &orders[i])
 	}
-	total := 0
-	for _, key := range keys {
+	type settleGroup struct {
+		config *paymentdomain.Config
+		orders []*paymentdomain.Order
+	}
+	groups := make([]*settleGroup, 0, len(configKeys))
+	byScope := map[string]*settleGroup{}
+	for _, key := range configKeys {
 		config, err := s.pg.GetPaymentConfigByID(ctx, key.appID, key.configID)
 		if err != nil || config == nil {
 			continue
 		}
-		total += s.settleOrdersWithConfig(ctx, config, groups[key])
+		scope := ""
+		if p, ok := s.providers[config.PaymentMethod]; ok {
+			if scoper, ok := p.(remoteSettleScoper); ok {
+				if sc := scoper.SettleScope(config.ConfigData); sc != "" {
+					scope = config.PaymentMethod + "|" + sc
+				}
+			}
+		}
+		if scope != "" {
+			if g, ok := byScope[scope]; ok {
+				g.orders = append(g.orders, byConfig[key]...)
+				continue
+			}
+		}
+		g := &settleGroup{config: config, orders: byConfig[key]}
+		groups = append(groups, g)
+		if scope != "" {
+			byScope[scope] = g
+		}
+	}
+	total := 0
+	for _, g := range groups {
+		total += s.settleOrdersWithConfig(ctx, g.config, g.orders)
 	}
 	if total > 0 {
 		s.log.Info("settled payment orders from upstream", zap.Int("count", total))

@@ -861,6 +861,7 @@ POST	/api/admin/app/payment-config/epay/init	AdminPaymentEpayInit
 POST	/api/admin/app/payment-config/list	AdminPaymentConfigList
 POST	/api/admin/app/payment-config/methods	PaymentMethods
 POST	/api/admin/app/payment-config/orders/detail	AdminPaymentOrderDetail
+POST	/api/admin/app/payment-config/orders/fulfill	AdminPaymentOrderFulfill
 POST	/api/admin/app/payment-config/orders/list	AdminPaymentOrderList
 POST	/api/admin/app/payment-config/orders/receipt	AdminPaymentOrderReceipt
 POST	/api/admin/app/payment-config/orders/receipt/email	AdminPaymentOrderReceiptEmail

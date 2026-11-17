@@ -127,12 +127,12 @@ func (r *Repository) CreatePaymentOrder(ctx context.Context, item paymentdomain.
 	meta, _ := json.Marshal(item.Metadata)
 	query := `INSERT INTO payment_orders (appid, user_id, config_id, order_no, subject, body, amount, payment_method, provider_type, status, notify_status, client_ip, notify_url, return_url, metadata, expire_at, currency, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', 'pending', $10, $11, $12, $13, $14, $15, NOW(), NOW())
-RETURNING id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at`
+RETURNING id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at, fulfillment_status, fulfilled_at`
 	return scanPaymentOrder(r.pool.QueryRow(ctx, query, item.AppID, item.UserID, item.ConfigID, item.OrderNo, item.Subject, nullableString(item.Body), item.Amount.StringFixed(2), item.PaymentMethod, item.ProviderType, nullableString(item.ClientIP), nullableString(item.NotifyURL), nullableString(item.ReturnURL), meta, item.ExpireAt, strings.ToUpper(strings.TrimSpace(item.Currency))))
 }
 
 func (r *Repository) GetPaymentOrderByOrderNo(ctx context.Context, orderNo string) (*paymentdomain.Order, error) {
-	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at FROM payment_orders WHERE order_no = $1 LIMIT 1`
+	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at, fulfillment_status, fulfilled_at FROM payment_orders WHERE order_no = $1 LIMIT 1`
 	return scanPaymentOrder(r.pool.QueryRow(ctx, query, orderNo))
 }
 
@@ -144,7 +144,7 @@ func (r *Repository) ListUnsettledPaymentOrders(ctx context.Context, methods []s
 	if limit < 1 {
 		limit = 100
 	}
-	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at FROM payment_orders WHERE payment_method = ANY($1) AND status IN ('pending', 'expired') AND review_reason IS NULL AND created_at >= $2 ORDER BY created_at DESC LIMIT $3`
+	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at, fulfillment_status, fulfilled_at FROM payment_orders WHERE payment_method = ANY($1) AND status IN ('pending', 'expired') AND review_reason IS NULL AND created_at >= $2 ORDER BY created_at DESC LIMIT $3`
 	rows, err := r.pool.Query(ctx, query, methods, since, limit)
 	if err != nil {
 		return nil, err
@@ -162,7 +162,7 @@ func (r *Repository) ListUnsettledPaymentOrders(ctx context.Context, methods []s
 }
 
 func (r *Repository) GetPaymentOrderByOrderNoForUser(ctx context.Context, appID int64, userID int64, orderNo string) (*paymentdomain.Order, error) {
-	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at FROM payment_orders WHERE appid = $1 AND user_id = $2 AND order_no = $3 LIMIT 1`
+	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at, fulfillment_status, fulfilled_at FROM payment_orders WHERE appid = $1 AND user_id = $2 AND order_no = $3 LIMIT 1`
 	return scanPaymentOrder(r.pool.QueryRow(ctx, query, appID, userID, orderNo))
 }
 
@@ -177,7 +177,7 @@ func (r *Repository) ListPaymentOrdersByUser(ctx context.Context, appID int64, u
 
 	args := []any{appID, userID}
 	countQuery := `SELECT COUNT(*) FROM payment_orders WHERE appid = $1 AND user_id = $2`
-	listQuery := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at FROM payment_orders WHERE appid = $1 AND user_id = $2`
+	listQuery := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at, fulfillment_status, fulfilled_at FROM payment_orders WHERE appid = $1 AND user_id = $2`
 	if status = strings.TrimSpace(status); status != "" {
 		args = append(args, status)
 		countQuery += fmt.Sprintf(" AND status = $%d", len(args))
@@ -221,6 +221,10 @@ func (r *Repository) ListPaymentOrdersByApp(ctx context.Context, appID int64, st
 	if status = strings.TrimSpace(status); status == paymentdomain.OrderFilterReview {
 		// 不是订单状态：待人工处理的订单（实付与订单金额对不上，见 docs/payment-review.md）
 		where += " AND review_reason IS NOT NULL"
+	} else if status == paymentdomain.OrderFilterUnfulfilled {
+		// 不是订单状态：钱收了、东西没发（docs/payment-fulfillment.md）
+		args = append(args, paymentdomain.LegacyIntentMetaKeys(), paymentdomain.LegacyIntentTypes())
+		where += fmt.Sprintf(" AND "+unfulfilledOrderCondition, len(args)-1, len(args))
 	} else if status != "" {
 		args = append(args, status)
 		where += fmt.Sprintf(" AND status = $%d", len(args))
@@ -242,7 +246,7 @@ func (r *Repository) ListPaymentOrdersByApp(ctx context.Context, appID int64, st
 		return nil, 0, err
 	}
 	args = append(args, limit, (page-1)*limit)
-	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at FROM payment_orders` +
+	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at, fulfillment_status, fulfilled_at FROM payment_orders` +
 		where + fmt.Sprintf(" ORDER BY id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -258,6 +262,68 @@ func (r *Repository) ListPaymentOrdersByApp(ctx context.Context, appID int64, st
 		items = append(items, *item)
 	}
 	return items, total, rows.Err()
+}
+
+// unfulfilledOrderCondition 已付款、未退款、没履约、看得出要发东西的订单。
+// 两个占位符依次是：意味着「要发货」的 metadata 键、被老客户端写进 provider_type 的用途词。
+const unfulfilledOrderCondition = `status = 'paid' AND fulfillment_status = 'none' AND refund_status = 'none'
+AND (COALESCE(metadata, '{}'::jsonb) ?| $%d::text[] OR LOWER(provider_type) = ANY($%d::text[]))`
+
+// ListPaidUnfulfilledPaymentOrders 后台补履约候选：since 之后付款、带 purpose、还没履约的订单（老单在前）。
+//
+// 只捞带 purpose 的：那是下单时就写清楚要发什么、只是履约失败了的单，重试是安全的。
+// 没写 purpose、靠推断才看得出用途的老订单不在这里 —— 应用管理员可能已经手工补过，
+// 自动补会重复发放；它们留给控制台「待履约」逐笔确认。
+func (r *Repository) ListPaidUnfulfilledPaymentOrders(ctx context.Context, since time.Time, limit int) ([]paymentdomain.Order, error) {
+	if limit < 1 {
+		limit = 100
+	}
+	query := `SELECT id, appid, user_id, config_id, order_no, COALESCE(provider_order_no, ''), subject, COALESCE(body, ''), amount, payment_method, provider_type, status, notify_status, COALESCE(client_ip, ''), COALESCE(notify_url, ''), COALESCE(return_url, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(raw_callback, '{}'::jsonb), refunded_amount, refund_status, COALESCE(currency, ''), paid_at, expire_at, created_at, updated_at, paid_amount, COALESCE(review_reason, ''), COALESCE(review_note, ''), review_at, fulfillment_status, fulfilled_at FROM payment_orders WHERE status = 'paid' AND fulfillment_status = 'none' AND refund_status = 'none' AND COALESCE(metadata->>'purpose', '') <> '' AND paid_at >= $1 ORDER BY paid_at ASC LIMIT $2`
+	rows, err := r.pool.Query(ctx, query, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]paymentdomain.Order, 0)
+	for rows.Next() {
+		item, err := scanPaymentOrder(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
+// SetPaymentOrderIntent 给一笔已付款、未履约的订单补写履约快照（metadata 整体替换）。
+// 返回 false 表示订单此刻已不满足条件（已履约 / 已退款 / 不是已付款），调用方不该继续发放。
+func (r *Repository) SetPaymentOrderIntent(ctx context.Context, orderID int64, metadata map[string]any) (bool, error) {
+	meta, err := json.Marshal(metadata)
+	if err != nil {
+		return false, err
+	}
+	result, err := r.pool.Exec(ctx, `UPDATE payment_orders SET metadata = $2, updated_at = NOW()
+WHERE id = $1 AND status = 'paid' AND fulfillment_status = 'none' AND refund_status = 'none'`, orderID, meta)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() > 0, nil
+}
+
+// MarkPaymentOrderFulfilledManually 标成「已在别处补发」（fulfillment_status = manual），patch 合并进 metadata。
+// 只对已付款、未履约的订单生效；返回 false 表示订单此刻不满足条件。
+func (r *Repository) MarkPaymentOrderFulfilledManually(ctx context.Context, orderID int64, patch map[string]any) (bool, error) {
+	meta, err := json.Marshal(patch)
+	if err != nil {
+		return false, err
+	}
+	result, err := r.pool.Exec(ctx, `UPDATE payment_orders SET fulfillment_status = $2, fulfilled_at = NOW(),
+metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb, updated_at = NOW()
+WHERE id = $1 AND status = 'paid' AND fulfillment_status = $4`, orderID, paymentdomain.FulfillmentManual, meta, paymentdomain.FulfillmentNone)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() > 0, nil
 }
 
 // GetPaymentOrderFulfillment 查询订单履约状态（履约列未纳入通用 Order 结构，按需读取）
@@ -373,7 +439,7 @@ func scanPaymentOrder(row interface{ Scan(dest ...any) error }) (*paymentdomain.
 	var metadata []byte
 	var rawCallback []byte
 	var paidAmount *string
-	if err := row.Scan(&item.ID, &item.AppID, &item.UserID, &item.ConfigID, &item.OrderNo, &item.ProviderOrderNo, &item.Subject, &item.Body, &amount, &item.PaymentMethod, &item.ProviderType, &item.Status, &item.NotifyStatus, &item.ClientIP, &item.NotifyURL, &item.ReturnURL, &metadata, &rawCallback, &refundedAmount, &item.RefundStatus, &item.Currency, &item.PaidAt, &item.ExpireAt, &item.CreatedAt, &item.UpdatedAt, &paidAmount, &item.ReviewReason, &item.ReviewNote, &item.ReviewAt); err != nil {
+	if err := row.Scan(&item.ID, &item.AppID, &item.UserID, &item.ConfigID, &item.OrderNo, &item.ProviderOrderNo, &item.Subject, &item.Body, &amount, &item.PaymentMethod, &item.ProviderType, &item.Status, &item.NotifyStatus, &item.ClientIP, &item.NotifyURL, &item.ReturnURL, &metadata, &rawCallback, &refundedAmount, &item.RefundStatus, &item.Currency, &item.PaidAt, &item.ExpireAt, &item.CreatedAt, &item.UpdatedAt, &paidAmount, &item.ReviewReason, &item.ReviewNote, &item.ReviewAt, &item.FulfillmentStatus, &item.FulfilledAt); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	if paidAmount != nil {
@@ -385,6 +451,7 @@ func scanPaymentOrder(row interface{ Scan(dest ...any) error }) (*paymentdomain.
 	item.RefundedAmount = decimal.RequireFromString(refundedAmount)
 	_ = json.Unmarshal(metadata, &item.Metadata)
 	_ = json.Unmarshal(rawCallback, &item.RawCallback)
+	item.DeriveFulfillment()
 	return &item, nil
 }
 

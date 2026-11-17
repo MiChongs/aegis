@@ -237,6 +237,11 @@ val profile = client.me.profile()
 
 官方 Kotlin SDK：`commerce.paymentMethods(purpose)`，下单 `commerce.createOrder(..., type, configName, paymentMethod = ...)`。
 
+**付款后要自动发东西（会员、余额、积分），订单必须写明用途**，否则就是普通商品单：钱收了，什么都不发。
+推荐 `{"purpose": "vip_purchase", "plan_id": 19}`、`{"purpose": "wallet_recharge", "package_id": 3}` 或
+`{"purpose": "wallet_recharge", "amount": "10"}`，金额与标题由服务端按套餐 / 档位定；SDK 用 `createVipOrder` /
+`createRechargeOrder`。`type: "vip"`、`metadata.planId` 这类写法也认，详见 [payment-fulfillment.md](payment-fulfillment.md)。
+
 ### 服务端校验会员（接入方后端调用）
 
 上面那些接口的凭据都是**用户令牌**。接入方自己的服务器没有用户令牌，

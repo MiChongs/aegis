@@ -137,6 +137,8 @@ func registerAdminAppConfigRoutes(router *gin.Engine, h *Handler, deps RouterDep
 		// 管理端订单查询
 		payCompat.POST("/orders/list", h.AdminPaymentOrderList)
 		payCompat.POST("/orders/detail", h.AdminPaymentOrderDetail)
+		// 补履约：钱收了、东西没发的订单（按用途补发，或标记已在别处补发）
+		payCompat.POST("/orders/fulfill", h.AdminPaymentOrderFulfill)
 		// 凭证：管理端代开（客服 / 对账留档）+ 语言与字体能力自述
 		payCompat.POST("/orders/receipt", h.AdminPaymentOrderReceipt)
 		payCompat.POST("/orders/receipt/email", h.AdminPaymentOrderReceiptEmail)

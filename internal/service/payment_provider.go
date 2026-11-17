@@ -57,6 +57,12 @@ type remoteOrderSettler interface {
 	SettleRemoteOrders(ctx context.Context, data map[string]any, orderNos []string) (map[string]*paymentdomain.CallbackResult, error)
 }
 
+// remoteSettleScoper 可选能力：几份支付配置指向同一个上游账号时返回相同的范围标识，
+// 后台补单按它合并成一轮查单（多个应用共用一个爱发电账号）。返回空串表示不合并。
+type remoteSettleScoper interface {
+	SettleScope(data map[string]any) string
+}
+
 // callbackAcknowledger 可选能力：上游对回调应答的格式有硬性要求的渠道实现此接口
 // （爱发电只认 {"ec":200}）。err 是网关处理回调的结果，渠道据此决定要不要上游重推。
 type callbackAcknowledger interface {

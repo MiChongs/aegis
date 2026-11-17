@@ -125,6 +125,43 @@ func (h *Handler) AdminPaymentOrderList(c *gin.Context) {
 	response.Success(c, 200, "获取成功", result)
 }
 
+// AdminPaymentOrderFulfillRequest 管理端处理「钱收了、东西没发」的订单（docs/payment-fulfillment.md）
+type AdminPaymentOrderFulfillRequest struct {
+	AppID   int64  `json:"appid" form:"appid" binding:"required"`
+	OrderNo string `json:"order_no" form:"order_no" binding:"required"`
+	// Action fulfill：按用途补发（默认）；manual：确认已在别处补发，平台不再发放
+	Action string `json:"action" form:"action"`
+	// Purpose / PlanID / PackageID 覆盖推断出的用途与套餐（推断不出或推断错时填）
+	Purpose   string `json:"purpose" form:"purpose"`
+	PlanID    int64  `json:"plan_id" form:"plan_id"`
+	PackageID int64  `json:"package_id" form:"package_id"`
+	Note      string `json:"note" form:"note"`
+	// DryRun 只预览将写入的快照与提示，不做任何修改
+	DryRun bool `json:"dry_run" form:"dry_run"`
+}
+
+// AdminPaymentOrderFulfill 补履约 / 标记已在别处补发
+func (h *Handler) AdminPaymentOrderFulfill(c *gin.Context) {
+	var req AdminPaymentOrderFulfillRequest
+	if err := bind(c, &req); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	result, err := h.payment.AdminFulfillOrder(c.Request.Context(), req.AppID, req.OrderNo, service.AdminFulfillRequest{
+		Action: req.Action, Purpose: req.Purpose, PlanID: req.PlanID, PackageID: req.PackageID,
+		Note: req.Note, DryRun: req.DryRun, Operator: refundOperatorLabel(c),
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	message := "处理成功"
+	if result.DryRun {
+		message = "预览成功"
+	}
+	response.Success(c, 200, message, result)
+}
+
 func (h *Handler) AdminPaymentOrderDetail(c *gin.Context) {
 	var req AdminPaymentOrderDetailRequest
 	if err := bind(c, &req); err != nil {
@@ -301,7 +338,12 @@ func (h *Handler) CreatePaymentOrder(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	payload, order, err := h.payment.CreateOrder(c.Request.Context(), session, req.Subject, req.Body, req.Amount, req.Type, req.PaymentMethod, req.ConfigName, req.NotifyURL, req.ReturnURL, req.Metadata, c.ClientIP())
+	payload, order, err := h.payment.CreateOrderFromInput(c.Request.Context(), session, service.PaymentOrderInput{
+		Subject: req.Subject, Body: req.Body, Amount: req.Amount, Type: req.Type,
+		PaymentMethod: req.PaymentMethod, ConfigName: req.ConfigName,
+		NotifyURL: req.NotifyURL, ReturnURL: req.ReturnURL, Metadata: req.Metadata, ClientIP: c.ClientIP(),
+		Intent: service.OrderIntent{Purpose: req.Purpose, PlanID: req.PlanID, PackageID: req.PackageID},
+	})
 	if err != nil {
 		h.writeError(c, err)
 		return

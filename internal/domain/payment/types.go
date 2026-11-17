@@ -78,6 +78,22 @@ const (
 const (
 	FulfillmentNone = "none" // 未履约（或无需履约的普通商品订单）
 	FulfillmentDone = "done" // 已履约
+	// FulfillmentManual 管理员确认已在别处补发（手工开会员、调余额、物品发放规则……），平台不再发放
+	FulfillmentManual = "manual"
+)
+
+// 订单的履约状况（Order.FulfillmentState，由服务层按订单推导，不落库）
+const (
+	// FulfillmentStateNotRequired 不需要履约：还没付款，或普通商品订单
+	FulfillmentStateNotRequired = "not_required"
+	// FulfillmentStatePending 付了款、写清了用途、还没发放（后台每 2 分钟重试）
+	FulfillmentStatePending = "pending"
+	// FulfillmentStateUnrecognized 付了款、看得出要发东西，但下单时没写规范的用途（老客户端），需要管理员确认
+	FulfillmentStateUnrecognized = "unrecognized"
+	// FulfillmentStateDone 已自动发放
+	FulfillmentStateDone = "done"
+	// FulfillmentStateManual 管理员确认已在别处补发
+	FulfillmentStateManual = "manual"
 )
 
 // metadata 中的字段键
@@ -581,6 +597,13 @@ type Order struct {
 	ReviewReason string     `json:"review_reason,omitempty"`
 	ReviewNote   string     `json:"review_note,omitempty"`
 	ReviewAt     *time.Time `json:"review_at,omitempty"`
+	// FulfillmentStatus 落库的履约状态：none / done / manual
+	FulfillmentStatus string     `json:"fulfillment_status"`
+	FulfilledAt       *time.Time `json:"fulfilled_at,omitempty"`
+	// Purpose 规范化后的订单用途（下单写清的，或从老订单推断的）；普通商品订单为空
+	Purpose string `json:"purpose,omitempty"`
+	// FulfillmentState 履约状况（FulfillmentState* 之一），由服务层推导
+	FulfillmentState string `json:"fulfillment_state,omitempty"`
 }
 
 // ReviewAmountMismatch 待人工处理的原因：实付少于订单金额，或者不允许改金额的渠道金额对不上。
@@ -588,6 +611,9 @@ const ReviewAmountMismatch = "amount_mismatch"
 
 // OrderFilterReview 管理端订单列表的筛选值（status=review）：只看待人工处理的订单。
 const OrderFilterReview = "review"
+
+// OrderFilterUnfulfilled 管理端订单列表的筛选值（status=unfulfilled）：已付款、看得出要发东西、还没发的订单。
+const OrderFilterUnfulfilled = "unfulfilled"
 
 // ReturnView 同步跳转结果页能看到的订单信息。
 //

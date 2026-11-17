@@ -58,6 +58,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/app/payment-config/epay/init"):                                                        AdminPaymentInitEpayRequest{},            // AdminPaymentEpayInit
 		routeKey("POST", "/api/admin/app/payment-config/list"):                                                             AdminPaymentConfigListRequest{},          // AdminPaymentConfigList
 		routeKey("POST", "/api/admin/app/payment-config/orders/detail"):                                                    AdminPaymentOrderDetailRequest{},         // AdminPaymentOrderDetail
+		routeKey("POST", "/api/admin/app/payment-config/orders/fulfill"):                                                   AdminPaymentOrderFulfillRequest{},        // AdminPaymentOrderFulfill
 		routeKey("POST", "/api/admin/app/payment-config/orders/list"):                                                      AdminPaymentOrderListRequest{},           // AdminPaymentOrderList
 		routeKey("POST", "/api/admin/app/payment-config/orders/receipt"):                                                   AdminPaymentReceiptRequest{},             // AdminPaymentOrderReceipt
 		routeKey("POST", "/api/admin/app/payment-config/orders/receipt/email"):                                             AdminPaymentReceiptEmailRequest{},        // AdminPaymentOrderReceiptEmail

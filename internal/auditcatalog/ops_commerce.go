@@ -301,6 +301,7 @@ func init() {
 		View("POST /api/admin/app/payment-config/refunds/order", "查看订单退款记录（兼容接口）", "订单"),
 		View("POST /api/admin/app/payment-config/refunds/refundable", "查询订单可退金额（兼容接口）", "订单"),
 		Write("POST /api/admin/app/payment-config/refunds/create", "发起退款（兼容接口）", "订单", SeverityCritical),
+		Write("POST /api/admin/app/payment-config/orders/fulfill", "补发订单或标记已补发", "订单", SeverityCritical),
 		Write("POST /api/admin/app/payment-config/refunds/sync", "同步退款状态（兼容接口）", "退款", SeverityMedium),
 	)
 }

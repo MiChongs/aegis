@@ -19,7 +19,6 @@ import (
 	paymentdomain "aegis/internal/domain/payment"
 	platformdomain "aegis/internal/domain/platform"
 	plugindomain "aegis/internal/domain/plugin"
-	vipdomain "aegis/internal/domain/vip"
 	pgrepo "aegis/internal/repository/postgres"
 	"aegis/pkg/egress"
 	apperrors "aegis/pkg/errors"
@@ -416,6 +415,36 @@ const PaymentResultPath = "/pay/result"
 // default 时，只给配置名会落到排序靠前的那一条；用户在 /pay/methods 里选的是哪一项，
 // 就该原样带回它的 method。两者都空时用应用的默认配置。
 func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Session, subject string, body string, amount string, providerType string, paymentMethod string, configName string, notifyURL string, returnURL string, metadata map[string]any, clientIP string) (*paymentdomain.PaymentPayload, *paymentdomain.Order, error) {
+	return s.CreateOrderFromInput(ctx, session, PaymentOrderInput{
+		Subject: subject, Body: body, Amount: amount, Type: providerType,
+		PaymentMethod: paymentMethod, ConfigName: configName,
+		NotifyURL: notifyURL, ReturnURL: returnURL, Metadata: metadata, ClientIP: clientIP,
+	})
+}
+
+// PaymentOrderInput 用户下单请求。
+//
+// Amount 与 Subject 可以不填：带了用途（买会员、按档位充值）时，价格与标题由服务端按套餐 / 档位补上 ——
+// 客户端算价本来就不可信（金额对不上会被拒），让它不必再算一遍。
+type PaymentOrderInput struct {
+	Subject       string
+	Body          string
+	Amount        string
+	Type          string
+	PaymentMethod string
+	ConfigName    string
+	NotifyURL     string
+	ReturnURL     string
+	Metadata      map[string]any
+	ClientIP      string
+	Intent        OrderIntent
+}
+
+// CreateOrderFromInput 创建支付订单（见 CreateOrder）。
+func (s *PaymentService) CreateOrderFromInput(ctx context.Context, session *authdomain.Session, in PaymentOrderInput) (*paymentdomain.PaymentPayload, *paymentdomain.Order, error) {
+	subject, body, amount := in.Subject, in.Body, in.Amount
+	paymentMethod, configName := in.PaymentMethod, in.ConfigName
+	notifyURL, returnURL, clientIP := in.NotifyURL, in.ReturnURL, in.ClientIP
 	if session == nil {
 		return nil, nil, apperrors.New(40170, http.StatusUnauthorized, "未认证")
 	}
@@ -440,12 +469,23 @@ func (s *PaymentService) CreateOrder(ctx context.Context, session *authdomain.Se
 	if err != nil {
 		return nil, nil, err
 	}
+	// 用途归一化在一切校验之前：type 写成 "vip" 这类用途词时，它要先从子类型里挪走，
+	// 否则会被当成付款方式交给上游（或被分子类型的渠道拒成 40116）。
+	metadata, providerType, err := normalizeOrderIntent(in.Type, in.Intent, in.Metadata)
+	if err != nil {
+		return nil, nil, err
+	}
 	// 子类型在落单之前定下来：订单里记的、交给上游的、凭证上印的，都是同一个值。
 	providerType, err = resolveOrderPayType(provider, config, providerType)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	// 没给金额或标题：按用途由服务端定价、取名
+	amount, subject, err = s.resolveOrderPricing(ctx, session.AppID, metadata, amount, subject)
+	if err != nil {
+		return nil, nil, err
+	}
 	parsedAmount, err := decimal.NewFromString(strings.TrimSpace(amount))
 	if err != nil || !parsedAmount.IsPositive() {
 		return nil, nil, apperrors.New(40072, http.StatusBadRequest, "支付金额无效")
@@ -995,18 +1035,7 @@ func (s *PaymentService) prepareFulfillmentMetadata(ctx context.Context, appID i
 		if holdings.CoversPlan(*plan) {
 			return nil, errVipLifetimeIncluded()
 		}
-		out[paymentdomain.MetaKeyVipPlanID] = plan.ID
-		out[paymentdomain.MetaKeyVipPlanName] = plan.Name
-		out[paymentdomain.MetaKeyVipDays] = plan.DurationDays
-		// metadata 是客户端传来的：不是永久套餐时必须把这个键删掉，
-		// 否则在月卡订单里塞一个 vipLifetime: true 就能按月卡的价钱开出永久会员。
-		if plan.Lifetime {
-			out[paymentdomain.MetaKeyVipLifetime] = true
-		} else {
-			delete(out, paymentdomain.MetaKeyVipLifetime)
-		}
-		out[paymentdomain.MetaKeyVipBonus] = plan.BonusIntegral
-		out[paymentdomain.MetaKeyVipFeatures] = vipdomain.NormalizeFeatureTags(plan.Features)
+		applyVipPlanSnapshot(out, plan)
 	case paymentdomain.PurposeIntegralPurchase:
 		app, err := s.pg.GetAppByID(ctx, appID)
 		if err != nil {
@@ -1287,6 +1316,8 @@ func (s *PaymentService) startReceiptCleaner() {
 				s.syncPendingRefunds()
 			case <-settleTicker.C:
 				s.syncUnsettledOrders()
+				// 写清了用途却没履约的已付款订单（回调那次履约失败、用户再没查单）
+				s.retryPendingFulfillments()
 			}
 		}
 	}()

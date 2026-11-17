@@ -1795,6 +1795,9 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
      *
      * 让用户选付款方式时，[type]、[configName]、[paymentMethod] 取自 [paymentMethods] 的同一项。
      * 三者都不传就用应用的默认配置与默认类型。[type] 不在那条配置放行的范围内时返回 40116。
+     *
+     * 要平台在付款后自动发放东西（会员、余额、积分），[metadata] 必须带 `purpose` 与对应参数，
+     * 或直接用 [createVipOrder] / [createRechargeOrder]。不带 purpose 的是普通商品单，付款后什么都不发。
      */
     @JvmOverloads
     fun createOrder(
@@ -1819,6 +1822,68 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
             "notify_url" to notifyUrl,
             "return_url" to returnUrl,
             "metadata" to metadata,
+        ),
+        requireAuth = true,
+    )
+
+    @Throws(IOException::class)
+    /**
+     * 买会员：下一笔付款后自动开通 [planId] 套餐的订单。
+     *
+     * 价格与商品名由服务端按套餐定（不必也不该由客户端算）；付款成功后平台按下单那一刻的套餐快照开通，
+     * 不用接入方再调任何接口。套餐不存在或已下架 40480，已是覆盖该套餐的永久会员 40378。
+     * [type]、[configName]、[paymentMethod] 的含义同 [createOrder]。
+     *
+     * 用 [createOrder] 自己拼时必须带 `metadata = {"purpose": "vip_purchase", "vipPlanId": …}`，
+     * 否则那是一笔普通商品单：钱收了，什么都不会发。
+     */
+    @JvmOverloads
+    fun createVipOrder(
+        planId: Long,
+        paymentMethod: String? = null,
+        configName: String? = null,
+        type: String? = null,
+        returnUrl: String? = null,
+        metadata: Map<String, Any?>? = null,
+    ): JsonElement = client.call(
+        "POST", "/pay/orders",
+        buildBody(
+            "purpose" to "vip_purchase",
+            "plan_id" to planId,
+            "type" to type,
+            "payment_method" to paymentMethod,
+            "config_name" to configName,
+            "return_url" to returnUrl,
+            "metadata" to metadata,
+        ),
+        requireAuth = true,
+    )
+
+    @Throws(IOException::class)
+    /**
+     * 余额充值：付款成功后金额 1:1 进余额本金。
+     *
+     * 按档位充值传 [packageId]（金额由服务端按档位定，附赠余额与积分一并发放）；
+     * 自选金额传 [amount]（十进制字符串，受应用的充值上下限约束）。两者至少给一个。
+     */
+    @JvmOverloads
+    fun createRechargeOrder(
+        amount: String? = null,
+        packageId: Long? = null,
+        paymentMethod: String? = null,
+        configName: String? = null,
+        type: String? = null,
+        returnUrl: String? = null,
+    ): JsonElement = client.call(
+        "POST", "/pay/orders",
+        buildBody(
+            "purpose" to "wallet_recharge",
+            "amount" to amount,
+            "package_id" to packageId,
+            "type" to type,
+            "payment_method" to paymentMethod,
+            "config_name" to configName,
+            "return_url" to returnUrl,
         ),
         requireAuth = true,
     )

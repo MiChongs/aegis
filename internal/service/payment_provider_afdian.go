@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -346,7 +347,7 @@ func (p *afdianProvider) findByCustomOrderID(ctx context.Context, cfg *afdianCon
 			return found, raws, err
 		}
 		for i, order := range orders {
-			id := strings.TrimSpace(order.CustomOrderID)
+			id := afdianOrderNo(order)
 			if !wanted[id] {
 				continue
 			}
@@ -366,6 +367,21 @@ func (p *afdianProvider) findByCustomOrderID(ctx context.Context, cfg *afdianCon
 		}
 	}
 	return found, raws, nil
+}
+
+// afdianRemarkOrderNo 下单链接里的留言写的是「订单 P…」。付款人在页面上改掉了链接参数、
+// custom_order_id 丢了时，留言多半还在 —— 从里面认出本平台的订单号作兜底。
+var afdianRemarkOrderNo = regexp.MustCompile(`P\d{15,}`)
+
+// afdianOrderNo 爱发电订单对应的本地订单号：custom_order_id 优先，留言兜底。
+//
+// 留言是付款人可改的，但这不构成风险：认领一笔别人的订单号等于替别人付钱，
+// 金额照样要对得上（少付标成待人工处理），回查拿到的也是爱发电的真实数据。
+func afdianOrderNo(order afdianOrder) string {
+	if id := strings.TrimSpace(order.CustomOrderID); id != "" {
+		return id
+	}
+	return afdianRemarkOrderNo.FindString(order.Remark)
 }
 
 // afdianOrderPaid 交易成功且真金白银付了钱（兑换码订单实付 0.00）
@@ -395,7 +411,7 @@ func afdianResult(order afdianOrder, raw map[string]any, source string) *payment
 	return &paymentdomain.CallbackResult{
 		Success:         true,
 		Paid:            paid,
-		OrderNo:         strings.TrimSpace(order.CustomOrderID),
+		OrderNo:         afdianOrderNo(order),
 		ProviderOrderNo: order.OutTradeNo,
 		TradeStatus:     tradeStatus,
 		PaymentMethod:   paymentdomain.MethodAfdian,
@@ -533,7 +549,7 @@ func (p *afdianProvider) ExtractOrderNo(callbackData map[string]string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(order.CustomOrderID)
+	return afdianOrderNo(*order)
 }
 
 // HandleCallback 推送报文不带签名，不能当真：用报文里的爱发电单号回查 query-order，
@@ -564,12 +580,23 @@ func (p *afdianProvider) HandleCallback(ctx context.Context, data map[string]any
 		if order.OutTradeNo != outTradeNo {
 			continue
 		}
-		if strings.TrimSpace(order.CustomOrderID) != strings.TrimSpace(pushed.CustomOrderID) {
+		if afdianOrderNo(order) != afdianOrderNo(*pushed) {
 			return nil, apperrors.New(40076, http.StatusBadRequest, "爱发电推送与查单结果不一致")
 		}
 		return afdianResult(order, raws[i], "webhook"), nil
 	}
 	return nil, apperrors.New(40076, http.StatusBadRequest, "爱发电查无此订单："+outTradeNo)
+}
+
+// SettleScope 实现 remoteSettleScoper：同一个爱发电创作者账号（同 user_id 与 Token）只需翻一轮订单。
+// 多个应用共用一个爱发电账号时，后台补单按账号合并，而不是每个应用各翻一遍、各吃一份接口频次。
+func (p *afdianProvider) SettleScope(data map[string]any) string {
+	cfg, err := decodeAfdianConfig(data)
+	if err != nil || cfg.UserID == "" || cfg.Token == "" {
+		return ""
+	}
+	sum := md5.Sum([]byte(cfg.Token))
+	return cfg.SiteURL + "|" + cfg.UserID + "|" + hex.EncodeToString(sum[:])
 }
 
 // SettleRemoteOrders 实现 remoteOrderSettler：按 custom_order_id 在最近的订单里找这批本地订单。
