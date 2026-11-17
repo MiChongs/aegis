@@ -1,5 +1,12 @@
 package bootstrap
 
+import (
+	"context"
+	"time"
+
+	"go.uber.org/zap"
+)
+
 // 后台任务的集群租约名。改名等于换一把锁：发布期间新旧版本会各持一把、同时干活，
 // 所以名字一经上线就不要再动。
 const (
@@ -28,4 +35,43 @@ func (a *APIApp) attachCluster() {
 	}
 	// 在 Start 之前登记，第一轮就能抢到
 	a.autoSignGate()
+}
+
+// watchSchema 关闭了启动时迁移的实例，在库追上镜像里的迁移之前一直报未就绪，每 15 秒复查一次。
+// 查询本身出错不判落后（数据库抖动由 /readyz 自己的 Postgres 检查负责）。
+func (a *APIApp) watchSchema(ctx context.Context) {
+	if a == nil || a.drain == nil || a.Postgres == nil || a.Config.Cluster.MigrateOnBoot {
+		return
+	}
+	check := func() bool {
+		checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		pending, err := pendingNewMigrations(checkCtx, a.Postgres)
+		if err != nil {
+			a.drain.schemaBehind.Store(false)
+			return false
+		}
+		behind := len(pending) > 0
+		if behind && !a.drain.schemaBehind.Load() {
+			a.Logger.Error("数据库迁移落后于当前版本，本实例报未就绪，请先执行 migrate", zap.Strings("pending", pending))
+		}
+		a.drain.schemaBehind.Store(behind)
+		return behind
+	}
+	if !check() {
+		return
+	}
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !check() {
+				a.Logger.Info("数据库迁移已追上，本实例恢复就绪")
+				return
+			}
+		}
+	}
 }

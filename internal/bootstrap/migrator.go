@@ -171,3 +171,42 @@ ON CONFLICT (version) DO UPDATE
 	})
 	return report, err
 }
+
+// pendingNewMigrations 返回镜像里有、库里从未记录过的迁移（被改过的旧迁移不算：它们重跑失败是允许的）。
+// 版本表还不存在时返回 nil —— 那是从未接入版本表的老库，由第一次 migrate 负责接入，不据此判落后。
+func pendingNewMigrations(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
+	files, err := loadMigrationFiles()
+	if err != nil {
+		return nil, err
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.schema_migrations') IS NOT NULL`).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil
+	}
+	rows, err := pool.Query(ctx, `SELECT version FROM schema_migrations`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	recorded := map[string]struct{}{}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		recorded[v] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var pending []string
+	for _, f := range files {
+		if _, ok := recorded[f.Version]; !ok {
+			pending = append(pending, f.Version)
+		}
+	}
+	return pending, nil
+}

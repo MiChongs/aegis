@@ -973,6 +973,13 @@ func (a *APIApp) Start(ctx context.Context) error {
 			a.Logger.Warn("集群租约初始化失败，后台任务将不会在本实例执行", zap.Error(err))
 		}
 	}
+	// 迁移落后时先同步判一次，保证监听起来后的第一次 /readyz 就是准的
+	if a.drain != nil && a.Postgres != nil && !a.Config.Cluster.MigrateOnBoot {
+		if pending, err := pendingNewMigrations(ctx, a.Postgres); err == nil && len(pending) > 0 {
+			a.drain.schemaBehind.Store(true)
+		}
+		SafeGo(a.Logger, a.CrashLog, "api.schema_watch", true, func() { a.watchSchema(ctx) })
+	}
 	if a.AccountBan != nil {
 		a.AccountBan.Start()
 	}
