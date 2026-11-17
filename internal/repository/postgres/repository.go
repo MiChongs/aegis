@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -4725,9 +4726,80 @@ func init() {
 }
 
 // generateTransactionNo 生成「前缀 + 14 位 UTC 时间 + 6 位序号」的流水号，并发安全。
+//
+// 进程分到了节点槽位（ReserveTransactionNoNode，多副本部署）时，6 位序号拆成「2 位槽位 + 4 位秒内序号」，
+// 不同副本在同一秒内的号段互不相交；没分到时沿用进程内随机起点的 6 位序号（单实例语义，与改造前一致）。
+// 两种情况下长度与「全是数字」的格式都不变，各流水号列（VARCHAR(40) / (64)）与对账导出都不受影响。
 func generateTransactionNo(prefix string) string {
+	if node := transactionNoNode.Load(); node >= 0 {
+		return prefix + nodeScopedSerial(int(node))
+	}
 	seq := transactionSeq.Add(1) % 1_000_000
 	return prefix + time.Now().UTC().Format("20060102150405") + fmt.Sprintf("%06d", seq)
+}
+
+// transactionNoNodeSlots 节点槽位数：6 位序号里拿出 2 位给槽位。
+const transactionNoNodeSlots = 100
+
+// transactionNoPerSecond 每个进程每秒能发的流水号数（4 位秒内序号）。
+const transactionNoPerSecond = 10_000
+
+// transactionNoNode 本进程的节点槽位；-1 表示没分配（单实例）。
+var transactionNoNode atomic.Int32
+
+// transactionNoClock 节点模式下的「逻辑秒 + 秒内序号」。
+//
+// 一秒内发满 1 万个号时不回绕（回绕就撞号），而是把逻辑秒往前借一秒接着发 ——
+// 流水号里的时间短暂地比墙上时钟快一点，换来同一进程内绝不重复；突发过去后墙上时钟追上来，逻辑秒随之对齐。
+// 逻辑秒只增不减，系统时钟往回调也不会重复发号。
+var transactionNoClock struct {
+	sync.Mutex
+	sec int64
+	n   int
+}
+
+// transactionNoNow 当前时间（单测替换）。
+var transactionNoNow = time.Now
+
+func init() {
+	transactionNoNode.Store(-1)
+}
+
+// nodeScopedSerial 节点模式下的「14 位时间 + 2 位槽位 + 4 位秒内序号」。
+func nodeScopedSerial(node int) string {
+	now := transactionNoNow().UTC().Unix()
+	transactionNoClock.Lock()
+	switch {
+	case now > transactionNoClock.sec:
+		transactionNoClock.sec, transactionNoClock.n = now, 0
+	case transactionNoClock.n+1 >= transactionNoPerSecond:
+		transactionNoClock.sec, transactionNoClock.n = transactionNoClock.sec+1, 0
+	default:
+		transactionNoClock.n++
+	}
+	sec, n := transactionNoClock.sec, transactionNoClock.n
+	transactionNoClock.Unlock()
+	return time.Unix(sec, 0).UTC().Format("20060102150405") + fmt.Sprintf("%02d%04d", node, n)
+}
+
+// ReserveTransactionNoNode 为本进程分配流水号的节点槽位（多副本部署时由 bootstrap 在迁移之后调用一次）。
+//
+// 为什么不是每次发号都去数据库取序列：流水号大多在事务里生成，再去池里借一条连接取号，
+// 高并发下所有连接都被事务占着、都在等取号的那条连接 —— 连接池自锁。启动时取一次槽位，之后纯内存发号。
+//
+// 槽位取自 Postgres 序列 transaction_no_node_seq 模 100：同时在线的进程只要不是恰好隔了 100 次启动，
+// 槽位就不会相同；就算相同，也还要在同一秒里撞上同一个秒内序号才会冲突（这时唯一约束会拦下，整笔回滚）。
+func (r *Repository) ReserveTransactionNoNode(ctx context.Context) (int, error) {
+	if r == nil || r.pool == nil {
+		return -1, errors.New("流水号节点槽位需要 Postgres 连接")
+	}
+	var seq int64
+	if err := r.pool.QueryRow(ctx, `SELECT nextval('transaction_no_node_seq')`).Scan(&seq); err != nil {
+		return -1, err
+	}
+	node := int(seq % transactionNoNodeSlots)
+	transactionNoNode.Store(int32(node))
+	return node, nil
 }
 
 // randomDigits 返回指定长度的随机数字串。math/rand/v2 的全局源并发安全、由系统熵播种，

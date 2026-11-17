@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	pgrepo "aegis/internal/repository/postgres"
+
 	"go.uber.org/zap"
 )
 
@@ -74,4 +76,18 @@ func (a *APIApp) watchSchema(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// reserveTransactionNoNode 为本进程领一个流水号槽位，让多个副本同一秒内的号段互不相交。
+// 失败只告警：退回单实例流水号（随机起点的进程内计数，撞号概率很低且会被唯一约束拦下）。
+func reserveTransactionNoNode(ctx context.Context, pg *pgrepo.Repository, log *zap.Logger) {
+	if pg == nil {
+		return
+	}
+	slot, err := pg.ReserveTransactionNoNode(ctx)
+	if err != nil {
+		log.Warn("领取流水号槽位失败，按单实例方式生成流水号", zap.Error(err))
+		return
+	}
+	log.Info("已领取流水号槽位", zap.Int("slot", slot))
 }

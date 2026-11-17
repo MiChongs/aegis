@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"aegis/internal/cluster"
 	"aegis/internal/config"
 	captchadomain "aegis/internal/domain/captcha"
 	plugindomain "aegis/internal/domain/plugin"
@@ -36,6 +37,56 @@ type PlatformSettingsService struct {
 	oidc     *OIDCService
 	saml     *SAMLService
 	plugin   *PluginService
+	// cluster 改完设置后通知其他实例重载（防火墙 / 认证安全 / LDAP / OIDC / SAML 都是进程内的运行时状态）
+	cluster clusterLink
+}
+
+// 平台设置里需要热重载到进程内运行时的分区，也是集群广播里的分区名。
+// 验证码、品牌、自助能力每次判定都现读数据库，不需要广播。
+const (
+	platformSectionFirewall = "firewall"
+	platformSectionSecurity = "security"
+	platformSectionLDAP     = "ldap"
+	platformSectionOIDC     = "oidc"
+	platformSectionSAML     = "saml"
+)
+
+// platformSettingsChange 集群广播的消息体：只说「哪几个分区变了」，内容由接收方自己从数据库读。
+// 不在消息里带配置本身：里面有 LDAP 绑定密码、OIDC 客户端密钥，没必要让它们多过一道消息总线。
+type platformSettingsChange struct {
+	Sections []string `json:"sections"`
+}
+
+// SetCluster 接上集群：订阅其他实例的设置变更广播，收到后从数据库重载对应分区。
+//
+// 重载走 reloadPersisted，它只读库、改本地运行时，不再广播 —— 否则 A 广播、B 重载后又广播、A 再重载……
+// 总线本身也会跳过本实例自己发出的消息，两道保险。
+func (s *PlatformSettingsService) SetCluster(c *cluster.Cluster) {
+	if c == nil {
+		return
+	}
+	s.cluster.set(c)
+	c.Subscribe(cluster.TopicPlatformSettings, s.handleClusterChange)
+}
+
+// handleClusterChange 处理其他实例发来的设置变更广播。
+func (s *PlatformSettingsService) handleClusterChange(payload []byte) {
+	var change platformSettingsChange
+	if err := json.Unmarshal(payload, &change); err != nil {
+		s.log.Warn("平台设置变更广播无法解析", zap.Error(err))
+		return
+	}
+	if len(change.Sections) == 0 {
+		// 空分区在 reloadPersisted 里表示「全部」；广播方不会发空列表，收到了当成格式错误丢掉
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := s.reloadPersisted(ctx, change.Sections...); err != nil {
+		s.log.Warn("按集群广播重载平台设置失败", zap.Strings("sections", change.Sections), zap.Error(err))
+		return
+	}
+	s.log.Info("已按集群广播重载平台设置", zap.Strings("sections", change.Sections))
 }
 
 // SetPluginService 注入插件服务
@@ -75,7 +126,24 @@ func NewPlatformSettingsService(cfg config.Config, log *zap.Logger, pg *pgrepo.R
 }
 
 func (s *PlatformSettingsService) Initialize(ctx context.Context) error {
-	if s.firewall != nil {
+	return s.reloadPersisted(ctx)
+}
+
+// reloadPersisted 从数据库读出持久化的设置并热重载到进程内运行时。sections 为空表示全部分区。
+// 启动时（Initialize）与收到其他实例的变更广播时共用这一条路径，两边的解析与归一化保证一致。
+func (s *PlatformSettingsService) reloadPersisted(ctx context.Context, sections ...string) error {
+	want := func(section string) bool {
+		if len(sections) == 0 {
+			return true
+		}
+		for _, item := range sections {
+			if item == section {
+				return true
+			}
+		}
+		return false
+	}
+	if s.firewall != nil && want(platformSectionFirewall) {
 		record, err := s.pg.GetPlatformSetting(ctx, firewallSettingKey)
 		if err != nil {
 			return err
@@ -90,7 +158,7 @@ func (s *PlatformSettingsService) Initialize(ctx context.Context) error {
 		}
 	}
 
-	if s.security != nil {
+	if s.security != nil && want(platformSectionSecurity) {
 		record, err := s.pg.GetPlatformSetting(ctx, securitySettingKey)
 		if err != nil {
 			return err
@@ -105,7 +173,7 @@ func (s *PlatformSettingsService) Initialize(ctx context.Context) error {
 		}
 	}
 
-	if s.ldap != nil {
+	if s.ldap != nil && want(platformSectionLDAP) {
 		record, err := s.pg.GetPlatformSetting(ctx, ldapSettingKey)
 		if err != nil {
 			return err
@@ -123,7 +191,7 @@ func (s *PlatformSettingsService) Initialize(ctx context.Context) error {
 		}
 	}
 
-	if s.oidc != nil {
+	if s.oidc != nil && want(platformSectionOIDC) {
 		record, err := s.pg.GetPlatformSetting(ctx, oidcSettingKey)
 		if err != nil {
 			return err
@@ -140,7 +208,7 @@ func (s *PlatformSettingsService) Initialize(ctx context.Context) error {
 			}
 		}
 	}
-	if s.saml != nil {
+	if s.saml != nil && want(platformSectionSAML) {
 		record, err := s.pg.GetPlatformSetting(ctx, samlSettingKey)
 		if err != nil {
 			return err
@@ -191,6 +259,14 @@ func (s *PlatformSettingsService) GetSettings(ctx context.Context) (*systemdomai
 }
 
 func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *int64, patch systemdomain.SettingsUpdate) (*systemdomain.SettingsView, error) {
+	// 每个分区写库成功就记一笔，函数无论从哪里返回都把已落库的分区广播出去：
+	// 中途某个分区校验失败时，前面已经写进库的分区在其他实例上也得生效，否则各实例从此各说各话。
+	var persisted []string
+	defer func() {
+		if len(persisted) > 0 {
+			s.cluster.publish(s.log, cluster.TopicPlatformSettings, platformSettingsChange{Sections: persisted})
+		}
+	}()
 	var firewallRecord *systemdomain.SettingRecord
 	if s.firewall != nil {
 		current := s.firewall.CurrentConfig()
@@ -207,6 +283,7 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 		if err != nil {
 			return nil, err
 		}
+		persisted = append(persisted, platformSectionFirewall)
 		if err := s.firewall.Reload(next); err != nil {
 			return nil, apperrors.New(50090, http.StatusInternalServerError, "系统设置热重载失败")
 		}
@@ -228,6 +305,7 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 		if err != nil {
 			return nil, err
 		}
+		persisted = append(persisted, platformSectionSecurity)
 		if err := s.security.Reload(next); err != nil {
 			return nil, apperrors.New(50091, http.StatusInternalServerError, "认证安全模块热重载失败")
 		}
@@ -257,6 +335,7 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 		if err != nil {
 			return nil, err
 		}
+		persisted = append(persisted, platformSectionLDAP)
 		if err := s.ldap.Reload(next); err != nil {
 			return nil, apperrors.New(50093, http.StatusInternalServerError, "LDAP 配置热重载失败")
 		}
@@ -276,6 +355,7 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 		if err != nil {
 			return nil, err
 		}
+		persisted = append(persisted, platformSectionOIDC)
 		if err := s.oidc.Reload(next); err != nil {
 			return nil, apperrors.New(50094, http.StatusInternalServerError, "OIDC 配置热重载失败")
 		}
@@ -302,6 +382,7 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 		if err != nil {
 			return nil, err
 		}
+		persisted = append(persisted, platformSectionSAML)
 		if err := s.saml.Reload(next); err != nil {
 			return nil, apperrors.New(50095, http.StatusInternalServerError, "SAML 配置热重载失败")
 		}

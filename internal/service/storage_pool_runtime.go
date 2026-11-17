@@ -69,6 +69,13 @@ func (s *StorageService) loop(ctx context.Context) {
 	defer probe.Stop()
 	defer usage.Stop()
 	defer daily.Stop()
+	// 接上集群后才需要周期性重扫迁移任务（接手宕机实例留下的）；单实例下这个通道永远不触发。
+	var rescan <-chan time.Time
+	if s.migrationRescanEnabled() {
+		ticker := time.NewTicker(storageMigrationRescan)
+		defer ticker.Stop()
+		rescan = ticker.C
+	}
 	// 启动后先刷一次用量，让总览一打开就有数。
 	s.refreshUsage(ctx)
 	for {
@@ -78,11 +85,16 @@ func (s *StorageService) loop(ctx context.Context) {
 		case <-s.stop:
 			return
 		case <-probe.C:
+			// 探活结果记在本进程的健康表里（每个实例各自的熔断状态），每个实例都要探
 			s.probeBackoffMembers(ctx)
 		case <-usage.C:
 			s.refreshUsage(ctx)
 		case <-daily.C:
-			s.dailyMaintenance(ctx)
+			if s.clusterState.dailyTask.owned() {
+				s.dailyMaintenance(ctx)
+			}
+		case <-rescan:
+			s.migrations.resume(ctx)
 		}
 	}
 }
@@ -162,6 +174,11 @@ func (s *StorageService) refreshUsage(ctx context.Context) {
 	}
 	s.pools.SetUsage(indexed, s.reportedUsageSnapshot())
 
+	// 用量缓存是每个实例自己的（写入选成员要用），上面每个实例都刷；
+	// 越线预警写的是共享事件表，事件去重又是进程内的 —— 只让一个实例发，免得同一条预警出现 N 遍。
+	if !s.clusterState.capacityTask.owned() {
+		return
+	}
 	pools, err := s.pg.ListStoragePools(ctx)
 	if err != nil {
 		return

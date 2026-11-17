@@ -42,8 +42,10 @@ type SuspensionService struct {
 
 	stop chan struct{}
 	wg   sync.WaitGroup
-	// reviewing 正在跑决策模型的申诉（同一条不并发审）
+	// reviewing 正在跑决策模型的申诉（同一条不并发审；跨实例的互斥靠数据库里的复审认领）
 	reviewing sync.Map
+	// cluster 集群句柄，只用来取本实例标识记进复审认领
+	cluster clusterLink
 }
 
 // NewSuspensionService masterKey 用来签申诉凭证、算全站封禁主体的摘要
@@ -371,7 +373,7 @@ func (s *SuspensionService) SubmitAppeal(ctx context.Context, in AppealSubmitInp
 	s.log.Info("收到封禁申诉", zap.Int64("appid", ban.AppID), zap.Int64("userId", userID), zap.Int64("appealId", appeal.ID))
 	go s.notifyAppeal(context.WithoutCancel(ctx), suspension.NoticeAppealReceived, appeal, ban)
 	// 决策模型复审：立即在后台跑一次，失败的由定时任务兜底
-	s.reviewAsync(appeal.ID)
+	s.reviewAsync(appeal.ID, false)
 	after := s.viewOf(ctx, ban, localeFor(ctx, ""))
 	return &AppealResult{Appeal: appeal.ToView(), Suspension: &after}, nil
 }

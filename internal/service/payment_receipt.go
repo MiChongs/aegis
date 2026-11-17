@@ -15,6 +15,7 @@ import (
 	authdomain "aegis/internal/domain/auth"
 	paymentdomain "aegis/internal/domain/payment"
 	userdomain "aegis/internal/domain/user"
+	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/receipt"
 
@@ -123,7 +124,7 @@ func (s *PaymentService) CreateUserOrderReceipt(ctx context.Context, session *au
 		ExpiresAt:       now.Add(s.resolveReceiptTTL(opts.TTL)),
 	}
 	export.DownloadURL = fmt.Sprintf("/api/pay/bills/%s/download", export.BillID)
-	if err := s.persistReceipt(session.AppID, session.UserID, export, result.PDF); err != nil {
+	if err := s.persistReceipt(ctx, session.AppID, session.UserID, export, result.PDF); err != nil {
 		return nil, err
 	}
 	return &export, nil
@@ -144,33 +145,27 @@ func (s *PaymentService) RenderUserOrderReceipt(ctx context.Context, session *au
 
 // DownloadUserOrderReceipt 取回之前导出的凭证文件。
 func (s *PaymentService) DownloadUserOrderReceipt(ctx context.Context, session *authdomain.Session, billID string) ([]byte, string, error) {
-	_ = ctx
 	if session == nil {
 		return nil, "", apperrors.New(40170, http.StatusUnauthorized, "未认证")
 	}
-	meta, metaPath, err := s.loadReceiptMeta(session.AppID, billID)
+	stored, err := s.findReceipt(ctx, session.AppID, billID)
 	if err != nil {
 		return nil, "", err
 	}
 	// 元数据里的 appid 与 userId 都要核对：只对 billID 做随机化不足以防越权，
 	// 猜中一个 ID 就能拿到别人的交易明细。
-	if meta.AppID != session.AppID || meta.UserID != session.UserID {
+	if stored.meta.AppID != session.AppID || stored.meta.UserID != session.UserID {
 		return nil, "", apperrors.New(40475, http.StatusNotFound, "账单不存在")
 	}
-	if time.Now().UTC().After(meta.ExpiresAt) {
-		s.deleteReceipt(meta, metaPath)
+	if time.Now().UTC().After(stored.meta.ExpiresAt) {
+		s.dropReceipt(ctx, stored)
 		return nil, "", apperrors.New(41075, http.StatusGone, "账单文件已过期")
 	}
-	pdfBytes, missing, err := readReceiptFile(meta.FilePath)
+	pdfBytes, err := s.receiptContent(stored)
 	if err != nil {
-		s.log.Warn("read receipt file failed", zap.String("bill_id", meta.BillID), zap.String("file_path", meta.FilePath), zap.Error(err))
-		if missing {
-			// 文件没了，留着元数据只会让下一次请求再走一遍同样的失败
-			_ = os.Remove(metaPath)
-		}
 		return nil, "", err
 	}
-	return pdfBytes, meta.FileName, nil
+	return pdfBytes, stored.meta.FileName, nil
 }
 
 // readReceiptFile 读取落盘的凭证文件。
@@ -698,7 +693,35 @@ func (s *PaymentService) receiptPaths(appID int64, billID string) (string, strin
 	return filepath.Join(dirPath, billID+".pdf"), filepath.Join(dirPath, billID+".meta.json")
 }
 
-func (s *PaymentService) persistReceipt(appID int64, userID int64, export paymentdomain.ReceiptExport, pdfBytes []byte) error {
+// persistReceipt 保存一份导出。
+//
+// 存进数据库而不是本地目录：多节点部署时导出与下载往往落在不同节点上（尤其是邮件里的链接，
+// 几天后才被点开），本地文件只有写它的那个节点读得到。没有数据库（只在单测里）时退回本地目录。
+func (s *PaymentService) persistReceipt(ctx context.Context, appID int64, userID int64, export paymentdomain.ReceiptExport, pdfBytes []byte) error {
+	if s.pg == nil {
+		return s.persistReceiptFile(appID, userID, export, pdfBytes)
+	}
+	err := s.pg.SavePaymentReceiptExport(ctx, pgrepo.StoredPaymentReceipt{
+		BillID:        export.BillID,
+		AppID:         appID,
+		UserID:        userID,
+		OrderNo:       export.OrderNo,
+		TransactionNo: export.TransactionNo,
+		FileName:      export.FileName,
+		Locale:        export.Locale,
+		Content:       pdfBytes,
+		CreatedAt:     export.CreatedAt,
+		ExpiresAt:     export.ExpiresAt,
+	})
+	if err != nil {
+		s.log.Warn("save receipt export failed", zap.String("bill_id", export.BillID), zap.Int64("appid", appID), zap.Error(err))
+		return apperrors.New(50077, http.StatusInternalServerError, "写入账单文件失败")
+	}
+	return nil
+}
+
+// persistReceiptFile 旧的本地目录存法，只在没有数据库时使用。
+func (s *PaymentService) persistReceiptFile(appID int64, userID int64, export paymentdomain.ReceiptExport, pdfBytes []byte) error {
 	dirPath := s.receiptAppDir(appID)
 	if err := os.MkdirAll(dirPath, 0o755); err != nil {
 		s.log.Warn("create receipt dir failed", zap.String("dir", dirPath), zap.Error(err))
@@ -734,6 +757,105 @@ func (s *PaymentService) persistReceipt(appID int64, userID int64, export paymen
 	return nil
 }
 
+// storedReceipt 取回的一份导出：要么来自数据库（content 已在内存），要么是升级前落在本地目录的旧文件（metaPath 非空）。
+type storedReceipt struct {
+	meta     receiptMeta
+	content  []byte
+	metaPath string
+}
+
+// findReceipt 按 (应用, 凭证标识) 找一份导出：先查数据库，再查本地目录里升级前留下的旧文件，
+// 让升级前发出去、还没过期的下载链接继续可用。
+func (s *PaymentService) findReceipt(ctx context.Context, appID int64, billID string) (*storedReceipt, error) {
+	billID = strings.TrimSpace(billID)
+	if billID == "" {
+		return nil, apperrors.New(40075, http.StatusBadRequest, "账单标识不能为空")
+	}
+	// 凭证标识来自 URL，必须挡住路径穿越：../ 拼进文件名就能读到其它应用的目录
+	if !isHexToken(billID) {
+		return nil, apperrors.New(40475, http.StatusNotFound, "账单不存在")
+	}
+	if s.pg != nil {
+		rec, err := s.pg.GetPaymentReceiptExport(ctx, appID, billID)
+		if err != nil {
+			s.log.Warn("load receipt export failed", zap.String("bill_id", billID), zap.Error(err))
+			return nil, apperrors.New(50079, http.StatusInternalServerError, "读取账单元数据失败")
+		}
+		if rec != nil {
+			return &storedReceipt{
+				meta: receiptMeta{
+					BillID: rec.BillID, AppID: rec.AppID, UserID: rec.UserID,
+					OrderNo: rec.OrderNo, TransactionNo: rec.TransactionNo,
+					FileName: rec.FileName, Locale: rec.Locale,
+					CreatedAt: rec.CreatedAt, ExpiresAt: rec.ExpiresAt,
+				},
+				content: rec.Content,
+			}, nil
+		}
+	}
+	meta, metaPath, err := s.loadReceiptMeta(appID, billID)
+	if err != nil {
+		return nil, err
+	}
+	return &storedReceipt{meta: meta, metaPath: metaPath}, nil
+}
+
+// receiptContent 取 PDF 字节。
+func (s *PaymentService) receiptContent(stored *storedReceipt) ([]byte, error) {
+	if stored.metaPath == "" {
+		return stored.content, nil
+	}
+	pdfBytes, missing, err := readReceiptFile(stored.meta.FilePath)
+	if err != nil {
+		s.log.Warn("read receipt file failed", zap.String("bill_id", stored.meta.BillID), zap.String("file_path", stored.meta.FilePath), zap.Error(err))
+		if missing {
+			// 文件没了，留着元数据只会让下一次请求再走一遍同样的失败
+			_ = os.Remove(stored.metaPath)
+		}
+		return nil, err
+	}
+	return pdfBytes, nil
+}
+
+// dropReceipt 删掉一份已过期的导出。
+func (s *PaymentService) dropReceipt(ctx context.Context, stored *storedReceipt) {
+	if stored.metaPath != "" {
+		s.deleteReceipt(stored.meta, stored.metaPath)
+		return
+	}
+	if s.pg == nil {
+		return
+	}
+	if err := s.pg.DeletePaymentReceiptExport(ctx, stored.meta.AppID, stored.meta.BillID); err != nil {
+		s.log.Warn("delete receipt export failed", zap.String("bill_id", stored.meta.BillID), zap.Error(err))
+	}
+}
+
+// purgeExpiredStoredReceipts 清理数据库里已过期的导出（多副本下只由一个实例执行，见 SetCluster）。
+func (s *PaymentService) purgeExpiredStoredReceipts() {
+	if s.pg == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	const batch = 500
+	var total int64
+	for {
+		n, err := s.pg.PurgeExpiredPaymentReceiptExports(ctx, time.Now().UTC(), batch)
+		if err != nil {
+			s.log.Warn("purge expired receipt exports failed", zap.Error(err))
+			return
+		}
+		total += n
+		if n < batch {
+			break
+		}
+	}
+	if total > 0 {
+		s.log.Info("purged expired receipt exports", zap.Int64("count", total))
+	}
+}
+
 func (s *PaymentService) loadReceiptMeta(appID int64, billID string) (receiptMeta, string, error) {
 	billID = strings.TrimSpace(billID)
 	if billID == "" {
@@ -762,6 +884,10 @@ func (s *PaymentService) loadReceiptMeta(appID int64, billID string) (receiptMet
 	return meta, metaPath, nil
 }
 
+// cleanupExpiredReceipts 清理本地目录里过期的凭证文件。
+//
+// 新导出已经存数据库（见 persistReceipt），本地目录里只剩升级前的旧文件，以及没有数据库时（单测）的导出。
+// 每个节点的目录各是各的，所以这一步每个节点都要跑，不走集群认领。
 func (s *PaymentService) cleanupExpiredReceipts() {
 	rootDir := strings.TrimSpace(s.receiptCfg.RootDir)
 	if rootDir == "" {

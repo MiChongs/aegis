@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"aegis/internal/cluster"
 	"aegis/internal/config"
 	"aegis/internal/db"
 	apperrors "aegis/pkg/errors"
@@ -124,6 +126,26 @@ type DatabaseManager struct {
 
 	cancel   context.CancelFunc
 	stopOnce sync.Once
+
+	// reaperTask 清道夫终止的是整个数据库上的会话，多副本下只由一个实例执行（见 SetCluster）
+	reaperTask clusterTask
+	// historyNode 非空时历史按节点分键（见 SetCluster）
+	historyNode atomic.Pointer[string]
+}
+
+// SetCluster 接上集群协调（bootstrap 在构造完、Elector.Start 之前调用）。
+//
+//   - 清道夫：idle in transaction 会话是数据库级的，任何一个实例都能看到全部副本的会话。
+//     N 个副本各扫各终止，会对同一批 pid 重复下手、重复告警；改为只由持有租约的实例执行。
+//   - 历史曲线：样本里有本进程连接池的统计（已借出、等待、泄漏嫌疑），多副本共用一个键时曲线在几个池之间来回跳，
+//     又和同一接口返回的本进程快照对不上；改为按节点分键，控制台打到哪个实例就看哪个实例的曲线，返回结构不变。
+func (m *DatabaseManager) SetCluster(c *cluster.Cluster) {
+	if m == nil || c == nil {
+		return
+	}
+	m.reaperTask.bind(c, "database.idle-tx-reaper")
+	node := c.InstanceKey()
+	m.historyNode.Store(&node)
 }
 
 const databaseAlertRingSize = 50
@@ -352,6 +374,9 @@ func (m *DatabaseManager) reaperLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if !m.reaperTask.owned() {
+				continue
+			}
 			reapCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			killed, err := reapIdleInTransaction(reapCtx, m.handle.Pool, m.cfg.AutoTerminateThreshold)
 			cancel()
@@ -439,6 +464,10 @@ func (m *DatabaseManager) store(ctx context.Context, metric DatabaseMetrics) {
 	pipe.ZAdd(ctx, m.historyKey(), redislib.Z{Score: float64(metric.Timestamp.UnixMilli()), Member: string(data)})
 	pipe.ZRemRangeByScore(ctx, m.historyKey(), "-inf",
 		fmt.Sprintf("%d", metric.Timestamp.Add(-retain).UnixMilli()))
+	if m.historyNode.Load() != nil {
+		// 节点标识每次启动都不同，进程退出后它的键没人再修剪：给整个键设过期，留存期一过自然消失
+		pipe.Expire(ctx, m.historyKey(), retain+m.cfg.MonitorInterval)
+	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		m.log.Debug("数据库监控：写入历史指标失败", zap.Error(err))
 	}
@@ -562,6 +591,9 @@ func (m *DatabaseManager) historyKey() string {
 	prefix := m.prefix
 	if prefix == "" {
 		prefix = "aegis"
+	}
+	if node := m.historyNode.Load(); node != nil {
+		return prefix + ":database:history:node:" + *node
 	}
 	return prefix + ":database:history"
 }

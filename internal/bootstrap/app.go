@@ -195,9 +195,10 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	}
 	nodeID := cluster.NodeID(cfg.Cluster.NodeID)
 	clusterHandle := &cluster.Cluster{
-		NodeID:  nodeID,
-		Elector: cluster.NewElector(postgres, nodeID, cfg.Cluster.LeaseTTL, log),
-		Bus:     cluster.NewBus(natsConn, nodeID, log),
+		NodeID:   nodeID,
+		Instance: cluster.InstanceID(cfg.Cluster.NodeID),
+		Elector:  cluster.NewElector(postgres, nodeID, cfg.Cluster.LeaseTTL, log),
+		Bus:      cluster.NewBus(natsConn, nodeID, log),
 	}
 	// Temporal 为可选依赖：不可达时仅告警并降级（WorkflowService 已做 nil-guard，
 	// 管理后台访问 Workflow 功能会返回 503，但 API / 用户认证 / 应用管理等核心链路继续运行）。
@@ -215,6 +216,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	}
 
 	pg := pgrepo.New(postgres)
+	reserveTransactionNoNode(ctx, pg, log)
 	adminUserSearch, err := service.NewAdminUserSearchService(log, pg, cfg.AdminUserSearch)
 	if err != nil {
 		closeTemporal()
@@ -728,6 +730,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 统一通知出口：所有业务事件（工单、SLA 告警…）只发到这里，
 	// 由订阅表决定投给飞书 / 钉钉 / 企微 / Slack / Webhook / 邮件 / 站内信 / 实时推送
 	notifyHub := service.NewNotifyHub(log, pg, cfg, emailService, notificationService, adminInboxService, realtimeService)
+	// 渠道限流按全集群合计（机器人的限额是给整个平台的，不是给每个副本的）
+	notifyHub.SetRedis(redisClient, cfg.Redis.KeyPrefix)
 	if base := strings.TrimSpace(cfg.ConsoleBaseURL); base != "" {
 		notifyHub.SetConsoleBaseURL(base)
 	}
@@ -902,6 +906,19 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		postgres.Close()
 		return nil, err
 	}
+
+	// 集群协调：必须在 Elector.Start（APIApp.Start 第一步）之前登记，第一轮就能抢到租约
+	paymentService.SetCluster(clusterHandle)
+	suspensionService.SetCluster(clusterHandle)
+	systemService.SetCluster(clusterHandle)
+	geoBanService.SetCluster(clusterHandle)
+	geoFenceService.SetCluster(clusterHandle)
+	pluginService.SetCluster(clusterHandle)
+	adminUserSearch.SetCluster(clusterHandle)
+	monitorService.SetCluster(clusterHandle)
+	memoryManager.SetCluster(clusterHandle)
+	databaseManager.SetCluster(clusterHandle)
+	storageService.SetCluster(clusterHandle)
 
 	drain := &drainState{}
 	server := &http.Server{

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"aegis/internal/cluster"
 	"aegis/internal/config"
 	authdomain "aegis/internal/domain/auth"
 	paymentdomain "aegis/internal/domain/payment"
@@ -61,6 +62,25 @@ type PaymentService struct {
 	inbox *AdminInboxService
 	// wallets 充值订单的档位与金额校验；nil 时只按 1:1 入账、不做限制（与旧行为一致）
 	wallets *WalletService
+
+	// 多副本下只该由一个实例跑的后台任务（见 SetCluster）。零值放行，即单实例语义。
+	expiryTask       clusterTask // 过期订单关闭
+	refundSyncTask   clusterTask // 未结退款单向上游查询
+	remoteSettleTask clusterTask // 推送会丢的渠道主动核实 + 已付款未履约补偿
+	receiptPurgeTask clusterTask // 数据库里过期凭证的清理
+}
+
+// SetCluster 接上集群协调（bootstrap 在构造完、Elector.Start 之前调用）。
+//
+// 订单过期、退款轮询、上游核实都会去打支付渠道的接口：N 个副本各轮询一遍，轻则被渠道限流，
+// 重则同一笔退款被并发推进。这里给每项任务各登记一个名字，循环照常每个实例都跑，
+// 但每一轮只有持有租约的那个实例真正执行。settleAttempts（查单触发核实的节流）是进程内的，
+// 用户查单打到哪个实例就在哪个实例节流，与这里互不相干。
+func (s *PaymentService) SetCluster(c *cluster.Cluster) {
+	s.expiryTask.bind(c, "payment.order-expiry")
+	s.refundSyncTask.bind(c, "payment.refund-sync")
+	s.remoteSettleTask.bind(c, "payment.remote-settle")
+	s.receiptPurgeTask.bind(c, "payment.receipt-purge")
 }
 
 // SetAdminInbox 接上管理员站内信（订单待人工处理的通知）。
@@ -1309,15 +1329,25 @@ func (s *PaymentService) startReceiptCleaner() {
 			case <-s.closeCh:
 				return
 			case <-ticker.C:
+				// 本地磁盘上的旧版凭证文件每个节点各有各的，各清各的；数据库里的只由一个实例清
 				s.cleanupExpiredReceipts()
+				if s.receiptPurgeTask.owned() {
+					s.purgeExpiredStoredReceipts()
+				}
 			case <-expireTicker.C:
-				s.expireOverdueOrders()
+				if s.expiryTask.owned() {
+					s.expireOverdueOrders()
+				}
 			case <-refundTicker.C:
-				s.syncPendingRefunds()
+				if s.refundSyncTask.owned() {
+					s.syncPendingRefunds()
+				}
 			case <-settleTicker.C:
-				s.syncUnsettledOrders()
-				// 写清了用途却没履约的已付款订单（回调那次履约失败、用户再没查单）
-				s.retryPendingFulfillments()
+				if s.remoteSettleTask.owned() {
+					s.syncUnsettledOrders()
+					// 写清了用途却没履约的已付款订单（回调那次履约失败、用户再没查单）
+					s.retryPendingFulfillments()
+				}
 			}
 		}
 	}()

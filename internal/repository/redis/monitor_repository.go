@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	gojson "github.com/goccy/go-json"
@@ -83,16 +84,22 @@ func (r *MonitorRepository) AppendHistory(ctx context.Context, namespace string,
 	}).Err()
 }
 
-// AppendHourlyHistory 追加小时聚合历史点
+// AppendHourlyHistory 写入一个小时的聚合点；同一小时（同一 score）已有的点先删掉再写。
+//
+// 成员是整个点的 JSON，同一小时聚合两次（多副本下负责实例换手、或进程重启后重算）若只 ZADD，
+// 状态或平均延迟稍有不同就会留下两条，周 / 月曲线上出现重影。按 score 先删后写，在一个事务里完成。
 func (r *MonitorRepository) AppendHourlyHistory(ctx context.Context, namespace string, point MonitorHistoryPoint) error {
 	raw, err := gojson.Marshal(point)
 	if err != nil {
 		return err
 	}
-	return r.client.ZAdd(ctx, r.hourlyHistoryKey(namespace), redislib.Z{
-		Score:  float64(point.T),
-		Member: string(raw),
-	}).Err()
+	key := r.hourlyHistoryKey(namespace)
+	score := strconv.FormatInt(point.T, 10)
+	pipe := r.client.TxPipeline()
+	pipe.ZRemRangeByScore(ctx, key, score, score)
+	pipe.ZAdd(ctx, key, redislib.Z{Score: float64(point.T), Member: string(raw)})
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 // TrimRawHistory 修剪原始历史

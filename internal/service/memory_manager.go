@@ -6,6 +6,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"aegis/internal/cluster"
 	"aegis/internal/config"
 	redislib "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -80,6 +81,15 @@ func NewMemoryManager(cfg config.MemoryConfig, log *zap.Logger, redis *redislib.
 }
 
 // Start 启动所有后台服务
+// SetCluster 接上集群：内存历史曲线按节点分键（理由见 MemoryMonitor.SetHistoryNode）。
+// GC 调优、对象池、缓存、泄漏检测都是本进程的事，不需要集群协调。
+func (m *MemoryManager) SetCluster(c *cluster.Cluster) {
+	if m == nil || c == nil || m.monitor == nil {
+		return
+	}
+	m.monitor.SetHistoryNode(c.InstanceKey())
+}
+
 func (m *MemoryManager) Start(ctx context.Context) {
 	ctx, m.cancel = context.WithCancel(ctx)
 

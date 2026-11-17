@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"aegis/internal/cluster"
 	firewalldomain "aegis/internal/domain/firewall"
 	pgrepo "aegis/internal/repository/postgres"
 
@@ -29,6 +30,39 @@ type GeoBanService struct {
 	rules []firewalldomain.GeoBan // 仅 enabled 且未过期的规则，按 scopeType/value 内部索引
 
 	version atomic.Int64
+
+	// cluster 规则改动后通知其他实例重载（规则匹配全在进程内存里）
+	cluster clusterLink
+}
+
+// clusterReloadNotice 「某张表变了，请从数据库重载」这一类集群广播的消息体。
+// 只带动作名供日志排查，不带数据：接收方一律全量重载，免得增量合并出错让各实例的规则悄悄分叉。
+type clusterReloadNotice struct {
+	Op string `json:"op"`
+	ID int64  `json:"id,omitempty"`
+}
+
+// SetCluster 接上集群：订阅其他实例的地域封禁变更广播，收到后从数据库全量重载。
+// 重载用 ReloadFromDB，它不广播，不会形成回环。
+func (s *GeoBanService) SetCluster(c *cluster.Cluster) {
+	if c == nil {
+		return
+	}
+	s.cluster.set(c)
+	c.Subscribe(cluster.TopicGeoBan, func([]byte) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := s.ReloadFromDB(ctx); err != nil {
+			s.log.Warn("按集群广播重载地域封禁失败", zap.Error(err))
+		}
+	})
+}
+
+// changed 写库成功后：本地重载并通知其他实例。广播在本地重载之前发 —— 库已经改了，
+// 本地重载失败不该连累别的实例也看不到新规则。
+func (s *GeoBanService) changed(ctx context.Context, op string, id int64) error {
+	s.cluster.publish(s.log, cluster.TopicGeoBan, clusterReloadNotice{Op: op, ID: id})
+	return s.ReloadFromDB(ctx)
 }
 
 // NewGeoBanService 构造服务；传入 locationService 以解析 IP → 国家/地区/ASN/ISP。
@@ -87,7 +121,7 @@ func (s *GeoBanService) Upsert(ctx context.Context, m firewalldomain.GeoBanMutat
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ReloadFromDB(ctx); err != nil {
+	if err := s.changed(ctx, "upsert", b.ID); err != nil {
 		s.log.Warn("geo ban reload failed after upsert", zap.Error(err))
 	}
 	return &b, nil
@@ -98,7 +132,7 @@ func (s *GeoBanService) Toggle(ctx context.Context, id int64, enabled bool) erro
 	if err := s.pg.UpdateGeoBanStatus(ctx, id, enabled); err != nil {
 		return err
 	}
-	return s.ReloadFromDB(ctx)
+	return s.changed(ctx, "toggle", id)
 }
 
 // Delete 删除规则。
@@ -106,7 +140,7 @@ func (s *GeoBanService) Delete(ctx context.Context, id int64) error {
 	if err := s.pg.DeleteGeoBan(ctx, id); err != nil {
 		return err
 	}
-	return s.ReloadFromDB(ctx)
+	return s.changed(ctx, "delete", id)
 }
 
 // CheckIP 对请求 IP 评估是否命中地域封禁规则。

@@ -147,9 +147,10 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 	}
 	workerNodeID := cluster.NodeID(cfg.Cluster.NodeID)
 	clusterHandle := &cluster.Cluster{
-		NodeID:  workerNodeID,
-		Elector: cluster.NewElector(postgres, workerNodeID, cfg.Cluster.LeaseTTL, log),
-		Bus:     cluster.NewBus(natsConn, workerNodeID, log),
+		NodeID:   workerNodeID,
+		Instance: cluster.InstanceID(cfg.Cluster.NodeID),
+		Elector:  cluster.NewElector(postgres, workerNodeID, cfg.Cluster.LeaseTTL, log),
+		Bus:      cluster.NewBus(natsConn, workerNodeID, log),
 	}
 	// Temporal 为可选依赖：不可达时仅告警并降级——Worker 会跳过 TemporalWorker 启动，
 	// AutoSign 等基于 NATS 的订阅循环不受影响。
@@ -160,6 +161,7 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 		err = nil
 	}
 	pg := pgrepo.New(postgres)
+	reserveTransactionNoNode(ctx, pg, log)
 	egressService := service.NewEgressService(log, pg, egressGateway, cfg.Security.MasterKey, cfg.Egress)
 	egressService.AttachMihomo(ensureMihomoCore(cfg.EgressMihomo, "worker", log), ownsEgress, cfg.EgressMihomo.Mirror)
 	if err := egressService.Initialize(ctx); err != nil {
@@ -208,6 +210,7 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 	if base := strings.TrimSpace(cfg.ConsoleBaseURL); base != "" {
 		workerNotifyHub.SetConsoleBaseURL(base)
 	}
+	workerNotifyHub.SetRedis(redisClient, cfg.Redis.KeyPrefix)
 	ticketService := service.NewTicketService(log, pg, nil, workerNotifyHub, nil)
 
 	// 平台治理在 Worker 侧也要接：被冻结应用的对外发信不能因为"这封信是 Worker 发的"

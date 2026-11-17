@@ -45,7 +45,10 @@ type locationSource struct {
 	single      func(ctx context.Context, ip string) (IPLocation, bool, error)
 	concurrency int
 	limiter     *rate.Limiter
-	health      sourceHealth
+	// shared 跨实例的合计限速（上游按密钥整体限额的来源才有，见 shared_rate.go）；
+	// limiter 仍保留，负责把本进程的请求摊平，免得一个进程在窗口开头把全集群的额度一口吃光
+	shared *sharedRateWindow
+	health sourceHealth
 }
 
 // sourceAnswer 一个来源对一批地址的回答。pending 是该查却没查成的地址（网络错误、超时、限流、熔断中），
@@ -248,6 +251,9 @@ func (s *LocationService) querySingle(ctx context.Context, src *locationSource, 
 		if err := src.limiter.Wait(ctx); err != nil {
 			return IPLocation{}, false, err
 		}
+	}
+	if err := src.shared.Wait(ctx); err != nil {
+		return IPLocation{}, false, err
 	}
 	return src.single(ctx, ip)
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"aegis/internal/cluster"
 	redisrepo "aegis/internal/repository/redis"
 
 	gojson "github.com/goccy/go-json"
@@ -35,6 +36,15 @@ func (s *MonitorService) SetCrashLog(cl interface {
 	Write(component string, r interface{}, recovered bool)
 }) {
 	s.crashLog = cl
+}
+
+// SetCluster 接上集群协调（bootstrap 在构造完、Elector.Start 之前调用）。
+//
+// 快照、组件历史曲线、整点聚合都写在共享 Redis 里，读取端（控制台监控页）不区分实例：
+// N 个副本各写一遍，曲线上同一时刻就有 N 个点、整点聚合追加 N 条。改为只有持有租约的实例写，
+// 与单实例时「有且只有一个采集者」的语义一致；负责实例宕机后快照最多空窗一个租约期（快照本身 60 秒过期）。
+func (s *MonitorService) SetCluster(c *cluster.Cluster) {
+	s.collectorTask.bind(c, "monitor.collector")
 }
 
 // StartCollector 启动后台定时采集（在 bootstrap 中调用）
@@ -88,7 +98,9 @@ func (s *MonitorService) collectorInnerLoop(parentCtx context.Context, interval 
 		}
 	}()
 
-	s.safeCollectOnce(parentCtx)
+	if s.collectorTask.owned() {
+		s.safeCollectOnce(parentCtx)
+	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -104,9 +116,15 @@ func (s *MonitorService) collectorInnerLoop(parentCtx context.Context, interval 
 		case <-parentCtx.Done():
 			return true
 		case <-ticker.C:
-			s.safeCollectOnce(parentCtx)
+			if s.collectorTask.owned() {
+				s.safeCollectOnce(parentCtx)
+			}
 		case <-hourlyTicker.C:
-			s.safeAggregateHourly(parentCtx)
+			// 整点聚合写入是幂等的（同一小时的点先删后写，见 AppendHourlyHistory）：
+			// 负责实例恰好在这一小时内换手、两边各聚合一次，也只会留下一条
+			if s.collectorTask.owned() {
+				s.safeAggregateHourly(parentCtx)
+			}
 		}
 	}
 }

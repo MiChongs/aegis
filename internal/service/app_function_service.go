@@ -937,6 +937,11 @@ func (s *AppFunctionService) enforceRateLimit(ctx context.Context, function *fun
 }
 
 // acquire 取一个并发名额。容量变了就按新容量重建闸门。
+//
+// 并发闸门刻意按进程计（多副本时全集群合计是「副本数 × 容量」），不做成 Redis 分布式信号量：
+// 它保护的是本进程的 CPU 与 goja 沙箱内存，一个进程同时跑多少个脚本只跟本进程有关；
+// 分布式信号量还要处理持有者崩溃后的名额回收，换来的只是一个更难解释的上限。
+// 真正需要全集群合计的是调用频次，那一道已经落在共享的 app_function_kv 上计数（enforceRateLimit）。
 func (s *AppFunctionService) acquire(functionID int64, capacity int) (func(), bool) {
 	if capacity <= 0 {
 		capacity = defaultConcurrency

@@ -58,6 +58,9 @@ type StorageService struct {
 
 	stopOnce sync.Once
 	stop     chan struct{}
+
+	// clusterState 多副本协调：后台任务判定、迁移控制广播，见 storage_cluster.go
+	clusterState storageClusterState
 }
 
 // SetLinkSigningKey 注入平台主密钥（bootstrap 中调用）。不注入时用进程内随机密钥，

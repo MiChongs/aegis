@@ -82,7 +82,7 @@ func (s *PaymentService) CreateUserWalletReceipt(ctx context.Context, session *a
 	// 下载走与订单凭证同一条路由：那条路由校验的是 (appid, userId, billId)，
 	// 与凭证主体无关，另开一条只会多一处要同步的权限判定。
 	export.DownloadURL = fmt.Sprintf("/api/pay/bills/%s/download", export.BillID)
-	if err := s.persistReceipt(session.AppID, session.UserID, export, result.PDF); err != nil {
+	if err := s.persistReceipt(ctx, session.AppID, session.UserID, export, result.PDF); err != nil {
 		return nil, err
 	}
 	return &export, nil

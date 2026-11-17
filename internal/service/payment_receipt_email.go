@@ -242,7 +242,7 @@ func (s *PaymentService) sendReceiptDocumentEmail(
 
 	// 无论能否附件都落一份带签名链接的导出：附件会被邮件网关剥离，
 	// 邮件也会被转发到打不开附件的客户端上。
-	export, err := s.persistEmailReceipt(subject, doc, rendered)
+	export, err := s.persistEmailReceipt(ctx, subject, doc, rendered)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +307,7 @@ func newReceiptEmailMessage(to, subject, body string) DocumentEmail {
 //
 // 单独一条路径而不是复用 CreateUserOrderReceipt：那条是「用户刚点了下载」，
 // 半小时有效期足够；邮件里的链接可能几天后才被点开，用同一个 TTL 等于没发。
-func (s *PaymentService) persistEmailReceipt(subject receiptEmailSubject, doc receipt.Document, rendered *receipt.Result) (paymentdomain.ReceiptExport, error) {
+func (s *PaymentService) persistEmailReceipt(ctx context.Context, subject receiptEmailSubject, doc receipt.Document, rendered *receipt.Result) (paymentdomain.ReceiptExport, error) {
 	ttl := s.receiptCfg.EmailLinkTTL
 	if ttl <= 0 {
 		ttl = 7 * 24 * time.Hour
@@ -329,7 +329,7 @@ func (s *PaymentService) persistEmailReceipt(subject receiptEmailSubject, doc re
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(ttl),
 	}
-	if err := s.persistReceipt(subject.AppID, subject.UserID, export, rendered.PDF); err != nil {
+	if err := s.persistReceipt(ctx, subject.AppID, subject.UserID, export, rendered.PDF); err != nil {
 		return paymentdomain.ReceiptExport{}, err
 	}
 	return export, nil
@@ -407,7 +407,6 @@ func (s *PaymentService) signReceiptLink(appID int64, billID string, expires int
 // 这与密码重置链接是同一套模型：拿到链接的人即被视为获授权，
 // 因此链接的有效期必须有限，且不能出现在任何日志里。
 func (s *PaymentService) DownloadSignedReceipt(ctx context.Context, appID int64, billID string, expires int64, token string) ([]byte, string, error) {
-	_ = ctx
 	if strings.TrimSpace(s.receiptCfg.SigningKey) == "" {
 		return nil, "", apperrors.New(50376, http.StatusServiceUnavailable, "凭证签名密钥未配置")
 	}
@@ -419,20 +418,20 @@ func (s *PaymentService) DownloadSignedReceipt(ctx context.Context, appID int64,
 	if time.Now().UTC().Unix() > expires {
 		return nil, "", apperrors.New(41075, http.StatusGone, "账单下载链接已过期")
 	}
-	meta, metaPath, err := s.loadReceiptMeta(appID, billID)
+	stored, err := s.findReceipt(ctx, appID, billID)
 	if err != nil {
 		return nil, "", err
 	}
-	if time.Now().UTC().After(meta.ExpiresAt) {
-		s.deleteReceipt(meta, metaPath)
+	if time.Now().UTC().After(stored.meta.ExpiresAt) {
+		s.dropReceipt(ctx, stored)
 		return nil, "", apperrors.New(41075, http.StatusGone, "账单文件已过期")
 	}
-	data, _, err := readReceiptFile(meta.FilePath)
+	data, err := s.receiptContent(stored)
 	if err != nil {
 		s.log.Warn("read signed receipt failed", zap.String("bill_id", billID), zap.Error(err))
 		return nil, "", err
 	}
-	return data, meta.FileName, nil
+	return data, stored.meta.FileName, nil
 }
 
 // ── 邮件正文 ──

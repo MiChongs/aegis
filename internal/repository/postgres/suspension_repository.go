@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"aegis/internal/domain/suspension"
 	userdomain "aegis/internal/domain/user"
@@ -548,12 +549,24 @@ func (r *Repository) DecideAppeal(ctx context.Context, id int64, status, decided
 	return r.GetAppeal(ctx, 0, id)
 }
 
-// ClaimUnreviewedAppeals 认领还没跑过决策模型的申诉（提交 30 秒后仍没审的、尝试不到 3 次的）
-func (r *Repository) ClaimUnreviewedAppeals(ctx context.Context, limit int) ([]int64, error) {
-	rows, err := r.pool.Query(ctx, `UPDATE ban_appeals SET review_attempts = review_attempts + 1, updated_at = NOW()
-		WHERE id IN (SELECT id FROM ban_appeals WHERE status = 'pending' AND model_reviewed_at IS NULL AND review_attempts < 3
-			AND created_at < NOW() - INTERVAL '30 seconds' ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED)
-		RETURNING id`, limit)
+// AppealReviewLease 复审认领的租期：单次复审最长 3 分钟（suspension_review.go），
+// 认领超过这么久还没出结论，说明认领它的实例已经没了，可以被重新认领。
+const AppealReviewLease = 5 * time.Minute
+
+// ClaimUnreviewedAppeals 兜底认领还没跑过决策模型的申诉（提交 30 秒后仍没审的、尝试不到 3 次的），
+// 认领时原子记下认领者与时刻。
+//
+// 只靠 FOR UPDATE SKIP LOCKED 不够：锁在这条语句结束时就放了，另一个副本下一轮还能把同一条认领走，
+// 同一条申诉就被并发送去大模型审两遍。现在认领即占租：租期内谁也认领不走（包括在线触发的那一次）。
+// 复审中（reviewing）但租期已过的也收：那是复审跑到一半进程没了，原先会一直卡在复审中。
+func (r *Repository) ClaimUnreviewedAppeals(ctx context.Context, holder string, limit int) ([]int64, error) {
+	rows, err := r.pool.Query(ctx, `UPDATE ban_appeals SET review_attempts = review_attempts + 1,
+		review_claimed_at = NOW(), review_claimed_by = $2, updated_at = NOW()
+		WHERE id IN (SELECT id FROM ban_appeals WHERE status IN ('pending','reviewing') AND model_reviewed_at IS NULL AND review_attempts < 3
+			AND created_at < NOW() - INTERVAL '30 seconds'
+			AND (review_claimed_at IS NULL OR review_claimed_at < NOW() - make_interval(secs => $3))
+			ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED)
+		RETURNING id`, limit, holder, AppealReviewLease.Seconds())
 	if err != nil {
 		return nil, err
 	}
@@ -566,6 +579,19 @@ func (r *Repository) ClaimUnreviewedAppeals(ctx context.Context, limit int) ([]i
 		}
 	}
 	return ids, rows.Err()
+}
+
+// ClaimAppealReview 在线触发（提交申诉后立即复审）前占租：别人租期内持有时返回 false，本次不审。
+// force（管理员要求重跑）无视现有租约直接接过来 —— 那是管理员明确要求的，宁可多审一次。
+func (r *Repository) ClaimAppealReview(ctx context.Context, id int64, holder string, force bool) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `UPDATE ban_appeals SET review_claimed_at = NOW(), review_claimed_by = $2
+		WHERE id = $1 AND status IN ('pending','reviewing')
+			AND ($3 OR review_claimed_at IS NULL OR review_claimed_at < NOW() - make_interval(secs => $4))`,
+		id, holder, force, AppealReviewLease.Seconds())
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // MarkAppealReviewing 申诉进入复审中（决策模型开始审）

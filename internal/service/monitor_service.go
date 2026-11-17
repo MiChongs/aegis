@@ -193,6 +193,8 @@ type MonitorService struct {
 	}
 	stopCollect chan struct{}
 	startedAt   time.Time
+	// collectorTask 共享 Redis 里的快照、历史曲线与整点聚合只由一个实例写（见 SetCluster）
+	collectorTask clusterTask
 }
 
 func NewMonitorService(

@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"aegis/internal/cluster"
 	"aegis/internal/config"
 	userdomain "aegis/internal/domain/user"
 	pgrepo "aegis/internal/repository/postgres"
@@ -74,6 +75,53 @@ type AdminUserSearchService struct {
 	cache     sync.Map
 	cacheSize atomic.Int64
 	appGen    sync.Map
+
+	// cluster 索引每个节点一份（Bleve 目录不能多进程共享）：本节点改了哪个用户的条目，
+	// 就广播一条让其他节点各自从数据库重读，否则各节点只认得经自己写入的用户。
+	cluster clusterLink
+}
+
+// 管理端用户搜索索引的集群广播动作。
+const (
+	adminUserSearchOpIndex   = "index"
+	adminUserSearchOpDelete  = "delete"
+	adminUserSearchOpSyncApp = "sync-app"
+)
+
+// adminUserSearchChange 集群广播的消息体：只带应用 ID、用户 ID 与动作，不带账号、手机号这些个人数据，
+// 接收方自己从数据库读 —— 个人数据不该为了同步索引多过一道消息总线。
+type adminUserSearchChange struct {
+	Op     string `json:"op"`
+	AppID  int64  `json:"appId"`
+	UserID int64  `json:"userId,omitempty"`
+}
+
+// SetCluster 接上集群：订阅其他节点的索引变更广播。
+func (s *AdminUserSearchService) SetCluster(c *cluster.Cluster) {
+	if s == nil || c == nil {
+		return
+	}
+	s.cluster.set(c)
+	c.Subscribe(cluster.TopicAdminUserSearch, s.handleClusterChange)
+}
+
+// handleClusterChange 处理其他节点发来的索引变更。走 *Local 版本，不再广播，不会形成回环。
+func (s *AdminUserSearchService) handleClusterChange(payload []byte) {
+	var change adminUserSearchChange
+	if err := json.Unmarshal(payload, &change); err != nil {
+		s.log.Warn("管理端用户搜索广播无法解析", zap.Error(err))
+		return
+	}
+	switch change.Op {
+	case adminUserSearchOpIndex:
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.indexUserLocal(ctx, change.AppID, change.UserID)
+	case adminUserSearchOpDelete:
+		_ = s.deleteUserLocal(change.AppID, change.UserID)
+	case adminUserSearchOpSyncApp:
+		s.resyncAppLocal(change.AppID)
+	}
 }
 
 type adminUserSearchCacheEntry struct {
@@ -422,7 +470,18 @@ func (s *AdminUserSearchService) SearchUsers(ctx context.Context, appID int64, a
 	return ids, int64(result.Total), nil
 }
 
+// IndexUser 从数据库重读一个用户并更新本节点的索引条目，同时通知其他节点照做。
 func (s *AdminUserSearchService) IndexUser(ctx context.Context, appID int64, userID int64) error {
+	if s == nil || s.index == nil || userID <= 0 || appID <= 0 {
+		return nil
+	}
+	// 先广播：调用方是在写库之后才调这里的，其他节点现在去读就能读到新值；本节点重读失败也不影响它们
+	s.cluster.publish(s.log, cluster.TopicAdminUserSearch, adminUserSearchChange{Op: adminUserSearchOpIndex, AppID: appID, UserID: userID})
+	return s.indexUserLocal(ctx, appID, userID)
+}
+
+// indexUserLocal 只更新本节点的索引条目。
+func (s *AdminUserSearchService) indexUserLocal(ctx context.Context, appID int64, userID int64) error {
 	if s == nil || s.index == nil || userID <= 0 || appID <= 0 {
 		return nil
 	}
@@ -475,7 +534,36 @@ func (s *AdminUserSearchService) IndexUser(ctx context.Context, appID int64, use
 	return nil
 }
 
+// DeleteUser 删掉本节点上一个用户的索引条目，同时通知其他节点照做。
 func (s *AdminUserSearchService) DeleteUser(appID int64, userID int64) error {
+	if s == nil || s.index == nil || userID <= 0 || appID <= 0 {
+		return nil
+	}
+	s.cluster.publish(s.log, cluster.TopicAdminUserSearch, adminUserSearchChange{Op: adminUserSearchOpDelete, AppID: appID, UserID: userID})
+	return s.deleteUserLocal(appID, userID)
+}
+
+// ResyncApp 让所有节点对一个应用重新做一遍增量同步（批量改了大量用户、没逐个调 IndexUser 时用）。
+// 同步按检查点增量进行，只会重读检查点之后有变化的用户。
+func (s *AdminUserSearchService) ResyncApp(appID int64) {
+	if s == nil || s.index == nil || appID <= 0 {
+		return
+	}
+	s.cluster.publish(s.log, cluster.TopicAdminUserSearch, adminUserSearchChange{Op: adminUserSearchOpSyncApp, AppID: appID})
+	s.resyncAppLocal(appID)
+}
+
+// resyncAppLocal 忘掉「本节点已同步过这个应用」，下一次检索时按检查点补齐。
+func (s *AdminUserSearchService) resyncAppLocal(appID int64) {
+	if s == nil || s.index == nil || appID <= 0 {
+		return
+	}
+	s.indexedApps.Delete(appID)
+	s.invalidate(appID)
+}
+
+// deleteUserLocal 只删本节点的索引条目。
+func (s *AdminUserSearchService) deleteUserLocal(appID int64, userID int64) error {
 	if s == nil || s.index == nil || userID <= 0 || appID <= 0 {
 		return nil
 	}

@@ -139,8 +139,11 @@ func (s *LocationService) buildSources(geoCfg config.GeoIPConfig) []*locationSou
 		case "btcn", "bt":
 			sources = append(sources, &locationSource{name: "btcn", supports: ipv4, batch: s.lookupBtCN, batchSize: btcnBatchSize})
 		case "uapis":
+			// UAPIS QPS 是上游按密钥算的硬限制：多副本时每个进程各有一个令牌桶，合起来就是 N 倍，
+			// 所以再叠一层 Redis 上的全集群合计限速（API 与 Worker 共用同一把键）
 			sources = append(sources, &locationSource{name: name, metered: true, single: s.lookupUAPIs, concurrency: 4,
-				limiter: rate.NewLimiter(rate.Limit(qps), 1)})
+				limiter: rate.NewLimiter(rate.Limit(qps), 1),
+				shared:  newSharedRateWindow(s.redis, s.redisRateKey("uapis"), qps)})
 		default:
 			s.log.Warn("unknown location provider ignored", zap.String("provider", raw))
 		}
@@ -149,6 +152,15 @@ func (s *LocationService) buildSources(geoCfg config.GeoIPConfig) []*locationSou
 }
 
 func (s *LocationService) Close() {}
+
+// redisRateKey 来源限速在 Redis 里的键前缀。
+func (s *LocationService) redisRateKey(source string) string {
+	prefix := s.keyPrefix
+	if prefix == "" {
+		prefix = "aegis"
+	}
+	return prefix + ":geoip:rate:" + source
+}
 
 func (s *LocationService) CacheLookupTimeout() time.Duration {
 	return s.cacheLookupTimeout

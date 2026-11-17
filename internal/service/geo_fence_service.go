@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"aegis/internal/cluster"
 	firewalldomain "aegis/internal/domain/firewall"
 	geodomain "aegis/internal/domain/geo"
 	pgrepo "aegis/internal/repository/postgres"
@@ -37,6 +38,31 @@ type GeoFenceService struct {
 	fences []compiledGeoFence
 
 	version atomic.Int64
+
+	// cluster 围栏改动后通知其他实例重载（判定用的是编译进内存的几何）
+	cluster clusterLink
+}
+
+// SetCluster 接上集群：订阅其他实例的围栏变更广播，收到后从数据库全量重载。
+// 重载用 ReloadFromDB，它不广播，不会形成回环。
+func (s *GeoFenceService) SetCluster(c *cluster.Cluster) {
+	if c == nil {
+		return
+	}
+	s.cluster.set(c)
+	c.Subscribe(cluster.TopicGeoFence, func([]byte) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := s.ReloadFromDB(ctx); err != nil {
+			s.log.Warn("按集群广播重载地理围栏失败", zap.Error(err))
+		}
+	})
+}
+
+// changed 写库成功后：先通知其他实例，再本地重载（理由同 GeoBanService.changed）。
+func (s *GeoFenceService) changed(ctx context.Context, op string, id int64) error {
+	s.cluster.publish(s.log, cluster.TopicGeoFence, clusterReloadNotice{Op: op, ID: id})
+	return s.ReloadFromDB(ctx)
 }
 
 // compiledGeoFence 编译到内存的围栏（热路径只读结构）。
@@ -252,7 +278,7 @@ func (s *GeoFenceService) Create(ctx context.Context, m geodomain.FenceMutation,
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ReloadFromDB(ctx); err != nil {
+	if err := s.changed(ctx, "create", f.ID); err != nil {
 		s.log.Warn("geo fence reload failed after create", zap.Error(err))
 	}
 	return &f, nil
@@ -267,7 +293,7 @@ func (s *GeoFenceService) Update(ctx context.Context, id int64, m geodomain.Fenc
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ReloadFromDB(ctx); err != nil {
+	if err := s.changed(ctx, "update", id); err != nil {
 		s.log.Warn("geo fence reload failed after update", zap.Error(err))
 	}
 	return &f, nil
@@ -278,7 +304,7 @@ func (s *GeoFenceService) Toggle(ctx context.Context, id int64, enabled bool) er
 	if err := s.pg.UpdateGeoFenceStatus(ctx, id, enabled); err != nil {
 		return err
 	}
-	return s.ReloadFromDB(ctx)
+	return s.changed(ctx, "toggle", id)
 }
 
 // Delete 删除围栏。
@@ -286,7 +312,7 @@ func (s *GeoFenceService) Delete(ctx context.Context, id int64) error {
 	if err := s.pg.DeleteGeoFence(ctx, id); err != nil {
 		return err
 	}
-	return s.ReloadFromDB(ctx)
+	return s.changed(ctx, "delete", id)
 }
 
 // Preview 回测围栏影响面（PostGIS 离线计算，管理端按需调用）。

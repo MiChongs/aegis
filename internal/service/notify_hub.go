@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -20,6 +21,7 @@ import (
 	apperrors "aegis/pkg/errors"
 	"aegis/pkg/timeutil"
 
+	redislib "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -53,9 +55,11 @@ type NotifyHub struct {
 	// 控制台基址，用于把「查看工单」按钮指向真实页面
 	consoleBaseURL string
 
-	// 渠道级限流：内存令牌桶，按渠道 ID 计数（单实例粒度，够用且零外部依赖）
+	// 渠道级限流：按渠道 ID 每分钟计数。接了 Redis（SetRedis）时全集群合计，否则进程内计数
 	rateMu    sync.Mutex
 	rateState map[int64]*notifyRateWindow
+	rateRedis *redislib.Client
+	rateKey   string
 
 	// 飞书 tenant_access_token 缓存（按 appId 维度，提前 5 分钟过期）
 	tokenMu    sync.Mutex
@@ -406,7 +410,7 @@ func (h *NotifyHub) deliver(ctx context.Context, event *notifydomain.Event, targ
 		return
 	}
 
-	if !h.allowRate(channel) {
+	if !h.allowRate(ctx, channel) {
 		_ = h.pg.CompleteNotifyDelivery(ctx, deliveryID, notifydomain.DeliverySkipped, 0, "", "", "渠道限流，本分钟配额已用尽", 0)
 		return
 	}
@@ -469,10 +473,36 @@ func (h *NotifyHub) deliver(ctx context.Context, event *notifydomain.Event, targ
 		zap.String("channel", channel.Name), zap.Error(lastErr))
 }
 
+// SetRedis 让渠道限流改为全集群合计（bootstrap 中调用，API 与 Worker 的通知出口都要接）。
+//
+// 渠道上配的「每分钟最多 N 条」多半是照着对方的限额填的（飞书 / 钉钉机器人都按分钟限流）：
+// API 与 Worker 各有一个通知出口，多副本时再乘以副本数，进程内计数会让实际发出量成倍超过配置，
+// 超出部分被对方拒收甚至触发机器人封禁。不调用时保持进程内计数（单实例语义）。
+func (h *NotifyHub) SetRedis(client *redislib.Client, keyPrefix string) {
+	if client == nil {
+		return
+	}
+	prefix := strings.TrimSpace(keyPrefix)
+	if prefix == "" {
+		prefix = "aegis"
+	}
+	h.rateRedis = client
+	h.rateKey = prefix + ":notify:rate"
+}
+
 // allowRate 渠道级每分钟限流。0 表示不限。
-func (h *NotifyHub) allowRate(channel *notifydomain.Channel) bool {
+func (h *NotifyHub) allowRate(ctx context.Context, channel *notifydomain.Channel) bool {
 	if channel.RateLimit <= 0 {
 		return true
+	}
+	if h.rateRedis != nil {
+		key := h.rateKey + ":" + strconv.FormatInt(channel.ID, 10)
+		allowed, _, err := sharedWindowTake(ctx, h.rateRedis, key, int64(channel.RateLimit), time.Minute, time.Now())
+		if err == nil {
+			return allowed
+		}
+		// Redis 不可用时退回进程内计数：限流是保护措施，不能因为它让通知整体发不出去
+		h.log.Debug("通知渠道限流计数失败，退回进程内计数", zap.Int64("channel", channel.ID), zap.Error(err))
 	}
 	h.rateMu.Lock()
 	defer h.rateMu.Unlock()

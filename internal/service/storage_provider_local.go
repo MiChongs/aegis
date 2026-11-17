@@ -42,10 +42,17 @@ func (p *localStorageProvider) HealthCheck(_ context.Context, cfg *storagedomain
 	if !info.IsDir() {
 		return nil, fmt.Errorf("存储路径不是目录: %s", localCfg.RootDir)
 	}
-	return map[string]any{
+	details := map[string]any{
 		"root_dir": localCfg.RootDir,
 		"writable": true,
-	}, nil
+	}
+	if localStorageClustered.Load() {
+		// 探活本身是好的（本节点的目录可写），但在多实例下这个池并不可靠：探活结果的详情里如实写出来，
+		// 控制台的存储池状态里就能看到，而不是等别的节点下载失败才发现。
+		details["multi_instance_safe"] = false
+		details["warning"] = localStorageMultiNodeHint
+	}
+	return details, nil
 }
 
 func (p *localStorageProvider) Upload(_ context.Context, cfg *storagedomain.Config, input storagedomain.UploadInput) (*storagedomain.StoredObject, error) {
@@ -110,6 +117,7 @@ func (p *localStorageProvider) Open(_ context.Context, cfg *storagedomain.Config
 	}
 
 	if localRootMissing(localCfg.RootDir) {
+		warnLocalStorageMiss(objectKey)
 		return nil, apperrors.New(40401, http.StatusNotFound, "文件不存在")
 	}
 	absPath, err := secureLocalStoragePath(localCfg.RootDir, objectKey)
@@ -120,6 +128,8 @@ func (p *localStorageProvider) Open(_ context.Context, cfg *storagedomain.Config
 	f, err := os.Open(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// 多节点下最常见的原因：文件是另一个节点写的。提示里直接给出处理办法
+			warnLocalStorageMiss(objectKey)
 			return nil, apperrors.New(40401, http.StatusNotFound, "文件不存在")
 		}
 		return nil, fmt.Errorf("打开文件失败: %w", err)

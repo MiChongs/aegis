@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"aegis/internal/cluster"
 	plugindomain "aegis/internal/domain/plugin"
 	pgrepo "aegis/internal/repository/postgres"
 
@@ -26,6 +27,72 @@ type PluginService struct {
 	// observers 进程内的钩子观察者（物品发放的事件触发）：每次钩子执行都通知，与有没有启用插件无关。
 	// 观察者自己负责不阻塞。只在启动装配时注册，之后只读。
 	observers []HookObserver
+
+	// cluster 插件增删改、启停后通知其他实例重建钩子缓存与表达式编译缓存
+	cluster clusterLink
+}
+
+// SetCluster 接上集群：订阅其他实例的插件变更广播，收到后按数据库重建本地缓存。
+// 重建走 syncFromDB，它不写库、不广播，不会形成回环。
+func (s *PluginService) SetCluster(c *cluster.Cluster) {
+	if c == nil {
+		return
+	}
+	s.cluster.set(c)
+	c.Subscribe(cluster.TopicPluginHooks, func([]byte) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		s.syncFromDB(ctx)
+	})
+}
+
+// changed 本地缓存已经刷新之后，通知其他实例跟上。
+func (s *PluginService) changed(op string, id int64) {
+	s.cluster.publish(s.log, cluster.TopicPluginHooks, clusterReloadNotice{Op: op, ID: id})
+}
+
+// syncFromDB 其他实例改了插件：重新编译全部启用中的表达式插件，再重建钩子缓存。
+//
+// 不按消息里的插件 ID 增量处理：改名、改脚本、启停交织时增量很容易漏一步，
+// 启用中的插件通常只有几个到几十个，全量重编一遍的代价可以忽略。
+// 编译失败只记日志、不改库里的状态 —— 发起变更的那个实例已经按它的结果写过状态了，
+// 这边再写一遍只会让多个实例互相覆盖。
+func (s *PluginService) syncFromDB(ctx context.Context) {
+	plugins, err := s.pg.ListEnabledPlugins(ctx)
+	if err != nil {
+		s.log.Warn("按集群广播刷新插件缓存失败", zap.Error(err))
+		return
+	}
+	// 先编译新的再换缓存：Compile 原地覆盖编译产物，不先卸载，免得重建期间正在执行的钩子扑空。
+	enabled := make(map[string]struct{}, len(plugins))
+	for i := range plugins {
+		p := &plugins[i]
+		enabled[p.Name] = struct{}{}
+		if err := s.loadPlugin(ctx, p); err != nil {
+			s.log.Warn("按集群广播重新编译插件失败", zap.String("plugin", p.Name), zap.Error(err))
+		}
+	}
+	previous := s.cachedPluginNames()
+	s.rebuildCache(plugins)
+	// 已停用 / 已删除的插件：缓存里已经没有它了，再把编译产物清掉
+	for name := range previous {
+		if _, ok := enabled[name]; !ok {
+			s.unloadPlugin(name)
+		}
+	}
+}
+
+// cachedPluginNames 当前钩子缓存里出现过的插件名（用于在重建前把已停用 / 已删除的编译产物一并清掉）。
+func (s *PluginService) cachedPluginNames() map[string]struct{} {
+	s.cacheMu.RLock()
+	defer s.cacheMu.RUnlock()
+	names := map[string]struct{}{}
+	for _, items := range s.hookCache {
+		for _, p := range items {
+			names[p.Name] = struct{}{}
+		}
+	}
+	return names
 }
 
 // HookObserver 进程内的钩子观察者。
@@ -111,6 +178,7 @@ func (s *PluginService) UpdatePlugin(ctx context.Context, id int64, input plugin
 			_ = s.pg.UpdatePluginStatus(ctx, id, "error", loadErr.Error())
 		}
 		s.refreshCache(ctx)
+		s.changed("update", id)
 	}
 	return p, nil
 }
@@ -127,6 +195,7 @@ func (s *PluginService) DeletePlugin(ctx context.Context, id int64) error {
 		return err
 	}
 	s.refreshCache(ctx)
+	s.changed("delete", id)
 	return nil
 }
 
@@ -145,6 +214,7 @@ func (s *PluginService) EnablePlugin(ctx context.Context, id int64) error {
 		return err
 	}
 	s.refreshCache(ctx)
+	s.changed("enable", id)
 	return nil
 }
 
@@ -158,6 +228,7 @@ func (s *PluginService) DisablePlugin(ctx context.Context, id int64) error {
 		return err
 	}
 	s.refreshCache(ctx)
+	s.changed("disable", id)
 	return nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"aegis/internal/cluster"
 	aidomain "aegis/internal/domain/ai"
 	"aegis/internal/domain/suspension"
 	userdomain "aegis/internal/domain/user"
@@ -21,7 +22,10 @@ import (
 
 // 申诉复审：先风控复评（风险分、拦截、关联账号），再交给大模型读申诉内容；按应用设置决定自动结案还是转人工。
 
-// Start 每分钟兜底认领没跑过决策模型的申诉
+// Start 每分钟兜底认领没跑过决策模型的申诉。
+//
+// 多副本下每个实例都跑这个循环，不走集群选主：认领本身在数据库里原子占租（ClaimUnreviewedAppeals），
+// 同一条申诉租期内只会被一个实例拿到，多几个实例一起兜底反而不怕某一台恰好宕着。
 func (s *SuspensionService) Start(ctx context.Context) {
 	s.wg.Add(1)
 	go func() {
@@ -35,13 +39,13 @@ func (s *SuspensionService) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				ids, err := s.pg.ClaimUnreviewedAppeals(context.Background(), 20)
+				ids, err := s.pg.ClaimUnreviewedAppeals(context.Background(), s.reviewHolder(), 20)
 				if err != nil {
 					s.log.Warn("认领待复审申诉失败", zap.Error(err))
 					continue
 				}
 				for _, id := range ids {
-					s.reviewAsync(id)
+					s.reviewAsync(id, true)
 				}
 			}
 		}
@@ -58,7 +62,19 @@ func (s *SuspensionService) Stop() {
 	s.wg.Wait()
 }
 
-func (s *SuspensionService) reviewAsync(id int64) {
+// SetCluster 接上集群标识：复审认领记下是哪个实例认领的，排查「这条申诉卡在谁手里」时用。
+// 不调用时用进程级默认标识，认领照样是原子的。
+func (s *SuspensionService) SetCluster(c *cluster.Cluster) { s.cluster.set(c) }
+
+// reviewHolder 复审认领者标识。
+func (s *SuspensionService) reviewHolder() string {
+	// get() 没接集群时为 nil，(*cluster.Cluster).ID 对 nil 返回进程级默认标识
+	return s.cluster.get().ID()
+}
+
+// reviewAsync 后台跑一次复审。claimed 表示调用方已经在数据库里认领过（兜底循环），
+// 否则（提交申诉后立即复审）先占租，占不到说明别的实例正在审，本次不审。
+func (s *SuspensionService) reviewAsync(id int64, claimed bool) {
 	if _, busy := s.reviewing.LoadOrStore(id, true); busy {
 		return
 	}
@@ -66,6 +82,16 @@ func (s *SuspensionService) reviewAsync(id int64) {
 		defer s.reviewing.Delete(id)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
+		if !claimed {
+			ok, err := s.pg.ClaimAppealReview(ctx, id, s.reviewHolder(), false)
+			if err != nil {
+				s.log.Warn("申诉复审认领失败，交给兜底任务", zap.Int64("appealId", id), zap.Error(err))
+				return
+			}
+			if !ok {
+				return
+			}
+		}
 		if err := s.review(ctx, id, false); err != nil {
 			s.log.Warn("申诉复审失败", zap.Int64("appealId", id), zap.Error(err))
 		}
@@ -469,6 +495,11 @@ func (s *SuspensionService) RerunReview(ctx context.Context, appID, id int64) (*
 	}
 	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	// 管理员要求重跑：无视别的实例手上的租约直接接过来（宁可多审一次），同时把租约记到本实例名下，
+	// 免得兜底任务在这次重跑进行中又去认领它。
+	if _, err := s.pg.ClaimAppealReview(cctx, id, s.reviewHolder(), true); err != nil {
+		return nil, err
+	}
 	if err := s.review(cctx, id, true); err != nil {
 		return nil, err
 	}

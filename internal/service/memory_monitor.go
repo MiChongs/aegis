@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -160,6 +161,28 @@ type MemoryMonitor struct {
 
 	cancel  context.CancelFunc
 	started atomic.Bool
+
+	// historyNode 非空时历史按节点分键（见 SetHistoryNode）
+	historyNode atomic.Pointer[string]
+}
+
+// SetHistoryNode 让历史曲线按节点分键：memory:history:node:<节点>。
+//
+// 进程内存是纯本机指标。多副本共用一个历史键时，曲线上同一时刻交替出现几个进程的值，看起来像在剧烈抖动；
+// 而同一个接口返回的 Latest / Alerts 又是本进程的 —— 曲线与读数对不上。按节点分键后，
+// 控制台打到哪个实例就看到哪个实例自己的曲线，返回结构不变。不调用时仍用原来的共享键（单实例）。
+func (m *MemoryMonitor) SetHistoryNode(node string) {
+	if node = strings.TrimSpace(node); node != "" {
+		m.historyNode.Store(&node)
+	}
+}
+
+// historyKey 历史曲线的 Redis 键。
+func (m *MemoryMonitor) historyKey() string {
+	if node := m.historyNode.Load(); node != nil {
+		return m.redisKey("memory:history:node:" + *node)
+	}
+	return m.redisKey("memory:history")
 }
 
 // NewMemoryMonitor 构造监控器（未启动）
@@ -232,7 +255,7 @@ func (m *MemoryMonitor) History(ctx context.Context, rangeStr string) ([]MemoryM
 	minScore := fmt.Sprintf("%d", now.Add(-dur).UnixMilli())
 	maxScore := fmt.Sprintf("%d", now.UnixMilli())
 
-	key := m.redisKey("memory:history")
+	key := m.historyKey()
 	results, err := m.redis.ZRangeByScore(ctx, key, &redislib.ZRangeBy{
 		Min: minScore,
 		Max: maxScore,
@@ -366,12 +389,16 @@ func (m *MemoryMonitor) collectAndStore(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	key := m.redisKey("memory:history")
+	key := m.historyKey()
 	score := float64(metric.Timestamp.UnixMilli())
 	pipe := m.redis.Pipeline()
 	pipe.ZAdd(ctx, key, redislib.Z{Score: score, Member: string(data)})
 	cutoff := fmt.Sprintf("%d", metric.Timestamp.Add(-m.historyRetain).UnixMilli())
 	pipe.ZRemRangeByScore(ctx, key, "-inf", cutoff)
+	if m.historyNode.Load() != nil {
+		// 节点标识每次启动都不同，进程退出后它的键没人再修剪：给整个键设过期，留存期一过自然消失
+		pipe.Expire(ctx, key, m.historyRetain+m.interval)
+	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		m.log.Debug("内存监控：存储历史指标失败", zap.Error(err))
 	}

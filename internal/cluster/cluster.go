@@ -22,7 +22,11 @@ import (
 
 // Cluster 是注入到各服务里的协调句柄。
 type Cluster struct {
-	NodeID  string
+	// NodeID 本进程的租约持有者标识，每次启动都不同（带随机串）。
+	NodeID string
+	// Instance 副本的稳定标识：配置了 AEGIS_NODE_ID 时就是它（Swarm 里是「主机名-角色-槽位」），否则为主机名。
+	// 重启后不变，用于按副本分键的监控历史这类「重启后还应接上」的数据；不要拿它当租约持有者。
+	Instance string
 	Elector *Elector
 	Bus     *Bus
 }
@@ -58,6 +62,26 @@ func (c *Cluster) ID() string {
 		return defaultNodeID
 	}
 	return c.NodeID
+}
+
+// InstanceKey 返回副本的稳定标识；c 为 nil 或未设置时退回主机名。
+func (c *Cluster) InstanceKey() string {
+	if c != nil && strings.TrimSpace(c.Instance) != "" {
+		return c.Instance
+	}
+	return InstanceID("")
+}
+
+// InstanceID 按配置生成副本稳定标识：configured 非空原样返回，否则用主机名。
+func InstanceID(configured string) string {
+	if id := strings.TrimSpace(configured); id != "" {
+		return id
+	}
+	host, _ := os.Hostname()
+	if host = strings.TrimSpace(host); host == "" {
+		host = "aegis"
+	}
+	return host
 }
 
 func alwaysTrue() bool { return true }

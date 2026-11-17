@@ -412,6 +412,40 @@ updated_at = NOW() WHERE id = $1`
 	return tag.RowsAffected() > 0, nil
 }
 
+// ClaimStorageMigration 认领一个迁移任务并置为 running：同一时刻只有一个实例能跑同一个任务。
+//
+// 能认领的条件：状态属于 from，且没人持有、持有者就是自己、或持有者的心跳已经超过 staleAfter 没更新（宕机了）。
+// force 为 true 时不看持有者（单实例部署：没有别人会来抢，进程重启后不必干等旧心跳过期）。
+// 认领与状态变更在同一条语句里完成，两个实例同时来认领只有一个能成。
+func (r *Repository) ClaimStorageMigration(ctx context.Context, id int64, owner string, from []string, staleAfter time.Duration, force bool) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `UPDATE storage_migrations SET status = 'running', owner = $2, heartbeat_at = NOW(),
+started_at = COALESCE(started_at, NOW()), updated_at = NOW()
+WHERE id = $1 AND status = ANY($3)
+  AND ($5 OR owner = '' OR owner = $2 OR heartbeat_at IS NULL OR heartbeat_at < NOW() - make_interval(secs => $4))`,
+		id, owner, from, staleAfter.Seconds(), force)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// HeartbeatStorageMigration 持有者续心跳。返回 false 表示任务已经不归自己跑了：
+// 被别的实例接手、或者被暂停 / 取消（状态不再是 running）—— 调用方应当立刻停下。
+func (r *Repository) HeartbeatStorageMigration(ctx context.Context, id int64, owner string) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `UPDATE storage_migrations SET heartbeat_at = NOW()
+WHERE id = $1 AND owner = $2 AND status = 'running'`, id, owner)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// ReleaseStorageMigration 持有者停下时放手，让别的实例（或「继续」之后的本实例）不必等心跳过期就能接手。
+func (r *Repository) ReleaseStorageMigration(ctx context.Context, id int64, owner string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE storage_migrations SET owner = '' WHERE id = $1 AND owner = $2`, id, owner)
+	return err
+}
+
 // StorageMigrationProgress 一批对象处理完后推进游标与计数。
 type StorageMigrationProgress struct {
 	LastObjectID     int64

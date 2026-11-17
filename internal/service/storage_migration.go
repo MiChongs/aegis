@@ -42,7 +42,8 @@ func newStorageMigrationRunner(s *StorageService) *storageMigrationRunner {
 	return &storageMigrationRunner{s: s, running: map[int64]context.CancelFunc{}}
 }
 
-// resume 进程启动时接着跑上次没跑完的任务。
+// resume 接着跑没跑完的任务：进程启动时一次；接上集群后还会周期性地再扫（storage_pool_runtime.go 的 loop），
+// 接手宕机实例留下的任务。已经有别的实例持有且心跳新鲜的，认领会失败，run 直接返回。
 func (r *storageMigrationRunner) resume(ctx context.Context) {
 	items, err := r.s.pg.StorageMigrationsWithStatus(ctx, storagedomain.MigrationPending, storagedomain.MigrationRunning)
 	if err != nil {
@@ -72,12 +73,15 @@ func (r *storageMigrationRunner) start(id int64) {
 	}()
 }
 
-func (r *storageMigrationRunner) cancel(id int64) {
+// cancel 取消本实例上正在跑的任务；返回本实例上是否确实有这个任务在跑。
+func (r *storageMigrationRunner) cancel(id int64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if cancel, ok := r.running[id]; ok {
 		cancel()
+		return true
 	}
+	return false
 }
 
 // stopAll 进程退出：停掉所有任务，状态保持 running，下次启动接着跑。
@@ -91,16 +95,39 @@ func (r *storageMigrationRunner) stopAll() {
 
 func (r *storageMigrationRunner) run(ctx context.Context, id int64) {
 	s := r.s
-	m, err := s.pg.GetStorageMigration(ctx, id)
-	if err != nil {
-		s.log.Warn("读取存储迁移任务失败", zap.Int64("migration", id), zap.Error(err))
-		return
-	}
-	if ok, err := s.pg.SetStorageMigrationStatus(ctx, id, storagedomain.MigrationRunning,
-		[]string{storagedomain.MigrationPending, storagedomain.MigrationRunning, storagedomain.MigrationPaused, storagedomain.MigrationFailed}, ""); err != nil || !ok {
+	// 先认领再干活：认领把状态置为 running 并记下持有者，同一个任务同一时刻只有一个实例能认领成功。
+	// 原先这里直接 running → running，多副本启动时每个实例都会续跑同一个任务，同一批对象被并发复制、计数翻倍。
+	//
+	// 只从 pending / running 认领：进入 run 的三条路（新建、「继续」先把状态改回 pending、续跑扫描只列 pending / running）
+	// 都满足这一点。原先这里还允许从 paused / failed 直接拉起；多副本下每分钟都有实例在扫描续跑，
+	// 「刚列出来时还是 running、认领前一刻被管理员暂停」就会被它改回 running —— 把暂停给吞了。
+	owner := s.migrationOwner()
+	ok, err := s.pg.ClaimStorageMigration(ctx, id, owner,
+		[]string{storagedomain.MigrationPending, storagedomain.MigrationRunning},
+		storageMigrationStaleAfter, s.migrationClaimForced())
+	if err != nil || !ok {
 		if err != nil {
 			s.log.Warn("启动存储迁移任务失败", zap.Int64("migration", id), zap.Error(err))
 		}
+		return
+	}
+	defer func() {
+		// 停下就放手（正常结束、失败、暂停、进程退出都一样），别的实例或「继续」之后不必等心跳过期
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.pg.ReleaseStorageMigration(releaseCtx, id, owner); err != nil {
+			s.log.Warn("释放存储迁移任务失败，其他实例将在心跳过期后接手", zap.Int64("migration", id), zap.Error(err))
+		}
+	}()
+	ctx, stopRun := context.WithCancel(ctx)
+	defer stopRun()
+	go s.heartbeatMigration(ctx, id, owner, func() {
+		s.log.Info("存储迁移任务已不归本实例执行（被暂停、取消或由其他实例接手），停止", zap.Int64("migration", id))
+		stopRun()
+	})
+	m, err := s.pg.GetStorageMigration(ctx, id)
+	if err != nil {
+		s.log.Warn("读取存储迁移任务失败", zap.Int64("migration", id), zap.Error(err))
 		return
 	}
 	fail := func(message string) {
@@ -384,7 +411,7 @@ func (s *StorageService) ControlMigration(ctx context.Context, id int64, action 
 		ok, err = s.pg.SetStorageMigrationStatus(ctx, id, storagedomain.MigrationPaused,
 			[]string{storagedomain.MigrationPending, storagedomain.MigrationRunning}, "")
 		if ok {
-			s.migrations.cancel(id)
+			s.stopMigration(id)
 		}
 	case "resume":
 		ok, err = s.pg.RestartStorageMigration(ctx, id)
@@ -395,7 +422,7 @@ func (s *StorageService) ControlMigration(ctx context.Context, id int64, action 
 		ok, err = s.pg.SetStorageMigrationStatus(ctx, id, storagedomain.MigrationCancelled,
 			[]string{storagedomain.MigrationPending, storagedomain.MigrationRunning, storagedomain.MigrationPaused, storagedomain.MigrationFailed}, "")
 		if ok {
-			s.migrations.cancel(id)
+			s.stopMigration(id)
 		}
 	default:
 		return nil, apperrors.New(42279, http.StatusUnprocessableEntity, "不支持的操作")
