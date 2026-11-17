@@ -185,10 +185,23 @@ services:
       - sh
       - -c
       - |
-        if redis-cli -h risk-redis-1 -p 7001 cluster info | grep -q 'cluster_state:ok'; then echo 'cluster ready'; exit 0; fi
-        yes yes | redis-cli --cluster create risk-redis-1:7001 risk-redis-2:7002 risk-redis-3:7003 --cluster-replicas 0
-        for i in $$(seq 1 30); do
-          redis-cli -h risk-redis-1 -p 7001 cluster info | grep -q 'cluster_state:ok' && exit 0
+        # 节点按 IP 互相记住对方；容器重建后地址会变，节点还记着旧地址，互相判成故障（CLUSTERDOWN）。
+        # 已建好的集群：每个节点向其余节点的当前地址重新握手（CLUSTER MEET 只认 IP，用 CLIENT INFO 的 laddr 取对方地址），
+        # 节点 ID 不变，槽位与数据都保留。没建过才创建。
+        nodes='risk-redis-1:7001 risk-redis-2:7002 risk-redis-3:7003'
+        if redis-cli -h risk-redis-1 -p 7001 cluster info | grep -q 'cluster_slots_assigned:16384'; then
+          for a in $$nodes; do
+            for b in $$nodes; do
+              [ "$$a" = "$$b" ] && continue
+              ip=$$(redis-cli -h $${b%:*} -p $${b#*:} client info | tr ' ' '\n' | sed -n 's/^laddr=\(.*\):[0-9]*$$/\1/p')
+              [ -n "$$ip" ] && redis-cli -h $${a%:*} -p $${a#*:} cluster meet $$ip $${b#*:} > /dev/null
+            done
+          done
+        else
+          yes yes | redis-cli --cluster create risk-redis-1:7001 risk-redis-2:7002 risk-redis-3:7003 --cluster-replicas 0
+        fi
+        for i in $$(seq 1 90); do
+          if redis-cli -h risk-redis-1 -p 7001 cluster info | grep -q 'cluster_state:ok'; then echo 'cluster ready'; exit 0; fi
           sleep 1
         done
         exit 1
