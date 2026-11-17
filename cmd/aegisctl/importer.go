@@ -297,8 +297,10 @@ func ClassifyImport(services, containers []runningUnit, opt ImportOptions) Impor
 		for _, k := range []string{"RISK_REDIS_PASSWORD", "RISK_CLICKHOUSE_PASSWORD", "RISK_NEBULA_PASSWORD", "RISK_INTERNAL_TOKEN", "RISK_PROXY_CIDRS", "RISK_STREAM_MAX_BYTES"} {
 			set(k, env[k])
 		}
-		set("RISK_MINIO_ACCESS_KEY", env["RISK_S3_ACCESS_KEY"])
-		set("RISK_MINIO_SECRET_KEY", env["RISK_S3_SECRET_KEY"])
+		// 沿用现网 risk-minio 的根凭据：objstore migrate 起临时 MinIO 读旧目录要用它，RustFS 也用同一对，
+		// 搬过去后风控与 Milvus 的凭据不用改
+		set("RISK_RUSTFS_ACCESS_KEY", env["RISK_S3_ACCESS_KEY"])
+		set("RISK_RUSTFS_SECRET_KEY", env["RISK_S3_SECRET_KEY"])
 		if u, err := url.Parse(env["RISK_PG_DSN"]); err == nil && u.User != nil {
 			if user := u.User.Username(); user != "" && res.Values["AEGIS_PG_USER"] != "" && user != res.Values["AEGIS_PG_USER"] {
 				note("现网风控用 Postgres 账号 " + user + "，统一栈改用主库账号 " + res.Values["AEGIS_PG_USER"] + "：确认它对库 aegis_risk 有权限")

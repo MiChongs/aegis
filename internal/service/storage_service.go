@@ -742,6 +742,11 @@ func (s *StorageService) buildProvider(cfg *storagedomain.Config) (storageProvid
 			return nil, err
 		}
 		provider = newMinIOProvider(s.httpClient)
+	case storagedomain.ProviderRustFS:
+		if _, err := decodeMinIOConfig(cfg.ConfigData); err != nil {
+			return nil, err
+		}
+		provider = newRustFSProvider(s.httpClient)
 	case storagedomain.ProviderAliyunOSS:
 		if _, err := decodeAliyunOSSConfig(cfg.ConfigData); err != nil {
 			return nil, err
@@ -948,7 +953,7 @@ func randomHex(size int) (string, error) {
 
 func isSupportedStorageProvider(value string) bool {
 	switch strings.TrimSpace(value) {
-	case storagedomain.ProviderS3, storagedomain.ProviderR2, storagedomain.ProviderMinIO, storagedomain.ProviderAliyunOSS, storagedomain.ProviderTencentCOS, storagedomain.ProviderQiniuKodo, storagedomain.ProviderWebDAV, storagedomain.ProviderOneDrive, storagedomain.ProviderDropbox, storagedomain.ProviderGoogleDrive, storagedomain.ProviderAzureBlob, storagedomain.ProviderLocal:
+	case storagedomain.ProviderS3, storagedomain.ProviderR2, storagedomain.ProviderMinIO, storagedomain.ProviderRustFS, storagedomain.ProviderAliyunOSS, storagedomain.ProviderTencentCOS, storagedomain.ProviderQiniuKodo, storagedomain.ProviderWebDAV, storagedomain.ProviderOneDrive, storagedomain.ProviderDropbox, storagedomain.ProviderGoogleDrive, storagedomain.ProviderAzureBlob, storagedomain.ProviderLocal:
 		return true
 	default:
 		return false

@@ -421,7 +421,7 @@ docker build -f deploy/docker/console.Dockerfile \
 | 权限控制 | Casbin v2 (RBAC) |
 | 密码强度 | zxcvbn（trustelem 端口，猜测次数估算）+ PRECIS RFC 8265 OpaqueString（x/text，归一化与合法性）+ 自带中文语境弱口令补充表，详见 [internal/service](internal/service/CLAUDE.md#密码强度评估--zxcvbn不是字符类规则) |
 | 富文本净化 | bluemonday（公告正文写入时净化，白名单放行 tiptap 的排版标签与 class，拒绝 style 与事件属性）+ html2text（提取纯文本摘要），详见 [internal/service](internal/service/CLAUDE.md#应用级内容中心app_contentgo) |
-| 多云存储 | Cloudflare R2 / AWS S3（aws-sdk-go-v2）/ MinIO / Azure Blob / Aliyun OSS / Tencent COS / Qiniu / WebDAV / OneDrive / Dropbox / Google Drive / 本地磁盘，经存储池统一调度，详见 [docs/storage.md](docs/storage.md) |
+| 多云存储 | Cloudflare R2 / AWS S3（aws-sdk-go-v2）/ MinIO / RustFS / Azure Blob / Aliyun OSS / Tencent COS / Qiniu / WebDAV / OneDrive / Dropbox / Google Drive / 本地磁盘，经存储池统一调度，详见 [docs/storage.md](docs/storage.md) |
 | OAuth2 | QQ / 微信 / GitHub / Google / Microsoft / 微博 |
 | 支付渠道 | 17 个内置渠道，均由 `Provider.Describe()` 自描述（详见 [internal/service/CLAUDE.md](internal/service/CLAUDE.md#支付网关)）：<br>内部钱包 / 支付宝 (smartwalle) / 微信支付 (官方 wechatpay-go) / 易支付系聚合（易支付·彩虹·虎皮椒·PAYJS·码支付·V免签）/ 爱发电 / Stripe (stripe-go) / PayPal (plutov) / Paddle / Lemon Squeezy / Square / Razorpay / Coinbase Commerce |
 | 邮件出口 | 九档可插拔 provider，一律优先官方 SDK：`smtp` 直连（go-mail）/ `zeabur` REST / `ses`（aws-sdk-go-v2 sesv2，Raw MIME 带附件）/ `resend`（resend-go）/ `sendgrid`（sendgrid-go）/ `mailgun`（mailgun-go v5）/ `postmark`（REST，无官方 Go SDK）/ `aliyun`（dm-20151123）/ `tencent`（tencentcloud-sdk-go ses）。配置全部落库、控制台动态表单由服务商自述驱动，详见 [docs/email.md](docs/email.md)<br>**Zeabur 平台封禁出站 SMTP 端口**，部署在其上时不能用 `smtp` 档 |

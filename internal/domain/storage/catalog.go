@@ -139,6 +139,22 @@ func Catalog() []ProviderMeta {
 			},
 		},
 		{
+			// 统一栈（deploy/swarm）自带的对象存储。Simple Icons 未收录 RustFS，图标走自建类的中性图标
+			Provider: ProviderRustFS, Name: "RustFS", Category: CategorySelfHost, Icon: "rustfs",
+			Description: "自建 S3 兼容对象存储，集群部署自带",
+			Capabilities: ConfigCapabilities{DirectUpload: true, Delete: true},
+			BaseURLLabel: "公开访问域名",
+			Fields: []ConfigField{
+				text("endpoint", "Endpoint", "aegis-rustfs:9000", true),
+				text("bucket", "存储桶", "aegis", true),
+				text("access_key_id", "Access Key", "", true),
+				secret("secret_access_key", "Secret Key", "", true),
+				toggle("use_ssl", "使用 SSL", false),
+				advanced(text("region", "Region", "us-east-1", false)),
+				advanced(toggle("auto_create_bucket", "自动创建存储桶", true)),
+			},
+		},
+		{
 			Provider: ProviderMinIO, Name: "MinIO", Category: CategorySelfHost, Icon: "minio", BrandColor: "#C72E49",
 			Description: "自建 S3 兼容对象存储",
 			Capabilities: ConfigCapabilities{DirectUpload: true, Delete: true},

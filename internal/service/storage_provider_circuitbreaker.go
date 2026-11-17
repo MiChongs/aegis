@@ -157,6 +157,8 @@ func storageProviderDisplayName(provider string) string {
 		return "S3"
 	case storagedomain.ProviderMinIO:
 		return "MinIO"
+	case storagedomain.ProviderRustFS:
+		return "RustFS"
 	case storagedomain.ProviderAliyunOSS:
 		return "阿里云 OSS"
 	case storagedomain.ProviderTencentCOS:

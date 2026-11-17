@@ -1,4 +1,4 @@
-// Package models 树模型文件：放对象存储（MinIO / S3），按内容摘要校验与缓存。
+// Package models 树模型文件：放对象存储（RustFS / S3），按内容摘要校验与缓存。
 package models
 
 import (

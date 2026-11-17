@@ -14,15 +14,27 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
+// minioProvider 自建 S3 兼容存储（MinIO、RustFS）。两者配置项相同，都用 minio-go 这个通用 S3 客户端访问；
+// name 只区分展示与熔断器分组，读写行为完全一致。
 type minioProvider struct {
 	httpClient *http.Client
+	name       string
 }
 
 func newMinIOProvider(httpClient *http.Client) storageProvider {
-	return &minioProvider{httpClient: httpClient}
+	return &minioProvider{httpClient: httpClient, name: storagedomain.ProviderMinIO}
 }
 
-func (p *minioProvider) Name() string { return storagedomain.ProviderMinIO }
+func newRustFSProvider(httpClient *http.Client) storageProvider {
+	return &minioProvider{httpClient: httpClient, name: storagedomain.ProviderRustFS}
+}
+
+func (p *minioProvider) Name() string {
+	if p.name == "" {
+		return storagedomain.ProviderMinIO
+	}
+	return p.name
+}
 
 func (p *minioProvider) HealthCheck(ctx context.Context, cfg *storagedomain.Config) (map[string]any, error) {
 	client, raw, err := p.client(cfg)

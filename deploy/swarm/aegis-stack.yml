@@ -20,7 +20,7 @@
 #  节点标签（aegisctl init 首次给 manager 全打上，aegisctl node label 调整）：
 #    aegis.app=true      无状态服务可调度的节点（api、worker、控制台、一起听、迁移任务）
 #    aegis.db=true       Postgres、Redis、NATS、Temporal（数据绑定在该节点的 /srv/aegis）
-#    aegis.storage=true  对象存储 aegis-minio
+#    aegis.storage=true  对象存储 aegis-rustfs
 #    aegis.risk=true     风控平台全部组件（/srv/aegis/risk）
 #    aegis.music=true    音乐个性化（无本地数据，只是集中调度）
 #  有状态标签同一时刻只应打在一个节点上：数据是该节点上的绑定目录，换节点等于换一份空数据。
@@ -129,9 +129,9 @@ x-risk-env: &risk-env
   RISK_NEBULA_STORAGED: risk-nebula-storaged:9779
   RISK_MILVUS_ADDR: risk-milvus:19530
   RISK_RISINGWAVE_DSN: postgres://root@risk-risingwave:4566/dev?sslmode=disable
-  RISK_S3_ENDPOINT: risk-minio:9000
-  RISK_S3_ACCESS_KEY: ${RISK_MINIO_ACCESS_KEY:?}
-  RISK_S3_SECRET_KEY: ${RISK_MINIO_SECRET_KEY:?}
+  RISK_S3_ENDPOINT: risk-rustfs:9000
+  RISK_S3_ACCESS_KEY: ${RISK_RUSTFS_ACCESS_KEY:?}
+  RISK_S3_SECRET_KEY: ${RISK_RUSTFS_SECRET_KEY:?}
   RISK_S3_BUCKET: aegis-risk
   RISK_INTERNAL_TOKEN: ${RISK_INTERNAL_TOKEN:?}
   RISK_ADMIN_URL: http://risk-admin:8891
@@ -326,32 +326,39 @@ services:
       resources:
         limits: {memory: 256m}
 
-  # ── 对象存储：多节点时主服务的上传文件放这里（控制台存储中心加 S3 存储池，endpoint http://aegis-minio:9000）──
-  aegis-minio:
-    image: ${AEGIS_MINIO_IMAGE:-milvusdb/minio:RELEASE.2024-12-18T13-15-44Z}
+  # 主服务对象存储（RustFS，S3 兼容）。多节点时上传文件放这里：控制台存储中心加 RustFS 存储池，
+  # endpoint aegis-rustfs:9000，再用存储迁移把本地存储池的文件搬过来。
+  aegis-rustfs:
+    image: ${AEGIS_RUSTFS_IMAGE:-rustfs/rustfs:1.0.6}
     logging: *logging
-    command: ["minio", "server", "/data", "--console-address", ":9001"]
+    command: ["/data"]
     environment:
-      MINIO_ROOT_USER: ${AEGIS_MINIO_ROOT_USER:?}
-      MINIO_ROOT_PASSWORD: ${AEGIS_MINIO_ROOT_PASSWORD:?}
-      MINIO_BROWSER_REDIRECT_URL: ${AEGIS_MINIO_CONSOLE_URL:-}
+      RUSTFS_ACCESS_KEY: ${AEGIS_RUSTFS_ACCESS_KEY:?}
+      RUSTFS_SECRET_KEY: ${AEGIS_RUSTFS_SECRET_KEY:?}
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_REGION: us-east-1
+      RUSTFS_OBS_LOGGER_LEVEL: warn
       TZ: Asia/Shanghai
+    # 镜像以 uid 10001（rustfs）运行，绑定目录由 aegisctl init 建并 chown 10001
     volumes:
       - type: bind
-        source: ${AEGIS_MINIO_DIR:-/srv/aegis/minio}
+        source: ${AEGIS_RUSTFS_DIR:-/srv/aegis/rustfs}
         target: /data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
     # 也接 dokploy-network：切换前现网 Dokploy 的 aegis-api 就能经它把本地文件迁过来；
-    # 配了 AEGIS_MINIO_DOMAINS 时 Traefik 可把预签名下载地址路由进来
+    # 配了 AEGIS_RUSTFS_DOMAINS 时 Traefik 可把预签名下载地址路由进来
     networks:
       aegis-internal:
-        aliases: [aegis-minio]
+        aliases: [aegis-rustfs]
       dokploy-network:
-        aliases: [aegis-minio]
+        aliases: [aegis-rustfs]
     deploy:
       replicas: 1
       placement:
@@ -360,7 +367,7 @@ services:
       rollback_config: *rollback-stateful
       restart_policy: *restart
       resources:
-        limits: {memory: "${AEGIS_MINIO_MEMORY:-1g}"}
+        limits: {memory: "${AEGIS_RUSTFS_MEMORY:-1g}"}
 
   # ════════════════════════════ 主服务（aegis.app，可横向扩展）════════════════════════════
 
@@ -686,25 +693,34 @@ services:
         delay: 10s
         max_attempts: 12
 
-  risk-minio:
-    image: milvusdb/minio:RELEASE.2024-12-18T13-15-44Z
+  # 风控对象存储（RustFS）：Milvus 的段文件（桶 a-bucket）与风控模型文件（桶 aegis-risk）。
+  # 从旧 MinIO（/srv/aegis/risk/minio）搬数据用 aegisctl objstore migrate，见 docs/distributed-deploy.md。
+  risk-rustfs:
+    image: ${AEGIS_RUSTFS_IMAGE:-rustfs/rustfs:1.0.6}
     logging: *logging
+    command: ["/data"]
     environment:
-      MINIO_ACCESS_KEY: ${RISK_MINIO_ACCESS_KEY:?}
-      MINIO_SECRET_KEY: ${RISK_MINIO_SECRET_KEY:?}
-    command: ["minio", "server", "/minio_data", "--console-address", ":9001"]
+      RUSTFS_ACCESS_KEY: ${RISK_RUSTFS_ACCESS_KEY:?}
+      RUSTFS_SECRET_KEY: ${RISK_RUSTFS_SECRET_KEY:?}
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_REGION: us-east-1
+      RUSTFS_OBS_LOGGER_LEVEL: warn
+      TZ: Asia/Shanghai
     volumes:
       - type: bind
-        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/minio
-        target: /minio_data
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/rustfs
+        target: /data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
     networks:
       aegis-internal:
-        aliases: [risk-minio]
+        aliases: [risk-rustfs]
     deploy:
       replicas: 1
       placement:
@@ -721,9 +737,10 @@ services:
     command: ["milvus", "run", "standalone"]
     environment:
       ETCD_ENDPOINTS: risk-etcd:2379
-      MINIO_ADDRESS: risk-minio:9000
-      MINIO_ACCESS_KEY_ID: ${RISK_MINIO_ACCESS_KEY:?}
-      MINIO_SECRET_ACCESS_KEY: ${RISK_MINIO_SECRET_KEY:?}
+      # Milvus 的对象存储配置项沿用 MINIO_* 这个名字，实际连的是 RustFS（S3 兼容）
+      MINIO_ADDRESS: risk-rustfs:9000
+      MINIO_ACCESS_KEY_ID: ${RISK_RUSTFS_ACCESS_KEY:?}
+      MINIO_SECRET_ACCESS_KEY: ${RISK_RUSTFS_SECRET_KEY:?}
       MINIO_REGION: us-east-1
     volumes:
       - type: bind

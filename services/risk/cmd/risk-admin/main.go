@@ -1,7 +1,7 @@
 // risk-admin 风控管理接口（docs/risk-platform.md）。
 //
 //	risk-admin            起服务（Hertz :8891，注册到 etcd 服务名 aegis.risk.admin）
-//	risk-admin migrate    初始化全部存储：PG 库与表、内置场景与特征、JetStream 流、ClickHouse、Nebula、Milvus、MinIO，
+//	risk-admin migrate    初始化全部存储：PG 库与表、内置场景与特征、JetStream 流、ClickHouse、Nebula、Milvus、对象存储（RustFS），
 //	                      导入旧风控中心仍有效的名单（主库 risk_lists），并从库里重建名单索引
 //	risk-admin probe URL  健康检查（镜像里没有 wget / curl）
 //	risk-admin eval JSON  经 etcd 发现 risk-decision 评估一次（排障用，JSON 是 EvaluateRequest）
@@ -202,7 +202,7 @@ func migrate(logf func(string, ...any)) error {
 	}); err != nil {
 		return err
 	}
-	if err := retry("minio", func() error { return models.New(cfg).EnsureBucket(ctx) }); err != nil {
+	if err := retry("rustfs", func() error { return models.New(cfg).EnsureBucket(ctx) }); err != nil {
 		return err
 	}
 	if err := retry("nebula", func() error { return graph.Migrate(cfg, logf) }); err != nil {

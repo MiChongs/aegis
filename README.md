@@ -463,7 +463,7 @@ See [docs/app-integration.md](docs/app-integration.md) for the full specificatio
 | AI gateway | App users call OpenAI- and Anthropic-compatible APIs with their own keys, billed at model prices against quota, points, or balance; failed calls are not charged |
 | MCP | Administrators issue MCP keys to AI assistants; permissions are the intersection of the holder's own permissions and the key's scope |
 | Workflows | Temporal orchestration with a canvas editor in the console |
-| Storage | 12 drivers: S3-compatible, Cloudflare R2, MinIO, Alibaba Cloud OSS, Tencent COS, Qiniu, Azure Blob, WebDAV, OneDrive, Google Drive, Dropbox, local |
+| Storage | 13 drivers: S3-compatible, Cloudflare R2, MinIO, RustFS, Alibaba Cloud OSS, Tencent COS, Qiniu, Azure Blob, WebDAV, OneDrive, Google Drive, Dropbox, local |
 
 </td>
     <td width="50%" valign="top">
@@ -523,7 +523,7 @@ Configuration has only two scopes, each with a single home page: app-level setti
 | Primary database | PostgreSQL 17 + PostGIS 3 + pgvector (pgx/v5 connection pool), with sqlc progressively taking over queries |
 | Cache and sessions | Redis 8 (go-redis v9); Redis Cluster on the risk side |
 | Messaging and workflows | NATS JetStream, Temporal |
-| Risk data | NebulaGraph, Milvus, ClickHouse, RisingWave, Apache Flink CEP, MinIO |
+| Risk data | NebulaGraph, Milvus, ClickHouse, RisingWave, Apache Flink CEP, RustFS |
 | Rules and policies | expr-lang/expr, gorules/zen-go, Open Policy Agent, dmitryikh/leaves |
 | Authorization and identity | Casbin v2, Ory Hydra, go-webauthn, go-oidc, crewjam/saml, go-ldap |
 | Security | Coraza v3 + OWASP CRS v4, in-house traffic management `pkg/traffic` |
@@ -577,7 +577,7 @@ One-command deployment starts only the main service and the console. The risk pl
 docker compose -f deploy/docker/docker-compose.yml --profile risk up -d
 ```
 
-This starts etcd, Redis Cluster, MinIO, Milvus, NebulaGraph, ClickHouse, RisingWave, Flink, and the three risk services,
+This starts etcd, Redis Cluster, RustFS, Milvus, NebulaGraph, ClickHouse, RisingWave, Flink, and the three risk services,
 with `risk-migrate` creating the databases and initializing them. For production orchestration see [deploy/dokploy/risk-stack.yml](deploy/dokploy/risk-stack.yml),
 and for deployment steps see [docs/risk-deploy-hk.md](docs/risk-deploy-hk.md). The main service discovers the decision service through `RISK_ETCD_ENDPOINTS`;
 when it is not configured, the risk integration layer lets every request through.

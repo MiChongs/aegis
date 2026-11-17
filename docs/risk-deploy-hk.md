@@ -1,6 +1,6 @@
 # 风控平台上线方案（HK Dokploy）
 
-> 2026-11-08 起草。阶段 A 的代码改动与编排见 `deploy/dokploy/risk-stack.yml`，分支 `risk-platform`。
+> 2026-11-08 起草。2026-11-17 起统一栈（docs/distributed-deploy.md）的风控对象存储换成 RustFS（risk-rustfs，`/srv/aegis/risk/rustfs`），下文的 MinIO 是当时 Dokploy 版的做法。阶段 A 的代码改动与编排见 `deploy/dokploy/risk-stack.yml`，分支 `risk-platform`。
 
 ## 1. 现状
 

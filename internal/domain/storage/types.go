@@ -12,9 +12,11 @@ const (
 	AccessPublic  = "public"
 	AccessPrivate = "private"
 
-	ProviderS3          = "s3"
-	ProviderR2          = "r2"
-	ProviderMinIO       = "minio"
+	ProviderS3    = "s3"
+	ProviderR2    = "r2"
+	ProviderMinIO = "minio"
+	// ProviderRustFS 自建 RustFS（S3 兼容，配置项与 MinIO 相同）。统一栈自带的对象存储就是它。
+	ProviderRustFS      = "rustfs"
 	ProviderAliyunOSS   = "aliyun_oss"
 	ProviderTencentCOS  = "tencent_cos"
 	ProviderQiniuKodo   = "qiniu_kodo"
@@ -45,8 +47,8 @@ type Config struct {
 	RedirectConfigID *int64 `json:"redirect_config_id,omitempty"`
 	// SecretsSet 出网时密钥字段的值被抹掉，这里列出哪些密钥已配置（编辑表单据此显示「已配置」）。
 	SecretsSet []string  `json:"secrets_set,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type ConfigMutation struct {

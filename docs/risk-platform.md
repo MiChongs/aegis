@@ -19,7 +19,7 @@
 | **expr-lang/expr** | 规则条件与派生特征表达式（编译一次、零反射求值） | 已在项目里用，表达式语法与旧规则兼容 |
 | **gorules/zen-go** | 决策流（JDM 决策表 / 决策图）：分数段 × 模型分 × 命中 → 处置。控制台用 `@gorules/jdm-editor` 可视化编辑 | 业务同学能看懂的决策表，有官方可视化编辑器 |
 | **open-policy-agent/opa** | 最终裁决策略（Rego）：白名单兜底、会员保护、验证码可用性、哪些场景允许自动封禁……以库的形式嵌在决策服务里 | 护栏与合规规则需要可测试、可审计的策略语言 |
-| **dmitryikh/leaves** | 树模型推理（LightGBM / XGBoost），模型文件在控制台上传、存 MinIO，按特征映射喂入 | 纯 Go 推理，无 CGO、微秒级 |
+| **dmitryikh/leaves** | 树模型推理（LightGBM / XGBoost），模型文件在控制台上传、存对象存储（RustFS），按特征映射喂入 | 纯 Go 推理，无 CGO、微秒级 |
 
 PostgreSQL（独立库 `aegis_risk`）是配置与名单的权威存储；NATS JetStream（与主服务共用）是全部事件的总线。
 
@@ -136,7 +136,7 @@ JetStream 流 `RISK`（subjects `risk.event.>`、`risk.decision.>`、`risk.cep.a
 
 ## 部署
 
-`deploy/docker/docker-compose.yml` 的 `risk` profile：etcd ×3、Redis Cluster ×6（+ 初始化）、MinIO、Milvus、
+`deploy/docker/docker-compose.yml` 的 `risk` profile：etcd ×3、Redis Cluster ×6（+ 初始化）、RustFS、Milvus、
 NebulaGraph（metad / storaged / graphd）、ClickHouse、RisingWave、Flink（jobmanager 以 application 模式直接带作业 + taskmanager）、
 `risk-migrate`（一次性初始化）、`risk-decision`、`risk-admin`、`risk-ingest`。Go 服务镜像 `deploy/docker/risk.Dockerfile`
 （zen-go 需要 CGO，基于 Debian），Flink 作业镜像 `deploy/docker/risk-cep.Dockerfile`（Maven 构建）。

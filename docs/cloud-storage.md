@@ -10,7 +10,7 @@
 
 内容的正本在存储桶里。每次写入都经 `StorageService.UploadForApp` 传到应用解析出的存储配置
 （与 `/storage/upload` 同一套解析：指定了配置名就用那个，否则应用级默认 → 平台级默认），
-因此 S3 / MinIO / 阿里云 OSS / 腾讯云 COS / 七牛 / WebDAV / OneDrive / Dropbox /
+因此 S3 / MinIO / RustFS / 阿里云 OSS / 腾讯云 COS / 七牛 / WebDAV / OneDrive / Dropbox /
 Google Drive / Azure Blob / 本地磁盘都能直接用，平台治理的「限制存储」也随之生效。
 
 写入目标也可以是一个存储池（按池名选择，见 [存储中心](storage.md)）。

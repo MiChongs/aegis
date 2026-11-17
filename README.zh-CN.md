@@ -462,7 +462,7 @@ flowchart LR
 | AI 网关 | 应用用户凭自己的密钥调用 OpenAI 与 Anthropic 兼容接口，按模型价格从额度、积分、余额扣费，失败不扣费 |
 | MCP | 管理员给 AI 助手签发 MCP 密钥，权限取本人权限与密钥范围的交集 |
 | 工作流 | Temporal 编排与控制台画布编辑器 |
-| 存储 | 12 种驱动：S3 兼容、Cloudflare R2、MinIO、阿里云 OSS、腾讯 COS、七牛、Azure Blob、WebDAV、OneDrive、Google Drive、Dropbox、本地 |
+| 存储 | 13 种驱动：S3 兼容、Cloudflare R2、MinIO、RustFS、阿里云 OSS、腾讯 COS、七牛、Azure Blob、WebDAV、OneDrive、Google Drive、Dropbox、本地 |
 
 </td>
     <td width="50%" valign="top">
@@ -522,7 +522,7 @@ flowchart LR
 | 主数据库 | PostgreSQL 17 + PostGIS 3 + pgvector（pgx/v5 连接池），sqlc 渐进接管查询 |
 | 缓存与会话 | Redis 8（go-redis v9）；风控侧 Redis Cluster |
 | 消息与工作流 | NATS JetStream、Temporal |
-| 风控数据 | NebulaGraph、Milvus、ClickHouse、RisingWave、Apache Flink CEP、MinIO |
+| 风控数据 | NebulaGraph、Milvus、ClickHouse、RisingWave、Apache Flink CEP、RustFS |
 | 规则与策略 | expr-lang/expr、gorules/zen-go、Open Policy Agent、dmitryikh/leaves |
 | 授权与身份 | Casbin v2、Ory Hydra、go-webauthn、go-oidc、crewjam/saml、go-ldap |
 | 安全 | Coraza v3 + OWASP CRS v4、自研流量管理 `pkg/traffic` |
@@ -576,7 +576,7 @@ Windows 另有 `deploy/windows/` 下的 cmd 包装脚本，Linux 另有 `deploy/
 docker compose -f deploy/docker/docker-compose.yml --profile risk up -d
 ```
 
-它会起 etcd、Redis Cluster、MinIO、Milvus、NebulaGraph、ClickHouse、RisingWave、Flink 与三个风控服务，
+它会起 etcd、Redis Cluster、RustFS、Milvus、NebulaGraph、ClickHouse、RisingWave、Flink 与三个风控服务，
 `risk-migrate` 负责建库与初始化。生产环境的编排见 [deploy/dokploy/risk-stack.yml](deploy/dokploy/risk-stack.yml)，
 部署步骤见 [docs/risk-deploy-hk.md](docs/risk-deploy-hk.md)。主服务通过 `RISK_ETCD_ENDPOINTS` 发现决策服务，
 未配置时风控接入层直接放行。

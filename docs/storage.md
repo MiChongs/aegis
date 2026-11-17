@@ -13,6 +13,7 @@
 | `r2` | aws-sdk-go-v2（S3 API） | ✓ | ✓ | ✓ | 填账户 ID 即可，端点自动拼；可选 API 令牌读真实用量 |
 | `s3` | aws-sdk-go-v2 | ✓ | ✓ | ✓ | 任意 S3 兼容端点 |
 | `minio` | minio-go | ✓ | ✓ | | |
+| `rustfs` | minio-go（与 `minio` 同一实现，统一栈自带的 aegis-rustfs） | ✓ | ✓ | | |
 | `aliyun_oss` / `tencent_cos` / `qiniu_kodo` | 各家官方 SDK | OSS、COS ✓ | ✓ | | |
 | `webdav` / `onedrive` / `dropbox` / `google_drive` / `azure_blob` | | | ✓ | | |
 | `local` | 本地磁盘 | | ✓ | | 只能是平台级；放在容器里**必须挂持久卷** |

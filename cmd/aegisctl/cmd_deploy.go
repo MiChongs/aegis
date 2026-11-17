@@ -443,7 +443,7 @@ func (a *App) cmdDeploy(ctx context.Context, args []string) error {
 		return fmt.Errorf("%d 个服务没有更新成功：%s", len(failed), strings.Join(names, " "))
 	}
 	if !*skipTraefik {
-		// 栈里还没有 aegis-api 时不写路由（例如切换前只部署 aegis-minio）：否则高优先级的新路由会把流量引到不存在的服务
+		// 栈里还没有 aegis-api 时不写路由（例如切换前只部署 aegis-rustfs）：否则高优先级的新路由会把流量引到不存在的服务
 		if st2, err := a.loadState(ctx); err == nil && st2.infos["aegis-api"].Name == "" {
 			a.warnf("栈里还没有 aegis-api，这次不写 Traefik 路由")
 		} else if err := a.applyTraefik(ctx, traefik, env); err != nil {
@@ -945,7 +945,7 @@ func (a *App) cmdTraefik(ctx context.Context, args []string) error {
 // cmdDown 删除栈里的服务（不删数据目录与命名卷），用于切回 Dokploy 或整体停机维护
 func (a *App) cmdDown(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("down", flag.ContinueOnError)
-	keep := fs.String("keep", "", "保留的服务或组（逗号分隔），如 aegis-minio")
+	keep := fs.String("keep", "", "保留的服务或组（逗号分隔），如 aegis-rustfs")
 	yes := fs.Bool("yes", false, "确认执行")
 	if _, err := parseFlags(fs, args); err != nil {
 		return err

@@ -776,7 +776,7 @@ func TestImport(t *testing.T) {
 		"AEGIS_NATS_USER": "zeabur", "AEGIS_NATS_PASSWORD": "natspw", "AEGIS_NATS_CONF": "/srv/aegis/nats/nats-server.conf",
 		"AEGIS_NATS_DATA": "/srv/aegis/nats/jetstream", "AEGIS_REDIS_PASSWORD": "rpw", "AEGIS_REDIS_EXTRA_ARGS": "--appendonly no",
 		"AEGIS_REDIS_IMAGE": "redis/redis-stack-server:7.2.0-v10", "TEMPORAL_DB_PASSWORD": "pgpw",
-		"RISK_MINIO_ACCESS_KEY": "ak", "RISK_NEBULA_PASSWORD": "nb", "AEGIS_RISK_DIR": "/srv/aegis/risk",
+		"RISK_RUSTFS_ACCESS_KEY": "ak", "RISK_NEBULA_PASSWORD": "nb", "AEGIS_RISK_DIR": "/srv/aegis/risk",
 		"JWT_SECRET": "jwt", "TRUSTED_PROXIES": "infra,95.82.8.0/23", "LISTEN_TOGETHER_INTERNAL_TOKEN": "lt", "LT_ROOM_CAPACITY": "50",
 	}
 	for k, want := range checks {

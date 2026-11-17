@@ -111,7 +111,7 @@ func CheckEnv(f *EnvFile, tmpl *EnvFile, stackTmpl string) []Check {
 	if n := len([]rune(env["RISK_NEBULA_PASSWORD"])); n > 24 {
 		cs.add("fail", "cluster.env", "RISK_NEBULA_PASSWORD 有 %d 个字符，Nebula 上限 24", n)
 	}
-	for _, k := range []string{"AEGIS_PG_PASSWORD", "AEGIS_REDIS_PASSWORD", "AEGIS_NATS_PASSWORD", "RISK_REDIS_PASSWORD", "RISK_CLICKHOUSE_PASSWORD", "AEGIS_MINIO_ROOT_PASSWORD"} {
+	for _, k := range []string{"AEGIS_PG_PASSWORD", "AEGIS_REDIS_PASSWORD", "AEGIS_NATS_PASSWORD", "RISK_REDIS_PASSWORD", "RISK_CLICKHOUSE_PASSWORD", "AEGIS_RUSTFS_SECRET_KEY", "RISK_RUSTFS_SECRET_KEY"} {
 		v := env[k]
 		if v != "" && url.PathEscape(v) != v {
 			cs.add("fail", "cluster.env", "%s 含 URL 特殊字符，拼进 DSN 后会解析错（只用字母数字）", k)

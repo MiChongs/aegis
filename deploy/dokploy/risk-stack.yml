@@ -1,5 +1,10 @@
 # ══════════════════════════════════════════════════════════════════════════
 #  Aegis 风控平台：HK Dokploy 生产编排（docs/risk-deploy-hk.md）
+#  【对象存储】这份旧编排仍用 MinIO（risk-minio，/srv/aegis/risk/minio），刻意不在这里改成 RustFS：
+#  它是线上正在自动部署的那份，原地换掉的话下一次部署 Milvus 就指向一个空桶、元数据里的段文件全部找不到。
+#  RustFS 随统一栈（deploy/swarm/aegis-stack.yml 的 risk-rustfs）上线，切换时用 aegisctl objstore migrate
+#  把这里的数据搬过去，步骤见 docs/distributed-deploy.md 第 13 节。切换完成后这份文件整体停用。
+#
 # ══════════════════════════════════════════════════════════════════════════
 #
 #  Dokploy compose 项目 aegis-risk，分支 risk-platform，compose 路径就是本文件。

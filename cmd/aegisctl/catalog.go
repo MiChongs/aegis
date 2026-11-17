@@ -138,8 +138,8 @@ func contains(list []string, s string) bool {
 var serviceGroups = map[string][]string{
 	"app":   {"aegis-migrate", "aegis-api", "aegis-worker"},
 	"web":   {"aegis-console", "listen-together"},
-	"infra": {"postgres", "redis", "nats", "temporal", "temporal-ui", "aegis-minio"},
-	"risk": {"risk-etcd", "risk-redis-1", "risk-redis-2", "risk-redis-3", "risk-redis-init", "risk-minio", "risk-milvus",
+	"infra": {"postgres", "redis", "nats", "temporal", "temporal-ui", "aegis-rustfs"},
+	"risk": {"risk-etcd", "risk-redis-1", "risk-redis-2", "risk-redis-3", "risk-redis-init", "risk-rustfs", "risk-milvus",
 		"risk-nebula-metad", "risk-nebula-storaged", "risk-nebula-graphd", "risk-clickhouse", "risk-risingwave",
 		"risk-migrate", "risk-decision-1", "risk-decision-2", "risk-admin", "risk-ingest",
 		"risk-flink-jobmanager", "risk-flink-taskmanager"},
@@ -224,16 +224,18 @@ func DirsForLabel(label string, env map[string]string) []DirSpec {
 			{Path: get("AEGIS_NATS_DATA", "/srv/aegis/nats/data"), Mode: "700"},
 		}
 	case "aegis.storage":
-		return []DirSpec{{Path: get("AEGIS_MINIO_DIR", "/srv/aegis/minio"), Mode: "700"}}
+		// RustFS 镜像以 uid 10001 运行
+		return []DirSpec{{Path: get("AEGIS_RUSTFS_DIR", "/srv/aegis/rustfs"), Mode: "700", Owner: "10001:10001", Recurse: true}}
 	case "aegis.risk":
 		root := get("AEGIS_RISK_DIR", "/srv/aegis/risk")
 		var dirs []DirSpec
-		for _, d := range []string{"etcd", "redis-1", "redis-2", "redis-3", "minio", "nebula-meta", "nebula-storage", "risingwave"} {
+		for _, d := range []string{"etcd", "redis-1", "redis-2", "redis-3", "nebula-meta", "nebula-storage", "risingwave"} {
 			dirs = append(dirs, DirSpec{Path: root + "/" + d, Mode: "755"})
 		}
 		dirs = append(dirs,
 			DirSpec{Path: root + "/clickhouse", Mode: "755", Owner: "101:101", NewOnly: true},
 			DirSpec{Path: root + "/milvus", Mode: "755", Owner: "999:999", Recurse: true},
+			DirSpec{Path: root + "/rustfs", Mode: "700", Owner: "10001:10001", Recurse: true},
 			DirSpec{Path: root + "/flink", Mode: "755", Owner: "9999:9999", Recurse: true},
 			DirSpec{Path: root + "/spool", Mode: "755", Owner: "10001:10001", Recurse: true},
 			DirSpec{Path: root + "/spool/decision-1", Mode: "755", Owner: "10001:10001", Recurse: true},

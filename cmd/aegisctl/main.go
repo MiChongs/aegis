@@ -64,6 +64,9 @@ const usage = `aegisctl：Aegis 统一栈（Docker Swarm）运维命令行
   scale <服务>=<N> ...
   exec <服务> -- <命令 ...>
   backup [--to 本机目录] [--keep N]
+  objstore migrate [--to risk-rustfs|aegis-rustfs] [--from-dir 目录] [--force] [--yes]
+                          把旧 MinIO 数据目录里的全部存储桶复制进 RustFS 并逐对象核对（可重复执行）
+  objstore check [--to ...]   只核对，不复制
 `
 
 // App 一次命令执行的上下文
@@ -217,6 +220,8 @@ func (a *App) dispatch(ctx context.Context, cmd string, args []string) error {
 		return a.cmdExec(ctx, args)
 	case "backup":
 		return a.cmdBackup(ctx, args)
+	case "objstore":
+		return a.cmdObjstore(ctx, args)
 	case "doctor":
 		return a.cmdDoctor(ctx, args)
 	}

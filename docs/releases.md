@@ -182,7 +182,7 @@ Kotlin SDK：`client.releases.*`（已登录时自动带令牌）。
 IPA 的 Info.plist，HAP 的 module.json），自动填写版本名、版本码、平台与最低系统要求，
 并在本地计算 SHA-256。文件随后直接 `PUT` 到对象存储，不经过 Next.js 代理与 Aegis 进程。
 
-- 支持直传的存储：S3 兼容（含 R2）、MinIO、阿里云 OSS、腾讯云 COS。其余存储（本地磁盘、WebDAV、网盘类）自动退回经服务器上传（受同源代理 1 GB 上限约束）。
+- 支持直传的存储：S3 兼容（含 R2）、MinIO、RustFS、阿里云 OSS、腾讯云 COS。其余存储（本地磁盘、WebDAV、网盘类）自动退回经服务器上传（受同源代理 1 GB 上限约束）。
 - 存储桶需要允许控制台域名跨域 `PUT`（CORS：`AllowedOrigins` 为控制台地址，`AllowedMethods` 含 `PUT`，`AllowedHeaders` 含 `Content-Type`）。未配置时浏览器会拦下请求，控制台自动改为经服务器上传并提示原因。
 - 直传时 SHA-256 由浏览器计算后随 `complete` 提交，服务端只能核对大小；经服务器上传时服务端边传边算，与本地值不一致时控制台判为上传失败。
 

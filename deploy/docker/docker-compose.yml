@@ -23,7 +23,7 @@
 #
 #  ⑤ 风控平台（docs/risk-platform.md，可与 app 叠加）
 #       … --profile app --profile risk up -d
-#     → etcd ×3、Redis Cluster ×6、MinIO、Milvus、NebulaGraph、ClickHouse、RisingWave、
+#     → etcd ×3、Redis Cluster ×6、RustFS、Milvus、NebulaGraph、ClickHouse、RisingWave、
 #       Flink（CEP 作业）、risk-migrate（一次性初始化）、risk-decision、risk-admin、risk-ingest
 #
 #  推荐直接使用一键脚本（自动生成强随机凭据并完成上述全部步骤）：
@@ -59,9 +59,9 @@ x-risk-env: &risk-env
   RISK_NEBULA_STORAGED: risk-nebula-storaged:9779
   RISK_MILVUS_ADDR: risk-milvus:19530
   RISK_RISINGWAVE_DSN: postgres://root@risk-risingwave:4566/dev?sslmode=disable
-  RISK_S3_ENDPOINT: risk-minio:9000
-  RISK_S3_ACCESS_KEY: ${RISK_MINIO_ACCESS_KEY:-minioadmin}
-  RISK_S3_SECRET_KEY: ${RISK_MINIO_SECRET_KEY:-minioadmin}
+  RISK_S3_ENDPOINT: risk-rustfs:9000
+  RISK_S3_ACCESS_KEY: ${RISK_RUSTFS_ACCESS_KEY:-rustfsadmin}
+  RISK_S3_SECRET_KEY: ${RISK_RUSTFS_SECRET_KEY:-rustfsadmin}
   RISK_S3_BUCKET: aegis-risk
   RISK_INTERNAL_TOKEN: ${RISK_INTERNAL_TOKEN:-}
   RISK_ADMIN_URL: http://risk-admin:8891
@@ -789,23 +789,32 @@ services:
       risk-redis-6: {condition: service_healthy}
 
   # ── 对象存储：Milvus 数据、RisingWave 无关、风控模型文件 ──
-  risk-minio:
-    image: milvusdb/minio:RELEASE.2024-12-18T13-15-44Z
-    container_name: aegis-risk-minio
+  # 对象存储 RustFS（S3 兼容）：Milvus 段文件与风控模型文件。
+  # 从 MinIO 换过来用的是新卷 risk_rustfs，旧卷 risk_minio 不再挂载。本地已有的 Milvus 元数据（etcd 卷）
+  # 还指着旧 MinIO 里的段文件：本地切换后执行一次
+  #   docker compose --profile risk down && docker volume rm <项目名>_risk_milvus <项目名>_risk_etcd_1 <项目名>_risk_etcd_2 <项目名>_risk_etcd_3
+  # 再 up，risk-migrate 会重建集合（设备向量随后由风控事件重新写入）。
+  risk-rustfs:
+    image: rustfs/rustfs:1.0.6
+    container_name: aegis-risk-rustfs
     profiles: ["risk"]
     restart: unless-stopped
     logging: *default-logging
     environment:
-      MINIO_ACCESS_KEY: ${RISK_MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${RISK_MINIO_SECRET_KEY:-minioadmin}
-    command: minio server /minio_data --console-address ":9001"
+      RUSTFS_ACCESS_KEY: ${RISK_RUSTFS_ACCESS_KEY:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${RISK_RUSTFS_SECRET_KEY:-rustfsadmin}
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_REGION: us-east-1
+    command: ["/data"]
     ports:
-      - "127.0.0.1:${RISK_MINIO_PORT:-19100}:9000"
-      - "127.0.0.1:${RISK_MINIO_CONSOLE_PORT:-19101}:9001"
+      - "127.0.0.1:${RISK_RUSTFS_PORT:-19100}:9000"
+      - "127.0.0.1:${RISK_RUSTFS_CONSOLE_PORT:-19101}:9001"
     volumes:
-      - risk_minio:/minio_data
+      - risk_rustfs:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -839,9 +848,10 @@ services:
       - seccomp:unconfined
     environment:
       ETCD_ENDPOINTS: risk-etcd-1:2379,risk-etcd-2:2379,risk-etcd-3:2379
-      MINIO_ADDRESS: risk-minio:9000
-      MINIO_ACCESS_KEY_ID: ${RISK_MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_ACCESS_KEY: ${RISK_MINIO_SECRET_KEY:-minioadmin}
+      # Milvus 的对象存储配置项沿用 MINIO_* 的名字，连的是 RustFS
+      MINIO_ADDRESS: risk-rustfs:9000
+      MINIO_ACCESS_KEY_ID: ${RISK_RUSTFS_ACCESS_KEY:-rustfsadmin}
+      MINIO_SECRET_ACCESS_KEY: ${RISK_RUSTFS_SECRET_KEY:-rustfsadmin}
       MINIO_REGION: us-east-1
     ports:
       - "127.0.0.1:${RISK_MILVUS_PORT:-19530}:19530"
@@ -858,7 +868,7 @@ services:
       risk-etcd-1: {condition: service_healthy}
       risk-etcd-2: {condition: service_healthy}
       risk-etcd-3: {condition: service_healthy}
-      risk-minio: {condition: service_healthy}
+      risk-rustfs: {condition: service_healthy}
 
   # ── NebulaGraph：关系图（meta / storage / graph 各一）──
   risk-nebula-metad:
@@ -1017,7 +1027,7 @@ services:
       risk-nebula-graphd: {condition: service_healthy}
       risk-milvus: {condition: service_healthy}
       risk-risingwave: {condition: service_healthy}
-      risk-minio: {condition: service_healthy}
+      risk-rustfs: {condition: service_healthy}
 
   # ── 在线决策（Kitex :8890，注册到 etcd；可 --scale 水平扩容）──
   risk-decision:
@@ -1139,7 +1149,7 @@ volumes:
   risk_redis_4:
   risk_redis_5:
   risk_redis_6:
-  risk_minio:
+  risk_rustfs:
   risk_milvus:
   risk_nebula_meta:
   risk_nebula_storage:

@@ -462,7 +462,7 @@ API カタログは `internal/service/auth_protocol_catalog.go` に記述され�
 | AI ゲートウェイ | アプリのユーザーが自分のキーで OpenAI と Anthropic 互換 API を呼び出し、モデルの価格に応じてクォータ、ポイント、残高から課金。失敗時は課金しない |
 | MCP | 管理者が AI アシスタントに MCP キーを発行。権限は本人の権限とキーのスコープの積集合 |
 | ワークフロー | Temporal によるオーケストレーションとコンソールのキャンバスエディター |
-| ストレージ | 12 種類のドライバー：S3 互換、Cloudflare R2、MinIO、Alibaba Cloud OSS、Tencent COS、Qiniu、Azure Blob、WebDAV、OneDrive、Google Drive、Dropbox、ローカル |
+| ストレージ | 13 種類のドライバー：S3 互換、Cloudflare R2、MinIO、RustFS、Alibaba Cloud OSS、Tencent COS、Qiniu、Azure Blob、WebDAV、OneDrive、Google Drive、Dropbox、ローカル |
 
 </td>
     <td width="50%" valign="top">
@@ -522,7 +522,7 @@ API カタログは `internal/service/auth_protocol_catalog.go` に記述され�
 | メインデータベース | PostgreSQL 17 + PostGIS 3 + pgvector（pgx/v5 コネクションプール）、sqlc が段階的にクエリを引き継ぐ |
 | キャッシュとセッション | Redis 8（go-redis v9）。リスク管理側は Redis Cluster |
 | メッセージングとワークフロー | NATS JetStream、Temporal |
-| リスク管理データ | NebulaGraph、Milvus、ClickHouse、RisingWave、Apache Flink CEP、MinIO |
+| リスク管理データ | NebulaGraph、Milvus、ClickHouse、RisingWave、Apache Flink CEP、RustFS |
 | ルールとポリシー | expr-lang/expr、gorules/zen-go、Open Policy Agent、dmitryikh/leaves |
 | 認可とアイデンティティ | Casbin v2、Ory Hydra、go-webauthn、go-oidc、crewjam/saml、go-ldap |
 | セキュリティ | Coraza v3 + OWASP CRS v4、自社開発のトラフィック管理 `pkg/traffic` |
@@ -576,7 +576,7 @@ Windows には別途 `deploy/windows/` 配下の cmd ラッパースクリプト
 docker compose -f deploy/docker/docker-compose.yml --profile risk up -d
 ```
 
-etcd、Redis Cluster、MinIO、Milvus、NebulaGraph、ClickHouse、RisingWave、Flink と 3 つのリスク管理サービスが起動し、
+etcd、Redis Cluster、RustFS、Milvus、NebulaGraph、ClickHouse、RisingWave、Flink と 3 つのリスク管理サービスが起動し、
 `risk-migrate` がデータベースの作成と初期化を担う。本番環境の構成は [deploy/dokploy/risk-stack.yml](deploy/dokploy/risk-stack.yml)、
 デプロイ手順は [docs/risk-deploy-hk.md](docs/risk-deploy-hk.md) を参照。メインサービスは `RISK_ETCD_ENDPOINTS` で判定サービスを検出し、
 未設定の場合はリスク管理の接続層がそのまま通過させる。

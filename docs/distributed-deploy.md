@@ -27,7 +27,7 @@ flowchart TB
     RD[(redis<br/>aegis-redis)]
     NT[(nats<br/>aegis-nats)]
     TP[temporal / temporal-ui]
-    MN[(aegis-minio<br/>上传文件)]
+    MN[(aegis-rustfs<br/>上传文件)]
     RISK[风控平台<br/>etcd · Redis Cluster · ClickHouse<br/>Nebula · Milvus · RisingWave · Flink<br/>risk-decision ×2 · risk-admin · risk-ingest]
     MU[音乐个性化<br/>music-rec · ingest · trainer · deep]
     A1[aegis-api.1]
@@ -53,7 +53,7 @@ flowchart TB
 
 | 网络 | 谁在上面 | 说明 |
 |---|---|---|
-| `dokploy-network` | Traefik、aegis-api、aegis-console、listen-together、temporal-ui、aegis-minio | Dokploy 的 overlay，Traefik 只能经它找到后端 |
+| `dokploy-network` | Traefik、aegis-api、aegis-console、listen-together、temporal-ui、aegis-rustfs | Dokploy 的 overlay，Traefik 只能经它找到后端 |
 | `aegis-internal` | 栈里全部服务 | `aegisctl init` 建的私有 overlay（attachable，可选 IPsec 加密）。数据库、缓存、消息、风控、音乐只在这张网上，别名与现网相同（`aegis-postgres`、`aegis-redis`、`aegis-nats`、`aegis-temporal`、`risk-*`、`music-rec`），连接串不用改 |
 
 节点标签与调度：
@@ -62,7 +62,7 @@ flowchart TB
 |---|---|---|---|
 | `aegis.app=true` | aegis-api、aegis-worker、aegis-console、listen-together、aegis-migrate | 每个副本一个命名卷 `aegis-api-data-<槽位>` / `aegis-worker-data-<槽位>`（不跨节点、不要求持久） | 是，`aegisctl scale` |
 | `aegis.db=true` | postgres、redis、nats、temporal、temporal-ui | `/srv/aegis/postgres`、`/srv/aegis/redis`、`/srv/aegis/nats/*` | 否，单副本 |
-| `aegis.storage=true` | aegis-minio | `/srv/aegis/minio` | 否 |
+| `aegis.storage=true` | aegis-rustfs | `/srv/aegis/rustfs` | 否 |
 | `aegis.risk=true` | 风控平台 19 个服务 | `/srv/aegis/risk/*`（与现网一致） | 否（risk-decision 是两个固定实例） |
 | `aegis.music=true` | music-rec、music-ingest、music-trainer、music-deep | 无本地数据 | 否 |
 
@@ -251,7 +251,7 @@ aegisctl backup --to ~/aegis-backups --keep 14
 
 内容：`postgres.sql.gz`（`pg_dumpall --clean --if-exists`，全部库：主库、aegis_risk、aegis_music、temporal）、`redis-dump.rdb.gz`（先 BGSAVE 再拷 RDB）、`nats-server.conf`、`cluster.env`，加 `SHA256SUMS`。Postgres 或 Redis 不在 manager 上时经本机中转流到 manager。备份目录 700、文件 600。清理只删名字是「8 位日期-6 位时间」的目录。
 
-不在备份里：JetStream 数据（事件流，可丢）、风控的 ClickHouse / Nebula / Milvus / RisingWave（量大，需要时停服务后直接打包 `/srv/aegis/risk`）、MinIO（对象存储本身另做复制或定期 `mc mirror`）。定时备份：在本机 crontab 加 `aegisctl backup --to ...`，或在 manager 上用 systemd timer 调本机下发的脚本。
+不在备份里：JetStream 数据（事件流，可丢）、风控的 ClickHouse / Nebula / Milvus / RisingWave（量大，需要时停服务后直接打包 `/srv/aegis/risk`）、RustFS（对象存储本身另做复制，或定期用 rclone 同步到另一处 S3）。定时备份：在本机 crontab 加 `aegisctl backup --to ...`，或在 manager 上用 systemd timer 调本机下发的脚本。
 
 恢复 Postgres（停机操作）：
 
@@ -311,7 +311,7 @@ aegisctl init --import-dokploy
 
 - 现网 aegis-api 的全部环境变量（栈文件会覆盖的连接项除外），模板里没有的追加在文件末尾；从 `POSTGRES_DSN` 拆出 `AEGIS_PG_USER / PASSWORD / DB / DSN_PARAMS`，从 `NATS_URL` 拆出 NATS 账号；
 - aegis-infra 里 Postgres、Redis、NATS、Temporal 容器的数据挂载点（`AEGIS_PG_DIR` 等）、镜像版本、Redis 的 `--requirepass` 与其余参数、Temporal 的数据库账号；
-- aegis-risk 里 risk-admin 的密钥（Redis、ClickHouse、Nebula、MinIO、内部令牌、代理网段）与 `/srv/aegis/risk`；aegis-music 的内部令牌；
+- aegis-risk 里 risk-admin 的密钥（Redis、ClickHouse、Nebula、对象存储、内部令牌、代理网段；对象存储的那一对沿用为 RustFS 的凭据）与 `/srv/aegis/risk`；aegis-music 的内部令牌；
 - 一起听的内部令牌与 `LT_*` 调参项。
 
 逐条看输出里的「注意」：例如数据目录不是绑定挂载、NATS 的 store_dir 与新挂载点不一致、风控用的 Postgres 账号与主库账号不同（统一栈改用主库账号，确认它对 aegis_risk 有权限）、控制台设了 `NEXT_PUBLIC_*`（console.Dockerfile 目前不接收）。然后：
@@ -333,17 +333,16 @@ push main 由 CI 构建，或 `aegisctl build`（在 manager 上构建，约 10 
 上传文件现在在 `/srv/aegis/aegis-api/data/storage`（本地存储池）。切换后每个副本是自己的命名卷，看不到这些文件，所以**切换前**先迁到对象存储：
 
 ```bash
-aegisctl deploy --only aegis-minio --tag sha-xxxxxxx
-aegisctl exec aegis-minio -- sh -c 'mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" && mc mb -p local/aegis-uploads'
+aegisctl deploy --only aegis-rustfs --tag sha-xxxxxxx
 ```
 
-aegis-minio 同时接在 dokploy-network 上，现网的 Dokploy aegis-api 就能经 `http://aegis-minio:9000` 访问它（栈里还没有 aegis-api 时，deploy 不写 Traefik 路由）。然后在控制台「存储中心」：
+aegis-rustfs 同时接在 dokploy-network 上，现网的 Dokploy aegis-api 就能经 `aegis-rustfs:9000` 访问它（栈里还没有 aegis-api 时，deploy 不写 Traefik 路由）。然后在控制台「存储中心」：
 
-1. 新建 S3 兼容存储池：endpoint `http://aegis-minio:9000`、桶 `aegis-uploads`、access key / secret key 用 `AEGIS_MINIO_ROOT_USER` / `AEGIS_MINIO_ROOT_PASSWORD`（`aegisctl config get --reveal AEGIS_MINIO_ROOT_PASSWORD`，或在 MinIO 里另建只读写这个桶的用户），路径风格访问；
+1. 新建 RustFS 存储池：endpoint `aegis-rustfs:9000`、不用 SSL、桶 `aegis-uploads`、打开「自动创建存储桶」，access key / secret key 用 `AEGIS_RUSTFS_ACCESS_KEY` / `AEGIS_RUSTFS_SECRET_KEY`（`aegisctl config get --reveal AEGIS_RUSTFS_SECRET_KEY`，或在 RustFS 控制台另建只读写这个桶的用户）；
 2. 用「存储迁移」把本地存储池的文件迁到新池，等迁移完成、核对数量；
 3. 把新池设为各应用的默认存储（头像 `AVATAR_STORAGE_CONFIG` 若指定了本地池也要改）。
 
-如果存储池配置要求客户端直连对象存储下载（预签名地址），给 MinIO 配公网域名：`aegisctl config set AEGIS_MINIO_DOMAINS=files.karpov.cn`，切换后的 deploy 会生成路由。经 Aegis 代理下载的不需要。
+如果存储池配置要求客户端直连对象存储下载（预签名地址），给 RustFS 配公网域名：`aegisctl config set AEGIS_RUSTFS_DOMAINS=files.karpov.cn`，切换后的 deploy 会生成路由。经 Aegis 代理下载的不需要。
 
 这一步现网照常服务。
 
@@ -362,12 +361,18 @@ aegis-minio 同时接在 dokploy-network 上，现网的 Dokploy aegis-api 就�
    ssh hk-paas 'docker ps --format "{{.Names}}" | grep -E "aegis|risk|music|listen" | grep -v "^aegis_"; ls /srv/aegis/postgres/postmaster.pid 2>/dev/null'
    ```
    两行都应当没有输出（路径以 `AEGIS_PG_DIR` 为准）。
-4. 部署：
+4. 风控对象存储从 MinIO 搬到 RustFS（现网约 50 MB，一两分钟）。Milvus 的段文件就在这里，必须在 Milvus 起来**之前**搬完：
+   ```bash
+   aegisctl deploy --only risk-rustfs --tag sha-xxxxxxx
+   aegisctl objstore migrate --yes
+   ```
+   它在风控节点上临时起一个 MinIO 读 `/srv/aegis/risk/minio`，用 rclone 把全部存储桶（Milvus 的 `a-bucket`、模型文件 `aegis-risk`）复制进 risk-rustfs，再逐对象按校验和核对，最后删掉临时容器。旧目录里的对象不会被改动（临时 MinIO 只写它自己的 `.minio.sys` 元数据），回滚时旧 MinIO 原样可用。还有容器挂着旧目录、或 risk-milvus / risk-admin 在运行时会拒绝执行；中途失败直接再跑一次（已复制的对象跳过）。只想核对用 `aegisctl objstore check`。
+5. 部署：
    ```bash
    aegisctl deploy --tag sha-xxxxxxx
    ```
    第一段拉起 Postgres、Redis、NATS、Temporal（原数据目录，约 30 秒）与风控、音乐（Milvus、RisingWave 要 1 到 2 分钟）、控制台、一起听；第二段迁移（版本与现网相同时没有新迁移，几秒）；第三段 api / worker；收敛后写 Traefik 路由（优先级 1000，高于 Dokploy 给旧应用生成的同域名路由，Traefik 约 2 秒内生效）。
-5. 旧的本地数据（可选）：搜索索引会自动重建；如果担心旧进程的风控暂存里有没送出的事件，把旧目录拷进 api 第 1 个槽位的卷（用 aegis-server 镜像本身，按用户名改属主）：
+6. 旧的本地数据（可选）：搜索索引会自动重建；如果担心旧进程的风控暂存里有没送出的事件，把旧目录拷进 api 第 1 个槽位的卷（用 aegis-server 镜像本身，按用户名改属主）：
    ```bash
    ssh hk-paas 'docker run --rm --user 0 --entrypoint sh -v /srv/aegis/aegis-api/data:/from:ro -v aegis-api-data-1:/app/data ghcr.io/michongs/aegis-server:sha-xxxxxxx -c "cp -an /from/. /app/data/ && chown -R aegis:aegis /app/data"'
    ```
@@ -380,7 +385,8 @@ aegis-minio 同时接在 dokploy-network 上，现网的 Dokploy aegis-api 就�
 - 客户端 IP 正确：`aegisctl logs aegis-api --since 5m | grep '"ip"'`，不应出现 10.0.x.x 或 CDN 节点地址（TRUSTED_PROXIES 已导入）。
 - 风控：控制台风控总览 9 个组件 ok；主服务日志里没有「风控评估失败，按放行处理」。
 - 后台任务：worker 日志里有定时任务在跑（自动签到、排行榜结算），且只在一个副本上执行（租约选主）。
-- 上传：上传一张头像，确认落在 aegis-minio。
+- 上传：上传一张头像，确认落在 aegis-rustfs。
+- 风控向量：控制台相似设备能查出结果（Milvus 从 RustFS 载入了段文件）；`aegisctl logs risk-milvus --since 10m` 里没有 NoSuchKey。
 
 ### 第 6 步：回滚（停机，约 5 分钟）
 
@@ -388,22 +394,27 @@ aegis-minio 同时接在 dokploy-network 上，现网的 Dokploy aegis-api 就�
 
 ```bash
 aegisctl traefik disable            # 移走新路由，Dokploy 旧路由重新生效（旧应用还停着，此时仍是 502）
-aegisctl down --keep aegis-minio --yes   # 删除栈里的服务，等容器退出；数据目录与命名卷保留，MinIO 留着给旧应用用
+aegisctl down --keep aegis-rustfs --yes   # 删除栈里的服务，等容器退出；数据目录与命名卷保留，aegis-rustfs 留着给旧应用用
 ```
 
-然后在 Dokploy 里按 aegis-infra → aegis-risk → aegis-music → aegis-api、aegis-console、listen-together 的顺序启动（应用用 Deploy / Redeploy）。数据是同一份目录，新栈期间写入的数据都在；上传文件在 aegis-minio 里，旧应用经 dokploy-network 照样访问。要连 MinIO 也撤掉：先在存储中心把默认存储切回本地池并反向迁移，再 `aegisctl down --yes`。
+然后在 Dokploy 里按 aegis-infra → aegis-risk → aegis-music → aegis-api、aegis-console、listen-together 的顺序启动（应用用 Deploy / Redeploy）。数据是同一份目录，新栈期间写入的数据都在；上传文件在 aegis-rustfs 里，旧应用经 dokploy-network 照样访问；风控的旧 MinIO 目录没被改过，Dokploy 的 aegis-risk 照旧用它（新栈期间写进 risk-rustfs 的新向量不会回到旧 MinIO，回滚后由风控事件重新写入）。要连 aegis-rustfs 也撤掉：先在存储中心把默认存储切回本地池并反向迁移，再 `aegisctl down --yes`。
 
 ### 第 7 步：收尾（稳定运行一周后）
 
 - Dokploy 里把旧应用的域名删掉（消除 doctor 的同域名提醒），项目可以保留不动或删除；
 - 确认上传文件已全部在对象存储后，再删 `/srv/aegis/aegis-api/data`；
+- `aegisctl objstore check` 再核对一次风控对象存储，然后可以删掉旧目录 `/srv/aegis/risk/minio`（删了就不能再回滚到 Dokploy 的 aegis-risk）；
 - 本机旧的环境变量备份（`~/Documents/zeabur-migration/env/aegis/*.env`）不再是配置来源，以 `aegisctl config pull` 的备份为准。
 
 ## 14. 多节点之后的对象存储
 
-单节点时也建议用 aegis-minio（第 13 节第 3 步）。加了第二台 aegis.app 节点之后**必须**用：任何一个副本收到的上传，其他节点上的副本都要能读到，本地存储池做不到。
+单节点时也建议用 aegis-rustfs（第 13 节第 3 步）。加了第二台 aegis.app 节点之后**必须**用：任何一个副本收到的上传，其他节点上的副本都要能读到，本地存储池做不到。
 
-aegis-minio 本身是单节点单盘（固定在 `aegis.storage` 节点上），它坏了上传不可用。要更高可用：换成云厂商的 S3 兼容存储（存储中心改 endpoint 后再做一次存储迁移），或部署多节点 MinIO / 其他分布式对象存储，这不在统一栈里。
+aegis-rustfs 本身是单节点单盘（固定在 `aegis.storage` 节点上），它坏了上传不可用。要更高可用：换成云厂商的 S3 兼容存储（存储中心改 endpoint 后再做一次存储迁移），或部署多节点 RustFS（`RUSTFS_VOLUMES` 列出各节点的盘，纠删码），这不在统一栈里。
+
+### 为什么是 RustFS
+
+统一栈的两个对象存储（主服务 aegis-rustfs、风控 risk-rustfs）都是 RustFS 1.0.6（Apache-2.0，S3 兼容）。MinIO 社区版已停止接受社区改动，长期维护没有保障，所以换掉。兼容性在本机实测过：存储中心用的 minio-go 客户端（建桶、分片上传 70 MiB、预签名上传下载、列举、删除）、风控模型文件用的 aws-sdk-go-v2，以及 Milvus 3.0.5（自定义密钥、写段文件、刷盘、重启后从 RustFS 重新载入并检索）。存储中心里已有的 MinIO 类型存储池照常可用，新建的选 RustFS。
 
 ## 15. 已知限制
 

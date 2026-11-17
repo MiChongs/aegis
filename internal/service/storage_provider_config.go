@@ -21,10 +21,10 @@ func decodeS3StorageConfig(data map[string]any) (*storagedomain.S3Config, error)
 func decodeMinIOConfig(data map[string]any) (*storagedomain.MinIOConfig, error) {
 	var cfg storagedomain.MinIOConfig
 	if err := decodeStorageConfigData(data, &cfg); err != nil {
-		return nil, apperrors.New(40113, http.StatusBadRequest, "MinIO 配置解析失败")
+		return nil, apperrors.New(40113, http.StatusBadRequest, "自建对象存储（MinIO / RustFS）配置解析失败")
 	}
 	if strings.TrimSpace(cfg.Endpoint) == "" || strings.TrimSpace(cfg.Bucket) == "" || strings.TrimSpace(cfg.AccessKeyID) == "" || strings.TrimSpace(cfg.SecretAccessKey) == "" {
-		return nil, apperrors.New(40114, http.StatusBadRequest, "MinIO 配置不完整")
+		return nil, apperrors.New(40114, http.StatusBadRequest, "自建对象存储（MinIO / RustFS）配置不完整")
 	}
 	return &cfg, nil
 }

@@ -85,6 +85,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   r2: "Cloudflare R2",
   s3: "Amazon S3",
   minio: "MinIO",
+  rustfs: "RustFS",
   aliyun_oss: "阿里云 OSS",
   tencent_cos: "腾讯云 COS",
   qiniu_kodo: "七牛云 Kodo",
