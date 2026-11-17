@@ -613,6 +613,10 @@ export interface BackfillProgress {
   vectors: number;
   proxyIps: number;
   badDevices?: number;
+  /** 回灌之后清扫掉的、主库里已删除但关系图还留着的账号数 */
+  deletedUsers?: number;
+  /** 来源表里属于已删除账号、没有写进图的记录数 */
+  skippedDeleted?: number;
   hostingIps: number;
   sharedIps: number;
   v6Lines: number;

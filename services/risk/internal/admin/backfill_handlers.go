@@ -113,6 +113,12 @@ func (s *Server) StartBackfill(ctx context.Context, op string) (int64, bool, err
 		} else if s.Logf != nil {
 			s.Logf("关系图回灌 #%d 完成：%d 位用户、%d 个 IP、%d 台设备", id, p.Users, p.IPs, p.Devices)
 		}
+		// 回灌只写现有账号；图里还留着的已删除账号在这里收尾（改造前删掉的、删号时没通知到风控的）
+		if n, serr := s.SweepDeletedUsers(bg); serr != nil && s.Logf != nil {
+			s.Logf("关系图回灌 #%d 之后的已删除账号清扫没有完成：%v", id, serr)
+		} else {
+			p.DeletedUsers = int64(n)
+		}
 		p.Status = status
 		_ = s.Store.SaveBackfill(bg, id, status, p, true)
 		bf.mu.Lock()

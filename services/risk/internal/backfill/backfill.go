@@ -46,11 +46,15 @@ type Progress struct {
 	Vectors    int64            `json:"vectors"`
 	ProxyIPs   int64            `json:"proxyIps"`   // 从图里删掉的代理 / CDN 地址数
 	BadDevices int64            `json:"badDevices"` // 从图里删掉的假设备码（占位值、UA 摘要）数
-	V6Lines    int64            `json:"v6Lines"`    // IPv6 线路（/64）数
-	V6Addrs    int64            `json:"v6Addrs"`    // 这些线路上出现过的 IPv6 地址数（合并前每个地址一个点）
-	HostingIPs int64            `json:"hostingIps"` // 标成机房 / 云主机出口的 IP 数
-	SharedIPs  int64            `json:"sharedIps"`  // 标成共享出口的 IP 数
-	Error      string           `json:"error,omitempty"`
+	// SkippedDeleted 来源表里属于已删除账号、没有写进图的点与边数
+	SkippedDeleted int64 `json:"skippedDeleted"`
+	// DeletedUsers 回灌之后的清扫：关系图里还留着、主库里已经删除的账号数（收尾后从图里删掉）
+	DeletedUsers int64  `json:"deletedUsers"`
+	V6Lines      int64  `json:"v6Lines"`    // IPv6 线路（/64）数
+	V6Addrs      int64  `json:"v6Addrs"`    // 这些线路上出现过的 IPv6 地址数（合并前每个地址一个点）
+	HostingIPs   int64  `json:"hostingIps"` // 标成机房 / 云主机出口的 IP 数
+	SharedIPs    int64  `json:"sharedIps"`  // 标成共享出口的 IP 数
+	Error        string `json:"error,omitempty"`
 }
 
 // Runner 执行一次回灌
@@ -71,6 +75,11 @@ type Runner struct {
 	proxies map[string]bool                // 遇到的代理 / CDN / 内网地址
 	badDevs map[string]bool                // 遇到的假设备码原值（占位值、UA 摘要），最后从图里删掉
 	v6Addrs map[string]map[string]struct{} // IPv6 线路（/64）→ 出现过的地址
+	// users 主库里现有的账号（用户 ID → 应用 ID）。流水表（登录地理、支付订单、业务流水……）在删号后可能还留着
+	// 这个账号的行，回灌只按现有账号写图，已删除的账号不会被写回来。
+	users map[int64]int64
+	// deadRows 因属于已删除账号而跳过的写入（行级判断处计数，写入层再挡下的算在 batch.Skipped）
+	deadRows int64
 }
 
 type ipInfo struct {
@@ -130,7 +139,11 @@ func (r *Runner) Run(ctx context.Context) (Progress, error) {
 		return Progress{}, err
 	}
 
+	if r.users, err = LiveUsers(ctx, conn); err != nil {
+		return Progress{}, fmt.Errorf("读现有账号：%w", err)
+	}
 	r.batch = r.Graph.NewBatch(graph.MaxStatements)
+	r.batch.Skip = r.deletedVID
 	r.ips = map[string]*ipInfo{}
 	r.devices = map[string]*deviceInfo{}
 	r.proxies = map[string]bool{}
@@ -168,6 +181,7 @@ func (r *Runner) Run(ctx context.Context) (Progress, error) {
 			for k, v := range r.batch.Written {
 				p.Written[k] = int64(v)
 			}
+			p.SkippedDeleted = r.deadRows + int64(r.batch.Skipped)
 		})
 		if err != nil && !errors.Is(err, errMissingTable) && r.Logf != nil {
 			r.Logf("关系图回灌：%s 失败：%v", s.label, err)
@@ -251,6 +265,43 @@ func query(ctx context.Context, conn *pgx.Conn, sql string, each func(pgx.Rows) 
 
 // ── 写入辅助 ──
 
+// alive 这个账号现在还在主库里（应用也对得上）；不在时记一次跳过
+func (r *Runner) alive(appID, uid int64) bool {
+	if r.exists(appID, uid) {
+		return true
+	}
+	r.deadRows++
+	return false
+}
+
+func (r *Runner) exists(appID, uid int64) bool {
+	if r.users == nil {
+		return true
+	}
+	a, ok := r.users[uid]
+	return ok && a == appID
+}
+
+// deletedVID 写图前的过滤：指向已删除账号的点与边都不写
+func (r *Runner) deletedVID(vid string) bool {
+	appID, uid, ok := graph.ParseUserVID(vid)
+	return ok && !r.exists(appID, uid)
+}
+
+// LiveUsers 主库里现有的全部账号（用户 ID → 应用 ID）
+func LiveUsers(ctx context.Context, conn *pgx.Conn) (map[int64]int64, error) {
+	out := map[int64]int64{}
+	_, err := query(ctx, conn, `SELECT id, appid FROM users`, func(row pgx.Rows) error {
+		var id, appID int64
+		if err := row.Scan(&id, &appID); err != nil {
+			return err
+		}
+		out[id] = appID
+		return nil
+	})
+	return out, err
+}
+
 func (r *Runner) user(appID, uid, first, last int64, sets ...string) error {
 	if appID <= 0 || uid <= 0 {
 		return nil
@@ -262,7 +313,7 @@ func (r *Runner) user(appID, uid, first, last int64, sets ...string) error {
 // useIP 用户用过某个 IP（记下 IP，最后统一写 IP 点与网段）
 func (r *Runner) useIP(edge string, appID, uid int64, ip string, first, last, count int64) error {
 	ip = r.clientIP(ip)
-	if ip == "" || appID <= 0 || uid <= 0 {
+	if ip == "" || appID <= 0 || uid <= 0 || !r.alive(appID, uid) {
 		return nil
 	}
 	r.noteIP(ip, first, last).addUser(appID, uid)
@@ -297,6 +348,10 @@ func (r *Runner) noteIP(ip string, first, last int64) *ipInfo {
 // useDevice 用户用过某台设备（设备属性累积起来，最后统一写设备点与向量）
 func (r *Runner) useDevice(edge string, appID, uid int64, deviceID string, first, last, count int64, attrs map[string]string) error {
 	if deviceID = r.deviceKey(deviceID); deviceID == "" || appID <= 0 {
+		return nil
+	}
+	// 已删除账号留下的行整行跳过：设备只被它用过的话，删号时已经清掉了，不该以无主设备的样子回来
+	if uid > 0 && !r.alive(appID, uid) {
 		return nil
 	}
 	r.noteDevice(appID, uid, deviceID, first, last, attrs)

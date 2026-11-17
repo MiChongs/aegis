@@ -663,6 +663,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 删号、解除风控时主服务里的计数一起更新：注册准入台账与计数、登录防爆破、在线连接、排行榜缓存、风险分缓存
 	accountCounters := service.NewAccountCounters(log, registerIPService, loginGuardService, realtimeRepo, sessions, riskService)
 	userService.AddPurgeHook(accountCounters.PurgeHook)
+	// 删号后通知风控平台收尾（关系图、计数、复核单）；风控关联删除自己通知，不重复
+	userService.AddPurgeHook(riskService.PurgeHook)
 	riskService.SetAccountCounters(accountCounters)
 
 	// 平台级 Banner（超级管理员专属 CRUD；Overview 对所有管理员展示；上传经 StorageService）

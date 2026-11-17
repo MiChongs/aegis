@@ -469,9 +469,22 @@ func (s *Server) forgetSubjects(ctx context.Context, c *app.RequestContext) (any
 	}
 	res["devicesBlocked"] = blocked
 
-	closed := 0
-	for _, uid := range in.UserIDs {
-		appID := in.AppID
+	closed, removedVertices, ps := s.finishDeleted(ctx, nb, by, reason)
+	problems = append(problems, ps...)
+	res["casesClosed"] = closed
+	res["graphRemoved"] = removedVertices
+	res["countersCleared"] = nb.countersCleared
+	res["problems"] = nonNilSlice(problems)
+	s.Store.Audit(ctx, by, "subjects.forget", fmt.Sprintf("app %d users %v", in.AppID, in.UserIDs), map[string]any{
+		"blockDevices": len(devices), "blockDays": in.BlockDays, "note": note, "result": res})
+	return res, nil
+}
+
+// finishDeleted 账号在主库删除之后风控侧的收尾：待复核单结案、关系图删点（只属于它们的登录名、手机号、设备等一并删）、
+// 设备与 IP 按剩下的使用者重写、图特征缓存与滑窗计数回退。nb 要在删点前收集。
+func (s *Server) finishDeleted(ctx context.Context, nb *neighborhood, by, reason string) (closed, removed int, problems []string) {
+	for _, uid := range nb.users {
+		appID := nb.appID
 		cases, _, err := s.Store.ListCases(ctx, store.CaseQuery{Status: "pending", AppID: &appID, UserID: uid, Limit: 200})
 		if err != nil {
 			problems = append(problems, err.Error())
@@ -483,16 +496,8 @@ func (s *Server) forgetSubjects(ctx context.Context, c *app.RequestContext) (any
 			}
 		}
 	}
-	res["casesClosed"] = closed
-
-	removedVertices, ps := s.refreshAfterDelete(ctx, nb)
-	problems = append(problems, ps...)
-	res["graphRemoved"] = removedVertices
-	res["countersCleared"] = nb.countersCleared
-	res["problems"] = nonNilSlice(problems)
-	s.Store.Audit(ctx, by, "subjects.forget", fmt.Sprintf("app %d users %v", in.AppID, in.UserIDs), map[string]any{
-		"blockDevices": len(devices), "blockDays": in.BlockDays, "note": note, "result": res})
-	return res, nil
+	removed, ps := s.refreshAfterDelete(ctx, nb)
+	return closed, removed, append(problems, ps...)
 }
 
 var errNoGraph = errors.New("关系图未就绪")

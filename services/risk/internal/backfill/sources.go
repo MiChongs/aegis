@@ -114,6 +114,9 @@ func srcRegister(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) 
 		if err := row.Scan(&appID, &uid, &ip, &dev, &country, &prov, &city, &isp, &ts); err != nil {
 			return err
 		}
+		if !r.alive(appID, uid) {
+			return nil
+		}
 		if ip = r.clientIP(ip); ip != "" {
 			info := r.noteIP(ip, ts, ts)
 			info.addUser(appID, uid)
@@ -267,6 +270,18 @@ func srcFingerprints(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, err
 		if err := row.Scan(&appID, &uid, &dev, &uaOS, &uaOSV, &browser, &uaDev, &tag, &lastIP, &first, &last, &n); err != nil {
 			return err
 		}
+		banned := false
+		switch strings.ToLower(tag) {
+		case "block", "blocked", "blacklist", "banned":
+			banned = true
+		}
+		// 已删除账号的指纹：被拉黑的设备留下（不挂人，封禁标记继续起作用），其余整行跳过
+		if uid > 0 && !r.alive(appID, uid) {
+			if !banned {
+				return nil
+			}
+			uid = 0
+		}
 		// 网页端：「Chrome（Windows）」这样的名字
 		name := browser
 		if uaOS != "" {
@@ -280,8 +295,7 @@ func srcFingerprints(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, err
 		if err := r.useDevice(graph.EdgeUsesDevice, appID, uid, dev, first, last, n, attrs); err != nil {
 			return err
 		}
-		switch strings.ToLower(tag) {
-		case "block", "blocked", "blacklist", "banned":
+		if banned {
 			r.noteDevice(appID, uid, dev, first, last, nil).banned = true
 		}
 		return r.useIP(graph.EdgeUsesIP, appID, uid, lastIP, last, last, 1)
@@ -324,7 +338,7 @@ func srcOAuth(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) {
 		if err := row.Scan(&appID, &uid, &provider, &subject, &nick, &prov, &city, &first, &last); err != nil {
 			return err
 		}
-		if subject == "" || provider == "" {
+		if subject == "" || provider == "" || !r.alive(appID, uid) {
 			return nil
 		}
 		iv := graph.IdentityVID(provider, subject)
@@ -346,6 +360,9 @@ func srcPasskeys(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) 
 		if err := row.Scan(&appID, &uid, &cred, &name, &first, &last, &n); err != nil {
 			return err
 		}
+		if !r.alive(appID, uid) {
+			return nil
+		}
 		pv := graph.PasskeyVID(cred)
 		if err := r.batch.Vertex(graph.TagPasskey, pv, first, last, graph.Sets(graph.Set("name", name))...); err != nil {
 			return err
@@ -362,6 +379,9 @@ func srcInvites(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) {
 		var dev, ip string
 		if err := row.Scan(&appID, &inviter, &invitee, &dev, &ip, &ts); err != nil {
 			return err
+		}
+		if !r.alive(appID, inviter) || !r.alive(appID, invitee) {
+			return nil
 		}
 		if err := r.user(appID, inviter, ts, ts); err != nil {
 			return err
@@ -398,6 +418,9 @@ func srcPayments(ctx context.Context, conn *pgx.Conn, r *Runner) (int64, error) 
 		var channel, account string
 		if err := row.Scan(&appID, &uid, &channel, &account, &first, &last, &n); err != nil {
 			return err
+		}
+		if !r.alive(appID, uid) {
+			return nil
 		}
 		pv := graph.PayerVID(channel, account)
 		if err := r.batch.Vertex(graph.TagPayer, pv, first, last, graph.Set("channel", channel), graph.Set("masked", mask(account))); err != nil {

@@ -380,3 +380,53 @@ func (c *Client) SetUserState(appID, userID int64, banned bool) error {
 	_, err := c.Exec(fmt.Sprintf("UPSERT VERTEX ON user %s SET status = %s, banned = %t;", Quote(UserVID(appID, userID)), Quote(status), banned))
 	return err
 }
+
+// PresentUsers 这些账号里在关系图上还有痕迹的：有用户点，或者还挂着边（点删了但边留着的悬空边也算）。
+// 清扫已删除账号用：先用它把主库空缺号收窄到真正需要收尾的那几个。
+func (c *Client) PresentUsers(appID int64, userIDs []int64) ([]int64, error) {
+	var out []int64
+	for i := 0; i < len(userIDs); i += 200 {
+		chunk := userIDs[i:min(i+200, len(userIDs))]
+		byVID := make(map[string]int64, len(chunk))
+		quoted := make([]string, len(chunk))
+		for k, uid := range chunk {
+			vid := UserVID(appID, uid)
+			byVID[vid] = uid
+			quoted[k] = Quote(vid)
+		}
+		list := strings.Join(quoted, ", ")
+		found := map[int64]bool{}
+		rs, err := c.Exec(fmt.Sprintf("FETCH PROP ON user %s YIELD id(vertex) AS id", list))
+		if err != nil {
+			return nil, err
+		}
+		for r := 0; r < rs.GetRowSize(); r++ {
+			if rec, err := rs.GetRowValuesByIndex(r); err == nil {
+				if uid, ok := byVID[str(rec, 0)]; ok {
+					found[uid] = true
+				}
+			}
+		}
+		rs, err = c.Exec(fmt.Sprintf("GO FROM %s OVER * BIDIRECT YIELD DISTINCT src(edge) AS s, dst(edge) AS d", list))
+		if err != nil {
+			return nil, err
+		}
+		for r := 0; r < rs.GetRowSize(); r++ {
+			rec, err := rs.GetRowValuesByIndex(r)
+			if err != nil {
+				continue
+			}
+			for _, v := range []string{str(rec, 0), str(rec, 1)} {
+				if uid, ok := byVID[v]; ok {
+					found[uid] = true
+				}
+			}
+		}
+		for _, uid := range chunk {
+			if found[uid] {
+				out = append(out, uid)
+			}
+		}
+	}
+	return out, nil
+}

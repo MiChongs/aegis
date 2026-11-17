@@ -514,7 +514,8 @@ func (s *RiskService) RiskOpsPurge(ctx context.Context, op RiskOpsOperator, in R
 			res.Users = append(res.Users, r)
 			continue
 		}
-		if err := purger.PurgeUser(ctx, in.AppID, id); err != nil {
+		// 这条路径在删完之后自己带着设备拉黑参数通知风控收尾，PurgeUser 的通用收尾不再单独通知
+		if err := purger.PurgeUser(withRiskForgetHandled(ctx), in.AppID, id); err != nil {
 			r.OK, r.Error = false, err.Error()
 			res.Users = append(res.Users, r)
 			continue
@@ -784,6 +785,48 @@ func nonNilStrings(v []string) []string {
 }
 
 var riskAdminOpsHTTP = &http.Client{Timeout: 120 * time.Second}
+
+type riskForgetHandledKey struct{}
+
+// withRiskForgetHandled 标记这次删号由调用方自己通知风控收尾（风控关联删除）
+func withRiskForgetHandled(ctx context.Context) context.Context {
+	return context.WithValue(ctx, riskForgetHandledKey{}, true)
+}
+
+// riskForgetSlots 删号后通知风控的并发上限：批量删除时不把 risk-admin 打满，多出来的排队
+var riskForgetSlots = make(chan struct{}, 4)
+
+// PurgeHook 挂到 UserService.AddPurgeHook：任何路径删号（管理员删除、批量删除、账号注销）之后通知风控收尾——
+// 关系图删掉账号与只属于它的登录名、手机号、设备等，设备与 IP 按剩下的使用者重写，图特征缓存与滑窗计数回退，待复核单结案。
+// 通知在后台进行，不拖慢删号；风控暂时不可用时由风控侧的已删除账号清扫（服务启动时与每日回灌之后）补上。
+func (s *RiskService) PurgeHook(ctx context.Context, appID, userID int64, _ string) func(context.Context) {
+	if !s.Enabled() || ctx.Value(riskForgetHandledKey{}) != nil {
+		return nil
+	}
+	return func(ctx context.Context) {
+		bg := context.WithoutCancel(ctx)
+		go func() {
+			riskForgetSlots <- struct{}{}
+			defer func() { <-riskForgetSlots }()
+			cctx, cancel := context.WithTimeout(bg, 90*time.Second)
+			defer cancel()
+			var out struct {
+				GraphRemoved int      `json:"graphRemoved"`
+				Problems     []string `json:"problems"`
+			}
+			err := s.adminDo(cctx, http.MethodPost, "subjects/forget", map[string]any{
+				"appId": appID, "userIds": []int64{userID}, "blockDevices": []string{}, "note": "账号在主服务删除",
+			}, "aegis-server", &out)
+			if err != nil {
+				s.log.Warn("删号后风控收尾没有完成，风控侧清扫会补上", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.Error(err))
+				return
+			}
+			if len(out.Problems) > 0 {
+				s.log.Warn("删号后风控收尾有问题", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.Strings("problems", out.Problems))
+			}
+		}()
+	}
+}
 
 // adminDo 调 risk-admin /v1/<path>（带内部令牌与操作者），解开 {code, data} 信封
 func (s *RiskService) adminDo(ctx context.Context, method, path string, body any, operator string, out any) error {

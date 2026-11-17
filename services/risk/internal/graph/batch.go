@@ -14,6 +14,10 @@ type Batch struct {
 	maxStmt int
 	// Written 已写出的语句数（按点类型 / 边类型）
 	Written map[string]int
+	// Skip 不为 nil 时，点或边任一端被它判为 true 就不写（回灌用它挡住主库里已经删除的账号）
+	Skip func(vid string) bool
+	// Skipped 被 Skip 挡掉的语句数
+	Skipped int
 }
 
 // MaxStatements 一次提交的语句上限。Nebula 把分号连起来的语句编成一棵执行计划树，
@@ -43,6 +47,10 @@ func (bt *Batch) Vertex(tag, vid string, first, last int64, sets ...string) erro
 	if vid == "" {
 		return nil
 	}
+	if bt.Skip != nil && bt.Skip(vid) {
+		bt.Skipped++
+		return nil
+	}
 	first, last = span(first, last)
 	all := sets
 	if last > 0 {
@@ -62,6 +70,10 @@ func (bt *Batch) Vertex(tag, vid string, first, last int64, sets ...string) erro
 // Edge 写一条边（汇总值）
 func (bt *Batch) Edge(edge, src, dst string, first, last, count int64) error {
 	if src == "" || dst == "" || src == dst {
+		return nil
+	}
+	if bt.Skip != nil && (bt.Skip(src) || bt.Skip(dst)) {
+		bt.Skipped++
 		return nil
 	}
 	first, last = span(first, last)

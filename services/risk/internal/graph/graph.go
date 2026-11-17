@@ -176,6 +176,24 @@ func hashed(prefix, v string) string {
 // UserVID 用户点
 func UserVID(appID, userID int64) string { return "u:" + itoa(appID) + ":" + itoa(userID) }
 
+// ParseUserVID 从用户点 ID 取应用与用户；不是用户点时 ok 为 false
+func ParseUserVID(vid string) (appID, userID int64, ok bool) {
+	rest, found := strings.CutPrefix(vid, "u:")
+	if !found {
+		return 0, 0, false
+	}
+	a, u, found := strings.Cut(rest, ":")
+	if !found {
+		return 0, 0, false
+	}
+	appID, err1 := strconv.ParseInt(a, 10, 64)
+	userID, err2 := strconv.ParseInt(u, 10, 64)
+	if err1 != nil || err2 != nil || appID <= 0 || userID <= 0 {
+		return 0, 0, false
+	}
+	return appID, userID, true
+}
+
 // AccountVID 登录名点
 func AccountVID(appID int64, account string) string {
 	return hashed("a:"+itoa(appID)+":", strings.ToLower(account))

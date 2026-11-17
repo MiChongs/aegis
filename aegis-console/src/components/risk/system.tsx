@@ -493,6 +493,11 @@ function GraphDataPanel() {
         { label: "IPv6 线路", value: p.v6Lines, sub: p.v6Addrs ? `含 ${p.v6Addrs.toLocaleString("zh-CN")} 个地址` : undefined },
         { label: "删除的代理地址", value: p.proxyIps },
         { label: "删除的假设备码", value: p.badDevices ?? 0 },
+        {
+          label: "清理的已删除账号",
+          value: p.deletedUsers ?? 0,
+          sub: p.skippedDeleted ? `另有 ${p.skippedDeleted.toLocaleString("zh-CN")} 条残留记录未写入` : undefined,
+        },
       ]
     : [];
 

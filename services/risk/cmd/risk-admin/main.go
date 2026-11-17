@@ -325,6 +325,17 @@ func serve(logf func(string, ...any)) error {
 	}()
 	go srv.DailyBackfill(ctx)
 	go srv.SyncStreamsOnStart(ctx)
+	// 已删除账号清扫：启动一分钟后跑一次（升级后立刻清掉旧残留），之后跟着每日回灌
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Minute):
+		}
+		if _, err := srv.SweepDeletedUsers(ctx); err != nil {
+			logf("已删除账号清扫没有完成：%v", err)
+		}
+	}()
 	// 旧格式的滑窗次数并进新键：启动时一次；滚动升级期间旧版决策服务可能还写了几笔，过几分钟再扫一次
 	go func() {
 		srv.MigrateCounters(ctx)
