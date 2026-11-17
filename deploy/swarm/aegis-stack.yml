@@ -767,6 +767,9 @@ services:
         limits: {memory: 3g}
 
   risk-nebula-metad:
+    # Nebula 启动时就要把 --local_ip 解析成本机地址。Swarm 的服务 DNS 要等任务跑起来才注册，
+    # 抢在前面解析会失败退出（dnsrr 下尤其如此）；显式 hostname 让容器从 /etc/hosts 立刻解析到自己。
+    hostname: risk-nebula-metad
     image: vesoft/nebula-metad:v3.8.0
     logging: *logging
     command:
@@ -804,6 +807,9 @@ services:
         limits: {memory: 512m}
 
   risk-nebula-storaged:
+    # Nebula 启动时就要把 --local_ip 解析成本机地址。Swarm 的服务 DNS 要等任务跑起来才注册，
+    # 抢在前面解析会失败退出（dnsrr 下尤其如此）；显式 hostname 让容器从 /etc/hosts 立刻解析到自己。
+    hostname: risk-nebula-storaged
     image: vesoft/nebula-storaged:v3.8.0
     logging: *logging
     command:
@@ -841,6 +847,9 @@ services:
         limits: {memory: 1g}
 
   risk-nebula-graphd:
+    # Nebula 启动时就要把 --local_ip 解析成本机地址。Swarm 的服务 DNS 要等任务跑起来才注册，
+    # 抢在前面解析会失败退出（dnsrr 下尤其如此）；显式 hostname 让容器从 /etc/hosts 立刻解析到自己。
+    hostname: risk-nebula-graphd
     image: vesoft/nebula-graphd:v3.8.0
     logging: *logging
     command:

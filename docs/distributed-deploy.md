@@ -157,6 +157,10 @@ aegisctl node rm hk-2          # 排空 → 在那台机器上 swarm leave → �
 - **CI**（推荐）：push 到 main，`.github/workflows/images.yml` 只构建改动涉及的镜像。手动触发可指定镜像。
 - **manager 上构建**：`aegisctl build [镜像 ...] [--ref 提交]`。在 `/srv/aegis/src` 检出提交（要先推到 GitHub），`docker buildx build --push`。镜像名可写简称：`server`、`console`、`lt`、`risk`、`cep`、`music`、`deep`。
 
+**镜像仓库（2026-11-17 现状）**：GHCR 上的包默认私有，manager 没有登录 GHCR，所以现网用的是 manager 本机的仓库 `127.0.0.1:5000`（容器 `aegis-registry`，`--restart always`，数据在 `/srv/aegis/registry`，只监听回环地址），`cluster.env` 里 `AEGIS_REGISTRY=127.0.0.1:5000`。日常发布在 manager 上 `aegisctl build` 推到这里。单节点够用；**加第二台机器之前**要换成各节点都能拉的仓库：把 GHCR 上的 7 个包设为公开（或在每台机器上 `docker login ghcr.io`），再 `aegisctl config set AEGIS_REGISTRY=ghcr.io/michongs`。
+
+第一次部署时栈还不存在，没有新标签的镜像用 `cluster.env` 里钉住的 `*_TAG`（例如 `AEGIS_RISK_TAG`）；之后沿用栈里正在跑的版本。
+
 ### 7.2 发布
 
 ```bash

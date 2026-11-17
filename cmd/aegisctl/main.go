@@ -296,7 +296,8 @@ func (a *App) writeRemoteEnv(ctx context.Context, f *EnvFile) error {
 	script := fmt.Sprintf("install -d -m 700 %[1]s %[1]s/env-backups\nif [ -f %[2]s ]; then cp -p %[2]s %[1]s/env-backups/cluster.env.%[3]s; fi\n", remoteConfDir, remoteEnvFile, ts)
 	script += WriteFileScript(remoteEnvFile, []byte(f.String()), "600")
 	// 只留最近 20 份备份
-	script += fmt.Sprintf("ls -1t %s/env-backups/cluster.env.* 2>/dev/null | tail -n +21 | while read -r f; do rm -f -- \"$f\"; done\n", remoteConfDir)
+	// 还没有备份时 ls 匹配不到会以 2 退出，pipefail 下整段脚本跟着失败，所以吞掉它的退出码
+	script += fmt.Sprintf("{ ls -1t %s/env-backups/cluster.env.* 2>/dev/null || true; } | tail -n +21 | while read -r f; do rm -f -- \"$f\"; done\n", remoteConfDir)
 	_, err := a.capture(ctx, script)
 	return err
 }

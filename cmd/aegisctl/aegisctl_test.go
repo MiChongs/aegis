@@ -526,10 +526,22 @@ func TestParseStateAndTags(t *testing.T) {
 	}
 }
 
+func TestPlanTagsUsesPinnedTagsOnFirstDeploy(t *testing.T) {
+	// 第一次部署：栈不存在，没改动的镜像用 cluster.env 钉住的标签
+	plan, err := PlanTags(map[string]bool{"music-rec": true, "aegis-api": true}, "new", map[string]string{},
+		map[string]string{"AEGIS_MUSIC_TAG": "dokploy-1"}, func(n string) bool { return n == "aegis-server" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Tags["AEGIS_MUSIC_TAG"] != "dokploy-1" || plan.Tags["AEGIS_TAG"] != "new" {
+		t.Fatalf("plan = %+v", plan.Tags)
+	}
+}
+
 func TestPlanTags(t *testing.T) {
 	sel := map[string]bool{"aegis-api": true, "aegis-console": true}
 	current := map[string]string{"AEGIS_TAG": "old", "AEGIS_CONSOLE_TAG": "c-old", "AEGIS_RISK_TAG": "r-old"}
-	plan, err := PlanTags(sel, "new", current, func(n string) bool { return n == "aegis-server" })
+	plan, err := PlanTags(sel, "new", current, nil, func(n string) bool { return n == "aegis-server" })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,7 +554,7 @@ func TestPlanTags(t *testing.T) {
 	if plan.Tags["AEGIS_RISK_TAG"] != "r-old" || plan.Tags["AEGIS_MUSIC_TAG"] != "new" {
 		t.Fatalf("未选中的镜像：%v", plan.Tags)
 	}
-	if _, err := PlanTags(map[string]bool{"music-rec": true}, "new", current, func(string) bool { return false }); err == nil {
+	if _, err := PlanTags(map[string]bool{"music-rec": true}, "new", current, nil, func(string) bool { return false }); err == nil {
 		t.Fatal("没有新标签也没有现网版本时应报错")
 	}
 }

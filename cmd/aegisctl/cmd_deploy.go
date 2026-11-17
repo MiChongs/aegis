@@ -94,8 +94,9 @@ type TagPlan struct {
 	Fallback []string          // 没有请求的标签、沿用现网的镜像
 }
 
-// PlanTags 选中服务用到的镜像：请求的标签存在就用，否则沿用现网的；都没有就报错。没选中的镜像沿用现网标签
-func PlanTags(selected map[string]bool, want string, current map[string]string, exists func(image string) bool) (TagPlan, error) {
+// PlanTags 选中服务用到的镜像：请求的标签存在就用，否则沿用现网的，再否则用 cluster.env 里钉住的；都没有就报错。
+// 没选中的镜像沿用现网标签。pinned 是 cluster.env 里的 *_TAG（第一次部署时栈还不存在，只能靠它给没改动的镜像定版本）。
+func PlanTags(selected map[string]bool, want string, current, pinned map[string]string, exists func(image string) bool) (TagPlan, error) {
 	plan := TagPlan{Tags: map[string]string{}}
 	for _, im := range Images {
 		needed := false
@@ -105,6 +106,7 @@ func PlanTags(selected map[string]bool, want string, current map[string]string, 
 			}
 		}
 		cur := current[im.TagVar]
+		pin := pinned[im.TagVar]
 		switch {
 		case !needed && cur != "":
 			plan.Tags[im.TagVar] = cur
@@ -115,6 +117,9 @@ func PlanTags(selected map[string]bool, want string, current map[string]string, 
 		case cur != "":
 			plan.Tags[im.TagVar] = cur
 			plan.Fallback = append(plan.Fallback, fmt.Sprintf("%s 没有标签 %s，沿用现网的 %s", im.Name, want, cur))
+		case pin != "" && pin != want:
+			plan.Tags[im.TagVar] = pin
+			plan.Fallback = append(plan.Fallback, fmt.Sprintf("%s 没有标签 %s，用 cluster.env 里钉住的 %s", im.Name, want, pin))
 		default:
 			return plan, fmt.Errorf("镜像 %s 没有标签 %s，现网也没有在跑的版本：先 aegisctl build %s --tag %s（或等 CI 推完）", im.Name, want, im.Name, want)
 		}
@@ -338,7 +343,7 @@ func (a *App) cmdDeploy(ctx context.Context, args []string) error {
 			return err
 		}
 	}
-	plan, err := PlanTags(selected, tag, current, func(n string) bool { return exists[n] })
+	plan, err := PlanTags(selected, tag, current, env, func(n string) bool { return exists[n] })
 	if err != nil {
 		return err
 	}
@@ -882,7 +887,7 @@ func (a *App) applyTraefik(ctx context.Context, content string, env map[string]s
 	script += fmt.Sprintf(`if [ -f %[1]s ] && cmp -s %[2]s %[1]s; then rm -f %[2]s; echo same; exit 0; fi
 if [ -f %[1]s ]; then cp -p %[1]s %[3]s/aegis.yml.%[4]s; fi
 cp %[2]s %[1]s.aegisctl-tmp && chmod 644 %[1]s.aegisctl-tmp && mv -f %[1]s.aegisctl-tmp %[1]s && rm -f %[2]s
-ls -1t %[3]s/aegis.yml.* 2>/dev/null | tail -n +21 | while read -r f; do rm -f -- "$f"; done
+{ ls -1t %[3]s/aegis.yml.* 2>/dev/null || true; } | tail -n +21 | while read -r f; do rm -f -- "$f"; done
 echo written
 `, ShellQuote(dst), staged, remoteTraefikBak, ts)
 	out, err := a.capture(ctx, script)
