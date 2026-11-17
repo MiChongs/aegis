@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"aegis/internal/cluster"
 	"aegis/internal/config"
 	"aegis/internal/db"
 	"aegis/internal/event"
@@ -58,6 +61,12 @@ type WorkerApp struct {
 	EgressGateway   *egress.Gateway
 	OwnsEgress      bool
 	ShutdownTracing func(context.Context) error
+	// Cluster 多副本协调：后台循环选主，见 internal/cluster。
+	Cluster *cluster.Cluster
+	gates   map[string]func() bool
+	// health Worker 的探针服务（WORKER_HEALTH_ADDR），draining 停止时让 /readyz 先回 503。
+	health   *http.Server
+	draining atomic.Bool
 
 	// closeOnce 保证 Close 只执行一次：信号路径与 fx OnStop 都可能调用它，
 	// 重复关闭会二次 Stop Temporal Worker（SDK 内部 close 已关闭的 channel 直接 panic）。
@@ -136,6 +145,12 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 		_ = redisClient.Close()
 		return nil, err
 	}
+	workerNodeID := cluster.NodeID(cfg.Cluster.NodeID)
+	clusterHandle := &cluster.Cluster{
+		NodeID:  workerNodeID,
+		Elector: cluster.NewElector(postgres, workerNodeID, cfg.Cluster.LeaseTTL, log),
+		Bus:     cluster.NewBus(natsConn, workerNodeID, log),
+	}
 	// Temporal 为可选依赖：不可达时仅告警并降级——Worker 会跳过 TemporalWorker 启动，
 	// AutoSign 等基于 NATS 的订阅循环不受影响。
 	temporalClient, err := db.NewTemporal(cfg.Temporal, log)
@@ -165,7 +180,9 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 	// 地理异常报给风控平台（geo.anomaly）；Worker 只上报事件，不评估
 	workerRisk := service.NewRiskService(cfg.Risk, log, "aegis-worker", cfg.NATS.URL, redisClient, cfg.Redis.KeyPrefix)
 	geoRiskService.SetRiskService(workerRisk)
-	pg.SetRiskScorer(func(ctx context.Context, appID, userID int64) int { return workerRisk.UserMaxScore(ctx, appID, userID, 30) })
+	pg.SetRiskScorer(func(ctx context.Context, appID, userID int64) int {
+		return workerRisk.UserMaxScore(ctx, appID, userID, 30)
+	})
 	geoAnalyticsService := service.NewGeoAnalyticsService(log, cfg.GeoRisk, pg)
 	// 工单 SLA 巡检需要的最小依赖：统一通知出口 + 工单服务。
 	// AdminService / StorageService 在 Worker 侧用不到（巡检不做权限判定、不传附件），故传 nil。
@@ -207,7 +224,8 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 		tw = temporalworker.New(temporalClient, cfg.Temporal.TaskQueue, temporalworker.Options{})
 		service.RegisterTemporalWorkflowEngine(tw, log, pg)
 	}
-	return &WorkerApp{
+	app := &WorkerApp{
+		Cluster:         clusterHandle,
 		Config:          cfg,
 		ConfigManager:   manager,
 		Logger:          log,
@@ -234,10 +252,18 @@ func NewWorkerAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, man
 		EgressGateway:   egressGateway,
 		OwnsEgress:      ownsEgress,
 		ShutdownTracing: shutdownTracing,
-	}, nil
+	}
+	app.attachCluster()
+	return app, nil
 }
 
 func (w *WorkerApp) Run(ctx context.Context) error {
+	w.startHealthServer()
+	if w.Cluster != nil && w.Cluster.Elector != nil {
+		if err := w.Cluster.Elector.Start(ctx); err != nil {
+			w.Logger.Warn("集群租约初始化失败，选主任务将不会在本实例执行", zap.Error(err))
+		}
+	}
 	if w.OwnsEgress && w.EgressGateway != nil {
 		w.EgressGateway.Start(ctx)
 		w.Egress.StartSync(ctx)
@@ -346,10 +372,12 @@ func (w *WorkerApp) Run(ctx context.Context) error {
 	}
 
 	if w.AutoSign != nil {
-		if scheduled, processed, catchUpErr := w.AutoSign.CatchUpOnStartup(ctx); catchUpErr != nil {
-			w.Logger.Warn("auto sign startup catch-up failed", zap.Error(catchUpErr))
-		} else {
-			w.Logger.Info("auto sign startup catch-up completed", zap.Int("scheduled", scheduled), zap.Int("processed", processed))
+		if w.workerGate(leaseAutoSign)() {
+			if scheduled, processed, catchUpErr := w.AutoSign.CatchUpOnStartup(ctx); catchUpErr != nil {
+				w.Logger.Warn("auto sign startup catch-up failed", zap.Error(catchUpErr))
+			} else {
+				w.Logger.Info("auto sign startup catch-up completed", zap.Int("scheduled", scheduled), zap.Int("processed", processed))
+			}
 		}
 
 		SafeGo(w.Logger, w.CrashLog, "worker.auto_sign", true, func() {
@@ -391,8 +419,13 @@ func (w *WorkerApp) Close(ctx context.Context) {
 //  3. 后台巡检/治理协程收尾；
 //  4. 最后才关 Temporal 客户端、Redis 与 Postgres，连接池排空在途查询后断开。
 func (w *WorkerApp) close(ctx context.Context) {
+	w.draining.Store(true)
 	if w.TemporalWorker != nil {
 		w.TemporalWorker.Stop()
+	}
+	if w.Cluster != nil {
+		w.Cluster.Elector.Stop(ctx)
+		w.Cluster.Bus.Close()
 	}
 	drainNATS(ctx, w.NATSConn)
 	if w.Risk != nil {
@@ -421,6 +454,9 @@ func (w *WorkerApp) close(ctx context.Context) {
 	} else if w.Postgres != nil {
 		w.Postgres.Close()
 	}
+	if w.health != nil {
+		_ = w.health.Shutdown(ctx)
+	}
 	if w.ShutdownTracing != nil {
 		_ = w.ShutdownTracing(ctx)
 	}
@@ -440,6 +476,10 @@ func (w *WorkerApp) runAutoSignLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+			if !w.workerGate(leaseAutoSign)() {
+				tick.Reset(w.autoSignTickInterval())
+				continue
+			}
 			processed, err := w.AutoSign.RunDue(ctx)
 			if err != nil {
 				w.Logger.Warn("auto sign due run failed", zap.Error(err))
@@ -448,6 +488,10 @@ func (w *WorkerApp) runAutoSignLoop(ctx context.Context) {
 			}
 			tick.Reset(w.autoSignTickInterval())
 		case <-rebuild.C:
+			if !w.workerGate(leaseAutoSign)() {
+				rebuild.Reset(w.autoSignRebuildInterval())
+				continue
+			}
 			scheduled, err := w.AutoSign.RebuildSchedule(ctx)
 			if err != nil {
 				w.Logger.Warn("auto sign periodic rebuild failed", zap.Error(err))
@@ -480,12 +524,18 @@ func (w *WorkerApp) autoSignRebuildInterval() time.Duration {
 // runGeoAnalyticsLoop 周期执行地理聚合与维护任务。
 // 启动即跑一轮（确保分区存在 + 补齐停机期间的聚合缺口），随后按间隔滚动。
 func (w *WorkerApp) runGeoAnalyticsLoop(ctx context.Context) {
+	gate := w.workerGate(leaseGeoAnalytics)
 	runRollup := func() {
+		if !gate() {
+			return
+		}
 		if err := w.GeoAnalytics.RunHourlyRollup(ctx); err != nil {
 			w.Logger.Warn("geo stats rollup failed", zap.Error(err))
 		}
 	}
-	w.GeoAnalytics.RunDailyMaintenance(ctx)
+	if gate() {
+		w.GeoAnalytics.RunDailyMaintenance(ctx)
+	}
 	runRollup()
 
 	rollupTick := time.NewTicker(w.GeoAnalytics.RollupInterval())
@@ -500,7 +550,9 @@ func (w *WorkerApp) runGeoAnalyticsLoop(ctx context.Context) {
 		case <-rollupTick.C:
 			runRollup()
 		case <-dailyTick.C:
-			w.GeoAnalytics.RunDailyMaintenance(ctx)
+			if gate() {
+				w.GeoAnalytics.RunDailyMaintenance(ctx)
+			}
 		}
 	}
 }
@@ -509,7 +561,11 @@ func (w *WorkerApp) runGeoAnalyticsLoop(ctx context.Context) {
 // 状态跃迁（ontime → warning → breached）只在跨越阈值那一刻发一次通知，
 // 因为 SetTicketSLAState 带 `sla_state <> $2` 条件，重复巡检不会重复打扰。
 func (w *WorkerApp) runTicketSLALoop(ctx context.Context) {
+	gate := w.workerGate(leaseTicketSLA)
 	runScan := func() {
+		if !gate() {
+			return
+		}
 		warned, breached, err := w.Tickets.RunSLAScan(ctx, 500)
 		if err != nil {
 			w.Logger.Warn("ticket sla scan failed", zap.Error(err))
@@ -543,6 +599,9 @@ func (w *WorkerApp) runIPBanCleanupLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+			if !w.workerGate(leaseIPBanCleanup)() {
+				continue
+			}
 			expired, err := w.IPBan.CleanupExpired(ctx)
 			if err != nil {
 				w.Logger.Warn("ip ban cleanup failed", zap.Error(err))

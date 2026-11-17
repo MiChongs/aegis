@@ -51,6 +51,8 @@ type Config struct {
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
 	ShutdownTimeout time.Duration
+	// Cluster 多副本部署：节点标识、启动时是否自动迁移、摘流等待、Worker 健康端口，见 docs/distributed-deploy.md。
+	Cluster ClusterConfig
 	// ClientIP 真实客户端 IP 的判定方式（含受信代理网段）。
 	// 限流、封禁、地理风控、审计全部建立在它算出来的那个地址上，
 	// 判错不会报错，只会让这几样一起静默失效。详见 pkg/clientip 与 docs/client-ip.md。
@@ -822,6 +824,14 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 		ReadTimeout:     v.GetDuration("READ_TIMEOUT"),
 		WriteTimeout:    v.GetDuration("WRITE_TIMEOUT"),
 		ShutdownTimeout: v.GetDuration("SHUTDOWN_TIMEOUT"),
+		Cluster: ClusterConfig{
+			Role:             v.GetString("AEGIS_ROLE"),
+			NodeID:           v.GetString("AEGIS_NODE_ID"),
+			MigrateOnBoot:    getBool(v, "MIGRATE_ON_BOOT", true),
+			DrainDelay:       v.GetDuration("SHUTDOWN_DRAIN_DELAY"),
+			WorkerHealthAddr: v.GetString("WORKER_HEALTH_ADDR"),
+			LeaseTTL:         v.GetDuration("CLUSTER_LEASE_TTL"),
+		},
 		CORS: CORSConfig{
 			Enabled:          getBool(v, "CORS_ENABLED", true),
 			AllowAllOrigins:  getBool(v, "CORS_ALLOW_ALL_ORIGINS", false),
@@ -1368,6 +1378,15 @@ func setDefaults(cfg *Config) {
 	// 与 IdleTimeout 兜底，业务超时在各 handler / service 自理。
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = 10 * time.Second
+	}
+	if cfg.Cluster.DrainDelay < 0 {
+		cfg.Cluster.DrainDelay = 0
+	}
+	if strings.TrimSpace(cfg.Cluster.WorkerHealthAddr) == "" {
+		cfg.Cluster.WorkerHealthAddr = ":8089"
+	}
+	if cfg.Cluster.LeaseTTL <= 0 {
+		cfg.Cluster.LeaseTTL = 30 * time.Second
 	}
 	if len(cfg.CORS.AllowMethods) == 0 {
 		cfg.CORS.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}

@@ -62,7 +62,7 @@ func (a *APIApp) startSecureServer(onError func(error)) (*autocert.Manager, erro
 	opts := httpserve.Options{
 		Addr:              fmt.Sprintf(":%d", tc.Port),
 		TLS:               bundle.Config,
-		Handler:           a.Router,
+		Handler:           a.drain.wrap(a.Router),
 		HSTS:              tc.HSTSHeader(),
 		ReadHeaderTimeout: a.Server.ReadHeaderTimeout,
 		ReadTimeout:       a.Server.ReadTimeout,

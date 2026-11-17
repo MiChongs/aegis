@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"aegis/internal/authz"
+	"aegis/internal/cluster"
 	"aegis/internal/config"
 	"aegis/internal/db"
 	"aegis/internal/event"
@@ -99,6 +100,12 @@ type APIApp struct {
 	ShutdownTracing func(context.Context) error
 	// NativePlugins 内置插件宿主（流量管理等）：Start 里跑启停对账，退出时逆序停止
 	NativePlugins *nativeplugin.Host
+	// Cluster 多副本协调：后台任务选主与配置失效广播，见 internal/cluster。
+	Cluster *cluster.Cluster
+	// drain 停止时先让 /readyz 回 503 再关监听，见 drain.go。
+	drain *drainState
+	// autoSignGateFn 自动签到循环的租约判定，由 autoSignGate 惰性登记。
+	autoSignGateFn func() bool
 
 	// closeOnce 保证 Close 只执行一次（信号路径与 fx OnStop 都可能调用）。
 	closeOnce sync.Once
@@ -169,9 +176,14 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	}
 	// 其余代码继续按 *pgxpool.Pool 使用；生命周期治理由 pgHandle 承担
 	postgres := pgHandle.Pool
-	// 自动执行数据库迁移
-	if err := autoMigrate(ctx, postgres, log); err != nil {
-		log.Warn("自动迁移失败", zap.Error(err))
+	// 自动执行数据库迁移。集群部署设 MIGRATE_ON_BOOT=false，由发布前的 migrate 任务负责；
+	// 即便多个副本都开着它也是安全的：迁移在 advisory lock 下排队、按版本表跳过。
+	if cfg.Cluster.MigrateOnBoot {
+		if err := autoMigrate(ctx, postgres, log); err != nil {
+			log.Warn("自动迁移失败", zap.Error(err))
+		}
+	} else {
+		log.Info("已关闭启动时自动迁移（MIGRATE_ON_BOOT=false），由发布流程执行 migrate")
 	}
 	redisClient := db.NewRedis(ctx, cfg.Redis)
 	if err := redisClient.Ping(ctx).Err(); err != nil {
@@ -180,6 +192,12 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	natsConn, js, err := db.NewNATS(ctx, cfg.NATS)
 	if err != nil {
 		return nil, err
+	}
+	nodeID := cluster.NodeID(cfg.Cluster.NodeID)
+	clusterHandle := &cluster.Cluster{
+		NodeID:  nodeID,
+		Elector: cluster.NewElector(postgres, nodeID, cfg.Cluster.LeaseTTL, log),
+		Bus:     cluster.NewBus(natsConn, nodeID, log),
 	}
 	// Temporal 为可选依赖：不可达时仅告警并降级（WorkflowService 已做 nil-guard，
 	// 管理后台访问 Workflow 功能会返回 503，但 API / 用户认证 / 应用管理等核心链路继续运行）。
@@ -231,7 +249,13 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 它必须先于 AdminService 起来 —— 后者的每一次判定都要问它。
 	// 内置策略 = 平台角色 + 组织内置角色，两者共用一张策略表、一个模型。
 	builtinPolicies := append(authz.BuiltinPolicies(), service.OrgBuiltinPolicies()...)
-	authzEngine, err := authz.New(ctx, log, pg, builtinPolicies)
+	// 内置策略是「删掉重插」：多个副本同时启动时必须排队，否则会交错出重复或缺失的策略行。
+	var authzEngine *authz.Engine
+	err = cluster.WithAdvisoryLock(ctx, postgres, "aegis.authz.builtin", func(lockCtx context.Context, _ *pgxpool.Conn) error {
+		var buildErr error
+		authzEngine, buildErr = authz.New(lockCtx, log, pg, builtinPolicies)
+		return buildErr
+	})
 	if err != nil {
 		closeTemporal()
 		natsConn.Close()
@@ -879,9 +903,10 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		return nil, err
 	}
 
+	drain := &drainState{}
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:           router,
+		Handler:           drain.wrap(router),
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		// 缺省 0（不限）：SSE 对话流与流式转发的生存前提，见 config.NormalizeConfig 的说明。
@@ -934,11 +959,20 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		ClientIP:           clientIPResolver,
 		ShutdownTracing:    shutdownTracing,
 		NativePlugins:      nativePlugins,
+		Cluster:            clusterHandle,
+		drain:              drain,
 	}
+	app.attachCluster()
 	return app, nil
 }
 
 func (a *APIApp) Start(ctx context.Context) error {
+	// 先抢一轮租约：下面要立即跑一次的任务（自动签到补签、存储迁移续跑）据此判断归不归本实例
+	if a.Cluster != nil && a.Cluster.Elector != nil {
+		if err := a.Cluster.Elector.Start(ctx); err != nil {
+			a.Logger.Warn("集群租约初始化失败，后台任务将不会在本实例执行", zap.Error(err))
+		}
+	}
 	if a.AccountBan != nil {
 		a.AccountBan.Start()
 	}
@@ -1005,10 +1039,12 @@ func (a *APIApp) Start(ctx context.Context) error {
 	})
 
 	if a.AutoSign != nil {
-		if scheduled, processed, err := a.AutoSign.CatchUpOnStartup(ctx); err != nil {
-			a.Logger.Warn("api auto sign startup catch-up failed", zap.Error(err))
-		} else {
-			a.Logger.Info("api auto sign startup catch-up completed", zap.Int("scheduled", scheduled), zap.Int("processed", processed))
+		if a.autoSignGate() {
+			if scheduled, processed, err := a.AutoSign.CatchUpOnStartup(ctx); err != nil {
+				a.Logger.Warn("api auto sign startup catch-up failed", zap.Error(err))
+			} else {
+				a.Logger.Info("api auto sign startup catch-up completed", zap.Int("scheduled", scheduled), zap.Int("processed", processed))
+			}
 		}
 		SafeGo(a.Logger, a.CrashLog, "api.auto_sign", true, func() {
 			a.runAutoSignLoop(ctx)
@@ -1027,6 +1063,8 @@ func (a *APIApp) Close(ctx context.Context) {
 func (a *APIApp) close(ctx context.Context) {
 	// 流式 AI 对话不会在 Shutdown 的期限内自己结束：先约好宽限后主动取消，让它们带着
 	// 可重试的错误事件收尾、放回暂扣，而不是被进程退出硬切、暂扣挂到过期（ai_gateway_inflight.go）。
+	// 先摘流：/readyz 转 503，等负载均衡把本实例摘掉，再取消流式请求、关监听
+	a.drain.begin(ctx, a.Config.Cluster.DrainDelay)
 	if a.AIGateway != nil {
 		a.AIGateway.CancelInFlightAfter(aiRelayShutdownGrace(ctx))
 	}
@@ -1112,10 +1150,16 @@ func (a *APIApp) close(ctx context.Context) {
 	if a.OwnsEgress {
 		releaseEgressGateway(a.EgressGateway)
 	}
+	// 后台任务都停了才释放租约，让别的实例立刻接手；广播退订要在 NATS 排空之前
+	if a.Cluster != nil {
+		a.Cluster.Elector.Stop(ctx)
+		a.Cluster.Bus.Close()
+	}
+	// NATS 先排空再关 Redis：排空期间还会投递的消息（自动签到同步等）处理时要用 Redis
+	drainNATS(ctx, a.NATSConn)
 	if a.Redis != nil {
 		_ = a.Redis.Close()
 	}
-	drainNATS(ctx, a.NATSConn)
 	if a.Temporal != nil {
 		a.Temporal.Close()
 	}
@@ -1148,6 +1192,10 @@ func (a *APIApp) runAutoSignLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+			if !a.autoSignGate() {
+				tick.Reset(a.autoSignTickInterval())
+				continue
+			}
 			processed, err := a.AutoSign.RunDue(ctx)
 			if err != nil {
 				a.Logger.Warn("api auto sign due run failed", zap.Error(err))
@@ -1156,6 +1204,10 @@ func (a *APIApp) runAutoSignLoop(ctx context.Context) {
 			}
 			tick.Reset(a.autoSignTickInterval())
 		case <-rebuild.C:
+			if !a.autoSignGate() {
+				rebuild.Reset(a.autoSignRebuildInterval())
+				continue
+			}
 			scheduled, err := a.AutoSign.RebuildSchedule(ctx)
 			if err != nil {
 				a.Logger.Warn("api auto sign periodic rebuild failed", zap.Error(err))
@@ -1190,7 +1242,11 @@ func (a *APIApp) runAdminSessionCleanupLoop(ctx context.Context) {
 		return
 	}
 
+	gate := a.Cluster.Gate(leaseAdminSessionCleanup)
 	runCleanup := func() {
+		if !gate() {
+			return
+		}
 		cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		a.SessionMgmt.Cleanup(cleanupCtx)

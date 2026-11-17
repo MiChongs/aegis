@@ -25,29 +25,24 @@ import (
 	"go.uber.org/zap"
 )
 
-// autoMigrate 启动时自动执行所有 SQL 迁移（幂等，失败不阻塞启动）
+// autoMigrate 启动时执行尚未应用的迁移（失败不阻塞启动）。规则见 migrator.go。
 func autoMigrate(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) error {
-	files, err := migrationFiles()
+	report, err := applyMigrations(ctx, pool, log, false, nil)
 	if err != nil {
 		return err
 	}
-	for _, file := range files {
-		content, err := os.ReadFile(file)
-		if err != nil {
-			return err
-		}
-		sql := strings.TrimSpace(string(content))
-		if sql == "" {
-			continue
-		}
-		if _, err := pool.Exec(ctx, sql); err != nil {
-			log.Warn("迁移跳过（可能已应用）", zap.String("file", filepath.Base(file)), zap.Error(err))
-		}
-	}
-	log.Info("数据库迁移检查完成", zap.Int("files", len(files)))
+	log.Info("数据库迁移检查完成",
+		zap.Int("files", report.Total),
+		zap.Int("applied", len(report.Applied)),
+		zap.Int("skipped", report.Skipped),
+		zap.Int("assumed", len(report.Assumed)),
+		zap.Int("failed", len(report.Failed)),
+	)
 	return nil
 }
 
+// RunMigrations 是 `aegis-server migrate`：集群发布前由一次性任务执行。
+// 新迁移失败时返回错误（进程非零退出），发布流程据此停在升级 API 之前。
 func RunMigrations(ctx context.Context) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -65,23 +60,25 @@ func RunMigrations(ctx context.Context) error {
 	}
 	bar := progressutil.New(int64(len(files)), "执行 PostgreSQL 迁移")
 	defer bar.Finish()
-	for _, file := range files {
-		content, err := os.ReadFile(file)
-		if err != nil {
-			return err
-		}
-		sql := strings.TrimSpace(string(content))
-		if sql == "" {
-			continue
-		}
-		if _, err := pool.Exec(ctx, sql); err != nil {
-			return fmt.Errorf("apply migration %s failed: %w", file, err)
-		}
-		bar.Add(1)
-		bar.SetDescription("执行 PostgreSQL 迁移 file=%s", filepath.Base(file))
-		fmt.Println("applied migration:", file)
+	log, logErr := pkglogger.New(cfg.AppEnv)
+	if logErr != nil {
+		log = zap.NewNop()
 	}
+	report, err := applyMigrations(ctx, pool, log, true, func(file string) {
+		bar.SetDescription("执行 PostgreSQL 迁移 file=%s", file)
+	})
 	bar.Finish()
+	if err != nil {
+		return err
+	}
+	for _, v := range report.Applied {
+		fmt.Println("applied migration:", v)
+	}
+	fmt.Printf("迁移完成：共 %d 个，新执行 %d 个，跳过 %d 个，按已应用记账 %d 个，失败 %d 个\n",
+		report.Total, len(report.Applied), report.Skipped, len(report.Assumed), len(report.Failed))
+	for _, v := range report.Failed {
+		fmt.Println("迁移失败（被改过的旧迁移，已保留旧记录）:", v)
+	}
 	return nil
 }
 
