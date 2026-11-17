@@ -298,8 +298,9 @@ func TestMonitorHistoryKeysPerNode(t *testing.T) {
 	if got := dbm.historyKey(); got != "t:database:history" {
 		t.Fatalf("单实例应沿用共享键，实得 %s", got)
 	}
-	dbm.SetCluster(&cluster.Cluster{NodeID: "node-b"})
-	if got := dbm.historyKey(); !strings.HasPrefix(got, "t:database:history:node:node-b") {
+	// 历史按副本的稳定标识分键（重启后接得上），不是每次启动都变的租约持有者 ID
+	dbm.SetCluster(&cluster.Cluster{NodeID: "node-b-3f9a", Instance: "node-b"})
+	if got := dbm.historyKey(); got != "t:database:history:node:node-b" {
 		t.Fatalf("应按节点分键，实得 %s", got)
 	}
 	if !dbm.reaperTask.owned() {
