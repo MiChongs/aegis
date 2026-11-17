@@ -1,5 +1,6 @@
 import { apiRequest, buildQuery } from "./client";
 import type {
+  AdminPaymentFulfillResult,
   AdminPaymentOrderDetail,
   AdminPaymentOrderList,
   AdminUserSettingsView,
@@ -31,6 +32,30 @@ export function getAdminPaymentOrders(
   }
 ) {
   return apiRequest<AdminPaymentOrderList>("/api/admin/app/payment-config/orders/list", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+/**
+ * 处理「钱收了、东西没发」的订单：action=fulfill 按（推断出的）用途补发，manual 标记已在别处补发。
+ * dry_run 只预览将写入的快照与提示。
+ */
+export function fulfillAdminPaymentOrder(
+  token: string,
+  payload: {
+    appid: number;
+    order_no: string;
+    action?: "fulfill" | "manual";
+    purpose?: string;
+    plan_id?: number;
+    package_id?: number;
+    note?: string;
+    dry_run?: boolean;
+  }
+) {
+  return apiRequest<AdminPaymentFulfillResult>("/api/admin/app/payment-config/orders/fulfill", {
     method: "POST",
     token,
     body: JSON.stringify(payload)

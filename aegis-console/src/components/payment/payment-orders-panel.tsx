@@ -31,7 +31,9 @@ import {
   orderPaidDifference,
   orderPaidDifferenceLabel,
   orderRefundLabel,
-  relativeOrderTime
+  relativeOrderTime,
+  needsFulfillment,
+  OrderFulfillmentBadge
 } from "./payment-order-meta";
 
 const ALL = "__all__";
@@ -226,6 +228,7 @@ function OrderRow({
   const refundable = order.status === "paid" && order.refund_status !== "full";
   const paidDiff = orderPaidDifference(order);
   const review = Boolean(order.review_reason);
+  const unfulfilled = needsFulfillment(order.fulfillment_state);
   return (
     <li
       role="button"
@@ -289,12 +292,14 @@ function OrderRow({
         <div className="mt-1 flex flex-wrap justify-end gap-1 md:hidden">
           <OrderStatusBadge status={order.status} />
           {review ? <OrderReviewBadge /> : null}
+          {unfulfilled ? <OrderFulfillmentBadge /> : null}
         </div>
       </div>
 
       <div className="hidden flex-col items-start gap-1 md:flex">
         <OrderStatusBadge status={order.status} />
         {review ? <OrderReviewBadge /> : null}
+        {unfulfilled ? <OrderFulfillmentBadge /> : null}
         {refundLabel ? <span className="text-xs text-muted-foreground">{refundLabel}</span> : null}
       </div>
 

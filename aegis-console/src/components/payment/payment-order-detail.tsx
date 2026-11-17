@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { PaymentBrandBadge } from "./payment-brand-icon";
+import { OrderFulfillmentCard } from "./payment-order-fulfill";
 import {
   OrderReviewBadge,
   orderPaidDifference,
@@ -19,6 +20,8 @@ import {
   OrderStatusBadge,
   callbackVerified,
   formatOrderTime,
+  fulfillmentStateLabel,
+  orderPurposeLabel,
   orderRefundLabel,
   refundStatusBadge,
   reversalBadge
@@ -102,6 +105,7 @@ export function PaymentOrderDetailSheet({
                   <p className="mt-1 text-xs text-muted-foreground">系统不会再自动查单。核实后请补发商品或在渠道后台退款。</p>
                 </div>
               ) : null}
+              <OrderFulfillmentCard appId={appId} order={order} />
               <div className="flex flex-wrap gap-2">
                 {refundable ? (
                   <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => onRefund(order.order_no)}>
@@ -165,6 +169,7 @@ export function PaymentOrderDetailSheet({
                   <Fact label="支付时间" value={formatOrderTime(order.paid_at, true)} />
                   <Fact label="过期时间" value={formatOrderTime(order.expire_at, true)} />
                   <Fact label="业务通知" value={notifyLabel(order.notify_status)} />
+                  {orderPurposeLabel(order.purpose) ? <Fact label="用途" value={orderPurposeLabel(order.purpose)} /> : null}
                   <Fact label="履约" value={fulfillmentLabel(detail)} />
                 </Facts>
               </Section>
@@ -233,7 +238,11 @@ function OrderProgress({ detail }: { detail: AdminPaymentOrderDetail }) {
       : order.status === "failed"
         ? { label: "支付失败", time: order.updatedAt, done: true, tone: "danger" }
         : { label: "支付", time: order.paid_at, done: Boolean(order.paid_at) },
-    { label: "履约", time: detail.fulfilled_at, done: detail.fulfillment_status === "done" }
+    {
+      label: order.fulfillment_state === "manual" ? "已补发" : "履约",
+      time: detail.fulfilled_at,
+      done: detail.fulfillment_status === "done" || detail.fulfillment_status === "manual"
+    }
   ];
   if (order.refund_status === "partial" || order.refund_status === "full") {
     steps.push({ label: order.refund_status === "full" ? "全额退款" : "部分退款", time: order.updatedAt, done: true, tone: "info" });
@@ -355,19 +364,9 @@ function Fact({
   );
 }
 
+/** 履约以服务端推导的 fulfillment_state 为准：以前只看落库的 none，把「付了钱没发货」也显示成了「无需履约」。 */
 function fulfillmentLabel(detail: AdminPaymentOrderDetail) {
-  switch (detail.fulfillment_status) {
-    case "done":
-      return "已履约";
-    case "none":
-      return "无需履约";
-    case "pending":
-      return "待履约";
-    case "failed":
-      return "履约失败";
-    default:
-      return detail.fulfillment_status || "";
-  }
+  return fulfillmentStateLabel(detail.order.fulfillment_state) || (detail.fulfillment_status === "done" ? "已发放" : detail.fulfillment_status || "");
 }
 
 function notifyLabel(status?: string) {

@@ -30,6 +30,7 @@ import {
   createAdminPaymentConfig,
   deleteAdminVipPlan,
   getAdminPaymentOrderDetail,
+  fulfillAdminPaymentOrder,
   getAdminPaymentOrders,
   getAdminVipPlans,
   getAdminVipTransactions,
@@ -1635,6 +1636,22 @@ export function useAdminPaymentOrderDetailQuery(appId?: number | null, orderNo?:
     queryKey: ["admin-payment-order-detail", token, appId, orderNo],
     queryFn: () => getAdminPaymentOrderDetail(token as string, { appid: appId as number, order_no: orderNo as string }),
     enabled: Boolean(token && appId && orderNo)
+  });
+}
+
+/** 补履约 / 标记已在别处补发。dry_run 只预览，不刷新列表。 */
+export function useFulfillAdminPaymentOrderMutation() {
+  const token = useAdminToken();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Parameters<typeof fulfillAdminPaymentOrder>[1]) => fulfillAdminPaymentOrder(token as string, payload),
+    onSuccess: async (result) => {
+      if (result.dryRun) return;
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["admin-payment-orders"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-payment-order-detail"] })
+      ]);
+    }
   });
 }
 

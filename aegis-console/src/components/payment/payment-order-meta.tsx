@@ -26,8 +26,56 @@ export const ORDER_STATUS_FILTERS = [
   { value: "expired", label: "已过期" },
   { value: "failed", label: "支付失败" },
   // 不是订单状态：实付与订单金额对不上、等管理员处理的订单（后端 status=review）
-  { value: "review", label: "待人工处理" }
+  { value: "review", label: "待人工处理" },
+  // 不是订单状态：钱收了、看得出要发东西、还没发的订单（后端 status=unfulfilled）
+  { value: "unfulfilled", label: "待履约" }
 ];
+
+/** 订单用途的叫法 */
+export function orderPurposeLabel(purpose?: string) {
+  switch (purpose) {
+    case "vip_purchase":
+      return "会员";
+    case "wallet_recharge":
+      return "余额充值";
+    case "integral_purchase":
+      return "积分";
+    default:
+      return "";
+  }
+}
+
+/** 履约状况的叫法（后端 fulfillment_state） */
+export function fulfillmentStateLabel(state?: string) {
+  switch (state) {
+    case "done":
+      return "已发放";
+    case "manual":
+      return "已在别处补发";
+    case "pending":
+      return "待发放（系统自动重试）";
+    case "unrecognized":
+      return "未发放（下单未写明用途）";
+    case "not_required":
+      return "无需发放";
+    default:
+      return "";
+  }
+}
+
+/** 钱收了、东西没发：pending 系统会自动重试，unrecognized 要管理员确认。 */
+export function needsFulfillment(state?: string) {
+  return state === "pending" || state === "unrecognized";
+}
+
+export function OrderFulfillmentBadge({ className }: { className?: string }) {
+  return (
+    <Badge variant="outline" className={cn("gap-1.5 font-medium", "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400", className)}>
+      <span className="size-1.5 rounded-full bg-red-500" />
+      待履约
+    </Badge>
+  );
+}
 
 export function orderStatusMeta(status?: string): OrderStatusMeta {
   return STATUS_META[status ?? ""] ?? { label: status || "未知", dot: "bg-muted-foreground/50", badge: "border-border bg-muted text-muted-foreground" };
@@ -116,7 +164,14 @@ export function relativeOrderTime(value?: string | null) {
 /** 回调验签结果 */
 export function callbackVerified(status: string) {
   const normalized = status.toLowerCase();
-  return normalized === "ok" || normalized.includes("success") || normalized === "verified";
+  return (
+    normalized === "ok" ||
+    normalized.includes("success") ||
+    normalized === "verified" ||
+    normalized === "overpaid" ||
+    normalized === "admin_fulfilled" ||
+    normalized === "manual_fulfilled"
+  );
 }
 
 // ── 退款单 ──────────────────────────

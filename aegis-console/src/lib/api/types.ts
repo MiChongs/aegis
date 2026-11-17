@@ -1185,7 +1185,26 @@ export type AdminPaymentOrder = {
   review_reason?: string;
   review_note?: string;
   review_at?: string | null;
+  /** 落库的履约状态：none / done / manual（已在别处补发） */
+  fulfillment_status?: string;
+  fulfilled_at?: string | null;
+  /** 规范化后的订单用途（vip_purchase / wallet_recharge / integral_purchase），老订单为推断值；普通商品为空 */
+  purpose?: string;
+  /** 履约状况：not_required / pending（写清用途、待重试）/ unrecognized（老客户端没写用途，需确认）/ done / manual */
+  fulfillment_state?: string;
   [key: string]: unknown;
+};
+
+/** 补履约（POST /orders/fulfill）的结果；dry_run 时 applied 为 false */
+export type AdminPaymentFulfillResult = {
+  orderNo: string;
+  action: "fulfill" | "manual";
+  dryRun: boolean;
+  applied: boolean;
+  purpose?: string;
+  snapshot?: Record<string, unknown>;
+  warnings?: string[];
+  order?: AdminPaymentOrder;
 };
 
 export type AdminPaymentOrderList = {
