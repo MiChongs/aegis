@@ -249,7 +249,8 @@ services:
         read_only: true
       - type: bind
         source: ${AEGIS_NATS_DATA:-/srv/aegis/nats/data}
-        target: /data
+        # 必须与 nats-server.conf 的 store_dir 一致；导入现网时沿用现网的挂载点
+        target: ${AEGIS_NATS_DATA_TARGET:-/data}
     # 官方 nats:2 镜像不带 shell 与 wget，无法做容器内健康检查；aegisctl doctor 经监控端口 8222 检查
     networks:
       aegis-internal:

@@ -428,6 +428,18 @@ func TestRenderTraefik(t *testing.T) {
 	if u := doc.HTTP.Services["aegis-api"].LoadBalancer.Servers[0].URL; u != "http://aegis_aegis-api:8088" {
 		t.Fatalf("后端 = %s", u)
 	}
+	// 一起听挂在 API 域名的 /listen-together 下（与现网 Dokploy 一致），优先级要压过 API 的整域名路由
+	lt := doc.HTTP.Routers["aegis-listen-together-path"]
+	if !strings.Contains(lt.Rule, "PathPrefix(`/listen-together`)") || !strings.Contains(lt.Rule, "Host(`system.karpov.cn`)") ||
+		lt.Priority <= api.Priority || lt.Service != "aegis-listen-together-path" || len(lt.Middlewares) != 1 || lt.Middlewares[0] != "aegis-listen-together-strip" {
+		t.Fatalf("一起听路径路由 = %+v", lt)
+	}
+	if !strings.Contains(out, "prefixes: [\"/listen-together\"]") {
+		t.Fatalf("缺少去前缀中间件：\n%s", out)
+	}
+	if u := doc.HTTP.Services["aegis-listen-together-path"].LoadBalancer.Servers[0].URL; u != "http://aegis_listen-together:8090" {
+		t.Fatalf("一起听后端 = %s", u)
+	}
 	if u := doc.HTTP.Services["aegis-console"].LoadBalancer.Servers[0].URL; u != "http://aegis_aegis-console:3000" {
 		t.Fatalf("控制台后端 = %s", u)
 	}
@@ -790,7 +802,11 @@ func TestImport(t *testing.T) {
 		}
 	}
 	notes := strings.Join(res.Notes, "\n")
-	for _, want := range []string{"/srv/aegis/aegis-api/data", "/data/js", "riskuser"} {
+	// NATS 的挂载点改为直接沿用现网（AEGIS_NATS_DATA_TARGET），不再提示改配置文件
+	if v["AEGIS_NATS_DATA_TARGET"] != "/data/js" {
+		t.Errorf("AEGIS_NATS_DATA_TARGET = %q，应沿用现网挂载点 /data/js", v["AEGIS_NATS_DATA_TARGET"])
+	}
+	for _, want := range []string{"/srv/aegis/aegis-api/data", "riskuser"} {
 		if !strings.Contains(notes, want) {
 			t.Errorf("提示里没有 %q：%s", want, notes)
 		}

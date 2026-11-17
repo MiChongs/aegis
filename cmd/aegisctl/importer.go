@@ -200,15 +200,11 @@ func ClassifyImport(services, containers []runningUnit, opt ImportOptions) Impor
 		if !strings.HasPrefix(s.Name, "aegis-console") {
 			continue
 		}
-		var pub []string
-		for k := range s.envMap() {
-			if strings.HasPrefix(k, "NEXT_PUBLIC_") {
-				pub = append(pub, k)
+		// 构建期内联进前端产物的界面文字：aegisctl build 按同名键传给 console.Dockerfile
+		for k, v := range s.envMap() {
+			if strings.HasPrefix(k, "NEXT_PUBLIC_AEGIS_") {
+				set(k, v)
 			}
-		}
-		sort.Strings(pub)
-		if len(pub) > 0 {
-			note("现网控制台设了构建期变量 " + strings.Join(pub, "、") + "：console.Dockerfile 目前不接收它们，需要时请先给 Dockerfile 加 ARG")
 		}
 	}
 
@@ -268,9 +264,8 @@ func ClassifyImport(services, containers []runningUnit, opt ImportOptions) Impor
 			} else {
 				set("AEGIS_NATS_DATA", data.Source)
 			}
-			if data.dest() != "/data" {
-				note("现网 NATS 数据挂在容器的 " + data.dest() + "，统一栈挂在 /data：请把 nats-server.conf 的 store_dir 改到 /data 下对应位置")
-			}
+			// 沿用现网容器里的挂载点：nats-server.conf 的 store_dir 指着它，不用改配置文件
+			set("AEGIS_NATS_DATA_TARGET", data.dest())
 		}
 	}
 	if tp := findContainer("aegis-temporal"); tp != nil {

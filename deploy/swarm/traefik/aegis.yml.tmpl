@@ -59,6 +59,40 @@ http:
         {}
 {{- end }}
 {{- end }}
+{{- /* 一起听挂在 API 域名的路径下（与现网 Dokploy 相同）：/listen-together/... 去掉前缀后转给一起听。
+       优先级比 API 的整域名路由高，否则会被 API 吃掉。 */ -}}
+{{- $ltPath := envOr "AEGIS_LISTEN_TOGETHER_PATH" "/listen-together" }}
+{{- $ltPriority := envOr "AEGIS_TRAEFIK_PATH_PRIORITY" "1100" }}
+{{- if env "AEGIS_LISTEN_TOGETHER_PATH_DOMAINS" }}
+{{- if ne $httpMode "off" }}
+    aegis-listen-together-path-web:
+      rule: "({{ hosts "AEGIS_LISTEN_TOGETHER_PATH_DOMAINS" }}) && PathPrefix(`{{ $ltPath }}`)"
+      entryPoints: ["{{ $web }}"]
+      service: aegis-listen-together-path
+      priority: {{ $ltPriority }}
+{{- if eq $httpMode "redirect" }}
+      middlewares: ["{{ $redirect }}"]
+{{- else }}
+      middlewares: ["aegis-listen-together-strip"]
+{{- end }}
+{{- end }}
+    aegis-listen-together-path:
+      rule: "({{ hosts "AEGIS_LISTEN_TOGETHER_PATH_DOMAINS" }}) && PathPrefix(`{{ $ltPath }}`)"
+      entryPoints: ["{{ $websecure }}"]
+      service: aegis-listen-together-path
+      priority: {{ $ltPriority }}
+      middlewares: ["aegis-listen-together-strip"]
+      tls:
+{{- if $resolver }}
+        certResolver: {{ $resolver }}
+{{- else }}
+        {}
+{{- end }}
+  middlewares:
+    aegis-listen-together-strip:
+      stripPrefix:
+        prefixes: ["{{ $ltPath }}"]
+{{- end }}
   services:
 {{- range $groups }}
     {{ .Name }}:
@@ -66,4 +100,11 @@ http:
         passHostHeader: true
         servers:
           - url: "{{ .Backend }}"
+{{- end }}
+{{- if env "AEGIS_LISTEN_TOGETHER_PATH_DOMAINS" }}
+    aegis-listen-together-path:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "http://aegis_listen-together:8090"
 {{- end }}
