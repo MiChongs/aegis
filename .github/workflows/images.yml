@@ -1,0 +1,148 @@
+name: Images
+
+# 统一栈（deploy/swarm/aegis-stack.yml）用的镜像：push 到 main 时只构建改动涉及的镜像，
+# 推到 ghcr.io/michongs/<镜像>:sha-<7 位短哈希> 与 :main。发布用 aegisctl deploy --tag sha-<短哈希>：
+# 没改动、因此没有这个标签的镜像，aegisctl 会沿用现网正在跑的版本。
+#
+# 路径规则与 cmd/aegisctl/catalog.go 的镜像清单对应；改了构建上下文就同步改这里。
+# 手动触发时可以指定镜像（逗号分隔，all 为全部）。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      images:
+        description: 要构建的镜像名（aegis-server、aegis-console 等，逗号分隔；all 为全部）
+        required: false
+        default: all
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/michongs
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+      any: ${{ steps.pick.outputs.any }}
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: pick
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          INPUT: ${{ github.event.inputs.images }}
+        run: |
+          set -euo pipefail
+          all="aegis-server aegis-console aegis-listen-together aegis-risk aegis-risk-cep aegis-music aegis-music-deep"
+          go_common='^(go\.mod|go\.sum|api/|pkg/)'
+          declare -A rule=(
+            # 主服务的构建上下文是整个仓库：只看它真正编译或打包进镜像的目录（含它引用的微服务契约包）
+            [aegis-server]='^(deploy/docker/Dockerfile$|go\.mod$|go\.sum$|\.dockerignore$|cmd/|internal/|pkg/|api/|migrations/|sql/|assets/|services/music/contract/|services/risk/(events|kitex_gen)/)'
+            [aegis-console]='^(aegis-console/|deploy/docker/console\.Dockerfile$)'
+            [aegis-listen-together]="${go_common}|^(services/listentogether/|deploy/docker/listen-together\.Dockerfile$)"
+            [aegis-risk]="${go_common}|^(services/risk/(cmd|internal|events|kitex_gen)/|deploy/docker/risk\.Dockerfile$)"
+            [aegis-risk-cep]='^(services/risk/cep/|deploy/docker/risk-cep\.Dockerfile$)'
+            [aegis-music]="${go_common}|^(services/music/(cmd|internal|contract)/|deploy/docker/music\.Dockerfile$)"
+            [aegis-music-deep]='^(services/music/deep/|deploy/docker/music-deep\.Dockerfile$)'
+          )
+          picked=""
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ -z "$INPUT" ] || [ "$INPUT" = "all" ]; then picked="$all"; else picked="${INPUT//,/ }"; fi
+          elif [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            picked="$all"
+          else
+            files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+            if grep -qx '.github/workflows/images.yml' <<<"$files"; then
+              picked="$all"
+            else
+              for im in $all; do
+                if grep -qE "${rule[$im]}" <<<"$files"; then picked="$picked $im"; fi
+              done
+            fi
+          fi
+          for im in $picked; do
+            case " $all " in *" $im "*) ;; *) echo "::error::不认识的镜像 $im"; exit 1 ;; esac
+          done
+          json=$(for im in $picked; do echo "$im"; done | jq -R . | jq -cs '{image: .}')
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+          if [ -n "${picked// /}" ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
+          echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "本次构建：${picked:-（无）}"
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: spec
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctx=.
+          args=""
+          case "${{ matrix.image }}" in
+            aegis-server)          df=deploy/docker/Dockerfile ;;
+            aegis-console)         df=deploy/docker/console.Dockerfile; ctx=aegis-console
+                                   # 统一栈里 API 的服务名；地址在构建期烘进控制台产物
+                                   # NEXT_PUBLIC_* 取仓库 Variables（Settings → Secrets and variables → Actions → Variables）
+                                   args="AEGIS_API_BACKEND=http://aegis_aegis-api:8088
+          NEXT_PUBLIC_AEGIS_CONSOLE_NAME=${{ vars.NEXT_PUBLIC_AEGIS_CONSOLE_NAME }}
+          NEXT_PUBLIC_AEGIS_PLATFORM_NAME=${{ vars.NEXT_PUBLIC_AEGIS_PLATFORM_NAME }}
+          NEXT_PUBLIC_AEGIS_ENVIRONMENT=${{ vars.NEXT_PUBLIC_AEGIS_ENVIRONMENT }}" ;;
+            aegis-listen-together) df=deploy/docker/listen-together.Dockerfile; args="VERSION=${{ needs.changes.outputs.tag }}" ;;
+            aegis-risk)            df=deploy/docker/risk.Dockerfile; args="VERSION=${{ needs.changes.outputs.tag }}" ;;
+            aegis-risk-cep)        df=deploy/docker/risk-cep.Dockerfile ;;
+            aegis-music)           df=deploy/docker/music.Dockerfile; args="VERSION=${{ needs.changes.outputs.tag }}" ;;
+            aegis-music-deep)      df=deploy/docker/music-deep.Dockerfile ;;
+          esac
+          {
+            echo "dockerfile=$df"
+            echo "context=$ctx"
+            echo "args<<EOF"
+            echo "$args"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.spec.outputs.context }}
+          file: ${{ steps.spec.outputs.dockerfile }}
+          build-args: ${{ steps.spec.outputs.args }}
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ matrix.image }}:${{ needs.changes.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ matrix.image }}:main
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

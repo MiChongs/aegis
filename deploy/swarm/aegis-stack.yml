@@ -1,0 +1,1228 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  Aegis 统一栈：Docker Swarm 多节点部署（docs/distributed-deploy.md）
+# ══════════════════════════════════════════════════════════════════════════
+#
+#  日常不直接用 docker 命令部署，而是：
+#      aegisctl deploy            # 渲染本文件 + Traefik 路由，先迁移、后滚动更新
+#  aegisctl 读 manager 上的 /etc/aegis/cluster.env（唯一真源），在本机把 ${VAR} 渲染好再交给
+#  `docker stack deploy -c - aegis`。手工部署也可以，前提是先把 cluster.env 导出到环境变量，
+#  并给出全部镜像标签（AEGIS_TAG 等）：
+#      set -a; . /etc/aegis/cluster.env; set +a
+#      AEGIS_TAG=sha-xxxxxxx ... docker stack deploy --with-registry-auth --prune=false -c aegis-stack.yml aegis
+#  （cluster.env 里的值不加引号，含空格或特殊字符的值用 source 读会出错，所以推荐 aegisctl。）
+#
+#  写法约束（docker stack deploy 只认 compose v3 的 Swarm 子集）：
+#    - 没有 depends_on / container_name / build / shm_size / security_opt；启动顺序靠一次性任务的重试与
+#      aegisctl deploy 的分阶段部署（先基础设施与迁移，再 aegis-api / aegis-worker）；
+#    - ${VAR} 不支持嵌套默认值；镜像标签全部由 aegisctl 解析后传入；
+#    - services 下每个服务名单独占一行、两格缩进：aegisctl deploy --only 按这个格式切出子集。
+#
+#  节点标签（aegisctl init 首次给 manager 全打上，aegisctl node label 调整）：
+#    aegis.app=true      无状态服务可调度的节点（api、worker、控制台、一起听、迁移任务）
+#    aegis.db=true       Postgres、Redis、NATS、Temporal（数据绑定在该节点的 /srv/aegis）
+#    aegis.storage=true  对象存储 aegis-minio
+#    aegis.risk=true     风控平台全部组件（/srv/aegis/risk）
+#    aegis.music=true    音乐个性化（无本地数据，只是集中调度）
+#  有状态标签同一时刻只应打在一个节点上：数据是该节点上的绑定目录，换节点等于换一份空数据。
+#
+#  网络：
+#    dokploy-network  Dokploy 的 overlay，Traefik 在上面；只接需要对外的服务
+#    aegis-internal   栈内私有 overlay（aegisctl init 建，attachable，可选加密）；数据库等只在这里，
+#                     别名与现网 Dokploy 一致（aegis-postgres、aegis-redis、aegis-nats、aegis-temporal、risk-*），
+#                     各服务的连接串因此不用改
+# ══════════════════════════════════════════════════════════════════════════
+
+version: "3.9"
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+# 无状态服务：先起新任务、健康后再停旧任务；失败自动回滚
+x-update-stateless: &update-stateless
+  parallelism: 1
+  delay: 5s
+  order: start-first
+  failure_action: rollback
+  monitor: 30s
+  max_failure_ratio: 0
+
+x-rollback-stateless: &rollback-stateless
+  parallelism: 1
+  delay: 0s
+  order: start-first
+  failure_action: pause
+  monitor: 15s
+
+# API / Worker：每个副本槽位挂自己的命名卷（bbolt 暂存、Bleve 索引都带文件锁）。
+# start-first 时同一槽位的新旧任务会同时打开同一个卷、互相锁死，所以按槽位先停后起；
+# parallelism 1 保证任何时刻只少一个副本，其余副本照常接流量 —— 因此这两个服务至少要 2 个副本。
+x-update-slotted: &update-slotted
+  parallelism: 1
+  delay: 10s
+  order: stop-first
+  failure_action: rollback
+  monitor: 30s
+  max_failure_ratio: 0
+
+x-rollback-slotted: &rollback-slotted
+  parallelism: 1
+  delay: 0s
+  order: stop-first
+  failure_action: pause
+  monitor: 15s
+
+# 有状态服务：同一份数据目录不能同时被两个进程打开，必须先停后起
+x-update-stateful: &update-stateful
+  parallelism: 1
+  delay: 0s
+  order: stop-first
+  failure_action: rollback
+  monitor: 30s
+
+x-rollback-stateful: &rollback-stateful
+  parallelism: 1
+  delay: 0s
+  order: stop-first
+  failure_action: pause
+  monitor: 15s
+
+x-restart: &restart
+  condition: any
+  delay: 5s
+  window: 60s
+
+# ── 主服务连接配置（覆盖 env_file 里的同名项：地址必须是栈内地址）──
+x-aegis-env: &aegis-env
+  POSTGRES_DSN: postgres://${AEGIS_PG_USER:?}:${AEGIS_PG_PASSWORD:?}@aegis-postgres:5432/${AEGIS_PG_DB:?}?${AEGIS_PG_DSN_PARAMS:-sslmode=disable}
+  REDIS_ADDR: aegis-redis:6379
+  REDIS_PASSWORD: ${AEGIS_REDIS_PASSWORD:?}
+  NATS_URL: nats://${AEGIS_NATS_USER:?}:${AEGIS_NATS_PASSWORD:?}@aegis-nats:4222
+  # passthrough:/// 不可省略：grpc-go 默认的 dns 解析器在 Docker 内置 DNS 下会超时
+  TEMPORAL_HOST_PORT: passthrough:///aegis-temporal:7233
+  RISK_ETCD_ENDPOINTS: risk-etcd:2379
+  MUSIC_RPC_URL: http://music-rec:8096
+  LISTEN_TOGETHER_RPC_URL: http://listen-together:8091
+  # 集群里不在启动时迁移：由一次性任务 aegis-migrate 执行（带 advisory lock，可重复执行）
+  MIGRATE_ON_BOOT: "false"
+  TZ: Asia/Shanghai
+
+# ── 风控服务共用配置（从 deploy/dokploy/risk-stack.yml 搬来，Postgres / NATS 凭据改用主库的）──
+x-risk-env: &risk-env
+  RISK_ETCD_ENDPOINTS: risk-etcd:2379
+  RISK_REDIS_ADDRS: risk-redis-1:7001,risk-redis-2:7002,risk-redis-3:7003
+  RISK_REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:?}
+  RISK_PG_DSN: postgres://${AEGIS_PG_USER:?}:${AEGIS_PG_PASSWORD:?}@aegis-postgres:5432/aegis_risk?sslmode=disable
+  RISK_PG_ADMIN_DSN: postgres://${AEGIS_PG_USER:?}:${AEGIS_PG_PASSWORD:?}@aegis-postgres:5432/${AEGIS_PG_DB:?}?sslmode=disable
+  RISK_NATS_URL: nats://${AEGIS_NATS_USER:?}:${AEGIS_NATS_PASSWORD:?}@aegis-nats:4222
+  RISK_STREAM_MAX_BYTES: ${RISK_STREAM_MAX_BYTES:-3G}
+  RISK_PROXY_CIDRS: ${RISK_PROXY_CIDRS:-}
+  RISK_CLICKHOUSE_ADDR: risk-clickhouse:9000
+  RISK_CLICKHOUSE_USER: aegis
+  RISK_CLICKHOUSE_PASSWORD: ${RISK_CLICKHOUSE_PASSWORD:?}
+  RISK_CLICKHOUSE_DB: aegis_risk
+  RISK_NEBULA_ADDRS: risk-nebula-graphd:9669
+  RISK_NEBULA_USER: root
+  RISK_NEBULA_PASSWORD: ${RISK_NEBULA_PASSWORD:?}
+  RISK_NEBULA_STORAGED: risk-nebula-storaged:9779
+  RISK_MILVUS_ADDR: risk-milvus:19530
+  RISK_RISINGWAVE_DSN: postgres://root@risk-risingwave:4566/dev?sslmode=disable
+  RISK_S3_ENDPOINT: risk-minio:9000
+  RISK_S3_ACCESS_KEY: ${RISK_MINIO_ACCESS_KEY:?}
+  RISK_S3_SECRET_KEY: ${RISK_MINIO_SECRET_KEY:?}
+  RISK_S3_BUCKET: aegis-risk
+  RISK_INTERNAL_TOKEN: ${RISK_INTERNAL_TOKEN:?}
+  RISK_ADMIN_URL: http://risk-admin:8891
+  TZ: Asia/Shanghai
+
+x-flink-env: &flink-env
+  RISK_NATS_URL: nats://${AEGIS_NATS_USER:?}:${AEGIS_NATS_PASSWORD:?}@aegis-nats:4222
+  RISK_ADMIN_URL: http://risk-admin:8891
+  RISK_INTERNAL_TOKEN: ${RISK_INTERNAL_TOKEN:?}
+  TZ: Asia/Shanghai
+
+x-music-env: &music-env
+  MUSIC_PG_DSN: postgres://${AEGIS_PG_USER:?}:${AEGIS_PG_PASSWORD:?}@aegis-postgres:5432/aegis_music?sslmode=disable
+  MUSIC_CLICKHOUSE_ADDR: risk-clickhouse:9000
+  MUSIC_CLICKHOUSE_USER: aegis
+  MUSIC_CLICKHOUSE_PASSWORD: ${RISK_CLICKHOUSE_PASSWORD:?}
+  MUSIC_CLICKHOUSE_DB: aegis_music
+  MUSIC_REDIS_URL: redis://:${AEGIS_REDIS_PASSWORD:?}@aegis-redis:6379/0
+  MUSIC_NATS_URL: nats://${AEGIS_NATS_USER:?}:${AEGIS_NATS_PASSWORD:?}@aegis-nats:4222
+  MUSIC_INTERNAL_TOKEN: ${MUSIC_INTERNAL_TOKEN:?}
+  MUSIC_TZ: Asia/Shanghai
+  TZ: Asia/Shanghai
+
+x-redis-node: &redis-node
+  image: redis:8-alpine
+  logging: *logging
+  healthcheck:
+    test: ["CMD-SHELL", "redis-cli -p $$REDIS_PORT -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+  networks: [aegis-internal]
+
+services:
+  # ════════════════════════════ 基础设施（aegis.db）════════════════════════════
+
+  postgres:
+    image: ${AEGIS_PG_IMAGE:-bryanlin16899/postgres-vector-postgis:17.4}
+    logging: *logging
+    environment:
+      # 只在数据目录为空、首次初始化时生效；沿用现网数据时不起作用
+      POSTGRES_USER: ${AEGIS_PG_USER:?}
+      POSTGRES_PASSWORD: ${AEGIS_PG_PASSWORD:?}
+      POSTGRES_DB: ${AEGIS_PG_DB:?}
+      TZ: Asia/Shanghai
+    volumes:
+      - type: bind
+        source: ${AEGIS_PG_DIR:-/srv/aegis/postgres}
+        target: /var/lib/postgresql/data
+      # Swarm 不支持 shm_size：用 tmpfs 给并行查询 1 GiB 的 /dev/shm（计入内存上限）
+      - type: tmpfs
+        target: /dev/shm
+        tmpfs:
+          size: 1073741824
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 60s
+    stop_grace_period: 60s
+    networks:
+      aegis-internal:
+        aliases: [aegis-postgres]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.db == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: "${AEGIS_PG_MEMORY:-8g}"}
+
+  redis:
+    image: ${AEGIS_REDIS_IMAGE:-redis/redis-stack-server:7.4.0-v6}
+    logging: *logging
+    environment:
+      # redis-stack-server 的入口把 REDIS_ARGS 追加到 redis-server 参数后面
+      REDIS_ARGS: --requirepass ${AEGIS_REDIS_PASSWORD:?} ${AEGIS_REDIS_EXTRA_ARGS:-}
+      # 容器内 redis-cli 自动带上密码（健康检查、aegisctl backup 用）
+      REDISCLI_AUTH: ${AEGIS_REDIS_PASSWORD:?}
+      TZ: Asia/Shanghai
+    volumes:
+      - type: bind
+        source: ${AEGIS_REDIS_DIR:-/srv/aegis/redis}
+        target: /data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      aegis-internal:
+        aliases: [aegis-redis]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.db == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: "${AEGIS_REDIS_MEMORY:-2g}"}
+
+  nats:
+    image: ${AEGIS_NATS_IMAGE:-nats:2}
+    logging: *logging
+    # 配置文件里有账户、用户、JetStream 上限与 store_dir（aegisctl init 首次生成，之后不覆盖）
+    command: ["-c", "/etc/nats/nats-server.conf"]
+    volumes:
+      - type: bind
+        source: ${AEGIS_NATS_CONF:-/srv/aegis/nats/nats-server.conf}
+        target: /etc/nats/nats-server.conf
+        read_only: true
+      - type: bind
+        source: ${AEGIS_NATS_DATA:-/srv/aegis/nats/data}
+        target: /data
+    # 官方 nats:2 镜像不带 shell 与 wget，无法做容器内健康检查；aegisctl doctor 经监控端口 8222 检查
+    networks:
+      aegis-internal:
+        aliases: [aegis-nats]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.db == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: "${AEGIS_NATS_MEMORY:-1536m}"}
+
+  temporal:
+    image: ${AEGIS_TEMPORAL_IMAGE:-temporalio/auto-setup:1.29.7}
+    logging: *logging
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_SEEDS: aegis-postgres
+      POSTGRES_USER: ${TEMPORAL_DB_USER:?}
+      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?}
+      DBNAME: ${TEMPORAL_DB_NAME:-temporal}
+      VISIBILITY_DBNAME: ${TEMPORAL_VISIBILITY_DB_NAME:-temporal_visibility}
+      BIND_ON_IP: 0.0.0.0
+      TEMPORAL_ADDRESS: 127.0.0.1:7233
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/docker.yaml
+      TZ: Asia/Shanghai
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 7233 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    networks:
+      aegis-internal:
+        aliases: [aegis-temporal]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.db == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: "${AEGIS_TEMPORAL_MEMORY:-1g}"}
+
+  temporal-ui:
+    image: ${AEGIS_TEMPORAL_UI_IMAGE:-temporalio/ui:2.42.1}
+    logging: *logging
+    environment:
+      TEMPORAL_ADDRESS: aegis-temporal:7233
+      TEMPORAL_UI_PORT: "8080"
+      TEMPORAL_CORS_ORIGINS: ${TEMPORAL_UI_CORS_ORIGINS:-}
+      TEMPORAL_UI_PUBLIC_PATH: ${TEMPORAL_UI_PUBLIC_PATH:-}
+      TEMPORAL_AUTH_ENABLED: ${TEMPORAL_AUTH_ENABLED:-false}
+      TEMPORAL_AUTH_PROVIDER_URL: ${TEMPORAL_AUTH_PROVIDER_URL:-}
+      TEMPORAL_AUTH_CLIENT_ID: ${TEMPORAL_AUTH_CLIENT_ID:-}
+      TEMPORAL_AUTH_CLIENT_SECRET: ${TEMPORAL_AUTH_CLIENT_SECRET:-}
+      TEMPORAL_AUTH_CALLBACK_URL: ${TEMPORAL_AUTH_CALLBACK_URL:-}
+      TEMPORAL_AUTH_SCOPES: ${TEMPORAL_AUTH_SCOPES:-openid,profile,email}
+      TEMPORAL_UI_DEFAULT_LANGUAGE: zh
+      TEMPORAL_DEFAULT_LANGUAGE: zh
+    # 默认不对外：配了 AEGIS_TEMPORAL_UI_DOMAINS 才由 Traefik 路由过来（务必同时开认证或加中间件）
+    networks: [aegis-internal, dokploy-network]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.db == true]
+      update_config: *update-stateless
+      rollback_config: *rollback-stateless
+      restart_policy: *restart
+      resources:
+        limits: {memory: 256m}
+
+  # ── 对象存储：多节点时主服务的上传文件放这里（控制台存储中心加 S3 存储池，endpoint http://aegis-minio:9000）──
+  aegis-minio:
+    image: ${AEGIS_MINIO_IMAGE:-milvusdb/minio:RELEASE.2024-12-18T13-15-44Z}
+    logging: *logging
+    command: ["minio", "server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${AEGIS_MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${AEGIS_MINIO_ROOT_PASSWORD:?}
+      MINIO_BROWSER_REDIRECT_URL: ${AEGIS_MINIO_CONSOLE_URL:-}
+      TZ: Asia/Shanghai
+    volumes:
+      - type: bind
+        source: ${AEGIS_MINIO_DIR:-/srv/aegis/minio}
+        target: /data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # 也接 dokploy-network：切换前现网 Dokploy 的 aegis-api 就能经它把本地文件迁过来；
+    # 配了 AEGIS_MINIO_DOMAINS 时 Traefik 可把预签名下载地址路由进来
+    networks:
+      aegis-internal:
+        aliases: [aegis-minio]
+      dokploy-network:
+        aliases: [aegis-minio]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.storage == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: "${AEGIS_MINIO_MEMORY:-1g}"}
+
+  # ════════════════════════════ 主服务（aegis.app，可横向扩展）════════════════════════════
+
+  # 一次性迁移任务：aegisctl deploy 先跑它并等待完成，失败则不更新 aegis-api / aegis-worker
+  aegis-migrate:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-server:${AEGIS_MIGRATE_TAG:?}
+    logging: *logging
+    command: ["/usr/local/bin/aegis-server", "migrate"]
+    env_file: ${AEGIS_ENV_FILE:-/etc/aegis/cluster.env}
+    environment:
+      <<: *aegis-env
+      AEGIS_NODE_ID: "{{.Node.Hostname}}-migrate-{{.Task.Slot}}"
+    networks: [aegis-internal]
+    deploy:
+      mode: replicated-job
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.app == true]
+      # 基础设施刚起来时 Postgres 可能还没就绪：失败重试，间隔 10 秒
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 6
+      resources:
+        limits: {memory: 1g}
+
+  aegis-api:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-server:${AEGIS_TAG:?}
+    logging: *logging
+    command: ["/usr/local/bin/aegis-server"]
+    env_file: ${AEGIS_ENV_FILE:-/etc/aegis/cluster.env}
+    environment:
+      <<: *aegis-env
+      AEGIS_ROLE: api
+      AEGIS_NODE_ID: "{{.Node.Hostname}}-api-{{.Task.Slot}}"
+      HTTP_PORT: "8088"
+      SHUTDOWN_DRAIN_DELAY: ${SHUTDOWN_DRAIN_DELAY:-5s}
+    # /app/data 每个副本槽位一个独立命名卷：bbolt 暂存、Bleve 索引都带文件锁，同节点两个副本不能共用
+    volumes:
+      - type: volume
+        source: aegis-api-data
+        target: /app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8088/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    # 收到 SIGTERM 后 /readyz 先回 503、等 SHUTDOWN_DRAIN_DELAY，再按 SHUTDOWN_TIMEOUT 关闭、DB_DRAIN_TIMEOUT 排空连接池
+    stop_grace_period: 45s
+    networks: [aegis-internal, dokploy-network]
+    deploy:
+      replicas: ${AEGIS_API_REPLICAS:-2}
+      placement:
+        constraints: [node.labels.aegis.app == true]
+        preferences:
+          - spread: node.id
+        max_replicas_per_node: ${AEGIS_API_MAX_PER_NODE:-3}
+      update_config: *update-slotted
+      rollback_config: *rollback-slotted
+      restart_policy: *restart
+      resources:
+        limits: {memory: "${AEGIS_API_MEMORY:-3g}"}
+
+  aegis-worker:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-server:${AEGIS_TAG:?}
+    logging: *logging
+    command: ["/usr/local/bin/aegis-server"]
+    env_file: ${AEGIS_ENV_FILE:-/etc/aegis/cluster.env}
+    environment:
+      <<: *aegis-env
+      AEGIS_ROLE: worker
+      AEGIS_NODE_ID: "{{.Node.Hostname}}-worker-{{.Task.Slot}}"
+      WORKER_HEALTH_ADDR: ":8089"
+    volumes:
+      - type: volume
+        source: aegis-worker-data
+        target: /app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8089/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    stop_grace_period: 45s
+    networks: [aegis-internal]
+    deploy:
+      replicas: ${AEGIS_WORKER_REPLICAS:-2}
+      placement:
+        constraints: [node.labels.aegis.app == true]
+        preferences:
+          - spread: node.id
+        max_replicas_per_node: ${AEGIS_WORKER_MAX_PER_NODE:-3}
+      update_config: *update-slotted
+      rollback_config: *rollback-slotted
+      restart_policy: *restart
+      resources:
+        limits: {memory: "${AEGIS_WORKER_MEMORY:-2g}"}
+
+  # 管理控制台：后端地址在构建期烘进产物（aegisctl build / CI 传 AEGIS_API_BACKEND=http://aegis_aegis-api:8088）
+  aegis-console:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-console:${AEGIS_CONSOLE_TAG:?}
+    logging: *logging
+    environment:
+      TZ: Asia/Shanghai
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    networks: [aegis-internal, dokploy-network]
+    deploy:
+      replicas: ${AEGIS_CONSOLE_REPLICAS:-2}
+      placement:
+        constraints: [node.labels.aegis.app == true]
+        preferences:
+          - spread: node.id
+      update_config: *update-stateless
+      rollback_config: *rollback-stateless
+      restart_policy: *restart
+      resources:
+        limits: {memory: "${AEGIS_CONSOLE_MEMORY:-768m}"}
+
+  # 一起听：实例间经 Redis 共享状态、经 NATS 同步事件，可扩
+  listen-together:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-listen-together:${AEGIS_LISTEN_TOGETHER_TAG:?}
+    logging: *logging
+    # cluster.env 里的 LT_* 调参项（房间容量、空闲回收等）原样带进来，下面的连接项覆盖它们
+    env_file: ${AEGIS_ENV_FILE:-/etc/aegis/cluster.env}
+    environment:
+      LT_REDIS_URL: redis://:${AEGIS_REDIS_PASSWORD:?}@aegis-redis:6379/0
+      LT_NATS_URL: nats://${AEGIS_NATS_USER:?}:${AEGIS_NATS_PASSWORD:?}@aegis-nats:4222
+      LT_TICKET_JWKS_URL: http://aegis-api:8088/api/listen-together/jwks.json
+      LT_INTERNAL_TOKEN: ${LISTEN_TOGETHER_INTERNAL_TOKEN:?}
+      LT_ALLOWED_ORIGINS: ${LISTEN_TOGETHER_ALLOWED_ORIGINS:-*}
+      TZ: Asia/Shanghai
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8090/readyz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    stop_grace_period: 30s
+    networks: [aegis-internal, dokploy-network]
+    deploy:
+      replicas: ${AEGIS_LISTEN_TOGETHER_REPLICAS:-1}
+      placement:
+        constraints: [node.labels.aegis.app == true]
+        preferences:
+          - spread: node.id
+      update_config: *update-stateless
+      rollback_config: *rollback-stateless
+      restart_policy: *restart
+      resources:
+        limits: {memory: "${AEGIS_LISTEN_TOGETHER_MEMORY:-512m}"}
+
+  # ════════════════════════════ 风控平台（aegis.risk，数据 /srv/aegis/risk）════════════════════════════
+  #  从 deploy/dokploy/risk-stack.yml 搬来。与原编排的区别：
+  #    - 只挂 aegis-internal（风控服务注册到 etcd 的是这张网上的地址；只有一张网时不会取错）；
+  #    - NebulaGraph 与 Redis Cluster 用 endpoint_mode: dnsrr：它们按主机名绑定监听地址、互相通告，
+  #      名字必须解析到任务自己的 IP，而不是 Swarm 的虚拟 IP；
+  #    - 原 risk-volume-init 由 aegisctl init / node label 在节点上直接建目录、改属主代替；
+  #    - Swarm 不支持 security_opt，Milvus 去掉了 seccomp:unconfined。
+
+  risk-etcd:
+    image: quay.io/coreos/etcd:v3.7.3
+    logging: *logging
+    entrypoint: ["/usr/local/bin/etcd"]
+    command:
+      - --name=risk-etcd
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://risk-etcd:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://risk-etcd:2380
+      - --initial-cluster=risk-etcd=http://risk-etcd:2380
+      - --initial-cluster-state=new
+      - --initial-cluster-token=aegis-risk
+      - --auto-compaction-mode=revision
+      - --auto-compaction-retention=1000
+      - --quota-backend-bytes=2147483648
+      - --snapshot-count=50000
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/etcd
+        target: /etcd-data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      aegis-internal:
+        aliases: [risk-etcd]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 256m}
+
+  risk-redis-1:
+    <<: *redis-node
+    environment:
+      REDIS_PORT: "7001"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:?}
+    command: >-
+      sh -c 'exec redis-server --port 7001 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-1 --cluster-preferred-endpoint-type hostname
+      --maxmemory 300mb --maxmemory-policy noeviction'
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/redis-1
+        target: /data
+    deploy:
+      endpoint_mode: dnsrr
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 384m}
+
+  risk-redis-2:
+    <<: *redis-node
+    environment:
+      REDIS_PORT: "7002"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:?}
+    command: >-
+      sh -c 'exec redis-server --port 7002 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-2 --cluster-preferred-endpoint-type hostname
+      --maxmemory 300mb --maxmemory-policy noeviction'
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/redis-2
+        target: /data
+    deploy:
+      endpoint_mode: dnsrr
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 384m}
+
+  risk-redis-3:
+    <<: *redis-node
+    environment:
+      REDIS_PORT: "7003"
+      REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:?}
+    command: >-
+      sh -c 'exec redis-server --port 7003 --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
+      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
+      --cluster-announce-hostname risk-redis-3 --cluster-preferred-endpoint-type hostname
+      --maxmemory 300mb --maxmemory-policy noeviction'
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/redis-3
+        target: /data
+    deploy:
+      endpoint_mode: dnsrr
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 384m}
+
+  # 建集群 / 节点换 IP 后重新握手（幂等）。aegisctl deploy 每次全量部署后都会强制重跑一次
+  risk-redis-init:
+    image: redis:8-alpine
+    logging: *logging
+    environment:
+      REDISCLI_AUTH: ${RISK_REDIS_PASSWORD:?}
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        nodes='risk-redis-1:7001 risk-redis-2:7002 risk-redis-3:7003'
+        for n in $$nodes; do
+          redis-cli -h $${n%:*} -p $${n#*:} ping | grep -q PONG || { echo "等待 $$n"; exit 1; }
+        done
+        if redis-cli -h risk-redis-1 -p 7001 cluster info | grep -q 'cluster_slots_assigned:16384'; then
+          for a in $$nodes; do
+            for b in $$nodes; do
+              [ "$$a" = "$$b" ] && continue
+              ip=$$(redis-cli -h $${b%:*} -p $${b#*:} client info | tr ' ' '\n' | sed -n 's/^laddr=\(.*\):[0-9]*$$/\1/p')
+              [ -n "$$ip" ] && redis-cli -h $${a%:*} -p $${a#*:} cluster meet $$ip $${b#*:} > /dev/null
+            done
+          done
+        else
+          yes yes | redis-cli --cluster create risk-redis-1:7001 risk-redis-2:7002 risk-redis-3:7003 --cluster-replicas 0
+        fi
+        for i in $$(seq 1 90); do
+          if redis-cli -h risk-redis-1 -p 7001 cluster info | grep -q 'cluster_state:ok'; then echo 'cluster ready'; exit 0; fi
+          sleep 1
+        done
+        exit 1
+    networks: [aegis-internal]
+    deploy:
+      mode: replicated-job
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 12
+
+  risk-minio:
+    image: milvusdb/minio:RELEASE.2024-12-18T13-15-44Z
+    logging: *logging
+    environment:
+      MINIO_ACCESS_KEY: ${RISK_MINIO_ACCESS_KEY:?}
+      MINIO_SECRET_KEY: ${RISK_MINIO_SECRET_KEY:?}
+    command: ["minio", "server", "/minio_data", "--console-address", ":9001"]
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/minio
+        target: /minio_data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      aegis-internal:
+        aliases: [risk-minio]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 512m}
+
+  risk-milvus:
+    image: milvusdb/milvus:v3.0.5
+    logging: *logging
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: risk-etcd:2379
+      MINIO_ADDRESS: risk-minio:9000
+      MINIO_ACCESS_KEY_ID: ${RISK_MINIO_ACCESS_KEY:?}
+      MINIO_SECRET_ACCESS_KEY: ${RISK_MINIO_SECRET_KEY:?}
+      MINIO_REGION: us-east-1
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/milvus
+        target: /var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 15s
+      start_period: 90s
+      timeout: 10s
+      retries: 10
+    networks:
+      aegis-internal:
+        aliases: [risk-milvus]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 3g}
+
+  risk-nebula-metad:
+    image: vesoft/nebula-metad:v3.8.0
+    logging: *logging
+    command:
+      - --meta_server_addrs=risk-nebula-metad:9559
+      - --local_ip=risk-nebula-metad
+      - --ws_ip=risk-nebula-metad
+      - --port=9559
+      - --ws_http_port=19559
+      - --data_path=/data/meta
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/nebula-meta
+        target: /data/meta
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://risk-nebula-metad:19559/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      aegis-internal:
+        aliases: [risk-nebula-metad]
+    deploy:
+      endpoint_mode: dnsrr
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 512m}
+
+  risk-nebula-storaged:
+    image: vesoft/nebula-storaged:v3.8.0
+    logging: *logging
+    command:
+      - --meta_server_addrs=risk-nebula-metad:9559
+      - --local_ip=risk-nebula-storaged
+      - --ws_ip=risk-nebula-storaged
+      - --port=9779
+      - --ws_http_port=19779
+      - --data_path=/data/storage
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/nebula-storage
+        target: /data/storage
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://risk-nebula-storaged:19779/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      aegis-internal:
+        aliases: [risk-nebula-storaged]
+    deploy:
+      endpoint_mode: dnsrr
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 1g}
+
+  risk-nebula-graphd:
+    image: vesoft/nebula-graphd:v3.8.0
+    logging: *logging
+    command:
+      - --meta_server_addrs=risk-nebula-metad:9559
+      - --port=9669
+      - --local_ip=risk-nebula-graphd
+      - --ws_ip=risk-nebula-graphd
+      - --ws_http_port=19669
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+      - --enable_authorize=true
+      - --session_idle_timeout_secs=3600
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://risk-nebula-graphd:19669/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      aegis-internal:
+        aliases: [risk-nebula-graphd]
+    deploy:
+      endpoint_mode: dnsrr
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 512m}
+
+  risk-clickhouse:
+    image: clickhouse/clickhouse-server:26.8
+    logging: *logging
+    environment:
+      CLICKHOUSE_DB: aegis_risk
+      CLICKHOUSE_USER: aegis
+      CLICKHOUSE_PASSWORD: ${RISK_CLICKHOUSE_PASSWORD:?}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/clickhouse
+        target: /var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    stop_grace_period: 60s
+    networks:
+      aegis-internal:
+        aliases: [risk-clickhouse]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 3g}
+
+  risk-risingwave:
+    image: risingwavelabs/risingwave:v3.1.1
+    logging: *logging
+    command:
+      - single_node
+      - --store-directory=/risingwave/data
+      - --listen-addr=0.0.0.0:4566
+      # 单节点把总内存的 1/8 给 compactor：6 GiB（768 MiB）时启动断言失败，8 GiB（1 GiB）可以
+      - --total-memory-bytes=8589934592
+      # 免费许可证最多 4 核
+      - --parallelism=4
+    environment:
+      RW_TELEMETRY_ENABLED: "false"
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/risingwave
+        target: /risingwave/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'printf \"\" > /dev/tcp/127.0.0.1/4566' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    stop_grace_period: 60s
+    networks:
+      aegis-internal:
+        aliases: [risk-risingwave]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 9g}
+
+  # 一次性初始化（幂等）：建库建表、图空间、向量集合、JetStream 流、流式特征。依赖没就绪时失败重试
+  risk-migrate:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-risk:${AEGIS_RISK_TAG:?}
+    logging: *logging
+    environment:
+      <<: *risk-env
+    command: ["/usr/local/bin/risk-admin", "migrate"]
+    networks: [aegis-internal]
+    deploy:
+      mode: replicated-job
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      restart_policy:
+        condition: on-failure
+        delay: 15s
+        max_attempts: 20
+
+  # 在线决策两个固定实例：各用自己的暂存目录（bbolt 文件锁不能共用）
+  risk-decision-1:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-risk:${AEGIS_RISK_TAG:?}
+    logging: *logging
+    environment:
+      <<: *risk-env
+      RISK_DECISION_ADDR: 0.0.0.0:8890
+    command: ["/usr/local/bin/risk-decision"]
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/spool/decision-1
+        target: /var/lib/aegis-risk
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/risk-admin", "probe", "http://127.0.0.1:8892/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      aegis-internal:
+        aliases: [risk-decision-1]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 512m}
+
+  risk-decision-2:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-risk:${AEGIS_RISK_TAG:?}
+    logging: *logging
+    environment:
+      <<: *risk-env
+      RISK_DECISION_ADDR: 0.0.0.0:8890
+    command: ["/usr/local/bin/risk-decision"]
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/spool/decision-2
+        target: /var/lib/aegis-risk
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/risk-admin", "probe", "http://127.0.0.1:8892/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      aegis-internal:
+        aliases: [risk-decision-2]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 512m}
+
+  risk-admin:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-risk:${AEGIS_RISK_TAG:?}
+    logging: *logging
+    environment:
+      <<: *risk-env
+      RISK_ADMIN_ADDR: 0.0.0.0:8891
+    command: ["/usr/local/bin/risk-admin"]
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/spool/admin
+        target: /var/lib/aegis-risk
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/risk-admin", "probe", "http://127.0.0.1:8891/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      aegis-internal:
+        aliases: [risk-admin]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 512m}
+
+  risk-ingest:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-risk:${AEGIS_RISK_TAG:?}
+    logging: *logging
+    environment:
+      <<: *risk-env
+    command: ["/usr/local/bin/risk-ingest"]
+    networks:
+      aegis-internal:
+        aliases: [risk-ingest]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateless
+      rollback_config: *rollback-stateless
+      restart_policy: *restart
+      resources:
+        limits: {memory: 512m}
+
+  risk-flink-jobmanager:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-risk-cep:${AEGIS_RISK_CEP_TAG:?}
+    logging: *logging
+    command: ["standalone-job", "--job-classname", "aegis.risk.cep.RiskCepJob"]
+    environment:
+      <<: *flink-env
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: risk-flink-jobmanager
+        jobmanager.memory.process.size: 1400m
+        parallelism.default: 2
+        state.backend.type: rocksdb
+        execution.checkpointing.dir: file:///flink-data/checkpoints
+        execution.checkpointing.interval: 30s
+        execution.checkpointing.mode: EXACTLY_ONCE
+        restart-strategy.type: exponential-delay
+        high-availability.type: NONE
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/flink
+        target: /flink-data
+    networks:
+      aegis-internal:
+        aliases: [risk-flink-jobmanager]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 1536m}
+
+  risk-flink-taskmanager:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-risk-cep:${AEGIS_RISK_CEP_TAG:?}
+    logging: *logging
+    command: ["taskmanager"]
+    environment:
+      <<: *flink-env
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: risk-flink-jobmanager
+        taskmanager.memory.process.size: 2300m
+        taskmanager.numberOfTaskSlots: 2
+        state.backend.type: rocksdb
+        execution.checkpointing.dir: file:///flink-data/checkpoints
+    volumes:
+      - type: bind
+        source: ${AEGIS_RISK_DIR:-/srv/aegis/risk}/flink
+        target: /flink-data
+    networks:
+      aegis-internal:
+        aliases: [risk-flink-taskmanager]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.risk == true]
+      update_config: *update-stateful
+      rollback_config: *rollback-stateful
+      restart_policy: *restart
+      resources:
+        limits: {memory: 2560m}
+
+  # ════════════════════════════ 音乐个性化（aegis.music）════════════════════════════
+  #  从 deploy/dokploy/music-stack.yml 搬来；ClickHouse 复用 risk-clickhouse（库 aegis_music）
+
+  music-rec:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-music:${AEGIS_MUSIC_TAG:?}
+    logging: *logging
+    entrypoint: ["/usr/local/bin/music-rec"]
+    environment: *music-env
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8096/readyz || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    networks:
+      aegis-internal:
+        aliases: [music-rec]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.music == true]
+      update_config: *update-stateless
+      rollback_config: *rollback-stateless
+      restart_policy: *restart
+      resources:
+        limits: {memory: 1g}
+
+  music-ingest:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-music:${AEGIS_MUSIC_TAG:?}
+    logging: *logging
+    entrypoint: ["/usr/local/bin/music-ingest"]
+    environment: *music-env
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8097/readyz || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    networks: [aegis-internal]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.music == true]
+      update_config: *update-stateless
+      rollback_config: *rollback-stateless
+      restart_policy: *restart
+      resources:
+        limits: {memory: 384m}
+
+  music-trainer:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-music:${AEGIS_MUSIC_TAG:?}
+    logging: *logging
+    entrypoint: ["/usr/local/bin/music-trainer"]
+    environment:
+      <<: *music-env
+      MUSIC_TRAIN_WORKERS: "2"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8097/readyz || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    networks: [aegis-internal]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.music == true]
+      update_config: *update-stateless
+      rollback_config: *rollback-stateless
+      restart_policy: *restart
+      resources:
+        limits: {memory: 2g}
+
+  music-deep:
+    image: ${AEGIS_REGISTRY:-ghcr.io/michongs}/aegis-music-deep:${AEGIS_MUSIC_DEEP_TAG:?}
+    logging: *logging
+    environment:
+      <<: *music-env
+      MUSIC_DEEP_THREADS: "4"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/readyz', timeout=3)"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+      start_period: 60s
+    networks: [aegis-internal]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.aegis.music == true]
+      update_config: *update-stateless
+      rollback_config: *rollback-stateless
+      restart_policy: *restart
+      resources:
+        limits: {memory: 6g}
+
+networks:
+  # Dokploy 的 overlay（Traefik 在上面）。没有 Dokploy 的新集群由 aegisctl init 建同名网络
+  dokploy-network:
+    external: true
+  # 栈内私有网络：aegisctl init 建（attachable，AEGIS_INTERNAL_ENCRYPTED=true 时加密）
+  aegis-internal:
+    external: true
+
+volumes:
+  # 名字里的模板由 Swarm 在创建任务时展开：每个副本槽位一个卷，留在任务所在节点上，不跨节点共享
+  aegis-api-data:
+    name: "aegis-api-data-{{.Task.Slot}}"
+  aegis-worker-data:
+    name: "aegis-worker-data-{{.Task.Slot}}"

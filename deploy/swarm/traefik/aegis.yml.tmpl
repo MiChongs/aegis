@@ -1,0 +1,69 @@
+{{- /*
+  Aegis 统一栈的 Traefik 动态配置模板（file provider）。
+
+  aegisctl deploy 用 /etc/aegis/cluster.env 渲染本模板，写到 AEGIS_TRAEFIK_DYNAMIC_FILE
+  （默认 /etc/dokploy/traefik/dynamic/aegis.yml，原文件先备份到 /etc/aegis/traefik-backups/）。
+  只写 http.routers / http.services，不碰 entryPoints：现网 traefik.yml 里的
+  forwardedHeaders.trustedIPs（CDN 回源节点）保持原样。
+
+  后端是 Swarm 服务名（aegis_<服务>），解析到服务的虚拟 IP，由 Swarm 在健康的副本间负载均衡，
+  所以这里不配健康检查；滚动更新时 Swarm 先把要停的任务从虚拟 IP 摘掉，再发 SIGTERM。
+  Traefik 容器 dokploy-traefik 在 dokploy-network 上，对外的几个服务都接了这张网。
+
+  模板语法：Go text/template。
+    env "KEY"            取 cluster.env 里的值（缺省为空串）
+    envOr "KEY" "默认"   为空时取默认值
+    hosts "KEY"          逗号分隔的域名列表 → Host(`a`) || Host(`b`)
+    list "KEY"           逗号分隔 → YAML 流式数组 ["a", "b"]
+*/ -}}
+# 由 aegisctl 生成，手工修改会在下次 aegisctl deploy 时被覆盖。源模板：deploy/swarm/traefik/aegis.yml.tmpl
+{{- $httpMode := envOr "AEGIS_TRAEFIK_HTTP_MODE" "redirect" }}
+{{- $web := envOr "AEGIS_TRAEFIK_ENTRYPOINT_HTTP" "web" }}
+{{- $websecure := envOr "AEGIS_TRAEFIK_ENTRYPOINT_HTTPS" "websecure" }}
+{{- $resolver := env "AEGIS_TRAEFIK_CERT_RESOLVER" }}
+{{- $redirect := envOr "AEGIS_TRAEFIK_REDIRECT_MIDDLEWARE" "redirect-to-https@file" }}
+{{- $priority := envOr "AEGIS_TRAEFIK_PRIORITY" "1000" }}
+{{- $groups := groups
+      "aegis-api" "AEGIS_API_DOMAINS" "http://aegis_aegis-api:8088" ""
+      "aegis-console" "AEGIS_CONSOLE_DOMAINS" "http://aegis_aegis-console:3000" ""
+      "aegis-listen-together" "AEGIS_LISTEN_TOGETHER_DOMAINS" "http://aegis_listen-together:8090" ""
+      "aegis-temporal-ui" "AEGIS_TEMPORAL_UI_DOMAINS" "http://aegis_temporal-ui:8080" "AEGIS_TEMPORAL_UI_MIDDLEWARES"
+      "aegis-minio" "AEGIS_MINIO_DOMAINS" "http://aegis_aegis-minio:9000" "" }}
+http:
+  routers:
+{{- range $groups }}
+{{- if ne $httpMode "off" }}
+    {{ .Name }}-web:
+      rule: "{{ hosts .DomainsKey }}"
+      entryPoints: ["{{ $web }}"]
+      service: {{ .Name }}
+      priority: {{ $priority }}
+{{- if eq $httpMode "redirect" }}
+      middlewares: ["{{ $redirect }}"]
+{{- else if .MiddlewaresKey }}{{ if env .MiddlewaresKey }}
+      middlewares: {{ list .MiddlewaresKey }}
+{{- end }}{{ end }}
+{{- end }}
+    {{ .Name }}:
+      rule: "{{ hosts .DomainsKey }}"
+      entryPoints: ["{{ $websecure }}"]
+      service: {{ .Name }}
+      priority: {{ $priority }}
+{{- if .MiddlewaresKey }}{{ if env .MiddlewaresKey }}
+      middlewares: {{ list .MiddlewaresKey }}
+{{- end }}{{ end }}
+      tls:
+{{- if $resolver }}
+        certResolver: {{ $resolver }}
+{{- else }}
+        {}
+{{- end }}
+{{- end }}
+  services:
+{{- range $groups }}
+    {{ .Name }}:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "{{ .Backend }}"
+{{- end }}
