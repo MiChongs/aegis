@@ -89,6 +89,51 @@ async def test_stats_audit(backend, call):
     assert (backend.last().path, backend.last().query) == (f"{BASE}/activities/5/audit", {"days": "14"})
 
 
+async def test_analyze_and_solve(backend, call, call_error):
+    personas = [{"key": "user", "share": 8}, {"key": "lifetime", "lifetime": True, "share": 2}]
+    await call("lottery_analyze", {"app": "demo", "activity_id": 5, "personas": personas})
+    req = backend.last()
+    assert (req.method, req.path, req.json) == ("POST", f"{BASE}/analyze", {"activityId": 5, "personas": personas})
+    await call("lottery_analyze", {"app": "demo", "activity": {"name": "草稿", "prizes": PRIZES}})
+    assert backend.last().json == {"activity": {"name": "草稿", "prizes": PRIZES}}
+    await call_error("lottery_analyze", {"app": "demo"})
+
+    goal = {"realRate": 0.3, "pointsReturn": 18, "prizes": [{"position": 1, "mode": "target", "probability": 0.001}]}
+    await call("lottery_solve", {"app": "demo", "activity_id": 5, "goal": goal, "persona": {"lifetime": True}, "fortune": "high"})
+    req = backend.last()
+    assert (req.method, req.path) == ("POST", f"{BASE}/solve")
+    assert req.json == {"activityId": 5, "persona": {"lifetime": True}, "fortune": "high", "goal": goal}
+    await call("lottery_solve", {"app": "demo", "activity_id": 5, "goal": {"winRate": 0.4}})
+    assert backend.last().json == {"activityId": 5, "fortune": "average", "goal": {"winRate": 0.4}}
+    await call_error("lottery_solve", {"app": "demo", "goal": goal})
+    await call_error("lottery_solve", {"app": "demo", "activity_id": 5, "goal": goal, "fortune": "best"})
+
+
+async def test_compute_jobs(backend, call, call_error):
+    await call("lottery_compute_run", {"app": "demo", "activity_id": 5, "users": 500, "days": 3, "draws_per_day": 4,
+                                       "replications": 16, "seed": "20261120", "name": "上线前",
+                                       "personas": [{"lifetime": True, "share": 1, "drawsPerDay": 10}]})
+    req = backend.last()
+    assert (req.method, req.path) == ("POST", f"{BASE}/compute/jobs")
+    assert req.json == {"activityId": 5, "name": "上线前", "users": 500, "days": 3, "drawsPerDay": 4, "replications": 16,
+                        "personas": [{"lifetime": True, "share": 1, "drawsPerDay": 10}], "seed": "20261120"}
+    await call("lottery_compute_run", {"app": "demo", "activity_id": 5})
+    assert backend.last().json == {"activityId": 5, "users": 2000, "days": 7, "drawsPerDay": 5, "replications": 24}
+    await call_error("lottery_compute_run", {"app": "demo"})
+    await call_error("lottery_compute_run", {"app": "demo", "activity_id": 5, "seed": "abc"})
+    await call_error("lottery_compute_run", {"app": "demo", "activity_id": 5, "users": 200_000})
+
+    await call("lottery_compute_jobs", {"app": "demo", "activity_id": 5})
+    assert (backend.last().method, backend.last().path, backend.last().query) == (
+        "GET", f"{BASE}/compute/jobs", {"activityId": "5", "page": "1", "limit": "20"})
+    await call("lottery_compute_job", {"app": "demo", "job_id": 9})
+    assert (backend.last().method, backend.last().path) == ("GET", f"{BASE}/compute/jobs/9")
+    await call("lottery_compute_cancel", {"app": "demo", "job_id": 9})
+    assert (backend.last().method, backend.last().path) == ("POST", f"{BASE}/compute/jobs/9/cancel")
+    await call("lottery_compute_delete", {"app": "demo", "job_id": 9})
+    assert (backend.last().method, backend.last().path) == ("DELETE", f"{BASE}/compute/jobs/9")
+
+
 async def test_draws_and_fulfill(backend, call):
     await call("lottery_draws", {"app": "demo", "activity_id": 5, "status": "pending", "winning": True, "start": "2026-10-01T00:00:00Z"})
     assert (backend.last().path, backend.last().query) == (f"{BASE}/draws", {

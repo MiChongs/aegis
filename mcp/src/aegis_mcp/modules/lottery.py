@@ -1,6 +1,6 @@
-"""抽奖：表单目录、活动与奖品（新建、修改、启停、删除）、策略模拟、统计与出奖审计、抽奖记录与人工奖品发放、抽奖次数、至尊加成。
+"""抽奖：表单目录、活动与奖品（新建、修改、启停、删除）、策略模拟、计算引擎（精确分析、奖盘求解、大规模推演）、统计与出奖审计、抽奖记录与人工奖品发放、抽奖次数、至尊加成。
 
-权限：读需要 app:read，其余（含模拟）需要 app:write。
+权限：读需要 app:read（精确分析与奖盘求解只算不写，也算读），其余（含模拟、发起推演）需要 app:write。
 """
 
 from __future__ import annotations
@@ -28,6 +28,13 @@ ACTIVITY_DELETE = DELETE("/api/admin/apps/:appkey/lottery/activities/:activityId
 ACTIVITY_STATS = GET("/api/admin/apps/:appkey/lottery/activities/:activityId/stats")
 ACTIVITY_AUDIT = GET("/api/admin/apps/:appkey/lottery/activities/:activityId/audit")
 SIMULATE = POST("/api/admin/apps/:appkey/lottery/simulate")
+ANALYZE = POST("/api/admin/apps/:appkey/lottery/analyze")
+SOLVE = POST("/api/admin/apps/:appkey/lottery/solve")
+COMPUTE_JOBS = GET("/api/admin/apps/:appkey/lottery/compute/jobs")
+COMPUTE_JOB = GET("/api/admin/apps/:appkey/lottery/compute/jobs/:jobId")
+COMPUTE_CREATE = POST("/api/admin/apps/:appkey/lottery/compute/jobs")
+COMPUTE_CANCEL = POST("/api/admin/apps/:appkey/lottery/compute/jobs/:jobId/cancel")
+COMPUTE_DELETE = DELETE("/api/admin/apps/:appkey/lottery/compute/jobs/:jobId")
 DRAWS = GET("/api/admin/apps/:appkey/lottery/draws")
 DRAW_FULFILL = POST("/api/admin/apps/:appkey/lottery/draws/:drawId/fulfill")
 TICKETS = GET("/api/admin/apps/:appkey/lottery/tickets")
@@ -37,6 +44,12 @@ TICKET_ACCOUNT = GET("/api/admin/apps/:appkey/lottery/tickets/users/:userId")
 TICKET_ADJUST = POST("/api/admin/apps/:appkey/lottery/tickets/users/:userId/adjust")
 
 ActivityID = Annotated[int, Field(gt=0, description="抽奖活动 ID（lottery_activities 结果里的 id）")]
+JobID = Annotated[int, Field(gt=0, description="推演任务 ID（lottery_compute_run / lottery_compute_jobs 结果里的 id）")]
+PERSONAS_HELP = (
+    "人群列表（最多 6 种）。每项 {key?, name?, share?（占比，任意正数，会归一；只对推演有用）, drawsPerDay?（这类人每天抽几次，"
+    "只对推演有用）, member?, lifetime?（永久会员，按已拥有奖盘里全部会员与功能奖品算）, adFree?, signedToday?, "
+    "onlineMinutesToday?, tiers?（所在会员档位 ID）}。不传为只有普通用户"
+)
 Days = Annotated[int, Field(ge=1, le=90, description="统计最近 N 天")]
 Status = Literal["draft", "active", "paused", "ended"]
 
@@ -284,8 +297,113 @@ async def stats(app: AppRef, activity_id: ActivityID, days: Days = 14) -> Any:
 
 @server.tool(**READ("lottery"))
 async def audit(app: AppRef, activity_id: ActivityID, days: Days = 14) -> Any:
-    """出奖审计：实际出奖分布与配置概率的整体检验（Mahalanobis χ²）和各奖品的边际检验，判断是否偏离配置。"""
+    """出奖审计：实际出奖分布与配置概率的整体检验（Mahalanobis χ²）和各奖品的边际检验，判断是否偏离配置。
+
+    结果的 replay 是逐笔复算：每条记录按方案里的权重与随机种子重抽一次，mismatches 列出对不上的记录
+    （记录或方案被改过）；unseeded 是种子功能上线之前的记录，无法复算。"""
     return await ACTIVITY_AUDIT(appkey=app, activityId=activity_id, query={"days": days})
+
+
+@server.tool(**READ("lottery"))
+async def analyze(
+    app: AppRef,
+    activity_id: Annotated[int | None, Field(gt=0, description="分析已保存的这个活动")] = None,
+    activity: Annotated[dict[str, Any] | None, Field(description="分析一份还没保存的活动配置（字段同 lottery_create 的请求体，camelCase）；给了就不用 activity_id 的已存配置")] = None,
+    personas: Annotated[list[dict[str, Any]] | None, Field(description=PERSONAS_HELP)] = None,
+) -> Any:
+    """精确分析奖盘（不抽样、不写库，只读权限即可）：每种人群的综合概率（含保底、软保底、伪随机，longRun）对公示概率（nominal）、
+    综合中奖率、每抽期望价值与积分回报、各奖品期望多少抽出一个（hitMean）与分位数、1/10/50/100 连抽至少出一个的概率（within），
+    以及每日运气最倒霉、最走运、全体平均三档。调概率之前先用它看现状，调完再用它核对；比 lottery_simulate 快且没有抽样误差。
+
+    库存、每日限量、个人上限、冷却等随时间变化的维度按此刻的状态固定处理（见结果的 notes），要看它们的效果用 lottery_compute_run。"""
+    if activity_id is None and activity is None:
+        raise ToolError("需要 activity_id（已保存的活动）或 activity（未保存的配置）之一")
+    return await ANALYZE(appkey=app, body=body(activityId=activity_id, activity=activity, personas=personas))
+
+
+@server.tool(**READ("lottery"))
+async def solve(
+    app: AppRef,
+    goal: Annotated[dict[str, Any], Field(description=(
+        "目标（概率都是 0–1，不设的不写）：{winRate?（综合中奖率；奖盘没有「谢谢参与」时不能用）, realRate?（兜底奖与谢谢参与以外奖品的综合概率）, "
+        "value?（每抽期望价值，积分当量）, valueMode?: max（上限，默认）| equal, pointsReturn?（每抽期望积分回报上限，"
+        "无套利即不超过用积分买一次的价格）, prizes?: [{position, mode: lock（权重占比不变）| target（综合概率 = probability）| "
+        "range（综合概率在 [min, max]）, probability?, min?, max?}], total?（新权重的合计，默认自动）}"
+    ))],
+    activity_id: Annotated[int | None, Field(gt=0, description="求解已保存的这个活动")] = None,
+    activity: Annotated[dict[str, Any] | None, Field(description="求解一份还没保存的活动配置（字段同 lottery_create 的请求体，camelCase）")] = None,
+    persona: Annotated[dict[str, Any] | None, Field(description="目标提在哪类人眼里：{member?, lifetime?, adFree?, signedToday?, tiers?}；不传为普通用户")] = None,
+    fortune: Annotated[Literal["average", "high", "low"], Field(description="按哪一天的运气算：average 平均 / high 最走运 / low 最倒霉")] = "average",
+) -> Any:
+    """按目标反解奖盘权重（不保存，只读权限即可）：在满足全部目标的权重里取对现有奖盘改动最小的一组（KL 散度最小），
+    目标针对的是含保底、中奖加成、运气之后的综合概率。返回每格的新旧权重与综合概率、各目标的达成情况（checks）、
+    求解前后的积分账（economyBefore / economyAfter）。feasible 为 false 表示目标互相矛盾或做不到。
+
+    解出的权重要生效，再用 lottery_update 把 prizes[].weight 改成 newWeight 保存。"""
+    if activity_id is None and activity is None:
+        raise ToolError("需要 activity_id（已保存的活动）或 activity（未保存的配置）之一")
+    return await SOLVE(appkey=app, body=body(
+        activityId=activity_id, activity=activity, persona=persona, fortune=fortune, goal=goal,
+    ))
+
+
+@server.tool(**WRITE("lottery"))
+async def compute_run(
+    app: AppRef,
+    activity_id: Annotated[int | None, Field(gt=0, description="推演已保存的这个活动")] = None,
+    activity: Annotated[dict[str, Any] | None, Field(description="推演一份还没保存的活动配置（字段同 lottery_create 的请求体，camelCase）")] = None,
+    users: Annotated[int, Field(ge=1, le=100_000, description="每个平行世界的人数")] = 2000,
+    days: Annotated[int, Field(ge=1, le=60, description="连续抽多少天")] = 7,
+    draws_per_day: Annotated[int, Field(ge=1, le=200, description="每人每天抽几次")] = 5,
+    replications: Annotated[int, Field(ge=1, le=256, description="独立演多少遍（平行世界数）；越多置信区间越窄，至少 8 遍才有像样的区间")] = 24,
+    personas: Annotated[list[dict[str, Any]] | None, Field(description=PERSONAS_HELP)] = None,
+    source: Annotated[Literal["", "free", "bonus", "points"], Field(description="按哪种次数来源抽，留空为免费")] = "",
+    seed: Annotated[str, Field(description="随机种子（十进制整数的字符串）；留空随机取一个。同一个种子得到同一份结果")] = "",
+    name: Annotated[str, Field(max_length=32, description="任务备注名")] = "",
+) -> Any:
+    """发起一次大规模推演（异步任务，立刻返回任务；不发奖、不扣次数，需要 app:write 权限）：一批人按各自的身份连续抽若干天，
+    共享库存、每日限量与积分预算，独立演很多遍，每个指标带 95% 置信区间。回答「限量奖品几天抽空」「预算够不够」
+    「各类人各拿走多少」「永久会员用积分买次数到底赚不赚」这类问题。总抽奖次数（人数 × 天数 × 次数 × 遍数）不超过 3000 万。
+
+    用 lottery_compute_job 查进度与结果（status 为 succeeded 时带 result）。"""
+    if activity_id is None and activity is None:
+        raise ToolError("需要 activity_id（已保存的活动）或 activity（未保存的配置）之一")
+    if seed and not seed.isdigit():
+        raise ToolError("seed 需要是非负整数的字符串")
+    return await COMPUTE_CREATE(appkey=app, body=body(
+        activityId=activity_id, activity=activity, name=name or None, users=users, days=days, drawsPerDay=draws_per_day,
+        replications=replications, personas=personas, source=source or None, seed=seed or None,
+    ))
+
+
+@server.tool(**READ("lottery"))
+async def compute_jobs(
+    app: AppRef,
+    activity_id: Annotated[int | None, Field(gt=0, description="只看这个活动的，留空为全部")] = None,
+    page: Page = 1,
+    limit: Limit = 20,
+) -> Any:
+    """推演任务列表（新的在前；状态、规模摘要、进度，不带结果）。"""
+    return await COMPUTE_JOBS(appkey=app, query=q(activityId=activity_id, page=page, limit=limit))
+
+
+@server.tool(**READ("lottery"))
+async def compute_job(app: AppRef, job_id: JobID) -> Any:
+    """一个推演任务的状态、进度与结果。status：queued 排队 / running 执行中（progress / total 为已演完的平行世界数）/
+    succeeded 完成（带 result）/ failed 失败（message 是原因）/ cancelled 已取消。"""
+    return await COMPUTE_JOB(appkey=app, jobId=job_id)
+
+
+@server.tool(**WRITE("lottery", idempotent=True))
+async def compute_cancel(app: AppRef, job_id: JobID) -> Any:
+    """取消一个排队或执行中的推演任务（已经结束的原样返回）。执行中的任务几秒内停下，不留结果。"""
+    return await COMPUTE_CANCEL(appkey=app, jobId=job_id)
+
+
+@server.tool(**DESTRUCTIVE("lottery"))
+async def compute_delete(app: AppRef, job_id: JobID) -> Any:
+    """删除一个已经结束的推演任务连同它的结果（不可恢复）。还在排队或执行的要先 lottery_compute_cancel。"""
+    return await COMPUTE_DELETE(appkey=app, jobId=job_id)
 
 
 @server.tool(**READ("lottery"))
