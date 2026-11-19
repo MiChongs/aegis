@@ -9,6 +9,7 @@ require (
 	connectrpc.com/otelconnect v0.12.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.0
 	github.com/Boostport/mjml-go v0.16.0
+	github.com/DataDog/sketches-go v1.4.8
 	github.com/MicahParks/keyfunc/v3 v3.8.2
 	github.com/RoaringBitmap/roaring/v2 v2.16.0
 	github.com/alibabacloud-go/darabonba-openapi/v2 v2.2.4
