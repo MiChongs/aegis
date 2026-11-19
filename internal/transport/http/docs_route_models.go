@@ -228,9 +228,12 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/activities/{activityId}/fortune/controls/revoke"):               LotteryFortuneRevokeRequest{},            // AdminRevokeLotteryFortuneControls
 		routeKey("PUT", "/api/admin/apps/{appkey}/lottery/activities/{activityId}/fortune/settings"):                       LotteryFortuneSettingsRequest{},          // AdminSetLotteryFortuneSettings
 		routeKey("PUT", "/api/admin/apps/{appkey}/lottery/activities/{activityId}/status"):                                 LotteryStatusRequest{},                   // AdminSetLotteryActivityStatus
+		routeKey("POST", "/api/admin/apps/{appkey}/lottery/analyze"):                                                       LotteryAnalyzeRequest{},                  // AdminAnalyzeLottery
+		routeKey("POST", "/api/admin/apps/{appkey}/lottery/compute/jobs"):                                                  LotteryComputeRequest{},                  // AdminCreateLotteryComputeJob
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/draws/{drawId}/fulfill"):                                        LotteryFulfillRequest{},                  // AdminFulfillLotteryDraw
 		routeKey("PUT", "/api/admin/apps/{appkey}/lottery/settings"):                                                       LotterySettingsRequest{},                 // AdminSaveLotterySettings
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/simulate"):                                                      LotterySimulateRequest{},                 // AdminSimulateLottery
+		routeKey("POST", "/api/admin/apps/{appkey}/lottery/solve"):                                                         LotterySolveRequest{},                    // AdminSolveLottery
 		routeKey("POST", "/api/admin/apps/{appkey}/lottery/tickets/users/{userId}/adjust"):                                 LotteryTicketAdjustRequest{},             // AdminAdjustLotteryTickets
 		routeKey("DELETE", "/api/admin/apps/{appkey}/notices"):                                                             AdminBatchIDsRequest{},                   // DeleteAdminNotices
 		routeKey("GET", "/api/admin/apps/{appkey}/notices"):                                                                AdminNoticeListQuery{},                   // AdminNotices

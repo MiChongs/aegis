@@ -28,6 +28,7 @@ DELETE	/api/admin/apps/:appkey/item-grants/rules/:ruleId	AdminDeleteItemGrantRul
 DELETE	/api/admin/apps/:appkey/leaderboard/exclusions/:userId	AdminRemoveLeaderboardExclusion
 DELETE	/api/admin/apps/:appkey/login-baseline/:userid	ResetAdminAppLoginBaseline
 DELETE	/api/admin/apps/:appkey/lottery/activities/:activityId	AdminDeleteLotteryActivity
+DELETE	/api/admin/apps/:appkey/lottery/compute/jobs/:jobId	AdminDeleteLotteryComputeJob
 DELETE	/api/admin/apps/:appkey/music/*path	AdminMusicProxy
 DELETE	/api/admin/apps/:appkey/notices	DeleteAdminNotices
 DELETE	/api/admin/apps/:appkey/notices/:noticeId	DeleteAdminNotice
@@ -272,6 +273,8 @@ GET	/api/admin/apps/:appkey/lottery/activities/:activityId/fortune/users/:userId
 GET	/api/admin/apps/:appkey/lottery/activities/:activityId/risk	AdminLotteryRisk
 GET	/api/admin/apps/:appkey/lottery/activities/:activityId/stats	AdminLotteryStats
 GET	/api/admin/apps/:appkey/lottery/catalog	AdminLotteryCatalog
+GET	/api/admin/apps/:appkey/lottery/compute/jobs	AdminListLotteryComputeJobs
+GET	/api/admin/apps/:appkey/lottery/compute/jobs/:jobId	AdminGetLotteryComputeJob
 GET	/api/admin/apps/:appkey/lottery/draws	AdminListLotteryDraws
 GET	/api/admin/apps/:appkey/lottery/settings	AdminLotterySettings
 GET	/api/admin/apps/:appkey/lottery/tickets	AdminLotteryTicketOverview
@@ -1003,8 +1006,12 @@ POST	/api/admin/apps/:appkey/lottery/activities	AdminCreateLotteryActivity
 POST	/api/admin/apps/:appkey/lottery/activities/:activityId/fortune/controls	AdminCreateLotteryFortuneControls
 POST	/api/admin/apps/:appkey/lottery/activities/:activityId/fortune/controls/preview	AdminPreviewLotteryFortuneControl
 POST	/api/admin/apps/:appkey/lottery/activities/:activityId/fortune/controls/revoke	AdminRevokeLotteryFortuneControls
+POST	/api/admin/apps/:appkey/lottery/analyze	AdminAnalyzeLottery
+POST	/api/admin/apps/:appkey/lottery/compute/jobs	AdminCreateLotteryComputeJob
+POST	/api/admin/apps/:appkey/lottery/compute/jobs/:jobId/cancel	AdminCancelLotteryComputeJob
 POST	/api/admin/apps/:appkey/lottery/draws/:drawId/fulfill	AdminFulfillLotteryDraw
 POST	/api/admin/apps/:appkey/lottery/simulate	AdminSimulateLottery
+POST	/api/admin/apps/:appkey/lottery/solve	AdminSolveLottery
 POST	/api/admin/apps/:appkey/lottery/tickets/users/:userId/adjust	AdminAdjustLotteryTickets
 POST	/api/admin/apps/:appkey/music/*path	AdminMusicProxy
 POST	/api/admin/apps/:appkey/notices	CreateAdminNotice

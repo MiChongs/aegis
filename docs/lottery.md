@@ -336,6 +336,12 @@ f' 关于 f 单调不减，所以拿到加成的人的系数范围就是把自�
   第 t 次是参数 p_t 的单次多项试验，合计 O 的期望 E = Σp_t、协方差 Σ = Σ(diag(p_t) − p_t p_tᵀ)；由多元中心极限定理
   T = (O − E)ᵀ Σ⁺ (O − E) → χ²(rank Σ)，Σ⁺ 用 SVD 求伪逆。另对每个奖品做泊松二项 z 检验，**Holm–Bonferroni** 校正，α = 0.01。
   硬保底与改发兜底的那几次不计入。用来证明线上出奖确实服从算法给出的概率（随机源、实现、数据都没出问题）。
+- **逐笔复算**（`ReplayDraws`，同一个接口的 `replay`）：统计检验是整体意义上的，几千次里个别几次被动了手脚，卡方看不出来。
+  每次抽样用的随机种子（`crypto/rand` 取的 32 字节，抽完才随方案落库，只给管理端）写在 `trace.seed`，方案里又有这一次每个奖品的
+  最终权重：把同样的权重、同样的种子交给同一个抽样函数（`ReplaySample`），抽到的必须是记录上的那个奖品。对不上只有三种可能 ——
+  记录被改过、方案被改过、抽样的实现变了 —— `replay.mismatches` 列出对不上的记录（最多 50 条），有任何一条审计即不通过。
+  硬保底与「权重全为 0 改发兜底」没有抽样，不复算（`skipped`）；限量被并发抢光改发兜底的，核对的是抽样抽到的那个（`trace.drawn`）；
+  种子功能上线之前的记录计入 `unseeded`。权重经 JSONB 存取之后逐位不变（测试里三千次带小数权重的抽样全部复算一致）。
 
 ### 行为画像
 
@@ -387,6 +393,141 @@ f' 关于 f 单调不减，所以拿到加成的人的系数范围就是把自�
 （`isolatedStock` 时各用一份）。返回实际中奖率对公示概率、首次中奖与最长连续未中的分位数（gonum `stat`）、保底触发次数、
 各奖品出现比例与受限次数。`activity` 传控制台里未保存的编辑内容；`userId` 用真实用户的画像、已拥有的奖品与本活动进度，
 并附他此刻再抽一次的方案（`current`）。规模上限：5000 人、每人 1000 次、合计 20 万次。不写库、不发奖。
+
+## 计算引擎
+
+模拟回答的是「一批同样的人各抽 N 次会怎样」：一种画像、一天、一遍，结果只有一个数。调奖盘时真正要问的是另外三类问题，
+各由一个引擎回答（2026-11，`exact.go` / `solver.go` / `compute.go`）。三者都只算不写：不发奖、不扣次数。
+
+| 引擎 | 回答什么 | 怎么算 | 接口 |
+|---|---|---|---|
+| 精确分析 | 这张奖盘长期来看每个奖品的概率到底是多少、一抽值多少、多少抽能出某个奖品 | 马尔可夫链的平稳分布与首达时间，不抽样 | `POST /lottery/analyze`（毫秒级，同步） |
+| 奖盘求解 | 我想要这样的中奖率、这样的成本、这一格这个概率，权重该怎么配 | I-投影 + 对数坐标上的 Broyden 校准 | `POST /lottery/solve`（同步） |
+| 大规模推演 | 全站的人按各自的身份连续抽几天：库存几天抽空、预算够不够、谁拿走多少、用积分买次数赚不赚 | 并行蒙特卡洛，多个平行世界，置信区间 | `POST /lottery/compute/jobs`（落库的异步任务） |
+
+### 人群
+
+三个引擎都要先回答「对谁算」。同一个活动在不同的人眼里不是同一张奖盘：永久会员的已拥有奖品被剔除或折算、特权人群有中奖加成
+与提前的保底、拿到至尊加成的人运气系数更高。请求里的 `personas[]`（求解是单个 `persona`）用几个开关描述一类人，与模拟里虚拟用户的
+特权身份同一套：`{key, name, member, lifetime, adFree, signedToday, onlineMinutesToday, tiers}`，推演另有 `share`（占比，任意正数，
+会归一）与 `drawsPerDay`（这类人每天抽几次）。不传时只有普通用户。
+
+服务层（`lottery_compute_service.go`）用与线上同一套函数算出这类人眼里的活动与奖盘：`PersonalPrizes`（已拥有剔除）→
+`ResolvePerks` / `Personalize` / `BoostPrizes`（人群特权）→ `SupremeGrades`（至尊加成）。永久会员按「已拥有奖盘里全部会员与功能奖品」
+算（与积分账同一个最坏情况）。每一格实际到账的积分与抽奖次数（`payout` / `redraws`）按活动的已拥有处理方式与无套利比例算，
+与抽奖事务同一个 `Swap(rule.WithEconomy(...))`。
+
+### 精确分析
+
+把「已连续未中 k 次」看成马尔可夫链的状态（与首中分布同一条链）：在状态 k 抽一次，按同一个 `PlanDraw` / `PityChoice` 得到各奖品的
+概率 p_k(i)，抽中任何奖品回到 0，没抽中进入 k + 1。软保底、伪随机、硬保底都只依赖 k，所以被精确地算了进去。
+
+- **综合概率**。每次中奖开始一个新周期（更新过程），链的平稳分布正比于生存函数：π_k = P(T > k) / E[T]。奖品 i 的综合概率
+  （含保底，监管口径的「综合概率」）L_i = Σ π_k · p_k(i)，每抽期望价值 = Σ L_i · v_i。保底奖的综合概率高于公示、其余奖品相应略低；
+  没有保底、没有「谢谢参与」的奖盘两者相同。
+- **多少抽能出**。把「抽中奖品 i」设为吸收态，期望步数满足 t_k = 1 + r_k·t_0 + d_k·t_{k+1}，设 t_k = α_k + β_k·t_0 从最后一个状态
+  往回代，O(状态数)（测试里与 gonum 的 LU 解 (I − Q)t = 1 逐位对照）。分位数与「N 连抽至少出一个」由状态向量逐步推进得到；
+  衰减率稳定之后按准平稳分布的几何衰减外推，十万分之一的大奖不用真的推几十万步。
+- **每日运气**。`fortune` 给出最倒霉、最走运两端与全体平均。平均是对运气分布的积分：z ~ N(0, 1) 截在 ±2，中间一段用
+  高斯–勒让德求积（gonum `integrate/quad`，16 个节点），两端各一个质点（各占 Φ(−2) ≈ 2.28%）。
+
+返回每种人群的 `analysis`（`winRate` / `baseWinRate`、`realRate` 兜底奖以外的概率、`valuePerDraw`、`pityShare`、`cycleMean`，
+每个奖品的 `nominal` 公示 / `longRun` 综合 / `hitMean` 期望抽数 / `hitP50` `hitP90` `hitP99` / `within` 1、10、50、100 连至少出一个），
+这类人的 `price`（用积分换一次的最低价）、`return`（每抽期望到账的积分回报，按综合概率与折算表）、`scale`（已拥有奖品按原价的几成折算），
+以及整张奖盘的积分账 `economy`。
+
+库存、每日限量、个人上限、中奖冷却、运气平衡依赖的不只是 k，这里按分析时的状态固定处理，`notes` 里逐条写明；要看它们随时间的效果用推演。
+
+### 奖盘求解
+
+目标都是对**综合概率**提的（求解对象眼里的、含保底与加成之后的）：
+
+```json
+{"activityId": 2, "persona": {"lifetime": true}, "fortune": "high", "goal": {
+  "realRate": 0.30, "value": 12, "valueMode": "max", "pointsReturn": 18,
+  "prizes": [{"position": 1, "mode": "target", "probability": 0.00005},
+             {"position": 5, "mode": "lock"},
+             {"position": 2, "mode": "range", "min": 0.02, "max": 0.05}]}}
+```
+
+| 目标 | 含义 |
+|---|---|
+| `winRate` | 综合中奖率（奖盘没有「谢谢参与」时每次都中，改用 `realRate`） |
+| `realRate` | 兜底奖、谢谢参与以外奖品的综合概率 |
+| `value` / `valueMode` | 每抽期望价值（积分当量）的上限（`max`，默认）或等于（`equal`） |
+| `pointsReturn` | 每抽期望积分回报 P / (1 − Q) 的上限：填用积分买一次的价格就是无套利 |
+| `prizes[]` | 单个奖品：`lock` 权重占比不变 / `target` 综合概率等于 `probability` / `range` 综合概率在 `[min, max]` |
+| `total` | 新权重的合计；不填时沿用现在的合计，最小的非零概率不足 20 个权重单位时放大十倍，直到一百万 |
+
+`persona` 是目标提在谁的眼里（不传为普通用户），`fortune` 是按哪一天的运气算（`average` / `high` / `low`）：
+「永久会员最走运那天积分回报也不超过 18」就是 `{"lifetime": true}` + `high` + `pointsReturn: 18`。
+
+求解分两层。**内层**：在满足目标的占比里取与现有占比 KL 散度最小的那个（改动最少、不凭空引入别的偏好，与护栏同一个 I-投影，
+等式约束的对偶变量不限符号）。**外层**：综合概率不是占比的线性函数（保底把中奖率抬高、加成与运气把真实奖品放大），
+把每条目标在占比上的右端当未知数，在对数坐标上用 Broyden 拟牛顿法解 ln m(x) = ln t（初始雅可比取单位阵，第一步就是按比例修正，
+之后用割线信息修正目标之间的耦合，带回溯）。每一轮的综合概率由精确分析给出，没有抽样噪声。不等式目标按有效集处理。
+
+解出来的占比按最大余数法取整（概率大于 0 的至少 1），再用整数权重重算一遍精确分析：结果里的数字是整数权重真实的综合概率。
+返回每格的 `weight` → `newWeight` 与新旧公示、综合概率，各目标的达成情况 `checks[]`（`target` / `before` / `after` / `met`），
+求解前后的汇总与积分账（`economyBefore` / `economyAfter`）。目标互相矛盾或做不到（保底 3 次必中却要 5% 的中奖率）时
+`feasible = false`，给出最接近的一组权重并标出没达成的目标。**不保存**：控制台把 `newWeight` 填回表单，由管理员确认后保存。
+
+### 大规模推演
+
+一个「平行世界」= `users` 个人（按占比分成几种人群）× `days` 天 × 每人每天若干次。同一个世界里的人共享库存、全站每日限量、
+积分预算与全站计数；每天按随机顺序一轮一轮地抽，时间随之从零点走到二十四点，于是匀速释放、按时间进度放量的预算、规则里的
+`draw.hour` 都按真实的节奏生效。过了零点，每日限量与当日计数清零、每个人换一个运气系数，连败、累计中奖、个人上限接着往下走。
+每一次抽奖走线上同一套 `PlanDraw` / `PityChoice`。
+
+同样的世界独立演 `replications` 遍。`pkg/montecarlo` 是这一层的计算框架：
+
+- 每一遍用自己的随机流，只由（种子，序号）决定（SplitMix64 派生两个状态喂给 PCG）；
+- 工作协程并行执行，结果按序号 0、1、2… 依次合并 —— 浮点累加的顺序固定，**同一个种子在 1 个核与 24 个核上得到逐字节相同的结果**；
+- 跑完但还没轮到合并的结果最多攒 2 × 工作协程数份，内存有界；工作协程里的 panic 变成这一次计算的错误，不带垮进程；
+- 统计件都可合并：`Moments`（Welford 均值方差、Student t 置信区间）、`Histogram`（整数直方图，精确分位数）、
+  `Sketch`（DDSketch，相对误差 0.5% 以内的分位数，用在「每人拿到的价值」这类连续量上）、`Wilson`（稀有事件的比例区间）。
+
+世界之间的差异就是统计误差：每个指标给均值与 95% 置信区间。结果（`lottery.ComputeResult`）：
+
+| 字段 | 内容 |
+|---|---|
+| `winRate` / `realRate` / `valuePerDraw` / `pointsPerDraw` / `pointsPerWorld` / `neverWon` | 整体指标，各带 `low` / `high` |
+| `prizes[]` | 各奖品的出现比例（各世界的均值）与全部世界合在一起的 Wilson 区间、出不了的次数、限量奖品被抽空的概率与发生在第几天（`stockOut`）、每日限量触顶的日子占比与时刻（`dailyCap`） |
+| `personas[]` | 各人群各自的中奖率、每抽价值、每抽积分回报 P / (1 − Q)；回报的区间下界超过价格时 `arbitrage` |
+| `daily[]` / `stock[]` / `budget` | 按天的抽奖次数、发出的价值与积分；限量奖品的累计已出曲线；积分预算用完的日子占比、用完的时刻与平均用量 |
+| `winsPerUser` / `missStreak` / `firstWin` | 每人抽到真实奖品的次数、最长连续没抽到、第几抽第一次抽到（直方图与分位数） |
+| `valuePerUser` / `pointsPerUser` / `fortune` | 每人拿到的价值、积分与运气系数的分位数 |
+| `arbitrage` | 全体的每抽积分回报对价格：有多大比例的世界里回报超过价格、区间下界是否超过（稳赚） |
+| `precision` | 每抽价值与真实奖品率的区间半宽；两项都在 2% 以内为 `enough` |
+
+积分预算一早用完之后积分格（连同积分兜底格）整天不出、剩下的概率全落到别的奖品上 —— 2026-10-28 线上出过两次的那种情况，
+推演里直接看得到（`budget.share`、积分格的「出不了」次数、被抬高的 `realRate`）。
+
+规模上限：每个世界 10 万人、60 天、每人每天 200 次、256 遍、合计 3000 万次抽奖。本机（i7-14650HX）单核约 65 万次 / 秒、
+12 核约 300 万次 / 秒。
+
+**任务**（表 `lottery_compute_jobs`，迁移 `000157`）。推演是纯计算，但一次可以跑几十秒，做成落库的任务：
+
+- 发起即返回一个 `queued` 的任务。任务里存的是**解析好的完整场景**（各人群眼里的活动与奖盘、规模、种子、起始日），
+  不是原始请求：重跑时不再读活动与会员配置，发起之后改了配置也不影响它。
+- 任意一个实例认领（`FOR UPDATE SKIP LOCKED`，置为 `running`、写上节点标识）。执行期间每 2 秒续心跳并写进度；续心跳的语句带着
+  「仍归我、仍在执行」的条件，改不到行说明任务被取消或被接手，执行方立刻停下。结果只在任务仍归自己时写得上，
+  被取消或被接手的任务不会被迟到的结果覆盖。
+- 心跳超过 30 秒没更新即视为执行它的实例没了，任何实例都能重新认领 —— 推演由种子完全确定，从头重跑得到同一份结果，不需要断点。
+  实例正常关闭时把手上的任务放回排队（认领次数退回）。被认领满 3 次仍没跑完的判失败，不再接手。
+- 一个实例同一时刻只跑一个任务，用一半的核（人数多的场景再按内存收紧），另一半留给线上请求。
+  一个应用排队与执行中的任务最多 5 个（`42922`），已结束的保留最近 100 个。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/lottery/compute/jobs` | 发起：`{activityId | activity, name?, users, days, drawsPerDay, replications, personas?, source?, seed?}`；`seed` 是十进制字符串 |
+| GET | `/lottery/compute/jobs?activityId=&page=&limit=` | 任务列表（状态、规模摘要、进度，不带结果） |
+| GET | `/lottery/compute/jobs/{jobId}` | 一个任务；`succeeded` 时带 `result` |
+| POST | `/lottery/compute/jobs/{jobId}/cancel` | 取消排队或执行中的任务（已结束的原样返回） |
+| DELETE | `/lottery/compute/jobs/{jobId}` | 删除已结束的任务（还在排队或执行时 `40939`，不存在 `40417`） |
+
+权限：精确分析与奖盘求解是 POST（请求体里带未保存的活动），但只算不写，归在 `app:lottery:read`，只读的 MCP 密钥也能调；
+发起、取消推演归 `app:lottery:write`，删除归 `app:lottery:delete`。
 
 ## 奖品
 
@@ -584,7 +725,12 @@ k 已拥有格子的发放比例。
 | GET | `/api/admin/apps/{appKey}/lottery/activities/{activityId}/risk?days=7` | 风控总览（见上文「风控规则」） |
 | POST | `/api/admin/apps/{appKey}/lottery/draws/{drawId}/fulfill` | 人工发放的奖品标记已发放（`{note}` 写进站内信；重复标记 `40926`） |
 | POST | `/api/admin/apps/{appKey}/lottery/simulate` | 出奖策略模拟（见上文「模拟」），附首中精确分析 `analytic` |
-| GET | `/api/admin/apps/{appKey}/lottery/activities/{activityId}/audit?days=14` | 出奖审计（见上文「精确分析与审计」） |
+| POST | `/api/admin/apps/{appKey}/lottery/analyze` | 精确分析：综合概率、每抽价值、多少抽能出（见上文「计算引擎」，读权限） |
+| POST | `/api/admin/apps/{appKey}/lottery/solve` | 奖盘求解：按目标反解权重，不保存（读权限） |
+| GET / POST | `/api/admin/apps/{appKey}/lottery/compute/jobs` | 推演任务列表 / 发起一次推演 |
+| GET / DELETE | `/api/admin/apps/{appKey}/lottery/compute/jobs/{jobId}` | 一个推演任务（带结果）/ 删除已结束的任务 |
+| POST | `/api/admin/apps/{appKey}/lottery/compute/jobs/{jobId}/cancel` | 取消推演 |
+| GET | `/api/admin/apps/{appKey}/lottery/activities/{activityId}/audit?days=14` | 出奖审计与逐笔复算（见上文「精确分析与审计」） |
 | GET | `/api/admin/apps/{appKey}/lottery/tickets` | 抽奖次数总览：持有人数、未用次数（两档）、今天发放与使用、各来源累计与剩余 |
 | GET | `/api/admin/apps/{appKey}/lottery/tickets/accounts?keyword=` | 有次数账户的人，余额多的在前 |
 | GET | `/api/admin/apps/{appKey}/lottery/tickets/ledger` | 次数流水（userId / kind / origin / keyword） |
@@ -638,6 +784,9 @@ IP 精确匹配；纯数字匹配记录 ID、用户 ID、数字账号或奖品�
 删 4 个聚合用的索引（000024 / 000124 不再建它们），改压缩与填充因子（DO 块里先判断，只做一次）。数据补齐不在迁移里
 （迁移不知道应用时区），在 `LotteryService.Start`。
 
+`000157_lottery_compute` 建推演任务表 `lottery_compute_jobs`（场景与结果两列改 lz4 压缩，DO 块里先判断，只做一次）。
+不碰任何已有的表；抽样种子写在 `lottery_draws.trace` 里，不需要迁移。
+
 ## 验证
 
 `TestLotteryScaleIntegration`：同一个人在两个实例上各并发 30 个单抽（只有抽成与 40925 两种结果、记录数 = 次数余额差 = 计数）、
@@ -673,6 +822,14 @@ IP 精确匹配；纯数字匹配记录 ID、用户 ID、数字账号或奖品�
 
 `TestLotteryBatchIntegration`：十连抽在 3 次免费后停下并写明 42915、同一 requestId 重试原样返回且不多扣、一次都抽不了时报错、
 次数上限；活动页的今日运气与出奖系数一致、`baseProbability`、`viewer`。今日运气档位占比的单元测试在 `fortune_reading_test.go`。
+
+`TestLotteryComputeIntegration`：精确分析（两种人群、特权、已拥有折算、未保存的草稿、结果可编码）→ 奖盘求解（解出的权重保存后独立复算达标、
+目标提在永久会员最走运那天、不合法的目标）→ 推演任务（排队上限 42922、排队中不能删 40939、同一个种子的两次推演逐字节相同、
+与精确分析互相印证、取消执行中的任务后循环继续接任务且不被迟到的结果覆盖、实例关闭时放回排队、心跳过期后被接手并从头重跑、
+原持有者迟到的心跳与结果写不上、认领次数用完判失败、删除与 40417）→ 逐笔复算（60 次真实抽奖全部复算一致，改一条记录能指出来）。
+引擎本身的单元测试：`exact_test.go`（几何分布闭式解、十万分之一的大奖的外推、与模拟和线性方程组对照、每日运气的求积对采样）、
+`solver_test.go`（透过保底与个人化校准、多目标、矛盾与做不到的目标、等式 I-投影）、`compute_test.go`（并行度无关的确定性、
+共享库存与每日限量恰好出到上限、人群与套利、预算用完的后果、取消）、`pkg/montecarlo`（有序合并、内存窗口、panic、区间覆盖率、草图精度）。
 
 `TestLotteryStrategyIntegration`：12 人并发下全站每日限量不超发、个人上限、积分预算、同设备聚集、
 行为画像整条查询（签到、会员率、邀请、在线时长累计）与规则、方案落库且不给用户端、模拟与单人预览、策略回读与非法规则。

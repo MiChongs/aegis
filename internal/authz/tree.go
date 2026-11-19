@@ -450,13 +450,20 @@ func permissionTree() []PermissionNode {
 				)...,
 			),
 			menu("app.lottery", "抽奖", "dices", ScopeAppOnly,
-				appStd("app:lottery", "/lottery", true,
-					act("app:lottery:fortune", "运势调控", LegacyAppWrite, routes(
-						under(mWrite, pApp+"/lottery/activities/:activityId/fortune"),
-					), danger()),
-					act("app:lottery:fulfill", "奖品发放", LegacyAppWrite, routes(rt(mPost, pApp+"/lottery/draws/:drawId/fulfill"))),
-					act("app:lottery:ticket", "调整抽奖次数", LegacyAppWrite, routes(rt(mPost, pApp+"/lottery/tickets/users/:userId/adjust")), danger()),
-				)...,
+				act("app:lottery:fortune", "运势调控", LegacyAppWrite, routes(
+					under(mWrite, pApp+"/lottery/activities/:activityId/fortune"),
+				), danger()),
+				act("app:lottery:fulfill", "奖品发放", LegacyAppWrite, routes(rt(mPost, pApp+"/lottery/draws/:drawId/fulfill"))),
+				act("app:lottery:ticket", "调整抽奖次数", LegacyAppWrite, routes(rt(mPost, pApp+"/lottery/tickets/users/:userId/adjust")), danger()),
+				// 标准三件套展开来写：精确分析与奖盘求解是 POST（请求体里带未保存的活动），但只算不写、
+				// 也不落任何数据，归在查看里 —— 只读的 MCP 密钥也能调（与发布中心的 releases/simulate 同理）。
+				// 发起推演要落一个任务、占用计算资源，仍归编辑。
+				act("app:lottery:delete", "删除", LegacyAppWrite, routes(under(mDelete, pApp+"/lottery"))),
+				act("app:lottery:read", "查看", LegacyAppRead, routes(
+					under(mRead, pApp+"/lottery"),
+					rt(mPost, pApp+"/lottery/analyze"), rt(mPost, pApp+"/lottery/solve"),
+				)),
+				act("app:lottery:write", "编辑", LegacyAppWrite, routes(under(mWrite, pApp+"/lottery"))),
 			),
 			menu("app.item_grant", "物品发放", "package-plus", ScopeAppOnly,
 				appStd("app:item_grant", "/item-grants", true,

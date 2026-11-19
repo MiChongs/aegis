@@ -919,6 +919,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	memoryManager.SetCluster(clusterHandle)
 	databaseManager.SetCluster(clusterHandle)
 	storageService.SetCluster(clusterHandle)
+	lotteryService.SetCluster(clusterHandle)
 
 	drain := &drainState{}
 	server := &http.Server{
