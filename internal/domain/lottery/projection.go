@@ -23,10 +23,12 @@ import (
 // 只有 q_i > 0 的奖品能分到概率（I-投影不会凭空给被挡掉的奖品概率），约束在这个支撑集上不可行时
 // 返回 feasible = false，并给出尽力而为的结果（对偶变量截断在上界）。
 
-// linearConstraint 一条 a·p ≤ b。
+// linearConstraint 一条 a·p ≤ b；eq 为真时是等式 a·p = b（对偶变量不限符号，恒在自由集里）。
+// 护栏只用不等式；奖盘求解（solver.go）把「综合中奖率等于目标」这类要求写成等式。
 type linearConstraint struct {
-	a []float64
-	b float64
+	a  []float64
+	b  float64
+	eq bool
 }
 
 const (
@@ -143,7 +145,7 @@ func iProject(q []float64, constraints []linearConstraint) ([]float64, bool) {
 		free := make([]int, 0, m)
 		optimal := true
 		for j := range lambda {
-			if lambda[j] > 0 || grad[j] > 0 {
+			if constraints[j].eq || lambda[j] > 0 || grad[j] > 0 {
 				free = append(free, j)
 				if math.Abs(grad[j]) > projectionTolerance {
 					optimal = false
@@ -182,7 +184,11 @@ func iProject(q []float64, constraints []linearConstraint) ([]float64, bool) {
 		for range 50 {
 			next := append([]float64(nil), lambda...)
 			for x, j := range free {
-				next[j] = math.Min(projectionMaxLambda, math.Max(0, lambda[j]+step*direction.AtVec(x)))
+				floor := 0.0
+				if constraints[j].eq {
+					floor = -projectionMaxLambda
+				}
+				next[j] = math.Min(projectionMaxLambda, math.Max(floor, lambda[j]+step*direction.AtVec(x)))
 			}
 			if dual(next) > current+1e-15 {
 				lambda = next
@@ -202,7 +208,7 @@ func iProject(q []float64, constraints []linearConstraint) ([]float64, bool) {
 		for i := range p {
 			s += p[i] * c.a[i]
 		}
-		if s > c.b+1e-6 {
+		if s > c.b+1e-6 || c.eq && s < c.b-1e-6 {
 			feasible = false
 		}
 	}
