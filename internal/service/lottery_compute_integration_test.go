@@ -352,6 +352,16 @@ func TestLotteryComputeIntegration(t *testing.T) {
 	if _, err := lottery.GetComputeJob(ctx, appID+1, one.ID); errCode(err) != errCodeLotteryComputeNotFound {
 		t.Fatalf("别的应用的任务应报 40417，得到 %v", err)
 	}
+	// 只列人群、不给占比：按均分算
+	even := request
+	even.Seed, even.Personas = 7, []LotteryPersonaSpec{{Key: "user"}, {Key: "lifetime", Lifetime: true}}
+	evenJob, err := lottery.CreateComputeJob(ctx, even)
+	if err != nil || evenJob.Summary.Personas[0].Share != 0.5 || evenJob.Summary.Personas[1].Share != 0.5 {
+		t.Fatalf("没给占比应均分：%+v，%v", evenJob, err)
+	}
+	if _, err := lottery.CancelComputeJob(ctx, appID, evenJob.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
 	// 规模超限、未保存也没有活动
 	huge := request
 	huge.Users, huge.Days, huge.DrawsPerDay, huge.Replications = 100_000, 60, 200, 256

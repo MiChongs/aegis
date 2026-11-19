@@ -46,8 +46,9 @@ const (
 	lotteryComputeHeartbeat = 2 * time.Second
 	// lotteryComputeStaleAfter 心跳超过这么久没更新，视为执行它的实例已经没了
 	lotteryComputeStaleAfter = 30 * time.Second
-	// lotteryComputeUserBudget 同时在内存里的虚拟用户总数上限（每个约 150 字节）：人数多的场景少开几个工作协程
-	lotteryComputeUserBudget = 1_500_000
+	// lotteryComputeUserBudget 同时在内存里的虚拟用户总数上限（每人连同中奖计数约 300–400 字节，
+	// 上限处约 200 MB）：人数多的场景少开几个工作协程，不让一次推演挤占线上请求的内存
+	lotteryComputeUserBudget = 600_000
 )
 
 // LotteryPersonaSpec 一种人群的描述：身份由几个开关给出，与策略模拟里虚拟用户的特权身份同一套口径。
@@ -478,6 +479,16 @@ func (s *LotteryService) computeScenario(ctx context.Context, req LotteryCompute
 	}
 	if scenario.Seed == 0 {
 		scenario.Seed = rand.Uint64()
+	}
+	// 一个占比都没给（只列了人群）时按均分算，而不是报「占比合计为 0」
+	var shareSum float64
+	for _, spec := range specs {
+		shareSum += spec.Share
+	}
+	for index := range specs {
+		if shareSum <= 0 {
+			specs[index].Share = 1
+		}
 	}
 	for _, spec := range specs {
 		view := board.view(spec)
