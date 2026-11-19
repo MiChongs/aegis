@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -40,8 +41,11 @@ type SSHExecutor struct {
 
 func (e *SSHExecutor) baseArgs(tty bool) []string {
 	args := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=30"}
-	if dir, err := controlDir(); err == nil {
-		args = append(args, "-o", "ControlMaster=auto", "-o", "ControlPath="+filepath.Join(dir, "%C"), "-o", "ControlPersist=120")
+	// Windows 自带的 OpenSSH 不支持连接复用（getsockname failed: Not a socket），每次单独建连
+	if runtime.GOOS != "windows" {
+		if dir, err := controlDir(); err == nil {
+			args = append(args, "-o", "ControlMaster=auto", "-o", "ControlPath="+filepath.Join(dir, "%C"), "-o", "ControlPersist=120")
+		}
 	}
 	if tty {
 		args = append(args, "-t")

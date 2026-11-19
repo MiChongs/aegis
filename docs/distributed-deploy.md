@@ -106,6 +106,8 @@ aegisctl help
 }
 ```
 
+Windows 上也能用（PowerShell 里直接运行，用系统自带的 OpenSSH）：配置文件在 `%AppData%\aegisctl\config.json`，不做 ssh 连接复用（每条远端命令单独建连，慢一些），仓库文件的 CRLF 换行在读取时统一成 LF。Git 报「dubious ownership」时本机 HEAD 读不到，`build` 用 `--ref`、`deploy` 用 `--tag` 明确指定。
+
 `manager` 是 `~/.ssh/config` 里的主机名；ssh 用户不是 root 时设 `"sudo": true`（远端用 `sudo -n`，要配免密 sudo）。aegisctl 只用 ssh，不在服务器上装任何东西。
 
 保密约定：所有输出里敏感值都打码（长度加 sha256 前 8 位）；密钥只经 ssh 的标准输入传给远端 bash，不出现在任何进程参数里；`config get --reveal` 只在交互终端里可用。

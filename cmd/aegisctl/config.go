@@ -147,13 +147,14 @@ func FindRepo(configured string) (string, error) {
 	}
 }
 
-// readRepoFile 读仓库里的文件
+// readRepoFile 读仓库里的文件。换行统一成 LF：Windows 上 core.autocrlf 检出的是 CRLF，
+// 原样传到 manager 会让栈文件、Traefik 路由带上回车（路由文件每次都被判成有变化而重写）
 func readRepoFile(repo, rel string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(rel)))
 	if err != nil {
 		return "", err
 	}
-	return string(data), nil
+	return strings.ReplaceAll(string(data), "\r\n", "\n"), nil
 }
 
 // validLabelKey 节点标签键

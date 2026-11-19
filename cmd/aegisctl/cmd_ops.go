@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -188,7 +189,8 @@ done
 }
 
 func validBackupBase(p string) bool {
-	clean := filepath.Clean(p)
+	// 远端（Linux）路径：用 path 而不是 filepath，Windows 上后者会把斜杠换成反斜杠
+	clean := path.Clean(p)
 	return strings.HasPrefix(clean, "/") && clean != "/" && strings.Count(clean, "/") >= 2 && clean == p
 }
 
