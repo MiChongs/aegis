@@ -1132,7 +1132,14 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 
 | 文件 | 职责 |
 |---|---|
-| `components/apps/lottery/app-lottery-panel.tsx` | 骨架 + 活动 / 统计 / 抽奖记录 / 运气控制 / 抽奖次数五个视图的切换，跨视图带活动与「待发放」筛选 |
+| `components/apps/lottery/app-lottery-panel.tsx` | 骨架 + 活动 / 统计 / 计算 / 抽奖记录 / 风控 / 运气控制 / 抽奖次数七个视图的切换，跨视图带活动与「待发放」筛选 |
+| `components/apps/lottery/compute/lottery-compute-panel.tsx` | 「计算」视图（已保存的活动）：精确分析（选人群、切人群）与推演（发起表单、任务列表、查看 / 取消 / 删除、结果） |
+| `components/apps/lottery/compute/lottery-compute-dialogs.tsx` | 活动编辑器底栏的三个弹窗（按未保存的编辑内容算）：分析、配平（目标 → 求解 → 「填入奖盘」）、推演 |
+| `components/apps/lottery/compute/lottery-exact-view.tsx` | 一种人群的精确分析：综合对公示、每抽价值与积分回报、每日运气三档、各奖品期望抽数 / 分位数 / 十连百连概率；积分账警告 |
+| `components/apps/lottery/compute/lottery-compute-runner.tsx` | 推演的发起表单（规模、人群构成与各自每天次数、会员档位、种子）与单个任务的进度 / 取消 / 结果 |
+| `components/apps/lottery/compute/lottery-compute-result.tsx` | 推演结果：带 95% 区间的指标、稳赚与否、人群表、奖品表（Wilson 区间、抽空、每日限量触顶）、按天与库存曲线、三张分布直方图 |
+| `components/apps/lottery/compute/lottery-compute-shared.tsx` | 人群预设、数字写法（概率沿用公示概率的取整）、任务状态徽标、小号指标块与药丸 |
+| `lib/api/lottery-compute.ts`、`lib/lottery-compute-hooks.ts` | 计算引擎的类型与请求；推演任务没结束时每秒轮询、结束即停 |
 | `components/apps/lottery/lottery-activities-panel.tsx` | 活动卡片：状态与形态、抽奖方式、奖品与公示概率、累计 / 今日 / 待发放；上线 / 暂停 / 结束、编辑、删除 |
 | `components/apps/lottery/lottery-activity-editor.tsx` | 活动编辑抽屉：基本信息与时间、三种次数与视频抽奖场景、奖盘、保底、规则；底部列出奖盘的待修正项 |
 | `components/apps/lottery/lottery-prize-board.tsx` | 奖盘：九宫格是 3×3 的盘（外圈顺时针 0–7 从左上角起，中心 GO），转盘是可增删、上下移的列表；右侧改选中的一格 |
@@ -1155,6 +1162,15 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
    发「抽奖次数」的激励广告场景都来自目录。场景归激励广告区块配置，这里只选；激励广告未开启或没有这类场景时如实提示。
 5. **前端校验只是提示**，保存时第一条问题 toast；后端的 40000 原因原样 toast。删除有记录的活动后端回 40927，
    toast 上给「结束活动」的快捷操作。控制台没有试抽入口：结果只在服务端产生，抽一次就是真的发了奖。
+
+计算引擎（docs/lottery.md「计算引擎」）的三条约定：
+
+1. **已保存的在「计算」视图算，未保存的在编辑器底栏算。** 两处用同一批组件；编辑器里的弹窗在打开时取一次编辑内容
+   （弹窗开着时底下的表单改不了），草稿分析的查询不留缓存。
+2. **配平不保存。** 求解接口只返回新权重，「填入奖盘」按位置写回草稿（位置即奖品在草稿里的下标），管理员保存才生效；
+   目标的概率在界面上填百分比、请求里是 0–1。
+3. **推演是落库的异步任务。** 发起后立刻返回，任务没结束时每秒轮询（进度由执行它的实例每 2 秒写一次库），结束即停；
+   规模上限与后端 `lottery.MaxCompute*` 同值写在 runner 里，超了先在前端拦住。区间、Wilson 范围一律按后端给的显示，前端不重算。
 
 旧版（报名、种子承诺 / 揭示、上链校验、`/api/lottery/*`）已整体删除，规则见 [docs/lottery.md](../docs/lottery.md)。
 

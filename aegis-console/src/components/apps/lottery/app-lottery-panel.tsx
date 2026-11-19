@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { BarChart3, Clover, Dices, ReceiptText, ShieldAlert, Ticket } from "lucide-react";
+import { BarChart3, Calculator, Clover, Dices, ReceiptText, ShieldAlert, Ticket } from "lucide-react";
 import { NoAppSelected } from "@/components/apps/app-config-primitives";
+import { LotteryComputePanel } from "@/components/apps/lottery/compute/lottery-compute-panel";
 import { LotteryActivitiesPanel } from "@/components/apps/lottery/lottery-activities-panel";
 import { LotteryDrawsPanel } from "@/components/apps/lottery/lottery-draws-panel";
 import { LotteryFortunePanel } from "@/components/apps/lottery/lottery-fortune-panel";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
  * |---|---|
  * | 活动 | 有哪些活动、盘上有什么、各自的概率、怎么抽、抽得怎么样；上线 / 暂停 / 结束、编辑、删除 |
  * | 统计 | 一个活动每天抽多少、中多少、次数从哪来、每个奖品出了多少 |
+ * | 计算 | 精确分析（综合概率、每抽价值、多少抽能出）与大规模推演（库存几天抽空、预算够不够、用积分买次数赚不赚，带置信区间） |
  * | 抽奖记录 | 谁在什么时候抽中了什么、实际发出去了什么、为什么是这个结果；人工发放在这里标记已发放 |
  * | 风控 | 哪条规则拦了多少、怎么处置的；设备 / IP / 网段多账号聚集；被拒绝的请求 |
  * | 运气控制 | 每日运气的差异与今日分布；对指定用户或全站重抽、定档、偏移，预演、撤销与记录 |
@@ -30,6 +32,7 @@ import { cn } from "@/lib/utils";
 const VIEWS = [
   { key: "activities", label: "活动", icon: Dices },
   { key: "stats", label: "统计", icon: BarChart3 },
+  { key: "compute", label: "计算", icon: Calculator },
   { key: "draws", label: "抽奖记录", icon: ReceiptText },
   { key: "risk", label: "风控", icon: ShieldAlert },
   { key: "fortune", label: "运气控制", icon: Clover },
@@ -106,6 +109,9 @@ export function AppLotteryPanel({ appKey }: { appKey?: string | null }) {
           onActivityChange={setActivityId}
           onOpenPending={(id) => openDraws(id, "pending")}
         />
+      ) : null}
+      {view === "compute" ? (
+        <LotteryComputePanel appKey={appKey} activityId={activityId} onActivityChange={setActivityId} />
       ) : null}
       {view === "fortune" ? (
         <LotteryFortunePanel appKey={appKey} activityId={activityId} onActivityChange={setActivityId} />

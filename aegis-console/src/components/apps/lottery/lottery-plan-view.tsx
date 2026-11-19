@@ -166,6 +166,14 @@ function Verdict({
       hint: plan.fortuneBase ? "至尊加成前后" : "乘在兜底奖以外的奖品上"
     });
   }
+  // 抽样用的随机种子：出奖审计按它与下面的权重把这一次原样重抽
+  if (plan.seed) {
+    stats.push({
+      label: "随机种子",
+      value: <span className="font-mono text-xs">{`${plan.seed.slice(0, 8)}…${plan.seed.slice(-6)}`}</span>,
+      hint: "可复算"
+    });
+  }
   if (plan.luck) stats.push({ label: "运气 z", value: `${plan.luck > 0 ? "+" : ""}${plan.luck.toFixed(2)}`, hint: "负数为比期望倒霉" });
   if (plan.prd) stats.push({ label: "伪随机", value: percent(plan.prd), hint: "伪随机分布给这一次定的中奖率" });
   if (plan.softPity) stats.push({ label: "软保底", value: `+${plan.softPity.toFixed(1)} 点`, hint: "中奖总概率提高的百分点" });

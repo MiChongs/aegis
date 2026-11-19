@@ -21,10 +21,13 @@ import {
   Loader2,
   Repeat,
   Save,
+  Scale,
   ScrollText,
   ShieldCheck,
+  Sigma,
   SlidersHorizontal,
   Ticket,
+  Users,
   UsersRound,
   X
 } from "lucide-react";
@@ -68,6 +71,11 @@ import { LotteryPerksEditor } from "@/components/apps/lottery/lottery-perks-edit
 import { LotteryPrizeBoard } from "@/components/apps/lottery/lottery-prize-board";
 import { LotteryStrategyEditor, strategyEnabledCount } from "@/components/apps/lottery/lottery-strategy-editor";
 import { LotteryStrategySimulator } from "@/components/apps/lottery/lottery-strategy-simulator";
+import {
+  LotteryAnalysisDialog,
+  LotteryComputeDialog,
+  LotterySolverDialog
+} from "@/components/apps/lottery/compute/lottery-compute-dialogs";
 import {
   LIFETIME_POLICIES,
   LIFETIME_POLICY_META,
@@ -175,6 +183,8 @@ export function LotteryActivityEditor({
   const [draft, setDraft] = useState<{ id: number; value: ActivityForm } | null>(null);
   const [selectedKey, setSelectedKey] = useState<number | null>(null);
   const [simulating, setSimulating] = useState(false);
+  // 计算引擎的三个弹窗：精确分析、配平（反解权重）、推演
+  const [tool, setTool] = useState<"analysis" | "solver" | "compute" | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>("basic");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -331,13 +341,28 @@ export function LotteryActivityEditor({
     setSimulating(true);
   };
 
+  /** 计算都按整张奖盘算：奖盘还有待修正的问题时先指过去 */
+  const openTool = (next: "analysis" | "solver" | "compute") => {
+    if (issues.length > 0) {
+      toast.error(issues[0].message);
+      jump(issueSection(issues[0]));
+      return;
+    }
+    setTool(next);
+  };
+
+  /** 配平解出来的权重按位置填回奖盘（位置即奖品在草稿里的下标） */
+  const applyWeights = (weights: Map<number, number>) => {
+    update({ prizes: form.prizes.map((prize, index) => (weights.has(index) ? { ...prize, weight: String(weights.get(index)) } : prize)) });
+  };
+
   useHotkeys(
     "mod+s",
     (event) => {
       event.preventDefault();
       void submit();
     },
-    { enabled: open && !simulating, enableOnFormTags: true, enableOnContentEditable: true }
+    { enabled: open && !simulating && !tool, enableOnFormTags: true, enableOnContentEditable: true }
   );
 
   const setRange = (days: number | null) => {
@@ -824,6 +849,18 @@ export function LotteryActivityEditor({
               <FlaskConical className="size-3.5" />
               模拟
             </Button>
+            <Button variant="outline" size="sm" className="rounded-xl" onClick={() => openTool("analysis")} disabled={catalogQuery.isLoading}>
+              <Sigma className="size-3.5" />
+              分析
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-xl" onClick={() => openTool("solver")} disabled={catalogQuery.isLoading}>
+              <Scale className="size-3.5" />
+              配平
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-xl" onClick={() => openTool("compute")} disabled={catalogQuery.isLoading}>
+              <Users className="size-3.5" />
+              推演
+            </Button>
             <Popover>
               <PopoverTrigger asChild>
                 <button
@@ -863,6 +900,36 @@ export function LotteryActivityEditor({
         catalog={catalog}
         open={simulating}
         onOpenChange={setSimulating}
+      />
+      <LotteryAnalysisDialog
+        appKey={appKey}
+        activityId={activity?.id}
+        payload={() => toPayload(form, kinds, catalog)}
+        open={tool === "analysis"}
+        onOpenChange={(next) => setTool(next ? "analysis" : null)}
+      />
+      <LotterySolverDialog
+        appKey={appKey}
+        activityId={activity?.id}
+        payload={() => toPayload(form, kinds, catalog)}
+        prizes={form.prizes.map((prize, index) => ({
+          position: index,
+          name: prizeName(prize.key),
+          none: prize.type === "none",
+          probability: probabilities[index] ?? 0,
+          weight: weightedOf(prize).weight
+        }))}
+        hasFortune={Boolean(form.strategy.fortune)}
+        open={tool === "solver"}
+        onOpenChange={(next) => setTool(next ? "solver" : null)}
+        onApply={applyWeights}
+      />
+      <LotteryComputeDialog
+        appKey={appKey}
+        activityId={activity?.id}
+        payload={() => toPayload(form, kinds, catalog)}
+        open={tool === "compute"}
+        onOpenChange={(next) => setTool(next ? "compute" : null)}
       />
 
       <AlertDialog open={confirmDiscard} onOpenChange={setConfirmDiscard}>
