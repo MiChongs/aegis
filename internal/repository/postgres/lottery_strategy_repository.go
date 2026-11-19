@@ -318,7 +318,7 @@ const MaxLotteryAuditDraws = 200_000
 
 // LotteryAuditDraws 一个活动在 since 之后带出奖方案的记录（最近的优先，最多 MaxLotteryAuditDraws 条）。
 func (r *Repository) LotteryAuditDraws(ctx context.Context, appID, activityID int64, since time.Time) ([]lotterydomain.AuditDraw, error) {
-	rows, err := r.pool.Query(ctx, `SELECT d.trace FROM lottery_draws d
+	rows, err := r.pool.Query(ctx, `SELECT d.id, d.draw_no, d.trace FROM lottery_draws d
 JOIN lottery_activities a ON a.id = d.activity_id AND a.appid = $1
 WHERE d.activity_id = $2 AND d.created_at >= $3 AND d.trace IS NOT NULL
 ORDER BY d.id DESC LIMIT $4`, appID, activityID, since, MaxLotteryAuditDraws)
@@ -328,15 +328,20 @@ ORDER BY d.id DESC LIMIT $4`, appID, activityID, since, MaxLotteryAuditDraws)
 	defer rows.Close()
 	out := make([]lotterydomain.AuditDraw, 0, 1024)
 	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
+		var (
+			id     int64
+			drawNo string
+			raw    []byte
+		)
+		if err := rows.Scan(&id, &drawNo, &raw); err != nil {
 			return nil, err
 		}
 		var plan lotterydomain.DrawPlan
 		if err := json.Unmarshal(raw, &plan); err != nil || len(plan.Odds) == 0 {
 			continue
 		}
-		out = append(out, lotterydomain.AuditDraw{Odds: plan.Odds, Picked: plan.Picked, Pity: plan.Pity, Fallback: plan.Fallback})
+		out = append(out, lotterydomain.AuditDraw{ID: id, DrawNo: drawNo, Odds: plan.Odds, Picked: plan.Picked,
+			Drawn: plan.Drawn, Seed: plan.Seed, Pity: plan.Pity, Fallback: plan.Fallback})
 	}
 	return out, rows.Err()
 }

@@ -2,6 +2,7 @@ package lottery
 
 import (
 	crand "crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -345,6 +346,10 @@ type DrawPlan struct {
 	FallbackReason string `json:"fallbackReason,omitempty"`
 	// FloorID 这一次的兜底奖（风控只发兜底、权重全为 0、限量被抢光时发它）
 	FloorID int64 `json:"floor,omitempty"`
+	// Seed 这一次抽样用的随机种子（64 位十六进制）；硬保底没有抽样，不写。审计按它复算，见 ReplaySample
+	Seed string `json:"seed,omitempty"`
+	// Drawn 抽样抽到的奖品；只在它与 Picked 不同（限量被并发抢光、改发了兜底）时写
+	Drawn int64 `json:"drawn,omitempty"`
 	// Perks 这一次生效的人群特权（权重与保底已按它改写）
 	Perks *PerkEffects `json:"perks,omitempty"`
 	// Fortune 这个人今天的运气系数（真实奖品的权重已乘过）；没开每日运气时不写
@@ -594,11 +599,35 @@ func budgetFactor(budget Budget, amount, issued int64) (float64, string) {
 // NewDrawSource 一次抽奖的随机源：用 crypto/rand 取 32 字节播种的 ChaCha8。
 // 每次抽奖一个新源，不跨请求复用，也就没有可以被推算的共享状态。
 func NewDrawSource() (rand.Source, error) {
+	src, _, err := NewSeededDrawSource()
+	return src, err
+}
+
+// NewSeededDrawSource 同 NewDrawSource，并把种子（64 位十六进制）一起返回。
+//
+// 种子在抽完之后随出奖方案写进记录的 trace：方案里有这一次每个奖品的最终权重，加上种子，
+// 任何人事后都能把这一次原样重抽一遍（ReplaySample），得到的必须是记录上的那个奖品。
+// 种子是抽奖时才从 crypto/rand 取的、抽完才落库，事前无从知道，也只给管理端看。
+func NewSeededDrawSource() (rand.Source, string, error) {
 	var seed [32]byte
 	if _, err := crand.Read(seed[:]); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return rand.NewChaCha8(seed), nil
+	return rand.NewChaCha8(seed), hex.EncodeToString(seed[:]), nil
+}
+
+// ReplaySample 用方案里的种子与最终权重把这一次重抽一遍，返回抽到的奖品 ID。
+// 没有种子（功能上线之前的记录、硬保底、权重全为 0）或种子格式不对时 ok 为 false。
+func ReplaySample(plan DrawPlan) (int64, bool) {
+	raw, err := hex.DecodeString(plan.Seed)
+	if err != nil || len(raw) != 32 {
+		return 0, false
+	}
+	index, ok := Sample(plan, rand.NewChaCha8([32]byte(raw)))
+	if !ok {
+		return 0, false
+	}
+	return plan.Odds[index].PrizeID, true
 }
 
 // Sample 按方案的最终权重抽一个，返回奖品在 prizes 里的下标。所有权重都为 0 时返回 false。

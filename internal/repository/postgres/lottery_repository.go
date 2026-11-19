@@ -660,7 +660,7 @@ func pickLotteryPrize(ctx context.Context, tx pgx.Tx, activity lotterydomain.Act
 
 	index, pity := lotterydomain.PityChoice(activity, plan, prizes, state.MissStreak)
 	if !pity {
-		src, err := lotterydomain.NewDrawSource()
+		src, seed, err := lotterydomain.NewSeededDrawSource()
 		if err != nil {
 			return lotterydomain.Prize{}, plan, err
 		}
@@ -668,6 +668,8 @@ func pickLotteryPrize(ctx context.Context, tx pgx.Tx, activity lotterydomain.Act
 		if index, ok = lotterydomain.Sample(plan, src); !ok {
 			return fallback(lotterydomain.FallbackEmpty)
 		}
+		// 种子随方案落库：审计时按它与方案里的权重把这一次原样重抽（lottery.ReplaySample）
+		plan.Seed = seed
 	}
 	chosen := prizes[index]
 	// 限量奖品在事务里从库存分片取一份（lottery_stock_repository.go）：分片按人错开，同一时刻抽中它的人分散在十几行上
@@ -676,6 +678,8 @@ func pickLotteryPrize(ctx context.Context, tx pgx.Tx, activity lotterydomain.Act
 		return chosen, plan, err
 	}
 	if !ok {
+		// 抽样抽到的是它，只是被并发抢光了：记下来，复算核对的是抽样本身
+		plan.Drawn = chosen.ID
 		return fallback(lotterydomain.FallbackContended)
 	}
 	plan.Pity, plan.Picked = pity, chosen.ID
