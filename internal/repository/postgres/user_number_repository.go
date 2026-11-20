@@ -424,8 +424,15 @@ type numberSwitch struct {
 
 // applyUserNumberSwitchTx 换上新号：写 users（唯一索引兜底并发抢号）、清掉新号的占用、冻结旧号、记历史。
 func applyUserNumberSwitchTx(ctx context.Context, tx pgx.Tx, sw numberSwitch) (*usernumber.History, error) {
-	if _, err := tx.Exec(ctx, `UPDATE users SET number = $3, number_tier = $4, number_changed_at = $5, updated_at = NOW()
-WHERE appid = $1 AND id = $2`, sw.appID, sw.userID, sw.newNumber, sw.tier, sw.now); err != nil {
+	// 冷却只算用户自己换的（改号卡、靓号券、摇号、换回冻结号）：管理员指定、物品发放、回滚不占用户的换号额度
+	changedAt := any(nil)
+	switch sw.source {
+	case usernumber.SourceChange, usernumber.SourceTicket, usernumber.SourceDraw, usernumber.SourceFrozen:
+		changedAt = sw.now
+	}
+	if _, err := tx.Exec(ctx, `UPDATE users SET number = $3, number_tier = $4,
+    number_changed_at = COALESCE($5::timestamptz, number_changed_at), updated_at = NOW()
+WHERE appid = $1 AND id = $2`, sw.appID, sw.userID, sw.newNumber, sw.tier, changedAt); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return nil, ErrUserNumberTaken

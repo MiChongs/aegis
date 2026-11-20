@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -272,5 +273,115 @@ func TestUserNumberIntegration(t *testing.T) {
 	// 摇号次数用完
 	if _, err := numbers.Draw(ctx, appID, dave); code(err) != errCodeUserNumberNoDraw {
 		t.Fatalf("draw without right: %v", err)
+	}
+}
+
+// 号码登录与多应用隔离：同一个号在两个应用里是两个人、登录只在本应用里找；可以换成别的应用正在用的号；
+// 号码与纯数字账号撞上时两人都是候选（由密码决定）；只开了 16 位 ID 的策略同样认号码，只开用户名时不认。
+//
+// AEGIS_TEST_PG_DSN=postgres://postgres@127.0.0.1:55465/postgres go test ./internal/service -run TestUserNumberLoginIntegration
+func TestUserNumberLoginIntegration(t *testing.T) {
+	ctx, pool := openTestDatabase(t)
+	pg := pgrepo.New(pool)
+	numbers := NewUserNumberService(zap.NewNop(), pg, nil)
+	auth := &AuthService{log: zap.NewNop(), pg: pg}
+
+	const appA, appB = int64(34000), int64(34001)
+	for _, id := range []int64{appA, appB} {
+		if _, err := pool.Exec(ctx, `INSERT INTO apps (id, name) VALUES ($1, 'number-login-test') ON CONFLICT DO NOTHING`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alice := insertTestUser(t, ctx, pool, appA, "nl-alice", "0")
+	bob := insertTestUser(t, ctx, pool, appB, "nl-bob", "0")
+	const shared = int64(530729164)
+	if _, err := numbers.Assign(ctx, appA, alice, strconv.FormatInt(shared, 10), true, "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	// 另一个应用里同一个号给另一个人：不冲突
+	if _, err := numbers.Assign(ctx, appB, bob, strconv.FormatInt(shared, 10), true, "", "admin"); err != nil {
+		t.Fatalf("same number in another app: %v", err)
+	}
+
+	ids := func(appID int64, identifier string) []int64 {
+		t.Helper()
+		users, err := auth.resolveLoginCandidates(ctx, appID, identifier)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := []int64{}
+		for _, u := range users {
+			out = append(out, u.ID)
+		}
+		return out
+	}
+	if got := ids(appA, "530729164"); len(got) != 1 || got[0] != alice {
+		t.Fatalf("app A number login: %v", got)
+	}
+	if got := ids(appB, "530729164"); len(got) != 1 || got[0] != bob {
+		t.Fatalf("app B number login: %v", got)
+	}
+	if got := ids(appA, "530729999"); len(got) != 0 {
+		t.Fatalf("unknown number: %v", got)
+	}
+
+	// 换成别的应用里正在用的号：可以
+	carol := insertTestUser(t, ctx, pool, appB, "nl-carol", "0")
+	if _, err := numbers.Assign(ctx, appB, carol, "527777103", true, "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.GrantUserNumberRight(ctx, usernumber.Grant{AppID: appA, UserID: alice, Kind: usernumber.RightTicket,
+		Level: usernumber.TierRare, Amount: 1, Origin: usernumber.OriginAdmin}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := numbers.Change(ctx, appA, alice, "527777103", 0, "", 0); err != nil {
+		t.Fatalf("number used in another app must be free here: %v", err)
+	}
+	if got := ids(appA, "527777103"); len(got) != 1 || got[0] != alice {
+		t.Fatalf("login after change: %v", got)
+	}
+	if got := ids(appB, "527777103"); len(got) != 1 || got[0] != carol {
+		t.Fatalf("other app unaffected: %v", got)
+	}
+	// 换下来的旧号冻结着，不再能用来登录
+	if got := ids(appA, "530729164"); len(got) != 0 {
+		t.Fatalf("old number must not log in: %v", got)
+	}
+
+	// 纯数字的老账号与别人的号码撞上：两人都是候选
+	legacy, err := pg.CreateUser(ctx, appA, "527777103", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(appA, "527777103"); len(got) != 2 || !slices.Contains(got, legacy.ID) || !slices.Contains(got, alice) {
+		t.Fatalf("account and number both candidates: %v", got)
+	}
+
+	// 只开 16 位 ID：仍认号码；只开用户名：不认
+	policy := *defaultAuthProtocolPolicy(appA)
+	policy.Identifiers = []string{"username", "id"}
+	if _, err := pg.UpsertAppAuthProtocolPolicy(ctx, policy); err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(appB, "527777103"); len(got) != 1 {
+		t.Fatalf("app B untouched by app A policy: %v", got)
+	}
+	aliceNumber, err := pg.GetUserNumber(ctx, appA, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := numbers.Assign(ctx, appA, alice, "590335571", true, "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	_ = aliceNumber
+	if got := ids(appA, "590335571"); len(got) != 1 || got[0] != alice {
+		t.Fatalf("id identifier also accepts numbers: %v", got)
+	}
+	policy.Identifiers = []string{"username"}
+	if _, err := pg.UpsertAppAuthProtocolPolicy(ctx, policy); err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(appA, "590335571"); len(got) != 0 {
+		t.Fatalf("number login disabled: %v", got)
 	}
 }
