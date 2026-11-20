@@ -260,9 +260,9 @@ type Draw struct {
 	// Trace 出奖方案（每个奖品的系数、最终概率、行为分）。只给管理端，客户端接口返回前清空
 	Trace *DrawPlan `json:"trace,omitempty"`
 	// RiskRules / RiskAction 命中的风控信号与最重的处置（只给管理端）
-	RiskRules  []string `json:"riskRules,omitempty"`
-	RiskAction string   `json:"riskAction,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
+	RiskRules  []string  `json:"riskRules,omitempty"`
+	RiskAction string    `json:"riskAction,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
 }
 
 // DrawQuery 抽奖记录筛选。
@@ -433,6 +433,8 @@ type ClientPrize struct {
 	SoldOut         bool    `json:"soldOut,omitempty"`
 	// Swap 对当前用户来说这一格会怎样（已拥有时改发什么 / 不会抽到）；照常发放时没有
 	Swap *PrizeSwap `json:"swap,omitempty"`
+	// RefID 个性装扮奖品的装扮编号（客户端据此在格子里绘制装扮外观）
+	RefID int64 `json:"refId,omitempty"`
 }
 
 // ClientState 用户端的一个活动页：活动、我的次数、保底进度。

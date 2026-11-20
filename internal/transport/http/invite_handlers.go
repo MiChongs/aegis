@@ -493,6 +493,18 @@ func (h *Handler) AppInvitees(c *gin.Context) {
 				session.AppID, item.UserID, item.RawAvatar, item.Account)
 		}
 	}
+	if h.cosmetic != nil && len(page.Items) > 0 {
+		ids := make([]int64, 0, len(page.Items))
+		for _, item := range page.Items {
+			ids = append(ids, item.UserID)
+		}
+		loadouts := h.cosmetic.LookupByUserIDs(c.Request.Context(), session.AppID, ids, requestBaseURL(c.Request))
+		for index := range page.Items {
+			if loadout, ok := loadouts[page.Items[index].UserID]; ok {
+				page.Items[index].Cosmetics = &loadout
+			}
+		}
+	}
 	response.Success(c, http.StatusOK, "ok", page)
 }
 

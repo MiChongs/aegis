@@ -7,6 +7,7 @@ package invite
 import (
 	"time"
 
+	"aegis/internal/domain/cosmetic"
 	"aegis/internal/domain/pointstore"
 )
 
@@ -409,6 +410,8 @@ type ClientInvitee struct {
 	BoundAt  time.Time      `json:"boundAt"`
 	// SettledAt 邀请人奖励的结算时间
 	SettledAt *time.Time `json:"settledAt,omitempty"`
+	// Cosmetics 被邀请人身上的装扮（docs/cosmetics.md），由传输层并进来；没戴或未开启时省略
+	Cosmetics *cosmetic.Loadout `json:"cosmetics,omitempty"`
 	// RawAvatar / UserID / Account 用于在传输层解析头像，不出网
 	UserID    int64  `json:"-"`
 	Account   string `json:"-"`

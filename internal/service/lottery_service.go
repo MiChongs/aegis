@@ -770,8 +770,13 @@ func (s *LotteryService) clientActivity(ctx context.Context, activity lotterydom
 		Prizes: make([]lotterydomain.ClientPrize, 0, len(prizes)),
 	}
 	for index, prize := range prizes {
+		var refID int64
+		if prize.Kind == lotterydomain.KindCosmetic {
+			refID = prize.Reward.RefID
+		}
 		out.Prizes = append(out.Prizes, lotterydomain.ClientPrize{
-			ID: prize.ID, Name: prize.Name, Kind: lotterydomain.ClientKind(prize.Kind), RewardType: prize.Kind,
+			RefID: refID,
+			ID:    prize.ID, Name: prize.Name, Kind: lotterydomain.ClientKind(prize.Kind), RewardType: prize.Kind,
 			Detail:   lotterydomain.DescribeReward(prize.Reward, plans, features).Detail,
 			ImageURL: prize.ImageURL, Position: prize.Position, Probability: lotterydomain.PublicProbability(probabilities[index]),
 			BaseProbability: lotterydomain.PublicProbability(base[index]),
