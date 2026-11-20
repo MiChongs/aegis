@@ -23,6 +23,8 @@ func TestKotlinSDKCoversEveryGatewayOperation(t *testing.T) {
 		"../../sdk/kotlin/src/main/kotlin/dev/aegis/sdk/AegisClient.kt",
 		// 版本管控自带加密通道，单独成文件
 		"../../sdk/kotlin/src/main/kotlin/dev/aegis/sdk/AegisClientControl.kt",
+		// 权益凭证要在客户端验签，同样单独成文件
+		"../../sdk/kotlin/src/main/kotlin/dev/aegis/sdk/AegisFeatureTicket.kt",
 	}
 	var combined strings.Builder
 	for _, path := range sources {
