@@ -38,7 +38,8 @@ Days = Annotated[int, Field(ge=1, le=90, description="统计最近 N 天的趋�
 REWARD_HELP = (
     "权益列表，每项 {type, amount?, money?, refId?, feature?}。type：vip_plan（refId=套餐 ID）/ vip_days（amount=天）/ "
     "integral（amount=积分）/ experience（amount=经验）/ lottery_draws（amount=次数）/ "
-    "feature_minutes（feature=功能标识，amount=分钟 1–1440，每场景最多一项）/ ai_credit（amount=点数）。"
+    "feature_minutes（feature=功能标识，amount=分钟 1–1440，每场景最多一项）/ ai_credit（amount=点数）/ "
+    "number_change 改号卡（amount=张）/ number_ticket 靓号券（amount=张，refId=等级 1 精品 2 稀有 3 传说 4 至尊）/ number_draw 摇号次数（amount=次）。"
     "可选项以 ads_rewarded_config 的 catalog 为准"
 )
 SCENE_KEYS = ("key", "name", "placementId", "enabled", "rewards", "dailyLimit", "cooldownSeconds", "membership", "lifetime")

@@ -56,6 +56,7 @@ type Handler struct {
 	lottery         *service.LotteryService
 	itemGrant       *service.ItemGrantService
 	cosmetic        *service.CosmeticService
+	userNumber      *service.UserNumberService
 	level           *service.LevelService
 	growth          *service.GrowthService
 	announcement    *service.AnnouncementService

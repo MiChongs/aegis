@@ -33,6 +33,13 @@ const (
 	ItemLicenseDays  = "license_days"
 	ItemDeviceSlots  = "device_slots"
 	ItemManual       = "manual"
+	// 用户号码的权益（docs/user-number.md）
+	ItemNumberChange = "number_change"
+	ItemNumberTicket = "number_ticket"
+	ItemNumberDraw   = "number_draw"
+	ItemNumberAssign = "number_assign"
+	// ItemCosmetic 个性装扮（docs/cosmetics.md）
+	ItemCosmetic = "cosmetic"
 )
 
 // 取值形态：决定 Item 上的哪个字段承载内容（控制台按它渲染表单）。
@@ -44,6 +51,8 @@ const (
 	ValueFeature        = "feature"         // Item.Tag + Item.Amount（天数，0 为永久）
 	ValueFeatureMinutes = "feature_minutes" // Item.Tag + Item.Amount（分钟）
 	ValueText           = "text"            // Item.Text（人工发放）
+	ValueNumberTicket   = "number_ticket"   // Item.Amount（张数）+ Item.RefID（靓号券等级 1–4）
+	ValueCosmetic       = "cosmetic"        // Item.RefID（装扮编号）+ Item.Amount（天数，0 为永久）
 )
 
 // 物品分组，控制台物品面板按组排列。
@@ -123,6 +132,16 @@ var itemSpecs = []ItemSpec{
 		Hint: "给领取人名下的授权卡延长授权期；名下没有限时授权卡时这一笔失败"},
 	{Type: ItemDeviceSlots, Label: "设备位", Group: GroupLicense, Value: ValueAmount, Unit: "台", Min: 1, Max: 63, NeedsLoginCard: true,
 		Hint: "给领取人名下授权期最长的授权卡加可绑定设备数；没有授权卡时这一笔失败"},
+	{Type: ItemNumberChange, Label: "改号卡", Group: GroupBenefit, Value: ValueAmount, Unit: "张", Min: 1, Max: MaxNumberRights, Scalable: true,
+		Hint: "自选一个普通号码；与积分商城、卡密等渠道发的是同一个账户"},
+	{Type: ItemNumberTicket, Label: "靓号券", Group: GroupBenefit, Value: ValueNumberTicket, Unit: "张", Min: 1, Max: MaxNumberRights,
+		Hint: "按等级自选靓号：1 精品、2 稀有、3 传说、4 至尊；能换不高于其等级的号码"},
+	{Type: ItemNumberDraw, Label: "摇号次数", Group: GroupBenefit, Value: ValueAmount, Unit: "次", Min: 1, Max: MaxNumberRights, Scalable: true,
+		Hint: "摇一次给若干候选号，任选其一换上；概率受今日号运影响"},
+	{Type: ItemNumberAssign, Label: "指定号码", Group: GroupBenefit, Value: ValueText,
+		Hint: "直接把这个号码换给领取人（不扣权益、不看冷却）；号码已被使用、保留或冻结时这一笔失败"},
+	{Type: ItemCosmetic, Label: "个性装扮", Group: GroupBenefit, Value: ValueCosmetic, Unit: "天", Min: 0, Max: MaxFeatureDays,
+		Hint: "头像框、资料卡背景、昵称样式或勋章；天数为 0 即永久，同一件多次发放时顺延，已永久持有时不重复发放"},
 	{Type: ItemManual, Label: "人工发放", Group: GroupOther, Value: ValueText, Pending: true,
 		Hint: "记录进入待发放，由管理员在发放记录里标记已发放（实物、兑换码等）"},
 }
@@ -195,6 +214,12 @@ func NormalizeItem(item Item) Item {
 		clean.Tag = normalizeTag(item.Tag)
 		clean.Amount = item.Amount
 		clean.AmountExpr = strings.TrimSpace(item.AmountExpr)
+	case ValueNumberTicket:
+		clean.Amount = item.Amount
+		clean.RefID = item.RefID
+	case ValueCosmetic:
+		clean.RefID = item.RefID
+		clean.Amount = item.Amount
 	case ValueText:
 		clean.Text = strings.TrimSpace(item.Text)
 	}
@@ -239,7 +264,27 @@ func ValidateItem(item Item) error {
 		if item.Amount < 0 || item.Amount > MaxFeatureDays {
 			return fmt.Errorf("「%s」的天数需要在 0–%d 之间（0 为永久）", spec.Label, MaxFeatureDays)
 		}
+	case ValueNumberTicket:
+		if item.RefID < 1 || item.RefID > 4 {
+			return fmt.Errorf("「%s」没有选择等级（1–4）", spec.Label)
+		}
+		if item.Amount < spec.Min || item.Amount > spec.Max {
+			return fmt.Errorf("「%s」需要在 %d–%d %s之间", spec.Label, spec.Min, spec.Max, spec.Unit)
+		}
+	case ValueCosmetic:
+		if item.RefID <= 0 {
+			return fmt.Errorf("「%s」没有选择具体装扮", spec.Label)
+		}
+		if item.Amount < 0 || item.Amount > MaxFeatureDays {
+			return fmt.Errorf("「%s」的天数需要在 0–%d 之间（0 为永久）", spec.Label, MaxFeatureDays)
+		}
 	case ValueText:
+		if item.Type == ItemNumberAssign {
+			if !validNumberText(item.Text) {
+				return fmt.Errorf("「%s」需要填写 5–12 位、不以 0 开头的纯数字", spec.Label)
+			}
+			return nil
+		}
 		if item.Text == "" {
 			return fmt.Errorf("「%s」需要写明发放什么", spec.Label)
 		}
@@ -282,10 +327,19 @@ type FeatureRef struct {
 	IsActive bool   `json:"isActive"`
 }
 
-// Refs 套餐与功能目录（描述物品、校验引用用）。
+// CosmeticRef 描述物品时需要的装扮信息。Live 为上架且发布过（只有这样的装扮发得出去）。
+type CosmeticRef struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	Slot string `json:"slot"`
+	Live bool   `json:"live"`
+}
+
+// Refs 套餐、功能与装扮目录（描述物品、校验引用用）。
 type Refs struct {
-	Plans    map[int64]PlanRef
-	Features map[string]FeatureRef
+	Plans     map[int64]PlanRef
+	Features  map[string]FeatureRef
+	Cosmetics map[int64]CosmeticRef
 }
 
 // DescribeItem 一句话说清这项物品：「积分 500」「在线听歌 永久」「会员 30 天」。
@@ -314,7 +368,18 @@ func DescribeItem(item Item, refs Refs) string {
 		return featureName(item.Tag) + " " + TermLabel(int(item.Amount), item.Amount == 0)
 	case ValueFeatureMinutes:
 		return featureName(item.Tag) + " " + strconv.FormatInt(item.Amount, 10) + " 分钟"
+	case ValueNumberTicket:
+		return numberTicketName(item.RefID) + " " + strconv.FormatInt(item.Amount, 10) + " 张"
+	case ValueCosmetic:
+		name := "装扮 #" + strconv.FormatInt(item.RefID, 10)
+		if ref, ok := refs.Cosmetics[item.RefID]; ok && strings.TrimSpace(ref.Name) != "" {
+			name = ref.Name
+		}
+		return name + " " + TermLabel(int(item.Amount), item.Amount == 0)
 	case ValueText:
+		if item.Type == ItemNumberAssign {
+			return "号码 " + item.Text
+		}
 		return item.Text
 	}
 	switch item.Type {

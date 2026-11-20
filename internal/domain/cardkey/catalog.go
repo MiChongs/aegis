@@ -7,6 +7,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"aegis/internal/domain/usernumber"
 	vipdomain "aegis/internal/domain/vip"
 )
 
@@ -21,6 +22,12 @@ const (
 	RewardLotteryDraws = "lottery_draws"
 	RewardLicenseDays  = "license_days"
 	RewardDeviceSlots  = "device_slots"
+	// 用户号码的权益（docs/user-number.md）
+	RewardNumberChange = "number_change"
+	RewardNumberTicket = "number_ticket"
+	RewardNumberDraw   = "number_draw"
+	// RewardCosmetic 个性装扮（docs/cosmetics.md）
+	RewardCosmetic = "cosmetic"
 )
 
 // 权益的取值形态：决定 Reward 上的哪个字段承载数量。
@@ -36,6 +43,10 @@ const (
 	// 卡密的「功能解锁」（Amount 为天数，0 为永久）与激励广告的「功能时长」
 	// （rewardedad.RewardFeatureMinutes，Amount 为分钟）共用这一形态，控制台按同一套 value 渲染表单。
 	ValueFeature = "feature"
+	// ValueNumberTicket 靓号券：Reward.Amount 张数 + Reward.RefID 等级（1 精品、2 稀有、3 传说、4 至尊）。
+	ValueNumberTicket = "number_ticket"
+	// ValueCosmetic 个性装扮：Reward.RefID 装扮编号 + Reward.Amount 天数（0 为永久）。
+	ValueCosmetic = "cosmetic"
 )
 
 // MaxRewardsPerCard 一张卡最多挂几档权益。
@@ -155,6 +166,44 @@ var rewardSpecs = []RewardSpec{
 		Max:            63,
 		NeedsLoginCard: true,
 	},
+	{
+		Type:  RewardNumberChange,
+		Label: "改号卡",
+		Hint:  "自选一个普通号码；与积分商城、抽奖等渠道发的是同一个账户",
+		Value: ValueAmount,
+		Unit:  "张",
+		Min:   1,
+		Max:   1000,
+	},
+	{
+		Type:       RewardNumberTicket,
+		Label:      "靓号券",
+		Hint:       "按等级自选靓号（1 精品、2 稀有、3 传说、4 至尊），能换不高于其等级的号码；不同等级可各配一项",
+		Value:      ValueNumberTicket,
+		Unit:       "张",
+		Min:        1,
+		Max:        1000,
+		Repeatable: true,
+	},
+	{
+		Type:  RewardNumberDraw,
+		Label: "摇号次数",
+		Hint:  "摇一次给若干候选号，任选其一换上；概率受今日号运影响",
+		Value: ValueAmount,
+		Unit:  "次",
+		Min:   1,
+		Max:   1000,
+	},
+	{
+		Type:       RewardCosmetic,
+		Label:      "个性装扮",
+		Hint:       "头像框、资料卡背景、昵称样式或勋章；天数为 0 即永久，同一件多次兑换时顺延，可以配几件不同的装扮",
+		Value:      ValueCosmetic,
+		Unit:       "天",
+		Min:        0,
+		Max:        MaxFeatureDays,
+		Repeatable: true,
+	},
 }
 
 // maxBalanceReward 单张卡能发的余额上限。
@@ -203,6 +252,7 @@ func ValidateRewards(rewards []Reward) error {
 
 	seen := make([]string, 0, len(rewards))
 	seenFeatures := make([]string, 0, 2)
+	seenCosmetics := make([]int64, 0, 2)
 	for _, reward := range rewards {
 		spec, ok := FindRewardSpec(reward.Type)
 		if !ok {
@@ -247,6 +297,24 @@ func ValidateRewards(rewards []Reward) error {
 			if reward.Amount < spec.Min || reward.Amount > spec.Max {
 				return fmt.Errorf("「%s」的天数需要在 %d–%d 之间（0 为永久）", spec.Label, spec.Min, spec.Max)
 			}
+		case ValueNumberTicket:
+			if reward.RefID < 1 || reward.RefID > 4 {
+				return fmt.Errorf("「%s」没有选择等级（1–4）", spec.Label)
+			}
+			if reward.Amount < spec.Min || reward.Amount > spec.Max {
+				return fmt.Errorf("「%s」需要在 %d–%d %s之间", spec.Label, spec.Min, spec.Max, spec.Unit)
+			}
+		case ValueCosmetic:
+			if reward.RefID <= 0 {
+				return fmt.Errorf("「%s」没有选择具体装扮", spec.Label)
+			}
+			if slices.Contains(seenCosmetics, reward.RefID) {
+				return fmt.Errorf("「%s」里同一件装扮配置了两次", spec.Label)
+			}
+			seenCosmetics = append(seenCosmetics, reward.RefID)
+			if reward.Amount < spec.Min || reward.Amount > spec.Max {
+				return fmt.Errorf("「%s」的天数需要在 %d–%d 之间（0 为永久）", spec.Label, spec.Min, spec.Max)
+			}
 		}
 	}
 	return nil
@@ -275,6 +343,12 @@ func NormalizeRewards(rewards []Reward) []Reward {
 			case ValueFeature:
 				clean.Feature = strings.ToLower(strings.TrimSpace(reward.Feature))
 				clean.Amount = reward.Amount
+			case ValueNumberTicket:
+				clean.Amount = reward.Amount
+				clean.RefID = reward.RefID
+			case ValueCosmetic:
+				clean.Amount = reward.Amount
+				clean.RefID = reward.RefID
 			}
 			out = append(out, clean)
 			if !spec.Repeatable {
@@ -301,6 +375,13 @@ func DescribeReward(reward Reward) string {
 			return fmt.Sprintf("%s %s 永久", spec.Label, reward.Feature)
 		}
 		return fmt.Sprintf("%s %s %d %s", spec.Label, reward.Feature, reward.Amount, spec.Unit)
+	case ValueNumberTicket:
+		return fmt.Sprintf("%s %d %s", usernumber.RightName(usernumber.RightTicket, int(reward.RefID)), reward.Amount, spec.Unit)
+	case ValueCosmetic:
+		if reward.Amount == 0 {
+			return fmt.Sprintf("%s #%d 永久", spec.Label, reward.RefID)
+		}
+		return fmt.Sprintf("%s #%d %d %s", spec.Label, reward.RefID, reward.Amount, spec.Unit)
 	default:
 		return spec.Label
 	}

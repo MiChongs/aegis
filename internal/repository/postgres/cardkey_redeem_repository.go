@@ -11,7 +11,9 @@ import (
 	"github.com/shopspring/decimal"
 
 	cardkeydomain "aegis/internal/domain/cardkey"
+	"aegis/internal/domain/cosmetic"
 	lotterydomain "aegis/internal/domain/lottery"
+	"aegis/internal/domain/usernumber"
 	vipdomain "aegis/internal/domain/vip"
 	walletdomain "aegis/internal/domain/wallet"
 )
@@ -569,6 +571,43 @@ func (r *Repository) grantCardRewardsTx(ctx context.Context, tx pgx.Tx, appID in
 				return nil, err
 			}
 			result.Detail = strconv.FormatInt(reward.Amount, 10) + " 台（上限 " + strconv.Itoa(total) + " 台）"
+
+		case cardkeydomain.RewardNumberChange:
+			_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, 0, usernumber.OriginCardKey, card.Code, source)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = strconv.FormatInt(reward.Amount, 10) + " 张" + note
+
+		case cardkeydomain.RewardNumberTicket:
+			_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, reward.RefID, usernumber.OriginCardKey, card.Code, source)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = cardkeydomain.DescribeReward(reward) + note
+
+		case cardkeydomain.RewardNumberDraw:
+			_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, 0, usernumber.OriginCardKey, card.Code, source)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = strconv.FormatInt(reward.Amount, 10) + " 次" + note
+
+		case cardkeydomain.RewardCosmetic:
+			granted, err := grantCosmeticTx(ctx, tx, cosmetic.GrantInput{
+				AppID: appID, UserID: userID, CosmeticID: reward.RefID, Days: int(reward.Amount),
+				Source: cosmetic.SourceCardKey, SourceRef: card.Code,
+			})
+			if errors.Is(err, ErrCosmeticUnavailable) {
+				return nil, ErrCardKeyRewardMissing
+			}
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = granted.CosmeticName + " " + cosmetic.TermLabel(int(reward.Amount))
+			if granted.AlreadyPermanent {
+				result.Detail += "（已永久拥有）"
+			}
 
 		default:
 			// 目录里有、这里没有 —— 由测试挡在合并之前，运行期走到这里说明测试被绕过了。

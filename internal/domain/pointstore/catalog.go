@@ -9,6 +9,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"aegis/internal/domain/usernumber"
 	vipdomain "aegis/internal/domain/vip"
 )
 
@@ -21,6 +22,12 @@ const (
 	RewardBalance      = "balance"
 	RewardLotteryDraws = "lottery_draws"
 	RewardManual       = "manual"
+	// 用户号码的权益（docs/user-number.md），与卡密、物品发放同名
+	RewardNumberChange = "number_change"
+	RewardNumberTicket = "number_ticket"
+	RewardNumberDraw   = "number_draw"
+	// RewardCosmetic 个性装扮（docs/cosmetics.md），与卡密、物品发放同名同形
+	RewardCosmetic = "cosmetic"
 )
 
 // 权益的取值形态：决定 Reward 上的哪个字段承载内容。
@@ -30,6 +37,10 @@ const (
 	ValueRef     = "ref"     // Reward.RefID（会员套餐）
 	ValueFeature = "feature" // Reward.Tag + Reward.Amount（天数，0 为永久）
 	ValueText    = "text"    // Reward.Text
+	// ValueNumberTicket 靓号券：Reward.Amount 张数 + Reward.RefID 等级（1 精品、2 稀有、3 传说、4 至尊）
+	ValueNumberTicket = "number_ticket"
+	// ValueCosmetic 个性装扮：Reward.RefID 装扮编号 + Reward.Amount 天数（0 为永久）
+	ValueCosmetic = "cosmetic"
 )
 
 // MaxRewardsPerItem 一件商品最多挂几项权益。
@@ -111,6 +122,44 @@ var rewardSpecs = []RewardSpec{
 		Max:   10_000,
 	},
 	{
+		Type:  RewardNumberChange,
+		Label: "改号卡",
+		Hint:  "自选一个普通号码；与卡密、抽奖等渠道发的是同一个账户",
+		Value: ValueAmount,
+		Unit:  "张",
+		Min:   1,
+		Max:   1000,
+	},
+	{
+		Type:       RewardNumberTicket,
+		Label:      "靓号券",
+		Hint:       "按等级自选靓号（1 精品、2 稀有、3 传说、4 至尊），能换不高于其等级的号码",
+		Value:      ValueNumberTicket,
+		Unit:       "张",
+		Min:        1,
+		Max:        1000,
+		Repeatable: true,
+	},
+	{
+		Type:  RewardNumberDraw,
+		Label: "摇号次数",
+		Hint:  "摇一次给若干候选号，任选其一换上；概率受今日号运影响",
+		Value: ValueAmount,
+		Unit:  "次",
+		Min:   1,
+		Max:   1000,
+	},
+	{
+		Type:       RewardCosmetic,
+		Label:      "个性装扮",
+		Hint:       "头像框、资料卡背景、昵称样式或勋章；天数为 0 即永久，同一件多次获得时顺延，已永久持有的人不能再兑",
+		Value:      ValueCosmetic,
+		Unit:       "天",
+		Min:        0,
+		Max:        MaxFeatureDays,
+		Repeatable: true,
+	},
+	{
 		Type:      RewardManual,
 		Label:     "人工发放",
 		Hint:      "兑换后进入待发放，由管理员在兑换记录里标记已发放或取消（取消即退回积分）",
@@ -168,6 +217,7 @@ func ValidateRewards(rewards []Reward) error {
 	}
 	seenTypes := make([]string, 0, len(rewards))
 	seenTags := make([]string, 0, len(rewards))
+	seenCosmetics := make([]int64, 0, 2)
 	for _, reward := range rewards {
 		spec, ok := FindRewardSpec(reward.Type)
 		if !ok {
@@ -212,6 +262,24 @@ func ValidateRewards(rewards []Reward) error {
 			if reward.Amount < 0 || reward.Amount > MaxFeatureDays {
 				return fmt.Errorf("「%s」的天数需要在 0–%d 之间（0 为永久）", spec.Label, MaxFeatureDays)
 			}
+		case ValueNumberTicket:
+			if reward.RefID < 1 || reward.RefID > 4 {
+				return fmt.Errorf("「%s」没有选择等级（1–4）", spec.Label)
+			}
+			if reward.Amount < spec.Min || reward.Amount > spec.Max {
+				return fmt.Errorf("「%s」需要在 %d–%d %s之间", spec.Label, spec.Min, spec.Max, spec.Unit)
+			}
+		case ValueCosmetic:
+			if reward.RefID <= 0 {
+				return fmt.Errorf("「%s」没有选择具体装扮", spec.Label)
+			}
+			if slices.Contains(seenCosmetics, reward.RefID) {
+				return fmt.Errorf("同一件装扮重复配置了两次")
+			}
+			seenCosmetics = append(seenCosmetics, reward.RefID)
+			if reward.Amount < 0 || reward.Amount > MaxFeatureDays {
+				return fmt.Errorf("「%s」的天数需要在 0–%d 之间（0 为永久）", spec.Label, MaxFeatureDays)
+			}
 		case ValueText:
 			text := strings.TrimSpace(reward.Text)
 			if text == "" {
@@ -245,6 +313,12 @@ func NormalizeRewards(rewards []Reward) []Reward {
 			case ValueFeature:
 				clean.Tag = normalizeTag(reward.Tag)
 				clean.Amount = reward.Amount
+			case ValueNumberTicket:
+				clean.Amount = reward.Amount
+				clean.RefID = reward.RefID
+			case ValueCosmetic:
+				clean.Amount = reward.Amount
+				clean.RefID = reward.RefID
 			case ValueText:
 				clean.Text = strings.TrimSpace(reward.Text)
 			}
@@ -299,6 +373,14 @@ func DescribeReward(reward Reward, plans map[int64]PlanRef, features map[string]
 		out.Detail = name + " " + termLabel(int(reward.Amount), reward.Amount == 0)
 	case RewardBalance:
 		out.Detail = "余额 " + reward.Money.StringFixed(2)
+	case RewardNumberTicket:
+		out.Detail = usernumber.RightName(usernumber.RightTicket, int(reward.RefID)) + " " + strconv.FormatInt(reward.Amount, 10) + " 张"
+	case RewardCosmetic:
+		// 名称不在这里翻：客户端按 refId 在装扮中心里取外观与名称，发放结果里由发放分支写上名称
+		out.RefID = reward.RefID
+		out.Days = int(reward.Amount)
+		out.Permanent = reward.Amount == 0
+		out.Detail = spec.Label + " " + termLabel(int(reward.Amount), reward.Amount == 0)
 	case RewardManual:
 		out.Detail = reward.Text
 	default:
@@ -312,6 +394,8 @@ func DescribeReward(reward Reward, plans map[int64]PlanRef, features map[string]
 var detailNoun = map[string]string{
 	RewardExperience:   "经验",
 	RewardLotteryDraws: "抽奖",
+	RewardNumberChange: "改号卡",
+	RewardNumberDraw:   "摇号",
 }
 
 // termLabel 时长的展示口径：永久 / 1 年 / 3 个月 / 7 天。

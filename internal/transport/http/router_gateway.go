@@ -218,6 +218,16 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.PUT("/cosmetics/me", h.AppEquipCosmetic)
 		appGatewayAuthed.GET("/cosmetics/history", h.AppCosmeticHistory)
 		appGatewayAuthed.GET("/cosmetics/users", h.AppLookupCosmetics)
+		// 用户号码（docs/user-number.md）：我的号码页 / 查号 / 联想 / 摇号与放弃 / 换号 / 换号记录 / 权益流水。
+		// 号码只用于展示与查找，id 仍是终生不变的对外 ID。
+		appGatewayAuthed.GET("/numbers/me", h.AppUserNumber)
+		appGatewayAuthed.GET("/numbers/check", h.AppCheckUserNumber)
+		appGatewayAuthed.GET("/numbers/suggest", h.AppSuggestUserNumbers)
+		appGatewayAuthed.POST("/numbers/draw", h.AppDrawUserNumbers)
+		appGatewayAuthed.POST("/numbers/draws/:drawId/discard", h.AppDiscardUserNumberDraw)
+		appGatewayAuthed.POST("/numbers/change", h.AppChangeUserNumber)
+		appGatewayAuthed.GET("/numbers/history", h.AppUserNumberHistory)
+		appGatewayAuthed.GET("/numbers/ledger", h.AppUserNumberLedger)
 		// 抽奖：活动列表、活动页（奖品与公示概率、我的次数、保底进度）、抽一次、我的记录。
 		// 抽中什么由服务端在一个事务里决定并到账；视频抽奖走激励广告场景，看完发的是抽奖次数。
 		appGatewayAuthed.GET("/lottery", h.AppLotteryActivities)

@@ -7,10 +7,13 @@ import (
 )
 
 type User struct {
-	ID              int64      `json:"id"`
+	ID int64 `json:"id"`
 	// PublicID 对外用户 ID：随机 16 位数字，建号时由数据库发放、终生不变、注销后不复用。
 	// 用户与第三方能看到的地方一律给它，ID 只在服务端内部与管理端使用（docs/user-public-id.md）。
-	PublicID        int64      `json:"publicId"`
+	PublicID int64 `json:"publicId"`
+	// Number 号码：5–12 位、按应用唯一、可以更换（docs/user-number.md）。用户看到、搜索的是它，令牌与第三方不挂在它上面
+	Number          int64      `json:"number"`
+	NumberTier      int        `json:"numberTier"`
 	AppID           int64      `json:"appid"`
 	Account         string     `json:"account"`
 	PasswordHash    string     `json:"-"`
@@ -22,7 +25,7 @@ type User struct {
 	// VIPLifetimeAt 成为永久会员的时间，非空即永久会员（与 vip_expire_at 并列的另一条线）
 	VIPLifetimeAt *time.Time `json:"vipLifetimeAt,omitempty"`
 	CreatedAt     time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
 }
 
 // ContactInfo 多平台联系方式
@@ -432,17 +435,17 @@ type ProfileUpdateResult struct {
 }
 
 type AdminUserQuery struct {
-	Keyword     string     `json:"keyword"`
-	Account     string     `json:"account"`
-	Nickname    string     `json:"nickname"`
-	Email       string     `json:"email"`
-	Phone       string     `json:"phone"`
-	InviteCode  string     `json:"inviteCode"`
-	RegisterIP  string     `json:"registerIp"`
-	MarkCode    string     `json:"markcode"`
-	CustomID    string     `json:"customId"`
-	UserID      *int64     `json:"userId,omitempty"`
-	Enabled     *bool      `json:"enabled,omitempty"`
+	Keyword    string `json:"keyword"`
+	Account    string `json:"account"`
+	Nickname   string `json:"nickname"`
+	Email      string `json:"email"`
+	Phone      string `json:"phone"`
+	InviteCode string `json:"inviteCode"`
+	RegisterIP string `json:"registerIp"`
+	MarkCode   string `json:"markcode"`
+	CustomID   string `json:"customId"`
+	UserID     *int64 `json:"userId,omitempty"`
+	Enabled    *bool  `json:"enabled,omitempty"`
 	// IDs 按用户 ID 批量取（最多 500 个），给出时忽略其余筛选与分页，按给定顺序返回。
 	// 发布中心的内测、排除名单要把存着的 ID 还原成人。
 	IDs         []int64    `json:"ids,omitempty"`
@@ -502,21 +505,24 @@ type AdminUserBatchStatusResult struct {
 }
 
 type AdminUserView struct {
-	ID               int64          `json:"id"`
+	ID int64 `json:"id"`
 	// PublicID 对外用户 ID（用户在 App 里看到、报给客服的那个号）
-	PublicID         int64          `json:"publicId"`
-	AppID            int64          `json:"appid"`
-	Account          string         `json:"account"`
-	Nickname         string         `json:"nickname,omitempty"`
-	Avatar           string         `json:"avatar,omitempty"`
-	Email            string         `json:"email,omitempty"`
-	Phone            string         `json:"phone,omitempty"`
-	InviteCode       string         `json:"inviteCode,omitempty"`
-	Integral         int64          `json:"integral"`
-	Experience       int64          `json:"experience"`
-	Enabled          bool           `json:"enabled"`
-	DisabledEndTime  *time.Time     `json:"disabledEndTime,omitempty"`
-	VIPExpireAt      *time.Time     `json:"vipExpireAt,omitempty"`
+	PublicID int64 `json:"publicId"`
+	// Number 号码（docs/user-number.md），NumberTier 换号时判定的等级
+	Number          int64      `json:"number"`
+	NumberTier      int        `json:"numberTier"`
+	AppID           int64      `json:"appid"`
+	Account         string     `json:"account"`
+	Nickname        string     `json:"nickname,omitempty"`
+	Avatar          string     `json:"avatar,omitempty"`
+	Email           string     `json:"email,omitempty"`
+	Phone           string     `json:"phone,omitempty"`
+	InviteCode      string     `json:"inviteCode,omitempty"`
+	Integral        int64      `json:"integral"`
+	Experience      int64      `json:"experience"`
+	Enabled         bool       `json:"enabled"`
+	DisabledEndTime *time.Time `json:"disabledEndTime,omitempty"`
+	VIPExpireAt     *time.Time `json:"vipExpireAt,omitempty"`
 	// VIPLifetimeAt 成为永久会员的时间，非空即永久会员；此时 vipExpireAt 只是限时那条线的到期时间
 	VIPLifetimeAt    *time.Time     `json:"vipLifetimeAt,omitempty"`
 	CreatedAt        time.Time      `json:"createdAt"`
@@ -571,24 +577,27 @@ type AutoSignCandidate struct {
 }
 
 type MyView struct {
-	ID                  int64      `json:"id"`
-	AppID               int64      `json:"appid"`
-	Account             string     `json:"account"`
-	Integral            int64      `json:"integral"`
-	Experience          int64      `json:"experience"`
-	UnreadNotifications int64      `json:"unreadNotifications"`
-	Nickname            string     `json:"nickname,omitempty"`
-	Avatar              string     `json:"avatar,omitempty"`
-	Email               string     `json:"email,omitempty"`
-	Enabled             bool       `json:"enabled"`
+	ID int64 `json:"id"`
+	// Number 号码（docs/user-number.md）：展示与查找用，可以更换；id 仍是终生不变的对外 ID
+	Number              int64  `json:"number"`
+	NumberTier          int    `json:"numberTier"`
+	AppID               int64  `json:"appid"`
+	Account             string `json:"account"`
+	Integral            int64  `json:"integral"`
+	Experience          int64  `json:"experience"`
+	UnreadNotifications int64  `json:"unreadNotifications"`
+	Nickname            string `json:"nickname,omitempty"`
+	Avatar              string `json:"avatar,omitempty"`
+	Email               string `json:"email,omitempty"`
+	Enabled             bool   `json:"enabled"`
 	// VIPExpireAt 会员到期时间；永久会员没有到期时间，恒为空（老客户端据此显示「长期有效」）
 	VIPExpireAt *time.Time `json:"vipExpireAt,omitempty"`
 	IsVIP       bool       `json:"isVip"`
 	// VIPLifetime 永久会员
-	VIPLifetime         bool       `json:"vipLifetime"`
-	TokenSource         string     `json:"tokenSource,omitempty"`
-	LastLoginIP         string     `json:"lastLoginIp,omitempty"`
-	LastDeviceID        string     `json:"lastDeviceId,omitempty"`
+	VIPLifetime  bool   `json:"vipLifetime"`
+	TokenSource  string `json:"tokenSource,omitempty"`
+	LastLoginIP  string `json:"lastLoginIp,omitempty"`
+	LastDeviceID string `json:"lastDeviceId,omitempty"`
 }
 
 type SignInReward struct {

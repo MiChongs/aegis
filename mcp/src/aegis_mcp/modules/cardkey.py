@@ -49,12 +49,14 @@ Audience = Literal["all", "vip", "non_vip"]
 class Reward(BaseModel):
     """一项卡密权益。取值字段由权益类型决定（见 cardkey_catalog）。"""
 
-    type: Literal["vip_plan", "vip_days", "feature", "integral", "experience", "balance", "lottery_draws", "license_days", "device_slots"] = Field(
+    type: Literal["vip_plan", "vip_days", "feature", "integral", "experience", "balance", "lottery_draws", "license_days", "device_slots",
+                  "number_change", "number_ticket", "number_draw"] = Field(
         description="vip_plan 会员套餐（ref_id）/ vip_days 会员天数 / feature 功能解锁（feature + amount 天，0 为永久）/ integral 积分 / "
-                    "experience 经验 / balance 余额（money）/ lottery_draws 抽奖次数 / license_days 续费卡：顺延名下授权卡天数 / device_slots 授权卡设备位")
+                    "experience 经验 / balance 余额（money）/ lottery_draws 抽奖次数 / license_days 续费卡：顺延名下授权卡天数 / device_slots 授权卡设备位 / "
+                    "number_change 改号卡（amount 张）/ number_ticket 靓号券（amount 张 + ref_id 等级 1 精品 2 稀有 3 传说 4 至尊）/ number_draw 摇号次数（amount 次）")
     amount: int | None = Field(default=None, ge=0, description="数量（天数 / 点数 / 次数 / 设备位）")
     money: str | None = Field(default=None, description="余额金额（十进制字符串，如 \"10.00\"）")
-    ref_id: int | None = Field(default=None, gt=0, description="会员套餐 ID（vip_plan 用）")
+    ref_id: int | None = Field(default=None, gt=0, description="会员套餐 ID（vip_plan 用）；number_ticket 时为靓号券等级 1–4")
     feature: str | None = Field(default=None, description="功能标识（feature 用）")
 
     def payload(self) -> dict[str, Any]:

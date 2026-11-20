@@ -83,6 +83,10 @@ var allowedRewardTypes = []string{
 	cardkeydomain.RewardIntegral,
 	cardkeydomain.RewardExperience,
 	cardkeydomain.RewardLotteryDraws,
+	// 用户号码的权益（docs/user-number.md）
+	cardkeydomain.RewardNumberChange,
+	cardkeydomain.RewardNumberTicket,
+	cardkeydomain.RewardNumberDraw,
 	RewardFeatureMinutes,
 	RewardAICredit,
 }

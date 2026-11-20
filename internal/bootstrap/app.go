@@ -531,6 +531,9 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	cosmeticService := service.NewCosmeticService(log, pg, storageService)
 	cosmeticService.SetNotifier(notificationService)
 	cosmeticService.SetEventPublisher(realtimeService)
+	// 用户号码（docs/user-number.md）：换号后作废 /me 缓存并刷新管理端搜索索引
+	userNumberService := service.NewUserNumberService(log, pg, sessions)
+	userNumberService.SetAdminUserSearchService(adminUserSearch)
 	levelService := service.NewLevelService(log, pg)
 	levelService.SetNotifier(notificationService)
 	levelService.SetEventPublisher(realtimeService)
@@ -854,6 +857,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Lottery:      lotteryService,
 		ItemGrant:    itemGrantService,
 		Cosmetic:     cosmeticService,
+		UserNumber:   userNumberService,
 		Level:        levelService,
 		Growth:       growthService,
 		Wallet:       walletService,

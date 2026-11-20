@@ -241,6 +241,8 @@ data class AegisSession(
     val refreshExpiresAt: String = "",
     val tokenType: String = "",
     val userId: Long = 0,
+    /** 号码（5–12 位、可以更换，docs/user-number.md）：展示用；本地数据的键仍是 [userId]。 */
+    val number: Long = 0,
     val account: String = "",
     val provider: String = "",
     val requiresSecondFactor: Boolean = false,

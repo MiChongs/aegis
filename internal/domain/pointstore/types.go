@@ -401,6 +401,10 @@ type UserFacts struct {
 	Plans map[int64]PlanRef
 	// Features 功能目录（含停用的），按标识索引：判功能是否还在
 	Features map[string]FeatureRef
+	// Cosmetics 装扮目录：编号 → 是否可发（上架且发布过）；为 nil 时不判
+	Cosmetics map[int64]bool
+	// PermanentCosmetics 已永久持有的装扮
+	PermanentCosmetics []int64
 }
 
 // PlanRef 判定所需的套餐信息。
@@ -505,6 +509,8 @@ type ClientReward struct {
 	Tag       string `json:"tag,omitempty"`
 	Days      int    `json:"days,omitempty"`
 	Permanent bool   `json:"permanent,omitempty"`
+	// RefID 个性装扮的装扮编号（客户端据此显示装扮外观）
+	RefID int64 `json:"refId,omitempty"`
 }
 
 // ClientStore 用户端的积分商城首页。

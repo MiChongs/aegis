@@ -650,6 +650,12 @@ func validateConfig(data any) []string {
 		if err := itemgrant.ValidateItems(cfg.Items); err != nil {
 			add("%s", err.Error())
 		}
+		for _, item := range cfg.Items {
+			// 同一个号码只能给一个人，人人都会达成的等级奖励里发它没有意义
+			if item.Type == itemgrant.ItemNumberAssign {
+				add("等级奖励不能发「指定号码」")
+			}
+		}
 	case *PrivilegeConfig:
 		spec, ok := FindPrivilegeSpec(cfg.Kind)
 		if !ok {

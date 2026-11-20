@@ -168,6 +168,14 @@ func CheckRefs(graph Graph, refs Refs) []Issue {
 				if _, ok := refs.Features[item.Tag]; !ok {
 					issues = append(issues, Issue{Level: IssueWarning, NodeID: nodeID, Message: "功能 " + item.Tag + " 不在功能目录里，时长照发但客户端可能用不上"})
 				}
+			case ItemCosmetic:
+				cosmetic, ok := refs.Cosmetics[item.RefID]
+				switch {
+				case !ok:
+					issues = append(issues, Issue{Level: IssueError, NodeID: nodeID, Message: fmt.Sprintf("装扮 #%d 不存在", item.RefID)})
+				case !cosmetic.Live:
+					issues = append(issues, Issue{Level: IssueError, NodeID: nodeID, Message: "装扮「" + cosmetic.Name + "」未上架或未发布，发不出去"})
+				}
 			}
 		}
 	}

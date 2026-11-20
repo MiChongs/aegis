@@ -29,6 +29,9 @@ func TestRewardedAdCatalogHasGrantBranch(t *testing.T) {
 		cardkeydomain.RewardDeviceSlots:  "cardkeydomain.RewardDeviceSlots",
 		rewardedad.RewardFeatureMinutes:  "rewardedad.RewardFeatureMinutes",
 		rewardedad.RewardAICredit:        "rewardedad.RewardAICredit",
+		cardkeydomain.RewardNumberChange: "cardkeydomain.RewardNumberChange",
+		cardkeydomain.RewardNumberTicket: "cardkeydomain.RewardNumberTicket",
+		cardkeydomain.RewardNumberDraw:   "cardkeydomain.RewardNumberDraw",
 	}
 	offered := map[string]bool{}
 	for _, spec := range rewardedad.RewardCatalog() {

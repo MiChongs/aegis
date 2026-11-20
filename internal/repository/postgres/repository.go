@@ -36,7 +36,9 @@ type Repository struct {
 }
 
 // SetRiskScorer 注入「用户近 30 天最高风险分」的取法（行为画像的风险信号）
-func (r *Repository) SetRiskScorer(fn func(ctx context.Context, appID, userID int64) int) { r.riskScore = fn }
+func (r *Repository) SetRiskScorer(fn func(ctx context.Context, appID, userID int64) int) {
+	r.riskScore = fn
+}
 
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
@@ -1101,6 +1103,8 @@ func (r *Repository) ListAdminUsersByAppQuery(ctx context.Context, appID int64, 
 	query := `SELECT
 	u.id,
 	u.public_id,
+	u.number,
+	u.number_tier,
 	u.appid,
 	u.account,
 	u.integral,
@@ -1162,7 +1166,7 @@ func (r *Repository) listAdminUsersByAppFast(ctx context.Context, appID int64, e
 	}
 
 	query := `WITH page_users AS (
-    SELECT id, public_id, appid, account, integral, experience, enabled, disabled_end_time, vip_expire_at, vip_lifetime_at, created_at, updated_at
+    SELECT id, public_id, number, number_tier, appid, account, integral, experience, enabled, disabled_end_time, vip_expire_at, vip_lifetime_at, created_at, updated_at
     FROM users
     WHERE appid = $1`
 	args := []any{appID}
@@ -1182,6 +1186,8 @@ func (r *Repository) listAdminUsersByAppFast(ctx context.Context, appID int64, e
 SELECT
     u.id,
     u.public_id,
+    u.number,
+    u.number_tier,
     u.appid,
     u.account,
     u.integral,
@@ -1231,6 +1237,8 @@ func (r *Repository) GetAdminUserByApp(ctx context.Context, appID int64, userID 
 	query := `SELECT
 	u.id,
 	u.public_id,
+	u.number,
+	u.number_tier,
 	u.appid,
 	u.account,
 	u.integral,
@@ -1277,6 +1285,8 @@ func (r *Repository) ListAdminUsersForExportQuery(ctx context.Context, appID int
 	query := `SELECT
 	u.id,
 	u.public_id,
+	u.number,
+	u.number_tier,
 	u.appid,
 	u.account,
 	u.integral,
@@ -1327,6 +1337,8 @@ func (r *Repository) ListAdminUsersByIDs(ctx context.Context, appID int64, userI
 	rows, err := r.pool.Query(ctx, `SELECT
 	u.id,
 	u.public_id,
+	u.number,
+	u.number_tier,
 	u.appid,
 	u.account,
 	u.integral,
@@ -1563,7 +1575,8 @@ WHERE u.appid = $1`
     OR COALESCE(p.mark_code, COALESCE(p.extra->>'markcode', '')) ILIKE $%d
     OR COALESCE(p.custom_id, COALESCE(p.extra->>'custom_id', '')) ILIKE $%d
     OR CAST(u.id AS TEXT) ILIKE $%d
-  )`, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1)
+    OR CAST(u.number AS TEXT) ILIKE $%d
+  )`, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1)
 		args = append(args, "%"+keyword+"%")
 	}
 
@@ -3970,11 +3983,11 @@ func (r *Repository) InsertSessionAudit(ctx context.Context, appID int64, userID
 // userColumns 是 scanUser 读取的列，顺序与 Scan 的参数一一对应。
 // 凡是交给 scanUser 的查询都必须用它拼 SELECT / RETURNING：手写列清单在加列时会漏改，
 // 漏一处就是运行时的「number of field descriptions must equal number of destinations」。
-const userColumns = `id, public_id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, vip_lifetime_at, created_at, updated_at`
+const userColumns = `id, public_id, appid, account, COALESCE(password_hash, ''), integral, experience, enabled, disabled_end_time, vip_expire_at, vip_lifetime_at, created_at, updated_at, number, number_tier`
 
 func scanUser(row interface{ Scan(dest ...any) error }) (*userdomain.User, error) {
 	var user userdomain.User
-	if err := row.Scan(&user.ID, &user.PublicID, &user.AppID, &user.Account, &user.PasswordHash, &user.Integral, &user.Experience, &user.Enabled, &user.DisabledEndTime, &user.VIPExpireAt, &user.VIPLifetimeAt, &user.CreatedAt, &user.UpdatedAt); err != nil {
+	if err := row.Scan(&user.ID, &user.PublicID, &user.AppID, &user.Account, &user.PasswordHash, &user.Integral, &user.Experience, &user.Enabled, &user.DisabledEndTime, &user.VIPExpireAt, &user.VIPLifetimeAt, &user.CreatedAt, &user.UpdatedAt, &user.Number, &user.NumberTier); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	return &user, nil
@@ -3986,6 +3999,8 @@ func scanAdminUser(row interface{ Scan(dest ...any) error }) (*userdomain.AdminU
 	if err := row.Scan(
 		&item.ID,
 		&item.PublicID,
+		&item.Number,
+		&item.NumberTier,
 		&item.AppID,
 		&item.Account,
 		&item.Integral,

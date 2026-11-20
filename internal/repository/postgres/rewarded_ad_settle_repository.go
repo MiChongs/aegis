@@ -16,6 +16,7 @@ import (
 	"aegis/internal/domain/featuretime"
 	lotterydomain "aegis/internal/domain/lottery"
 	rewardedad "aegis/internal/domain/rewardedad"
+	"aegis/internal/domain/usernumber"
 	vipdomain "aegis/internal/domain/vip"
 )
 
@@ -469,6 +470,27 @@ func (r *Repository) grantAdRewardsTx(ctx context.Context, tx pgx.Tx, view *rewa
 				return nil, err
 			}
 			result.Detail = rewardedad.DescribeAICredit(reward) + "（余额 " + aigateway.MicroToPoints(balance).Round(2).String() + " 点）"
+
+		case cardkeydomain.RewardNumberChange:
+			_, note, err := grantNumberRewardTx(ctx, tx, view.AppID, view.UserID, reward.Type, reward.Amount, 0, usernumber.OriginRewardedAd, view.TransID, source)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = cardkeydomain.DescribeReward(reward) + note
+
+		case cardkeydomain.RewardNumberTicket:
+			_, note, err := grantNumberRewardTx(ctx, tx, view.AppID, view.UserID, reward.Type, reward.Amount, reward.RefID, usernumber.OriginRewardedAd, view.TransID, source)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = cardkeydomain.DescribeReward(reward) + note
+
+		case cardkeydomain.RewardNumberDraw:
+			_, note, err := grantNumberRewardTx(ctx, tx, view.AppID, view.UserID, reward.Type, reward.Amount, 0, usernumber.OriginRewardedAd, view.TransID, source)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = cardkeydomain.DescribeReward(reward) + note
 
 		default:
 			// 目录里有、这里没有 —— 由测试挡在合并之前；运行期走到这里说明配置绕过了校验。

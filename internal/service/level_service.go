@@ -121,6 +121,10 @@ func (s *LevelService) Catalog(ctx context.Context, appID int64) (*LevelCatalog,
 	sort.Slice(features, func(i, j int) bool { return features[i].Tag < features[j].Tag })
 	items := make([]itemgrant.ItemSpec, 0, 16)
 	for _, item := range itemgrant.ItemCatalog() {
+		// 同一个号码只能给一个人，等级奖励不提供「指定号码」
+		if item.Type == itemgrant.ItemNumberAssign {
+			continue
+		}
 		// 达成奖励的数量固定，不支持按人计算
 		item.Scalable = false
 		items = append(items, item)

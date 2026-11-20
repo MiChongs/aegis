@@ -225,6 +225,8 @@ func (s *UserService) GetMy(ctx context.Context, session *authdomain.Session) (*
 	view := &userdomain.MyView{
 		// 对外只给随机的对外 ID，数据库主键不出服务端（docs/user-public-id.md）
 		ID:           user.PublicID,
+		Number:       user.Number,
+		NumberTier:   user.NumberTier,
 		AppID:        user.AppID,
 		Account:      user.Account,
 		Integral:     user.Integral,
@@ -2478,6 +2480,12 @@ func shouldUseAdminUserSearch(query userdomain.AdminUserQuery) bool {
 	}
 	if strings.HasPrefix(strings.TrimSpace(query.Keyword), "#") {
 		return false
+	}
+	// 5–12 位纯数字可能是用户报来的号码（docs/user-number.md），索引里没有这一列，交给 Postgres
+	if keyword := strings.TrimSpace(query.Keyword); len(keyword) >= 5 && len(keyword) <= 12 {
+		if _, err := strconv.ParseInt(keyword, 10, 64); err == nil {
+			return false
+		}
 	}
 	// 16 位纯数字是用户报来的对外 ID，同样是 Postgres 侧直达（索引里没有这一列）
 	if keyword := strings.TrimSpace(query.Keyword); len(keyword) == 16 {

@@ -1,6 +1,7 @@
 package pointstore
 
 import (
+	"slices"
 	"strconv"
 
 	vipdomain "aegis/internal/domain/vip"
@@ -123,6 +124,13 @@ func rewardsResolvable(rewards []Reward, facts UserFacts) bool {
 			if !ok || !feature.IsActive {
 				return false
 			}
+		case RewardCosmetic:
+			if facts.Cosmetics == nil {
+				continue
+			}
+			if live, ok := facts.Cosmetics[reward.RefID]; !ok || !live {
+				return false
+			}
 		}
 	}
 	return true
@@ -149,6 +157,11 @@ func Owned(rewards []Reward, facts UserFacts) bool {
 			}
 		case RewardFeature:
 			if _, ok := holdings.CoversFeature(reward.Tag); ok {
+				return true
+			}
+		case RewardCosmetic:
+			// 已永久持有这件装扮：再兑一段限时的或永久的都拿不到新东西
+			if slices.Contains(facts.PermanentCosmetics, reward.RefID) {
 				return true
 			}
 		}

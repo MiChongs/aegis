@@ -146,6 +146,24 @@ func init() {
 		Write("POST /api/admin/apps/:appkey/cosmetics/users/:userId/ownerships/:ownershipId/revoke", "收回用户装扮", "用户装扮", SeverityHigh),
 		Write("POST /api/admin/apps/:appkey/cosmetics/users/:userId/unequip", "摘下用户装扮", "用户装扮", SeverityMedium),
 
+		// 用户号码
+		View("GET /api/admin/apps/:appkey/numbers/catalog", "查看号码目录", ""),
+		View("GET /api/admin/apps/:appkey/numbers/overview", "查看号码总览", ""),
+		View("GET /api/admin/apps/:appkey/numbers/settings", "查看号码设置", ""),
+		Write("PUT /api/admin/apps/:appkey/numbers/settings", "修改号码设置", "", SeverityHigh),
+		View("POST /api/admin/apps/:appkey/numbers/settings/odds", "试算摇号概率", ""),
+		View("GET /api/admin/apps/:appkey/numbers/inspect", "查询号码", ""),
+		View("GET /api/admin/apps/:appkey/numbers/users/:userId", "查看用户号码", ""),
+		Write("POST /api/admin/apps/:appkey/numbers/users/:userId/assign", "给用户指定号码", "用户号码", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/numbers/users/:userId/rollback", "回滚用户号码", "用户号码", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/numbers/users/:userId/rights", "调整用户号码权益", "号码权益", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/numbers/history", "查看换号记录", ""),
+		View("GET /api/admin/apps/:appkey/numbers/ledger", "查看号码权益流水", ""),
+		View("GET /api/admin/apps/:appkey/numbers/draws", "查看摇号记录", ""),
+		View("GET /api/admin/apps/:appkey/numbers/holds", "查看号码占用", ""),
+		Write("POST /api/admin/apps/:appkey/numbers/holds", "保留号码", "保留号", SeverityMedium),
+		Write("DELETE /api/admin/apps/:appkey/numbers/holds/:number", "放出号码占用", "保留号", SeverityMedium),
+
 		// 邀请
 		View("GET /api/admin/apps/:appkey/invite/catalog", "查看邀请配置目录", ""),
 		View("GET /api/admin/apps/:appkey/invite/settings", "查看邀请配置", ""),

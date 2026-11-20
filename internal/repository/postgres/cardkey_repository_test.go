@@ -36,6 +36,10 @@ func TestRewardCatalogHasGrantBranch(t *testing.T) {
 		cardkeydomain.RewardBalance:      "RewardBalance",
 		cardkeydomain.RewardLotteryDraws: "RewardLotteryDraws",
 		cardkeydomain.RewardDeviceSlots:  "RewardDeviceSlots",
+		cardkeydomain.RewardNumberChange: "RewardNumberChange",
+		cardkeydomain.RewardNumberTicket: "RewardNumberTicket",
+		cardkeydomain.RewardNumberDraw:   "RewardNumberDraw",
+		cardkeydomain.RewardCosmetic:     "RewardCosmetic",
 	}
 	for _, spec := range cardkeydomain.RewardCatalog() {
 		name, ok := constNames[spec.Type]

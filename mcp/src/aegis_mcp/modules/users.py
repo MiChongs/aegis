@@ -123,7 +123,7 @@ DETAIL_INCLUDE = Literal[
 @server.tool(**READ("users"))
 async def search(
     app: AppRef,
-    keyword: Annotated[str, Field(description="模糊关键字（账号 / 昵称 / 邮箱 / 手机号等）")] = "",
+    keyword: Annotated[str, Field(description="模糊关键字（账号 / 昵称 / 邮箱 / 手机号等；5–12 位纯数字也按用户号码精确匹配）")] = "",
     account: Annotated[str, Field(description="账号（精确或前缀匹配，按后端实现）")] = "",
     nickname: Annotated[str, Field(description="昵称")] = "",
     email: Annotated[str, Field(description="邮箱")] = "",
@@ -144,7 +144,7 @@ async def search(
 ) -> Any:
     """检索应用用户（支持账号、昵称、邮箱、手机号、邀请码、注册 IP、设备码、自定义 ID、启用状态、注册时间等过滤）。
 
-    返回分页结果，items[].id 即后续工具要用的用户 ID。需要 app:user:read。
+    返回分页结果，items[].id 即后续工具要用的用户 ID，items[].number / numberTier 为用户号码与等级（展示用，可更换，见 numbers_）。需要 app:user:read。
     """
     return await USERS(appkey=app, query=q(
         keyword=keyword, account=account, nickname=nickname, email=email, phone=phone,
@@ -164,6 +164,8 @@ async def get_user(
     ))] = None,
 ) -> Any:
     """一个用户的完整资料，可按需附带封禁、会话、钱包、授权、注销、设备数、云存储、广告策略等。
+
+    资料里的 number / numberTier 是用户号码与等级（按应用唯一、可更换，权益与换号记录用 numbers_user 查）。
 
     附加项单独失败时不影响主体，失败原因写在 errors 里。
     """

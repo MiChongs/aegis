@@ -12,8 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"aegis/internal/domain/cosmetic"
 	lotterydomain "aegis/internal/domain/lottery"
 	"aegis/internal/domain/pointstore"
+	"aegis/internal/domain/usernumber"
 	vipdomain "aegis/internal/domain/vip"
 	walletdomain "aegis/internal/domain/wallet"
 )
@@ -429,14 +431,42 @@ func (r *Repository) assemblePointsStoreFacts(ctx context.Context, q queryExecut
 	if err != nil {
 		return nil, err
 	}
+	cosmeticRefs, err := cosmeticRefsQ(ctx, q, appID)
+	if err != nil {
+		return nil, err
+	}
+	cosmetics := make(map[int64]bool, len(cosmeticRefs))
+	for id, ref := range cosmeticRefs {
+		cosmetics[id] = ref.Live
+	}
+	permanentCosmetics := make([]int64, 0)
+	cosmeticRows, err := q.Query(ctx, `SELECT DISTINCT cosmetic_id FROM user_cosmetics
+WHERE appid = $1 AND user_id = $2 AND revoked_at IS NULL AND ends_at IS NULL`, appID, userID)
+	if err != nil {
+		return nil, err
+	}
+	for cosmeticRows.Next() {
+		var id int64
+		if err := cosmeticRows.Scan(&id); err != nil {
+			cosmeticRows.Close()
+			return nil, err
+		}
+		permanentCosmetics = append(permanentCosmetics, id)
+	}
+	cosmeticRows.Close()
+	if err := cosmeticRows.Err(); err != nil {
+		return nil, err
+	}
 	return &pointstore.UserFacts{
-		Integral:   integral,
-		Level:      level,
-		IsVip:      entitlement.IsVIP,
-		IsLifetime: entitlement.IsLifetime,
-		Holdings:   vipdomain.HoldingsOf(*entitlementFacts, now),
-		Plans:      plans,
-		Features:   features,
+		Cosmetics:          cosmetics,
+		PermanentCosmetics: permanentCosmetics,
+		Integral:           integral,
+		Level:              level,
+		IsVip:              entitlement.IsVIP,
+		IsLifetime:         entitlement.IsLifetime,
+		Holdings:           vipdomain.HoldingsOf(*entitlementFacts, now),
+		Plans:              plans,
+		Features:           features,
 	}, nil
 }
 
@@ -736,6 +766,44 @@ func (r *Repository) grantPointsStoreRewardsTx(ctx context.Context, tx pgx.Tx, r
 
 		case pointstore.RewardManual:
 			result.Pending = true
+
+		case pointstore.RewardNumberChange:
+			_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, 0, usernumber.OriginPointsStore, redemption.RedemptionNo, source)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail += note
+
+		case pointstore.RewardNumberTicket:
+			_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, reward.RefID, usernumber.OriginPointsStore, redemption.RedemptionNo, source)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail += note
+
+		case pointstore.RewardNumberDraw:
+			_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, 0, usernumber.OriginPointsStore, redemption.RedemptionNo, source)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail += note
+
+		case pointstore.RewardCosmetic:
+			granted, err := grantCosmeticTx(ctx, tx, cosmetic.GrantInput{
+				AppID: appID, UserID: userID, CosmeticID: reward.RefID, Days: int(reward.Amount),
+				Source: cosmetic.SourcePointsStore, SourceRef: redemption.RedemptionNo,
+			})
+			if errors.Is(err, ErrCosmeticUnavailable) {
+				return nil, pointsStoreUnavailable(pointstore.ReasonRewardUnavailable)
+			}
+			if err != nil {
+				return nil, err
+			}
+			if granted.AlreadyPermanent {
+				// 列表上已经按「已拥有」灰掉了；走到这里是并发，整笔回滚、积分不扣
+				return nil, pointsStoreUnavailable(pointstore.ReasonOwned)
+			}
+			result.Detail = granted.CosmeticName + " " + cosmetic.TermLabel(int(reward.Amount))
 
 		default:
 			// 目录里有、这里没有 —— 由测试挡在合并之前

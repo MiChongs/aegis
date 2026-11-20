@@ -111,7 +111,9 @@ type LoginResult struct {
 	// UserID 数据库主键，服务端内部用（登录后的邀请绑定、钩子等），不下发
 	UserID int64 `json:"-"`
 	// PublicUserID 对外用户 ID，响应里的 userId 就是它（docs/user-public-id.md）
-	PublicUserID         int64                  `json:"userId"`
+	PublicUserID int64 `json:"userId"`
+	// Number 号码（docs/user-number.md）：展示用，可以更换
+	Number               int64                  `json:"number,omitempty"`
 	Account              string                 `json:"account"`
 	Provider             string                 `json:"provider,omitempty"`
 	RequiresSecondFactor bool                   `json:"requiresSecondFactor,omitempty"`

@@ -965,6 +965,65 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
     fun lookupCosmetics(userIds: List<Long>): JsonElement =
         client.call("GET", "/cosmetics/users", query = mapOf("ids" to userIds.joinToString(",")), requireAuth = true)
 
+    // ── 用户号码（docs/user-number.md）──
+    //
+    // 号码是 5–12 位、按应用唯一、可以更换的展示号；`id` 仍是终生不变的对外 ID，本地数据继续用它做键。
+    // 号码在请求里用字符串传。
+
+    /**
+     * 我的号码页：`number` / `tier` / `patterns`、冷却（`nextChangeAt`）、权益余额（`rights`）、打开的摇号单（`draw`）、
+     * 今日号运与各级概率（`luck.odds`）、冻结中的旧号（`frozen`）、规则（`rules`）与规律目录（`catalog`）。
+     */
+    @Throws(IOException::class)
+    fun userNumber(): JsonElement = client.call("GET", "/numbers/me", requireAuth = true)
+
+    /** 查一个号码：等级、是否空闲（`reason`）、需要什么权益（`needName`）、现在能不能换（`canChange`）。 */
+    @Throws(IOException::class)
+    fun checkUserNumber(number: String): JsonElement =
+        client.call("GET", "/numbers/check", query = mapOf("number" to number), requireAuth = true)
+
+    /** 自选联想：含 [query] 的空闲号码；[query] 为空时按 [tier] 给一组这一级的空闲号码。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun suggestUserNumbers(query: String = "", tier: Int = -1, count: Int = 12): JsonElement =
+        client.call(
+            "GET", "/numbers/suggest",
+            query = mapOf("q" to query, "tier" to tier.toString(), "count" to count.toString()), requireAuth = true,
+        )
+
+    /** 摇一次号（扣一次摇号次数）：返回 `draw.candidates`（锁定到 `draw.expiresAt`）、今日号运与剩余权益。 */
+    @Throws(IOException::class)
+    fun drawUserNumbers(): JsonElement = client.call("POST", "/numbers/draw", requireAuth = true)
+
+    /** 放弃打开的摇号单（次数不退）。 */
+    @Throws(IOException::class)
+    fun discardUserNumberDraw(drawId: Long): JsonElement =
+        client.call("POST", "/numbers/draws/$drawId/discard", requireAuth = true)
+
+    /**
+     * 换号：[drawId] 大于 0 时从那张摇号单里选；否则换回自己冻结中的旧号，或用改号卡 / 靓号券自选
+     * （[useKind] 为空时自动用最便宜的够用的一份）。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun changeUserNumber(number: String, drawId: Long = 0, useKind: String = "", useLevel: Int = 0): JsonElement =
+        client.call(
+            "POST", "/numbers/change",
+            mapOf("number" to number, "drawId" to drawId, "useKind" to useKind, "useLevel" to useLevel), requireAuth = true,
+        )
+
+    /** 我的换号记录。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun userNumberHistory(page: Int = 1, limit: Int = 20): JsonElement =
+        client.call("GET", "/numbers/history", query = pageQuery(page, limit), requireAuth = true)
+
+    /** 我的号码权益流水。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun userNumberLedger(page: Int = 1, limit: Int = 20): JsonElement =
+        client.call("GET", "/numbers/ledger", query = pageQuery(page, limit), requireAuth = true)
+
     // ── 抽奖（docs/lottery.md）──
 
     /** 进行中的抽奖活动。没有活动时 `activities` 为空（不报错），入口应当整个隐藏。 */

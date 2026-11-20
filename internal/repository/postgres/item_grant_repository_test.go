@@ -30,6 +30,11 @@ func TestItemCatalogHasGrantBranch(t *testing.T) {
 		itemgrant.ItemLicenseDays:  "itemgrant.ItemLicenseDays",
 		itemgrant.ItemDeviceSlots:  "itemgrant.ItemDeviceSlots",
 		itemgrant.ItemManual:       "itemgrant.ItemManual",
+		itemgrant.ItemNumberChange: "itemgrant.ItemNumberChange",
+		itemgrant.ItemNumberTicket: "itemgrant.ItemNumberTicket",
+		itemgrant.ItemNumberDraw:   "itemgrant.ItemNumberDraw",
+		itemgrant.ItemNumberAssign: "itemgrant.ItemNumberAssign",
+		itemgrant.ItemCosmetic:     "itemgrant.ItemCosmetic",
 	}
 	offered := map[string]bool{}
 	for _, spec := range itemgrant.ItemCatalog() {

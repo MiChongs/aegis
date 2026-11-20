@@ -230,6 +230,22 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "cosmeticHistory", Method: "GET", Path: "/cosmetics/history", Auth: true, Summary: "我的装扮获得记录"},
 	{Key: "cosmeticLookup", Method: "GET", Path: "/cosmetics/users", Auth: true,
 		Summary: "批量查别人身上的装扮（ids 为对外用户 ID，逗号分隔，最多 100 个）"},
+	// 用户号码（docs/user-number.md）：5–12 位、按应用唯一、可以更换的展示号码；id 仍是终生不变的对外 ID。
+	// 换号三条路：摇号单里选（不再扣别的权益）、换回自己冻结中的旧号（免费）、用改号卡 / 靓号券自选。号码在请求里用字符串传。
+	{Key: "numberMe", Method: "GET", Path: "/numbers/me", Auth: true,
+		Summary: "我的号码页：号码与等级、冷却、权益余额、打开的摇号单、今日号运与各级概率、冻结中的旧号、规则与规律目录"},
+	{Key: "numberCheck", Method: "GET", Path: "/numbers/check", Auth: true,
+		Summary: "查一个号码（number）：等级与命中的规律、是否空闲（reason）、需要什么权益、现在能不能换"},
+	{Key: "numberSuggest", Method: "GET", Path: "/numbers/suggest", Auth: true,
+		Summary: "自选联想：含 q 的空闲号码；q 为空时按 tier 给一组这一级的空闲号码（count ≤ 30）"},
+	{Key: "numberDraw", Method: "POST", Path: "/numbers/draw", Auth: true,
+		Summary: "摇一次号（扣一次摇号次数）：候选号锁定若干分钟、只给自己；新摇一次作废上一张；冷却中不扣次数"},
+	{Key: "numberDrawDiscard", Method: "POST", Path: "/numbers/draws/{drawId}/discard", Auth: true,
+		Summary: "放弃打开的摇号单（次数不退），候选号释放"},
+	{Key: "numberChange", Method: "POST", Path: "/numbers/change", Auth: true,
+		Summary: "换号：{number, drawId?, useKind?, useLevel?}；不指定权益时自动用最便宜的够用的一份"},
+	{Key: "numberHistory", Method: "GET", Path: "/numbers/history", Auth: true, Summary: "我的换号记录"},
+	{Key: "numberLedger", Method: "GET", Path: "/numbers/ledger", Auth: true, Summary: "我的号码权益流水（改号卡、靓号券、摇号次数的获得与使用）"},
 	// 抽奖：抽中什么只由服务端决定并在同一个事务里到账，客户端只说用哪一种次数抽一次。
 	// 次数三种来源：每日免费（free）、抽奖次数余额（bonus，看激励广告 / 卡密 / 积分商城等发放）、积分（points）。
 	// 扣除顺序只有一条：今日免费 → 赠送的次数 → 兑换的次数 → 积分；source 只是「最多用到这一档」，免费永远先扣。
@@ -637,6 +653,29 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 		Recovery: authprotocol.RecoveryNone, Hint: "入口应当隐藏；/cosmetics/me 在未开启时返回空而不是这个错误"},
 	{Code: errCodeCosmeticNotWearable, Name: "COSMETIC_NOT_WEARABLE", Message: "暂时不能佩戴这件装扮",
 		Recovery: authprotocol.RecoveryNone, Hint: "data.reason 与 /cosmetics 里每件的 state.reason 同一套：not_owned / expired / need_vip / need_tier / need_level / need_feature / unavailable / slot_mismatch"},
+	// ── 用户号码 ──
+	{Code: errCodeUserNumberDisabled, Name: "NUMBER_CHANGE_DISABLED", Message: "号码更换暂未开放",
+		Recovery: authprotocol.RecoveryNone, Hint: "/numbers/me 的 enabled 为 false 时隐藏换号与摇号入口，号码照常展示"},
+	{Code: errCodeUserNumberInvalid, Name: "NUMBER_INVALID", Message: "号码格式或位数不对",
+		Recovery: authprotocol.RecoveryNone, Hint: "纯数字、不以 0 开头、位数在 rules.minLength–maxLength 之间"},
+	{Code: errCodeUserNumberTaken, Name: "NUMBER_TAKEN", Message: "号码已被使用", Recovery: authprotocol.RecoveryNone,
+		Hint: "换一个号；提交前可用 /numbers/check 预查"},
+	{Code: errCodeUserNumberHeld, Name: "NUMBER_HELD", Message: "号码保留、冻结或正被摇号锁定", Recovery: authprotocol.RecoveryNone,
+		Hint: "保留号只能由后台指定；冻结号只有原主人能换回；候选号只给摇出它的人"},
+	{Code: errCodeUserNumberCooldown, Name: "NUMBER_COOLDOWN", Message: "换号冷却中", Recovery: authprotocol.RecoveryNone,
+		Hint: "/numbers/me 的 nextChangeAt 之后再换；摇号同样受冷却限制且冷却中不扣次数"},
+	{Code: errCodeUserNumberNoRight, Name: "NUMBER_NO_RIGHT", Message: "没有能换这个等级号码的权益", Recovery: authprotocol.RecoveryNone,
+		Hint: "普通号要改号卡或任意靓号券，其余要不低于该级的靓号券（/numbers/check 的 needName）"},
+	{Code: errCodeUserNumberSelfPickOff, Name: "NUMBER_SELF_PICK_DISABLED", Message: "只能通过摇号更换号码", Recovery: authprotocol.RecoveryNone,
+		Hint: "rules.selfPick 为 false 时隐藏自选入口"},
+	{Code: errCodeUserNumberNoDraw, Name: "NUMBER_NO_DRAW", Message: "摇号次数不足", Recovery: authprotocol.RecoveryNone,
+		Hint: "rights.draw 为 0；次数来自物品发放、卡密、积分商城、抽奖等渠道"},
+	{Code: errCodeUserNumberDrawNotFound, Name: "NUMBER_DRAW_CLOSED", Message: "摇号结果已过期或已关闭", Recovery: authprotocol.RecoveryNone,
+		Hint: "重新摇号；候选号锁定 rules.drawHoldMinutes 分钟"},
+	{Code: errCodeUserNumberNotCandidate, Name: "NUMBER_NOT_CANDIDATE", Message: "号码不在这张摇号单里", Recovery: authprotocol.RecoveryNone},
+	{Code: errCodeUserNumberSame, Name: "NUMBER_SAME", Message: "与当前号码相同", Recovery: authprotocol.RecoveryNone},
+	{Code: errCodeUserNumberNoCandidates, Name: "NUMBER_POOL_BUSY", Message: "没有摇到空闲的候选号", Recovery: authprotocol.RecoveryNone,
+		Hint: "次数未扣，稍后重试"},
 	// ── 积分商城 ──
 	// 与 /points/store 里每件商品的 availability.reason 一一对应：列表上灰着的原因与点了之后的报错是同一句话。
 	{Code: errCodePointsStoreDisabled, Name: "POINTS_STORE_DISABLED", Message: "积分商城暂未开放",

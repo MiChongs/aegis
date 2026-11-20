@@ -30,6 +30,7 @@ import (
 	"aegis/internal/domain/storage"
 	"aegis/internal/domain/suspension"
 	"aegis/internal/domain/system"
+	"aegis/internal/domain/usernumber"
 	"aegis/internal/service"
 )
 
@@ -255,6 +256,12 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/notifications/campaigns/preview"):                                       AdminNotificationAudienceRequest{},       // AdminPreviewNotificationAudience
 		routeKey("POST", "/api/admin/apps/{appkey}/notifications/delete-by-filter"):                                        AdminNotificationDeleteFilterRequest{},   // DeleteAdminAppNotificationsByFilter
 		routeKey("GET", "/api/admin/apps/{appkey}/notifications/export"):                                                   AdminNotificationListQuery{},             // ExportAdminAppNotifications
+		routeKey("POST", "/api/admin/apps/{appkey}/numbers/holds"):                                                         UserNumberReserveRequest{},               // AdminReserveUserNumbers
+		routeKey("PUT", "/api/admin/apps/{appkey}/numbers/settings"):                                                       usernumber.Settings{},                    // AdminSaveUserNumberSettings
+		routeKey("POST", "/api/admin/apps/{appkey}/numbers/settings/odds"):                                                 UserNumberOddsRequest{},                  // AdminPreviewUserNumberOdds
+		routeKey("POST", "/api/admin/apps/{appkey}/numbers/users/{userId}/assign"):                                         UserNumberAssignRequest{},                // AdminAssignUserNumber
+		routeKey("POST", "/api/admin/apps/{appkey}/numbers/users/{userId}/rights"):                                         UserNumberRightAdjustRequest{},           // AdminAdjustUserNumberRight
+		routeKey("POST", "/api/admin/apps/{appkey}/numbers/users/{userId}/rollback"):                                       UserNumberRollbackRequest{},              // AdminRollbackUserNumber
 		routeKey("DELETE", "/api/admin/apps/{appkey}/oauth-bindings"):                                                      AdminUnbindOAuthRequest{},                // AdminDeleteAppOAuthBinding
 		routeKey("GET", "/api/admin/apps/{appkey}/oauth-bindings"):                                                         AppOAuthBindingQuery{},                   // AdminListAppOAuthBindings
 		routeKey("POST", "/api/admin/apps/{appkey}/oauth-providers"):                                                       AppOAuthProviderRequest{},                // AdminCreateAppOAuthProvider
@@ -820,6 +827,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/v1/apps/{appkey}/notifications/read-all"):                                                   NotificationReadAllRequest{},             // ReadAllNotifications
 		routeKey("POST", "/api/v1/apps/{appkey}/notifications/read-batch"):                                                 NotificationReadBatchRequest{},           // ReadNotificationsBatch
 		routeKey("POST", "/api/v1/apps/{appkey}/notifications/unread"):                                                     NotificationReadRequest{},                // UnreadNotification
+		routeKey("POST", "/api/v1/apps/{appkey}/numbers/change"):                                                           UserNumberChangeRequest{},                // AppChangeUserNumber
 		routeKey("GET", "/api/v1/apps/{appkey}/pay/methods"):                                                               PaymentMethodsQuery{},                    // UserPaymentMethods
 		routeKey("GET", "/api/v1/apps/{appkey}/pay/orders"):                                                                UserPaymentOrdersQuery{},                 // PaymentOrders
 		routeKey("POST", "/api/v1/apps/{appkey}/pay/orders"):                                                               CreatePaymentOrderRequest{},              // CreatePaymentOrder

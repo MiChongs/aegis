@@ -663,7 +663,7 @@ func (s *AuthService) registerWithPasswordOnce(ctx context.Context, app *appdoma
 	s.syncAdminUserSearch(input.AppID, user.ID)
 	s.sendWelcomeMail(input.AppID, input.Account, registerEmail, input.Nickname)
 	if input.SuppressSession {
-		return &authdomain.LoginResult{UserID: user.ID, PublicUserID: user.PublicID, Account: user.Account}, nil
+		return &authdomain.LoginResult{UserID: user.ID, PublicUserID: user.PublicID, Number: user.Number, Account: user.Account}, nil
 	}
 	// 新建用户必然未被封禁/禁用，无需 ensureUserLoginState；首次设备已以 register 场景同步写入
 	return s.completeLogin(ctx, app, user, "password", "password", input.DeviceID, input.Device, input.IP, input.UserAgent)
@@ -1437,7 +1437,7 @@ func (s *AuthService) issueSessionChecked(ctx context.Context, app *appdomain.Ap
 		if challenge != nil {
 			// 不签发令牌：客户端凭 ticket 让用户选好要下线的设备，再调 /auth/device-limit/resolve
 			return &authdomain.LoginResult{
-				UserID: user.ID, PublicUserID: user.PublicID, Account: user.Account, Provider: provider,
+				UserID: user.ID, PublicUserID: user.PublicID, Number: user.Number, Account: user.Account, Provider: provider,
 				AuthenticationState: AuthStateDeviceLimitRequired, DeviceLimit: challenge,
 			}, nil
 		}
@@ -1660,6 +1660,7 @@ func (s *AuthService) issueSessionBundle(ctx context.Context, app *appdomain.App
 			TokenType:              "Bearer",
 			UserID:                 user.ID,
 			PublicUserID:           user.PublicID,
+			Number:                 user.Number,
 			Account:                user.Account,
 			Provider:               provider,
 			PasswordChangeRequired: passwordChangeRequired,

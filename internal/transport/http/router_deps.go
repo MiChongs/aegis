@@ -96,6 +96,7 @@ type RouterDeps struct {
 	Lottery      *service.LotteryService
 	ItemGrant    *service.ItemGrantService
 	Cosmetic     *service.CosmeticService
+	UserNumber   *service.UserNumberService
 	Level        *service.LevelService
 	Growth       *service.GrowthService
 	Wallet       *service.WalletService
@@ -203,6 +204,7 @@ func (d RouterDeps) newHandler() *Handler {
 		lottery:            d.Lottery,
 		itemGrant:          d.ItemGrant,
 		cosmetic:           d.Cosmetic,
+		userNumber:         d.UserNumber,
 		level:              d.Level,
 		growth:             d.Growth,
 		announcement:       d.Announcement,

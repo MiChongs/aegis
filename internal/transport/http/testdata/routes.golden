@@ -35,6 +35,7 @@ DELETE	/api/admin/apps/:appkey/music/*path	AdminMusicProxy
 DELETE	/api/admin/apps/:appkey/notices	DeleteAdminNotices
 DELETE	/api/admin/apps/:appkey/notices/:noticeId	DeleteAdminNotice
 DELETE	/api/admin/apps/:appkey/notifications	DeleteAdminAppNotifications
+DELETE	/api/admin/apps/:appkey/numbers/holds/:number	AdminReleaseUserNumberHold
 DELETE	/api/admin/apps/:appkey/oauth-bindings	AdminDeleteAppOAuthBinding
 DELETE	/api/admin/apps/:appkey/oauth-providers/:provider	AdminDeleteAppOAuthProvider
 DELETE	/api/admin/apps/:appkey/oauth2/clients/:clientId	AdminDeleteOAuth2Client
@@ -300,6 +301,15 @@ GET	/api/admin/apps/:appkey/notifications/campaigns	AdminListNotificationCampaig
 GET	/api/admin/apps/:appkey/notifications/campaigns/:campaignId	AdminGetNotificationCampaign
 GET	/api/admin/apps/:appkey/notifications/campaigns/catalog	AdminNotificationCampaignCatalog
 GET	/api/admin/apps/:appkey/notifications/export	ExportAdminAppNotifications
+GET	/api/admin/apps/:appkey/numbers/catalog	AdminUserNumberCatalog
+GET	/api/admin/apps/:appkey/numbers/draws	AdminUserNumberDraws
+GET	/api/admin/apps/:appkey/numbers/history	AdminUserNumberHistory
+GET	/api/admin/apps/:appkey/numbers/holds	AdminUserNumberHolds
+GET	/api/admin/apps/:appkey/numbers/inspect	AdminInspectUserNumber
+GET	/api/admin/apps/:appkey/numbers/ledger	AdminUserNumberLedger
+GET	/api/admin/apps/:appkey/numbers/overview	AdminUserNumberOverview
+GET	/api/admin/apps/:appkey/numbers/settings	AdminUserNumberSettings
+GET	/api/admin/apps/:appkey/numbers/users/:userId	AdminUserNumberOfUser
 GET	/api/admin/apps/:appkey/oauth-bindings	AdminListAppOAuthBindings
 GET	/api/admin/apps/:appkey/oauth-providers	AdminListAppOAuthProviders
 GET	/api/admin/apps/:appkey/oauth-providers/:provider	AdminGetAppOAuthProvider
@@ -789,6 +799,11 @@ GET	/api/v1/apps/:appkey/notifications/:notificationId	NotificationDetail
 GET	/api/v1/apps/:appkey/notifications/preferences	NotificationPreferences
 GET	/api/v1/apps/:appkey/notifications/summary	NotificationSummary
 GET	/api/v1/apps/:appkey/notifications/unread-count	NotificationUnreadCount
+GET	/api/v1/apps/:appkey/numbers/check	AppCheckUserNumber
+GET	/api/v1/apps/:appkey/numbers/history	AppUserNumberHistory
+GET	/api/v1/apps/:appkey/numbers/ledger	AppUserNumberLedger
+GET	/api/v1/apps/:appkey/numbers/me	AppUserNumber
+GET	/api/v1/apps/:appkey/numbers/suggest	AppSuggestUserNumbers
 GET	/api/v1/apps/:appkey/pay/methods	UserPaymentMethods
 GET	/api/v1/apps/:appkey/pay/orders	PaymentOrders
 GET	/api/v1/apps/:appkey/pay/orders/:orderNo	PaymentOrderDetail
@@ -1048,6 +1063,11 @@ POST	/api/admin/apps/:appkey/notifications/campaigns/:campaignId/cancel	AdminCan
 POST	/api/admin/apps/:appkey/notifications/campaigns/:campaignId/recall	AdminRecallNotificationCampaign
 POST	/api/admin/apps/:appkey/notifications/campaigns/preview	AdminPreviewNotificationAudience
 POST	/api/admin/apps/:appkey/notifications/delete-by-filter	DeleteAdminAppNotificationsByFilter
+POST	/api/admin/apps/:appkey/numbers/holds	AdminReserveUserNumbers
+POST	/api/admin/apps/:appkey/numbers/settings/odds	AdminPreviewUserNumberOdds
+POST	/api/admin/apps/:appkey/numbers/users/:userId/assign	AdminAssignUserNumber
+POST	/api/admin/apps/:appkey/numbers/users/:userId/rights	AdminAdjustUserNumberRight
+POST	/api/admin/apps/:appkey/numbers/users/:userId/rollback	AdminRollbackUserNumber
 POST	/api/admin/apps/:appkey/oauth-providers	AdminCreateAppOAuthProvider
 POST	/api/admin/apps/:appkey/oauth-providers/:provider/test	AdminTestAppOAuthProvider
 POST	/api/admin/apps/:appkey/oauth-providers/reorder	AdminReorderAppOAuthProviders
@@ -1535,6 +1555,9 @@ POST	/api/v1/apps/:appkey/notifications/read	ReadNotification
 POST	/api/v1/apps/:appkey/notifications/read-all	ReadAllNotifications
 POST	/api/v1/apps/:appkey/notifications/read-batch	ReadNotificationsBatch
 POST	/api/v1/apps/:appkey/notifications/unread	UnreadNotification
+POST	/api/v1/apps/:appkey/numbers/change	AppChangeUserNumber
+POST	/api/v1/apps/:appkey/numbers/draw	AppDrawUserNumbers
+POST	/api/v1/apps/:appkey/numbers/draws/:drawId/discard	AppDiscardUserNumberDraw
 POST	/api/v1/apps/:appkey/pay/orders	CreatePaymentOrder
 POST	/api/v1/apps/:appkey/points/level/rewards/:rewardId/claim	ClaimLevelReward
 POST	/api/v1/apps/:appkey/points/store/redeem	AppRedeemPointsStoreItem
@@ -1617,6 +1640,7 @@ PUT	/api/admin/apps/:appkey/lottery/activities/:activityId/status	AdminSetLotter
 PUT	/api/admin/apps/:appkey/lottery/settings	AdminSaveLotterySettings
 PUT	/api/admin/apps/:appkey/music/*path	AdminMusicProxy
 PUT	/api/admin/apps/:appkey/notices/:noticeId	UpdateAdminNotice
+PUT	/api/admin/apps/:appkey/numbers/settings	AdminSaveUserNumberSettings
 PUT	/api/admin/apps/:appkey/oauth-providers/:provider	AdminUpdateAppOAuthProvider
 PUT	/api/admin/apps/:appkey/oauth-providers/:provider/enabled	AdminSetAppOAuthProviderEnabled
 PUT	/api/admin/apps/:appkey/oauth2/clients/:clientId	AdminUpdateOAuth2Client

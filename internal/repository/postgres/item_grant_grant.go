@@ -11,9 +11,11 @@ import (
 	"github.com/shopspring/decimal"
 
 	"aegis/internal/domain/aigateway"
+	"aegis/internal/domain/cosmetic"
 	"aegis/internal/domain/featuretime"
 	"aegis/internal/domain/itemgrant"
 	lotterydomain "aegis/internal/domain/lottery"
+	"aegis/internal/domain/usernumber"
 	vipdomain "aegis/internal/domain/vip"
 	walletdomain "aegis/internal/domain/wallet"
 )
@@ -206,6 +208,50 @@ func (r *Repository) grantItemTx(ctx context.Context, tx pgx.Tx, grant itemGrant
 	case itemgrant.ItemManual:
 		result.Pending = true
 
+	case itemgrant.ItemNumberChange:
+		_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, item.Type, item.Amount, 0, usernumber.OriginItemGrant, grant.RecordNo, grant.Title)
+		if err != nil {
+			return result, err
+		}
+		result.Detail += note
+
+	case itemgrant.ItemNumberTicket:
+		_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, item.Type, item.Amount, item.RefID, usernumber.OriginItemGrant, grant.RecordNo, grant.Title)
+		if err != nil {
+			return result, err
+		}
+		result.Detail += note
+
+	case itemgrant.ItemNumberDraw:
+		_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, item.Type, item.Amount, 0, usernumber.OriginItemGrant, grant.RecordNo, grant.Title)
+		if err != nil {
+			return result, err
+		}
+		result.Detail += note
+
+	case itemgrant.ItemNumberAssign:
+		note, err := assignNumberRewardTx(ctx, tx, appID, userID, item.Text, grant.Title)
+		if err != nil {
+			return result, err
+		}
+		result.Detail += note
+
+	case itemgrant.ItemCosmetic:
+		granted, err := grantCosmeticTx(ctx, tx, cosmetic.GrantInput{
+			AppID: appID, UserID: userID, CosmeticID: item.RefID, Days: int(item.Amount),
+			Source: cosmetic.SourceItemGrant, SourceRef: grant.RecordNo,
+		})
+		if err != nil {
+			return result, err
+		}
+		if granted.AlreadyPermanent {
+			result.Detail += "（已永久拥有）"
+			result.Converted = true
+			break
+		}
+		result.ExpireAt = granted.Ownership.EndsAt
+		result.TransactionNo = strconv.FormatInt(granted.Ownership.ID, 10)
+
 	default:
 		// 目录里有、这里没有 —— 由测试挡在合并之前
 		return result, fmt.Errorf("item grant: unsupported item type %s", item.Type)
@@ -224,7 +270,15 @@ func applyItemGrantConversion(result *itemgrant.ItemResult, txn *vipdomain.Trans
 
 // itemGrantRefsQ 应用的会员套餐与功能目录（含停用的）。
 func itemGrantRefsQ(ctx context.Context, q queryExecutor, appID int64) (itemgrant.Refs, error) {
-	refs := itemgrant.Refs{Plans: map[int64]itemgrant.PlanRef{}, Features: map[string]itemgrant.FeatureRef{}}
+	refs := itemgrant.Refs{Plans: map[int64]itemgrant.PlanRef{}, Features: map[string]itemgrant.FeatureRef{},
+		Cosmetics: map[int64]itemgrant.CosmeticRef{}}
+	cosmetics, err := cosmeticRefsQ(ctx, q, appID)
+	if err != nil {
+		return refs, err
+	}
+	for id, ref := range cosmetics {
+		refs.Cosmetics[id] = itemgrant.CosmeticRef{ID: ref.ID, Name: ref.Name, Slot: ref.Slot, Live: ref.Live}
+	}
 	rows, err := q.Query(ctx, `SELECT `+vipPlanColumns+` FROM vip_plans WHERE appid = $1`, appID)
 	if err != nil {
 		return refs, err

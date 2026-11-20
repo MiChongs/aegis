@@ -9,10 +9,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"aegis/internal/domain/cosmetic"
 	"aegis/internal/domain/invite"
 	"aegis/internal/domain/leaderboard"
 	lotterydomain "aegis/internal/domain/lottery"
 	"aegis/internal/domain/pointstore"
+	"aegis/internal/domain/usernumber"
 	vipdomain "aegis/internal/domain/vip"
 	walletdomain "aegis/internal/domain/wallet"
 )
@@ -149,6 +151,40 @@ func (r *Repository) grantLeaderboardRewardsTx(ctx context.Context, tx pgx.Tx, g
 				return nil, err
 			}
 			result.Detail += "（剩余 " + strconv.FormatInt(balance, 10) + " 次）"
+
+		case pointstore.RewardNumberChange:
+			_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, 0, usernumber.OriginLeaderboard, key, grant.Title)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail += note
+
+		case pointstore.RewardNumberTicket:
+			_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, reward.RefID, usernumber.OriginLeaderboard, key, grant.Title)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail += note
+
+		case pointstore.RewardNumberDraw:
+			_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, 0, usernumber.OriginLeaderboard, key, grant.Title)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail += note
+
+		case pointstore.RewardCosmetic:
+			granted, err := grantCosmeticTx(ctx, tx, cosmetic.GrantInput{
+				AppID: appID, UserID: userID, CosmeticID: reward.RefID, Days: int(reward.Amount),
+				Source: cosmetic.SourceLeaderboard, SourceRef: key,
+			})
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = granted.CosmeticName + " " + cosmetic.TermLabel(int(reward.Amount))
+			if granted.AlreadyPermanent {
+				result.Detail += "（已永久拥有）"
+			}
 
 		default:
 			return nil, fmt.Errorf("leaderboard: unsupported reward type %s", reward.Type)

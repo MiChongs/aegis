@@ -27,6 +27,10 @@ var rewardTypes = []string{
 	pointstore.RewardExperience,
 	pointstore.RewardBalance,
 	pointstore.RewardLotteryDraws,
+	pointstore.RewardNumberChange,
+	pointstore.RewardNumberTicket,
+	pointstore.RewardNumberDraw,
+	pointstore.RewardCosmetic,
 }
 
 // maxBalanceReward 一项奖励能发的余额上限（防手滑）。
@@ -125,6 +129,20 @@ func ValidateRewards(label string, rewards []Reward) error {
 			if reward.Amount < 0 || reward.Amount > pointstore.MaxFeatureDays {
 				return fmt.Errorf("%s里「%s」的天数需要在 0–%d 之间（0 为永久）", label, spec.Label, pointstore.MaxFeatureDays)
 			}
+		case pointstore.ValueNumberTicket:
+			if reward.RefID < 1 || reward.RefID > 4 {
+				return fmt.Errorf("%s里「%s」没有选择等级（1–4）", label, spec.Label)
+			}
+			if reward.Amount < spec.Min || reward.Amount > spec.Max {
+				return fmt.Errorf("%s里「%s」需要在 %d–%d %s之间", label, spec.Label, spec.Min, spec.Max, spec.Unit)
+			}
+		case pointstore.ValueCosmetic:
+			if reward.RefID <= 0 {
+				return fmt.Errorf("%s里「%s」没有选择具体装扮", label, spec.Label)
+			}
+			if reward.Amount < 0 || reward.Amount > pointstore.MaxFeatureDays {
+				return fmt.Errorf("%s里「%s」的天数需要在 0–%d 之间（0 为永久）", label, spec.Label, pointstore.MaxFeatureDays)
+			}
 		}
 	}
 	return nil
@@ -150,6 +168,12 @@ func NormalizeRewards(rewards []Reward) []Reward {
 			case pointstore.ValueFeature:
 				clean.Tag = normalizeTag(reward.Tag)
 				clean.Amount = reward.Amount
+			case pointstore.ValueNumberTicket:
+				clean.Amount = reward.Amount
+				clean.RefID = reward.RefID
+			case pointstore.ValueCosmetic:
+				clean.Amount = reward.Amount
+				clean.RefID = reward.RefID
 			}
 			out = append(out, clean)
 			if !spec.Repeatable {

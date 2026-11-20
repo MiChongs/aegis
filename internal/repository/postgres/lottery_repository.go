@@ -15,9 +15,11 @@ import (
 	"github.com/shopspring/decimal"
 	"golang.org/x/sync/errgroup"
 
+	"aegis/internal/domain/cosmetic"
 	"aegis/internal/domain/featuretime"
 	lotterydomain "aegis/internal/domain/lottery"
 	"aegis/internal/domain/pointstore"
+	"aegis/internal/domain/usernumber"
 	vipdomain "aegis/internal/domain/vip"
 )
 
@@ -844,6 +846,40 @@ func (r *Repository) grantLotteryPrizeTx(ctx context.Context, tx pgx.Tx, grant l
 		}
 		// 写明是存进了次数余额：次数交给用户自己抽，不是「再来一次」那样当场又抽了
 		result.Detail += "，已存入抽奖次数（现有 " + strconv.FormatInt(balance, 10) + " 次）"
+
+	case lotterydomain.KindNumberChange:
+		_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, 0, usernumber.OriginLottery, grant.DrawNo, grant.Source)
+		if err != nil {
+			return nil, err
+		}
+		result.Detail += note
+
+	case lotterydomain.KindNumberTicket:
+		_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, reward.RefID, usernumber.OriginLottery, grant.DrawNo, grant.Source)
+		if err != nil {
+			return nil, err
+		}
+		result.Detail += note
+
+	case lotterydomain.KindNumberDraw:
+		_, note, err := grantNumberRewardTx(ctx, tx, appID, userID, reward.Type, reward.Amount, 0, usernumber.OriginLottery, grant.DrawNo, grant.Source)
+		if err != nil {
+			return nil, err
+		}
+		result.Detail += note
+
+	case lotterydomain.KindCosmetic:
+		granted, err := grantCosmeticTx(ctx, tx, cosmetic.GrantInput{
+			AppID: appID, UserID: userID, CosmeticID: reward.RefID, Days: int(reward.Amount),
+			Source: cosmetic.SourceLottery, SourceRef: grant.DrawNo,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result.Detail = granted.CosmeticName + " " + cosmetic.TermLabel(int(reward.Amount))
+		if granted.AlreadyPermanent {
+			result.Detail += "（已永久拥有）"
+		}
 
 	case lotterydomain.KindManual:
 		result.Pending = true
