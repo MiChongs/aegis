@@ -1199,6 +1199,20 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 
 规则见 [docs/item-grant.md](../docs/item-grant.md)。
 
+## 站内信群发区块（/apps/{appKey}?tab=notification-campaigns）
+
+| 文件 | 职责 |
+|---|---|
+| `components/apps/notification-campaign/app-notification-campaign-panel.tsx` | 任务列表（状态筛选、进度、有未结束任务时每 2 秒轮询）、发起入口、详情抽屉 |
+| `components/apps/notification-campaign/campaign-editor.tsx` | 发起：人群、内容、定时、实时预览（400ms 防抖）、确认（全站要输入「全站发送」） |
+| `components/apps/notification-campaign/campaign-audience.tsx` | 预设、一键全站 / 指定用户 / 条件筛选、账号状态、排除名单、人数上限；预览卡 |
+| `components/apps/notification-campaign/campaign-detail.tsx` | 统计（含已读率）、内容、人群；取消与撤回各一步确认，「查看已发消息」跳审计区块按 campaignId 筛 |
+| `components/apps/notification-campaign/campaign-shared.tsx` | 状态徽标、进度、人群草稿与校验（同后端 NormalizeAudience）、幂等键 |
+| `components/notifications/notification-content-fields.tsx` | 站内信内容字段与校验，用户列表「发通知」与群发编辑器共用 |
+| `lib/api/notification-campaigns.ts` / `lib/notification-campaign-hooks.ts` | 群发任务 API（类型对应 Go `notification.Campaign`）与 hooks |
+
+每打开一次编辑器换 key 重新挂载，生成新的 `requestId`，重复提交返回同一个任务。规则见 [docs/notification-center.md](../docs/notification-center.md)「群发任务」。
+
 ## AI 通道编辑（/apps/{appKey}?tab=ai 与 /configuration?tab=ai）
 
 平台级与应用级共用 `components/ai/ai-channel-panel.tsx`，只差 scope。新建 / 编辑走右侧大号 Sheet

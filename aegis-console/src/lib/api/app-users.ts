@@ -22,6 +22,7 @@ import type {
   WalletAdjustResult
 } from "./types";
 import type { UserNotificationAction } from "@/lib/user-notification-meta";
+import type { NotificationCampaign } from "./notification-campaigns";
 
 const app = (appKey: string) => `/api/admin/apps/${encodeURIComponent(appKey)}`;
 const base = (appKey: string, userId: number | string) => `${app(appKey)}/users/${userId}`;
@@ -187,8 +188,21 @@ export type BulkNotifyPayload = {
   expiresAt?: string;
 };
 
+/**
+ * 旧群发接口的响应（Go `AdminBulkSendResult`）。不超过 2000 人时就地发完（`async=false`）；
+ * 更多时转后台群发任务，立刻返回 `async=true`、`delivered=0` 与 `campaign`。
+ */
+export type BulkNotifyResult = {
+  appid: number;
+  requested: number;
+  delivered: number;
+  recipientIds: number[] | null;
+  async: boolean;
+  campaign: NotificationCampaign | null;
+};
+
 export function bulkNotifyAdminAppUsers(token: string, appKey: string, payload: BulkNotifyPayload) {
-  return apiRequest<BatchResult>(`${app(appKey)}/notifications/bulk`, {
+  return apiRequest<BulkNotifyResult>(`${app(appKey)}/notifications/bulk`, {
     method: "POST",
     token,
     body: JSON.stringify(payload)

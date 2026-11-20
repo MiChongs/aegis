@@ -2920,6 +2920,8 @@ export type NotificationItem = {
   content?: string;
   level?: string;
   status?: string;
+  /** 群发任务 ID（管理端列表；单条投递为 null） */
+  campaignId?: number | null;
   /** 跳转动作：route 为应用内页面（target 是路由键），url 为 https 链接 */
   action?: { type: "route" | "url"; target: string; label?: string } | null;
   image?: string | null;

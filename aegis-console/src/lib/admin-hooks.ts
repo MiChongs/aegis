@@ -192,7 +192,7 @@ import {
   getOIDCPublicConfig
 } from "@/lib/api/system";
 import type { FirewallLogListParams, IPBanListParams } from "@/lib/api/system";
-import type { AdminAppUserListParams, PointsAdjustPayload } from "@/lib/api/apps";
+import type { AdminAppNotificationParams, AdminAppUserListParams, PointsAdjustPayload } from "@/lib/api/apps";
 import type { StorageBatchAction, StorageObjectQuery } from "@/lib/api/types";
 import {
   bulkDeletePlatformBanners,
@@ -328,10 +328,7 @@ export function useAdminAppSessionAuditsQuery(
   });
 }
 
-export function useAdminAppNotificationsQuery(
-  appKey?: string | null,
-  params?: { keyword?: string; category?: string; type?: string; level?: string; page?: number; limit?: number }
-) {
+export function useAdminAppNotificationsQuery(appKey?: string | null, params?: AdminAppNotificationParams) {
   const token = useAdminToken();
   return useQuery({
     queryKey: [
@@ -342,6 +339,9 @@ export function useAdminAppNotificationsQuery(
       params?.category,
       params?.type,
       params?.level,
+      params?.status,
+      params?.userId,
+      params?.campaignId,
       params?.page,
       params?.limit
     ],

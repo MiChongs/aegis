@@ -368,16 +368,32 @@ export function getAdminAppSessionAudits(
   return apiRequest<PagedResult<SessionAuditItem>>(`/api/admin/apps/${appKey}/audits/sessions${query}`, { token });
 }
 
+/** 管理端消息列表筛选；`status` 只有 read / unread，`campaignId` 只看某次群发写出的消息 */
+export type AdminAppNotificationParams = {
+  keyword?: string;
+  category?: string;
+  type?: string;
+  level?: string;
+  status?: "read" | "unread";
+  userId?: number;
+  campaignId?: number;
+  page?: number;
+  limit?: number;
+};
+
 export function getAdminAppNotifications(
   token: string,
   appKey: string,
-  params?: { keyword?: string; category?: string; type?: string; level?: string; page?: number; limit?: number }
+  params?: AdminAppNotificationParams
 ) {
   const query = buildQuery({
     keyword: params?.keyword,
     category: params?.category,
     type: params?.type,
     level: params?.level,
+    status: params?.status,
+    userId: params?.userId,
+    campaignId: params?.campaignId,
     page: params?.page,
     limit: params?.limit
   });
