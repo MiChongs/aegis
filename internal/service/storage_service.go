@@ -908,7 +908,9 @@ func validateStorageObjectKey(objectKey string) error {
 	if objectKey == "" || strings.ContainsRune(objectKey, '\x00') {
 		return apperrors.New(40083, http.StatusBadRequest, "对象路径无效")
 	}
-	if path.IsAbs(objectKey) || filepath.VolumeName(filepath.FromSlash(objectKey)) != "" {
+	// 盘符按字面判断，不用 filepath.VolumeName：它只在 Windows 上认盘符，服务跑在 Linux 上时
+	// `C:\Windows\win.ini` 会被当成普通相对路径放过去，而这个键之后可能落到 Windows 上的存储节点
+	if path.IsAbs(objectKey) || hasDriveLetter(objectKey) || filepath.VolumeName(filepath.FromSlash(objectKey)) != "" {
 		return apperrors.New(40083, http.StatusBadRequest, "对象路径必须是相对路径")
 	}
 	cleaned := path.Clean(objectKey)
@@ -916,6 +918,15 @@ func validateStorageObjectKey(objectKey string) error {
 		return apperrors.New(40083, http.StatusBadRequest, "对象路径包含非法目录跳转")
 	}
 	return nil
+}
+
+// hasDriveLetter 是否以 Windows 盘符开头（`C:`、`d:/…`）
+func hasDriveLetter(objectKey string) bool {
+	if len(objectKey) < 2 || objectKey[1] != ':' {
+		return false
+	}
+	c := objectKey[0]
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 func buildUploadedObjectKey(fileName string) string {
