@@ -141,8 +141,22 @@ func (h *Handler) leaderboardAvatar(c *gin.Context, appID, userID int64, raw str
 }
 
 func (h *Handler) resolveLeaderboardRows(c *gin.Context, appID int64, rows []leaderboard.ClientRow) {
+	owners := make([]int64, 0, len(rows))
 	for i := range rows {
 		rows[i].Avatar = h.leaderboardAvatar(c, appID, rows[i].AvatarOwner, rows[i].RawAvatar)
+		if rows[i].AvatarOwner > 0 {
+			owners = append(owners, rows[i].AvatarOwner)
+		}
+	}
+	// 装扮跟头像走：匿名上榜的人 AvatarOwner 为 0，既不出头像也不出装扮（装扮能认出人）
+	if h.cosmetic == nil || len(owners) == 0 {
+		return
+	}
+	loadouts := h.cosmetic.LookupByUserIDs(c.Request.Context(), appID, owners, requestBaseURL(c.Request))
+	for i := range rows {
+		if loadout, ok := loadouts[rows[i].AvatarOwner]; ok && rows[i].AvatarOwner > 0 {
+			rows[i].Cosmetics = &loadout
+		}
 	}
 }
 

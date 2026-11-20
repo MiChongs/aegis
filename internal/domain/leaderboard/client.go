@@ -1,6 +1,10 @@
 package leaderboard
 
-import "time"
+import (
+	"time"
+
+	"aegis/internal/domain/cosmetic"
+)
 
 // 用户端的数据形状（字段与 docs/leaderboard.md 的「用户端接口」逐字对应）。
 
@@ -50,6 +54,9 @@ type ClientRow struct {
 	Anonymous bool   `json:"anonymous"`
 	IsMe      bool   `json:"isMe"`
 	LevelName string `json:"levelName,omitempty"`
+	// Cosmetics 这个人身上的装扮（头像框、昵称样式、勋章；docs/cosmetics.md），由传输层并进来；
+	// 匿名上榜、没戴装扮或应用未开启装扮时省略
+	Cosmetics *cosmetic.Loadout `json:"cosmetics,omitempty"`
 	// AvatarOwner / RawAvatar 由传输层翻成永久头像地址（匿名的人为 0，不出头像）
 	AvatarOwner int64  `json:"-"`
 	RawAvatar   string `json:"-"`
