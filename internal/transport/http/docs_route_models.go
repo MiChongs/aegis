@@ -365,6 +365,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/captcha/generate"):                                                                    CaptchaGenerateRequest{},                 // AdminGenerateCaptcha
 		routeKey("POST", "/api/admin/captcha/verify"):                                                                      CaptchaVerifyRequest{},                   // AdminVerifyCaptcha
 		routeKey("POST", "/api/admin/captcha/verify-click"):                                                                CaptchaVerifyClickRequest{},              // VerifyCaptchaClick
+		routeKey("GET", "/api/admin/mcp/endpoints"):                                                                        mcpEndpointQuery{},                       // AdminMCPEndpoints
 		routeKey("POST", "/api/admin/notifications/delete"):                                                                AdminInboxIDsRequest{},                   // DeleteAdminInbox
 		routeKey("POST", "/api/admin/notifications/read"):                                                                  AdminInboxIDsRequest{},                   // MarkAdminInboxRead
 		routeKey("POST", "/api/admin/notify/channels"):                                                                     NotifyChannelRequest{},                   // AdminSaveNotifyChannel

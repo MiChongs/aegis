@@ -343,85 +343,98 @@ var (
 //
 // 判定口径与中间件一致（只读、无权限点模块、应用范围、密钥权限范围、管理员本人权限），
 // 但只是预判：超管专属接口与 service 层的细粒度判定这里看不见，以实际调用结果为准。
+//
+// 处理器是具名类型上的方法而不是闭包：闭包的名字（funcN）由编译器按内联结果编号，
+// 换一个 Go 版本就会变，路由快照与接口目录里显示的处理器名会跟着漂。
 func (h *Handler) mcpEndpointsHandler(router *gin.Engine) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		access, ok := h.mustAdminAccess(c)
-		if !ok {
-			return
-		}
-		var query mcpEndpointQuery
-		if err := bind(c, &query); err != nil {
-			response.Error(c, http.StatusBadRequest, 40000, err.Error())
-			return
-		}
-		snapshot := h.admin.EffectivePermissions(c.Request.Context(), access)
-		keywords := strings.Fields(strings.ToLower(query.Q))
-		method := strings.ToUpper(strings.TrimSpace(query.Method))
-		group := strings.TrimSpace(query.Group)
-		onlyAllowed := query.Allowed == "1" || strings.EqualFold(query.Allowed, "true")
+	return mcpEndpointCatalog{h: h, router: router}.AdminMCPEndpoints
+}
 
-		items := make([]admindomain.MCPEndpoint, 0, 256)
-		groups := map[string]int{}
-		for _, route := range router.Routes() {
-			if route.Method == http.MethodHead || route.Method == http.MethodOptions {
-				continue
-			}
-			if !mcpHasAnyPrefix(route.Path, mcpEndpointGuardedPrefixes) || mcpHasAnyPrefix(route.Path, mcpEndpointExemptPrefixes) {
-				continue
-			}
-			decision, registered := authz.ResolveRoute(route.Method, route.Path)
-			if !registered {
-				continue
-			}
-			item := admindomain.MCPEndpoint{
-				Method:     route.Method,
-				Path:       route.Path,
-				Handler:    shortHandlerName(route.Handler),
-				Group:      matchRouteGroup(route.Path).Title,
-				Permission: decision.Permission,
-				AppScoped:  decision.AppScoped(),
-			}
-			if decision.Permission != "" {
-				item.PermissionName = authz.PermissionName(decision.Permission)
-			}
-			item.Allowed, item.Reason = mcpEndpointVerdict(access, snapshot, route.Method, route.Path, decision)
-			if onlyAllowed && !item.Allowed {
-				continue
-			}
-			if method != "" && item.Method != method {
-				continue
-			}
-			if group != "" && item.Group != group {
-				continue
-			}
-			if len(keywords) > 0 {
-				haystack := strings.ToLower(item.Method + " " + item.Path + " " + item.Handler + " " + item.Group + " " + item.Permission + " " + item.PermissionName)
-				matched := true
-				for _, keyword := range keywords {
-					if !strings.Contains(haystack, keyword) {
-						matched = false
-						break
-					}
-				}
-				if !matched {
-					continue
-				}
-			}
-			groups[item.Group]++
-			items = append(items, item)
-		}
-		sort.Slice(items, func(i, j int) bool {
-			if items[i].Path != items[j].Path {
-				return items[i].Path < items[j].Path
-			}
-			return items[i].Method < items[j].Method
-		})
-		total := len(items)
-		if query.Limit > 0 && query.Limit < len(items) {
-			items = items[:query.Limit]
-		}
-		response.Success(c, http.StatusOK, "ok", gin.H{"items": items, "total": total, "groups": groups})
+// mcpEndpointCatalog 接口目录要读的路由表。路由表在 NewRouter 返回前才完整，所以只存引用、请求时才读
+type mcpEndpointCatalog struct {
+	h      *Handler
+	router *gin.Engine
+}
+
+// AdminMCPEndpoints GET /api/admin/mcp/endpoints
+func (m mcpEndpointCatalog) AdminMCPEndpoints(c *gin.Context) {
+	h, router := m.h, m.router
+	access, ok := h.mustAdminAccess(c)
+	if !ok {
+		return
 	}
+	var query mcpEndpointQuery
+	if err := bind(c, &query); err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	snapshot := h.admin.EffectivePermissions(c.Request.Context(), access)
+	keywords := strings.Fields(strings.ToLower(query.Q))
+	method := strings.ToUpper(strings.TrimSpace(query.Method))
+	group := strings.TrimSpace(query.Group)
+	onlyAllowed := query.Allowed == "1" || strings.EqualFold(query.Allowed, "true")
+
+	items := make([]admindomain.MCPEndpoint, 0, 256)
+	groups := map[string]int{}
+	for _, route := range router.Routes() {
+		if route.Method == http.MethodHead || route.Method == http.MethodOptions {
+			continue
+		}
+		if !mcpHasAnyPrefix(route.Path, mcpEndpointGuardedPrefixes) || mcpHasAnyPrefix(route.Path, mcpEndpointExemptPrefixes) {
+			continue
+		}
+		decision, registered := authz.ResolveRoute(route.Method, route.Path)
+		if !registered {
+			continue
+		}
+		item := admindomain.MCPEndpoint{
+			Method:     route.Method,
+			Path:       route.Path,
+			Handler:    shortHandlerName(route.Handler),
+			Group:      matchRouteGroup(route.Path).Title,
+			Permission: decision.Permission,
+			AppScoped:  decision.AppScoped(),
+		}
+		if decision.Permission != "" {
+			item.PermissionName = authz.PermissionName(decision.Permission)
+		}
+		item.Allowed, item.Reason = mcpEndpointVerdict(access, snapshot, route.Method, route.Path, decision)
+		if onlyAllowed && !item.Allowed {
+			continue
+		}
+		if method != "" && item.Method != method {
+			continue
+		}
+		if group != "" && item.Group != group {
+			continue
+		}
+		if len(keywords) > 0 {
+			haystack := strings.ToLower(item.Method + " " + item.Path + " " + item.Handler + " " + item.Group + " " + item.Permission + " " + item.PermissionName)
+			matched := true
+			for _, keyword := range keywords {
+				if !strings.Contains(haystack, keyword) {
+					matched = false
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		groups[item.Group]++
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Path != items[j].Path {
+			return items[i].Path < items[j].Path
+		}
+		return items[i].Method < items[j].Method
+	})
+	total := len(items)
+	if query.Limit > 0 && query.Limit < len(items) {
+		items = items[:query.Limit]
+	}
+	response.Success(c, http.StatusOK, "ok", gin.H{"items": items, "total": total, "groups": groups})
 }
 
 // mcpEndpointVerdict 预判一条接口对当前凭证是否可调。

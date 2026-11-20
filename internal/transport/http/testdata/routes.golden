@@ -396,7 +396,7 @@ GET	/api/admin/auth/saml/metadata	AdminSAMLMetadata
 GET	/api/admin/auth/self-service	AdminSelfServiceConfig
 GET	/api/admin/captcha/config	AdminCaptchaPublicConfig
 GET	/api/admin/dashboard	AdminDashboard
-GET	/api/admin/mcp/endpoints	mcpEndpointsHandler.func1
+GET	/api/admin/mcp/endpoints	AdminMCPEndpoints
 GET	/api/admin/mcp/whoami	AdminMCPWhoAmI
 GET	/api/admin/notifications	ListAdminInbox
 GET	/api/admin/notifications/unread-count	AdminInboxUnreadCount
