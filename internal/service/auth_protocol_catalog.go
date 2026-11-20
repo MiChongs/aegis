@@ -219,6 +219,17 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "pointsStoreRedeem", Method: "POST", Path: "/points/store/redeem", Auth: true,
 		Summary: "用积分兑换一件商品（requestId 幂等）；含人工发放的商品兑换后为 pending"},
 	{Key: "pointsStoreRedemptions", Method: "GET", Path: "/points/store/redemptions", Auth: true, Summary: "我的兑换记录"},
+	// 个性装扮（docs/cosmetics.md）：外观是服务端下发的设计稿（图层 + 关键帧 + 素材地址），客户端按设计稿实时绘制。
+	// 能不能戴只由服务端判定：佩戴时判一次、读取时再判一次，过期 / 下架 / 会员到期的装扮在 /cosmetics/me 里直接消失。
+	{Key: "cosmeticCenter", Method: "GET", Path: "/cosmetics", Auth: true,
+		Summary: "装扮中心：槽位、每件装扮的设计稿与我的状态（能否佩戴及原因、到期时间、获取渠道）、我身上的装扮"},
+	{Key: "cosmeticMine", Method: "GET", Path: "/cosmetics/me", Auth: true,
+		Summary: "我此刻身上的装扮（头像框、资料卡背景、昵称样式、勋章）；应用未开启时为空"},
+	{Key: "cosmeticEquip", Method: "PUT", Path: "/cosmetics/me", Auth: true,
+		Summary: "佩戴或摘下（cosmeticId 为 0 即摘下；勋章用 position 指定位置），返回新的身上装扮"},
+	{Key: "cosmeticHistory", Method: "GET", Path: "/cosmetics/history", Auth: true, Summary: "我的装扮获得记录"},
+	{Key: "cosmeticLookup", Method: "GET", Path: "/cosmetics/users", Auth: true,
+		Summary: "批量查别人身上的装扮（ids 为对外用户 ID，逗号分隔，最多 100 个）"},
 	// 抽奖：抽中什么只由服务端决定并在同一个事务里到账，客户端只说用哪一种次数抽一次。
 	// 次数三种来源：每日免费（free）、抽奖次数余额（bonus，看激励广告 / 卡密 / 积分商城等发放）、积分（points）。
 	// 扣除顺序只有一条：今日免费 → 赠送的次数 → 兑换的次数 → 积分；source 只是「最多用到这一档」，免费永远先扣。
@@ -621,6 +632,11 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 		Recovery: authprotocol.RecoveryNone, Hint: "应用未开放自动签到（reason: disabled），入口应当隐藏或置灰"},
 	{Code: errCodeAutoSignNotEligible, Name: "AUTO_SIGN_NOT_ELIGIBLE", Message: "不满足自动签到的开放条件",
 		Recovery: authprotocol.RecoveryNone, Hint: "开放对象为会员 / 永久会员 / 指定功能而当前用户不满足（reason: vip_required / trial_excluded / lifetime_required / feature_required），message 说明具体是哪一条"},
+	// ── 个性装扮 ──
+	{Code: errCodeCosmeticDisabled, Name: "COSMETICS_DISABLED", Message: "当前应用未开启个性装扮",
+		Recovery: authprotocol.RecoveryNone, Hint: "入口应当隐藏；/cosmetics/me 在未开启时返回空而不是这个错误"},
+	{Code: errCodeCosmeticNotWearable, Name: "COSMETIC_NOT_WEARABLE", Message: "暂时不能佩戴这件装扮",
+		Recovery: authprotocol.RecoveryNone, Hint: "data.reason 与 /cosmetics 里每件的 state.reason 同一套：not_owned / expired / need_vip / need_tier / need_level / need_feature / unavailable / slot_mismatch"},
 	// ── 积分商城 ──
 	// 与 /points/store 里每件商品的 availability.reason 一一对应：列表上灰着的原因与点了之后的报错是同一句话。
 	{Code: errCodePointsStoreDisabled, Name: "POINTS_STORE_DISABLED", Message: "积分商城暂未开放",

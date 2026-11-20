@@ -211,6 +211,13 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/points/store", h.AppPointsStore)
 		appGatewayAuthed.POST("/points/store/redeem", h.AppRedeemPointsStoreItem)
 		appGatewayAuthed.GET("/points/store/redemptions", h.AppPointsStoreRedemptions)
+		// 个性装扮（docs/cosmetics.md）：装扮中心 / 我的佩戴 / 佩戴与摘下 / 我的持有记录 / 批量查别人身上的装扮。
+		// 设计稿与素材地址全部由服务端下发，客户端按设计稿实时绘制。
+		appGatewayAuthed.GET("/cosmetics", h.AppCosmeticCenter)
+		appGatewayAuthed.GET("/cosmetics/me", h.AppMyCosmetics)
+		appGatewayAuthed.PUT("/cosmetics/me", h.AppEquipCosmetic)
+		appGatewayAuthed.GET("/cosmetics/history", h.AppCosmeticHistory)
+		appGatewayAuthed.GET("/cosmetics/users", h.AppLookupCosmetics)
 		// 抽奖：活动列表、活动页（奖品与公示概率、我的次数、保底进度）、抽一次、我的记录。
 		// 抽中什么由服务端在一个事务里决定并到账；视频抽奖走激励广告场景，看完发的是抽奖次数。
 		appGatewayAuthed.GET("/lottery", h.AppLotteryActivities)

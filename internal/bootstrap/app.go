@@ -527,6 +527,10 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	itemGrantService := service.NewItemGrantService(log, pg)
 	itemGrantService.SetNotifier(notificationService)
 	itemGrantService.SetEventPublisher(realtimeService)
+	// 个性装扮（docs/cosmetics.md）：素材走应用的对象存储；获得装扮走站内信，佩戴变化推 cosmetic.changed。
+	cosmeticService := service.NewCosmeticService(log, pg, storageService)
+	cosmeticService.SetNotifier(notificationService)
+	cosmeticService.SetEventPublisher(realtimeService)
 	levelService := service.NewLevelService(log, pg)
 	levelService.SetNotifier(notificationService)
 	levelService.SetEventPublisher(realtimeService)
@@ -849,6 +853,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Points:       pointsService,
 		Lottery:      lotteryService,
 		ItemGrant:    itemGrantService,
+		Cosmetic:     cosmeticService,
 		Level:        levelService,
 		Growth:       growthService,
 		Wallet:       walletService,

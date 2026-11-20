@@ -57,6 +57,8 @@ const (
 	TypeTicket          = "ticket"
 	TypeItemGrant       = "item_grant"
 	TypeLevel           = "level"
+	// TypeCosmetic 获得 / 被收回个性装扮（docs/cosmetics.md）
+	TypeCosmetic = "cosmetic"
 )
 
 // typeCategories 旧 type → 分类。没登记的 type 一律落 system。
@@ -92,6 +94,7 @@ var typeCategories = map[string]string{
 	"cardkey":      CategoryReward,
 	"item_grant":   CategoryReward,
 	"level":        CategoryReward,
+	"cosmetic":     CategoryReward,
 
 	"ticket":   CategoryTicket,
 	"feedback": CategoryTicket,
@@ -245,6 +248,8 @@ const (
 	RoutePromo       = "promo"
 	// RouteSuspension 账号封禁与申诉页
 	RouteSuspension = "account/suspension"
+	// RouteCosmetics 个性装扮中心
+	RouteCosmetics = "cosmetics"
 )
 
 var routes = []RouteSpec{
@@ -263,6 +268,7 @@ var routes = []RouteSpec{
 	{Key: RouteLevel, Label: "我的等级"},
 	{Key: RoutePromo, Label: "推广活动"},
 	{Key: RouteSuspension, Label: "封禁与申诉"},
+	{Key: RouteCosmetics, Label: "个性装扮"},
 }
 
 // Routes 全部路由键（副本）。

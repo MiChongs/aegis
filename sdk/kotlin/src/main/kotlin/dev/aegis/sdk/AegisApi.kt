@@ -928,6 +928,43 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
     fun pointsStoreRedemptions(page: Int = 1, limit: Int = 20): JsonElement =
         client.call("GET", "/points/store/redemptions", query = pageQuery(page, limit), requireAuth = true)
 
+    // ── 个性装扮（docs/cosmetics.md）──
+
+    /**
+     * 装扮中心：槽位、每件装扮的设计稿（图层、关键帧、素材地址）与我的状态
+     * （`state.usable` 能否佩戴、`state.reason` 不能的原因、到期时间、获取渠道），以及我身上的装扮（`loadout`）。
+     * 应用未开启时报 40361，入口应当隐藏。
+     */
+    @Throws(IOException::class)
+    fun cosmeticCenter(): JsonElement = client.call("GET", "/cosmetics", requireAuth = true)
+
+    /** 我此刻身上的装扮（已按资格过滤：过期、下架、会员到期的不会出现）；应用未开启时为空。 */
+    @Throws(IOException::class)
+    fun myCosmetics(): JsonElement = client.call("GET", "/cosmetics/me", requireAuth = true)
+
+    /**
+     * 佩戴或摘下。[cosmeticId] 为 0 即摘下这个槽位；勋章用 [position] 指定第几位（0 起，
+     * `-1` 且 [cosmeticId] 为 0 摘下全部勋章）。返回新的身上装扮。不能佩戴时报 40360，`data.reason` 说明原因。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun equipCosmetic(slot: String, cosmeticId: Long, position: Int = 0): JsonElement =
+        client.call(
+            "PUT", "/cosmetics/me",
+            mapOf("slot" to slot, "cosmeticId" to cosmeticId, "position" to position), requireAuth = true,
+        )
+
+    /** 我的装扮获得记录。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun cosmeticHistory(page: Int = 1, limit: Int = 30): JsonElement =
+        client.call("GET", "/cosmetics/history", query = pageQuery(page, limit), requireAuth = true)
+
+    /** 批量查别人身上的装扮：[userIds] 为对外用户 ID（最多 100 个）；没戴任何装扮的人不在结果里。 */
+    @Throws(IOException::class)
+    fun lookupCosmetics(userIds: List<Long>): JsonElement =
+        client.call("GET", "/cosmetics/users", query = mapOf("ids" to userIds.joinToString(",")), requireAuth = true)
+
     // ── 抽奖（docs/lottery.md）──
 
     /** 进行中的抽奖活动。没有活动时 `activities` 为空（不报错），入口应当整个隐藏。 */

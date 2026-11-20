@@ -172,6 +172,16 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/admin/apps/{appkey}/cloud-storage/users"):                                                    CloudStorageUserListQuery{},              // AdminCloudStorageUsers
 		routeKey("PUT", "/api/admin/apps/{appkey}/commerce"):                                                               app.CommerceSettings{},                   // UpdateAdminAppCommerceSettings
 		routeKey("GET", "/api/admin/apps/{appkey}/commerce/overview"):                                                      AdminWalletStatsQuery{},                  // AdminAppCommerceOverview
+		routeKey("PUT", "/api/admin/apps/{appkey}/cosmetics/item-order"):                                                   CosmeticOrderRequest{},                   // AdminReorderCosmeticItems
+		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/items"):                                                       CosmeticItemRequest{},                    // AdminCreateCosmeticItem
+		routeKey("PUT", "/api/admin/apps/{appkey}/cosmetics/items/{itemId}"):                                               CosmeticItemRequest{},                    // AdminUpdateCosmeticItem
+		routeKey("PUT", "/api/admin/apps/{appkey}/cosmetics/items/{itemId}/draft"):                                         CosmeticDraftRequest{},                   // AdminSaveCosmeticDraft
+		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/items/{itemId}/publish"):                                      CosmeticPublishRequest{},                 // AdminPublishCosmeticItem
+		routeKey("PUT", "/api/admin/apps/{appkey}/cosmetics/items/{itemId}/status"):                                        CosmeticStatusRequest{},                  // AdminSetCosmeticStatus
+		routeKey("PUT", "/api/admin/apps/{appkey}/cosmetics/settings"):                                                     CosmeticSettingsRequest{},                // AdminSaveCosmeticSettings
+		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/users/{userId}/grant"):                                        CosmeticGrantRequest{},                   // AdminGrantUserCosmetic
+		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/users/{userId}/ownerships/{ownershipId}/revoke"):              CosmeticRevokeRequest{},                  // AdminRevokeUserCosmetic
+		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/users/{userId}/unequip"):                                      CosmeticUnequipRequest{},                 // AdminUnequipUserCosmetic
 		routeKey("POST", "/api/admin/apps/{appkey}/crash-reports/delete"):                                                  CrashReportIDsRequest{},                  // AdminDeleteCrashReports
 		routeKey("POST", "/api/admin/apps/{appkey}/crash-reports/resolve"):                                                 CrashReportResolveRequest{},              // AdminResolveCrashReports
 		routeKey("PUT", "/api/admin/apps/{appkey}/device-limit/overrides/{userId}"):                                        devicelimit.OverrideInput{},              // AdminSaveDeviceLimitOverride
@@ -762,6 +772,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}"):                                             CloudItemPutRequest{},                    // AppPutCloudItem
 		routeKey("POST", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}/link"):                                       CloudItemLinkRequest{},                   // AppCloudItemLink
 		routeKey("POST", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}/rollback"):                                   CloudItemRollbackRequest{},               // AppRollbackCloudItem
+		routeKey("PUT", "/api/v1/apps/{appkey}/cosmetics/me"):                                                              CosmeticEquipRequest{},                   // AppEquipCosmetic
 		routeKey("POST", "/api/v1/apps/{appkey}/crash-reports"):                                                            CrashReportRequest{},                     // AppSubmitCrashReport
 		routeKey("POST", "/api/v1/apps/{appkey}/features/time/leases/{leaseNo}/settle"):                                    FeatureTimeSettleRequest{},               // AppSettleFeatureTimeLease
 		routeKey("POST", "/api/v1/apps/{appkey}/features/time/{feature}/leases"):                                           FeatureTimeLeaseRequest{},                // AppLeaseFeatureTime
