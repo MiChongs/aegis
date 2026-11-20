@@ -1,6 +1,8 @@
 "use client";
 
 import { Copy } from "lucide-react";
+import { useCosmeticRewardNames } from "@/components/apps/cosmetics/cosmetic-reward";
+import { cosmeticRewardText } from "@/lib/cosmetic-names";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +20,7 @@ import type {
   CardKeyRewardSpec,
   CardKeyValidityMode
 } from "@/lib/api/card-key";
+import { numberTicketName } from "@/lib/api/user-number";
 import { cn } from "@/lib/utils";
 
 /**
@@ -167,11 +170,15 @@ export function describeReward(reward: CardKeyReward, catalog?: CardKeyCatalog |
       const plan = catalog?.plans.find((item) => item.id === reward.refId);
       return plan ? `${spec.label} ${plan.name}` : `${spec.label} #${reward.refId ?? 0}`;
     }
+    case "number_ticket":
+      return `${numberTicketName(reward.refId)} ×${formatCount(reward.amount ?? 0)}`;
     case "feature": {
       const feature = catalog?.features.find((item) => item.tag === reward.feature);
       const name = feature?.name || reward.feature || "";
       return reward.amount ? `${spec.label} ${name} ${reward.amount} 天` : `${spec.label} ${name} 永久`;
     }
+    case "cosmetic":
+      return cosmeticRewardText(reward.refId, reward.amount);
     default:
       return spec.label;
   }
@@ -186,6 +193,7 @@ export function RewardSummary({
   catalog?: CardKeyCatalog | null;
   className?: string;
 }) {
+  useCosmeticRewardNames();
   if (!rewards.length) {
     return <span className="text-xs text-muted-foreground">无随卡权益</span>;
   }

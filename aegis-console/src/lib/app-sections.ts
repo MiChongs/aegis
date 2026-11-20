@@ -9,6 +9,7 @@ import {
   Dices,
   Fingerprint,
   Gift,
+  Hash,
   Headphones,
   Info,
   KeyRound,
@@ -127,8 +128,10 @@ export const appSectionGroups: AppSectionGroup[] = [
     sections: [
       { key: "vip", title: "会员", summary: "套餐、试用与功能权益", icon: Crown },
       { key: "card-key", title: "卡密", summary: "授权卡与兑换卡", icon: Ticket },
+      { key: "numbers", title: "用户号码", summary: "可更换的号码、靓号等级、摇号与保留号", icon: Hash },
       { key: "signin-reward", title: "签到奖励", summary: "连签规则与奖励发放", icon: Gift },
       { key: "points-store", title: "积分商城", summary: "积分兑换会员、功能与福利", icon: ShoppingBag },
+      { key: "cosmetics", title: "个性装扮", summary: "头像框、资料卡、昵称样式与勋章的设计与发放", icon: Sparkles },
       { key: "levels", title: "等级体系", summary: "画布配置等级、晋级条件、达成奖励与权益", icon: Milestone },
       { key: "invite", title: "邀请", summary: "邀请码、双方奖励与邀请记录", icon: UserPlus },
       { key: "promo", title: "推广活动", summary: "限时邀请档位与分享推广，提交审核与统计", icon: Megaphone },

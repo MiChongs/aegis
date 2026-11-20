@@ -1,6 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
+import { cosmeticRewardText } from "@/lib/cosmetic-names";
 import { formatStoreDate, termLabel } from "@/components/apps/points-store/points-store-shared";
 import { vipPlanTerm } from "@/components/apps/vip/vip-shared";
 import type {
@@ -15,6 +16,7 @@ import type {
   LotteryStatus,
   LotteryUIMode
 } from "@/lib/api/lottery";
+import { numberTicketName } from "@/lib/api/user-number";
 
 /**
  * 抽奖的展示口径：状态、形态、来源、奖品摘要与公示概率。集中在一处，
@@ -178,6 +180,10 @@ export function describeLotteryReward(
     }
     case "text":
       return reward.text || label;
+    case "number_ticket":
+      return `${numberTicketName(reward.refId)} ×${reward.amount ?? 0}`;
+    case "cosmetic":
+      return cosmeticRewardText(reward.refId, reward.amount);
     case "amount":
       return `${label} ${reward.amount ?? 0}${spec.unit ? ` ${spec.unit}` : ""}`;
     default:
@@ -210,6 +216,10 @@ export function defaultPrizeName(
       return "永久会员";
     case "ad_free":
       return `免广告 ${reward.amount ?? 0} 天`;
+    case "number_change":
+      return `改号卡 ${reward.amount ?? 0} 张`;
+    case "number_draw":
+      return `摇号 ${reward.amount ?? 0} 次`;
   }
   return Array.from(describeLotteryReward(reward, kinds, plans, features)).slice(0, 16).join("");
 }

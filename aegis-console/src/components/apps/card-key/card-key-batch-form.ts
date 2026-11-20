@@ -352,6 +352,14 @@ function validateRewards(form: BatchForm, catalog?: CardKeyCatalog | null): stri
       case "ref":
         if (!row.refId) issues.push(`「${spec.label}」没有选择具体对象`);
         break;
+      case "number_ticket": {
+        const amount = Number(row.amount);
+        if (!Number.isInteger(amount) || amount < (spec.min ?? 1) || amount > (spec.max ?? Infinity)) {
+          issues.push(`「${spec.label}」需要在 ${spec.min ?? 1}–${spec.max ?? ""} 张之间`);
+        }
+        if (!(row.refId >= 1 && row.refId <= 4)) issues.push(`「${spec.label}」没有选择等级`);
+        break;
+      }
       case "feature": {
         if (!row.feature) {
           issues.push(`「${spec.label}」没有选择功能`);
@@ -359,6 +367,14 @@ function validateRewards(form: BatchForm, catalog?: CardKeyCatalog | null): stri
         }
         if (seenFeatures.has(row.feature)) issues.push(`「${spec.label}」里功能「${row.feature}」配置了两次`);
         seenFeatures.add(row.feature);
+        const days = Number(row.amount || 0);
+        if (!Number.isInteger(days) || days < 0 || days > (spec.max ?? 3650)) {
+          issues.push(`「${spec.label}」的天数需要在 0–${spec.max ?? 3650} 之间（0 为永久）`);
+        }
+        break;
+      }
+      case "cosmetic": {
+        if (!row.refId) issues.push(`「${spec.label}」没有选择装扮`);
         const days = Number(row.amount || 0);
         if (!Number.isInteger(days) || days < 0 || days > (spec.max ?? 3650)) {
           issues.push(`「${spec.label}」的天数需要在 0–${spec.max ?? 3650} 之间（0 为永久）`);
@@ -383,8 +399,12 @@ function rewardsPayload(form: BatchForm, catalog?: CardKeyCatalog | null): CardK
         return [{ type: row.type, money: row.money.trim() }];
       case "ref":
         return [{ type: row.type, refId: row.refId }];
+      case "number_ticket":
+        return [{ type: row.type, amount: Number(row.amount), refId: row.refId }];
       case "feature":
         return [{ type: row.type, feature: row.feature, amount: Number(row.amount || 0) }];
+      case "cosmetic":
+        return [{ type: row.type, refId: row.refId, amount: Number(row.amount || 0) }];
       default:
         return [];
     }

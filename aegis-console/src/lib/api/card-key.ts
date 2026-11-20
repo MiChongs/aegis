@@ -23,8 +23,9 @@ export type CardKeyStatusFilter = CardKeyStatus | "partial" | "expired";
 /**
  * 权益取值形态，决定 Reward 上用哪个字段承载数量。
  * feature 为功能标识 + 天数（Reward.feature + Reward.amount，0 为永久），可在一张卡里出现多次。
+ * number_ticket 为靓号券：Reward.amount 张数 + Reward.refId 等级 1–4（docs/user-number.md）。
  */
-export type CardKeyRewardValue = "amount" | "money" | "ref" | "feature";
+export type CardKeyRewardValue = "amount" | "money" | "ref" | "feature" | "number_ticket" | "cosmetic";
 
 /**
  * 一档权益的自述。**由后端目录下发**，前端不得另抄一份 ——

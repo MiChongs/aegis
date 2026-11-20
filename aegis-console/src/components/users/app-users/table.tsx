@@ -54,6 +54,7 @@ import {
   TableRow
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { NumberChip } from "@/components/apps/user-number/number-shared";
 import type { AdminAppUserItem } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { SORT_LABELS, type SortField, type UserQueryState } from "./shared";
@@ -289,6 +290,7 @@ export function AppUsersTable({
                 </div>
                 <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                   {item.account && item.nickname ? <span className="truncate">@{item.account}</span> : null}
+                  <NumberChip number={item.number} tier={item.numberTier} />
                   <span className="shrink-0 rounded bg-muted px-1 font-mono text-[10px] leading-4">#{item.id}</span>
                 </div>
               </div>
@@ -402,6 +404,12 @@ export function AppUsersTable({
                   查看详情
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
+                {item.number ? (
+                  <DropdownMenuItem className="text-xs" onSelect={() => void copyText(String(item.number), "号码")}>
+                    <Copy className="size-3.5" />
+                    复制号码
+                  </DropdownMenuItem>
+                ) : null}
                 {item.publicId ? (
                   <DropdownMenuItem
                     className="text-xs"
@@ -864,6 +872,7 @@ function UserGrid({
                 </div>
                 <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                   {item.account ? <span className="truncate">@{item.account}</span> : null}
+                  <NumberChip number={item.number} tier={item.numberTier} />
                   <span className="shrink-0 rounded bg-muted px-1 font-mono text-[10px] leading-4">#{item.id}</span>
                 </div>
               </div>

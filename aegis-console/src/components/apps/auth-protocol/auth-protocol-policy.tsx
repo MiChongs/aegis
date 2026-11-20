@@ -129,7 +129,7 @@ export function AuthProtocolPolicy({
               ))}
             </div>
             <InlineNotice icon={Info}>
-              密码登录时，账号框可输入用户名、邮箱、手机号或用户 ID，按勾选的标识识别用户；账号名始终可用
+              密码登录时，账号框可输入用户名、号码、邮箱、手机号或 16 位对外 ID，按勾选的标识识别用户；账号名始终可用；号码只在本应用内识别，勾选对外 ID 时同样可用号码登录
             </InlineNotice>
             {phoneMissing ? (
               <InlineNotice tone="warning" icon={TriangleAlert}>

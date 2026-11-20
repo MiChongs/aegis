@@ -2935,8 +2935,12 @@ export type NotificationItem = {
 
 export type AdminAppUserItem = {
   id: number;
-  /** 对外用户 ID：用户在 App 里看到、报给客服的 16 位号（主键 id 只在后台用） */
+  /** 对外 ID：16 位、终生不变，OAuth2 sub 与客户端本地数据的键（主键 id 只在后台用） */
   publicId?: number;
+  /** 用户号码：5–12 位、按应用唯一、可以更换，用户在 App 里看到、报给客服的就是它（docs/user-number.md） */
+  number?: number;
+  /** 号码等级 0 普通 / 1 精品 / 2 稀有 / 3 传说 / 4 至尊（换号那一刻判定） */
+  numberTier?: number;
   appid?: number;
   account?: string;
   nickname?: string;

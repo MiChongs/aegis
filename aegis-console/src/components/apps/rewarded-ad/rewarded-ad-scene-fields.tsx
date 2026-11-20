@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { CardKeyRewardSpec } from "@/lib/api/card-key";
 import type { RewardedAdLifetimePolicy, RewardedAdLifetimePolicySpec } from "@/lib/api/rewarded-ad";
+import { NUMBER_TICKET_LEVELS } from "@/lib/api/user-number";
 import type { VipFeature, VipPlan } from "@/lib/api/vip";
 import { cn } from "@/lib/utils";
 
@@ -46,7 +47,7 @@ export function RewardPicker({
           : spec.min ?? 1;
       rewards[spec.type] = {
         amount: String(amount),
-        refId: plans[0]?.id ?? 0,
+        refId: spec.value === "number_ticket" ? 1 : (plans[0]?.id ?? 0),
         feature: features.find((feature) => feature.isActive)?.tag ?? ""
       };
     } else {
@@ -94,6 +95,29 @@ export function RewardPicker({
                       </SelectContent>
                     </Select>
                   )
+                ) : spec.value === "number_ticket" ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select
+                      value={String(value.refId || 1)}
+                      onValueChange={(next) => update(spec.type, { ...value, refId: Number(next) })}
+                    >
+                      <SelectTrigger className="h-8 w-32 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {NUMBER_TICKET_LEVELS.map((tier) => (
+                          <SelectItem key={tier.level} value={String(tier.level)}>
+                            {tier.name}靓号券
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <AmountInput
+                      spec={{ ...spec, unit: spec.unit || "张" }}
+                      value={value.amount}
+                      onChange={(amount) => update(spec.type, { ...value, amount })}
+                    />
+                  </div>
                 ) : spec.value === "feature" ? (
                   <FeatureAmountField
                     spec={spec}

@@ -264,9 +264,13 @@ export function rewardOf(prize: PrizeDraft, kinds: LotteryRewardSpec[]): Lottery
       return { type: prize.type };
     case "ref":
       return { type: prize.type, refId: prize.refId };
+    case "number_ticket":
+      return { type: prize.type, amount: toInt(prize.amount), refId: prize.refId >= 1 && prize.refId <= 4 ? prize.refId : 1 };
     case "feature":
     case "feature_minutes":
       return { type: prize.type, tag: prize.tag, amount: toInt(prize.amount) };
+    case "cosmetic":
+      return { type: prize.type, refId: prize.refId, amount: toInt(prize.amount) };
     case "text":
       return { type: prize.type, text: prize.text.trim() };
     default:
@@ -439,6 +443,13 @@ export function validateForm(form: ActivityForm, catalog?: LotteryCatalog | null
       }
     }
     if (spec?.value === "ref" && !prize.refId) prizes(`${label}：请选择会员套餐`);
+    if (spec?.value === "number_ticket") {
+      const amount = toInt(prize.amount);
+      if (amount < (spec.min ?? 1) || (spec.max !== undefined && amount > spec.max)) {
+        prizes(`${label}：${spec.label}需要在 ${spec.min ?? 1}–${spec.max ?? amount} 张之间`);
+      }
+      if (!(prize.refId >= 1 && prize.refId <= 4)) prizes(`${label}：请选择靓号券等级`);
+    }
     if (spec?.value === "feature") {
       if (!prize.tag) prizes(`${label}：请选择功能`);
       if (toInt(prize.amount) < 0) prizes(`${label}：天数不能为负`);
@@ -451,6 +462,11 @@ export function validateForm(form: ActivityForm, catalog?: LotteryCatalog | null
       }
     }
     if (spec?.value === "text" && !prize.text.trim()) prizes(`${label}：请填写发放内容`);
+    if (spec?.value === "cosmetic") {
+      if (!prize.refId) prizes(`${label}：请选择装扮`);
+      const days = toInt(prize.amount);
+      if (days < 0 || (spec.max !== undefined && days > spec.max)) prizes(`${label}：装扮天数需要在 0–${spec.max ?? 3650} 之间（0 为永久）`);
+    }
 
     const weight = toInt(prize.weight);
     if (weight < 0 || weight > LIMITS.weight) prizes(`${label}的权重需要在 0–${LIMITS.weight} 之间`);

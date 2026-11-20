@@ -23,6 +23,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import NumberFlow from "@number-flow/react";
+import { CosmeticRewardInput } from "@/components/apps/cosmetics/cosmetic-reward";
 import {
   ArrowRight,
   ChevronLeft,
@@ -65,6 +66,7 @@ import {
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { LotteryCatalog, LotteryUIMode } from "@/lib/api/lottery";
+import { NUMBER_TICKET_LEVELS } from "@/lib/api/user-number";
 import { cn } from "@/lib/utils";
 
 /** Select 不接受空串：「按活动的处理方式」用这个占位 */
@@ -526,7 +528,10 @@ const WHEEL_FILL: Record<string, string> = {
   feature: "fill-rose-400",
   lottery_draws: "fill-emerald-400",
   balance: "fill-teal-400",
-  manual: "fill-orange-400"
+  manual: "fill-orange-400",
+  number_change: "fill-indigo-400",
+  number_ticket: "fill-yellow-400",
+  number_draw: "fill-cyan-400"
 };
 
 function WheelRow({
@@ -726,8 +731,8 @@ function PrizeInspector({
     const next = kinds.find((item) => item.type === type);
     onPatch({
       type,
-      amount: String(next?.value === "feature" ? 7 : next?.value === "feature_minutes" ? 30 : next?.min ?? 1),
-      refId: plans[0]?.id ?? 0,
+      amount: String(next?.value === "feature" ? 7 : next?.value === "feature_minutes" ? 30 : next?.value === "cosmetic" ? 0 : next?.min ?? 1),
+      refId: next?.value === "number_ticket" ? 1 : next?.value === "cosmetic" ? 0 : (plans[0]?.id ?? 0),
       tag: features[0]?.tag ?? "",
       text: ""
     });
@@ -905,6 +910,45 @@ function PrizeInspector({
                 </Field>
               </>
             )
+          ) : null}
+
+          {spec?.value === "number_ticket" ? (
+            <>
+              <Field label="靓号券等级">
+                <Select value={String(prize.refId || 1)} onValueChange={(value) => onPatch({ refId: Number(value) })}>
+                  <SelectTrigger className={cn(FIELD_SURFACE, "h-9 w-full border-0 shadow-none")}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    {NUMBER_TICKET_LEVELS.map((tier) => (
+                      <SelectItem key={tier.level} value={String(tier.level)}>
+                        {tier.name}靓号券
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="张数" aside={`${spec.min ?? 1}–${spec.max ?? "∞"}`}>
+                <Stepper
+                  value={prize.amount}
+                  min={spec.min ?? 1}
+                  max={spec.max}
+                  suffix={spec.unit ?? "张"}
+                  onChange={(amount) => onPatch({ amount })}
+                />
+              </Field>
+            </>
+          ) : null}
+
+          {spec?.value === "cosmetic" ? (
+            <Field label="装扮与天数（0 为永久）" className="sm:col-span-2">
+              <CosmeticRewardInput
+                refId={prize.refId}
+                amount={prize.amount}
+                max={spec.max}
+                onChange={(next) => onPatch({ ...(next.refId !== undefined ? { refId: next.refId } : {}), ...(next.amount !== undefined ? { amount: next.amount } : {}) })}
+              />
+            </Field>
           ) : null}
 
           {spec?.value === "text" ? (

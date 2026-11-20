@@ -241,6 +241,8 @@ export function buildRewards(scene: SceneDraft, catalog: CardKeyRewardSpec[]): C
           return { type: spec.type, refId: Number(value.refId) };
         case "feature":
           return { type: spec.type, amount: Number(value.amount), feature: value.feature };
+        case "number_ticket":
+          return { type: spec.type, amount: Number(value.amount), refId: Number(value.refId) || 1 };
         default:
           return { type: spec.type, amount: Number(value.amount) };
       }

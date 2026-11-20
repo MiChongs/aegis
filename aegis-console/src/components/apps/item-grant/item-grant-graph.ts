@@ -120,10 +120,14 @@ export function defaultItem(type: string, catalog?: ItemGrantCatalog): ItemGrant
       return { type, tag: catalog?.features.find((feature) => feature.isActive)?.tag ?? "", amount: 60 };
     case "text":
       return { type, text: "" };
+    case "number_ticket":
+      return { type, amount: 1, refId: 1 };
+    case "cosmetic":
+      return { type, refId: 0, amount: 0 };
     case "":
       return { type };
     default: {
-      const presets: Record<string, number> = { points: 100, experience: 100, vip_days: 7, ad_free: 3, lottery_draws: 3, ai_credit: 10 };
+      const presets: Record<string, number> = { points: 100, experience: 100, vip_days: 7, ad_free: 3, lottery_draws: 3, ai_credit: 10, number_change: 1, number_draw: 1 };
       return { type, amount: presets[type] ?? spec?.min ?? 1 };
     }
   }

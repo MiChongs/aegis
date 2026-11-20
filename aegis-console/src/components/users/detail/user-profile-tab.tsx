@@ -406,7 +406,9 @@ function BasicSection({
         </button>
       ) : undefined
     },
-    { label: "用户 ID", icon: Hash, value: publicId, mono: true, copy: publicId || null, hint: publicId ? "用户在客户端看到的编号" : undefined },
+    // 两层身份（docs/user-number.md）：用户在客户端看到的是号码，16 位对外 ID 终生不变、只在后台与接入里用
+    { label: "号码", icon: Hash, value: user.number ? String(user.number) : "", mono: true, copy: user.number ? String(user.number) : null, hint: user.number ? "用户在客户端看到的编号" : undefined },
+    { label: "对外 ID", icon: Hash, value: publicId, mono: true, copy: publicId || null },
     {
       label: "自定义 ID",
       icon: Fingerprint,

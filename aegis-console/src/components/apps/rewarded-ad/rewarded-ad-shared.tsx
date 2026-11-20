@@ -3,6 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import type { CardKeyReward, CardKeyRewardSpec } from "@/lib/api/card-key";
 import type { RewardedAdScene, RewardedAdVerifyMode, RewardedAdViewStatus } from "@/lib/api/rewarded-ad";
+import { numberTicketName } from "@/lib/api/user-number";
 
 /** 观看记录状态 → 标签与徽标色。 */
 const STATUS_META: Record<RewardedAdViewStatus, { label: string; variant: "success" | "warning" | "danger" }> = {
@@ -63,6 +64,9 @@ export function describeRewards(
       if (!spec) return reward.type;
       if (spec.value === "ref") {
         return planNames[reward.refId ?? 0] ? `${spec.label}「${planNames[reward.refId ?? 0]}」` : spec.label;
+      }
+      if (spec.value === "number_ticket") {
+        return `${numberTicketName(reward.refId)} ×${reward.amount ?? 0}`;
       }
       if (spec.value === "feature") {
         const feature = reward.feature ?? "";

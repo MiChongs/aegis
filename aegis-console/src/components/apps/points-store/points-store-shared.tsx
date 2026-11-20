@@ -1,7 +1,9 @@
 "use client";
 
 import type { ComponentType } from "react";
-import { CalendarPlus, Crown, Gift, HandHelping, KeyRound, Sparkles, Ticket, Wallet } from "lucide-react";
+import { BadgeCheck, CalendarPlus, Crown, Dices, Gift, HandHelping, Hash, KeyRound, Shirt, Sparkles, Ticket, Wallet } from "lucide-react";
+import { useCosmeticRewardNames } from "@/components/apps/cosmetics/cosmetic-reward";
+import { cosmeticRewardText } from "@/lib/cosmetic-names";
 import type { Tone } from "@/components/users/detail/kit";
 import { Badge } from "@/components/ui/badge";
 import type {
@@ -14,6 +16,7 @@ import type {
   PointsStoreReward,
   PointsStoreRewardSpec
 } from "@/lib/api/points-store";
+import { numberTicketName } from "@/lib/api/user-number";
 import type { VipFeature, VipPlan } from "@/lib/api/vip";
 import { vipPlanTerm } from "@/components/apps/vip/vip-shared";
 
@@ -104,6 +107,10 @@ export function describeReward(
       return `${label} ¥${reward.money}`;
     case "text":
       return reward.text ?? label;
+    case "number_ticket":
+      return `${numberTicketName(reward.refId)} ×${reward.amount ?? 0}`;
+    case "cosmetic":
+      return cosmeticRewardText(reward.refId, reward.amount);
     case "amount":
       return `${label} ${reward.amount}${spec.unit ? ` ${spec.unit}` : ""}`;
     default:
@@ -122,6 +129,8 @@ export function RewardBadges({
   plans: VipPlan[];
   features: VipFeature[];
 }) {
+  // 装扮名称来自登记表：订阅后名字晚到也会重绘
+  useCosmeticRewardNames();
   return (
     <div className="flex flex-wrap gap-1">
       {rewards.map((reward, index) => (
@@ -240,7 +249,11 @@ const REWARD_VISUAL: Record<string, { icon: ComponentType<{ className?: string }
   experience: { icon: Sparkles, tone: "primary" },
   balance: { icon: Wallet, tone: "success" },
   lottery_draws: { icon: Ticket, tone: "warning" },
-  manual: { icon: HandHelping, tone: "danger" }
+  manual: { icon: HandHelping, tone: "danger" },
+  number_change: { icon: Hash, tone: "info" },
+  number_ticket: { icon: BadgeCheck, tone: "warning" },
+  number_draw: { icon: Dices, tone: "violet" },
+  cosmetic: { icon: Shirt, tone: "violet" }
 };
 
 export function rewardVisual(type?: string) {

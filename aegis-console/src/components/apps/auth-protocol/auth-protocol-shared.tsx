@@ -5,6 +5,7 @@ import {
   AtSign,
   Check,
   Clipboard,
+  Fingerprint,
   Hash,
   KeyRound,
   Link2,
@@ -37,13 +38,17 @@ export function levelMeta(level: SecurityLevel) {
 export type MethodOption = { value: string; label: string; icon: LucideIcon };
 
 // 密码登录时账号框按这里勾选的标识认人（后端 resolveLoginCandidates）：账号名永远先认且始终可用，
-// 其后依次是 16 位用户 ID、邮箱、手机号。邮箱或手机号挂在多个账号上时由密码区分。
+// 其后依次是 16 位对外 ID、邮箱、手机号。邮箱或手机号挂在多个账号上时由密码区分。
 // 用户自己设的用户名不许纯数字、不含 @，所以新账号不会和另外几种标识撞在一起（docs/account-setup.md）。
+// 两层身份（docs/user-number.md）：16 位对外 ID 终生不变，是这里的「id」标识；用户在 App 里看到的是
+// 5–12 位、可以更换的号码（「number」标识，只在本应用里找）。勾了「id」的应用同样认号码。
+// 号码与 11 位手机号、老系统导入的纯数字账号可能撞上，几类候选合在一起由密码决定。
 export const IDENTIFIERS: MethodOption[] = [
   { value: "username", label: "用户名", icon: User },
   { value: "email", label: "邮箱", icon: AtSign },
   { value: "phone", label: "手机号", icon: Phone },
-  { value: "id", label: "用户 ID", icon: Hash }
+  { value: "number", label: "号码", icon: Hash },
+  { value: "id", label: "16 位对外 ID", icon: Fingerprint }
 ];
 
 // 登录与注册的可选集合刻意不同：第三方能否自动建号由每个渠道自己的

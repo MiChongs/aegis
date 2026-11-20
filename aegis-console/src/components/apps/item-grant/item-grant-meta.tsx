@@ -4,6 +4,7 @@ import {
   BadgeCheck,
   CalendarClock,
   Clock3,
+  Dices,
   Coins,
   Crown,
   Filter,
@@ -11,12 +12,14 @@ import {
   Gift,
   GitBranch,
   Hand,
+  Hash,
   Infinity as InfinityIcon,
   KeyRound,
   Mail,
   MonitorSmartphone,
   Package,
   PackageOpen,
+  Shirt,
   Shuffle,
   Sparkles,
   Square,
@@ -48,6 +51,8 @@ import type {
   ItemGrantTriggerKind,
   ItemGrantWindowData
 } from "@/lib/api/item-grant";
+import { numberTicketName } from "@/lib/api/user-number";
+import { cosmeticRewardText } from "@/lib/cosmetic-names";
 
 /**
  * 物品发放的展示元数据：节点的图标与色调、状态徽标、物品图标，以及节点在画布上的一句话摘要。
@@ -124,7 +129,12 @@ export const ITEM_ICON: Record<string, LucideIcon> = {
   balance: Wallet,
   license_days: CalendarClock,
   device_slots: MonitorSmartphone,
-  manual: Package
+  manual: Package,
+  number_change: Hash,
+  number_ticket: BadgeCheck,
+  number_draw: Dices,
+  number_assign: Hash,
+  cosmetic: Shirt
 };
 
 export const HANDLE_TONE: Record<string, { stroke: string; text: string; dot: string }> = {
@@ -181,7 +191,12 @@ export function describeItem(item: ItemGrantItem, catalog?: ItemGrantCatalog) {
     case "feature_minutes":
       return `${featureName(item.tag)} ${item.amount ?? 0} 分钟${expr}`;
     case "text":
+      if (item.type === "number_assign") return item.text ? `指定号码 ${item.text}` : "未填写号码";
       return item.text || "未填写";
+    case "number_ticket":
+      return `${numberTicketName(item.refId)} ×${formatNumber(item.amount ?? 0)}${expr}`;
+    case "cosmetic":
+      return cosmeticRewardText(item.refId, item.amount);
   }
   switch (item.type) {
     case "vip_days":

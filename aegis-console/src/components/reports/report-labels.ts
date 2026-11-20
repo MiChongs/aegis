@@ -143,7 +143,11 @@ export const PRIZE_KIND: Record<string, string> = {
   vip_days: "会员天数",
   feature: "功能解锁",
   lottery_draws: "抽奖次数",
-  manual: "人工发放"
+  manual: "人工发放",
+  number_change: "改号卡",
+  number_ticket: "靓号券",
+  number_draw: "摇号次数",
+  number_assign: "指定号码"
 };
 
 export const DRAW_SOURCE: Record<string, string> = {

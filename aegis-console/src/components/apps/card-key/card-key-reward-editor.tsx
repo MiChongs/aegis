@@ -2,6 +2,7 @@
 
 import { Info, Plus, Trash2 } from "lucide-react";
 import { nextRowKey, type RewardRow } from "@/components/apps/card-key/card-key-batch-form";
+import { CosmeticRewardInput } from "@/components/apps/cosmetics/cosmetic-reward";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -18,6 +19,7 @@ import {
   SelectValue
 } from "@/components/ui/select";
 import type { CardKeyCatalog, CardKeyKind, CardKeyRewardSpec } from "@/lib/api/card-key";
+import { NUMBER_TICKET_LEVELS } from "@/lib/api/user-number";
 import { cn } from "@/lib/utils";
 
 /**
@@ -55,9 +57,9 @@ export function CardKeyRewardEditor({
       {
         key: nextRowKey(rows),
         type: spec.type,
-        amount: spec.value === "feature" ? "0" : String(spec.min ?? 1),
+        amount: spec.value === "feature" || spec.value === "cosmetic" ? "0" : String(spec.min ?? 1),
         money: "10.00",
-        refId: plans.find((plan) => !plan.trial)?.id ?? plans[0]?.id ?? 0,
+        refId: spec.value === "number_ticket" ? 1 : spec.value === "cosmetic" ? 0 : (plans.find((plan) => !plan.trial)?.id ?? plans[0]?.id ?? 0),
         feature: features.find((feature) => !usedFeatures.has(feature.tag))?.tag ?? ""
       }
     ]);
@@ -142,6 +144,35 @@ export function CardKeyRewardEditor({
                   </SelectContent>
                 </Select>
               ) : null}
+              {spec.value === "number_ticket" ? (
+                <>
+                  <Select
+                    value={String(row.refId || 1)}
+                    onValueChange={(value) => patch(row.key, { refId: Number(value) })}
+                    disabled={disabled}
+                  >
+                    <SelectTrigger className="h-9 w-full">
+                      <SelectValue placeholder="选择等级" />
+                    </SelectTrigger>
+                    <SelectContent position="popper">
+                      {NUMBER_TICKET_LEVELS.map((tier) => (
+                        <SelectItem key={tier.level} value={String(tier.level)}>
+                          {tier.name}靓号券
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <AmountInput
+                    value={row.amount}
+                    unit={spec.unit ?? "张"}
+                    min={spec.min ?? 1}
+                    max={spec.max}
+                    disabled={disabled}
+                    className="sm:w-44"
+                    onChange={(amount) => patch(row.key, { amount })}
+                  />
+                </>
+              ) : null}
               {spec.value === "feature" ? (
                 <>
                   <Select
@@ -174,6 +205,15 @@ export function CardKeyRewardEditor({
                     onChange={(amount) => patch(row.key, { amount })}
                   />
                 </>
+              ) : null}
+              {spec.value === "cosmetic" ? (
+                <CosmeticRewardInput
+                  refId={row.refId}
+                  amount={row.amount}
+                  max={spec.max}
+                  disabled={disabled}
+                  onChange={(next) => patch(row.key, next)}
+                />
               ) : null}
             </div>
 

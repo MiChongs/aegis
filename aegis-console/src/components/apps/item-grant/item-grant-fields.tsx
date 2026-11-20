@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ChevronDown, Plus, Sigma, Trash2 } from "lucide-react";
 import { ITEM_ICON, describeItem } from "@/components/apps/item-grant/item-grant-meta";
 import { defaultItem } from "@/components/apps/item-grant/item-grant-graph";
+import { CosmeticRewardInput } from "@/components/apps/cosmetics/cosmetic-reward";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -19,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ItemGrantCatalog, ItemGrantItem, ItemGrantItemSpec } from "@/lib/api/item-grant";
+import { NUMBER_TICKET_LEVELS } from "@/lib/api/user-number";
 import { cn } from "@/lib/utils";
 
 /**
@@ -322,7 +324,32 @@ function ItemRow({
         ) : null}
         {spec?.value === "feature" ? <p className="text-[11px] text-muted-foreground">天数为 0 即永久解锁</p> : null}
 
-        {spec?.value === "text" ? (
+        {spec?.value === "cosmetic" ? (
+          <CosmeticRewardInput
+            refId={item.refId ?? 0}
+            amount={item.amount ?? 0}
+            max={spec.max}
+            onChange={(next) =>
+              onChange({
+                ...(next.refId !== undefined ? { refId: next.refId } : {}),
+                ...(next.amount !== undefined ? { amount: Math.max(0, Math.trunc(Number(next.amount) || 0)) } : {})
+              })
+            }
+          />
+        ) : null}
+
+        {spec?.value === "text" && item.type === "number_assign" ? (
+          <Input
+            className="h-8 font-mono"
+            inputMode="numeric"
+            value={item.text ?? ""}
+            maxLength={12}
+            placeholder="例如 88886666"
+            onChange={(event) => onChange({ text: event.target.value.replace(/\D/g, "") })}
+          />
+        ) : null}
+
+        {spec?.value === "text" && item.type !== "number_assign" ? (
           <Input
             className="h-8"
             value={item.text ?? ""}
@@ -330,6 +357,31 @@ function ItemRow({
             placeholder="例如：定制周边一套"
             onChange={(event) => onChange({ text: event.target.value })}
           />
+        ) : null}
+
+        {spec?.value === "number_ticket" ? (
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+            <Select value={String(item.refId || 1)} onValueChange={(value) => onChange({ refId: Number(value) })}>
+              <SelectTrigger size="sm" className="h-8 w-full text-xs">
+                <SelectValue placeholder="选择等级" />
+              </SelectTrigger>
+              <SelectContent position="popper">
+                {NUMBER_TICKET_LEVELS.map((tier) => (
+                  <SelectItem key={tier.level} value={String(tier.level)}>
+                    {tier.name}靓号券
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <NumberInput
+              className="w-32"
+              value={item.amount}
+              min={spec.min ?? 1}
+              max={spec.max}
+              onChange={(amount) => onChange({ amount })}
+              suffix={spec.unit ?? "张"}
+            />
+          </div>
         ) : null}
 
         {exprOpen && spec?.scalable ? (

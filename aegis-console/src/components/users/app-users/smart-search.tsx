@@ -92,6 +92,16 @@ export function detectIntents(raw: string): SearchIntent[] {
       icon: Globe2
     });
   }
+  // 5–12 位、不以 0 开头的纯数字多半是用户报来的号码（docs/user-number.md）：关键字搜索会精确匹配号码，排在最前
+  const numberLike = /^[1-9]\d{4,11}$/.test(value);
+  if (numberLike) {
+    intents.push({
+      key: "keyword",
+      label: "按号码搜索",
+      description: `号码 = ${value}`,
+      icon: Hash
+    });
+  }
   if (/^\d{5,20}$/.test(value)) {
     intents.push({
       key: "phone",
@@ -100,12 +110,14 @@ export function detectIntents(raw: string): SearchIntent[] {
       icon: Phone
     });
   }
-  intents.push({
-    key: "keyword",
-    label: "全字段搜索",
-    description: "",
-    icon: Search
-  });
+  if (!numberLike) {
+    intents.push({
+      key: "keyword",
+      label: "全字段搜索",
+      description: "",
+      icon: Search
+    });
+  }
   if (!value.includes("@") && /^[A-Za-z][\w.-]*$/.test(value)) {
     intents.push({
       key: "account",

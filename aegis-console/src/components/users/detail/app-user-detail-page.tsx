@@ -15,6 +15,7 @@ import {
   Copy,
   Crown,
   Gavel,
+  Hash,
   Layers,
   Link2,
   ListChecks,
@@ -78,9 +79,11 @@ import {
 import { UserGovernanceTab } from "./user-governance-tab";
 import { UserGrowthTab } from "./user-growth-tab";
 import { UserLedgerTab } from "./user-ledger-tab";
+import { UserNumberTab } from "./user-number-tab";
 import { UserOverviewTab } from "./user-overview-tab";
 import { UserProfileTab } from "./user-profile-tab";
 import { UserRecordsTab } from "./user-records-tab";
+import { UserCosmeticsTab } from "./user-cosmetics-tab";
 import { UserSecurityTab } from "./user-security-tab";
 
 type Props = {
@@ -98,6 +101,7 @@ const TAB_GROUPS: Array<{ label: string; tabs: TabDef[] }> = [
     tabs: [
       { value: "overview", label: "概览", icon: Layers },
       { value: "profile", label: "资料", icon: UserRound },
+      { value: "number", label: "号码", icon: Hash },
       { value: "security", label: "安全", icon: ShieldCheck },
       { value: "activity", label: "活动", icon: Activity }
     ]
@@ -108,7 +112,8 @@ const TAB_GROUPS: Array<{ label: string; tabs: TabDef[] }> = [
       { value: "assets", label: "资产与权益", icon: Wallet },
       { value: "growth", label: "奖惩", icon: Scale },
       { value: "ledger", label: "流水", icon: Receipt },
-      { value: "records", label: "互动记录", icon: ListChecks }
+      { value: "records", label: "互动记录", icon: ListChecks },
+      { value: "cosmetics", label: "装扮", icon: Sparkles }
     ]
   },
   {
@@ -279,6 +284,8 @@ export function AppUserDetailPage({ appKey, userId, fromHref }: Props) {
                   <UserOverviewTab appKey={appKey} userId={userId} user={user} wallet={walletQuery.data} onNavigate={goTab} />
                 ) : tab === "profile" ? (
                   <UserProfileTab appKey={appKey} userId={userId} user={user} />
+                ) : tab === "number" ? (
+                  <UserNumberTab appKey={appKey} userId={userId} />
                 ) : tab === "security" ? (
                   <UserSecurityTab appKey={appKey} userId={userId} user={user} />
                 ) : tab === "activity" ? (
@@ -291,6 +298,8 @@ export function AppUserDetailPage({ appKey, userId, fromHref }: Props) {
                   <UserLedgerTab appKey={appKey} userId={userId} user={user} onNavigate={goTab} />
                 ) : tab === "records" ? (
                   <UserRecordsTab appKey={appKey} userId={userId} user={user} />
+                ) : tab === "cosmetics" ? (
+                  <UserCosmeticsTab appKey={appKey} userId={userId} user={user} />
                 ) : tab === "cloud" ? (
                   <UserCloudTab appKey={appKey} userId={userId} />
                 ) : tab === "ad-policy" ? (
@@ -357,7 +366,9 @@ function IdentityCard({
     void copyToClipboard(url.toString(), "页面链接");
   }
 
+  // 号码是用户在 App 里看到、报给客服的那个；16 位对外 ID 终生不变，排在它后面（docs/user-number.md）
   const ids: Array<{ label: string; value: string }> = [
+    ...(user.number ? [{ label: "号码", value: String(user.number) }] : []),
     ...(user.publicId ? [{ label: "对外 ID", value: String(user.publicId) }] : []),
     { label: "用户 ID", value: String(user.id) },
     ...(account ? [{ label: "账号", value: account }] : [])
@@ -467,6 +478,12 @@ function IdentityCard({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
+            {user.number ? (
+              <DropdownMenuItem onSelect={() => void copyToClipboard(String(user.number), "号码")}>
+                <Copy />
+                复制号码
+              </DropdownMenuItem>
+            ) : null}
             {user.publicId ? (
               <DropdownMenuItem onSelect={() => void copyToClipboard(String(user.publicId), "对外 ID")}>
                 <Copy />

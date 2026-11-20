@@ -16,7 +16,8 @@ export type LotteryDrawStatus = "granted" | "pending" | "fulfilled";
 /** 抽中已拥有的奖品怎么办：折算积分 / 改发抽奖次数 / 不参与抽取 / 照常发放 */
 export type LotteryLifetimePolicy = "points" | "draws" | "exclude" | "grant";
 /** 奖品取值形态：空为不需要取值（谢谢参与） */
-export type LotteryRewardValue = "" | "amount" | "ref" | "feature" | "feature_minutes" | "text";
+/** `number_ticket`：靓号券，`amount` 张数 + `refId` 等级 1–4（docs/user-number.md） */
+export type LotteryRewardValue = "" | "amount" | "ref" | "feature" | "feature_minutes" | "text" | "number_ticket" | "cosmetic";
 
 /** 一档奖品的自述，由后端目录下发，前端不另抄一份 */
 export type LotteryRewardSpec = {

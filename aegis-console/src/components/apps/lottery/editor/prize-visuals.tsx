@@ -1,14 +1,18 @@
 "use client";
 
 import {
+  Award,
   BadgeCheck,
   Clock,
   Coins,
   Crown,
+  Dices,
   Gem,
   Gift,
+  Hash,
   KeyRound,
   Package,
+  Shirt,
   ShieldOff,
   Smile,
   Sparkles,
@@ -120,6 +124,34 @@ const KIND_VISUALS: Record<string, KindVisual> = {
     fill: "bg-orange-400",
     ring: "ring-orange-500/60",
     stroke: "stroke-orange-400"
+  },
+  number_change: {
+    icon: Hash,
+    tone: "bg-indigo-500/12 text-indigo-600 dark:text-indigo-400",
+    fill: "bg-indigo-400",
+    ring: "ring-indigo-500/60",
+    stroke: "stroke-indigo-400"
+  },
+  number_ticket: {
+    icon: Award,
+    tone: "bg-yellow-500/12 text-yellow-700 dark:text-yellow-400",
+    fill: "bg-yellow-400",
+    ring: "ring-yellow-500/60",
+    stroke: "stroke-yellow-400"
+  },
+  number_draw: {
+    icon: Dices,
+    tone: "bg-cyan-500/12 text-cyan-600 dark:text-cyan-400",
+    fill: "bg-cyan-400",
+    ring: "ring-cyan-500/60",
+    stroke: "stroke-cyan-400"
+  },
+  cosmetic: {
+    icon: Shirt,
+    tone: "bg-fuchsia-500/12 text-fuchsia-600 dark:text-fuchsia-400",
+    fill: "bg-fuchsia-400",
+    ring: "ring-fuchsia-500/60",
+    stroke: "stroke-fuchsia-400"
   }
 };
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
+import { CosmeticRewardInput } from "@/components/apps/cosmetics/cosmetic-reward";
 import { termLabel } from "@/components/apps/points-store/points-store-shared";
 import { vipPlanTerm } from "@/components/apps/vip/vip-shared";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ import {
   SelectValue
 } from "@/components/ui/select";
 import type { PointsStoreReward, PointsStoreRewardSpec } from "@/lib/api/points-store";
+import { NUMBER_TICKET_LEVELS } from "@/lib/api/user-number";
 import type { VipFeature, VipPlan } from "@/lib/api/vip";
 
 /**
@@ -63,8 +65,12 @@ export function rewardsFromDrafts(drafts: RewardDraft[], catalog: PointsStoreRew
         return { type: reward.type, money: reward.money.trim() };
       case "ref":
         return { type: reward.type, refId: Number(reward.refId) };
+      case "number_ticket":
+        return { type: reward.type, amount: Number(reward.amount) || 0, refId: Number(reward.refId) || 1 };
       case "feature":
         return { type: reward.type, tag: reward.tag, amount: Number(reward.amount) || 0 };
+      case "cosmetic":
+        return { type: reward.type, refId: Number(reward.refId) || 0, amount: Number(reward.amount) || 0 };
       case "text":
         return { type: reward.type, text: reward.text.trim() };
       default:
@@ -111,9 +117,9 @@ export function RewardListEditor({
       {
         key: nextRewardKey(rewards),
         type,
-        amount: String(spec.value === "feature" ? 7 : spec.min ?? 1),
+        amount: String(spec.value === "feature" ? 7 : spec.value === "cosmetic" ? 0 : spec.min ?? 1),
         money: "1.00",
-        refId: plans[0]?.id ?? 0,
+        refId: spec.value === "number_ticket" ? 1 : spec.value === "cosmetic" ? 0 : (plans[0]?.id ?? 0),
         tag: features.find((feature) => feature.isActive && !usedTags.includes(feature.tag))?.tag ?? "",
         text: ""
       }
@@ -276,6 +282,41 @@ function RewardRow({
               </span>
             </div>
           )
+        ) : null}
+
+        {spec?.value === "number_ticket" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={String(reward.refId || 1)} onValueChange={(next) => onChange({ refId: Number(next) })}>
+              <SelectTrigger className="h-8 w-full sm:w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {NUMBER_TICKET_LEVELS.map((tier) => (
+                  <SelectItem key={tier.level} value={String(tier.level)}>
+                    {tier.name}靓号券
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              type="number"
+              className="h-8 w-24"
+              value={reward.amount}
+              min={spec.min ?? 1}
+              max={spec.max}
+              onChange={(event) => onChange({ amount: event.target.value })}
+            />
+            <span className="text-xs text-muted-foreground">{spec.unit || "张"}</span>
+          </div>
+        ) : null}
+
+        {spec?.value === "cosmetic" ? (
+          <CosmeticRewardInput
+            refId={reward.refId}
+            amount={reward.amount}
+            max={spec.max}
+            onChange={(next) => onChange(next)}
+          />
         ) : null}
 
         {spec?.value === "text" ? (
