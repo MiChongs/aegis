@@ -2,7 +2,7 @@
 
 > 由 `scripts/gen_tools_doc.py` 生成，勿手改。
 
-共 491 个工具。类别：读 = 只读；写 = 可逆或增量的写；危险 = 不可逆或影响面大的写（客户端会要求确认）。
+共 498 个工具。类别：读 = 只读；写 = 可逆或增量的写；危险 = 不可逆或影响面大的写（客户端会要求确认）。
 
 ## admins（20）
 
@@ -116,24 +116,31 @@
 | `cardkey_update` | 写 | 调整单张卡：备注、可绑设备数、到期时间。只传要改的字段。 |
 | `cardkey_update_batch` | 写 | 修改批次（卡面格式、形态、有效期模式、单卡设备数不能改）。只传要改的字段：后端整体覆盖，这里先读批次再合并。 |
 
-## content（16）
+## content（23）
 
-内容与通知：应用公告、Banner、用户站内信（发送与清理）、平台公告、内容总览。
+内容与通知：应用公告、Banner、用户站内信（发送与清理）、站内信群发任务（全站或按人群、定时、取消、撤回）、平台公告、内容总览。
 
 | 工具 | 类别 | 说明 |
 |---|---|---|
 | `content_announcement_status` | 危险 | 发布、归档或删除平台公告。 |
 | `content_announcements` | 读 | 平台公告（面向全部管理员的控制台公告）列表或详情。 |
 | `content_banners` | 读 | 应用 Banner 列表（按展示顺序，不分页）。 |
+| `content_campaign` | 读 | 一个群发任务的详情与进度，另现算已读人数 readCount。失败、取消、撤回的说明在 message。 |
+| `content_campaign_catalog` | 读 | 群发任务的表单目录：预设人群（全站、会员、新用户、活跃、沉默、各平台……及其 audience）、平台、会员身份、账号状态、分类、任务状态、上限。 |
+| `content_campaigns` | 读 | 站内信群发任务列表（新的在前）：标题、人群摘要、状态、人数 total、进度 processed / delivered / skipped、撤回条数。 |
+| `content_cancel_campaign` | 写 | 取消定时、排队或发送中的群发任务。发送中的写完当前一批就停，已发出的消息保留（要收回请用 content_recall_campaign）。 |
 | `content_create_banner` | 写 | 新建 Banner。图片上传是二进制接口，请提供已有图片地址。 |
+| `content_create_campaign` | 危险 | 发起站内信群发任务（后台分批写入并实时推送，立刻返回 {campaign, created}）。可一键全站、指定用户或按条件筛选，可定时。 |
 | `content_create_notice` | 写 | 新建应用公告。默认存为草稿，确认后再用 content_update_notice 发布。 |
 | `content_delete_banners` | 危险 | 删除 Banner（一条或多条，不可恢复）。 |
 | `content_delete_notices` | 危险 | 删除公告（一条或多条，不可恢复）。 |
 | `content_delete_notifications` | 危险 | 删除已发出的站内信（用户端随之消失，不可恢复）。给 ID 就按 ID 删，否则按筛选条件删。 |
 | `content_notices` | 读 | 应用公告列表（分页）。 |
-| `content_notifications` | 读 | 应用里已发出的用户站内信（管理视图，分页）。 |
+| `content_notifications` | 读 | 应用里已发出的用户站内信（管理视图，分页，含已过期的）。列表项带 campaignId（单条投递为 null）。 |
 | `content_notify_users` | 危险 | 给用户发站内信，实时推送到用户全部设备。可指定用户，也可按筛选条件群发。发送前务必向用户确认接收范围与内容。 |
 | `content_overview` | 读 | 应用内容总览：Banner、公告的数量与状态分布。 |
+| `content_preview_audience` | 读 | 预览群发人群（只数人、不写数据）：返回归一后的 audience、中文摘要 label、人数 total 与至多 10 个样例用户。 |
+| `content_recall_campaign` | 危险 | 撤回群发任务：后台把这个任务发出的全部消息从每个收件人的消息中心删掉（不可恢复）；还没开始的直接取消。 |
 | `content_reorder_banners` | 写 | 调整 Banner 展示顺序：提交完整顺序。 |
 | `content_save_announcement` | 写 | 新建或修改平台公告（新建为草稿，用 content_announcement_status 发布）。需要超级管理员。 |
 | `content_update_banner` | 写 | 修改 Banner（只传要改的字段），也用于启停。 |

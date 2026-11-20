@@ -58,6 +58,94 @@ async def test_notifications_list_and_delete(backend, call, call_error):
     await call_error("content_delete_notifications", {"app": "demo"})
 
 
+async def test_notifications_new_filters(backend, call):
+    await call("content_notifications", {"app": "demo", "status": "unread", "user_id": 7, "campaign_id": 3})
+    assert backend.last().query == {"status": "unread", "userId": "7", "campaignId": "3", "page": "1", "limit": "20"}
+
+
+CAMPAIGNS = "/api/admin/apps/demo/notifications/campaigns"
+
+
+async def test_campaign_catalog_preview_and_list(backend, call, call_error):
+    await call("content_campaign_catalog", {"app": "demo"})
+    assert (backend.last().method, backend.last().path) == ("GET", f"{CAMPAIGNS}/catalog")
+
+    await call("content_preview_audience", {"app": "demo"})
+    req = backend.last()
+    assert (req.method, req.path, req.json) == ("POST", f"{CAMPAIGNS}/preview", {"audience": {"scope": "all", "account": "available"}})
+    await call("content_preview_audience", {"app": "demo", "scope": "filter", "membership": "non_member", "inactive_days": 30,
+                                            "platforms": ["android", "ios"], "exclude_user_ids": [9], "max_recipients": 500})
+    assert backend.last().json == {"audience": {"scope": "filter", "excludeUserIds": [9], "account": "available",
+                                                "membership": "non_member", "inactiveDays": 30,
+                                                "platforms": ["android", "ios"], "limit": 500}}
+    assert "scope=filter" in await call_error("content_preview_audience", {"app": "demo", "scope": "all", "membership": "member"})
+    assert "user_ids" in await call_error("content_preview_audience", {"app": "demo", "scope": "users"})
+    await call_error("content_preview_audience", {"app": "demo", "scope": "filter"})
+    await call_error("content_preview_audience", {"app": "demo", "scope": "filter", "active_within_days": 7, "inactive_days": 30})
+    await call_error("content_preview_audience", {"app": "demo", "scope": "filter", "min_level": 9, "max_level": 3})
+    await call_error("content_preview_audience", {"app": "demo", "scope": "filter", "platforms": ["symbian"]})
+
+    await call("content_campaigns", {"app": "demo", "status": "running"})
+    assert (backend.last().method, backend.last().path, backend.last().query) == (
+        "GET", CAMPAIGNS, {"status": "running", "page": "1", "limit": "20"})
+    await call_error("content_campaigns", {"app": "demo", "limit": 101})
+    await call("content_campaign", {"app": "demo", "campaign_id": 12})
+    assert (backend.last().method, backend.last().path) == ("GET", f"{CAMPAIGNS}/12")
+
+
+async def test_create_campaign(backend, call, call_error):
+    await call("content_create_campaign", {"app": "demo", "title": "双十一", "scope": "all"})
+    req = backend.last()
+    assert (req.method, req.path) == ("POST", CAMPAIGNS)
+    generated = req.json.pop("requestId")
+    assert len(generated) == 32
+    assert req.json == {"title": "双十一", "level": "info", "audience": {"scope": "all", "account": "available"}}
+
+    await call("content_create_campaign", {"app": "demo", "title": "召回", "content": "回来看看", "scope": "filter",
+                                           "active_within_days": 7, "min_level": 3, "keyword": "vip",
+                                           "category": "activity", "level": "success", "action_type": "route",
+                                           "action_target": "points", "action_label": "去看看",
+                                           "image": "https://img/x.png", "scheduled_at": "2026-11-21T10:00:00+08:00",
+                                           "expires_at": "2026-11-28T10:00:00+08:00", "metadata": {"src": "mcp"},
+                                           "request_id": "camp-1"})
+    assert backend.last().json == {
+        "requestId": "camp-1", "category": "activity", "title": "召回", "content": "回来看看", "level": "success",
+        "action": {"type": "route", "target": "points", "label": "去看看"}, "image": "https://img/x.png",
+        "expiresAt": "2026-11-28T10:00:00+08:00", "metadata": {"src": "mcp"}, "scheduledAt": "2026-11-21T10:00:00+08:00",
+        "audience": {"scope": "filter", "account": "available", "keyword": "vip", "activeWithinDays": 7, "minLevel": 3},
+    }
+
+    await call("content_create_campaign", {"app": "demo", "title": "t", "scope": "users", "user_ids": [1, 2], "account": "all"})
+    assert backend.last().json["audience"] == {"scope": "users", "userIds": [1, 2], "account": "all"}
+
+    count = len(backend.requests)
+    await call_error("content_create_campaign", {"app": "demo", "title": "t"})
+    await call_error("content_create_campaign", {"app": "demo", "title": "t", "scope": "users"})
+    await call_error("content_create_campaign", {"app": "demo", "title": "t", "scope": "all", "inactive_days": 30})
+    await call_error("content_create_campaign", {"app": "demo", "title": "t", "scope": "all", "level": "fatal"})
+    assert len(backend.requests) == count
+
+
+async def test_cancel_and_recall_campaign(backend, call):
+    await call("content_cancel_campaign", {"app": "demo", "campaign_id": 12})
+    assert (backend.last().method, backend.last().path) == ("POST", f"{CAMPAIGNS}/12/cancel")
+    await call("content_recall_campaign", {"app": "demo", "campaign_id": 12})
+    assert (backend.last().method, backend.last().path) == ("POST", f"{CAMPAIGNS}/12/recall")
+
+
+async def test_campaign_tool_categories(mcp):
+    tools = {tool.name: tool for tool in await mcp.list_tools()}
+
+    def tags(name):
+        return set((tools[name].meta or {}).get("fastmcp", {}).get("tags") or [])
+
+    for name in ("content_campaign_catalog", "content_preview_audience", "content_campaigns", "content_campaign"):
+        assert "read" in tags(name)
+    assert {"write", "destructive"} <= tags("content_create_campaign")
+    assert {"write", "destructive"} <= tags("content_recall_campaign")
+    assert "write" in tags("content_cancel_campaign") and "destructive" not in tags("content_cancel_campaign")
+
+
 async def test_announcements(backend, call):
     await call("content_announcements")
     assert backend.last().path == "/api/admin/system/announcements"
