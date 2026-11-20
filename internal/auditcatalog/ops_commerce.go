@@ -67,6 +67,14 @@ func init() {
 		Write("POST /api/admin/apps/:appkey/wallet/adjust", "调整用户余额", "用户", SeverityCritical),
 		View("POST /api/admin/apps/:appkey/wallet/receipt", "生成钱包流水凭证", "钱包流水"),
 		Write("POST /api/admin/apps/:appkey/wallet/receipt/email", "发送钱包流水凭证邮件", "钱包流水", SeverityLow),
+		// 钱包设置与充值档位（docs/wallet.md）：设置里有本金兑积分的比例，直接决定用户的钱换成多少积分
+		View("GET /api/admin/apps/:appkey/wallet/settings", "查看钱包设置", ""),
+		Write("PUT /api/admin/apps/:appkey/wallet/settings", "修改钱包设置", "", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/wallet/packages", "查看充值档位", ""),
+		Write("POST /api/admin/apps/:appkey/wallet/packages", "新建充值档位", "充值档位", SeverityMedium),
+		Write("PUT /api/admin/apps/:appkey/wallet/packages/:packageId", "修改充值档位", "充值档位", SeverityMedium),
+		Write("DELETE /api/admin/apps/:appkey/wallet/packages/:packageId", "删除充值档位", "充值档位", SeverityMedium),
+		Write("PUT /api/admin/apps/:appkey/wallet/packages-order", "调整充值档位顺序", "", SeverityLow),
 
 		// 一起听（独立微服务，经内部 RPC 转发）
 		View("GET /api/admin/apps/:appkey/listen-together/stats", "查看一起听统计", ""),
@@ -278,6 +286,11 @@ func init() {
 		Write("POST /api/admin/apps/:appkey/ai-gateway/models", "新建 AI 中转模型", "AI 模型", SeverityMedium),
 		Write("PUT /api/admin/apps/:appkey/ai-gateway/models/:modelId", "修改 AI 中转模型与价格", "AI 模型", SeverityMedium),
 		Write("DELETE /api/admin/apps/:appkey/ai-gateway/models/:modelId", "删除 AI 中转模型", "AI 模型", SeverityMedium),
+		Write("POST /api/admin/apps/:appkey/ai-gateway/models/sync", "按公开模型目录同步 AI 中转模型", "AI 模型", SeverityMedium),
+		View("GET /api/admin/apps/:appkey/ai-gateway/model-catalog", "查看公开模型目录", ""),
+		View("GET /api/admin/apps/:appkey/ai-gateway/model-catalog/search", "检索公开模型目录", ""),
+		View("GET /api/admin/apps/:appkey/ai-gateway/model-catalog/match", "匹配公开模型目录", ""),
+		Write("POST /api/admin/apps/:appkey/ai-gateway/model-catalog/refresh", "刷新公开模型目录", "", SeverityLow),
 		View("GET /api/admin/apps/:appkey/ai-gateway/requests", "查看 AI 调用记录", ""),
 		View("GET /api/admin/apps/:appkey/ai-gateway/requests/summary", "查看 AI 调用实时概况", ""),
 		View("GET /api/admin/apps/:appkey/ai-gateway/requests/live", "订阅 AI 调用实时推送", ""),

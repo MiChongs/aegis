@@ -47,6 +47,9 @@ func init() {
 		View("GET /api/admin/apps/:appkey/users/:userId/wallet", "查看用户钱包", "用户"),
 		Write("POST /api/admin/apps/:appkey/users/:userId/points/experience/transactions/:transactionNo/reverse", "冲正用户经验流水", "用户", SeverityHigh),
 		View("GET /api/admin/apps/:appkey/users/:userId/wallet/transactions", "查看用户钱包流水", "用户"),
+		View("GET /api/admin/apps/:appkey/users/:userId/points/:kind/transactions", "查看用户积分与经验流水", "用户"),
+		View("GET /api/admin/apps/:appkey/users/:userId/points/:kind/summary", "查看用户积分与经验汇总", "用户"),
+		Write("POST /api/admin/apps/:appkey/users/:userId/points/integral/transactions/:transactionNo/reverse", "冲正用户积分流水", "用户", SeverityHigh),
 
 		// 用户云存储
 		View("GET /api/admin/apps/:appkey/users/:userId/cloud-storage", "查看用户云存储", "用户"),

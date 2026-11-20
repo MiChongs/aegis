@@ -5,6 +5,7 @@ func init() {
 	Register("support",
 		View("GET /api/admin/tickets", "查看工单列表", ""),
 		View("GET /api/admin/tickets/:ticketId", "查看工单详情", "工单"),
+		View("GET /api/admin/tickets/:ticketId/requester", "查看提单人资料", "工单"),
 		View("GET /api/admin/tickets/workbench", "查看工单工作台", ""),
 		View("GET /api/admin/tickets/metadata", "查看工单元数据", ""),
 		View("GET /api/admin/tickets/stats", "查看工单统计", ""),

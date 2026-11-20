@@ -39,6 +39,25 @@ func init() {
 		Write("POST /api/admin/apps/:appkey/channels/:cid/users", "添加渠道成员", "渠道", SeverityLow),
 		Write("DELETE /api/admin/apps/:appkey/channels/:cid/users", "移除渠道成员", "渠道", SeverityMedium),
 
+		// 版本管控（docs/client-control.md）：规则能让某个版本强制更新或直接停用，生效是即时的，按高风险记
+		View("GET /api/admin/apps/:appkey/client-control", "查看版本管控总览", ""),
+		View("GET /api/admin/apps/:appkey/client-control/settings", "查看版本管控设置", ""),
+		Write("PUT /api/admin/apps/:appkey/client-control/settings", "修改版本管控设置", "", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/client-control/keys", "查看版本管控密钥", ""),
+		Write("POST /api/admin/apps/:appkey/client-control/keys/:kind/rotate", "轮换版本管控密钥", "版本管控密钥", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/client-control/rules", "查看版本管控规则", ""),
+		Write("POST /api/admin/apps/:appkey/client-control/rules", "新建版本管控规则", "管控规则", SeverityHigh),
+		Write("PUT /api/admin/apps/:appkey/client-control/rules/:ruleId", "修改版本管控规则", "管控规则", SeverityHigh),
+		Write("DELETE /api/admin/apps/:appkey/client-control/rules/:ruleId", "删除版本管控规则", "管控规则", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/client-control/rules/:ruleId/enable", "启用版本管控规则", "管控规则", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/client-control/rules/:ruleId/disable", "停用版本管控规则", "管控规则", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/client-control/rules/reorder", "调整版本管控规则顺序", "", SeverityMedium),
+		View("GET /api/admin/apps/:appkey/client-control/versions", "查看客户端版本分布", ""),
+		View("GET /api/admin/apps/:appkey/client-control/devices", "查看版本管控设备清单", ""),
+		Write("DELETE /api/admin/apps/:appkey/client-control/devices/:deviceId", "删除版本管控设备记录", "设备", SeverityMedium),
+		View("POST /api/admin/apps/:appkey/client-control/simulate", "模拟版本管控裁决", ""),
+		Write("POST /api/admin/apps/:appkey/client-control/refresh", "通知客户端立即重新校验版本", "", SeverityMedium),
+
 		// 旧版版本接口
 		View("GET /api/admin/apps/:appkey/versions", "查看版本列表（旧版）", ""),
 		View("GET /api/admin/apps/:appkey/versions/stats", "查看版本统计（旧版）", ""),
