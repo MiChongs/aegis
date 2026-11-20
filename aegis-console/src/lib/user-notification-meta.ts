@@ -28,6 +28,7 @@ export const USER_NOTIFICATION_ROUTES = [
   { value: "wallet", label: "钱包" },
   { value: "security", label: "账号安全" },
   { value: "invite", label: "邀请" },
+  { value: "cosmetics", label: "个性装扮" },
   { value: "tickets", label: "工单" },
   { value: "profile", label: "个人资料" }
 ] as const;
