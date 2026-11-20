@@ -132,7 +132,7 @@
 
 形状：`rect` 圆角 cornerRadius；`circle` 内切椭圆；`ring` 是描边圆弧（直径取 min(width,height) − strokeWidth，居中），
 从 12 点方向起、偏 startAngle 度、顺时针扫 sweep 度，端点圆头；`star` 为 sides 个角、内径 = 外径 × innerRatio、第一个角朝上；
-`polygon` 正 sides 边形、第一个顶点朝上。`dash` 是描边虚线 `[实, 虚, …]`，`dashOffset` 为偏移（可动画，做「流光跑边」）。
+`polygon` 正 sides 边形、第一个顶点朝上。星形与多边形的外接形状是图层矩形的内切椭圆（横向半径 width/2、纵向半径 height/2，与 circle 同口径），宽高不等时随之压扁。`dash` 是描边虚线 `[实, 虚, …]`，`dashOffset` 为偏移（可动画，做「流光跑边」）。
 填充与描边都可以有，先填充后描边。
 
 ### 粒子
@@ -146,7 +146,7 @@
 - 出生点：point 为图层中心；ring 为中心 + radius·(sin θ, −cos θ)，θ = r0·360°；rect 为图层矩形内 (r0·w, r1·h)。
 - 方向：`outward` 时为 θ，否则 `direction − spread/2 + r2·spread`（度，0 向上、顺时针）。速度 `speed·(0.6 + 0.4·r3)`。
 - 位置 = 出生点 + 速度·dir·age/1000 + (0, ½·gravity·(age/1000)²)。
-- 大小 `sizeMin + (sizeMax − sizeMin)·r4`，`shrink` 时乘 (1 − p)；透明度 `fade` 时为 `1 − p`（前 10% 渐入）；颜色 `colors[floor(r5·len)]`；自转 `spin·age/1000` 度。
+- 大小（直径，画布像素）`sizeMin + (sizeMax − sizeMin)·r4`，`shrink` 时乘 (1 − p)；透明度 `fade` 时为 `1 − p`（前 10% 渐入）；颜色 `colors[floor(r5·len)]`；自转 `spin·age/1000` 度。
 - 形状：circle 圆；star 五角星（内径 0.45）；spark 沿运动方向拉长的菱形（长 = 3×大小）；image 素材。
 
 ### 动画轨道
