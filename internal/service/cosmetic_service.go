@@ -1197,3 +1197,19 @@ func (s *CosmeticService) LookupByUserIDs(ctx context.Context, appID int64, user
 	}
 	return out
 }
+
+// checkCosmeticRef 各系统配置奖励时核对引用的装扮：必须存在且已上架、发布过（否则发放时整笔失败）。
+func checkCosmeticRef(ctx context.Context, pg *pgrepo.Repository, appID, cosmeticID int64) error {
+	refs, err := pg.CosmeticRefs(ctx, appID)
+	if err != nil {
+		return err
+	}
+	ref, ok := refs[cosmeticID]
+	if !ok {
+		return apperrors.New(40000, http.StatusBadRequest, "选择的装扮不存在")
+	}
+	if !ref.Live {
+		return apperrors.New(40000, http.StatusBadRequest, "装扮「"+ref.Name+"」未上架或未发布，不能用作奖励")
+	}
+	return nil
+}

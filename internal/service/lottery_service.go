@@ -478,6 +478,10 @@ func (s *LotteryService) prepare(ctx context.Context, input lotterydomain.Activi
 				return input, apperrors.New(40000, http.StatusBadRequest,
 					"功能标识 "+prize.Reward.Tag+" 未登记，请先在会员功能目录里创建它")
 			}
+		case lotterydomain.KindCosmetic:
+			if err := checkCosmeticRef(ctx, s.pg, input.AppID, prize.Reward.RefID); err != nil {
+				return input, err
+			}
 		case lotterydomain.KindFeature:
 			feature, ok := features[prize.Reward.Tag]
 			if !ok {

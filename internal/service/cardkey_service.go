@@ -380,6 +380,10 @@ func (s *CardKeyService) checkRewardRefs(ctx context.Context, appID int64, rewar
 			if !feature.IsActive {
 				return apperrors.New(40000, http.StatusBadRequest, "功能「"+feature.Name+"」已停用")
 			}
+		case cardkeydomain.RewardCosmetic:
+			if err := checkCosmeticRef(ctx, s.pg, appID, reward.RefID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

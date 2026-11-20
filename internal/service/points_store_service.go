@@ -215,6 +215,10 @@ func (s *PointsStoreService) prepareItem(ctx context.Context, input pointstore.I
 				return input, apperrors.New(40000, http.StatusBadRequest,
 					"功能标识 "+reward.Tag+" 未登记，请先在会员功能目录里创建它")
 			}
+		case pointstore.RewardCosmetic:
+			if err := checkCosmeticRef(ctx, s.pg, input.AppID, reward.RefID); err != nil {
+				return input, err
+			}
 		}
 	}
 	return input, nil

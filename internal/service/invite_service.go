@@ -150,6 +150,10 @@ func (s *InviteService) checkRewardRefs(ctx context.Context, appID int64, reward
 				return apperrors.New(40000, http.StatusBadRequest,
 					"功能标识 "+reward.Tag+" 未登记，请先在会员功能目录里创建它")
 			}
+		case pointstore.RewardCosmetic:
+			if err := checkCosmeticRef(ctx, s.pg, appID, reward.RefID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
