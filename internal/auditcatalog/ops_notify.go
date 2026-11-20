@@ -30,6 +30,13 @@ func init() {
 		Write("POST /api/admin/apps/:appkey/notifications/bulk", "群发站内信", "站内信", SeverityHigh),
 		Write("DELETE /api/admin/apps/:appkey/notifications", "批量删除站内信", "站内信", SeverityHigh),
 		Write("POST /api/admin/apps/:appkey/notifications/delete-by-filter", "按条件删除站内信", "站内信", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/notifications/campaigns/catalog", "查看站内信群发目录", ""),
+		View("POST /api/admin/apps/:appkey/notifications/campaigns/preview", "预览站内信群发人群", "站内信群发"),
+		View("GET /api/admin/apps/:appkey/notifications/campaigns", "查看站内信群发任务", ""),
+		View("GET /api/admin/apps/:appkey/notifications/campaigns/:campaignId", "查看站内信群发任务详情", "站内信群发"),
+		Write("POST /api/admin/apps/:appkey/notifications/campaigns", "发起站内信群发", "站内信群发", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/notifications/campaigns/:campaignId/cancel", "取消站内信群发", "站内信群发", SeverityMedium),
+		Write("POST /api/admin/apps/:appkey/notifications/campaigns/:campaignId/recall", "撤回站内信群发", "站内信群发", SeverityHigh),
 
 		// 平台邮件通道
 		View("GET /api/admin/system/email/channel", "查看平台生效邮件通道", ""),

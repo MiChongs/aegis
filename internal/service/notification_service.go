@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -25,7 +24,6 @@ import (
 	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 	apperrors "aegis/pkg/errors"
-	"aegis/pkg/taskpool"
 	"go.uber.org/zap"
 )
 
@@ -40,10 +38,8 @@ const (
 const (
 	// notificationEventConcurrency 同时在发的实时事件任务上限（每个任务可能要查一次计数与偏好）
 	notificationEventConcurrency = 16
-	// notificationBulkConcurrency 群发时同时落库的人数
-	notificationBulkConcurrency = 16
-	notificationCacheTTL        = 60 * time.Second
-	notificationEventTimeout    = 5 * time.Second
+	notificationCacheTTL         = redisrepo.NotificationCacheMaxTTL
+	notificationEventTimeout     = 5 * time.Second
 )
 
 // notificationDeliverer 站内信投递出口（由 *NotificationService 实现）。
@@ -73,7 +69,9 @@ type NotificationService struct {
 	// eventSlots 实时事件任务的并发闸门
 	eventSlots chan struct{}
 	events     sync.WaitGroup
-	now        func() time.Time
+	// campaigns 群发任务执行器（notification_campaign.go）
+	campaigns *notificationCampaignRunner
+	now       func() time.Time
 }
 
 // SetGovernanceService 注入平台治理服务（bootstrap 中调用）。
@@ -99,6 +97,7 @@ func NewNotificationService(log *zap.Logger, pg *pgrepo.Repository, sessions *re
 	return &NotificationService{
 		log: log, pg: pg, sessions: sessions, realtime: realtime,
 		eventSlots: make(chan struct{}, notificationEventConcurrency),
+		campaigns:  newNotificationCampaignRunner(),
 		now:        time.Now,
 	}
 }
@@ -558,71 +557,12 @@ func buildNotificationPreferences(prefs map[string]bool) *notificationdomain.Pre
 
 // ── 管理端 ──
 
-func (s *NotificationService) AdminBulkSend(ctx context.Context, appID int64, cmd notificationdomain.AdminBulkSendCommand) (*notificationdomain.AdminBulkSendResult, error) {
-	if strings.TrimSpace(cmd.Type) == "" {
-		return nil, apperrors.New(40010, http.StatusBadRequest, "通知类型不能为空")
-	}
-	if strings.TrimSpace(cmd.Content) == "" {
-		return nil, apperrors.New(40010, http.StatusBadRequest, "通知内容不能为空")
-	}
-	category := strings.TrimSpace(cmd.Category)
-	if category == "" {
-		// 管理员群发默认归入公告活动
-		category = notificationdomain.CategoryAnnouncement
-	}
-	template, err := s.normalizeDeliverInput(notificationdomain.DeliverInput{
-		AppID: appID, Type: cmd.Type, Category: category, Title: cmd.Title, Content: cmd.Content,
-		Level: cmd.Level, Metadata: cmd.Metadata, Action: cmd.Action, Image: cmd.Image, ExpiresAt: cmd.ExpiresAt,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if cmd.Limit <= 0 {
-		cmd.Limit = 200
-	}
-	if cmd.Limit > 2000 {
-		cmd.Limit = 2000
-	}
-	if err := s.ensureNotificationAllowed(appID); err != nil {
-		return nil, err
-	}
-
-	targets, err := s.resolveRecipients(ctx, appID, cmd)
-	if err != nil {
-		return nil, err
-	}
-	if len(targets) == 0 {
-		return nil, apperrors.New(40401, http.StatusNotFound, "未找到可发送的目标用户")
-	}
-
-	var delivered atomic.Int64
-	if err := taskpool.DispatchWithError(ctx, min(len(targets), notificationBulkConcurrency), targets, func(taskCtx context.Context, userID int64) error {
-		input := template
-		input.UserID = userID
-		if _, err := s.deliver(taskCtx, input, false); err != nil {
-			return err
-		}
-		delivered.Add(1)
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-
-	if s.plugin != nil {
-		go s.plugin.ExecuteHook(context.Background(), HookNotificationSent, map[string]any{
-			"appId": appID, "delivered": delivered.Load(), "type": template.Type, "category": template.Category, "title": template.Title,
-		}, plugindomain.HookMetadata{AppID: &appID})
-	}
-	return &notificationdomain.AdminBulkSendResult{
-		AppID:        appID,
-		Requested:    len(targets),
-		Delivered:    int(delivered.Load()),
-		RecipientIDs: targets,
-	}, nil
-}
-
 func (s *NotificationService) AdminList(ctx context.Context, appID int64, query notificationdomain.AdminListQuery) (*notificationdomain.AdminListResponse, error) {
 	category, err := normalizeNotificationCategoryFilter(query.Category)
+	if err != nil {
+		return nil, err
+	}
+	status, err := normalizeAdminNotificationStatus(query.Status)
 	if err != nil {
 		return nil, err
 	}
@@ -637,14 +577,8 @@ func (s *NotificationService) AdminList(ctx context.Context, appID int64, query 
 	if limit > 100 {
 		limit = 100
 	}
-	items, total, err := s.pg.ListAppNotifications(ctx, appID, notificationdomain.AdminListQuery{
-		Keyword:  query.Keyword,
-		Category: category,
-		Type:     query.Type,
-		Level:    query.Level,
-		Page:     page,
-		Limit:    limit,
-	})
+	query.Category, query.Status, query.Page, query.Limit = category, status, page, limit
+	items, total, err := s.pg.ListAppNotifications(ctx, appID, query)
 	if err != nil {
 		return nil, err
 	}
@@ -680,12 +614,14 @@ func (s *NotificationService) adminDelete(ctx context.Context, appID int64, ids 
 		return 0, nil, err
 	}
 	affected := make([]int64, 0, len(owners))
+	byUser := make(map[int64][]int64, len(owners))
 	for _, owner := range owners {
 		affected = append(affected, owner.UserID)
-		s.invalidateCaches(ctx, appID, owner.UserID)
-		s.publishAsync(appID, owner.UserID, notificationdomain.EventDeleted, map[string]any{
-			"ids": owner.IDs, "cleared": false,
-		}, nil, reason)
+		byUser[owner.UserID] = owner.IDs
+	}
+	s.invalidateCachesBatch(ctx, appID, affected)
+	if len(byUser) > 0 {
+		s.runEvent(func(eventCtx context.Context) { s.publishDeletedBatch(eventCtx, appID, byUser, reason) })
 	}
 	return deleted, affected, nil
 }
@@ -696,6 +632,9 @@ func (s *NotificationService) AdminExport(ctx context.Context, appID int64, quer
 		return nil, err
 	}
 	query.Category = category
+	if query.Status, err = normalizeAdminNotificationStatus(query.Status); err != nil {
+		return nil, err
+	}
 	if query.Limit <= 0 {
 		query.Limit = 5000
 	}
@@ -711,6 +650,9 @@ func (s *NotificationService) AdminDeleteByFilter(ctx context.Context, appID int
 		return nil, err
 	}
 	query.Category = category
+	if query.Status, err = normalizeAdminNotificationStatus(query.Status); err != nil {
+		return nil, err
+	}
 	if query.Limit <= 0 {
 		query.Limit = 5000
 	}
@@ -744,18 +686,16 @@ func (s *NotificationService) AdminDeleteByFilter(ctx context.Context, appID int
 // ── 缓存 ──
 
 func (s *NotificationService) invalidateCaches(ctx context.Context, appID int64, userID int64) {
-	if s.sessions == nil {
+	s.invalidateCachesBatch(ctx, appID, []int64{userID})
+}
+
+// invalidateCachesBatch 一批用户的列表与计数缓存、总未读、「我的」页聚合一起失效（一次管道往返）。
+func (s *NotificationService) invalidateCachesBatch(ctx context.Context, appID int64, userIDs []int64) {
+	if s.sessions == nil || len(userIDs) == 0 {
 		return
 	}
-	// 列表缓存与分类计数缓存同一前缀，一次清掉
-	if err := s.sessions.DeleteNotificationListCache(ctx, appID, userID); err != nil {
-		s.log.Warn("delete notification list cache failed", zap.Error(err))
-	}
-	if err := s.sessions.DeleteNotificationUnreadCount(ctx, appID, userID); err != nil {
-		s.log.Warn("delete notification unread cache failed", zap.Error(err))
-	}
-	if err := s.sessions.DeleteMyView(ctx, appID, userID); err != nil {
-		s.log.Warn("delete my view cache failed after notification mutation", zap.Error(err))
+	if err := s.sessions.InvalidateNotificationCaches(ctx, appID, userIDs); err != nil {
+		s.log.Warn("invalidate notification caches failed", zap.Error(err), zap.Int("users", len(userIDs)))
 	}
 }
 
@@ -818,21 +758,6 @@ func (s *NotificationService) cacheTTL(expiries ...*time.Time) time.Duration {
 	return ttl
 }
 
-func (s *NotificationService) resolveRecipients(ctx context.Context, appID int64, cmd notificationdomain.AdminBulkSendCommand) ([]int64, error) {
-	if len(cmd.UserIDs) > 0 {
-		return s.pg.FilterExistingUserIDsByApp(ctx, appID, cmd.UserIDs)
-	}
-	items, err := s.pg.ListAdminUsersForExport(ctx, appID, cmd.Keyword, cmd.Enabled, cmd.Limit)
-	if err != nil {
-		return nil, err
-	}
-	userIDs := make([]int64, 0, len(items))
-	for _, item := range items {
-		userIDs = append(userIDs, item.ID)
-	}
-	return userIDs, nil
-}
-
 // ── 实时事件 ──
 
 // runEvent 异步跑一个事件任务：不阻塞调用方，同时在跑的任务受 eventSlots 限制。
@@ -862,6 +787,10 @@ func (s *NotificationService) waitPendingEvents() { s.events.Wait() }
 // publishCreatedAsync 新消息：notification.created（完整 Item + 计数 + 是否静默）与兼容的 state.changed。
 func (s *NotificationService) publishCreatedAsync(item notificationdomain.Item, userID int64) {
 	s.runEvent(func(ctx context.Context) {
+		// 不在线的人收不到推送，也就不必为他查计数与偏好
+		if len(s.onlineOnly(ctx, item.AppID, []int64{userID})) == 0 {
+			return
+		}
 		counts, err := s.pg.NotificationUnreadCounts(ctx, item.AppID, userID)
 		if err != nil {
 			s.log.Debug("count notifications for realtime failed", zap.Error(err), zap.Int64("userId", userID))
@@ -976,6 +905,19 @@ func normalizeNotificationStatus(status string, allowUnread bool) (string, error
 		if allowUnread {
 			return "unread", nil
 		}
+	}
+	return "", apperrors.New(40010, http.StatusBadRequest, "状态只能是 all、unread 或 read")
+}
+
+// normalizeAdminNotificationStatus 管理端筛选的已读状态：空或 all 不限，read / unread。
+func normalizeAdminNotificationStatus(status string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "all":
+		return "", nil
+	case "read":
+		return "read", nil
+	case "unread":
+		return "unread", nil
 	}
 	return "", apperrors.New(40010, http.StatusBadRequest, "状态只能是 all、unread 或 read")
 }

@@ -302,32 +302,6 @@ func (r *SessionRepository) DeleteNotices(ctx context.Context, appID int64) erro
 	return r.client.Del(ctx, r.noticeKey(appID)).Err()
 }
 
-func (r *SessionRepository) GetNotificationListCache(ctx context.Context, appID int64, userID int64, status string, page int, limit int, target any) (bool, error) {
-	return r.getJSON(ctx, r.notificationListKey(appID, userID, status, page, limit), target)
-}
-
-func (r *SessionRepository) SetNotificationListCache(ctx context.Context, appID int64, userID int64, status string, page int, limit int, value any, ttl time.Duration) error {
-	return r.setJSON(ctx, r.notificationListKey(appID, userID, status, page, limit), value, ttl)
-}
-
-func (r *SessionRepository) DeleteNotificationListCache(ctx context.Context, appID int64, userID int64) error {
-	return r.deleteByPattern(ctx, fmt.Sprintf("%s:notification:list:%d:%d:*", r.keyPrefix, appID, userID))
-}
-
-// GetNotificationCountsCache 站内信的分类未读计数缓存。键挂在列表缓存的前缀下，
-// DeleteNotificationListCache 会连它一起清掉。
-func (r *SessionRepository) GetNotificationCountsCache(ctx context.Context, appID int64, userID int64, target any) (bool, error) {
-	return r.getJSON(ctx, r.notificationCountsKey(appID, userID), target)
-}
-
-func (r *SessionRepository) SetNotificationCountsCache(ctx context.Context, appID int64, userID int64, value any, ttl time.Duration) error {
-	return r.setJSON(ctx, r.notificationCountsKey(appID, userID), value, ttl)
-}
-
-func (r *SessionRepository) notificationCountsKey(appID int64, userID int64) string {
-	return fmt.Sprintf("%s:notification:list:%d:%d:counts", r.keyPrefix, appID, userID)
-}
-
 func (r *SessionRepository) GetNotificationUnreadCount(ctx context.Context, appID int64, userID int64) (int64, bool, error) {
 	value, err := r.client.Get(ctx, r.notificationUnreadKey(appID, userID)).Result()
 	if err != nil {
@@ -559,10 +533,6 @@ func (r *SessionRepository) EnsureFirstDevice(ctx context.Context, record auth.F
 
 func (r *SessionRepository) rankingKey(namespace string, appID int64, rankingType string, scope string, page int, limit int) string {
 	return fmt.Sprintf("%s:rank:%s:%d:%s:%s:%d:%d", r.keyPrefix, namespace, appID, rankingType, scope, page, limit)
-}
-
-func (r *SessionRepository) notificationListKey(appID int64, userID int64, status string, page int, limit int) string {
-	return fmt.Sprintf("%s:notification:list:%d:%d:%s:%d:%d", r.keyPrefix, appID, userID, status, page, limit)
 }
 
 func (r *SessionRepository) notificationUnreadKey(appID int64, userID int64) string {

@@ -473,8 +473,51 @@ type AdminNotificationListQuery struct {
 	Category string `form:"category"`
 	Type     string `form:"type"`
 	Level    string `form:"level"`
-	Page     int    `form:"page"`
-	Limit    int    `form:"limit"`
+	// Status 已读状态：all | read | unread
+	Status string `form:"status"`
+	// UserID 只看这个人的（管理端用户 ID）
+	UserID int64 `form:"userId"`
+	// CampaignID 只看这个群发任务发出的
+	CampaignID int64 `form:"campaignId"`
+	Page       int   `form:"page"`
+	Limit      int   `form:"limit"`
+}
+
+// AdminNotificationCampaignRequest 发起群发任务：内容 + 目标人群 + 可选定时与幂等键。
+type AdminNotificationCampaignRequest struct {
+	// RequestID 幂等键（≤ 64 字符）：同一应用重复提交返回第一次建的任务
+	RequestID string `json:"requestId"`
+	// Type 类型，空即 announcement
+	Type    string `json:"type"`
+	Title   string `json:"title" binding:"required"`
+	Content string `json:"content"`
+	// Level info | success | warning | error
+	Level    string         `json:"level"`
+	Metadata map[string]any `json:"metadata"`
+	// Category 分类 key，空即 announcement（公告活动）
+	Category string `json:"category"`
+	// Action 跳转动作：{type: route, target: 路由键} 或 {type: url, target: https 地址}
+	Action *notificationdomain.Action `json:"action"`
+	// Image 配图地址（https）
+	Image string `json:"image"`
+	// ExpiresAt 过期时间（RFC 3339，一年内）
+	ExpiresAt *time.Time `json:"expiresAt"`
+	// Audience 目标人群：{scope: all（全站）| users（指定用户）| filter（条件筛选）, ...}
+	Audience notificationdomain.Audience `json:"audience"`
+	// ScheduledAt 定时发送（RFC 3339，90 天内），空即立刻
+	ScheduledAt *time.Time `json:"scheduledAt"`
+}
+
+// AdminNotificationAudienceRequest 人群预览。
+type AdminNotificationAudienceRequest struct {
+	Audience notificationdomain.Audience `json:"audience"`
+}
+
+// AdminNotificationCampaignListQuery 群发任务列表。
+type AdminNotificationCampaignListQuery struct {
+	Status string `form:"status"`
+	Page   int    `form:"page"`
+	Limit  int    `form:"limit"`
 }
 
 type LegacyAppNotificationCreateRequest struct {
@@ -495,11 +538,14 @@ type AdminNotificationDeleteRequest struct {
 }
 
 type AdminNotificationDeleteFilterRequest struct {
-	Keyword  string `json:"keyword"`
-	Category string `json:"category"`
-	Type     string `json:"type"`
-	Level    string `json:"level"`
-	Limit    int    `json:"limit"`
+	Keyword    string `json:"keyword"`
+	Category   string `json:"category"`
+	Type       string `json:"type"`
+	Level      string `json:"level"`
+	Status     string `json:"status"`
+	UserID     int64  `json:"userId"`
+	CampaignID int64  `json:"campaignId"`
+	Limit      int    `json:"limit"`
 }
 
 type AdminSettingsStatsQuery struct {

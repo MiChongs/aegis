@@ -240,6 +240,9 @@ func generatedRouteModels() map[string]any {
 		routeKey("DELETE", "/api/admin/apps/{appkey}/notifications"):                                                       AdminNotificationDeleteRequest{},         // DeleteAdminAppNotifications
 		routeKey("GET", "/api/admin/apps/{appkey}/notifications"):                                                          AdminNotificationListQuery{},             // AdminAppNotifications
 		routeKey("POST", "/api/admin/apps/{appkey}/notifications/bulk"):                                                    AdminBulkNotificationRequest{},           // AdminBulkNotifyUsers
+		routeKey("GET", "/api/admin/apps/{appkey}/notifications/campaigns"):                                                AdminNotificationCampaignListQuery{},     // AdminListNotificationCampaigns
+		routeKey("POST", "/api/admin/apps/{appkey}/notifications/campaigns"):                                               AdminNotificationCampaignRequest{},       // AdminCreateNotificationCampaign
+		routeKey("POST", "/api/admin/apps/{appkey}/notifications/campaigns/preview"):                                       AdminNotificationAudienceRequest{},       // AdminPreviewNotificationAudience
 		routeKey("POST", "/api/admin/apps/{appkey}/notifications/delete-by-filter"):                                        AdminNotificationDeleteFilterRequest{},   // DeleteAdminAppNotificationsByFilter
 		routeKey("GET", "/api/admin/apps/{appkey}/notifications/export"):                                                   AdminNotificationListQuery{},             // ExportAdminAppNotifications
 		routeKey("DELETE", "/api/admin/apps/{appkey}/oauth-bindings"):                                                      AdminUnbindOAuthRequest{},                // AdminDeleteAppOAuthBinding

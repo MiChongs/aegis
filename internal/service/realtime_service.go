@@ -213,6 +213,14 @@ func (s *RealtimeService) PublishAppEvent(ctx context.Context, appID int64, even
 	return nil
 }
 
+// FilterOnlineUsers 给定的用户里当前在线的那些（onlineUserFilter）。实时服务不可用时原样返回，宁可多发。
+func (s *RealtimeService) FilterOnlineUsers(ctx context.Context, appID int64, userIDs []int64) ([]int64, error) {
+	if s == nil || s.repository == nil {
+		return userIDs, nil
+	}
+	return s.repository.FilterOnlineUserIDs(ctx, appID, userIDs)
+}
+
 func (s *RealtimeService) OnlineStats(ctx context.Context) (*realtimedomain.OnlineStats, error) {
 	if s == nil || s.repository == nil {
 		return nil, apperrors.New(50300, http.StatusServiceUnavailable, "实时服务暂不可用")

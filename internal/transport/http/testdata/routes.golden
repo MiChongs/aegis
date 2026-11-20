@@ -285,6 +285,9 @@ GET	/api/admin/apps/:appkey/music/*path	AdminMusicProxy
 GET	/api/admin/apps/:appkey/notices	AdminNotices
 GET	/api/admin/apps/:appkey/notices/export	ExportAdminNotices
 GET	/api/admin/apps/:appkey/notifications	AdminAppNotifications
+GET	/api/admin/apps/:appkey/notifications/campaigns	AdminListNotificationCampaigns
+GET	/api/admin/apps/:appkey/notifications/campaigns/:campaignId	AdminGetNotificationCampaign
+GET	/api/admin/apps/:appkey/notifications/campaigns/catalog	AdminNotificationCampaignCatalog
 GET	/api/admin/apps/:appkey/notifications/export	ExportAdminAppNotifications
 GET	/api/admin/apps/:appkey/oauth-bindings	AdminListAppOAuthBindings
 GET	/api/admin/apps/:appkey/oauth-providers	AdminListAppOAuthProviders
@@ -1016,6 +1019,10 @@ POST	/api/admin/apps/:appkey/lottery/tickets/users/:userId/adjust	AdminAdjustLot
 POST	/api/admin/apps/:appkey/music/*path	AdminMusicProxy
 POST	/api/admin/apps/:appkey/notices	CreateAdminNotice
 POST	/api/admin/apps/:appkey/notifications/bulk	AdminBulkNotifyUsers
+POST	/api/admin/apps/:appkey/notifications/campaigns	AdminCreateNotificationCampaign
+POST	/api/admin/apps/:appkey/notifications/campaigns/:campaignId/cancel	AdminCancelNotificationCampaign
+POST	/api/admin/apps/:appkey/notifications/campaigns/:campaignId/recall	AdminRecallNotificationCampaign
+POST	/api/admin/apps/:appkey/notifications/campaigns/preview	AdminPreviewNotificationAudience
 POST	/api/admin/apps/:appkey/notifications/delete-by-filter	DeleteAdminAppNotificationsByFilter
 POST	/api/admin/apps/:appkey/oauth-providers	AdminCreateAppOAuthProvider
 POST	/api/admin/apps/:appkey/oauth-providers/:provider/test	AdminTestAppOAuthProvider

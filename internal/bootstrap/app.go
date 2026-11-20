@@ -86,6 +86,8 @@ type APIApp struct {
 	Lottery *service.LotteryService
 	// ItemGrant 物品发放：后台循环执行到点的定时规则、接管中断的执行，退出时必须 Stop
 	ItemGrant *service.ItemGrantService
+	// Notifications 站内信：群发任务执行器（认领、分批发送、撤回、接管中断的任务），退出时必须 StopCampaigns
+	Notifications *service.NotificationService
 	// Level 等级体系：后台循环发放达成奖励、发送升级通知、接管中断的重算任务，退出时必须 Stop
 	Level *service.LevelService
 	// AIGateway AI 中转网关：后台循环放回超时未结算的暂扣，退出时必须 Stop
@@ -920,6 +922,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	databaseManager.SetCluster(clusterHandle)
 	storageService.SetCluster(clusterHandle)
 	lotteryService.SetCluster(clusterHandle)
+	notificationService.SetCluster(clusterHandle)
 
 	drain := &drainState{}
 	server := &http.Server{
@@ -966,6 +969,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Leaderboard:        leaderboardService,
 		Lottery:            lotteryService,
 		ItemGrant:          itemGrantService,
+		Notifications:      notificationService,
 		Level:              levelService,
 		AIGateway:          aiGatewayService,
 		AuthProviderHealth: authProviderHealthService,
@@ -1041,6 +1045,9 @@ func (a *APIApp) Start(ctx context.Context) error {
 	}
 	if a.ItemGrant != nil {
 		a.ItemGrant.Start(ctx)
+	}
+	if a.Notifications != nil {
+		a.Notifications.StartCampaigns(ctx)
 	}
 	if a.Level != nil {
 		a.Level.Start(ctx)
@@ -1130,6 +1137,10 @@ func (a *APIApp) close(ctx context.Context) {
 	}
 	if a.Leaderboard != nil {
 		a.Leaderboard.Stop()
+	}
+	if a.Notifications != nil {
+		// 手上的群发任务写完当前一批后放回去，别的实例（或重启后的自己）从游标接着发
+		a.Notifications.StopCampaigns()
 	}
 	if a.ItemGrant != nil {
 		a.ItemGrant.Stop()

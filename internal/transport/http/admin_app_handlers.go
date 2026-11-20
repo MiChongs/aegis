@@ -340,12 +340,15 @@ func (h *Handler) AdminAppNotifications(c *gin.Context) {
 	var query AdminNotificationListQuery
 	_ = bind(c, &query)
 	result, err := h.notifications.AdminList(c.Request.Context(), appID, notificationdomain.AdminListQuery{
-		Keyword:  query.Keyword,
-		Category: query.Category,
-		Type:     query.Type,
-		Level:    query.Level,
-		Page:     query.Page,
-		Limit:    query.Limit,
+		Keyword:    query.Keyword,
+		Category:   query.Category,
+		Type:       query.Type,
+		Level:      query.Level,
+		Status:     query.Status,
+		UserID:     query.UserID,
+		CampaignID: query.CampaignID,
+		Page:       query.Page,
+		Limit:      query.Limit,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -391,11 +394,14 @@ func (h *Handler) DeleteAdminAppNotificationsByFilter(c *gin.Context) {
 		return
 	}
 	result, err := h.notifications.AdminDeleteByFilter(c.Request.Context(), appID, notificationdomain.AdminExportQuery{
-		Keyword:  req.Keyword,
-		Category: req.Category,
-		Type:     req.Type,
-		Level:    req.Level,
-		Limit:    req.Limit,
+		Keyword:    req.Keyword,
+		Category:   req.Category,
+		Type:       req.Type,
+		Level:      req.Level,
+		Status:     req.Status,
+		UserID:     req.UserID,
+		CampaignID: req.CampaignID,
+		Limit:      req.Limit,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -416,11 +422,14 @@ func (h *Handler) ExportAdminAppNotifications(c *gin.Context) {
 	var query AdminNotificationListQuery
 	_ = bind(c, &query)
 	items, err := h.notifications.AdminExport(c.Request.Context(), appID, notificationdomain.AdminExportQuery{
-		Keyword:  query.Keyword,
-		Category: query.Category,
-		Type:     query.Type,
-		Level:    query.Level,
-		Limit:    query.Limit,
+		Keyword:    query.Keyword,
+		Category:   query.Category,
+		Type:       query.Type,
+		Level:      query.Level,
+		Status:     query.Status,
+		UserID:     query.UserID,
+		CampaignID: query.CampaignID,
+		Limit:      query.Limit,
 	})
 	if err != nil {
 		h.writeError(c, err)

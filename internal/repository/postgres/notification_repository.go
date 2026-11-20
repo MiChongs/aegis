@@ -52,37 +52,19 @@ func (r *Repository) CreateUserNotification(ctx context.Context, in notification
 			return nil, err
 		}
 	}
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var notificationID int64
-	if err := tx.QueryRow(ctx, `INSERT INTO notifications (appid, user_id, type, category, title, content, level, status,
-    metadata, action, image, expires_at, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, 'unread', $8, $9, NULLIF($10, ''), $11, NOW(), NOW())
-RETURNING id`,
-		in.AppID, in.UserID, in.Type, in.Category, in.Title, in.Content, in.Level, metadataJSON, actionJSON, in.Image, in.ExpiresAt,
-	).Scan(&notificationID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO notification_receipts (notification_id, user_id, status, created_at, updated_at)
-VALUES ($1, $2, 'delivered', NOW(), NOW())
-ON CONFLICT (notification_id, user_id) DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()`, notificationID, in.UserID); err != nil {
-		return nil, err
-	}
-	item, err := scanNotification(tx.QueryRow(ctx, `SELECT `+notificationItemColumns+`
-FROM notifications n
-JOIN notification_receipts nr ON nr.notification_id = n.id AND nr.user_id = n.user_id
-WHERE n.id = $1`, notificationID))
-	if err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-	return item, nil
+	// 一条语句写消息与回执并带回完整一行：单条语句天然原子，比「开事务 → 两次 INSERT → 回查 → 提交」少四次往返
+	return scanNotification(r.pool.QueryRow(ctx, `WITH n AS (
+    INSERT INTO notifications (appid, user_id, type, category, title, content, level, status,
+        metadata, action, image, expires_at, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'unread', $8, $9, NULLIF($10, ''), $11, NOW(), NOW())
+    RETURNING *
+), nr AS (
+    INSERT INTO notification_receipts (notification_id, user_id, status, created_at, updated_at)
+    SELECT n.id, n.user_id, 'delivered', NOW(), NOW() FROM n
+    RETURNING status, read_at
+)
+SELECT `+notificationItemColumns+` FROM n, nr`,
+		in.AppID, in.UserID, in.Type, in.Category, in.Title, in.Content, in.Level, metadataJSON, actionJSON, in.Image, in.ExpiresAt))
 }
 
 // ListUserNotifications 用户的消息列表（已排除过期）。nextExpiry 是筛选范围内最早的过期时间，供缓存定寿命。
@@ -443,7 +425,7 @@ func decodeNotificationAction(raw []byte) *notificationdomain.Action {
 // ── 管理端 ──
 
 // adminNotificationColumns scanAdminNotification 读取的列。
-const adminNotificationColumns = `n.id, n.appid, n.user_id, COALESCE(u.account, ''), COALESCE(p.nickname, ''), n.type, n.category,
+const adminNotificationColumns = `n.id, n.appid, n.user_id, n.campaign_id, COALESCE(u.account, ''), COALESCE(p.nickname, ''), n.type, n.category,
 	n.title, n.content, n.level, COALESCE(nr.status, n.status), n.action, n.image, n.expires_at,
 	COALESCE(n.metadata, '{}'::jsonb), nr.read_at, n.created_at, n.updated_at`
 
@@ -457,12 +439,14 @@ func (r *Repository) ListAppNotifications(ctx context.Context, appID int64, quer
 		limit = 20
 	}
 	offset := (page - 1) * limit
-	baseQuery, args := buildAdminNotificationFilter(appID, query.Keyword, query.Category, query.Type, query.Level)
-
+	filter := query.Filter()
+	// 计数只连筛选真正用到的表：不按关键词时不连用户与资料表，不按已读状态时不连回执
+	countQuery, countArgs := buildAdminNotificationFilter(appID, filter, false)
 	var total int64
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+baseQuery, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
+	baseQuery, args := buildAdminNotificationFilter(appID, filter, true)
 	sql := `SELECT ` + adminNotificationColumns + baseQuery + fmt.Sprintf(`
 ORDER BY n.created_at DESC, n.id DESC
 LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
@@ -476,7 +460,7 @@ func (r *Repository) ListAppNotificationsForExport(ctx context.Context, appID in
 	if limit < 1 {
 		limit = 5000
 	}
-	baseQuery, args := buildAdminNotificationFilter(appID, query.Keyword, query.Category, query.Type, query.Level)
+	baseQuery, args := buildAdminNotificationFilter(appID, query, true)
 	sql := `SELECT ` + adminNotificationColumns + baseQuery + fmt.Sprintf(`
 ORDER BY n.created_at DESC, n.id DESC
 LIMIT $%d`, len(args)+1)
@@ -506,7 +490,7 @@ func (r *Repository) ResolveAppNotificationIDs(ctx context.Context, appID int64,
 	if limit < 1 {
 		limit = 5000
 	}
-	baseQuery, args := buildAdminNotificationFilter(appID, query.Keyword, query.Category, query.Type, query.Level)
+	baseQuery, args := buildAdminNotificationFilter(appID, query, false)
 	sql := `SELECT n.id` + baseQuery + fmt.Sprintf(`
 ORDER BY n.created_at DESC, n.id DESC
 LIMIT $%d`, len(args)+1)
@@ -564,7 +548,7 @@ func (r *Repository) DeleteAppNotifications(ctx context.Context, appID int64, id
 func scanAdminNotification(row interface{ Scan(dest ...any) error }) (*notificationdomain.AdminItem, error) {
 	var item notificationdomain.AdminItem
 	var metadata, action []byte
-	if err := row.Scan(&item.ID, &item.AppID, &item.UserID, &item.Account, &item.Nickname, &item.Type, &item.Category,
+	if err := row.Scan(&item.ID, &item.AppID, &item.UserID, &item.CampaignID, &item.Account, &item.Nickname, &item.Type, &item.Category,
 		&item.Title, &item.Content, &item.Level, &item.Status, &action, &item.Image, &item.ExpiresAt,
 		&metadata, &item.ReadAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return nil, err
@@ -578,16 +562,26 @@ func scanAdminNotification(row interface{ Scan(dest ...any) error }) (*notificat
 	return &item, nil
 }
 
-func buildAdminNotificationFilter(appID int64, keyword string, category string, notificationType string, level string) (string, []any) {
-	keyword = strings.TrimSpace(keyword)
-	category = strings.TrimSpace(category)
-	notificationType = strings.TrimSpace(notificationType)
-	level = strings.TrimSpace(level)
+// buildAdminNotificationFilter 管理端筛选。full=true 连上用户、资料与回执（列表要展示这些列）；
+// full=false 只连筛选用得到的表（计数、取 ID）。
+func buildAdminNotificationFilter(appID int64, query notificationdomain.AdminExportQuery, full bool) (string, []any) {
+	keyword := strings.TrimSpace(query.Keyword)
+	category := strings.TrimSpace(query.Category)
+	notificationType := strings.TrimSpace(query.Type)
+	level := strings.TrimSpace(query.Level)
+	status := strings.TrimSpace(query.Status)
 
-	baseQuery := ` FROM notifications n
+	baseQuery := ` FROM notifications n`
+	if full || keyword != "" {
+		baseQuery += `
 LEFT JOIN users u ON u.id = n.user_id
-LEFT JOIN user_profiles p ON p.user_id = n.user_id
-LEFT JOIN notification_receipts nr ON nr.notification_id = n.id AND nr.user_id = n.user_id
+LEFT JOIN user_profiles p ON p.user_id = n.user_id`
+	}
+	if full || status == "read" || status == "unread" {
+		baseQuery += `
+LEFT JOIN notification_receipts nr ON nr.notification_id = n.id AND nr.user_id = n.user_id`
+	}
+	baseQuery += `
 WHERE n.appid = $1`
 	args := []any{appID}
 	if category != "" && category != "all" {
@@ -601,6 +595,20 @@ WHERE n.appid = $1`
 	if level != "" && level != "all" {
 		args = append(args, level)
 		baseQuery += fmt.Sprintf(" AND n.level = $%d", len(args))
+	}
+	switch status {
+	case "read":
+		baseQuery += " AND nr.status = 'read'"
+	case "unread":
+		baseQuery += " AND COALESCE(nr.status, n.status) <> 'read'"
+	}
+	if query.UserID > 0 {
+		args = append(args, query.UserID)
+		baseQuery += fmt.Sprintf(" AND n.user_id = $%d", len(args))
+	}
+	if query.CampaignID > 0 {
+		args = append(args, query.CampaignID)
+		baseQuery += fmt.Sprintf(" AND n.campaign_id = $%d", len(args))
 	}
 	if keyword != "" {
 		args = append(args, "%"+keyword+"%")

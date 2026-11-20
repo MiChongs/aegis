@@ -525,7 +525,11 @@ func permissionTree() []PermissionNode {
 				appStd("app:channel", "/channels", true)...,
 			),
 			menu("app.notification", "通知", "bell", ScopeAppOnly,
-				act(PermAppNotificationRead, "查看", PermAppNotificationRead, routes(under(mRead, pApp+"/notifications"))),
+				// 人群预览是 POST（请求体里带人群条件），只数人、不写任何数据，归在查看里
+				act(PermAppNotificationRead, "查看", PermAppNotificationRead, routes(
+					under(mRead, pApp+"/notifications"),
+					rt(mPost, pApp+"/notifications/campaigns/preview"),
+				)),
 				act(PermAppNotifWrite, "发送与删除", PermAppNotifWrite, routes(under(mAny, pApp+"/notifications"))),
 			),
 		),

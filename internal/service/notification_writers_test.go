@@ -61,6 +61,29 @@ func TestOnlyNotificationServiceCreatesUserNotifications(t *testing.T) {
 	}
 }
 
+// 群发的批量写入（一条语句写一千人）同样只能由群发执行器调：它在提交后失效这批人的缓存并推实时事件，
+// 别处直接调就又回到了「写进去了、用户却看不见」。
+func TestOnlyCampaignRunnerWritesCampaignBatches(t *testing.T) {
+	allowed := map[string]bool{
+		"../service/notification_campaign.go":                        true, // 唯一的调用方
+		"../repository/postgres/notification_campaign_repository.go": true, // 定义处
+	}
+	call := regexp.MustCompile(`\.(DeliverNotificationCampaignBatch|RecallNotificationCampaignBatch)\(`)
+	found := 0
+	for path, text := range notificationWriterSources(t) {
+		if !call.MatchString(text) {
+			continue
+		}
+		found++
+		if !allowed[path] {
+			t.Errorf("%s 直接调用了群发批量写入 —— 改走 NotificationService.CreateCampaign（docs/notification-center.md）", path)
+		}
+	}
+	if found == 0 {
+		t.Fatal("没扫到群发批量写入的调用，扫描规则大概失效了")
+	}
+}
+
 // 每个写入点用的 type 都必须在分类映射表里显式登记（或显式落 system），
 // 新增写入点时忘了登记，消息会悄悄落进「系统通知」。
 func TestNotificationWriterTypesAreCategorized(t *testing.T) {
@@ -68,6 +91,7 @@ func TestNotificationWriterTypesAreCategorized(t *testing.T) {
 	dynamic := map[string]string{
 		"notificationType": "notifySecurityEvent / NotifyUser / SendUserNotification / NotifyHub 的透传参数",
 		"cmd.Type":         "管理员群发：由管理员填写",
+		"out.Type":         "群发任务（normalizeCampaignInput）：由管理员填写，空时补 announcement",
 	}
 	patterns := []*regexp.Regexp{
 		// notificationdomain.DeliverInput{... Type: <expr>, ...}

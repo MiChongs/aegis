@@ -447,6 +447,32 @@ func (r *RealtimeRepository) ListAppOnlineUserIDs(ctx context.Context, appID int
 	return parseIDs(ids), nil
 }
 
+// FilterOnlineUserIDs 给定的用户里当前在线的那些（保持原顺序）。每 1000 人一条 ZMSCORE。
+// 群发的实时事件只发给在线的人：不在线的收不到推送，重连后客户端自己拉 summary。
+func (r *RealtimeRepository) FilterOnlineUserIDs(ctx context.Context, appID int64, userIDs []int64) ([]int64, error) {
+	out := make([]int64, 0, len(userIDs))
+	now := time.Now().UTC().Unix()
+	key := r.appUsersKey(appID)
+	for start := 0; start < len(userIDs); start += 1000 {
+		chunk := userIDs[start:min(start+1000, len(userIDs))]
+		members := make([]string, len(chunk))
+		for i, id := range chunk {
+			members[i] = strconv.FormatInt(id, 10)
+		}
+		scores, err := r.client.ZMScore(ctx, key, members...).Result()
+		if err != nil {
+			return nil, err
+		}
+		for i, score := range scores {
+			// 分数是连接的到期时间（秒）；不存在的成员 go-redis 给 0
+			if i < len(chunk) && score >= float64(now) {
+				out = append(out, chunk[i])
+			}
+		}
+	}
+	return out, nil
+}
+
 // BuildAppOnlineUsers 按给定顺序组装在线用户行；已经下线的用户跳过。
 func (r *RealtimeRepository) BuildAppOnlineUsers(ctx context.Context, appID int64, userIDs []int64) ([]realtimedomain.AppOnlineUser, error) {
 	items := make([]realtimedomain.AppOnlineUser, 0, len(userIDs))

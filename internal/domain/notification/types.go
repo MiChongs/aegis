@@ -175,11 +175,15 @@ type AdminBulkSendCommand struct {
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
+// AdminBulkSendResult 旧群发接口的结果。人数不超过 BulkSendInlineLimit 时在请求里发完（async=false，
+// recipientIds 是真正收到的人）；更多的人转成后台任务（async=true，看 campaign 的进度）。
 type AdminBulkSendResult struct {
-	AppID        int64   `json:"appid"`
-	Requested    int     `json:"requested"`
-	Delivered    int     `json:"delivered"`
-	RecipientIDs []int64 `json:"recipientIds"`
+	AppID        int64     `json:"appid"`
+	Requested    int       `json:"requested"`
+	Delivered    int       `json:"delivered"`
+	RecipientIDs []int64   `json:"recipientIds"`
+	Async        bool      `json:"async"`
+	Campaign     *Campaign `json:"campaign"`
 }
 
 type AdminListQuery struct {
@@ -187,26 +191,43 @@ type AdminListQuery struct {
 	Category string `json:"category"`
 	Type     string `json:"type"`
 	Level    string `json:"level"`
-	Page     int    `json:"page"`
-	Limit    int    `json:"limit"`
+	// Status read | unread，空不限
+	Status string `json:"status"`
+	// UserID 只看这个人的
+	UserID int64 `json:"userId"`
+	// CampaignID 只看这个群发任务的
+	CampaignID int64 `json:"campaignId"`
+	Page       int   `json:"page"`
+	Limit      int   `json:"limit"`
 }
 
 type AdminExportQuery struct {
-	Keyword  string `json:"keyword"`
-	Category string `json:"category"`
-	Type     string `json:"type"`
-	Level    string `json:"level"`
-	Limit    int    `json:"limit"`
+	Keyword    string `json:"keyword"`
+	Category   string `json:"category"`
+	Type       string `json:"type"`
+	Level      string `json:"level"`
+	Status     string `json:"status"`
+	UserID     int64  `json:"userId"`
+	CampaignID int64  `json:"campaignId"`
+	Limit      int    `json:"limit"`
+}
+
+// Filter 管理端列表、导出、按条件删除共用的筛选条件。
+func (q AdminListQuery) Filter() AdminExportQuery {
+	return AdminExportQuery{Keyword: q.Keyword, Category: q.Category, Type: q.Type, Level: q.Level, Status: q.Status,
+		UserID: q.UserID, CampaignID: q.CampaignID}
 }
 
 type AdminItem struct {
-	ID       int64  `json:"id"`
-	AppID    int64  `json:"appid"`
-	UserID   *int64 `json:"userId,omitempty"`
-	Account  string `json:"account,omitempty"`
-	Nickname string `json:"nickname,omitempty"`
-	Type     string `json:"type"`
-	Category string `json:"category"`
+	ID     int64  `json:"id"`
+	AppID  int64  `json:"appid"`
+	UserID *int64 `json:"userId,omitempty"`
+	// CampaignID 来自哪个群发任务，单条投递为 null
+	CampaignID *int64 `json:"campaignId"`
+	Account    string `json:"account,omitempty"`
+	Nickname   string `json:"nickname,omitempty"`
+	Type       string `json:"type"`
+	Category   string `json:"category"`
 	// CategoryLabel 分类中文名
 	CategoryLabel string         `json:"categoryLabel"`
 	Title         string         `json:"title"`
