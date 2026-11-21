@@ -56,6 +56,7 @@
 | `draw` | 0 | 摇号次数 | 摇一次给 N 个候选号，锁定若干分钟，任选其一直接换上（不再扣别的权益） |
 
 自选时不指定用哪份权益，就自动选能用的里最便宜的：普通号先用改号卡，其余用等级最低的够用的靓号券。
+客户端指定的那份用不了（种类不收这一级、或余额已经是 0）时同样改用自动选的那份，只有一份够用的都没有才报 `42985`。
 
 账户 `user_number_rights`（`balance ≥ 0`、`earned`、`used`）+ 流水 `user_number_ledger`（`delta`、`balance_after`、`origin`、`ref`、`title`）。
 流水来源 `origin`：`item_grant`、`level`、`card_key`、`points_store`、`lottery`、`invite`、`leaderboard`、`promo`、`rewarded_ad`、`admin`、`change`（换号用掉）、`draw`（摇号用掉）。
@@ -102,8 +103,8 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/numbers/me` | 我的号码页：`number`、`tier`、`tierName`、`patterns`、`patternNames`、`changedAt`、`nextChangeAt`、`rights`、`draw`（打开的摇号单）、`luck`（今日号运 + 各级概率 `odds` / `baseOdds`）、`frozen`（自己冻结中的旧号）、`rules`、`tiers`、`catalog`（生效的规律） |
-| GET | `/numbers/check?number=` | 查号：`valid`、`available`、`reason`（`available` / `invalid_format` / `invalid_length` / `self` / `taken` / `reserved` / `frozen` / `locked`）、`message`、`tier`、`patterns`、`ownFrozen`、`needKind` / `needLevel` / `needName`、`canChange` |
-| GET | `/numbers/suggest?q=&tier=&count=` | 自选联想：含 `q` 的空闲号码；`q` 为空时给一组 `tier` 级的空闲号码（`items` 同查号结构） |
+| GET | `/numbers/check?number=` | 查号：`valid`、`available`、`reason`（`available` / `invalid_format` / `invalid_length` / `self` / `taken` / `reserved` / `frozen` / `locked`）、`message`、`tier`、`patterns`、`ownFrozen`、`needKind` / `needLevel` / `needName`、`canChange`、`block`（空闲但换不了的原因：`disabled` / `cooldown` / `self_pick_off` / `no_right`）、`useKind` / `useLevel` / `useName`（现在换会扣的那份） |
+| GET | `/numbers/suggest?q=&tier=&count=` | 自选联想：含 `q` 的空闲号码；`q` 为空时给一组 `tier` 级的空闲号码（`items` 同查号结构，`canChange` / `block` / `use*` 与查号同一套判断） |
 | POST | `/numbers/draw` | 摇号：`draw`（`id`、`candidates[{number,tier,patterns}]`、`luck`、`expiresAt`）、`luck`、`rights` |
 | POST | `/numbers/draws/:drawId/discard` | 放弃打开的摇号单（次数不退） |
 | POST | `/numbers/change` | 换号：`{number: "字符串", drawId?, useKind?, useLevel?}` → `number`、`tier`、`oldNumber`、`source`、`used`、`rights`、`nextChangeAt` |

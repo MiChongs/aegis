@@ -140,6 +140,68 @@ type UserNumberCheck struct {
 	NeedName  string `json:"needName,omitempty"`
 	// CanChange 现在就能换（空闲 + 有够用的权益或是自己的冻结号 + 不在冷却 + 应用允许自选）
 	CanChange bool `json:"canChange"`
+	// Block 号码空闲但现在换不了的原因：disabled 未开放、cooldown 冷却中、self_pick_off 只能摇号、
+	// no_right 没有够用的权益；能换或号码本身不可用时为空
+	Block string `json:"block,omitempty"`
+	// UseKind / UseLevel / UseName 现在换会扣哪一份权益（服务端自动选的那份；CanChange 且不是冻结号时才有）
+	UseKind  string `json:"useKind,omitempty"`
+	UseLevel int    `json:"useLevel,omitempty"`
+	UseName  string `json:"useName,omitempty"`
+}
+
+// 号码空闲但现在换不了的原因（UserNumberCheck.Block）。
+const (
+	numberBlockDisabled    = "disabled"
+	numberBlockCooldown    = "cooldown"
+	numberBlockSelfPickOff = "self_pick_off"
+	numberBlockNoRight     = "no_right"
+)
+
+// numberGate 一个人此刻的换号条件：一次读齐，查号与联想的每一项共用。
+type numberGate struct {
+	enabled  bool
+	selfPick bool
+	cooling  bool
+	rights   usernumber.Rights
+}
+
+func (s *UserNumberService) gate(ctx context.Context, appID, userID int64, st *usernumber.Settings) (numberGate, error) {
+	g := numberGate{enabled: st.Enabled, selfPick: st.SelfPick}
+	rec, err := s.pg.GetUserNumber(ctx, appID, userID)
+	if err != nil {
+		return g, s.mapErr(err)
+	}
+	g.cooling = nextChangeAt(*st, rec.ChangedAt, s.now()) != nil
+	if g.rights, err = s.pg.ListUserNumberRights(ctx, appID, userID); err != nil {
+		return g, err
+	}
+	return g, nil
+}
+
+// apply 给一个空闲号码填上 CanChange / Block / Use*：与 ChangeUserNumber 的判断顺序一致
+// （冷却 → 自己的冻结号免费 → 只能摇号 → 自动选权益）。
+func (g numberGate) apply(out *UserNumberCheck) {
+	out.CanChange, out.Block, out.UseKind, out.UseLevel, out.UseName = false, "", "", 0, ""
+	switch {
+	case !out.Available:
+		return
+	case !g.enabled:
+		out.Block = numberBlockDisabled
+	case g.cooling:
+		out.Block = numberBlockCooldown
+	case out.OwnFrozen:
+		out.CanChange = true
+	case !g.selfPick:
+		out.Block = numberBlockSelfPickOff
+	default:
+		kind, level, ok := usernumber.PickRight(g.rights, out.Tier)
+		if !ok {
+			out.Block = numberBlockNoRight
+			return
+		}
+		out.CanChange = true
+		out.UseKind, out.UseLevel, out.UseName = kind, level, usernumber.RightName(kind, level)
+	}
 }
 
 // 查号结论。
@@ -326,28 +388,14 @@ func (s *UserNumberService) Check(ctx context.Context, appID, userID int64, raw 
 	case errors.Is(availErr, pgrepo.ErrUserNumberLocked):
 		out.Reason, out.Message = numberReasonLocked, "这个号码正被别人摇中锁定"
 	}
-	if !out.Available || !st.Enabled {
+	if !out.Available {
 		return out, nil
 	}
-	rec, err := s.pg.GetUserNumber(ctx, appID, userID)
-	if err != nil {
-		return nil, s.mapErr(err)
-	}
-	if nextChangeAt(st, rec.ChangedAt, s.now()) != nil {
-		return out, nil
-	}
-	if out.OwnFrozen {
-		out.CanChange = true
-		return out, nil
-	}
-	if !st.SelfPick {
-		return out, nil
-	}
-	rights, err := s.pg.ListUserNumberRights(ctx, appID, userID)
+	g, err := s.gate(ctx, appID, userID, &st)
 	if err != nil {
 		return nil, err
 	}
-	_, _, out.CanChange = usernumber.PickRight(rights, cls.Tier)
+	g.apply(out)
 	return out, nil
 }
 
@@ -388,6 +436,11 @@ func (s *UserNumberService) Suggest(ctx context.Context, appID, userID int64, pa
 	if err != nil {
 		return nil, err
 	}
+	// 联想的每一项与查号同一套判断：之前这里不填 CanChange，客户端点了联想就一律显示「权益不足」
+	g, err := s.gate(ctx, appID, userID, &st)
+	if err != nil {
+		return nil, err
+	}
 	out := []UserNumberCheck{}
 	for _, n := range free {
 		if len(out) == count {
@@ -398,9 +451,11 @@ func (s *UserNumberService) Suggest(ctx context.Context, appID, userID int64, pa
 			continue
 		}
 		kind, level := usernumber.Requirement(cls.Tier)
-		out = append(out, UserNumberCheck{Number: n, Valid: true, Available: true, Reason: numberReasonAvailable,
-			Tier: cls.Tier, TierName: cls.TierName, Patterns: cls.Patterns, PatternNames: patternNames(cls.Patterns),
-			NeedKind: kind, NeedLevel: level, NeedName: usernumber.RightName(kind, level)})
+		item := UserNumberCheck{Number: n, Valid: true, Available: true, Reason: numberReasonAvailable,
+			Message: "这个号码可以使用", Tier: cls.Tier, TierName: cls.TierName, Patterns: cls.Patterns,
+			PatternNames: patternNames(cls.Patterns), NeedKind: kind, NeedLevel: level, NeedName: usernumber.RightName(kind, level)}
+		g.apply(&item)
+		out = append(out, item)
 	}
 	return out, nil
 }

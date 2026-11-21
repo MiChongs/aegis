@@ -208,6 +208,23 @@ type Rights struct {
 	Items   []Right `json:"items"`
 }
 
+// Balance 某一种权益的余额（种类或等级不认识时为 0）。
+func (r Rights) Balance(kind string, level int) int64 {
+	switch kind {
+	case RightChange:
+		return r.Change
+	case RightDraw:
+		return r.Draw
+	case RightTicket:
+		for _, t := range r.Tickets {
+			if t.Level == level {
+				return t.Balance
+			}
+		}
+	}
+	return 0
+}
+
 // Candidate 摇号的一个候选号。
 type Candidate struct {
 	Number   int64    `json:"number"`

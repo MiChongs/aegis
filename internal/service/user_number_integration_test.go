@@ -69,6 +69,9 @@ func TestUserNumberIntegration(t *testing.T) {
 	if !check.Available || check.Tier != usernumber.TierRare || check.NeedKind != usernumber.RightTicket || check.NeedLevel != 2 || check.CanChange {
 		t.Fatalf("check rare: %+v", check)
 	}
+	if check.Block != numberBlockNoRight {
+		t.Fatalf("check rare block: %q", check.Block)
+	}
 	if _, err := numbers.Change(ctx, appID, alice, "527777103", 0, "", 0); code(err) != errCodeUserNumberNoRight {
 		t.Fatalf("change without right: %v", err)
 	}
@@ -84,9 +87,26 @@ func TestUserNumberIntegration(t *testing.T) {
 		}
 	}
 
-	// 改号卡换普通号
+	// 联想与查号同一套判断：有改号卡时普通号可以换、会扣改号卡；稀有号用稀有券
+	suggested, err := numbers.Suggest(ctx, appID, alice, "", usernumber.TierCommon, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(suggested) == 0 {
+		t.Fatal("suggest returned nothing")
+	}
+	for _, item := range suggested {
+		if !item.CanChange || item.Block != "" || item.UseKind != usernumber.RightChange {
+			t.Fatalf("suggested common number must be changeable with the change card: %+v", item)
+		}
+	}
+	if check, err = numbers.Check(ctx, appID, alice, "527777103"); err != nil || !check.CanChange || check.UseKind != usernumber.RightTicket || check.UseLevel != 2 {
+		t.Fatalf("check rare with ticket: %+v %v", check, err)
+	}
+
+	// 改号卡换普通号；客户端指定了一份没有的权益（老版本按缓存余额算）时改用自动选的那份
 	plain := int64(530729164)
-	result, err := numbers.Change(ctx, appID, alice, strconv.FormatInt(plain, 10), 0, "", 0)
+	result, err := numbers.Change(ctx, appID, alice, strconv.FormatInt(plain, 10), 0, usernumber.RightTicket, usernumber.TierSupreme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +116,10 @@ func TestUserNumberIntegration(t *testing.T) {
 	// 冷却 7 天
 	if _, err := numbers.Change(ctx, appID, alice, "527777103", 0, "", 0); code(err) != errCodeUserNumberCooldown {
 		t.Fatalf("cooldown: %v", err)
+	}
+	if suggested, err = numbers.Suggest(ctx, appID, alice, "", usernumber.TierCommon, 3); err != nil || len(suggested) == 0 ||
+		suggested[0].CanChange || suggested[0].Block != numberBlockCooldown {
+		t.Fatalf("suggest while cooling: %+v %v", suggested, err)
 	}
 	clock = clock.Add(8 * 24 * time.Hour)
 

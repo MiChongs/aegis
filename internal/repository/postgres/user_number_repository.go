@@ -517,18 +517,19 @@ func (r *Repository) ChangeUserNumber(ctx context.Context, req usernumber.Change
 			if !settings.SelfPick {
 				return ErrUserNumberSelfPickOff
 			}
+			// 客户端指定的那份权益（老版本按本地缓存的余额算）用不了时，改用自动选的那份，
+			// 只有一份够用的都没有才报没有权益
+			rights, err := listUserNumberRights(ctx, tx, req.AppID, req.UserID)
+			if err != nil {
+				return err
+			}
 			kind, level := req.UseKind, req.UseLevel
-			if kind == "" {
-				rights, err := listUserNumberRights(ctx, tx, req.AppID, req.UserID)
-				if err != nil {
-					return err
-				}
+			if kind == "" || !usernumber.ValidRight(kind, level) || !usernumber.Accepts(kind, level, tier) ||
+				rights.Balance(kind, level) <= 0 {
 				var ok bool
 				if kind, level, ok = usernumber.PickRight(rights, tier); !ok {
 					return ErrUserNumberNoRight
 				}
-			} else if !usernumber.ValidRight(kind, level) || !usernumber.Accepts(kind, level, tier) {
-				return ErrUserNumberNoRight
 			}
 			if err := consumeUserNumberRightTx(ctx, tx, req.AppID, req.UserID, kind, level, usernumber.OriginChange,
 				strconv.FormatInt(req.Number, 10), ErrUserNumberNoRight); err != nil {
