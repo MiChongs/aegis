@@ -1933,10 +1933,16 @@ func (s *ScriptSDK) bindFetch(vm *goja.Runtime) func(goja.FunctionCall) goja.Val
 		method := http.MethodGet
 		var body []byte
 		headers := map[string]string{}
+		// insecure 显式放行明文 HTTP（只有裸 IP、没有证书的上游才需要）。其余防护不变：
+		// 禁止重定向、连接时重新解析并拒绝内网与元数据地址。缺省仍是只收 HTTPS。
+		insecure := false
 		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Argument(1)) {
 			if options, ok := call.Argument(1).Export().(map[string]any); ok {
 				if value, ok := options["method"].(string); ok && value != "" {
 					method = strings.ToUpper(value)
+				}
+				if value, ok := options["insecure"].(bool); ok {
+					insecure = value
 				}
 				if value, ok := options["headers"].(map[string]any); ok {
 					for name, raw := range value {
@@ -1981,7 +1987,7 @@ func (s *ScriptSDK) bindFetch(vm *goja.Runtime) func(goja.FunctionCall) goja.Val
 		// POST 可能是一次扣款、一条短信、一封信，而「试一下」不该有这些后果。
 		if s.dryRun && method != http.MethodGet && method != http.MethodHead {
 			s.recordEffect(CapHTTPFetch, map[string]any{
-				"method": method, "url": endpoint, "skipped": true,
+				"method": method, "url": endpoint, "skipped": true, "insecure": insecure,
 			})
 			s.appendLog("warn", "试跑跳过了 "+method+" "+endpoint+"（非安全方法不实际发出）")
 			return vm.ToValue(map[string]any{
@@ -1991,13 +1997,15 @@ func (s *ScriptSDK) bindFetch(vm *goja.Runtime) func(goja.FunctionCall) goja.Val
 		}
 
 		status, responseHeaders, payload, err := s.deps.HTTP.FetchWithHeaders(
-			s.ctx, method, endpoint, headers, body, maxFetchBodySize)
+			s.ctx, method, endpoint, headers, body, maxFetchBodySize, insecure)
 		if err != nil {
 			throw(vm, err)
 		}
-		s.recordEffect(CapHTTPFetch, map[string]any{
-			"method": method, "url": endpoint, "status": status,
-		})
+		effect := map[string]any{"method": method, "url": endpoint, "status": status}
+		if insecure {
+			effect["insecure"] = true
+		}
+		s.recordEffect(CapHTTPFetch, effect)
 
 		result := map[string]any{
 			"status":  status,

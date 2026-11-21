@@ -94,3 +94,18 @@ func TestValidateEffectsRequiresCapability(t *testing.T) {
 		t.Fatalf("已授权 effect 应通过: %v", err)
 	}
 }
+
+// aegis.fetch 的 insecure 只多放行 http 这一种协议：用户信息、本地域名、fragment 照样拦。
+func TestParseFetchEndpointInsecure(t *testing.T) {
+	if _, err := parseFetchEndpoint("http://121.43.48.30:12476/api", false); err == nil {
+		t.Fatal("没开 insecure 时明文 http 应被拒")
+	}
+	if _, err := parseFetchEndpoint("http://121.43.48.30:12476/api", true); err != nil {
+		t.Fatalf("开了 insecure 应放行明文 http：%v", err)
+	}
+	for _, bad := range []string{"ftp://example.com/a", "http://user:pass@example.com/a", "http://localhost/a", "http://example.com/a#x"} {
+		if _, err := parseFetchEndpoint(bad, true); err == nil {
+			t.Errorf("%s 即使开了 insecure 也应被拒", bad)
+		}
+	}
+}

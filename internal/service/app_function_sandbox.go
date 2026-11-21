@@ -216,8 +216,9 @@ func (e *AppFunctionHTTPExecutor) FetchWithHeaders(
 	headers map[string]string,
 	body []byte,
 	maxOutput int,
+	allowHTTP bool,
 ) (int, map[string]string, []byte, error) {
-	if _, err := parseFunctionEndpoint(endpoint); err != nil {
+	if _, err := parseFetchEndpoint(endpoint, allowHTTP); err != nil {
 		return 0, nil, nil, err
 	}
 	switch method {
@@ -274,9 +275,19 @@ func (e *AppFunctionHTTPExecutor) FetchWithHeaders(
 }
 
 func parseFunctionEndpoint(rawURL string) (*url.URL, error) {
+	return parseFetchEndpoint(rawURL, false)
+}
+
+// parseFetchEndpoint 与 parseFunctionEndpoint 相同，allowHTTP 时另收明文 http（aegis.fetch 的 insecure 选项）。
+// http 运行时的函数端点永远只收 HTTPS：那条链路要做双向签名，明文没有意义。
+func parseFetchEndpoint(rawURL string, allowHTTP bool) (*url.URL, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
-		return nil, errors.New("远程函数必须使用无用户信息的 HTTPS URL")
+	schemeOK := parsed != nil && (parsed.Scheme == "https" || (allowHTTP && parsed.Scheme == "http"))
+	if err != nil || !schemeOK || parsed.Hostname() == "" || parsed.User != nil {
+		if allowHTTP {
+			return nil, errors.New("出站请求必须使用无用户信息的 HTTP(S) URL")
+		}
+		return nil, errors.New("远程函数必须使用无用户信息的 HTTPS URL（明文 HTTP 请在 aegis.fetch 里显式传 insecure: true）")
 	}
 	host := strings.ToLower(parsed.Hostname())
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {

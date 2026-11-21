@@ -393,7 +393,7 @@ SDK 真正绑定什么由 Go 决定，在前端另写一份类型只会让「补
 | `email.send` | `aegis.email.send` | **恒发往调用者绑定的邮箱**，脚本填不了收件人 |
 | `audit.write` | `aegis.audit.log` | 写平台审计，操作者记为 `function:<函数名>` |
 | `geo.read` | `aegis.geo.lookup(ip)` | IP 归属地与运营商（GeoIP2 + ASN） |
-| `http.fetch` | `aegis.fetch(url, options)` | 仅 HTTPS、禁重定向、拒绝内网与元数据地址；支持 `form` / `query` |
+| `http.fetch` | `aegis.fetch(url, options)` | 缺省仅 HTTPS（`insecure: true` 显式放行明文 http，只给裸 IP 上游用）、禁重定向、拒绝内网与元数据地址；支持 `form` / `query` |
 
 #### 平台各子系统（2026-11 平台化）
 

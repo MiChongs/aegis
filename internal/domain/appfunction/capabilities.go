@@ -334,6 +334,11 @@ declare interface AegisGeoLocation {
     form?: Record<string, string>;
     /** 查询参数，会拼到 url 上 */
     query?: Record<string, string>;
+    /**
+     * 放行明文 http://（只给裸 IP、没有证书的上游用）。禁止重定向、拒绝内网与元数据地址照旧；
+     * 明文链路上的密钥可被中间人看到，能用 HTTPS 就别开它
+     */
+    insecure?: boolean;
   }): AegisFetchResult;`,
 	},
 	{
