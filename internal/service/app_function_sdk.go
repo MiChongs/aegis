@@ -68,7 +68,9 @@ const (
 	maxSDKFetches    = 8
 	maxKVKeyLength   = 128
 	maxKVValueBytes  = 32 << 10
-	maxFetchBodySize = 256 << 10
+	// maxFetchBodySize 单次出站响应上限。4MB 够装下上万章的目录接口；响应体在 Go 侧读入并解析，
+	// 不经过标准库那道 1MB 闸门，脚本拿到的仍受函数自身 maxResponseBytes 约束。
+	maxFetchBodySize = 4 << 20
 	maxConfigBytes   = 32 << 10
 	// maxScriptLogLines 试跑时回传的日志行数上限。
 	// 不设上限的话，一个 for 循环里的 console.log 能把响应撑到几十兆。
