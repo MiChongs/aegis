@@ -37,6 +37,10 @@ export function useCommerceOverviewQuery(appKey?: string | null, window: Commerc
     queryKey: [...COMMERCE_KEYS.overview, token, appKey, window.start, window.end],
     queryFn: () => commerce.getCommerceOverview(token!, appKey!, window),
     enabled: Boolean(token && appKey),
+    // 只在同一应用内换时间窗时沿用上一份数据（概览不闪成骨架）；
+    // 换应用时不沿用，否则会把上一个应用的钱当成这个应用的显示出来
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[COMMERCE_KEYS.overview.length + 1] === appKey ? previous : undefined,
   });
 }
 

@@ -21,7 +21,11 @@ export const MONEY_COLORS = {
   refunded: { light: "#f43f5e", dark: "#fb7185" },
   net: { light: "#6366f1", dark: "#818cf8" },
   walletIn: { light: "#0ea5e9", dark: "#38bdf8" },
-  walletOut: { light: "#f59e0b", dark: "#fbbf24" }
+  walletOut: { light: "#f59e0b", dark: "#fbbf24" },
+  /** 钱包净流入：与实收净额一样是算出来的，画虚线 */
+  walletNet: { light: "#0284c7", dark: "#7dd3fc" },
+  /** 待支付：还没到账，用中性灰，不与任何已发生的资金抢颜色 */
+  pending: { light: "#a1a1aa", dark: "#71717a" }
 } satisfies Record<string, ThemedColor>;
 
 /** 订单状态色：与订单表格里的徽标同色，两处对不上会让人以为是两组数据。 */

@@ -10,7 +10,7 @@
 | React | 19.2.8 |
 | TypeScript | 7.0.2（编译器）+ 6.0.2（工具链 API，见下） |
 | Tailwind CSS | ^4.3.3 |
-| shadcn/ui | new-york-v4，41 个官方组件均为最新版（2026-11-06 补 `empty`，概览页空状态用）（见下方扩展说明） |
+| shadcn/ui | new-york-v4，42 个官方组件均为最新版（2026-11-06 补 `empty`，概览页空状态用；2026-11-21 补 `spinner`，交易概览后台刷新用）（见下方扩展说明） |
 | radix-ui | ^1.6.7（**统一包**，已取代 32 个 `@radix-ui/react-*` 独立包） |
 | TanStack React Query | ^5.101.4 |
 | TanStack React Table | ^9.1.2（表格，v9 按需注册功能） |
@@ -54,6 +54,10 @@
 `src/components/ui/` 下另有 13 个**项目自有组件**（非 shadcn，CLI 不会碰）：
 `auto-skeleton`、`brand-icon`、`country-flag`、`data-state`、`error-boundary`、`image-dropzone`、`image-lightbox`、
 `json-viewer`、`rich-editor`、`section-heading`、`surface-card`、`toast-detail`、`virtual-list`。
+
+> **CLI 的 `cn` 坑（2026-11-21 装 `spinner` 时遇到）**：CLI 把组件里的 `import { cn } from "@/lib/utils"`
+> 写成了 `from "cn"`，还顺手往 `package.json` 加了一个毫不相干的 npm 包 `cn`。装完先看 `git diff package.json bun.lock`，
+> 有 `cn` 就回退这两个文件、删 `node_modules/cn`，再把导入改回 `@/lib/utils`。
 
 补装组件用 `bunx shadcn@latest add <name>`，**永远不要带 `--overwrite`** ——
 上表四项扩展会被一次性抹掉，而覆盖是静默的。CLI 对已存在且内容一致的文件会自己跳过。
@@ -863,7 +867,14 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 | 文件 | 职责 |
 |---|---|
 | `(console)/commerce/page.tsx` | 页面骨架、应用与时间窗选择、Tab 路由 |
-| `components/commerce/commerce-overview-panel.tsx` | 概览：KPI + 趋势 + 三张分布图 + 凭证能力 |
+| `components/commerce/commerce-overview-panel.tsx` | 概览：只做取数、骨架与栅格装配（三行：资金流向 + 订单健康 / 交易趋势 / 钱包资金池 + 渠道与凭证） |
+| `components/commerce/overview/money-flow-card.tsx` | 资金流向：实收净额大数字、付费用户 / 客单价 / 退款率 / 待支付，已支付 → 退款 → 实收的瀑布图 |
+| `components/commerce/overview/order-health-card.tsx` | 订单健康：环图中心是支付成功率，状态按固定顺序列笔数与金额 |
+| `components/commerce/overview/trend-card.tsx` | 交易趋势：四个汇总格即切换器，进项朝上、出项朝下（`stackOffset="sign"`），净额虚线 |
+| `components/commerce/overview/wallet-pool-card.tsx` | 钱包资金池：待兑付余额（时点值）+ 按流水类型左出右进的双向条形 |
+| `components/commerce/overview/channel-card.tsx` | 支付渠道排行：柱尾写金额与占比；配置键用序号（渠道标识可能带点号，进不了 CSS 变量名） |
+| `components/commerce/overview/receipt-card.tsx` | 凭证能力：语言 / 默认语言 / 字体，缺中日韩字体时给 Alert |
+| `components/commerce/overview/overview-shared.tsx` | 金额提示框（读数据行上的 `<key>Raw` 原始字符串）、`ChartColorScope`（用 shadcn `ChartStyle` 让图外色点也能用 `--color-*`）、刷新转圈 |
 | `components/commerce/commerce-charts.tsx` | 图表外壳 `ChartCard` 与**配色目录**（资金 / 订单状态 / 流水类型 / 分类色轮） |
 | `components/commerce/commerce-range-picker.tsx` | 时间窗：预设 + 日历范围，对外只吐 `{start, end}` |
 | `components/commerce/wallet-transactions-panel.tsx` | 钱包流水台：筛选、凭证下载与寄送、调账入口 |
@@ -931,6 +942,10 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
    给它统一贴一个币种符号就是在撒谎。钱包币种来自应用级 `walletCurrency`。
 5. **凭证 PDF 走 `fetch` 拿 blob 再触发下载**（`lib/api/commerce.ts` 的 `downloadPdf`）：
    两条管理端下载都是 **POST + Bearer**，裸 `<a href>` 发出的请求不带任何头，后端会 401。
+
+概览里的求和、客单价、退款率一律经 `commerce-format.tsx` 的 `toCents` / `sumMoney` / `divideMoney` / `moneyRatio`
+按「分」用 BigInt 算，只有喂给图表的坐标值才转 `number`；提示框显示的仍是原始字符串。
+换时间窗时概览沿用上一份数据（`placeholderData` 只在同一应用内生效，换应用不沿用），卡片右上角转圈。
 
 概览刻意用**一个**接口取齐订单 + 钱包 + 趋势 + 凭证能力（`/commerce/overview`）：
 这四段数据在页面上是一起呈现的，分开拉会出现「订单已刷新、退款还是上一个时间窗」
