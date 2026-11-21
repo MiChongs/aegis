@@ -425,9 +425,12 @@ declare interface AegisKV extends AegisKVNamespace {
 const BaseDeclaration = `
 /** 远程函数调用上下文。由 Aegis 构造，客户端无法伪造其中的身份字段。 */
 declare interface AegisCaller {
-  /** user（应用用户）| admin（控制台调试）| app（服务端函数密钥） */
-  type: "user" | "admin" | "app";
-  /** 应用用户调用时存在 */
+  /**
+   * user（应用用户）| admin（控制台调试）| app（服务端函数密钥）
+   * | event（平台事件拉起，带着事件里的那个用户）| schedule（定时拉起，没有用户）
+   */
+  type: "user" | "admin" | "app" | "event" | "schedule";
+  /** 应用用户调用、或事件触发时存在 */
   userId?: number;
   /** 管理员在控制台调试时存在 */
   adminId?: number;
@@ -450,6 +453,26 @@ declare interface AegisContext {
   input: AegisInput;
   /** 本次是不是控制台里的试跑（试跑不会真的写数据） */
   dryRun: boolean;
+  /** 这次调用从哪来：接入方调用 / 平台事件 / 定时 / 控制台 / 其他函数 */
+  source: "api" | "event" | "schedule" | "console" | "function";
+  /** 由触发器拉起时的触发信息；接入方直接调用时为 null */
+  trigger: AegisTrigger | null;
+  /** 函数互调的嵌套深度，直接调用为 0 */
+  depth: number;
+}
+
+declare interface AegisTrigger {
+  kind: "event" | "schedule";
+  triggerId: number;
+  /** 平台事件键（user.registered / payment.completed / …） */
+  event?: string;
+  /** 定时触发的 cron 表达式 */
+  cron?: string;
+  firedAt: string;
+  /** 第几次尝试（失败会按退避重试，最多 5 次） */
+  attempt: number;
+  /** 事件自带的数据，例如支付成功的 orderId / amount */
+  data: Record<string, any>;
 }
 
 declare interface AegisEntitlement {

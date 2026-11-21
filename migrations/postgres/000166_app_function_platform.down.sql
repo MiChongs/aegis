@@ -1,0 +1,12 @@
+DROP TABLE IF EXISTS app_function_grants;
+DROP TABLE IF EXISTS app_function_trigger_jobs;
+DROP TABLE IF EXISTS app_function_triggers;
+DROP INDEX IF EXISTS idx_app_function_invocations_trigger;
+DROP INDEX IF EXISTS idx_app_function_invocations_app_time;
+ALTER TABLE app_function_invocations DROP COLUMN IF EXISTS usage;
+ALTER TABLE app_function_invocations DROP COLUMN IF EXISTS logs;
+ALTER TABLE app_function_invocations DROP COLUMN IF EXISTS input_truncated;
+ALTER TABLE app_function_invocations DROP COLUMN IF EXISTS input;
+ALTER TABLE app_function_invocations DROP COLUMN IF EXISTS error_code;
+ALTER TABLE app_function_invocations DROP COLUMN IF EXISTS trigger_id;
+ALTER TABLE app_function_invocations DROP COLUMN IF EXISTS source;

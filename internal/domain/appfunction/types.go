@@ -182,6 +182,12 @@ type ScriptContext struct {
 	Input    json.RawMessage `json:"input"`
 	// DryRun 控制台里的试跑。脚本读得到它，可以据此跳过不可逆的外部动作。
 	DryRun bool `json:"dryRun"`
+	// Source 这次调用从哪来：api / event / schedule / console / function
+	Source string `json:"source"`
+	// Trigger 由触发器拉起时的触发信息；接入方直接调用时为 null
+	Trigger *TriggerContext `json:"trigger"`
+	// Depth 函数互调的嵌套深度，接入方直接调用为 0
+	Depth int `json:"depth"`
 }
 
 // KVScope 限定键值对的可见范围。
@@ -206,6 +212,12 @@ type Caller struct {
 	UserID  *int64 `json:"userId,omitempty"`
 	AdminID *int64 `json:"adminId,omitempty"`
 	KeyID   *int64 `json:"keyId,omitempty"`
+
+	// 客户端信息只在服务端流转（不进 ctx.caller）：脚本代用户抽奖、兑换、兑卡密时，
+	// 那几个系统的风控与防爆破要按真实的 IP / 设备判，而不是一律当成服务器自己发起的。
+	ClientIP  string `json:"-"`
+	UserAgent string `json:"-"`
+	DeviceID  string `json:"-"`
 }
 
 type InvocationRequest struct {
@@ -215,6 +227,8 @@ type InvocationRequest struct {
 	Version  string          `json:"version"`
 	Caller   Caller          `json:"caller"`
 	Input    json.RawMessage `json:"input"`
+	// Trigger 由触发器拉起时带上（http / wasm 运行时同样收得到）
+	Trigger *TriggerContext `json:"trigger,omitempty"`
 }
 
 type Effect struct {
@@ -246,7 +260,36 @@ type Invocation struct {
 	ErrorMessage   string            `json:"errorMessage,omitempty"`
 	Result         *InvocationResult `json:"result,omitempty"`
 	CreatedAt      time.Time         `json:"createdAt"`
+	// Source 调用来源（api / event / schedule / console / function）
+	Source string `json:"source"`
+	// TriggerID 由触发器拉起时的触发器编号
+	TriggerID *int64 `json:"triggerId,omitempty"`
+	// Version 版本号（列表里联查出来，省得控制台再按 versionId 去对）
+	Version string `json:"version,omitempty"`
+	// ErrorCode 业务错误码（aegis.fail 的 code）或平台错误码
+	ErrorCode int `json:"errorCode,omitempty"`
+	// Input 本次入参。超过 InvocationInputLimit 的不留（InputTruncated 为 true）——
+	// 留它是为了「用这次的入参再试跑一遍」，不是为了存档
+	Input          json.RawMessage `json:"input,omitempty"`
+	InputTruncated bool            `json:"inputTruncated,omitempty"`
+	// Logs 脚本日志（真实调用也留，最多 MaxInvocationLogLines 行）。
+	// 只有试跑回传日志的话，线上那条失败调用为什么失败只能去翻服务器日志
+	Logs  []LogEntry `json:"logs,omitempty"`
+	Usage *Usage     `json:"usage,omitempty"`
 }
+
+// Usage 一次调用用掉的 SDK 额度。
+type Usage struct {
+	Calls     int `json:"calls"`
+	Mutations int `json:"mutations"`
+	Fetches   int `json:"fetches"`
+}
+
+// 调用记录里留存的上界。
+const (
+	InvocationInputLimit  = 16 * 1024
+	MaxInvocationLogLines = 100
+)
 
 // Key 是接入 App 后端使用的函数调用凭据，数据库只保存摘要。
 type Key struct {
@@ -279,8 +322,14 @@ type InvocationQuery struct {
 	CallerType string
 	// EventID 精确匹配
 	EventID string
-	Page    int
-	Limit   int
+	// Source 调用来源筛选（api / event / schedule / console / function）
+	Source string
+	// TriggerID 只看某个触发器拉起的调用
+	TriggerID int64
+	// CallerID 只看某个用户（或密钥、管理员）发起的调用
+	CallerID int64
+	Page     int
+	Limit    int
 }
 
 type InvocationPage struct {
@@ -341,6 +390,8 @@ type TestRequest struct {
 	// 大多数脚本第一行就是 aegis.user.get()，没有这个字段试跑只能测到那句 fail。
 	AsUserID  int64
 	TimeoutMs int
+	// Trigger 模拟一次触发（ctx.trigger），用来试跑「事件拉起」那条分支
+	Trigger *TriggerContext
 }
 
 // LogEntry 是脚本写下的一行日志。
@@ -439,4 +490,67 @@ type KVPage struct {
 	Total int64    `json:"total"`
 	Page  int      `json:"page"`
 	Limit int      `json:"limit"`
+}
+
+// AppOverview 一个应用的远程函数全景：控制台首页用它回答「哪个函数在报错、谁最忙、触发器跑没跑」。
+type AppOverview struct {
+	WindowHours int `json:"windowHours"`
+	Functions   int `json:"functions"`
+	Active      int `json:"active"`
+	Triggers    int `json:"triggers"`
+	// TriggersEnabled 启用中的触发器
+	TriggersEnabled int   `json:"triggersEnabled"`
+	PendingJobs     int64 `json:"pendingJobs"`
+	FailedJobs      int64 `json:"failedJobs"`
+	Total           int64 `json:"total"`
+	Success         int64 `json:"success"`
+	Failed          int64 `json:"failed"`
+	SuccessRate     float64 `json:"successRate"`
+	P95Ms           float64 `json:"p95Ms"`
+	// Sources 按调用来源分的调用量
+	Sources []OverviewSource `json:"sources"`
+	// Capabilities 全部函数声明过的能力（去重计数），回答「这个应用的函数碰了哪些系统」
+	Capabilities []OverviewCapability `json:"capabilities"`
+	Buckets      []StatsBucket        `json:"buckets"`
+	Items        []OverviewFunction   `json:"items"`
+	// RecentErrors 最近失败的几次调用（跨函数）
+	RecentErrors []OverviewError `json:"recentErrors"`
+}
+
+type OverviewSource struct {
+	Source string `json:"source"`
+	Count  int64  `json:"count"`
+}
+
+type OverviewCapability struct {
+	Key   string `json:"key"`
+	Count int    `json:"count"`
+}
+
+// OverviewFunction 全景里的一个函数。
+type OverviewFunction struct {
+	Name          string     `json:"name"`
+	Description   string     `json:"description"`
+	Runtime       string     `json:"runtime"`
+	Status        string     `json:"status"`
+	ActiveVersion string     `json:"activeVersion,omitempty"`
+	Capabilities  []string   `json:"capabilities"`
+	Triggers      int        `json:"triggers"`
+	Total         int64      `json:"total"`
+	Failed        int64      `json:"failed"`
+	SuccessRate   float64    `json:"successRate"`
+	P95Ms         float64    `json:"p95Ms"`
+	LastInvokedAt *time.Time `json:"lastInvokedAt,omitempty"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+	// Spark 最近 windowHours 小时每小时的调用量（成功 + 失败）
+	Spark []int64 `json:"spark"`
+}
+
+type OverviewError struct {
+	Function  string    `json:"function"`
+	EventID   string    `json:"eventId"`
+	ID        int64     `json:"id"`
+	Source    string    `json:"source"`
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"createdAt"`
 }

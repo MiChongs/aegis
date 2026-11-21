@@ -177,36 +177,25 @@ WHERE appid=$1 AND id=$2`, appID, functionID, version); err != nil {
 }
 
 func (r *Repository) GetAppFunctionInvocationByEvent(ctx context.Context, appID int64, eventID string) (*functiondomain.Invocation, error) {
-	return scanAppFunctionInvocation(r.pool.QueryRow(ctx, invocationSelect+` WHERE appid=$1 AND event_id=$2`, appID, eventID))
-}
-
-func (r *Repository) InsertAppFunctionInvocation(ctx context.Context, item functiondomain.Invocation) (*functiondomain.Invocation, error) {
-	var raw any
-	if item.Result != nil {
-		raw, _ = json.Marshal(item.Result)
-	}
-	return scanAppFunctionInvocation(r.pool.QueryRow(ctx, `INSERT INTO app_function_invocations
-(event_id, appid, function_id, version_id, caller_type, caller_id, status, duration_ms,
-request_sha256, response_sha256, error_message, result)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-RETURNING id, event_id::text, appid, function_id, version_id, caller_type, caller_id, status,
-duration_ms, request_sha256, response_sha256, error_message, result, created_at`,
-		item.EventID, item.AppID, item.FunctionID, item.VersionID, item.CallerType, item.CallerID,
-		item.Status, item.DurationMs, item.RequestSHA256, item.ResponseSHA256, item.ErrorMessage, raw))
+	return scanAppFunctionInvocation(r.pool.QueryRow(ctx, invocationSelect+` WHERE i.appid=$1 AND i.event_id=$2`, appID, eventID))
 }
 
 func (r *Repository) ReserveAppFunctionInvocation(ctx context.Context, item functiondomain.Invocation) (bool, error) {
 	tag, err := r.pool.Exec(ctx, `INSERT INTO app_function_invocations
-(event_id, appid, function_id, version_id, caller_type, caller_id, status, request_sha256)
-VALUES ($1,$2,$3,$4,$5,$6,'running',$7)
+(event_id, appid, function_id, version_id, caller_type, caller_id, status, request_sha256,
+source, trigger_id, input, input_truncated)
+VALUES ($1,$2,$3,$4,$5,$6,'running',$7,$8,$9,$10,$11)
 ON CONFLICT (appid, event_id) DO UPDATE SET
 function_id=EXCLUDED.function_id, version_id=EXCLUDED.version_id,
 caller_type=EXCLUDED.caller_type, caller_id=EXCLUDED.caller_id,
 status='running', duration_ms=0, request_sha256=EXCLUDED.request_sha256,
-response_sha256='', error_message='', result=NULL, created_at=NOW()
+response_sha256='', error_message='', error_code=0, result=NULL, logs=NULL, usage=NULL,
+source=EXCLUDED.source, trigger_id=EXCLUDED.trigger_id,
+input=EXCLUDED.input, input_truncated=EXCLUDED.input_truncated, created_at=NOW()
 WHERE app_function_invocations.status='running'
 AND app_function_invocations.created_at < NOW() - INTERVAL '2 minutes'`,
-		item.EventID, item.AppID, item.FunctionID, item.VersionID, item.CallerType, item.CallerID, item.RequestSHA256)
+		item.EventID, item.AppID, item.FunctionID, item.VersionID, item.CallerType, item.CallerID, item.RequestSHA256,
+		invocationSource(item.Source), item.TriggerID, nullableInvocationInput(item.Input), item.InputTruncated)
 	if err != nil {
 		return false, err
 	}
@@ -214,16 +203,44 @@ AND app_function_invocations.created_at < NOW() - INTERVAL '2 minutes'`,
 }
 
 func (r *Repository) CompleteAppFunctionInvocation(ctx context.Context, item functiondomain.Invocation) error {
-	var raw any
+	var raw, logs, usage any
 	if item.Result != nil {
 		raw, _ = json.Marshal(item.Result)
 	}
+	if len(item.Logs) > 0 {
+		logs, _ = json.Marshal(item.Logs)
+	}
+	if item.Usage != nil {
+		usage, _ = json.Marshal(item.Usage)
+	}
 	_, err := r.pool.Exec(ctx, `UPDATE app_function_invocations SET
-status=$3, duration_ms=$4, response_sha256=$5, error_message=$6, result=$7
+status=$3, duration_ms=$4, response_sha256=$5, error_message=$6, result=$7,
+error_code=$8, logs=$9, usage=$10
 WHERE appid=$1 AND event_id=$2`,
 		item.AppID, item.EventID, item.Status, item.DurationMs, item.ResponseSHA256,
-		item.ErrorMessage, raw)
+		item.ErrorMessage, raw, item.ErrorCode, logs, usage)
 	return err
+}
+
+// GetAppFunctionInvocation 一条调用的完整记录（带入参、日志与额度）。
+func (r *Repository) GetAppFunctionInvocation(ctx context.Context, appID, functionID, invocationID int64) (*functiondomain.Invocation, error) {
+	return scanAppFunctionInvocationDetail(r.pool.QueryRow(ctx, invocationDetailSelect+
+		` WHERE i.appid=$1 AND i.function_id=$2 AND i.id=$3`, appID, functionID, invocationID))
+}
+
+func invocationSource(source string) string {
+	if source == "" {
+		return functiondomain.SourceAPI
+	}
+	return source
+}
+
+// nullableInvocationInput 空入参落 NULL（而不是 'null'::jsonb），控制台据此区分「没留」与「入参是 null」。
+func nullableInvocationInput(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return []byte(raw)
 }
 
 func (r *Repository) ListAppFunctionInvocations(
@@ -242,31 +259,43 @@ func (r *Repository) ListAppFunctionInvocations(
 
 	// 条件与参数一起累加，避免出现「SQL 里写了 $4 但只传了三个参数」这种
 	// 只在特定筛选组合下才触发的运行时错误。
-	where := []string{"appid=$1", "function_id=$2"}
+	where := []string{"i.appid=$1", "i.function_id=$2"}
 	args := []any{appID, functionID}
 	if query.Status != "" {
 		args = append(args, query.Status)
-		where = append(where, fmt.Sprintf("status=$%d", len(args)))
+		where = append(where, fmt.Sprintf("i.status=$%d", len(args)))
 	}
 	if query.CallerType != "" {
 		args = append(args, query.CallerType)
-		where = append(where, fmt.Sprintf("caller_type=$%d", len(args)))
+		where = append(where, fmt.Sprintf("i.caller_type=$%d", len(args)))
 	}
 	if query.EventID != "" {
 		args = append(args, query.EventID)
-		where = append(where, fmt.Sprintf("event_id=$%d::uuid", len(args)))
+		where = append(where, fmt.Sprintf("i.event_id=$%d::uuid", len(args)))
+	}
+	if query.Source != "" {
+		args = append(args, query.Source)
+		where = append(where, fmt.Sprintf("i.source=$%d", len(args)))
+	}
+	if query.TriggerID > 0 {
+		args = append(args, query.TriggerID)
+		where = append(where, fmt.Sprintf("i.trigger_id=$%d", len(args)))
+	}
+	if query.CallerID > 0 {
+		args = append(args, query.CallerID)
+		where = append(where, fmt.Sprintf("i.caller_id=$%d", len(args)))
 	}
 	clause := " WHERE " + strings.Join(where, " AND ")
 
 	var total int64
 	if err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM app_function_invocations`+clause, args...).Scan(&total); err != nil {
+		`SELECT COUNT(*) FROM app_function_invocations i`+clause, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 
 	args = append(args, limit, (page-1)*limit)
 	rows, err := r.pool.Query(ctx, invocationSelect+clause+
-		fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
+		fmt.Sprintf(` ORDER BY i.created_at DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -410,9 +439,16 @@ WHERE appid=$1 AND id=$2 AND status='active'`, appID, keyID)
 	return tag.RowsAffected(), nil
 }
 
-const invocationSelect = `SELECT id, event_id::text, appid, function_id, version_id, caller_type,
-caller_id, status, duration_ms, request_sha256, response_sha256, error_message, result, created_at
-FROM app_function_invocations`
+// invocationColumns 列表与单查共用的列；详情另加入参、日志与额度（列表里不带，一页 100 条日志太重）。
+const invocationColumns = `i.id, i.event_id::text, i.appid, i.function_id, i.version_id, i.caller_type,
+i.caller_id, i.status, i.duration_ms, i.request_sha256, i.response_sha256, i.error_message, i.result, i.created_at,
+i.source, i.trigger_id, i.error_code, i.input_truncated, COALESCE(v.version, '')`
+
+const invocationSelect = `SELECT ` + invocationColumns + `
+FROM app_function_invocations i LEFT JOIN app_function_versions v ON v.id = i.version_id`
+
+const invocationDetailSelect = `SELECT ` + invocationColumns + `, i.input, i.logs, i.usage
+FROM app_function_invocations i LEFT JOIN app_function_versions v ON v.id = i.version_id`
 
 func scanAppFunction(row interface{ Scan(...any) error }) (*functiondomain.Function, error) {
 	var item functiondomain.Function
@@ -442,17 +478,46 @@ func scanAppFunctionVersion(row interface{ Scan(...any) error }) (*functiondomai
 	return &item, nil
 }
 
+func invocationTargets(item *functiondomain.Invocation, raw *[]byte) []any {
+	return []any{&item.ID, &item.EventID, &item.AppID, &item.FunctionID, &item.VersionID,
+		&item.CallerType, &item.CallerID, &item.Status, &item.DurationMs, &item.RequestSHA256,
+		&item.ResponseSHA256, &item.ErrorMessage, raw, &item.CreatedAt,
+		&item.Source, &item.TriggerID, &item.ErrorCode, &item.InputTruncated, &item.Version}
+}
+
 func scanAppFunctionInvocation(row interface{ Scan(...any) error }) (*functiondomain.Invocation, error) {
 	var item functiondomain.Invocation
 	var raw []byte
-	if err := row.Scan(&item.ID, &item.EventID, &item.AppID, &item.FunctionID, &item.VersionID,
-		&item.CallerType, &item.CallerID, &item.Status, &item.DurationMs, &item.RequestSHA256,
-		&item.ResponseSHA256, &item.ErrorMessage, &raw, &item.CreatedAt); err != nil {
+	if err := row.Scan(invocationTargets(&item, &raw)...); err != nil {
 		return nil, normalizeNotFound(err)
 	}
 	if len(raw) > 0 {
 		item.Result = &functiondomain.InvocationResult{}
 		_ = json.Unmarshal(raw, item.Result)
+	}
+	return &item, nil
+}
+
+func scanAppFunctionInvocationDetail(row interface{ Scan(...any) error }) (*functiondomain.Invocation, error) {
+	var item functiondomain.Invocation
+	var raw, input, logs, usage []byte
+	targets := append(invocationTargets(&item, &raw), &input, &logs, &usage)
+	if err := row.Scan(targets...); err != nil {
+		return nil, normalizeNotFound(err)
+	}
+	if len(raw) > 0 {
+		item.Result = &functiondomain.InvocationResult{}
+		_ = json.Unmarshal(raw, item.Result)
+	}
+	if len(input) > 0 {
+		item.Input = json.RawMessage(input)
+	}
+	if len(logs) > 0 {
+		_ = json.Unmarshal(logs, &item.Logs)
+	}
+	if len(usage) > 0 {
+		item.Usage = &functiondomain.Usage{}
+		_ = json.Unmarshal(usage, item.Usage)
 	}
 	return &item, nil
 }

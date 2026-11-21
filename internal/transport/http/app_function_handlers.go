@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	functiondomain "aegis/internal/domain/appfunction"
 	"aegis/pkg/response"
@@ -61,6 +62,15 @@ type testAppFunctionRequest struct {
 	Config    json.RawMessage `json:"config"`
 	AsUserID  int64           `json:"asUserId"`
 	TimeoutMs int             `json:"timeoutMs"`
+	// Trigger 模拟一次触发（试跑「事件拉起」那条分支）：{ kind, event, data }
+	Trigger *testTriggerRequest `json:"trigger"`
+}
+
+type testTriggerRequest struct {
+	Kind  string         `json:"kind"`
+	Event string         `json:"event"`
+	Cron  string         `json:"cron"`
+	Data  map[string]any `json:"data"`
 }
 
 // analyzeAppFunctionRequest 静态检查。
@@ -74,6 +84,8 @@ type analyzeAppFunctionRequest struct {
 type invokeAppFunctionRequest struct {
 	EventID string          `json:"eventId"`
 	Input   json.RawMessage `json:"input"`
+	// AsUserID 只在管理端生效：以某个应用用户的身份真实调用（来源记为 console）
+	AsUserID int64 `json:"asUserId,omitempty"`
 }
 
 type createAppFunctionKeyRequest struct {
@@ -258,8 +270,8 @@ func (h *Handler) AdminInvokeAppFunction(c *gin.Context) {
 		return
 	}
 	adminID := currentAdminID(c)
-	result, err := h.appFunction.Invoke(c.Request.Context(), appID, c.Param("functionName"),
-		req.EventID, req.Input, functiondomain.Caller{Type: "admin", AdminID: adminID})
+	result, err := h.appFunction.AdminInvoke(c.Request.Context(), appID, c.Param("functionName"),
+		req.EventID, req.Input, adminID, req.AsUserID)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -284,6 +296,9 @@ func (h *Handler) AdminListAppFunctionInvocations(c *gin.Context) {
 			Status:     strings.TrimSpace(c.Query("status")),
 			CallerType: strings.TrimSpace(c.Query("callerType")),
 			EventID:    strings.TrimSpace(c.Query("eventId")),
+			Source:     strings.TrimSpace(c.Query("source")),
+			TriggerID:  queryInt64(c, "triggerId"),
+			CallerID:   queryInt64(c, "callerId"),
 			Page:       page, Limit: limit,
 		})
 	if err != nil {
@@ -357,6 +372,7 @@ func (h *Handler) AdminTestAppFunction(c *gin.Context) {
 		functiondomain.TestRequest{
 			Source: req.Source, Input: req.Input, Config: req.Config,
 			AsUserID: req.AsUserID, TimeoutMs: req.TimeoutMs,
+			Trigger: req.Trigger.toContext(),
 		}, currentAdminID(c))
 	if err != nil {
 		h.writeError(c, err)
@@ -565,7 +581,7 @@ func (h *Handler) resolveAppFunctionCaller(c *gin.Context, appID int64) (functio
 			return functiondomain.Caller{}, false
 		}
 		keyID := key.ID
-		return functiondomain.Caller{Type: "app", KeyID: &keyID}, true
+		return withClientInfo(c, functiondomain.Caller{Type: functiondomain.CallerKey, KeyID: &keyID}), true
 	}
 	authorization := strings.TrimSpace(c.GetHeader("Authorization"))
 	if len(authorization) < 8 || !strings.EqualFold(authorization[:7], "Bearer ") {
@@ -582,7 +598,34 @@ func (h *Handler) resolveAppFunctionCaller(c *gin.Context, appID int64) (functio
 		return functiondomain.Caller{}, false
 	}
 	userID := session.UserID
-	return functiondomain.Caller{Type: "user", UserID: &userID}, true
+	caller := withClientInfo(c, functiondomain.Caller{Type: functiondomain.CallerUser, UserID: &userID})
+	if caller.DeviceID == "" {
+		caller.DeviceID = session.DeviceID
+	}
+	return caller, true
+}
+
+// withClientInfo 把真实客户端信息带进调用者（只在服务端流转，不进 ctx.caller）：
+// 脚本代用户抽奖、兑换、兑卡密时，那几个系统的风控与防爆破按它判。
+func withClientInfo(c *gin.Context, caller functiondomain.Caller) functiondomain.Caller {
+	caller.ClientIP = c.ClientIP()
+	caller.UserAgent = c.GetHeader("User-Agent")
+	caller.DeviceID = strings.TrimSpace(c.GetHeader("X-Device-Id"))
+	return caller
+}
+
+func (r *testTriggerRequest) toContext() *functiondomain.TriggerContext {
+	if r == nil || strings.TrimSpace(r.Kind) == "" {
+		return nil
+	}
+	data := r.Data
+	if data == nil {
+		data = map[string]any{}
+	}
+	return &functiondomain.TriggerContext{
+		Kind: strings.TrimSpace(r.Kind), Event: strings.TrimSpace(r.Event), Cron: strings.TrimSpace(r.Cron),
+		FiredAt: time.Now(), Attempt: 1, Data: data,
+	}
 }
 
 func currentAdminID(c *gin.Context) *int64 {

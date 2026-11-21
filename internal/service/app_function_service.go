@@ -50,6 +50,14 @@ type AppFunctionService struct {
 	http       *AppFunctionHTTPExecutor
 	sdk        ScriptSDKDeps
 	concurrent sync.Map
+
+	// 触发器（app_function_triggers.go）
+	triggerMu    sync.Mutex
+	triggerCache map[string]triggerCacheEntry
+	triggerKick  chan struct{}
+	triggerStop  chan struct{}
+	stopOnce     sync.Once
+	lastPurge    time.Time
 }
 
 // concurrencySlot 一个函数的并发闸门。
@@ -70,6 +78,17 @@ func NewAppFunctionService(log *zap.Logger, pg *pgrepo.Repository, rootSecret st
 		script:  NewAppFunctionScriptExecutor(),
 		http:    executor,
 		sdk:     ScriptSDKDeps{Log: log, PG: pg, HTTP: executor},
+
+		triggerCache: map[string]triggerCacheEntry{},
+		triggerKick:  make(chan struct{}, 1),
+		triggerStop:  make(chan struct{}),
+	}
+}
+
+// ExtendScriptDeps 补装晚于 SetScriptDeps 才建好的服务（工单、设备等在引导后段才构造）。
+func (s *AppFunctionService) ExtendScriptDeps(apply func(*ScriptSDKDeps)) {
+	if apply != nil {
+		apply(&s.sdk)
 	}
 }
 
@@ -101,7 +120,12 @@ func (s *AppFunctionService) SigningPublicKey() string {
 func (s *AppFunctionService) Catalog() map[string]any {
 	return map[string]any{
 		"capabilities": functiondomain.CapabilityCatalog(),
-		"limits":       FunctionRuntimeLimits(),
+		// 能力分组的标题与说明：控制台按它分节，不在前端另抄一份
+		"groups": functiondomain.CapabilityGroups(),
+		// 触发器能挂的平台事件，以及 rights.grant 能发的物品
+		"triggerEvents": functiondomain.TriggerEventCatalog(),
+		"grantItems":    grantableItemCatalog(),
+		"limits":        FunctionRuntimeLimits(),
 		"templates":    functiondomain.ScriptTemplates(),
 		// 与能力无关、永远存在的那部分类型声明。控制台把它与各能力的
 		// declaration 拼成喂给 Monaco 的 .d.ts —— 编辑器里出现什么，
@@ -557,8 +581,8 @@ func (s *AppFunctionService) TestScript(
 
 	appKey := s.resolveAppKey(ctx, appID)
 	eventID := uuid.NewString()
-	sdk := newScriptSDK(runCtx, s.sdk, appID, appKey, function.Name, eventID, caller,
-		function.Capabilities, scriptSDKOptions{Config: config, DryRun: true})
+	sdk := newScriptSDK(runCtx, s.scriptDeps(), appID, appKey, function.Name, eventID, caller,
+		function.Capabilities, scriptSDKOptions{Config: config, DryRun: true, FunctionID: function.ID})
 	defer sdk.Release()
 
 	start := time.Now()
@@ -566,6 +590,7 @@ func (s *AppFunctionService) TestScript(
 		EventID: eventID, AppID: appID, AppKey: appKey,
 		Function: function.Name, Version: "(dry-run)",
 		Caller: caller, Input: input, DryRun: true,
+		Source: functiondomain.SourceConsole, Trigger: request.Trigger,
 	}, sdk, function.MaxResponseBytes)
 
 	calls, mutations, fetches := sdk.Usage()
@@ -653,7 +678,47 @@ func describeBlockingDiagnostics(diagnostics []functiondomain.Diagnostic) string
 	return "脚本静态检查未通过 —— " + strings.Join(parts, "；")
 }
 
+// invokeOptions 调用链路之间的差异项：谁拉起的、由哪个触发器、嵌套第几层。
+type invokeOptions struct {
+	Source    string
+	TriggerID *int64
+	Trigger   *functiondomain.TriggerContext
+	Depth     int
+}
+
+// sourceForCaller 接入方直接调用时按调用者推断来源：管理员在控制台点的是 console，其余是 api。
+func sourceForCaller(caller functiondomain.Caller) string {
+	if caller.Type == functiondomain.CallerAdmin {
+		return functiondomain.SourceConsole
+	}
+	return functiondomain.SourceAPI
+}
+
 func (s *AppFunctionService) Invoke(ctx context.Context, appID int64, name, eventID string, input json.RawMessage, caller functiondomain.Caller) (*functiondomain.InvocationResult, error) {
+	return s.invoke(ctx, appID, name, eventID, input, caller, invokeOptions{Source: sourceForCaller(caller)})
+}
+
+// AdminInvoke 控制台真实调用。指定 asUserID 时以那个应用用户的身份执行（RequiresUser 的能力才用得上），
+// 来源一律记为 console —— 调用记录里要分得清「接入方调的」与「管理员在控制台点的」。
+func (s *AppFunctionService) AdminInvoke(ctx context.Context, appID int64, name, eventID string, input json.RawMessage,
+	adminID *int64, asUserID int64) (*functiondomain.InvocationResult, error) {
+	caller := functiondomain.Caller{Type: functiondomain.CallerAdmin, AdminID: adminID}
+	if asUserID > 0 {
+		user, err := s.pg.GetUserByID(ctx, asUserID)
+		if err != nil {
+			return nil, err
+		}
+		if user == nil || user.AppID != appID {
+			return nil, apperrors.New(40105, http.StatusBadRequest, "指定的用户不属于当前应用")
+		}
+		userID := user.ID
+		caller = functiondomain.Caller{Type: functiondomain.CallerUser, UserID: &userID, AdminID: adminID}
+	}
+	return s.invoke(ctx, appID, name, eventID, input, caller, invokeOptions{Source: functiondomain.SourceConsole})
+}
+
+func (s *AppFunctionService) invoke(ctx context.Context, appID int64, name, eventID string, input json.RawMessage,
+	caller functiondomain.Caller, options invokeOptions) (*functiondomain.InvocationResult, error) {
 	function, err := s.GetFunction(ctx, appID, name)
 	if err != nil {
 		return nil, err
@@ -678,7 +743,7 @@ func (s *AppFunctionService) Invoke(ctx context.Context, appID int64, name, even
 		return nil, apperrors.New(40088, http.StatusBadRequest, "eventId 必须是 UUID")
 	}
 	if existing, existingErr := s.pg.GetAppFunctionInvocationByEvent(ctx, appID, eventID); existingErr == nil && existing != nil {
-		if existing.Result != nil {
+		if existing.Result != nil && existing.Status == "success" {
 			return existing.Result, nil
 		}
 		return nil, apperrors.New(40991, http.StatusConflict, "相同 eventId 的调用已经失败")
@@ -704,7 +769,7 @@ func (s *AppFunctionService) Invoke(ctx context.Context, appID int64, name, even
 
 	request := functiondomain.InvocationRequest{
 		EventID: eventID, AppID: appID, Function: function.Name,
-		Version: version.Version, Caller: caller, Input: input,
+		Version: version.Version, Caller: caller, Input: input, Trigger: options.Trigger,
 	}
 	payload, _ := json.Marshal(request)
 	requestDigest := sha256.Sum256(payload)
@@ -712,6 +777,13 @@ func (s *AppFunctionService) Invoke(ctx context.Context, appID int64, name, even
 		EventID: eventID, AppID: appID, FunctionID: function.ID, VersionID: version.ID,
 		CallerType: caller.Type, CallerID: callerID(caller),
 		RequestSHA256: hex.EncodeToString(requestDigest[:]),
+		Source:        options.Source, TriggerID: options.TriggerID,
+	}
+	// 入参留一份，供「用这次的入参与身份再试跑一遍」；太大的不留，只标记
+	if len(input) <= functiondomain.InvocationInputLimit {
+		invocation.Input = input
+	} else {
+		invocation.InputTruncated = true
 	}
 	reserved, err := s.pg.ReserveAppFunctionInvocation(ctx, invocation)
 	if err != nil {
@@ -722,7 +794,7 @@ func (s *AppFunctionService) Invoke(ctx context.Context, appID int64, name, even
 		if getErr != nil {
 			return nil, getErr
 		}
-		if existing != nil && existing.Result != nil {
+		if existing != nil && existing.Result != nil && existing.Status == "success" {
 			return existing.Result, nil
 		}
 		return nil, apperrors.New(40993, http.StatusConflict, "相同 eventId 的函数调用正在执行或已经失败")
@@ -740,7 +812,14 @@ func (s *AppFunctionService) Invoke(ctx context.Context, appID int64, name, even
 	case functiondomain.RuntimeScript:
 		// 脚本在进程内执行，副作用由 SDK 当场落库并回填到 effects，
 		// 因此这里拿到的已经是「实际发生了什么」而不是脚本的一面之词。
-		result, business, err = s.executeScript(callCtx, function, version, eventID, caller, input)
+		var run scriptRun
+		run, err = s.executeScript(callCtx, function, version, eventID, caller, input, options)
+		result, business = run.result, run.business
+		invocation.Logs, invocation.Usage = run.logs, run.usage
+		if failed := run.failedEffects; err != nil && len(failed) > 0 {
+			// 失败调用也要留下「失败之前已经做了什么」：脚本不是一个大事务，前面的写入不会回滚
+			invocation.Result = &functiondomain.InvocationResult{EventID: eventID, Version: version.Version, Effects: failed}
+		}
 		if result != nil {
 			raw, _ = json.Marshal(result)
 		}
@@ -766,6 +845,12 @@ func (s *AppFunctionService) Invoke(ctx context.Context, appID int64, name, even
 	if err != nil {
 		invocation.Status = "error"
 		invocation.ErrorMessage = truncateFunctionError(err.Error())
+		if business != nil {
+			invocation.ErrorCode = business.Code
+			invocation.ErrorMessage = truncateFunctionError(business.Message)
+		} else {
+			invocation.ErrorCode = 50290
+		}
 		_ = s.completeInvocation(invocation)
 		// 脚本主动 aegis.fail() 属于业务判定（授权过期、次数用尽），
 		// 要原样透传给调用方，不能混淆成「函数挂了」
@@ -801,31 +886,66 @@ func (s *AppFunctionService) executeScript(
 	eventID string,
 	caller functiondomain.Caller,
 	input json.RawMessage,
-) (*functiondomain.InvocationResult, *ScriptBusinessError, error) {
+	options invokeOptions,
+) (scriptRun, error) {
 	if err := s.requireScriptDeps(); err != nil {
-		return nil, nil, err
+		return scriptRun{}, err
 	}
 
 	appKey := s.resolveAppKey(ctx, function.AppID)
-	sdk := newScriptSDK(ctx, s.sdk, function.AppID, appKey, function.Name, eventID, caller,
-		function.Capabilities, scriptSDKOptions{Config: function.Config})
+	sdk := newScriptSDK(ctx, s.scriptDeps(), function.AppID, appKey, function.Name, eventID, caller,
+		function.Capabilities, scriptSDKOptions{Config: function.Config, FunctionID: function.ID, Depth: options.Depth})
 	// 脚本被超时中断时它自己那句 release 不会执行，锁只能靠这里归还。
 	defer sdk.Release()
 	output, err := s.script.Execute(ctx, version.Source, functiondomain.ScriptContext{
 		EventID: eventID, AppID: function.AppID, AppKey: appKey,
 		Function: function.Name, Version: version.Version,
 		Caller: caller, Input: input,
+		Source: options.Source, Trigger: options.Trigger, Depth: options.Depth,
 	}, sdk, function.MaxResponseBytes)
+	run := scriptRun{logs: capInvocationLogs(sdk.Logs())}
+	calls, mutations, fetches := sdk.Usage()
+	run.usage = &functiondomain.Usage{Calls: calls, Mutations: mutations, Fetches: fetches}
 	if err != nil {
-		return nil, sdk.BusinessError(), err
+		run.business = sdk.BusinessError()
+		run.failedEffects = sdk.Effects()
+		return run, err
 	}
-
-	return &functiondomain.InvocationResult{
+	run.result = &functiondomain.InvocationResult{
 		EventID: eventID,
 		Version: version.Version,
 		Output:  output,
 		Effects: sdk.Effects(),
-	}, nil, nil
+	}
+	return run, nil
+}
+
+// scriptRun 一次脚本执行的全部产物：输出、业务错误，以及要进调用记录的日志与额度。
+type scriptRun struct {
+	result        *functiondomain.InvocationResult
+	business      *ScriptBusinessError
+	logs          []functiondomain.LogEntry
+	usage         *functiondomain.Usage
+	failedEffects []functiondomain.Effect
+}
+
+// capInvocationLogs 调用记录里最多留 MaxInvocationLogLines 行（试跑面板另有自己的上限）。
+func capInvocationLogs(logs []functiondomain.LogEntry) []functiondomain.LogEntry {
+	if len(logs) <= functiondomain.MaxInvocationLogLines {
+		return logs
+	}
+	capped := append([]functiondomain.LogEntry{}, logs[:functiondomain.MaxInvocationLogLines]...)
+	return append(capped, functiondomain.LogEntry{
+		Level: "warn", Message: fmt.Sprintf("调用记录只保留前 %d 行日志", functiondomain.MaxInvocationLogLines),
+		ElapsedMs: logs[len(logs)-1].ElapsedMs,
+	})
+}
+
+// scriptDeps 本服务给脚本的依赖：外部装配的那一份 + 函数互调（只能由本服务提供）。
+func (s *AppFunctionService) scriptDeps() ScriptSDKDeps {
+	deps := s.sdk
+	deps.CallFunction = s.callNested
+	return deps
 }
 
 // requireScriptDeps 检查脚本运行时的依赖是否装配齐全。

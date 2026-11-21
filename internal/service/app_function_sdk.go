@@ -142,6 +142,24 @@ type ScriptSDKDeps struct {
 	KeyPrefix string
 	// AI 支撑 ai.generate：走应用/平台配置的 AI 通道（带链路回退）。
 	AI *AIProviderService
+
+	// 平台各子系统（app_function_sdk_systems.go）。同一条约定：缺哪一项，对应能力在绑定时点名报错。
+	FeatureTime *FeatureTimeService
+	SignIn      *SignInService
+	Invite      *InviteService
+	Leaderboard *LeaderboardService
+	Lottery     *LotteryService
+	Store       *PointsStoreService
+	CardKeys    *CardKeyService
+	Cosmetics   *CosmeticService
+	Numbers     *UserNumberService
+	Payment     *PaymentService
+	Cloud       *CloudStorageService
+	Tickets     *TicketService
+	Apps        *AppService
+	Devices     *DeviceLimitService
+	// CallFunction 支撑 function.call，由 AppFunctionService 自己装上（不是外部依赖）
+	CallFunction func(ctx context.Context, request FunctionCallRequest) (*FunctionCallResult, error)
 }
 
 // ScriptSDK 是注入脚本的 `aegis` 全局对象，每次调用新建一个。
@@ -157,8 +175,15 @@ type ScriptSDK struct {
 
 	appID        int64
 	appKey       string
+	functionID   int64
 	functionName string
 	eventID      string
+	// depth 函数互调的嵌套深度
+	depth int
+	// requestSeq / grantSeq / callSeq 本次调用里第几个写操作：与 eventId 一起派生各系统的幂等键
+	requestSeq int
+	grantSeq   int
+	callSeq    int
 	caller       functiondomain.Caller
 	capabilities map[string]struct{}
 	config       map[string]any
@@ -190,8 +215,10 @@ type ScriptSDK struct {
 
 // scriptSDKOptions 是调用链路之间的差异项，避免构造函数再长出两个位置参数。
 type scriptSDKOptions struct {
-	Config json.RawMessage
-	DryRun bool
+	Config     json.RawMessage
+	DryRun     bool
+	FunctionID int64
+	Depth      int
 }
 
 func newScriptSDK(
@@ -218,6 +245,7 @@ func newScriptSDK(
 		appID: appID, appKey: appKey, functionName: functionName,
 		eventID: eventID, caller: caller, capabilities: set,
 		config: config, dryRun: options.DryRun,
+		functionID: options.FunctionID, depth: options.Depth,
 		startedAt: time.Now(),
 		heldLocks: map[string]*scriptLock{},
 	}
@@ -412,7 +440,7 @@ func (s *ScriptSDK) bind(vm *goja.Runtime) error {
 		build func(*goja.Runtime, *goja.Object) error
 	}{
 		{"user", s.has(CapUserRead) || s.has(CapUserWrite), s.bindUserNamespace},
-		{"points", s.has(CapPointsWrite), s.bindPointsNamespace},
+		{"points", s.has(CapPointsWrite) || s.has(CapPointsRead), s.bindPointsNamespace},
 		{"vip", s.has(CapVipRead) || s.has(CapVipWrite), s.bindVipNamespace},
 		{"wallet", s.has(CapWalletRead) || s.has(CapWalletWrite), s.bindWalletNamespace},
 		{"lock", s.has(CapLockAcquire), s.bindLockNamespace},
@@ -422,6 +450,23 @@ func (s *ScriptSDK) bind(vm *goja.Runtime) error {
 		{"audit", s.has(CapAuditWrite), s.bindAuditNamespace},
 		{"geo", s.has(CapGeoRead), s.bindGeoNamespace},
 		{"ai", s.has(CapAIGenerate), s.bindAINamespace},
+		// 平台各子系统
+		{"rights", s.has(CapRightsRead) || s.has(CapRightsGrant) || s.has(CapRightsConsume), s.bindRightsNamespace},
+		{"level", s.has(CapLevelRead) || s.has(CapLevelWrite), s.bindLevelNamespace},
+		{"signin", s.has(CapSignInRead) || s.has(CapSignInWrite), s.bindSignInNamespace},
+		{"invite", s.has(CapInviteRead), s.bindInviteNamespace},
+		{"leaderboard", s.has(CapLeaderboardRead), s.bindLeaderboardNamespace},
+		{"lottery", s.has(CapLotteryRead) || s.has(CapLotteryDraw), s.bindLotteryNamespace},
+		{"store", s.has(CapStoreRead) || s.has(CapStoreRedeem), s.bindStoreNamespace},
+		{"cardkey", s.has(CapCardKeyRedeem), s.bindCardKeyNamespace},
+		{"cosmetic", s.has(CapCosmeticRead) || s.has(CapCosmeticWrite), s.bindCosmeticNamespace},
+		{"number", s.has(CapNumberRead), s.bindNumberNamespace},
+		{"payment", s.has(CapPaymentRead), s.bindPaymentNamespace},
+		{"cloud", s.has(CapCloudRead) || s.has(CapCloudWrite), s.bindCloudNamespace},
+		{"tickets", s.has(CapTicketRead) || s.has(CapTicketWrite), s.bindTicketsNamespace},
+		{"content", s.has(CapContentRead), s.bindContentNamespace},
+		{"devices", s.has(CapDeviceRead), s.bindDevicesNamespace},
+		{"functions", s.has(CapFunctionCall), s.bindFunctionsNamespace},
 	}
 	for _, namespace := range namespaces {
 		if !namespace.bound {
@@ -924,6 +969,14 @@ func (s *ScriptSDK) resolveEntitlement(vm *goja.Runtime, userID int64) *vipdomai
 // ── points.write ────────────────────────────────────────────────────
 
 func (s *ScriptSDK) bindPointsNamespace(vm *goja.Runtime, object *goja.Object) error {
+	if s.has(CapPointsRead) {
+		if err := s.bindPointsRead(vm, object); err != nil {
+			return err
+		}
+	}
+	if !s.has(CapPointsWrite) {
+		return nil
+	}
 	adjust := func(call goja.FunctionCall, sign int64) goja.Value {
 		s.budget(vm, true)
 		userID := s.requireUser(vm)

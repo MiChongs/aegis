@@ -86,6 +86,8 @@ type APIApp struct {
 	Lottery *service.LotteryService
 	// ItemGrant 物品发放：后台循环执行到点的定时规则、接管中断的执行，退出时必须 Stop
 	ItemGrant *service.ItemGrantService
+	// AppFunction 远程函数：触发器后台循环（定时触发入队、抢占执行持久队列、清理旧任务），退出时必须 StopTriggers
+	AppFunction *service.AppFunctionService
 	// Notifications 站内信：群发任务执行器（认领、分批发送、撤回、接管中断的任务），退出时必须 StopCampaigns
 	Notifications *service.NotificationService
 	// Level 等级体系：后台循环发放达成奖励、发送升级通知、接管中断的重算任务，退出时必须 Stop
@@ -539,7 +541,14 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	levelService.SetEventPublisher(realtimeService)
 	growthService := service.NewGrowthService(log, pg)
 	growthService.SetEventPublisher(realtimeService)
-	signInService.SetSignInObserver(itemGrantService.OnSignIn)
+	// 签到观察者有两家：物品发放的「每日签到」事件，与远程函数的 user.signin 触发器
+	var appFunctionSignIn func(appID, userID int64, consecutiveDays int)
+	signInService.SetSignInObserver(func(appID, userID int64, consecutiveDays int) {
+		itemGrantService.OnSignIn(appID, userID, consecutiveDays)
+		if appFunctionSignIn != nil {
+			appFunctionSignIn(appID, userID, consecutiveDays)
+		}
+	})
 	authService.SetLoginObserver(itemGrantService.OnLogin)
 	// 用户云存储：内容走 storageService 解析出的存储配置，治理闸门（blockStorage）
 	// 也随之生效 —— 写入经 UploadForApp，那里是所有上传的收口。
@@ -578,12 +587,28 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Redis:         redisClient,
 		KeyPrefix:     cfg.Redis.KeyPrefix,
 		AI:            aiProviderService,
+		// 平台各子系统：脚本代用户走的是这些系统面向终端用户的同一个入口
+		FeatureTime: featureTimeService,
+		SignIn:      signInService,
+		Invite:      inviteService,
+		Leaderboard: leaderboardService,
+		Lottery:     lotteryService,
+		Store:       pointsStoreService,
+		CardKeys:    cardKeyService,
+		Cosmetics:   cosmeticService,
+		Numbers:     userNumberService,
+		Payment:     paymentService,
+		Cloud:       cloudStorageService,
+		Apps:        appService,
 	})
+	appFunctionSignIn = appFunctionService.OnSignIn
 	if err := pluginService.Initialize(ctx); err != nil {
 		log.Warn("插件系统初始化失败（非致命）", zap.Error(err))
 	}
 	adminService.SetPluginService(pluginService)
 	pluginService.ObserveHooks(itemGrantService.ObserveHook)
+	// 远程函数的事件触发器：注册、登录、资料变更、封禁、支付、退款
+	pluginService.ObserveHooks(appFunctionService.OnHook)
 	authService.SetPluginService(pluginService)
 	userService.SetPluginService(pluginService)
 	accountBanService.SetPluginService(pluginService)
@@ -746,6 +771,11 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	}
 	// 工单系统：权限判定依赖 AdminService（Casbin），通知统一走 NotifyHub
 	ticketService := service.NewTicketService(log, pg, adminService, notifyHub, storageService)
+	// 工单与设备服务构造得比脚本依赖装配晚，这里补上
+	appFunctionService.ExtendScriptDeps(func(deps *service.ScriptSDKDeps) {
+		deps.Tickets = ticketService
+		deps.Devices = deviceLimitService
+	})
 	go func() {
 		seedCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
@@ -978,6 +1008,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Leaderboard:        leaderboardService,
 		Lottery:            lotteryService,
 		ItemGrant:          itemGrantService,
+		AppFunction:        appFunctionService,
 		Notifications:      notificationService,
 		Level:              levelService,
 		AIGateway:          aiGatewayService,
@@ -1054,6 +1085,9 @@ func (a *APIApp) Start(ctx context.Context) error {
 	}
 	if a.ItemGrant != nil {
 		a.ItemGrant.Start(ctx)
+	}
+	if a.AppFunction != nil {
+		a.AppFunction.StartTriggers(ctx)
 	}
 	if a.Notifications != nil {
 		a.Notifications.StartCampaigns(ctx)
@@ -1153,6 +1187,9 @@ func (a *APIApp) close(ctx context.Context) {
 	}
 	if a.ItemGrant != nil {
 		a.ItemGrant.Stop()
+	}
+	if a.AppFunction != nil {
+		a.AppFunction.StopTriggers()
 	}
 	if a.Level != nil {
 		a.Level.Stop()

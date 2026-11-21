@@ -196,6 +196,9 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/analyze"):                                      analyzeAppFunctionRequest{},              // AdminAnalyzeAppFunction
 		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/invoke"):                                       invokeAppFunctionRequest{},               // AdminInvokeAppFunction
 		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/test"):                                         testAppFunctionRequest{},                 // AdminTestAppFunction
+		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/triggers"):                                     appFunctionTriggerRequest{},              // AdminCreateAppFunctionTrigger
+		routeKey("PUT", "/api/admin/apps/{appkey}/functions/{functionName}/triggers/{triggerId}"):                          appFunctionTriggerRequest{},              // AdminUpdateAppFunctionTrigger
+		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/triggers/{triggerId}/fire"):                    fireAppFunctionTriggerRequest{},          // AdminFireAppFunctionTrigger
 		routeKey("POST", "/api/admin/apps/{appkey}/functions/{functionName}/versions"):                                     createAppFunctionVersionRequest{},        // AdminCreateAppFunctionVersion
 		routeKey("POST", "/api/admin/apps/{appkey}/governance/appeals"):                                                    GovernanceAppealRequest{},                // AdminAppSubmitGovernanceAppeal
 		routeKey("POST", "/api/admin/apps/{appkey}/growth/preview"):                                                        GrowthPreviewRequest{},                   // AdminPreviewGrowth

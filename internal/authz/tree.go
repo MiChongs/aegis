@@ -602,12 +602,18 @@ func permissionTree() []PermissionNode {
 
 		dir("functions", "远程函数", "code-2", ScopeAppOnly,
 			menu("app.function", "远程函数", "code-2", ScopeAppOnly,
-				act("app:function:invoke", "调用", LegacyAppWrite, routes(rt(mPost, pApp+"/functions/:functionName/invoke"))),
+				act("app:function:invoke", "调用", LegacyAppWrite, routes(
+					rt(mPost, pApp+"/functions/:functionName/invoke"),
+					// 立即触发与重试触发任务都是一次真实调用
+					rt(mPost, pApp+"/functions/:functionName/triggers/:triggerId/fire"),
+					rt(mPost, pApp+"/functions/:functionName/trigger-jobs/:jobId/retry"),
+				)),
 				act("app:function:deploy", "切换生效版本", LegacyAppWrite, routes(rt(mPost, pApp+"/functions/:functionName/versions/:version/activate")), danger()),
 				act("app:function:key", "调用密钥", LegacyAppWrite, routes(under(mWrite, pApp+"/function-keys")), danger()),
 				act("app:function:kv", "清理 KV", LegacyAppWrite, routes(under(mWrite, pApp+"/function-kv")), danger()),
 				act("app:function:read", "查看", LegacyAppRead, routes(
 					under(mRead, pApp+"/functions"), under(mRead, pApp+"/function-catalog"),
+					under(mRead, pApp+"/function-overview"), under(mRead, pApp+"/function-triggers"),
 					under(mRead, pApp+"/function-keys"), under(mRead, pApp+"/function-kv"),
 				)),
 				act("app:function:delete", "删除", LegacyAppWrite, routes(under(mDelete, pApp+"/functions"))),

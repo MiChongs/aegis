@@ -23,6 +23,7 @@ DELETE	/api/admin/apps/:appkey/device-limit/users/:userId/ledger	AdminResetDevic
 DELETE	/api/admin/apps/:appkey/function-keys/:keyId	AdminRevokeAppFunctionKey
 DELETE	/api/admin/apps/:appkey/function-kv	AdminDeleteAppFunctionKV
 DELETE	/api/admin/apps/:appkey/functions/:functionName	AdminDeleteAppFunction
+DELETE	/api/admin/apps/:appkey/functions/:functionName/triggers/:triggerId	AdminDeleteAppFunctionTrigger
 DELETE	/api/admin/apps/:appkey/functions/:functionName/versions/:version	AdminDeleteAppFunctionVersion
 DELETE	/api/admin/apps/:appkey/growth/rules/:ruleId	AdminDeleteGrowthRule
 DELETE	/api/admin/apps/:appkey/invite/codes/:codeId	AdminDeleteInviteCode
@@ -229,10 +230,15 @@ GET	/api/admin/apps/:appkey/encryption	AdminAppEncryption
 GET	/api/admin/apps/:appkey/function-catalog	AdminAppFunctionCatalog
 GET	/api/admin/apps/:appkey/function-keys	AdminListAppFunctionKeys
 GET	/api/admin/apps/:appkey/function-kv	AdminBrowseAppFunctionKV
+GET	/api/admin/apps/:appkey/function-overview	AdminAppFunctionOverview
+GET	/api/admin/apps/:appkey/function-triggers	AdminListAppTriggers
 GET	/api/admin/apps/:appkey/functions	AdminListAppFunctions
 GET	/api/admin/apps/:appkey/functions/:functionName	AdminGetAppFunction
 GET	/api/admin/apps/:appkey/functions/:functionName/invocations	AdminListAppFunctionInvocations
+GET	/api/admin/apps/:appkey/functions/:functionName/invocations/:invocationId	AdminGetAppFunctionInvocation
 GET	/api/admin/apps/:appkey/functions/:functionName/stats	AdminAppFunctionStats
+GET	/api/admin/apps/:appkey/functions/:functionName/trigger-jobs	AdminListAppFunctionTriggerJobs
+GET	/api/admin/apps/:appkey/functions/:functionName/triggers	AdminListAppFunctionTriggers
 GET	/api/admin/apps/:appkey/functions/:functionName/versions	AdminListAppFunctionVersions
 GET	/api/admin/apps/:appkey/functions/:functionName/versions/:version	AdminGetAppFunctionVersion
 GET	/api/admin/apps/:appkey/governance	AdminAppGovernance
@@ -1009,8 +1015,12 @@ POST	/api/admin/apps/:appkey/device-limit/users/:userId/remove	AdminRemoveDevice
 POST	/api/admin/apps/:appkey/function-keys	AdminCreateAppFunctionKey
 POST	/api/admin/apps/:appkey/functions	AdminCreateAppFunction
 POST	/api/admin/apps/:appkey/functions/:functionName/analyze	AdminAnalyzeAppFunction
+POST	/api/admin/apps/:appkey/functions/:functionName/invocations/:invocationId/replay	AdminReplayAppFunctionInvocation
 POST	/api/admin/apps/:appkey/functions/:functionName/invoke	AdminInvokeAppFunction
 POST	/api/admin/apps/:appkey/functions/:functionName/test	AdminTestAppFunction
+POST	/api/admin/apps/:appkey/functions/:functionName/trigger-jobs/:jobId/retry	AdminRetryAppFunctionTriggerJob
+POST	/api/admin/apps/:appkey/functions/:functionName/triggers	AdminCreateAppFunctionTrigger
+POST	/api/admin/apps/:appkey/functions/:functionName/triggers/:triggerId/fire	AdminFireAppFunctionTrigger
 POST	/api/admin/apps/:appkey/functions/:functionName/versions	AdminCreateAppFunctionVersion
 POST	/api/admin/apps/:appkey/functions/:functionName/versions/:version/activate	AdminActivateAppFunctionVersion
 POST	/api/admin/apps/:appkey/governance/appeals	AdminAppSubmitGovernanceAppeal
@@ -1626,6 +1636,7 @@ PUT	/api/admin/apps/:appkey/device-limit/overrides/:userId	AdminSaveDeviceLimitO
 PUT	/api/admin/apps/:appkey/device-limit/policy	AdminUpdateDeviceLimitPolicy
 PUT	/api/admin/apps/:appkey/encryption	UpdateAdminAppEncryption
 PUT	/api/admin/apps/:appkey/functions/:functionName	AdminUpdateAppFunction
+PUT	/api/admin/apps/:appkey/functions/:functionName/triggers/:triggerId	AdminUpdateAppFunctionTrigger
 PUT	/api/admin/apps/:appkey/growth/rules/:ruleId	AdminUpdateGrowthRule
 PUT	/api/admin/apps/:appkey/invite/codes/:codeId	AdminUpdateInviteCode
 PUT	/api/admin/apps/:appkey/invite/codes/:codeId/status	AdminSetInviteCodeStatus

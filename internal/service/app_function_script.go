@@ -283,8 +283,37 @@ func buildScriptArgument(vm *goja.Runtime, scriptCtx functiondomain.ScriptContex
 		"input":    input,
 		// 试跑标记要透给脚本：有些动作（给第三方发通知、写外部账本）
 		// 即便平台这边只是模拟，作者自己也该有机会跳过。
-		"dryRun": scriptCtx.DryRun,
+		"dryRun":  scriptCtx.DryRun,
+		"source":  scriptSource(scriptCtx),
+		"trigger": scriptTrigger(scriptCtx.Trigger),
+		"depth":   scriptCtx.Depth,
 	}), nil
+}
+
+func scriptSource(scriptCtx functiondomain.ScriptContext) string {
+	if scriptCtx.Source != "" {
+		return scriptCtx.Source
+	}
+	if scriptCtx.DryRun {
+		return functiondomain.SourceConsole
+	}
+	return functiondomain.SourceAPI
+}
+
+// scriptTrigger ctx.trigger：经 JSON 往返，字段名与编辑器里的 AegisTrigger 声明一致；没有触发信息时为 null。
+func scriptTrigger(trigger *functiondomain.TriggerContext) any {
+	if trigger == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(trigger)
+	if err != nil {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(encoded, &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 // encodeScriptResult 把 handle 的返回值编码为 JSON，并强制大小上限。

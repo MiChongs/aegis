@@ -81,6 +81,24 @@ func testScriptDeps() ScriptSDKDeps {
 		Redis:     redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"}),
 		KeyPrefix: "test:",
 		AI:        &AIProviderService{},
+
+		FeatureTime: &FeatureTimeService{},
+		SignIn:      &SignInService{},
+		Invite:      &InviteService{},
+		Leaderboard: &LeaderboardService{},
+		Lottery:     &LotteryService{},
+		Store:       &PointsStoreService{},
+		CardKeys:    &CardKeyService{},
+		Cosmetics:   &CosmeticService{},
+		Numbers:     &UserNumberService{},
+		Payment:     &PaymentService{},
+		Cloud:       &CloudStorageService{},
+		Tickets:     &TicketService{},
+		Apps:        &AppService{},
+		Devices:     &DeviceLimitService{},
+		CallFunction: func(context.Context, FunctionCallRequest) (*FunctionCallResult, error) {
+			panic("测试夹具里的函数互调不应被真的调用")
+		},
 	}
 }
 

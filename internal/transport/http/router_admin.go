@@ -235,6 +235,18 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/functions/:functionName/invoke", h.AdminInvokeAppFunction)
 		admin.GET("/apps/:appkey/functions/:functionName/invocations", h.AdminListAppFunctionInvocations)
 		admin.GET("/apps/:appkey/functions/:functionName/stats", h.AdminAppFunctionStats)
+		// 平台化：全景、触发器（平台事件 / 定时）、触发任务、调用详情与重放（docs/app-functions.md）
+		admin.GET("/apps/:appkey/function-overview", h.AdminAppFunctionOverview)
+		admin.GET("/apps/:appkey/function-triggers", h.AdminListAppTriggers)
+		admin.GET("/apps/:appkey/functions/:functionName/triggers", h.AdminListAppFunctionTriggers)
+		admin.POST("/apps/:appkey/functions/:functionName/triggers", h.AdminCreateAppFunctionTrigger)
+		admin.PUT("/apps/:appkey/functions/:functionName/triggers/:triggerId", h.AdminUpdateAppFunctionTrigger)
+		admin.DELETE("/apps/:appkey/functions/:functionName/triggers/:triggerId", h.AdminDeleteAppFunctionTrigger)
+		admin.POST("/apps/:appkey/functions/:functionName/triggers/:triggerId/fire", h.AdminFireAppFunctionTrigger)
+		admin.GET("/apps/:appkey/functions/:functionName/trigger-jobs", h.AdminListAppFunctionTriggerJobs)
+		admin.POST("/apps/:appkey/functions/:functionName/trigger-jobs/:jobId/retry", h.AdminRetryAppFunctionTriggerJob)
+		admin.GET("/apps/:appkey/functions/:functionName/invocations/:invocationId", h.AdminGetAppFunctionInvocation)
+		admin.POST("/apps/:appkey/functions/:functionName/invocations/:invocationId/replay", h.AdminReplayAppFunctionInvocation)
 		// AI 通道 / 技能 / MCP / Agent（应用作用域）。
 		// 与平台级 /api/admin/system/ai/* 走同一批服务层方法，只差 appid 来源；
 		// Agent 流式对话是控制台函数工作台的「AI 助手」面板。

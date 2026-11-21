@@ -395,9 +395,72 @@ SDK 真正绑定什么由 Go 决定，在前端另写一份类型只会让「补
 | `geo.read` | `aegis.geo.lookup(ip)` | IP 归属地与运营商（GeoIP2 + ASN） |
 | `http.fetch` | `aegis.fetch(url, options)` | 仅 HTTPS、禁重定向、拒绝内网与元数据地址；支持 `form` / `query` |
 
+#### 平台各子系统（2026-11 平台化）
+
+远程函数现在接得到全站的每一个系统。原则只有一条：**每个写操作都落到那个系统面向终端用户的同一个入口**
+（抽奖走 `LotteryService.Draw`、兑换走 `PointsStoreService.Redeem`、签到走 `SignInService`……），
+而不是绕到仓储层改数字 —— 于是风控、幂等、通知、排行榜口径与用户自己在客户端上按那个按钮完全一致。
+
+| capability | 注入 | 说明 |
+|---|---|---|
+| `points.read` | `aegis.points.balance / history` | 余额与最近的积分 / 经验流水 |
+| `rights.read` | `aegis.rights.summary / has / featureTime / catalog` | 会员、单独解锁的功能、免广告、抽奖次数余额、功能计时账户 |
+| `rights.grant` | `aegis.rights.grant(items, { key, title })` | **高风险**。复用物品发放引擎的同一个事务内入口，全站能发的东西都能发（见下） |
+| `rights.consume` | `aegis.rights.consumeTime(feature, seconds)` | 扣功能时长（与客户端计时同一个账户），会员与免广告期内免扣 |
+| `level.read` / `level.write` | `aegis.level.get / addExperience` | 等级进度；加经验同步等级，升级奖励照常 |
+| `signin.read` / `signin.write` | `aegis.signin.status / checkIn` | 代为签到：奖励、连签、发放规则的「每日签到」事件照常 |
+| `invite.read` | `aegis.invite.center()` | 邀请码、邀请人数、邀请人（带内部 userId，客户端视图里没有） |
+| `leaderboard.read` | `aegis.leaderboard.boards / board(key)` | 榜单前 N 与调用者名次 |
+| `lottery.read` / `lottery.draw` | `aegis.lottery.activities / state / tickets / draw` | 代为抽奖（单抽 / 连抽 1–10），风控按真实客户端 IP 与设备判 |
+| `store.read` / `store.redeem` | `aegis.store.items / redeem(itemId)` | 代为兑换：库存、限购、发货同一个事务 |
+| `cardkey.redeem` | `aegis.cardkey.redeem(code)` | **高风险**。防爆破照常；卡密在调用审计里打码 |
+| `cosmetic.read` / `cosmetic.write` | `aegis.cosmetic.owned / loadout / equip` | 只能戴拥有的 |
+| `number.read` | `aegis.number.get()` | 应用号码与靓号等级 |
+| `payment.read` | `aegis.payment.orders / order(orderNo)` | 调用者自己的订单；回调原文、客户端 IP、元数据不给 |
+| `cloud.read` / `cloud.write` | `aegis.cloud.get / put` | 用户云存储；对象按 JSON 存、字符串按文本存，支持 `ifRevision` 乐观锁 |
+| `ticket.read` / `ticket.write` | `aegis.tickets.list / create` | 以调用者身份提单，客服后台照常收到提醒 |
+| `content.read` | `aegis.content.banners / notices` | 应用当前生效的横幅与公告 |
+| `device.read` | `aegis.devices.list()` | 设备与上限，**不含 IP** |
+| `function.call` | `aegis.functions.call(name, input)` | 同步调用本应用另一个函数，见「函数互调」 |
+
+能力分组由目录下发（`/function-catalog` 的 `groups`）：身份、资产、权益、成长、玩法与交易、状态、触达、
+情报与内容、审计、出站、编排。控制台按它分节，不在前端另抄一份；`TestCapabilityCatalogIsWellFormed`
+钉住「每项能力的分组都在分组目录里」。
+
+几处刻意的取舍：
+
+- **幂等键由 eventId 派生**：同一次调用里第 n 个抽奖 / 兑换的 `requestId` 是 `fn-<eventId>-draw<n>`。
+  eventId 重放（或租约过期后被另一台实例接管重跑）时，那几个系统自己的幂等就能认出它，不会多抽一次。
+- **真实客户端信息只在服务端流转**：调用入口把 IP / UA / `X-Device-Id` 带进调用者，但不进 `ctx.caller` ——
+  风控与防爆破要按真实的人判，而不是一律当成服务器自己发起的；脚本没有理由拿到它们。
+- **读别人的状态要过应用归属**：`points.balance(userId)` 这类带 userId 的读，主键与对外 ID 都接受，
+  不属于本应用的一律当作不存在。
+- **查不到回 null，不抛错**：订单号不存在、云存储键不存在是正常分支。
+
+##### `rights.grant`：权益系统的完整入口
+
+```js
+// 首充礼：会员 7 天 + 抽奖 3 次 + 一个头像框（30 天）。整笔原子，任何一项发不出去全部回滚
+var gift = aegis.rights.grant([
+  { type: "vip_days", amount: 7 },
+  { type: "lottery_draws", amount: 3 },
+  { type: "cosmetic", refId: 12, amount: 30 },
+], { key: "first-pay", title: "首充礼" });
+if (gift.replayed) aegis.log("这个人已经领过了");
+```
+
+- **逐项复用 `grantItemTx`**（物品发放引擎、等级奖励用的同一个函数），所以发出去的会员、功能解锁、功能时长、
+  免广告、抽奖次数、AI 额度、余额、授权时长、设备位、改号卡 / 靓号券 / 摇号、装扮与积分商城、卡密、
+  发放规则发的完全同口径：会员折算、次数批次与扣除顺序、排行榜分类都照常生效。
+- **幂等键 `(应用, 函数, 用户, key)` 唯一**，落在 `app_function_grants`。同一个人同一个 key 第二次发直接回第一次的结果
+  （`replayed: true`），缺省 key 按 eventId 生成。任何一项失败整笔回滚，幂等键随之释放 —— 修好之后用同一个 key 能正常发出。
+- **人工物品（`manual`）不开放**：远程函数没有管理员去处理它。引用的套餐 / 功能 / 装扮在发放前核对，
+  给出「会员套餐 12 不存在或已停用」而不是整笔回滚之后的一句「引用不存在」。
+- 能发什么由目录下发（`grantItems` 与 `aegis.rights.catalog()`），与物品发放的物品目录是同一份。
+
 用户级操作一律锁定到当前调用者，脚本无法跨用户写。
-`user.write` / `wallet.write` / `vip.write` / `email.send` / `http.fetch` 属高风险档，
-控制台在勾选后会单独提示。
+`user.write` / `wallet.write` / `vip.write` / `rights.grant` / `cardkey.redeem` / `email.send` / `http.fetch`
+属高风险档，控制台在勾选后会单独提示。
 
 #### 分布式锁为什么是必要的
 
@@ -496,6 +559,93 @@ return aegis.lock.run("claim:" + me.id + ":" + task, function () {
 试跑产生的 effect 带 `simulated: true`：少了这个标记，一份看起来
 「发了 100 积分、开了 30 天会员」的清单会被当成真的发生过。
 
+## 触发器：平台事件与定时
+
+函数除了被接入方调用，还能由**平台事件**或 **cron 计划**拉起。一个函数最多 16 个触发器。
+
+| 事件键 | 何时 | ctx.trigger.data |
+|---|---|---|
+| `user.registered` | 新用户完成注册（各种注册方式），同一个人只触发一次 | `account` |
+| `user.login` | 每次签发登录会话（频繁，脚本里自己按天去重） | `account` |
+| `user.profile_updated` | 资料变更之后 | — |
+| `user.banned` | 任何来源的封禁落成之后 | `reason` |
+| `user.signin` | 完成当天签到（含自动签到），同一天只一次 | `consecutiveDays` |
+| `payment.completed` | 在线支付确认到账，同一订单只一次 | `orderId`、`amount` |
+| `payment.refunded` | 退款确认成功 | `orderId`、`amount` |
+
+事件触发时 `ctx.caller` 是 `{ type: "event", userId }` —— 锁定到事件里的那个用户，
+`RequiresUser` 的能力照常可用；定时触发是 `{ type: "schedule" }`，没有用户。
+`ctx.trigger` 带 `kind / triggerId / event / cron / firedAt / attempt / data`，`ctx.source` 是 `event` 或 `schedule`。
+触发器上可以配一份**固定入参**（作为 `ctx.input`），保存时就过入参契约 —— 放行的话这个触发器每次都会在调用入口被 40109 挡下。
+
+```js
+// 注册即发新手礼（触发器：user.registered）
+function handle(ctx) {
+  return aegis.rights.grant([{ type: "points", amount: 100 }, { type: "lottery_draws", amount: 1 }],
+    { key: "newbie", title: "新手礼" });
+}
+```
+
+### 为什么是持久队列
+
+钩子回调与定时扫描**只入队**（`app_function_trigger_jobs`），执行由后台循环抢占：
+
+- **不拖慢关键链路**：钩子在注册、支付这些链路上触发，脚本慢一点就把它们拖慢。
+- **重启不丢**：内存里没跑完的那批在进程重启时会悄悄没了；落库之后哪一台实例来执行都一样。
+- **多实例各抢各的**：`FOR UPDATE SKIP LOCKED` 抢一批，带 2 分钟租约；执行它的实例挂了，租约过期后别人接手。
+- **同一事件只入一次**：`(触发器, 幂等键)` 唯一。注册按人、支付按订单、签到按人按天。
+- **定时触发不会在 N 个副本上各跑一次**：到点时比较交换推进 `next_run_at`，推得动的那台负责入队。
+- **事件数据只给目录登记过的字段**：钩子里的其余内部字段不外泄给脚本。
+
+### 只重试「还没开始执行」的失败
+
+退避 30s / 2min / 4.5min / 8min，最多 5 次。只重试函数未激活（40990）、激活版本不可用（40992）、
+eventId 正被占用（40993）、并发满（42990）、频次满（42991）与基础设施故障。
+**脚本已经开始执行之后的失败一律不重试**（50290、`aegis.fail` 的业务错误、入参不合契约）：
+脚本不是一个大事务，前面的写入不会回滚，同一个 eventId 也会被幂等挡下 —— 重试只会让人误以为它「再跑了一遍」。
+失败的任务可以在控制台手动「重试」（次数清零、放回队列）。结束 7 天以上的任务自动清理，调用记录里另有完整留痕。
+
+「立即触发」不经队列、同步执行并返回结果；事件触发器要指定一个用户来模拟这次事件。
+试跑也能模拟触发：`test` 的 `trigger: { kind, event, data }` 作为 `ctx.trigger` 传入，用来调「事件拉起」那条分支。
+
+## 调用记录：来源、入参、日志与重放
+
+每次调用记下**来源**（`api` 接入方 / `event` / `schedule` / `console` 控制台真实调用 / `function` 被其他函数调用）、
+触发器编号、版本号、错误码，以及：
+
+- **入参**（≤16KB，超出只标记 `inputTruncated`）：留它是为了「用这次的入参与身份再试跑一遍」，不是为了存档。
+- **日志**（最多 100 行，结构化 `{ level, message, elapsedMs }`）：只有试跑回传日志的话，
+  线上那条失败调用为什么失败只能去翻服务器日志。
+- **额度**（SDK 调用 / 写操作 / 出站次数）与**副作用**。失败的调用也留下「失败之前已经做了什么」——
+  幂等重放只认成功的结果，不会把这份清单当成成功返回。
+
+`GET .../invocations/:id` 取一条的完整记录；`POST .../invocations/:id/replay` 在**当前激活版本**上
+用那次的入参与身份试跑（写只记不做）。列表可按 `source` / `triggerId` / `callerId` 筛选。
+控制台的真实调用可以指定 `asUserId` 以某个用户的身份执行，来源记为 `console`。
+
+## 函数互调
+
+`aegis.functions.call(name, input)` 同步调用本应用另一个已激活函数，身份不变，返回它的输出：
+
+- **最多嵌套 3 层**，不能调自己；`ctx.depth` 告诉脚本自己在第几层。
+- **被调函数的 eventId 由外层派生**（UUID v5）：外层重放时被调函数也命中同一个幂等记录，不会二次执行。
+- **被调函数的一切拒绝都以业务错误抛给外层**（业务错误、未激活、限流），外层可以 catch；不 catch 就成为外层的业务错误。
+- **试跑时被调函数同样只记不做**，也不写调用记录。
+- 被调函数照常留一条来源为 `function` 的调用记录，照常受它自己的并发、频次与超时闸门约束。
+
+## 全景
+
+`GET /function-overview?windowHours=24` 是控制台首页：函数数 / 激活数、触发器数 / 启用数、排队与失败的触发任务、
+调用量、成功率、P95、按来源的分布、全部函数声明过的能力（回答「这个应用的函数碰了哪些系统」）、
+按小时分桶、每个函数一行（带火花线）、最近失败的几次调用。
+
+## MCP
+
+Aegis MCP 服务的 `functions_` 模块（31 个工具）覆盖下面全部管理端接口：
+`functions_catalog` → `functions_create` → `functions_analyze` → `functions_test` → `functions_publish_version`
+→ `functions_activate_version`，以及触发器、触发任务、调用详情与重放、KV、调用密钥。
+`functions_invoke` 与 `functions_trigger_fire` 是真实执行。
+
 ## 键值存储
 
 `aegis.kv`（应用级共享）与 `aegis.kv.user`（按调用者隔离）是脚本的
@@ -515,7 +665,7 @@ return aegis.lock.run("claim:" + me.id + ":" + task, function () {
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| `GET` | `/function-catalog` | 能力目录 + 运行时额度 + 内置模板 + 基础类型声明 |
+| `GET` | `/function-catalog` | 能力目录与分组 + 平台事件 + 可发物品 + 运行时额度 + 内置模板 + 基础类型声明 |
 | `GET` `POST` | `/functions` | 列出 / 创建函数 |
 | `GET` `PUT` `DELETE` | `/functions/:name` | 函数管理（能力、闸门、配置、入参契约均可改） |
 | `GET` `POST` | `/functions/:name/versions` | 版本列表 / 发布（**发布前跑一遍静态检查**） |
@@ -523,9 +673,18 @@ return aegis.lock.run("claim:" + me.id + ":" + task, function () {
 | `POST` | `/functions/:name/versions/:version/activate` | 激活或回滚 |
 | `POST` | `/functions/:name/analyze` | **静态检查**（不执行代码，只回诊断） |
 | `POST` | `/functions/:name/test` | **试跑**（不建版本、不写审计、写只记录） |
-| `POST` | `/functions/:name/invoke` | 管理员真实调用 |
-| `GET` | `/functions/:name/invocations` | 调用审计（按 status / callerType / eventId 筛选，分页） |
-| `GET` | `/functions/:name/stats` | 成功率、耗时分位、Top 错误、按小时分桶 |
+| `POST` | `/functions/:name/invoke` | 管理员真实调用（`asUserId` 以某个用户的身份） |
+| `GET` | `/functions/:name/invocations` | 调用审计（按 status / callerType / eventId / source / triggerId / callerId 筛选，分页） |
+| `GET` | `/functions/:name/invocations/:id` | 一条调用的完整记录（入参、日志、副作用、额度） |
+| `POST` | `/functions/:name/invocations/:id/replay` | 用那次的入参与身份在激活版本上试跑 |
+| `GET` | `/functions/:name/stats` | 成功率、耗时分位、Top 错误、按小时分桶（`hours`） |
+| `GET` | `/function-overview` | 应用全景（`windowHours`，上限 168） |
+| `GET` | `/function-triggers` | 整个应用的触发器 + 平台事件目录 |
+| `GET` `POST` | `/functions/:name/triggers` | 触发器列表 / 新建 |
+| `PUT` `DELETE` | `/functions/:name/triggers/:triggerId` | 修改（种类不可变）/ 删除 |
+| `POST` | `/functions/:name/triggers/:triggerId/fire` | 立即真实执行一次（同步） |
+| `GET` | `/functions/:name/trigger-jobs` | 触发任务（按 triggerId / status 筛选） |
+| `POST` | `/functions/:name/trigger-jobs/:jobId/retry` | 失败任务放回队列 |
 | `GET` `DELETE` | `/function-kv` | KV 浏览 / 删除 |
 | `GET` `POST` | `/function-keys` | 调用密钥列表 / 创建 |
 | `DELETE` | `/function-keys/:keyId` | 撤销密钥 |

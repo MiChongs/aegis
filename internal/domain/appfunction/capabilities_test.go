@@ -13,10 +13,13 @@ var errUnbalanced = errors.New("大括号不平衡")
 func TestCapabilityCatalogIsWellFormed(t *testing.T) {
 	t.Parallel()
 
-	validGroups := map[string]struct{}{
-		CapGroupIdentity: {}, CapGroupAsset: {}, CapGroupState: {},
-		CapGroupReach: {}, CapGroupAudit: {}, CapGroupIntel: {},
-		CapGroupEgress: {}, CapGroupLegacy: {},
+	// 已知分组读分组目录（控制台的分节标题也读它），而不是在这里另抄一份
+	validGroups := map[string]struct{}{}
+	for _, group := range CapabilityGroups() {
+		if group.Label == "" {
+			t.Errorf("分组 %s 没有标题", group.Key)
+		}
+		validGroups[group.Key] = struct{}{}
 	}
 	validRisks := map[string]struct{}{RiskLow: {}, RiskMedium: {}, RiskHigh: {}}
 
