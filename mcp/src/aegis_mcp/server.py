@@ -34,6 +34,7 @@ INSTRUCTIONS = """\
    注册准入（register_）收紧规则前先 register_simulate，或把策略 mode 设为 observe 观察；查可疑注册时 register_inspect_ip
    与 register_inspect_device 互相跳（地址下的设备、设备用过的地址）。
    音乐推荐（music_）改配置、发布模型、动规则或实验前先 music_preview 拿具体用户看效果；实验结果看 music_experiment_results 的 p 值。
+   远程函数（functions_）先 functions_analyze / functions_test 试跑，再发布版本与激活；functions_invoke 与触发器 functions_trigger_fire 是真实执行。
    出海网关（egress_）的编辑工具只改草稿，egress_apply 才影响线上全部出站：应用前先 egress_validate、egress_explain 核对。
    若只看到 search_tools / run_tool：先用 search_tools 按英文关键词（如 "vip grant"、"lottery prize"、"users ban"）检索，再用 run_tool 调用。
 3. 没有现成工具时：list_endpoints 按关键词找接口 → describe_endpoint 看参数 → call_api 调用（覆盖全部约 970 条管理端接口）。
@@ -89,7 +90,7 @@ def build_server(
     if read_only:
         root.disable(tags={"write"})
     if tool_search:
-        # 四百多个工具一次性下发会挤爆部分客户端的工具上限与上下文：只露出检索入口与通用层，
+        # 五百多个工具一次性下发会挤爆部分客户端的工具上限与上下文：只露出检索入口与通用层，
         # 其余按需检索后经 run_tool 调用（权限、只读过滤照常生效）
         root.add_transform(BM25SearchTransform(
             max_results=8,

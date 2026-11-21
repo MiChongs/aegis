@@ -2,7 +2,7 @@
 
 > 由 `scripts/gen_tools_doc.py` 生成，勿手改。
 
-共 537 个工具。类别：读 = 只读；写 = 可逆或增量的写；危险 = 不可逆或影响面大的写（客户端会要求确认）。
+共 568 个工具。类别：读 = 只读；写 = 可逆或增量的写；危险 = 不可逆或影响面大的写（客户端会要求确认）。
 
 ## admins（20）
 
@@ -249,6 +249,44 @@
 | `features_grant_unlock` | 写 | 给用户授予一项功能解锁（来源记为管理员授予），立即生效。 |
 | `features_revoke_unlock` | 危险 | 收回用户的一条功能解锁，立即失效（不可撤销，需要的话只能重新授予）。执行前先向用户确认功能与记录 ID。 |
 | `features_unlocks` | 读 | 一个用户的功能解锁：全部记录（来源、天数、到期、是否已收回）与当前生效的功能。 |
+
+## functions（31）
+
+远程函数：能力目录、函数增改删、静态检查与试跑、版本发布激活与回滚、真实调用、调用审计与重放、运行统计与全景、触发器与触发任务、KV、调用密钥。
+
+| 工具 | 类别 | 说明 |
+|---|---|---|
+| `functions_activate_version` | 写 | 激活一个版本（原子切换，之后的每次调用都跑它）；回滚就是重新激活旧版本。立即影响线上调用，执行前向用户确认版本号。 |
+| `functions_analyze` | 写 | 静态检查脚本（不执行、无副作用），返回带行列的诊断；只有 error 挡发布。 |
+| `functions_catalog` | 读 | 远程函数的能力目录、平台事件、可发物品、额度与模板；写脚本、声明能力、建触发器之前先看它。 |
+| `functions_create` | 写 | 新建函数（草稿，没有版本，接入方还调不到）。名字建好后不能改。 |
+| `functions_create_key` | 写 | 新建一把函数调用密钥（afk_ 开头），明文只在这次返回、之后取不回。 |
+| `functions_create_trigger` | 写 | 给函数加一个事件或定时触发器（每个函数最多 16 个），启用后自动真实执行。 |
+| `functions_delete` | 危险 | 删除函数及其全部版本与触发器（不可恢复），接入方此后调用一律失败。只想暂停用 functions_update(status=disabled)。执行前先向用户确认函数名。 |
+| `functions_delete_kv` | 危险 | 删除一个 KV 键（不可恢复）。计数、配额、已领取标记被删后，脚本会当作从未发生（如允许再领一次）。执行前先向用户确认。 |
+| `functions_delete_trigger` | 危险 | 删除触发器（不可恢复），之后不再自动拉起。只想暂停用 functions_update_trigger(enabled=false)。执行前先向用户确认。 |
+| `functions_delete_version` | 危险 | 删除一个未激活的版本（不可恢复，激活中的版本删不掉）。删了就不能再回滚到它。执行前先向用户确认。 |
+| `functions_get` | 读 | 一个函数的完整定义：能力、超时与并发 / 频次闸门、函数配置 config、入参契约 inputSchema（及生成的 TypeScript 类型）、激活版本。 |
+| `functions_get_invocation` | 读 | 一条调用的完整记录：入参（过大会截断）、输出、脚本日志、实际发生的 effects、SDK 用量、错误与耗时。 |
+| `functions_get_version` | 读 | 一个版本的详情，含脚本正文 source（仅管理端可见）。改脚本时先取回当前版本正文再改。 |
+| `functions_invocations` | 读 | 调用审计（新的在前）：eventId、来源、调用者、版本、状态、耗时、错误码与错误。排障先 status=error；详情用 functions_get_invocation。 |
+| `functions_invoke` | 写 | 以管理员身份真实调用激活版本（来源记为 console），写操作全部真实执行。 |
+| `functions_keys` | 读 | 函数调用密钥（afk_ 开头，供接入方服务端调用）列表：名称、前缀、创建人、最近使用、是否已撤销。不含明文。 |
+| `functions_kv` | 读 | 浏览脚本的服务端状态 KV（应用级，多个函数共用）：键、值（过长截断）、作用域、过期时间（过期的也列出并标注）。查某个用户的配额计数用 scope=user + scope_id。 |
+| `functions_list` | 读 | 函数列表：名称、说明、运行时（script / wasm / http）、状态（draft / active / disabled）、激活版本、声明的能力与闸门。 |
+| `functions_overview` | 读 | 应用下全部函数的运行全景：调用量、成功率、来源分布、触发器积压，以及「为什么调不通」。 |
+| `functions_publish_version` | 写 | 发布一个新版本（不可修改，版本号不能重复）。script 版本发布前后端会跑一遍静态检查，有 error 直接拒绝。 |
+| `functions_replay` | 写 | 重放一条调用：用它记录下的入参与身份在当前激活版本上试跑（只记不做，同 functions_test）。修了 bug 后用它核对那条失败调用。需要 app:write 权限。 |
+| `functions_retry_trigger_job` | 写 | 把一个失败的触发任务放回队列重新执行（真实执行，eventId 不变所以已成功的不会重复）。先看 last error，原因未消除时重试仍会失败。 |
+| `functions_revoke_key` | 危险 | 撤销函数调用密钥（不可恢复），持有它的服务端此后调用一律 401。执行前先向用户确认密钥名称。 |
+| `functions_stats` | 读 | 一个函数的运行状况：调用量、成功率、耗时分位（p50 / p95 / p99）、Top 错误、按小时分桶。 |
+| `functions_test` | 写 | 试跑脚本：不建版本、不写调用审计、不产生真实副作用，发布前必跑。 |
+| `functions_trigger_fire` | 写 | 立即真实执行一次触发器（同步，不是试跑），脚本的写操作真实生效、写调用审计。 |
+| `functions_trigger_jobs` | 读 | 触发任务队列（新的在前）：哪个触发器、事件与用户、状态、已试次数、下次重试、最后错误。 |
+| `functions_triggers` | 读 | 触发器列表：种类（event 平台事件 / schedule 定时）、事件或 Cron 与时区、固定入参、启用、下次执行时间、最近触发结果。 |
+| `functions_update` | 写 | 修改函数：只传要改的字段，其余不变。改动对之后的每次调用立即生效（不需要发新版本）。 |
+| `functions_update_trigger` | 写 | 修改触发器（种类不能改，要换种类请删了重建）。只传要改的字段；说明不传时沿用原值（后端会清空，这里先读后合并）。 |
+| `functions_versions` | 读 | 版本列表（新的在前）：版本号、产物摘要、备注、发布人、时间、是否激活。正文用 functions_get_version 取。 |
 
 ## grant（19）
 
