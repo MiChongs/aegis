@@ -26,14 +26,17 @@ import {
   Trash2,
   UploadCloud,
   WandSparkles,
-  XCircle
+  XCircle,
+  Zap
 } from "lucide-react";
 import { toast } from "sonner";
 import type {
   AppFunction,
   AppFunctionDiagnostic,
+  AppFunctionSimulatedTrigger,
   AppFunctionTestResult,
-  FunctionCatalog
+  FunctionCatalog,
+  FunctionTriggerEvent
 } from "@/lib/api/app-functions";
 import {
   useActivateVersionMutation,
@@ -95,13 +98,22 @@ import {
   usePanelRef,
   type PanelImperativeHandle
 } from "@/components/ui/resizable";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { EffectList, errorMessage, formatBytes, formatDuration, formatTime } from "./function-shared";
+import { EventFieldList, groupTriggerEvents, sampleEventData } from "./function-trigger-dialogs";
 
 /**
  * 脚本工作台：写 → 检查 → 试跑 → 发布 → 回滚，**一屏之内**完成。
@@ -180,6 +192,15 @@ export function FunctionEditorPanel({
       "{}"
   );
   const [asUserId, setAsUserId] = useState("");
+  // 模拟触发：试跑「被事件或定时拉起」那条分支（ctx.trigger 非 null）。
+  // 默认关着 —— 大多数试跑测的是接入方直接调用，ctx.trigger 为 null。
+  const [simTrigger, setSimTrigger] = useState<SimTriggerState>(() => ({
+    enabled: false,
+    kind: "event",
+    event: catalog?.triggerEvents?.[0]?.key ?? "",
+    cron: "0 0 * * *",
+    data: sampleEventData(catalog?.triggerEvents?.[0])
+  }));
   const [testResult, setTestResult] = useState<TestResultWithSource | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [diffAgainst, setDiffAgainst] = useState<string | null>(null);
@@ -279,10 +300,28 @@ export function FunctionEditorPanel({
     // 就是作者唯一能拿到的信息
     expand(runnerRef, setRunnerOpen);
     const userId = overrides?.asUserId ?? asUserId;
+    let trigger: AppFunctionSimulatedTrigger | undefined;
+    if (simTrigger.enabled) {
+      let data: unknown = {};
+      try {
+        data = simTrigger.data.trim() ? JSON.parse(simTrigger.data) : {};
+      } catch {
+        toast.error("模拟触发的事件数据不是合法 JSON");
+        return;
+      }
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        toast.error("模拟触发的事件数据必须是 JSON 对象");
+        return;
+      }
+      trigger =
+        simTrigger.kind === "event"
+          ? { kind: "event", event: simTrigger.event, data: data as Record<string, unknown> }
+          : { kind: "schedule", cron: simTrigger.cron.trim(), data: data as Record<string, unknown> };
+    }
     try {
       const result = await testMutation.mutateAsync({
         name: selected.name,
-        payload: { source, input, asUserId: userId ? Number(userId) : undefined }
+        payload: { source, input, asUserId: userId ? Number(userId) : undefined, trigger }
       });
       // 记下这次跑的是哪份正文：正文一改，错误行标记就不该再指向它
       setTestResult({ ...result, source });
@@ -576,6 +615,9 @@ export function FunctionEditorPanel({
                 inputSample={selected.inputSample}
                 asUserId={asUserId}
                 onAsUserIdChange={setAsUserId}
+                simTrigger={simTrigger}
+                onSimTriggerChange={setSimTrigger}
+                triggerEvents={catalog?.triggerEvents ?? NO_TRIGGER_EVENTS}
                 pending={testMutation.isPending}
                 disabled={!source.trim()}
                 blocking={blocking.length}
@@ -682,6 +724,17 @@ export function FunctionEditorPanel({
 type TestResultWithSource = AppFunctionTestResult & { source?: string };
 
 type DockTab = "problems" | "versions";
+
+type SimTriggerState = {
+  enabled: boolean;
+  kind: "event" | "schedule";
+  event: string;
+  cron: string;
+  /** ctx.trigger.data 的 JSON 文本 */
+  data: string;
+};
+
+const NO_TRIGGER_EVENTS: FunctionTriggerEvent[] = [];
 
 type PanelRef = { current: PanelImperativeHandle | null };
 
@@ -1138,6 +1191,9 @@ function TestRunnerPane({
   inputSample,
   asUserId,
   onAsUserIdChange,
+  simTrigger,
+  onSimTriggerChange,
+  triggerEvents,
   pending,
   disabled,
   blocking,
@@ -1150,6 +1206,9 @@ function TestRunnerPane({
   inputSample?: string;
   asUserId: string;
   onAsUserIdChange: (value: string) => void;
+  simTrigger: SimTriggerState;
+  onSimTriggerChange: (value: SimTriggerState) => void;
+  triggerEvents: FunctionTriggerEvent[];
   pending: boolean;
   disabled: boolean;
   blocking: number;
@@ -1252,6 +1311,7 @@ function TestRunnerPane({
             placeholder="以用户身份执行（ID）"
             inputMode="numeric"
           />
+          <SimTriggerPopover value={simTrigger} onChange={onSimTriggerChange} events={triggerEvents} />
           <Popover open={caseOpen} onOpenChange={setCaseOpen}>
             <PopoverTrigger asChild>
               <Button variant="outline" size="icon-sm" aria-label="保存为用例">
@@ -1306,6 +1366,108 @@ function TestRunnerPane({
   );
 }
 
+/**
+ * 模拟触发：给试跑带上一份 ctx.trigger。开着时按钮常亮，
+ * 否则作者会忘了它还开着，然后对着「为什么 ctx.trigger 不是 null」找半天。
+ */
+function SimTriggerPopover({
+  value,
+  onChange,
+  events
+}: {
+  value: SimTriggerState;
+  onChange: (value: SimTriggerState) => void;
+  events: FunctionTriggerEvent[];
+}) {
+  const grouped = groupTriggerEvents(events);
+  const spec = events.find((item) => item.key === value.event);
+  const patch = (next: Partial<SimTriggerState>) => onChange({ ...value, ...next });
+  return (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              variant={value.enabled ? "secondary" : "outline"}
+              size="icon-sm"
+              aria-label="模拟触发"
+              className={cn(value.enabled && "text-violet-600 ring-1 ring-violet-500/40 dark:text-violet-400")}
+            >
+              <Zap className="size-3.5" />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{value.enabled ? "模拟触发：已开启" : "模拟触发"}</TooltipContent>
+      </Tooltip>
+      <PopoverContent align="end" className="w-80 space-y-3">
+        <label className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium">模拟触发</span>
+          <Switch checked={value.enabled} onCheckedChange={(enabled) => patch({ enabled })} />
+        </label>
+        <div className={cn("space-y-3", !value.enabled && "pointer-events-none opacity-50")}>
+          <div className="grid grid-cols-2 gap-1 rounded-lg border p-0.5">
+            {(["event", "schedule"] as const).map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => patch({ kind })}
+                className={cn(
+                  "rounded-md py-1 text-xs transition-colors",
+                  value.kind === kind ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {kind === "event" ? "事件" : "定时"}
+              </button>
+            ))}
+          </div>
+          {value.kind === "event" ? (
+            <>
+              <Select
+                value={value.event}
+                onValueChange={(event) =>
+                  patch({ event, data: sampleEventData(events.find((item) => item.key === event)) })
+                }
+              >
+                <SelectTrigger size="sm" className="w-full text-xs">
+                  <SelectValue placeholder="选择事件" />
+                </SelectTrigger>
+                <SelectContent>
+                  {grouped.map(([group, items]) => (
+                    <SelectGroup key={group}>
+                      <SelectLabel>{group}</SelectLabel>
+                      {items.map((item) => (
+                        <SelectItem key={item.key} value={item.key}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </Select>
+              {spec ? <EventFieldList spec={spec} /> : null}
+            </>
+          ) : (
+            <Input
+              className="h-8 font-mono text-xs"
+              value={value.cron}
+              onChange={(event) => patch({ cron: event.target.value })}
+              placeholder="0 0 * * *"
+            />
+          )}
+          <div className="space-y-1">
+            <Label className="font-mono text-[11px] text-muted-foreground">ctx.trigger.data</Label>
+            <Textarea
+              className="min-h-20 font-mono text-[11px]"
+              value={value.data}
+              onChange={(event) => patch({ data: event.target.value })}
+            />
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function TestResultPane({
   result,
   onReveal
@@ -1346,7 +1508,7 @@ function TestResultPane({
               {result.ok ? "通过" : result.businessCode ? "被脚本拒绝" : "执行失败"}
             </Badge>
             <span className="truncate text-[11px] text-muted-foreground">
-              {formatDuration(result.durationMs)} · SDK {result.sdkCalls} / 写 {result.sdkMutations}{" "}
+              {formatDuration(result.durationMs)}，SDK {result.sdkCalls} / 写 {result.sdkMutations}{" "}
               / 出站 {result.sdkFetches}
             </span>
           </>

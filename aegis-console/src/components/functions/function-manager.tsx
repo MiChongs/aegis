@@ -13,7 +13,8 @@ import {
   Plus,
   ScrollText,
   Search,
-  Settings2
+  Settings2,
+  Zap
 } from "lucide-react";
 import type { AppFunction } from "@/lib/api/app-functions";
 import { useAppFunctionsQuery, useFunctionCatalogQuery } from "@/lib/function-hooks";
@@ -37,6 +38,7 @@ import { FunctionEditorPanel } from "./function-editor-panel";
 import { FunctionInvocationsPanel } from "./function-invocations-panel";
 import { FunctionOverviewPanel } from "./function-overview-panel";
 import { FunctionSettingsPanel } from "./function-settings-panel";
+import { FunctionTriggersPanel } from "./function-triggers-panel";
 
 const STATUS_VARIANT: Record<AppFunction["status"], "success" | "warning" | "outline"> = {
   active: "success",
@@ -70,10 +72,31 @@ const STATUS_DOT: Record<AppFunction["status"], string> = {
  * 默认落在「脚本」上：进这个页面十次有九次是来改逻辑的，
  * 而「为什么调不通」这一条结论已经压缩成头部那枚警示徽标，不必先看一页图表。
  */
-export function FunctionManager({ appKey }: { appKey?: string | null }) {
-  const [selectedName, setSelectedName] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [panel, setPanel] = useState("script");
+export function FunctionManager({
+  appKey,
+  initialName,
+  initialPanel,
+  initialInvocationId,
+  initialCreate
+}: {
+  appKey?: string | null;
+  /** 从应用全景点进来时要打开的函数、面板与调用记录（只在挂载时读一次） */
+  initialName?: string;
+  initialPanel?: string;
+  initialInvocationId?: number;
+  initialCreate?: boolean;
+}) {
+  const [selectedName, setSelectedName] = useState(initialName ?? "");
+  const [createOpen, setCreateOpen] = useState(Boolean(initialCreate));
+  const [panel, setPanel] = useState(initialPanel || "script");
+  // 调用面板的初始定位：从全景点一条错误进来时直接展开它，
+  // 从触发器卡片点「查看调用」时按触发器筛选。换函数即失效（按函数名记）。
+  const [invocationFocus, setInvocationFocus] = useState<{
+    name: string;
+    invocationId?: number;
+    triggerId?: number;
+    seq: number;
+  } | null>(initialName && initialInvocationId ? { name: initialName, invocationId: initialInvocationId, seq: 0 } : null);
   const [keyword, setKeyword] = useState("");
   const [listCollapsed, setListCollapsed] = useState(false);
   // 建函数时选的模板：新函数还没有任何版本，编辑器要用它当起始正文
@@ -260,6 +283,10 @@ export function FunctionManager({ appKey }: { appKey?: string | null }) {
                       <ScrollText className="size-3.5" />
                       调用
                     </TabsTrigger>
+                    <TabsTrigger value="triggers" className="text-xs">
+                      <Zap className="size-3.5" />
+                      触发器
+                    </TabsTrigger>
                     <TabsTrigger value="docs" className="text-xs">
                       <BookOpenText className="size-3.5" />
                       接入
@@ -288,7 +315,35 @@ export function FunctionManager({ appKey }: { appKey?: string | null }) {
                   <FunctionOverviewPanel key={selected.name} appKey={appKey} selected={selected} />
                 </TabsContent>
                 <TabsContent value="invocations" className="min-h-0 flex-1 overflow-y-auto p-3">
-                  <FunctionInvocationsPanel key={selected.name} appKey={appKey} selected={selected} />
+                  {(() => {
+                    const focus = invocationFocus?.name === selected.name ? invocationFocus : null;
+                    return (
+                      <FunctionInvocationsPanel
+                        key={`${selected.name}:${focus?.seq ?? "-"}`}
+                        appKey={appKey}
+                        selected={selected}
+                        catalog={catalogQuery.data}
+                        initialInvocationId={focus?.invocationId}
+                        initialTriggerId={focus?.triggerId}
+                      />
+                    );
+                  })()}
+                </TabsContent>
+                <TabsContent value="triggers" className="min-h-0 flex-1 overflow-y-auto p-3">
+                  <FunctionTriggersPanel
+                    key={selected.name}
+                    appKey={appKey}
+                    selected={selected}
+                    catalog={catalogQuery.data}
+                    onViewInvocations={(triggerId) => {
+                      setInvocationFocus((current) => ({
+                        name: selected.name,
+                        triggerId,
+                        seq: (current?.seq ?? 0) + 1
+                      }));
+                      setPanel("invocations");
+                    }}
+                  />
                 </TabsContent>
                 <TabsContent value="docs" className="min-h-0 flex-1 overflow-y-auto p-3">
                   <FunctionDocsPanel key={selected.name} appKey={appKey} selected={selected} />

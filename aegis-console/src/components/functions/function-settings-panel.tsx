@@ -181,9 +181,9 @@ export function FunctionSettingsPanel({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="draft">草稿 · 不可被调用</SelectItem>
-                <SelectItem value="active">已启用 · 可被调用</SelectItem>
-                <SelectItem value="disabled">已停用 · 拒绝调用</SelectItem>
+                <SelectItem value="draft">草稿，不可被调用</SelectItem>
+                <SelectItem value="active">已启用，可被调用</SelectItem>
+                <SelectItem value="disabled">已停用，拒绝调用</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -202,6 +202,7 @@ export function FunctionSettingsPanel({
           <CardContent className="space-y-3">
             <CapabilityPicker
               catalog={catalog?.capabilities ?? []}
+              groups={catalog?.groups}
               selected={form.capabilities}
               onChange={(next) => patch("capabilities", next)}
             />

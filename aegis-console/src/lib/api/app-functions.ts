@@ -106,6 +106,27 @@ export type AppFunctionInvocation = {
   errorMessage?: string;
   result?: AppFunctionResult;
   createdAt: string;
+  /** 调用来源：接入方 / 事件 / 定时 / 控制台 / 函数编排 */
+  source?: AppFunctionSource;
+  /** 由触发器拉起时的触发器编号 */
+  triggerId?: number;
+  /** 版本号（后端联查好的，不必再按 versionId 去对） */
+  version?: string;
+  /** 业务错误码（aegis.fail 的 code）或平台错误码 */
+  errorCode?: number;
+  /** 入参超过留存上限时为 true：这条调用无法重放 */
+  inputTruncated?: boolean;
+};
+
+export type AppFunctionSource = "api" | "event" | "schedule" | "console" | "function";
+
+export type AppFunctionUsage = { calls: number; mutations: number; fetches: number };
+
+/** 单条调用的完整记录：列表行加上入参、日志与额度（只有详情接口带） */
+export type AppFunctionInvocationDetail = AppFunctionInvocation & {
+  input?: unknown;
+  logs?: AppFunctionLogEntry[];
+  usage?: AppFunctionUsage;
 };
 
 export type AppFunctionInvocationPage = {
@@ -264,8 +285,45 @@ export type FunctionScriptTemplate = {
   sampleInput?: string;
 };
 
+/** 能力分组的标题与说明，顺序即展示顺序（后端 capabilities_systems.go） */
+export type FunctionCapabilityGroup = { key: string; label: string; hint: string };
+
+/** 平台事件携带的一项数据，脚本里读作 ctx.trigger.data.<key> */
+export type FunctionTriggerEventField = { key: string; label: string; type: string };
+
+export type FunctionTriggerEvent = {
+  key: string;
+  label: string;
+  hint: string;
+  /** 事件分组的展示名（账号 / 成长 / 交易 …），后端直接给中文 */
+  group: string;
+  hook?: string;
+  /** 事件带着一个应用用户：需要用户身份的能力照常可用 */
+  hasUser: boolean;
+  fields: FunctionTriggerEventField[];
+};
+
+/** rights.grant 能发的物品（与物品发放同一份目录，人工发放除外） */
+export type FunctionGrantItem = {
+  type: string;
+  label: string;
+  hint: string;
+  group: string;
+  value: string;
+  unit?: string;
+  min?: number;
+  max?: number;
+  scalable?: boolean;
+  needsLoginCard?: boolean;
+  pending?: boolean;
+};
+
 export type FunctionCatalog = {
   capabilities: FunctionCapability[];
+  /** 旧版后端没有这三项：分组缺省时按能力自带的 group 键分节 */
+  groups?: FunctionCapabilityGroup[];
+  triggerEvents?: FunctionTriggerEvent[];
+  grantItems?: FunctionGrantItem[];
   limits: FunctionRuntimeLimits;
   templates: FunctionScriptTemplate[];
   /** 与能力无关、永远存在的那部分 .d.ts（AegisContext / AegisUser / AegisCrypto…） */
@@ -275,7 +333,10 @@ export type FunctionCatalog = {
   inputSchemaTemplate: string;
 };
 
-/** 能力分组的展示名。分组键由后端定义，这里只负责翻译。 */
+/**
+ * 能力分组的兜底展示名：只在后端目录没下发 `groups` 时使用（旧版后端）。
+ * 新后端以 `catalog.groups` 为准，这张表不再随后端新增分组同步。
+ */
 export const CAPABILITY_GROUP_LABELS: Record<string, string> = {
   identity: "用户与身份",
   asset: "资产",
@@ -443,6 +504,8 @@ export function testAppFunction(
     config?: Record<string, unknown>;
     asUserId?: number;
     timeoutMs?: number;
+    /** 模拟一次触发（ctx.trigger），用来试跑「被事件或定时拉起」那条分支 */
+    trigger?: AppFunctionSimulatedTrigger;
   }
 ) {
   return apiRequest<AppFunctionTestResult>(`${functionPath(appKey, name)}/test`, {
@@ -476,7 +539,8 @@ export function invokeAppFunction(
   token: string,
   appKey: string,
   name: string,
-  payload: { eventId?: string; input: unknown }
+  /** asUserId：以某个应用用户的身份真实调用（来源记为 console） */
+  payload: { eventId?: string; input: unknown; asUserId?: number }
 ) {
   return apiRequest<AppFunctionResult>(`${functionPath(appKey, name)}/invoke`, {
     method: "POST",
@@ -489,11 +553,51 @@ export function listAppFunctionInvocations(
   token: string,
   appKey: string,
   name: string,
-  query: { status?: string; callerType?: string; eventId?: string; page?: number; limit?: number } = {}
+  query: AppFunctionInvocationQuery = {}
 ) {
   return apiRequest<AppFunctionInvocationPage>(
     `${functionPath(appKey, name)}/invocations${buildQuery({ ...query })}`,
     { token }
+  );
+}
+
+export type AppFunctionInvocationQuery = {
+  status?: string;
+  callerType?: string;
+  eventId?: string;
+  source?: string;
+  triggerId?: number;
+  callerId?: number;
+  page?: number;
+  limit?: number;
+};
+
+/** 单条调用的完整记录（入参、日志、额度、副作用） */
+export function getAppFunctionInvocation(
+  token: string,
+  appKey: string,
+  name: string,
+  invocationId: number
+) {
+  return apiRequest<AppFunctionInvocationDetail>(
+    `${functionPath(appKey, name)}/invocations/${invocationId}`,
+    { token }
+  );
+}
+
+/**
+ * 重放：用这次调用的入参与身份，在当前激活版本上**试跑**一遍。
+ * 与试跑同形、同语义 —— 写操作只记录不执行，失败也是 200。
+ */
+export function replayAppFunctionInvocation(
+  token: string,
+  appKey: string,
+  name: string,
+  invocationId: number
+) {
+  return apiRequest<AppFunctionTestResult>(
+    `${functionPath(appKey, name)}/invocations/${invocationId}/replay`,
+    { method: "POST", token }
   );
 }
 
@@ -541,6 +645,247 @@ export function createAppFunctionKey(token: string, appKey: string, name: string
 export function revokeAppFunctionKey(token: string, appKey: string, keyId: number) {
   return apiRequest<{ revoked: boolean }>(`${appPath(appKey)}/function-keys/${keyId}`, {
     method: "DELETE",
+    token
+  });
+}
+
+// ── 应用全景 ──
+
+export type AppFunctionOverviewItem = {
+  name: string;
+  description: string;
+  runtime: AppFunctionRuntime;
+  status: AppFunction["status"];
+  activeVersion?: string;
+  capabilities: string[];
+  triggers: number;
+  total: number;
+  failed: number;
+  /** 0~1，分母是已结束的调用（不含执行中） */
+  successRate: number;
+  p95Ms: number;
+  lastInvokedAt?: string;
+  updatedAt: string;
+  /** 时间窗内每小时的调用量（成功 + 失败），长度 windowHours + 1 */
+  spark: number[];
+};
+
+export type AppFunctionOverviewError = {
+  function: string;
+  eventId: string;
+  /** 调用记录编号，跳调用详情用 */
+  id: number;
+  source: AppFunctionSource;
+  message: string;
+  createdAt: string;
+};
+
+export type AppFunctionOverview = {
+  windowHours: number;
+  functions: number;
+  /** 可被调用的函数（已启用且有激活版本） */
+  active: number;
+  triggers: number;
+  triggersEnabled: number;
+  pendingJobs: number;
+  failedJobs: number;
+  total: number;
+  success: number;
+  failed: number;
+  successRate: number;
+  p95Ms: number;
+  sources: Array<{ source: AppFunctionSource; count: number }>;
+  /** 全部函数声明过的能力：count 是声明它的函数个数 */
+  capabilities: Array<{ key: string; count: number }>;
+  /** 按小时分桶，后端已补齐空桶 */
+  buckets: Array<{ at: string; success: number; failed: number }>;
+  items: AppFunctionOverviewItem[];
+  recentErrors: AppFunctionOverviewError[];
+};
+
+/** 一个应用全部函数的运行全景（时间窗上限 168 小时） */
+export function getAppFunctionOverview(token: string, appKey: string, windowHours = 24) {
+  return apiRequest<AppFunctionOverview>(
+    `${appPath(appKey)}/function-overview${buildQuery({ windowHours })}`,
+    { token }
+  );
+}
+
+// ── 触发器 ──
+
+export type AppFunctionTriggerKind = "event" | "schedule";
+
+export type AppFunctionTrigger = {
+  id: number;
+  appId: number;
+  functionId: number;
+  function?: string;
+  kind: AppFunctionTriggerKind;
+  event?: string;
+  cron?: string;
+  timezone?: string;
+  description: string;
+  /** 每次触发时作为 ctx.input 传入的固定入参 */
+  input: Record<string, unknown> | null;
+  enabled: boolean;
+  nextRunAt?: string;
+  lastFireAt?: string;
+  lastStatus?: string;
+  lastError?: string;
+  fireCount: number;
+  failCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/**
+ * 新建 / 修改触发器。
+ *
+ * 修改时**没传的说明会被清空**（后端只对 event / cron / timezone / input 沿用原值），
+ * 所以哪怕只是切换启用开关，也要把整条触发器带上。
+ */
+export type AppFunctionTriggerInput = {
+  kind: AppFunctionTriggerKind;
+  event?: string;
+  cron?: string;
+  timezone?: string;
+  description: string;
+  input?: Record<string, unknown>;
+  enabled?: boolean;
+};
+
+export type AppFunctionTriggerJobStatus = "pending" | "running" | "succeeded" | "failed";
+
+export type AppFunctionTriggerJob = {
+  id: number;
+  appId: number;
+  functionId: number;
+  triggerId: number;
+  eventId: string;
+  kind: AppFunctionTriggerKind;
+  event?: string;
+  userId?: number;
+  data: Record<string, unknown> | null;
+  status: AppFunctionTriggerJobStatus;
+  attempts: number;
+  lastError?: string;
+  runAfter: string;
+  firedAt: string;
+  finishedAt?: string;
+};
+
+export type AppFunctionTriggerJobPage = {
+  items: AppFunctionTriggerJob[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+/** 「立即触发」的结果：真实执行，失败也回 200，判成功看 ok */
+export type AppFunctionTriggerFireResult = {
+  ok: boolean;
+  eventId: string;
+  output?: unknown;
+  effects: AppFunctionEffect[];
+  error?: string;
+  errorCode?: number;
+};
+
+/** 试跑时模拟的 ctx.trigger */
+export type AppFunctionSimulatedTrigger = {
+  kind: AppFunctionTriggerKind;
+  event?: string;
+  cron?: string;
+  data?: Record<string, unknown>;
+};
+
+export function listAppFunctionTriggers(token: string, appKey: string, name: string) {
+  return apiRequest<{ items: AppFunctionTrigger[] }>(`${functionPath(appKey, name)}/triggers`, {
+    token
+  });
+}
+
+export function createAppFunctionTrigger(
+  token: string,
+  appKey: string,
+  name: string,
+  payload: AppFunctionTriggerInput
+) {
+  return apiRequest<AppFunctionTrigger>(`${functionPath(appKey, name)}/triggers`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateAppFunctionTrigger(
+  token: string,
+  appKey: string,
+  name: string,
+  triggerId: number,
+  payload: AppFunctionTriggerInput
+) {
+  return apiRequest<AppFunctionTrigger>(`${functionPath(appKey, name)}/triggers/${triggerId}`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteAppFunctionTrigger(
+  token: string,
+  appKey: string,
+  name: string,
+  triggerId: number
+) {
+  return apiRequest<{ id: number }>(`${functionPath(appKey, name)}/triggers/${triggerId}`, {
+    method: "DELETE",
+    token
+  });
+}
+
+/** 立即真实执行一次（同步，不经队列）。事件触发器必须指定一个用户 */
+export function fireAppFunctionTrigger(
+  token: string,
+  appKey: string,
+  name: string,
+  triggerId: number,
+  payload: { userId?: number; data?: Record<string, unknown> }
+) {
+  return apiRequest<AppFunctionTriggerFireResult>(
+    `${functionPath(appKey, name)}/triggers/${triggerId}/fire`,
+    { method: "POST", token, body: JSON.stringify(payload) }
+  );
+}
+
+export type AppFunctionTriggerJobQuery = {
+  triggerId?: number;
+  status?: string;
+  page?: number;
+  limit?: number;
+};
+
+export function listAppFunctionTriggerJobs(
+  token: string,
+  appKey: string,
+  name: string,
+  query: AppFunctionTriggerJobQuery = {}
+) {
+  return apiRequest<AppFunctionTriggerJobPage>(
+    `${functionPath(appKey, name)}/trigger-jobs${buildQuery({ ...query })}`,
+    { token }
+  );
+}
+
+/** 把一个失败的触发任务放回队列 */
+export function retryAppFunctionTriggerJob(
+  token: string,
+  appKey: string,
+  name: string,
+  jobId: number
+) {
+  return apiRequest<{ id: number }>(`${functionPath(appKey, name)}/trigger-jobs/${jobId}/retry`, {
+    method: "POST",
     token
   });
 }

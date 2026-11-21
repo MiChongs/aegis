@@ -6,6 +6,20 @@ import { useAdminToken } from "@/lib/admin-hooks";
 import {
   activateAppFunctionVersion,
   analyzeAppFunction,
+  createAppFunctionTrigger,
+  deleteAppFunctionTrigger,
+  fireAppFunctionTrigger,
+  getAppFunctionInvocation,
+  getAppFunctionOverview,
+  invokeAppFunction,
+  listAppFunctionTriggerJobs,
+  listAppFunctionTriggers,
+  replayAppFunctionInvocation,
+  retryAppFunctionTriggerJob,
+  updateAppFunctionTrigger,
+  type AppFunctionInvocationQuery,
+  type AppFunctionTriggerInput,
+  type AppFunctionTriggerJobQuery,
   createAppFunction,
   createAppFunctionVersion,
   deleteAppFunction,
@@ -39,6 +53,10 @@ const INVOCATIONS_KEY = "app-function-invocations";
 const STATS_KEY = "app-function-stats";
 const KV_KEY = "app-function-kv";
 const ANALYSIS_KEY = "app-function-analysis";
+const OVERVIEW_KEY = "app-function-overview";
+const INVOCATION_KEY = "app-function-invocation";
+const TRIGGERS_KEY = "app-function-triggers";
+const TRIGGER_JOBS_KEY = "app-function-trigger-jobs";
 
 /**
  * 能力目录。它是静态的（只随后端版本变化），因此缓存放到很久 ——
@@ -92,7 +110,7 @@ export function useFunctionVersionSourceQuery(
 export function useFunctionInvocationsQuery(
   appKey: string | null | undefined,
   name: string | null | undefined,
-  query: { status?: string; callerType?: string; eventId?: string; page?: number; limit?: number }
+  query: AppFunctionInvocationQuery
 ) {
   const token = useAdminToken();
   return useQuery({
@@ -127,13 +145,83 @@ export function useFunctionKvQuery(
   });
 }
 
-/** 成组失效：改一个函数会牵动列表 / 版本 / 审计 / 统计四张表。 */
+/**
+ * 应用全景。queryKey 第四位留空（null）：成组失效按「第三位应用、第四位函数名」匹配，
+ * 全景不属于任何一个函数，任何函数的变化都该让它重拉。
+ * 换时间窗时沿用上一份数据，卡片右上角转圈，而不是整页闪回骨架。
+ */
+export function useFunctionAppOverviewQuery(appKey?: string | null, windowHours = 24) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [OVERVIEW_KEY, token, appKey, null, windowHours],
+    queryFn: () => getAppFunctionOverview(token as string, appKey as string, windowHours),
+    enabled: Boolean(token && appKey),
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[2] === appKey ? previous : undefined,
+    refetchInterval: 60 * 1000
+  });
+}
+
+/** 单条调用的完整记录。调用记录落库后不再变化（执行中的除外），缓存一分钟足够 */
+export function useFunctionInvocationQuery(
+  appKey?: string | null,
+  name?: string | null,
+  invocationId?: number | null
+) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [INVOCATION_KEY, token, appKey, name, invocationId],
+    queryFn: () =>
+      getAppFunctionInvocation(token as string, appKey as string, name as string, invocationId as number),
+    enabled: Boolean(token && appKey && name && invocationId),
+    staleTime: 60 * 1000
+  });
+}
+
+export function useFunctionTriggersQuery(appKey?: string | null, name?: string | null) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [TRIGGERS_KEY, token, appKey, name],
+    queryFn: () => listAppFunctionTriggers(token as string, appKey as string, name as string),
+    enabled: Boolean(token && appKey && name),
+    select: (data) => data.items ?? []
+  });
+}
+
+/** 触发任务队列。排队中的任务会自己变化，开着页面时每 15 秒刷一次 */
+export function useFunctionTriggerJobsQuery(
+  appKey: string | null | undefined,
+  name: string | null | undefined,
+  query: AppFunctionTriggerJobQuery
+) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [TRIGGER_JOBS_KEY, token, appKey, name, query],
+    queryFn: () => listAppFunctionTriggerJobs(token as string, appKey as string, name as string, query),
+    enabled: Boolean(token && appKey && name),
+    placeholderData: (previous) => previous,
+    refetchInterval: 15 * 1000
+  });
+}
+
+/** 成组失效：改一个函数会牵动列表 / 版本 / 审计 / 统计 / 全景 / 触发器多张表。 */
 export function useFunctionInvalidator(appKey?: string | null) {
   const client = useQueryClient();
   return useCallback(
     async (name?: string) => {
       await Promise.all(
-        [LIST_KEY, VERSIONS_KEY, VERSION_KEY, INVOCATIONS_KEY, STATS_KEY, KV_KEY].map((key) =>
+        [
+          LIST_KEY,
+          VERSIONS_KEY,
+          VERSION_KEY,
+          INVOCATIONS_KEY,
+          INVOCATION_KEY,
+          STATS_KEY,
+          KV_KEY,
+          OVERVIEW_KEY,
+          TRIGGERS_KEY,
+          TRIGGER_JOBS_KEY
+        ].map((key) =>
           client.invalidateQueries({
             predicate: (query) => {
               const [head, , queryAppKey, queryName] = query.queryKey as unknown[];
@@ -256,5 +344,84 @@ export function useDeleteFunctionKvMutation(appKey?: string | null) {
     mutationFn: (entry: { scope: string; scopeId: number; key: string }) =>
       deleteAppFunctionKv(token as string, appKey as string, entry),
     onSuccess: () => invalidate()
+  });
+}
+
+export function useSaveTriggerMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useFunctionInvalidator(appKey);
+  return useMutation({
+    mutationFn: (variables: { name: string; triggerId?: number; payload: AppFunctionTriggerInput }) =>
+      variables.triggerId
+        ? updateAppFunctionTrigger(
+            token as string,
+            appKey as string,
+            variables.name,
+            variables.triggerId,
+            variables.payload
+          )
+        : createAppFunctionTrigger(token as string, appKey as string, variables.name, variables.payload),
+    onSuccess: (_data, variables) => invalidate(variables.name)
+  });
+}
+
+export function useDeleteTriggerMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useFunctionInvalidator(appKey);
+  return useMutation({
+    mutationFn: (variables: { name: string; triggerId: number }) =>
+      deleteAppFunctionTrigger(token as string, appKey as string, variables.name, variables.triggerId),
+    onSuccess: (_data, variables) => invalidate(variables.name)
+  });
+}
+
+/** 立即触发是真实执行：调用审计、触发器计数、全景都会变 */
+export function useFireTriggerMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useFunctionInvalidator(appKey);
+  return useMutation({
+    mutationFn: (variables: {
+      name: string;
+      triggerId: number;
+      payload: Parameters<typeof fireAppFunctionTrigger>[4];
+    }) =>
+      fireAppFunctionTrigger(
+        token as string,
+        appKey as string,
+        variables.name,
+        variables.triggerId,
+        variables.payload
+      ),
+    onSettled: (_data, _error, variables) => invalidate(variables.name)
+  });
+}
+
+export function useRetryTriggerJobMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useFunctionInvalidator(appKey);
+  return useMutation({
+    mutationFn: (variables: { name: string; jobId: number }) =>
+      retryAppFunctionTriggerJob(token as string, appKey as string, variables.name, variables.jobId),
+    onSuccess: (_data, variables) => invalidate(variables.name)
+  });
+}
+
+/** 真实调用（管理员发起，可代某个用户） */
+export function useInvokeFunctionMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useFunctionInvalidator(appKey);
+  return useMutation({
+    mutationFn: (variables: { name: string; payload: Parameters<typeof invokeAppFunction>[3] }) =>
+      invokeAppFunction(token as string, appKey as string, variables.name, variables.payload),
+    onSettled: (_data, _error, variables) => invalidate(variables.name)
+  });
+}
+
+/** 重放是试跑：不产生真实副作用，因此与试跑一样不失效任何缓存 */
+export function useReplayInvocationMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  return useMutation({
+    mutationFn: (variables: { name: string; invocationId: number }) =>
+      replayAppFunctionInvocation(token as string, appKey as string, variables.name, variables.invocationId)
   });
 }

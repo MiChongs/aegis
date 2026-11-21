@@ -139,6 +139,7 @@ export function CreateFunctionDialog({
                 <Label>能力声明</Label>
                 <CapabilityPicker
                   catalog={capabilityCatalog}
+                  groups={catalog?.groups}
                   selected={capabilities}
                   onChange={setCapabilities}
                 />

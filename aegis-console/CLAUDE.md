@@ -1679,7 +1679,7 @@ OpenTopoMap / MapTiler✱ / Stadia✱）、**中国大陆**（高德 / 高德卫
 
 ## 远程函数（/functions）
 
-三个页签同步到 URL（`?tab=functions|kv|keys`）：
+四个页签同步到 URL（`?tab=overview|functions|kv|keys`），默认落在 `overview`（应用全景）。全景里点函数 / 点错误带 `fn`、`panel`、`inv` 跳到工作台，`FunctionManager` 按这几个参数挂载一次初始定位（key 带上它们）：
 
 | 文件 | 职责 |
 |---|---|
@@ -1687,12 +1687,16 @@ OpenTopoMap / MapTiler✱ / Stadia✱）、**中国大陆**（高德 / 高德卫
 | `components/functions/function-manager.tsx` | 左侧函数列表（可折叠 / 可搜索）+ 四个面板的装配 |
 | `components/ui/resizable.tsx` | 可拖拽分栏与布局记忆（`usePanelLayout`），本页全部分隔线都出自这里 |
 | `components/functions/function-create-dialog.tsx` | 新建：运行时 / 起始模板 / 能力 |
+| `components/functions/function-app-overview.tsx` | 应用全景（`/function-overview`）：指标条、按小时成败柱图、调用来源环图、系统覆盖（按后端能力分组，格内小方块即能力）、最近错误（点了直达调用详情）、函数健康表（火花线、快捷入口） |
 | `components/functions/function-overview-panel.tsx` | 运行状况：成功率 / 耗时分位 / 趋势 / Top 错误 |
 | `components/functions/function-editor-panel.tsx` | 脚本工作台：写 → 检查 → 试跑 → 发布 → 回滚 |
-| `components/functions/function-invocations-panel.tsx` | 调用审计（筛选 + 分页 + 详情抽屉）与真实调用 |
+| `components/functions/function-invocations-panel.tsx` | 调用审计（状态 / 来源 / 调用方 / 触发器 / 调用方 ID / eventId 筛选）、详情抽屉（入参、返回值、副作用时间线、日志、额度、重放）、真实调用弹窗（可代用户） |
+| `components/functions/function-triggers-panel.tsx` | 触发器卡片（启用开关、下次执行、累计 / 失败、立即触发）与触发任务队列（状态筛选、重试） |
+| `components/functions/function-trigger-dialogs.tsx` | 触发器编辑（事件按后端分组 + ctx.trigger.data 字段表 / cron 预设 + 时区 + 下几次预览 / 固定入参）、立即触发（真实执行，事件需选用户） |
+| `components/functions/function-cron.ts` | cron 人话描述与下几次执行预览（语法同 robfig/cron v3，**只做预览**，nextRunAt 以后端为准） |
 | `components/functions/function-settings-panel.tsx` | 能力、运行闸门、函数配置、删除 |
 | `components/functions/function-kv-panel.tsx` | KV 浏览器（脚本的服务端独占状态） |
-| `components/functions/function-shared.tsx` | 能力勾选树、风险徽标、副作用清单、格式化 |
+| `components/functions/function-shared.tsx` | 能力勾选器（按 `catalog.groups` 分节、搜索、读写 / 风险过滤、组内全选、选中汇总）、来源 / 调用方 / 状态口径、日志、额度、副作用、格式化 |
 | `components/functions/script-editor.tsx` | Monaco：SDK 类型 + 诊断标记 + 差异视图 + 快捷键 |
 | `components/functions/json-editor.tsx` | 带 JSON Schema 的 JSON 编辑器（试跑 input / 函数配置 / 入参契约共用） |
 | `lib/monaco/aegis-language.ts` | 平台语义的 provider：悬浮 / 配置补全 / 快速修复 / Code Lens |
