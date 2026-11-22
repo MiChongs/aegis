@@ -44,6 +44,7 @@ import {
 import { formatRelative, localDateKey } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import { CosmeticItemPreview } from "./cosmetic-preview";
+import { WorkshopSettingsCard } from "./cosmetics-workshop-settings";
 import { RarityBadge, SLOT_META, SLOT_ORDER, formatBytes, formatCount, slotLabel, sourceLabel } from "./cosmetic-shared";
 
 const SLOT_COLORS: Record<CosmeticSlot, { light: string; dark: string }> = {
@@ -177,6 +178,8 @@ export function CosmeticsOverviewPanel({
         <GrantTrend className="xl:col-span-3" loading={loading} stats={stats} />
         <SettingsCard className="xl:col-span-2" appKey={appKey} catalog={catalog} canWrite={canWrite} />
       </div>
+
+      <WorkshopSettingsCard appKey={appKey} catalog={catalog} canWrite={canWrite} />
 
       <div className="grid gap-4 xl:grid-cols-2">
         <SlotDistribution loading={loading} stats={stats} catalog={catalog} onOpenSlot={(slot) => onOpenLibrary({ slot })} />
@@ -530,7 +533,7 @@ function RecentGrants({
   );
 }
 
-/** 应用设置：开关 + 勋章同时佩戴数（1–目录上限） */
+/** 应用设置：开关 + 勋章同时佩戴数（1–目录上限）。只提交这两项，工坊设置由 WorkshopSettingsCard 单独保存 */
 function SettingsCard({
   className,
   appKey,

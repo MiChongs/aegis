@@ -723,6 +723,7 @@ function WorkspaceInner({
           appKey={appKey}
           catalog={catalog}
           kind={picker.kind}
+          usedIds={Object.values(design.assets ?? {}).map((ref) => ref.id)}
           onPick={(asset) => {
             if (picker.particleLayer) pickParticleAsset(asset, picker.particleLayer);
             else insertAsset(asset, picker.kind);

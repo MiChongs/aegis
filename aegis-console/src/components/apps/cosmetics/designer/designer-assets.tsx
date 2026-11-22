@@ -13,31 +13,44 @@ import { cn } from "@/lib/utils";
 import { AssetDropzone, AssetThumb } from "../cosmetics-assets-panel";
 import { useDesigner } from "./designer-store";
 
-/**
- * 设计器的素材面板：素材库网格（点一下插入为图层；选中了图片 / 序列帧图层时可以「替换」它的素材）、
- * 直接上传后插入、本件已引用的素材。插入时自动写进 design.assets（同一素材复用同一个键）。
- */
-export function AssetBrowser({
-  appKey,
-  catalog,
-  readOnly,
-  dense,
-  onInsert,
-  onReplace
-}: {
+type AssetBrowserProps = {
   appKey: string;
   catalog?: CosmeticCatalog | null;
   readOnly: boolean;
   dense?: boolean;
   onInsert: (asset: CosmeticAsset) => void;
   onReplace?: (asset: CosmeticAsset) => void;
-}) {
+};
+
+/**
+ * 设计器的素材面板：素材库网格（点一下插入为图层；选中了图片 / 序列帧图层时可以「替换」它的素材）、
+ * 直接上传后插入、本件已引用的素材。插入时自动写进 design.assets（同一素材复用同一个键）。
+ */
+export function AssetBrowser(props: AssetBrowserProps) {
+  const design = useDesigner((s) => s.design);
+  const used = Object.values(design.assets ?? {}).map((ref) => ref.id);
+  return <AssetLibrary {...props} usedIds={used} usedLabel="本件已引用" />;
+}
+
+/**
+ * 素材库浏览（不依赖设计器）：搜索、上传、网格点选。`usedIds` 里的素材另起一组置顶（设计器里是
+ * 「本件已引用」，工坊零件库里是「已是零件」）。
+ */
+export function AssetLibrary({
+  appKey,
+  catalog,
+  readOnly,
+  dense,
+  usedIds,
+  usedLabel,
+  onInsert,
+  onReplace
+}: AssetBrowserProps & { usedIds?: number[]; usedLabel?: string }) {
   const [keyword, setKeyword] = useState("");
   const [kind, setKind] = useState<"image" | "sprite">("image");
   const debounced = useDebouncedValue(keyword.trim());
   const query = useCosmeticAssetsQuery(appKey, { keyword: debounced, limit: 120 });
-  const design = useDesigner((s) => s.design);
-  const used = new Set(Object.values(design.assets ?? {}).map((ref) => ref.id));
+  const used = new Set(usedIds ?? []);
   const assets = query.data?.items ?? [];
   const inUse = assets.filter((asset) => used.has(asset.id));
 
@@ -72,7 +85,7 @@ export function AssetBrowser({
       <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
         {inUse.length ? (
           <div className="mb-3 flex flex-col gap-1.5">
-            <span className="text-[11px] font-semibold text-muted-foreground">本件已引用</span>
+            <span className="text-[11px] font-semibold text-muted-foreground">{usedLabel}</span>
             <AssetGrid assets={inUse} dense={dense} readOnly={readOnly} onInsert={onInsert} onReplace={onReplace} />
           </div>
         ) : null}
@@ -148,6 +161,10 @@ export function AssetPickerDialog({
   appKey,
   catalog,
   kind,
+  title,
+  description,
+  usedIds,
+  usedLabel,
   onPick
 }: {
   open: boolean;
@@ -155,19 +172,26 @@ export function AssetPickerDialog({
   appKey: string;
   catalog?: CosmeticCatalog | null;
   kind: "image" | "sprite";
+  title?: string;
+  description?: string;
+  /** 置顶的一组素材（设计器传本件已引用的） */
+  usedIds?: number[];
+  usedLabel?: string;
   onPick: (asset: CosmeticAsset) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[78dvh] flex-col gap-0 p-0 sm:max-w-2xl">
         <DialogHeader className="border-b px-5 pt-4 pb-3">
-          <DialogTitle>{kind === "sprite" ? "选择序列帧素材" : "选择图片素材"}</DialogTitle>
-          <DialogDescription>点选素材插入为新图层，或上传后直接插入</DialogDescription>
+          <DialogTitle>{title ?? (kind === "sprite" ? "选择序列帧素材" : "选择图片素材")}</DialogTitle>
+          <DialogDescription>{description ?? "点选素材插入为新图层，或上传后直接插入"}</DialogDescription>
         </DialogHeader>
-        <AssetBrowser
+        <AssetLibrary
           appKey={appKey}
           catalog={catalog}
           readOnly={false}
+          usedIds={usedIds}
+          usedLabel={usedLabel ?? "本件已引用"}
           onInsert={(asset) => {
             onPick(asset);
             onOpenChange(false);

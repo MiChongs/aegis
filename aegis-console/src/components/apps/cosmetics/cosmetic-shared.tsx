@@ -132,13 +132,23 @@ export const REASON_LABEL: Record<string, string> = {
   need_level: "等级不够",
   need_feature: "没有对应功能",
   unavailable: "装扮已下架或未发布",
-  slot_mismatch: "槽位不符"
+  slot_mismatch: "槽位不符",
+  need_workshop: "工坊额度已失效"
 };
 
 export function reasonLabel(reason?: string | null) {
   if (!reason) return "";
   return REASON_LABEL[reason] ?? reason;
 }
+
+/** 工坊零件可用的槽位（昵称样式作品只是一份 nameStyle，用不到零件） */
+export const WORKSHOP_PART_SLOTS = ["avatar_frame", "profile_card", "badge"] as const;
+
+/** 工坊作品的状态：只有正常与被运营下架两种 */
+export const WORKSHOP_STATUS_META: Record<"active" | "archived", { label: string; variant: "success" | "outline" }> = {
+  active: { label: "正常", variant: "success" },
+  archived: { label: "已下架", variant: "outline" }
+};
 
 export function termText(days: number) {
   return cosmeticTermLabel(days);

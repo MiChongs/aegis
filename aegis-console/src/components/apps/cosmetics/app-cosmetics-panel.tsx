@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BarChart3, Images, ReceiptText, Shirt, Sparkles } from "lucide-react";
+import { BarChart3, Images, Puzzle, ReceiptText, ScanEye, Shirt, Sparkles } from "lucide-react";
 import { NoAppSelected } from "@/components/apps/app-config-primitives";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,6 +11,8 @@ import { CosmeticsAssetsPanel } from "./cosmetics-assets-panel";
 import { CosmeticsLibraryPanel, type LibraryFilter } from "./cosmetics-library-panel";
 import { CosmeticsOverviewPanel } from "./cosmetics-overview-panel";
 import { CosmeticsOwnershipsPanel, type OwnershipFilter } from "./cosmetics-ownerships-panel";
+import { CosmeticsWorkshopItemsPanel } from "./cosmetics-workshop-items-panel";
+import { CosmeticsWorkshopPartsPanel } from "./cosmetics-workshop-parts-panel";
 import { CosmeticDesigner } from "./designer/cosmetic-designer";
 
 /**
@@ -22,6 +24,8 @@ import { CosmeticDesigner } from "./designer/cosmetic-designer";
  * | 装扮库 | 每个槽位有哪些装扮、长什么样、上没上架；新建（可套模板）、复制、排序、上下架、删除，进设计器 |
  * | 素材库 | 上传与管理设计稿引用的图片和序列帧 |
  * | 持有记录 | 谁从哪里得到了哪一件、到什么时候 |
+ * | 零件库 | 自定义工坊里用户能用哪些官方图片与序列帧（工坊开关与额度在概览的「自定义工坊」卡片） |
+ * | 作品巡查 | 用户在工坊里做了什么；下架（原因作者可见）与恢复 |
  *
  * 设计器是全屏弹层（designer/），关闭时刷新列表上的「未发布修改」与预览图。
  * 视图状态不进 URL：`?tab=` 已经被应用区块占用。
@@ -30,7 +34,9 @@ const VIEWS = [
   { key: "overview", label: "概览", icon: BarChart3 },
   { key: "library", label: "装扮库", icon: Shirt },
   { key: "assets", label: "素材库", icon: Images },
-  { key: "ownerships", label: "持有记录", icon: ReceiptText }
+  { key: "ownerships", label: "持有记录", icon: ReceiptText },
+  { key: "workshop-parts", label: "零件库", icon: Puzzle },
+  { key: "workshop-items", label: "作品巡查", icon: ScanEye }
 ] as const;
 
 type ViewKey = (typeof VIEWS)[number]["key"];
@@ -114,6 +120,10 @@ export function AppCosmeticsPanel({ appKey }: { appKey?: string | null }) {
         />
       ) : null}
       {view === "assets" ? <CosmeticsAssetsPanel appKey={appKey} catalog={catalog} can={permissions} /> : null}
+      {view === "workshop-parts" ? <CosmeticsWorkshopPartsPanel appKey={appKey} catalog={catalog} can={permissions} /> : null}
+      {view === "workshop-items" ? (
+        <CosmeticsWorkshopItemsPanel appKey={appKey} catalog={catalog} canWrite={permissions.write} />
+      ) : null}
       {view === "ownerships" ? (
         <CosmeticsOwnershipsPanel key={ownershipFilter.key} appKey={appKey} catalog={catalog} initial={ownershipFilter.value} />
       ) : null}

@@ -3,8 +3,10 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createCosmeticItem,
+  createWorkshopPart,
   deleteCosmeticAsset,
   deleteCosmeticItem,
+  deleteWorkshopPart,
   duplicateCosmeticItem,
   getCosmeticCatalog,
   getCosmeticItem,
@@ -16,15 +18,20 @@ import {
   listCosmeticItems,
   listCosmeticOwnerships,
   listCosmeticRevisions,
+  listWorkshopItems,
+  listWorkshopParts,
   publishCosmeticItem,
   reorderCosmeticItems,
   restoreCosmeticRevision,
+  restoreWorkshopItem,
   revokeUserCosmetic,
   saveCosmeticDraft,
   saveCosmeticSettings,
   setCosmeticStatus,
+  takedownWorkshopItem,
   unequipUserCosmetic,
   updateCosmeticItem,
+  updateWorkshopPart,
   uploadCosmeticAsset,
   uploadCosmeticPreview,
   type CosmeticAssetFilter,
@@ -32,9 +39,12 @@ import {
   type CosmeticItemFilter,
   type CosmeticItemPayload,
   type CosmeticOwnershipFilter,
+  type CosmeticSettingsPayload,
   type CosmeticSlot,
   type CosmeticStatus,
-  type Design
+  type Design,
+  type WorkshopItemFilter,
+  type WorkshopPartInput
 } from "@/lib/api/cosmetics";
 import { useAdminToken } from "@/lib/admin-hooks";
 import { rememberCosmeticNames } from "@/lib/cosmetic-names";
@@ -45,6 +55,7 @@ import { rememberCosmeticNames } from "@/lib/cosmetic-names";
  * 失效关系集中在这里：装扮的任何写操作（含草稿、发布、上下架）都影响列表、单件、统计与目录里的设置；
  * 素材的上传与删除影响素材库与统计（素材占用）；给用户发放 / 收回 / 摘下影响该用户的装扮页、持有记录、
  * 列表上的持有与佩戴人数与统计。整组失效，不在组件里逐个点名。
+ * 工坊：零件的写操作影响零件库与素材库（被零件占用的素材不能删）；作品下架 / 恢复影响作品列表与用户的装扮页。
  */
 
 const KEY = {
@@ -56,7 +67,9 @@ const KEY = {
   assets: "admin-cosmetic-assets",
   ownerships: "admin-cosmetic-ownerships",
   stats: "admin-cosmetic-stats",
-  user: "admin-cosmetic-user"
+  user: "admin-cosmetic-user",
+  workshopParts: "admin-cosmetic-workshop-parts",
+  workshopItems: "admin-cosmetic-workshop-items"
 } as const;
 
 const SCOPE = Object.values(KEY);
@@ -93,7 +106,7 @@ export function useSaveCosmeticSettingsMutation(appKey?: string | null) {
   const token = useAdminToken();
   const invalidate = useInvalidateCosmetics();
   return useMutation({
-    mutationFn: (settings: { enabled: boolean; badgeSlots: number }) =>
+    mutationFn: (settings: CosmeticSettingsPayload) =>
       saveCosmeticSettings(token as string, appKey as string, settings),
     onSuccess: invalidate
   });
@@ -345,5 +358,85 @@ export function useUnequipUserCosmeticMutation(appKey?: string | null, userId?: 
     mutationFn: (input: { slot: CosmeticSlot; position: number }) =>
       unequipUserCosmetic(token as string, appKey as string, userId as number, input.slot, input.position),
     onSuccess: invalidate
+  });
+}
+
+// ── 自定义工坊 ──
+
+export function useWorkshopPartsQuery(appKey?: string | null, enabled = true) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [KEY.workshopParts, token, appKey],
+    queryFn: async () => (await listWorkshopParts(token as string, appKey as string)).items ?? [],
+    enabled: Boolean(token && appKey && enabled)
+  });
+}
+
+function useInvalidateWorkshopParts() {
+  const queryClient = useQueryClient();
+  return async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: [KEY.workshopParts] }),
+      queryClient.invalidateQueries({ queryKey: [KEY.assets] })
+    ]);
+  };
+}
+
+export function useSaveWorkshopPartMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateWorkshopParts();
+  return useMutation({
+    mutationFn: (input: { partId?: number; payload: WorkshopPartInput }) =>
+      input.partId
+        ? updateWorkshopPart(token as string, appKey as string, input.partId, input.payload)
+        : createWorkshopPart(token as string, appKey as string, input.payload),
+    onSuccess: invalidate
+  });
+}
+
+export function useDeleteWorkshopPartMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateWorkshopParts();
+  return useMutation({
+    mutationFn: (partId: number) => deleteWorkshopPart(token as string, appKey as string, partId),
+    onSuccess: invalidate
+  });
+}
+
+export function useWorkshopItemsQuery(appKey?: string | null, filter: WorkshopItemFilter = {}) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [
+      KEY.workshopItems,
+      token,
+      appKey,
+      filter.userId ?? 0,
+      filter.slot ?? "",
+      filter.status ?? "",
+      filter.keyword ?? "",
+      filter.page ?? 1,
+      filter.limit ?? 20
+    ],
+    queryFn: () => listWorkshopItems(token as string, appKey as string, filter),
+    enabled: Boolean(token && appKey),
+    placeholderData: keepPreviousData
+  });
+}
+
+/** 下架（带原因）或恢复一件作品 */
+export function useSetWorkshopItemStatusMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { itemId: number; takedown: boolean; reason?: string }) =>
+      input.takedown
+        ? takedownWorkshopItem(token as string, appKey as string, input.itemId, input.reason ?? "")
+        : restoreWorkshopItem(token as string, appKey as string, input.itemId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [KEY.workshopItems] }),
+        queryClient.invalidateQueries({ queryKey: [KEY.user] })
+      ]);
+    }
   });
 }

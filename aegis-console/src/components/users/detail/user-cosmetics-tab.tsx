@@ -202,6 +202,12 @@ function LoadoutView({
   );
 }
 
+/** 佩戴行的装扮名；工坊作品服务端会在名字后缀「（工坊作品）」，这里改用标记显示 */
+function equipName(row: CosmeticEquipRow) {
+  if (!row.name) return row.workshop ? "" : `#${row.cosmeticId}`;
+  return row.workshop ? row.name.replace(/（工坊作品）$/, "") : row.name;
+}
+
 function EquipsSection({
   appKey,
   userId,
@@ -242,7 +248,20 @@ function EquipsSection({
         </span>
       )
     },
-    { id: "name", header: "装扮", cell: (row) => <span className="text-sm">{row.name || `#${row.cosmeticId}`}</span> },
+    {
+      id: "name",
+      header: "装扮",
+      cell: (row) => (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-sm">{equipName(row)}</span>
+          {row.workshop ? (
+            <Badge variant="info" size="sm" className="shrink-0">
+              工坊作品
+            </Badge>
+          ) : null}
+        </span>
+      )
+    },
     {
       id: "effective",
       header: "是否生效",
@@ -276,7 +295,7 @@ function EquipsSection({
           <Button
             size="xs"
             variant="ghost"
-            onClick={() => setTarget({ slot: row.slot, position: row.position, label: `「${row.name || slotLabel(row.slot, catalog)}」` })}
+            onClick={() => setTarget({ slot: row.slot, position: row.position, label: `「${equipName(row) || slotLabel(row.slot, catalog)}」` })}
           >
             <X />
             摘下

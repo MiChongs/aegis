@@ -186,6 +186,12 @@ export type CosmeticItem = {
   publishedAt?: string;
   owners?: number;
   equipped?: number;
+  /** official 官方 / workshop 工坊作品 */
+  origin?: "official" | "workshop";
+  /** 工坊作品的作者 */
+  creatorUserId?: number;
+  /** 工坊作品被运营下架的原因（作者可见） */
+  takedownReason?: string;
 };
 
 export type CosmeticOwnership = {
@@ -210,10 +216,23 @@ export type CosmeticOwnership = {
   userNickname?: string;
 };
 
+/**
+ * 自定义工坊设置（docs/cosmetics.md「自定义工坊」）。一个人的额度 =
+ * max(freeQuota, 有效会员时的 vipQuota, 所在档位的 tierQuotas)，上限 50；关闭时为 0。
+ */
+export type WorkshopSettings = {
+  enabled: boolean;
+  freeQuota: number;
+  vipQuota: number;
+  /** 会员档位编号（字符串）→ 额度 */
+  tierQuotas?: Record<string, number> | null;
+};
+
 export type CosmeticSettings = {
   appid?: number;
   enabled: boolean;
   badgeSlots: number;
+  workshop?: WorkshopSettings | null;
   updatedBy?: string;
   updatedAt?: string;
 };
@@ -344,6 +363,8 @@ export type CosmeticEquipRow = {
   equippedAt: string;
   effective: boolean;
   reason: string;
+  /** 戴的是用户自己的工坊作品 */
+  workshop?: boolean;
 };
 
 export type CosmeticUserProfile = {
@@ -411,6 +432,57 @@ export type CosmeticOwnershipFilter = {
 
 export type Paged<T> = { items: T[]; total: number };
 
+/** 工坊零件：运营从素材库里挑出来、允许用户在作品里使用的图片或序列帧（cosmetic.Part） */
+export type WorkshopPartSlot = "avatar_frame" | "profile_card" | "badge";
+
+export type WorkshopPart = {
+  id: number;
+  appid?: number;
+  assetId: number;
+  name: string;
+  category: string;
+  slots: WorkshopPartSlot[];
+  /** 序列帧的切分；frameCount 为 0 即图片零件 */
+  columns?: number;
+  rows?: number;
+  frameCount?: number;
+  fps?: number;
+  sortOrder: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  asset?: CosmeticAsset | null;
+};
+
+export type WorkshopPartInput = {
+  assetId: number;
+  name: string;
+  category: string;
+  slots: WorkshopPartSlot[];
+  columns: number;
+  rows: number;
+  frameCount: number;
+  fps: number;
+  sortOrder: number;
+  enabled: boolean;
+};
+
+/** 管理端看到的工坊作品（cosmetic.WorkshopAdminItem）：一件 origin = workshop 的装扮 + 作者 */
+export type WorkshopAdminItem = CosmeticItem & {
+  creatorUserId: number;
+  creatorAccount?: string;
+  creatorNickname?: string;
+};
+
+export type WorkshopItemFilter = {
+  userId?: number;
+  slot?: string;
+  status?: string;
+  keyword?: string;
+  page?: number;
+  limit?: number;
+};
+
 const base = (appKey: string) => `/api/admin/apps/${encodeURIComponent(appKey)}/cosmetics`;
 
 // ── 目录与设置 ──
@@ -423,7 +495,10 @@ export function getCosmeticSettings(token: string, appKey: string) {
   return apiRequest<CosmeticSettings>(`${base(appKey)}/settings`, { token });
 }
 
-export function saveCosmeticSettings(token: string, appKey: string, settings: { enabled: boolean; badgeSlots: number }) {
+/** workshop 不传时服务端保持原样 */
+export type CosmeticSettingsPayload = { enabled: boolean; badgeSlots: number; workshop?: WorkshopSettings };
+
+export function saveCosmeticSettings(token: string, appKey: string, settings: CosmeticSettingsPayload) {
   return apiRequest<CosmeticSettings>(`${base(appKey)}/settings`, {
     method: "PUT",
     token,
@@ -568,4 +643,43 @@ export function unequipUserCosmetic(token: string, appKey: string, userId: numbe
     token,
     body: JSON.stringify({ slot, position })
   });
+}
+
+// ── 自定义工坊 ──
+
+export function listWorkshopParts(token: string, appKey: string) {
+  return apiRequest<{ items: WorkshopPart[] }>(`${base(appKey)}/workshop/parts`, { token });
+}
+
+export function createWorkshopPart(token: string, appKey: string, input: WorkshopPartInput) {
+  return apiRequest<WorkshopPart>(`${base(appKey)}/workshop/parts`, { method: "POST", token, body: JSON.stringify(input) });
+}
+
+export function updateWorkshopPart(token: string, appKey: string, partId: number, input: WorkshopPartInput) {
+  return apiRequest<WorkshopPart>(`${base(appKey)}/workshop/parts/${partId}`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify(input)
+  });
+}
+
+export function deleteWorkshopPart(token: string, appKey: string, partId: number) {
+  return apiRequest<{ deleted: boolean }>(`${base(appKey)}/workshop/parts/${partId}`, { method: "DELETE", token });
+}
+
+export function listWorkshopItems(token: string, appKey: string, filter: WorkshopItemFilter = {}) {
+  return apiRequest<Paged<WorkshopAdminItem>>(`${base(appKey)}/workshop/items${buildQuery(filter)}`, { token });
+}
+
+/** 下架作品；reason 必填，作者在工坊里看得到 */
+export function takedownWorkshopItem(token: string, appKey: string, itemId: number, reason: string) {
+  return apiRequest<CosmeticItem>(`${base(appKey)}/workshop/items/${itemId}/takedown`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ reason })
+  });
+}
+
+export function restoreWorkshopItem(token: string, appKey: string, itemId: number) {
+  return apiRequest<CosmeticItem>(`${base(appKey)}/workshop/items/${itemId}/restore`, { method: "POST", token });
 }
