@@ -321,8 +321,16 @@ func (s *CosmeticService) workshopResult(ctx context.Context, appID, userID int6
 	m := map[int64]cosmetic.Item{item.ID: item}
 	s.fillItemsAssets(ctx, appID, m)
 	item = m[item.ID]
-	return &cosmetic.WorkshopItem{View: workshopView(item, userID, baseURL), Status: item.Status,
+	out := &cosmetic.WorkshopItem{View: workshopView(item, userID, baseURL), Status: item.Status,
 		TakedownReason: item.TakedownReason, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+	if equips, err := s.pg.GetUserCosmeticEquips(ctx, appID, userID); err == nil {
+		for _, e := range equips {
+			if e.CosmeticID == item.ID {
+				out.Equipped, out.Position = true, e.Position
+			}
+		}
+	}
+	return out
 }
 
 // ── 管理端 ──
