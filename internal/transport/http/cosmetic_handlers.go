@@ -74,6 +74,8 @@ type CosmeticOrderRequest struct {
 type CosmeticSettingsRequest struct {
 	Enabled    bool `json:"enabled"`
 	BadgeSlots int  `json:"badgeSlots"`
+	// Workshop 自定义工坊设置；不传时保持原样（老版控制台只改开关与勋章位）
+	Workshop *cosmetic.WorkshopSettings `json:"workshop"`
 }
 
 // CosmeticGrantRequest 给用户发一件装扮；days 为 0 即永久。
@@ -155,9 +157,18 @@ func (h *Handler) AdminSaveCosmeticSettings(c *gin.Context) {
 		return
 	}
 	_, operator := adminAccount(c)
-	settings, err := h.cosmetic.SaveSettings(c.Request.Context(), cosmetic.Settings{
-		AppID: appID, Enabled: req.Enabled, BadgeSlots: req.BadgeSlots, UpdatedBy: operator,
-	})
+	next := cosmetic.Settings{AppID: appID, Enabled: req.Enabled, BadgeSlots: req.BadgeSlots, UpdatedBy: operator}
+	if req.Workshop != nil {
+		next.Workshop = *req.Workshop
+	} else {
+		current, err := h.cosmetic.Settings(c.Request.Context(), appID)
+		if err != nil {
+			h.writeError(c, err)
+			return
+		}
+		next.Workshop = current.Workshop
+	}
+	settings, err := h.cosmetic.SaveSettings(c.Request.Context(), next)
 	if err != nil {
 		h.writeError(c, err)
 		return

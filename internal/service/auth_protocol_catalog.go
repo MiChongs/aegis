@@ -230,6 +230,15 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "cosmeticHistory", Method: "GET", Path: "/cosmetics/history", Auth: true, Summary: "我的装扮获得记录"},
 	{Key: "cosmeticLookup", Method: "GET", Path: "/cosmetics/users", Auth: true,
 		Summary: "批量查别人身上的装扮（ids 为对外用户 ID，逗号分隔，最多 100 个）"},
+	// 自定义工坊：用户用官方零件（不能上传图片）拼自己的头像框、资料卡背景、昵称样式、勋章；只有作者本人能戴，额度随会员档位。
+	{Key: "cosmeticWorkshop", Method: "GET", Path: "/cosmetics/workshop", Auth: true,
+		Summary: "工坊首页：我的额度与已用数、编辑器上界、零件（带素材地址）、起点模板、我的作品"},
+	{Key: "cosmeticWorkshopCreate", Method: "POST", Path: "/cosmetics/workshop/items", Auth: true,
+		Summary: "新建作品（slot、name、design），额度已满报 40954、没有额度报 40362"},
+	{Key: "cosmeticWorkshopUpdate", Method: "PUT", Path: "/cosmetics/workshop/items/{itemId}", Auth: true,
+		Summary: "修改作品的名称与设计稿；被运营下架的作品报 40363"},
+	{Key: "cosmeticWorkshopDelete", Method: "DELETE", Path: "/cosmetics/workshop/items/{itemId}", Auth: true,
+		Summary: "删除作品（正戴着的随之摘下）"},
 	// 用户号码（docs/user-number.md）：5–12 位、按应用唯一、可以更换的展示号码；id 仍是终生不变的对外 ID。
 	// 换号三条路：摇号单里选（不再扣别的权益）、换回自己冻结中的旧号（免费）、用改号卡 / 靓号券自选。号码在请求里用字符串传。
 	{Key: "numberMe", Method: "GET", Path: "/numbers/me", Auth: true,

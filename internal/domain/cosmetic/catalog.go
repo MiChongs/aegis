@@ -350,7 +350,7 @@ func ValidateSettings(s Settings) error {
 	if s.BadgeSlots < 1 || s.BadgeSlots > MaxBadgeSlots {
 		return fmt.Errorf("勋章佩戴数需要在 1–%d 之间", MaxBadgeSlots)
 	}
-	return nil
+	return ValidateWorkshopSettings(s.Workshop)
 }
 
 // TermLabel 时长的展示口径：永久 / 1 年 / 3 个月 / 7 天。

@@ -181,3 +181,64 @@
 
 `cosmetic.Templates()`：鎏金光环、霓虹轨道、星河流光（头像框），极光尘埃（资料卡），星章、文字章（勋章），流金、幻彩、霓光（昵称）。
 只用形状、文字与粒子，不依赖素材；`TestTemplatesValidate` 钉住每个模板都能过校验。三端渲染器的回归样例也用它们。
+
+## 自定义工坊
+
+用户在 App 里用**官方零件**拼自己的头像框、资料卡背景、昵称样式、勋章。**不能上传图片**，也不能有文字图层（免审核）。
+代码：`internal/domain/cosmetic/workshop.go`（规则）、`internal/repository/postgres/cosmetic_workshop_repository.go`、
+`internal/service/cosmetic_workshop_service.go`、`internal/transport/http/cosmetic_workshop_handlers.go`；迁移 000167。
+
+### 作品是什么
+
+作品就是 `cosmetic_items` 里 `origin = 'workshop'` 的一行（`creator_user_id` 是作者，获取方式 `creator`），与官方装扮同一份设计稿规格、
+同一套佩戴（`PUT /cosmetics/me`）与绘制，所以三端渲染器、头像框、排行榜、名片等不用改。区别：
+
+- **只有作者本人能戴，且作者此刻要有工坊额度**（`Eligibility` 的 `creator` 分支；额度为 0 时原因 `need_workshop`）。会员到期 → 额度归零 →
+  作品在 `/cosmetics/me` 里消失，与会员装扮同理，不需要扫描。
+- 保存即生效：新建就是上架、发布过的第 1 版；每次修改版本号 +1（客户端据此丢缓存）。
+- 不进装扮中心、管理端装扮列表与统计，不能被任何系统发放（`grantCosmeticTx` 只认官方）。
+- **名称只给作者看**：别人（`/cosmetics/users`、排行榜等）看到的 `name` 是「工坊作品」、`code` 为空。`View.workshop = true`，客户端可以标角标。
+- 运营可以下架（`status = archived` + 原因，作者在工坊里看得到），下架后戴不上、不能再改，只能删除；恢复后照常。
+
+### 额度
+
+`cosmetic_settings.workshop = {enabled, freeQuota, vipQuota, tierQuotas: {"档位编号": 额度}}`。一个人的额度 =
+max(freeQuota, 有效会员时的 vipQuota, 所在会员档位的 tierQuotas)，上限 50；工坊关闭时为 0。额度决定能存几件、作品能不能戴。
+额度降下来时已存的作品不删，只是不能再新建（作品数 ≥ 额度）。
+
+### 零件
+
+`cosmetic_workshop_parts`：运营从素材库里挑出来的图片或序列帧，`{assetId, name, category, slots[], columns, rows, frameCount, fps, sortOrder, enabled}`。
+`slots` 只能是 avatar_frame / profile_card / badge；序列帧零件必须给切分，作品里的序列帧图层必须照用。零件停用或改了槽位后，
+已有作品照常能戴，只是再保存时会被拒。零件还在时素材不能删（40958）。
+
+### 作品设计稿的额外限制
+
+在 `ValidateDesign` 之外（`ValidateWorkshopDesign`）：画布固定为槽位默认值（头像框 300×300、头像区域 50/50/200 圆形；资料卡 1080×608；勋章 96×96）；
+最多 16 个图层；粒子总数 ≤ 160；没有文字图层；image / sprite / 图片粒子只能引用**启用中、允许这个槽位**的零件（按素材编号对）。
+昵称样式作品就是一份 `nameStyle`。名称 1–16 字。
+
+### 用户端（`/api/v1/apps/{appKey}`，均需登录；装扮未开启 40361）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/cosmetics/workshop` | `settings{quota, used, canCreate, reason, badgeSlots, freeQuota, vipQuota}`、`slots`、`vocabulary`、`limits`、`parts[]`（带 `asset{url,width,height,contentType,kind}`）、`starters[]`（可套用的内置模板，`{key, slot, name, description, design}`）、`items[]` |
+| POST | `/cosmetics/workshop/items` | `{slot, name, design}` → 作品；没有额度 40362（`data.reason = need_workshop`）、额度已满 40954 |
+| PUT | `/cosmetics/workshop/items/{itemId}` | `{name, design}` → 作品；被下架 40363、不是自己的 40425 |
+| DELETE | `/cosmetics/workshop/items/{itemId}` | 删除，正戴着的随之摘下 |
+
+`items[]` 每件：`View`（`id slot code name rarity revision design workshop`）+ `status`（active / archived）+ `takedownReason` +
+`equipped` + `position` + `createdAt` + `updatedAt`。工坊未开启时 `GET /cosmetics/workshop` 报 40362；装扮中心 `GET /cosmetics` 多返回
+`workshop{enabled, quota}` 供客户端决定是否显示入口。作品里的 `design.assets` 只需给 `{id}`，地址由服务端补。
+
+### 管理端（`/api/admin/apps/:appkey/cosmetics`，权限 `app:cosmetic:*`）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| PUT | `/settings` | 多一个可选的 `workshop`（不传保持原样） |
+| GET | `/workshop/parts` | `{items: Part[]}`（含停用的，带素材） |
+| POST | `/workshop/parts` | `PartInput`；同一素材只能登记一次（40953） |
+| PUT, DELETE | `/workshop/parts/:partId` | 修改 / 删除（40429 不存在） |
+| GET | `/workshop/items?userId=&slot=&status=&keyword=&page=&limit=` | `{items, total}`，每件带 `creatorUserId creatorAccount creatorNickname` 与设计稿 |
+| POST | `/workshop/items/:itemId/takedown` `{reason}` | 下架（原因必填，作者可见） |
+| POST | `/workshop/items/:itemId/restore` | 恢复 |

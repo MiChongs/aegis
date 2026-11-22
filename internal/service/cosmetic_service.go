@@ -829,20 +829,28 @@ func (s *CosmeticService) UserProfile(ctx context.Context, appID, userID int64, 
 		names[it.ID] = it
 	}
 	now := time.Now()
+	applyWorkshopFacts(live.settings, f)
+	workshop := s.workshopItemsFor(ctx, appID, live, f)
 	equips := make([]map[string]any, 0, len(f.Equips))
 	for _, e := range f.Equips {
 		item, ok := live.byID[e.CosmeticID]
+		name := names[e.CosmeticID].Name
+		if !ok {
+			if item, ok = workshop[e.CosmeticID]; ok {
+				name = item.Name + "（工坊作品）"
+			}
+		}
 		effective, reason := false, cosmetic.ReasonUnavailable
 		if ok {
 			effective, reason = cosmetic.Eligibility(item, f.Facts, now)
 		}
 		equips = append(equips, map[string]any{"slot": e.Slot, "position": e.Position, "cosmeticId": e.CosmeticID,
-			"name": names[e.CosmeticID].Name, "equippedAt": e.EquippedAt, "effective": effective, "reason": reason})
+			"name": name, "equippedAt": e.EquippedAt, "effective": effective, "reason": reason, "workshop": item.Workshop()})
 	}
 	return map[string]any{
 		"ownerships": owned,
 		"equips":     equips,
-		"loadout":    s.loadoutOf(live, f, now, baseURL),
+		"loadout":    s.loadoutOf(live, workshop, f, userID, now, baseURL),
 		"facts": map[string]any{"isVip": f.Facts.IsVIP, "tierIds": f.Facts.TierIDs, "level": f.Facts.Level,
 			"features": f.Facts.Features},
 	}, nil
@@ -937,13 +945,18 @@ func (s *CosmeticService) ensureEnabled(entry cosmeticLiveEntry) error {
 }
 
 // loadoutOf 按资格过滤后的身上装扮。
-func (s *CosmeticService) loadoutOf(entry cosmeticLiveEntry, f *pgrepo.CosmeticUserFacts, now time.Time, baseURL string) cosmetic.Loadout {
+// workshop 是身上戴着的工坊作品（workshopItemsFor 取的）；viewer 是谁在看（工坊作品的名称只给作者本人看）。
+func (s *CosmeticService) loadoutOf(entry cosmeticLiveEntry, workshop map[int64]cosmetic.Item, f *pgrepo.CosmeticUserFacts, viewer int64, now time.Time, baseURL string) cosmetic.Loadout {
 	out := cosmetic.Loadout{Badges: []cosmetic.View{}}
 	if f == nil || !entry.settings.Enabled {
 		return out
 	}
+	applyWorkshopFacts(entry.settings, f)
 	for _, e := range f.Equips {
 		item, ok := entry.byID[e.CosmeticID]
+		if !ok {
+			item, ok = workshop[e.CosmeticID]
+		}
 		if !ok || item.Slot != e.Slot {
 			continue
 		}
@@ -951,6 +964,9 @@ func (s *CosmeticService) loadoutOf(entry cosmeticLiveEntry, f *pgrepo.CosmeticU
 			continue
 		}
 		view := absoluteView(item, baseURL)
+		if item.Workshop() {
+			view = workshopView(item, viewer, baseURL)
+		}
 		switch e.Slot {
 		case cosmetic.SlotAvatarFrame:
 			out.AvatarFrame = &view
@@ -1014,6 +1030,7 @@ func (s *CosmeticService) Center(ctx context.Context, appID, userID int64, baseU
 		}
 	}
 	now := time.Now()
+	applyWorkshopFacts(entry.settings, f)
 	items := make([]cosmetic.CenterItem, 0, len(entry.items))
 	for _, item := range entry.items {
 		expires, owned := f.Facts.Owned[item.ID]
@@ -1044,7 +1061,8 @@ func (s *CosmeticService) Center(ctx context.Context, appID, userID int64, baseU
 		"slots":    cosmetic.Slots(),
 		"rarities": cosmetic.Rarities(),
 		"items":    items,
-		"loadout":  s.loadoutOf(entry, f, now, baseURL),
+		"loadout":  s.loadoutOf(entry, s.workshopItemsFor(ctx, appID, entry, f), f, userID, now, baseURL),
+		"workshop": map[string]any{"enabled": entry.settings.Workshop.Enabled, "quota": f.Facts.WorkshopQuota},
 	}, nil
 }
 
@@ -1061,7 +1079,7 @@ func (s *CosmeticService) MyLoadout(ctx context.Context, appID, userID int64, ba
 	if err != nil {
 		return cosmetic.Loadout{Badges: []cosmetic.View{}}, err
 	}
-	return s.loadoutOf(entry, f, time.Now(), baseURL), nil
+	return s.loadoutOf(entry, s.workshopItemsFor(ctx, appID, entry, f), f, userID, time.Now(), baseURL), nil
 }
 
 // EquipInput 佩戴 / 摘下。CosmeticID 为 0 即摘下这个槽位（勋章摘下 Position 那一位；Position 为 -1 摘下全部勋章）。
@@ -1100,6 +1118,11 @@ func (s *CosmeticService) Equip(ctx context.Context, in EquipInput) (cosmetic.Lo
 	} else {
 		item, ok := entry.byID[in.CosmeticID]
 		if !ok {
+			if ws, err := s.pg.GetWorkshopItems(ctx, in.AppID, []int64{in.CosmeticID}); err == nil {
+				item, ok = ws[in.CosmeticID]
+			}
+		}
+		if !ok {
 			return empty, apperrors.New(errCodeCosmeticNotWearable, http.StatusForbidden, "这件装扮已下架").WithData(map[string]any{"reason": cosmetic.ReasonUnavailable})
 		}
 		if item.Slot != in.Slot {
@@ -1111,6 +1134,7 @@ func (s *CosmeticService) Equip(ctx context.Context, in EquipInput) (cosmetic.Lo
 		if err != nil {
 			return empty, err
 		}
+		applyWorkshopFacts(entry.settings, f)
 		if usable, reason := cosmetic.Eligibility(item, f.Facts, time.Now()); !usable {
 			return empty, apperrors.New(errCodeCosmeticNotWearable, http.StatusForbidden,
 				"暂时不能佩戴："+cosmetic.ReasonLabel(reason)).WithData(map[string]any{"reason": reason})
@@ -1165,8 +1189,13 @@ func (s *CosmeticService) Lookup(ctx context.Context, appID int64, publicIDs []i
 		return nil, err
 	}
 	now := time.Now()
+	all := make([]*pgrepo.CosmeticUserFacts, 0, len(facts))
+	for _, f := range facts {
+		all = append(all, f)
+	}
+	workshop := s.workshopItemsFor(ctx, appID, entry, all...)
 	for pub, uid := range ids {
-		loadout := s.loadoutOf(entry, facts[uid], now, baseURL)
+		loadout := s.loadoutOf(entry, workshop, facts[uid], 0, now, baseURL)
 		if !loadout.Empty() {
 			out[strconv.FormatInt(pub, 10)] = loadout
 		}
@@ -1190,8 +1219,13 @@ func (s *CosmeticService) LookupByUserIDs(ctx context.Context, appID int64, user
 		return out
 	}
 	now := time.Now()
+	all := make([]*pgrepo.CosmeticUserFacts, 0, len(facts))
+	for _, f := range facts {
+		all = append(all, f)
+	}
+	workshop := s.workshopItemsFor(ctx, appID, entry, all...)
 	for uid, f := range facts {
-		if loadout := s.loadoutOf(entry, f, now, baseURL); !loadout.Empty() {
+		if loadout := s.loadoutOf(entry, workshop, f, 0, now, baseURL); !loadout.Empty() {
 			out[uid] = loadout
 		}
 	}

@@ -145,6 +145,13 @@ func init() {
 		Write("POST /api/admin/apps/:appkey/cosmetics/users/:userId/grant", "给用户发放装扮", "用户装扮", SeverityHigh),
 		Write("POST /api/admin/apps/:appkey/cosmetics/users/:userId/ownerships/:ownershipId/revoke", "收回用户装扮", "用户装扮", SeverityHigh),
 		Write("POST /api/admin/apps/:appkey/cosmetics/users/:userId/unequip", "摘下用户装扮", "用户装扮", SeverityMedium),
+		View("GET /api/admin/apps/:appkey/cosmetics/workshop/parts", "查看工坊零件", ""),
+		Write("POST /api/admin/apps/:appkey/cosmetics/workshop/parts", "登记工坊零件", "工坊零件", SeverityLow),
+		Write("PUT /api/admin/apps/:appkey/cosmetics/workshop/parts/:partId", "修改工坊零件", "工坊零件", SeverityLow),
+		Write("DELETE /api/admin/apps/:appkey/cosmetics/workshop/parts/:partId", "删除工坊零件", "工坊零件", SeverityMedium),
+		View("GET /api/admin/apps/:appkey/cosmetics/workshop/items", "查看工坊作品", ""),
+		Write("POST /api/admin/apps/:appkey/cosmetics/workshop/items/:itemId/takedown", "下架工坊作品", "工坊作品", SeverityMedium),
+		Write("POST /api/admin/apps/:appkey/cosmetics/workshop/items/:itemId/restore", "恢复工坊作品", "工坊作品", SeverityMedium),
 
 		// 用户号码
 		View("GET /api/admin/apps/:appkey/numbers/catalog", "查看号码目录", ""),

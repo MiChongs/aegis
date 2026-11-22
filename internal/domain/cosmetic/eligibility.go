@@ -19,6 +19,14 @@ func Eligibility(item Item, facts Facts, now time.Time) (bool, string) {
 		return true, ""
 	}
 	switch item.Unlock.Mode {
+	case UnlockCreator:
+		if !item.Workshop() || item.CreatorUserID == 0 || item.CreatorUserID != facts.UserID {
+			return false, ReasonNotOwned
+		}
+		if facts.WorkshopQuota <= 0 {
+			return false, ReasonNeedWorkshop
+		}
+		return true, ""
 	case UnlockFree:
 		return true, ""
 	case UnlockVIP:
@@ -70,6 +78,8 @@ func ReasonLabel(reason string) string {
 		return "已下架"
 	case ReasonSlotMismatch:
 		return "槽位不符"
+	case ReasonNeedWorkshop:
+		return "工坊权益已失效"
 	}
 	return ""
 }
@@ -77,11 +87,14 @@ func ReasonLabel(reason string) string {
 // ToView 客户端视图。
 func (i Item) ToView() View {
 	return View{ID: i.ID, Slot: i.Slot, Code: i.Code, Name: i.Name, Description: i.Description, Rarity: i.Rarity,
-		Series: i.Series, Revision: i.Revision, Preview: i.Preview, Design: i.Design}
+		Series: i.Series, Revision: i.Revision, Preview: i.Preview, Design: i.Design, Workshop: i.Workshop()}
 }
 
 // UnlockLabel 获取方式的一句话：「会员专属」「Lv.10 解锁」。
 func UnlockLabel(u Unlock) string {
+	if u.Mode == UnlockCreator {
+		return "工坊作品"
+	}
 	spec, ok := FindUnlock(u.Mode)
 	if !ok {
 		return u.Mode

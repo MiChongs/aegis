@@ -55,6 +55,12 @@ type Item struct {
 	UpdatedAt   time.Time  `json:"updatedAt"`
 	PublishedAt *time.Time `json:"publishedAt,omitempty"`
 
+	// Origin official 官方 / workshop 工坊作品；CreatorUserID 工坊作品的作者
+	Origin        string `json:"origin,omitempty"`
+	CreatorUserID int64  `json:"creatorUserId,omitempty"`
+	// TakedownReason 工坊作品被运营下架的原因
+	TakedownReason string `json:"takedownReason,omitempty"`
+
 	// 以下仅管理端列表填充
 	Owners   int64 `json:"owners,omitempty"`
 	Equipped int64 `json:"equipped,omitempty"`
@@ -62,6 +68,9 @@ type Item struct {
 
 // Live 装扮此刻对用户生效：已上架且发布过。
 func (i Item) Live() bool { return i.Status == StatusActive && i.Revision > 0 && i.Design != nil }
+
+// Workshop 是用户在工坊里做的作品。
+func (i Item) Workshop() bool { return i.Origin == OriginWorkshop }
 
 // Unlock 获取方式。
 type Unlock struct {
@@ -127,9 +136,11 @@ type Settings struct {
 	AppID   int64 `json:"appid,omitempty"`
 	Enabled bool  `json:"enabled"`
 	// BadgeSlots 最多同时佩戴几枚勋章（1–MaxBadgeSlots）
-	BadgeSlots int        `json:"badgeSlots"`
-	UpdatedBy  string     `json:"updatedBy,omitempty"`
-	UpdatedAt  *time.Time `json:"updatedAt,omitempty"`
+	BadgeSlots int `json:"badgeSlots"`
+	// Workshop 自定义工坊
+	Workshop  WorkshopSettings `json:"workshop"`
+	UpdatedBy string           `json:"updatedBy,omitempty"`
+	UpdatedAt *time.Time       `json:"updatedAt,omitempty"`
 }
 
 // DefaultSettings 没有配置过的应用：关闭，勋章三枚。
@@ -205,7 +216,11 @@ type GrantResult struct {
 
 // Facts 判定「能不能戴」所需的用户事实，由服务层一次取齐。
 type Facts struct {
-	IsVIP bool
+	// UserID 判工坊作品「是不是作者本人」
+	UserID int64
+	// WorkshopQuota 此刻的工坊额度（服务层按应用设置算好填入；0 即作品戴不上）
+	WorkshopQuota int
+	IsVIP         bool
 	// TierIDs 此刻仍生效的会员期所属档位
 	TierIDs  []int64
 	Level    int
@@ -226,6 +241,8 @@ type View struct {
 	Revision    int     `json:"revision"`
 	Preview     string  `json:"preview,omitempty"`
 	Design      *Design `json:"design,omitempty"`
+	// Workshop 用户在工坊里做的作品（客户端可以标一个「工坊」角标）
+	Workshop bool `json:"workshop,omitempty"`
 }
 
 // CenterItem 装扮中心的一件：外观 + 我能不能戴、为什么。

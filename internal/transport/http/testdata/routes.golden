@@ -17,6 +17,7 @@ DELETE	/api/admin/apps/:appkey/client-control/devices/:deviceId	AdminDeleteClien
 DELETE	/api/admin/apps/:appkey/client-control/rules/:ruleId	AdminDeleteClientControlRule
 DELETE	/api/admin/apps/:appkey/cosmetics/assets/:assetId	AdminDeleteCosmeticAsset
 DELETE	/api/admin/apps/:appkey/cosmetics/items/:itemId	AdminDeleteCosmeticItem
+DELETE	/api/admin/apps/:appkey/cosmetics/workshop/parts/:partId	AdminDeleteWorkshopPart
 DELETE	/api/admin/apps/:appkey/crash-reports/:crashId	AdminDeleteCrashReport
 DELETE	/api/admin/apps/:appkey/device-limit/overrides/:userId	AdminDeleteDeviceLimitOverride
 DELETE	/api/admin/apps/:appkey/device-limit/users/:userId/ledger	AdminResetDeviceLimitLedger
@@ -125,6 +126,7 @@ DELETE	/api/v1/apps/:appkey/ai/keys/:keyId	AppDeleteAIKey
 DELETE	/api/v1/apps/:appkey/auth/oauth/bindings/:provider	UnbindMyOAuthProvider
 DELETE	/api/v1/apps/:appkey/card-keys/mine/:cardId/devices/:deviceId	AppUnbindMyCardKeyDevice
 DELETE	/api/v1/apps/:appkey/cloud/items/:namespace/:key	AppDeleteCloudItem
+DELETE	/api/v1/apps/:appkey/cosmetics/workshop/items/:itemId	AppDeleteWorkshopItem
 DELETE	/api/v1/apps/:appkey/me/avatar	RemoveUserAvatar
 DELETE	/api/v1/apps/:appkey/me/oauth2/grants/:clientId	AppRevokeMyOAuth2Grant
 DELETE	/api/v1/apps/:appkey/me/passkeys/:credentialId	DeletePasskey
@@ -218,6 +220,8 @@ GET	/api/admin/apps/:appkey/cosmetics/ownerships	AdminCosmeticOwnerships
 GET	/api/admin/apps/:appkey/cosmetics/settings	AdminCosmeticSettings
 GET	/api/admin/apps/:appkey/cosmetics/stats	AdminCosmeticStats
 GET	/api/admin/apps/:appkey/cosmetics/users/:userId	AdminUserCosmetics
+GET	/api/admin/apps/:appkey/cosmetics/workshop/items	AdminWorkshopItems
+GET	/api/admin/apps/:appkey/cosmetics/workshop/parts	AdminWorkshopParts
 GET	/api/admin/apps/:appkey/crash-reports	AdminCrashReports
 GET	/api/admin/apps/:appkey/crash-reports/:crashId	AdminCrashReport
 GET	/api/admin/apps/:appkey/crash-reports/facets	AdminCrashReportFacets
@@ -754,6 +758,7 @@ GET	/api/v1/apps/:appkey/cosmetics	AppCosmeticCenter
 GET	/api/v1/apps/:appkey/cosmetics/history	AppCosmeticHistory
 GET	/api/v1/apps/:appkey/cosmetics/me	AppMyCosmetics
 GET	/api/v1/apps/:appkey/cosmetics/users	AppLookupCosmetics
+GET	/api/v1/apps/:appkey/cosmetics/workshop	AppCosmeticWorkshop
 GET	/api/v1/apps/:appkey/features/time/:feature	AppFeatureTimeStatus
 GET	/api/v1/apps/:appkey/feedback	AppListFeedback
 GET	/api/v1/apps/:appkey/feedback/:feedbackId	AppGetFeedback
@@ -1007,6 +1012,9 @@ POST	/api/admin/apps/:appkey/cosmetics/items/:itemId/revisions/:revision/restore
 POST	/api/admin/apps/:appkey/cosmetics/users/:userId/grant	AdminGrantUserCosmetic
 POST	/api/admin/apps/:appkey/cosmetics/users/:userId/ownerships/:ownershipId/revoke	AdminRevokeUserCosmetic
 POST	/api/admin/apps/:appkey/cosmetics/users/:userId/unequip	AdminUnequipUserCosmetic
+POST	/api/admin/apps/:appkey/cosmetics/workshop/items/:itemId/restore	AdminRestoreWorkshopItem
+POST	/api/admin/apps/:appkey/cosmetics/workshop/items/:itemId/takedown	AdminTakedownWorkshopItem
+POST	/api/admin/apps/:appkey/cosmetics/workshop/parts	AdminCreateWorkshopPart
 POST	/api/admin/apps/:appkey/crash-reports/delete	AdminDeleteCrashReports
 POST	/api/admin/apps/:appkey/crash-reports/resolve	AdminResolveCrashReports
 POST	/api/admin/apps/:appkey/device-limit/simulate	AdminSimulateDeviceLimit
@@ -1523,6 +1531,7 @@ POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/link	AppCloudItemLink
 POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/restore	AppRestoreCloudItem
 POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/rollback	AppRollbackCloudItem
 POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/upload	AppUploadCloudItem
+POST	/api/v1/apps/:appkey/cosmetics/workshop/items	AppCreateWorkshopItem
 POST	/api/v1/apps/:appkey/crash-reports	AppSubmitCrashReport
 POST	/api/v1/apps/:appkey/features/time/:feature/leases	AppLeaseFeatureTime
 POST	/api/v1/apps/:appkey/features/time/leases/:leaseNo/settle	AppSettleFeatureTimeLease
@@ -1632,6 +1641,7 @@ PUT	/api/admin/apps/:appkey/cosmetics/items/:itemId	AdminUpdateCosmeticItem
 PUT	/api/admin/apps/:appkey/cosmetics/items/:itemId/draft	AdminSaveCosmeticDraft
 PUT	/api/admin/apps/:appkey/cosmetics/items/:itemId/status	AdminSetCosmeticStatus
 PUT	/api/admin/apps/:appkey/cosmetics/settings	AdminSaveCosmeticSettings
+PUT	/api/admin/apps/:appkey/cosmetics/workshop/parts/:partId	AdminUpdateWorkshopPart
 PUT	/api/admin/apps/:appkey/device-limit/overrides/:userId	AdminSaveDeviceLimitOverride
 PUT	/api/admin/apps/:appkey/device-limit/policy	AdminUpdateDeviceLimitPolicy
 PUT	/api/admin/apps/:appkey/encryption	UpdateAdminAppEncryption
@@ -1746,6 +1756,7 @@ PUT	/api/user/update-site	UpdateSite
 PUT	/api/v1/apps/:appkey/ai/keys/:keyId	AppUpdateAIKey
 PUT	/api/v1/apps/:appkey/cloud/items/:namespace/:key	AppPutCloudItem
 PUT	/api/v1/apps/:appkey/cosmetics/me	AppEquipCosmetic
+PUT	/api/v1/apps/:appkey/cosmetics/workshop/items/:itemId	AppUpdateWorkshopItem
 PUT	/api/v1/apps/:appkey/invite/code	AppUpdateInviteCode
 PUT	/api/v1/apps/:appkey/leaderboard/preference	AppUpdateLeaderboardPreference
 PUT	/api/v1/apps/:appkey/me/auto-sign	AppUpdateAutoSign

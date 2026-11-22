@@ -218,6 +218,11 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.PUT("/cosmetics/me", h.AppEquipCosmetic)
 		appGatewayAuthed.GET("/cosmetics/history", h.AppCosmeticHistory)
 		appGatewayAuthed.GET("/cosmetics/users", h.AppLookupCosmetics)
+		// 自定义工坊：额度、零件、起点模板与我的作品 / 新建 / 修改 / 删除（佩戴走 PUT /cosmetics/me）
+		appGatewayAuthed.GET("/cosmetics/workshop", h.AppCosmeticWorkshop)
+		appGatewayAuthed.POST("/cosmetics/workshop/items", h.AppCreateWorkshopItem)
+		appGatewayAuthed.PUT("/cosmetics/workshop/items/:itemId", h.AppUpdateWorkshopItem)
+		appGatewayAuthed.DELETE("/cosmetics/workshop/items/:itemId", h.AppDeleteWorkshopItem)
 		// 用户号码（docs/user-number.md）：我的号码页 / 查号 / 联想 / 摇号与放弃 / 换号 / 换号记录 / 权益流水。
 		// 号码只用于展示与查找，id 仍是终生不变的对外 ID。
 		appGatewayAuthed.GET("/numbers/me", h.AppUserNumber)

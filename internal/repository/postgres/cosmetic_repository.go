@@ -37,13 +37,19 @@ func (r *Repository) GetCosmeticSettings(ctx context.Context, appID int64) (cosm
 	settings := cosmetic.DefaultSettings(appID)
 	var updatedBy *string
 	var updatedAt time.Time
-	err := r.pool.QueryRow(ctx, `SELECT enabled, badge_slots, updated_by, updated_at FROM cosmetic_settings WHERE appid = $1`,
-		appID).Scan(&settings.Enabled, &settings.BadgeSlots, &updatedBy, &updatedAt)
+	var workshop []byte
+	err := r.pool.QueryRow(ctx, `SELECT enabled, badge_slots, workshop, updated_by, updated_at FROM cosmetic_settings WHERE appid = $1`,
+		appID).Scan(&settings.Enabled, &settings.BadgeSlots, &workshop, &updatedBy, &updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return settings, nil
 	}
 	if err != nil {
 		return settings, err
+	}
+	if len(workshop) > 0 {
+		if err := json.Unmarshal(workshop, &settings.Workshop); err != nil {
+			return settings, fmt.Errorf("decode cosmetic workshop settings: %w", err)
+		}
 	}
 	if updatedBy != nil {
 		settings.UpdatedBy = *updatedBy
@@ -54,11 +60,15 @@ func (r *Repository) GetCosmeticSettings(ctx context.Context, appID int64) (cosm
 
 // SaveCosmeticSettings 保存应用设置。
 func (r *Repository) SaveCosmeticSettings(ctx context.Context, settings cosmetic.Settings) (cosmetic.Settings, error) {
-	if _, err := r.pool.Exec(ctx, `INSERT INTO cosmetic_settings (appid, enabled, badge_slots, updated_by, updated_at)
-VALUES ($1, $2, $3, $4, NOW())
-ON CONFLICT (appid) DO UPDATE SET enabled = EXCLUDED.enabled, badge_slots = EXCLUDED.badge_slots,
+	workshop, err := json.Marshal(settings.Workshop)
+	if err != nil {
+		return settings, err
+	}
+	if _, err := r.pool.Exec(ctx, `INSERT INTO cosmetic_settings (appid, enabled, badge_slots, workshop, updated_by, updated_at)
+VALUES ($1, $2, $3, $4, $5, NOW())
+ON CONFLICT (appid) DO UPDATE SET enabled = EXCLUDED.enabled, badge_slots = EXCLUDED.badge_slots, workshop = EXCLUDED.workshop,
     updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
-		settings.AppID, settings.Enabled, settings.BadgeSlots, nullableString(settings.UpdatedBy)); err != nil {
+		settings.AppID, settings.Enabled, settings.BadgeSlots, workshop, nullableString(settings.UpdatedBy)); err != nil {
 		return settings, err
 	}
 	// 勋章位调少了：超出的那几位直接清掉（否则「最多戴三枚」的设置在老用户身上不生效）
@@ -191,7 +201,8 @@ func (r *Repository) DeleteCosmeticAsset(ctx context.Context, appID, assetID int
 	asset, err := scanCosmeticAsset(r.pool.QueryRow(ctx, `DELETE FROM cosmetic_assets a WHERE a.appid = $1 AND a.id = $2
 RETURNING `+cosmeticAssetColumns, appID, assetID))
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+	// 23503 被装扮引用（cosmetic_item_assets）；23001 被工坊零件引用（ON DELETE RESTRICT）
+	if errors.As(err, &pgErr) && (pgErr.Code == "23503" || pgErr.Code == "23001") {
 		return nil, ErrCosmeticAssetInUse
 	}
 	return asset, err
@@ -201,22 +212,26 @@ RETURNING `+cosmeticAssetColumns, appID, assetID))
 
 const cosmeticItemColumns = `i.id, i.appid, i.slot, i.code, i.name, i.description, i.rarity, i.series, i.status, i.unlock,
 i.design, i.draft, i.revision, COALESCE(i.preview_ref, ''), i.sort_order, i.hidden, COALESCE(i.created_by, ''),
-i.created_at, i.updated_at, i.published_at`
+i.created_at, i.updated_at, i.published_at, i.origin, i.creator_user_id, COALESCE(i.takedown_reason, '')`
 
 func scanCosmeticItem(row interface{ Scan(dest ...any) error }, extra ...any) (*cosmetic.Item, error) {
 	var (
 		item                        cosmetic.Item
 		unlockRaw, designRaw, draft []byte
+		creator                     *int64
 	)
 	dest := []any{&item.ID, &item.AppID, &item.Slot, &item.Code, &item.Name, &item.Description, &item.Rarity, &item.Series,
 		&item.Status, &unlockRaw, &designRaw, &draft, &item.Revision, &item.PreviewRef, &item.SortOrder, &item.Hidden,
-		&item.CreatedBy, &item.CreatedAt, &item.UpdatedAt, &item.PublishedAt}
+		&item.CreatedBy, &item.CreatedAt, &item.UpdatedAt, &item.PublishedAt, &item.Origin, &creator, &item.TakedownReason}
 	dest = append(dest, extra...)
 	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrCosmeticNotFound
 		}
 		return nil, err
+	}
+	if creator != nil {
+		item.CreatorUserID = *creator
 	}
 	if err := json.Unmarshal(unlockRaw, &item.Unlock); err != nil {
 		return nil, fmt.Errorf("decode cosmetic unlock: %w", err)
@@ -294,7 +309,7 @@ SELECT $1, unnest($2::bigint[]) ON CONFLICT DO NOTHING`, cosmeticID, ids)
 
 // GetCosmeticItem 取一件装扮（含草稿）。
 func (r *Repository) GetCosmeticItem(ctx context.Context, appID, id int64) (*cosmetic.Item, error) {
-	return scanCosmeticItem(r.pool.QueryRow(ctx, `SELECT `+cosmeticItemColumns+` FROM cosmetic_items i WHERE i.appid = $1 AND i.id = $2`,
+	return scanCosmeticItem(r.pool.QueryRow(ctx, `SELECT `+cosmeticItemColumns+` FROM cosmetic_items i WHERE i.appid = $1 AND i.id = $2 AND i.origin = 'official'`,
 		appID, id))
 }
 
@@ -309,7 +324,7 @@ type CosmeticItemFilter struct {
 
 // ListCosmeticItems 管理端列表（含草稿与下架），带持有人数与佩戴人数。
 func (r *Repository) ListCosmeticItems(ctx context.Context, f CosmeticItemFilter) ([]cosmetic.Item, error) {
-	where := []string{"i.appid = $1"}
+	where := []string{"i.appid = $1", "i.origin = 'official'"}
 	args := []any{f.AppID}
 	add := func(cond string, v any) {
 		args = append(args, v)
@@ -354,7 +369,7 @@ FROM cosmetic_items i WHERE `+strings.Join(where, " AND ")+` ORDER BY i.slot, i.
 // ListLiveCosmeticItems 用户端可见与可戴判定用：已上架且发布过的全部装扮（含 hidden，调用方自己过滤列出与否）。
 func (r *Repository) ListLiveCosmeticItems(ctx context.Context, appID int64) ([]cosmetic.Item, error) {
 	rows, err := r.pool.Query(ctx, `SELECT `+cosmeticItemColumns+` FROM cosmetic_items i
-WHERE i.appid = $1 AND i.status = 'active' AND i.revision > 0 ORDER BY i.slot, i.sort_order, i.id`, appID)
+WHERE i.appid = $1 AND i.origin = 'official' AND i.status = 'active' AND i.revision > 0 ORDER BY i.slot, i.sort_order, i.id`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +389,7 @@ WHERE i.appid = $1 AND i.status = 'active' AND i.revision > 0 ORDER BY i.slot, i
 // CountCosmeticItems 应用的装扮数（上限判定）。
 func (r *Repository) CountCosmeticItems(ctx context.Context, appID int64) (int64, error) {
 	var n int64
-	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM cosmetic_items WHERE appid = $1`, appID).Scan(&n)
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM cosmetic_items WHERE appid = $1 AND origin = 'official'`, appID).Scan(&n)
 	return n, err
 }
 
@@ -383,7 +398,7 @@ func (r *Repository) UpdateCosmeticItemMeta(ctx context.Context, id int64, in co
 	unlock, _ := json.Marshal(in.Unlock)
 	item, err := scanCosmeticItem(r.pool.QueryRow(ctx, `UPDATE cosmetic_items i SET code = $3, name = $4, description = $5,
     rarity = $6, series = $7, unlock = $8, sort_order = $9, hidden = $10, updated_at = NOW()
-WHERE i.appid = $1 AND i.id = $2 RETURNING `+cosmeticItemColumns,
+WHERE i.appid = $1 AND i.id = $2 AND i.origin = 'official' RETURNING `+cosmeticItemColumns,
 		in.AppID, id, in.Code, in.Name, in.Description, in.Rarity, in.Series, unlock, in.SortOrder, in.Hidden))
 	if err != nil {
 		return nil, mapCosmeticUnique(err)
@@ -403,7 +418,7 @@ func (r *Repository) SaveCosmeticDraft(ctx context.Context, appID, id int64, dra
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	item, err := scanCosmeticItem(tx.QueryRow(ctx, `UPDATE cosmetic_items i SET draft = $3, updated_at = NOW()
-WHERE i.appid = $1 AND i.id = $2 RETURNING `+cosmeticItemColumns, appID, id, raw))
+WHERE i.appid = $1 AND i.id = $2 AND i.origin = 'official' RETURNING `+cosmeticItemColumns, appID, id, raw))
 	if err != nil {
 		return nil, err
 	}
@@ -443,14 +458,14 @@ func (r *Repository) PublishCosmeticItem(ctx context.Context, appID, id int64, n
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	current, err := scanCosmeticItem(tx.QueryRow(ctx, `SELECT `+cosmeticItemColumns+` FROM cosmetic_items i
-WHERE i.appid = $1 AND i.id = $2 FOR UPDATE`, appID, id))
+WHERE i.appid = $1 AND i.id = $2 AND i.origin = 'official' FOR UPDATE`, appID, id))
 	if err != nil {
 		return nil, err
 	}
 	next := current.Revision + 1
 	item, err := scanCosmeticItem(tx.QueryRow(ctx, `UPDATE cosmetic_items i SET design = i.draft, revision = $3,
     preview_ref = COALESCE(NULLIF($4, ''), i.preview_ref), published_at = NOW(), updated_at = NOW()
-WHERE i.appid = $1 AND i.id = $2 RETURNING `+cosmeticItemColumns, appID, id, next, previewRef))
+WHERE i.appid = $1 AND i.id = $2 AND i.origin = 'official' RETURNING `+cosmeticItemColumns, appID, id, next, previewRef))
 	if err != nil {
 		return nil, err
 	}
@@ -520,7 +535,7 @@ func (r *Repository) GetCosmeticRevision(ctx context.Context, appID, id int64, r
 // SetCosmeticItemStatus 上架 / 下架 / 回到草稿。上架要求发布过（表约束兜底）。
 func (r *Repository) SetCosmeticItemStatus(ctx context.Context, appID, id int64, status string) (*cosmetic.Item, error) {
 	item, err := scanCosmeticItem(r.pool.QueryRow(ctx, `UPDATE cosmetic_items i SET status = $3, updated_at = NOW()
-WHERE i.appid = $1 AND i.id = $2 RETURNING `+cosmeticItemColumns, appID, id, status))
+WHERE i.appid = $1 AND i.id = $2 AND i.origin = 'official' RETURNING `+cosmeticItemColumns, appID, id, status))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23514" {
 		return nil, ErrCosmeticNotPublished
@@ -530,7 +545,7 @@ WHERE i.appid = $1 AND i.id = $2 RETURNING `+cosmeticItemColumns, appID, id, sta
 
 // SetCosmeticPreview 换预览图。
 func (r *Repository) SetCosmeticPreview(ctx context.Context, appID, id int64, ref string) error {
-	tag, err := r.pool.Exec(ctx, `UPDATE cosmetic_items SET preview_ref = $3, updated_at = NOW() WHERE appid = $1 AND id = $2`,
+	tag, err := r.pool.Exec(ctx, `UPDATE cosmetic_items SET preview_ref = $3, updated_at = NOW() WHERE appid = $1 AND id = $2 AND origin = 'official'`,
 		appID, id, nullableString(ref))
 	if err != nil {
 		return err
@@ -544,7 +559,7 @@ func (r *Repository) SetCosmeticPreview(ctx context.Context, appID, id int64, re
 // ReorderCosmeticItems 按给定顺序重写排序值 10、20、30……
 func (r *Repository) ReorderCosmeticItems(ctx context.Context, appID int64, ids []int64) (int64, error) {
 	tag, err := r.pool.Exec(ctx, `UPDATE cosmetic_items c SET sort_order = o.ord * 10, updated_at = NOW()
-FROM unnest($2::bigint[]) WITH ORDINALITY AS o(id, ord) WHERE c.appid = $1 AND c.id = o.id`, appID, ids)
+FROM unnest($2::bigint[]) WITH ORDINALITY AS o(id, ord) WHERE c.appid = $1 AND c.id = o.id AND c.origin = 'official'`, appID, ids)
 	if err != nil {
 		return 0, err
 	}
@@ -561,7 +576,7 @@ func (r *Repository) DeleteCosmeticItem(ctx context.Context, appID, id int64) er
 	if owned {
 		return ErrCosmeticHasOwners
 	}
-	tag, err := r.pool.Exec(ctx, `DELETE FROM cosmetic_items WHERE appid = $1 AND id = $2`, appID, id)
+	tag, err := r.pool.Exec(ctx, `DELETE FROM cosmetic_items WHERE appid = $1 AND id = $2 AND origin = 'official'`, appID, id)
 	if err != nil {
 		return err
 	}
@@ -586,7 +601,7 @@ type CosmeticRef struct {
 }
 
 func cosmeticRefsQ(ctx context.Context, q queryExecutor, appID int64) (map[int64]CosmeticRef, error) {
-	rows, err := q.Query(ctx, `SELECT id, name, slot, rarity, (status = 'active' AND revision > 0) FROM cosmetic_items WHERE appid = $1`, appID)
+	rows, err := q.Query(ctx, `SELECT id, name, slot, rarity, (status = 'active' AND revision > 0) FROM cosmetic_items WHERE appid = $1 AND origin = 'official'`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -645,7 +660,7 @@ func grantCosmeticTx(ctx context.Context, tx pgx.Tx, in cosmetic.GrantInput) (*c
 		name, slot, status string
 		revision           int
 	)
-	if err := tx.QueryRow(ctx, `SELECT name, slot, status, revision FROM cosmetic_items WHERE appid = $1 AND id = $2`,
+	if err := tx.QueryRow(ctx, `SELECT name, slot, status, revision FROM cosmetic_items WHERE appid = $1 AND id = $2 AND origin = 'official'`,
 		in.AppID, in.CosmeticID).Scan(&name, &slot, &status, &revision); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("%w：装扮 #%d", ErrCosmeticUnavailable, in.CosmeticID)
@@ -1051,15 +1066,15 @@ func (r *Repository) CosmeticStats(ctx context.Context, appID int64) (*cosmetic.
 	s := &cosmetic.Stats{BySlot: []cosmetic.SlotStat{}, BySource: []cosmetic.SourceStat{}, TopItems: []cosmetic.ItemStat{},
 		DailyGrants: []cosmetic.DailyGrantRow{}}
 	if err := r.pool.QueryRow(ctx, `SELECT
-    (SELECT COUNT(*) FROM cosmetic_items WHERE appid = $1),
-    (SELECT COUNT(*) FROM cosmetic_items WHERE appid = $1 AND status = 'active' AND revision > 0),
+    (SELECT COUNT(*) FROM cosmetic_items WHERE appid = $1 AND origin = 'official'),
+    (SELECT COUNT(*) FROM cosmetic_items WHERE appid = $1 AND origin = 'official' AND status = 'active' AND revision > 0),
     (SELECT COUNT(DISTINCT user_id) FROM user_cosmetics WHERE appid = $1 AND revoked_at IS NULL AND (ends_at IS NULL OR ends_at > NOW())),
     (SELECT COUNT(*) FROM user_cosmetics WHERE appid = $1),
     (SELECT COUNT(DISTINCT user_id) FROM user_cosmetic_equips WHERE appid = $1),
     (SELECT COUNT(*) FROM user_cosmetics WHERE appid = $1 AND revoked_at IS NULL AND ends_at > NOW() AND ends_at <= NOW() + INTERVAL '7 days'),
     (SELECT COUNT(*) FROM cosmetic_assets WHERE appid = $1),
     (SELECT COALESCE(SUM(size_bytes), 0) FROM cosmetic_assets WHERE appid = $1),
-    (SELECT COUNT(*) FROM cosmetic_items WHERE appid = $1 AND (revision = 0 OR design IS DISTINCT FROM draft))`, appID).Scan(
+    (SELECT COUNT(*) FROM cosmetic_items WHERE appid = $1 AND origin = 'official' AND (revision = 0 OR design IS DISTINCT FROM draft))`, appID).Scan(
 		&s.Items, &s.LiveItems, &s.Owners, &s.Ownerships, &s.Wearers, &s.ExpiringSoon, &s.AssetCount, &s.AssetBytes, &s.DraftsPending); err != nil {
 		return nil, err
 	}
@@ -1068,7 +1083,7 @@ func (r *Repository) CosmeticStats(ctx context.Context, appID int64) (*cosmetic.
     (SELECT COUNT(*) FROM user_cosmetic_equips e WHERE e.appid = $1 AND e.slot = i.slot)
 FROM cosmetic_items i
 LEFT JOIN user_cosmetics uc ON uc.cosmetic_id = i.id AND uc.revoked_at IS NULL AND (uc.ends_at IS NULL OR uc.ends_at > NOW())
-WHERE i.appid = $1 GROUP BY i.slot`, appID)
+WHERE i.appid = $1 AND i.origin = 'official' GROUP BY i.slot`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -1098,7 +1113,7 @@ WHERE i.appid = $1 GROUP BY i.slot`, appID)
     (SELECT COUNT(DISTINCT uc.user_id) FROM user_cosmetics uc WHERE uc.cosmetic_id = i.id AND uc.revoked_at IS NULL
         AND (uc.ends_at IS NULL OR uc.ends_at > NOW())) AS owners,
     (SELECT COUNT(*) FROM user_cosmetic_equips e WHERE e.cosmetic_id = i.id) AS equipped
-FROM cosmetic_items i WHERE i.appid = $1 ORDER BY equipped DESC, owners DESC, i.id LIMIT 10`, appID)
+FROM cosmetic_items i WHERE i.appid = $1 AND i.origin = 'official' ORDER BY equipped DESC, owners DESC, i.id LIMIT 10`, appID)
 	if err != nil {
 		return nil, err
 	}

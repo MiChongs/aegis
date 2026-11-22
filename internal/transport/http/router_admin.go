@@ -359,6 +359,14 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/cosmetics/users/:userId/grant", h.AdminGrantUserCosmetic)
 		admin.POST("/apps/:appkey/cosmetics/users/:userId/ownerships/:ownershipId/revoke", h.AdminRevokeUserCosmetic)
 		admin.POST("/apps/:appkey/cosmetics/users/:userId/unequip", h.AdminUnequipUserCosmetic)
+		// 自定义工坊：零件库与用户作品的巡查（下架 / 恢复）
+		admin.GET("/apps/:appkey/cosmetics/workshop/parts", h.AdminWorkshopParts)
+		admin.POST("/apps/:appkey/cosmetics/workshop/parts", h.AdminCreateWorkshopPart)
+		admin.PUT("/apps/:appkey/cosmetics/workshop/parts/:partId", h.AdminUpdateWorkshopPart)
+		admin.DELETE("/apps/:appkey/cosmetics/workshop/parts/:partId", h.AdminDeleteWorkshopPart)
+		admin.GET("/apps/:appkey/cosmetics/workshop/items", h.AdminWorkshopItems)
+		admin.POST("/apps/:appkey/cosmetics/workshop/items/:itemId/takedown", h.AdminTakedownWorkshopItem)
+		admin.POST("/apps/:appkey/cosmetics/workshop/items/:itemId/restore", h.AdminRestoreWorkshopItem)
 		// 用户号码（docs/user-number.md）：目录 / 总览 / 设置与概率试算 / 查号 / 用户的号码、指定、回滚、权益 / 记录 / 保留号
 		admin.GET("/apps/:appkey/numbers/catalog", h.AdminUserNumberCatalog)
 		admin.GET("/apps/:appkey/numbers/overview", h.AdminUserNumberOverview)
