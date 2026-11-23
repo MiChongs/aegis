@@ -16,6 +16,7 @@ import {
   deleteTicketSLAPolicy,
   getTicket,
   getTicketAgentStats,
+  getTicketApps,
   getTicketMetadata,
   getTicketRequester,
   getTicketStats,
@@ -112,6 +113,7 @@ function invalidateTickets(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["tickets"] });
   qc.invalidateQueries({ queryKey: ["ticket-detail"] });
   qc.invalidateQueries({ queryKey: ["ticket-stats"] });
+  qc.invalidateQueries({ queryKey: ["ticket-apps"] });
   qc.invalidateQueries({ queryKey: ["ticket-workbench"] });
 }
 
@@ -176,21 +178,32 @@ export function useTicketStatsQuery(appid?: number, kind?: TicketKind) {
   });
 }
 
-export function useTicketTrendQuery(days = 30, appid?: number) {
+/** 按应用汇总的计数，工作台左侧应用栏与配置页的应用选择器共用 */
+export function useTicketAppsQuery(kind?: TicketKind) {
   const token = useToken();
   return useQuery({
-    queryKey: ["ticket-trend", token, days, appid],
-    queryFn: () => getTicketTrend(token as string, days, appid),
+    queryKey: ["ticket-apps", token, kind],
+    queryFn: () => getTicketApps(token as string, kind),
+    enabled: Boolean(token),
+    staleTime: 30_000
+  });
+}
+
+export function useTicketTrendQuery(days = 30, appid?: number, kind?: TicketKind) {
+  const token = useToken();
+  return useQuery({
+    queryKey: ["ticket-trend", token, days, appid, kind],
+    queryFn: () => getTicketTrend(token as string, days, appid, kind),
     enabled: Boolean(token),
     staleTime: 60_000
   });
 }
 
-export function useTicketAgentStatsQuery(limit = 20, appid?: number) {
+export function useTicketAgentStatsQuery(limit = 20, appid?: number, kind?: TicketKind) {
   const token = useToken();
   return useQuery({
-    queryKey: ["ticket-agents", token, limit, appid],
-    queryFn: () => getTicketAgentStats(token as string, limit, appid),
+    queryKey: ["ticket-agents", token, limit, appid, kind],
+    queryFn: () => getTicketAgentStats(token as string, limit, appid, kind),
     enabled: Boolean(token),
     staleTime: 60_000
   });

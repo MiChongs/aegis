@@ -57,12 +57,14 @@ import {
   isTerminalStatus
 } from "@/components/tickets/ticket-shared";
 import { TicketAttachmentList } from "@/components/tickets/ticket-attachments";
-import { FeedbackActionMenu } from "./feedback-action-menu";
-import { FeedbackComposer, type FeedbackComposerHandle } from "./feedback-composer";
-import { CategoryDot, CategoryTag, PropertyMenu, type PropertyOption } from "./feedback-kit";
-import { useFeedbackActions, type FeedbackActions } from "./use-feedback-actions";
+import { DeskActionMenu } from "./desk-action-menu";
+import { DeskComposer, type DeskComposerHandle } from "./desk-composer";
+import { CategoryDot, CategoryTag, PropertyMenu, type PropertyOption } from "./desk-kit";
+import { useDeskActions, type DeskActions } from "./use-desk-actions";
+import { AppMark } from "./desk-app-rail";
+import { useDesk } from "./desk-context";
 
-// 反馈详情：页头 + 会话 + 回复框。
+// 详情（工单与反馈共用）：页头 + 会话 + 回复框。
 //
 // 页头按「人 → 标题 → 属性」排：先看清是谁，再看说了什么，最后是一行可直接改的属性胶囊
 // （状态、分类、优先级、受理人）。按钮显隐一律读后端返回的 permissions，不在前端按角色猜。
@@ -72,7 +74,7 @@ type Props = {
   onClose: () => void;
   onStep: (direction: 1 | -1) => void;
   canStep: { prev: boolean; next: boolean };
-  composerRef: Ref<FeedbackComposerHandle>;
+  composerRef: Ref<DeskComposerHandle>;
   panelOpen: boolean;
   onTogglePanel: () => void;
   /** 打开右侧的用户资料 */
@@ -83,7 +85,7 @@ type Props = {
   children?: (ticket: TicketItem) => React.ReactNode;
 };
 
-export function FeedbackThread({
+export function DeskThread({
   ticketId,
   onClose,
   onStep,
@@ -132,7 +134,7 @@ export function FeedbackThread({
           onCompose={onCompose}
         />
         <Conversation key={`c-${ticket.id}`} ticket={ticket} />
-        <FeedbackComposer key={`r-${ticket.id}`} ticket={ticket} ref={composerRef} />
+        <DeskComposer key={`r-${ticket.id}`} ticket={ticket} ref={composerRef} />
       </div>
       {children?.(ticket)}
     </div>
@@ -170,8 +172,9 @@ function ThreadHeader({
   onShowUser: () => void;
   onCompose: (mode: "reply" | "internal") => void;
 }) {
+  const desk = useDesk();
   const perms = ticket.permissions;
-  const actions = useFeedbackActions(ticket);
+  const actions = useDeskActions(ticket);
   const client = formatClientShort(getTicketClient(ticket.metadata));
   const terminal = isTerminalStatus(ticket.status);
 
@@ -215,7 +218,7 @@ function ThreadHeader({
               {ticket.requesterName || "匿名用户"}
             </span>
             <span className="block truncate text-xs text-muted-foreground" title={formatDateTime(ticket.createdAt)}>
-              {ticket.appName ? <span className="mr-2">{ticket.appName}</span> : null}
+              <span className="mr-2 font-mono">{ticket.ticketNo}</span>
               {client ? <span className="mr-2">{client}</span> : null}
               {formatRelativeTime(ticket.createdAt)}提交
             </span>
@@ -306,7 +309,7 @@ function ThreadHeader({
                     void resolve();
                   }
                 }}
-                placeholder="选填，反馈人可见"
+                placeholder={`选填，${desk.person}可见`}
                 aria-label="解决说明"
               />
               <div className="flex justify-end gap-2">
@@ -329,7 +332,7 @@ function ThreadHeader({
 
       <PropertyBar ticket={ticket} actions={actions} onRequestClose={() => setConfirm("close")} />
 
-      <FeedbackActionMenu
+      <DeskActionMenu
         open={menuOpen}
         onOpenChange={setMenuOpen}
         ticket={ticket}
@@ -343,9 +346,9 @@ function ThreadHeader({
       <AlertDialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{confirm === "delete" ? "删除这条反馈？" : "关闭这条反馈？"}</AlertDialogTitle>
+            <AlertDialogTitle>{confirm === "delete" ? `删除这条${desk.noun}？` : `关闭这条${desk.noun}？`}</AlertDialogTitle>
             <AlertDialogDescription>
-              {confirm === "delete" ? "会话与附件一并删除，无法恢复。" : "关闭后反馈人不能再回复，可重新打开。"}
+              {confirm === "delete" ? "会话与附件一并删除，无法恢复。" : "关闭后{desk.person}不能再回复，可重新打开。"}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -360,7 +363,7 @@ function ThreadHeader({
                 }
               }}
             >
-              {confirm === "delete" ? "删除" : "关闭反馈"}
+              {confirm === "delete" ? "删除" : `关闭${desk.noun}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -376,7 +379,7 @@ function PropertyBar({
   onRequestClose
 }: {
   ticket: TicketItem;
-  actions: FeedbackActions;
+  actions: DeskActions;
   onRequestClose: () => void;
 }) {
   const perms = ticket.permissions;
@@ -388,7 +391,7 @@ function PropertyBar({
   ).map((status) => ({ value: status, label: STATUS_LABEL[status], leading: <StatusDot status={status} /> }));
 
   const categoryOptions: PropertyOption[] = (categoriesQuery.data ?? [])
-    .filter((item) => item.kind === "feedback" && (item.enabled || item.id === ticket.categoryId))
+    .filter((item) => (item.kind ?? "ticket") === (ticket.kind ?? "ticket") && (item.enabled || item.id === ticket.categoryId))
     .map((item) => ({
       value: String(item.id),
       label: item.name,

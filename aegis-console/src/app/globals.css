@@ -796,121 +796,80 @@
 
 
 /* ================================================================== */
-/*  Yet Another React Lightbox — Radix UI / shadcn/ui 设计对齐          */
+/*  图片查看器（react-photo-view）— 见 components/ui/image-lightbox.tsx */
 /* ================================================================== */
 
-/* ── 设计 Token 映射 ── */
-:root {
-  /* 背景：不用毛玻璃，靠不透明度把身后的页面压下去 */
-  --yarl__container_background_color: rgba(0, 0, 0, 0.8);
-  /* 按钮颜色 — ghost 风格 */
-  --yarl__color_button: var(--muted-foreground);
-  --yarl__color_button_active: var(--foreground);
-  --yarl__color_button_disabled: color-mix(in srgb, var(--muted-foreground) 40%, transparent);
-  /* 按钮底板 — 不设独立底板，由工具栏统一承载 */
-  --yarl__button_background_color: transparent;
-  --yarl__button_border: none;
-  --yarl__button_filter: none;
-  --yarl__button_padding: 0.5rem;
-  /* 工具栏 — 由自定义规则接管 */
-  --yarl__toolbar_padding: 0;
-  /* 图标 */
-  --yarl__icon_size: 1rem;
-  /* 加载 / 描述 */
-  --yarl__slide_icon_loading_color: var(--muted-foreground);
-  --yarl__slide_captions_container_background: transparent;
-}
-
-.dark {
-  --yarl__container_background_color: rgba(0, 0, 0, 0.85);
-}
-
-/* ── 工具栏 — 浮岛式 pill ── */
-.yarl__toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.125rem;
-  padding: 0.25rem;
-  margin: 0.75rem;
-  border-radius: calc(var(--radius) - 2px);
-  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-  background: var(--background);
-}
-
-.dark .yarl__toolbar {
-  background: var(--card);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
-}
-
-/* ── 按钮 — 工具栏内 ghost + 统一圆角/聚焦环 ── */
-.yarl__button {
-  border-radius: calc(var(--radius) - 4px);
-  transition:
-    background-color 0.15s ease,
-    color 0.15s ease,
-    box-shadow 0.15s ease,
-    transform 0.1s ease;
-}
-
-.yarl__button:hover {
-  background-color: var(--accent);
-  color: var(--accent-foreground);
-}
-
-.yarl__button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 30%, transparent);
-}
-
-.yarl__button:active {
-  transform: scale(0.94);
-}
-
-/* ── 图片 — 圆角卡片式呈现 ── */
-.yarl__slide_image {
-  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  border-radius: var(--radius-xl);
-  background: var(--card);
-}
-
-/* 深色模式：阴影增强层次 */
-.dark .yarl__slide_image {
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
-}
-
-/* ── 导航按钮 — 独立 outline 风格 ── */
-.yarl__navigation_prev,
-.yarl__navigation_next {
-  padding-inline: 0.5rem;
-}
-
-.yarl__navigation_prev .yarl__button,
-.yarl__navigation_next .yarl__button {
-  background: var(--background);
-  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-  border-radius: calc(var(--radius) - 2px);
-}
-
-.dark .yarl__navigation_prev .yarl__button,
-.dark .yarl__navigation_next .yarl__button {
-  background: var(--card);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-/* ── 描述文字 ── */
-.yarl__slide_description {
+/* 弹窗 / 抽屉打开时 Radix 会给 body 加 pointer-events: none，查看器挂在 body 下必须显式放开 */
+.aegis-photo {
+  pointer-events: auto;
   font-family: var(--font-sans);
-  font-size: 0.8125rem;
-  color: var(--muted-foreground);
-  text-align: center;
-  padding: 0.75rem 1rem 0;
 }
 
-/* ── 幻灯片计数器 ── */
-.yarl__counter {
-  font-family: var(--font-data);
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
+/* 背景：深色压暗 + 模糊，看图时身后的页面只剩轮廓 */
+.aegis-photo .PhotoView-Slider__Backdrop {
+  background: rgb(9 9 11 / 0.86) !important;
+  backdrop-filter: blur(18px) saturate(120%);
+}
+
+/* 自带的箭头与横幅不用：顶栏、工具条、左右切换都由 overlayRender 接管 */
+.aegis-photo .PhotoView-Slider__ArrowLeft,
+.aegis-photo .PhotoView-Slider__ArrowRight {
+  display: none;
+}
+
+.aegis-photo .PhotoView__Photo {
+  border-radius: 6px;
+  box-shadow: 0 24px 80px -20px rgb(0 0 0 / 0.6);
+}
+
+/* 点一下图片隐藏控件（库切到 __clean），再点一下回来 */
+.aegis-photo.PhotoView-Slider__clean .aegis-photo__chrome {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.aegis-photo__chrome {
+  transition: opacity 0.2s ease-out;
+}
+
+.aegis-photo.PhotoView-Slider__willClose .aegis-photo__chrome {
+  opacity: 0;
+}
+
+/* 透明图（Logo、图标）放在棋盘格上，才看得出边界 */
+.aegis-checkerboard {
+  background-color: var(--muted);
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--foreground) 6%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--foreground) 6%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--foreground) 6%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--foreground) 6%, transparent) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+/* 缩略图加载时的扫光 */
+@keyframes aegis-photo-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.aegis-photo-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--foreground) 8%, transparent), transparent);
+  animation: aegis-photo-shimmer 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aegis-photo-shimmer::after {
+    animation: none;
+  }
 }
 
 /* ================================================================== */
@@ -2031,7 +1990,7 @@
 }
 
 /* ==================================================================== */
-/*  反馈台回复框（components/feedback/feedback-composer.tsx）           */
+/*  服务台回复框（components/service-desk/desk-composer.tsx）         */
 /* ==================================================================== */
 
 /* Tiptap 的可编辑区。排版与会话里渲染出来的 Markdown 保持同一套间距，写的时候就是发出去的样子 */
@@ -2125,4 +2084,17 @@
    骨架层还要淡出 300ms，这期间底色不能先没。 */
 [data-slot="auto-skeleton"] > div > div.auto-skeleton-fade + div.auto-skeleton-fade div[style*="border: 1px"] {
   background-color: var(--card);
+}
+
+.desk-progress {
+  animation: desk-progress 1s ease-in-out infinite;
+}
+
+@keyframes desk-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
 }

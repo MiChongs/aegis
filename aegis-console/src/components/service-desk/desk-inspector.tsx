@@ -46,21 +46,14 @@ import {
   formatDuration,
   formatPlatform,
   formatRelativeTime,
+  copyText,
   getTicketClient
-} from "../ticket-shared";
-import { TicketAttachmentList } from "../ticket-attachments";
+} from "@/components/tickets/ticket-shared";
+import { TicketAttachmentList } from "@/components/tickets/ticket-attachments";
 
 // 详情右栏：人、端、归属、时效、附件、时间线。
 // 每个可改的字段都在原位直接改，改完立即生效，不设「保存」按钮。
 
-export async function copyText(text: string, label: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    notify.success(`已复制${label}`);
-  } catch {
-    notify.error("复制失败，请手动选择文本");
-  }
-}
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof ApiError ? error.message : fallback;
@@ -235,7 +228,7 @@ function RequesterCard({ ticket }: { ticket: TicketItem }) {
   );
 }
 
-function HandlingFields({ ticket }: { ticket: TicketItem }) {
+export function HandlingFields({ ticket }: { ticket: TicketItem }) {
   const perms = ticket.permissions;
   const admins = useAdminOptions();
   const operatorId = useAuthStore((state) => Number(state.operator?.id) || 0);

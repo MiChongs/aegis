@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { joinApiUrl } from "@/lib/api/client";
+import { notify } from "@/lib/notify";
 import type {
   TicketAttachment,
   TicketClientInfo,
@@ -345,4 +346,14 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
       {children}
     </kbd>
   );
+}
+
+/** 复制到剪贴板并提示「已复制{label}」 */
+export async function copyText(text: string, label: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    notify.success(`已复制${label}`);
+  } catch {
+    notify.error("复制失败，请手动选择文本");
+  }
 }

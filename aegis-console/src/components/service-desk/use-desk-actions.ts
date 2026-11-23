@@ -11,8 +11,9 @@ import {
 } from "@/lib/ticket-hooks";
 import type { TicketItem, TicketPriority, TicketStatus } from "@/lib/api/tickets";
 import { PRIORITY_LABEL, STATUS_LABEL } from "@/components/tickets/ticket-shared";
+import { useDesk } from "./desk-context";
 
-// 对一条反馈能做的全部写操作。
+// 对一条工单 / 反馈能做的全部写操作。
 //
 // 页头的属性胶囊、操作菜单、快捷键三处入口共用这一份：
 // 同一个动作各写一遍，提示文案与失败处理迟早不一致。
@@ -22,7 +23,8 @@ function message(error: unknown, fallback: string) {
   return error instanceof ApiError ? error.message : fallback;
 }
 
-export function useFeedbackActions(ticket: TicketItem) {
+export function useDeskActions(ticket: TicketItem) {
+  const desk = useDesk();
   const operatorId = useAuthStore((state) => Number(state.operator?.id) || 0);
   const statusMut = useChangeTicketStatusMutation();
   const updateMut = useUpdateTicketMutation();
@@ -62,10 +64,25 @@ export function useFeedbackActions(ticket: TicketItem) {
     }
   };
 
+  /** 换处理组；autoPick 时按组的分配策略自动挑人 */
+  const assignGroup = async (groupId: number | null, autoPick = false) => {
+    try {
+      await assignMut.mutateAsync({
+        id: ticket.id,
+        payload: autoPick ? { groupId, autoPick: true } : { assigneeAdminId: ticket.assigneeAdminId ?? null, groupId }
+      });
+      notify.success(autoPick ? "已按组策略分派" : groupId ? "处理组已更新" : "已移出处理组");
+      return true;
+    } catch (error) {
+      notify.error(message(error, "指派失败"));
+      return false;
+    }
+  };
+
   const remove = async () => {
     try {
       await deleteMut.mutateAsync(ticket.id);
-      notify.success("反馈已删除");
+      notify.success(`${desk.noun}已删除`);
       return true;
     } catch (error) {
       notify.error(message(error, "删除失败"));
@@ -78,6 +95,7 @@ export function useFeedbackActions(ticket: TicketItem) {
     busy: statusMut.isPending || updateMut.isPending || assignMut.isPending || deleteMut.isPending,
     changeStatus,
     assign,
+    assignGroup,
     assignToMe: () => (operatorId ? assign(operatorId) : Promise.resolve(false)),
     setPriority: (priority: TicketPriority) => update({ priority }, `优先级已改为「${PRIORITY_LABEL[priority]}」`),
     setCategory: (categoryId: number) => update({ categoryId }, "分类已更新"),
@@ -87,4 +105,4 @@ export function useFeedbackActions(ticket: TicketItem) {
   };
 }
 
-export type FeedbackActions = ReturnType<typeof useFeedbackActions>;
+export type DeskActions = ReturnType<typeof useDeskActions>;

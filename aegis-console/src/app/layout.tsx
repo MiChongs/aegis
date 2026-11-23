@@ -4,7 +4,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { IntroOverlay } from "@/components/intro-overlay";
 import { Providers } from "@/lib/providers";
 import "@fontsource/oxanium/700.css";
-import "yet-another-react-lightbox/styles.css";
+import "react-photo-view/dist/react-photo-view.css";
 import "./globals.css";
 
 export const metadata: Metadata = {

@@ -346,8 +346,31 @@ export type TicketListParams = {
   sortDir?: string;
   includeClosed?: boolean;
   mine?: boolean;
+  /** 只看我创建的应用 */
+  owned?: boolean;
+  /** 我创建的应用排在前面（不改变范围，只改顺序） */
+  ownedFirst?: boolean;
   page?: number;
   limit?: number;
+};
+
+/**
+ * 某应用下的计数（受可见范围约束）。我创建的应用即使一条都没有也会列出；
+ * 后端已排好序：我创建的在前，其次未结多的、最近有动静的。appid 0 是平台内部工单。
+ */
+export type TicketAppSummary = {
+  appid: number;
+  appKey?: string;
+  appName: string;
+  owned: boolean;
+  total: number;
+  active: number;
+  unaccepted: number;
+  unassigned: number;
+  overdue: number;
+  mine: number;
+  createdToday: number;
+  lastAt?: string;
 };
 
 // ─────────────── 提单人资料 ───────────────
@@ -423,12 +446,16 @@ export function getTicketStats(token: string, appid?: number, kind?: TicketKind)
   return apiRequest<TicketStats>(`/api/admin/tickets/stats${buildQuery({ appid, kind })}`, { token });
 }
 
-export function getTicketTrend(token: string, days = 30, appid?: number) {
-  return apiRequest<TicketTrendPoint[]>(`/api/admin/tickets/trend${buildQuery({ days, appid })}`, { token });
+export function getTicketApps(token: string, kind?: TicketKind) {
+  return apiRequest<TicketAppSummary[]>(`/api/admin/tickets/apps${buildQuery({ kind })}`, { token });
 }
 
-export function getTicketAgentStats(token: string, limit = 20, appid?: number) {
-  return apiRequest<TicketAgentStat[]>(`/api/admin/tickets/agents${buildQuery({ limit, appid })}`, { token });
+export function getTicketTrend(token: string, days = 30, appid?: number, kind?: TicketKind) {
+  return apiRequest<TicketTrendPoint[]>(`/api/admin/tickets/trend${buildQuery({ days, appid, kind })}`, { token });
+}
+
+export function getTicketAgentStats(token: string, limit = 20, appid?: number, kind?: TicketKind) {
+  return apiRequest<TicketAgentStat[]>(`/api/admin/tickets/agents${buildQuery({ limit, appid, kind })}`, { token });
 }
 
 export function getTicketWorkbench(token: string) {
@@ -447,6 +474,8 @@ export function ticketExportUrl(params: TicketListParams = {}) {
 
 export type TicketCreatePayload = {
   appid: number;
+  /** 缺省 ticket；选了分类时以分类的类型为准 */
+  kind?: TicketKind;
   requesterType?: "user" | "admin";
   requesterUserId?: number;
   requesterAdminId?: number;

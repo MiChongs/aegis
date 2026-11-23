@@ -89,6 +89,7 @@
     "react-fast-marquee": "^1.6.5",
     "react-hotkeys-hook": "^5.3.3",
     "react-markdown": "^10.1.0",
+    "react-photo-view": "1.2.7",
     "react-resizable-panels": "^4.14.2",
     "react-textarea-autosize": "^8.5.9",
     "recharts": "^3.10.1",
@@ -106,7 +107,6 @@
     "use-stick-to-bottom": "1.1.6",
     "workbox-window": "^7.4.1",
     "yaml": "^2.9.1",
-    "yet-another-react-lightbox": "^3.32.2",
     "zod": "^4.6.5",
     "zustand": "^5.0.15"
   },

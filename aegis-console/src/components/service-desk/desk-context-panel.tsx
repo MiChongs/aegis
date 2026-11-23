@@ -20,18 +20,20 @@ import {
   getTicketClient
 } from "@/components/tickets/ticket-shared";
 import { TicketAttachmentList } from "@/components/tickets/ticket-attachments";
-import { SlaMeter, TagEditor, Timeline, Watchers } from "@/components/tickets/workspace/ticket-inspector";
-import { Fact, Facts, PanelSection } from "./feedback-kit";
+import { HandlingFields, SlaMeter, TagEditor, Timeline, Watchers } from "./desk-inspector";
+import { Fact, Facts, PanelSection } from "./desk-kit";
+import { AppMark } from "./desk-app-rail";
+import { deskLink, useDesk } from "./desk-context";
 
-// 反馈详情右栏。
+// 服务台详情右栏（工单与反馈共用）。
 //
 // 「用户」页签回答「对面是谁」：头像、账号资料、会员与账号状态、最近登录、这次提交用的设备，
-// 以及他以前提过什么。处理反馈时最常做的事是去用户页查这个人，这里把那一趟省掉。
-// 「详情」页签放这条反馈自身的属性：时效、标签、关注人、附件、操作记录。
+// 以及他以前提过什么。处理时最常做的事是去用户页查这个人，这里把那一趟省掉。
+// 「详情」页签放这一条自身的属性：受理人与处理组、时效、标签、关注人、附件、操作记录。
 
 export type ContextTab = "user" | "detail";
 
-export function FeedbackContextPanel({
+export function DeskContextPanel({
   ticket,
   tab,
   onTabChange,
@@ -79,6 +81,7 @@ function membership(user: TicketRequesterAccount) {
 }
 
 function UserTab({ ticket, onOpenFeedback }: { ticket: TicketItem; onOpenFeedback: (id: number) => void }) {
+  const desk = useDesk();
   const profileQuery = useTicketRequesterQuery(ticket.id);
   const profile = profileQuery.data;
   const user = profile?.user;
@@ -89,7 +92,7 @@ function UserTab({ ticket, onOpenFeedback }: { ticket: TicketItem; onOpenFeedbac
   const registerPlace = user ? [user.registerProvince, user.registerCity, user.registerIsp].filter(Boolean).join(" ") : "";
   const detailHref =
     profile?.appKey && user
-      ? `/users/app-users/${encodeURIComponent(profile.appKey)}/${user.id}?from=${encodeURIComponent(`/feedback?id=${ticket.id}`)}`
+      ? `/users/app-users/${encodeURIComponent(profile.appKey)}/${user.id}?from=${encodeURIComponent(deskLink(desk, ticket.id))}`
       : null;
 
   return (
@@ -143,7 +146,11 @@ function UserTab({ ticket, onOpenFeedback }: { ticket: TicketItem; onOpenFeedbac
 
       {profile ? (
         <div className="grid grid-cols-3 divide-x rounded-xl border text-center">
-          <Stat label="反馈" value={profile.tickets.feedback} />
+          {desk.kind === "feedback" ? (
+            <Stat label="反馈" value={profile.tickets.feedback} />
+          ) : (
+            <Stat label="工单" value={Math.max(profile.tickets.total - profile.tickets.feedback, 0)} />
+          )}
           <Stat label="未结" value={profile.tickets.open} tone={profile.tickets.open > 1 ? "warning" : undefined} />
           <Stat label="积分" value={user ? user.integral : null} />
         </div>
@@ -227,10 +234,11 @@ function Stat({ label, value, tone }: { label: string; value: number | null; ton
   );
 }
 
-/** 这个人以前提过的反馈：重复反馈、老问题没解决，一眼能看出来 */
+/** 这个人以前提过的：重复提交、老问题没解决，一眼能看出来 */
 function History({ ticket, userId, onOpen }: { ticket: TicketItem; userId: number; onOpen: (id: number) => void }) {
+  const desk = useDesk();
   const historyQuery = useTicketsQuery({
-    kind: "feedback",
+    kind: desk.kind,
     appid: ticket.appid,
     requesterId: userId,
     includeClosed: true,
@@ -241,7 +249,7 @@ function History({ ticket, userId, onOpen }: { ticket: TicketItem; userId: numbe
   if (!others.length) return null;
 
   return (
-    <PanelSection title="其他反馈">
+    <PanelSection title={`其他${desk.noun}`}>
       <ul className="-mx-2">
         {others.map((item) => (
           <li key={item.id}>
@@ -267,6 +275,20 @@ function DetailTab({ ticket }: { ticket: TicketItem }) {
   const attachments = ticket.attachments ?? [];
   return (
     <div className="space-y-5 p-4">
+      <div className="flex items-center gap-2.5 rounded-xl border bg-muted/30 px-3 py-2.5">
+        <AppMark appid={ticket.appid} name={ticket.appName || ""} className="size-8 text-sm" />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-foreground">{ticket.appName || (ticket.appid ? `应用 #${ticket.appid}` : "平台内部")}</p>
+          <p className="truncate font-mono text-[11px] text-muted-foreground">{ticket.ticketNo}</p>
+        </div>
+      </div>
+
+      <PanelSection title="处理">
+        <div className="space-y-3">
+          <HandlingFields ticket={ticket} />
+        </div>
+      </PanelSection>
+
       <PanelSection title="时效">
         <div className="space-y-3">
           <SlaMeter label="首次响应" start={ticket.createdAt} due={ticket.firstResponseDueAt} doneAt={ticket.firstRespondedAt} />

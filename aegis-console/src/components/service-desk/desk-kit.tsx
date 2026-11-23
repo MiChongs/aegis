@@ -5,7 +5,7 @@ import { Check, ChevronsUpDown, Copy } from "lucide-react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { copyText } from "@/components/tickets/workspace/ticket-inspector";
+import { copyText } from "@/components/tickets/ticket-shared";
 
 // 反馈台各面板共用的小件：分类标记、属性选择器、事实行。
 

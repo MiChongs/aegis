@@ -27,16 +27,17 @@ import {
 } from "@/components/ui/command";
 import type { TicketItem, TicketPriority, TicketStatus } from "@/lib/api/tickets";
 import { PRIORITY_LABEL, STATUS_LABEL, StatusDot, isTerminalStatus } from "@/components/tickets/ticket-shared";
-import { copyText } from "@/components/tickets/workspace/ticket-inspector";
-import type { FeedbackActions } from "./use-feedback-actions";
+import { copyText } from "@/components/tickets/ticket-shared";
+import type { DeskActions } from "./use-desk-actions";
+import { deskLink, useDesk } from "./desk-context";
 
-// 操作菜单（cmdk）：对当前这条反馈能做的事都列在这里，可检索。
+// 操作菜单（cmdk）：对当前这一条能做的事都列在这里，可检索。
 // 页头的「⋯」和快捷键 . 打开的是同一个菜单，不必记每个动作各自的快捷键。
 
 const STATUSES: TicketStatus[] = ["open", "processing", "pending_user", "pending_third_party"];
 const PRIORITIES: TicketPriority[] = ["urgent", "high", "normal", "low"];
 
-export function FeedbackActionMenu({
+export function DeskActionMenu({
   open,
   onOpenChange,
   ticket,
@@ -49,12 +50,13 @@ export function FeedbackActionMenu({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   ticket: TicketItem;
-  actions: FeedbackActions;
+  actions: DeskActions;
   onCompose: (mode: "reply" | "internal") => void;
   onResolve: () => void;
   onShowUser: () => void;
   onConfirm: (kind: "close" | "delete") => void;
 }) {
+  const desk = useDesk();
   const perms = ticket.permissions;
   const terminal = isTerminalStatus(ticket.status);
 
@@ -65,7 +67,7 @@ export function FeedbackActionMenu({
   };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} title="操作" description="对当前反馈执行操作">
+    <CommandDialog open={open} onOpenChange={onOpenChange} title="操作" description={`对当前${desk.noun}执行操作`}>
       <CommandInput placeholder="搜索操作" />
       <CommandList>
         <CommandEmpty>没有匹配的操作</CommandEmpty>
@@ -144,13 +146,13 @@ export function FeedbackActionMenu({
         <CommandGroup heading="其他">
           <CommandItem onSelect={run(onShowUser)}>
             <UserRound />
-            查看反馈人资料
+            查看{desk.person}资料
           </CommandItem>
           <CommandItem onSelect={run(() => void copyText(ticket.ticketNo, "编号"))}>
             <Copy />
             复制编号
           </CommandItem>
-          <CommandItem onSelect={run(() => void copyText(`${window.location.origin}/feedback?id=${ticket.id}`, "链接"))}>
+          <CommandItem onSelect={run(() => void copyText(`${window.location.origin}${deskLink(desk, ticket.id)}`, "链接"))}>
             <Link2 />
             复制链接
           </CommandItem>
@@ -163,13 +165,13 @@ export function FeedbackActionMenu({
           {perms?.close && ticket.status !== "closed" ? (
             <CommandItem onSelect={run(() => onConfirm("close"))}>
               <XCircle />
-              关闭反馈
+              关闭{desk.noun}
             </CommandItem>
           ) : null}
           {perms?.delete ? (
             <CommandItem className="text-destructive data-[selected=true]:text-destructive [&_svg]:!text-destructive" onSelect={run(() => onConfirm("delete"))}>
               <Trash2 />
-              删除反馈
+              删除{desk.noun}
             </CommandItem>
           ) : null}
         </CommandGroup>

@@ -99,12 +99,12 @@ const NEXT_STATUS: { value: string; label: string; status?: TicketStatus }[] = [
   { value: "resolved", label: "已解决", status: "resolved" }
 ];
 
-export type FeedbackComposerHandle = {
+export type DeskComposerHandle = {
   /** 聚焦输入框；传 mode 时先切到对应模式 */
   focus: (mode?: Mode) => void;
 };
 
-export function FeedbackComposer({ ticket, ref }: { ticket: TicketItem; ref?: Ref<FeedbackComposerHandle> }) {
+export function DeskComposer({ ticket, ref }: { ticket: TicketItem; ref?: Ref<DeskComposerHandle> }) {
   const perms = ticket.permissions;
   const canReply = Boolean(perms?.reply);
   const canNote = Boolean(perms?.internalNote);
