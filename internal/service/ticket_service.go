@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -156,21 +157,21 @@ func (s *TicketService) Stats(ctx context.Context, access *admindomain.AccessCon
 }
 
 // Trend 工单趋势。
-func (s *TicketService) Trend(ctx context.Context, access *admindomain.AccessContext, appID *int64, days int) ([]ticketdomain.TrendPoint, error) {
+func (s *TicketService) Trend(ctx context.Context, access *admindomain.AccessContext, appID *int64, kind string, days int) ([]ticketdomain.TrendPoint, error) {
 	scope, err := s.ResolveScope(ctx, access)
 	if err != nil {
 		return nil, err
 	}
-	return s.pg.TicketTrend(ctx, appID, scope, days)
+	return s.pg.TicketTrend(ctx, appID, normalizeTicketKind(kind), scope, days)
 }
 
 // AgentStats 处理人绩效榜。
-func (s *TicketService) AgentStats(ctx context.Context, access *admindomain.AccessContext, appID *int64, limit int) ([]ticketdomain.AgentStat, error) {
+func (s *TicketService) AgentStats(ctx context.Context, access *admindomain.AccessContext, appID *int64, kind string, limit int) ([]ticketdomain.AgentStat, error) {
 	scope, err := s.ResolveScope(ctx, access)
 	if err != nil {
 		return nil, err
 	}
-	return s.pg.TicketAgentStats(ctx, appID, scope, limit)
+	return s.pg.TicketAgentStats(ctx, appID, normalizeTicketKind(kind), scope, limit)
 }
 
 // Export 导出（受范围约束）。
@@ -181,6 +182,40 @@ func (s *TicketService) Export(ctx context.Context, access *admindomain.AccessCo
 	}
 	normalizeTicketQuery(&query)
 	return s.pg.ListTicketsForExport(ctx, query, scope, limit)
+}
+
+// AppSummaries 按应用汇总可见范围内的计数。排序：我创建的应用在前，其次未结多的、最近有动静的。
+func (s *TicketService) AppSummaries(ctx context.Context, access *admindomain.AccessContext, kind string) ([]ticketdomain.AppSummary, error) {
+	scope, err := s.ResolveScope(ctx, access)
+	if err != nil {
+		return nil, err
+	}
+	items, err := s.pg.TicketAppSummaries(ctx, normalizeTicketKind(kind), scope)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if items[i].AppID == 0 && items[i].AppName == "" {
+			items[i].AppName = "平台内部"
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := items[i], items[j]
+		if a.Owned != b.Owned {
+			return a.Owned
+		}
+		if a.Active != b.Active {
+			return a.Active > b.Active
+		}
+		switch {
+		case a.LastAt != nil && b.LastAt != nil && !a.LastAt.Equal(*b.LastAt):
+			return a.LastAt.After(*b.LastAt)
+		case (a.LastAt == nil) != (b.LastAt == nil):
+			return a.LastAt != nil
+		}
+		return a.AppID < b.AppID
+	})
+	return items, nil
 }
 
 // MyWorkbenchCount 我的待办数量（侧边栏角标）。

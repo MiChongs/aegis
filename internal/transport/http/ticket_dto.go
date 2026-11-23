@@ -1,6 +1,8 @@
 package httptransport
 
 import (
+	"strings"
+
 	ticketdomain "aegis/internal/domain/ticket"
 )
 
@@ -30,14 +32,19 @@ type TicketListQuery struct {
 	SortDir       string `form:"sortDir"`
 	IncludeClosed bool   `form:"includeClosed"`
 	// Mine=true 时强制只看指派给自己的工单（「我的待办」快捷视图）
-	Mine  bool `form:"mine"`
-	Page  int  `form:"page"`
-	Limit int  `form:"limit"`
+	Mine bool `form:"mine"`
+	// Owned 只看我创建的应用；OwnedFirst 我创建的应用排前面
+	Owned      bool `form:"owned"`
+	OwnedFirst bool `form:"ownedFirst"`
+	Page       int  `form:"page"`
+	Limit      int  `form:"limit"`
 }
 
 // TicketCreateRequest 建单请求。
 type TicketCreateRequest struct {
-	AppID            int64          `json:"appid"`
+	AppID int64 `json:"appid"`
+	// Kind ticket / feedback，缺省 ticket；选了分类时跟分类走
+	Kind             string         `json:"kind"`
 	RequesterType    string         `json:"requesterType"`
 	RequesterUserID  *int64         `json:"requesterUserId"`
 	RequesterAdminID *int64         `json:"requesterAdminId"`
@@ -60,6 +67,7 @@ type TicketCreateRequest struct {
 func (r TicketCreateRequest) ToCommand() ticketdomain.CreateCommand {
 	return ticketdomain.CreateCommand{
 		AppID:            r.AppID,
+		Kind:             strings.TrimSpace(strings.ToLower(r.Kind)),
 		RequesterType:    r.RequesterType,
 		RequesterUserID:  r.RequesterUserID,
 		RequesterAdminID: r.RequesterAdminID,

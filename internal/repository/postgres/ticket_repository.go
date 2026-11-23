@@ -203,6 +203,10 @@ func ticketFilterClauses(query ticketdomain.ListQuery, scope ticketdomain.Scope,
 		*args = append(*args, *query.CreatedTo)
 		clauses = append(clauses, fmt.Sprintf("t.created_at <= $%d", len(*args)))
 	}
+	if query.Owned {
+		*args = append(*args, scope.AdminID)
+		clauses = append(clauses, fmt.Sprintf("ap.created_by = $%d", len(*args)))
+	}
 	if query.Rated != nil {
 		if *query.Rated {
 			clauses = append(clauses, "t.rating IS NOT NULL")
@@ -213,21 +217,26 @@ func ticketFilterClauses(query ticketdomain.ListQuery, scope ticketdomain.Scope,
 	return clauses
 }
 
-func ticketOrderBy(query ticketdomain.ListQuery) string {
+func ticketOrderBy(query ticketdomain.ListQuery, adminID int64) string {
 	dir := "DESC"
 	if strings.EqualFold(strings.TrimSpace(query.SortDir), "asc") {
 		dir = "ASC"
 	}
+	// 我创建的应用排前面。adminID 来自会话（整数），直接拼进 SQL 不需要占位符
+	prefix := "ORDER BY "
+	if query.OwnedFirst && adminID > 0 {
+		prefix = fmt.Sprintf("ORDER BY (ap.created_by IS NOT DISTINCT FROM %d) DESC, ", adminID)
+	}
 	switch strings.TrimSpace(query.SortBy) {
 	case "created":
-		return "ORDER BY t.created_at " + dir + ", t.id " + dir
+		return prefix + "t.created_at " + dir + ", t.id " + dir
 	case "priority":
 		// 紧急在前；同级按更新时间
-		return `ORDER BY CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'normal' THEN 2 ELSE 1 END ` + dir + `, t.updated_at DESC`
+		return prefix + `CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'normal' THEN 2 ELSE 1 END ` + dir + `, t.updated_at DESC`
 	case "due":
-		return "ORDER BY COALESCE(t.first_response_due_at, t.resolve_due_at) " + dir + " NULLS LAST, t.id DESC"
+		return prefix + "COALESCE(t.first_response_due_at, t.resolve_due_at) " + dir + " NULLS LAST, t.id DESC"
 	default:
-		return "ORDER BY t.updated_at " + dir + ", t.id " + dir
+		return prefix + "t.updated_at " + dir + ", t.id " + dir
 	}
 }
 
@@ -258,7 +267,7 @@ func (r *Repository) ListTickets(ctx context.Context, query ticketdomain.ListQue
 		page = 1
 	}
 	args = append(args, limit, (page-1)*limit)
-	listSQL := "SELECT " + ticketColumns + " " + ticketJoins + where + " " + ticketOrderBy(query) +
+	listSQL := "SELECT " + ticketColumns + " " + ticketJoins + where + " " + ticketOrderBy(query, scope.AdminID) +
 		fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 
 	rows, err := r.pool.Query(ctx, listSQL, args...)
@@ -1498,8 +1507,68 @@ func (r *Repository) TicketStats(ctx context.Context, appID *int64, kind string,
 	return stats, rows.Err()
 }
 
+// TicketAppSummaries 按应用汇总可见范围内的工单计数，并补上自己创建但还没有工单的应用。
+func (r *Repository) TicketAppSummaries(ctx context.Context, kind string, scope ticketdomain.Scope) ([]ticketdomain.AppSummary, error) {
+	args := make([]any, 0, 6)
+	clauses := make([]string, 0, 2)
+	if c := ticketScopeClause(scope, &args); c != "" {
+		clauses = append(clauses, c)
+	}
+	if kind != "" {
+		args = append(args, kind)
+		clauses = append(clauses, fmt.Sprintf("t.kind = $%d", len(args)))
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	args = append(args, scope.AdminID)
+	me := fmt.Sprintf("$%d", len(args))
+
+	const active = `t.status IN ('open','processing','pending_user','pending_third_party')`
+	sql := `WITH s AS (
+		SELECT t.appid,
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE ` + active + `) AS active,
+			COUNT(*) FILTER (WHERE t.status = 'open') AS unaccepted,
+			COUNT(*) FILTER (WHERE ` + active + ` AND t.assignee_admin_id IS NULL) AS unassigned,
+			COUNT(*) FILTER (WHERE ` + active + ` AND (
+				(t.first_responded_at IS NULL AND t.first_response_due_at IS NOT NULL AND t.first_response_due_at < NOW())
+				OR (t.resolved_at IS NULL AND t.resolve_due_at IS NOT NULL AND t.resolve_due_at < NOW()))) AS overdue,
+			COUNT(*) FILTER (WHERE ` + active + ` AND t.assignee_admin_id = ` + me + `) AS mine,
+			COUNT(*) FILTER (WHERE t.created_at >= date_trunc('day', NOW())) AS today,
+			MAX(t.updated_at) AS last_at
+		FROM tickets t` + where + `
+		GROUP BY t.appid
+	)
+	SELECT s.appid, COALESCE(ap.app_key, ''), COALESCE(ap.name, ''), COALESCE(ap.created_by = ` + me + `, FALSE),
+		s.total, s.active, s.unaccepted, s.unassigned, s.overdue, s.mine, s.today, s.last_at
+	FROM s LEFT JOIN apps ap ON ap.id = s.appid
+	UNION ALL
+	SELECT ap.id, COALESCE(ap.app_key, ''), ap.name, TRUE, 0, 0, 0, 0, 0, 0, 0, NULL::timestamptz
+	FROM apps ap
+	WHERE ap.created_by = ` + me + ` AND NOT EXISTS (SELECT 1 FROM s WHERE s.appid = ap.id)`
+
+	rows, err := r.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ticketdomain.AppSummary, 0, 16)
+	for rows.Next() {
+		var item ticketdomain.AppSummary
+		if err := rows.Scan(&item.AppID, &item.AppKey, &item.AppName, &item.Owned,
+			&item.Total, &item.Active, &item.Unaccepted, &item.Unassigned, &item.Overdue, &item.Mine,
+			&item.CreatedToday, &item.LastAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 // TicketTrend 近 N 天创建 / 解决 / 关闭趋势。
-func (r *Repository) TicketTrend(ctx context.Context, appID *int64, scope ticketdomain.Scope, days int) ([]ticketdomain.TrendPoint, error) {
+func (r *Repository) TicketTrend(ctx context.Context, appID *int64, kind string, scope ticketdomain.Scope, days int) ([]ticketdomain.TrendPoint, error) {
 	if days <= 0 || days > 180 {
 		days = 30
 	}
@@ -1511,6 +1580,10 @@ func (r *Repository) TicketTrend(ctx context.Context, appID *int64, scope ticket
 	if appID != nil {
 		args = append(args, *appID)
 		clauses = append(clauses, fmt.Sprintf("t.appid = $%d", len(args)))
+	}
+	if kind != "" {
+		args = append(args, kind)
+		clauses = append(clauses, fmt.Sprintf("t.kind = $%d", len(args)))
 	}
 	sql := `SELECT to_char(date_trunc('day', t.created_at), 'YYYY-MM-DD') AS d,
 		COUNT(*),
@@ -1535,7 +1608,7 @@ func (r *Repository) TicketTrend(ctx context.Context, appID *int64, scope ticket
 }
 
 // TicketAgentStats 处理人绩效榜。
-func (r *Repository) TicketAgentStats(ctx context.Context, appID *int64, scope ticketdomain.Scope, limit int) ([]ticketdomain.AgentStat, error) {
+func (r *Repository) TicketAgentStats(ctx context.Context, appID *int64, kind string, scope ticketdomain.Scope, limit int) ([]ticketdomain.AgentStat, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
@@ -1547,6 +1620,10 @@ func (r *Repository) TicketAgentStats(ctx context.Context, appID *int64, scope t
 	if appID != nil {
 		args = append(args, *appID)
 		clauses = append(clauses, fmt.Sprintf("t.appid = $%d", len(args)))
+	}
+	if kind != "" {
+		args = append(args, kind)
+		clauses = append(clauses, fmt.Sprintf("t.kind = $%d", len(args)))
 	}
 	args = append(args, limit)
 	sql := `SELECT a.id, a.account, COALESCE(a.display_name, ''),
@@ -1671,7 +1748,7 @@ func (r *Repository) ListTicketsForExport(ctx context.Context, query ticketdomai
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	args = append(args, limit)
-	sql := "SELECT " + ticketColumns + " " + ticketJoins + where + " " + ticketOrderBy(query) + fmt.Sprintf(" LIMIT $%d", len(args))
+	sql := "SELECT " + ticketColumns + " " + ticketJoins + where + " " + ticketOrderBy(query, scope.AdminID) + fmt.Sprintf(" LIMIT $%d", len(args))
 	rows, err := r.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err

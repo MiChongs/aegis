@@ -68,7 +68,7 @@ func (s *TicketService) emitTicketEventAs(ctx context.Context, item *ticketdomai
 func (s *TicketService) buildTicketEvent(ctx context.Context, item *ticketdomain.Ticket,
 	eventKey string, actor ticketActor, extraVars map[string]any) notifydomain.Event {
 
-	consoleLink := s.ticketConsoleLink(item.ID)
+	consoleLink := s.ticketConsoleLink(item.ID, item.Kind)
 	userLink := fmt.Sprintf("/tickets/%d", item.ID)
 	resource := "ticket"
 	userTitle := ticketUserTitle(eventKey, item)
@@ -475,13 +475,17 @@ func ticketEventVars(item *ticketdomain.Ticket, extra map[string]any) map[string
 	return vars
 }
 
-// ticketConsoleLink 拼出控制台工单详情地址。
-func (s *TicketService) ticketConsoleLink(ticketID int64) string {
+// ticketConsoleLink 拼出控制台详情地址：反馈落在 /feedback，其余落在 /tickets。
+func (s *TicketService) ticketConsoleLink(ticketID int64, kind string) string {
 	base := ""
 	if s.notify != nil {
 		base = s.notify.consoleBaseURL
 	}
-	path := fmt.Sprintf("/tickets?id=%d", ticketID)
+	page := "/tickets"
+	if kind == ticketdomain.KindFeedback {
+		page = "/feedback"
+	}
+	path := fmt.Sprintf("%s?id=%d", page, ticketID)
 	if base == "" {
 		return path
 	}

@@ -461,6 +461,10 @@ type ListQuery struct {
 	Page          int        `json:"page"`
 	Limit         int        `json:"limit"`
 	IncludeClosed bool       `json:"includeClosed,omitempty"`
+	// Owned=true 只看「我创建的应用」下的工单（apps.created_by = 当前管理员）
+	Owned bool `json:"owned,omitempty"`
+	// OwnedFirst=true 时我创建的应用排在前面，再按 SortBy 排。不改变可见范围，只改顺序
+	OwnedFirst bool `json:"ownedFirst,omitempty"`
 }
 
 // ListResponse 分页结果。
@@ -639,6 +643,30 @@ type Stats struct {
 	AvgResolveMs   int64            `json:"avgResolveMs"`
 	AvgRating      float64          `json:"avgRating"`
 	RatingCount    int64            `json:"ratingCount"`
+}
+
+// AppSummary 某个应用下的工单 / 反馈计数，工作台左侧「按应用」一栏用。
+//
+// 计数受 Scope 约束：看不到的工单不计入，所以同一个应用在不同管理员那里数字可以不同。
+// 自己创建的应用即使一条都没有也会列出（Owned=true、计数为 0），
+// 这样新建的应用不会因为「还没收到反馈」而在栏里找不到。
+type AppSummary struct {
+	AppID   int64  `json:"appid"`
+	AppKey  string `json:"appKey,omitempty"`
+	AppName string `json:"appName"`
+	// Owned 应用由当前管理员创建
+	Owned bool `json:"owned"`
+	Total int64 `json:"total"`
+	// Active 未结（待受理 / 处理中 / 等待补充 / 等待第三方）
+	Active int64 `json:"active"`
+	// Unaccepted 待受理（status=open）
+	Unaccepted int64 `json:"unaccepted"`
+	Unassigned int64 `json:"unassigned"`
+	Overdue    int64 `json:"overdue"`
+	// Mine 未结且受理人是当前管理员
+	Mine         int64      `json:"mine"`
+	CreatedToday int64      `json:"createdToday"`
+	LastAt       *time.Time `json:"lastAt,omitempty"`
 }
 
 // CategoryStat 分类维度统计。

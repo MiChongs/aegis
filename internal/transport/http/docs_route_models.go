@@ -24,6 +24,7 @@ import (
 	"aegis/internal/domain/aigateway"
 	"aegis/internal/domain/app"
 	"aegis/internal/domain/authprotocol"
+	"aegis/internal/domain/cosmetic"
 	"aegis/internal/domain/devicelimit"
 	"aegis/internal/domain/egressgraph"
 	"aegis/internal/domain/regip"
@@ -183,6 +184,10 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/users/{userId}/grant"):                                        CosmeticGrantRequest{},                   // AdminGrantUserCosmetic
 		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/users/{userId}/ownerships/{ownershipId}/revoke"):              CosmeticRevokeRequest{},                  // AdminRevokeUserCosmetic
 		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/users/{userId}/unequip"):                                      CosmeticUnequipRequest{},                 // AdminUnequipUserCosmetic
+		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/workshop/items/{itemId}/restore"):                             WorkshopTakedownRequest{},                // AdminRestoreWorkshopItem
+		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/workshop/items/{itemId}/takedown"):                            WorkshopTakedownRequest{},                // AdminTakedownWorkshopItem
+		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/workshop/parts"):                                              cosmetic.PartInput{},                     // AdminCreateWorkshopPart
+		routeKey("PUT", "/api/admin/apps/{appkey}/cosmetics/workshop/parts/{partId}"):                                      cosmetic.PartInput{},                     // AdminUpdateWorkshopPart
 		routeKey("POST", "/api/admin/apps/{appkey}/crash-reports/delete"):                                                  CrashReportIDsRequest{},                  // AdminDeleteCrashReports
 		routeKey("POST", "/api/admin/apps/{appkey}/crash-reports/resolve"):                                                 CrashReportResolveRequest{},              // AdminResolveCrashReports
 		routeKey("PUT", "/api/admin/apps/{appkey}/device-limit/overrides/{userId}"):                                        devicelimit.OverrideInput{},              // AdminSaveDeviceLimitOverride
@@ -783,6 +788,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}/link"):                                       CloudItemLinkRequest{},                   // AppCloudItemLink
 		routeKey("POST", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}/rollback"):                                   CloudItemRollbackRequest{},               // AppRollbackCloudItem
 		routeKey("PUT", "/api/v1/apps/{appkey}/cosmetics/me"):                                                              CosmeticEquipRequest{},                   // AppEquipCosmetic
+		routeKey("POST", "/api/v1/apps/{appkey}/cosmetics/workshop/items"):                                                 WorkshopItemRequest{},                    // AppCreateWorkshopItem
+		routeKey("PUT", "/api/v1/apps/{appkey}/cosmetics/workshop/items/{itemId}"):                                         WorkshopItemRequest{},                    // AppUpdateWorkshopItem
 		routeKey("POST", "/api/v1/apps/{appkey}/crash-reports"):                                                            CrashReportRequest{},                     // AppSubmitCrashReport
 		routeKey("POST", "/api/v1/apps/{appkey}/features/time/leases/{leaseNo}/settle"):                                    FeatureTimeSettleRequest{},               // AppSettleFeatureTimeLease
 		routeKey("POST", "/api/v1/apps/{appkey}/features/time/{feature}/leases"):                                           FeatureTimeLeaseRequest{},                // AppLeaseFeatureTime

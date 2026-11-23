@@ -47,6 +47,8 @@ func (h *Handler) AdminListTickets(c *gin.Context) {
 		SortBy:        q.SortBy,
 		SortDir:       q.SortDir,
 		IncludeClosed: q.IncludeClosed,
+		Owned:         q.Owned,
+		OwnedFirst:    q.OwnedFirst,
 		Page:          q.Page,
 		Limit:         q.Limit,
 	}
@@ -109,8 +111,24 @@ func (h *Handler) AdminTicketStats(c *gin.Context) {
 	response.Success(c, http.StatusOK, "获取成功", stats)
 }
 
+// AdminTicketApps 按应用汇总的计数（我创建的应用在前）
+// GET /api/admin/tickets/apps?kind=ticket|feedback
+func (h *Handler) AdminTicketApps(c *gin.Context) {
+	session, ok := adminAccessSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40110, "管理员未认证")
+		return
+	}
+	items, err := h.ticket.AppSummaries(c.Request.Context(), session, c.Query("kind"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "获取成功", items)
+}
+
 // AdminTicketTrend 工单趋势
-// GET /api/admin/tickets/trend?days=30
+// GET /api/admin/tickets/trend?days=30&appid=&kind=ticket|feedback
 func (h *Handler) AdminTicketTrend(c *gin.Context) {
 	session, ok := adminAccessSession(c)
 	if !ok {
@@ -118,7 +136,7 @@ func (h *Handler) AdminTicketTrend(c *gin.Context) {
 		return
 	}
 	days, _ := strconv.Atoi(c.DefaultQuery("days", "30"))
-	items, err := h.ticket.Trend(c.Request.Context(), session, optionalQueryInt64(c, "appid"), days)
+	items, err := h.ticket.Trend(c.Request.Context(), session, optionalQueryInt64(c, "appid"), c.Query("kind"), days)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -127,7 +145,7 @@ func (h *Handler) AdminTicketTrend(c *gin.Context) {
 }
 
 // AdminTicketAgentStats 处理人绩效
-// GET /api/admin/tickets/agents
+// GET /api/admin/tickets/agents?limit=20&appid=&kind=ticket|feedback
 func (h *Handler) AdminTicketAgentStats(c *gin.Context) {
 	session, ok := adminAccessSession(c)
 	if !ok {
@@ -135,7 +153,7 @@ func (h *Handler) AdminTicketAgentStats(c *gin.Context) {
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	items, err := h.ticket.AgentStats(c.Request.Context(), session, optionalQueryInt64(c, "appid"), limit)
+	items, err := h.ticket.AgentStats(c.Request.Context(), session, optionalQueryInt64(c, "appid"), c.Query("kind"), limit)
 	if err != nil {
 		h.writeError(c, err)
 		return

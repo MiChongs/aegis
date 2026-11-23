@@ -827,6 +827,7 @@ func registerAdminModuleRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		// 元数据与配置（放在 :ticketId 之前，避免被通配路由吃掉）
 		adminTickets.GET("/metadata", h.AdminTicketMetadata)
 		adminTickets.GET("/stats", h.AdminTicketStats)
+		adminTickets.GET("/apps", h.AdminTicketApps)
 		adminTickets.GET("/trend", h.AdminTicketTrend)
 		adminTickets.GET("/agents", h.AdminTicketAgentStats)
 		adminTickets.GET("/workbench", h.AdminTicketWorkbench)

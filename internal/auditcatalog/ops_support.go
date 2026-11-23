@@ -9,6 +9,7 @@ func init() {
 		View("GET /api/admin/tickets/workbench", "查看工单工作台", ""),
 		View("GET /api/admin/tickets/metadata", "查看工单元数据", ""),
 		View("GET /api/admin/tickets/stats", "查看工单统计", ""),
+		View("GET /api/admin/tickets/apps", "查看工单应用汇总", ""),
 		View("GET /api/admin/tickets/trend", "查看工单趋势", ""),
 		View("GET /api/admin/tickets/agents", "查看客服处理统计", ""),
 		Export("GET /api/admin/tickets/export", "导出工单", ""),

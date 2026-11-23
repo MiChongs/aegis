@@ -631,6 +631,7 @@ GET	/api/admin/tickets	AdminListTickets
 GET	/api/admin/tickets/:ticketId	AdminGetTicket
 GET	/api/admin/tickets/:ticketId/requester	AdminTicketRequester
 GET	/api/admin/tickets/agents	AdminTicketAgentStats
+GET	/api/admin/tickets/apps	AdminTicketApps
 GET	/api/admin/tickets/categories	AdminListTicketCategories
 GET	/api/admin/tickets/export	ExportAdminTickets
 GET	/api/admin/tickets/groups	AdminListTicketGroups
