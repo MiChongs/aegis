@@ -800,15 +800,71 @@
 /* ================================================================== */
 
 /* 弹窗 / 抽屉打开时 Radix 会给 body 加 pointer-events: none，查看器挂在 body 下必须显式放开 */
+/* 根节点（PhotoView-Portal）用 overflow: clip 而不是库自带的 hidden：hidden 仍可被脚本滚动
+   （scrollIntoView、focus 都会滚它），一滚整个查看器就偏到一侧、另一侧露出页面；clip 根本不可滚 */
 .aegis-photo {
   pointer-events: auto;
   font-family: var(--font-sans);
+  overflow: clip !important;
+  inset: 0;
+  width: 100vw !important;
+  height: 100dvh !important;
 }
 
-/* 背景：深色压暗 + 模糊，看图时身后的页面只剩轮廓 */
+/* 背景：深色压暗 + 模糊 + 中心微亮的光晕，看图时身后的页面只剩轮廓 */
 .aegis-photo .PhotoView-Slider__Backdrop {
-  background: rgb(9 9 11 / 0.86) !important;
-  backdrop-filter: blur(18px) saturate(120%);
+  background:
+    radial-gradient(120% 90% at 50% 45%, rgb(39 39 42 / 0.55), transparent 70%),
+    rgb(9 9 11 / 0.9) !important;
+  backdrop-filter: blur(24px) saturate(130%);
+}
+
+/* 顶栏与底部的压暗带，控件压在亮图上也看得清 */
+.aegis-photo .aegis-photo__top {
+  background: linear-gradient(to bottom, rgb(0 0 0 / 0.55), rgb(0 0 0 / 0.22) 55%, transparent);
+}
+
+.aegis-photo .aegis-photo__bottom {
+  background: linear-gradient(to top, rgb(0 0 0 / 0.5), rgb(0 0 0 / 0.18) 55%, transparent);
+}
+
+@keyframes aegis-photo-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* 控件进场：顶栏从上、底部从下滑入 */
+.aegis-photo .aegis-photo__top {
+  animation: aegis-photo-in-top 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.aegis-photo .aegis-photo__bottom {
+  animation: aegis-photo-in-bottom 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes aegis-photo-in-top {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+}
+
+@keyframes aegis-photo-in-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aegis-photo .aegis-photo__top,
+  .aegis-photo .aegis-photo__bottom {
+    animation: none;
+  }
 }
 
 /* 自带的箭头与横幅不用：顶栏、工具条、左右切换都由 overlayRender 接管 */

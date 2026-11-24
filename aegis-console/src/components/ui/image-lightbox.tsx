@@ -280,21 +280,84 @@ function PhotoChrome({
 
   return (
     <div ref={rootRef} className="aegis-photo__chrome pointer-events-none absolute inset-0 z-20 text-white">
-      {/* 顶栏 */}
-      <div className="pointer-events-auto absolute inset-x-0 top-0 flex items-start gap-3 bg-gradient-to-b from-black/60 to-transparent px-4 pb-10 pt-3 sm:px-6">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            {total > 1 ? (
-              <span className="shrink-0 rounded-full bg-white/12 px-2 py-0.5 font-mono text-[11px] tabular-nums text-white/85">
-                {index + 1} / {total}
-              </span>
-            ) : null}
-            <p className="truncate text-sm font-medium">{title}</p>
+      {/* 顶栏：左边是这张图是什么，右边只留关闭 */}
+      <div className="aegis-photo__top pointer-events-auto absolute inset-x-0 top-0 flex items-center gap-3 px-4 pb-12 pt-4 sm:px-6">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          {total > 1 ? (
+            <span className="shrink-0 rounded-full bg-white/12 px-2.5 py-1 font-mono text-[11px] font-medium tabular-nums text-white ring-1 ring-white/10">
+              {index + 1}
+              <span className="text-white/45"> / {total}</span>
+            </span>
+          ) : null}
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium leading-5">{title}</p>
+            {meta.length ? <p className="truncate font-mono text-[11px] leading-4 text-white/55">{meta.join("  ")}</p> : null}
           </div>
-          {meta.length ? <p className="mt-0.5 font-mono text-[11px] text-white/60">{meta.join(" · ")}</p> : null}
         </div>
+        <button
+          type="button"
+          onClick={() => onClose()}
+          title="关闭（Esc）"
+          aria-label="关闭"
+          className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/85 ring-1 ring-white/12 backdrop-blur-xl transition-[background-color,color,transform] hover:bg-white/20 hover:text-white active:scale-90"
+        >
+          <X className="size-[18px]" />
+        </button>
+      </div>
 
-        <div className="flex shrink-0 items-center gap-0.5 rounded-full bg-white/10 p-1 shadow-lg ring-1 ring-white/10 backdrop-blur-md">
+      {/* 图片信息 */}
+      {infoOpen ? (
+        <div className="pointer-events-auto absolute right-4 top-20 w-72 overflow-hidden rounded-2xl bg-zinc-900/80 text-xs shadow-2xl ring-1 ring-white/10 backdrop-blur-xl sm:right-6">
+          <div className="flex items-center gap-2 border-b border-white/8 px-4 py-3">
+            <Info className="size-3.5 text-white/60" />
+            <span className="text-[13px] font-medium">图片信息</span>
+          </div>
+          <dl className="grid grid-cols-[4rem_1fr] gap-x-3 gap-y-2 px-4 py-3">
+            <dt className="text-white/50">名称</dt>
+            <dd className="break-all">{title}</dd>
+            <dt className="text-white/50">尺寸</dt>
+            <dd className="font-mono">{dims ? `${dims.w} × ${dims.h}` : "读取中"}</dd>
+            {slide.size ? (
+              <>
+                <dt className="text-white/50">大小</dt>
+                <dd className="font-mono">{formatSize(slide.size)}</dd>
+              </>
+            ) : null}
+            <dt className="text-white/50">缩放</dt>
+            <dd className="font-mono">{Math.round(scale * 100)}%</dd>
+            <dt className="text-white/50">旋转</dt>
+            <dd className="font-mono">{((rotate % 360) + 360) % 360}°</dd>
+          </dl>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-white/8 bg-white/[0.03] px-4 py-3 text-[11px] text-white/55">
+            {SHORTCUTS.map(([key, label]) => (
+              <span key={key} className="flex items-center gap-1.5">
+                <kbd className="min-w-5 rounded bg-white/10 px-1 py-px text-center font-mono text-[10px] text-white/80 ring-1 ring-white/10">{key}</kbd>
+                {label}
+              </span>
+            ))}
+          </div>
+          <p className="border-t border-white/8 px-4 py-2.5 text-[11px] leading-relaxed text-white/45">滚轮或双指缩放，拖动平移，双击放大。</p>
+        </div>
+      ) : null}
+
+      {/* 左右切换 */}
+      {total > 1 ? (
+        <>
+          <NavButton side="left" onClick={() => go(-1)} disabled={total <= 2 && index === 0} />
+          <NavButton side="right" onClick={() => go(1)} disabled={total <= 2 && index === total - 1} />
+        </>
+      ) : null}
+
+      {/* 底部：说明、胶片条、工具坞 */}
+      <div className="aegis-photo__bottom pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 px-4 pb-5 pt-16">
+        {slide.description && slide.description !== title ? (
+          <p className="pointer-events-auto max-w-2xl truncate rounded-full bg-black/35 px-3 py-1 text-center text-xs text-white/80 backdrop-blur-md">
+            {slide.description}
+          </p>
+        ) : null}
+        {total > 1 ? <ThumbStrip slides={slides} index={index} onSelect={onIndexChange} /> : null}
+
+        <div className="pointer-events-auto relative flex max-w-full items-center gap-0.5 overflow-hidden rounded-2xl bg-zinc-900/70 p-1.5 shadow-[0_16px_48px_-12px_rgb(0_0_0/0.7)] ring-1 ring-white/10 backdrop-blur-xl">
           <ChromeButton label="缩小（-）" onClick={() => zoom(1 / 1.5)} disabled={scale <= MIN_SCALE}>
             <ZoomOut />
           </ChromeButton>
@@ -303,8 +366,8 @@ function PhotoChrome({
             onClick={reset}
             title="还原（0）"
             className={cn(
-              "h-8 min-w-12 rounded-full px-1.5 font-mono text-[11px] tabular-nums transition-colors hover:bg-white/15",
-              transformed ? "text-white" : "text-white/60"
+              "h-9 min-w-14 shrink-0 rounded-xl px-2 font-mono text-xs tabular-nums transition-colors hover:bg-white/12",
+              transformed ? "text-white" : "text-white/55"
             )}
           >
             {Math.round(scale * 100)}%
@@ -320,16 +383,9 @@ function PhotoChrome({
             <RotateCw />
           </ChromeButton>
           {total > 1 ? (
-            <>
-              <ChromeDivider />
-              <ChromeButton
-                label={playing ? "暂停轮播（空格）" : "轮播（空格）"}
-                onClick={() => setPlaying((value) => !value)}
-                active={playing}
-              >
-                {playing ? <Pause /> : <Play />}
-              </ChromeButton>
-            </>
+            <ChromeButton label={playing ? "暂停轮播（空格）" : "轮播（空格）"} onClick={() => setPlaying((value) => !value)} active={playing}>
+              {playing ? <Pause /> : <Play />}
+            </ChromeButton>
           ) : null}
           <ChromeDivider />
           <ChromeButton label="复制图片" onClick={() => void copy()} className="hidden sm:inline-flex">
@@ -347,7 +403,8 @@ function PhotoChrome({
           >
             <ExternalLink />
           </ChromeButton>
-          <ChromeButton label="图片信息（I）" onClick={() => setInfoOpen((value) => !value)} active={infoOpen} className="hidden md:inline-flex">
+          <ChromeDivider className="hidden sm:block" />
+          <ChromeButton label="图片信息（I）" onClick={() => setInfoOpen((value) => !value)} active={infoOpen} className="hidden sm:inline-flex">
             <Info />
           </ChromeButton>
           {screenfull.isEnabled ? (
@@ -355,66 +412,30 @@ function PhotoChrome({
               {fullscreen ? <Minimize /> : <Maximize />}
             </ChromeButton>
           ) : null}
-          <ChromeDivider />
-          <ChromeButton label="关闭（Esc）" onClick={() => onClose()}>
-            <X />
-          </ChromeButton>
+
+          {/* 轮播进度贴在工具坞底边 */}
+          {slideshow ? (
+            <span
+              key={index}
+              aria-hidden
+              className="absolute inset-x-3 bottom-0 h-0.5 origin-left rounded-full bg-white/80"
+              style={{ animation: `aegis-photo-progress ${SLIDESHOW_MS}ms linear forwards` }}
+            />
+          ) : null}
         </div>
       </div>
-
-      {/* 图片信息 */}
-      {infoOpen ? (
-        <div className="pointer-events-auto absolute right-4 top-16 w-64 rounded-xl bg-black/55 p-3 text-xs shadow-xl ring-1 ring-white/10 backdrop-blur-md sm:right-6">
-          <dl className="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1.5">
-            <dt className="text-white/55">名称</dt>
-            <dd className="break-all">{title}</dd>
-            <dt className="text-white/55">尺寸</dt>
-            <dd className="font-mono">{dims ? `${dims.w} × ${dims.h}` : "读取中"}</dd>
-            {slide.size ? (
-              <>
-                <dt className="text-white/55">大小</dt>
-                <dd className="font-mono">{formatSize(slide.size)}</dd>
-              </>
-            ) : null}
-            <dt className="text-white/55">缩放</dt>
-            <dd className="font-mono">{Math.round(scale * 100)}%</dd>
-            <dt className="text-white/55">旋转</dt>
-            <dd className="font-mono">{((rotate % 360) + 360) % 360}°</dd>
-          </dl>
-          <p className="mt-2.5 border-t border-white/10 pt-2 text-[11px] leading-relaxed text-white/50">
-            滚轮或双指缩放，拖动平移，双击放大；← → 切换，R 旋转，0 还原，Esc 关闭。
-          </p>
-        </div>
-      ) : null}
-
-      {/* 左右切换 */}
-      {total > 1 ? (
-        <>
-          <NavButton side="left" onClick={() => go(-1)} disabled={total <= 2 && index === 0} />
-          <NavButton side="right" onClick={() => go(1)} disabled={total <= 2 && index === total - 1} />
-        </>
-      ) : null}
-
-      {/* 说明 + 缩略图条 */}
-      {slide.description || total > 1 ? (
-        <div className="pointer-events-auto absolute inset-x-0 bottom-0 flex flex-col items-center gap-2.5 bg-gradient-to-t from-black/60 to-transparent px-4 pb-4 pt-10">
-          {slide.description && slide.description !== title ? (
-            <p className="max-w-2xl truncate text-center text-xs text-white/75">{slide.description}</p>
-          ) : null}
-          {total > 1 ? <ThumbStrip slides={slides} index={index} onSelect={onIndexChange} /> : null}
-        </div>
-      ) : null}
-
-      {/* 轮播进度 */}
-      {slideshow ? (
-        <div className="absolute inset-x-0 top-0 h-0.5 bg-white/10">
-          <div key={index} className="h-full origin-left bg-white/80" style={{ animation: `aegis-photo-progress ${SLIDESHOW_MS}ms linear forwards` }} />
-          <style>{"@keyframes aegis-photo-progress{from{transform:scaleX(0)}to{transform:scaleX(1)}}"}</style>
-        </div>
-      ) : null}
     </div>
   );
 }
+
+const SHORTCUTS: [string, string][] = [
+  ["← →", "切换"],
+  ["+ −", "缩放"],
+  ["0", "还原"],
+  ["R", "旋转"],
+  ["F", "全屏"],
+  ["Esc", "关闭"]
+];
 
 function ChromeButton({
   label,
@@ -439,8 +460,8 @@ function ChromeButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "inline-flex size-8 items-center justify-center rounded-full text-white/80 transition-[background-color,color,transform] hover:bg-white/15 hover:text-white active:scale-90 disabled:pointer-events-none disabled:opacity-35 [&_svg]:size-4",
-        active && "bg-white/20 text-white",
+        "inline-flex size-9 shrink-0 items-center justify-center rounded-xl text-white/75 transition-[background-color,color,transform] hover:bg-white/12 hover:text-white active:scale-90 disabled:pointer-events-none disabled:opacity-30 [&_svg]:size-[18px]",
+        active && "bg-white/90 text-zinc-900 hover:bg-white hover:text-zinc-900",
         className
       )}
     >
@@ -449,8 +470,8 @@ function ChromeButton({
   );
 }
 
-function ChromeDivider() {
-  return <span aria-hidden className="mx-0.5 h-4 w-px bg-white/15" />;
+function ChromeDivider({ className }: { className?: string }) {
+  return <span aria-hidden className={cn("mx-1 h-5 w-px shrink-0 bg-white/12", className)} />;
 }
 
 function NavButton({ side, onClick, disabled }: { side: "left" | "right"; onClick: () => void; disabled?: boolean }) {
@@ -462,23 +483,30 @@ function NavButton({ side, onClick, disabled }: { side: "left" | "right"; onClic
       disabled={disabled}
       aria-label={side === "left" ? "上一张" : "下一张"}
       className={cn(
-        "pointer-events-auto absolute top-1/2 hidden size-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white shadow-lg ring-1 ring-white/10 backdrop-blur-md transition-[background-color,transform,opacity] hover:scale-105 hover:bg-white/20 active:scale-95 disabled:opacity-0 sm:inline-flex",
+        "pointer-events-auto absolute top-1/2 hidden size-12 -translate-y-1/2 items-center justify-center rounded-full bg-zinc-900/55 text-white/85 shadow-xl ring-1 ring-white/10 backdrop-blur-xl transition-[background-color,color,opacity] hover:bg-zinc-800/80 hover:text-white disabled:pointer-events-none disabled:opacity-0 sm:inline-flex",
         side === "left" ? "left-4 sm:left-6" : "right-4 sm:right-6"
       )}
     >
-      <Icon className="size-5" />
+      <Icon className="size-6" />
     </button>
   );
 }
 
 function ThumbStrip({ slides, index, onSelect }: { slides: LightboxSlide[]; index: number; onSelect: (index: number) => void }) {
   const stripRef = useRef<HTMLDivElement>(null);
+  // 只滚胶片条自己。不能用 scrollIntoView：它会连带滚动所有可滚祖先，
+  // 包括查看器 overflow: hidden 的根节点，整个查看器被推向一侧、右边露出底下的页面。
   useEffect(() => {
-    const el = stripRef.current?.children[index] as HTMLElement | undefined;
-    el?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+    const strip = stripRef.current;
+    const el = strip?.children[index] as HTMLElement | undefined;
+    if (!strip || !el) return;
+    strip.scrollTo({ left: el.offsetLeft - (strip.clientWidth - el.offsetWidth) / 2, behavior: "smooth" });
   }, [index]);
   return (
-    <div ref={stripRef} className="flex max-w-full gap-1.5 overflow-x-auto px-1 py-1 [scrollbar-width:none]">
+    <div
+      ref={stripRef}
+      className="pointer-events-auto relative flex max-w-[min(100%,44rem)] gap-2 overflow-x-auto overscroll-contain p-2 [scrollbar-width:none]"
+    >
       {slides.map((slide, i) => (
         <button
           key={`${i}:${slide.src}`}
@@ -487,8 +515,10 @@ function ThumbStrip({ slides, index, onSelect }: { slides: LightboxSlide[]; inde
           aria-label={`第 ${i + 1} 张`}
           aria-current={i === index}
           className={cn(
-            "relative size-12 shrink-0 overflow-hidden rounded-lg bg-white/5 ring-offset-black transition-[opacity,transform,box-shadow] duration-200",
-            i === index ? "scale-105 opacity-100 ring-2 ring-white ring-offset-2" : "opacity-45 hover:opacity-80"
+            "relative h-14 w-11 shrink-0 overflow-hidden rounded-lg bg-white/5 transition-[opacity,transform,box-shadow] duration-200 sm:h-16 sm:w-12",
+            i === index
+              ? "-translate-y-0.5 opacity-100 shadow-[0_0_0_2px_rgb(255_255_255),0_8px_20px_-6px_rgb(0_0_0/0.8)]"
+              : "opacity-40 ring-1 ring-white/10 hover:opacity-80"
           )}
         >
           {/* eslint-disable-next-line @next/next/no-img-element -- 同源代理与外链地址，不走图像优化器 */}

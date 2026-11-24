@@ -1528,7 +1528,10 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 
 1. **键盘在 window 捕获阶段自己接，处理过的键 `stopPropagation`。** 查看器常从 Radix 抽屉 / 弹窗里打开，不抢在前面的话 Esc 会连同底下的抽屉一起关掉。
 2. **根节点要 `pointer-events: auto`**（`.aegis-photo`）：Radix 模态打开时给 body 加了 `pointer-events: none`，挂在 body 下的查看器会点不动。
-3. 复制图片只稳定支持 PNG，其余格式先画到画布上再转；浏览器不允许时退回复制地址。下载先 fetch 成 Blob，跨域或链接失效退回新窗口。
+3. **查看器里禁止 `scrollIntoView`，根节点必须 `overflow: clip`。** `scrollIntoView` 会连带滚动所有可滚祖先，库的根节点 `overflow: hidden` 照样能被脚本滚，
+   一滚整个查看器偏到一侧、另一侧露出底下的页面（2026-11-24 胶片条切图时出过）。胶片条自己算 `scrollTo({ left })`；`.aegis-photo` 已改 `overflow: clip` 兜底。
+4. 版面：顶栏左侧序号 + 文件名 + 尺寸大小、右侧只有关闭；工具全部在底部居中的工具坞（缩放、旋转、轮播、复制、下载、新窗口、信息、全屏），胶片条在工具坞上方。
+5. 复制图片只稳定支持 PNG，其余格式先画到画布上再转；浏览器不允许时退回复制地址。下载先 fetch 成 Blob，跨域或链接失效退回新窗口。
 
 ## 管理员与权限（/users）
 
