@@ -7,6 +7,7 @@ import {
   useAssignTicketMutation,
   useChangeTicketStatusMutation,
   useDeleteTicketMutation,
+  useRetractTicketMessageMutation,
   useUpdateTicketMutation
 } from "@/lib/ticket-hooks";
 import type { TicketItem, TicketPriority, TicketStatus } from "@/lib/api/tickets";
@@ -30,6 +31,7 @@ export function useDeskActions(ticket: TicketItem) {
   const updateMut = useUpdateTicketMutation();
   const assignMut = useAssignTicketMutation();
   const deleteMut = useDeleteTicketMutation();
+  const retractMut = useRetractTicketMessageMutation();
 
   /** solution 随「已解决」提交；reason 随「不采纳」等提交，不采纳时后端会通知提单人 / 反馈人 */
   const changeStatus = async (status: TicketStatus, detail?: { solution?: string; reason?: string }) => {
@@ -91,9 +93,25 @@ export function useDeskActions(ticket: TicketItem) {
     }
   };
 
+  /** 撤回一条回复 / 备注；reason 选填，只在控制台与操作记录里可见 */
+  const retractMessage = async (messageId: number, reason?: string) => {
+    try {
+      const result = await retractMut.mutateAsync({ ticketId: ticket.id, messageId, reason: reason?.trim() || undefined });
+      notify.success(
+        result.notificationsRemoved > 0 ? `已撤回，并删除了${desk.person}收到的 ${result.notificationsRemoved} 条通知` : "已撤回"
+      );
+      return true;
+    } catch (error) {
+      notify.error(message(error, "撤回失败"));
+      return false;
+    }
+  };
+
   return {
     operatorId,
-    busy: statusMut.isPending || updateMut.isPending || assignMut.isPending || deleteMut.isPending,
+    busy: statusMut.isPending || updateMut.isPending || assignMut.isPending || deleteMut.isPending || retractMut.isPending,
+    retractMessage,
+    retracting: retractMut.isPending,
     changeStatus,
     assign,
     assignGroup,

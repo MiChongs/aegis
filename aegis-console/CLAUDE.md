@@ -1539,6 +1539,11 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 
 通知深链：后端 `ticketConsoleLink` 按 kind 拼 `/feedback?id=` 或 `/tickets?id=`。
 
+**撤回单条回复**：会话里每条消息悬停出「撤回」（只看后端逐条给的 `canRetract`，不在前端按作者或角色推断），
+确认框带选填原因，调 `DELETE /api/admin/tickets/:id/messages/:messageId`（`use-desk-actions.ts` 的 `retractMessage`）。
+已撤回的消息（`retracted`）画成虚线占位「回复已撤回 · 谁 于 何时」，后端给了原文（能看内部备注的人）才出「查看原文」折叠。
+对方侧与它生成的站内信由后端一并处理，前端不另发请求。
+
 快捷键：`J`/`K` 上下一条，`/` 搜索，`R` 回复，`N` 备注，`E` 解决，`A` 指派给我，`X` 勾选当前，`I` 资料栏，`.` 操作菜单，
 `Ctrl/⌘ + Enter` 发送，空回复框里敲 `/` 出快捷回复；列表里 `Shift/Ctrl + 点击` 多选，`Esc` 取消勾选。
 

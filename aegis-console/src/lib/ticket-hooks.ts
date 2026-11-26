@@ -28,6 +28,7 @@ import {
   listTicketSLAPolicies,
   listTickets,
   replyTicket,
+  retractTicketMessage,
   saveTicketCategory,
   saveTicketGroup,
   saveTicketQuickReply,
@@ -284,6 +285,16 @@ export function useChangeTicketStatusMutation() {
         reason: args.reason,
         solution: args.solution
       }),
+    onSuccess: () => invalidateTickets(qc)
+  });
+}
+
+export function useRetractTicketMessageMutation() {
+  const token = useToken();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { ticketId: number; messageId: number; reason?: string }) =>
+      retractTicketMessage(token as string, args.ticketId, args.messageId, args.reason),
     onSuccess: () => invalidateTickets(qc)
   });
 }

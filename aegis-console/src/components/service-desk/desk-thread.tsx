@@ -18,6 +18,7 @@ import {
   RotateCcw,
   Star,
   Tag,
+  Undo2,
   UserCheck,
   X,
   XCircle
@@ -558,6 +559,8 @@ const INLINE_EVENTS = new Set([
   "merged"
 ]);
 
+const RETRACT_REASON_MAX = 200;
+
 type Entry =
   | { type: "day"; key: string; label: string }
   | { type: "message"; key: string; message: TicketMessage; head: boolean }
@@ -621,7 +624,16 @@ function buildEntries(messages: TicketMessage[], events: TicketEvent[]): Entry[]
  * 用户的话是灰底，客服回复是描边白底并带「客服」标记，内部备注是琥珀色。
  */
 function Conversation({ ticket }: { ticket: TicketItem }) {
+  const desk = useDesk();
+  const actions = useDeskActions(ticket);
   const entries = useMemo(() => buildEntries(ticket.messages ?? [], ticket.events ?? []), [ticket.messages, ticket.events]);
+  const [retractTarget, setRetractTarget] = useState<TicketMessage | null>(null);
+  const [retractReason, setRetractReason] = useState("");
+
+  const closeRetract = () => {
+    setRetractTarget(null);
+    setRetractReason("");
+  };
 
   return (
     // 打开时贴到最新一条，有新消息跟着走；用户往上翻就停止跟随
@@ -639,13 +651,58 @@ function Conversation({ ticket }: { ticket: TicketItem }) {
             ) : entry.type === "event" ? (
               <EventLine event={entry.event} />
             ) : (
-              <MessageEntry message={entry.message} head={entry.head} />
+              <MessageEntry message={entry.message} head={entry.head} onRetract={setRetractTarget} />
             )}
           </Fragment>
         ))}
         {ticket.rating ? <RatingCard ticket={ticket} /> : null}
       </StickToBottom.Content>
       <JumpToLatest />
+
+      <AlertDialog
+        open={retractTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeRetract();
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{retractTarget?.internal ? "撤回这条内部备注？" : "撤回这条回复？"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {retractTarget?.internal
+                ? "撤回后会话里只留一条「已撤回」占位，原文仍记在操作记录里。"
+                : `撤回后${desk.person}那边不再显示这条回复，它发出的站内通知一并删除；已经发出的邮件与 IM 消息收不回。原文仍记在操作记录里。`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {retractTarget?.content ? (
+            <blockquote className="max-h-32 overflow-y-auto rounded-md border-l-2 bg-muted/60 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              {retractTarget.content}
+            </blockquote>
+          ) : null}
+          <Textarea
+            rows={2}
+            maxLength={RETRACT_REASON_MAX}
+            value={retractReason}
+            onChange={(event) => setRetractReason(event.target.value)}
+            placeholder="撤回原因，选填，只在控制台可见"
+            aria-label="撤回原因"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={actions.retracting}
+              onClick={async (event) => {
+                event.preventDefault();
+                if (!retractTarget) return;
+                if (await actions.retractMessage(retractTarget.id, retractReason)) closeRetract();
+              }}
+            >
+              撤回
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </StickToBottom>
   );
 }
@@ -666,8 +723,20 @@ function JumpToLatest() {
   );
 }
 
-function MessageEntry({ message, head }: { message: TicketMessage; head: boolean }) {
+function MessageEntry({
+  message,
+  head,
+  onRetract
+}: {
+  message: TicketMessage;
+  head: boolean;
+  onRetract: (message: TicketMessage) => void;
+}) {
   const name = message.authorName || "系统";
+
+  if (message.retracted) {
+    return <RetractedEntry message={message} head={head} name={name} />;
+  }
 
   if (message.authorType === "system") {
     return <p className="py-2 pl-11 text-xs text-muted-foreground">{message.content}</p>;
@@ -675,7 +744,7 @@ function MessageEntry({ message, head }: { message: TicketMessage; head: boolean
 
   const agent = message.authorType === "agent";
   return (
-    <article className={cn("flex gap-3", head ? "pt-3" : "pt-1")}>
+    <article className={cn("group/message flex gap-3", head ? "pt-3" : "pt-1")}>
       <div className="w-8 shrink-0">{head ? <PersonAvatar name={name} src={message.authorAvatar} /> : null}</div>
       <div className="min-w-0 flex-1">
         {head ? (
@@ -713,6 +782,64 @@ function MessageEntry({ message, head }: { message: TicketMessage; head: boolean
           </div>
         ) : null}
         {message.attachments?.length ? <TicketAttachmentList attachments={message.attachments} size="md" className="mt-2" /> : null}
+      </div>
+      {message.canRetract ? (
+        <div className="w-8 shrink-0 pt-1 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-7 text-muted-foreground"
+                aria-label={message.internal ? "撤回这条内部备注" : "撤回这条回复"}
+                onClick={() => onRetract(message)}
+              >
+                <Undo2 className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>撤回</TooltipContent>
+          </Tooltip>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+/** 已撤回的消息：只留占位。能看内部备注的人可以展开原文（后端只给他们下发原文）。 */
+function RetractedEntry({ message, head, name }: { message: TicketMessage; head: boolean; name: string }) {
+  const by = message.deletedByName || "管理员";
+  const at = message.deletedAt ? formatDateTime(message.deletedAt) : "";
+  return (
+    <article className={cn("flex gap-3", head ? "pt-3" : "pt-1")}>
+      <div className="w-8 shrink-0">{head ? <PersonAvatar name={name} src={message.authorAvatar} /> : null}</div>
+      <div className="min-w-0 flex-1">
+        {head ? (
+          <header className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="text-sm font-medium text-foreground">{name}</span>
+            <time dateTime={message.createdAt} title={formatDateTime(message.createdAt)}>
+              {clock(message.createdAt)}
+            </time>
+          </header>
+        ) : null}
+        <div className="w-fit max-w-full rounded-2xl border border-dashed px-4 py-2 text-xs leading-5 text-muted-foreground">
+          <p className="flex items-center gap-1.5">
+            <Undo2 className="size-3.5 shrink-0" />
+            {message.internal ? "内部备注已撤回" : "回复已撤回"}
+            <span>
+              · {by}
+              {at ? ` 于 ${at}` : ""}
+            </span>
+          </p>
+          {message.deleteReason ? <p className="mt-0.5">原因：{message.deleteReason}</p> : null}
+          {message.content ? (
+            <details className="mt-1">
+              <summary className="cursor-pointer select-none text-foreground/70">查看原文</summary>
+              <div className="mt-1.5 text-sm leading-6 text-foreground/80 line-through decoration-muted-foreground/40">
+                <MessageBody message={message} />
+              </div>
+            </details>
+          ) : null}
+        </div>
       </div>
     </article>
   );

@@ -57,6 +57,10 @@ export type TicketActionSet = {
   watch: boolean;
   manageWatchers: boolean;
   uploadAttachment: boolean;
+  /** 撤回自己发的回复与备注 */
+  retractOwn?: boolean;
+  /** 撤回任何处理人的回复与备注（ticket:manage） */
+  retractAny?: boolean;
 };
 
 export type TicketAttachment = {
@@ -89,6 +93,14 @@ export type TicketMessage = {
   editedAt?: string;
   createdAt: string;
   attachments?: TicketAttachment[];
+  /** 已撤回：对方看不到；能看内部备注的人仍看得到原文，其余人 content 为空 */
+  retracted?: boolean;
+  deletedAt?: string;
+  deletedByAdminId?: number;
+  deletedByName?: string;
+  deleteReason?: string;
+  /** 当前管理员能否撤回这条（后端逐条判定，前端只读它） */
+  canRetract?: boolean;
 };
 
 export type TicketEvent = {
@@ -566,6 +578,23 @@ export function changeTicketStatus(
     method: "POST",
     token,
     body: JSON.stringify(payload)
+  });
+}
+
+export type TicketRetractResult = {
+  message: TicketMessage;
+  /** 删掉的对方站内信条数 */
+  notificationsRemoved: number;
+  /** 删掉的管理员收件箱条数 */
+  adminInboxRemoved: number;
+};
+
+/** 撤回一条回复或内部备注（软删除）。对方侧不再显示，它生成的站内信一并删除。 */
+export function retractTicketMessage(token: string, ticketId: number, messageId: number, reason?: string) {
+  return apiRequest<TicketRetractResult>(`/api/admin/tickets/${ticketId}/messages/${messageId}`, {
+    method: "DELETE",
+    token,
+    body: JSON.stringify({ reason: reason ?? "" })
   });
 }
 
