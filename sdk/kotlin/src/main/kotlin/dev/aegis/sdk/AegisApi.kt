@@ -1004,12 +1004,19 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
     @Throws(IOException::class)
     fun cosmeticCenter(): JsonElement = client.call("GET", "/cosmetics", requireAuth = true)
 
-    /** 我此刻身上的装扮（已按资格过滤：过期、下架、会员到期的不会出现）；应用未开启时为空。 */
+    /**
+     * 我此刻身上的装扮（已按资格过滤：过期、下架、会员到期的不会出现）；应用未开启时为空。
+     * 形状 `{avatarFrame?, profileCard?, nameStyle?, badges: [], idPlate?, vipPlate?}`。铭牌的设计稿带
+     * `plate{x, y, width, height, template, align, fontSize, fontWeight, letterSpacing, font, stretch?{x0, x1}}` 与 `nameStyle`：
+     * 号码铭牌把 template 里的 `{value}` 换成号码，会员铭牌换 `{value}`（有效期那一行）与 `{tier}`（套餐 / 档位名），
+     * 绘制与按字伸缩见 docs/cosmetics.md「铭牌」。
+     */
     @Throws(IOException::class)
     fun myCosmetics(): JsonElement = client.call("GET", "/cosmetics/me", requireAuth = true)
 
     /**
-     * 佩戴或摘下。[cosmeticId] 为 0 即摘下这个槽位；勋章用 [position] 指定第几位（0 起，
+     * 佩戴或摘下。[slot] 为 `avatar_frame` / `profile_card` / `name_style` / `badge` / `id_plate` / `vip_plate`；
+     * [cosmeticId] 为 0 即摘下这个槽位；勋章用 [position] 指定第几位（0 起，
      * `-1` 且 [cosmeticId] 为 0 摘下全部勋章）。返回新的身上装扮。不能佩戴时报 40360，`data.reason` 说明原因。
      */
     @Throws(IOException::class)

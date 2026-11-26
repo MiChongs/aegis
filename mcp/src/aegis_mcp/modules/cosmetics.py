@@ -1,4 +1,4 @@
-"""个性装扮：头像框、资料卡背景、昵称样式、勋章的目录、设置、设计稿草稿与发布、版本回退、素材库、用户的发放 / 收回 / 摘下、持有记录与统计。"""
+"""个性装扮：头像框、资料卡背景、昵称样式、勋章、号码铭牌、会员铭牌的目录、设置、设计稿草稿与发布、版本回退、素材库、用户的发放 / 收回 / 摘下、持有记录与统计。"""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ REVOKE = POST(f"{B}/users/:userId/ownerships/:ownershipId/revoke")
 UNEQUIP = POST(f"{B}/users/:userId/unequip")
 
 ItemID = Annotated[int, Field(gt=0, description="装扮 ID（cosmetics_items 结果里的 id）")]
-Slot = Literal["avatar_frame", "profile_card", "name_style", "badge"]
+Slot = Literal["avatar_frame", "profile_card", "name_style", "badge", "id_plate", "vip_plate"]
 Rarity = Literal["common", "rare", "epic", "legendary", "mythic"]
 UnlockMode = Literal["grant", "free", "vip", "level", "feature"]
 Days = Annotated[int, Field(ge=0, le=3650, description="天数，0 为永久；同一件多次限时发放时顺延")]
@@ -161,7 +161,7 @@ async def update_item(
 async def save_draft(
     app: AppRef,
     item_id: ItemID,
-    design: Annotated[dict[str, Any], Field(description="整份设计稿（规格见 docs/cosmetics.md「设计稿」：version、canvas、avatar、duration、layers、nameStyle、assets）")],
+    design: Annotated[dict[str, Any], Field(description="整份设计稿（规格见 docs/cosmetics.md「设计稿」：version、canvas、avatar、duration、layers、nameStyle、assets；铭牌另有 plate（文字区域、template、可选 stretch 按字伸缩），且必须带 nameStyle）")],
 ) -> Any:
     """保存设计器草稿（整份校验，错误信息会点名第几个图层哪个字段）。不影响已发布的版本，发布后才对用户生效。"""
     return await ITEM_DRAFT(appkey=app, itemId=item_id, body={"design": design})
