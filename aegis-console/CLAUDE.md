@@ -736,7 +736,7 @@ Shell 挂载 1.5s 后预热一次，面板打开时再兜底触发一次
 | `components/apps/cloud-storage/` | 用户云存储区块：概览 / 用户 / 配置（见下节） |
 | `lib/api/cloud-storage.ts` / `lib/cloud-storage-hooks.ts` | 用户云存储域 API 与 React Query hooks |
 | `lib/api/vip.ts` / `lib/vip-hooks.ts` | 会员域 API 与 React Query hooks |
-| `components/apps/ai-gateway/` | AI 中转区块：概览 / 模型 / 调用记录 / 密钥 / 额度 / 设置（见下方「AI 中转区块」） |
+| `components/apps/ai-gateway/` | AI 中转区块：概览 / 模型 / 计费方案 / 额度商店 / 调用记录 / 密钥 / 额度 / 设置（见下方「AI 中转区块」） |
 | `lib/api/ai-gateway.ts` / `lib/ai-gateway-hooks.ts` | AI 中转网关域 API 与 React Query hooks |
 
 四条硬约束：
@@ -1253,14 +1253,23 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 
 | 文件 | 职责 |
 |---|---|
-| `components/apps/ai-gateway/app-ai-gateway-panel.tsx` | 骨架 + 六个视图的切换；从概览 / 密钥 / 额度跳到调用记录时带上筛选 |
+| `components/apps/ai-gateway/app-ai-gateway-panel.tsx` | 骨架 + 八个视图的切换；从概览 / 密钥 / 额度跳到调用记录时带上筛选 |
 | `components/apps/ai-gateway/ai-gateway-overview-panel.tsx` | Base URL（可复制）、扣费顺序、调用与扣费趋势、按来源与模型汇总、未收与进行中 |
 | `components/apps/ai-gateway/ai-gateway-models-panel.tsx` | 模型列表（点行即编辑）与删除确认 |
 | `components/apps/ai-gateway/ai-gateway-model-sheet.tsx` | 添加 / 编辑模型的大号 Sheet：左栏上游通道（当前链路，含平台共享），右栏从通道型号里挑上游模型（应用自有通道可一键拉取，新建可多选批量添加）、对外信息、种类、价格（含典型用量估价）、选项 |
 | `components/apps/ai-gateway/ai-gateway-requests-panel.tsx` | 调用记录：用户 / 模型 / 状态 / 接口筛选；明细弹窗含暂扣、价格、实扣、扣费来源与整笔退款 |
 | `components/apps/ai-gateway/ai-gateway-keys-panel.tsx` | 用户密钥：启用 / 停用（管理端不新建，明文只给用户本人看一次） |
-| `components/apps/ai-gateway/ai-gateway-credits-panel.tsx` | 某个用户的 AI 账户（与用户端总览同一份）与赠送额度调整、流水 |
-| `components/apps/ai-gateway/ai-gateway-settings-panel.tsx` | 开关、扣费来源勾选与排序、额度、余额折算、倍率、限制 |
+| `components/apps/ai-gateway/ai-gateway-credits-panel.tsx` | 某个用户的 AI 额度（与用户端总览同一份：额度包 / 永久 / 周期额度 / 此刻倍率）、额度批次（可作废）、发放限期额度与调整永久额度、额度流水（bucket / 批次 / 合计） |
+| `components/apps/ai-gateway/ai-gateway-settings-panel.tsx` | 开关、扣费来源勾选与排序（不含积分）、免费额度、余额直付、全局与等级倍率、新人礼、额度商店开关与购买须知、限制 |
+| `components/apps/ai-gateway/ai-gateway-pricing-panel.tsx` | 计费方案：时段价格 / 会员优惠 / 价格模拟三个页签共用一份草稿，顶栏与悬浮条保存 |
+| `components/apps/ai-gateway/ai-gateway-time-pricing.tsx` / `ai-gateway-time-visual.tsx` | 时段列表（dnd-kit 拖动排优先级、模板、星期 / 时间 / 倍率 / 限定模型与种类 / 活动日期）；24 小时环形时钟 + 7 天 × 48 个半小时热力图，标出「现在」 |
+| `components/apps/ai-gateway/ai-gateway-member-tiers.tsx` | 会员档位优惠：优惠对比表 + 逐档卡片（拖动排优先级）+ 通用会员 |
+| `components/apps/ai-gateway/ai-gateway-price-simulator.tsx` | 价格模拟：按草稿调 `POST /pricing/preview`，倍率分解、累乘条、模型单价、会员权益、服务端 7 天时间轴 |
+| `components/apps/ai-gateway/ai-gateway-store-panel.tsx` | 额度商店：额度包 / 订单 / 生意三个页签；额度包按用户看到的样子排卡片，可切身份看会员价 |
+| `components/apps/ai-gateway/ai-gateway-package-card.tsx` / `ai-gateway-package-sheet.tsx` | 额度包卡片与前端报价（`quotePackage`，与后端 QuotePackage 同公式，只作预览）；新建 / 编辑 Sheet（右栏实时预览 + 各身份到手价） |
+| `components/apps/ai-gateway/ai-gateway-package-orders.tsx` | 订单筛选与详情：批次剩余、按剩余比例的预计退款额、退款 |
+| `components/apps/ai-gateway/ai-gateway-commerce-board.tsx` | 额度生意：营收 / 订单 / 买家 / 售出 / 负债 / 7 天内到期，按日营收、按包占比、到期分布、按时段的调用与让利 |
+| `components/apps/ai-gateway/ai-gateway-billing-kit.tsx` | 时段色调、折扣说法（`discountLabel`：0.85 → 85 折）、倍率分解 `FactorChain`、批次 / 流水中文名，以及与后端一致的时段求值（`resolveWindow` / `daySegments`） |
 | `components/apps/ai-gateway/ai-gateway-shared.tsx` | 状态 / 接口 / 来源 / 价格项文案、点数与用量格式化 |
 
 五条硬约束：
@@ -1276,10 +1285,16 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
    `holds` / `charges` 是**微点整数**，展示前除以 `MICRO_PER_POINT`。
 4. **扣费来源存「全部来源的顺序 + 哪些启用」**：取消勾选不丢位置，保存时按顺序筛出启用的发给后端。
    余额是真钱，未勾选时余额折算输入框禁用。
-5. **赠送额度调整用方向 + 正数**，每次提交带 `crypto.randomUUID()` 作请求编号，成功后换新编号：
+5. **永久额度调整用方向 + 正数**，每次提交（含发放限期额度）带 `crypto.randomUUID()` 作请求编号，成功后换新编号：
    网络重试命中同一编号时后端只生效一次（回 `replayed`）。
+6. **设置是整份 PUT，三处分管**：「设置」管开关 / 来源 / 免费额度 / 余额直付 / 全局与等级倍率 / 新人礼 / 商店 / 限制，
+   「计费方案」管 `timePricing` / `memberTiers` / 通用会员（`vipMultiplier` 等五项）。各自保存时都**以服务端当前设置为底**
+   只换自己那几项，另一处的字段原样带回去；不要在两处编辑同一个字段。
+7. **时段在前端自算**：热力图与时钟用 `billing-kit` 的 `resolveWindow`（半开区间、`end ≤ start` 跨零点按开始那天判星期与
+   活动日期、`start = end` 全天、首个命中优先），改一格不必请求；价格模拟才走 `/pricing/preview`。
+   积分（`integral`）已不是扣费来源：类型里留着只为显示旧记录，设置里过滤掉。
 
-规格见 [docs/ai-gateway.md](../docs/ai-gateway.md)。
+规格见 [docs/ai-gateway.md](../docs/ai-gateway.md) 与 [docs/ai-billing.md](../docs/ai-billing.md)。
 
 ## 登录设备区块（/apps/{appKey}?tab=device-limit）
 
