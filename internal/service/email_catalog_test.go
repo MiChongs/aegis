@@ -288,3 +288,20 @@ func TestSettingMapParsesJSONObject(t *testing.T) {
 		t.Fatal("解析失败或缺失时应返回 nil")
 	}
 }
+
+// 真实构造函数必须注册展示顺序里的每一家。
+// 上面的用例用的是测试自己拼的发送器表，构造函数里漏掉一行时它们照样全绿 ——
+// 11-26 一次回退提交就这样悄悄删掉了 Cloud Mail 的注册，表现是控制台里那家服务商凭空消失。
+func TestNewEmailServiceRegistersEveryDisplayedProvider(t *testing.T) {
+	t.Parallel()
+
+	service := NewEmailService(zap.NewNop(), nil, nil, "", "test-master-key")
+	for _, key := range emailProviderDisplayOrder {
+		if _, ok := service.senders[key]; !ok {
+			t.Errorf("NewEmailService 没有注册 %q", key)
+		}
+	}
+	if len(service.senders) != len(emailProviderDisplayOrder) {
+		t.Errorf("注册了 %d 家，展示顺序里有 %d 家", len(service.senders), len(emailProviderDisplayOrder))
+	}
+}

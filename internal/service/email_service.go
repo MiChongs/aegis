@@ -67,6 +67,7 @@ func NewEmailService(log *zap.Logger, pg *pgrepo.Repository, redis *redislib.Cli
 		emaildomain.ProviderPostmark: newPostmarkEmailSender(log),
 		emaildomain.ProviderAliyun:   newAliyunEmailSender(log),
 		emaildomain.ProviderTencent:  newTencentEmailSender(log),
+		emaildomain.ProviderSkymail:  newSkymailEmailSender(log),
 	}
 	return service
 }
