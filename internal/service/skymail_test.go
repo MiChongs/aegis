@@ -38,7 +38,7 @@ func newFakeSkymail(t *testing.T) (*fakeSkymail, *httptest.Server) {
 	return fake, server
 }
 
-func (f *fakeSkymail) reply(w http.ResponseWriter, code int, message string, data any) {
+func (f *fakeSkymail) reply(w http.ResponseWriter, code any, message string, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": code, "message": message, "data": data})
 }
@@ -90,7 +90,7 @@ func (f *fakeSkymail) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Unlock()
 		if f.sendReply != nil {
 			reply := f.sendReply()
-			f.reply(w, reply["code"].(int), reply["message"].(string), reply["data"])
+			f.reply(w, reply["code"], reply["message"].(string), reply["data"])
 			return
 		}
 		f.reply(w, 200, "success", []map[string]any{{
@@ -381,5 +381,31 @@ func TestDecodeSkymailParamsRejectsUnknownFields(t *testing.T) {
 	}
 	if _, err := validSkymailIDs([]int64{0}, "邮件"); err == nil {
 		t.Fatal("非正数 id 应被拒绝")
+	}
+}
+
+// Cloud Mail 透传 Cloudflare Email 的错误时 code 是字符串，不能被当成「不是接口数据」。
+func TestSkymailStringCodeFromCloudflareIsExplained(t *testing.T) {
+	fake, server := newFakeSkymail(t)
+	fake.sendReply = func() map[string]any {
+		return map[string]any{"code": "E_RECIPIENT_NOT_ALLOWED", "message": "destination address is not a verified address", "data": nil}
+	}
+	sender := newTestSkymailSender(server)
+	_, err := sender.Send(context.Background(), skymailTestConfig(server.URL, ""),
+		emailOutbound{To: "user@example.com", Subject: "s", HTML: "<p>x</p>"})
+	var appErr *apperrors.AppError
+	if !errors.As(err, &appErr) || appErr.Code != 40072 {
+		t.Fatalf("Cloudflare 拒收未验证地址应报 40072，实际 %v", err)
+	}
+	if !strings.Contains(appErr.Message, "Email Routing") || strings.Contains(appErr.Message, "站点地址") {
+		t.Fatalf("提示应指向 Cloudflare 的收件人验证，而不是站点地址：%q", appErr.Message)
+	}
+
+	var code skymailCode
+	for raw, want := range map[string]skymailCode{`200`: {Num: 200}, `"401"`: {Num: 401}, `"E_X"`: {Str: "E_X"}, `null`: {}} {
+		code = skymailCode{}
+		if err := json.Unmarshal([]byte(raw), &code); err != nil || code != want {
+			t.Fatalf("%s 解析成 %+v（%v），期望 %+v", raw, code, err, want)
+		}
 	}
 }

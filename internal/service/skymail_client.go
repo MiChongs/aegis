@@ -82,10 +82,46 @@ func normalizeSkymailBaseURL(raw string) string {
 }
 
 type skymailEnvelope struct {
-	Code    int             `json:"code"`
+	Code    skymailCode     `json:"code"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data"`
 }
+
+// skymailCode 信封里的业务码。通常是数字（200 / 401 / 403 / 500），但 Cloud Mail 透传
+// 发信渠道的错误时会原样带出对方的字符串码，例如 Cloudflare Email 的
+// `{"code":"E_RECIPIENT_NOT_ALLOWED"}`。只按数字解析会把这类回包当成「不是接口数据」，
+// 报一句「请确认站点地址」把人带偏。
+type skymailCode struct {
+	Num int
+	Str string
+}
+
+func (c *skymailCode) UnmarshalJSON(raw []byte) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var value string
+		if err := json.Unmarshal(trimmed, &value); err != nil {
+			return err
+		}
+		value = strings.TrimSpace(value)
+		if n, err := strconv.Atoi(value); err == nil {
+			c.Num = n
+		} else {
+			c.Str = value
+		}
+		return nil
+	}
+	return json.Unmarshal(trimmed, &c.Num)
+}
+
+func (c skymailCode) present() bool { return c.Num != 0 || c.Str != "" }
+
+func (c skymailCode) ok() bool { return c.Str == "" && c.Num == http.StatusOK }
+
+func (c skymailCode) unauthorized() bool { return c.Str == "" && c.Num == http.StatusUnauthorized }
 
 type skymailCachedToken struct {
 	token     string
@@ -146,7 +182,7 @@ func (c *skymailClient) call(ctx context.Context, cred skymailCredentials, metho
 		return err
 	}
 	envelope, err := c.do(ctx, cred.BaseURL, method, path, query, body, token)
-	if err == nil && envelope.Code == http.StatusUnauthorized {
+	if err == nil && envelope.Code.unauthorized() {
 		c.dropToken(cred, token)
 		if token, err = c.token(ctx, cred); err != nil {
 			return err
@@ -156,8 +192,8 @@ func (c *skymailClient) call(ctx context.Context, cred skymailCredentials, metho
 	if err != nil {
 		return err
 	}
-	if envelope.Code != http.StatusOK {
-		if envelope.Code == http.StatusUnauthorized {
+	if !envelope.Code.ok() {
+		if envelope.Code.unauthorized() {
 			c.dropToken(cred, token)
 		}
 		return classifySkymailCode(envelope.Code, envelope.Message)
@@ -235,7 +271,7 @@ func (c *skymailClient) login(ctx context.Context, cred skymailCredentials) (str
 	if err != nil {
 		return "", err
 	}
-	if envelope.Code != http.StatusOK {
+	if !envelope.Code.ok() {
 		detail := clampDetail(envelope.Message)
 		return "", apperrors.New(40071, http.StatusUnauthorized, withDetail("Cloud Mail 登录失败，请检查登录邮箱与密码", detail))
 	}
@@ -294,7 +330,7 @@ func (c *skymailClient) do(ctx context.Context, baseURL string, method string, p
 			withDetail(fmt.Sprintf("Cloud Mail 返回 %d，请稍后重试", response.StatusCode), string(raw)))
 	}
 	var envelope skymailEnvelope
-	if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Code == 0 {
+	if err := json.Unmarshal(raw, &envelope); err != nil || !envelope.Code.present() {
 		return skymailEnvelope{}, apperrors.New(50060, http.StatusBadGateway,
 			withDetail(fmt.Sprintf("Cloud Mail 返回的不是接口数据（HTTP %d），请确认站点地址", response.StatusCode), string(raw)))
 	}
@@ -305,9 +341,12 @@ func (c *skymailClient) do(ctx context.Context, baseURL string, method string, p
 //
 // Cloud Mail 的业务拒绝大多是 500 + 一句中文（发件账号不存在、域名未配置、超出发件次数……），
 // 这些都是「改配置」类问题，不该重试，也不该进熔断。
-func classifySkymailCode(code int, message string) error {
+func classifySkymailCode(code skymailCode, message string) error {
 	detail := clampDetail(message)
-	switch code {
+	if code.Str != "" {
+		return classifySkymailChannelCode(code.Str, detail)
+	}
+	switch code.Num {
 	case http.StatusUnauthorized:
 		return apperrors.New(40071, http.StatusUnauthorized, withDetail("Cloud Mail 登录已失效", detail))
 	case http.StatusForbidden:
@@ -316,9 +355,32 @@ func classifySkymailCode(code int, message string) error {
 		return apperrors.New(50060, http.StatusBadGateway, withDetail("Cloud Mail 站点自身配置不完整", detail))
 	default:
 		if detail == "" {
-			detail = "code " + strconv.Itoa(code)
+			detail = "code " + strconv.Itoa(code.Num)
 		}
 		return apperrors.New(40070, http.StatusBadRequest, "Cloud Mail："+detail)
+	}
+}
+
+// classifySkymailChannelCode Cloud Mail 透传的发信渠道错误（字符串码）。
+//
+// 目前见过的是 Cloudflare Email（邮局绑定了 Workers 的 send_email）：它只能发给
+// 在 Email Routing 里验证过的目标地址，发给任意用户的验证码会被 E_RECIPIENT_NOT_ALLOWED 拒掉。
+// 这是邮局的发信渠道选错了，不是平台或站点地址的问题，提示里要把出路说清楚。
+func classifySkymailChannelCode(code string, detail string) error {
+	upstream := code
+	if detail != "" {
+		upstream += "：" + detail
+	}
+	switch code {
+	case "E_RECIPIENT_NOT_ALLOWED":
+		return apperrors.New(40072, http.StatusForbidden,
+			"Cloud Mail 用 Cloudflare Email 发信，而 Cloudflare 只允许发给在 Email Routing 里验证过的地址。"+
+				"要发给任意收件人，请在邮局后台为该域名配置 Resend（"+upstream+"）")
+	case "E_SENDER_NOT_VERIFIED", "E_SENDER_DOMAIN_NOT_AVAILABLE":
+		return apperrors.New(40072, http.StatusForbidden,
+			"Cloud Mail 的发件域名没有在 Cloudflare Email 里启用（"+upstream+"）")
+	default:
+		return apperrors.New(40070, http.StatusBadRequest, "Cloud Mail 发信渠道拒绝："+clampDetail(upstream))
 	}
 }
 
