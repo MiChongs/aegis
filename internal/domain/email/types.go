@@ -26,6 +26,7 @@ const (
 	ProviderPostmark = "postmark" // Postmark
 	ProviderAliyun   = "aliyun"   // 阿里云邮件推送 DirectMail
 	ProviderTencent  = "tencent"  // 腾讯云邮件推送 SES
+	ProviderSkymail  = "skymail"  // Cloud Mail（docs.skymail.ink）自建邮局
 )
 
 // ZeaburDefaultBaseURL 是 Zeabur Email 的 REST 根地址，配置留空时使用。

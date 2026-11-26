@@ -895,6 +895,8 @@ POST	/api/admin/app/email-config/policy/save	AdminEmailPolicySave
 POST	/api/admin/app/email-config/preview	AdminEmailPreview
 POST	/api/admin/app/email-config/providers	EmailProviderCatalog
 POST	/api/admin/app/email-config/scenes	EmailSceneCatalog
+POST	/api/admin/app/email-config/skymail/action	AdminEmailSkymailAction
+POST	/api/admin/app/email-config/skymail/query	AdminEmailSkymailQuery
 POST	/api/admin/app/email-config/stats	AdminEmailDeliveryStats
 POST	/api/admin/app/email-config/suppressions	AdminEmailSuppressionList
 POST	/api/admin/app/email-config/suppressions/create	AdminEmailSuppressionCreate
@@ -1257,6 +1259,8 @@ POST	/api/admin/system/egress/probe	AdminProbeEgress
 POST	/api/admin/system/egress/reset	AdminResetEgressSettings
 POST	/api/admin/system/egress/test	AdminTestEgress
 POST	/api/admin/system/email/configs	AdminPlatformEmailConfigCreate
+POST	/api/admin/system/email/configs/:configId/skymail/action	AdminPlatformEmailSkymailAction
+POST	/api/admin/system/email/configs/:configId/skymail/query	AdminPlatformEmailSkymailQuery
 POST	/api/admin/system/email/configs/:configId/test	AdminPlatformEmailConfigTest
 POST	/api/admin/system/email/preview	AdminPlatformEmailPreview
 POST	/api/admin/system/email/suppressions	AdminPlatformEmailSuppressionCreate

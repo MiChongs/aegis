@@ -299,6 +299,8 @@ func permissionTree() []PermissionNode {
 					rt(mAny, "/api/admin/app/email-config/channel"), rt(mAny, "/api/admin/app/email-config/policy"),
 					rt(mAny, "/api/admin/app/email-config/preview"), rt(mAny, "/api/admin/app/email-config/overview"),
 					rt(mAny, "/api/admin/app/email-config/deliveries/detail"), rt(mAny, "/api/admin/app/email-config/suppressions"),
+					// Cloud Mail 邮局的只读查询（收件箱、邮箱账号、用户、注册码……）
+					rt(mPost, pSystem+"/email/configs/:configId/skymail/query"), rt(mAny, "/api/admin/app/email-config/skymail/query"),
 				)),
 				act(PermEmailWrite, "编辑", PermEmailWrite, routes(
 					under(mAny, pSystem+"/email"), under(mAny, "/api/admin/app/email-config"),

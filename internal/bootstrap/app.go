@@ -76,6 +76,8 @@ type APIApp struct {
 	Storage *service.StorageService
 	// AccountDeletion 账号注销：后台循环执行到期的冷静期申请并发到期提醒，退出时必须 Stop
 	AccountDeletion *service.AccountDeletionService
+	// EmailSync 邮件服务：后台对账不推送回执的服务商（Cloud Mail）的投递状态
+	EmailSync *service.EmailService
 	// Suspension 封禁申诉与全站封禁：后台每分钟兜底跑没审过的申诉，退出时必须 Stop
 	Suspension *service.SuspensionService
 	// RegisterIP 注册 IP 控制：台账与拦截记录批量写入协程，退出时必须 Stop 把队列写完
@@ -1003,6 +1005,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		CloudStorage:       cloudStorageService,
 		Storage:            storageService,
 		AccountDeletion:    accountDeletionService,
+		EmailSync:          emailService,
 		Suspension:         suspensionService,
 		RegisterIP:         registerIPService,
 		Leaderboard:        leaderboardService,
@@ -1065,6 +1068,9 @@ func (a *APIApp) Start(ctx context.Context) error {
 	}
 	if a.AccountDeletion != nil {
 		a.AccountDeletion.Start(ctx)
+	}
+	if a.EmailSync != nil {
+		a.EmailSync.StartSkymailSync(ctx)
 	}
 	if a.Suspension != nil {
 		a.Suspension.Start(ctx)

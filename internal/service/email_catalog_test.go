@@ -25,6 +25,7 @@ func newCatalogTestService(t *testing.T) *EmailService {
 			emaildomain.ProviderPostmark: newPostmarkEmailSender(log),
 			emaildomain.ProviderAliyun:   newAliyunEmailSender(log),
 			emaildomain.ProviderTencent:  newTencentEmailSender(log),
+			emaildomain.ProviderSkymail:  newSkymailEmailSender(log),
 		},
 	}
 }

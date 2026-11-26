@@ -2,8 +2,8 @@
 
 > 面包屑：[Aegis](../CLAUDE.md) › docs/email
 
-平台的邮件出口：**两种作用域、九档服务商、一份目录**。
-Zeabur 那一档的接入细节另见 [zeabur-email.md](zeabur-email.md)。
+平台的邮件出口：**两种作用域、十档服务商、一份目录**。
+Zeabur 那一档的接入细节另见 [zeabur-email.md](zeabur-email.md)，Cloud Mail 那一档（含控制台里的「邮局」代管）见 [skymail-email.md](skymail-email.md)。
 
 ## 两种作用域
 
@@ -141,7 +141,7 @@ Redis 出错时限频放行并记 warn：为一次缓存抖动让所有人收不
 - 概览（`overview`）给累计数字、按浏览器时区分日的趋势（`tz` 参数）、按用途与状态的分布、
   有效抑制数与近 24 小时失败数。
 
-## 九档服务商
+## 十档服务商
 
 | provider | 传输 | SDK | 附件 | 投递回执 |
 |---|---|---|:--:|:--:|
@@ -154,6 +154,7 @@ Redis 出错时限频放行并记 warn：为一次缓存抖动让所有人收不
 | `postmark` | REST | 自研（无官方 Go SDK） | ✅ | ✅ |
 | `aliyun` | 阿里云邮件推送 | `dm-20151123/v2`（官方） | ❌ | ✅ |
 | `tencent` | 腾讯云 SES | `tencentcloud-sdk-go/.../ses`（官方） | ✅ | ✅ |
+| `skymail` | Cloud Mail REST | 自研（无 SDK） | ✅（≤10 个） | 定时对账（无推送） |
 
 `resolveSender` 对未知 provider **直接报错而不静默回落到 SMTP** ——
 回落会让「配了 A 却在用 B」这种故障以超时的形式出现在几层之外。
@@ -240,7 +241,9 @@ Secret 标记与类型成对、下拉必须有选项、声明了回执就必须�
 
 ## 投递回执
 
-除 SMTP 外的**八家全部接了回执**。地址里的作用域段是应用 id，或字面量 `platform`：
+除 SMTP 与 Cloud Mail 外的**八家全部接了回执**。Cloud Mail 不向外推送，
+由 `StartSkymailSync` 每两分钟比对它的发件箱回填（见 [skymail-email.md](skymail-email.md)）。
+地址里的作用域段是应用 id，或字面量 `platform`：
 
 | provider | 路径 | 准入方式 |
 |---|---|---|
@@ -337,7 +340,7 @@ PascalCase 三种写法（阿里云还分「带事件名」与「只有状态码
 
 ## 出网一律经过出海代理网关
 
-九档里除 SMTP 外全部走 `pkg/egress` 的客户端（含 SNS 取证书与订阅确认）。
+十档里除 SMTP 外全部走 `pkg/egress` 的客户端（Cloud Mail 的 profile 名是 `email.skymail`）（含 SNS 取证书与订阅确认）。
 这些服务商的端点多在境外，与 OAuth / 对象存储 / GeoIP 共用同一张域名路由表。
 绕开它的后果是「开了代理，别的都通、唯独这家超时」，而那种差异极难联想到出网路由上去。
 

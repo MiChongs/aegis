@@ -99,7 +99,7 @@ graph TD
 | `pkg/montecarlo/` | **可复现的并行蒙特卡洛框架**：每次重复实验一条只由（种子，序号）决定的随机流，并行执行、按序号合并（同一个种子在几个核上都是逐字节相同的结果），内存有界、panic 变错误；配套可合并的统计件（Welford 均值方差与 Student t 置信区间、整数直方图、DDSketch 分位数、Wilson 区间）。抽奖的大规模推演建在它上面 | [docs](docs/lottery.md#大规模推演) |
 | `pkg/routetable/` | **路由清单渲染**：分组表格 / 树形 / Markdown / CSV / HTML / JSON，宽度自适应 | [transport/http](internal/transport/http/CLAUDE.md#路由清单与分组规则) |
 | `pkg/gifcaptcha/` | **动态图片验证码**：逐帧动画 GIF（字形位移/旋转/变色 + 漂移噪点 + 干扰线 + 水波扭曲），纯 Go、字体内嵌 | [service](internal/service/CLAUDE.md#动态图片验证码gifcaptcha) |
-| **邮件系统** | 平台级 + 应用级两种作用域，九档服务商（SMTP / Zeabur / AWS SES / Resend / SendGrid / Mailgun / Postmark / 阿里云 / 腾讯云）一律优先官方 SDK；服务商目录自述驱动服务端校验与控制台表单 | [docs](docs/email.md) |
+| **邮件系统** | 平台级 + 应用级两种作用域，十档服务商（SMTP / Cloud Mail / Zeabur / AWS SES / Resend / SendGrid / Mailgun / Postmark / 阿里云 / 腾讯云）一律优先官方 SDK；Cloud Mail 通道还能在控制台「邮局」里直接管收件箱、邮箱账号、用户与注册码；服务商目录自述驱动服务端校验与控制台表单 | [docs](docs/email.md) |
 | **头像服务** | 地址**永久**不失效（编码的是「谁」不是「哪个对象」）+ EXIF 纠正 / 多尺寸 / blurhash + 服务端自绘默认头像 | [docs](docs/avatar.md) |
 | **地图底图** | 13 家供应商自述式目录，默认档跟随**浏览器语言**（简体中文走境内、其余走全球）；GCJ-02 底图在瓦片管线里纠偏，业务坐标恒为 WGS-84 | [aegis-console](aegis-console/CLAUDE.md#地图底图多供应商--跟随浏览器语言) |
 | `pkg/receipt/` | **支付凭证 PDF**：10 语言 A4 排版 + 字体决策 + 分页 | [docs](docs/payment-receipt.md) |
@@ -427,7 +427,7 @@ docker build -f deploy/docker/console.Dockerfile \
 | 多云存储 | Cloudflare R2 / AWS S3（aws-sdk-go-v2）/ MinIO / RustFS / Azure Blob / Aliyun OSS / Tencent COS / Qiniu / WebDAV / OneDrive / Dropbox / Google Drive / 本地磁盘，经存储池统一调度，详见 [docs/storage.md](docs/storage.md) |
 | OAuth2 | QQ / 微信 / GitHub / Google / Microsoft / 微博 |
 | 支付渠道 | 17 个内置渠道，均由 `Provider.Describe()` 自描述（详见 [internal/service/CLAUDE.md](internal/service/CLAUDE.md#支付网关)）：<br>内部钱包 / 支付宝 (smartwalle) / 微信支付 (官方 wechatpay-go) / 易支付系聚合（易支付·彩虹·虎皮椒·PAYJS·码支付·V免签）/ 爱发电 / Stripe (stripe-go) / PayPal (plutov) / Paddle / Lemon Squeezy / Square / Razorpay / Coinbase Commerce |
-| 邮件出口 | 九档可插拔 provider，一律优先官方 SDK：`smtp` 直连（go-mail）/ `zeabur` REST / `ses`（aws-sdk-go-v2 sesv2，Raw MIME 带附件）/ `resend`（resend-go）/ `sendgrid`（sendgrid-go）/ `mailgun`（mailgun-go v5）/ `postmark`（REST，无官方 Go SDK）/ `aliyun`（dm-20151123）/ `tencent`（tencentcloud-sdk-go ses）。配置全部落库、控制台动态表单由服务商自述驱动，详见 [docs/email.md](docs/email.md)<br>**Zeabur 平台封禁出站 SMTP 端口**，部署在其上时不能用 `smtp` 档 |
+| 邮件出口 | 十档可插拔 provider，一律优先官方 SDK：`smtp` 直连（go-mail）/ `skymail` Cloud Mail 自建邮局（REST，令牌缓存 + 发件箱对账回填状态）/ `zeabur` REST / `ses`（aws-sdk-go-v2 sesv2，Raw MIME 带附件）/ `resend`（resend-go）/ `sendgrid`（sendgrid-go）/ `mailgun`（mailgun-go v5）/ `postmark`（REST，无官方 Go SDK）/ `aliyun`（dm-20151123）/ `tencent`（tencentcloud-sdk-go ses）。配置全部落库、控制台动态表单由服务商自述驱动，详见 [docs/email.md](docs/email.md)<br>**Zeabur 平台封禁出站 SMTP 端口**，部署在其上时不能用 `smtp` 档 |
 | 出海代理 | 自研网关（`pkg/egress`）：域名后缀路由 + http/https/socks5/socks5h/ssh/trojan/shadowsocks，协议实现分别来自 x/net/proxy、x/crypto/ssh、go-shadowsocks2 |
 | 启动横幅 | `pkg/banner`：go-figure（FIGlet 艺术字，内嵌 148 字体）+ go-pretty（表格/着色，自带 NO_COLOR 与 Windows VT 识别）+ gopsutil（主机事实）+ go-humanize + go-isatty/x/term（终端探测） |
 | 支付凭证 | `pkg/receipt`：gopdf（PDF 引擎，支持 TTF 子集嵌入）+ `pkg/fontkit`（TTC → 独立 sfnt，gopdf 读不了 TTC/OTF）+ `pkg/i18n`（x/text 的语言协商与 CLDR 复数）+ x/image/gofont（内嵌拉丁字形，保证英文凭证零依赖）+ go-colorful（Lab 空间配色派生与 WCAG 对比度）+ boombuler/barcode（矢量二维码）。10 语言、默认 en、Claude 暖调配色，详见 [docs](docs/payment-receipt.md) |

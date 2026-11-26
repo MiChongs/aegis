@@ -154,6 +154,9 @@ func registerAdminSystemRoutes(router *gin.Engine, h *Handler, deps RouterDeps) 
 		adminSystem.PUT("/email/configs/:configId", h.AdminPlatformEmailConfigUpdate)
 		adminSystem.DELETE("/email/configs/:configId", h.AdminPlatformEmailConfigDelete)
 		adminSystem.POST("/email/configs/:configId/test", h.AdminPlatformEmailConfigTest)
+		// Cloud Mail 邮局代管：query 只读，action 写（资源与动作白名单在服务层）
+		adminSystem.POST("/email/configs/:configId/skymail/query", h.AdminPlatformEmailSkymailQuery)
+		adminSystem.POST("/email/configs/:configId/skymail/action", h.AdminPlatformEmailSkymailAction)
 		// 平台级 AI 通道 / 技能 / MCP：与邮件通道同一套作用域戒律 ——
 		// 平台级恒用 aidomain.PlatformAppID，不接受请求体里的 appid。
 		adminSystem.GET("/ai/providers", h.AIProviderCatalog)

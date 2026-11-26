@@ -48,6 +48,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/app/email-config/policy"):                                                             AdminEmailScopeRequest{},                 // AdminEmailPolicy
 		routeKey("POST", "/api/admin/app/email-config/policy/save"):                                                        AdminEmailPolicySaveRequest{},            // AdminEmailPolicySave
 		routeKey("POST", "/api/admin/app/email-config/preview"):                                                            AdminEmailPreviewRequest{},               // AdminEmailPreview
+		routeKey("POST", "/api/admin/app/email-config/skymail/action"):                                                     AdminSkymailActionRequest{},              // AdminEmailSkymailAction
+		routeKey("POST", "/api/admin/app/email-config/skymail/query"):                                                      AdminSkymailQueryRequest{},               // AdminEmailSkymailQuery
 		routeKey("POST", "/api/admin/app/email-config/stats"):                                                              AdminEmailConfigListRequest{},            // AdminEmailDeliveryStats
 		routeKey("POST", "/api/admin/app/email-config/suppressions"):                                                       AdminEmailSuppressionListRequest{},       // AdminEmailSuppressionList
 		routeKey("POST", "/api/admin/app/email-config/suppressions/create"):                                                AdminEmailSuppressionCreateRequest{},     // AdminEmailSuppressionCreate
@@ -485,6 +487,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/system/egress/test"):                                                                  AdminEgressTestRequest{},                 // AdminTestEgress
 		routeKey("POST", "/api/admin/system/email/configs"):                                                                AdminPlatformEmailConfigSaveRequest{},    // AdminPlatformEmailConfigCreate
 		routeKey("PUT", "/api/admin/system/email/configs/{configId}"):                                                      AdminPlatformEmailConfigSaveRequest{},    // AdminPlatformEmailConfigUpdate
+		routeKey("POST", "/api/admin/system/email/configs/{configId}/skymail/action"):                                      SkymailActionRequest{},                   // AdminPlatformEmailSkymailAction
+		routeKey("POST", "/api/admin/system/email/configs/{configId}/skymail/query"):                                       SkymailQueryRequest{},                    // AdminPlatformEmailSkymailQuery
 		routeKey("POST", "/api/admin/system/email/configs/{configId}/test"):                                                AdminPlatformEmailTestRequest{},          // AdminPlatformEmailConfigTest
 		routeKey("PUT", "/api/admin/system/email/policy"):                                                                  EmailPolicySaveRequest{},                 // AdminPlatformEmailPolicySave
 		routeKey("POST", "/api/admin/system/email/preview"):                                                                EmailPreviewRequest{},                    // AdminPlatformEmailPreview

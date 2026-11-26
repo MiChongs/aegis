@@ -100,6 +100,7 @@ func emailProviderOrder(provider string) int {
 
 var emailProviderDisplayOrder = []string{
 	emaildomain.ProviderSMTP,
+	emaildomain.ProviderSkymail,
 	emaildomain.ProviderZeabur,
 	emaildomain.ProviderSES,
 	emaildomain.ProviderResend,

@@ -122,6 +122,9 @@ func registerAdminAppConfigRoutes(router *gin.Engine, h *Handler, deps RouterDep
 		emailAdmin.POST("/suppressions", h.AdminEmailSuppressionList)
 		emailAdmin.POST("/suppressions/create", h.AdminEmailSuppressionCreate)
 		emailAdmin.POST("/suppressions/delete", h.AdminEmailSuppressionDelete)
+		// Cloud Mail 邮局代管
+		emailAdmin.POST("/skymail/query", h.AdminEmailSkymailQuery)
+		emailAdmin.POST("/skymail/action", h.AdminEmailSkymailAction)
 	}
 
 	payCompat := router.Group("/api/admin/app/payment-config")
