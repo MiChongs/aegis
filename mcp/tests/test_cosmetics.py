@@ -47,7 +47,9 @@ async def test_design_flow(backend, call):
 
 async def test_users(backend, call):
     await call("cosmetics_grant", {"app": "demo", "user_id": 3, "item_id": 7, "days": 30})
-    assert (backend.last().path, backend.last().json) == (f"{B}/users/3/grant", {"cosmeticId": 7, "days": 30})
+    assert (backend.last().path, backend.last().json) == (f"{B}/users/3/grant", {"cosmeticId": 7, "days": 30, "equip": False})
+    await call("cosmetics_grant", {"app": "demo", "user_id": 3, "item_id": 8, "equip": True})
+    assert backend.last().json == {"cosmeticId": 8, "days": 0, "equip": True}
     await call("cosmetics_revoke", {"app": "demo", "user_id": 3, "ownership_id": 9, "reason": "误发"})
     assert (backend.last().path, backend.last().json) == (f"{B}/users/3/ownerships/9/revoke", {"reason": "误发"})
     await call("cosmetics_unequip", {"app": "demo", "user_id": 3, "slot": "badge", "position": 1})

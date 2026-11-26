@@ -46,12 +46,13 @@ RecordID = Annotated[int, Field(gt=0, description="发放记录 ID（grant_recor
 Status = Literal["draft", "active", "paused", "archived"]
 
 ITEMS_HELP = (
-    "物品列表（一个发放节点最多 12 项）。每项 {type, amount?, money?, refId?, tag?, text?, amountExpr?}。type："
+    "物品列表（一个发放节点最多 12 项）。每项 {type, amount?, money?, refId?, tag?, text?, amountExpr?, equip?}。type："
     "points 积分（amount）/ experience 经验（amount）/ vip_days 会员天数（amount=天）/ vip_plan 会员套餐（refId=套餐 ID，试用套餐不能发）/ "
     "vip_lifetime 永久会员（无取值）/ feature 功能解锁（tag=功能标识，amount=天，0 为永久）/ feature_time 功能时长（tag，amount=分钟）/ "
     "ad_free 免广告（amount=天）/ lottery_draws 抽奖次数（amount）/ ai_credit AI 额度（amount=点）/ balance 钱包余额（money=元，如 \"1.50\"）/ "
     "license_days 授权时长（amount=天，名下须有限时授权卡）/ device_slots 设备位（amount=台，须有授权卡）/ manual 人工发放（text，记录进入待处理）/ "
-    "number_change 改号卡（amount=张）/ number_ticket 靓号券（amount=张，refId=等级 1 精品 2 稀有 3 传说 4 至尊）/ number_draw 摇号次数（amount=次）/ number_assign 指定号码（text=5–12 位号码，不扣权益不看冷却；保留号、别人冻结或在用的号会让这笔发放失败、可重试）。"
+    "number_change 改号卡（amount=张）/ number_ticket 靓号券（amount=张，refId=等级 1 精品 2 稀有 3 传说 4 至尊）/ number_draw 摇号次数（amount=次）/ number_assign 指定号码（text=5–12 位号码，不扣权益不看冷却；保留号、别人冻结或在用的号会让这笔发放失败、可重试）/ "
+    "cosmetic 个性装扮（refId=装扮编号，amount=天，0 为永久；equip=true 时发放后顺手戴上，替换该槽位原有佩戴、勋章放第一个空位，已永久持有也会戴，戴不上只发不戴）。"
     "数量型物品可写 amountExpr（如 \"50 + user.signStreak * 5\"），算不出来退回 amount。以 grant_catalog 的 items 为准"
 )
 GRAPH_HELP = (

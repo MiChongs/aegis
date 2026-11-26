@@ -258,9 +258,15 @@ async def user(app: AppRef, user_id: UserID) -> Any:
 
 
 @server.tool(**WRITE("cosmetics"))
-async def grant(app: AppRef, user_id: UserID, item_id: ItemID, days: Days = 0) -> Any:
+async def grant(
+    app: AppRef,
+    user_id: UserID,
+    item_id: ItemID,
+    days: Days = 0,
+    equip: Annotated[bool, Field(description="发放后顺手戴上：替换该槽位原有佩戴，勋章放第一个空位（满了不戴）；已永久持有也会戴上")] = False,
+) -> Any:
     """给用户发一件装扮（站内信通知）。装扮须已上架；已永久持有时不重复发放。可用 cosmetics_revoke 收回。"""
-    return await GRANT(appkey=app, userId=user_id, body={"cosmeticId": item_id, "days": days})
+    return await GRANT(appkey=app, userId=user_id, body={"cosmeticId": item_id, "days": days, "equip": equip})
 
 
 @server.tool(**DESTRUCTIVE("cosmetics"))
