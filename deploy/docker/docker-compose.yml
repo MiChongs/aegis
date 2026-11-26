@@ -86,7 +86,8 @@ x-risk-etcd: &risk-etcd
 # 重新握手（CLUSTER MEET 只认 IP，用对方 CLIENT INFO 的 laddr 取）。节点 ID 不变，槽位与数据都保留；
 # 集群还没建（槽位没分配满）时什么都不做，免得抢在 --cluster create 之前把节点连起来。
 x-risk-redis: &risk-redis
-  image: redis:8-alpine
+  # 与 Swarm 栈一致钉在 8.10.3：8.12 起集群模式要显式 cluster-bus-port-protected-mode no
+  image: redis:8.10.3-alpine
   command:
     - sh
     - -c
@@ -746,7 +747,7 @@ services:
 
   # 建集群（幂等：已经成形就什么都不做）
   risk-redis-init:
-    image: redis:8-alpine
+    image: redis:8.10.3-alpine
     container_name: aegis-risk-redis-init
     profiles: ["risk"]
     restart: "no"

@@ -161,7 +161,9 @@ x-music-env: &music-env
 # 重新握手（CLUSTER MEET 只认 IP，用对方 CLIENT INFO 的 laddr 取）。节点 ID 不变，槽位与数据都保留；
 # 集群还没建（槽位没分配满）时什么都不做，免得抢在 --cluster create 之前把节点连起来。
 x-redis-node: &redis-node
-  image: redis:8-alpine
+  # 版本钉死：8.12 起集群模式没开 TLS 时必须显式 cluster-bus-port-protected-mode no，否则拒绝启动（11-26 部署时浮动标签拉到 8.12，三节点起不来被自动回滚）。
+  # 升级时先在测试集群确认配置项，再同时改这里与 risk-redis-init。
+  image: redis:8.10.3-alpine
   logging: *logging
   command:
     - sh
@@ -667,7 +669,7 @@ services:
 
   # 建集群 / 节点换 IP 后重新握手（幂等）。aegisctl deploy 每次全量部署后都会强制重跑一次
   risk-redis-init:
-    image: redis:8-alpine
+    image: redis:8.10.3-alpine
     logging: *logging
     environment:
       REDISCLI_AUTH: ${RISK_REDIS_PASSWORD:?}
