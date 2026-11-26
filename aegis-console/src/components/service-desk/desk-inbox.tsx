@@ -45,7 +45,7 @@ import { countDeskFilters, type DeskState, type DeskView, type SetDeskState } fr
 // 一行回答四件事：谁、哪个应用、说了什么、要不要我现在处理。
 // 状态由上方页签表达，行内只在头像角上留一个色点；「等我回复」用行首色条与加粗表达，像邮箱里的未读；
 // 看「全部应用」时每行带应用标记，自己创建的应用排在前面（ownedFirst），一眼分得清是哪个应用的。
-// 头像位悬停变成勾选框，勾了几条之后顶部换成批量操作条。
+// 行首单独一条勾选槽（悬停显出，勾了任意一条后全部常显），勾了几条之后顶部换成批量操作条。
 
 const ROW_HEIGHT = 92;
 
@@ -369,39 +369,44 @@ const InboxRow = memo(function InboxRow({
       }}
       aria-current={active ? "true" : undefined}
       className={cn(
-        "group/row relative flex h-full w-full cursor-pointer gap-3 border-b border-border/50 px-4 py-3 text-left outline-none transition-colors",
+        "group/row relative flex h-full w-full cursor-pointer gap-2.5 border-b border-border/50 py-3 pl-2 pr-4 text-left outline-none transition-colors",
         active ? "bg-accent" : checked ? "bg-primary/5" : "hover:bg-muted/50 focus-visible:bg-muted/50"
       )}
     >
       {/* 等我回复：行首色条，对应邮箱里的未读 */}
       {awaiting ? <span aria-hidden className="absolute inset-y-3 left-0 w-[3px] rounded-r-full bg-primary" /> : null}
 
+      {/*
+        勾选单独占一条窄槽，头像始终不动（不再悬停时把头像换成复选框）。
+        槽宽常驻，复选框平时隐藏：悬停 / 键盘聚焦这一行时出现；一旦勾了任意一条就进入多选，所有行常显。
+      */}
+      <span
+        className={cn(
+          "-ml-1 mt-2.5 flex size-5 shrink-0 items-start justify-center transition-opacity",
+          checked || selecting
+            ? "opacity-100"
+            : "opacity-0 group-hover/row:opacity-100 group-focus-visible/row:opacity-100"
+        )}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle(item.id);
+        }}
+      >
+        <Checkbox checked={checked} tabIndex={-1} aria-label={checked ? "取消勾选" : "勾选"} className="size-4 rounded-[4px]" />
+      </span>
+
       <span className="relative mt-0.5 size-9 shrink-0">
-        <span className={cn("absolute inset-0 transition-opacity", checked || selecting ? "opacity-0" : "group-hover/row:opacity-0")}>
-          <PersonAvatar name={item.requesterName} src={item.requesterAvatar} className="size-9" />
-          {showStatus ? (
-            <span
-              title={STATUS_LABEL[item.status]}
-              className={cn(
-                "absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full ring-2 ring-card",
-                STATUS_DOT[item.status],
-                active && "ring-accent"
-              )}
-            />
-          ) : null}
-        </span>
-        <span
-          className={cn(
-            "absolute inset-0 flex items-center justify-center rounded-full transition-opacity",
-            checked || selecting ? "opacity-100" : "opacity-0 group-hover/row:opacity-100"
-          )}
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggle(item.id);
-          }}
-        >
-          <Checkbox checked={checked} tabIndex={-1} aria-label={checked ? "取消勾选" : "勾选"} className="size-[18px] rounded-[5px]" />
-        </span>
+        <PersonAvatar name={item.requesterName} src={item.requesterAvatar} className="size-9" />
+        {showStatus ? (
+          <span
+            title={STATUS_LABEL[item.status]}
+            className={cn(
+              "absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full ring-2 ring-card",
+              STATUS_DOT[item.status],
+              active && "ring-accent"
+            )}
+          />
+        ) : null}
       </span>
 
       <span className="min-w-0 flex-1">
