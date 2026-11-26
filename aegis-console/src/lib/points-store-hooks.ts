@@ -7,6 +7,13 @@ import {
   getPointsStoreCatalog,
   getPointsStoreSettings,
   getPointsStoreStats,
+  getPointsStoreGift,
+  getPointsStoreGiftPolicy,
+  handlePointsStoreGift,
+  listPointsStoreGifts,
+  savePointsStoreGiftPolicy,
+  type PointsStoreGiftParams,
+  type PointsStoreGiftRule,
   getUserFeatureUnlocks,
   grantUserFeatureUnlock,
   handlePointsStoreRedemption,
@@ -37,7 +44,9 @@ const KEY = {
   items: "admin-points-store-items",
   redemptions: "admin-points-store-redemptions",
   stats: "admin-points-store-stats",
-  unlocks: "admin-points-store-unlocks"
+  unlocks: "admin-points-store-unlocks",
+  gifts: "admin-points-store-gifts",
+  giftPolicy: "admin-points-store-gift-policy"
 } as const;
 
 const POINTS_STORE_SCOPE = Object.values(KEY);
@@ -176,13 +185,14 @@ export function usePointsStoreRedemptionCountsQuery(
         listPointsStoreRedemptions(token as string, appKey as string, { ...filters, status, page: 1, limit: 1 }).then(
           (page) => page.total
         );
-      const [all, completed, pending, cancelled] = await Promise.all([
+      const [all, completed, pending, cancelled, revoked] = await Promise.all([
         count(),
         count("completed"),
         count("pending"),
-        count("cancelled")
+        count("cancelled"),
+        count("revoked")
       ]);
-      return { all, completed, pending, cancelled };
+      return { all, completed, pending, cancelled, revoked };
     }
   });
 }
@@ -245,5 +255,80 @@ export function useRevokeUserFeatureUnlockMutation(appKey?: string | null, userI
     mutationFn: (input: { unlockId: number; reason: string }) =>
       revokeUserFeatureUnlock(token as string, appKey as string, userId as number, input.unlockId, input.reason),
     onSuccess: invalidate
+  });
+}
+
+// ── 赠好友 ──
+// 审核、撤销会动积分、库存、兑换记录与接收人的会员：积分商城整组失效，会员缓存一并失效。
+
+function useInvalidateGiftScope() {
+  const invalidateStore = useInvalidatePointsStoreScope();
+  const queryClient = useQueryClient();
+  return async () => {
+    await invalidateStore();
+    await queryClient.invalidateQueries({
+      predicate: (query) => String(query.queryKey[0] ?? "").includes("vip")
+    });
+  };
+}
+
+export function usePointsStoreGiftsQuery(appKey?: string | null, params?: PointsStoreGiftParams) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [
+      KEY.gifts,
+      token,
+      appKey,
+      params?.status ?? "",
+      params?.userId ?? 0,
+      params?.itemId ?? 0,
+      params?.keyword ?? "",
+      params?.from ?? "",
+      params?.to ?? "",
+      params?.page ?? 1,
+      params?.limit ?? 20
+    ],
+    queryFn: () => listPointsStoreGifts(token as string, appKey as string, params),
+    enabled: Boolean(token && appKey)
+  });
+}
+
+export function usePointsStoreGiftQuery(appKey?: string | null, giftId?: number | null) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [KEY.gifts, "detail", token, appKey, giftId],
+    queryFn: () => getPointsStoreGift(token as string, appKey as string, giftId as number),
+    enabled: Boolean(token && appKey && giftId)
+  });
+}
+
+export function useHandlePointsStoreGiftMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateGiftScope();
+  return useMutation({
+    mutationFn: (input: { giftId: number; action: "approve" | "reject" | "revoke"; note: string; refundSender?: boolean }) =>
+      handlePointsStoreGift(token as string, appKey as string, input.giftId, input.action, input.note, input.refundSender),
+    onSuccess: invalidate
+  });
+}
+
+export function usePointsStoreGiftPolicyQuery(appKey?: string | null) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [KEY.giftPolicy, token, appKey],
+    queryFn: () => getPointsStoreGiftPolicy(token as string, appKey as string),
+    enabled: Boolean(token && appKey)
+  });
+}
+
+export function useSavePointsStoreGiftPolicyMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (policy: { enabled: boolean; rules: PointsStoreGiftRule[] }) =>
+      savePointsStoreGiftPolicy(token as string, appKey as string, policy),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: [KEY.giftPolicy] });
+    }
   });
 }

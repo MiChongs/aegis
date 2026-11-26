@@ -211,6 +211,10 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/points/store", h.AppPointsStore)
 		appGatewayAuthed.POST("/points/store/redeem", h.AppRedeemPointsStoreItem)
 		appGatewayAuthed.GET("/points/store/redemptions", h.AppPointsStoreRedemptions)
+		appGatewayAuthed.GET("/points/store/gift/recipients", h.AppPointsStoreGiftRecipients)
+		appGatewayAuthed.POST("/points/store/gift/preview", h.AppPreviewPointsStoreGift)
+		appGatewayAuthed.POST("/points/store/gift", h.AppGiftPointsStoreItem)
+		appGatewayAuthed.GET("/points/store/gifts", h.AppPointsStoreGifts)
 		// 个性装扮（docs/cosmetics.md）：装扮中心 / 我的佩戴 / 佩戴与摘下 / 我的持有记录 / 批量查别人身上的装扮。
 		// 设计稿与素材地址全部由服务端下发，客户端按设计稿实时绘制。
 		appGatewayAuthed.GET("/cosmetics", h.AppCosmeticCenter)

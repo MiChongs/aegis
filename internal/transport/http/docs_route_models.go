@@ -281,6 +281,10 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/apps/{appkey}/passkey"):                                                                app.PasskeyPolicy{},                      // UpdateAdminAppPasskeyPolicy
 		routeKey("PUT", "/api/admin/apps/{appkey}/password-policy"):                                                        AdminPasswordPolicyUpdateRequest{},       // UpdateAdminAppPasswordPolicy
 		routeKey("POST", "/api/admin/apps/{appkey}/password-policy/test"):                                                  AdminPasswordPolicyTestRequest{},         // TestAdminAppPasswordPolicy
+		routeKey("PUT", "/api/admin/apps/{appkey}/points-store/gift-policy"):                                               PointsStoreGiftPolicyRequest{},           // AdminSavePointsStoreGiftPolicy
+		routeKey("POST", "/api/admin/apps/{appkey}/points-store/gifts/{giftId}/approve"):                                   PointsStoreGiftReviewRequest{},           // AdminApprovePointsStoreGift
+		routeKey("POST", "/api/admin/apps/{appkey}/points-store/gifts/{giftId}/reject"):                                    PointsStoreGiftReviewRequest{},           // AdminRejectPointsStoreGift
+		routeKey("POST", "/api/admin/apps/{appkey}/points-store/gifts/{giftId}/revoke"):                                    PointsStoreGiftReviewRequest{},           // AdminRevokePointsStoreGift
 		routeKey("PUT", "/api/admin/apps/{appkey}/points-store/item-order"):                                                PointsStoreItemOrderRequest{},            // AdminReorderPointsStoreItems
 		routeKey("POST", "/api/admin/apps/{appkey}/points-store/items"):                                                    PointsStoreItemRequest{},                 // AdminCreatePointsStoreItem
 		routeKey("PUT", "/api/admin/apps/{appkey}/points-store/items/{itemId}"):                                            PointsStoreItemRequest{},                 // AdminUpdatePointsStoreItem
@@ -838,6 +842,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/v1/apps/{appkey}/pay/orders"):                                                               CreatePaymentOrderRequest{},              // CreatePaymentOrder
 		routeKey("GET", "/api/v1/apps/{appkey}/points/experience-transactions"):                                            PaginationQuery{},                        // ExperienceTransactions
 		routeKey("GET", "/api/v1/apps/{appkey}/points/integral-transactions"):                                              PaginationQuery{},                        // IntegralTransactions
+		routeKey("POST", "/api/v1/apps/{appkey}/points/store/gift"):                                                        PointsStoreGiftRequest{},                 // AppGiftPointsStoreItem
+		routeKey("POST", "/api/v1/apps/{appkey}/points/store/gift/preview"):                                                PointsStoreGiftRequest{},                 // AppPreviewPointsStoreGift
 		routeKey("POST", "/api/v1/apps/{appkey}/points/store/redeem"):                                                      PointsStoreRedeemRequest{},               // AppRedeemPointsStoreItem
 		routeKey("POST", "/api/v1/apps/{appkey}/promo/{campaignId}/submissions"):                                           PromoSubmitRequest{},                     // AppSubmitPromo
 		routeKey("POST", "/api/v1/apps/{appkey}/promo/{campaignId}/tiers/claim"):                                           PromoClaimRequest{},                      // AppClaimPromoTier

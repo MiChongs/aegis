@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Ban, ExternalLink, PackageCheck, ReceiptText, RotateCw, X } from "lucide-react";
+import { Ban, ExternalLink, Gift, PackageCheck, ReceiptText, RotateCw, X } from "lucide-react";
 import { RedemptionHandleDialog, type HandleRequest } from "@/components/apps/points-store/points-store-handle-dialog";
 import {
   RedemptionStatusBadge,
@@ -55,7 +55,8 @@ const STATUS_TABS: Array<{ value: "" | PointsStoreRedemptionStatus; label: strin
   { value: "", label: "全部", countKey: "all" },
   { value: "pending", label: "待发放", countKey: "pending" },
   { value: "completed", label: "已到账", countKey: "completed" },
-  { value: "cancelled", label: "已取消", countKey: "cancelled" }
+  { value: "cancelled", label: "已取消", countKey: "cancelled" },
+  { value: "revoked", label: "已撤销", countKey: "revoked" }
 ];
 
 /**
@@ -71,13 +72,16 @@ export function PointsStoreRedemptionsPanel({
   itemId,
   status,
   onItemIdChange,
-  onStatusChange
+  onStatusChange,
+  onOpenGifts
 }: {
   appKey: string;
   itemId?: number;
   status?: PointsStoreRedemptionStatus;
   onItemIdChange: (itemId?: number) => void;
   onStatusChange: (status?: PointsStoreRedemptionStatus) => void;
+  /** 赠送的兑换在赠送记录里审核、撤销 */
+  onOpenGifts?: () => void;
 }) {
   const token = useAdminToken();
   const [keyword, setKeyword] = useState("");
@@ -98,7 +102,8 @@ export function PointsStoreRedemptionsPanel({
   const listQuery = usePointsStoreRedemptionsQuery(appKey, { ...filters, status, page: paging.page, limit: paging.limit });
 
   const rows = useMemo(() => listQuery.data?.items ?? [], [listQuery.data]);
-  const pendingRows = rows.filter((row) => row.status === "pending");
+  // 赠送的兑换不在这里发放：标记发放不会把东西发到接收人手上，审核在「赠送」页签
+  const pendingRows = rows.filter((row) => row.status === "pending" && !row.giftNo);
   const selectedRows = pendingRows.filter((row) => selectedIds.has(row.id));
   const allPendingSelected = pendingRows.length > 0 && pendingRows.every((row) => selectedIds.has(row.id));
   const filtered = Boolean(keyword || itemId || range.preset !== "all");
@@ -133,7 +138,7 @@ export function PointsStoreRedemptionsPanel({
         />
       ),
       cell: (row) =>
-        row.status === "pending" ? (
+        row.status === "pending" && !row.giftNo ? (
           <span onClick={(event) => event.stopPropagation()}>
             <Checkbox checked={selectedIds.has(row.id)} onCheckedChange={(next) => toggle(row.id, Boolean(next))} aria-label="选择" />
           </span>
@@ -147,6 +152,7 @@ export function PointsStoreRedemptionsPanel({
           <span className="truncate font-medium">
             {row.itemTitle}
             {row.itemId ? null : <span className="ml-1.5 text-xs font-normal text-muted-foreground">已删除</span>}
+            {row.giftNo ? <span className="ml-1.5 text-xs font-normal text-violet-600 dark:text-violet-400">赠送</span> : null}
           </span>
           <span className="truncate font-mono text-xs text-muted-foreground">{row.redemptionNo}</span>
         </div>
@@ -201,7 +207,13 @@ export function PointsStoreRedemptionsPanel({
       align: "right",
       width: "120px",
       cell: (row) =>
-        row.status === "pending" ? (
+        row.status === "pending" && row.giftNo ? (
+          <div className="flex justify-end" onClick={(event) => event.stopPropagation()}>
+            <Button size="xs" variant="outline" onClick={onOpenGifts}>
+              去审核
+            </Button>
+          </div>
+        ) : row.status === "pending" ? (
           <div className="flex justify-end gap-1.5" onClick={(event) => event.stopPropagation()}>
             <Button size="xs" variant="outline" onClick={() => setRequest({ action: "fulfill", items: [row] })}>
               发放
@@ -437,6 +449,7 @@ export function PointsStoreRedemptionsPanel({
                 { label: "商品 ID", value: detail.itemId ? String(detail.itemId) : "已删除" },
                 { label: "扣积分流水", value: detail.integralTransactionNo, mono: true, copy: detail.integralTransactionNo || null },
                 { label: "退积分流水", value: detail.refundTransactionNo, mono: true, copy: detail.refundTransactionNo || null },
+                { label: "赠送单号", value: detail.giftNo, mono: true, copy: detail.giftNo || null },
                 { label: "处理备注", value: detail.note, wide: true },
                 { label: "处理人", value: detail.handledBy },
                 { label: "处理时间", value: detail.handledAt ? formatDateTime(detail.handledAt) : undefined },
@@ -450,7 +463,12 @@ export function PointsStoreRedemptionsPanel({
         }
         raw={detail}
         actions={
-          detail?.status === "pending" ? (
+          detail?.giftNo ? (
+            <Button variant="outline" size="sm" onClick={onOpenGifts}>
+              <Gift />
+              在赠送记录里处理
+            </Button>
+          ) : detail?.status === "pending" ? (
             <>
               <Button variant="outline" size="sm" onClick={() => setRequest({ action: "cancel", items: [detail] })}>
                 <Ban />

@@ -118,6 +118,13 @@ func init() {
 		Write("POST /api/admin/apps/:appkey/points-store/redemptions/:redemptionId/fulfill", "发放积分兑换", "积分兑换", SeverityMedium),
 		Write("POST /api/admin/apps/:appkey/points-store/redemptions/:redemptionId/cancel", "取消积分兑换并退回积分", "积分兑换", SeverityHigh),
 		View("GET /api/admin/apps/:appkey/points-store/stats", "查看积分商城统计", ""),
+		View("GET /api/admin/apps/:appkey/points-store/gifts", "查看积分赠送记录", ""),
+		View("GET /api/admin/apps/:appkey/points-store/gifts/:giftId", "查看积分赠送详情", ""),
+		Write("POST /api/admin/apps/:appkey/points-store/gifts/:giftId/approve", "通过积分赠送审核", "积分赠送", SeverityMedium),
+		Write("POST /api/admin/apps/:appkey/points-store/gifts/:giftId/reject", "驳回积分赠送并退回积分", "积分赠送", SeverityMedium),
+		Write("POST /api/admin/apps/:appkey/points-store/gifts/:giftId/revoke", "撤销积分赠送并追回权益", "积分赠送", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/points-store/gift-policy", "查看积分赠送风控", ""),
+		Write("PUT /api/admin/apps/:appkey/points-store/gift-policy", "修改积分赠送风控", "", SeverityHigh),
 
 		// 个性装扮
 		View("GET /api/admin/apps/:appkey/cosmetics/catalog", "查看装扮目录", ""),

@@ -53,6 +53,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type {
   PointsStoreAdminItem,
   PointsStoreAudience,
+  PointsStoreDelivery,
   PointsStoreItem,
   PointsStoreLimitPeriod,
   PointsStoreRestockPeriod
@@ -75,6 +76,7 @@ type Form = {
   badge: string;
   cost: string;
   originalCost: string;
+  delivery: PointsStoreDelivery;
   rewards: RewardDraft[];
   stockMode: StockMode;
   stock: string;
@@ -123,6 +125,7 @@ function seed(target: EditorTarget): Form {
       badge: "",
       cost: "100",
       originalCost: "",
+      delivery: "self",
       rewards: [],
       stockMode: "unlimited",
       stock: "100",
@@ -155,6 +158,7 @@ function seed(target: EditorTarget): Form {
     badge: item.badge ?? "",
     cost: String(item.cost),
     originalCost: item.originalCost ? String(item.originalCost) : "",
+    delivery: item.delivery ?? "self",
     rewards: rewardDraftsFrom(item.rewards),
     stockMode: stockModeOf(item),
     // 周期补货时库里的 stock 可能还是上个周期的，按换算后的此刻库存编辑
@@ -222,10 +226,14 @@ function EditorBody({ appKey, target, onClose }: { appKey: string; target: Edito
   const [form, setForm] = useState<Form>(() => seed(target));
   const patch = <K extends keyof Form>(key: K, value: Form[K]) => setForm((current) => ({ ...current, [key]: value }));
 
-  const catalog = catalogQuery.data?.rewards ?? [];
+  const giftable = catalogQuery.data?.giftableRewards ?? ["vip_plan", "vip_days", "feature", "cosmetic"];
+  const gift = form.delivery === "gift";
+  // 赠送商品只能配撤销时追得回来的几类权益；目录里其余的不给选
+  const catalog = (catalogQuery.data?.rewards ?? []).filter((spec) => !gift || giftable.includes(spec.type));
   const maxRewards = catalogQuery.data?.maxRewards ?? 6;
   const categories = catalogQuery.data?.categories ?? [];
-  const plans = (plansQuery.data ?? []).filter((plan) => plan.kind !== "trial");
+  // 永久套餐送出去会把对方的存量折算掉，撤销时追不回来：赠送商品不给选
+  const plans = (plansQuery.data ?? []).filter((plan) => plan.kind !== "trial" && (!gift || !plan.lifetime));
   const features = featuresQuery.data ?? [];
   const editing = target.mode === "edit" ? target.item : null;
 
@@ -245,6 +253,11 @@ function EditorBody({ appKey, target, onClose }: { appKey: string; target: Edito
   const problems: Array<{ ok: boolean; label: string; blocking: boolean }> = [
     { ok: Boolean(form.title.trim()), label: "填写商品名称", blocking: true },
     { ok: form.rewards.length > 0, label: "至少配置一项权益", blocking: true },
+    {
+      ok: !gift || form.rewards.every((draft) => giftable.includes(draft.type)),
+      label: "赠送商品只配会员、功能解锁或个性装扮",
+      blocking: true
+    },
     { ok: cost >= 1, label: "兑换积分至少为 1", blocking: true },
     { ok: !startsAt || !endsAt || startsAt < endsAt, label: "结束时间晚于开始时间", blocking: true },
     { ok: !originalCost || originalCost > cost, label: "划线价高于兑换积分", blocking: false },
@@ -276,7 +289,8 @@ function EditorBody({ appKey, target, onClose }: { appKey: string; target: Edito
     badge: form.badge.trim(),
     cost,
     originalCost: originalCost || undefined,
-    rewards: rewardsFromDrafts(form.rewards, catalog),
+    rewards: rewardsFromDrafts(form.rewards, catalogQuery.data?.rewards ?? []),
+    delivery: form.delivery,
     stock: form.stockMode === "unlimited" ? undefined : stockValue,
     soldCount: editing?.soldCount ?? 0,
     restockPeriod: form.stockMode === "restock" ? form.restockPeriod : "none",
@@ -317,6 +331,7 @@ function EditorBody({ appKey, target, onClose }: { appKey: string; target: Edito
           cost,
           originalCost: originalCost || null,
           rewards: preview.rewards,
+          delivery: form.delivery,
           stock: form.stockMode === "unlimited" ? null : stockValue,
           restockPeriod: preview.restockPeriod,
           restockQuantity: preview.restockQuantity ?? null,
@@ -391,7 +406,33 @@ function EditorBody({ appKey, target, onClose }: { appKey: string; target: Edito
             </div>
           </FormBlock>
 
-          <FormBlock icon={Gift} tone="violet" title="权益" aside={`${form.rewards.length}/${maxRewards}`} description="兑换成功后发给用户的东西；人工发放只能单独成为一件商品">
+          <FormBlock
+            icon={Gift}
+            tone="violet"
+            title="权益"
+            aside={`${form.rewards.length}/${maxRewards}`}
+            description={
+              gift
+                ? "兑换人选好友后，权益直接发到对方账上；只能配撤销时追得回来的会员、功能解锁与个性装扮"
+                : "兑换成功后发给用户的东西；人工发放只能单独成为一件商品"
+            }
+          >
+            <Field label="发给谁" hint={gift ? "用户兑换前先选人并核对昵称与头像，风控与审核见「赠送风控」" : undefined}>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                value={form.delivery}
+                onValueChange={(value) => value && patch("delivery", value as PointsStoreDelivery)}
+                className="w-full"
+              >
+                <ToggleGroupItem value="self" className="flex-1 text-xs">
+                  兑换人自己
+                </ToggleGroupItem>
+                <ToggleGroupItem value="gift" className="flex-1 text-xs">
+                  赠送好友
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </Field>
             <RewardListEditor
               catalog={catalog}
               maxRewards={maxRewards}

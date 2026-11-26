@@ -219,6 +219,15 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "pointsStoreRedeem", Method: "POST", Path: "/points/store/redeem", Auth: true,
 		Summary: "用积分兑换一件商品（requestId 幂等）；含人工发放的商品兑换后为 pending"},
 	{Key: "pointsStoreRedemptions", Method: "GET", Path: "/points/store/redemptions", Auth: true, Summary: "我的兑换记录"},
+	// 赠好友（docs/points-store-gift.md）：delivery 为 gift 的商品先选人再提交，扣积分与给对方发放在同一个事务里完成。
+	{Key: "pointsStoreGiftRecipients", Method: "GET", Path: "/points/store/gift/recipients", Auth: true,
+		Summary: "赠送选人：不带 q 给最近互动过的人（送过的、送过我的、邀请关系），带 q 按用户号码找人"},
+	{Key: "pointsStoreGiftPreview", Method: "POST", Path: "/points/store/gift/preview", Auth: true,
+		Summary: "赠送前核对：对方的昵称与头像、会收到什么、能不能送（不能送时 allowed=false 与 reason）"},
+	{Key: "pointsStoreGift", Method: "POST", Path: "/points/store/gift", Auth: true,
+		Summary: "赠送一件商品给另一个用户（requestId 幂等）；放行的当场送达，可疑的进入审核（status=reviewing）"},
+	{Key: "pointsStoreGifts", Method: "GET", Path: "/points/store/gifts", Auth: true,
+		Summary: "我的赠送记录：box=sent 我送出的 / received 我收到的"},
 	// 个性装扮（docs/cosmetics.md）：外观是服务端下发的设计稿（图层 + 关键帧 + 素材地址），客户端按设计稿实时绘制。
 	// 能不能戴只由服务端判定：佩戴时判一次、读取时再判一次，过期 / 下架 / 会员到期的装扮在 /cosmetics/me 里直接消失。
 	{Key: "cosmeticCenter", Method: "GET", Path: "/cosmetics", Auth: true,
@@ -694,6 +703,23 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 		Recovery: authprotocol.RecoveryNone},
 	{Code: errCodePointsStoreRedeeming, Name: "POINTS_STORE_REDEEMING", Message: "兑换正在处理",
 		Recovery: authprotocol.RecoveryNone, Hint: "同一个 requestId 的并发提交；稍后用同一个 requestId 重试会原样拿到结果"},
+	// 赠好友：硬性条件与风控拒绝都不扣积分，message 是给用户看的原因
+	{Code: errCodeGiftRecipientNotFound, Name: "POINTS_GIFT_RECIPIENT_NOT_FOUND", Message: "没有找到这个用户，请核对号码",
+		Recovery: authprotocol.RecoveryNone, Hint: "recipient 是用户号码或候选列表里的 publicId，只在本应用内找"},
+	{Code: errCodeGiftSelf, Name: "POINTS_GIFT_SELF", Message: "不能赠送给自己", Recovery: authprotocol.RecoveryNone},
+	{Code: errCodeGiftRecipientInactive, Name: "POINTS_GIFT_RECIPIENT_INACTIVE", Message: "对方账号状态异常，暂时不能接收赠送",
+		Recovery: authprotocol.RecoveryNone, Hint: "对方被停用、封禁或正在注销"},
+	{Code: errCodeGiftRecipientOwned, Name: "POINTS_GIFT_RECIPIENT_OWNED", Message: "对方已拥有该权益，无需赠送",
+		Recovery: authprotocol.RecoveryNone, Hint: "对方是永久会员且已包含所送的会员，或所送功能、装扮已永久拥有"},
+	{Code: errCodeGiftItemMismatch, Name: "POINTS_GIFT_ITEM_MISMATCH", Message: "商品与兑换方式不符",
+		Recovery: authprotocol.RecoveryNone, Hint: "delivery=gift 的商品要走 /points/store/gift，其余商品走 /points/store/redeem"},
+	{Code: errCodeGiftRisk, Name: "POINTS_GIFT_RISK_BLOCKED", Message: "当前环境存在风险，暂时无法赠送",
+		Recovery: authprotocol.RecoveryNone, Hint: "新号、同设备、同网络或风险决策平台拦截；message 说明具体原因"},
+	{Code: errCodeGiftDisabled, Name: "POINTS_GIFT_DISABLED", Message: "赠送功能暂未开放", Recovery: authprotocol.RecoveryNone},
+	{Code: errCodeGiftLimit, Name: "POINTS_GIFT_LIMIT", Message: "赠送次数已达上限",
+		Recovery: authprotocol.RecoveryNone, Hint: "每日赠送次数、每日赠送额度或对方每日接收次数，按应用时区的自然日计"},
+	{Code: errCodeGiftFrequency, Name: "POINTS_GIFT_FREQUENCY", Message: "赠送过于频繁，请稍后再试",
+		Recovery: authprotocol.RecoveryNone, Hint: "短时间内频繁送同一人，或对方刚送过你"},
 	// ── 抽奖 ──
 	// 与活动页 chances 的判定一一对应：显示「还剩 0 次」与点了之后的报错是同一件事。
 	{Code: errCodeLotteryNotFound, Name: "LOTTERY_NOT_FOUND", Message: "活动不存在或已下线",

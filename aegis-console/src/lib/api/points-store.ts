@@ -15,7 +15,10 @@ export type PointsStoreLimitPeriod = "total" | "day" | "week" | "month";
 export type PointsStoreRestockPeriod = "none" | "day" | "week" | "month";
 export type PointsStoreAudience = "all" | "vip" | "non_vip" | "lifetime";
 export type PointsStoreItemStatus = "active" | "inactive";
-export type PointsStoreRedemptionStatus = "completed" | "pending" | "cancelled";
+/** revoked：赠送被撤销、权益已追回且积分没有退回 */
+export type PointsStoreRedemptionStatus = "completed" | "pending" | "cancelled" | "revoked";
+/** 发给谁：self 兑换人自己 / gift 兑换人选的好友（docs/points-store-gift.md） */
+export type PointsStoreDelivery = "self" | "gift";
 
 /** 一档权益的自述，由后端目录下发，前端不另抄一份 */
 export type PointsStoreRewardSpec = {
@@ -39,6 +42,9 @@ export type PointsStoreCatalog = {
   /** 周期边界与每日开放时段所用的时区（应用默认时区，IANA 名） */
   timezone: string;
   audiences: PointsStoreAudience[];
+  deliveries: PointsStoreDelivery[];
+  /** 赠送商品只能配的权益类型（都能在撤销时追回） */
+  giftableRewards: string[];
   maxRewards: number;
   /** 应用里已经用过的分类，供分类输入补全 */
   categories: string[];
@@ -83,6 +89,7 @@ export type PointsStoreItem = {
   cost: number;
   originalCost?: number;
   rewards: PointsStoreReward[];
+  delivery: PointsStoreDelivery;
   /** 剩余库存，缺省为不限。开了补货周期时是库里那个周期的值，此刻的库存看管理端的 currentStock */
   stock?: number;
   soldCount: number;
@@ -136,6 +143,7 @@ export type PointsStoreItemPayload = {
   cost: number;
   originalCost: number | null;
   rewards: PointsStoreReward[];
+  delivery: PointsStoreDelivery;
   stock: number | null;
   restockPeriod: PointsStoreRestockPeriod;
   restockQuantity: number | null;
@@ -170,6 +178,8 @@ export type PointsStoreRedemption = {
   status: PointsStoreRedemptionStatus;
   integralTransactionNo?: string;
   refundTransactionNo?: string;
+  /** 赠送商品的兑换：对应的赠送单号（审核、撤销在赠送记录里处理） */
+  giftNo?: string;
   requestId?: string;
   note?: string;
   handledBy?: string;
@@ -358,5 +368,200 @@ export function revokeUserFeatureUnlock(token: string, appKey: string, userId: n
     method: "POST",
     token,
     body: JSON.stringify({ reason })
+  });
+}
+
+// ── 赠好友（docs/points-store-gift.md）──
+
+export type PointsStoreGiftStatus = "reviewing" | "delivered" | "rejected" | "revoked" | "blocked";
+export type PointsStoreGiftAction = "allow" | "review" | "reject";
+
+/** 赠送记录里的一方（管理端带主键与账号） */
+export type PointsStoreGiftUser = {
+  userId?: number;
+  publicId?: number;
+  number?: number;
+  account?: string;
+  nickname: string;
+  avatar?: string;
+};
+
+/** 命中的一条风控判据：message 是说给用户的，detail 给管理员看 */
+export type PointsStoreGiftHit = {
+  key: string;
+  label: string;
+  action: PointsStoreGiftAction;
+  message: string;
+  detail?: string;
+};
+
+/** 判定时的事实快照 */
+export type PointsStoreGiftFacts = {
+  now: string;
+  senderAgeDays: number;
+  recipientAgeDays: number;
+  sharedDevices: string[];
+  sharedNetworks: string[];
+  senderToday: number;
+  senderTodayPoints: number;
+  recipientToday: number;
+  pairRecent: number;
+  mutualRecent: number;
+  cost: number;
+  platform?: { decisionId?: string; action: string; score: number; reasons?: string[] };
+};
+
+export type PointsStoreGiftRevocationItem = {
+  type: string;
+  label: string;
+  detail: string;
+  /** recovered 已追回 / expired 已过期无可追回 / missing 找不到发放记录 */
+  outcome: "recovered" | "expired" | "missing";
+};
+
+export type PointsStoreGift = {
+  id: number;
+  giftNo: string;
+  appid: number;
+  redemptionId?: number;
+  redemptionNo?: string;
+  sender: PointsStoreGiftUser;
+  recipient: PointsStoreGiftUser;
+  itemId?: number;
+  itemTitle: string;
+  cost: number;
+  rewards?: PointsStoreReward[];
+  results: PointsStoreRewardResult[];
+  message?: string;
+  status: PointsStoreGiftStatus;
+  riskAction?: PointsStoreGiftAction;
+  riskHits?: PointsStoreGiftHit[];
+  riskFacts?: PointsStoreGiftFacts;
+  decisionId?: string;
+  requestId?: string;
+  deviceId?: string;
+  clientIp?: string;
+  reviewNote?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  revokeNote?: string;
+  revokedBy?: string;
+  revokedAt?: string;
+  revocation?: PointsStoreGiftRevocationItem[];
+  refundTransactionNo?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PointsStoreGiftSummary = {
+  reviewing: number;
+  delivered: number;
+  rejected: number;
+  revoked: number;
+  blocked: number;
+  todayDelivered: number;
+  todayPoints: number;
+};
+
+export type PointsStoreGiftList = PointsStorePage<PointsStoreGift> & {
+  summary: PointsStoreGiftSummary;
+  statuses: PointsStoreGiftStatus[];
+};
+
+export type PointsStoreGiftParams = {
+  status?: PointsStoreGiftStatus;
+  userId?: number;
+  senderId?: number;
+  recipientId?: number;
+  itemId?: number;
+  keyword?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+};
+
+export type PointsStoreGiftRuleAction = Exclude<PointsStoreGiftAction, "allow">;
+
+/** 一条风控判据的配置 */
+export type PointsStoreGiftRule = {
+  key: string;
+  enabled: boolean;
+  action: PointsStoreGiftRuleAction;
+  threshold?: number;
+  windowHours?: number;
+};
+
+/** 判据的自述：表单由它驱动 */
+export type PointsStoreGiftRuleSpec = {
+  key: string;
+  label: string;
+  hint: string;
+  /** 为空表示这条判据没有阈值 */
+  thresholdLabel?: string;
+  thresholdUnit?: string;
+  min?: number;
+  max?: number;
+  window?: boolean;
+  maxWindow?: number;
+  actions: PointsStoreGiftRuleAction[];
+  default: PointsStoreGiftRule;
+};
+
+export type PointsStoreGiftPolicy = {
+  appid: number;
+  enabled: boolean;
+  rules: PointsStoreGiftRule[];
+  configured: boolean;
+  updatedBy?: string;
+  updatedAt?: string;
+};
+
+export type PointsStoreGiftPolicyView = {
+  policy: PointsStoreGiftPolicy;
+  catalog: PointsStoreGiftRuleSpec[];
+  defaults: PointsStoreGiftPolicy;
+};
+
+export function listPointsStoreGifts(token: string, appKey: string, params?: PointsStoreGiftParams) {
+  return apiRequest<PointsStoreGiftList>(`${base(appKey)}/gifts${buildQuery(params ?? {})}`, { token });
+}
+
+export function getPointsStoreGift(token: string, appKey: string, giftId: number) {
+  return apiRequest<PointsStoreGift>(`${base(appKey)}/gifts/${giftId}`, { token });
+}
+
+/**
+ * 审核与撤销：approve 给接收人发放；reject 积分退回赠送人；revoke 从接收人处追回，
+ * refundSender 决定积分退不退（误送退、套利不退）。都会站内信通知相关的一方或双方。
+ */
+export function handlePointsStoreGift(
+  token: string,
+  appKey: string,
+  giftId: number,
+  action: "approve" | "reject" | "revoke",
+  note: string,
+  refundSender = false
+) {
+  return apiRequest<PointsStoreGift>(`${base(appKey)}/gifts/${giftId}/${action}`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ note, refundSender })
+  });
+}
+
+export function getPointsStoreGiftPolicy(token: string, appKey: string) {
+  return apiRequest<PointsStoreGiftPolicyView>(`${base(appKey)}/gift-policy`, { token });
+}
+
+export function savePointsStoreGiftPolicy(
+  token: string,
+  appKey: string,
+  policy: { enabled: boolean; rules: PointsStoreGiftRule[] }
+) {
+  return apiRequest<PointsStoreGiftPolicy>(`${base(appKey)}/gift-policy`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify(policy)
   });
 }

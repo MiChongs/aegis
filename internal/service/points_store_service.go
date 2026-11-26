@@ -84,8 +84,11 @@ func (s *PointsStoreService) Catalog(ctx context.Context, appID int64) (map[stri
 		"restockPeriods": pointstore.RestockPeriods(),
 		"timezone":       timeutil.DefaultLocation().String(),
 		"audiences":      pointstore.Audiences(),
-		"maxRewards":     pointstore.MaxRewardsPerItem,
-		"categories":     categories,
+		// 发给谁；赠送商品只能配这几类可追回的权益
+		"deliveries":      []string{pointstore.DeliverySelf, pointstore.DeliveryGift},
+		"giftableRewards": pointstore.GiftableRewardTypes(),
+		"maxRewards":      pointstore.MaxRewardsPerItem,
+		"categories":      categories,
 	}, nil
 }
 
@@ -209,6 +212,10 @@ func (s *PointsStoreService) prepareItem(ctx context.Context, input pointstore.I
 			}
 			if plan.Trial {
 				return input, apperrors.New(40000, http.StatusBadRequest, "试用套餐不能用于兑换")
+			}
+			// 永久会员一旦开通会把对方的存量折算掉，撤销时追不回来
+			if plan.Lifetime && input.Delivery == pointstore.DeliveryGift {
+				return input, apperrors.New(40000, http.StatusBadRequest, "永久会员套餐不能做成赠送商品")
 			}
 		case pointstore.RewardFeature:
 			if _, ok := features[reward.Tag]; !ok {
@@ -460,8 +467,16 @@ func clientItem(item pointstore.Item, facts pointstore.UserFacts, usage pointsto
 		MinLevel:          item.MinLevel,
 		StartsAt:          item.StartsAt,
 		EndsAt:            item.EndsAt,
-		Availability:      pointstore.Evaluate(item, facts, usage, clock),
+		Delivery:          item.Delivery,
 	}
+	if item.Delivery == pointstore.DeliveryGift {
+		// 「已拥有」问的是接收人，选人之前无从判断：不拿兑换人自己的持有去灰掉一份送给别人的礼物
+		facts.Holdings = vipdomain.Holdings{}
+		facts.PermanentCosmetics = nil
+	} else {
+		view.Delivery = pointstore.DeliverySelf
+	}
+	view.Availability = pointstore.Evaluate(item, facts, usage, clock)
 	if view.RestockPeriod == "" {
 		view.RestockPeriod = pointstore.RestockNone
 	}
@@ -589,6 +604,9 @@ func (s *PointsStoreService) publishUser(appID, userID int64, data map[string]an
 func (s *PointsStoreService) translate(err error) error {
 	if err == nil {
 		return nil
+	}
+	if gift := translateGift(err); gift != nil {
+		return gift
 	}
 	var unavailable *pgrepo.PointsStoreUnavailableError
 	if errors.As(err, &unavailable) {

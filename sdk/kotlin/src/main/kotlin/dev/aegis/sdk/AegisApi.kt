@@ -928,6 +928,70 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
     fun pointsStoreRedemptions(page: Int = 1, limit: Int = 20): JsonElement =
         client.call("GET", "/points/store/redemptions", query = pageQuery(page, limit), requireAuth = true)
 
+    // ── 赠好友（docs/points-store-gift.md）──
+    // `delivery` 为 `gift` 的商品不走 redeem：先选人（候选或按号码找）、核对对方的昵称与头像，再提交。
+
+    /**
+     * 赠送选人。[q] 为空时给最近互动过的人（送过的、送过我的、邀请关系，`relation` 说明来由）；
+     * [q] 是用户号码时按号码找人。每一项带 `publicId`、`number`、`nickname`、`avatar`，提交时把 `publicId` 当 recipient。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun pointsStoreGiftRecipients(q: String? = null): JsonElement =
+        client.call(
+            "GET", "/points/store/gift/recipients",
+            query = if (q.isNullOrBlank()) emptyMap() else mapOf("q" to q.trim()), requireAuth = true,
+        )
+
+    /**
+     * 赠送前核对：对方是谁（`recipient`）、会收到什么（`rewards`）、能不能送（`allowed`；不能时 `reason` 与 `message`）。
+     * 不扣积分。[recipient] 是对方的用户号码或候选里的 `publicId`。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun previewPointsStoreGift(itemId: Long, recipient: String, message: String? = null): JsonElement =
+        client.call(
+            "POST", "/points/store/gift/preview",
+            mapOf("itemId" to itemId, "recipient" to recipient, "message" to message), requireAuth = true,
+        )
+
+    /**
+     * 把一件赠送商品送给 [recipient]（号码或 `publicId`），[message] 是最多 60 字的赠言。
+     *
+     * 扣积分与给对方发放在同一个事务里完成：`gift.status` 为 `delivered` 即已到对方账上；
+     * 为 `reviewing` 时积分已扣、等待审核，未通过原路退回。[requestId] 幂等，重试带同一个值不会重复扣。
+     * 被拒不扣积分：42251 送给自己 / 42252 对方状态异常 / 42253 对方已拥有 / 42254 商品不能这样兑换 /
+     * 42255 风险拦截 / 42256 未开放 / 42930 次数或额度已满 / 42931 过于频繁 / 40432 查无此人；
+     * 可兑换判定的 403xx 照旧（库存、限兑、积分）。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun giftPointsStoreItem(
+        itemId: Long,
+        recipient: String,
+        message: String? = null,
+        requestId: String? = null,
+        deviceId: String? = null,
+    ): JsonElement =
+        client.call(
+            "POST", "/points/store/gift",
+            mapOf(
+                "itemId" to itemId, "recipient" to recipient, "message" to message,
+                "requestId" to requestId, "deviceId" to deviceId,
+            ),
+            requireAuth = true,
+        )
+
+    /** 我的赠送记录：[box] 为 `sent` 我送出的 / `received` 我收到的，为空时两者都有（`direction` 区分）。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun pointsStoreGifts(box: String? = null, page: Int = 1, limit: Int = 20): JsonElement =
+        client.call(
+            "GET", "/points/store/gifts",
+            query = pageQuery(page, limit) + (if (box.isNullOrBlank()) emptyMap() else mapOf("box" to box)),
+            requireAuth = true,
+        )
+
     // ── 个性装扮（docs/cosmetics.md）──
 
     /**

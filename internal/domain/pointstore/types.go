@@ -126,6 +126,8 @@ type Item struct {
 	// OriginalCost 划线价（高于 cost 才有意义）
 	OriginalCost *int64   `json:"originalCost,omitempty"`
 	Rewards      []Reward `json:"rewards"`
+	// Delivery 发给谁：self 兑换人自己 / gift 兑换人选的好友（docs/points-store-gift.md）
+	Delivery string `json:"delivery"`
 	// Stock 剩余库存，nil 为不限。开了补货周期时是「本周期还剩多少」，跨周期后读到的值要经
 	// CurrentStock 换算（库里的数要等到新周期第一笔兑换才回写）
 	Stock     *int64 `json:"stock,omitempty"`
@@ -171,6 +173,7 @@ type ItemInput struct {
 	Cost         int64
 	OriginalCost *int64
 	Rewards      []Reward
+	Delivery     string
 	Stock        *int64
 	// RestockPeriod / RestockQuantity 见 Item；StockWindowStart 由服务层按保存时刻算好
 	RestockPeriod     string
@@ -230,16 +233,18 @@ type Redemption struct {
 	Results   []RewardResult `json:"results"`
 	Status    string         `json:"status"`
 	// IntegralTransactionNo 扣积分的流水号；RefundTransactionNo 取消时退积分的流水号
-	IntegralTransactionNo string     `json:"integralTransactionNo,omitempty"`
-	RefundTransactionNo   string     `json:"refundTransactionNo,omitempty"`
-	RequestID             string     `json:"requestId,omitempty"`
-	Note                  string     `json:"note,omitempty"`
-	HandledBy             string     `json:"handledBy,omitempty"`
-	HandledAt             *time.Time `json:"handledAt,omitempty"`
-	DeviceID              string     `json:"deviceId,omitempty"`
-	ClientIP              string     `json:"clientIp,omitempty"`
-	CreatedAt             time.Time  `json:"createdAt"`
-	UpdatedAt             time.Time  `json:"updatedAt"`
+	IntegralTransactionNo string `json:"integralTransactionNo,omitempty"`
+	RefundTransactionNo   string `json:"refundTransactionNo,omitempty"`
+	// GiftNo 赠送商品的兑换对应的赠送单号（详情看赠送记录）
+	GiftNo    string     `json:"giftNo,omitempty"`
+	RequestID string     `json:"requestId,omitempty"`
+	Note      string     `json:"note,omitempty"`
+	HandledBy string     `json:"handledBy,omitempty"`
+	HandledAt *time.Time `json:"handledAt,omitempty"`
+	DeviceID  string     `json:"deviceId,omitempty"`
+	ClientIP  string     `json:"clientIp,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
 }
 
 // RedeemInput 一次兑换指令。
@@ -465,6 +470,8 @@ type ClientItem struct {
 	Rewards      []ClientReward `json:"rewards"`
 	// Kind 主权益的类型（第一项），客户端据此选图标
 	Kind string `json:"kind"`
+	// Delivery self 兑给自己 / gift 赠送好友（兑换前要先选人，走 /points/store/gift）
+	Delivery string `json:"delivery"`
 	// Stock 此刻的剩余库存（已按补货周期换算），不限时为空
 	Stock     *int64 `json:"stock,omitempty"`
 	SoldCount int64  `json:"soldCount"`

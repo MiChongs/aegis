@@ -1,4 +1,4 @@
-"""积分商城：开关、权益目录、商品增删改与上下架排序、兑换记录与人工发放 / 取消、统计。"""
+"""积分商城：开关、权益目录、商品增删改与上下架排序、兑换记录与人工发放 / 取消、统计、赠好友的赠送记录、审核队列、撤销追回与赠送风控（docs/points-store-gift.md）。"""
 
 from __future__ import annotations
 
@@ -27,25 +27,35 @@ REDEMPTIONS = GET(f"{B}/redemptions")
 FULFILL = POST(f"{B}/redemptions/:redemptionId/fulfill")
 CANCEL = POST(f"{B}/redemptions/:redemptionId/cancel")
 STATS = GET(f"{B}/stats")
+GIFTS = GET(f"{B}/gifts")
+GIFT = GET(f"{B}/gifts/:giftId")
+GIFT_APPROVE = POST(f"{B}/gifts/:giftId/approve")
+GIFT_REJECT = POST(f"{B}/gifts/:giftId/reject")
+GIFT_REVOKE = POST(f"{B}/gifts/:giftId/revoke")
+GIFT_POLICY = GET(f"{B}/gift-policy")
+GIFT_POLICY_SAVE = PUT(f"{B}/gift-policy")
 
 ItemID = Annotated[int, Field(gt=0, description="商品 ID（store_items 结果里的 id）")]
 RedemptionID = Annotated[int, Field(gt=0, description="兑换记录 ID（store_redemptions 结果里的 id）")]
 Period = Literal["total", "day", "week", "month"]
 RestockPeriod = Literal["none", "day", "week", "month"]
 Audience = Literal["all", "vip", "non_vip", "lifetime"]
+Delivery = Literal["self", "gift"]
+GiftID = Annotated[int, Field(gt=0, description="赠送记录 ID（store_gifts 结果里的 id）")]
 
 
 class Reward(BaseModel):
     """一项权益。取值字段由权益类型决定（见 store_catalog）。"""
 
     type: Literal["vip_plan", "vip_days", "feature", "experience", "balance", "lottery_draws", "manual",
-                  "number_change", "number_ticket", "number_draw"] = Field(
+                  "number_change", "number_ticket", "number_draw", "cosmetic"] = Field(
         description="vip_plan 会员套餐（ref_id）/ vip_days 会员天数（amount）/ feature 功能解锁（tag + amount 天，0 为永久）/ "
                     "experience 经验（amount）/ balance 余额（money）/ lottery_draws 抽奖次数（amount）/ manual 人工发放（text，只能单独成为一件商品）/ "
-                    "number_change 改号卡（amount 张）/ number_ticket 靓号券（amount 张 + ref_id 等级 1 精品 2 稀有 3 传说 4 至尊）/ number_draw 摇号次数（amount 次）")
+                    "number_change 改号卡（amount 张）/ number_ticket 靓号券（amount 张 + ref_id 等级 1 精品 2 稀有 3 传说 4 至尊）/ number_draw 摇号次数（amount 次）/ "
+                    "cosmetic 个性装扮（ref_id 装扮编号 + amount 天，0 为永久）。赠送商品（delivery=gift）只能配 vip_plan（限时）、vip_days、feature、cosmetic")
     amount: int | None = Field(default=None, ge=0, description="数量：天数 / 经验点 / 次数")
     money: str | None = Field(default=None, description="余额金额（十进制字符串，如 \"5.00\"）")
-    ref_id: int | None = Field(default=None, gt=0, description="会员套餐 ID（vip_plan 用）；number_ticket 时为靓号券等级 1–4")
+    ref_id: int | None = Field(default=None, gt=0, description="会员套餐 ID（vip_plan 用）；number_ticket 时为靓号券等级 1–4；cosmetic 时为装扮编号")
     tag: str | None = Field(default=None, description="功能标识（feature 用）")
     text: str | None = Field(default=None, description="人工发放的内容说明（manual 用，用户可见）")
 
@@ -61,6 +71,7 @@ _FIELDS = {
     "limit_period": "limitPeriod", "limit_count": "limitCount", "user_total_limit": "userTotalLimit",
     "daily_open_minute": "dailyOpenMinute", "daily_close_minute": "dailyCloseMinute", "audience": "audience",
     "min_level": "minLevel", "starts_at": "startsAt", "ends_at": "endsAt", "status": "status", "sort_order": "sortOrder",
+    "delivery": "delivery",
 }
 _NULLABLE = Literal["original_cost", "stock", "restock_quantity", "daily_open_minute", "daily_close_minute", "starts_at", "ends_at"]
 
@@ -139,6 +150,7 @@ async def create_item(
     ends_at: Annotated[str | None, Field(description="下架时间（ISO 8601），不传为长期")] = None,
     status: Annotated[Literal["active", "inactive"] | None, Field(description="active 上架 / inactive 下架")] = None,
     sort_order: Annotated[int | None, Field(description="排序值，越小越靠前")] = None,
+    delivery: Annotated[Delivery | None, Field(description="发给谁：self 兑换人自己（默认）/ gift 赠好友（用户兑换时先选人，权益发给对方）")] = None,
 ) -> Any:
     """新建积分商城商品。权益引用（套餐、功能标识）在保存时校验。status=active 时用户立即可兑，执行前确认价格与权益。"""
     fields = {k: v for k, v in locals().items() if k in _FIELDS}
@@ -173,6 +185,7 @@ async def update_item(
     ends_at: Annotated[str | None, Field(description="下架时间（ISO 8601）")] = None,
     status: Annotated[Literal["active", "inactive"] | None, Field(description="active 上架 / inactive 下架")] = None,
     sort_order: Annotated[int | None, Field(description="排序值")] = None,
+    delivery: Annotated[Delivery | None, Field(description="发给谁：self / gift（赠好友）")] = None,
     clear: Annotated[list[_NULLABLE] | None, Field(description="要清空的可空字段：stock（改为不限库存）、original_cost、restock_quantity、"
                                                              "daily_open_minute / daily_close_minute（两者都清空为全天开放）、starts_at、ends_at")] = None,
 ) -> Any:
@@ -217,7 +230,7 @@ async def redemptions(
     app: AppRef,
     user_id: Annotated[int | None, Field(gt=0, description="只看某个用户（管理端用户 ID）")] = None,
     item_id: Annotated[int | None, Field(gt=0, description="只看某件商品")] = None,
-    status: Annotated[Literal["", "completed", "pending", "cancelled"], Field(description="completed 已到账 / pending 待人工发放 / cancelled 已取消；空为不限")] = "",
+    status: Annotated[Literal["", "completed", "pending", "cancelled", "revoked"], Field(description="completed 已到账 / pending 待人工发放（或赠送审核中）/ cancelled 已取消 / revoked 赠送已撤销且未退积分；空为不限")] = "",
     keyword: Annotated[str, Field(description="按用户账号 / 商品标题等搜索")] = "",
     from_time: IsoTime = "",
     to_time: IsoTime = "",
@@ -236,7 +249,8 @@ async def fulfill(
     redemption_id: RedemptionID,
     note: Annotated[str, Field(max_length=500, description="给用户的话（兑换码、快递单号等），随站内信发给用户")] = "",
 ) -> Any:
-    """把一笔待人工发放（pending）的兑换标记为已发放，并站内信通知用户。处理后不能再改回或取消，先确认已经实际发出。"""
+    """把一笔待人工发放（pending）的兑换标记为已发放，并站内信通知用户。处理后不能再改回或取消，先确认已经实际发出。
+    赠送的兑换（带 giftNo）不能在这里处理（40969），用 store_approve_gift / store_reject_gift。"""
     return await FULFILL(appkey=app, redemptionId=redemption_id, body={"note": note})
 
 
@@ -258,3 +272,90 @@ async def stats(
 ) -> Any:
     """积分商城概览与按天趋势：兑换笔数、人数、消耗积分、待发放、上架商品数、今日与取消笔数、热门商品。"""
     return await STATS(appkey=app, query=q(days=days, tz=tz))
+
+
+# ── 赠好友 ──
+
+GiftStatus = Literal["", "reviewing", "delivered", "rejected", "revoked", "blocked"]
+
+
+@server.tool(**READ("store"))
+async def gifts(
+    app: AppRef,
+    status: Annotated[GiftStatus, Field(description="reviewing 审核中（即审核队列）/ delivered 已送达 / rejected 已驳回 / "
+                                                    "revoked 已撤销 / blocked 风控拦截（未扣积分）；空为不限")] = "",
+    user_id: Annotated[int | None, Field(gt=0, description="作为赠送人或接收人（管理端用户 ID）")] = None,
+    sender_id: Annotated[int | None, Field(gt=0, description="只看这个赠送人")] = None,
+    recipient_id: Annotated[int | None, Field(gt=0, description="只看这个接收人")] = None,
+    item_id: Annotated[int | None, Field(gt=0, description="只看某件商品")] = None,
+    keyword: Annotated[str, Field(description="赠送单号、兑换单号、商品标题、双方账号 / 昵称 / 号码")] = "",
+    from_time: IsoTime = "",
+    to_time: IsoTime = "",
+    page: Page = 1,
+    limit: Annotated[int, Field(ge=1, le=100, description="每页条数")] = 20,
+) -> Any:
+    """赠送记录与各状态笔数（summary）。每条带双方、发了什么、风控结论（riskAction / riskHits / riskFacts）与审核撤销记录。"""
+    return await GIFTS(appkey=app, query=q(
+        status=status, userId=user_id, senderId=sender_id, recipientId=recipient_id, itemId=item_id, keyword=keyword,
+        **{"from": from_time, "to": to_time}, page=page, limit=limit,
+    ))
+
+
+@server.tool(**READ("store"))
+async def gift(app: AppRef, gift_id: GiftID) -> Any:
+    """一笔赠送的详情：双方、权益与发放结果、命中的风控判据与当时的事实（注册天数、共用设备与地址、当日次数）、审核与追回记录。"""
+    return await GIFT(appkey=app, giftId=gift_id)
+
+
+GiftNote = Annotated[str, Field(max_length=500, description="备注（随站内信发给用户）")]
+
+
+@server.tool(**WRITE("store"))
+async def approve_gift(app: AppRef, gift_id: GiftID, note: GiftNote = "") -> Any:
+    """审核通过一笔 reviewing 的赠送：在一个事务里把权益发给接收人并通知双方。发放前复核对方状态与是否已拥有，不满足时报错，应改为驳回。"""
+    return await GIFT_APPROVE(appkey=app, giftId=gift_id, body={"note": note})
+
+
+@server.tool(**DESTRUCTIVE("store"))
+async def reject_gift(app: AppRef, gift_id: GiftID, note: GiftNote = "") -> Any:
+    """驳回一笔 reviewing 的赠送：积分原路退回赠送人、库存加回、通知赠送人。不可撤销，先向用户确认。"""
+    return await GIFT_REJECT(appkey=app, giftId=gift_id, body={"note": note})
+
+
+@server.tool(**DESTRUCTIVE("store"))
+async def revoke_gift(
+    app: AppRef,
+    gift_id: GiftID,
+    refund_sender: Annotated[bool, Field(description="是否把积分退给赠送人：误送、客诉退；套利、欺诈不退")] = False,
+    note: GiftNote = "",
+) -> Any:
+    """撤销一笔 delivered 的赠送并从接收人处追回：会员扣掉还没走完的时长、功能解锁与装扮收回；通知双方。不可撤销，先向用户确认。"""
+    return await GIFT_REVOKE(appkey=app, giftId=gift_id, body={"note": note, "refundSender": refund_sender})
+
+
+@server.tool(**READ("store"))
+async def gift_policy(app: AppRef) -> Any:
+    """赠送风控策略（policy）、判据目录（catalog：每条判据的含义、阈值范围、可选处置）与推荐默认值（defaults）。改之前先看它。"""
+    return await GIFT_POLICY(appkey=app)
+
+
+class GiftRule(BaseModel):
+    """一条赠送风控判据（键与含义见 store_gift_policy 的 catalog）。"""
+
+    key: Literal["sender_age", "recipient_age", "same_device", "same_network", "sender_daily_count", "sender_daily_points",
+                 "recipient_daily_count", "pair_frequency", "mutual", "large_gift", "risk_platform"]
+    enabled: bool
+    action: Literal["review", "reject"] = Field(description="review 送审核（积分先扣）/ reject 直接拒绝（不扣积分）")
+    threshold: int | None = Field(default=None, ge=0, description="阈值：天数 / 次数 / 积分（没有阈值的判据不传）")
+    window_hours: int | None = Field(default=None, ge=1, description="时间窗（小时，只有 same_network / pair_frequency / mutual 有）")
+
+
+@server.tool(**WRITE("store", idempotent=True))
+async def save_gift_policy(
+    app: AppRef,
+    enabled: Annotated[bool, Field(description="是否允许赠送（关掉后赠送商品照列但不能提交）")],
+    rules: Annotated[list[GiftRule] | None, Field(description="要配置的判据；没给的判据按推荐默认值")] = None,
+) -> Any:
+    """保存赠送风控策略，立即对新的赠送生效。放宽判据（关掉、改为审核、调高上限）前先向用户确认。"""
+    payload = [body(key=r.key, enabled=r.enabled, action=r.action, threshold=r.threshold, windowHours=r.window_hours) for r in rules or []]
+    return await GIFT_POLICY_SAVE(appkey=app, body={"enabled": enabled, "rules": payload})

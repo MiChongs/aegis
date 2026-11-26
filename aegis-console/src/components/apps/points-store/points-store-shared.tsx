@@ -61,7 +61,8 @@ const REDEMPTION_STATUS_META: Record<
 > = {
   completed: { label: "已到账", variant: "success" },
   pending: { label: "待发放", variant: "warning" },
-  cancelled: { label: "已取消", variant: "secondary" }
+  cancelled: { label: "已取消", variant: "secondary" },
+  revoked: { label: "已撤销", variant: "secondary" }
 };
 
 export function RedemptionStatusBadge({ status }: { status: PointsStoreRedemptionStatus }) {
@@ -279,6 +280,7 @@ export function itemRules(item: PointsStoreItem) {
   if (hours) rules.push(`每日 ${hours} 开放`);
   if (item.audience !== "all") rules.push(AUDIENCE_LABEL[item.audience]);
   if (item.minLevel > 0) rules.push(`Lv.${item.minLevel} 起`);
+  if (item.delivery === "gift") rules.push("赠送好友");
   return rules;
 }
 
@@ -301,6 +303,7 @@ export function itemToPayload(item: PointsStoreItem, overrides: Partial<PointsSt
     cost: item.cost,
     originalCost: item.originalCost ?? null,
     rewards: item.rewards,
+    delivery: item.delivery ?? "self",
     stock: hasStock(item) ? (liveStock(item) ?? 0) : null,
     restockPeriod: item.restockPeriod ?? "none",
     restockQuantity: item.restockQuantity ?? null,

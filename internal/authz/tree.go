@@ -415,6 +415,7 @@ func permissionTree() []PermissionNode {
 			menu("app.points_store", "积分商城", "shopping-bag", ScopeAppOnly,
 				appStd("app:points_store", "/points-store", true,
 					act("app:points_store:fulfill", "兑换处理", LegacyAppWrite, routes(under(mPost, pApp+"/points-store/redemptions"))),
+					act("app:points_store:gift_review", "赠送审核与撤销", LegacyAppWrite, routes(under(mPost, pApp+"/points-store/gifts")), danger()),
 				)...,
 			),
 			menu("service.points", "积分", "coins", ScopeAppOnly,

@@ -118,6 +118,7 @@ func Scenes() []store.Scene {
 		scene("signin", "签到", "每日签到", false, []string{"device"}, true),
 		scene("cardkey", "卡密兑换", "兑换卡与授权卡", false, []string{"device", "ip"}, false),
 		scene("points_redeem", "积分兑换", "积分商城兑换", false, []string{"device"}, true),
+		scene("points_gift", "积分赠送", "积分商城赠好友：付积分把权益送给另一个账号", false, []string{"device", "ip"}, true),
 		scene("ad_reward", "激励广告发奖", "看完激励视频后发奖", false, []string{"device"}, true),
 		scene("oauth_login", "第三方登录", "QQ、Google 等第三方账号登录，含首次登录建号", false, acct, false),
 		scene("oauth_bind", "绑定第三方账号", "已登录用户绑定 QQ、Google 等第三方账号", false, acct, false),
@@ -190,7 +191,7 @@ func Templates() []Template {
 			rule("device_reuse", "设备重复注册", bundle.DimDevice, "F.device_register_7d >= 3", 60, "", "设备 7 天注册 {{F.device_register_7d}} 个"),
 			rule("device_many_users", "设备挂多号", bundle.DimGraph, "F.g_device_users >= 8", 80, "block", "设备上已有 {{F.g_device_users}} 个账号"),
 		}},
-		{Key: "marketing", Name: "营销反作弊", Description: "羊毛党、设备农场、邀请裂变", Scenes: []string{"invite", "lottery", "signin", "points_redeem", "ad_reward", "cardkey", "vip_trial"}, Rules: []store.Rule{
+		{Key: "marketing", Name: "营销反作弊", Description: "羊毛党、设备农场、邀请裂变", Scenes: []string{"invite", "lottery", "signin", "points_redeem", "points_gift", "ad_reward", "cardkey", "vip_trial"}, Rules: []store.Rule{
 			rule("device_accounts", "一机多号", bundle.DimDevice, "F.device_accounts_1d >= 3", 50, "", "设备 1 天出现 {{F.device_accounts_1d}} 个账号"),
 			rule("graph_device_accounts", "同设备账号团", bundle.DimGraph, "F.g_device_accounts >= 5", 60, "", "与 {{F.g_device_accounts}} 个账号共用设备"),
 			rule("invite_burst", "邀请裂变异常", bundle.DimGraph, "scene == 'invite' && F.g_invite_tree >= 200", 60, "", "三层邀请树 {{F.g_invite_tree}} 人"),

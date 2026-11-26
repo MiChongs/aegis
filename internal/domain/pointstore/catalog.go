@@ -452,6 +452,9 @@ func NormalizeItemInput(input ItemInput) ItemInput {
 	if input.Audience == "" {
 		input.Audience = AudienceAll
 	}
+	if input.Delivery == "" {
+		input.Delivery = DeliverySelf
+	}
 	if input.Status == "" {
 		input.Status = StatusActive
 	}
@@ -518,8 +521,16 @@ func ValidateItemInput(input ItemInput) error {
 		return fmt.Errorf("下架时间需要晚于上架时间")
 	case !ValidStatus(input.Status):
 		return fmt.Errorf("未知的商品状态：%s", input.Status)
+	case !ValidDelivery(input.Delivery):
+		return fmt.Errorf("未知的发放对象：%s", input.Delivery)
 	}
-	return ValidateRewards(input.Rewards)
+	if err := ValidateRewards(input.Rewards); err != nil {
+		return err
+	}
+	if input.Delivery == DeliveryGift {
+		return ValidateGiftRewards(input.Rewards)
+	}
+	return nil
 }
 
 func normalizeTag(tag string) string {

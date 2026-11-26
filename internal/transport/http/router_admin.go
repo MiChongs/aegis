@@ -333,6 +333,14 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/points-store/redemptions/:redemptionId/fulfill", h.AdminFulfillPointsStoreRedemption)
 		admin.POST("/apps/:appkey/points-store/redemptions/:redemptionId/cancel", h.AdminCancelPointsStoreRedemption)
 		admin.GET("/apps/:appkey/points-store/stats", h.AdminPointsStoreStats)
+		// 赠好友：赠送记录（status=reviewing 即审核队列）、审核、撤销追回与赠送风控（docs/points-store-gift.md）
+		admin.GET("/apps/:appkey/points-store/gifts", h.AdminListPointsStoreGifts)
+		admin.GET("/apps/:appkey/points-store/gifts/:giftId", h.AdminGetPointsStoreGift)
+		admin.POST("/apps/:appkey/points-store/gifts/:giftId/approve", h.AdminApprovePointsStoreGift)
+		admin.POST("/apps/:appkey/points-store/gifts/:giftId/reject", h.AdminRejectPointsStoreGift)
+		admin.POST("/apps/:appkey/points-store/gifts/:giftId/revoke", h.AdminRevokePointsStoreGift)
+		admin.GET("/apps/:appkey/points-store/gift-policy", h.AdminPointsStoreGiftPolicy)
+		admin.PUT("/apps/:appkey/points-store/gift-policy", h.AdminSavePointsStoreGiftPolicy)
 		// 个性装扮（docs/cosmetics.md）：目录 / 设置 / 素材库 / 装扮与设计器草稿 / 发布与版本 / 用户的持有与佩戴 / 统计
 		admin.GET("/apps/:appkey/cosmetics/catalog", h.AdminCosmeticCatalog)
 		admin.GET("/apps/:appkey/cosmetics/settings", h.AdminCosmeticSettings)

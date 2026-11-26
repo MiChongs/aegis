@@ -28,6 +28,8 @@ var (
 	ErrPointsStoreRedemptionNotFound = errors.New("points store redemption not found")
 	// ErrPointsStoreRedemptionState 只有待发放的兑换能被标记发放或取消
 	ErrPointsStoreRedemptionState = errors.New("points store redemption is not pending")
+	// ErrPointsStoreRedemptionIsGift 赠送的兑换要在赠送审核里处理
+	ErrPointsStoreRedemptionIsGift = errors.New("points store redemption belongs to a gift")
 )
 
 // PointsStoreUnavailableError 这件商品此刻不能被这个人兑换（判定结论随错误带出）。
@@ -82,7 +84,7 @@ const pointsStoreItemColumns = `i.id, i.appid, i.title, i.subtitle, i.descriptio
 i.rewards, i.stock, i.sold_count, i.limit_period, i.limit_count, i.audience, i.min_level, i.starts_at, i.ends_at,
 i.status, i.sort_order, COALESCE(i.created_by, ''), i.created_at, i.updated_at,
 i.restock_period, i.restock_quantity, i.stock_window_start, i.global_limit_period, i.global_limit_count,
-i.user_total_limit, i.daily_open_minute, i.daily_close_minute`
+i.user_total_limit, i.daily_open_minute, i.daily_close_minute, i.delivery`
 
 func scanPointsStoreItem(row interface{ Scan(dest ...any) error }, extra ...any) (*pointstore.Item, error) {
 	var item pointstore.Item
@@ -92,7 +94,7 @@ func scanPointsStoreItem(row interface{ Scan(dest ...any) error }, extra ...any)
 		&item.Audience, &item.MinLevel, &item.StartsAt, &item.EndsAt, &item.Status, &item.SortOrder,
 		&item.CreatedBy, &item.CreatedAt, &item.UpdatedAt,
 		&item.RestockPeriod, &item.RestockQuantity, &item.StockWindowStart, &item.GlobalLimitPeriod, &item.GlobalLimitCount,
-		&item.UserTotalLimit, &item.DailyOpenMinute, &item.DailyCloseMinute}
+		&item.UserTotalLimit, &item.DailyOpenMinute, &item.DailyCloseMinute, &item.Delivery}
 	if err := row.Scan(append(dest, extra...)...); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrPointsStoreItemNotFound
@@ -177,15 +179,22 @@ func (r *Repository) CreatePointsStoreItem(ctx context.Context, input pointstore
 (appid, title, subtitle, description, category, badge, cost, original_cost, rewards, stock,
  limit_period, limit_count, audience, min_level, starts_at, ends_at, status, sort_order, created_by,
  restock_period, restock_quantity, stock_window_start, global_limit_period, global_limit_count,
- user_total_limit, daily_open_minute, daily_close_minute)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+ user_total_limit, daily_open_minute, daily_close_minute, delivery)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
 RETURNING `+pointsStoreItemColumns,
 		input.AppID, input.Title, input.Subtitle, input.Description, input.Category, input.Badge,
 		input.Cost, input.OriginalCost, rewards, input.Stock, input.LimitPeriod, input.LimitCount,
 		input.Audience, input.MinLevel, input.StartsAt, input.EndsAt, input.Status, input.SortOrder,
 		nullableString(input.Operator),
 		input.RestockPeriod, input.RestockQuantity, input.StockWindowStart, input.GlobalLimitPeriod, input.GlobalLimitCount,
-		input.UserTotalLimit, input.DailyOpenMinute, input.DailyCloseMinute))
+		input.UserTotalLimit, input.DailyOpenMinute, input.DailyCloseMinute, pointsStoreDelivery(input.Delivery)))
+}
+
+func pointsStoreDelivery(delivery string) string {
+	if delivery == pointstore.DeliveryGift {
+		return delivery
+	}
+	return pointstore.DeliverySelf
 }
 
 // UpdatePointsStoreItem 整体更新商品。已兑出的记录存的是快照，不受影响。
@@ -196,14 +205,14 @@ title = $3, subtitle = $4, description = $5, category = $6, badge = $7, cost = $
 rewards = $10, stock = $11, limit_period = $12, limit_count = $13, audience = $14, min_level = $15,
 starts_at = $16, ends_at = $17, status = $18, sort_order = $19,
 restock_period = $20, restock_quantity = $21, stock_window_start = $22, global_limit_period = $23,
-global_limit_count = $24, user_total_limit = $25, daily_open_minute = $26, daily_close_minute = $27, updated_at = NOW()
+global_limit_count = $24, user_total_limit = $25, daily_open_minute = $26, daily_close_minute = $27, delivery = $28, updated_at = NOW()
 WHERE i.id = $1 AND i.appid = $2
 RETURNING `+pointsStoreItemColumns,
 		itemID, input.AppID, input.Title, input.Subtitle, input.Description, input.Category, input.Badge,
 		input.Cost, input.OriginalCost, rewards, input.Stock, input.LimitPeriod, input.LimitCount,
 		input.Audience, input.MinLevel, input.StartsAt, input.EndsAt, input.Status, input.SortOrder,
 		input.RestockPeriod, input.RestockQuantity, input.StockWindowStart, input.GlobalLimitPeriod, input.GlobalLimitCount,
-		input.UserTotalLimit, input.DailyOpenMinute, input.DailyCloseMinute))
+		input.UserTotalLimit, input.DailyOpenMinute, input.DailyCloseMinute, pointsStoreDelivery(input.Delivery)))
 }
 
 // SetPointsStoreItemStatus 上架 / 下架。
@@ -475,7 +484,8 @@ WHERE appid = $1 AND user_id = $2 AND revoked_at IS NULL AND ends_at IS NULL`, a
 const pointsStoreRedemptionColumns = `r.id, r.redemption_no, r.appid, r.user_id, r.item_id, r.item_title, r.cost,
 r.rewards, r.results, r.status, COALESCE(r.integral_transaction_no, ''), COALESCE(r.refund_transaction_no, ''),
 COALESCE(r.request_id, ''), COALESCE(r.note, ''), COALESCE(r.handled_by, ''), r.handled_at,
-COALESCE(r.device_id, ''), COALESCE(r.client_ip, ''), r.created_at, r.updated_at`
+COALESCE(r.device_id, ''), COALESCE(r.client_ip, ''), r.created_at, r.updated_at,
+COALESCE((SELECT g.gift_no FROM points_store_gifts g WHERE g.redemption_id = r.id), '')`
 
 func scanPointsStoreRedemption(row interface{ Scan(dest ...any) error }, extra ...any) (*pointstore.Redemption, error) {
 	var item pointstore.Redemption
@@ -483,7 +493,7 @@ func scanPointsStoreRedemption(row interface{ Scan(dest ...any) error }, extra .
 	dest := []any{&item.ID, &item.RedemptionNo, &item.AppID, &item.UserID, &item.ItemID, &item.ItemTitle, &item.Cost,
 		&rewards, &results, &item.Status, &item.IntegralTransactionNo, &item.RefundTransactionNo,
 		&item.RequestID, &item.Note, &item.HandledBy, &item.HandledAt, &item.DeviceID, &item.ClientIP,
-		&item.CreatedAt, &item.UpdatedAt}
+		&item.CreatedAt, &item.UpdatedAt, &item.GiftNo}
 	if err := row.Scan(append(dest, extra...)...); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrPointsStoreRedemptionNotFound
@@ -553,6 +563,10 @@ FROM points_store_items i WHERE i.id = $1 AND i.appid = $2 FOR UPDATE`, input.It
 	if err != nil {
 		return nil, err
 	}
+	// 赠送商品要先选人，走 GiftPointsStoreItem：兑给自己会把送给别人的东西发到自己账上
+	if item.Delivery == pointstore.DeliveryGift {
+		return nil, giftRefused(pointstore.GiftReasonGiftItem)
+	}
 
 	entitlementFacts, err := entitlementFactsTx(ctx, tx, input.AppID, input.UserID, nil)
 	if err != nil {
@@ -620,7 +634,7 @@ RETURNING `+pointsStoreRedemptionColumns,
 		return nil, err
 	}
 
-	results, err := r.grantPointsStoreRewardsTx(ctx, tx, redemption, rewards, facts)
+	results, err := r.grantPointsStoreRewardsTx(ctx, tx, redemption, input.UserID, rewards, facts, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -644,15 +658,24 @@ WHERE id = $1`, redemption.ID, resultsJSON, integralTxnNo); err != nil {
 //
 // 这里的 switch 与 pointstore 的权益目录**双向钉死**（TestPointsStoreCatalogHasGrantBranch）。
 // 任何一项发不出去都让整笔兑换回滚：积分退回、库存复原，不存在「扣了积分少发一样」。
+//
+// beneficiaryID 是收到权益的人：兑给自己时是兑换人，赠送时是接收人（extraMeta 带上赠送单号与赠送人，
+// 各账本的流水据此能追到是谁送的）。
 func (r *Repository) grantPointsStoreRewardsTx(ctx context.Context, tx pgx.Tx, redemption *pointstore.Redemption,
-	rewards []pointstore.Reward, facts *pointstore.UserFacts) ([]pointstore.RewardResult, error) {
-	appID, userID := redemption.AppID, redemption.UserID
+	beneficiaryID int64, rewards []pointstore.Reward, facts *pointstore.UserFacts, extraMeta map[string]any) ([]pointstore.RewardResult, error) {
+	appID, userID := redemption.AppID, beneficiaryID
 	redemptionID := redemption.ID
 	meta := map[string]any{"redemptionNo": redemption.RedemptionNo}
 	if redemption.ItemID != nil {
 		meta["itemId"] = *redemption.ItemID
 	}
+	for key, value := range extraMeta {
+		meta[key] = value
+	}
 	source := "积分兑换 " + redemption.ItemTitle
+	if _, gift := extraMeta["giftNo"]; gift {
+		source = "好友赠送 " + redemption.ItemTitle
+	}
 	out := make([]pointstore.RewardResult, 0, len(rewards))
 
 	for _, reward := range rewards {
@@ -804,6 +827,10 @@ func (r *Repository) grantPointsStoreRewardsTx(ctx context.Context, tx pgx.Tx, r
 				return nil, pointsStoreUnavailable(pointstore.ReasonOwned)
 			}
 			result.Detail = granted.CosmeticName + " " + cosmetic.TermLabel(int(reward.Amount))
+			if granted.Ownership != nil {
+				// 持有记录编号：撤销赠送时按它收回这一段
+				result.TransactionNo = strconv.FormatInt(granted.Ownership.ID, 10)
+			}
 
 		default:
 			// 目录里有、这里没有 —— 由测试挡在合并之前
@@ -848,6 +875,10 @@ FROM points_store_redemptions r WHERE r.id = $1 AND r.appid = $2 FOR UPDATE`, in
 	if redemption.Status != pointstore.RedemptionPending {
 		return nil, ErrPointsStoreRedemptionState
 	}
+	// 审核中的赠送在赠送审核里处理：这里标记发放不会把东西发给接收人
+	if redemption.GiftNo != "" {
+		return nil, ErrPointsStoreRedemptionIsGift
+	}
 
 	status := pointstore.RedemptionCompleted
 	refundNo := ""
@@ -862,16 +893,7 @@ FROM points_store_redemptions r WHERE r.id = $1 AND r.appid = $2 FOR UPDATE`, in
 		}
 		refundNo = txnNo
 		if redemption.ItemID != nil {
-			// 开了补货周期时，只有本周期兑出的那份才退回库存：上个周期的货已经随补货清零，
-			// 退回去会让本周期凭空多出一份
-			if _, err := tx.Exec(ctx, `UPDATE points_store_items
-SET stock = CASE
-        WHEN stock IS NULL THEN NULL
-        WHEN restock_period <> 'none' AND (stock_window_start IS NULL OR $2 < stock_window_start) THEN stock
-        WHEN restock_quantity IS NOT NULL THEN LEAST(stock + 1, restock_quantity)
-        ELSE stock + 1 END,
-    sold_count = GREATEST(sold_count - 1, 0), updated_at = NOW()
-WHERE id = $1`, *redemption.ItemID, redemption.CreatedAt); err != nil {
+			if err := restorePointsStoreStockTx(ctx, tx, *redemption.ItemID, redemption.CreatedAt); err != nil {
 				return nil, err
 			}
 		}

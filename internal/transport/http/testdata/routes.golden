@@ -329,6 +329,9 @@ GET	/api/admin/apps/:appkey/oauth2/overview	AdminOAuth2Overview
 GET	/api/admin/apps/:appkey/passkey	AdminAppPasskeyPolicy
 GET	/api/admin/apps/:appkey/password-policy	AdminAppPasswordPolicy
 GET	/api/admin/apps/:appkey/points-store/catalog	AdminPointsStoreCatalog
+GET	/api/admin/apps/:appkey/points-store/gift-policy	AdminPointsStoreGiftPolicy
+GET	/api/admin/apps/:appkey/points-store/gifts	AdminListPointsStoreGifts
+GET	/api/admin/apps/:appkey/points-store/gifts/:giftId	AdminGetPointsStoreGift
 GET	/api/admin/apps/:appkey/points-store/items	AdminListPointsStoreItems
 GET	/api/admin/apps/:appkey/points-store/redemptions	AdminListPointsStoreRedemptions
 GET	/api/admin/apps/:appkey/points-store/settings	AdminPointsStoreSettings
@@ -824,6 +827,8 @@ GET	/api/v1/apps/:appkey/points/level/rewards	MyLevelRewards
 GET	/api/v1/apps/:appkey/points/levels	PointsLevels
 GET	/api/v1/apps/:appkey/points/overview	PointsOverview
 GET	/api/v1/apps/:appkey/points/store	AppPointsStore
+GET	/api/v1/apps/:appkey/points/store/gift/recipients	AppPointsStoreGiftRecipients
+GET	/api/v1/apps/:appkey/points/store/gifts	AppPointsStoreGifts
 GET	/api/v1/apps/:appkey/points/store/redemptions	AppPointsStoreRedemptions
 GET	/api/v1/apps/:appkey/promo	AppPromoCampaigns
 GET	/api/v1/apps/:appkey/promo/:campaignId	AppPromoCampaign
@@ -1088,6 +1093,9 @@ POST	/api/admin/apps/:appkey/oauth2/clients	AdminCreateOAuth2Client
 POST	/api/admin/apps/:appkey/oauth2/clients/:clientId/rotate-secret	AdminRotateOAuth2ClientSecret
 POST	/api/admin/apps/:appkey/password-policy/reset	ResetAdminAppPasswordPolicy
 POST	/api/admin/apps/:appkey/password-policy/test	TestAdminAppPasswordPolicy
+POST	/api/admin/apps/:appkey/points-store/gifts/:giftId/approve	AdminApprovePointsStoreGift
+POST	/api/admin/apps/:appkey/points-store/gifts/:giftId/reject	AdminRejectPointsStoreGift
+POST	/api/admin/apps/:appkey/points-store/gifts/:giftId/revoke	AdminRevokePointsStoreGift
 POST	/api/admin/apps/:appkey/points-store/items	AdminCreatePointsStoreItem
 POST	/api/admin/apps/:appkey/points-store/redemptions/:redemptionId/cancel	AdminCancelPointsStoreRedemption
 POST	/api/admin/apps/:appkey/points-store/redemptions/:redemptionId/fulfill	AdminFulfillPointsStoreRedemption
@@ -1569,6 +1577,8 @@ POST	/api/v1/apps/:appkey/numbers/draw	AppDrawUserNumbers
 POST	/api/v1/apps/:appkey/numbers/draws/:drawId/discard	AppDiscardUserNumberDraw
 POST	/api/v1/apps/:appkey/pay/orders	CreatePaymentOrder
 POST	/api/v1/apps/:appkey/points/level/rewards/:rewardId/claim	ClaimLevelReward
+POST	/api/v1/apps/:appkey/points/store/gift	AppGiftPointsStoreItem
+POST	/api/v1/apps/:appkey/points/store/gift/preview	AppPreviewPointsStoreGift
 POST	/api/v1/apps/:appkey/points/store/redeem	AppRedeemPointsStoreItem
 POST	/api/v1/apps/:appkey/promo/:campaignId/submissions	AppSubmitPromo
 POST	/api/v1/apps/:appkey/promo/:campaignId/tiers/claim	AppClaimPromoTier
@@ -1652,6 +1662,7 @@ PUT	/api/admin/apps/:appkey/oauth-providers/:provider/enabled	AdminSetAppOAuthPr
 PUT	/api/admin/apps/:appkey/oauth2/clients/:clientId	AdminUpdateOAuth2Client
 PUT	/api/admin/apps/:appkey/passkey	UpdateAdminAppPasskeyPolicy
 PUT	/api/admin/apps/:appkey/password-policy	UpdateAdminAppPasswordPolicy
+PUT	/api/admin/apps/:appkey/points-store/gift-policy	AdminSavePointsStoreGiftPolicy
 PUT	/api/admin/apps/:appkey/points-store/item-order	AdminReorderPointsStoreItems
 PUT	/api/admin/apps/:appkey/points-store/items/:itemId	AdminUpdatePointsStoreItem
 PUT	/api/admin/apps/:appkey/points-store/items/:itemId/status	AdminSetPointsStoreItemStatus

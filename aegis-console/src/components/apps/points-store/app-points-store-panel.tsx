@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { BarChart3, Loader2, ReceiptText, ShoppingBag, Store } from "lucide-react";
+import { BarChart3, Gift, Loader2, ReceiptText, ShieldCheck, ShoppingBag, Store } from "lucide-react";
 import { toast } from "sonner";
 import { NoAppSelected } from "@/components/apps/app-config-primitives";
+import { PointsStoreGiftPolicyPanel } from "@/components/apps/points-store/points-store-gift-policy-panel";
+import { PointsStoreGiftsPanel } from "@/components/apps/points-store/points-store-gifts-panel";
 import { PointsStoreItemsPanel } from "@/components/apps/points-store/points-store-items-panel";
 import { PointsStoreOverviewPanel } from "@/components/apps/points-store/points-store-overview-panel";
 import { PointsStoreRedemptionsPanel } from "@/components/apps/points-store/points-store-redemptions-panel";
@@ -17,6 +19,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { PointsStoreRedemptionStatus } from "@/lib/api/points-store";
 import { formatDateTime } from "@/lib/datetime";
 import {
+  usePointsStoreGiftsQuery,
   usePointsStoreItemsQuery,
   usePointsStoreSettingsQuery,
   usePointsStoreStatsQuery,
@@ -31,6 +34,8 @@ import {
  * | 概览 | 每天兑多少、花掉多少积分、哪些商品最受欢迎、还有几笔等人处理 |
  * | 商品 | 卖什么、多少积分、限量与限兑、卖得怎么样；上下架、排序、复制、批量处理 |
  * | 兑换记录 | 谁在什么时候兑了什么、实际发出去了什么；人工发放在这里处理 |
+ * | 赠送 | 谁送了谁什么、风控为什么拦或送审；审核队列与撤销追回在这里处理 |
+ * | 赠送风控 | 新号、同设备、同网络、频次与额度等判据的开关、阈值与处置 |
  *
  * 顶部状态条常驻：商城开关与两项最要紧的数（在售、待发放），换页签时不消失。
  * 视图状态不进 URL，理由同卡密区块：`?tab=` 已经被应用区块占用。
@@ -39,7 +44,9 @@ import {
 const VIEWS = [
   { key: "overview", label: "概览", icon: BarChart3 },
   { key: "items", label: "商品", icon: ShoppingBag },
-  { key: "redemptions", label: "兑换记录", icon: ReceiptText }
+  { key: "redemptions", label: "兑换记录", icon: ReceiptText },
+  { key: "gifts", label: "赠送", icon: Gift },
+  { key: "giftPolicy", label: "赠送风控", icon: ShieldCheck }
 ] as const;
 
 type ViewKey = (typeof VIEWS)[number]["key"];
@@ -52,6 +59,9 @@ export function AppPointsStorePanel({ appKey }: { appKey?: string | null }) {
 
   const itemsQuery = usePointsStoreItemsQuery(appKey);
   const statsQuery = usePointsStoreStatsQuery(appKey, 14);
+  // 审核队列的笔数挂在「赠送」页签上：只取一条，读 summary
+  const giftsQuery = usePointsStoreGiftsQuery(appKey, { status: "reviewing", limit: 1 });
+  const reviewing = giftsQuery.data?.summary.reviewing ?? 0;
 
   if (!appKey) {
     return <NoAppSelected icon={<ShoppingBag className="size-5" />} />;
@@ -71,7 +81,7 @@ export function AppPointsStorePanel({ appKey }: { appKey?: string | null }) {
       <StoreStatusBar
         appKey={appKey}
         activeItems={statsQuery.data?.summary.activeItems}
-        pending={statsQuery.data ? pending : undefined}
+        pending={statsQuery.data ? Math.max(0, pending - reviewing) : undefined}
         onOpenItems={() => setView("items")}
         onOpenPending={() => openRedemptions(undefined, "pending")}
       />
@@ -86,9 +96,14 @@ export function AppPointsStorePanel({ appKey }: { appKey?: string | null }) {
                 {item.key === "items" && itemCount !== undefined ? (
                   <span className="text-xs font-normal tabular-nums text-muted-foreground">{itemCount}</span>
                 ) : null}
-                {item.key === "redemptions" && pending > 0 ? (
+                {item.key === "redemptions" && pending - reviewing > 0 ? (
                   <Badge variant="warning" size="sm" className="tabular-nums">
-                    {formatPoints(pending)}
+                    {formatPoints(pending - reviewing)}
+                  </Badge>
+                ) : null}
+                {item.key === "gifts" && reviewing > 0 ? (
+                  <Badge variant="warning" size="sm" className="tabular-nums">
+                    {formatPoints(reviewing)}
                   </Badge>
                 ) : null}
               </TabsTrigger>
@@ -117,8 +132,11 @@ export function AppPointsStorePanel({ appKey }: { appKey?: string | null }) {
           status={statusFilter}
           onItemIdChange={setItemFilter}
           onStatusChange={setStatusFilter}
+          onOpenGifts={() => setView("gifts")}
         />
       ) : null}
+      {view === "gifts" ? <PointsStoreGiftsPanel appKey={appKey} /> : null}
+      {view === "giftPolicy" ? <PointsStoreGiftPolicyPanel appKey={appKey} /> : null}
     </div>
   );
 }

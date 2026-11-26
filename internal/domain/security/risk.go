@@ -19,6 +19,7 @@ const (
 	SceneSignIn        = "signin"
 	SceneCardKey       = "cardkey"
 	ScenePointsRedeem  = "points_redeem"
+	ScenePointsGift    = "points_gift" // 积分商城赠好友（docs/points-store-gift.md）
 	SceneAdReward      = "ad_reward"
 
 	// 身份与账号安全

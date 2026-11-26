@@ -40,6 +40,8 @@ type PointsStoreItemRequest struct {
 	Cost         int64                      `json:"cost"`
 	OriginalCost *int64                     `json:"originalCost"`
 	Rewards      []PointsStoreRewardRequest `json:"rewards"`
+	// Delivery 发给谁：self（默认）兑换人自己 / gift 兑换人选的好友（只能配会员套餐、会员天数、功能解锁、个性装扮）
+	Delivery string `json:"delivery"`
 	// Stock 剩余库存，不传或 null 为不限；开了补货周期时是本周期还剩多少（不传则从满货开始）
 	Stock *int64 `json:"stock"`
 	// RestockPeriod 补货周期 none / day / week / month；RestockQuantity 每个周期补到多少
@@ -124,6 +126,7 @@ func (req PointsStoreItemRequest) toInput(appID int64, operator string) pointsto
 		Cost:              req.Cost,
 		OriginalCost:      req.OriginalCost,
 		Rewards:           rewards,
+		Delivery:          strings.TrimSpace(req.Delivery),
 		Stock:             req.Stock,
 		RestockPeriod:     req.RestockPeriod,
 		RestockQuantity:   req.RestockQuantity,
