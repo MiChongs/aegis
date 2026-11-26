@@ -293,6 +293,11 @@ type IPBan struct {
 	TriggerCount int        `json:"triggerCount"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	UpdatedAt    time.Time  `json:"updatedAt"`
+	// RevokeNote 解封备注（批量解封时填写的原因）
+	RevokeNote string `json:"revokeNote,omitempty"`
+	// DelayMs tarpit 模式的延迟毫秒（落库后服务重启同步回 Redis 不再丢）
+	DelayMs   int    `json:"delayMs,omitempty"`
+	UpdatedBy *int64 `json:"updatedBy,omitempty"`
 }
 
 // ──────────────────────────────────────
@@ -448,20 +453,96 @@ type GeoBanMutation struct {
 
 // BanDecision 防火墙向中间件返回的封禁决策。
 type BanDecision struct {
-	Banned  bool
-	Mode    string // 见 BanMode* 常量
-	Reason  string
-	BanID   int64
-	DelayMs int // tarpit 模式生效时的延迟毫秒数
+	Banned  bool   `json:"banned"`
+	Mode    string `json:"mode"` // 见 BanMode* 常量
+	Reason  string `json:"reason"`
+	BanID   int64  `json:"banId,omitempty"`
+	DelayMs int    `json:"delayMs,omitempty"` // tarpit 模式生效时的延迟毫秒数
 }
 
-// IPBanFilter 查询过滤条件
+// IPBanFilter 查询过滤条件（列表、批量解封、统计共用一套）
 type IPBanFilter struct {
-	IP       string
-	Status   string // all | active | expired | revoked
-	Source   string // all | manual | auto
-	Page     int
-	PageSize int
+	IP      string
+	Status  string // all | active | expired | revoked
+	Source  string // all | manual | auto | risk | rule
+	Country string // 国家代码
+	Mode    string // 响应模式；"default" = 未指定（沿用全局默认）
+	Keyword string // IP 前缀 / 原因 / 触发规则 / 运营商
+	// ExpiringWithin 只看这么多秒内到期的（0 = 不限）
+	ExpiringWithin int64
+	// Permanent true = 只看永久、false = 只看有期限、nil = 不限
+	Permanent *bool
+	Sort      string // created_desc（默认）| created_asc | expires_asc | ip
+	Page      int
+	PageSize  int
+}
+
+// IPBanStats 封禁概况（封禁页签顶部）
+type IPBanStats struct {
+	Active       int64        `json:"active"`
+	Permanent    int64        `json:"permanent"`
+	ExpiringSoon int64        `json:"expiringSoon"` // 24 小时内到期
+	Created24h   int64        `json:"created24h"`
+	Revoked24h   int64        `json:"revoked24h"`
+	Expired24h   int64        `json:"expired24h"`
+	BySource     []RankedItem `json:"bySource"`
+	ByMode       []RankedItem `json:"byMode"`
+	ByCountry    []RankedItem `json:"byCountry"`
+	Daily        []BanDaily   `json:"daily"` // 近 14 天
+}
+
+// BanDaily 每天新增与解除
+type BanDaily struct {
+	Day     string `json:"day"`
+	Created int64  `json:"created"`
+	Revoked int64  `json:"revoked"`
+	Expired int64  `json:"expired"`
+}
+
+// BanBatchItem 批量封禁 / 解封的逐条结果
+type BanBatchItem struct {
+	IP     string `json:"ip"`
+	BanID  int64  `json:"banId,omitempty"`
+	Status string `json:"status"` // created | exists | invalid | failed | revoked | skipped
+	Error  string `json:"error,omitempty"`
+}
+
+// BanBatchResult 批量操作结论
+type BanBatchResult struct {
+	Total     int            `json:"total"`
+	Succeeded int            `json:"succeeded"`
+	Skipped   int            `json:"skipped"`
+	Failed    int            `json:"failed"`
+	Items     []BanBatchItem `json:"items"`
+	// Truncated 按筛选批量解封时超出单次上限，只处理了前一部分
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// IPBanUpdate 修改一条生效中的封禁（nil = 不改）
+type IPBanUpdate struct {
+	Mode     *string
+	Reason   *string
+	Duration *int64 // 从现在起算的秒数，0 = 改为永久
+	DelayMs  *int
+}
+
+// IPInspection 某个 IP 现在会不会被拦、被哪一层拦（IP 精确封禁 → 地域规则 → 地理围栏）
+type IPInspection struct {
+	IP          string      `json:"ip"`
+	Blocked     bool        `json:"blocked"`
+	Layer       string      `json:"layer,omitempty"` // ip_ban | geo_ban | geo_fence
+	Decision    BanDecision `json:"decision"`
+	ActiveBan   *IPBan      `json:"activeBan,omitempty"`
+	History     []IPBan     `json:"history"`
+	Blocks24h   int         `json:"blocks24h"`
+	Blocks7d    int         `json:"blocks7d"`
+	Country     string      `json:"country"`
+	CountryCode string      `json:"countryCode"`
+	Region      string      `json:"region"`
+	City        string      `json:"city"`
+	ISP         string      `json:"isp"`
+	ASN         string      `json:"asn"`
+	GeoRule     *GeoBan     `json:"geoRule,omitempty"`
 }
 
 // IPBanPage 分页结果

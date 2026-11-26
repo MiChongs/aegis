@@ -108,6 +108,14 @@ IP_BANS = GET(f"{FW}/bans")
 IP_BAN_MODES = GET(f"{FW}/bans/modes")
 IP_BAN = POST(f"{FW}/bans")
 IP_UNBAN = DELETE(f"{FW}/bans/:banId")
+IP_BAN_STATS = GET(f"{FW}/bans/stats")
+IP_BAN_COUNT = GET(f"{FW}/bans/count")
+IP_BAN_INSPECT = GET(f"{FW}/bans/inspect")
+IP_BAN_BATCH = POST(f"{FW}/bans/batch")
+IP_UNBAN_BATCH = POST(f"{FW}/bans/unban")
+IP_BAN_UPDATE = PATCH(f"{FW}/bans/:banId")
+IP_BAN_UPDATE_BATCH = POST(f"{FW}/bans/update")
+GEO_BAN_BATCH = POST(f"{FW}/geo-bans/batch")
 GEO_BANS = GET(f"{FW}/geo-bans")
 GEO_BAN_UPSERT = POST(f"{FW}/geo-bans")
 GEO_BAN_TOGGLE = PATCH(f"{FW}/geo-bans/:id")
@@ -814,16 +822,86 @@ async def profile(
 @server.tool(**READ("risk"))
 async def ip_bans(
     modes: Annotated[bool, Field(description="改为返回可选的封禁响应模式与默认模式")] = False,
-    ip: Annotated[str, Field(description="IP")] = "",
+    stats: Annotated[bool, Field(description="改为返回封禁概况（生效中、永久、即将到期、按来源 / 模式 / 国家、近 14 天新增与解除）")] = False,
+    ip: Annotated[str, Field(description="IP（精确）")] = "",
     status: Annotated[Literal["", "all", "active", "expired", "revoked"], Field(description="状态")] = "",
-    source: Annotated[str, Field(description="来源（all / manual / auto / risk）")] = "",
+    source: Annotated[str, Field(description="来源（all / manual / auto / risk / rule）")] = "",
+    country: Annotated[str, Field(description="国家代码")] = "",
+    mode: Annotated[str, Field(description="响应模式；default = 沿用全局默认")] = "",
+    keyword: Annotated[str, Field(description="IP 前缀 / 原因 / 触发规则 / 运营商 / 城市")] = "",
+    expiring_within: Annotated[int, Field(ge=0, description="只看这么多秒内到期的，0 不限")] = 0,
+    permanent: Annotated[Literal["", "true", "false"], Field(description="true 只看永久、false 只看限期")] = "",
+    sort: Annotated[Literal["", "created_desc", "created_asc", "expires_asc", "ip"], Field(description="排序")] = "",
     page: Page = 1,
     page_size: PageSize = 20,
 ) -> Any:
-    """防火墙 IP 封禁记录，或 modes=true 列出可选的封禁响应模式。仅超级管理员。"""
+    """防火墙 IP 封禁记录（多条件筛选），或 modes=true 列出封禁响应模式，或 stats=true 看概况。仅超级管理员。"""
     if modes:
         return await IP_BAN_MODES()
-    return await IP_BANS(query=q(ip=ip, status=status, source=source, page=page, pageSize=page_size))
+    if stats:
+        return await IP_BAN_STATS()
+    return await IP_BANS(query=q(
+        ip=ip, status=status, source=source, country=country, mode=mode, keyword=keyword,
+        expiringWithin=expiring_within or None, permanent=permanent, sort=sort, page=page, pageSize=page_size,
+    ))
+
+
+@server.tool(**READ("risk"))
+async def inspect_ip(ip: Annotated[str, Field(min_length=1, description="IP 地址")]) -> Any:
+    """查一个 IP 现在会不会被防火墙拦、被哪一层拦（IP 精确封禁 / 地域规则 / 地理围栏），以及它的封禁历史与 24 小时、7 天拦截次数。不改任何统计。仅超级管理员。"""
+    return await IP_BAN_INSPECT(query={"ip": ip})
+
+
+@server.tool(**DESTRUCTIVE("risk"))
+async def ban_ips(
+    ips: Annotated[list[str], Field(min_length=1, max_length=1000, description="IP 列表（不接受网段，网段放防火墙设置的 blockedCIDRs）")],
+    reason: Annotated[str, Field(description="原因")] = "",
+    duration: DurationSeconds = 0,
+    mode: Annotated[str, Field(description="封禁响应模式；留空用全局默认")] = "",
+    delay_ms: Annotated[int | None, Field(ge=0, description="tarpit 模式的延迟毫秒数")] = None,
+) -> Any:
+    """批量封禁 IP（去重；已在封禁中的跳过；逐条返回结果）。执行前先向用户确认，别封到自己的出口 IP。仅超级管理员。"""
+    return await IP_BAN_BATCH(body=body(ips=ips, reason=reason, duration=duration, mode=mode or None, delayMs=delay_ms))
+
+
+@server.tool(**DESTRUCTIVE("risk"))
+async def unban_ips(
+    ban_ids: Annotated[list[int] | None, Field(description="要解封的封禁记录 ID；给了就只解封这些")] = None,
+    source: Annotated[str, Field(description="不给 ban_ids 时按条件解封：来源")] = "",
+    country: Annotated[str, Field(description="按条件：国家代码")] = "",
+    mode: Annotated[str, Field(description="按条件：响应模式")] = "",
+    keyword: Annotated[str, Field(description="按条件：IP 前缀 / 原因 / 触发规则 / 运营商 / 城市")] = "",
+    expiring_within: Annotated[int, Field(ge=0, description="按条件：这么多秒内到期的")] = 0,
+    note: Annotated[str, Field(description="解封备注")] = "",
+) -> Any:
+    """批量解除防火墙 IP 封禁：给 ban_ids 解封选中的；否则按条件解封全部匹配的生效中封禁（先计数并向用户复述条数确认，服务端会核对条数）。单次最多 5000 条。仅超级管理员。"""
+    if ban_ids:
+        return await IP_UNBAN_BATCH(body=body(ids=ban_ids, note=note))
+    flt = q(source=source, country=country, mode=mode, keyword=keyword, expiringWithin=expiring_within or None)
+    if not flt:
+        raise ToolError("按条件解封至少要给一个条件（不提供「全部解封」）")
+    counted = await IP_BAN_COUNT(query={**flt, "status": "active"})
+    expected = counted.get("total", 0) if isinstance(counted, dict) else 0
+    if not expected:
+        return {"total": 0, "succeeded": 0, "skipped": 0, "failed": 0, "items": []}
+    return await IP_UNBAN_BATCH(body=body(filter={**flt, "status": "active"}, expected=expected, note=note))
+
+
+@server.tool(**WRITE("risk"))
+async def update_ip_ban(
+    ban_ids: Annotated[list[int], Field(min_length=1, description="封禁记录 ID（一条或多条）")],
+    mode: Annotated[str | None, Field(description="新的响应模式；空串 = 改回全局默认；不给不改")] = None,
+    duration: Annotated[int | None, Field(ge=0, description="从现在起再封多少秒，0 = 改为永久；不给不改")] = None,
+    reason: Annotated[str | None, Field(description="新的原因；不给不改")] = None,
+    delay_ms: Annotated[int | None, Field(ge=0, description="tarpit 延迟毫秒；不给不改")] = None,
+) -> Any:
+    """修改生效中的 IP 封禁（响应模式、时长、原因、tarpit 延迟）。仅超级管理员。"""
+    patch = body(mode=mode, duration=duration, reason=reason, delayMs=delay_ms)
+    if not patch:
+        raise ToolError("没有要修改的字段")
+    if len(ban_ids) == 1:
+        return await IP_BAN_UPDATE(banId=ban_ids[0], body=patch)
+    return await IP_BAN_UPDATE_BATCH(body={"ids": ban_ids, **patch})
 
 
 @server.tool(**DESTRUCTIVE("risk"))
@@ -875,6 +953,15 @@ async def toggle_geo_ban(
 ) -> Any:
     """启用或停用一条地域封禁。仅超级管理员。"""
     return await GEO_BAN_TOGGLE(id=geo_ban_id, body={"enabled": enabled})
+
+
+@server.tool(**DESTRUCTIVE("risk"))
+async def batch_geo_bans(
+    geo_ban_ids: Annotated[list[int], Field(min_length=1, max_length=500, description="地域封禁规则 ID")],
+    action: Annotated[Literal["enable", "disable", "delete"], Field(description="启用 / 停用 / 删除")],
+) -> Any:
+    """批量启用、停用或删除地域封禁规则。删除不可恢复，执行前先向用户确认。仅超级管理员。"""
+    return await GEO_BAN_BATCH(body={"ids": geo_ban_ids, "action": action})
 
 
 @server.tool(**DESTRUCTIVE("risk"))

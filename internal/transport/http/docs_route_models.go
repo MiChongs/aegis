@@ -502,10 +502,16 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/system/email/suppressions"):                                                           EmailSuppressionCreateRequest{},          // AdminPlatformEmailSuppressionCreate
 		routeKey("GET", "/api/admin/system/firewall/bans"):                                                                 IPBanListRequest{},                       // AdminListIPBans
 		routeKey("POST", "/api/admin/system/firewall/bans"):                                                                IPBanCreateRequest{},                     // AdminBanIP
+		routeKey("POST", "/api/admin/system/firewall/bans/batch"):                                                          IPBanBatchCreateRequest{},                // AdminBatchBanIPs
+		routeKey("GET", "/api/admin/system/firewall/bans/count"):                                                           IPBanListRequest{},                       // AdminCountIPBans
+		routeKey("POST", "/api/admin/system/firewall/bans/unban"):                                                          IPBanBatchUnbanRequest{},                 // AdminBatchUnbanIPs
+		routeKey("POST", "/api/admin/system/firewall/bans/update"):                                                         IPBanUpdateRequest{},                     // AdminBatchUpdateIPBans
+		routeKey("PATCH", "/api/admin/system/firewall/bans/{banId}"):                                                       IPBanUpdateRequest{},                     // AdminUpdateIPBan
 		routeKey("POST", "/api/admin/system/firewall/exclusions"):                                                          FirewallExclusionRequest{},               // AdminCreateFirewallExclusion
 		routeKey("PATCH", "/api/admin/system/firewall/exclusions/{exclusionId}"):                                           FirewallToggleRequest{},                  // AdminToggleFirewallExclusion
 		routeKey("PUT", "/api/admin/system/firewall/exclusions/{exclusionId}"):                                             FirewallExclusionRequest{},               // AdminUpdateFirewallExclusion
 		routeKey("POST", "/api/admin/system/firewall/geo-bans"):                                                            GeoBanUpsertRequest{},                    // AdminUpsertGeoBan
+		routeKey("POST", "/api/admin/system/firewall/geo-bans/batch"):                                                      GeoBanBatchRequest{},                     // AdminBatchGeoBans
 		routeKey("PATCH", "/api/admin/system/firewall/geo-bans/{id}"):                                                      GeoBanToggleRequest{},                    // AdminToggleGeoBan
 		routeKey("POST", "/api/admin/system/firewall/geo-fences"):                                                          GeoFenceUpsertRequest{},                  // AdminCreateGeoFence
 		routeKey("POST", "/api/admin/system/firewall/geo-fences/preview"):                                                  GeoFencePreviewRequest{},                 // AdminPreviewGeoFence

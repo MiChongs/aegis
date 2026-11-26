@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -144,20 +145,43 @@ func (s *GeoBanService) Delete(ctx context.Context, id int64) error {
 }
 
 // CheckIP 对请求 IP 评估是否命中地域封禁规则。
-// 未命中返回 {Banned: false}；命中返回决策 + 命中的规则 ID。
+// 未命中返回 {Banned: false}；命中返回决策 + 命中的规则 ID，并累加该规则的命中计数。
 // 调用侧应在 IP 精确封禁之后再调用此方法（IP 优先）。
 func (s *GeoBanService) CheckIP(ctx context.Context, ip string) (firewalldomain.BanDecision, int64) {
+	rule := s.MatchIP(ctx, ip)
+	if rule == nil {
+		return firewalldomain.BanDecision{}, 0
+	}
+	go func(id int64) {
+		bg, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = s.pg.IncrementGeoBanMatch(bg, id, time.Now().UTC())
+	}(rule.ID)
+	reason := rule.Reason
+	if strings.TrimSpace(reason) == "" {
+		reason = "geo_banned:" + rule.ScopeType + ":" + rule.ScopeValue
+	}
+	return firewalldomain.BanDecision{
+		Banned: true,
+		Mode:   rule.Mode, // 空时由 middleware 回退到默认
+		Reason: reason,
+		BanID:  rule.ID,
+	}, rule.ID
+}
+
+// MatchIP 返回 IP 命中的第一条地域规则（不计数，「IP 查询」用）；未命中返回 nil。
+func (s *GeoBanService) MatchIP(ctx context.Context, ip string) *firewalldomain.GeoBan {
 	s.mu.RLock()
 	rules := s.rules
 	s.mu.RUnlock()
 	if len(rules) == 0 || s.location == nil {
-		return firewalldomain.BanDecision{}, 0
+		return nil
 	}
 
 	loc := s.location.Resolve(ctx, ip)
 	if loc.IsPrivate {
 		// 私网 IP 不走地域封禁
-		return firewalldomain.BanDecision{}, 0
+		return nil
 	}
 
 	country := strings.ToUpper(strings.TrimSpace(loc.CountryCode))
@@ -172,7 +196,8 @@ func (s *GeoBanService) CheckIP(ctx context.Context, ip string) (firewalldomain.
 		isp = strings.TrimSpace(loc.Network.Organization)
 	}
 
-	for _, r := range rules {
+	for i := range rules {
+		r := rules[i]
 		val := strings.TrimSpace(r.ScopeValue)
 		if val == "" {
 			continue
@@ -192,24 +217,38 @@ func (s *GeoBanService) CheckIP(ctx context.Context, ip string) (firewalldomain.
 			match = isp != "" && strings.Contains(strings.ToLower(isp), strings.ToLower(val))
 		}
 		if match {
-			go func(id int64) {
-				bg, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				defer cancel()
-				_ = s.pg.IncrementGeoBanMatch(bg, id, time.Now().UTC())
-			}(r.ID)
-			reason := r.Reason
-			if strings.TrimSpace(reason) == "" {
-				reason = "geo_banned:" + r.ScopeType + ":" + r.ScopeValue
-			}
-			return firewalldomain.BanDecision{
-				Banned: true,
-				Mode:   r.Mode, // 空时由 middleware 回退到默认
-				Reason: reason,
-				BanID:  r.ID,
-			}, r.ID
+			return &r
 		}
 	}
-	return firewalldomain.BanDecision{}, 0
+	return nil
+}
+
+// BatchApply 批量启用 / 停用 / 删除地域规则，返回实际处理的条数（不存在的 ID 跳过）。
+func (s *GeoBanService) BatchApply(ctx context.Context, ids []int64, action string) (int, error) {
+	done := 0
+	for _, id := range ids {
+		var err error
+		switch action {
+		case "enable":
+			err = s.pg.UpdateGeoBanStatus(ctx, id, true)
+		case "disable":
+			err = s.pg.UpdateGeoBanStatus(ctx, id, false)
+		case "delete":
+			err = s.pg.DeleteGeoBan(ctx, id)
+		default:
+			return 0, fmt.Errorf("不支持的批量操作 %q", action)
+		}
+		if err != nil {
+			continue
+		}
+		done++
+	}
+	if done > 0 {
+		if err := s.changed(ctx, "batch-"+action, 0); err != nil {
+			return done, err
+		}
+	}
+	return done, nil
 }
 
 // Version 返回规则集版本号（用于调试 / 暴露给监控）。

@@ -152,24 +152,13 @@ func (r *Repository) ActiveIPBansFor(ctx context.Context, ips []string) ([]firew
 	if len(ips) == 0 {
 		return nil, nil
 	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, ip, reason, source, mode, trigger_rule, severity, duration, expires_at,
-			status, revoked_by, revoked_at, country, country_code, region, city, isp, trigger_count, created_at, updated_at
+	rows, err := r.pool.Query(ctx, `SELECT `+ipBanColumns+`
 		FROM ip_bans WHERE ip = ANY($1) AND status = 'active' AND (expires_at IS NULL OR expires_at > NOW())
 		ORDER BY created_at DESC`, ips)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []firewalldomain.IPBan
-	for rows.Next() {
-		b, err := scanIPBanFromRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *b)
-	}
-	return out, rows.Err()
+	return collectIPBans(rows)
 }
 
 // RiskDeviceClusters 登录过至少 minUsers 个账号的设备（占位设备码、UA 摘要键不算，与 events.NormalizeDeviceID 一致）

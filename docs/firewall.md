@@ -140,7 +140,23 @@ Coraza 的 `t:normalizePath` 用 `filepath.Clean` 实现，Windows 上会把 `/e
 例外拼进 Coraza 指令，拼错会让整个 WAF 编译失败，所以保存前一定先用「改动之后」的整套例外试编译。
 热更新换下来的旧 WAF 实例 30 秒后才释放（上面可能还有正在跑的事务）。
 
-## 8. 接口
+## 8. 封禁
+
+判定顺序：IP 精确封禁（Redis，O(1)）→ 地域规则 → 地理围栏，先命中的生效；封禁排在可信网段之前。
+
+批量管理（迁移 000175 加 `revoke_note`、`delay_ms`、`updated_by` 与筛选索引）：
+
+- **批量封禁**：一次最多 1000 个 IP，去重；IPv4 映射的 IPv6 按 IPv4 封；网段拒收（放「访问控制 → 黑名单网段」）；
+  已在封禁中的跳过；归属地并发查询（最多 8 路）。逐条返回 created / exists / invalid / failed。
+- **批量解封**：按选中的 ID，或按筛选解封全部匹配的生效中封禁。按筛选时必须带 `expected`（确认时看到的条数），
+  实际条数不符返回 40990，避免「确认 30 条、实际解了 3000 条」；不带任何条件的「全部解封」直接拒绝；
+  单次最多 5000 条（`truncated=true` 表示还有剩余）；子查询 `FOR UPDATE SKIP LOCKED`，两个人同时解封互不等锁。
+- **修改**：生效中的封禁可改响应模式、原因、时长（从现在起算，0 = 永久）与 tarpit 延迟，同步重写 Redis 与 TTL；可批量。
+- **IP 查询**：这个 IP 现在会不会被拦、被哪一层拦、封禁历史、24 小时 / 7 天拦截次数。地域规则用不计数的 `MatchIP`，查询不污染命中统计。
+- 修了一个旧问题：服务启动把生效中的封禁同步回 Redis 时只带原因与来源，丢了响应模式与 tarpit 延迟，重启后所有封禁都退回默认 403。
+- 风控处置（source=risk）的封禁在这里解除后，风控平台名单里的对象不会随之撤销。
+
+## 9. 接口
 
 全部在 `/api/admin/system/firewall/` 下、仅超级管理员；权限点 `system:firewall:read`（含测试台与表达式校验）、
 `system:firewall:policy`（规则、例外与设置）、原有的 `ban` / `fence` / `log_clean`。
@@ -153,11 +169,13 @@ Coraza 的 `t:normalizePath` 用 `filepath.Clean` 实现，Windows 上会把 `/e
 | `GET/POST exclusions`、`PUT/PATCH/DELETE exclusions/:exclusionId` | WAF 例外 |
 | `GET catalog`、`GET catalog/rules/:ruleId`、`GET directives` | 规则目录、规则详情与最近命中、完整指令 |
 | `POST sandbox` | 测试台（可带一条草稿例外，看它能不能消掉误报） |
+| `GET bans`（新增 country / mode / keyword / expiringWithin / permanent / sort）、`GET bans/stats`、`GET bans/count`、`GET bans/inspect` | 封禁列表、概况、计数、IP 查询 |
+| `POST bans/batch`、`POST bans/unban`、`POST bans/update`、`PATCH bans/:banId`、`POST geo-bans/batch` | 批量封禁、批量解封、批量 / 单条修改、地域规则批量启停删 |
 | `GET logs`（新增 action / stage / transport / appKey / ruleRef / keyword 筛选、score 排序）、`GET stats`（新增 minute 粒度与各维度聚合） | 事件 |
 
-## 9. 测试
+## 10. 测试
 
 - `go test ./internal/firewall/ ./internal/middleware/`：指令编译、业务流量 / 攻击语料、例外、脱敏、观察模式、
   sealed 解密后拦截且错误信封经加密 Writer 返回、自定义规则、可信网段。
 - `AEGIS_TEST_PG_DSN=postgres://postgres@127.0.0.1:55432/aegis_fw_test go test ./internal/transport/http -run TestFirewallIntegration`：
-  真库 + miniredis 端到端（用独立库，测试会清空 public schema）。
+  真库 + miniredis 端到端（用独立库，测试会清空 public schema）；`-run TestIPBanBatchIntegration` 覆盖封禁批量管理。

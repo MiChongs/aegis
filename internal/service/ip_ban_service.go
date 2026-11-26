@@ -304,6 +304,7 @@ func (s *IPBanService) BanIPWithOptions(ctx context.Context, ip string, reason s
 		Severity:    firewalldomain.SeverityHigh,
 		Duration:    durationSec,
 		ExpiresAt:   expiresAt,
+		DelayMs:     opts.DelayMs,
 	}
 	if s.location != nil {
 		loc := s.location.Resolve(ctx, ip)
@@ -515,10 +516,13 @@ func (s *IPBanService) SyncBansToRedis(ctx context.Context) error {
 				continue // 已过期，跳过
 			}
 		}
+		// 响应模式与 tarpit 延迟一并同步：以前只同步原因与来源，服务一重启所有封禁都退回默认 403
 		if err := s.redis.SetBan(ctx, ban.IP, redisrepo.BanMeta{
 			BanID:    ban.ID,
 			Reason:   ban.Reason,
 			Source:   ban.Source,
+			Mode:     ban.Mode,
+			DelayMs:  ban.DelayMs,
 			BannedAt: ban.CreatedAt.Format(time.RFC3339),
 		}, ttl); err != nil {
 			s.log.Warn("同步封禁到 Redis 失败", zap.String("ip", ban.IP), zap.Error(err))

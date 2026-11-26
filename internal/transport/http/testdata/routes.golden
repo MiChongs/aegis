@@ -538,7 +538,10 @@ GET	/api/admin/system/email/scenes	EmailSceneCatalog
 GET	/api/admin/system/email/stats	AdminPlatformEmailDeliveryStats
 GET	/api/admin/system/email/suppressions	AdminPlatformEmailSuppressionList
 GET	/api/admin/system/firewall/bans	AdminListIPBans
+GET	/api/admin/system/firewall/bans/count	AdminCountIPBans
+GET	/api/admin/system/firewall/bans/inspect	AdminInspectIP
 GET	/api/admin/system/firewall/bans/modes	AdminListIPBanModes
+GET	/api/admin/system/firewall/bans/stats	AdminIPBanStats
 GET	/api/admin/system/firewall/catalog	AdminFirewallCatalog
 GET	/api/admin/system/firewall/catalog/rules/:ruleId	AdminFirewallCatalogRule
 GET	/api/admin/system/firewall/directives	AdminFirewallDirectives
@@ -899,6 +902,7 @@ HEAD	/api/avatar/:hash	AvatarRedirect
 HEAD	/api/avatars/:token	AvatarImage
 HEAD	/healthz	Healthz
 HEAD	/readyz	Readyz
+PATCH	/api/admin/system/firewall/bans/:banId	AdminUpdateIPBan
 PATCH	/api/admin/system/firewall/exclusions/:exclusionId	AdminToggleFirewallExclusion
 PATCH	/api/admin/system/firewall/geo-bans/:id	AdminToggleGeoBan
 PATCH	/api/admin/system/firewall/geo-fences/:id	AdminToggleGeoFence
@@ -1293,8 +1297,12 @@ POST	/api/admin/system/email/configs/:configId/test	AdminPlatformEmailConfigTest
 POST	/api/admin/system/email/preview	AdminPlatformEmailPreview
 POST	/api/admin/system/email/suppressions	AdminPlatformEmailSuppressionCreate
 POST	/api/admin/system/firewall/bans	AdminBanIP
+POST	/api/admin/system/firewall/bans/batch	AdminBatchBanIPs
+POST	/api/admin/system/firewall/bans/unban	AdminBatchUnbanIPs
+POST	/api/admin/system/firewall/bans/update	AdminBatchUpdateIPBans
 POST	/api/admin/system/firewall/exclusions	AdminCreateFirewallExclusion
 POST	/api/admin/system/firewall/geo-bans	AdminUpsertGeoBan
+POST	/api/admin/system/firewall/geo-bans/batch	AdminBatchGeoBans
 POST	/api/admin/system/firewall/geo-fences	AdminCreateGeoFence
 POST	/api/admin/system/firewall/geo-fences/preview	AdminPreviewGeoFence
 POST	/api/admin/system/firewall/rules	AdminCreateFirewallRule

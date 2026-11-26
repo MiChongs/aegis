@@ -27,14 +27,7 @@ func (h *Handler) AdminListIPBans(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	filter := firewalldomain.IPBanFilter{
-		IP:       req.IP,
-		Status:   req.Status,
-		Source:   req.Source,
-		Page:     req.Page,
-		PageSize: req.PageSize,
-	}
-	page, err := h.ipBan.ListBans(c.Request.Context(), filter)
+	page, err := h.ipBan.ListBans(c.Request.Context(), req.filter())
 	if err != nil {
 		h.writeError(c, err)
 		return

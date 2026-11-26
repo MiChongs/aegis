@@ -12,6 +12,13 @@ func init() {
 		View("GET /api/admin/system/firewall/bans/modes", "查看 IP 封禁方式", ""),
 		Write("POST /api/admin/system/firewall/bans", "封禁 IP", "IP", SeverityHigh),
 		Write("DELETE /api/admin/system/firewall/bans/:banId", "解除 IP 封禁", "IP 封禁", SeverityHigh),
+		View("GET /api/admin/system/firewall/bans/stats", "查看 IP 封禁概况", ""),
+		View("GET /api/admin/system/firewall/bans/count", "统计匹配的 IP 封禁", ""),
+		View("GET /api/admin/system/firewall/bans/inspect", "查询 IP 封禁状态", "IP"),
+		Write("POST /api/admin/system/firewall/bans/batch", "批量封禁 IP", "IP 封禁", SeverityHigh),
+		Write("POST /api/admin/system/firewall/bans/unban", "批量解除 IP 封禁", "IP 封禁", SeverityCritical),
+		Write("POST /api/admin/system/firewall/bans/update", "批量修改 IP 封禁", "IP 封禁", SeverityHigh),
+		Write("PATCH /api/admin/system/firewall/bans/:banId", "修改 IP 封禁", "IP 封禁", SeverityHigh),
 
 		// 防火墙工作台（规则集 v2）：运行态、设置、自定义规则、WAF 例外、规则目录、测试台
 		View("GET /api/admin/system/firewall/runtime", "查看防火墙运行态", ""),
@@ -37,6 +44,7 @@ func init() {
 		// 地理封禁与地理围栏
 		View("GET /api/admin/system/firewall/geo-bans", "查看地区封禁规则", ""),
 		Write("POST /api/admin/system/firewall/geo-bans", "保存地区封禁规则", "地区封禁规则", SeverityHigh),
+		Write("POST /api/admin/system/firewall/geo-bans/batch", "批量操作地区封禁规则", "地区封禁规则", SeverityHigh),
 		Write("PATCH /api/admin/system/firewall/geo-bans/:id", "启停地区封禁规则", "地区封禁规则", SeverityHigh),
 		Write("DELETE /api/admin/system/firewall/geo-bans/:id", "删除地区封禁规则", "地区封禁规则", SeverityHigh),
 		View("GET /api/admin/system/firewall/geo-fences", "查看地理围栏", ""),

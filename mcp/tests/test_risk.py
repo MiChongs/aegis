@@ -99,6 +99,15 @@ CASES = [
     ("risk_ban_ip", {"ip": "6.6.6.6", "duration": 3600, "mode": "tarpit", "delay_ms": 5000},
      "POST", f"{F}/bans", {}, {"ip": "6.6.6.6", "reason": "", "duration": 3600, "mode": "tarpit", "delayMs": 5000}),
     ("risk_unban_ip", {"ban_id": 9}, "DELETE", f"{F}/bans/9", {}, None),
+    ("risk_ip_bans", {"stats": True}, "GET", f"{F}/bans/stats", {}, None),
+    ("risk_ip_bans", {"status": "active", "country": "CN", "keyword": "183.", "expiring_within": 86400, "sort": "expires_asc"},
+     "GET", f"{F}/bans", {"status": "active", "country": "CN", "keyword": "183.", "expiringWithin": "86400", "sort": "expires_asc", **PAGE}, None),
+    ("risk_inspect_ip", {"ip": "6.6.6.6"}, "GET", f"{F}/bans/inspect", {"ip": "6.6.6.6"}, None),
+    ("risk_ban_ips", {"ips": ["1.1.1.1", "2.2.2.2"], "duration": 600}, "POST", f"{F}/bans/batch", {}, {"ips": ["1.1.1.1", "2.2.2.2"], "reason": "", "duration": 600}),
+    ("risk_unban_ips", {"ban_ids": [1, 2], "note": "误封"}, "POST", f"{F}/bans/unban", {}, {"ids": [1, 2], "note": "误封"}),
+    ("risk_update_ip_ban", {"ban_ids": [3], "duration": 0}, "PATCH", f"{F}/bans/3", {}, {"duration": 0}),
+    ("risk_update_ip_ban", {"ban_ids": [3, 4], "mode": ""}, "POST", f"{F}/bans/update", {}, {"ids": [3, 4], "mode": ""}),
+    ("risk_batch_geo_bans", {"geo_ban_ids": [5, 6], "action": "disable"}, "POST", f"{F}/geo-bans/batch", {}, {"ids": [5, 6], "action": "disable"}),
     ("risk_geo_bans", {}, "GET", f"{F}/geo-bans", {}, None),
     ("risk_save_geo_ban", {"scope_type": "country", "scope_value": "KP"},
      "POST", f"{F}/geo-bans", {}, {"scopeType": "country", "scopeValue": "KP", "mode": "", "reason": "", "enabled": True, "expiresAt": ""}),
@@ -299,3 +308,17 @@ async def test_firewall_catalog_filters_client_side(backend, call):
     ]})
     result = await call("risk_firewall_catalog", {"group": "942", "active_only": True})
     assert result["matched"] == 1 and result["rules"][0]["id"] == 942100
+
+
+async def test_unban_ips_by_filter_confirms_count(backend, call):
+    backend.reply("GET", f"{F}/bans/count", {"total": 7})
+    await call("risk_unban_ips", {"source": "risk", "note": "清理"})
+    req = backend.last()
+    assert (req.method, req.path) == ("POST", f"{F}/bans/unban")
+    assert req.json == {"filter": {"source": "risk", "status": "active"}, "expected": 7, "note": "清理"}
+    count_req = backend.find("GET", f"{F}/bans/count")
+    assert count_req.query == {"source": "risk", "status": "active"}
+
+
+async def test_unban_ips_refuses_unfiltered(call_error):
+    assert "至少要给一个条件" in await call_error("risk_unban_ips", {})
