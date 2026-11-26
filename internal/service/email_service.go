@@ -67,7 +67,6 @@ func NewEmailService(log *zap.Logger, pg *pgrepo.Repository, redis *redislib.Cli
 		emaildomain.ProviderPostmark: newPostmarkEmailSender(log),
 		emaildomain.ProviderAliyun:   newAliyunEmailSender(log),
 		emaildomain.ProviderTencent:  newTencentEmailSender(log),
-		emaildomain.ProviderSkymail:  newSkymailEmailSender(log),
 	}
 	return service
 }
@@ -374,7 +373,7 @@ func (s *EmailService) SendRecoveryCode(ctx context.Context, appID int64, email 
 	if err != nil {
 		return err
 	}
-	_, _, err = s.deliverCodeMail(ctx, appID, config, "", email, code, "reset_password", expireMinutes)
+	_, _, err = s.sendCodeMail(ctx, appID, config, email, code, "reset_password", expireMinutes)
 	return err
 }
 
@@ -679,37 +678,16 @@ func (s *EmailService) SendDocumentEmail(ctx context.Context, appID int64, mail 
 }
 
 func (s *EmailService) sendCodeMail(ctx context.Context, appID int64, config *emaildomain.Config, email string, code string, purpose string, expireMinutes int) (time.Time, string, error) {
-	expireAt, messageID, _, err := s.sendCodeMailVia(ctx, appID, config, email, code, purpose, expireMinutes)
-	return expireAt, messageID, err
-}
-
-// sendCodeMailVia 同 sendCodeMail，多回一个「是不是这条通道自己的问题」，供故障切换判断。
-func (s *EmailService) sendCodeMailVia(ctx context.Context, appID int64, config *emaildomain.Config, email string, code string, purpose string, expireMinutes int) (time.Time, string, bool, error) {
 	policy, brand, err := s.mailContext(ctx, appID)
 	if err != nil {
-		return time.Time{}, "", false, err
+		return time.Time{}, "", err
 	}
 	if expireMinutes <= 0 {
 		expireMinutes = policy.Code.TTLMinutes
 	}
 	expireAt := timeutil.Now().Add(timeutil.Minutes(expireMinutes))
 	subject, html, text := renderCodeMailWithPolicy(policy, brand, config.Name, purpose, code, expireMinutes, email)
-	messageID, channelFailed, err := s.sendRenderedMailVia(ctx, appID, config, email, subject, mailBody{HTML: html, Text: text}, purpose)
-	return expireAt, messageID, channelFailed, err
-}
-
-// deliverCodeMail 终端用户发起的验证码邮件：主通道发不出去就换下一条，全都不行时报一句用户看得懂的话。
-//
-// 管理员的通道自检（TestConfig）不走这里 —— 它要的恰恰是那条通道原原本本的报错。
-func (s *EmailService) deliverCodeMail(ctx context.Context, appID int64, primary *emaildomain.Config, configName string, email string, code string, purpose string, expireMinutes int) (time.Time, string, error) {
-	var expireAt time.Time
-	messageID, err := s.deliverUserMail(ctx, appID, primary, configName, purpose, func(config *emaildomain.Config) (string, bool, error) {
-		at, id, channelFailed, err := s.sendCodeMailVia(ctx, appID, config, email, code, purpose, expireMinutes)
-		if err == nil {
-			expireAt = at
-		}
-		return id, channelFailed, err
-	})
+	messageID, err := s.sendRenderedMail(ctx, appID, config, email, subject, mailBody{HTML: html, Text: text}, purpose)
 	return expireAt, messageID, err
 }
 
@@ -746,22 +724,14 @@ func (s *EmailService) sendMail(ctx context.Context, appID int64, config *emaild
 // 抑制名单与投递留痕都按发信的作用域算 —— 否则应用的投递记录里看不到自己借道发出的信，
 // 应用的抑制名单也拦不住经共享通道发出的那一封。
 func (s *EmailService) sendRenderedMail(ctx context.Context, appID int64, config *emaildomain.Config, to string, subject string, body mailBody, purpose string, attachments ...emailAttachment) (string, error) {
-	messageID, _, err := s.sendRenderedMailVia(ctx, appID, config, to, subject, body, purpose, attachments...)
-	return messageID, err
-}
-
-// sendRenderedMailVia 同 sendRenderedMail，多回一个 channelFailed：
-// 为 true 表示失败出在这条通道本身（服务商拒绝、配额用尽、熔断、超时、通道不支持），换一条通道可能就发出去了；
-// 为 false 表示与通道无关（地址格式、抑制名单、平台治理），换哪条都一样，不该切换。
-func (s *EmailService) sendRenderedMailVia(ctx context.Context, appID int64, config *emaildomain.Config, to string, subject string, body mailBody, purpose string, attachments ...emailAttachment) (string, bool, error) {
 	to = strings.TrimSpace(to)
 	if _, err := mail.ParseAddress(to); err != nil {
-		return "", false, apperrors.New(40062, http.StatusBadRequest, "邮箱地址格式错误")
+		return "", apperrors.New(40062, http.StatusBadRequest, "邮箱地址格式错误")
 	}
 	// 通道自检是管理员对着一个明确的地址手动发的，不受抑制名单约束
 	if normalizeEmailPurpose(purpose) != "test" {
 		if err := s.ensureNotSuppressed(ctx, appID, to); err != nil {
-			return "", false, err
+			return "", err
 		}
 	}
 	// 平台治理挂在这里而不是各调用点：这里是全平台唯一的邮件出口，
@@ -770,17 +740,17 @@ func (s *EmailService) sendRenderedMailVia(ctx context.Context, appID int64, con
 	// 且平台告警恰恰在治理动作发生时最需要发得出去。
 	if s.governance != nil && config != nil && !config.IsPlatform() {
 		if err := s.governance.EnsureCapability(config.AppID, platformdomain.CapabilityNotification); err != nil {
-			return "", false, err
+			return "", err
 		}
 	}
 	sender, err := s.resolveSender(config.Provider)
 	if err != nil {
-		return "", true, err
+		return "", err
 	}
 	// 通道带不了附件就当场报错，绝不静默把附件丢掉再把信发出去 ——
 	// 那样用户收到的是一封「您的收据见附件」但没有附件的邮件，谁也发现不了。
 	if len(attachments) > 0 && !sender.SupportsAttachments() {
-		return "", true, apperrors.New(50062, http.StatusBadGateway,
+		return "", apperrors.New(50062, http.StatusBadGateway,
 			"当前邮件通道（"+sender.Provider()+"）不支持附件，请改用支持附件的服务商（SMTP / AWS SES / Resend / SendGrid / Mailgun / Postmark / 腾讯云），或改为发送下载链接")
 	}
 
@@ -795,7 +765,7 @@ func (s *EmailService) sendRenderedMailVia(ctx context.Context, appID int64, con
 	result, sendErr := sender.Send(ctx, config, out)
 	s.recordDelivery(ctx, appID, config, out, result, sendErr)
 	if sendErr != nil {
-		return "", true, sendErr
+		return "", sendErr
 	}
 
 	messageID := result.MessageID
@@ -805,7 +775,7 @@ func (s *EmailService) sendRenderedMailVia(ctx context.Context, appID int64, con
 	if messageID == "" {
 		messageID = fmt.Sprintf("%d-%s", timeutil.Now().UnixNano(), strings.ReplaceAll(strings.ToLower(subject), " ", "-"))
 	}
-	return messageID, false, nil
+	return messageID, nil
 }
 
 // recordDelivery 落投递留痕。

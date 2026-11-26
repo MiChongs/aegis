@@ -367,10 +367,10 @@ func (s *AccountDeletionService) SendCode(ctx context.Context, session *authdoma
 	} else if previous != nil && now.Sub(previous.SentAt) < accountDeletionResendInterval {
 		wait := accountDeletionResendInterval - now.Sub(previous.SentAt)
 		return nil, apperrors.New(errCodeDeletionResendTooSoon, http.StatusTooManyRequests,
-			fmt.Sprintf("发送过于频繁，请 %d 秒后再试", int(wait.Seconds())+1)).Public()
+			fmt.Sprintf("发送过于频繁，请 %d 秒后再试", int(wait.Seconds())+1))
 	}
 	if n, err := s.sessions.HitAccountDeletionCounter(ctx, "send", session.AppID, session.UserID, 24*time.Hour); err == nil && n > accountDeletionSendsPerDay {
-		return nil, apperrors.New(errCodeDeletionResendTooSoon, http.StatusTooManyRequests, "今日验证码发送次数已达上限，请明天再试").Public()
+		return nil, apperrors.New(errCodeDeletionResendTooSoon, http.StatusTooManyRequests, "今日验证码发送次数已达上限，请明天再试")
 	}
 
 	state := redisrepo.AccountDeletionCode{Channel: channel, SentAt: now, ExpiresAt: now.Add(accountDeletionCodeTTL)}
@@ -418,13 +418,13 @@ func (s *AccountDeletionService) ensureNotLocked(ctx context.Context, appID, use
 	}
 	minutes := int(ttl.Minutes()) + 1
 	return apperrors.New(errCodeDeletionTooManyFailure, http.StatusTooManyRequests,
-		fmt.Sprintf("验证失败次数过多，请 %d 分钟后再试", minutes)).Public()
+		fmt.Sprintf("验证失败次数过多，请 %d 分钟后再试", minutes))
 }
 
 func (s *AccountDeletionService) recordFailure(ctx context.Context, appID, userID int64, cause error) error {
 	n, err := s.sessions.HitAccountDeletionCounter(ctx, "fail", appID, userID, accountDeletionFailureWindow)
 	if err == nil && n >= accountDeletionMaxFailures {
-		return apperrors.New(errCodeDeletionTooManyFailure, http.StatusTooManyRequests, "验证失败次数过多，请 1 小时后再试").Public()
+		return apperrors.New(errCodeDeletionTooManyFailure, http.StatusTooManyRequests, "验证失败次数过多，请 1 小时后再试")
 	}
 	return cause
 }

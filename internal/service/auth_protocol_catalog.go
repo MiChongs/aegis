@@ -863,17 +863,6 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 	// 防火墙全局限流与崩溃报告（同一设备 / 同一 IP 每小时 20 份）共用这一个码。
 	{Code: errCodeCrashReportRateLimited, Name: "RATE_LIMITED", Message: "请求过于频繁，请稍后再试",
 		Recovery: authprotocol.RecoveryNone, Hint: "不要立即重试；崩溃报告留在本机，过一段时间（如下次启动）再发"},
-	// ── 邮件验证码（绑定 / 换绑邮箱、找回密码、注销）──
-	// 这几条的 message 是写给用户的原话，不会被换成「请求过于频繁」；直接展示即可。
-	{Code: 42961, Name: "EMAIL_RESEND_TOO_SOON", Message: "发送太频繁，请稍后再试",
-		Recovery: authprotocol.RecoveryNone, Hint: "同一地址同一用途的重发冷却；data.retryAfter 是还要等的秒数，按它倒计时"},
-	{Code: 42962, Name: "EMAIL_ADDRESS_QUOTA", Message: "该邮箱获取验证码的次数已达上限",
-		Recovery: authprotocol.RecoveryNone, Hint: "单个地址每小时 / 每天的上限，message 说明是哪一档"},
-	{Code: 42963, Name: "EMAIL_NETWORK_QUOTA", Message: "当前网络获取验证码的次数过多",
-		Recovery: authprotocol.RecoveryNone, Hint: "单个 IP 每小时的上限"},
-	{Code: errCodeEmailDeliveryUnavailable, Name: "EMAIL_DELIVERY_UNAVAILABLE", Message: "邮件暂时发不出去，请稍后再试",
-		Recovery: authprotocol.RecoveryNone,
-		Hint: "所有邮件通道都发信失败（服务商配额用尽、熔断或故障）。不是用户点多了：不要提示「过于频繁」，也不要自动重试；可引导改用短信等其他验证方式"},
 	// ── 意见反馈与工单附件 ──
 	{Code: errCodeFeedbackRateLimited, Name: "FEEDBACK_RATE_LIMITED", Message: feedbackRateLimitedMessage,
 		Recovery: authprotocol.RecoveryNone, Hint: "同一用户每小时最多 5 条、每天最多 20 条反馈，稍后再提交"},
