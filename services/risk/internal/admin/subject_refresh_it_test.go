@@ -46,7 +46,7 @@ func TestSubjectRefreshIT(t *testing.T) {
 	s.SetGraph(g)
 	if v, err := vector.Open(ctx, cfg); err == nil {
 		if err := v.Migrate(ctx); err == nil {
-			s.Vector() = v
+			s.SetVector(v)
 			defer v.Close(ctx)
 		}
 	}
