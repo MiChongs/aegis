@@ -1,10 +1,10 @@
 # 个性装扮
 
-头像框、资料卡背景、昵称样式、勋章。外观与素材**全部由服务端下发**：运营在控制台设计器里做一份设计稿（图层 + 关键帧 + 素材），
+头像框、资料卡背景、昵称样式、勋章、号码铭牌、会员铭牌（见「铭牌」）。外观与素材**全部由服务端下发**：运营在控制台设计器里做一份设计稿（图层 + 关键帧 + 素材），
 发布后客户端按设计稿实时绘制；客户端不内置任何一件装扮。
 
 代码：`internal/domain/cosmetic`（规则、规格、模板、判定）、`internal/repository/postgres/cosmetic_repository.go`、
-`internal/service/cosmetic_service.go`、`internal/transport/http/cosmetic_handlers.go`；迁移 000161。
+`internal/service/cosmetic_service.go`、`internal/transport/http/cosmetic_handlers.go`；迁移 000161（000176 加铭牌槽位）。
 
 ## 三张账
 
@@ -47,14 +47,14 @@
 |---|---|---|
 | GET | `/cosmetics` | 装扮中心：`settings.badgeSlots`、`slots`、`rarities`、`items[]`、`loadout`；未开启报 40361 |
 | GET | `/cosmetics/me` | 我身上的装扮 `Loadout`；未开启时为空（不报错） |
-| PUT | `/cosmetics/me` | `{slot, cosmeticId, position}`；`cosmeticId=0` 摘下，勋章 `position=-1` 摘下全部；返回新的 `Loadout` |
+| PUT | `/cosmetics/me` | `{slot, cosmeticId, position}`（slot：avatar_frame / profile_card / name_style / badge / id_plate / vip_plate）；`cosmeticId=0` 摘下，勋章 `position=-1` 摘下全部；返回新的 `Loadout` |
 | GET | `/cosmetics/history` | 我的获得记录 `{items, total}`（page / limit） |
 | GET | `/cosmetics/users?ids=1,2` | 别人身上的装扮 `{users: {对外ID: Loadout}}`，最多 100 个，没戴的人不出现 |
 
 `items[]` 每件：`id slot code name description rarity series revision preview design` + `unlock{mode,label,hint,minLevel,feature,tiers[]}`
 + `state{usable,owned,permanent,expiresAt,reason,equipped,position}` + `channels[]{kind(points_store|lottery),refId,title,cost,days}`。
 
-`Loadout`：`{avatarFrame?, profileCard?, nameStyle?, badges: []}`，每项是 `View`（`id slot code name rarity revision preview design`）。
+`Loadout`：`{avatarFrame?, profileCard?, nameStyle?, badges: [], idPlate?, vipPlate?}`，每项是 `View`（`id slot code name rarity revision preview design`）。
 
 实时事件：`cosmetic.changed`（`data.action` = granted / revoked / equipped / unequipped），收到后重拉 `/cosmetics/me`。
 站内信 `type=cosmetic`（分类 reward），跳转路由键 `cosmetics`。
@@ -172,6 +172,55 @@
 | glow | 外发光（glowColor、glowRadius） |
 | wave | 逐字上下起伏（振幅 0.12em，相邻字相位差 0.15 周期） |
 
+### 铭牌（号码铭牌 `id_plate`、会员铭牌 `vip_plate`）
+
+两个单戴的槽位，装饰的是一枚**写着动态文字的胶囊**：号码铭牌换掉资料卡上的「ID 66666」标签，会员铭牌换掉会员有效期那一行（「永久有效」「2027-01-01 到期」）。
+文字由客户端填，设计稿只决定写在哪、怎么写：
+
+```jsonc
+{
+  "canvas": {"width": 360, "height": 96},          // 默认；任意比例，最长边 32–1024
+  "layers": [ /* 与其他槽位相同 */ ],
+  "plate": {
+    "x": 96, "y": 18, "width": 240, "height": 60,  // 文字区域（画布像素，须落在画布内）
+    "template": "ID {value}",                      // 1–32 字，恰好含一个 {value}
+    "align": "center",                             // left / center / right
+    "fontSize": 40,                                // 画布像素；一行放不下时等比缩小到刚好放下，不换行、不省略
+    "fontWeight": 700,                             // 100–900
+    "letterSpacing": 0.04,                         // em，-0.2–1
+    "font": "sans"                                 // sans / serif / mono
+  },
+  "nameStyle": { /* 文字的颜色与动态效果，规格同昵称样式，必填 */ }
+}
+```
+
+- `{value}`：号码铭牌是号码（不带「ID」字样，要的话写进 template）；会员铭牌是客户端原本那行有效期文字（「永久有效」「2027-01-01 到期」）。
+- `{tier}`（**只有会员铭牌**可用）：会员标签上原本的名字（套餐名，没有时用档位名，如「领航者」）。
+  号码铭牌的 template 恰好一个 `{value}`；会员铭牌的 template 里 `{value}`、`{tier}` 各最多一次、至少有一个，例如 `{tier} · {value}`。
+- **会员铭牌合并替换**：戴着会员铭牌且是有效会员时，原来的会员标签（领航者胶囊）与有效期那一行**都不再显示**，只显示这一枚铭牌，
+  点铭牌进会员页（与原会员标签相同）。号码铭牌只替换号码标签（点了复制）。
+  会员铭牌只在用户有有效会员时出现；号码铭牌只在用户有号码时出现；不满足时照原样显示原来的标签。
+- 绘制顺序：`placement: "below"` 的图层在文字之下，`"above"` 在文字之上（与头像框里「头像」的位置同理）。
+  **铭牌槽位里 placement 缺省按 below 处理**（服务端规范化时补 below，控制台新建图层也默认 below）。
+- 显示：客户端按**高度**定尺寸（「我的」页 26dp），宽度 = 高度 × canvas.width / canvas.height；文字按 plate 区域垂直居中、按 align 水平对齐，
+  字号 = fontSize × 缩放比，放不下时整体缩小。
+- **按字伸缩**（`plate.stretch: {"x0": 120, "x1": 300}`，可选，推荐）：画布上 x0–x1 这一段横向可伸缩，两端固定（徽章、圆头不变形）。
+  - 客户端先按 fontSize（画布像素，含 letterSpacing）量出文字宽 `tw`，`delta = tw − plate.width`，下限 `−(x1 − x0) + 1`（中段至少留 1 像素）。
+    显示用的画布宽 = canvas.width + delta，显示宽 = 高度 × (canvas.width + delta) / canvas.height；这时文字按原字号绘制、不缩小
+    （父级给的宽度不够时才整体等比缩小）。
+  - 横坐标映射 `X(x)`：x ≤ x0 不变；x0 < x < x1 时 `x0 + (x − x0)·(x1 − x0 + delta)/(x1 − x0)`；x ≥ x1 时 `x + delta`。纵向不变。
+  - 图层：矩形左右边各自过 `X`（完全在 x0 左边或 x1 右边的图层只是平移，跨过伸缩段的图层被拉宽）。x 轨道的值同样过 `X`。
+    `image` / `sprite` 且 `fit = fill` 跨过伸缩段时**三段式绘制**：素材按图层矩形里 x0、x1 对应的源像素列切成左中右三块，左右原样、只拉伸中间
+    （序列帧每一格各自切）；其他 fit 只映射矩形。形状画进映射后的矩形（圆角半径不变，所以胶囊拉长仍是胶囊）；circle / star / polygon / ring
+    只平移中心、不拉伸。粒子：rect 发射区映射，point / ring 发射中心过 `X`。
+  - 文字区域：左 = `X(plate.x)`，右 = `X(plate.x + plate.width)`。
+  - 校验：0 ≤ x0 < x1 ≤ canvas.width。没有 stretch 时按固定宽度、字放不下再缩小（上面一条）。
+- `plate` 只出现在这两个槽位（其他槽位带了报错）；这两个槽位必须有 `plate` 与 `nameStyle`。不进自定义工坊。
+- `Loadout` 多两项 `idPlate?`、`vipPlate?`；`PUT /cosmetics/me` 的 slot 可取这两个值。
+- 目录与校验的细节：`catalog.slots` 里铭牌的 `plate = true`、`workshop = false`（工坊首页 `slots` 不列出铭牌，零件也不能用在铭牌上）；
+  `vocabulary.plateAligns` / `plateFonts` 是两个枚举，`limits.maxPlateTemplateRunes = 32`。字号上限 1024；字重以 `plate.fontWeight` 为准
+  （`nameStyle.fontWeight` 仍须合法，缺省跟 plate 一致）。新建铭牌的空白稿：plate `{24, 18, 312, 60}`、`stretch {24, 336}`，号码铭牌模板 `ID {value}`、会员铭牌 `{value}`。
+
 ### 上界
 
 见 `cosmetic.DesignVocabulary().limits`（图层 40、每层轨道 8、每轨关键帧 64、时长 20 秒、粒子 240、文字 32 字、每件素材 32、
@@ -179,7 +228,7 @@
 
 ## 模板
 
-`cosmetic.Templates()`：鎏金光环、霓虹轨道、星河流光（头像框），极光尘埃（资料卡），星章、文字章（勋章），流金、幻彩、霓光（昵称）。
+`cosmetic.Templates()`：鎏金光环、霓虹轨道、星河流光（头像框），极光尘埃（资料卡），星章、文字章（勋章），流金、幻彩、霓光（昵称），黑金号牌（号码铭牌）、黑金尊享（会员铭牌，`{tier} · {value}`，两枚都带按字伸缩 x0 84–x1 336）。
 只用形状、文字与粒子，不依赖素材；`TestTemplatesValidate` 钉住每个模板都能过校验。三端渲染器的回归样例也用它们。
 
 ## 自定义工坊
@@ -222,7 +271,7 @@ max(freeQuota, 有效会员时的 vipQuota, 所在会员档位的 tierQuotas)，
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/cosmetics/workshop` | `settings{quota, used, canCreate, reason, badgeSlots, freeQuota, vipQuota}`、`slots`、`vocabulary`、`limits`、`parts[]`（带 `asset{url,width,height,contentType,kind}`）、`starters[]`（可套用的内置模板，`{key, slot, name, description, design}`）、`items[]` |
+| GET | `/cosmetics/workshop` | `settings{quota, used, canCreate, reason, badgeSlots, freeQuota, vipQuota}`、`slots`（不含铭牌）、`vocabulary`、`limits`、`parts[]`（带 `asset{url,width,height,contentType,kind}`）、`starters[]`（可套用的内置模板，`{key, slot, name, description, design}`）、`items[]` |
 | POST | `/cosmetics/workshop/items` | `{slot, name, design}` → 作品；没有额度 40362（`data.reason = need_workshop`）、额度已满 40954 |
 | PUT | `/cosmetics/workshop/items/{itemId}` | `{name, design}` → 作品；被下架 40363、不是自己的 40425 |
 | DELETE | `/cosmetics/workshop/items/{itemId}` | 删除，正戴着的随之摘下 |

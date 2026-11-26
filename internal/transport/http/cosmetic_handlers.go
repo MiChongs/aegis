@@ -95,7 +95,8 @@ type CosmeticUnequipRequest struct {
 	Position int    `json:"position"`
 }
 
-// CosmeticEquipRequest 用户佩戴；cosmeticId 为 0 即摘下。勋章用 position 指定第几位（0 起；-1 且 cosmeticId 为 0 摘下全部）。
+// CosmeticEquipRequest 用户佩戴；slot 为 avatar_frame / profile_card / name_style / badge / id_plate / vip_plate，cosmeticId 为 0 即摘下。
+// 勋章用 position 指定第几位（0 起；-1 且 cosmeticId 为 0 摘下全部）。
 type CosmeticEquipRequest struct {
 	Slot       string `json:"slot" binding:"required"`
 	Position   int    `json:"position"`

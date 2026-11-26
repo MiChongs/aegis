@@ -1,4 +1,4 @@
-// Package cosmetic 个性装扮（docs/cosmetics.md）：头像框、资料卡背景、昵称样式、勋章。
+// Package cosmetic 个性装扮（docs/cosmetics.md）：头像框、资料卡背景、昵称样式、勋章、号码铭牌、会员铭牌。
 //
 // ── 三张账 ──
 //
@@ -297,11 +297,15 @@ type Loadout struct {
 	ProfileCard *View  `json:"profileCard,omitempty"`
 	NameStyle   *View  `json:"nameStyle,omitempty"`
 	Badges      []View `json:"badges"`
+	// IDPlate 号码铭牌、VIPPlate 会员铭牌（文字由客户端填：号码 / 会员有效期那一行）
+	IDPlate  *View `json:"idPlate,omitempty"`
+	VIPPlate *View `json:"vipPlate,omitempty"`
 }
 
 // Empty 身上什么都没戴。
 func (l Loadout) Empty() bool {
-	return l.AvatarFrame == nil && l.ProfileCard == nil && l.NameStyle == nil && len(l.Badges) == 0
+	return l.AvatarFrame == nil && l.ProfileCard == nil && l.NameStyle == nil && len(l.Badges) == 0 &&
+		l.IDPlate == nil && l.VIPPlate == nil
 }
 
 // Stats 管理端统计。

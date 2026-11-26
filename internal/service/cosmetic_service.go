@@ -974,6 +974,10 @@ func (s *CosmeticService) loadoutOf(entry cosmeticLiveEntry, workshop map[int64]
 			out.ProfileCard = &view
 		case cosmetic.SlotNameStyle:
 			out.NameStyle = &view
+		case cosmetic.SlotIDPlate:
+			out.IDPlate = &view
+		case cosmetic.SlotVIPPlate:
+			out.VIPPlate = &view
 		case cosmetic.SlotBadge:
 			if e.Position < entry.settings.BadgeSlots {
 				out.Badges = append(out.Badges, view)

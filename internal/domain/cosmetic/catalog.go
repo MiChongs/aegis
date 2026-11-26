@@ -14,6 +14,9 @@ const (
 	SlotProfileCard = "profile_card"
 	SlotNameStyle   = "name_style"
 	SlotBadge       = "badge"
+	// SlotIDPlate 号码铭牌：资料卡上「ID 66666」那枚标签；SlotVIPPlate 会员铭牌：会员有效期那一行
+	SlotIDPlate  = "id_plate"
+	SlotVIPPlate = "vip_plate"
 )
 
 // 稀有度，由低到高。
@@ -105,23 +108,33 @@ type SlotSpec struct {
 	Square bool `json:"square"`
 	// Multiple 可以同时戴几件（勋章），上限由应用设置 badgeSlots 决定
 	Multiple bool `json:"multiple"`
-	// MinCanvas / MaxCanvas 画布边长范围
+	// MinCanvas / MaxCanvas 画布边长范围（铭牌只限最长边，任意比例）
 	MinCanvas int `json:"minCanvas"`
 	MaxCanvas int `json:"maxCanvas"`
+	// Plate 铭牌：设计稿带 plate（客户端填的动态文字写在哪、怎么写）与 nameStyle（文字的颜色与效果）
+	Plate bool `json:"plate,omitempty"`
+	// Workshop 能在自定义工坊里做（铭牌不能）
+	Workshop bool `json:"workshop"`
 }
 
 var slotSpecs = []SlotSpec{
 	{Key: SlotAvatarFrame, Label: "头像框", Layered: true, Square: true, MinCanvas: 64, MaxCanvas: 1024,
 		Canvas: Size{Width: 300, Height: 300}, Avatar: &AvatarSlot{X: 50, Y: 50, Size: 200, Shape: AvatarCircle},
-		Hint: "画在头像四周；头像位于画布中的指定区域，图层可以放在头像之上或之下"},
+		Hint: "画在头像四周；头像位于画布中的指定区域，图层可以放在头像之上或之下", Workshop: true},
 	{Key: SlotProfileCard, Label: "资料卡背景", Layered: true, MinCanvas: 64, MaxCanvas: 2048,
 		Canvas: Size{Width: 1080, Height: 608},
-		Hint:   "个人主页与资料卡顶部的背景，客户端按宽度等比缩放、超出部分裁掉"},
+		Hint:   "个人主页与资料卡顶部的背景，客户端按宽度等比缩放、超出部分裁掉", Workshop: true},
 	{Key: SlotNameStyle, Label: "昵称样式", Layered: false,
-		Hint: "昵称的颜色与动态效果，出现在资料卡、排行榜等显示昵称的地方"},
+		Hint: "昵称的颜色与动态效果，出现在资料卡、排行榜等显示昵称的地方", Workshop: true},
 	{Key: SlotBadge, Label: "勋章", Layered: true, Square: true, Multiple: true, MinCanvas: 32, MaxCanvas: 512,
 		Canvas: Size{Width: 96, Height: 96},
-		Hint:   "昵称旁的小图标，可以同时佩戴多枚（数量在装扮设置里配置）"},
+		Hint:   "昵称旁的小图标，可以同时佩戴多枚（数量在装扮设置里配置）", Workshop: true},
+	{Key: SlotIDPlate, Label: "号码铭牌", Layered: true, Plate: true, MinCanvas: 32, MaxCanvas: 1024,
+		Canvas: Size{Width: 360, Height: 96},
+		Hint:   "资料卡上的号码标签；号码由客户端填进文字区域，用户有号码时才出现"},
+	{Key: SlotVIPPlate, Label: "会员铭牌", Layered: true, Plate: true, MinCanvas: 32, MaxCanvas: 1024,
+		Canvas: Size{Width: 360, Height: 96},
+		Hint:   "会员有效期那一行（「永久有效」「2027-01-01 到期」）；文字由客户端填，有有效会员时才出现"},
 }
 
 // RaritySpec 稀有度的自述。Color 是控制台与客户端的标识色。
@@ -192,6 +205,23 @@ func FindSlot(key string) (SlotSpec, bool) {
 		}
 	}
 	return SlotSpec{}, false
+}
+
+// IsPlateSlot 是铭牌槽位（号码铭牌、会员铭牌）。
+func IsPlateSlot(key string) bool {
+	spec, ok := FindSlot(key)
+	return ok && spec.Plate
+}
+
+// WorkshopSlots 能在自定义工坊里做的槽位（副本）。
+func WorkshopSlots() []SlotSpec {
+	out := make([]SlotSpec, 0, len(slotSpecs))
+	for _, spec := range slotSpecs {
+		if spec.Workshop {
+			out = append(out, spec)
+		}
+	}
+	return out
 }
 
 // FindRarity 按键取稀有度。

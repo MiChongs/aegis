@@ -2,7 +2,7 @@ package cosmetic
 
 import "slices"
 
-// 内置模板：只用形状、文字与粒子拼出来（不依赖任何素材文件），新建装扮时一键套用，
+// 内置模板：只用形状、文字与粒子拼出来（铭牌模板不用文字图层，文字来自 plate）（不依赖任何素材文件），新建装扮时一键套用，
 // 三端渲染器的回归样例也用它们——每个模板都必须能过 ValidateDesign（TestTemplatesValidate 钉住）。
 
 // Template 一个设计模板。
@@ -171,6 +171,74 @@ var templates = []Template{
 	},
 }
 
+// plateCapsule 黑金铭牌：黑色胶囊 + 金色描边（垫在文字下）与沿边跑的流光（盖在文字上），中间夹上各自的徽记。
+// 胶囊三层横跨伸缩段（x 84–336），随文字长短拉长、圆头不变形；徽记在左段固定不动。
+func plateCapsule(duration int, emblems ...Layer) []Layer {
+	body := baseLayer("body", "底", LayerShape, 4, 4, 352, 88)
+	body.Placement = PlacementBelow
+	body.Shape, body.Fill, body.Stroke, body.StrokeWidth, body.CornerRadius = ShapeRect, "#FF111111", "#FFC9A14A", 4, 44
+	inner := baseLayer("inner", "内线", LayerShape, 12, 12, 336, 72)
+	inner.Placement = PlacementBelow
+	inner.Shape, inner.Stroke, inner.StrokeWidth, inner.CornerRadius = ShapeRect, "#66F3D58A", 1.5, 36
+	flow := baseLayer("flow", "流光", LayerShape, 4, 4, 352, 88)
+	flow.Placement = PlacementAbove
+	flow.Shape, flow.Stroke, flow.StrokeWidth, flow.CornerRadius = ShapeRect, "#FFFFE9A8", 4, 44
+	flow.Dash = []float64{60, 820}
+	flow.Glow, flow.GlowColor = 6, "#CCFFD86B"
+	flow.Tracks = []Track{{Property: PropDashOffset, Keyframes: []Keyframe{kf(0, 0, EaseLinear), kf(duration, -880, EaseLinear)}}}
+	layers := append([]Layer{body, inner}, emblems...)
+	return append(layers, flow)
+}
+
+func init() {
+	idEmblem := baseLayer("emblem", "星徽", LayerShape, 26, 26, 44, 44)
+	idEmblem.Placement = PlacementBelow
+	idEmblem.Shape, idEmblem.Fill, idEmblem.Sides, idEmblem.InnerRatio = ShapeStar, "#FFE7C46A", 5, 0.45
+	idEmblem.Glow, idEmblem.GlowColor = 6, "#99FFD86B"
+	idEmblem.Tracks = []Track{{Property: PropRotation, Keyframes: []Keyframe{kf(0, 0, EaseLinear), kf(4000, 72, EaseInOut)}}}
+	idSparks := baseLayer("sparks", "金屑", LayerParticles, 20, 20, 56, 56)
+	idSparks.Placement = PlacementBelow
+	idSparks.Particles = &Particles{Emitter: EmitterRing, Radius: 26, Shape: ParticleSpark,
+		Colors: []string{"#FFFFE9A8", "#FFE7C46A"}, Count: 10, Lifetime: 1600, Speed: 14, Outward: true,
+		SizeMin: 1.5, SizeMax: 3, Fade: true, Shrink: true, Seed: 20261126}
+	idLayers := plateCapsule(4000, idEmblem, idSparks)
+
+	vipGem := baseLayer("gem", "钻", LayerShape, 28, 26, 40, 44)
+	vipGem.Placement = PlacementBelow
+	vipGem.Shape, vipGem.Fill, vipGem.Stroke, vipGem.StrokeWidth, vipGem.Sides = ShapePolygon, "#FFC9A14A", "#FFFFE9A8", 2, 4
+	vipGem.Tracks = []Track{{Property: PropScale, Keyframes: []Keyframe{kf(0, 1, EaseInOut), kf(2000, 1.12, EaseInOut), kf(4000, 1, EaseInOut)}}}
+	vipDust := baseLayer("dust", "金尘", LayerParticles, 84, 8, 268, 80)
+	vipDust.Placement = PlacementBelow
+	vipDust.Particles = &Particles{Emitter: EmitterRect, Shape: ParticleStar,
+		Colors: []string{"#99FFE9A8", "#66E7C46A"}, Count: 14, Lifetime: 2400, Speed: 8, Direction: 0, Spread: 60,
+		SizeMin: 2, SizeMax: 4, Spin: 60, Fade: true, Seed: 1126}
+	vipLayers := plateCapsule(4000, vipDust, vipGem)
+
+	goldText := func() *NameStyle {
+		return &NameStyle{Color: "#FFE7C46A", Effect: NameEffectShimmer, Speed: 2400, FontWeight: 700, HighlightColor: "#FFFFF6D5"}
+	}
+	templates = append(templates,
+		Template{
+			Key: "plate_id_black_gold", Slot: SlotIDPlate, Name: "黑金号牌", Rarity: RarityLegendary,
+			Description: "黑色胶囊配金色描边，星徽旋转、流光沿边跑动，号码金色扫光",
+			Design: Design{Version: DesignVersion, Canvas: Size{360, 96}, Duration: 4000, Layers: idLayers,
+				Plate: &Plate{X: 84, Y: 18, Width: 252, Height: 60, Template: "ID " + PlateValueToken, Align: "center",
+					FontSize: 40, FontWeight: 700, LetterSpacing: 0.06, Font: PlateFontMono,
+					Stretch: &PlateStretch{X0: 84, X1: 336}},
+				NameStyle: goldText()},
+		},
+		Template{
+			Key: "plate_vip_black_gold", Slot: SlotVIPPlate, Name: "黑金尊享", Rarity: RarityLegendary,
+			Description: "黑色胶囊配金色描边，钻石呼吸、金尘飘落，「档位 · 有效期」金色扫光",
+			Design: Design{Version: DesignVersion, Canvas: Size{360, 96}, Duration: 4000, Layers: vipLayers,
+				Plate: &Plate{X: 84, Y: 18, Width: 252, Height: 60, Template: PlateTierToken + " · " + PlateValueToken, Align: "center",
+					FontSize: 36, FontWeight: 700, LetterSpacing: 0.04, Font: PlateFontSans,
+					Stretch: &PlateStretch{X0: 84, X1: 336}},
+				NameStyle: goldText()},
+		},
+	)
+}
+
 // Templates 全部模板（深拷贝，调用方可以随意改）。
 func Templates() []Template {
 	out := make([]Template, 0, len(templates))
@@ -202,6 +270,14 @@ func cloneDesign(d Design) Design {
 		s := *d.NameStyle
 		s.Colors = slices.Clone(d.NameStyle.Colors)
 		out.NameStyle = &s
+	}
+	if d.Plate != nil {
+		p := *d.Plate
+		if d.Plate.Stretch != nil {
+			s := *d.Plate.Stretch
+			p.Stretch = &s
+		}
+		out.Plate = &p
 	}
 	out.Layers = make([]Layer, 0, len(d.Layers))
 	for _, l := range d.Layers {

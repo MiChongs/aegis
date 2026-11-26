@@ -125,6 +125,20 @@ const (
 	NameEffectWave    = "wave"    // 逐字上下起伏
 )
 
+// 铭牌文字的字体族（三端各自映射到系统字体：无衬线 / 衬线 / 等宽）。
+const (
+	PlateFontSans  = "sans"
+	PlateFontSerif = "serif"
+	PlateFontMono  = "mono"
+)
+
+// 铭牌模板里客户端填动态文字的占位符：PlateValueToken 号码 / 会员有效期那一行；
+// PlateTierToken 只有会员铭牌可用，是会员标签上原本的名字（套餐名，没有时用档位名）。
+const (
+	PlateValueToken = "{value}"
+	PlateTierToken  = "{tier}"
+)
+
 // 素材类型。
 const (
 	AssetImage  = "image"
@@ -145,6 +159,8 @@ const (
 	MaxSpriteFrames  = 256
 	MaxNameColors    = 6
 	MaxDashItems     = 8
+	// MaxPlateTemplateRunes 铭牌模板（含 {value}）最多几个字
+	MaxPlateTemplateRunes = 32
 )
 
 // Size 画布尺寸。
@@ -174,8 +190,10 @@ type Design struct {
 	// Background 画布底色（资料卡用；头像框、勋章应为空即透明）
 	Background string  `json:"background,omitempty"`
 	Layers     []Layer `json:"layers"`
-	// NameStyle 昵称样式专有
+	// NameStyle 昵称样式专有；铭牌也用它决定文字的颜色与效果
 	NameStyle *NameStyle `json:"nameStyle,omitempty"`
+	// Plate 铭牌专有：客户端填的动态文字写在哪、怎么写
+	Plate *Plate `json:"plate,omitempty"`
 	// Assets 图层引用的素材：键是图层里写的 asset
 	Assets map[string]AssetRef `json:"assets,omitempty"`
 }
@@ -309,6 +327,36 @@ type NameStyle struct {
 	HighlightColor string `json:"highlightColor,omitempty"`
 }
 
+// Plate 铭牌的文字区域与排版。文字 = Template 里的 {value} 换成客户端的动态文字（号码 / 会员有效期），
+// 在区域内垂直居中、按 Align 水平对齐；一行放不下时整体等比缩小到刚好放下，不换行、不省略。
+// 颜色与动态效果取设计稿的 nameStyle，字重以这里的 FontWeight 为准。
+type Plate struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	// Template 1–32 字；号码铭牌恰好含一个 {value}，会员铭牌 {value}、{tier} 各最多一次且至少一个
+	Template string `json:"template"`
+	// Align left / center / right
+	Align string `json:"align"`
+	// FontSize 画布像素
+	FontSize   float64 `json:"fontSize"`
+	FontWeight int     `json:"fontWeight"`
+	// LetterSpacing 字间距（em）
+	LetterSpacing float64 `json:"letterSpacing"`
+	// Font sans / serif / mono
+	Font string `json:"font"`
+	// Stretch 按字伸缩（可选）：画布上 x0–x1 这一段随文字长短横向伸缩，两端固定。
+	// 没有时按固定宽度绘制，字放不下再整体缩小。映射规则见 docs/cosmetics.md「按字伸缩」。
+	Stretch *PlateStretch `json:"stretch,omitempty"`
+}
+
+// PlateStretch 铭牌的横向伸缩段（画布像素），0 ≤ X0 < X1 ≤ canvas.width。
+type PlateStretch struct {
+	X0 float64 `json:"x0"`
+	X1 float64 `json:"x1"`
+}
+
 var (
 	layerIDPattern = regexp.MustCompile(`^[A-Za-z0-9_\-]+$`)
 	colorPattern   = regexp.MustCompile(`^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$`)
@@ -326,6 +374,7 @@ var (
 	particleKind = []string{ParticleCircle, ParticleStar, ParticleSpark, ParticleImage}
 	nameEffects  = []string{NameEffectNone, NameEffectShimmer, NameEffectPulse, NameEffectCycle, NameEffectGlow, NameEffectWave}
 	aligns       = []string{"left", "center", "right"}
+	plateFonts   = []string{PlateFontSans, PlateFontSerif, PlateFontMono}
 )
 
 // propertyRanges 每个可动画属性的取值范围。
@@ -356,8 +405,11 @@ type Vocabulary struct {
 	Particles    []string `json:"particles"`
 	NameEffects  []string `json:"nameEffects"`
 	Aligns       []string `json:"aligns"`
-	Properties   []string `json:"properties"`
-	Limits       Limits   `json:"limits"`
+	// PlateAligns / PlateFonts 铭牌文字的对齐与字体族
+	PlateAligns []string `json:"plateAligns"`
+	PlateFonts  []string `json:"plateFonts"`
+	Properties  []string `json:"properties"`
+	Limits      Limits   `json:"limits"`
 }
 
 // Limits 规格上界。
@@ -374,6 +426,8 @@ type Limits struct {
 	MaxPreviewBytes  int `json:"maxPreviewBytes"`
 	MaxBadgeSlots    int `json:"maxBadgeSlots"`
 	MaxGrantDays     int `json:"maxGrantDays"`
+	// MaxPlateTemplateRunes 铭牌模板最多几个字
+	MaxPlateTemplateRunes int `json:"maxPlateTemplateRunes"`
 }
 
 // DesignVocabulary 规格枚举（副本）。
@@ -388,12 +442,13 @@ func DesignVocabulary() Vocabulary {
 		AvatarShapes: slices.Clone(avatarShapes), Placements: slices.Clone(placements), Blends: slices.Clone(blends),
 		Fits: slices.Clone(fits), Easings: slices.Clone(easings), Emitters: slices.Clone(emitters),
 		Particles: slices.Clone(particleKind), NameEffects: slices.Clone(nameEffects), Aligns: slices.Clone(aligns),
+		PlateAligns: slices.Clone(aligns), PlateFonts: slices.Clone(plateFonts),
 		Properties: props,
 		Limits: Limits{
 			MaxLayers: MaxLayers, MaxTracks: MaxTracks, MaxKeyframes: MaxKeyframes, MaxDurationMs: MaxDurationMs,
 			MaxParticles: MaxParticles, MaxTextRunes: MaxTextRunes, MaxAssetsPerItem: MaxAssetsPerItem,
 			MaxSpriteFrames: MaxSpriteFrames, MaxAssetBytes: MaxAssetBytes, MaxPreviewBytes: MaxPreviewBytes,
-			MaxBadgeSlots: MaxBadgeSlots, MaxGrantDays: MaxGrantDays,
+			MaxBadgeSlots: MaxBadgeSlots, MaxGrantDays: MaxGrantDays, MaxPlateTemplateRunes: MaxPlateTemplateRunes,
 		},
 	}
 }
@@ -410,6 +465,16 @@ func NewDesign(slot string) Design {
 		design.Canvas = Size{}
 		design.NameStyle = &NameStyle{Color: "#3B82F6", Effect: NameEffectNone, FontWeight: 600, Speed: 2400}
 	}
+	if spec.Plate {
+		template := PlateValueToken
+		if slot == SlotIDPlate {
+			template = "ID " + PlateValueToken
+		}
+		design.Plate = &Plate{X: 24, Y: 18, Width: 312, Height: 60, Template: template, Align: "center",
+			FontSize: 40, FontWeight: 700, LetterSpacing: 0.04, Font: PlateFontSans,
+			Stretch: &PlateStretch{X0: 24, X1: 336}}
+		design.NameStyle = &NameStyle{Color: "#FFFFFFFF", Effect: NameEffectNone, FontWeight: 700, Speed: 2400}
+	}
 	return design
 }
 
@@ -425,26 +490,35 @@ func NormalizeDesign(slot string, in Design) Design {
 		out.Duration = 0
 		out.Background = ""
 		out.Assets = nil
-		if out.NameStyle != nil {
-			style := *out.NameStyle
-			style.Effect = strings.TrimSpace(style.Effect)
-			if style.Effect == "" {
-				style.Effect = NameEffectNone
-			}
-			if style.FontWeight == 0 {
-				style.FontWeight = 600
-			}
-			if style.Speed == 0 {
-				style.Speed = 2400
-			}
-			if style.Effect != NameEffectCycle {
-				style.Colors = nil
-			}
-			out.NameStyle = &style
-		}
+		out.NameStyle = normalizeNameStyle(out.NameStyle, 600)
 		return out
 	}
-	out.NameStyle = nil
+	plate := IsPlateSlot(slot)
+	if plate {
+		// 铭牌：nameStyle 决定文字的颜色与效果；字重以 plate.fontWeight 为准，nameStyle 的字重缺省跟它一致
+		weight := 700
+		if out.Plate != nil {
+			p := *out.Plate
+			p.Template = strings.TrimSpace(p.Template)
+			p.Align = strings.TrimSpace(p.Align)
+			if p.Align == "" {
+				p.Align = "center"
+			}
+			p.Font = strings.TrimSpace(p.Font)
+			if p.Font == "" {
+				p.Font = PlateFontSans
+			}
+			if p.FontWeight == 0 {
+				p.FontWeight = 700
+			}
+			weight = p.FontWeight
+			out.Plate = &p
+		}
+		out.NameStyle = normalizeNameStyle(out.NameStyle, weight)
+	} else {
+		// 其余槽位带了 plate 原样留着，交给 ValidateDesign 报错
+		out.NameStyle = nil
+	}
 	if slot != SlotAvatarFrame {
 		out.Avatar = nil
 	} else if out.Avatar != nil {
@@ -457,9 +531,14 @@ func NormalizeDesign(slot string, in Design) Design {
 		}
 		out.Avatar = &avatar
 	}
+	// 铭牌里 placement 缺省为 below：装饰默认垫在文字之下
+	defaultPlacement := PlacementAbove
+	if plate {
+		defaultPlacement = PlacementBelow
+	}
 	layers := make([]Layer, 0, len(in.Layers))
 	for _, layer := range in.Layers {
-		layers = append(layers, normalizeLayer(layer))
+		layers = append(layers, normalizeLayer(layer, defaultPlacement))
 	}
 	out.Layers = layers
 	// 只留被引用到的素材：删掉图层后素材表里的残留不该继续占着「被引用」
@@ -479,7 +558,29 @@ func NormalizeDesign(slot string, in Design) Design {
 	return out
 }
 
-func normalizeLayer(in Layer) Layer {
+// normalizeNameStyle 昵称样式（与铭牌的文字样式）补默认值；fontWeight 为 0 时取 defaultWeight。
+func normalizeNameStyle(in *NameStyle, defaultWeight int) *NameStyle {
+	if in == nil {
+		return nil
+	}
+	style := *in
+	style.Effect = strings.TrimSpace(style.Effect)
+	if style.Effect == "" {
+		style.Effect = NameEffectNone
+	}
+	if style.FontWeight == 0 {
+		style.FontWeight = defaultWeight
+	}
+	if style.Speed == 0 {
+		style.Speed = 2400
+	}
+	if style.Effect != NameEffectCycle {
+		style.Colors = nil
+	}
+	return &style
+}
+
+func normalizeLayer(in Layer, defaultPlacement string) Layer {
 	l := Layer{
 		ID: strings.TrimSpace(in.ID), Name: strings.TrimSpace(in.Name), Type: strings.TrimSpace(in.Type),
 		Hidden: in.Hidden, Placement: in.Placement, X: in.X, Y: in.Y, Width: in.Width, Height: in.Height,
@@ -487,7 +588,7 @@ func normalizeLayer(in Layer) Layer {
 		Blend: in.Blend, Glow: in.Glow, GlowColor: in.GlowColor,
 	}
 	if l.Placement == "" {
-		l.Placement = PlacementAbove
+		l.Placement = defaultPlacement
 	}
 	if l.Blend == "" {
 		l.Blend = BlendNormal
@@ -625,10 +726,28 @@ func ValidateDesign(slot string, d Design) error {
 	if !ok {
 		return fmt.Errorf("未登记的槽位：%s", slot)
 	}
+	if !spec.Plate && d.Plate != nil {
+		return fmt.Errorf("只有铭牌可以设置文字区域（plate）")
+	}
 	if slot == SlotNameStyle {
 		return validateNameStyle(d.NameStyle)
 	}
-	if d.Canvas.Width < spec.MinCanvas || d.Canvas.Width > spec.MaxCanvas ||
+	if spec.Plate {
+		// 铭牌任意比例，只限最长边
+		longest := max(d.Canvas.Width, d.Canvas.Height)
+		if longest < spec.MinCanvas || longest > spec.MaxCanvas || min(d.Canvas.Width, d.Canvas.Height) < 1 {
+			return fmt.Errorf("%s的画布最长边需要在 %d–%d 之间", spec.Label, spec.MinCanvas, spec.MaxCanvas)
+		}
+		if err := validatePlate(slot, d.Canvas, d.Plate); err != nil {
+			return err
+		}
+		if d.NameStyle == nil {
+			return fmt.Errorf("%s缺少文字样式（nameStyle）", spec.Label)
+		}
+		if err := validateNameStyle(d.NameStyle); err != nil {
+			return fmt.Errorf("文字样式：%w", err)
+		}
+	} else if d.Canvas.Width < spec.MinCanvas || d.Canvas.Width > spec.MaxCanvas ||
 		d.Canvas.Height < spec.MinCanvas || d.Canvas.Height > spec.MaxCanvas {
 		return fmt.Errorf("%s的画布边长需要在 %d–%d 之间", spec.Label, spec.MinCanvas, spec.MaxCanvas)
 	}
@@ -913,6 +1032,60 @@ func validateParticles(d Design, p *Particles) error {
 	}
 	if p.Shape != ParticleImage && len(p.Colors) == 0 {
 		return fmt.Errorf("粒子至少要选一种颜色")
+	}
+	return nil
+}
+
+func validatePlate(slot string, canvas Size, p *Plate) error {
+	if p == nil {
+		return fmt.Errorf("铭牌需要设置文字区域（plate）")
+	}
+	for name, value := range map[string]float64{"x": p.X, "y": p.Y, "宽": p.Width, "高": p.Height, "字号": p.FontSize, "字间距": p.LetterSpacing} {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return fmt.Errorf("文字区域的%s不是有效数字", name)
+		}
+	}
+	if p.Width <= 0 || p.Height <= 0 || p.X < 0 || p.Y < 0 ||
+		p.X+p.Width > float64(canvas.Width)+0.01 || p.Y+p.Height > float64(canvas.Height)+0.01 {
+		return fmt.Errorf("文字区域需要完整落在画布内，且宽高大于 0")
+	}
+	runes := utf8.RuneCountInString(p.Template)
+	if runes < 1 || runes > MaxPlateTemplateRunes {
+		return fmt.Errorf("铭牌文字模板需要 1–%d 字", MaxPlateTemplateRunes)
+	}
+	values, tiers := strings.Count(p.Template, PlateValueToken), strings.Count(p.Template, PlateTierToken)
+	if slot == SlotVIPPlate {
+		if values > 1 || tiers > 1 || values+tiers == 0 {
+			return fmt.Errorf("会员铭牌的文字模板里 %s、%s 各最多一次，且至少有一个", PlateValueToken, PlateTierToken)
+		}
+	} else {
+		if values != 1 {
+			return fmt.Errorf("铭牌文字模板需要恰好包含一个 %s", PlateValueToken)
+		}
+		if tiers > 0 {
+			return fmt.Errorf("只有会员铭牌可以使用 %s", PlateTierToken)
+		}
+	}
+	if !slices.Contains(aligns, p.Align) {
+		return fmt.Errorf("未知的对齐方式：%s", p.Align)
+	}
+	if !slices.Contains(plateFonts, p.Font) {
+		return fmt.Errorf("未知的字体：%s", p.Font)
+	}
+	if p.FontSize <= 0 || p.FontSize > 1024 {
+		return fmt.Errorf("字号需要大于 0 且不超过 1024")
+	}
+	if p.FontWeight < 100 || p.FontWeight > 900 {
+		return fmt.Errorf("字重需要在 100–900 之间")
+	}
+	if p.LetterSpacing < -0.2 || p.LetterSpacing > 1 {
+		return fmt.Errorf("字间距需要在 -0.2–1 em 之间")
+	}
+	if s := p.Stretch; s != nil {
+		if math.IsNaN(s.X0) || math.IsInf(s.X0, 0) || math.IsNaN(s.X1) || math.IsInf(s.X1, 0) ||
+			s.X0 < 0 || s.X0 >= s.X1 || s.X1 > float64(canvas.Width)+0.01 {
+			return fmt.Errorf("伸缩段需要满足 0 ≤ x0 < x1 ≤ 画布宽（%d）", canvas.Width)
+		}
 	}
 	return nil
 }

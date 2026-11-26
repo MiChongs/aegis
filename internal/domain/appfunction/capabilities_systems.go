@@ -397,7 +397,7 @@ declare interface AegisDrawResult {
     /** 装扮中心：全部装扮与当前调用者的拥有、到期、佩戴状态 */
     owned(): any;
     /** 当前佩戴 */
-    loadout(): { avatarFrame?: any; profileCard?: any; nameStyle?: any; badges: any[] };`,
+    loadout(): { avatarFrame?: any; profileCard?: any; nameStyle?: any; badges: any[]; idPlate?: any; vipPlate?: any };`,
 	},
 	{
 		Key: CapCosmeticWrite, Group: CapGroupEngage,
@@ -407,7 +407,7 @@ declare interface AegisDrawResult {
 		Namespace: "cosmetic",
 		Members:   []string{"equip"},
 		Declaration: `
-    /** 佩戴装扮；cosmeticId 传 0 卸下。slot：avatar_frame / profile_card / name_style / badge */
+    /** 佩戴装扮；cosmeticId 传 0 卸下。slot：avatar_frame / profile_card / name_style / badge / id_plate / vip_plate */
     equip(slot: string, cosmeticId: number, position?: number): any;`,
 	},
 	{

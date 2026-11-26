@@ -233,7 +233,7 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "cosmeticCenter", Method: "GET", Path: "/cosmetics", Auth: true,
 		Summary: "装扮中心：槽位、每件装扮的设计稿与我的状态（能否佩戴及原因、到期时间、获取渠道）、我身上的装扮"},
 	{Key: "cosmeticMine", Method: "GET", Path: "/cosmetics/me", Auth: true,
-		Summary: "我此刻身上的装扮（头像框、资料卡背景、昵称样式、勋章）；应用未开启时为空"},
+		Summary: "我此刻身上的装扮（头像框、资料卡背景、昵称样式、勋章、号码铭牌、会员铭牌）；应用未开启时为空"},
 	{Key: "cosmeticEquip", Method: "PUT", Path: "/cosmetics/me", Auth: true,
 		Summary: "佩戴或摘下（cosmeticId 为 0 即摘下；勋章用 position 指定位置），返回新的身上装扮"},
 	{Key: "cosmeticHistory", Method: "GET", Path: "/cosmetics/history", Auth: true, Summary: "我的装扮获得记录"},

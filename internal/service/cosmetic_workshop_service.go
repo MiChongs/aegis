@@ -158,8 +158,12 @@ func (s *CosmeticService) workshopParts(ctx context.Context, appID int64, onlyEn
 
 // prepareWorkshopDesign 规整并校验一份作品设计稿。
 func (s *CosmeticService) prepareWorkshopDesign(ctx context.Context, appID int64, slot string, d cosmetic.Design) (cosmetic.Design, error) {
-	if _, ok := cosmetic.FindSlot(slot); !ok {
+	spec, ok := cosmetic.FindSlot(slot)
+	if !ok {
 		return d, badRequest(fmt.Errorf("未登记的槽位：%s", slot))
+	}
+	if !spec.Workshop {
+		return d, badRequest(fmt.Errorf("%s不能在工坊里制作", spec.Label))
 	}
 	d = cosmetic.NormalizeDesign(slot, d)
 	parts, _, err := s.workshopParts(ctx, appID, true, "")
@@ -175,18 +179,19 @@ func (s *CosmeticService) prepareWorkshopDesign(ctx context.Context, appID int64
 	return d, nil
 }
 
-// workshopStarters 新建作品时可以套用的起点：内置模板里不带文字图层的那些。
+// workshopStarters 新建作品时可以套用的起点：工坊槽位里不带文字图层的内置模板。
 func workshopStarters() []cosmetic.Template {
 	out := make([]cosmetic.Template, 0)
 	for _, t := range cosmetic.Templates() {
-		ok := true
+		spec, found := cosmetic.FindSlot(t.Slot)
+		ok := found && spec.Workshop
 		for _, l := range t.Design.Layers {
 			if l.Type == cosmetic.LayerText || l.Asset != "" {
 				ok = false
 				break
 			}
 		}
-		if spec, found := cosmetic.FindSlot(t.Slot); found && spec.Layered && t.Design.Canvas != spec.Canvas {
+		if found && spec.Layered && t.Design.Canvas != spec.Canvas {
 			ok = false
 		}
 		if ok {
@@ -239,7 +244,7 @@ func (s *CosmeticService) Workshop(ctx context.Context, appID, userID int64, bas
 			"badgeSlots": entry.settings.BadgeSlots,
 			"freeQuota":  entry.settings.Workshop.FreeQuota, "vipQuota": entry.settings.Workshop.VIPQuota,
 		},
-		"slots":      cosmetic.Slots(),
+		"slots":      cosmetic.WorkshopSlots(),
 		"vocabulary": cosmetic.DesignVocabulary(),
 		"limits":     cosmetic.WorkshopLimits(),
 		"parts":      parts,

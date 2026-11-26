@@ -11,7 +11,7 @@ import (
 
 // ── 自定义工坊（docs/cosmetics.md「自定义工坊」）──
 //
-// 用户在 App 里用官方零件拼自己的头像框、资料卡、昵称样式、勋章。作品就是一件 origin = workshop 的装扮：
+// 用户在 App 里用官方零件拼自己的头像框、资料卡、昵称样式、勋章（铭牌不进工坊）。作品就是一件 origin = workshop 的装扮：
 // 与官方装扮同一张表、同一份设计稿规格、同一套佩戴与绘制，只是
 //
 //   - 只有作者本人能戴（获取方式 creator），且作者此刻要有工坊额度（会员到期 → 额度归零 → 作品戴不上，读取时过滤）；
@@ -173,7 +173,7 @@ func ValidatePartInput(in PartInput, asset Asset) error {
 	}
 	for _, s := range in.Slots {
 		spec, ok := FindSlot(s)
-		if !ok || !spec.Layered {
+		if !ok || !spec.Layered || !spec.Workshop {
 			return fmt.Errorf("零件不能用在%s上", SlotLabel(s))
 		}
 	}
@@ -235,6 +235,9 @@ func ValidateWorkshopDesign(slot string, d Design, parts map[int64]Part) error {
 	spec, ok := FindSlot(slot)
 	if !ok {
 		return fmt.Errorf("未登记的槽位：%s", slot)
+	}
+	if !spec.Workshop {
+		return fmt.Errorf("%s不能在工坊里制作", spec.Label)
 	}
 	if err := ValidateDesign(slot, d); err != nil {
 		return err
