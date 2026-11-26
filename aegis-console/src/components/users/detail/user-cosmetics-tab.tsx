@@ -32,6 +32,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import type { AdminAppUserDetail } from "@/lib/api/types";
 import type { CosmeticCatalog, CosmeticEquipRow, CosmeticItem, CosmeticLoadout, CosmeticOwnership } from "@/lib/api/cosmetics";
 import { useAppKeyPermissionChecker } from "@/lib/app-permission-hooks";
@@ -540,6 +541,7 @@ function GrantDialog({ appKey, userId, nickname, onClose }: { appKey: string; us
   const [cosmetic, setCosmetic] = useState<{ id: number; item?: CosmeticItem }>({ id: 0 });
   const [term, setTerm] = useState<Term>("30");
   const [days, setDays] = useState("30");
+  const [equip, setEquip] = useState(false);
   const count = Number(days);
   const daysValid = days !== "" && Number.isInteger(count) && count >= 0 && count <= maxDays;
   const ready = cosmetic.id > 0 && daysValid;
@@ -547,9 +549,10 @@ function GrantDialog({ appKey, userId, nickname, onClose }: { appKey: string; us
   const submit = async () => {
     if (!ready) return;
     try {
-      const result = await grant.mutateAsync({ cosmeticId: cosmetic.id, days: count });
-      if (result.alreadyPermanent) toast.info(`${nickname} 已永久持有「${result.cosmeticName}」，未重复发放`);
-      else toast.success(`已发放「${result.cosmeticName}」${termText(count)}`);
+      const result = await grant.mutateAsync({ cosmeticId: cosmetic.id, days: count, equip });
+      const worn = result.equipped ? "，已戴上" : equip ? "，没有空位或暂不能佩戴，未戴上" : "";
+      if (result.alreadyPermanent) toast.info(`${nickname} 已永久持有「${result.cosmeticName}」，未重复发放${worn}`);
+      else toast.success(`已发放「${result.cosmeticName}」${termText(count)}${worn}`);
       onClose();
     } catch (error) {
       toast.error(errorMessage(error, "发放失败"));
@@ -591,6 +594,13 @@ function GrantDialog({ appKey, userId, nickname, onClose }: { appKey: string; us
             ) : null}
             {!daysValid ? <p className={cn("text-xs", TONE_TEXT.warning)}>天数需为 0 到 {maxDays} 的整数</p> : null}
           </div>
+          <label className="flex items-start gap-2.5">
+            <Switch className="mt-0.5" checked={equip} onCheckedChange={setEquip} />
+            <span className="flex flex-col gap-0.5">
+              <span className="text-sm">发放时佩戴</span>
+              <span className="text-xs text-muted-foreground">替换该槽位原有的佩戴，勋章放到第一个空位（满了不戴）；已永久持有也会戴上</span>
+            </span>
+          </label>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={grant.isPending}>

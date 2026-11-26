@@ -130,6 +130,8 @@ export type ItemGrantItem = {
   tag?: string;
   text?: string;
   amountExpr?: string;
+  /** 个性装扮：发放后顺手戴上 */
+  equip?: boolean;
 };
 
 export type ItemGrantNodeMeta = { label?: string; note?: string };

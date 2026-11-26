@@ -335,8 +335,8 @@ export function useGrantUserCosmeticMutation(appKey?: string | null, userId?: nu
   const token = useAdminToken();
   const invalidate = useInvalidateCosmetics();
   return useMutation({
-    mutationFn: (input: { cosmeticId: number; days: number }) =>
-      grantUserCosmetic(token as string, appKey as string, userId as number, input.cosmeticId, input.days),
+    mutationFn: (input: { cosmeticId: number; days: number; equip?: boolean }) =>
+      grantUserCosmetic(token as string, appKey as string, userId as number, input.cosmeticId, input.days, input.equip ?? false),
     onSuccess: invalidate
   });
 }

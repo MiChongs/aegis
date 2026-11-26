@@ -423,6 +423,9 @@ export type CosmeticGrantResult = {
   alreadyPermanent?: boolean;
   cosmeticName: string;
   slot: string;
+  /** 按 equip 戴上了；position 是勋章戴在第几位 */
+  equipped?: boolean;
+  position?: number;
 };
 
 export type CosmeticStats = {
@@ -665,11 +668,11 @@ export function getUserCosmetics(token: string, appKey: string, userId: number) 
   return apiRequest<CosmeticUserProfile>(`${base(appKey)}/users/${userId}`, { token });
 }
 
-export function grantUserCosmetic(token: string, appKey: string, userId: number, cosmeticId: number, days: number) {
+export function grantUserCosmetic(token: string, appKey: string, userId: number, cosmeticId: number, days: number, equip = false) {
   return apiRequest<CosmeticGrantResult>(`${base(appKey)}/users/${userId}/grant`, {
     method: "POST",
     token,
-    body: JSON.stringify({ cosmeticId, days })
+    body: JSON.stringify({ cosmeticId, days, equip })
   });
 }
 

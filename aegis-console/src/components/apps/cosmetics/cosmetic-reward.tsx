@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
 import type { CosmeticItem, CosmeticSlot } from "@/lib/api/cosmetics";
 import { useCosmeticCatalogQuery, useCosmeticItemsQuery } from "@/lib/cosmetic-hooks";
 import { cosmeticTermLabel, useCosmeticNamesVersion } from "@/lib/cosmetic-names";
@@ -142,21 +143,26 @@ export function CosmeticPicker({
   );
 }
 
-/** 奖励行里的装扮：选择器 + 天数（0 为永久） */
+/**
+ * 奖励行里的装扮：选择器 + 天数（0 为永久）。传了 equip 时多一个「发放时佩戴」开关（物品发放用；
+ * 发放后替换该槽位原有佩戴，勋章放第一个空位，已永久持有也会戴上）。
+ */
 export function CosmeticRewardInput({
   appKey,
   refId,
   amount,
   max = 3650,
   onChange,
-  disabled
+  disabled,
+  equip
 }: {
   appKey?: string | null;
   refId: number;
   amount: string | number;
   max?: number;
-  onChange: (next: { refId?: number; amount?: string }) => void;
+  onChange: (next: { refId?: number; amount?: string; equip?: boolean }) => void;
   disabled?: boolean;
+  equip?: boolean;
 }) {
   const days = Number(amount) || 0;
   return (
@@ -172,6 +178,15 @@ export function CosmeticRewardInput({
         onChange={(event) => onChange({ amount: event.target.value })}
       />
       <span className="text-xs text-muted-foreground">天（{cosmeticTermLabel(days)}）</span>
+      {equip !== undefined ? (
+        <label
+          className="flex items-center gap-1.5 text-xs text-muted-foreground"
+          title="发放后戴到它的槽位上：替换原有佩戴，勋章放第一个空位（满了不戴）；已永久持有也会戴上"
+        >
+          <Switch size="sm" checked={equip} disabled={disabled} onCheckedChange={(checked) => onChange({ equip: checked })} />
+          发放时佩戴
+        </label>
+      ) : null}
     </div>
   );
 }

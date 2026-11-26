@@ -196,7 +196,7 @@ export function describeItem(item: ItemGrantItem, catalog?: ItemGrantCatalog) {
     case "number_ticket":
       return `${numberTicketName(item.refId)} ×${formatNumber(item.amount ?? 0)}${expr}`;
     case "cosmetic":
-      return cosmeticRewardText(item.refId, item.amount);
+      return `${cosmeticRewardText(item.refId, item.amount)}${item.equip ? "（发放时佩戴）" : ""}`;
   }
   switch (item.type) {
     case "vip_days":

@@ -329,10 +329,12 @@ function ItemRow({
             refId={item.refId ?? 0}
             amount={item.amount ?? 0}
             max={spec.max}
+            equip={item.equip ?? false}
             onChange={(next) =>
               onChange({
                 ...(next.refId !== undefined ? { refId: next.refId } : {}),
-                ...(next.amount !== undefined ? { amount: Math.max(0, Math.trunc(Number(next.amount) || 0)) } : {})
+                ...(next.amount !== undefined ? { amount: Math.max(0, Math.trunc(Number(next.amount) || 0)) } : {}),
+                ...(next.equip !== undefined ? { equip: next.equip } : {})
               })
             }
           />
