@@ -549,7 +549,7 @@ func graphCenter(c *app.RequestContext) (string, error) {
 }
 
 func (s *Server) graph(ctx context.Context, c *app.RequestContext) (any, error) {
-	if s.Graph == nil {
+	if s.Graph() == nil {
 		return nil, errors.New("关系图未就绪")
 	}
 	center, err := graphCenter(c)
@@ -562,7 +562,7 @@ func (s *Server) graph(ctx context.Context, c *app.RequestContext) (any, error) 
 	if d := qint(c, "days", 0); d > 0 {
 		o.Since = time.Now().Add(-time.Duration(min(d, 3650)) * 24 * time.Hour).Unix()
 	}
-	return s.Graph.ExpandWith(center, o)
+	return s.Graph().ExpandWith(center, o)
 }
 
 type dayAction struct {
@@ -642,11 +642,11 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 	base := "app_id = ? AND user_id = ? AND ts >= ? AND shadow = 0"
 	args := []any{appID, uid, since}
 	run("graph", func() (any, error) {
-		if s.Graph == nil {
+		if s.Graph() == nil {
 			return nil, errors.New("关系图未就绪")
 		}
 		// 与画像同一时间窗；网段不画（信息量少、点多）；共享 / 机房出口不往外展开
-		return s.Graph.ExpandWith(graph.UserVID(appID, uid), graph.ExpandOptions{Depth: 2, Fanout: 40, Max: 260, Since: since.Unix()})
+		return s.Graph().ExpandWith(graph.UserVID(appID, uid), graph.ExpandOptions{Depth: 2, Fanout: 40, Max: 260, Since: since.Unix()})
 	})
 	run("timeline", func() (any, error) {
 		var r []dayAction
@@ -748,7 +748,7 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 		v.Lists, _ = s.Store.EntriesFor(ctx, bundle.ListDevice, d.Value)
 		_ = json.Unmarshal([]byte(d.Device), &v.Fingerprint)
 		devViews[i] = v
-		if s.Vector == nil || vector.Empty(vector.Embed(d.Value)) {
+		if s.Vector() == nil || vector.Empty(vector.Embed(d.Value)) {
 			continue
 		}
 		// 每台设备都查相似设备（并发 4 个、各 2 秒上限）
@@ -759,7 +759,7 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 			defer func() { <-sem }()
 			sctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			ns, _ := s.Vector.Similar(sctx, appID, id, 10)
+			ns, _ := s.Vector().Similar(sctx, appID, id, 10)
 			views := make([]similarView, len(ns))
 			for k, n := range ns {
 				views[k] = similarView{Neighbor: n}
@@ -769,7 +769,7 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 	}
 	swg.Wait()
 	// 相似设备补型号与用户名：所有相似设备与其用户一次从关系图取
-	if s.Graph != nil {
+	if s.Graph() != nil {
 		var ids []string
 		seen := map[string]bool{}
 		for _, v := range devViews {
@@ -784,7 +784,7 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 			}
 		}
 		if len(ids) > 0 {
-			if props, err := s.Graph.Props(ids); err == nil {
+			if props, err := s.Graph().Props(ids); err == nil {
 				str := func(p map[string]any, k string) string { v, _ := p[k].(string); return strings.TrimSpace(v) }
 				for i := range devViews {
 					for k := range devViews[i].Similar {
@@ -808,12 +808,12 @@ func (s *Server) profile(ctx context.Context, c *app.RequestContext) (any, error
 		v.Lists, _ = s.Store.EntriesFor(ctx, bundle.ListIP, p.Value)
 		ipViews = append(ipViews, v)
 	}
-	if s.Graph != nil && len(ipViews) > 0 {
+	if s.Graph() != nil && len(ipViews) > 0 {
 		ids := make([]string, len(ipViews))
 		for i, v := range ipViews {
 			ids[i] = graph.IPVID(v.Value)
 		}
-		if props, err := s.Graph.Props(ids); err == nil {
+		if props, err := s.Graph().Props(ids); err == nil {
 			for i := range ipViews {
 				p := props[ids[i]]
 				if p == nil {
@@ -886,17 +886,17 @@ func (s *Server) status(ctx context.Context, _ *app.RequestContext) (any, error)
 		return errors.New("未连接")
 	})
 	check("nebula", func(context.Context) error {
-		if s.Graph == nil {
+		if s.Graph() == nil {
 			return errors.New("未连接")
 		}
-		_, err := s.Graph.Exec("SHOW HOSTS")
+		_, err := s.Graph().Exec("SHOW HOSTS")
 		return err
 	})
 	check("milvus", func(c context.Context) error {
-		if s.Vector == nil {
+		if s.Vector() == nil {
 			return errors.New("未连接")
 		}
-		_, err := s.Vector.Similar(c, 0, "probe-device", 1)
+		_, err := s.Vector().Similar(c, 0, "probe-device", 1)
 		return err
 	})
 	check("risingwave", func(c context.Context) error {

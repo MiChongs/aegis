@@ -297,19 +297,30 @@ func serve(logf func(string, ...any)) error {
 
 	srv := &admin.Server{Cfg: cfg, Store: st, Lists: idx, Redis: rdb, CH: ch, Models: models.New(cfg), Etcd: etcd, Decision: dc, Bus: bus,
 		Stream: StreamTarget(cfg), Logf: logf}
-	// 图与向量可选：连不上照常提供其余接口
-	if g, err := graph.Open(cfg); err == nil {
-		srv.Graph = g
-		defer g.Close()
-	} else {
-		logf("关系图未连接：%v", err)
-	}
-	if v, err := vector.Open(ctx, cfg); err == nil {
-		srv.Vector = v
-		defer v.Close(ctx)
-	} else {
-		logf("向量库未连接：%v", err)
-	}
+	// 图与向量可选：连不上照常提供其余接口，并在后台一直重连。
+	// 宿主机重启时 Nebula / Milvus 往往比 risk-admin 起得慢，只连一次会让关系图、相似设备一直不可用。
+	defer func() {
+		if g := srv.Graph(); g != nil {
+			g.Close()
+		}
+		if v := srv.Vector(); v != nil {
+			v.Close(context.Background())
+		}
+	}()
+	go keepConnecting(ctx, "关系图", logf, func() error {
+		g, err := graph.Open(cfg)
+		if err == nil {
+			srv.SetGraph(g)
+		}
+		return err
+	})
+	go keepConnecting(ctx, "向量库", logf, func() error {
+		v, err := vector.Open(ctx, cfg)
+		if err == nil {
+			srv.SetVector(v)
+		}
+		return err
+	})
 	reg, err := hertzetcd.NewEtcdRegistry(cfg.EtcdEndpoints)
 	if err != nil {
 		return err
@@ -378,4 +389,25 @@ func graphBackfill(logf func(string, ...any)) error {
 	p, err := r.Run(ctx)
 	logf("关系图回灌结束：%d 位用户、%d 个 IP、%d 台设备、%d 条设备向量，写入 %v", p.Users, p.IPs, p.Devices, p.Vectors, p.Written)
 	return err
+}
+
+// keepConnecting 反复尝试连接可选依赖直到成功（首次立即尝试，之后每 15 秒一次）
+func keepConnecting(ctx context.Context, name string, logf func(string, ...any), connect func() error) {
+	for i := 0; ; i++ {
+		err := connect()
+		if err == nil {
+			if i > 0 {
+				logf("%s已连接（第 %d 次尝试）", name, i+1)
+			}
+			return
+		}
+		if i == 0 || i%20 == 0 {
+			logf("%s未连接，稍后重试：%v", name, err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(15 * time.Second):
+		}
+	}
 }

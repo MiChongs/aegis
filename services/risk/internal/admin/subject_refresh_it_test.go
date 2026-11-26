@@ -42,10 +42,11 @@ func TestSubjectRefreshIT(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer g.Close()
-	s := &Server{Cfg: cfg, Store: st, Lists: lists.NewIndex(rdb), Redis: rdb, Graph: g, Logf: t.Logf}
+	s := &Server{Cfg: cfg, Store: st, Lists: lists.NewIndex(rdb), Redis: rdb, Logf: t.Logf}
+	s.SetGraph(g)
 	if v, err := vector.Open(ctx, cfg); err == nil {
 		if err := v.Migrate(ctx); err == nil {
-			s.Vector = v
+			s.Vector() = v
 			defer v.Close(ctx)
 		}
 	}
@@ -67,9 +68,9 @@ func TestSubjectRefreshIT(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if s.Vector != nil {
+	if s.Vector() != nil {
 		vec := func(d string) []float32 { return vector.Embed(d) }
-		if err := s.Vector.Upsert(ctx, []vector.Device{
+		if err := s.Vector().Upsert(ctx, []vector.Device{
 			{AppID: app, DeviceID: devA, UserID: 1, UpdatedAt: now.Unix(), Vec: vec(devA)},
 			{AppID: app, DeviceID: devC, UserID: 3, UpdatedAt: now.Unix(), Vec: vec(devC)},
 		}); err != nil {
@@ -257,12 +258,12 @@ func TestSubjectRefreshIT(t *testing.T) {
 			t.Fatalf("关联账号的图特征缓存应已清掉")
 		}
 	}
-	if s.Vector != nil {
+	if s.Vector() != nil {
 		// Milvus 检索默认是有界一致性：写入后几秒内才可见
 		var last string
 		ok := false
 		for i := 0; i < 20 && !ok; i++ {
-			ns, err := s.Vector.Similar(ctx, app, devA+"x", 5)
+			ns, err := s.Vector().Similar(ctx, app, devA+"x", 5)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -282,7 +283,7 @@ func TestSubjectRefreshIT(t *testing.T) {
 		}
 	}
 	_ = g.DeleteVertices([]string{graph.UserVID(app, 2), graph.DeviceVID(devA), graph.IPVID(ipShared), graph.AccountVID(app, "bob-"+suffix)})
-	if s.Vector != nil {
-		_ = s.Vector.Delete(ctx, app, []string{devA})
+	if s.Vector() != nil {
+		_ = s.Vector().Delete(ctx, app, []string{devA})
 	}
 }

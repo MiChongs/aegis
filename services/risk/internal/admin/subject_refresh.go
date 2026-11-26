@@ -52,9 +52,9 @@ func (s *Server) collectNeighborhood(ctx context.Context, appID int64, users []i
 	for _, uid := range users {
 		nb.userVIDs[graph.UserVID(appID, uid)] = true
 	}
-	if s.Graph != nil {
+	if s.Graph() != nil {
 		for _, uid := range users {
-			nodes, err := s.Graph.Entities(appID, uid, 0)
+			nodes, err := s.Graph().Entities(appID, uid, 0)
 			if err != nil {
 				s.logf("关系图收尾：读用户 %d 的关联对象失败：%v", uid, err)
 				continue
@@ -77,7 +77,7 @@ func (s *Server) collectNeighborhood(ctx context.Context, appID int64, users []i
 				}
 			}
 		}
-		if rel, err := s.Graph.RelatedUsers(appID, users, graph.RelatedOptions{PerEntity: 50, Max: 500}); err == nil {
+		if rel, err := s.Graph().RelatedUsers(appID, users, graph.RelatedOptions{PerEntity: 50, Max: 500}); err == nil {
 			for _, r := range rel {
 				nb.related = append(nb.related, r.UserID)
 			}
@@ -157,21 +157,21 @@ func (s *Server) recomputeBanned(ctx context.Context, removed []lists.Entry) {
 		}
 		switch e.ListType {
 		case bundle.ListDevice:
-			if s.Graph != nil {
-				_ = s.Graph.SetBanned(graph.DeviceVID(e.Value), blocked)
+			if s.Graph() != nil {
+				_ = s.Graph().SetBanned(graph.DeviceVID(e.Value), blocked)
 			}
-			if s.Vector != nil && e.AppID > 0 {
-				_ = s.Vector.SetBanned(ctx, e.AppID, e.Value, blocked)
+			if s.Vector() != nil && e.AppID > 0 {
+				_ = s.Vector().SetBanned(ctx, e.AppID, e.Value, blocked)
 			}
 		case bundle.ListIP:
-			if s.Graph != nil && graph.IPKey(e.Value) == e.Value {
-				_ = s.Graph.SetBanned(graph.IPVID(e.Value), blocked)
+			if s.Graph() != nil && graph.IPKey(e.Value) == e.Value {
+				_ = s.Graph().SetBanned(graph.IPVID(e.Value), blocked)
 			}
 		case bundle.ListUser:
 			// 用户点的封禁还取决于主服务的封号：由 release 按主服务给的结果重写
-			if s.Graph != nil && e.AppID > 0 && blocked {
+			if s.Graph() != nil && e.AppID > 0 && blocked {
 				uid, _ := strconv.ParseInt(e.Value, 10, 64)
-				_ = s.Graph.SetBanned(graph.UserVID(e.AppID, uid), true)
+				_ = s.Graph().SetBanned(graph.UserVID(e.AppID, uid), true)
 			}
 		}
 	}
@@ -180,11 +180,11 @@ func (s *Server) recomputeBanned(ctx context.Context, removed []lists.Entry) {
 // refreshAfterRelease 解除之后：用户点按「仍在封号或仍在用户黑名单」重写，名下设备与 IP 按名单重算
 func (s *Server) refreshAfterRelease(ctx context.Context, nb *neighborhood, stillBanned map[int64]bool) []string {
 	var problems []string
-	if s.Graph != nil {
+	if s.Graph() != nil {
 		var gerr error
 		for _, uid := range nb.users {
 			banned := stillBanned[uid] || s.hasBlock(ctx, nb.appID, bundle.ListUser, strconv.FormatInt(uid, 10))
-			if err := s.Graph.SetUserState(nb.appID, uid, banned); err != nil && gerr == nil {
+			if err := s.Graph().SetUserState(nb.appID, uid, banned); err != nil && gerr == nil {
 				gerr = err
 			}
 		}
@@ -196,7 +196,7 @@ func (s *Server) refreshAfterRelease(ctx context.Context, nb *neighborhood, stil
 					continue
 				}
 				blocked := s.hasBlock(ctx, nb.appID, bundle.ListDevice, d)
-				if err := s.Graph.SetBanned(vid, blocked); err != nil && gerr == nil {
+				if err := s.Graph().SetBanned(vid, blocked); err != nil && gerr == nil {
 					gerr = err
 				}
 			case graph.TagIP:
@@ -204,7 +204,7 @@ func (s *Server) refreshAfterRelease(ctx context.Context, nb *neighborhood, stil
 				if strings.Contains(ip, "/") {
 					continue
 				}
-				if err := s.Graph.SetBanned(vid, s.hasBlock(ctx, nb.appID, bundle.ListIP, ip)); err != nil && gerr == nil {
+				if err := s.Graph().SetBanned(vid, s.hasBlock(ctx, nb.appID, bundle.ListIP, ip)); err != nil && gerr == nil {
 					gerr = err
 				}
 			}
@@ -213,9 +213,9 @@ func (s *Server) refreshAfterRelease(ctx context.Context, nb *neighborhood, stil
 			problems = append(problems, "关系图封禁标记没有全部更新："+gerr.Error())
 		}
 	}
-	if s.Vector != nil {
+	if s.Vector() != nil {
 		for d := range nb.devices {
-			_ = s.Vector.SetBanned(ctx, nb.appID, d, s.hasBlock(ctx, nb.appID, bundle.ListDevice, d))
+			_ = s.Vector().SetBanned(ctx, nb.appID, d, s.hasBlock(ctx, nb.appID, bundle.ListDevice, d))
 		}
 	}
 	s.purgeFeatureCache(ctx, nb)
@@ -224,7 +224,7 @@ func (s *Server) refreshAfterRelease(ctx context.Context, nb *neighborhood, stil
 
 // refreshAfterDelete 删号之后：删用户点与只属于它们的点，设备与 IP 按剩下的使用者重写
 func (s *Server) refreshAfterDelete(ctx context.Context, nb *neighborhood) (removed int, problems []string) {
-	if s.Graph == nil {
+	if s.Graph() == nil {
 		s.purgeFeatureCache(ctx, nb)
 		return 0, s.forgetCounters(ctx, nb, nil)
 	}
@@ -241,7 +241,7 @@ func (s *Server) refreshAfterDelete(ctx context.Context, nb *neighborhood) (remo
 		switch n.Kind {
 		case graph.TagDevice:
 			d, _ := n.Props["device_id"].(string)
-			rest, err := s.Graph.NeighborUsers(vid, nb.userVIDs, 1)
+			rest, err := s.Graph().NeighborUsers(vid, nb.userVIDs, 1)
 			if err != nil {
 				keep(err)
 				continue
@@ -252,24 +252,24 @@ func (s *Server) refreshAfterDelete(ctx context.Context, nb *neighborhood) (remo
 			}
 			switch {
 			case len(rest) > 0:
-				if s.Vector != nil && d != "" {
+				if s.Vector() != nil && d != "" {
 					uid, _ := strconv.ParseInt(rest[0].VID[strings.LastIndexByte(rest[0].VID, ':')+1:], 10, 64)
-					keep(s.Vector.SetOwner(ctx, nb.appID, d, uid, blocked))
+					keep(s.Vector().SetOwner(ctx, nb.appID, d, uid, blocked))
 				}
 			case blocked:
 				// 没人用了但在黑名单里：点留着，封禁标记继续让同设备的新账号命中
-				keep(s.Graph.SetBanned(vid, true))
-				if s.Vector != nil {
-					keep(s.Vector.SetOwner(ctx, nb.appID, d, 0, true))
+				keep(s.Graph().SetBanned(vid, true))
+				if s.Vector() != nil {
+					keep(s.Vector().SetOwner(ctx, nb.appID, d, 0, true))
 				}
 			default:
 				drop = append(drop, vid)
-				if s.Vector != nil && d != "" {
-					keep(s.Vector.Delete(ctx, nb.appID, []string{d}))
+				if s.Vector() != nil && d != "" {
+					keep(s.Vector().Delete(ctx, nb.appID, []string{d}))
 				}
 			}
 		case graph.TagIP:
-			rest, err := s.Graph.NeighborUsers(vid, nb.userVIDs, 5000)
+			rest, err := s.Graph().NeighborUsers(vid, nb.userVIDs, 5000)
 			if err != nil {
 				keep(err)
 				continue
@@ -280,10 +280,10 @@ func (s *Server) refreshAfterDelete(ctx context.Context, nb *neighborhood) (remo
 				drop = append(drop, vid)
 				continue
 			}
-			keep(s.Graph.SetIPUsers(vid, int64(len(rest)), len(rest) >= proxyip.SharedUsers))
+			keep(s.Graph().SetIPUsers(vid, int64(len(rest)), len(rest) >= proxyip.SharedUsers))
 		default:
 			// 登录名、手机号、邮箱、第三方身份、付款账号、通行密钥：没有别的用户就删
-			rest, err := s.Graph.NeighborUsers(vid, nb.userVIDs, 1)
+			rest, err := s.Graph().NeighborUsers(vid, nb.userVIDs, 1)
 			if err != nil {
 				keep(err)
 				continue
@@ -296,7 +296,7 @@ func (s *Server) refreshAfterDelete(ctx context.Context, nb *neighborhood) (remo
 	for vid := range nb.userVIDs {
 		drop = append(drop, vid)
 	}
-	if err := s.Graph.DeleteVertices(drop); err != nil {
+	if err := s.Graph().DeleteVertices(drop); err != nil {
 		keep(err)
 	} else {
 		removed = len(drop)

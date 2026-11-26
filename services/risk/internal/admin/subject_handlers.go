@@ -135,11 +135,11 @@ func (s *Server) inspectSubjects(ctx context.Context, c *app.RequestContext) (an
 		}(i, uid)
 	}
 	var related []graph.RelatedUser
-	if in.Related && s.Graph != nil {
+	if in.Related && s.Graph() != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r, err := s.Graph.RelatedUsers(in.AppID, in.UserIDs, graph.RelatedOptions{Since: since.Unix(), PerEntity: 30, Max: 200})
+			r, err := s.Graph().RelatedUsers(in.AppID, in.UserIDs, graph.RelatedOptions{Since: since.Unix(), PerEntity: 30, Max: 200})
 			note("related", err)
 			related = r
 		}()
@@ -192,8 +192,8 @@ func (s *Server) inspectOne(ctx context.Context, appID, uid int64, since time.Ti
 		order = append(order, k)
 		return &cp
 	}
-	if s.Graph != nil {
-		nodes, err := s.Graph.Entities(appID, uid, since.Unix())
+	if s.Graph() != nil {
+		nodes, err := s.Graph().Entities(appID, uid, since.Unix())
 		keep(err)
 		for _, n := range nodes {
 			e := SubjectEntity{Kind: n.Kind, Label: n.Label, LastSeen: num64(n.Props["last_seen"]), Banned: n.Props["banned"] == true}
@@ -211,7 +211,7 @@ func (s *Server) inspectOne(ctx context.Context, appID, uid int64, since time.Ti
 			}
 			put(e)
 		}
-		if props, err := s.Graph.Props([]string{graph.UserVID(appID, uid)}); err == nil {
+		if props, err := s.Graph().Props([]string{graph.UserVID(appID, uid)}); err == nil {
 			if p := props[graph.UserVID(appID, uid)]; p != nil {
 				sub.Name, _ = p["nickname"].(string)
 				if sub.Name == "" {
@@ -508,12 +508,12 @@ func (s *Server) relatedSubjects(ctx context.Context, c *app.RequestContext) (an
 	if appID <= 0 || uid <= 0 {
 		return nil, bad("要应用与用户")
 	}
-	if s.Graph == nil {
+	if s.Graph() == nil {
 		return nil, errNoGraph
 	}
 	days := min(max(qint(c, "days", 180), 1), 365)
 	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour).Unix()
-	r, err := s.Graph.RelatedUsers(appID, []int64{uid}, graph.RelatedOptions{Since: since, PerEntity: 30, Max: 200})
+	r, err := s.Graph().RelatedUsers(appID, []int64{uid}, graph.RelatedOptions{Since: since, PerEntity: 30, Max: 200})
 	if err != nil {
 		return nil, err
 	}

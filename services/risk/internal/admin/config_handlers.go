@@ -664,7 +664,7 @@ func (s *Server) putEntries(ctx context.Context, es []lists.Entry) error {
 }
 
 func (s *Server) markGraphBanned(es []lists.Entry, banned bool) {
-	if s.Graph == nil {
+	if s.Graph() == nil {
 		return
 	}
 	for _, e := range es {
@@ -684,7 +684,7 @@ func (s *Server) markGraphBanned(es []lists.Entry, banned bool) {
 			}
 		}
 		if vid != "" {
-			_ = s.Graph.SetBanned(vid, banned)
+			_ = s.Graph().SetBanned(vid, banned)
 		}
 	}
 }

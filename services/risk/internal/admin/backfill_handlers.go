@@ -69,7 +69,7 @@ func (s *Server) startBackfill(ctx context.Context, c *app.RequestContext) (any,
 
 // StartBackfill 在后台跑一次回灌；返回本次（或正在跑的那次）ID 与是否新开
 func (s *Server) StartBackfill(ctx context.Context, op string) (int64, bool, error) {
-	if s.Graph == nil {
+	if s.Graph() == nil {
 		return 0, false, bad("关系图未就绪")
 	}
 	bf.mu.Lock()
@@ -90,7 +90,7 @@ func (s *Server) StartBackfill(ctx context.Context, op string) (int64, bool, err
 	go func() {
 		bg := context.Background()
 		lastSave := time.Time{}
-		r := &backfill.Runner{MainDSN: s.Cfg.PGAdminDSN, Graph: s.Graph, Vector: s.Vector, Logf: s.Logf,
+		r := &backfill.Runner{MainDSN: s.Cfg.PGAdminDSN, Graph: s.Graph(), Vector: s.Vector(), Logf: s.Logf,
 			OnProgress: func(p backfill.Progress) {
 				bf.mu.Lock()
 				bf.current = p
@@ -130,7 +130,7 @@ func (s *Server) StartBackfill(ctx context.Context, op string) (int64, bool, err
 
 // AutoBackfill 启动时：从没成功回灌过就自动跑一次（新部署 / 新加的数据来源）
 func (s *Server) AutoBackfill(ctx context.Context) {
-	if s.Graph == nil || s.Cfg.PGAdminDSN == "" {
+	if s.Graph() == nil || s.Cfg.PGAdminDSN == "" {
 		return
 	}
 	_ = s.Store.AbandonBackfills(ctx)

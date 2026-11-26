@@ -134,7 +134,8 @@ func TestSweepDeletedIT(t *testing.T) {
 		}
 	}
 
-	s := &Server{Cfg: cfg, Store: st, Lists: lists.NewIndex(rdb), Redis: rdb, Graph: g, Logf: t.Logf}
+	s := &Server{Cfg: cfg, Store: st, Lists: lists.NewIndex(rdb), Redis: rdb, Logf: t.Logf}
+	s.SetGraph(g)
 	s.Cfg.PGAdminDSN = mainDSN
 	swept, err := s.SweepDeletedUsers(ctx)
 	if err != nil {

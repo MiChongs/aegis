@@ -80,8 +80,36 @@ x-risk-etcd: &risk-etcd
     retries: 10
 
 # Redis Cluster 节点：三主三从，各节点用自己的端口号（宿主机 1:1 映射，本机调试时地址可以对上）
+# 风控 Redis Cluster 节点。节点之间按 IP 记住对方（nodes.conf），宿主机重启或节点一起重建后几个节点同时换了地址，
+# 谁也连不上谁，集群一直 CLUSTERDOWN（11-24 宿主机重启后决策服务因此宕了 42 小时）；risk-redis-init 是一次性任务，重启后不会再跑。
+# 所以每个节点自带看护：集群建成以后，只要自己不是 cluster_state:ok 或有节点 fail / 断开，就按其余节点的当前地址
+# 重新握手（CLUSTER MEET 只认 IP，用对方 CLIENT INFO 的 laddr 取）。节点 ID 不变，槽位与数据都保留；
+# 集群还没建（槽位没分配满）时什么都不做，免得抢在 --cluster create 之前把节点连起来。
 x-risk-redis: &risk-redis
   image: redis:8-alpine
+  command:
+    - sh
+    - -c
+    - |
+      export REDISCLI_AUTH="$$REDIS_PASSWORD"
+      nodes='risk-redis-1:7001 risk-redis-2:7002 risk-redis-3:7003 risk-redis-4:7004 risk-redis-5:7005 risk-redis-6:7006'
+      (
+        while sleep 10; do
+          info=$$(redis-cli -p "$$REDIS_PORT" cluster info 2>/dev/null) || continue
+          echo "$$info" | grep -q 'cluster_slots_assigned:16384' || continue
+          if echo "$$info" | grep -q 'cluster_state:ok' && ! redis-cli -p "$$REDIS_PORT" cluster nodes | grep -qE 'fail|disconnected'; then continue; fi
+          for n in $$nodes; do
+            [ "$$n" = "$$REDIS_NAME:$$REDIS_PORT" ] && continue
+            ip=$$(redis-cli -h $${n%:*} -p $${n#*:} client info 2>/dev/null | tr ' ' '\n' | sed -n 's/^laddr=\(.*\):[0-9]*$$/\1/p')
+            [ -n "$$ip" ] && redis-cli -p "$$REDIS_PORT" cluster meet "$$ip" $${n#*:} > /dev/null && echo "cluster meet $$n -> $$ip"
+          done
+        done
+      ) &
+      exec redis-server --port "$$REDIS_PORT" --cluster-enabled yes --cluster-config-file /data/nodes.conf \
+        --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec \
+        --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD" \
+        --cluster-announce-hostname "$$REDIS_NAME" --cluster-preferred-endpoint-type hostname \
+        --maxmemory-policy noeviction
   profiles: ["risk"]
   restart: unless-stopped
   logging: *default-logging
@@ -649,13 +677,8 @@ services:
     container_name: aegis-risk-redis-1
     environment:
       REDIS_PORT: "7001"
+      REDIS_NAME: risk-redis-1
       REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
-    command: >-
-      sh -c 'exec redis-server --port 7001 --cluster-enabled yes --cluster-config-file /data/nodes.conf
-      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
-      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
-      --cluster-announce-hostname risk-redis-1 --cluster-preferred-endpoint-type hostname
-      --maxmemory-policy noeviction'
     ports:
       - "127.0.0.1:7001:7001"
     volumes:
@@ -666,13 +689,8 @@ services:
     container_name: aegis-risk-redis-2
     environment:
       REDIS_PORT: "7002"
+      REDIS_NAME: risk-redis-2
       REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
-    command: >-
-      sh -c 'exec redis-server --port 7002 --cluster-enabled yes --cluster-config-file /data/nodes.conf
-      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
-      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
-      --cluster-announce-hostname risk-redis-2 --cluster-preferred-endpoint-type hostname
-      --maxmemory-policy noeviction'
     ports:
       - "127.0.0.1:7002:7002"
     volumes:
@@ -683,13 +701,8 @@ services:
     container_name: aegis-risk-redis-3
     environment:
       REDIS_PORT: "7003"
+      REDIS_NAME: risk-redis-3
       REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
-    command: >-
-      sh -c 'exec redis-server --port 7003 --cluster-enabled yes --cluster-config-file /data/nodes.conf
-      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
-      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
-      --cluster-announce-hostname risk-redis-3 --cluster-preferred-endpoint-type hostname
-      --maxmemory-policy noeviction'
     ports:
       - "127.0.0.1:7003:7003"
     volumes:
@@ -700,13 +713,8 @@ services:
     container_name: aegis-risk-redis-4
     environment:
       REDIS_PORT: "7004"
+      REDIS_NAME: risk-redis-4
       REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
-    command: >-
-      sh -c 'exec redis-server --port 7004 --cluster-enabled yes --cluster-config-file /data/nodes.conf
-      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
-      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
-      --cluster-announce-hostname risk-redis-4 --cluster-preferred-endpoint-type hostname
-      --maxmemory-policy noeviction'
     ports:
       - "127.0.0.1:7004:7004"
     volumes:
@@ -717,13 +725,8 @@ services:
     container_name: aegis-risk-redis-5
     environment:
       REDIS_PORT: "7005"
+      REDIS_NAME: risk-redis-5
       REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
-    command: >-
-      sh -c 'exec redis-server --port 7005 --cluster-enabled yes --cluster-config-file /data/nodes.conf
-      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
-      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
-      --cluster-announce-hostname risk-redis-5 --cluster-preferred-endpoint-type hostname
-      --maxmemory-policy noeviction'
     ports:
       - "127.0.0.1:7005:7005"
     volumes:
@@ -734,13 +737,8 @@ services:
     container_name: aegis-risk-redis-6
     environment:
       REDIS_PORT: "7006"
+      REDIS_NAME: risk-redis-6
       REDIS_PASSWORD: ${RISK_REDIS_PASSWORD:-aegis-risk}
-    command: >-
-      sh -c 'exec redis-server --port 7006 --cluster-enabled yes --cluster-config-file /data/nodes.conf
-      --cluster-node-timeout 5000 --appendonly yes --appendfsync everysec
-      --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD"
-      --cluster-announce-hostname risk-redis-6 --cluster-preferred-endpoint-type hostname
-      --maxmemory-policy noeviction'
     ports:
       - "127.0.0.1:7006:7006"
     volumes:

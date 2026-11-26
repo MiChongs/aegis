@@ -16,6 +16,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"aegis/services/risk/events"
@@ -48,15 +49,29 @@ type Server struct {
 	Lists    *lists.Index
 	Redis    redis.UniversalClient
 	CH       *analytics.Client
-	Graph    *graph.Client  // 可为 nil
-	Vector   *vector.Client // 可为 nil
 	Models   *models.Store
 	Etcd     *clientv3.Client
 	Decision decisionservice.Client
 	Bus      *events.Bus
 	Stream   stream.Target
 	Logf     func(string, ...any)
+
+	// 关系图与向量库可选：启动时没连上照常提供其余接口，后台重连成功后再挂上（只会从 nil 变成非 nil）
+	graphc  atomic.Pointer[graph.Client]
+	vectorc atomic.Pointer[vector.Client]
 }
+
+// Graph 关系图客户端，没连上时为 nil
+func (s *Server) Graph() *graph.Client { return s.graphc.Load() }
+
+// Vector 向量库客户端，没连上时为 nil
+func (s *Server) Vector() *vector.Client { return s.vectorc.Load() }
+
+// SetGraph 挂上关系图客户端
+func (s *Server) SetGraph(g *graph.Client) { s.graphc.Store(g) }
+
+// SetVector 挂上向量库客户端
+func (s *Server) SetVector(v *vector.Client) { s.vectorc.Store(v) }
 
 // apiError 带业务码的错误
 type apiError struct {

@@ -26,7 +26,7 @@ var errSweepRunning = errors.New("已有一次清扫在进行")
 
 // SweepDeletedUsers 清扫一次，返回收尾的账号数
 func (s *Server) SweepDeletedUsers(ctx context.Context) (int, error) {
-	if s.Graph == nil || s.Cfg.PGAdminDSN == "" {
+	if s.Graph() == nil || s.Cfg.PGAdminDSN == "" {
 		return 0, nil
 	}
 	if !sweepMu.TryLock() {
@@ -69,7 +69,7 @@ func (s *Server) SweepDeletedUsers(ctx context.Context) (int, error) {
 	total := 0
 	var errs []error
 	for _, appID := range apps {
-		present, err := s.Graph.PresentUsers(appID, ids)
+		present, err := s.Graph().PresentUsers(appID, ids)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("应用 %d：%w", appID, err))
 			continue
