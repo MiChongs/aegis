@@ -589,6 +589,9 @@ func (s *PlatformSettingsService) decodeFirewallConfig(payload []byte) (config.F
 	if len(payload) == 0 {
 		return cfg, nil
 	}
+	// 打底的环境配置已经归一化成当前规则集版本；库里 v1 时代存下的记录根本没有这个字段，
+	// 不清零的话 Unmarshal 之后仍是「已是 v2」，旧默认值（阈值 40、17 条全局移除）就永远迁不过来。
+	cfg.CorazaRulesetVersion = 0
 	if err := json.Unmarshal(payload, &cfg); err != nil {
 		return config.FirewallConfig{}, err
 	}
