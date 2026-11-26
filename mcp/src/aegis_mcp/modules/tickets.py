@@ -21,6 +21,8 @@ TICKET_DELETE = DELETE("/api/admin/tickets/:ticketId")
 TICKET_REPLY = POST("/api/admin/tickets/:ticketId/replies")
 TICKET_MESSAGE_DELETE = DELETE("/api/admin/tickets/:ticketId/messages/:messageId")
 TICKET_STATUS = POST("/api/admin/tickets/:ticketId/status")
+TICKET_REWARD = POST("/api/admin/tickets/:ticketId/reward")
+TICKET_REWARD_REVOKE = POST("/api/admin/tickets/:ticketId/reward/revoke")
 TICKET_ASSIGN = POST("/api/admin/tickets/:ticketId/assign")
 TICKET_WATCH = POST("/api/admin/tickets/:ticketId/watch")
 TICKET_WATCHERS = PUT("/api/admin/tickets/:ticketId/watchers")
@@ -222,6 +224,29 @@ async def delete_message(
     提单人 / 反馈人侧不再显示这条消息，它生成的站内信与管理员收件箱条目一并删除，时间线记一条撤回事件。
     提单人自己的消息不能撤回；撤回他人的回复需要 ticket:manage。已发出的邮件与 IM 消息收不回。"""
     return await TICKET_MESSAGE_DELETE(ticketId=ticket_id, messageId=message_id, body=body(reason=reason))
+
+
+@server.tool(**DESTRUCTIVE("tickets"))
+async def reward(
+    ticket_id: TicketID,
+    action: Annotated[Literal["grant", "revoke"], Field(description="grant 发放积分 / revoke 撤回并扣回积分")] = "grant",
+    points: Annotated[int | None, Field(gt=0, le=100_000_000, description="发放的积分；省略按应用策略的建议值（按反馈分类预填）")] = None,
+    reason: Annotated[str, Field(max_length=200, description="发放理由（会附在给用户的站内信里）/ 撤回原因")] = "",
+    allow_partial: Annotated[bool, Field(description="撤回时用户余额不足：false 整笔拒绝（默认），true 扣到 0 为止并记下差额")] = False,
+    request_id: Annotated[str, Field(max_length=64, description="请求编号：同一编号重复提交原样返回，不会重复发放或扣回")] = "",
+) -> Any:
+    """给被采纳的意见反馈发放积分奖励，或撤回已发的奖励（扣回积分）。会改用户资产，执行前先向用户复述反馈、对象与积分数。
+
+    只能发给提单人是应用用户的反馈（不采纳、已撤销的不行）；应用须在策略里开启反馈奖励，受单条与每用户每日 / 每月上限约束。
+    一张反馈同一时刻只有一笔有效奖励：重复发放同样数额原样返回，数额不同报 40999（先撤回再发）。
+    需要能处理这条反馈，并持有该应用的积分调整权限（app:user:asset 或 points:write）。
+    发放与撤回都会给用户发站内信、在反馈时间线记一条；tickets_get 的 reward 字段可看建议值、余量与历史。"""
+    request = request_id.strip() or None
+    if action == "revoke":
+        if points is not None:
+            raise ToolError("撤回不需要 points：扣回的就是当初发放的数额")
+        return await TICKET_REWARD_REVOKE(ticketId=ticket_id, body=body(reason=reason, allowPartial=allow_partial, requestId=request))
+    return await TICKET_REWARD(ticketId=ticket_id, body=body(points=points, reason=reason, requestId=request))
 
 
 @server.tool(name="delete", **DESTRUCTIVE("tickets"))

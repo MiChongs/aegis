@@ -53,6 +53,20 @@ async def test_delete_message(backend, call):
     assert backend.last().path == "/api/admin/tickets/7/messages/8"
 
 
+async def test_reward(backend, call, call_error):
+    await call("tickets_reward", {"ticket_id": 417, "points": 50, "reason": "定位到闪退原因", "request_id": "r-1"})
+    req = backend.last()
+    assert (req.method, req.path, req.json) == ("POST", "/api/admin/tickets/417/reward", {"points": 50, "reason": "定位到闪退原因", "requestId": "r-1"})
+    # 省略积分：按策略的建议值发
+    await call("tickets_reward", {"ticket_id": 417})
+    assert backend.last().json == {"reason": ""}
+    await call("tickets_reward", {"ticket_id": 417, "action": "revoke", "reason": "重复反馈", "allow_partial": True})
+    req = backend.last()
+    assert (req.method, req.path, req.json) == ("POST", "/api/admin/tickets/417/reward/revoke", {"reason": "重复反馈", "allowPartial": True})
+    await call_error("tickets_reward", {"ticket_id": 417, "action": "revoke", "points": 10})
+    await call_error("tickets_reward", {"ticket_id": 417, "points": 0})
+
+
 async def test_stats_and_config(backend, call):
     data = await call("tickets_stats", {"trend_days": 7, "agents": True})
     assert set(data) == {"stats", "workbench", "trend", "agents"}
