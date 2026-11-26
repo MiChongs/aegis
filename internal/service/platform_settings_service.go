@@ -273,7 +273,7 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 		next := applyFirewallPatch(current, patch.Firewall)
 		next = config.NormalizeFirewallConfig(next)
 		if err := s.firewall.ValidateConfig(next); err != nil {
-			return nil, apperrors.New(40090, http.StatusBadRequest, "防火墙配置无效")
+			return nil, apperrors.New(40090, http.StatusBadRequest, "防火墙配置无效："+err.Error())
 		}
 		payload, err := json.Marshal(next)
 		if err != nil {
@@ -449,6 +449,39 @@ func (s *PlatformSettingsService) UpdateSettings(ctx context.Context, adminID *i
 	}, nil
 }
 
+// GetFirewallSettings 只取防火墙分区（防火墙工作台的「设置」页用）。
+func (s *PlatformSettingsService) GetFirewallSettings(ctx context.Context) (systemdomain.FirewallSettingsView, error) {
+	record, err := s.pg.GetPlatformSetting(ctx, firewallSettingKey)
+	if err != nil {
+		return systemdomain.FirewallSettingsView{}, err
+	}
+	return s.buildFirewallView(record), nil
+}
+
+// UpdateFirewallSettings 只改防火墙分区：校验（含 WAF 试编译）→ 落库 → 本机热更新 → 广播其他副本。
+func (s *PlatformSettingsService) UpdateFirewallSettings(ctx context.Context, adminID *int64, patch systemdomain.FirewallSettingsPatch) (systemdomain.FirewallSettingsView, error) {
+	if s.firewall == nil {
+		return systemdomain.FirewallSettingsView{}, apperrors.New(50390, http.StatusServiceUnavailable, "防火墙未启用")
+	}
+	next := config.NormalizeFirewallConfig(applyFirewallPatch(s.firewall.CurrentConfig(), patch))
+	if err := s.firewall.ValidateConfig(next); err != nil {
+		return systemdomain.FirewallSettingsView{}, apperrors.New(40090, http.StatusBadRequest, "防火墙配置无效："+err.Error())
+	}
+	payload, err := json.Marshal(next)
+	if err != nil {
+		return systemdomain.FirewallSettingsView{}, err
+	}
+	record, err := s.pg.UpsertPlatformSetting(ctx, systemdomain.SettingRecord{Key: firewallSettingKey, Value: payload, UpdatedBy: adminID})
+	if err != nil {
+		return systemdomain.FirewallSettingsView{}, err
+	}
+	s.cluster.publish(s.log, cluster.TopicPlatformSettings, platformSettingsChange{Sections: []string{platformSectionFirewall}})
+	if err := s.firewall.Reload(next); err != nil {
+		return systemdomain.FirewallSettingsView{}, apperrors.New(50090, http.StatusInternalServerError, "防火墙热重载失败："+err.Error())
+	}
+	return s.buildFirewallView(record), nil
+}
+
 func (s *PlatformSettingsService) buildFirewallView(record *systemdomain.SettingRecord) systemdomain.FirewallSettingsView {
 	if s.firewall == nil {
 		return systemdomain.FirewallSettingsView{Source: "unavailable"}
@@ -464,17 +497,36 @@ func (s *PlatformSettingsService) buildFirewallView(record *systemdomain.Setting
 		CorazaParanoia:    current.CorazaParanoia,
 		RequestBodyLimit:  current.RequestBodyLimit,
 		RequestBodyMemory: current.RequestBodyMemory,
-		AllowedCIDRs:      cloneStrings(current.AllowedCIDRs),
-		BlockedCIDRs:      cloneStrings(current.BlockedCIDRs),
-		BlockedUserAgents: cloneStrings(current.BlockedUserAgents),
-		BlockedPathPrefix: cloneStrings(current.BlockedPathPrefix),
+		AllowedCIDRs:      stringsOrEmpty(current.AllowedCIDRs),
+		BlockedCIDRs:      stringsOrEmpty(current.BlockedCIDRs),
+		BlockedUserAgents: stringsOrEmpty(current.BlockedUserAgents),
+		BlockedPathPrefix: stringsOrEmpty(current.BlockedPathPrefix),
 		MaxPathLength:     current.MaxPathLength,
 		MaxQueryLength:    current.MaxQueryLength,
 		DefaultBanMode:    current.DefaultBanMode,
 		TarpitDelayMs:     current.TarpitDelayMs,
-		Source:            "environment",
-		ReloadVersion:     reloadVersion,
-		ReloadedAt:        reloadedAt,
+		BanRedirectURL:    current.BanRedirectURL,
+
+		RulesetVersion:           current.CorazaRulesetVersion,
+		CorazaDetectionOnly:      current.CorazaDetectionOnly,
+		CorazaDetectionParanoia:  current.CorazaDetectionParanoia,
+		CorazaAnomalyThreshold:   current.CorazaAnomalyThreshold,
+		CorazaOutboundThreshold:  current.CorazaOutboundThreshold,
+		CorazaResponseInspection: current.CorazaResponseInspection,
+		CorazaResponseBodyLimit:  current.CorazaResponseBodyLimit,
+		CorazaRemovedRules:       stringsOrEmpty(current.CorazaRemovedRules),
+		CorazaDisabledGroups:     stringsOrEmpty(current.CorazaDisabledGroups),
+		CorazaInspectAdminBody:   current.CorazaInspectAdminBody,
+		CorazaBodyExemptPrefixes: stringsOrEmpty(current.CorazaBodyExemptPrefixes),
+		CorazaSensitiveArgs:      stringsOrEmpty(current.CorazaSensitiveArgs),
+		CorazaRichTextArgs:       stringsOrEmpty(current.CorazaRichTextArgs),
+		CorazaArgumentsLimit:     current.CorazaArgumentsLimit,
+		CorazaExtraContentTypes:  stringsOrEmpty(current.CorazaExtraContentTypes),
+		TrustedCIDRs:             stringsOrEmpty(current.TrustedCIDRs),
+		BlockedSignatures:        stringsOrEmpty(current.BlockedSignatures),
+		Source:                   "environment",
+		ReloadVersion:            reloadVersion,
+		ReloadedAt:               reloadedAt,
 	}
 	if record != nil {
 		view.Source = "database"
@@ -603,6 +655,65 @@ func applyFirewallPatch(current config.FirewallConfig, patch systemdomain.Firewa
 	if patch.TarpitDelayMs != nil {
 		current.TarpitDelayMs = *patch.TarpitDelayMs
 	}
+	if patch.BanRedirectURL != nil {
+		current.BanRedirectURL = strings.TrimSpace(*patch.BanRedirectURL)
+	}
+	if patch.CorazaDetectionOnly != nil {
+		current.CorazaDetectionOnly = *patch.CorazaDetectionOnly
+	}
+	if patch.CorazaDetectionParanoia != nil {
+		current.CorazaDetectionParanoia = *patch.CorazaDetectionParanoia
+	}
+	if patch.CorazaAnomalyThreshold != nil {
+		current.CorazaAnomalyThreshold = *patch.CorazaAnomalyThreshold
+	}
+	if patch.CorazaOutboundThreshold != nil {
+		current.CorazaOutboundThreshold = *patch.CorazaOutboundThreshold
+	}
+	if patch.CorazaResponseInspection != nil {
+		current.CorazaResponseInspection = *patch.CorazaResponseInspection
+	}
+	if patch.CorazaResponseBodyLimit != nil {
+		current.CorazaResponseBodyLimit = *patch.CorazaResponseBodyLimit
+	}
+	if patch.CorazaInspectAdminBody != nil {
+		current.CorazaInspectAdminBody = *patch.CorazaInspectAdminBody
+	}
+	if patch.CorazaArgumentsLimit != nil {
+		current.CorazaArgumentsLimit = *patch.CorazaArgumentsLimit
+	}
+	// 列表：空数组 = 显式清空（非 nil 的空切片，落库为 []）；nil 才表示「用默认值」，见 config.NormalizeFirewallConfig。
+	explicit := func(values []string) []string {
+		values = compactStrings(values)
+		if values == nil {
+			return []string{}
+		}
+		return values
+	}
+	if patch.CorazaRemovedRules != nil {
+		current.CorazaRemovedRules = explicit(*patch.CorazaRemovedRules)
+	}
+	if patch.CorazaDisabledGroups != nil {
+		current.CorazaDisabledGroups = compactStrings(*patch.CorazaDisabledGroups)
+	}
+	if patch.CorazaBodyExemptPrefixes != nil {
+		current.CorazaBodyExemptPrefixes = explicit(*patch.CorazaBodyExemptPrefixes)
+	}
+	if patch.CorazaSensitiveArgs != nil {
+		current.CorazaSensitiveArgs = explicit(*patch.CorazaSensitiveArgs)
+	}
+	if patch.CorazaRichTextArgs != nil {
+		current.CorazaRichTextArgs = explicit(*patch.CorazaRichTextArgs)
+	}
+	if patch.CorazaExtraContentTypes != nil {
+		current.CorazaExtraContentTypes = explicit(*patch.CorazaExtraContentTypes)
+	}
+	if patch.TrustedCIDRs != nil {
+		current.TrustedCIDRs = compactStrings(*patch.TrustedCIDRs)
+	}
+	if patch.BlockedSignatures != nil {
+		current.BlockedSignatures = explicit(*patch.BlockedSignatures)
+	}
 	return current
 }
 
@@ -681,6 +792,13 @@ func compactStrings(values []string) []string {
 			items = append(items, value)
 		}
 	}
+	return items
+}
+
+// stringsOrEmpty 复制一份；空时返回 []（JSON 里是 [] 而不是 null，控制台不用到处判空）。
+func stringsOrEmpty(values []string) []string {
+	items := make([]string, len(values))
+	copy(items, values)
 	return items
 }
 

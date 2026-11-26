@@ -122,6 +122,7 @@ type RouterDeps struct {
 	// ── 风控与观测 ────────────────────────────────────────────────────
 	Risk            *service.RiskService
 	FirewallLog     *service.FirewallLogService
+	FirewallPolicy  *service.FirewallPolicyService
 	IPBan           *service.IPBanService
 	GeoBan          *service.GeoBanService
 	GeoFence        *service.GeoFenceService
@@ -196,6 +197,7 @@ func (d RouterDeps) newHandler() *Handler {
 		security:           d.Security,
 		captcha:            d.Captcha,
 		firewallLog:        d.FirewallLog,
+		firewallPolicy:     d.FirewallPolicy,
 		ipBan:              d.IPBan,
 		geoBan:             d.GeoBan,
 		geoFence:           d.GeoFence,

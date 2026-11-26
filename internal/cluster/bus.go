@@ -23,6 +23,7 @@ const (
 	TopicPluginHooks      = "plugin-hooks"
 	TopicAdminUserSearch  = "admin-user-search" // payload: {"op":"index"|"delete"|"sync-app", ...}
 	TopicStorageMigration = "storage-migration" // payload: {"op":"cancel","id":...}
+	TopicFirewallPolicy   = "firewall-policy"   // 自定义规则 / WAF 例外变更，收到后从库重载
 )
 
 // Bus 是集群内的失效广播。

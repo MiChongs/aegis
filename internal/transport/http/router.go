@@ -48,6 +48,7 @@ type Handler struct {
 	security        *service.SecurityService
 	captcha         *service.CaptchaService
 	firewallLog     *service.FirewallLogService
+	firewallPolicy  *service.FirewallPolicyService
 	ipBan           *service.IPBanService
 	geoBan          *service.GeoBanService
 	geoFence        *service.GeoFenceService
@@ -185,6 +186,7 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		// 访问日志走 zap 而不是 gin.Logger()：后者按自己的格式写 stdout，
 		// 与平台其余部分的结构化输出混在一起，采集端每条都解析失败。见 access_log.go。
 		middleware.AccessLog(log, middleware.AccessLogSkipPaths()...),
+		// 防火墙入口段：IP、封禁、签名、自定义规则、限流（还没解密，只看请求行与请求头）
 		firewall.Handler(),
 		// 流量管理（内置插件 traffic）：必须在 Firewall 之后（先拒恶意，再整形合法流量）、
 		// ReplayGuard 之前（被拒掉的请求不该消耗 Nonce / 幂等键占位）。插件停用时直通。
@@ -194,6 +196,9 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		// 版本管控的服务端执行点：读 AppGateway 写入的 aegis.app_id，必须排在它之后
 		middleware.ClientControlGate(deps.ClientControlGate),
 		middleware.AppEncryption(appService),
+		// WAF（Coraza + CRS）在解密之后：sealed 与旧加密请求到这里已是明文，
+		// 拦截响应写进上面两个中间件包好的 Writer，客户端收到的是加密过的错误信封。见 docs/firewall.md。
+		firewall.WAFHandler(),
 		middleware.Location(locationService),
 		// 请求语言：封禁提示、申诉、通知按它本地化（docs/account-suspension.md）
 		func(c *gin.Context) {

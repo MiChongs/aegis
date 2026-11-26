@@ -4890,7 +4890,7 @@ func (r *Repository) ListRecentAuditLogs(ctx context.Context, adminID int64, lim
 
 func (r *Repository) CountRecentFirewallBlocks(ctx context.Context, dur time.Duration) (int64, error) {
 	var count int64
-	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM firewall_logs WHERE created_at > $1`, time.Now().Add(-dur)).Scan(&count)
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM firewall_logs WHERE blocked_at > $1 AND action = 'block'`, time.Now().Add(-dur)).Scan(&count)
 	return count, err
 }
 

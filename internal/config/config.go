@@ -246,27 +246,28 @@ type FirewallConfig struct {
 	CorazaEnabled  bool
 	CorazaParanoia int
 	// CorazaDetectionOnly true 时 WAF 仅记录不拦截（SecRuleEngine DetectionOnly），
-	// 用于灰度验证 paranoia 升级或规则调整的误报面。
+	// 用于灰度验证 paranoia 升级或规则调整的误报面。命中「本该拦截」的请求记为观察事件。
 	CorazaDetectionOnly bool
-	// CorazaAnomalyThreshold CRS 入站异常分阈值（越低越严格；CRS 官方默认 5
-	// 在真实业务下误报极高，本项目默认 40）。
+	// CorazaAnomalyThreshold CRS 入站异常分阈值（越低越严格；一条 critical 命中 = 5 分）。
+	// 规则集 v2 起默认 5（CRS 官方值：一条 critical 即拦）。v1 用 40 是因为当时 JSON 请求体
+	// 一律免攻击规则、误报只能靠抬阈值兜；v2 改为按字段排除，见 docs/firewall.md。
 	CorazaAnomalyThreshold int
-	// CorazaRemovedRules 误报排除规则 ID 列表；空 = 内置默认清单，
-	// ["none"] = 不排除任何规则（完整 CRS）。
+	// CorazaRemovedRules 全局移除的 CRS 规则 ID；空 = 内置默认清单，["none"] = 不移除任何规则。
+	// 能按路径或字段排除的误报请用 WAF 例外（firewall_waf_exclusions），不要全局移除。
 	CorazaRemovedRules []string
 	RequestBodyLimit   int
 	RequestBodyMemory  int
-	AllowedCIDRs       []string
-	BlockedCIDRs       []string
-	BlockedUserAgents  []string
-	BlockedPathPrefix  []string
-	MaxPathLength      int
-	MaxQueryLength     int
+	// AllowedCIDRs 非空时只放行这些网段（白名单模式，其余一律 40391）。
+	AllowedCIDRs []string
+	// BlockedCIDRs 黑名单网段。
+	BlockedCIDRs      []string
+	BlockedUserAgents []string
+	BlockedPathPrefix []string
+	MaxPathLength     int
+	MaxQueryLength    int
 
 	// ── IP 封禁响应模式 ───────────────────────────────────────
 	// DefaultBanMode 未显式指定 mode 时的全局默认（见 firewall.BanMode* 常量）。
-	// 合法值：forbidden / silent_drop / connection_reset / tarpit / stealth_404 / teapot / rate_choke
-	// 默认 "forbidden"（返回 HTTP 403）。
 	DefaultBanMode string
 	// TarpitDelayMs tarpit 模式的延迟毫秒（默认 5000 = 5s，最大 30000）。
 	TarpitDelayMs int
@@ -276,17 +277,85 @@ type FirewallConfig struct {
 	// AutoBanRules 自动封禁规则覆盖（JSON 数组，空 = 使用内置默认规则）。
 	// 格式见 service.ParseAutoBanRules；解析失败时回退默认规则并告警。
 	AutoBanRules string
+
+	// ── 规则集 v2（2026-11-26 重构，docs/firewall.md）────────────────
+	// TrustedCIDRs 可信网段：命中后跳过签名、自定义规则、限流与 WAF（封禁仍生效）。
+	// 用于监控探针、办公出口等；与 AllowedCIDRs（只放行这些）是两回事。
+	TrustedCIDRs []string
+	// BlockedSignatures 入口快速签名（路径 + 原始查询串小写后子串匹配）。空 = 内置清单，["none"] = 关闭。
+	BlockedSignatures []string
+	// CorazaRulesetVersion 持久化配置对应的规则集版本；低于当前版本时 Normalize 会把旧默认值迁到新默认值。
+	CorazaRulesetVersion int
+	// CorazaDetectionParanoia 检测偏执等级（≥ 拦截等级）：高出的部分只计分记录、不参与拦截。
+	CorazaDetectionParanoia int
+	// CorazaOutboundThreshold CRS 出站异常分阈值（出站检测只记录，不拦截）。
+	CorazaOutboundThreshold int
+	// CorazaResponseInspection 开启出站检测：对明文响应（加密前）跑 RESPONSE-95x 数据泄露规则，只记录。
+	CorazaResponseInspection bool
+	// CorazaResponseBodyLimit 出站检测读取的响应体上限（字节）。
+	CorazaResponseBodyLimit int
+	// CorazaDisabledGroups 整组停用的 CRS 规则文件编号（如 "933" PHP、"944" Java）。
+	CorazaDisabledGroups []string
+	// CorazaInspectAdminBody 是否对 /api/admin/ 的请求体跑攻击规则（默认否：已鉴权的运维请求里满是表达式、脚本与模板）。
+	CorazaInspectAdminBody bool
+	// CorazaBodyExemptPrefixes 只检查请求头与 URI、不检查请求体的路径前缀。空 = 内置清单，["none"] = 不豁免。
+	CorazaBodyExemptPrefixes []string
+	// CorazaSensitiveArgs 不跑攻击规则、命中数据脱敏的参数名（按最后一段、不区分大小写）。空 = 内置清单。
+	CorazaSensitiveArgs []string
+	// CorazaRichTextArgs 富文本参数名：免 XSS / SQLi / RCE / 注入类规则，保留 LFI、RFI、Java 等。空 = 内置清单。
+	CorazaRichTextArgs []string
+	// CorazaArgumentsLimit 单请求参数个数上限（SecArgumentsLimit），超过 400。
+	CorazaArgumentsLimit int
+	// CorazaExtraContentTypes 额外允许的请求 Content-Type（CRS 920420 白名单之外）。
+	CorazaExtraContentTypes []string
 }
 
-// DefaultCorazaRemovedRules 内置 CRS 误报排除清单（自托管 / 内网 / API 网关 /
-// 后台 SaaS 场景的高频误报规则；语义说明见 middleware.buildCorazaDirectives）。
-var DefaultCorazaRemovedRules = []string{
+// CurrentCorazaRulesetVersion 规则集版本。v1 = 2026-11-26 之前（JSON 请求体一律免攻击规则、阈值 40、全局移除 17 条）。
+const CurrentCorazaRulesetVersion = 2
+
+// legacyCorazaRemovedRules v1 的默认移除清单，升级时识别「没人改过」的旧值。
+var legacyCorazaRemovedRules = []string{
 	"920350", "920300", "920420", "920230", "920440",
 	"913100", "921110",
 	"932200", "932230", "932235", "932236", "932240", "932250",
 	"942100", "942430", "942440",
 	"941100",
 }
+
+// DefaultCorazaRemovedRules 规则集 v2 的全局移除清单（只留确实与部署形态冲突、按路径排除也没意义的几条）：
+//
+//	920350 — Host 为数字 IP：内网、编排探针、局域网直连都会命中
+//	920300 — 缺 Accept 头：SDK、探针、脚本默认不带
+//	932235 / 932236 — Unix 命令词表（time、more、less…）对自由文本与逗号分隔的键名误报成片
+//	932240 / 932250 — @ 与 $ 触发的命令执行变体：邮箱、模板字符串、正则里随处可见
+//
+// v1 里另外 11 条（920420/920440/942100/941100 等）改由「内容类型白名单」「路径例外」
+// 「敏感字段 / 富文本字段排除」精确处理，不再全局关掉 SQLi 与 XSS 的核心检测。
+var DefaultCorazaRemovedRules = []string{"920350", "920300", "932235", "932236", "932240", "932250"}
+
+// DefaultFirewallBlockedSignatures 入口快速签名（在 WAF 之前、解密之前，只看路径与原始查询串）。
+var DefaultFirewallBlockedSignatures = []string{
+	"../", "..\\", "%2e%2e", "/.git/", "/.env", "/vendor/phpunit", "/etc/passwd", "/proc/self/environ",
+	"<script", "%3cscript", "javascript:", "onerror=", "onload=",
+	"union+select", "union%20select", "sleep(", "benchmark(", "load_file(", "information_schema",
+	";cat+", "|cat+", "$(curl", "$(wget", "`curl", "`wget", "${jndi:", "%24%7bjndi",
+}
+
+// DefaultCorazaBodyExemptPrefixes 请求体不过 WAF 的路径：AI 中转（对话里满是代码与命令，只原样转给模型）、
+// 支付回调与邮件服务商回调（第三方签名的服务端回调，误拦就是丢单、丢投递事件）。
+var DefaultCorazaBodyExemptPrefixes = []string{"/api/ai/v1/", "/api/public/pay/callback/", "/api/email/webhook/"}
+
+// DefaultCorazaSensitiveArgs 口令与密钥类字段：从不进 SQL、不回显，又最常含特殊字符。
+var DefaultCorazaSensitiveArgs = []string{
+	"password", "passwd", "pwd", "oldPassword", "newPassword", "confirmPassword", "currentPassword",
+	"secret", "clientSecret", "appSecret", "privateKey", "signature", "totpCode", "recoveryCode",
+}
+
+// DefaultCorazaRichTextArgs 富文本字段：反馈、工单、公告正文与 Markdown。
+var DefaultCorazaRichTextArgs = []string{"content", "html", "markdown", "richText", "reply", "body", "notes"}
+
+// DefaultCorazaExtraContentTypes Aegis 实际接收、CRS 默认白名单里没有的类型。
+var DefaultCorazaExtraContentTypes = []string{"application/octet-stream", "text/plain", "application/gzip", "application/x-ndjson", "application/csp-report", "application/reports+json"}
 
 func NormalizeFirewallConfig(cfg FirewallConfig) FirewallConfig {
 	if strings.TrimSpace(cfg.GlobalRate) == "" {
@@ -298,14 +367,30 @@ func NormalizeFirewallConfig(cfg FirewallConfig) FirewallConfig {
 	if strings.TrimSpace(cfg.AdminRate) == "" {
 		cfg.AdminRate = "360-M"
 	}
+	if cfg.CorazaRulesetVersion < CurrentCorazaRulesetVersion {
+		// v1 → v2：只迁「没人改过的旧默认值」，手工调过的保持原样。
+		if sameStringSet(cfg.CorazaRemovedRules, legacyCorazaRemovedRules) {
+			cfg.CorazaRemovedRules = nil
+		}
+		if cfg.CorazaAnomalyThreshold == 40 {
+			cfg.CorazaAnomalyThreshold = 5
+		}
+		cfg.CorazaRulesetVersion = CurrentCorazaRulesetVersion
+	}
 	if cfg.CorazaParanoia <= 0 {
 		cfg.CorazaParanoia = 1
 	}
 	if cfg.CorazaParanoia > 4 {
 		cfg.CorazaParanoia = 4
 	}
+	if cfg.CorazaDetectionParanoia < cfg.CorazaParanoia {
+		cfg.CorazaDetectionParanoia = cfg.CorazaParanoia
+	}
+	if cfg.CorazaDetectionParanoia > 4 {
+		cfg.CorazaDetectionParanoia = 4
+	}
 	if cfg.CorazaAnomalyThreshold <= 0 {
-		cfg.CorazaAnomalyThreshold = 40
+		cfg.CorazaAnomalyThreshold = 5
 	}
 	if cfg.CorazaAnomalyThreshold < 5 {
 		cfg.CorazaAnomalyThreshold = 5
@@ -313,24 +398,40 @@ func NormalizeFirewallConfig(cfg FirewallConfig) FirewallConfig {
 	if cfg.CorazaAnomalyThreshold > 10000 {
 		cfg.CorazaAnomalyThreshold = 10000
 	}
-	switch {
-	case len(cfg.CorazaRemovedRules) == 0:
-		cfg.CorazaRemovedRules = append([]string(nil), DefaultCorazaRemovedRules...)
-	case len(cfg.CorazaRemovedRules) == 1 && strings.EqualFold(strings.TrimSpace(cfg.CorazaRemovedRules[0]), "none"):
-		cfg.CorazaRemovedRules = nil
-	default:
-		valid := cfg.CorazaRemovedRules[:0]
-		for _, id := range cfg.CorazaRemovedRules {
-			id = strings.TrimSpace(id)
-			if id == "" {
-				continue
-			}
-			if _, err := strconv.Atoi(id); err == nil {
-				valid = append(valid, id)
-			}
-		}
-		cfg.CorazaRemovedRules = valid
+	if cfg.CorazaOutboundThreshold <= 0 {
+		cfg.CorazaOutboundThreshold = 4
 	}
+	if cfg.CorazaOutboundThreshold > 10000 {
+		cfg.CorazaOutboundThreshold = 10000
+	}
+	if cfg.CorazaResponseBodyLimit <= 0 {
+		cfg.CorazaResponseBodyLimit = 512 * 1024
+	}
+	if cfg.CorazaResponseBodyLimit > 8*1024*1024 {
+		cfg.CorazaResponseBodyLimit = 8 * 1024 * 1024
+	}
+	if cfg.CorazaArgumentsLimit <= 0 {
+		cfg.CorazaArgumentsLimit = 1000
+	}
+	if cfg.CorazaArgumentsLimit < 50 {
+		cfg.CorazaArgumentsLimit = 50
+	}
+	// 列表字段统一约定（规则集 v2）：nil = 没填，用默认值；非 nil 的空切片或 ["none"] = 显式清空。
+	// Normalize 必须幂等——设置保存时先归一化再热更新，热更新里还会再归一化一次。
+	switch {
+	case cfg.CorazaRemovedRules == nil:
+		cfg.CorazaRemovedRules = append([]string(nil), DefaultCorazaRemovedRules...)
+	case isNoneList(cfg.CorazaRemovedRules):
+		cfg.CorazaRemovedRules = []string{}
+	default:
+		cfg.CorazaRemovedRules = numericEntries(cfg.CorazaRemovedRules)
+	}
+	cfg.CorazaDisabledGroups = numericEntries(cfg.CorazaDisabledGroups)
+	cfg.BlockedSignatures = defaultedList(cfg.BlockedSignatures, DefaultFirewallBlockedSignatures)
+	cfg.CorazaBodyExemptPrefixes = defaultedList(cfg.CorazaBodyExemptPrefixes, DefaultCorazaBodyExemptPrefixes)
+	cfg.CorazaSensitiveArgs = defaultedList(cfg.CorazaSensitiveArgs, DefaultCorazaSensitiveArgs)
+	cfg.CorazaRichTextArgs = defaultedList(cfg.CorazaRichTextArgs, DefaultCorazaRichTextArgs)
+	cfg.CorazaExtraContentTypes = defaultedList(cfg.CorazaExtraContentTypes, DefaultCorazaExtraContentTypes)
 	if cfg.RequestBodyLimit <= 0 {
 		cfg.RequestBodyLimit = 13 * 1024 * 1024
 	}
@@ -374,6 +475,72 @@ func NormalizeFirewallConfig(cfg FirewallConfig) FirewallConfig {
 		cfg.BlockedPathPrefix = []string{"/.env", "/.git", "/.svn", "/wp-admin", "/wp-login", "/phpmyadmin", "/vendor/phpunit", "/_ignition", "/hnap1"}
 	}
 	return cfg
+}
+
+// isNoneList 判断列表是不是 ["none"]（显式清空，区别于「没填 = 用默认」）。
+func isNoneList(values []string) bool {
+	return len(values) == 1 && strings.EqualFold(strings.TrimSpace(values[0]), "none")
+}
+
+// defaultedList nil = 默认值；空切片或 ["none"] = 显式清空；其余去空白去重。
+func defaultedList(values, defaults []string) []string {
+	switch {
+	case values == nil:
+		return append([]string(nil), defaults...)
+	case isNoneList(values):
+		return []string{}
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func numericEntries(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, id := range values {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, err := strconv.Atoi(id); err != nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]int, len(a))
+	for _, v := range a {
+		set[strings.TrimSpace(v)]++
+	}
+	for _, v := range b {
+		if set[v] == 0 {
+			return false
+		}
+		set[v]--
+	}
+	return true
 }
 
 // LoginGuardConfig 登录防爆破配置（账号 + IP 双维度失败计数与指数退避锁定）。
@@ -631,7 +798,6 @@ type RiskIPQualityScoreConfig struct {
 	LighterPenalties bool
 }
 
-
 // GeoIPConfig IP 归属地。数据来自远程接口（美团、宝塔面板、UAPIs，见 service/location_provider.go），
 // 不下载本地库。
 type GeoIPConfig struct {
@@ -874,6 +1040,18 @@ func loadWithViper(v *viper.Viper) (Config, error) {
 			TarpitDelayMs:          v.GetInt("FIREWALL_TARPIT_DELAY_MS"),
 			BanRedirectURL:         v.GetString("FIREWALL_BAN_REDIRECT_URL"),
 			AutoBanRules:           v.GetString("FIREWALL_AUTO_BAN_RULES"),
+
+			TrustedCIDRs:             csvList(v.GetString("FIREWALL_TRUSTED_CIDRS")),
+			CorazaDetectionParanoia:  v.GetInt("FIREWALL_CORAZA_DETECTION_PARANOIA_LEVEL"),
+			CorazaOutboundThreshold:  v.GetInt("FIREWALL_CORAZA_OUTBOUND_THRESHOLD"),
+			CorazaResponseInspection: getBool(v, "FIREWALL_CORAZA_RESPONSE_INSPECTION", false),
+			CorazaDisabledGroups:     csvList(v.GetString("FIREWALL_CORAZA_DISABLED_GROUPS")),
+			CorazaInspectAdminBody:   getBool(v, "FIREWALL_CORAZA_INSPECT_ADMIN_BODY", false),
+			CorazaBodyExemptPrefixes: csvList(v.GetString("FIREWALL_CORAZA_BODY_EXEMPT_PREFIXES")),
+			CorazaSensitiveArgs:      csvList(v.GetString("FIREWALL_CORAZA_SENSITIVE_ARGS")),
+			CorazaRichTextArgs:       csvList(v.GetString("FIREWALL_CORAZA_RICH_TEXT_ARGS")),
+			CorazaArgumentsLimit:     v.GetInt("FIREWALL_CORAZA_ARGUMENTS_LIMIT"),
+			CorazaExtraContentTypes:  csvList(v.GetString("FIREWALL_CORAZA_EXTRA_CONTENT_TYPES")),
 		},
 		LoginGuard: LoginGuardConfig{
 			Enabled:          getBool(v, "LOGIN_GUARD_ENABLED", true),

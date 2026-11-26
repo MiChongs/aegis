@@ -13,6 +13,27 @@ func init() {
 		Write("POST /api/admin/system/firewall/bans", "封禁 IP", "IP", SeverityHigh),
 		Write("DELETE /api/admin/system/firewall/bans/:banId", "解除 IP 封禁", "IP 封禁", SeverityHigh),
 
+		// 防火墙工作台（规则集 v2）：运行态、设置、自定义规则、WAF 例外、规则目录、测试台
+		View("GET /api/admin/system/firewall/runtime", "查看防火墙运行态", ""),
+		View("GET /api/admin/system/firewall/settings", "查看防火墙设置", ""),
+		Write("PUT /api/admin/system/firewall/settings", "修改防火墙设置", "防火墙设置", SeverityHigh),
+		View("GET /api/admin/system/firewall/rules", "查看防火墙自定义规则", ""),
+		Write("POST /api/admin/system/firewall/rules", "新建防火墙规则", "防火墙规则", SeverityHigh),
+		Write("POST /api/admin/system/firewall/rules/reorder", "调整防火墙规则顺序", "防火墙规则", SeverityHigh),
+		View("POST /api/admin/system/firewall/rules/validate", "校验防火墙规则表达式", "防火墙规则"),
+		Write("PUT /api/admin/system/firewall/rules/:ruleId", "修改防火墙规则", "防火墙规则", SeverityHigh),
+		Write("PATCH /api/admin/system/firewall/rules/:ruleId", "启停防火墙规则", "防火墙规则", SeverityHigh),
+		Write("DELETE /api/admin/system/firewall/rules/:ruleId", "删除防火墙规则", "防火墙规则", SeverityHigh),
+		View("GET /api/admin/system/firewall/exclusions", "查看 WAF 例外", ""),
+		Write("POST /api/admin/system/firewall/exclusions", "新建 WAF 例外", "WAF 例外", SeverityHigh),
+		Write("PUT /api/admin/system/firewall/exclusions/:exclusionId", "修改 WAF 例外", "WAF 例外", SeverityHigh),
+		Write("PATCH /api/admin/system/firewall/exclusions/:exclusionId", "启停 WAF 例外", "WAF 例外", SeverityHigh),
+		Write("DELETE /api/admin/system/firewall/exclusions/:exclusionId", "删除 WAF 例外", "WAF 例外", SeverityHigh),
+		View("GET /api/admin/system/firewall/catalog", "查看 WAF 规则目录", ""),
+		View("GET /api/admin/system/firewall/catalog/rules/:ruleId", "查看 WAF 规则详情", "WAF 规则"),
+		View("GET /api/admin/system/firewall/directives", "查看 WAF 指令", ""),
+		View("POST /api/admin/system/firewall/sandbox", "防火墙测试台检测", "测试请求"),
+
 		// 地理封禁与地理围栏
 		View("GET /api/admin/system/firewall/geo-bans", "查看地区封禁规则", ""),
 		Write("POST /api/admin/system/firewall/geo-bans", "保存地区封禁规则", "地区封禁规则", SeverityHigh),

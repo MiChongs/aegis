@@ -34,6 +34,12 @@ func (h *Handler) AdminFirewallLogs(c *gin.Context) {
 		WAFRuleID:   req.WAFRuleID,
 		PathPattern: req.PathPattern,
 		Severity:    req.Severity,
+		Action:      req.Action,
+		Stage:       req.Stage,
+		Transport:   req.Transport,
+		AppKey:      req.AppKey,
+		RuleRef:     req.RuleRef,
+		Keyword:     req.Keyword,
 		Page:        req.Page,
 		PageSize:    req.PageSize,
 		SortBy:      req.SortBy,
@@ -109,8 +115,18 @@ func (h *Handler) AdminFirewallStats(c *gin.Context) {
 		}
 	}
 	granularity := "hour"
-	if req.Granularity == "day" {
+	switch req.Granularity {
+	case "day":
 		granularity = "day"
+	case "minute":
+		// 按分钟只给短窗口（实时视图），超过 6 小时自动退回按小时
+		if end.Sub(start) <= 6*time.Hour {
+			granularity = "minute"
+		}
+	}
+	if end.Sub(start) > 93*24*time.Hour {
+		response.Error(c, http.StatusBadRequest, 40000, "统计窗口最长 93 天")
+		return
 	}
 
 	stats, err := h.firewallLog.GetStats(c.Request.Context(), start, end, granularity)

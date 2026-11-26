@@ -1,18 +1,31 @@
 package middleware
 
-import "testing"
+import (
+	"testing"
 
-// TestSkipsBodyInspectionOnlyForAIRelay 只有 /api/ai/v1/ 免请求体检查，其余路径照常。
-func TestSkipsBodyInspectionOnlyForAIRelay(t *testing.T) {
+	"aegis/internal/config"
+)
+
+// TestBodyInspectableExemptsOnlyConfiguredPrefixes AI 中转、支付回调、邮件回调与管理端免请求体检查，其余路径照常。
+func TestBodyInspectableExemptsOnlyConfiguredPrefixes(t *testing.T) {
+	cfg := config.NormalizeFirewallConfig(config.FirewallConfig{})
+	state := &firewallState{cfg: cfg, bodyExempt: cfg.CorazaBodyExemptPrefixes}
 	for path, want := range map[string]bool{
-		"/api/ai/v1/chat/completions":        true,
-		"/api/ai/v1/messages":                true,
-		"/api/ai/v1x/chat":                   false,
-		"/api/apps/k/ai/v1/chat/completions": false,
-		"/api/v1/apps/k/auth/login":          false,
+		"/api/ai/v1/chat/completions":        false,
+		"/api/ai/v1/messages":                false,
+		"/api/ai/v1x/chat":                   true,
+		"/api/apps/k/ai/v1/chat/completions": true,
+		"/api/v1/apps/k/auth/login":          true,
+		"/api/public/pay/callback/alipay":    false,
+		"/api/email/webhook/mailgun/x":       false,
+		"/api/admin/system/risk/rules":       false,
 	} {
-		if got := skipsBodyInspection(path); got != want {
-			t.Errorf("skipsBodyInspection(%q) = %v，想要 %v", path, got, want)
+		if got := bodyInspectable(path, state); got != want {
+			t.Errorf("bodyInspectable(%q) = %v，想要 %v", path, got, want)
 		}
+	}
+	state.cfg.CorazaInspectAdminBody = true
+	if !bodyInspectable("/api/admin/system/risk/rules", state) {
+		t.Error("开启管理端请求体检查后应检查 /api/admin/")
 	}
 }

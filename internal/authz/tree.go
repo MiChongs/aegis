@@ -823,7 +823,17 @@ func permissionTree() []PermissionNode {
 
 		dir("security", "安全与风控", "shield-alert", ScopePlatform,
 			menu("security.firewall", "防火墙", "brick-wall", ScopePlatform,
-				act("system:firewall:read", "查看", sys, routes(under(mRead, pSystem+"/firewall"))),
+				act("system:firewall:read", "查看", sys, routes(
+					under(mRead, pSystem+"/firewall"),
+					// 测试台与表达式校验是 POST，但不改任何状态
+					rt([]string{http.MethodPost}, pSystem+"/firewall/sandbox"),
+					rt([]string{http.MethodPost}, pSystem+"/firewall/rules/validate"),
+				)),
+				act("system:firewall:policy", "规则、例外与设置", sys, routes(
+					under(mWrite, pSystem+"/firewall/rules"), rt(mWrite, pSystem+"/firewall/rules"),
+					under(mWrite, pSystem+"/firewall/exclusions"), rt(mWrite, pSystem+"/firewall/exclusions"),
+					rt(mWrite, pSystem+"/firewall/settings"),
+				), danger()),
 				act("system:firewall:log_clean", "清理日志", sys, routes(rt(mDelete, pSystem+"/firewall/logs")), danger()),
 				act("system:firewall:fence", "地理围栏", sys, routes(
 					under(mWrite, pSystem+"/firewall/geo-fences"),

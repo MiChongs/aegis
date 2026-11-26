@@ -134,19 +134,19 @@ GROUP BY 1`},
 
 	"firewall.severity": {global: true, sql: `
 SELECT COALESCE(NULLIF(severity, ''), ''), '', COUNT(*), COUNT(DISTINCT ip), 0::float8, 0::float8
-FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2
+FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2 AND action = 'block'
 GROUP BY 1`},
 	"firewall.rules": {global: true, sql: `
 SELECT COALESCE(waf_rule_id::text, NULLIF(reason, ''), ''), COALESCE(MAX(reason), ''), COUNT(*), COUNT(DISTINCT ip), 0::float8, 0::float8
-FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2
+FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2 AND action = 'block'
 GROUP BY 1 ORDER BY 3 DESC LIMIT 20`},
 	"firewall.countries": {global: true, sql: `
 SELECT COALESCE(NULLIF(country_code, ''), ''), COALESCE(MAX(country), ''), COUNT(*), COUNT(DISTINCT ip), 0::float8, 0::float8
-FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2
+FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2 AND action = 'block'
 GROUP BY 1 ORDER BY 3 DESC LIMIT 20`},
 	"firewall.paths": {global: true, sql: `
 SELECT COALESCE(NULLIF(path, ''), ''), '', COUNT(*), COUNT(DISTINCT ip), 0::float8, 0::float8
-FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2
+FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2 AND action = 'block'
 GROUP BY 1 ORDER BY 3 DESC LIMIT 20`},
 
 	"activity.prizes": {sql: `
@@ -228,7 +228,7 @@ WHERE n.appid = $1 AND nr.read_at >= $2 AND nr.read_at < $3
 GROUP BY 1`},
 	"firewall.daily": {global: true, tz: true, sql: `
 SELECT (blocked_at AT TIME ZONE $3::text)::date, COALESCE(NULLIF(severity, ''), 'unknown'), COUNT(*)::float8, 0::float8, 0::float8
-FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2
+FROM firewall_logs WHERE blocked_at >= $1 AND blocked_at < $2 AND action = 'block'
 GROUP BY 1, 2`},
 	"activity.daily": {tz: true, sql: `
 SELECT (created_at AT TIME ZONE $4::text)::date, '', COUNT(*)::float8,

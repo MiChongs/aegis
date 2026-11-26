@@ -182,7 +182,7 @@ func (r *Repository) PreviewGeoFence(ctx context.Context, m geodomain.FenceMutat
 			    AND CASE WHEN f.poly IS NOT NULL THEN ST_Intersects(e.geom, f.poly)
 			             ELSE ST_DWithin(e.geom, f.c, f.r) END),
 			(SELECT COUNT(*) FROM firewall_logs l, f
-			  WHERE l.blocked_at > NOW() - make_interval(days => $5) AND l.geom IS NOT NULL
+			  WHERE l.blocked_at > NOW() - make_interval(days => $5) AND l.action = 'block' AND l.geom IS NOT NULL
 			    AND CASE WHEN f.poly IS NOT NULL THEN ST_Intersects(l.geom, f.poly)
 			             ELSE ST_DWithin(l.geom, f.c, f.r) END)`,
 		strings.TrimSpace(m.FenceGeoJSON), m.CenterLat, m.CenterLng, m.RadiusM, windowDays,
@@ -370,7 +370,7 @@ func (r *Repository) RollupGeoStatsRange(ctx context.Context, kind string, start
 			       COALESCE(AVG(ST_X(geom::geometry)), 0),
 			       COUNT(*)
 			  FROM firewall_logs
-			 WHERE blocked_at >= $1 AND blocked_at < $2
+			 WHERE blocked_at >= $1 AND blocked_at < $2 AND action = 'block'
 			 GROUP BY 1, 3, 4, 5
 			ON CONFLICT (bucket, kind, country_code, city, geohash5)
 			DO UPDATE SET cnt = EXCLUDED.cnt, lat = EXCLUDED.lat, lng = EXCLUDED.lng`
@@ -465,7 +465,7 @@ func (r *Repository) QueryGeoClusters(ctx context.Context, since time.Time, epsD
 			SELECT ip, reason, geom::geometry AS g,
 			       ST_ClusterDBSCAN(geom::geometry, eps := $2, minpoints := $3) OVER () AS cid
 			  FROM firewall_logs
-			 WHERE blocked_at > $1 AND geom IS NOT NULL
+			 WHERE blocked_at > $1 AND action = 'block' AND geom IS NOT NULL
 		)
 		SELECT cid, COUNT(*), COUNT(DISTINCT ip),
 		       ST_Y(ST_Centroid(ST_Collect(g))), ST_X(ST_Centroid(ST_Collect(g))),

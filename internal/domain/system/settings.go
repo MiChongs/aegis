@@ -57,28 +57,47 @@ type SelfServiceSettingsPatch struct {
 }
 
 type FirewallSettingsView struct {
-	Enabled           bool       `json:"enabled"`
-	GlobalRate        string     `json:"globalRate"`
-	AuthRate          string     `json:"authRate"`
-	AdminRate         string     `json:"adminRate"`
-	CorazaEnabled     bool       `json:"corazaEnabled"`
-	CorazaParanoia    int        `json:"corazaParanoia"`
-	RequestBodyLimit  int        `json:"requestBodyLimit"`
-	RequestBodyMemory int        `json:"requestBodyMemory"`
-	AllowedCIDRs      []string   `json:"allowedCIDRs"`
-	BlockedCIDRs      []string   `json:"blockedCIDRs"`
-	BlockedUserAgents []string   `json:"blockedUserAgents"`
-	BlockedPathPrefix []string   `json:"blockedPathPrefix"`
-	MaxPathLength     int        `json:"maxPathLength"`
-	MaxQueryLength    int        `json:"maxQueryLength"`
+	Enabled           bool     `json:"enabled"`
+	GlobalRate        string   `json:"globalRate"`
+	AuthRate          string   `json:"authRate"`
+	AdminRate         string   `json:"adminRate"`
+	CorazaEnabled     bool     `json:"corazaEnabled"`
+	CorazaParanoia    int      `json:"corazaParanoia"`
+	RequestBodyLimit  int      `json:"requestBodyLimit"`
+	RequestBodyMemory int      `json:"requestBodyMemory"`
+	AllowedCIDRs      []string `json:"allowedCIDRs"`
+	BlockedCIDRs      []string `json:"blockedCIDRs"`
+	BlockedUserAgents []string `json:"blockedUserAgents"`
+	BlockedPathPrefix []string `json:"blockedPathPrefix"`
+	MaxPathLength     int      `json:"maxPathLength"`
+	MaxQueryLength    int      `json:"maxQueryLength"`
 	// IP 封禁响应模式（数据库驱动，平台级全局）
-	DefaultBanMode    string     `json:"defaultBanMode"`
-	TarpitDelayMs     int        `json:"tarpitDelayMs"`
-	Source            string     `json:"source"`
-	ReloadVersion     uint64     `json:"reloadVersion"`
-	ReloadedAt        time.Time  `json:"reloadedAt"`
-	UpdatedBy         *int64     `json:"updatedBy,omitempty"`
-	UpdatedAt         *time.Time `json:"updatedAt,omitempty"`
+	DefaultBanMode string `json:"defaultBanMode"`
+	TarpitDelayMs  int    `json:"tarpitDelayMs"`
+	BanRedirectURL string `json:"banRedirectUrl"`
+	// 规则集 v2（docs/firewall.md）
+	RulesetVersion           int        `json:"rulesetVersion"`
+	CorazaDetectionOnly      bool       `json:"corazaDetectionOnly"`
+	CorazaDetectionParanoia  int        `json:"corazaDetectionParanoia"`
+	CorazaAnomalyThreshold   int        `json:"corazaAnomalyThreshold"`
+	CorazaOutboundThreshold  int        `json:"corazaOutboundThreshold"`
+	CorazaResponseInspection bool       `json:"corazaResponseInspection"`
+	CorazaResponseBodyLimit  int        `json:"corazaResponseBodyLimit"`
+	CorazaRemovedRules       []string   `json:"corazaRemovedRules"`
+	CorazaDisabledGroups     []string   `json:"corazaDisabledGroups"`
+	CorazaInspectAdminBody   bool       `json:"corazaInspectAdminBody"`
+	CorazaBodyExemptPrefixes []string   `json:"corazaBodyExemptPrefixes"`
+	CorazaSensitiveArgs      []string   `json:"corazaSensitiveArgs"`
+	CorazaRichTextArgs       []string   `json:"corazaRichTextArgs"`
+	CorazaArgumentsLimit     int        `json:"corazaArgumentsLimit"`
+	CorazaExtraContentTypes  []string   `json:"corazaExtraContentTypes"`
+	TrustedCIDRs             []string   `json:"trustedCIDRs"`
+	BlockedSignatures        []string   `json:"blockedSignatures"`
+	Source                   string     `json:"source"`
+	ReloadVersion            uint64     `json:"reloadVersion"`
+	ReloadedAt               time.Time  `json:"reloadedAt"`
+	UpdatedBy                *int64     `json:"updatedBy,omitempty"`
+	UpdatedAt                *time.Time `json:"updatedAt,omitempty"`
 }
 
 type SecuritySettingsView struct {
@@ -175,6 +194,24 @@ type FirewallSettingsPatch struct {
 	MaxQueryLength    *int      `json:"maxQueryLength,omitempty"`
 	DefaultBanMode    *string   `json:"defaultBanMode,omitempty"`
 	TarpitDelayMs     *int      `json:"tarpitDelayMs,omitempty"`
+	BanRedirectURL    *string   `json:"banRedirectUrl,omitempty"`
+	// 规则集 v2：列表字段传空数组 = 显式清空（服务端转成 ["none"] 存，区别于「没填 = 用默认」）
+	CorazaDetectionOnly      *bool     `json:"corazaDetectionOnly,omitempty"`
+	CorazaDetectionParanoia  *int      `json:"corazaDetectionParanoia,omitempty"`
+	CorazaAnomalyThreshold   *int      `json:"corazaAnomalyThreshold,omitempty"`
+	CorazaOutboundThreshold  *int      `json:"corazaOutboundThreshold,omitempty"`
+	CorazaResponseInspection *bool     `json:"corazaResponseInspection,omitempty"`
+	CorazaResponseBodyLimit  *int      `json:"corazaResponseBodyLimit,omitempty"`
+	CorazaRemovedRules       *[]string `json:"corazaRemovedRules,omitempty"`
+	CorazaDisabledGroups     *[]string `json:"corazaDisabledGroups,omitempty"`
+	CorazaInspectAdminBody   *bool     `json:"corazaInspectAdminBody,omitempty"`
+	CorazaBodyExemptPrefixes *[]string `json:"corazaBodyExemptPrefixes,omitempty"`
+	CorazaSensitiveArgs      *[]string `json:"corazaSensitiveArgs,omitempty"`
+	CorazaRichTextArgs       *[]string `json:"corazaRichTextArgs,omitempty"`
+	CorazaArgumentsLimit     *int      `json:"corazaArgumentsLimit,omitempty"`
+	CorazaExtraContentTypes  *[]string `json:"corazaExtraContentTypes,omitempty"`
+	TrustedCIDRs             *[]string `json:"trustedCIDRs,omitempty"`
+	BlockedSignatures        *[]string `json:"blockedSignatures,omitempty"`
 }
 
 type SecuritySettingsPatch struct {

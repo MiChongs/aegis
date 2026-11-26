@@ -23,8 +23,18 @@ type ExtendedBanChecker interface {
 	CheckBan(ctx context.Context, ip string) (firewalldomain.BanDecision, error)
 }
 
+// ctxEventOverride 自定义规则借用封禁模式做响应时，事件仍要按「自定义规则」记（原因、规则编号、封禁时长）。
+const ctxEventOverride = "aegis.firewall.event_override"
+
+// applyBanModeWith 用封禁模式响应，但事件记成 detail 描述的那一条。
+func (f *Firewall) applyBanModeWith(c *gin.Context, ip string, dec firewalldomain.BanDecision, state *firewallState, detail *firewalldomain.EventDetail) {
+	c.Set(ctxEventOverride, detail)
+	f.applyBanMode(c, ip, dec, state)
+}
+
 // applyBanMode 根据决策执行对应的拦截行为。
-func (f *Firewall) applyBanMode(c *gin.Context, ip string, dec firewalldomain.BanDecision, state firewallState) {
+func (f *Firewall) applyBanMode(c *gin.Context, ip string, dec firewalldomain.BanDecision, state *firewallState) {
+	f.edgeBlocked.Add(1)
 	mode := firewalldomain.NormalizeBanMode(dec.Mode, state.cfg.DefaultBanMode)
 	reason := dec.Reason
 	if reason == "" {

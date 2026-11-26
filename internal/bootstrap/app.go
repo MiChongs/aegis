@@ -66,8 +66,10 @@ type APIApp struct {
 	// 横幅要把生效的判定方式说出来，否则「线上 IP 不对」只能靠猜配置。
 	ClientIP *clientip.Resolver
 	Firewall *middleware.Firewall
-	Security *service.SecurityService
-	Risk     *service.RiskService
+	// FirewallPolicy 防火墙自定义规则与 WAF 例外；后台循环回写规则命中数
+	FirewallPolicy *service.FirewallPolicyService
+	Security       *service.SecurityService
+	Risk           *service.RiskService
 	// Governance 平台治理：后台循环负责到期解冻与跨实例快照收敛，退出时必须 Stop
 	Governance *service.PlatformGovernanceService
 	// CloudStorage 用户云存储：后台循环清理过期回收站，退出时必须 Stop
@@ -396,6 +398,16 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		_ = redisClient.Close()
 		postgres.Close()
 		return nil, err
+	}
+	// 自定义规则里引用 country / asn 等变量时按需查归属地（防火墙自带 30 分钟缓存）
+	firewall.SetGeoResolver(func(ctx context.Context, ip string) middleware.GeoInfo {
+		loc := locationService.Resolve(ctx, ip)
+		return middleware.GeoInfo{Country: loc.CountryCode, Region: loc.Region, City: loc.City, ISP: loc.ISP, ASN: loc.Network.ASN}
+	})
+	// 防火墙策略（自定义规则 + WAF 例外）存库，启动时装进运行时（docs/firewall.md）
+	firewallPolicyService := service.NewFirewallPolicyService(log, pg, firewall)
+	if err := firewallPolicyService.Initialize(ctx); err != nil {
+		log.Warn("防火墙策略初始化失败（自定义规则与 WAF 例外暂不生效）", zap.Error(err))
 	}
 	// 流量管理以内置插件运行：中间件常驻在 Firewall 之后，插件停用时直通。
 	// 插件宿主在下面 Boot：读启停记录、加载（首次则初始化）流量配置。
@@ -916,6 +928,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 
 		Risk:            riskService,
 		FirewallLog:     firewallLogService,
+		FirewallPolicy:  firewallPolicyService,
 		IPBan:           ipBanService,
 		GeoBan:          geoBanService,
 		GeoFence:        geoFenceService,
@@ -958,6 +971,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	paymentService.SetCluster(clusterHandle)
 	suspensionService.SetCluster(clusterHandle)
 	systemService.SetCluster(clusterHandle)
+	firewallPolicyService.SetCluster(clusterHandle)
 	geoBanService.SetCluster(clusterHandle)
 	geoFenceService.SetCluster(clusterHandle)
 	pluginService.SetCluster(clusterHandle)
@@ -1003,6 +1017,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Monitor:            monitorService,
 		Memory:             memoryManager,
 		Firewall:           firewall,
+		FirewallPolicy:     firewallPolicyService,
 		Security:           securityService,
 		Risk:               riskService,
 		Governance:         governanceService,
@@ -1118,6 +1133,11 @@ func (a *APIApp) Start(ctx context.Context) error {
 		})
 	}
 	registerAPIConfigHotReload(a.ConfigManager, a.Logger, a.Firewall, a.Security, a.AutoSign, a.AccountBan, a.Risk, a.Egress)
+	if a.FirewallPolicy != nil {
+		SafeGo(a.Logger, a.CrashLog, "api.firewall_rule_hits", true, func() {
+			a.FirewallPolicy.RunHitFlusher(ctx)
+		})
+	}
 
 	SafeGo(a.Logger, a.CrashLog, "api.admin_session_cleanup", true, func() {
 		a.runAdminSessionCleanupLoop(ctx)

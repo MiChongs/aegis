@@ -1,60 +1,112 @@
 package middleware
 
 import (
-	"aegis/internal/config"
-	firewalldomain "aegis/internal/domain/firewall"
-	"aegis/internal/event"
-	"aegis/pkg/response"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
 	"net/netip"
-	"os"
-	"path"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
-	"github.com/corazawaf/coraza/v3"
-	corazatypes "github.com/corazawaf/coraza/v3/types"
+	"aegis/internal/config"
+	firewalldomain "aegis/internal/domain/firewall"
+	"aegis/internal/event"
+	fw "aegis/internal/firewall"
+	"aegis/pkg/response"
+
 	"github.com/gin-gonic/gin"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	redislib "github.com/redis/go-redis/v9"
 	"github.com/ulule/limiter/v3"
 	redisstore "github.com/ulule/limiter/v3/drivers/store/redis"
 	"go.uber.org/zap"
 )
 
+// 防火墙分两段（docs/firewall.md）：
+//
+//	Handler()    入口段：IP 白 / 黑名单、封禁、方法与长度、扫描器 UA、探测路径与快速签名、
+//	             自定义规则、限流。排在 ReplayGuard 与解密中间件之前，只看连接、请求行与请求头。
+//	WAFHandler() 载荷段：Coraza + CRS。排在 AppGateway / AppEncryption **之后**，
+//	             所以 Transport v2（sealed）与旧 X-Aegis-Encrypted 请求在这里已经是明文；
+//	             拦截响应写进解密中间件包好的 Writer，客户端收到的是加密过的错误信封，照常能解开。
+//
+// v1 把 Coraza 放在入口段：加密请求的请求体与 `_payload` 查询串在那里只是一段密文，
+// CRS 等于没检查；为了压误报又给所有 JSON 请求体关掉了 SQLi / XSS / RCE 规则。
+
+// CorazaAllowedMethods 与 firewall.AllowedMethods 相同，transport 层的路由核对测试引用它。
+const CorazaAllowedMethods = fw.AllowedMethods
+
+// 请求上下文里的防火墙标记（Handler 写、WAFHandler 读）。
+const (
+	ctxFirewallMark = "aegis.firewall.mark"
+	// ctxTransportKey 解密中间件写入的载荷来源（sealed / legacy），WAF 据此标注事件。
+	ctxTransportKey = "aegis.transport"
+)
+
+type firewallMark struct {
+	skipWAF bool
+	ruleRef int64
+}
+
+func markOf(c *gin.Context) *firewallMark {
+	if v, ok := c.Get(ctxFirewallMark); ok {
+		if m, ok := v.(*firewallMark); ok {
+			return m
+		}
+	}
+	m := &firewallMark{}
+	c.Set(ctxFirewallMark, m)
+	return m
+}
+
+// SetRequestTransport 由解密中间件调用：这次请求的载荷是从哪种加密里解出来的。
+func SetRequestTransport(c *gin.Context, transport string) {
+	c.Set(ctxTransportKey, transport)
+}
+
 type firewallState struct {
 	cfg               config.FirewallConfig
-	waf               coraza.WAF
+	waf               *fw.WAF
+	rules             *fw.RuleSet
+	ruleErrors        []string
+	exclusions        int
 	globalLimiter     *limiter.Limiter
 	authLimiter       *limiter.Limiter
 	adminLimiter      *limiter.Limiter
-	allowedCIDRs      []netip.Prefix
-	blockedCIDRs      []netip.Prefix
+	allowed           *fw.IPSet
+	blocked           *fw.IPSet
+	trusted           *fw.IPSet
 	blockedUserAgents []string
 	blockedPathPrefix []string
 	blockedFragments  []string
+	bodyExempt        []string
 }
 
-type FirewallSnapshot struct {
-	Config         config.FirewallConfig
-	ReloadVersion  uint64
-	ReloadedAt     time.Time
-	RuntimeEnabled bool
-}
+// FirewallSnapshot 当前运行态（类型定义在引擎包，避免 service ↔ middleware 成环）。
+type FirewallSnapshot = fw.Snapshot
+
+// FirewallCounters 本副本计数。
+type FirewallCounters = fw.Counters
 
 // BanChecker 动态 IP 封禁检查接口
 type BanChecker interface {
 	IsBanned(ctx context.Context, ip string) (bool, error)
 }
+
+// GeoInfo 自定义规则用到的归属地。
+type GeoInfo struct {
+	Country, Region, City, ISP, ASN string
+}
+
+// GeoResolver 查 IP 归属地（可能走远程接口，防火墙自己会缓存）。
+type GeoResolver func(ctx context.Context, ip string) GeoInfo
 
 type Firewall struct {
 	log         *zap.Logger
@@ -62,38 +114,69 @@ type Firewall struct {
 	keyPrefix   string
 	publisher   *event.Publisher
 	banChecker  BanChecker
-	mu          sync.RWMutex
-	state       firewallState
-	reloadedAt  time.Time
-	version     uint64
+
+	state      atomic.Pointer[firewallState]
+	reloadMu   sync.Mutex
+	version    atomic.Uint64
+	reloadedAt atomic.Pointer[time.Time]
+
+	// 规则与例外来自数据库（FirewallPolicyService 加载后 SetPolicy），配置来自平台设置（Reload）。
+	policyMu   sync.Mutex
+	rules      []fw.CustomRule
+	exclusions []fw.Exclusion
+
+	geo      GeoResolver
+	geoCache *expirable.LRU[string, GeoInfo]
+	// observed 观察类事件去重：同一来源同一条规则一分钟只记一次，观察模式不至于把表写爆。
+	observed *expirable.LRU[string, struct{}]
+
+	inspected, edgeBlocked, wafBlocked, observedCount, decrypted, wafErrors atomic.Int64
+	wafNanos                                                                atomic.Int64
+	startedAt                                                               time.Time
 }
 
 func NewFirewall(cfg config.FirewallConfig, log *zap.Logger, redisClient *redislib.Client, keyPrefix string, publisher *event.Publisher, banChecker BanChecker) (*Firewall, error) {
 	if log == nil {
 		log = zap.NewNop()
 	}
-
-	firewall := &Firewall{
+	f := &Firewall{
 		log:         log,
 		redisClient: redisClient,
 		keyPrefix:   keyPrefix,
 		publisher:   publisher,
 		banChecker:  banChecker,
+		geoCache:    expirable.NewLRU[string, GeoInfo](50000, nil, 30*time.Minute),
+		observed:    expirable.NewLRU[string, struct{}](20000, nil, time.Minute),
+		startedAt:   time.Now().UTC(),
 	}
-	if err := firewall.Reload(cfg); err != nil {
+	if err := f.Reload(cfg); err != nil {
 		return nil, err
 	}
-	return firewall, nil
+	return f, nil
 }
+
+// SetGeoResolver 注入归属地查询（只有引用了 country / asn 等变量的自定义规则会用到）。
+func (f *Firewall) SetGeoResolver(resolver GeoResolver) {
+	if f != nil {
+		f.geo = resolver
+	}
+}
+
+func (f *Firewall) current() *firewallState {
+	if f == nil {
+		return nil
+	}
+	return f.state.Load()
+}
+
+// ──────────────────────────────────────
+// 入口段
+// ──────────────────────────────────────
 
 func (f *Firewall) Handler() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if f == nil {
-			c.Next()
-			return
-		}
-		state := f.snapshotState()
-		if !state.cfg.Enabled {
+		state := f.current()
+		if state == nil || !state.cfg.Enabled {
 			c.Next()
 			return
 		}
@@ -105,13 +188,19 @@ func (f *Firewall) Handler() gin.HandlerFunc {
 		}
 
 		ip := sanitizeIP(c.ClientIP())
-		if ip == "" {
+		addr, err := netip.ParseAddr(ip)
+		if err != nil {
 			f.block(c, http.StatusForbidden, 40390, "invalid_ip", "当前请求已被安全策略拦截")
 			return
 		}
+		addr = addr.Unmap()
 
-		if blocked, reason := blockByCIDR(state, ip); blocked {
-			f.block(c, http.StatusForbidden, 40391, reason, "当前请求已被安全策略拦截")
+		if !state.allowed.Empty() && !state.allowed.Contains(addr) {
+			f.block(c, http.StatusForbidden, 40391, "not_in_allowlist", "当前请求已被安全策略拦截")
+			return
+		}
+		if state.blocked.Contains(addr) {
+			f.block(c, http.StatusForbidden, 40391, "blocked_cidr", "当前请求已被安全策略拦截")
 			return
 		}
 		if f.banChecker != nil {
@@ -121,14 +210,16 @@ func (f *Firewall) Handler() gin.HandlerFunc {
 					return
 				}
 			} else if banned, _ := f.banChecker.IsBanned(c.Request.Context(), ip); banned {
-				// 回退：未实现 ExtendedBanChecker，按默认模式处理
-				f.applyBanMode(c, ip, firewalldomain.BanDecision{
-					Banned: true,
-					Mode:   state.cfg.DefaultBanMode,
-					Reason: "banned_ip",
-				}, state)
+				f.applyBanMode(c, ip, firewalldomain.BanDecision{Banned: true, Mode: state.cfg.DefaultBanMode, Reason: "banned_ip"}, state)
 				return
 			}
+		}
+		mark := markOf(c)
+		// 可信网段：封禁之后、其余检查之前。监控探针与办公出口不该被签名、限流和 WAF 误伤。
+		if state.trusted.Contains(addr) {
+			mark.skipWAF = true
+			c.Next()
+			return
 		}
 		if blockedMethod(c.Request.Method) {
 			f.block(c, http.StatusNotImplemented, 50190, "blocked_method", "服务能力暂未开放")
@@ -139,7 +230,7 @@ func (f *Firewall) Handler() gin.HandlerFunc {
 			return
 		}
 		rawQuery := c.Request.URL.RawQuery
-		if state.cfg.MaxQueryLength > 0 && len(rawQuery) > state.cfg.MaxQueryLength {
+		if state.cfg.MaxQueryLength > 0 && len(rawQuery) > state.cfg.MaxQueryLength && !hasEncryptedQuery(c.Request) {
 			f.block(c, http.StatusForbidden, 40393, "query_too_long", "当前请求已被安全策略拦截")
 			return
 		}
@@ -151,78 +242,613 @@ func (f *Firewall) Handler() gin.HandlerFunc {
 			f.block(c, http.StatusForbidden, 40395, reason, "当前请求已被安全策略拦截")
 			return
 		}
+		if !state.rules.Empty() {
+			if f.applyCustomRules(c, state, ip, mark) {
+				return
+			}
+			if mark.ruleRef < 0 { // allow：跳过限流与 WAF
+				c.Next()
+				return
+			}
+		}
 		if limited, resetAt := f.rateLimit(state, c, ip); limited {
 			retryAfter := maxInt64(1, resetAt-time.Now().Unix())
 			c.Header("Retry-After", strconv.FormatInt(retryAfter, 10))
 			f.block(c, http.StatusTooManyRequests, 42900, "rate_limited", "请求过于频繁，请稍后再试")
 			return
 		}
-		if state.waf != nil {
-			if interrupted, err := f.inspectRequest(state, c, ip); err != nil {
-				f.log.Error("firewall coraza inspect failed",
-					zap.Error(err),
-					zap.String("method", c.Request.Method),
-					zap.String("path", c.Request.URL.Path),
-					zap.String("ip", ip),
-					zap.String("request_id", requestID(c)),
-				)
-				f.block(c, http.StatusServiceUnavailable, 50310, "waf_processing_error", "服务维护中，请稍后再试")
-				return
-			} else if interrupted != nil {
-				f.blockCoraza(c, interrupted)
-				return
-			}
-		}
-
 		c.Next()
 	}
 }
 
+// hasEncryptedQuery 加密 GET 的查询串是 `_payload=<密文>`，长度随明文膨胀约 1.4 倍，不按明文的上限卡。
+func hasEncryptedQuery(req *http.Request) bool {
+	return claimsEncryption(req) && strings.HasPrefix(req.URL.RawQuery, "_payload=")
+}
+
+// claimsEncryption 客户端声明了加密载荷（入口段还没解开，只看声明）。
+func claimsEncryption(req *http.Request) bool {
+	if strings.TrimSpace(req.Header.Get(gwHeaderProtocol)) != "" {
+		return true
+	}
+	return isEncryptedRequest(req)
+}
+
+// applyCustomRules 求值自定义规则；返回 true 表示请求已被拦截。allow 动作用 mark.ruleRef = -1 告知调用方。
+func (f *Firewall) applyCustomRules(c *gin.Context, state *firewallState, ip string, mark *firewallMark) bool {
+	env := f.ruleEnv(c, state, ip)
+	terminal, logged := state.rules.Evaluate(env)
+	for _, rule := range logged {
+		f.emitObserved(c, rule.ID, "custom_log", firewalldomain.EventDetail{
+			Action: firewalldomain.EventActionLog, Stage: firewalldomain.StageEdge, RuleRef: rule.ID, RuleName: rule.Name,
+		})
+	}
+	if terminal == nil {
+		return false
+	}
+	switch terminal.Action {
+	case fw.ActionAllow:
+		mark.skipWAF = true
+		mark.ruleRef = -1
+	case fw.ActionSkipWAF:
+		mark.skipWAF = true
+		mark.ruleRef = terminal.ID
+	case fw.ActionBlock:
+		f.edgeBlocked.Add(1)
+		detail := firewalldomain.EventDetail{
+			Action: firewalldomain.EventActionBlock, Stage: firewalldomain.StageEdge,
+			RuleRef: terminal.ID, RuleName: terminal.Name, BanSeconds: terminal.BanSeconds,
+		}
+		mode := strings.TrimSpace(terminal.BlockMode)
+		if mode == "" || mode == firewalldomain.BanModeForbidden {
+			f.log.Warn("firewall custom rule blocked request",
+				zap.Int64("rule_id", terminal.ID), zap.String("rule", terminal.Name),
+				zap.String("ip", ip), zap.String("path", c.Request.URL.Path), zap.String("request_id", requestID(c)))
+			response.Error(c, http.StatusForbidden, 40395, "当前请求已被安全策略拦截")
+			c.Abort()
+			f.emitEvent(c, "custom_rule", http.StatusForbidden, 40395, detail, nil, "", "")
+			return true
+		}
+		// 自定义响应方式复用封禁模式（伪装 404、拖延、蜜罐……）；事件仍按自定义规则记。
+		f.applyBanModeWith(c, ip, firewalldomain.BanDecision{Banned: true, Mode: mode, Reason: "custom_rule"}, state, &detail)
+		return true
+	}
+	return false
+}
+
+func (f *Firewall) ruleEnv(c *gin.Context, state *firewallState, ip string) *fw.RuleEnv {
+	req := c.Request
+	headers := make(map[string]string, len(req.Header))
+	for key, values := range req.Header {
+		if len(values) > 0 {
+			headers[strings.ToLower(key)] = values[0]
+		}
+	}
+	args := map[string]string{}
+	if !hasEncryptedQuery(req) {
+		for key, values := range req.URL.Query() {
+			if len(values) > 0 {
+				args[key] = values[0]
+			}
+		}
+	}
+	env := &fw.RuleEnv{
+		IP:          ip,
+		Method:      req.Method,
+		Path:        req.URL.Path,
+		Query:       req.URL.RawQuery,
+		Host:        req.Host,
+		UA:          req.Header.Get("User-Agent"),
+		Referer:     req.Header.Get("Referer"),
+		ContentType: req.Header.Get("Content-Type"),
+		Headers:     headers,
+		Args:        args,
+		App:         appKeyFromGatewayPath(req.URL.Path),
+		Encrypted:   claimsEncryption(req),
+	}
+	env.FillTime(time.Now())
+	if state.rules.NeedGeo() {
+		geo := f.lookupGeo(req.Context(), ip)
+		env.Country, env.Region, env.City, env.ISP, env.ASN = geo.Country, geo.Region, geo.City, geo.ISP, geo.ASN
+	}
+	return env
+}
+
+func (f *Firewall) lookupGeo(ctx context.Context, ip string) GeoInfo {
+	if f.geo == nil {
+		return GeoInfo{}
+	}
+	if cached, ok := f.geoCache.Get(ip); ok {
+		return cached
+	}
+	ctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	info := f.geo(ctx, ip)
+	f.geoCache.Add(ip, info)
+	return info
+}
+
+// ──────────────────────────────────────
+// 载荷段（解密之后）
+// ──────────────────────────────────────
+
+// WAFHandler 解密之后的 Coraza 检测。必须注册在 AppGateway 与 AppEncryption 之后。
+func (f *Firewall) WAFHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		state := f.current()
+		if state == nil || !state.cfg.Enabled || state.waf == nil {
+			c.Next()
+			return
+		}
+		path := c.Request.URL.Path
+		if path == "/healthz" || path == "/readyz" || path == "/api/ws" {
+			c.Next()
+			return
+		}
+		if mark := markOf(c); mark.skipWAF {
+			c.Next()
+			return
+		}
+		transport := firewalldomain.TransportPlain
+		if v := c.GetString(ctxTransportKey); v != "" {
+			transport = v
+			f.decrypted.Add(1)
+		}
+
+		started := time.Now()
+		body, inspectBody, err := f.readBodyForInspection(c.Request, state)
+		if errors.Is(err, fw.ErrBodyTooLarge) {
+			f.wafBlocked.Add(1)
+			response.Error(c, http.StatusRequestEntityTooLarge, 41390, "请求体超过安全检查上限")
+			c.Abort()
+			f.emitEvent(c, "body_too_large", http.StatusRequestEntityTooLarge, 41390, firewalldomain.EventDetail{
+				Action: firewalldomain.EventActionBlock, Stage: firewalldomain.StagePayload, Transport: transport,
+			}, nil, "", "")
+			return
+		}
+		if err != nil {
+			f.wafError(c, err, transport)
+			return
+		}
+
+		headers := c.Request.Header
+		contentLength := int64(-1)
+		if inspectBody {
+			contentLength = int64(len(body))
+			if effective := fw.EffectiveContentType(headers.Get("Content-Type"), body); effective != headers.Get("Content-Type") {
+				headers = headers.Clone()
+				headers.Set("Content-Type", effective)
+			}
+		}
+		uri := c.Request.URL.EscapedPath()
+		if c.Request.URL.RawQuery != "" {
+			uri += "?" + c.Request.URL.RawQuery
+		}
+		_, port := splitRemote(c.Request.RemoteAddr)
+		txn, res := state.waf.Begin(fw.Request{
+			RemoteIP: sanitizeIP(c.ClientIP()), RemotePort: port, Method: c.Request.Method, URI: uri,
+			Proto: c.Request.Proto, Host: c.Request.Host, Headers: headers, Transport: transport, ContentLength: contentLength,
+		})
+		closeTxn := func() {
+			if err := txn.Close(); err != nil {
+				f.log.Debug("firewall coraza close failed", zap.Error(err))
+			}
+		}
+		if res == nil {
+			var reader io.Reader
+			if inspectBody && len(body) > 0 && txn.BodyAccessible() {
+				reader = bytes.NewReader(body)
+			}
+			res, err = txn.RequestBody(reader)
+			if err != nil {
+				closeTxn()
+				f.wafError(c, err, transport)
+				return
+			}
+		}
+		f.inspected.Add(1)
+		f.wafNanos.Add(time.Since(started).Nanoseconds())
+
+		if res.Interrupted {
+			closeTxn()
+			f.blockWAF(c, res, transport)
+			return
+		}
+		if res.WouldBlock {
+			f.recordObserved(c, res, transport, firewalldomain.StagePayload, "waf_observed")
+		}
+
+		if !txn.ResponseAccessible() {
+			closeTxn()
+			c.Next()
+			return
+		}
+		tee := newWAFResponseTee(c.Writer, state.waf.ResponseBodyLimit())
+		c.Writer = tee
+		c.Next()
+		c.Writer = tee.ResponseWriter
+		out, err := txn.Response(tee.Status(), tee.Header(), tee.captured.Bytes())
+		closeTxn()
+		if err != nil {
+			f.log.Debug("firewall outbound inspection failed", zap.Error(err))
+			return
+		}
+		if out != nil && out.WouldBlock && out.OutboundScore > 0 {
+			f.recordObserved(c, out, transport, firewalldomain.StageResponse, "waf_outbound")
+		}
+	}
+}
+
+// readBodyForInspection 读出要检查的请求体并原样接回请求。
+//
+//   - 管理端（未开启管理端请求体检查）与豁免前缀：不读，phase 1 的 ctl:requestBodyAccess=Off 同样会跳过；
+//   - 超出上限的文件上传：已读的前缀接回原流，只检查头与 URI（截断的 multipart 喂给 WAF 只会解析失败）；
+//   - 其余类型超限：ErrBodyTooLarge。
+//
+// 旧加密（AppEncryption）解出来的明文在临时文件里：读完要 Close 原 Body，临时文件才会被删。
+func (f *Firewall) readBodyForInspection(req *http.Request, state *firewallState) ([]byte, bool, error) {
+	if req.Body == nil || req.Body == http.NoBody || !bodyInspectable(req.URL.Path, state) {
+		return nil, false, nil
+	}
+	limit := int64(state.waf.RequestBodyLimit())
+	original := req.Body
+	body, err := io.ReadAll(io.LimitReader(original, limit+1))
+	if err != nil {
+		return nil, false, fmt.Errorf("读取请求体: %w", err)
+	}
+	if int64(len(body)) > limit {
+		if isFileUploadContentType(req.Header.Get("Content-Type")) {
+			req.Body = struct {
+				io.Reader
+				io.Closer
+			}{io.MultiReader(bytes.NewReader(body), original), original}
+			return nil, false, nil
+		}
+		_ = original.Close()
+		req.Body = http.NoBody
+		return nil, false, fw.ErrBodyTooLarge
+	}
+	_ = original.Close()
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	return body, true, nil
+}
+
+func bodyInspectable(path string, state *firewallState) bool {
+	// 防火墙自己的管理接口（测试台请求体就是攻击样本），与 directives 里的 1100099 对应
+	if strings.HasPrefix(path, "/api/admin/system/firewall/") {
+		return false
+	}
+	if !state.cfg.CorazaInspectAdminBody && strings.HasPrefix(path, "/api/admin/") {
+		return false
+	}
+	for _, prefix := range state.bodyExempt {
+		if strings.HasPrefix(path, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+func isFileUploadContentType(contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	return strings.HasPrefix(contentType, "multipart/form-data") || strings.HasPrefix(contentType, "application/octet-stream")
+}
+
+func splitRemote(remote string) (string, int) {
+	host, port, err := net.SplitHostPort(remote)
+	if err != nil {
+		return remote, 0
+	}
+	n, _ := strconv.Atoi(port)
+	return host, n
+}
+
+func (f *Firewall) wafError(c *gin.Context, err error, transport string) {
+	f.wafErrors.Add(1)
+	f.log.Error("firewall coraza inspect failed",
+		zap.Error(err),
+		zap.String("method", c.Request.Method),
+		zap.String("path", c.Request.URL.Path),
+		zap.String("ip", sanitizeIP(c.ClientIP())),
+		zap.String("request_id", requestID(c)),
+	)
+	response.Error(c, http.StatusServiceUnavailable, 50310, "服务维护中，请稍后再试")
+	c.Abort()
+	f.emitEvent(c, "waf_processing_error", http.StatusServiceUnavailable, 50310, firewalldomain.EventDetail{
+		Action: firewalldomain.EventActionBlock, Stage: firewalldomain.StagePayload, Transport: transport,
+	}, nil, "", "")
+}
+
+func (f *Firewall) blockWAF(c *gin.Context, res *fw.Result, transport string) {
+	f.wafBlocked.Add(1)
+	status := res.Status
+	if status < 400 || status > 599 {
+		status = http.StatusForbidden
+	}
+	f.log.Warn("firewall coraza blocked request",
+		zap.Int("rule_id", res.RuleID),
+		zap.Int("score", res.InboundScore),
+		zap.String("transport", transport),
+		zap.String("method", c.Request.Method),
+		zap.String("path", c.Request.URL.Path),
+		zap.String("ip", sanitizeIP(c.ClientIP())),
+		zap.String("request_id", requestID(c)),
+		zap.String("rules", summarizeMatches(res.Matches)),
+	)
+	response.Error(c, status, 40396, "当前请求已被安全策略拦截")
+	c.Abort()
+	ruleID := primaryRule(res)
+	f.emitEvent(c, "waf_blocked", status, 40396, firewalldomain.EventDetail{
+		Action: firewalldomain.EventActionBlock, Stage: firewalldomain.StagePayload, Transport: transport,
+		AnomalyScore: res.InboundScore, Matches: toDomainMatches(res.Matches),
+	}, &ruleID, res.Action, primaryData(res))
+}
+
+// recordObserved 观察模式的「本该拦截」与出站命中：只记事件、不改响应，按来源 + 规则一分钟去重。
+func (f *Firewall) recordObserved(c *gin.Context, res *fw.Result, transport, stage, reason string) {
+	f.observedCount.Add(1)
+	ruleID := primaryRule(res)
+	key := sanitizeIP(c.ClientIP()) + "|" + reason + "|" + strconv.Itoa(ruleID) + "|" + c.Request.URL.Path
+	if _, seen := f.observed.Get(key); seen {
+		return
+	}
+	f.observed.Add(key, struct{}{})
+	score := res.InboundScore
+	if stage == firewalldomain.StageResponse {
+		score = res.OutboundScore
+	}
+	f.emitEvent(c, reason, 0, 0, firewalldomain.EventDetail{
+		Action: firewalldomain.EventActionObserve, Stage: stage, Transport: transport,
+		AnomalyScore: score, Matches: toDomainMatches(res.Matches),
+	}, &ruleID, res.Action, primaryData(res))
+}
+
+// emitObserved 自定义规则的 log 动作（同样去重）。
+func (f *Firewall) emitObserved(c *gin.Context, ruleID int64, reason string, detail firewalldomain.EventDetail) {
+	key := sanitizeIP(c.ClientIP()) + "|" + reason + "|" + strconv.FormatInt(ruleID, 10)
+	if _, seen := f.observed.Get(key); seen {
+		return
+	}
+	f.observed.Add(key, struct{}{})
+	f.emitEvent(c, reason, 0, 0, detail, nil, "", "")
+}
+
+// primaryRule 事件的「主规则」：真正命中攻击特征的那条，而不是 949110 这种汇总评估。
+func primaryRule(res *fw.Result) int {
+	best, bestRank := 0, -1
+	for _, m := range res.Matches {
+		if m.RuleID == 949110 || m.RuleID == 959100 || m.RuleID == 980170 {
+			continue
+		}
+		rank := map[string]int{"critical": 4, "error": 3, "warning": 2, "notice": 1}[m.Severity]
+		if rank > bestRank {
+			best, bestRank = m.RuleID, rank
+		}
+	}
+	if best == 0 {
+		return res.RuleID
+	}
+	return best
+}
+
+func primaryData(res *fw.Result) string {
+	id := primaryRule(res)
+	for _, m := range res.Matches {
+		if m.RuleID == id {
+			return m.Data
+		}
+	}
+	return ""
+}
+
+func summarizeMatches(matches []fw.Match) string {
+	parts := make([]string, 0, len(matches))
+	for _, m := range matches {
+		parts = append(parts, strconv.Itoa(m.RuleID))
+	}
+	return strings.Join(parts, ",")
+}
+
+func toDomainMatches(matches []fw.Match) []firewalldomain.MatchedRule {
+	out := make([]firewalldomain.MatchedRule, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, firewalldomain.MatchedRule{
+			ID: m.RuleID, Message: m.Message, Data: m.Data, Severity: m.Severity,
+			Phase: m.Phase, Group: m.Group, Tags: m.Tags, Targets: m.Targets,
+		})
+	}
+	return out
+}
+
+// wafResponseTee 出站检测：响应照常流式写出，同时截一段（上限内）副本给 WAF。不缓冲、不改写。
+type wafResponseTee struct {
+	gin.ResponseWriter
+	captured bytes.Buffer
+	limit    int
+}
+
+func newWAFResponseTee(w gin.ResponseWriter, limit int) *wafResponseTee {
+	return &wafResponseTee{ResponseWriter: w, limit: limit}
+}
+
+func (w *wafResponseTee) capture(p []byte) {
+	if room := w.limit - w.captured.Len(); room > 0 {
+		ct := strings.ToLower(w.Header().Get("Content-Type"))
+		if strings.Contains(ct, "event-stream") {
+			return
+		}
+		if len(p) > room {
+			p = p[:room]
+		}
+		w.captured.Write(p)
+	}
+}
+
+func (w *wafResponseTee) Write(p []byte) (int, error) {
+	w.capture(p)
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *wafResponseTee) WriteString(s string) (int, error) {
+	w.capture([]byte(s))
+	return w.ResponseWriter.WriteString(s)
+}
+
+// ──────────────────────────────────────
+// 配置与热更新
+// ──────────────────────────────────────
+
 func (f *Firewall) ValidateConfig(cfg config.FirewallConfig) error {
-	_, err := f.buildState(cfg)
+	f.policyMu.Lock()
+	rules, exclusions := f.rules, f.exclusions
+	f.policyMu.Unlock()
+	state, err := f.buildState(cfg, rules, exclusions)
+	if err == nil && state.waf != nil {
+		_ = state.waf.Close()
+	}
 	return err
 }
 
-func (f *Firewall) Reload(cfg config.FirewallConfig) error {
-	state, err := f.buildState(cfg)
+// ValidatePolicy 用当前配置试编译一组规则与例外（保存前调用；例外拼错会让整个 WAF 编译失败）。
+func (f *Firewall) ValidatePolicy(rules []fw.CustomRule, exclusions []fw.Exclusion) error {
+	for _, e := range exclusions {
+		if err := fw.ValidateExclusion(e); err != nil {
+			return fmt.Errorf("WAF 例外 %s：%w", e.Name, err)
+		}
+	}
+	state, err := f.buildState(f.CurrentConfig(), rules, exclusions)
 	if err != nil {
 		return err
 	}
-	f.mu.Lock()
-	f.state = state
-	f.version++
-	f.reloadedAt = time.Now().UTC()
-	version := f.version
-	reloadedAt := f.reloadedAt
-	enabled := state.cfg.Enabled
-	corazaEnabled := state.cfg.CorazaEnabled && state.waf != nil
-	f.mu.Unlock()
+	if len(state.ruleErrors) > 0 {
+		return errors.New(strings.Join(state.ruleErrors, "；"))
+	}
+	if state.waf != nil {
+		_ = state.waf.Close()
+	}
+	return nil
+}
 
+// TestWAF 用当前配置 + 给定例外编译一份临时 WAF（测试台用，不影响线上）。调用方负责 Close。
+func (f *Firewall) TestWAF(exclusions []fw.Exclusion) (*fw.WAF, error) {
+	return fw.CompileWAF(firewallOptions(f.CurrentConfig(), exclusions))
+}
+
+// CurrentWAF 线上正在用的 WAF（可能为 nil）。只读使用，不要 Close。
+func (f *Firewall) CurrentWAF() *fw.WAF {
+	if state := f.current(); state != nil {
+		return state.waf
+	}
+	return nil
+}
+
+func (f *Firewall) Reload(cfg config.FirewallConfig) error {
+	f.policyMu.Lock()
+	rules, exclusions := f.rules, f.exclusions
+	f.policyMu.Unlock()
+	return f.install(cfg, rules, exclusions)
+}
+
+// SetPolicy 换上数据库里的自定义规则与 WAF 例外（启动加载、控制台保存、集群广播都走这里）。
+func (f *Firewall) SetPolicy(rules []fw.CustomRule, exclusions []fw.Exclusion) error {
+	f.policyMu.Lock()
+	f.rules = rules
+	f.exclusions = exclusions
+	f.policyMu.Unlock()
+	return f.install(f.CurrentConfig(), rules, exclusions)
+}
+
+func (f *Firewall) install(cfg config.FirewallConfig, rules []fw.CustomRule, exclusions []fw.Exclusion) error {
+	f.reloadMu.Lock()
+	defer f.reloadMu.Unlock()
+	state, err := f.buildState(cfg, rules, exclusions)
+	if err != nil {
+		return err
+	}
+	old := f.state.Swap(state)
+	version := f.version.Add(1)
+	now := time.Now().UTC()
+	f.reloadedAt.Store(&now)
+	if old != nil && old.waf != nil && old.waf != state.waf {
+		// 旧实例上可能还有正在跑的事务：晚一点再释放。
+		retired := old.waf
+		time.AfterFunc(30*time.Second, func() { _ = retired.Close() })
+	}
+	for _, msg := range state.ruleErrors {
+		f.log.Error("firewall custom rule skipped", zap.String("error", msg))
+	}
 	f.log.Info("firewall settings reloaded",
 		zap.Uint64("version", version),
-		zap.Time("reloaded_at", reloadedAt),
-		zap.Bool("enabled", enabled),
-		zap.Bool("coraza_enabled", corazaEnabled),
+		zap.Bool("enabled", state.cfg.Enabled),
+		zap.Bool("coraza_enabled", state.waf != nil),
+		zap.Bool("detection_only", state.cfg.CorazaDetectionOnly),
+		zap.Int("anomaly_threshold", state.cfg.CorazaAnomalyThreshold),
+		zap.Int("custom_rules", len(state.rules.Rules())),
+		zap.Int("waf_exclusions", state.exclusions),
 	)
 	return nil
 }
 
 func (f *Firewall) Snapshot() FirewallSnapshot {
-	if f == nil {
+	state := f.current()
+	if state == nil {
 		return FirewallSnapshot{}
 	}
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return FirewallSnapshot{
-		Config:         f.state.cfg,
-		ReloadVersion:  f.version,
-		ReloadedAt:     f.reloadedAt,
-		RuntimeEnabled: f.state.cfg.Enabled,
+	snap := FirewallSnapshot{
+		Config:         state.cfg,
+		ReloadVersion:  f.version.Load(),
+		RuntimeEnabled: state.cfg.Enabled,
+		WAFActive:      state.cfg.Enabled && state.waf != nil,
+		CustomRules:    len(state.rules.Rules()),
+		RuleErrors:     state.ruleErrors,
+		Exclusions:     state.exclusions,
+		Counters:       f.Counters(),
+	}
+	if t := f.reloadedAt.Load(); t != nil {
+		snap.ReloadedAt = *t
+	}
+	if state.waf != nil {
+		snap.Catalog = state.waf.Catalog()
+		snap.Directives = state.waf.Directives()
+	}
+	return snap
+}
+
+// Counters 本副本计数。
+func (f *Firewall) Counters() FirewallCounters {
+	inspected := f.inspected.Load()
+	avg := int64(0)
+	if inspected > 0 {
+		avg = f.wafNanos.Load() / inspected / 1000
+	}
+	return FirewallCounters{
+		Inspected: inspected, EdgeBlocked: f.edgeBlocked.Load(), WAFBlocked: f.wafBlocked.Load(),
+		Observed: f.observedCount.Load(), Decrypted: f.decrypted.Load(), WAFErrors: f.wafErrors.Load(),
+		AvgWAFMicros: avg, StartedAt: f.startedAt,
 	}
 }
 
+// TakeRuleHits 取走自上次以来各自定义规则的命中数（FirewallPolicyService 定时累加进库）。
+func (f *Firewall) TakeRuleHits() map[int64]int64 {
+	state := f.current()
+	if state == nil {
+		return nil
+	}
+	out := map[int64]int64{}
+	for _, rule := range state.rules.Rules() {
+		if n := rule.TakeHits(); n > 0 {
+			out[rule.ID] = n
+		}
+	}
+	return out
+}
+
 func (f *Firewall) CurrentConfig() config.FirewallConfig {
-	return f.Snapshot().Config
+	if state := f.current(); state != nil {
+		return state.cfg
+	}
+	return config.FirewallConfig{}
 }
 
 func (f *Firewall) ReloadMeta() (uint64, time.Time) {
@@ -230,98 +856,89 @@ func (f *Firewall) ReloadMeta() (uint64, time.Time) {
 	return snapshot.ReloadVersion, snapshot.ReloadedAt
 }
 
-func (f *Firewall) snapshotState() firewallState {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return f.state
+// firewallOptions 配置 → WAF 编译参数。
+func firewallOptions(cfg config.FirewallConfig, exclusions []fw.Exclusion) fw.Options {
+	cfg = config.NormalizeFirewallConfig(cfg)
+	return fw.Options{
+		DetectionOnly:      cfg.CorazaDetectionOnly,
+		Paranoia:           cfg.CorazaParanoia,
+		DetectionParanoia:  cfg.CorazaDetectionParanoia,
+		InboundThreshold:   cfg.CorazaAnomalyThreshold,
+		OutboundThreshold:  cfg.CorazaOutboundThreshold,
+		ResponseInspection: cfg.CorazaResponseInspection,
+		ResponseBodyLimit:  cfg.CorazaResponseBodyLimit,
+		RequestBodyLimit:   cfg.RequestBodyLimit,
+		RequestBodyMemory:  cfg.RequestBodyMemory,
+		ArgumentsLimit:     cfg.CorazaArgumentsLimit,
+		DisabledGroups:     cfg.CorazaDisabledGroups,
+		RemovedRules:       cfg.CorazaRemovedRules,
+		InspectAdminBody:   cfg.CorazaInspectAdminBody,
+		BodyExemptPrefixes: cfg.CorazaBodyExemptPrefixes,
+		SensitiveArgs:      cfg.CorazaSensitiveArgs,
+		RichTextArgs:       cfg.CorazaRichTextArgs,
+		ExtraContentTypes:  cfg.CorazaExtraContentTypes,
+		Exclusions:         exclusions,
+	}
 }
 
-func (f *Firewall) buildState(cfg config.FirewallConfig) (firewallState, error) {
+func (f *Firewall) buildState(cfg config.FirewallConfig, rules []fw.CustomRule, exclusions []fw.Exclusion) (*firewallState, error) {
 	cfg = config.NormalizeFirewallConfig(cfg)
-	state := firewallState{
+	state := &firewallState{
 		cfg:               cfg,
 		blockedUserAgents: normalizeEntries(cfg.BlockedUserAgents),
 		blockedPathPrefix: normalizeEntries(cfg.BlockedPathPrefix),
-		blockedFragments: []string{
-			// 路径遍历
-			"../",
-			"..\\",
-			"%2e%2e",
-			// 敏感路径探测
-			"/.git/",
-			"/.env",
-			"/vendor/phpunit",
-			"/etc/passwd",
-			"/proc/self/environ",
-			// XSS
-			"<script",
-			"%3cscript",
-			"javascript:",
-			"onerror=",
-			"onload=",
-			// SQL 注入
-			"union+select",
-			"union%20select",
-			"sleep(",
-			"benchmark(",
-			"load_file(",
-			"information_schema",
-			// 命令注入
-			";cat+",
-			"|cat+",
-			"$(curl",
-			"$(wget",
-			"`curl",
-			"`wget",
-		},
+		blockedFragments:  normalizeEntries(cfg.BlockedSignatures),
+		bodyExempt:        cfg.CorazaBodyExemptPrefixes,
+		exclusions:        len(exclusions),
 	}
-
 	var err error
-	state.allowedCIDRs, err = parseCIDRs(cfg.AllowedCIDRs)
-	if err != nil {
-		return firewallState{}, err
+	if state.allowed, err = fw.ParseIPSet(cfg.AllowedCIDRs); err != nil {
+		return nil, err
 	}
-	state.blockedCIDRs, err = parseCIDRs(cfg.BlockedCIDRs)
-	if err != nil {
-		return firewallState{}, err
+	if state.blocked, err = fw.ParseIPSet(cfg.BlockedCIDRs); err != nil {
+		return nil, err
+	}
+	if state.trusted, err = fw.ParseIPSet(cfg.TrustedCIDRs); err != nil {
+		return nil, err
+	}
+	ruleSet, ruleErrs := fw.NewRuleSet(rules)
+	state.rules = ruleSet
+	for _, e := range ruleErrs {
+		state.ruleErrors = append(state.ruleErrors, e.Error())
 	}
 	if !cfg.Enabled {
 		return state, nil
 	}
 	if f.redisClient == nil {
-		return firewallState{}, net.InvalidAddrError("firewall requires redis client")
+		return nil, net.InvalidAddrError("firewall requires redis client")
 	}
 	if cfg.CorazaEnabled {
-		state.waf, err = newCorazaWAF(cfg, f.log)
+		state.waf, err = fw.CompileWAF(firewallOptions(cfg, exclusions))
 		if err != nil {
-			return firewallState{}, fmt.Errorf("init coraza waf: %w", err)
+			return nil, err
 		}
 	}
 	globalRate, err := limiter.NewRateFromFormatted(cfg.GlobalRate)
 	if err != nil {
-		return firewallState{}, err
+		return nil, fmt.Errorf("全局限流格式无效: %w", err)
 	}
 	authRate, err := limiter.NewRateFromFormatted(cfg.AuthRate)
 	if err != nil {
-		return firewallState{}, err
+		return nil, fmt.Errorf("认证限流格式无效: %w", err)
 	}
 	adminRate, err := limiter.NewRateFromFormatted(cfg.AdminRate)
 	if err != nil {
-		return firewallState{}, err
+		return nil, fmt.Errorf("管理端限流格式无效: %w", err)
 	}
-
 	prefix := strings.TrimSpace(f.keyPrefix)
-	state.globalLimiter, err = newLimiter(f.redisClient, prefix+":fw:global", globalRate)
-	if err != nil {
-		return firewallState{}, err
+	if state.globalLimiter, err = newLimiter(f.redisClient, prefix+":fw:global", globalRate); err != nil {
+		return nil, err
 	}
-	state.authLimiter, err = newLimiter(f.redisClient, prefix+":fw:auth", authRate)
-	if err != nil {
-		return firewallState{}, err
+	if state.authLimiter, err = newLimiter(f.redisClient, prefix+":fw:auth", authRate); err != nil {
+		return nil, err
 	}
-	state.adminLimiter, err = newLimiter(f.redisClient, prefix+":fw:admin", adminRate)
-	if err != nil {
-		return firewallState{}, err
+	if state.adminLimiter, err = newLimiter(f.redisClient, prefix+":fw:admin", adminRate); err != nil {
+		return nil, err
 	}
 	return state, nil
 }
@@ -334,301 +951,23 @@ func newLimiter(redisClient *redislib.Client, prefix string, rate limiter.Rate) 
 	return limiter.New(store, rate), nil
 }
 
-func newCorazaWAF(cfg config.FirewallConfig, log *zap.Logger) (coraza.WAF, error) {
-	wafConfig := coraza.NewWAFConfig().
-		WithRootFS(newSlashFS(coreruleset.FS)).
-		WithDirectives(buildCorazaDirectives(cfg)).
-		WithRequestBodyAccess().
-		WithRequestBodyLimit(cfg.RequestBodyLimit).
-		WithRequestBodyInMemoryLimit(cfg.RequestBodyMemory).
-		WithErrorCallback(func(rule corazatypes.MatchedRule) {
-			if log == nil {
-				return
-			}
-			meta := rule.Rule()
-			// 单行摘要 + 精简结构字段，避免长串 stack-like 输出刷屏
-			//   示例：WAF BLOCK #932235 [RCE] Unix Command Injection (command without evasion)
-			//       uri: /api/system/monitor/history?keys=postgres%2Credis%2C...
-			//       matched: time,location,http_api,monitor,docs,cors,firewall
-			// 这个回调按「每条命中的规则」触发，此时请求的最终裁决还没产生，
-			// 因此这里不能宣称拦截。CRS v4 是异常计分模式：911100 之类带 block
-			// 动作的规则经 SecDefaultAction 解析成 pass，只累加异常分，真正的
-			// 阻断由 phase 2 的 949110 在越过 inbound 阈值时做出。
-			// Disruptive() 只说明规则**声明**了 block，写成 "BLOCK" 会让每条放行
-			// 请求都在日志里显示成被拦，排查时直接指错方向。
-			// 真正的拦截由 blockCoraza 另打一条 "firewall coraza blocked request"。
-			verdict := "HIT"
-			if cfg.CorazaDetectionOnly {
-				verdict = "observe"
-			}
-			category := corazaRuleCategory(meta.File())
-			message := truncateWAFText(rule.Message(), 96)
-			uri := truncateWAFText(rule.URI(), 160)
-			matched := truncateWAFText(rule.Data(), 140)
-			log.Warn(
-				fmt.Sprintf("WAF %s #%d [%s] %s", verdict, meta.ID(), category, message),
-				zap.String("uri", uri),
-				zap.String("matched", matched),
-				zap.String("ip", rule.ClientIPAddress()),
-			)
-		})
-
-	return coraza.NewWAF(wafConfig)
-}
-
-// corazaRuleCategory 从规则文件名提取简短分类：
-//
-//	REQUEST-932-APPLICATION-ATTACK-RCE.conf  → RCE
-//	REQUEST-942-APPLICATION-ATTACK-SQLI.conf → SQLI
-//	REQUEST-941-APPLICATION-ATTACK-XSS.conf  → XSS
-//	REQUEST-920-PROTOCOL-ENFORCEMENT.conf    → PROTOCOL
-func corazaRuleCategory(file string) string {
-	base := path.Base(strings.ReplaceAll(file, "\\", "/"))
-	base = strings.TrimSuffix(base, path.Ext(base))
-	segs := strings.Split(base, "-")
-	if len(segs) == 0 {
-		return "WAF"
-	}
-	return strings.ToUpper(segs[len(segs)-1])
-}
-
-func truncateWAFText(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}
-
-// CorazaAllowedMethods CRS 911100（METHOD-ENFORCEMENT）的放行方法集。
-//
-// CRS 的默认值是 `GET HEAD POST OPTIONS`（REQUEST-901-INITIALIZATION.conf 里
-// 用 `&TX:allowed_methods "@eq 0"` 守着，只在变量未设置时才写入），
-// 而本平台是 REST 风格：路由表里 PUT 70 条、DELETE 75 条、PATCH 3 条。
-//
-// 不覆盖这个变量并不会当场拦掉写请求 —— CRS v4 是异常计分模式，911100 只加
-// 5 分（critical_anomaly_score），而本项目的 inbound 阈值放宽到了 40。
-// 真正的代价是每个写请求都白吃 12.5% 的异常分预算：它本身不越线，却让同一请求
-// 里任何一个轻微命中更容易把总分顶过 949110 的阻断线，于是表现为
-// "大部分时候好用，偶尔 403"。此外每个写请求都会刷一条 911100 告警日志。
-// 阈值若被调到 CRS 原生的 5，则每个 PUT/PATCH/DELETE 当场 403。
-//
-// 这里刻意选择"设置放行集"而不是 SecRuleRemoveById 911100：后者会连
-// TRACE / TRACK / CONNECT 一起放行（TRACE 是 XST 向量），而方法白名单
-// 恰恰是这条规则唯一的价值所在。
-//
-// 这份清单必须跟随路由表：新增一种 HTTP 方法而忘了加进来，该方法的所有接口
-// 会在开了 WAF 的环境里持续掉分。因此导出给 transport 层的
-// TestRegisteredRouteMethodsAreAllowedByWAF 反向核对真实路由表。
-const CorazaAllowedMethods = "GET HEAD POST PUT PATCH DELETE OPTIONS"
-
-func buildCorazaDirectives(cfg config.FirewallConfig) string {
-	// 防御式规范化：保证默认阈值 / 排除清单即使被裸 struct 调用也成立
-	cfg = config.NormalizeFirewallConfig(cfg)
-	tempDir := strings.ReplaceAll(os.TempDir(), "\\", "/")
-	paranoia := cfg.CorazaParanoia
-
-	// CRS 常见误报（自托管 / 内网 / API 网关 / 后台 SaaS 场景）在此统一放行：
-	//   920350 — Host 头为数字 IP：内网、docker compose、局域网直连 IP 都会命中
-	//   920300 — Accept 头缺失：healthz / readyz / 自动化脚本 / SDK 默认不带
-	//   920420 — Content-Type 不在白名单：前端 FormData、SSE、OAuth callback 等会被误伤
-	//   920230 — 多重 URL 编码：部分浏览器 / 代理会二次编码
-	//   920440 — URL 后缀命中静态扩展：Next.js 打包产物 (.map/.wasm) 会被拦
-	//   913100 — UA 命中扫描器关键字：误伤正常健康检查 (httpclient)，由我方黑名单兜底
-	//   921110 — HTTP Request Smuggling：在反代层（Nginx/Caddy）已拦截，gin 侧重复拦截易误伤
-	//   932200 — RCE via Unix 命令：中文姓名、路径等极易触发
-	//   932230 — Unix shell metacharacters：反斜杠/管道符在 JSON / Markdown 中常见
-	//   932235 — Unix command (no evasion)：query 参数如 keys=time,location,docs 命中命令名黑名单（本次 #9 报错）
-	//   932236 — Unix command with evasion：类似 932235，变体模式
-	//   932240 — Unix command execution via @：username/邮箱等含 @ 的参数会命中
-	//   932250 — Unix command execution via $：模板字符串、正则中 $ 常见
-	//   942100 — SQLi libinjection：Next.js / 表单中的正则、emoji 会误伤
-	//   942430/942440 — SQL 关键字 + 注释符号：Markdown 内容会误伤
-	//   941100 — XSS 过滤器：富文本 / Markdown 场景会误伤（应用层已做 sanitize）
-	//
-	// 排除清单默认取 config.DefaultCorazaRemovedRules，可经
-	// FIREWALL_CORAZA_REMOVED_RULES 覆盖（"none" = 不排除任何规则）。
-	// 剩余的 900-series 协议校验 / 949/959/980 score 合计依然生效，不会裸奔。
-	engine := "On"
-	if cfg.CorazaDetectionOnly {
-		// 观察模式：规则全量评估、命中走 ErrorCallback 记录 zap 日志（verdict=observe），
-		// 但不产生拦截/入库 —— 用于灰度验证 paranoia / 阈值调整的误报面。
-		engine = "DetectionOnly"
-	}
-	var removed strings.Builder
-	for _, id := range cfg.CorazaRemovedRules {
-		removed.WriteString("SecRuleRemoveById ")
-		removed.WriteString(id)
-		removed.WriteString("\n")
-	}
-	return fmt.Sprintf(`
-Include @coraza.conf-recommended
-Include @crs-setup.conf.example
-SecRuleEngine %s
-SecRequestBodyAccess On
-SecResponseBodyAccess Off
-SecDataDir "%s"
-SecAction "id:1000001,phase:1,pass,nolog,setvar:tx.blocking_paranoia_level=%d,setvar:tx.detection_paranoia_level=%d,setvar:tx.inbound_anomaly_score_threshold=%d,setvar:tx.outbound_anomaly_score_threshold=20"
-SecAction "id:1000002,phase:1,pass,nolog,setvar:tx.allowed_methods=%s"
-SecRule REQUEST_HEADERS:Content-Type "@rx ^application/(?:json|[a-z0-9.+-]+\\+json)" "id:1000003,phase:1,pass,nolog,ctl:ruleRemoveByTag=attack-sqli,ctl:ruleRemoveByTag=attack-xss,ctl:ruleRemoveByTag=attack-rce,ctl:ruleRemoveByTag=attack-protocol"
-Include @owasp_crs/*.conf
-%s`, engine, tempDir, paranoia, paranoia, cfg.CorazaAnomalyThreshold, CorazaAllowedMethods, removed.String())
-}
-
-func (f *Firewall) inspectRequest(state firewallState, c *gin.Context, clientIP string) (*corazatypes.Interruption, error) {
-	tx := state.waf.NewTransaction()
-	defer func() {
-		tx.ProcessLogging()
-		if err := tx.Close(); err != nil {
-			f.log.Warn("firewall coraza close failed", zap.Error(err), zap.String("request_id", requestID(c)))
-		}
-	}()
-
-	if tx.IsRuleEngineOff() {
-		return nil, nil
-	}
-
-	tx.ProcessConnection(clientIP, 0, "", 0)
-	tx.ProcessURI(c.Request.URL.String(), c.Request.Method, c.Request.Proto)
-
-	for key, values := range c.Request.Header {
-		for _, value := range values {
-			tx.AddRequestHeader(key, value)
-		}
-	}
-	if c.Request.Host != "" {
-		tx.AddRequestHeader("Host", c.Request.Host)
-		tx.SetServerName(c.Request.Host)
-	}
-	for _, value := range c.Request.TransferEncoding {
-		tx.AddRequestHeader("Transfer-Encoding", value)
-	}
-
-	if interrupted := tx.ProcessRequestHeaders(); interrupted != nil {
-		return interrupted, nil
-	}
-
-	if tx.IsRequestBodyAccessible() && c.Request.Body != nil && c.Request.Body != http.NoBody &&
-		!skipsBodyInspection(c.Request.URL.Path) {
-		body, err := f.snapshotRequestBody(c.Request)
-		if errors.Is(err, errSkipBodyInspection) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("snapshot request body: %w", err)
-		}
-		interrupted, _, err := tx.ReadRequestBodyFrom(bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("read request body: %w", err)
-		}
-		if interrupted != nil {
-			return interrupted, nil
-		}
-		c.Request.Body = io.NopCloser(bytes.NewReader(body))
-	}
-
-	interrupted, err := tx.ProcessRequestBody()
-	if err != nil {
-		return nil, fmt.Errorf("process request body: %w", err)
-	}
-	return interrupted, nil
-}
-
-// bodyInspectionExemptPrefixes 只检查请求头与 URI、不把请求体喂给 WAF 的路径前缀。
-//
-// /api/ai/v1/：用户 AI 中转。请求体是对话历史 —— 工具结果里满是源码、shell 命令、文件路径、
-// SQL，CRS 的 LFI / RCE / 注入规则对它们误报成片，Agent 跑着跑着某一轮就被 403 拦下；
-// 请求体又能到几十 MB，超过 WAF 的检查上限直接 503。这里的内容只会被原样转给模型，
-// 不进 SQL、不进 shell、不落页面，检查它没有收益。鉴权由处理器自己做，限流照常生效。
-var bodyInspectionExemptPrefixes = []string{"/api/ai/v1/"}
-
-func skipsBodyInspection(path string) bool {
-	for _, prefix := range bodyInspectionExemptPrefixes {
-		if strings.HasPrefix(path, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// errSkipBodyInspection 请求体超出检查上限但属于文件上传：放行，只是不做请求体检查。
-var errSkipBodyInspection = errors.New("request body inspection skipped")
-
-func isFileUploadContentType(contentType string) bool {
-	contentType = strings.ToLower(strings.TrimSpace(contentType))
-	return strings.HasPrefix(contentType, "multipart/form-data") || strings.HasPrefix(contentType, "application/octet-stream")
-}
-
-func (f *Firewall) snapshotRequestBody(req *http.Request) ([]byte, error) {
-	if req == nil || req.Body == nil || req.Body == http.NoBody {
-		return nil, nil
-	}
-
-	limit := int64(0)
-	if f != nil {
-		snapshot := f.Snapshot()
-		if snapshot.Config.RequestBodyLimit > 0 {
-			limit = int64(snapshot.Config.RequestBodyLimit)
-		}
-	}
-
-	var (
-		body []byte
-		err  error
-	)
-	if limit > 0 {
-		body, err = io.ReadAll(io.LimitReader(req.Body, limit+1))
-		if err != nil {
-			return nil, err
-		}
-		if int64(len(body)) > limit {
-			// 超限的文件上传（安装包动辄上百 MB）：已读的前缀接回原流，交给下游完整读取，
-			// 本次只检查请求头与 URI。截断的 multipart 喂给 WAF 只会解析失败，
-			// 而直接报错会把每一次大文件上传都变成一个 503。其余类型超限仍然拒绝。
-			if isFileUploadContentType(req.Header.Get("Content-Type")) {
-				req.Body = struct {
-					io.Reader
-					io.Closer
-				}{io.MultiReader(bytes.NewReader(body), req.Body), req.Body}
-				return nil, errSkipBodyInspection
-			}
-			return nil, fmt.Errorf("request body exceeds configured limit")
-		}
-	} else {
-		body, err = io.ReadAll(req.Body)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	req.Body = io.NopCloser(bytes.NewReader(body))
-	return body, nil
-}
-
-func (f *Firewall) rateLimit(state firewallState, c *gin.Context, ip string) (bool, int64) {
+func (f *Firewall) rateLimit(state *firewallState, c *gin.Context, ip string) (bool, int64) {
 	requestPath := strings.ToLower(strings.TrimSpace(c.Request.URL.Path))
-	checks := []struct {
+	type check struct {
 		limiter *limiter.Limiter
 		key     string
-	}{
-		{limiter: state.globalLimiter, key: "global:" + ip},
 	}
-
-	if strings.HasPrefix(requestPath, "/api/auth/") || strings.HasPrefix(requestPath, "/api/email/send-") {
-		checks = append(checks, struct {
-			limiter *limiter.Limiter
-			key     string
-		}{limiter: state.authLimiter, key: "auth:" + ip})
+	checks := []check{{limiter: state.globalLimiter, key: "global:" + ip}}
+	if strings.HasPrefix(requestPath, "/api/auth/") || strings.HasPrefix(requestPath, "/api/email/send-") ||
+		(strings.HasPrefix(requestPath, gatewayPathPrefix) && strings.Contains(requestPath, "/auth/")) {
+		checks = append(checks, check{limiter: state.authLimiter, key: "auth:" + ip})
 	}
 	if strings.HasPrefix(requestPath, "/api/admin/") ||
 		strings.HasPrefix(requestPath, "/api/app/password-policy") ||
 		strings.HasPrefix(requestPath, "/api/app/points") ||
 		strings.HasPrefix(requestPath, "/api/app/workflow") {
-		checks = append(checks, struct {
-			limiter *limiter.Limiter
-			key     string
-		}{limiter: state.adminLimiter, key: "admin:" + ip})
+		checks = append(checks, check{limiter: state.adminLimiter, key: "admin:" + ip})
 	}
-
 	for _, item := range checks {
 		if item.limiter == nil {
 			continue
@@ -650,32 +989,7 @@ func (f *Firewall) rateLimit(state firewallState, c *gin.Context, ip string) (bo
 	return false, 0
 }
 
-func blockByCIDR(state firewallState, ip string) (bool, string) {
-	addr, err := netip.ParseAddr(ip)
-	if err != nil {
-		return true, "invalid_ip"
-	}
-	if len(state.allowedCIDRs) > 0 {
-		allowed := false
-		for _, prefix := range state.allowedCIDRs {
-			if prefix.Contains(addr) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return true, "not_in_allowlist"
-		}
-	}
-	for _, prefix := range state.blockedCIDRs {
-		if prefix.Contains(addr) {
-			return true, "blocked_cidr"
-		}
-	}
-	return false, ""
-}
-
-func blockByUserAgent(state firewallState, userAgent string) (bool, string) {
+func blockByUserAgent(state *firewallState, userAgent string) (bool, string) {
 	userAgent = strings.ToLower(strings.TrimSpace(userAgent))
 	if userAgent == "" {
 		return false, ""
@@ -688,7 +1002,7 @@ func blockByUserAgent(state firewallState, userAgent string) (bool, string) {
 	return false, ""
 }
 
-func blockByPathOrQuery(state firewallState, path, rawQuery string) (bool, string) {
+func blockByPathOrQuery(state *firewallState, path, rawQuery string) (bool, string) {
 	target := strings.ToLower(strings.TrimSpace(path))
 	query := strings.ToLower(strings.TrimSpace(rawQuery))
 	for _, prefix := range state.blockedPathPrefix {
@@ -708,23 +1022,8 @@ func blockByPathOrQuery(state firewallState, path, rawQuery string) (bool, strin
 	return false, ""
 }
 
-func (f *Firewall) blockCoraza(c *gin.Context, interrupted *corazatypes.Interruption) {
-	f.log.Warn("firewall coraza blocked request",
-		zap.Int("rule_id", interrupted.RuleID),
-		zap.String("action", interrupted.Action),
-		zap.String("data", interrupted.Data),
-		zap.String("method", c.Request.Method),
-		zap.String("path", c.Request.URL.Path),
-		zap.String("ip", sanitizeIP(c.ClientIP())),
-		zap.String("request_id", requestID(c)),
-	)
-	response.Error(c, http.StatusForbidden, 40396, "当前请求已被安全策略拦截")
-	c.Abort()
-	ruleID := interrupted.RuleID
-	f.emitBlockEvent(c, "waf_blocked", http.StatusForbidden, 40396, &ruleID, interrupted.Action, interrupted.Data)
-}
-
 func (f *Firewall) block(c *gin.Context, httpStatus int, code int, reason string, message string) {
+	f.edgeBlocked.Add(1)
 	f.log.Warn("firewall blocked request",
 		zap.String("reason", reason),
 		zap.String("method", c.Request.Method),
@@ -737,65 +1036,75 @@ func (f *Firewall) block(c *gin.Context, httpStatus int, code int, reason string
 	f.emitBlockEvent(c, reason, httpStatus, code, nil, "", "")
 }
 
-// emitBlockEvent 异步发射防火墙拦截事件到 NATS
+// emitBlockEvent 入口段拦截事件（封禁模式等旧调用点沿用这个签名）。
 func (f *Firewall) emitBlockEvent(c *gin.Context, reason string, httpStatus int, responseCode int, wafRuleID *int, wafAction string, wafData string) {
+	if v, ok := c.Get(ctxEventOverride); ok {
+		if detail, ok := v.(*firewalldomain.EventDetail); ok && detail != nil {
+			f.emitEvent(c, "custom_rule", httpStatus, responseCode, *detail, nil, reason, "")
+			return
+		}
+	}
+	f.emitEvent(c, reason, httpStatus, responseCode, firewalldomain.EventDetail{
+		Action: firewalldomain.EventActionBlock, Stage: firewalldomain.StageEdge,
+	}, wafRuleID, wafAction, wafData)
+}
+
+// emitEvent 异步发射防火墙事件到 NATS（Worker 落库、补归属地、评估自动封禁）。
+func (f *Firewall) emitEvent(c *gin.Context, reason string, httpStatus int, responseCode int, detail firewalldomain.EventDetail, wafRuleID *int, wafAction string, wafData string) {
 	if f.publisher == nil {
 		return
 	}
 	headers := make(map[string]string)
-	for _, key := range []string{"Referer", "Origin", "Accept-Language", "Content-Type", "X-Forwarded-For"} {
+	for _, key := range []string{"Referer", "Origin", "Accept-Language", "Content-Type", "X-Forwarded-For", gwHeaderProtocol, appEncryptionHeaderEnabled, "X-App-Version", "X-Device-Platform"} {
 		if v := c.GetHeader(key); v != "" {
-			headers[key] = v
+			headers[key] = truncateText(v, 256)
 		}
+	}
+	if detail.Transport == "" {
+		detail.Transport = firewalldomain.TransportPlain
+	}
+	if detail.AppKey == "" {
+		detail.AppKey = c.GetString("aegis.app_key")
+		if detail.AppKey == "" {
+			detail.AppKey = appKeyFromGatewayPath(c.Request.URL.Path)
+		}
+	}
+	query := c.Request.URL.RawQuery
+	if detail.Stage == firewalldomain.StageEdge && hasEncryptedQuery(c.Request) {
+		query = "_payload=<密文>"
 	}
 	evt := firewalldomain.BlockEvent{
 		RequestID:    requestID(c),
 		IP:           sanitizeIP(c.ClientIP()),
 		Method:       c.Request.Method,
 		Path:         c.Request.URL.Path,
-		QueryString:  c.Request.URL.RawQuery,
-		UserAgent:    c.GetHeader("User-Agent"),
+		QueryString:  truncateText(query, 2048),
+		UserAgent:    truncateText(c.GetHeader("User-Agent"), 512),
 		Headers:      headers,
 		Reason:       reason,
 		HTTPStatus:   httpStatus,
 		ResponseCode: responseCode,
 		WAFRuleID:    wafRuleID,
 		WAFAction:    wafAction,
-		WAFData:      wafData,
+		WAFData:      truncateText(wafData, 512),
 		Severity:     firewalldomain.ReasonSeverity(reason),
 		BlockedAt:    time.Now().UTC(),
+		EventDetail:  detail,
 	}
 	if err := f.publisher.PublishJSON(context.Background(), event.SubjectFirewallBlocked, evt); err != nil {
 		f.log.Warn("firewall emit block event failed", zap.Error(err))
 	}
 }
 
-func parseCIDRs(values []string) ([]netip.Prefix, error) {
-	items := make([]netip.Prefix, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if strings.Contains(value, "/") {
-			prefix, err := netip.ParsePrefix(value)
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, prefix)
-			continue
-		}
-		addr, err := netip.ParseAddr(value)
-		if err != nil {
-			return nil, err
-		}
-		bits := 32
-		if addr.Is6() {
-			bits = 128
-		}
-		items = append(items, netip.PrefixFrom(addr, bits))
+func truncateText(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return items, nil
+	cut := n
+	for cut > 0 && s[cut]&0xC0 == 0x80 {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 func normalizeEntries(values []string) []string {
@@ -843,39 +1152,4 @@ func maxInt64(a int64, b int64) int64 {
 		return a
 	}
 	return b
-}
-
-type slashFS struct {
-	root fs.FS
-}
-
-func newSlashFS(root fs.FS) fs.FS {
-	return slashFS{root: root}
-}
-
-func (s slashFS) Open(name string) (fs.File, error) {
-	return s.root.Open(normalizeFSPath(name))
-}
-
-func (s slashFS) ReadFile(name string) ([]byte, error) {
-	return fs.ReadFile(s.root, normalizeFSPath(name))
-}
-
-func (s slashFS) ReadDir(name string) ([]fs.DirEntry, error) {
-	return fs.ReadDir(s.root, normalizeFSPath(name))
-}
-
-func normalizeFSPath(name string) string {
-	name = strings.TrimSpace(name)
-	name = strings.ReplaceAll(name, "\\", "/")
-	if name == "" {
-		return "."
-	}
-	cleaned := path.Clean(name)
-	cleaned = strings.TrimPrefix(cleaned, "./")
-	cleaned = strings.TrimPrefix(cleaned, "/")
-	if cleaned == "" {
-		return "."
-	}
-	return cleaned
 }

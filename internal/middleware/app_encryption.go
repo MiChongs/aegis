@@ -103,6 +103,8 @@ func AppEncryption(appService appEncryptionAppService) gin.HandlerFunc {
 			rejectEncryptedRequest(c, 40064, "加密请求无效")
 			return
 		}
+		// 防火墙的 WAF 段排在这之后：看到的是解开的明文，事件标成 legacy。
+		SetRequestTransport(c, "legacy")
 
 		var encryptedWriter *appEncryptionResponseWriter
 		if policy.ResponseEncryption && c.Request.Method != http.MethodHead {

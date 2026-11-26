@@ -24,6 +24,10 @@ func ReasonSeverity(reason string) string {
 		return SeverityMedium
 	case "banned_ip":
 		return SeverityHigh
+	case "custom_rule":
+		return SeverityHigh
+	case "body_too_large", "waf_observed", "custom_log", "waf_outbound":
+		return SeverityLow
 	case "blocked_method", "path_too_long", "query_too_long", "invalid_ip", "waf_processing_error":
 		return SeverityLow
 	default:
@@ -62,6 +66,57 @@ type FirewallLog struct {
 	Longitude    *float64          `json:"longitude,omitempty"`
 	Severity     string            `json:"severity"`
 	BlockedAt    time.Time         `json:"blockedAt"`
+
+	EventDetail
+}
+
+// 事件动作：拦截之外，观察模式「本该拦截」、自定义规则的记录动作、出站检测也落同一张表，
+// 统计「拦了多少」的查询一律带 action = 'block'（见 docs/firewall.md）。
+const (
+	EventActionBlock   = "block"
+	EventActionObserve = "observe"
+	EventActionLog     = "log"
+)
+
+// 检测阶段：edge = 入口（IP、封禁、签名、自定义规则、限流，还没解密）；
+// payload = 解密后的 WAF；response = 出站检测。
+const (
+	StageEdge     = "edge"
+	StagePayload  = "payload"
+	StageResponse = "response"
+)
+
+// 载荷来源：plain 明文；sealed = 接入网关 Transport v2；legacy = 旧 X-Aegis-Encrypted。
+const (
+	TransportPlain  = "plain"
+	TransportSealed = "sealed"
+	TransportLegacy = "legacy"
+)
+
+// MatchedRule WAF 事件里的一条命中规则（截断、脱敏后入库）。
+type MatchedRule struct {
+	ID       int      `json:"id"`
+	Message  string   `json:"message"`
+	Data     string   `json:"data,omitempty"`
+	Severity string   `json:"severity"`
+	Phase    int      `json:"phase"`
+	Group    string   `json:"group"`
+	Tags     []string `json:"tags,omitempty"`
+	Targets  []string `json:"targets,omitempty"`
+}
+
+// EventDetail 规则集 v2 起事件多出来的字段（BlockEvent 与 FirewallLog 共用）。
+type EventDetail struct {
+	Action       string        `json:"action"`
+	Stage        string        `json:"stage"`
+	Transport    string        `json:"transport"`
+	AppKey       string        `json:"appKey,omitempty"`
+	AnomalyScore int           `json:"anomalyScore,omitempty"`
+	Matches      []MatchedRule `json:"matches,omitempty"`
+	RuleRef      int64         `json:"ruleRef,omitempty"`
+	RuleName     string        `json:"ruleName,omitempty"`
+	// BanSeconds 自定义规则要求的封禁时长（由 Worker 执行；0 = 不封，-1 = 永久）。
+	BanSeconds int64 `json:"banSeconds,omitempty"`
 }
 
 // ──────────────────────────────────────
@@ -78,9 +133,15 @@ type FirewallLogFilter struct {
 	WAFRuleID   *int
 	PathPattern string
 	Severity    string
+	Action      string
+	Stage       string
+	Transport   string
+	AppKey      string
+	RuleRef     *int64
+	Keyword     string
 	Page        int
 	PageSize    int
-	SortBy      string // "blocked_at" | "ip"
+	SortBy      string // "blocked_at" | "ip" | "score"
 	SortOrder   string // "asc" | "desc"
 }
 
@@ -123,6 +184,20 @@ type FirewallStats struct {
 	TopReasons     []RankedItem      `json:"topReasons"`
 	SeverityCounts []RankedItem      `json:"severityCounts"`
 	TimeSeries     []TimeSeriesPoint `json:"timeSeries"`
+
+	// 规则集 v2 新增：按动作、阶段、载荷来源、规则组、自定义规则、应用聚合；
+	// TotalBlocked 只数 action = block，观察与记录单独计数。
+	TotalObserved   int64        `json:"totalObserved"`
+	TotalLogged     int64        `json:"totalLogged"`
+	UniqueIPs       int64        `json:"uniqueIPs"`
+	ActionCounts    []RankedItem `json:"actionCounts"`
+	StageCounts     []RankedItem `json:"stageCounts"`
+	TransportCounts []RankedItem `json:"transportCounts"`
+	TopGroups       []RankedItem `json:"topGroups"`
+	TopCustomRules  []RankedItem `json:"topCustomRules"`
+	TopApps         []RankedItem `json:"topApps"`
+	// PreviousBlocked 上一个等长时间窗的拦截数（总览卡片的环比）。
+	PreviousBlocked int64 `json:"previousBlocked"`
 }
 
 // ──────────────────────────────────────
@@ -146,6 +221,50 @@ type BlockEvent struct {
 	WAFData      string            `json:"wafData,omitempty"`
 	Severity     string            `json:"severity"`
 	BlockedAt    time.Time         `json:"blockedAt"`
+
+	EventDetail
+}
+
+// ──────────────────────────────────────
+// 自定义规则与 WAF 例外（规则集 v2）
+// ──────────────────────────────────────
+
+// Rule 自定义规则（表 firewall_rules）。表达式语法见 docs/firewall.md「自定义规则」。
+type Rule struct {
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Enabled     bool       `json:"enabled"`
+	Priority    int        `json:"priority"`
+	Expression  string     `json:"expression"`
+	Action      string     `json:"action"`
+	BlockMode   string     `json:"blockMode"`
+	BanSeconds  int64      `json:"banSeconds"`
+	Hits        int64      `json:"hits"`
+	LastHitAt   *time.Time `json:"lastHitAt,omitempty"`
+	CreatedBy   *int64     `json:"createdBy,omitempty"`
+	UpdatedBy   *int64     `json:"updatedBy,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
+}
+
+// WAFExclusion WAF 例外（表 firewall_waf_exclusions）。
+type WAFExclusion struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Note      string    `json:"note"`
+	Enabled   bool      `json:"enabled"`
+	Position  int       `json:"position"`
+	PathMatch string    `json:"pathMatch"`
+	Path      string    `json:"path"`
+	Methods   []string  `json:"methods"`
+	RuleIDs   []int     `json:"ruleIds"`
+	Tags      []string  `json:"tags"`
+	Targets   []string  `json:"targets"`
+	CreatedBy *int64    `json:"createdBy,omitempty"`
+	UpdatedBy *int64    `json:"updatedBy,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // ──────────────────────────────────────
@@ -157,13 +276,13 @@ type IPBan struct {
 	ID           int64      `json:"id"`
 	IP           string     `json:"ip"`
 	Reason       string     `json:"reason"`
-	Source       string     `json:"source"`       // manual | auto
-	Mode         string     `json:"mode"`         // forbidden | silent_drop | tarpit | stealth_404 | teapot | connection_reset
+	Source       string     `json:"source"` // manual | auto
+	Mode         string     `json:"mode"`   // forbidden | silent_drop | tarpit | stealth_404 | teapot | connection_reset
 	TriggerRule  string     `json:"triggerRule"`
 	Severity     string     `json:"severity"`
-	Duration     int64      `json:"duration"`     // 秒，0=永久
+	Duration     int64      `json:"duration"` // 秒，0=永久
 	ExpiresAt    *time.Time `json:"expiresAt,omitempty"`
-	Status       string     `json:"status"`       // active | expired | revoked
+	Status       string     `json:"status"` // active | expired | revoked
 	RevokedBy    *int64     `json:"revokedBy,omitempty"`
 	RevokedAt    *time.Time `json:"revokedAt,omitempty"`
 	Country      string     `json:"country"`
@@ -356,11 +475,11 @@ type IPBanPage struct {
 
 // AutoBanRule 自动封禁规则
 type AutoBanRule struct {
-	Name            string        // 规则名称
-	Window          time.Duration // 时间窗口
-	Threshold       int           // 阈值（窗口内拦截次数）
-	BanDuration     time.Duration // 封禁时长（0=永久）
-	Severity        string        // 封禁严重性
-	SeverityFilter  []string      // 仅统计哪些 severity（空=全部）
-	ReasonFilter    []string      // 仅统计哪些拦截原因（空=全部）；优先于 SeverityFilter
+	Name           string        // 规则名称
+	Window         time.Duration // 时间窗口
+	Threshold      int           // 阈值（窗口内拦截次数）
+	BanDuration    time.Duration // 封禁时长（0=永久）
+	Severity       string        // 封禁严重性
+	SeverityFilter []string      // 仅统计哪些 severity（空=全部）
+	ReasonFilter   []string      // 仅统计哪些拦截原因（空=全部）；优先于 SeverityFilter
 }

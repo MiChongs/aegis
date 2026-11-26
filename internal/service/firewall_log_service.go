@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	firewalldomain "aegis/internal/domain/firewall"
+	fw "aegis/internal/firewall"
 	pgrepo "aegis/internal/repository/postgres"
 
 	"go.uber.org/zap"
@@ -58,6 +60,7 @@ func (s *FirewallLogService) HandleFirewallBlocked(ctx context.Context, payload 
 		WAFData:      evt.WAFData,
 		Severity:     evt.Severity,
 		BlockedAt:    evt.BlockedAt,
+		EventDetail:  evt.EventDetail,
 	}
 
 	id, err := s.pg.InsertFirewallLog(ctx, record)
@@ -92,10 +95,26 @@ func (s *FirewallLogService) HandleFirewallBlocked(ctx context.Context, payload 
 		zap.String("severity", evt.Severity),
 	)
 
-	// 自动封禁评估（跳过已封禁 IP 的事件避免重复评估）
-	if s.banService != nil && evt.IP != "" && evt.Reason != "banned_ip" {
-		if banErr := s.banService.EvaluateAutoBan(ctx, evt.IP); banErr != nil {
-			s.log.Warn("自动封禁评估失败", zap.String("ip", evt.IP), zap.Error(banErr))
+	// 只有真正拦下的事件参与封禁：观察模式「本该拦截」、自定义规则的记录动作、出站命中都不算。
+	isBlock := evt.Action == "" || evt.Action == firewalldomain.EventActionBlock
+	if s.banService != nil && evt.IP != "" && isBlock {
+		// 自定义规则要求的封禁：命中即封，不等阈值。
+		if evt.Reason == "custom_rule" && evt.BanSeconds != 0 {
+			duration := evt.BanSeconds
+			if duration < 0 {
+				duration = 0 // 永久
+			}
+			_, banErr := s.banService.BanIPWithOptions(ctx, evt.IP, fmt.Sprintf("自定义规则「%s」命中即封", evt.RuleName), duration, 0, BanIPOptions{
+				Source: "rule", TriggerRule: fmt.Sprintf("firewall-rule:%d", evt.RuleRef),
+			})
+			if banErr != nil && !strings.Contains(banErr.Error(), "已被封禁") {
+				s.log.Warn("自定义规则封禁失败", zap.String("ip", evt.IP), zap.Int64("rule", evt.RuleRef), zap.Error(banErr))
+			}
+		} else if !strings.HasPrefix(evt.Reason, "banned_") && evt.Reason != "banned_ip" {
+			// 自动封禁评估（跳过已封禁 IP 的事件避免重复评估）
+			if banErr := s.banService.EvaluateAutoBan(ctx, evt.IP); banErr != nil {
+				s.log.Warn("自动封禁评估失败", zap.String("ip", evt.IP), zap.Error(banErr))
+			}
 		}
 	}
 
@@ -111,9 +130,18 @@ func (s *FirewallLogService) ListLogs(ctx context.Context, filter firewalldomain
 	return s.pg.ListFirewallLogs(ctx, filter)
 }
 
-// GetLog 获取单条防火墙日志详情
+// GetLog 获取单条防火墙日志详情。v1 的 WAF 事件只记了打断请求的那条规则 ID，这里按规则目录补上说明。
 func (s *FirewallLogService) GetLog(ctx context.Context, id int64) (*firewalldomain.FirewallLog, error) {
-	return s.pg.GetFirewallLog(ctx, id)
+	item, err := s.pg.GetFirewallLog(ctx, id)
+	if err != nil || item == nil {
+		return item, err
+	}
+	if len(item.Matches) == 0 && item.WAFRuleID != nil {
+		if msg, group, ok := fw.RuleMessage(*item.WAFRuleID); ok {
+			item.Matches = []firewalldomain.MatchedRule{{ID: *item.WAFRuleID, Message: msg, Group: group, Data: item.WAFData}}
+		}
+	}
+	return item, nil
 }
 
 // GetStats 获取聚合统计

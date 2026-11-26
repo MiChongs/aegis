@@ -22,26 +22,23 @@
 | `app_encryption.go` | `AppEncryption(appSvc)` | 请求/响应加密（X-Aegis-Encrypted 头），旧命名空间用 |
 | `location.go` | `Location(locationSvc)` | IP 地理位置信息注入 |
 
-## Firewall 详解
+## Firewall 详解（规则集 v2，完整说明见 [docs/firewall.md](../../docs/firewall.md)）
 
-`Firewall` 结构体（`firewall.go`）集成：
-- **ulule/limiter**：全局 / 认证 / 管理员 三段限流（令牌桶，Redis 存储）
-- **Coraza WAF**：OWASP CRS v4 规则集，可选开启，偏执等级 1-4
-- **CIDR 过滤**：白名单（AllowedCIDRs）/ 黑名单（BlockedCIDRs）
-- **UA 过滤**：默认屏蔽 sqlmap、nikto、acunetix 等扫描器
-- **路径前缀过滤**：默认屏蔽 `/.git`、`/wp-admin` 等探测路径
-- **请求体限制**：`RequestBodyLimit`（默认 13 MB）
+两段：
+- **`Handler()` 入口段**（解密之前）：IP 白 / 黑名单（go4.org/netipx）→ 封禁（IP、地域、围栏，封禁模式见 ban_modes*.go）
+  → 可信网段 → 方法与长度 → 扫描器 UA → 探测路径与快速签名 → 自定义规则（expr 表达式，表 firewall_rules）
+  → 限流（ulule/limiter，全局 / 认证 / 管理员三段，Redis 存储）。
+- **`WAFHandler()` 载荷段**（AppGateway 与 AppEncryption **之后**）：Coraza v3 + OWASP CRS v4 + Aegis 专属规则，
+  看到的是 sealed / 旧加密解开后的明文；拦截响应写进解密中间件包好的 Writer。引擎在 `internal/firewall`。
 
-默认限流规则：
-- 全局：`1200-M`（每分钟 1200 次/IP）
-- 认证路由：`180-M`
-- 管理员路由：`360-M`
+不要再把 Coraza 挪回入口段，也不要再按 Content-Type 整类关掉攻击规则：误报用路径 / 字段级例外处理。
 
 ## 中间件在路由中的组装顺序
 
 ```
-ClientIP → RequestID → RequestOrigin → CrashRecovery → Tracing → CORS → AccessLog
-  → Firewall → ReplayGuard → AppGateway → AppEncryption → Location
+ClientIP → UploadReadDeadline → RequestID → RequestOrigin → CrashRecovery → Tracing → CORS → AccessLog
+  → Firewall(入口段) → 流量管理 → ReplayGuard → AppGateway → ClientControlGate → AppEncryption
+  → Firewall.WAF(载荷段) → Location
 [路由组中追加] AdminAuth 或 Auth
 ```
 

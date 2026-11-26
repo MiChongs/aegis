@@ -155,6 +155,8 @@ func AppGateway(service appGatewayService) gin.HandlerFunc {
 		}
 		c.Set("aegis.app_id", cryptoContext.AppID)
 		c.Set("aegis.app_key", cryptoContext.AppKey)
+		// 防火墙的 WAF 段排在这之后，看到的是明文，并据此把事件标成 sealed（docs/firewall.md）。
+		SetRequestTransport(c, "sealed")
 
 		writer := newAppEncryptionResponseWriter(c.Writer)
 		c.Writer = writer

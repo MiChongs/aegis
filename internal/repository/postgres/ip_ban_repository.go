@@ -145,7 +145,7 @@ func (r *Repository) ExpireIPBans(ctx context.Context) (int64, error) {
 func (r *Repository) CountRecentBlocks(ctx context.Context, ip string, since time.Time) (int, error) {
 	var count int
 	err := r.pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM firewall_logs WHERE ip=$1 AND blocked_at >= $2",
+		"SELECT COUNT(*) FROM firewall_logs WHERE ip=$1 AND blocked_at >= $2 AND action = 'block'",
 		ip, since,
 	).Scan(&count)
 	return count, err
@@ -158,7 +158,7 @@ func (r *Repository) CountRecentBlocksBySeverity(ctx context.Context, ip string,
 	}
 	var count int
 	err := r.pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM firewall_logs WHERE ip=$1 AND blocked_at >= $2 AND severity = ANY($3)",
+		"SELECT COUNT(*) FROM firewall_logs WHERE ip=$1 AND blocked_at >= $2 AND action = 'block' AND severity = ANY($3)",
 		ip, since, severities,
 	).Scan(&count)
 	return count, err
@@ -172,7 +172,7 @@ func (r *Repository) CountRecentBlocksByReason(ctx context.Context, ip string, s
 	}
 	var count int
 	err := r.pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM firewall_logs WHERE ip=$1 AND blocked_at >= $2 AND reason = ANY($3)",
+		"SELECT COUNT(*) FROM firewall_logs WHERE ip=$1 AND blocked_at >= $2 AND action = 'block' AND reason = ANY($3)",
 		ip, since, reasons,
 	).Scan(&count)
 	return count, err

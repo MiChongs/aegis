@@ -502,6 +502,9 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/system/email/suppressions"):                                                           EmailSuppressionCreateRequest{},          // AdminPlatformEmailSuppressionCreate
 		routeKey("GET", "/api/admin/system/firewall/bans"):                                                                 IPBanListRequest{},                       // AdminListIPBans
 		routeKey("POST", "/api/admin/system/firewall/bans"):                                                                IPBanCreateRequest{},                     // AdminBanIP
+		routeKey("POST", "/api/admin/system/firewall/exclusions"):                                                          FirewallExclusionRequest{},               // AdminCreateFirewallExclusion
+		routeKey("PATCH", "/api/admin/system/firewall/exclusions/{exclusionId}"):                                           FirewallToggleRequest{},                  // AdminToggleFirewallExclusion
+		routeKey("PUT", "/api/admin/system/firewall/exclusions/{exclusionId}"):                                             FirewallExclusionRequest{},               // AdminUpdateFirewallExclusion
 		routeKey("POST", "/api/admin/system/firewall/geo-bans"):                                                            GeoBanUpsertRequest{},                    // AdminUpsertGeoBan
 		routeKey("PATCH", "/api/admin/system/firewall/geo-bans/{id}"):                                                      GeoBanToggleRequest{},                    // AdminToggleGeoBan
 		routeKey("POST", "/api/admin/system/firewall/geo-fences"):                                                          GeoFenceUpsertRequest{},                  // AdminCreateGeoFence
@@ -510,6 +513,13 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/system/firewall/geo-fences/{id}"):                                                      GeoFenceUpsertRequest{},                  // AdminUpdateGeoFence
 		routeKey("DELETE", "/api/admin/system/firewall/logs"):                                                              FirewallLogCleanupRequest{},              // AdminFirewallLogsCleanup
 		routeKey("GET", "/api/admin/system/firewall/logs"):                                                                 FirewallLogListRequest{},                 // AdminFirewallLogs
+		routeKey("POST", "/api/admin/system/firewall/rules"):                                                               FirewallRuleRequest{},                    // AdminCreateFirewallRule
+		routeKey("POST", "/api/admin/system/firewall/rules/reorder"):                                                       FirewallReorderRequest{},                 // AdminReorderFirewallRules
+		routeKey("POST", "/api/admin/system/firewall/rules/validate"):                                                      FirewallRuleValidateRequest{},            // AdminValidateFirewallRule
+		routeKey("PATCH", "/api/admin/system/firewall/rules/{ruleId}"):                                                     FirewallToggleRequest{},                  // AdminToggleFirewallRule
+		routeKey("PUT", "/api/admin/system/firewall/rules/{ruleId}"):                                                       FirewallRuleRequest{},                    // AdminUpdateFirewallRule
+		routeKey("POST", "/api/admin/system/firewall/sandbox"):                                                             FirewallSandboxRequest{},                 // AdminFirewallSandbox
+		routeKey("PUT", "/api/admin/system/firewall/settings"):                                                             system.FirewallSettingsPatch{},           // AdminUpdateFirewallSettings
 		routeKey("GET", "/api/admin/system/firewall/stats"):                                                                FirewallLogStatsRequest{},                // AdminFirewallStats
 		routeKey("POST", "/api/admin/system/ldap/test"):                                                                    AdminLDAPTestRequest{},                   // AdminLDAPTest
 		routeKey("PUT", "/api/admin/system/legal/documents/{docType}/{locale}"):                                            LegalDocumentRequest{},                   // AdminSaveLegalDocument
