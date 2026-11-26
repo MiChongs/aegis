@@ -3469,6 +3469,11 @@ export type IPBanEntry = {
   triggerCount: number;
   createdAt: string;
   updatedAt: string;
+  /** 解封备注 */
+  revokeNote?: string;
+  /** tarpit 延迟毫秒 */
+  delayMs?: number;
+  updatedBy?: number | null;
 };
 
 export type IPBanModeOption = {

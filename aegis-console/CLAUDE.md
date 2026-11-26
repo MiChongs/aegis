@@ -874,7 +874,7 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 | `components/firewall/firewall-status-strip.tsx` | 页顶运行态条（计数是**本副本**的） |
 | `overview/` `events/` | 总览（趋势、攻击面、排行、飞线图）与事件浏览、详情弹窗 |
 | `rules/` `exclusions/` `sandbox/` | 自定义规则（expr）、WAF 例外、测试台（可带草稿例外） |
-| `waf/` `access/` `bans/` | WAF 引擎与规则库、访问控制（入口段设置）、封禁（复用 security 下的 IP / 地域封禁面板） |
+| `waf/` `access/` `bans/` | WAF 引擎与规则库、访问控制（入口段设置）、封禁（概况、IP 查询、多选与按筛选批量解封 / 修改 / 导出、批量封禁、地域规则批量启停删；数据层 `lib/firewall-ban-hooks.ts`） |
 
 设置页的草稿按 `updatedAt` 重置，不按 `reloadVersion`（后者每个副本各数各的）。列表字段传 `[]` 是显式清空，
 只有 `blockedUserAgents` / `blockedPathPrefix` 清空后后端会补回默认值（界面上有提示）。
