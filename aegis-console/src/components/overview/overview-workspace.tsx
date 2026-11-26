@@ -106,7 +106,7 @@ export function AttentionPanel({ className }: { className?: string }) {
           ))}
           {alerts.map((alert, index) => (
             <Item key={`${alert.type}-${index}`} variant="outline" size="sm" asChild>
-              <Link href="/security">
+              <Link href={alert.type === "firewall_block" ? "/firewall?tab=events" : "/security"}>
                 <ItemMedia variant="icon" className={cn("rounded-md border-transparent", ALERT_TONE[alert.type] ?? "bg-muted text-muted-foreground")}>
                   {alert.type === "firewall_block" ? <ShieldAlert /> : <AlertTriangle />}
                 </ItemMedia>

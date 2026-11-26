@@ -253,7 +253,9 @@ export function AttackFlightMap({ timeRange }: AttackFlightMapProps) {
     startTime: timeRange?.startTime,
     endTime: timeRange?.endTime,
     sortBy: "blocked_at",
-    sortOrder: "desc"
+    sortOrder: "desc",
+    // 规则集 v2 起事件表也记观察与记录类事件，飞线图只画真正拦下的
+    action: "block"
   });
   const logs = useMemo(() => mapQuery.data?.items ?? [], [mapQuery.data]);
 

@@ -2,6 +2,7 @@ import {
   AppWindow,
   BarChart3,
   BellDot,
+  BrickWall,
   ShieldAlert,
   Building2,
   ClipboardList,
@@ -340,16 +341,32 @@ export const navigationGroups: NavigationGroup[] = [
     icon: ShieldCheck,
     items: [
       {
-        // 只管运行态（发生了什么）；平台安全的配置在 /configuration
+        // 账户安全与地理风控；防火墙有独立工作台 /firewall
         title: "安全",
         href: "/security",
         icon: ShieldCheck,
-        summary: "安全运行态与留痕",
-        permission: ["system:firewall:read", "system:geo:read"],
+        summary: "账户安全与地理风控",
         children: [
           { title: "账户安全", tab: "account" },
-          { title: "防火墙", tab: "firewall", permission: "system:firewall:read" },
           { title: "地理风控", tab: "geo-intel", permission: "system:geo:read" }
+        ]
+      },
+      {
+        // 规则集 v2（docs/firewall.md）：入口防护 + 解密后的 Coraza WAF、自定义规则、例外、测试台
+        title: "防火墙",
+        href: "/firewall",
+        icon: BrickWall,
+        summary: "WAF、自定义规则、例外、封禁与测试台",
+        permission: "system:firewall:read",
+        children: [
+          { title: "总览", tab: "overview" },
+          { title: "事件", tab: "events" },
+          { title: "自定义规则", tab: "rules" },
+          { title: "WAF 引擎", tab: "waf" },
+          { title: "WAF 例外", tab: "exclusions" },
+          { title: "访问控制", tab: "access" },
+          { title: "封禁", tab: "bans" },
+          { title: "测试台", tab: "sandbox" }
         ]
       },
       {
@@ -414,7 +431,6 @@ export const navigationGroups: NavigationGroup[] = [
         permission: ["system:config:read", "system:egress:read", "email:read", "ai:read"],
         children: [
           { title: "品牌与外观", tab: "branding", permission: "system:config:read" },
-          { title: "防火墙与限流", tab: "firewall", permission: "system:config:read" },
           { title: "出海代理", tab: "egress", permission: "system:egress:read" },
           { title: "邮件", tab: "email", permission: "email:read" },
           { title: "安全模块", tab: "security", permission: "system:config:read" },

@@ -860,6 +860,25 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 （真没风险 / 根本没规则在跑），零规则或零策略时直接给出「安装规则模板」入口。
 执行器就绪徽标（情报源、GeoIP、Redis、限流、账号封禁、防火墙、验证码）回答「ban 动作能不能真的落地」。
 
+## 防火墙（/firewall）
+
+规则集 v2（后端设计见 [docs/firewall.md](../docs/firewall.md)）。八个页签同步到 `?tab=overview|events|rules|waf|exclusions|access|bans|sandbox`，
+只在激活时挂载。旧链接 `/security?tab=firewall` 转到事件页、`/configuration?tab=firewall` 转到 WAF 引擎页。
+
+| 文件 | 职责 |
+|---|---|
+| `lib/api/firewall.ts` | 类型逐字段对齐后端 + `firewallApi`；规则变量表 `FIREWALL_RULE_VARIABLES` |
+| `lib/firewall-hooks.ts` | 查询与写操作；写成功统一失效 `FIREWALL_KEY` |
+| `lib/firewall-store.ts` | 页签间意图（事件 → 建例外 / 测试台复现、总览 → 事件筛选），目标页签挂载后取走 |
+| `components/firewall/firewall-kit.tsx` | **所有中文说法**（原因、动作、阶段、载荷来源、规则组、偏执等级、阈值预设）与小徽标 |
+| `components/firewall/firewall-status-strip.tsx` | 页顶运行态条（计数是**本副本**的） |
+| `overview/` `events/` | 总览（趋势、攻击面、排行、飞线图）与事件浏览、详情弹窗 |
+| `rules/` `exclusions/` `sandbox/` | 自定义规则（expr）、WAF 例外、测试台（可带草稿例外） |
+| `waf/` `access/` `bans/` | WAF 引擎与规则库、访问控制（入口段设置）、封禁（复用 security 下的 IP / 地域封禁面板） |
+
+设置页的草稿按 `updatedAt` 重置，不按 `reloadVersion`（后者每个副本各数各的）。列表字段传 `[]` 是显式清空，
+只有 `blockedUserAgents` / `blockedPathPrefix` 清空后后端会补回默认值（界面上有提示）。
+
 ## 交易中心（/commerce）
 
 六个页签同步到 URL（`?tab=overview|orders|refunds|wallet|vip|wallet-config`）。

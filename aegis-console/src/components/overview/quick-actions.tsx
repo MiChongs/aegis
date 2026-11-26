@@ -21,7 +21,7 @@ const QUICK_ACTIONS: Array<{ href: string; tone: KitTone }> = [
   { href: "/content", tone: "violet" },
   { href: "/reports", tone: "emerald" },
   { href: "/organization", tone: "amber" },
-  { href: "/security", tone: "rose" },
+  { href: "/firewall", tone: "rose" },
   { href: "/storage", tone: "sky" },
   { href: "/workflows", tone: "violet" }
 ];

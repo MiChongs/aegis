@@ -330,7 +330,10 @@ func buildFirewallLogWhere(f firewalldomain.FirewallLogFilter) (string, []any) {
 		add("rule_ref = $?", *f.RuleRef)
 	}
 	if f.Keyword != "" {
-		add("(request_id = $? OR path ILIKE '%' || $? || '%' OR user_agent ILIKE '%' || $? || '%' OR rule_name ILIKE '%' || $? || '%')", escapeLike(f.Keyword))
+		// 请求 ID 精确比较用原值，模糊匹配用转义后的值（否则带 _ 或 % 的请求 ID 永远对不上）
+		conds = append(conds, fmt.Sprintf("(request_id = $%d OR path ILIKE '%%' || $%d || '%%' OR user_agent ILIKE '%%' || $%d || '%%' OR rule_name ILIKE '%%' || $%d || '%%')", idx, idx+1, idx+1, idx+1))
+		args = append(args, f.Keyword, escapeLike(f.Keyword))
+		idx += 2
 	}
 
 	if len(conds) == 0 {

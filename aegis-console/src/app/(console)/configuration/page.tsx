@@ -1,14 +1,13 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Flame, Globe, Globe2, KeyRound, Mail, Network, Palette, ShieldCheck, Sparkles } from "lucide-react";
+import { Globe, Globe2, KeyRound, Mail, Network, Palette, ShieldCheck, Sparkles } from "lucide-react";
 import { usePermissionChecker, usePermissionsLoading } from "@/lib/permissions";
 import { EmptyState, LoadingState } from "@/components/ui/data-state";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BrandingPanel } from "@/components/configuration/branding-panel";
-import { FirewallConfigPanel } from "@/components/security/firewall-config-panel";
 import { PlatformSecurityPanel } from "@/components/security/platform-security-panel";
 import { LDAPConfigPanel } from "@/components/security/ldap-config-panel";
 import { OIDCConfigPanel } from "@/components/security/oidc-config-panel";
@@ -29,12 +28,11 @@ import { PLATFORM_AI_SCOPE } from "@/lib/api/ai";
  * 现在应用级配置全部归 /apps（那里的应用选择器就是作用域），
  * 本页去掉选择器，只承载对整个平台生效的配置。
  *
- * 与 /security 的分工：本页管**配置**（改了什么会生效），
- * /security 管**运行态**（发生了什么：拦截日志、封禁、地理风控）。
+ * 防火墙的配置与运行态都在独立工作台 /firewall（规则集 v2，docs/firewall.md）；
+ * 旧链接 /configuration?tab=firewall 转到 /firewall?tab=waf。
  */
 const TABS = [
   { value: "branding", label: "品牌与外观", icon: Palette, permission: "system:config:read" },
-  { value: "firewall", label: "防火墙与限流", icon: Flame, permission: "system:config:read" },
   { value: "egress", label: "出海代理", icon: Globe2, permission: "system:egress:read" },
   { value: "email", label: "邮件", icon: Mail, permission: "email:read" },
   { value: "ai", label: "AI 服务", icon: Sparkles, permission: "ai:read" },
@@ -55,6 +53,9 @@ function ConfigurationPageInner() {
 
   const rawTab = searchParams.get("tab");
   const tab = rawTab && shown.has(rawTab) ? rawTab : visible[0]?.value;
+  useEffect(() => {
+    if (rawTab === "firewall") router.replace("/firewall?tab=waf");
+  }, [rawTab, router]);
 
   if (!tab) {
     return (
@@ -90,7 +91,6 @@ function ConfigurationPageInner() {
         </TabsList>
 
         {shown.has("branding") ? <TabsContent value="branding"><BrandingPanel /></TabsContent> : null}
-        {shown.has("firewall") ? <TabsContent value="firewall"><FirewallConfigPanel /></TabsContent> : null}
         {shown.has("egress") ? <TabsContent value="egress"><EgressGatewayPanel /></TabsContent> : null}
         {shown.has("email") ? <TabsContent value="email"><EmailWorkspace scope={PLATFORM_EMAIL_SCOPE} /></TabsContent> : null}
         {shown.has("ai") ? <TabsContent value="ai"><AIChannelPanel scope={PLATFORM_AI_SCOPE} /></TabsContent> : null}

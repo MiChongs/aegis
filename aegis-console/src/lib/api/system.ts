@@ -155,6 +155,8 @@ export type FirewallLogListParams = {
   wafRuleId?: number;
   pathPattern?: string;
   severity?: string;
+  /** block / observe / log（规则集 v2） */
+  action?: string;
   sortBy?: string;
   sortOrder?: string;
 };
