@@ -510,10 +510,10 @@ func (s *AuthService) SendPasswordRecoveryCode(ctx context.Context, input Passwo
 		if item.LastSentAt != nil && now.Sub(*item.LastSentAt) < passwordRecoveryResendInterval {
 			wait := passwordRecoveryResendInterval - now.Sub(*item.LastSentAt)
 			return true, 0, apperrors.New(errCodeRecoveryResendTooSoon, http.StatusTooManyRequests,
-				fmt.Sprintf("发送过于频繁，请 %d 秒后再试", int(wait.Seconds())+1))
+				fmt.Sprintf("发送过于频繁，请 %d 秒后再试", int(wait.Seconds())+1)).Public()
 		}
 		if item.Sends >= passwordRecoveryMaxSends {
-			return true, 0, apperrors.New(errCodeRecoveryResendTooSoon, http.StatusTooManyRequests, "本次找回发送次数已达上限，请重新开始")
+			return true, 0, apperrors.New(errCodeRecoveryResendTooSoon, http.StatusTooManyRequests, "本次找回发送次数已达上限，请重新开始").Public()
 		}
 		previousSent = item.LastSentAt
 		item.Sends++
@@ -910,7 +910,7 @@ func (s *AuthService) hitRecoveryLimit(ctx context.Context, scope, subject strin
 		return nil
 	}
 	if n > limit {
-		return apperrors.New(errCodeRecoveryDailyLimit, http.StatusTooManyRequests, message)
+		return apperrors.New(errCodeRecoveryDailyLimit, http.StatusTooManyRequests, message).Public()
 	}
 	return nil
 }
@@ -919,7 +919,7 @@ func (s *AuthService) hitRecoveryLimit(ctx context.Context, scope, subject strin
 func recordRecoveryFailure(flow *redisrepo.PasswordRecoveryFlow, cause error) (bool, time.Duration, error) {
 	flow.Failures++
 	if flow.Failures >= passwordRecoveryMaxFailures {
-		return false, 0, apperrors.New(errCodeRecoveryTooManyFailure, http.StatusTooManyRequests, "验证失败次数过多，本次找回已作废")
+		return false, 0, apperrors.New(errCodeRecoveryTooManyFailure, http.StatusTooManyRequests, "验证失败次数过多，本次找回已作废").Public()
 	}
 	return true, 0, cause
 }

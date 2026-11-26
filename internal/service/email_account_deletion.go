@@ -19,7 +19,7 @@ func (s *EmailService) SendAccountDeletionCode(ctx context.Context, appID int64,
 	if err != nil {
 		return err
 	}
-	_, _, err = s.sendCodeMail(ctx, appID, config, email, code, "account_deletion", expireMinutes)
+	_, _, err = s.deliverCodeMail(ctx, appID, config, "", email, code, "account_deletion", expireMinutes)
 	return err
 }
 

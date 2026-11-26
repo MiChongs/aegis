@@ -662,3 +662,29 @@ func TestAllStatusPagesRender(t *testing.T) {
 		}
 	}
 }
+
+// ─── AppError：可公开文案不脱敏 ───
+
+func TestAppErrorKeepsPublicTooManyRequestsMessage(t *testing.T) {
+	c, w := ctxWith(http.MethodPost, "/x", "application/json")
+	AppError(c, apperrors.New(42961, http.StatusTooManyRequests, "发送太频繁，请 37 秒后再试").Public())
+	var env Envelope
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusTooManyRequests || env.Code != 42961 || env.Message != "发送太频繁，请 37 秒后再试" {
+		t.Fatalf("got status=%d code=%d message=%q", w.Code, env.Code, env.Message)
+	}
+}
+
+func TestAppErrorStillSanitizesUnmarkedErrors(t *testing.T) {
+	c, w := ctxWith(http.MethodPost, "/x", "application/json")
+	AppError(c, apperrors.New(42974, http.StatusTooManyRequests, "Zeabur 邮件配额已用尽：quota exceeded"))
+	var env Envelope
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(env.Message, "Zeabur") {
+		t.Fatalf("未标记可公开的上游细节不应透出：%q", env.Message)
+	}
+}

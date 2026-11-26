@@ -80,7 +80,7 @@ func (s *EmailService) SendCode(ctx context.Context, request CodeRequest) (*emai
 	}
 
 	code := generateEmailCodeLength(policy.Code.Length)
-	expireAt, messageID, err := s.sendCodeMail(ctx, request.AppID, config, email, code, purpose, ttl)
+	expireAt, messageID, err := s.deliverCodeMail(ctx, request.AppID, config, request.ConfigName, email, code, purpose, ttl)
 	if err != nil {
 		release()
 		return nil, err
@@ -111,7 +111,8 @@ func (s *EmailService) reserveSend(ctx context.Context, appID int64, purpose str
 			if ttl, err := s.redis.TTL(ctx, coolKey).Result(); err == nil && ttl > 0 {
 				wait = int((ttl + time.Second - 1) / time.Second)
 			}
-			return nil, apperrors.New(42961, http.StatusTooManyRequests, fmt.Sprintf("发送太频繁，请 %d 秒后再试", wait))
+			return nil, apperrors.New(42961, http.StatusTooManyRequests, fmt.Sprintf("发送太频繁，请 %d 秒后再试", wait)).
+				WithData(map[string]any{"retryAfter": wait}).Public()
 		}
 	}
 	release := func() {
@@ -165,7 +166,7 @@ func (s *EmailService) reserveSend(ctx context.Context, appID int64, purpose str
 				_ = s.redis.Decr(ctx, key).Err()
 			}
 			release()
-			return nil, apperrors.New(quota.code, http.StatusTooManyRequests, quota.message)
+			return nil, apperrors.New(quota.code, http.StatusTooManyRequests, quota.message).Public()
 		}
 		taken = append(taken, quota.key)
 	}
@@ -325,7 +326,10 @@ func (s *EmailService) SendPasswordResetLink(ctx context.Context, request ResetL
 		Preheader: fmt.Sprintf("重置密码的链接 %d 分钟内有效", passwordResetTTLMinutes),
 		Blocks:    passwordResetBlocks(resetURL, passwordResetTTLMinutes),
 	})
-	messageID, err := s.sendRenderedMail(ctx, request.AppID, config, email, subject, mailBody{HTML: html, Text: text}, "password_reset_link")
+	messageID, err := s.deliverUserMail(ctx, request.AppID, config, request.ConfigName, "password_reset_link",
+		func(channel *emaildomain.Config) (string, bool, error) {
+			return s.sendRenderedMailVia(ctx, request.AppID, channel, email, subject, mailBody{HTML: html, Text: text}, "password_reset_link")
+		})
 	if err != nil {
 		release()
 		return nil, err

@@ -164,6 +164,29 @@ func ErrorData(c *gin.Context, httpStatus int, code int, message string, data an
 	c.Abort()
 }
 
+// AppError 写出一个 *apperrors.AppError。
+//
+// 打了 PublicMessage 标记的错误原样输出文案，其余照旧经 sanitizeMessage 脱敏，
+// 详见 apperrors.AppError.PublicMessage。
+func AppError(c *gin.Context, ae *apperrors.AppError) {
+	if ae == nil {
+		return
+	}
+	if !ae.PublicMessage || strings.TrimSpace(ae.Message) == "" {
+		ErrorData(c, ae.HTTPStatus, ae.Code, ae.Message, ae.Data)
+		return
+	}
+	message := strings.TrimSpace(ae.Message)
+	c.Header("Cache-Control", "no-store")
+	if wantsHTML(c) {
+		renderHTMLPage(c, ae.HTTPStatus, message)
+		c.Abort()
+		return
+	}
+	writeJSON(c, ae.HTTPStatus, Envelope{Code: ae.Code, Message: message, Data: ae.Data})
+	c.Abort()
+}
+
 // ErrorE 自动展开 *apperrors.AppError → HTTP 状态码 + 业务码；
 // 其他错误视为 500。返回 true 表示已写入响应。
 func ErrorE(c *gin.Context, err error) bool {
@@ -171,7 +194,7 @@ func ErrorE(c *gin.Context, err error) bool {
 		return false
 	}
 	if ae, ok := err.(*apperrors.AppError); ok {
-		ErrorData(c, ae.HTTPStatus, ae.Code, ae.Message, ae.Data)
+		AppError(c, ae)
 		return true
 	}
 	Error(c, http.StatusInternalServerError, codeInternalError, err.Error())

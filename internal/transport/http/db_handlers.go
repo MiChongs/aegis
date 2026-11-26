@@ -16,7 +16,7 @@ import (
 // databaseHandlers 不是 *Handler（无需注入全部服务），因此单独提供一份等价实现。
 func writeServiceError(c *gin.Context, err error) {
 	if appErr, ok := errors.AsType[*apperrors.AppError](err); ok {
-		response.ErrorData(c, appErr.HTTPStatus, appErr.Code, appErr.Message, appErr.Data)
+		response.AppError(c, appErr)
 		return
 	}
 	_ = c.Error(err)

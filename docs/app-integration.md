@@ -69,7 +69,7 @@ val profile = client.me.profile()
 | `POST` | `/auth/oauth/bind/url` | 取第三方账号绑定授权地址（Bearer） |
 | `POST` | `/auth/oauth/bind/token` | 用原生 SDK 拿到的 `accessToken` 绑定（Bearer） |
 | `GET` `DELETE` | `/auth/oauth/bindings[/{provider}]` | 查询 / 解绑第三方账号（Bearer） |
-| `POST` | `/auth/email/code`、`/auth/email/verify` | 邮箱验证码。位数、有效期、重发冷却（42961）、按邮箱 / IP 的频次上限（42962 / 42963）、错误次数（42964）由应用的邮件策略决定；`expireMinutes` 只能比策略里的短 |
+| `POST` | `/auth/email/code`、`/auth/email/verify` | 邮箱验证码。位数、有效期、重发冷却（42961，`data.retryAfter` 为剩余秒数）、按邮箱 / IP 的频次上限（42962 / 42963）、错误次数（42964）由应用的邮件策略决定，这几条的 message 原样给用户看；`expireMinutes` 只能比策略里的短。所有邮件通道都发不出去时回 50316（HTTP 503）：不是用户点多了，别提示「过于频繁」，也不要自动重试。未指名配置时主通道失败会依次切到应用的其他启用配置与平台共享通道 |
 | `POST` | `/auth/password/recovery/start`、`/status`、`/send`、`/verify`、`/complete` | 找回密码（见 1.10） |
 | `POST` | `/me/password/recovery` | 已登录时找回密码，后续步骤同上（Bearer，见 1.10） |
 | `POST` | `/auth/password/forgot`、`/auth/password/reset/verify` | 旧的邮件链接式重置：只寄信，响应不含令牌；`resetUrl` 必须落在邮件策略登记的前缀内（否则 42291），不存在的账号同样返回成功但不发信。新接入请用上一行 |
