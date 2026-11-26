@@ -353,17 +353,7 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.POST("/cloud/items/:namespace/:key/rollback", h.AppRollbackCloudItem)
 		appGatewayAuthed.POST("/cloud/items/:namespace/:key/link", h.AppCloudItemLink)
 
-		// 工单（用户自助）
-		appGatewayAuthed.GET("/tickets", h.UserListTickets)
-		appGatewayAuthed.POST("/tickets", h.UserCreateTicket)
-		appGatewayAuthed.GET("/tickets/categories", h.UserListTicketCategories)
-		appGatewayAuthed.POST("/tickets/attachments", h.UserUploadTicketAttachment)
-		appGatewayAuthed.GET("/tickets/:ticketId", h.UserGetTicket)
-		appGatewayAuthed.POST("/tickets/:ticketId/replies", h.UserReplyTicket)
-		appGatewayAuthed.POST("/tickets/:ticketId/rating", h.UserRateTicket)
-		appGatewayAuthed.POST("/tickets/:ticketId/cancel", h.UserCancelTicket)
-
-		// 意见反馈：kind=feedback 的工单，独立入口与更严的入参（见 feedback_service.go）
+		// 意见反馈：应用用户唯一的诉求入口（kind=feedback）。工单只对管理员开放，网关不注册 /tickets，独立入口与更严的入参（见 feedback_service.go）
 		appGatewayAuthed.GET("/feedback/categories", h.AppFeedbackCategories)
 		appGatewayAuthed.POST("/feedback/attachments", h.AppUploadFeedbackAttachment)
 		appGatewayAuthed.POST("/feedback", h.AppCreateFeedback)

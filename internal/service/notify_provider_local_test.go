@@ -91,7 +91,7 @@ func ticketLikeEvent() *notifydomain.Event {
 		Title:       "【工单已回复】TK001 支付未到账",
 		Summary:     "李四 回复了工单：已为你补单",
 		Link:        "https://console.example.com/tickets?id=42",
-		UserLink:    "/tickets/42",
+		UserLink:    "/feedback/42",
 		UserTitle:   "【客服已回复】支付未到账",
 		UserSummary: "客服回复：已为你补单",
 		Resource:    "ticket",

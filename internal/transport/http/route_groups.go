@@ -146,8 +146,6 @@ var routeGroups = []routeGroup{
 		Prefix: "/api/auth/"},
 	{Realm: realmUser, Title: "用户设置", Tag: "User Settings", Auth: authBearer,
 		Prefix: "/api/user-settings"},
-	{Realm: realmUser, Title: "用户工单", Tag: "User", Auth: authBearer,
-		Prefix: "/api/user/tickets"},
 	{Realm: realmUser, Title: "用户资料与安全", Tag: "User", Auth: authBearer,
 		Prefix: "/api/user/"},
 	{Realm: realmUser, Title: "积分与签到", Tag: "Points", Auth: authBearer,

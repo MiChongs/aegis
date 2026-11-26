@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -132,7 +133,8 @@ export function RefreshButton({ spinning, onClick }: { spinning: boolean; onClic
 
 // ─────────────── 批量操作 ───────────────
 
-const BULK_STATUSES: TicketStatus[] = ["processing", "pending_user", "pending_third_party", "resolved"];
+// 「不采纳」要填理由，单独走确认框；「关闭」是单独的按钮
+const BULK_STATUSES: TicketStatus[] = ["processing", "pending", "resolved"];
 const BULK_PRIORITIES: TicketPriority[] = ["urgent", "high", "normal", "low"];
 
 /**
@@ -150,10 +152,11 @@ export function BulkBar({
   onSelectAll: () => void;
   onClear: () => void;
 }) {
-  const { noun } = useDesk();
+  const { noun, person } = useDesk();
   const operatorId = useAuthStore((state) => Number(state.operator?.id) || 0);
   const bulkMut = useBulkTicketsMutation();
-  const [confirm, setConfirm] = useState<"close" | "delete" | null>(null);
+  const [confirm, setConfirm] = useState<"close" | "reject" | "delete" | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
   const count = selected.length;
   const all = count >= loaded && loaded > 0;
 
@@ -219,6 +222,10 @@ export function BulkBar({
               {STATUS_LABEL[status]}
             </DropdownMenuItem>
           ))}
+          <DropdownMenuItem onSelect={() => setConfirm("reject")}>
+            <StatusDot status="rejected" className="mx-0.5" />
+            {STATUS_LABEL.rejected}
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -281,30 +288,57 @@ export function BulkBar({
         </TooltipContent>
       </Tooltip>
 
-      <AlertDialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
+      <AlertDialog
+        open={confirm !== null}
+        onOpenChange={(open) => {
+          if (open) return;
+          setConfirm(null);
+          setRejectReason("");
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirm === "delete" ? `删除选中的 ${count} 条${noun}？` : `关闭选中的 ${count} 条${noun}？`}
+              {confirm === "delete"
+                ? `删除选中的 ${count} 条${noun}？`
+                : confirm === "reject"
+                  ? `不采纳选中的 ${count} 条${noun}？`
+                  : `关闭选中的 ${count} 条${noun}？`}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirm === "delete"
                 ? "会话与附件一并删除，无法恢复。没有删除权限的条目会被跳过。"
-                : "关闭后对方不能再回复，可以重新打开。没有关闭权限的条目会被跳过。"}
+                : confirm === "reject"
+                  ? `每位${person}都会收到通知并看到同一条理由；之后不能再回复，可以重新打开。没有改状态权限的条目会被跳过。`
+                  : `关闭后${person}不能再回复，可以重新打开。没有关闭权限的条目会被跳过。`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {confirm === "reject" ? (
+            <Textarea
+              autoFocus
+              rows={3}
+              value={rejectReason}
+              onChange={(event) => setRejectReason(event.target.value)}
+              placeholder={`不采纳理由，选填，${person}可见`}
+              aria-label="不采纳理由"
+            />
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction
               className={cn(confirm === "delete" && "bg-destructive text-white hover:bg-destructive/90")}
               onClick={() => {
                 const action = confirm;
+                const reason = rejectReason.trim();
                 setConfirm(null);
+                setRejectReason("");
                 if (action === "delete") void run({ action: "delete" }, "已删除");
                 else if (action === "close") void run({ action: "close" }, "已关闭");
+                else if (action === "reject")
+                  void run({ action: "status", status: "rejected", reason: reason || undefined }, `已改为「${STATUS_LABEL.rejected}」`);
               }}
             >
-              {confirm === "delete" ? "删除" : "关闭"}
+              {confirm === "delete" ? "删除" : confirm === "reject" ? "确认不采纳" : "关闭"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

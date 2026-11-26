@@ -75,8 +75,10 @@ const RANGES = [7, 30, 90] as const;
 const STATUS_ROWS: Array<{ key: keyof TicketStats; label: string; bar: string }> = [
   { key: "open", label: "待受理", bar: "bg-sky-500" },
   { key: "processing", label: "处理中", bar: "bg-indigo-500" },
-  { key: "pendingUser", label: "等待补充", bar: "bg-amber-500" },
+  { key: "pending", label: "等待中", bar: "bg-amber-500" },
   { key: "resolved", label: "已解决", bar: "bg-emerald-500" },
+  { key: "rejected", label: "不采纳", bar: "bg-rose-300 dark:bg-rose-400/60" },
+  // 统计接口的 closed 是已关闭 + 已撤销
   { key: "closed", label: "已关闭", bar: "bg-zinc-400" }
 ];
 
@@ -315,7 +317,7 @@ function KpiRow({
     );
   }
 
-  const unresolved = stats ? stats.open + stats.processing + stats.pendingUser : 0;
+  const unresolved = stats ? stats.open + stats.processing + stats.pending : 0;
   const items: Array<{ key: string; label: string; icon: LucideIcon; tone: KitTone; value: string; hint?: string }> = [
     {
       key: "open",
@@ -466,7 +468,7 @@ function StatusCard({ stats, loading, noun }: { stats?: TicketStats; loading: bo
   const total = rows.reduce((sum, row) => sum + row.value, 0);
   return (
     <OverviewCard icon={ListChecks} tone="sky" title="状态分布" description={stats ? `共 ${formatCount(stats.total)} 条${noun}` : undefined}>
-      {loading || !stats ? <ListSkeleton rows={5} /> : total === 0 ? <CardEmpty icon={ListChecks} title={`还没有${noun}`} /> : <DistributionList rows={rows} total={total} />}
+      {loading || !stats ? <ListSkeleton rows={STATUS_ROWS.length} /> : total === 0 ? <CardEmpty icon={ListChecks} title={`还没有${noun}`} /> : <DistributionList rows={rows} total={total} />}
     </OverviewCard>
   );
 }

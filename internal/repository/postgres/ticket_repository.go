@@ -150,7 +150,7 @@ func ticketFilterClauses(query ticketdomain.ListQuery, scope ticketdomain.Scope,
 		*args = append(*args, query.Statuses)
 		clauses = append(clauses, fmt.Sprintf("t.status = ANY($%d)", len(*args)))
 	} else if !query.IncludeClosed {
-		*args = append(*args, []string{ticketdomain.StatusClosed, ticketdomain.StatusCancelled})
+		*args = append(*args, []string{ticketdomain.StatusClosed, ticketdomain.StatusCancelled, ticketdomain.StatusRejected})
 		clauses = append(clauses, fmt.Sprintf("t.status <> ALL($%d)", len(*args)))
 	}
 	if len(query.Priorities) > 0 {
@@ -518,10 +518,10 @@ func (r *Repository) UpdateTicketStatus(ctx context.Context, id int64, status st
 		UPDATE tickets
 		SET status = $2::text,
 		    resolved_at = CASE WHEN $2::text = 'resolved' THEN NOW() WHEN $3::boolean THEN NULL ELSE resolved_at END,
-		    closed_at   = CASE WHEN $2::text IN ('closed','cancelled') THEN NOW() WHEN $3::boolean THEN NULL ELSE closed_at END,
+		    closed_at   = CASE WHEN $2::text IN ('closed','cancelled','rejected') THEN NOW() WHEN $3::boolean THEN NULL ELSE closed_at END,
 		    reopened_count = reopened_count + CASE WHEN $3::boolean THEN 1 ELSE 0 END,
 		    sla_state = CASE
-		        WHEN $2::text IN ('resolved','closed') AND sla_state <> 'breached' THEN 'met'
+		        WHEN $2::text IN ('resolved','rejected','closed') AND sla_state <> 'breached' THEN 'met'
 		        WHEN $3::boolean THEN 'ontime'
 		        ELSE sla_state END,
 		    locked = CASE WHEN $2::text = 'closed' THEN TRUE WHEN $3::boolean THEN FALSE ELSE locked END,
@@ -673,7 +673,7 @@ func (r *Repository) AddTicketMessage(ctx context.Context, input AddTicketMessag
 			    status = CASE
 			        WHEN $4::text <> '' THEN $4::text
 			        WHEN status = 'open' AND $3::boolean THEN 'processing'
-			        WHEN status = 'resolved' AND NOT $3::boolean THEN 'processing'
+			        WHEN status IN ('resolved','pending') AND NOT $3::boolean THEN 'processing'
 			        ELSE status END,
 			    updated_at = NOW()
 			WHERE id = $1::bigint`,
@@ -891,7 +891,7 @@ func (r *Repository) CountRequesterTickets(ctx context.Context, appID int64, use
 	var stats ticketdomain.RequesterTicketStats
 	err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*),
-			COUNT(*) FILTER (WHERE status NOT IN ('resolved', 'closed', 'cancelled')),
+			COUNT(*) FILTER (WHERE status NOT IN ('resolved', 'rejected', 'closed', 'cancelled')),
 			COUNT(*) FILTER (WHERE kind = 'feedback')
 		FROM tickets WHERE appid = $1 AND requester_user_id = $2`, appID, userID).
 		Scan(&stats.Total, &stats.Open, &stats.Feedback)
@@ -1026,7 +1026,7 @@ func (r *Repository) DeleteTicketCategory(ctx context.Context, id int64) (bool, 
 func (r *Repository) ListTicketGroups(ctx context.Context, appID int64, onlyEnabled bool) ([]ticketdomain.Group, error) {
 	sql := `SELECT g.id, g.appid, g.key, g.name, g.description, g.assign_strategy, g.enabled, g.created_at, g.updated_at,
 		(SELECT COUNT(*) FROM ticket_group_members m WHERE m.group_id = g.id),
-		(SELECT COUNT(*) FROM tickets t WHERE t.group_id = g.id AND t.status NOT IN ('closed','cancelled'))
+		(SELECT COUNT(*) FROM tickets t WHERE t.group_id = g.id AND t.status NOT IN ('closed','cancelled','rejected'))
 		FROM ticket_groups g WHERE (g.appid = $1 OR g.appid = 0)`
 	if onlyEnabled {
 		sql += " AND g.enabled = TRUE"
@@ -1056,7 +1056,7 @@ func (r *Repository) GetTicketGroup(ctx context.Context, id int64) (*ticketdomai
 	err := r.pool.QueryRow(ctx, `
 		SELECT g.id, g.appid, g.key, g.name, g.description, g.assign_strategy, g.enabled, g.created_at, g.updated_at,
 		(SELECT COUNT(*) FROM ticket_group_members m WHERE m.group_id = g.id),
-		(SELECT COUNT(*) FROM tickets t WHERE t.group_id = g.id AND t.status NOT IN ('closed','cancelled'))
+		(SELECT COUNT(*) FROM tickets t WHERE t.group_id = g.id AND t.status NOT IN ('closed','cancelled','rejected'))
 		FROM ticket_groups g WHERE g.id = $1`, id).Scan(
 		&item.ID, &item.AppID, &item.Key, &item.Name, &item.Description,
 		&item.AssignStrategy, &item.Enabled, &item.CreatedAt, &item.UpdatedAt,
@@ -1104,7 +1104,7 @@ func (r *Repository) DeleteTicketGroup(ctx context.Context, id int64) (bool, err
 func (r *Repository) ListTicketGroupMembers(ctx context.Context, groupID int64) ([]ticketdomain.GroupMember, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT m.group_id, m.admin_id, a.account, COALESCE(a.display_name, ''), COALESCE(a.avatar, ''), m.role, m.created_at,
-		       (SELECT COUNT(*) FROM tickets t WHERE t.assignee_admin_id = m.admin_id AND t.status NOT IN ('closed','cancelled'))
+		       (SELECT COUNT(*) FROM tickets t WHERE t.assignee_admin_id = m.admin_id AND t.status NOT IN ('closed','cancelled','rejected'))
 		FROM ticket_group_members m JOIN admin_accounts a ON a.id = m.admin_id
 		WHERE m.group_id = $1 ORDER BY m.created_at ASC`, groupID)
 	if err != nil {
@@ -1206,7 +1206,7 @@ func (r *Repository) PickTicketGroupAgent(ctx context.Context, groupID int64) (*
 			SELECT m.admin_id FROM ticket_group_members m
 			JOIN admin_accounts a ON a.id = m.admin_id AND a.status = 'active'
 			WHERE m.group_id = $1
-			ORDER BY (SELECT COUNT(*) FROM tickets t WHERE t.assignee_admin_id = m.admin_id AND t.status NOT IN ('closed','cancelled')) ASC,
+			ORDER BY (SELECT COUNT(*) FROM tickets t WHERE t.assignee_admin_id = m.admin_id AND t.status NOT IN ('closed','cancelled','rejected')) ASC,
 			         m.admin_id ASC
 			LIMIT 1`, groupID).Scan(&adminID)
 		if err != nil {
@@ -1432,13 +1432,14 @@ func (r *Repository) TicketStats(ctx context.Context, appID *int64, kind string,
 		COUNT(*),
 		COUNT(*) FILTER (WHERE t.status = 'open'),
 		COUNT(*) FILTER (WHERE t.status = 'processing'),
-		COUNT(*) FILTER (WHERE t.status IN ('pending_user','pending_third_party')),
+		COUNT(*) FILTER (WHERE t.status = 'pending'),
 		COUNT(*) FILTER (WHERE t.status = 'resolved'),
+		COUNT(*) FILTER (WHERE t.status = 'rejected'),
 		COUNT(*) FILTER (WHERE t.status IN ('closed','cancelled')),
-		COUNT(*) FILTER (WHERE t.assignee_admin_id IS NULL AND t.status NOT IN ('closed','cancelled')),
-		COUNT(*) FILTER (WHERE t.assignee_admin_id = $` + fmt.Sprint(minePos) + ` AND t.status NOT IN ('closed','cancelled')),
-		COUNT(*) FILTER (WHERE t.first_responded_at IS NULL AND t.first_response_due_at IS NOT NULL AND t.first_response_due_at < NOW() AND t.status NOT IN ('closed','cancelled')),
-		COUNT(*) FILTER (WHERE t.resolved_at IS NULL AND t.resolve_due_at IS NOT NULL AND t.resolve_due_at < NOW() AND t.status NOT IN ('closed','cancelled')),
+		COUNT(*) FILTER (WHERE t.assignee_admin_id IS NULL AND t.status NOT IN ('closed','cancelled','rejected')),
+		COUNT(*) FILTER (WHERE t.assignee_admin_id = $` + fmt.Sprint(minePos) + ` AND t.status NOT IN ('closed','cancelled','rejected')),
+		COUNT(*) FILTER (WHERE t.first_responded_at IS NULL AND t.first_response_due_at IS NOT NULL AND t.first_response_due_at < NOW() AND t.status NOT IN ('closed','cancelled','rejected')),
+		COUNT(*) FILTER (WHERE t.resolved_at IS NULL AND t.resolve_due_at IS NOT NULL AND t.resolve_due_at < NOW() AND t.status NOT IN ('closed','cancelled','rejected')),
 		COUNT(*) FILTER (WHERE t.created_at >= date_trunc('day', NOW())),
 		COUNT(*) FILTER (WHERE t.resolved_at >= date_trunc('day', NOW())),
 		COUNT(*) FILTER (WHERE t.priority = 'low'),
@@ -1454,7 +1455,7 @@ func (r *Repository) TicketStats(ctx context.Context, appID *int64, kind string,
 	var low, normal, high, urgent int64
 	var avgFirst, avgResolve, avgRating float64
 	if err := r.pool.QueryRow(ctx, sql, args...).Scan(
-		&stats.Total, &stats.Open, &stats.Processing, &stats.PendingUser, &stats.Resolved, &stats.Closed,
+		&stats.Total, &stats.Open, &stats.Processing, &stats.Pending, &stats.Resolved, &stats.Rejected, &stats.Closed,
 		&stats.Unassigned, &stats.MineAssigned, &stats.OverdueFirst, &stats.OverdueResolve,
 		&stats.CreatedToday, &stats.ResolvedToday,
 		&low, &normal, &high, &urgent,
@@ -1525,7 +1526,7 @@ func (r *Repository) TicketAppSummaries(ctx context.Context, kind string, scope 
 	args = append(args, scope.AdminID)
 	me := fmt.Sprintf("$%d", len(args))
 
-	const active = `t.status IN ('open','processing','pending_user','pending_third_party')`
+	const active = `t.status IN ('open','processing','pending')`
 	sql := `WITH s AS (
 		SELECT t.appid,
 			COUNT(*) AS total,
@@ -1629,7 +1630,7 @@ func (r *Repository) TicketAgentStats(ctx context.Context, appID *int64, kind st
 	sql := `SELECT a.id, a.account, COALESCE(a.display_name, ''),
 		COUNT(*),
 		COUNT(*) FILTER (WHERE t.resolved_at IS NOT NULL),
-		COUNT(*) FILTER (WHERE t.status NOT IN ('closed','cancelled')),
+		COUNT(*) FILTER (WHERE t.status NOT IN ('closed','cancelled','rejected')),
 		COALESCE(AVG(EXTRACT(EPOCH FROM (t.first_responded_at - t.created_at)) * 1000) FILTER (WHERE t.first_responded_at IS NOT NULL), 0),
 		COALESCE(AVG(EXTRACT(EPOCH FROM (t.resolved_at - t.created_at)) * 1000) FILTER (WHERE t.resolved_at IS NOT NULL), 0),
 		COALESCE(AVG(t.rating) FILTER (WHERE t.rating IS NOT NULL), 0),
@@ -1692,7 +1693,7 @@ func (r *Repository) ScanTicketsForSLA(ctx context.Context, limit int) ([]SLASca
 		       t.first_response_due_at, t.resolve_due_at, t.first_responded_at,
 		       COALESCE(p.warn_ratio, 0.8), t.created_at
 		FROM tickets t LEFT JOIN ticket_sla_policies p ON p.id = t.sla_policy_id
-		WHERE t.status NOT IN ('closed','cancelled','resolved')
+		WHERE t.status NOT IN ('closed','cancelled','rejected','resolved')
 		  AND (t.first_response_due_at IS NOT NULL OR t.resolve_due_at IS NOT NULL)
 		  AND t.sla_state <> 'breached'
 		ORDER BY COALESCE(t.first_response_due_at, t.resolve_due_at) ASC
@@ -1729,7 +1730,7 @@ func (r *Repository) CountAdminOpenTickets(ctx context.Context, adminID int64) (
 	var count int64
 	err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM tickets t
-		WHERE t.status NOT IN ('closed','cancelled')
+		WHERE t.status NOT IN ('closed','cancelled','rejected')
 		  AND (t.assignee_admin_id = $1
 		       OR (t.assignee_admin_id IS NULL AND t.group_id IN (SELECT group_id FROM ticket_group_members WHERE admin_id = $1)))`,
 		adminID).Scan(&count)

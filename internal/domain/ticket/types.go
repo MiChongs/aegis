@@ -4,22 +4,49 @@ import "time"
 
 // ─────────────── 枚举常量 ───────────────
 
-// 工单状态机
+// 工单状态机。状态一律三个字，七种：
 //
-//	open ──► processing ──► resolved ──► closed
-//	  │           │  ▲          │
-//	  │           ▼  │          └──► reopen 回到 processing
-//	  │      pending_user / pending_third_party
-//	  └──► cancelled（提单人撤单）
+//	待受理 open ──► 处理中 processing ◄──► 等待中 pending
+//	                    │
+//	                    ├──► 已解决 resolved ──► 已关闭 closed（到期自动关闭）
+//	                    └──► 不采纳 rejected
+//	提单人可撤单 ──► 已撤销 cancelled
+//
+// 已解决、已关闭、不采纳、已撤销都可以由处理人重开回到处理中。
+// 「等待中」不区分在等谁（提单人补充、第三方答复），等谁写在回复或备注里。
 const (
-	StatusOpen              = "open"                // 待受理
-	StatusProcessing        = "processing"          // 处理中
-	StatusPendingUser       = "pending_user"        // 等待提单人补充
-	StatusPendingThirdParty = "pending_third_party" // 等待第三方
-	StatusResolved          = "resolved"            // 已解决（待确认）
-	StatusClosed            = "closed"              // 已关闭
-	StatusCancelled         = "cancelled"           // 已撤销
+	StatusOpen       = "open"       // 待受理
+	StatusProcessing = "processing" // 处理中
+	StatusPending    = "pending"    // 等待中
+	StatusResolved   = "resolved"   // 已解决
+	StatusRejected   = "rejected"   // 不采纳
+	StatusClosed     = "closed"     // 已关闭
+	StatusCancelled  = "cancelled"  // 已撤销
 )
+
+// StatusLabels 状态的中文名，全部三个字。顺序即展示顺序。
+var StatusLabels = []struct {
+	Value string
+	Label string
+}{
+	{StatusOpen, "待受理"},
+	{StatusProcessing, "处理中"},
+	{StatusPending, "等待中"},
+	{StatusResolved, "已解决"},
+	{StatusRejected, "不采纳"},
+	{StatusClosed, "已关闭"},
+	{StatusCancelled, "已撤销"},
+}
+
+// StatusLabel 状态的中文名；未知状态原样返回。
+func StatusLabel(status string) string {
+	for _, item := range StatusLabels {
+		if item.Value == status {
+			return item.Label
+		}
+	}
+	return status
+}
 
 // 优先级
 const (
@@ -101,8 +128,8 @@ const (
 
 // ValidStatuses 是否为受支持的工单状态。
 var ValidStatuses = map[string]struct{}{
-	StatusOpen: {}, StatusProcessing: {}, StatusPendingUser: {},
-	StatusPendingThirdParty: {}, StatusResolved: {}, StatusClosed: {}, StatusCancelled: {},
+	StatusOpen: {}, StatusProcessing: {}, StatusPending: {},
+	StatusResolved: {}, StatusRejected: {}, StatusClosed: {}, StatusCancelled: {},
 }
 
 // ValidPriorities 是否为受支持的优先级。
@@ -116,11 +143,16 @@ var PriorityWeight = map[string]int{
 }
 
 // ActiveStatuses 未终结状态（仍需处理人跟进）。
-var ActiveStatuses = []string{StatusOpen, StatusProcessing, StatusPendingUser, StatusPendingThirdParty}
+var ActiveStatuses = []string{StatusOpen, StatusProcessing, StatusPending}
 
 // IsTerminal 是否为终态（终态不再计 SLA、默认禁止回复）。
 func IsTerminal(status string) bool {
-	return status == StatusClosed || status == StatusCancelled
+	return status == StatusClosed || status == StatusCancelled || status == StatusRejected
+}
+
+// IsFinished 处理是否已有结论（已解决 + 终态）：可以评价，改回处理中算重开。
+func IsFinished(status string) bool {
+	return status == StatusResolved || IsTerminal(status)
 }
 
 // ─────────────── 核心实体 ───────────────
@@ -517,7 +549,7 @@ type ReplyCommand struct {
 	Internal      bool           `json:"internal,omitempty"`
 	AttachmentIDs []int64        `json:"attachmentIds,omitempty"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
-	// 回复同时切换状态（如客服回复后置为 pending_user）
+	// 回复同时切换状态（如客服回复后置为 pending 等待中）
 	NextStatus string `json:"nextStatus,omitempty"`
 }
 
@@ -625,11 +657,13 @@ type ActionSet struct {
 
 // Stats 工单概览统计（受 Scope 约束）。
 type Stats struct {
-	Total          int64            `json:"total"`
-	Open           int64            `json:"open"`
-	Processing     int64            `json:"processing"`
-	PendingUser    int64            `json:"pendingUser"`
-	Resolved       int64            `json:"resolved"`
+	Total      int64 `json:"total"`
+	Open       int64 `json:"open"`
+	Processing int64 `json:"processing"`
+	Pending    int64 `json:"pending"`
+	Resolved   int64 `json:"resolved"`
+	Rejected   int64 `json:"rejected"`
+	// Closed 已关闭 + 已撤销
 	Closed         int64            `json:"closed"`
 	Unassigned     int64            `json:"unassigned"`
 	MineAssigned   int64            `json:"mineAssigned"`
@@ -655,7 +689,7 @@ type AppSummary struct {
 	AppKey  string `json:"appKey,omitempty"`
 	AppName string `json:"appName"`
 	// Owned 应用由当前管理员创建
-	Owned bool `json:"owned"`
+	Owned bool  `json:"owned"`
 	Total int64 `json:"total"`
 	// Active 未结（待受理 / 处理中 / 等待补充 / 等待第三方）
 	Active int64 `json:"active"`

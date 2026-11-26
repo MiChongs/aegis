@@ -427,17 +427,8 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "cloudItemLink", Method: "POST", Path: "/cloud/items/{namespace}/{key}/link", Auth: true,
 		Summary: "换取条目内容的短时下载地址"},
 
-	// ── 工单（用户自助）──
-	{Key: "tickets", Method: "GET", Path: "/tickets", Auth: true, Summary: "我的工单"},
-	{Key: "ticketCreate", Method: "POST", Path: "/tickets", Auth: true, Summary: "提交工单"},
-	{Key: "ticketCategories", Method: "GET", Path: "/tickets/categories", Auth: true, Summary: "工单分类"},
-	{Key: "ticketAttachment", Method: "POST", Path: "/tickets/attachments", Auth: true, Upload: true, Summary: "上传工单附件（multipart/form-data）"},
-	{Key: "ticketDetail", Method: "GET", Path: "/tickets/{ticketId}", Auth: true, Summary: "工单详情"},
-	{Key: "ticketReply", Method: "POST", Path: "/tickets/{ticketId}/replies", Auth: true, Summary: "追问"},
-	{Key: "ticketRating", Method: "POST", Path: "/tickets/{ticketId}/rating", Auth: true, Summary: "评价"},
-	{Key: "ticketCancel", Method: "POST", Path: "/tickets/{ticketId}/cancel", Auth: true, Summary: "撤单"},
-
 	// ── 意见反馈 ──
+	// 应用用户唯一的诉求入口。工单只对管理员开放（/api/admin/tickets），网关没有 /tickets。
 	// 反馈是 kind=feedback 的工单：图片（≤4，按魔数判定）与附件（≤2）分开传，
 	// 来源与客户端信息由服务端记录，同一用户每小时 5 条、每天 20 条。
 	{Key: "feedbackCategories", Method: "GET", Path: "/feedback/categories", Auth: true, Summary: "反馈分类"},

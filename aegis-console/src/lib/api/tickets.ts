@@ -8,12 +8,17 @@ import { apiRequest, buildQuery } from "./client";
 
 // ─────────────── 枚举 ───────────────
 
+/**
+ * 工单与意见反馈共用的七个状态。
+ * 进行中：open / processing / pending；已解决：resolved；终态（不可回复、不计时效）：rejected / closed / cancelled。
+ * 「已有结论」= resolved + 终态，从已有结论改回进行中算重开。
+ */
 export type TicketStatus =
   | "open"
   | "processing"
-  | "pending_user"
-  | "pending_third_party"
+  | "pending"
   | "resolved"
+  | "rejected"
   | "closed"
   | "cancelled";
 
@@ -187,8 +192,11 @@ export type TicketStats = {
   total: number;
   open: number;
   processing: number;
-  pendingUser: number;
+  pending: number;
   resolved: number;
+  /** 不采纳 */
+  rejected: number;
+  /** 已关闭 + 已撤销 */
   closed: number;
   unassigned: number;
   mineAssigned: number;

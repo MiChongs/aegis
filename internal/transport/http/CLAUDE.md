@@ -81,7 +81,7 @@ POST    /api/admin/profile/avatar [AdminAuth]
 /api/app/password-policy/*       密码策略
 /api/app/points/*                积分管理
 /api/admin/app/version/*         版本管理（compat）
-/api/admin/tickets/*             工单（中间件只做进模块的粗粒度闸门，细粒度在 service 层）
+/api/admin/tickets/*             工单与反馈（只对管理员开放；中间件只做进模块的粗粒度闸门，细粒度在 service 层）
 /api/admin/notify/*              统一通知出口（写操作叠加 RequireSuperAdmin）
 /api/admin/platform/*            平台治理（恒全局作用域，绝不 appScoped）
 /api/admin/system/organizations/:orgId/*
@@ -89,7 +89,6 @@ POST    /api/admin/profile/avatar [AdminAuth]
                                  组织归属由路径携带，service 层据此做隔离校验）
 
 # 用户 API（需 Auth 中间件）
-/api/user/tickets/*              用户自助提单 / 追问 / 评价 / 撤单
 /api/auth/*                      旧明文认证命名空间（由 App 的 allowLegacy 开关控制）
 /api/user/*                      用户信息
 /api/notification/*              通知

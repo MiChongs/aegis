@@ -87,35 +87,6 @@ func (r TicketCreateRequest) ToCommand() ticketdomain.CreateCommand {
 	}
 }
 
-// UserTicketCreateRequest 用户自助提单。
-//
-// 只收用户该填的字段：来源、标签、元数据、指派与处理组是处理侧的数据，
-// 早先用户端直接复用管理端的 TicketCreateRequest，这些字段都能被提单人自己写进去。
-type UserTicketCreateRequest struct {
-	CategoryID       *int64  `json:"categoryId"`
-	Title            string  `json:"title" binding:"required"`
-	Content          string  `json:"content" binding:"required"`
-	ContentType      string  `json:"contentType"`
-	Priority         string  `json:"priority"`
-	RequesterName    string  `json:"requesterName"`
-	RequesterContact string  `json:"requesterContact"`
-	AttachmentIDs    []int64 `json:"attachmentIds"`
-}
-
-// ToCommand 转成领域命令。
-func (r UserTicketCreateRequest) ToCommand() ticketdomain.CreateCommand {
-	return ticketdomain.CreateCommand{
-		CategoryID:       r.CategoryID,
-		Title:            r.Title,
-		Content:          r.Content,
-		ContentType:      r.ContentType,
-		Priority:         r.Priority,
-		RequesterName:    r.RequesterName,
-		RequesterContact: r.RequesterContact,
-		AttachmentIDs:    r.AttachmentIDs,
-	}
-}
-
 // TicketReplyRequest 回复请求。
 type TicketReplyRequest struct {
 	Content       string         `json:"content" binding:"required"`

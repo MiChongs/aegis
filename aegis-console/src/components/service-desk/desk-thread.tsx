@@ -57,7 +57,7 @@ import {
   isTerminalStatus
 } from "@/components/tickets/ticket-shared";
 import { TicketAttachmentList } from "@/components/tickets/ticket-attachments";
-import { DeskActionMenu } from "./desk-action-menu";
+import { DeskActionMenu, type DeskConfirm } from "./desk-action-menu";
 import { DeskComposer, type DeskComposerHandle } from "./desk-composer";
 import { CategoryDot, CategoryTag, PropertyMenu, type PropertyOption } from "./desk-kit";
 import { useDeskActions, type DeskActions } from "./use-desk-actions";
@@ -143,7 +143,8 @@ export function DeskThread({
 
 // ─────────────── 页头 ───────────────
 
-const STATUS_ORDER: TicketStatus[] = ["open", "processing", "pending_user", "pending_third_party", "resolved", "closed"];
+// 「已撤销」是对方的动作，这里不给选
+const STATUS_ORDER: TicketStatus[] = ["open", "processing", "pending", "resolved", "rejected", "closed"];
 const PRIORITY_ORDER: TicketPriority[] = ["urgent", "high", "normal", "low"];
 
 const PRIORITY_TONE: Record<TicketPriority, string> = {
@@ -183,7 +184,8 @@ function ThreadHeader({
   const [resolveOpen, setResolveOpen] = useState(false);
   const [solution, setSolution] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [confirm, setConfirm] = useState<"close" | "delete" | null>(null);
+  const [confirm, setConfirm] = useState<DeskConfirm | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   const canResolve = Boolean(perms?.changeStatus) && !terminal;
 
@@ -198,7 +200,7 @@ function ThreadHeader({
   };
 
   const resolve = async () => {
-    if (await actions.changeStatus("resolved", solution.trim() || undefined)) {
+    if (await actions.changeStatus("resolved", { solution: solution.trim() || undefined })) {
       setSolution("");
       setResolveOpen(false);
     }
@@ -330,7 +332,7 @@ function ThreadHeader({
         ) : null}
       </div>
 
-      <PropertyBar ticket={ticket} actions={actions} onRequestClose={() => setConfirm("close")} />
+      <PropertyBar ticket={ticket} actions={actions} onRequestConfirm={setConfirm} />
 
       <DeskActionMenu
         open={menuOpen}
@@ -343,14 +345,37 @@ function ThreadHeader({
         onConfirm={setConfirm}
       />
 
-      <AlertDialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
+      <AlertDialog
+        open={confirm !== null}
+        onOpenChange={(open) => {
+          if (open) return;
+          setConfirm(null);
+          setRejectReason("");
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{confirm === "delete" ? `删除这条${desk.noun}？` : `关闭这条${desk.noun}？`}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {confirm === "delete" ? `删除这条${desk.noun}？` : confirm === "reject" ? `不采纳这条${desk.noun}？` : `关闭这条${desk.noun}？`}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirm === "delete" ? "会话与附件一并删除，无法恢复。" : "关闭后{desk.person}不能再回复，可重新打开。"}
+              {confirm === "delete"
+                ? "会话与附件一并删除，无法恢复。"
+                : confirm === "reject"
+                  ? `会通知${desk.person}并附上理由；之后${desk.person}不能再回复，可重新打开。`
+                  : `关闭后${desk.person}不能再回复，可重新打开。`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {confirm === "reject" ? (
+            <Textarea
+              autoFocus
+              rows={3}
+              value={rejectReason}
+              onChange={(event) => setRejectReason(event.target.value)}
+              placeholder={`不采纳理由，选填，${desk.person}可见`}
+              aria-label="不采纳理由"
+            />
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction
@@ -358,12 +383,15 @@ function ThreadHeader({
               onClick={async () => {
                 if (confirm === "delete") {
                   if (await actions.remove()) onClose();
+                } else if (confirm === "reject") {
+                  const reason = rejectReason.trim();
+                  if (await actions.changeStatus("rejected", { reason: reason || undefined })) setRejectReason("");
                 } else {
                   void actions.changeStatus("closed");
                 }
               }}
             >
-              {confirm === "delete" ? "删除" : `关闭${desk.noun}`}
+              {confirm === "delete" ? "删除" : confirm === "reject" ? "确认不采纳" : `关闭${desk.noun}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -376,11 +404,12 @@ function ThreadHeader({
 function PropertyBar({
   ticket,
   actions,
-  onRequestClose
+  onRequestConfirm
 }: {
   ticket: TicketItem;
   actions: DeskActions;
-  onRequestClose: () => void;
+  /** 关闭与不采纳先确认（不采纳要填理由），不在胶囊里直接改 */
+  onRequestConfirm: (kind: DeskConfirm) => void;
 }) {
   const perms = ticket.permissions;
   const admins = useAdminOptions();
@@ -425,7 +454,8 @@ function PropertyBar({
         options={statusOptions}
         editable={Boolean(perms?.changeStatus)}
         onSelect={(value) => {
-          if (value === "closed") onRequestClose();
+          if (value === "closed") onRequestConfirm("close");
+          else if (value === "rejected") onRequestConfirm("reject");
           else void actions.changeStatus(value as TicketStatus);
         }}
       >

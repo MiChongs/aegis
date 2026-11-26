@@ -305,57 +305,6 @@ func (s *TicketService) CreateByAdmin(ctx context.Context, access *admindomain.A
 	return s.create(ctx, cmd)
 }
 
-// CreateByUser 应用用户自助提单。
-func (s *TicketService) CreateByUser(ctx context.Context, session *authdomain.Session, cmd ticketdomain.CreateCommand) (*ticketdomain.Ticket, error) {
-	if session == nil {
-		return nil, apperrors.New(40110, http.StatusUnauthorized, "用户未认证")
-	}
-	userID := session.UserID
-	cmd.AppID = session.AppID
-	cmd.Kind = ticketdomain.KindTicket
-	cmd.RequesterType = ticketdomain.RequesterUser
-	cmd.RequesterUserID = &userID
-	cmd.RequesterAdminID = nil
-	cmd.CreatedByAdminID = nil
-	// 用户不能自行指派与升级优先级，避免"人人都紧急"
-	cmd.AssigneeAdminID = nil
-	cmd.GroupID = nil
-	// 来源、标签、元数据是处理侧用来筛选与统计的，不能由提单人自己声明
-	cmd.Source = ticketdomain.SourceApp
-	cmd.Tags = nil
-	cmd.Metadata = nil
-	contentType, err := normalizeUserContentType(cmd.ContentType)
-	if err != nil {
-		return nil, err
-	}
-	cmd.ContentType = contentType
-	cmd.AttachmentOwner = &ticketdomain.AttachmentOwner{Type: "user", ID: userID}
-	if cmd.Priority == ticketdomain.PriorityUrgent {
-		cmd.Priority = ticketdomain.PriorityHigh
-	}
-
-	// 分类必须允许用户自助提交
-	if cmd.CategoryID != nil {
-		category, err := s.pg.GetTicketCategory(ctx, *cmd.CategoryID)
-		if err != nil {
-			return nil, err
-		}
-		if category == nil || !category.Enabled {
-			return nil, apperrors.New(40461, http.StatusNotFound, "工单分类不存在或已停用")
-		}
-		if category.Kind == ticketdomain.KindFeedback {
-			return nil, apperrors.New(40314, http.StatusForbidden, "该分类用于意见反馈，请从反馈入口提交")
-		}
-		if !category.UserSubmittable {
-			return nil, apperrors.New(40314, http.StatusForbidden, "该分类不支持自助提交")
-		}
-		if category.AppID != 0 && category.AppID != session.AppID {
-			return nil, apperrors.New(40314, http.StatusForbidden, "该分类不属于当前应用")
-		}
-	}
-	return s.create(ctx, cmd)
-}
-
 // create 建单公共路径：校验 → 应用分类默认值 → 计算 SLA → 落库 → 发通知。
 func (s *TicketService) create(ctx context.Context, cmd ticketdomain.CreateCommand) (*ticketdomain.Ticket, error) {
 	cmd.Title = strings.TrimSpace(cmd.Title)
@@ -396,6 +345,11 @@ func (s *TicketService) create(ctx context.Context, cmd ticketdomain.CreateComma
 	}
 	if !ticketdomain.ValidKind(cmd.Kind) {
 		cmd.Kind = ticketdomain.KindTicket
+	}
+	// 工单是管理员之间的内部系统，提单人只能是管理员；应用用户的诉求一律走意见反馈，
+	// 管理员代用户登记也建反馈，用户才能在反馈入口看到并跟进。
+	if cmd.Kind == ticketdomain.KindTicket && cmd.RequesterType != ticketdomain.RequesterAdmin {
+		return nil, apperrors.New(40000, http.StatusBadRequest, "工单只对管理员开放，代用户登记请改建意见反馈")
 	}
 	if strings.TrimSpace(cmd.Priority) == "" {
 		if category != nil {
@@ -506,13 +460,23 @@ func (s *TicketService) ReplyByAdmin(ctx context.Context, access *admindomain.Ac
 	if len([]rune(content)) > ticketMaxContentLen {
 		return nil, apperrors.New(40000, http.StatusBadRequest, "回复内容过长")
 	}
-	if next := strings.TrimSpace(cmd.NextStatus); next != "" {
+	next := strings.ToLower(strings.TrimSpace(cmd.NextStatus))
+	if cmd.Internal {
+		next = "" // 内部备注不改变对外状态
+	}
+	if next != "" {
 		if _, ok := ticketdomain.ValidStatuses[next]; !ok {
 			return nil, apperrors.New(40000, http.StatusBadRequest, "无效的工单状态")
 		}
 		if !actions.ChangeStatus {
 			return nil, apperrors.New(40311, http.StatusForbidden, "无权变更工单状态")
 		}
+	}
+	// 进行中的状态随消息一起落库；有结论的状态（已解决 / 不采纳 / 已关闭）要记时间、算 SLA、发通知，
+	// 回复落库后走 ChangeStatus。早先一律随消息落库，「回复并标为已解决」不记解决时间也不通知。
+	inlineStatus, finishStatus := next, ""
+	if ticketdomain.IsFinished(next) {
+		inlineStatus, finishStatus = "", next
 	}
 
 	adminID := access.AdminID
@@ -526,7 +490,7 @@ func (s *TicketService) ReplyByAdmin(ctx context.Context, access *admindomain.Ac
 		ContentType:   cmd.ContentType,
 		Metadata:      cmd.Metadata,
 		AttachmentIDs: cmd.AttachmentIDs,
-		NextStatus:    strings.TrimSpace(cmd.NextStatus),
+		NextStatus:    inlineStatus,
 	})
 	if err != nil {
 		return nil, mapTicketAttachmentError(err)
@@ -551,17 +515,22 @@ func (s *TicketService) ReplyByAdmin(ctx context.Context, access *admindomain.Ac
 			})
 		}
 	}
+	if finishStatus != "" {
+		if _, err := s.ChangeStatus(ctx, access, cmd.TicketID, ticketdomain.StatusCommand{Status: finishStatus}); err != nil {
+			return nil, err
+		}
+	}
 	return message, nil
 }
 
-// ReplyByUser 提单人追加回复。
-func (s *TicketService) ReplyByUser(ctx context.Context, session *authdomain.Session, cmd ticketdomain.ReplyCommand) (*ticketdomain.Message, error) {
-	item, err := s.requireUserTicket(ctx, session, cmd.TicketID)
+// replyByRequester 反馈人追加回复。应用用户只有意见反馈一个入口，工单不对用户开放。
+func (s *TicketService) replyByRequester(ctx context.Context, session *authdomain.Session, cmd ticketdomain.ReplyCommand) (*ticketdomain.Message, error) {
+	item, err := s.requireUserFeedback(ctx, session, cmd.TicketID)
 	if err != nil {
 		return nil, err
 	}
 	if item.Locked || ticketdomain.IsTerminal(item.Status) {
-		return nil, apperrors.New(40316, http.StatusForbidden, "工单已关闭，无法继续回复")
+		return nil, apperrors.New(40316, http.StatusForbidden, "反馈已结束，无法继续回复")
 	}
 	content := strings.TrimSpace(cmd.Content)
 	if content == "" {
@@ -744,8 +713,8 @@ func (s *TicketService) ChangeStatus(ctx context.Context, access *admindomain.Ac
 	if next == item.Status {
 		return item, nil
 	}
-	reopen := ticketdomain.IsTerminal(item.Status) || item.Status == ticketdomain.StatusResolved
-	reopen = reopen && !ticketdomain.IsTerminal(next) && next != ticketdomain.StatusResolved
+	// 已有结论（已解决 / 不采纳 / 已关闭 / 已撤销）改回进行中的状态才算重开
+	reopen := ticketdomain.IsFinished(item.Status) && !ticketdomain.IsFinished(next)
 	if reopen {
 		if !actions.Reopen {
 			return nil, apperrors.New(40311, http.StatusForbidden, "无权重开该工单")
@@ -774,7 +743,7 @@ func (s *TicketService) ChangeStatus(ctx context.Context, access *admindomain.Ac
 	if reopen {
 		eventKey = ticketdomain.EventReopened
 	}
-	summary := fmt.Sprintf("状态 %s → %s", statusLabel(item.Status), statusLabel(next))
+	summary := fmt.Sprintf("状态 %s → %s", ticketdomain.StatusLabel(item.Status), ticketdomain.StatusLabel(next))
 	if reason := strings.TrimSpace(cmd.Reason); reason != "" {
 		summary += "：" + reason
 	}
@@ -797,11 +766,11 @@ func (s *TicketService) ChangeStatus(ctx context.Context, access *admindomain.Ac
 		s.emitTicketEventAs(ctx, refreshed, ticketEventReopened, ticketActor{AdminID: &adminID}, map[string]any{"reason": cmd.Reason})
 	case next == ticketdomain.StatusResolved:
 		s.emitTicketEventAs(ctx, refreshed, ticketEventResolved, ticketActor{AdminID: &adminID}, map[string]any{"solution": excerpt(cmd.Solution, 200)})
-	case next == ticketdomain.StatusClosed || next == ticketdomain.StatusCancelled:
+	case ticketdomain.IsTerminal(next):
 		s.emitTicketEventAs(ctx, refreshed, ticketEventClosed, ticketActor{AdminID: &adminID}, map[string]any{"reason": cmd.Reason})
 	default:
 		s.emitTicketEventAs(ctx, refreshed, ticketEventStatusChanged, ticketActor{AdminID: &adminID}, map[string]any{
-			"from": statusLabel(item.Status), "to": statusLabel(next),
+			"from": ticketdomain.StatusLabel(item.Status), "to": ticketdomain.StatusLabel(next),
 		})
 	}
 	return refreshed, nil
@@ -927,14 +896,14 @@ func (s *TicketService) SetWatchers(ctx context.Context, access *admindomain.Acc
 	return s.pg.ListTicketWatchers(ctx, ticketID)
 }
 
-// RateByUser 提单人提交满意度评价。仅对已解决/已关闭的工单开放，且只能评一次。
-func (s *TicketService) RateByUser(ctx context.Context, session *authdomain.Session, ticketID int64, cmd ticketdomain.RatingCommand) (*ticketdomain.Ticket, error) {
-	item, err := s.requireUserTicket(ctx, session, ticketID)
+// rateByRequester 反馈人提交满意度评价。处理有了结论（已解决 / 不采纳 / 已关闭）才开放，只能评一次。
+func (s *TicketService) rateByRequester(ctx context.Context, session *authdomain.Session, ticketID int64, cmd ticketdomain.RatingCommand) (*ticketdomain.Ticket, error) {
+	item, err := s.requireUserFeedback(ctx, session, ticketID)
 	if err != nil {
 		return nil, err
 	}
-	if item.Status != ticketdomain.StatusResolved && item.Status != ticketdomain.StatusClosed {
-		return nil, apperrors.New(40317, http.StatusForbidden, "工单处理完成后才能评价")
+	if !ticketdomain.IsFinished(item.Status) || item.Status == ticketdomain.StatusCancelled {
+		return nil, apperrors.New(40317, http.StatusForbidden, "反馈处理完成后才能评价")
 	}
 	if cmd.Rating < 1 || cmd.Rating > 5 {
 		return nil, apperrors.New(40000, http.StatusBadRequest, "评分必须在 1-5 之间")
@@ -944,7 +913,7 @@ func (s *TicketService) RateByUser(ctx context.Context, session *authdomain.Sess
 		return nil, err
 	}
 	if !updated {
-		return nil, apperrors.New(40901, http.StatusConflict, "该工单已评价过")
+		return nil, apperrors.New(40901, http.StatusConflict, "该反馈已评价过")
 	}
 	userID := session.UserID
 	_ = s.pg.AddTicketEvent(ctx, ticketdomain.Event{
@@ -962,14 +931,14 @@ func (s *TicketService) RateByUser(ctx context.Context, session *authdomain.Sess
 	return refreshed, nil
 }
 
-// CancelByUser 提单人撤销工单。
-func (s *TicketService) CancelByUser(ctx context.Context, session *authdomain.Session, ticketID int64, reason string) (*ticketdomain.Ticket, error) {
-	item, err := s.requireUserTicket(ctx, session, ticketID)
+// cancelByRequester 反馈人撤销反馈。
+func (s *TicketService) cancelByRequester(ctx context.Context, session *authdomain.Session, ticketID int64, reason string) (*ticketdomain.Ticket, error) {
+	item, err := s.requireUserFeedback(ctx, session, ticketID)
 	if err != nil {
 		return nil, err
 	}
 	if ticketdomain.IsTerminal(item.Status) {
-		return nil, apperrors.New(40316, http.StatusForbidden, "工单已结束，无法撤销")
+		return nil, apperrors.New(40316, http.StatusForbidden, "反馈已结束，无法撤销")
 	}
 	if err := s.pg.UpdateTicketStatus(ctx, ticketID, ticketdomain.StatusCancelled, false); err != nil {
 		return nil, err
@@ -978,84 +947,14 @@ func (s *TicketService) CancelByUser(ctx context.Context, session *authdomain.Se
 	_ = s.pg.AddTicketEvent(ctx, ticketdomain.Event{
 		TicketID: ticketID, Event: ticketdomain.EventStatusChanged, ActorType: "user", ActorID: &userID,
 		ActorName: item.RequesterName, FromValue: item.Status, ToValue: ticketdomain.StatusCancelled,
-		Summary: "提单人撤销了工单：" + strings.TrimSpace(reason),
+		Summary: "反馈人撤销了反馈：" + strings.TrimSpace(reason),
 	})
 	refreshed, err := s.pg.GetTicketByID(ctx, ticketID)
 	if err != nil {
 		return nil, err
 	}
-	s.emitTicketEventAs(ctx, refreshed, ticketEventClosed, ticketActor{UserID: &userID}, map[string]any{"reason": "提单人撤销：" + reason})
+	s.emitTicketEventAs(ctx, refreshed, ticketEventClosed, ticketActor{UserID: &userID}, map[string]any{"reason": "反馈人撤销：" + reason})
 	return refreshed, nil
-}
-
-// ─────────────── 用户侧查询 ───────────────
-
-// ListForUser 用户查看自己的工单。
-func (s *TicketService) ListForUser(ctx context.Context, session *authdomain.Session, query ticketdomain.ListQuery) (*ticketdomain.ListResponse, error) {
-	if session == nil {
-		return nil, apperrors.New(40110, http.StatusUnauthorized, "用户未认证")
-	}
-	normalizeTicketQuery(&query)
-	userID := session.UserID
-	appID := session.AppID
-	query.AppID = &appID
-	query.RequesterID = &userID
-	query.IncludeClosed = true
-	// 「我的工单」不混入意见反馈，反馈有自己的入口（/feedback）
-	query.Kind = ticketdomain.KindTicket
-	// 用户只能看自己的工单：Scope.All + RequesterID 过滤即可精确收敛
-	items, total, err := s.pg.ListTickets(ctx, query, ticketdomain.Scope{All: true})
-	if err != nil {
-		return nil, err
-	}
-	return &ticketdomain.ListResponse{
-		Items: items, Page: query.Page, Limit: query.Limit,
-		Total: total, TotalPages: totalPages(total, query.Limit),
-	}, nil
-}
-
-// DetailForUser 用户查看自己工单的详情。内部备注永不下发。
-func (s *TicketService) DetailForUser(ctx context.Context, session *authdomain.Session, ticketID int64, baseURL string) (*ticketdomain.Ticket, error) {
-	item, err := s.requireUserTicket(ctx, session, ticketID)
-	if err != nil {
-		return nil, err
-	}
-	messages, err := s.pg.ListTicketMessages(ctx, ticketID, false)
-	if err != nil {
-		return nil, err
-	}
-	attachments, err := s.pg.ListTicketAttachments(ctx, ticketID)
-	if err != nil {
-		return nil, err
-	}
-	s.resolveAttachmentURLs(ctx, baseURL, attachments)
-	attachMessageFiles(messages, attachments)
-	item.Messages = messages
-	item.Attachments = attachments
-	// 用户侧不暴露内部归属信息
-	item.AssigneeName = ""
-	item.AssigneeAdminID = nil
-	item.GroupID = nil
-	item.GroupName = ""
-	return item, nil
-}
-
-// requireUserTicket 取工单并校验属于当前用户。
-func (s *TicketService) requireUserTicket(ctx context.Context, session *authdomain.Session, ticketID int64) (*ticketdomain.Ticket, error) {
-	if session == nil {
-		return nil, apperrors.New(40110, http.StatusUnauthorized, "用户未认证")
-	}
-	item, err := s.pg.GetTicketByID(ctx, ticketID)
-	if err != nil {
-		return nil, err
-	}
-	if item == nil {
-		return nil, apperrors.New(40460, http.StatusNotFound, "工单不存在")
-	}
-	if item.AppID != session.AppID || item.RequesterUserID == nil || *item.RequesterUserID != session.UserID {
-		return nil, apperrors.New(40313, http.StatusForbidden, "无权访问该工单")
-	}
-	return item, nil
 }
 
 // ─────────────── 附件 ───────────────
@@ -1253,26 +1152,6 @@ func attachMessageFiles(messages []ticketdomain.Message, attachments []ticketdom
 }
 
 // ─────────────── 展示辅助 ───────────────
-
-func statusLabel(status string) string {
-	switch status {
-	case ticketdomain.StatusOpen:
-		return "待受理"
-	case ticketdomain.StatusProcessing:
-		return "处理中"
-	case ticketdomain.StatusPendingUser:
-		return "待用户补充"
-	case ticketdomain.StatusPendingThirdParty:
-		return "等待第三方"
-	case ticketdomain.StatusResolved:
-		return "已解决"
-	case ticketdomain.StatusClosed:
-		return "已关闭"
-	case ticketdomain.StatusCancelled:
-		return "已撤销"
-	}
-	return status
-}
 
 func priorityLabel(priority string) string {
 	switch priority {

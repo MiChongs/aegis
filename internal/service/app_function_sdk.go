@@ -465,7 +465,7 @@ func (s *ScriptSDK) bind(vm *goja.Runtime) error {
 		{"number", s.has(CapNumberRead), s.bindNumberNamespace},
 		{"payment", s.has(CapPaymentRead), s.bindPaymentNamespace},
 		{"cloud", s.has(CapCloudRead) || s.has(CapCloudWrite), s.bindCloudNamespace},
-		{"tickets", s.has(CapTicketRead) || s.has(CapTicketWrite), s.bindTicketsNamespace},
+		{"feedback", s.has(CapFeedbackRead) || s.has(CapFeedbackWrite), s.bindFeedbackNamespace},
 		{"content", s.has(CapContentRead), s.bindContentNamespace},
 		{"devices", s.has(CapDeviceRead), s.bindDevicesNamespace},
 		{"functions", s.has(CapFunctionCall), s.bindFunctionsNamespace},

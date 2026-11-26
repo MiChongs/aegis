@@ -31,10 +31,14 @@ import { copyText } from "@/components/tickets/ticket-shared";
 import type { DeskActions } from "./use-desk-actions";
 import { deskLink, useDesk } from "./desk-context";
 
+/** 需要二次确认的动作：关闭、不采纳（带理由）、删除 */
+export type DeskConfirm = "close" | "reject" | "delete";
+
 // 操作菜单（cmdk）：对当前这一条能做的事都列在这里，可检索。
 // 页头的「⋯」和快捷键 . 打开的是同一个菜单，不必记每个动作各自的快捷键。
 
-const STATUSES: TicketStatus[] = ["open", "processing", "pending_user", "pending_third_party"];
+// 进行中的三个状态直接切换；「不采纳」「关闭」要先确认（不采纳还要填理由），走 onConfirm
+const STATUSES: TicketStatus[] = ["open", "processing", "pending"];
 const PRIORITIES: TicketPriority[] = ["urgent", "high", "normal", "low"];
 
 export function DeskActionMenu({
@@ -54,7 +58,7 @@ export function DeskActionMenu({
   onCompose: (mode: "reply" | "internal") => void;
   onResolve: () => void;
   onShowUser: () => void;
-  onConfirm: (kind: "close" | "delete") => void;
+  onConfirm: (kind: DeskConfirm) => void;
 }) {
   const desk = useDesk();
   const perms = ticket.permissions;
@@ -125,6 +129,10 @@ export function DeskActionMenu({
                   改为{STATUS_LABEL[status]}
                 </CommandItem>
               ))}
+              <CommandItem value={`状态 ${STATUS_LABEL.rejected}`} onSelect={run(() => onConfirm("reject"))}>
+                <StatusDot status="rejected" className="mx-1" />
+                改为{STATUS_LABEL.rejected}
+              </CommandItem>
             </CommandGroup>
           </>
         ) : null}

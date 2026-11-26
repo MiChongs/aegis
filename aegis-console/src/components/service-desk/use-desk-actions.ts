@@ -31,9 +31,10 @@ export function useDeskActions(ticket: TicketItem) {
   const assignMut = useAssignTicketMutation();
   const deleteMut = useDeleteTicketMutation();
 
-  const changeStatus = async (status: TicketStatus, solution?: string) => {
+  /** solution 随「已解决」提交；reason 随「不采纳」等提交，不采纳时后端会通知提单人 / 反馈人 */
+  const changeStatus = async (status: TicketStatus, detail?: { solution?: string; reason?: string }) => {
     try {
-      await statusMut.mutateAsync({ id: ticket.id, status, solution });
+      await statusMut.mutateAsync({ id: ticket.id, status, solution: detail?.solution, reason: detail?.reason });
       notify.success(`已改为「${STATUS_LABEL[status]}」`);
       return true;
     } catch (error) {

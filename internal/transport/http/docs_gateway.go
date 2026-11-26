@@ -174,13 +174,6 @@ func gatewayRequestModels() map[string]any {
 		"cloudItemRollback": CloudItemRollbackRequest{},
 		"cloudItemLink":     CloudItemLinkRequest{},
 
-		// 工单
-		"tickets":      TicketListQuery{},
-		"ticketCreate": UserTicketCreateRequest{},
-		"ticketReply":  TicketReplyRequest{},
-		"ticketRating": TicketRatingRequest{},
-		"ticketCancel": TicketCancelRequest{},
-
 		// 意见反馈
 		"feedbackList":   FeedbackListQuery{},
 		"feedbackCreate": FeedbackCreateRequest{},

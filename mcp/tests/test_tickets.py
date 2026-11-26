@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+from fastmcp.exceptions import ToolError
+
 
 async def test_list_resolves_app_and_flags(backend, call):
     await call("tickets_list", {"app": "demo", "status": "open", "mine": True, "tags": ["a", "b"]})
@@ -12,8 +15,11 @@ async def test_list_resolves_app_and_flags(backend, call):
 async def test_get_create_update(backend, call):
     await call("tickets_get", {"ticket_id": 7})
     assert backend.last().path == "/api/admin/tickets/7"
-    await call("tickets_create", {"app": "12", "title": "t", "content": "c", "requester_user_id": 5})
-    assert backend.last().json == {"appid": 12, "title": "t", "content": "c", "requesterUserId": 5, "requesterType": "user", "source": "api"}
+    await call("tickets_create", {"app": "12", "kind": "feedback", "title": "t", "content": "c", "requester_user_id": 5})
+    assert backend.last().json == {"appid": 12, "kind": "feedback", "title": "t", "content": "c", "requesterUserId": 5, "requesterType": "user", "source": "api"}
+    # 工单只对管理员开放：不能以用户为提单人建 kind=ticket
+    with pytest.raises(ToolError, match="工单只对管理员开放"):
+        await call("tickets_create", {"app": "12", "title": "t", "content": "c", "requester_user_id": 5})
     await call("tickets_update", {"ticket_id": 7, "priority": "high", "locked": True})
     assert (backend.last().method, backend.last().json) == ("PATCH", {"priority": "high", "locked": True})
 

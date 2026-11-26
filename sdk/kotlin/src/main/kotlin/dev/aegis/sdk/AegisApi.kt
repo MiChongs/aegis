@@ -1531,64 +1531,8 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
     fun updateNotificationPreferences(categories: Map<String, Boolean>): JsonElement =
         client.call("PUT", "/notifications/preferences", mapOf("categories" to categories), requireAuth = true)
 
-    // ── 工单 ──
-
-    @Throws(IOException::class)
-    @JvmOverloads
-    fun tickets(page: Int = 1, limit: Int = 20): JsonElement =
-        client.call("GET", "/tickets", query = pageQuery(page, limit), requireAuth = true)
-
-    @Throws(IOException::class)
-    /** 提交工单。分类取自 [ticketCategories]，附件先走 [uploadTicketAttachment]。 */
-    @JvmOverloads
-    fun createTicket(
-        title: String,
-        content: String,
-        categoryId: Long? = null,
-        priority: String? = null,
-        contentType: String? = null,
-        attachmentIds: List<Long>? = null,
-    ): JsonElement = client.call(
-        "POST", "/tickets",
-        buildBody(
-            "title" to title,
-            "content" to content,
-            "categoryId" to categoryId,
-            "priority" to priority,
-            "contentType" to contentType,
-            // 服务端字段是 attachmentIds（[uploadTicketAttachment] 返回的 id），曾误写成 attachments，附件被静默丢弃。
-            "attachmentIds" to attachmentIds,
-        ),
-        requireAuth = true,
-    )
-
-    @Throws(IOException::class)
-    fun ticketCategories(): JsonElement = client.call("GET", "/tickets/categories", requireAuth = true)
-
-    @Throws(IOException::class)
-    fun uploadTicketAttachment(file: File): JsonElement = client.upload("/tickets/attachments", file)
-
-    @Throws(IOException::class)
-    fun ticket(ticketId: String): JsonElement = client.call("GET", "/tickets/$ticketId", requireAuth = true)
-
-    @Throws(IOException::class)
-    fun replyTicket(ticketId: String, content: String): JsonElement =
-        client.call("POST", "/tickets/$ticketId/replies", mapOf("content" to content), requireAuth = true)
-
-    @Throws(IOException::class)
-    @JvmOverloads
-    fun rateTicket(ticketId: String, score: Int, comment: String? = null): JsonElement = client.call(
-        "POST", "/tickets/$ticketId/rating",
-        // 服务端字段是 rating（TicketRatingRequest），不是 score。
-        buildBody("rating" to score, "comment" to comment), requireAuth = true,
-    )
-
-    @Throws(IOException::class)
-    @JvmOverloads
-    fun cancelTicket(ticketId: String, reason: String? = null): JsonElement =
-        client.call("POST", "/tickets/$ticketId/cancel", buildBody("reason" to reason), requireAuth = true)
-
     // ── 意见反馈 ──
+    // 应用用户唯一的诉求入口。工单只对管理员开放，用户侧没有工单接口。
     // 反馈是独立入口的工单：图片与附件分开上传、分开引用，频率受限（每小时 5 条、每天 20 条，超出 42960）。
 
     /** 反馈分类：`[{id, key, name, description}]`。 */

@@ -194,36 +194,28 @@ VALUES ('fb-admin', 'x', '客服小王', TRUE) RETURNING id`).Scan(&adminID); er
 		t.Fatalf("已绑定的附件不能再用（42271），得到 %v", err)
 	}
 
-	// ── 只看得到自己的；工单入口不混入反馈 ──
+	// ── 只看得到自己的；反馈入口不混入工单 ──
 	if _, err := svc.FeedbackDetail(ctx, sessB, created.ID); errCode(err) != errCodeFeedbackNotFound {
 		t.Fatalf("别人的反馈应 404（40467），得到 %v", err)
 	}
-	userTicket, err := svc.CreateByUser(ctx, sessA, ticketdomain.CreateCommand{
-		CategoryID: &ticketCategoryID, Title: "改绑手机", Content: "旧号停用了",
-		Source: "import", Tags: []string{"vip"}, Metadata: map[string]any{"x": 1},
-	})
-	if err != nil {
+	// 工单只对管理员开放：管理员不能以应用用户为提单人建工单
+	if _, err := svc.CreateByAdmin(ctx, admin, ticketdomain.CreateCommand{
+		AppID: appID, CategoryID: &ticketCategoryID, Title: "改绑手机", Content: "旧号停用了",
+		RequesterType: ticketdomain.RequesterUser, RequesterUserID: &userA,
+	}); errCode(err) != 40000 {
+		t.Fatalf("工单的提单人只能是管理员，得到 %v", err)
+	}
+	// 早期用户自助提的工单（kind=ticket）留在库里，但反馈入口读不到、也回复不了
+	var legacyTicketID int64
+	if err := pool.QueryRow(ctx, `INSERT INTO tickets (kind, ticket_no, appid, requester_type, requester_user_id, title, source)
+VALUES ('ticket', 'LEGACY-1', $1, 'user', $2, '改绑手机', 'app') RETURNING id`, appID, userA).Scan(&legacyTicketID); err != nil {
 		t.Fatal(err)
 	}
-	if userTicket.Kind != "ticket" || userTicket.Source != "app" || len(userTicket.Tags) != 0 || len(userTicket.Metadata) != 0 {
-		t.Fatalf("用户提单不应能设置来源、标签与元数据：%+v", userTicket)
-	}
-	if _, err := svc.FeedbackDetail(ctx, sessA, userTicket.ID); errCode(err) != errCodeFeedbackNotFound {
+	if _, err := svc.FeedbackDetail(ctx, sessA, legacyTicketID); errCode(err) != errCodeFeedbackNotFound {
 		t.Fatalf("普通工单不应能从反馈入口读到，得到 %v", err)
 	}
-	if _, err := svc.CreateByUser(ctx, sessA, ticketdomain.CreateCommand{Title: "x", Content: "y", ContentType: "html"}); errCode(err) != 40000 {
-		t.Fatalf("用户端 html 内容应被拒，得到 %v", err)
-	}
-	feedbackCategory := bugCategory.ID
-	if _, err := svc.CreateByUser(ctx, sessA, ticketdomain.CreateCommand{CategoryID: &feedbackCategory, Title: "x", Content: "y"}); errCode(err) != 40314 {
-		t.Fatalf("工单入口不能用反馈分类，得到 %v", err)
-	}
-	tickets, err := svc.ListForUser(ctx, sessA, ticketdomain.ListQuery{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tickets.Total != 1 || tickets.Items[0].ID != userTicket.ID {
-		t.Fatalf("我的工单应只有 1 条普通工单，得到 %d 条", tickets.Total)
+	if _, err := svc.ReplyFeedback(ctx, sessA, legacyTicketID, FeedbackReplyInput{Content: "补充"}); errCode(err) != errCodeFeedbackNotFound {
+		t.Fatalf("普通工单不应能从反馈入口回复，得到 %v", err)
 	}
 	mine, err := svc.ListFeedback(ctx, sessA, nil, 1, 100)
 	if err != nil {
@@ -259,8 +251,13 @@ VALUES ('fb-admin', 'x', '客服小王', TRUE) RETURNING id`).Scan(&adminID); er
 	if len(event.Recipients.UserIDs) != 1 || event.Recipients.UserIDs[0] != userA {
 		t.Fatalf("客服回复应通知反馈人，得到 %v", event.Recipients.UserIDs)
 	}
-	if plain := svc.buildTicketEvent(ctx, userTicket, ticketEventAgentReplied, ticketActor{}, nil); plain.UserLink != fmt.Sprintf("/tickets/%d", userTicket.ID) || plain.Resource != "ticket" {
-		t.Fatalf("普通工单的通知不应受影响，得到 %s / %s", plain.UserLink, plain.Resource)
+	// 早期用户提的工单：用户侧已没有工单页，回复不再提醒到应用用户
+	legacyTicket, err := svc.pg.GetTicketByID(ctx, legacyTicketID)
+	if err != nil || legacyTicket == nil {
+		t.Fatalf("读旧工单失败：%v", err)
+	}
+	if plain := svc.buildTicketEvent(ctx, legacyTicket, ticketEventAgentReplied, ticketActor{}, nil); plain.UserLink != "" || plain.Resource != "ticket" || len(plain.Recipients.UserIDs) != 0 {
+		t.Fatalf("工单的通知不应带用户侧链接或收件人，得到 %s / %s / %v", plain.UserLink, plain.Resource, plain.Recipients.UserIDs)
 	}
 	detail, err := svc.FeedbackDetail(ctx, sessA, created.ID)
 	if err != nil {
@@ -347,16 +344,13 @@ VALUES ('fb-admin', 'x', '客服小王', TRUE) RETURNING id`).Scan(&adminID); er
 		t.Fatalf("未带客户端信息的反馈不应下发 client，得到 %+v / %v", noClient, err)
 	}
 
-	// ── 普通工单的附件绑定：别人的、已用过的都拒绝 ──
+	// ── 附件绑定：别人的一律拒绝 ──
 	otherFile, err := upload(sessB, "file", "b.txt", "", []byte("from b"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.CreateByUser(ctx, sessA, ticketdomain.CreateCommand{Title: "附件", Content: "看附件", AttachmentIDs: []int64{otherFile.ID}}); errCode(err) != errCodeTicketAttachmentUnavailable {
-		t.Fatalf("用户建单挂别人的附件应被拒，得到 %v", err)
-	}
-	if _, err := svc.ReplyByUser(ctx, sessA, ticketdomain.ReplyCommand{TicketID: userTicket.ID, Content: "补充", AttachmentIDs: []int64{otherFile.ID}}); errCode(err) != errCodeTicketAttachmentUnavailable {
-		t.Fatalf("用户回复挂别人的附件应被拒，得到 %v", err)
+	if _, err := svc.ReplyFeedback(ctx, sessA, created.ID, FeedbackReplyInput{Content: "补充", AttachmentIDs: []int64{otherFile.ID}}); errCode(err) != errCodeTicketAttachmentUnavailable {
+		t.Fatalf("反馈回复挂别人的附件应被拒，得到 %v", err)
 	}
 	var otherTicket *int64
 	if err := pool.QueryRow(ctx, `SELECT ticket_id FROM ticket_attachments WHERE id = $1`, otherFile.ID).Scan(&otherTicket); err != nil || otherTicket != nil {

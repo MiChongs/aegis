@@ -99,6 +99,7 @@ type FeedbackSummary struct {
 	Category           FeedbackCategoryRef `json:"category"`
 	Title              string              `json:"title"`
 	Status             string              `json:"status"`
+	StatusText         string              `json:"statusText"` // 状态中文名（三个字），客户端不认识 status 时直接显示
 	MessageCount       int                 `json:"messageCount"`
 	LastMessageAt      *time.Time          `json:"lastMessageAt,omitempty"`
 	LastReplyFromAgent bool                `json:"lastReplyFromAgent"`
@@ -328,6 +329,7 @@ func feedbackSummary(item *ticketdomain.Ticket) FeedbackSummary {
 		Category:           FeedbackCategoryRef{Key: item.CategoryKey, Name: item.CategoryName},
 		Title:              item.Title,
 		Status:             item.Status,
+		StatusText:         ticketdomain.StatusLabel(item.Status),
 		MessageCount:       item.MessageCount,
 		LastMessageAt:      item.LastMessageAt,
 		LastReplyFromAgent: item.LastMessageRole == ticketdomain.AuthorAgent,
@@ -483,7 +485,7 @@ func (s *TicketService) ReplyFeedback(ctx context.Context, session *authdomain.S
 	if err := s.checkFeedbackAttachments(ctx, session.UserID, imageIDs, fileIDs); err != nil {
 		return nil, err
 	}
-	if _, err := s.ReplyByUser(ctx, session, ticketdomain.ReplyCommand{
+	if _, err := s.replyByRequester(ctx, session, ticketdomain.ReplyCommand{
 		TicketID:      feedbackID,
 		Content:       content,
 		ContentType:   "text",
@@ -499,7 +501,7 @@ func (s *TicketService) RateFeedback(ctx context.Context, session *authdomain.Se
 	if _, err := s.requireUserFeedback(ctx, session, feedbackID); err != nil {
 		return nil, err
 	}
-	if _, err := s.RateByUser(ctx, session, feedbackID, cmd); err != nil {
+	if _, err := s.rateByRequester(ctx, session, feedbackID, cmd); err != nil {
 		return nil, err
 	}
 	return s.FeedbackDetail(ctx, session, feedbackID)
@@ -510,7 +512,7 @@ func (s *TicketService) CancelFeedback(ctx context.Context, session *authdomain.
 	if _, err := s.requireUserFeedback(ctx, session, feedbackID); err != nil {
 		return nil, err
 	}
-	if _, err := s.CancelByUser(ctx, session, feedbackID, reason); err != nil {
+	if _, err := s.cancelByRequester(ctx, session, feedbackID, reason); err != nil {
 		return nil, err
 	}
 	return s.FeedbackDetail(ctx, session, feedbackID)

@@ -48,7 +48,8 @@ QUICK_REPLY_CREATE = POST("/api/admin/tickets/quick-replies")
 QUICK_REPLY_UPDATE = PUT("/api/admin/tickets/quick-replies/:id")
 QUICK_REPLY_DELETE = DELETE("/api/admin/tickets/quick-replies/:id")
 
-Status = Literal["open", "processing", "pending_user", "pending_third_party", "resolved", "closed", "cancelled"]
+# 状态一律三个字：待受理 / 处理中 / 等待中 / 已解决 / 不采纳 / 已关闭 / 已撤销
+Status = Literal["open", "processing", "pending", "resolved", "rejected", "closed", "cancelled"]
 Priority = Literal["low", "normal", "high", "urgent"]
 Kind = Literal["ticket", "feedback"]
 TicketID = Annotated[int, Field(gt=0, description="工单 ID")]
@@ -104,19 +105,22 @@ async def create(
     app: Annotated[str, Field(min_length=1, description="所属应用（appKey 或应用 ID）")],
     title: Annotated[str, Field(min_length=1)],
     content: Annotated[str, Field(min_length=1)],
+    kind: Annotated[Kind, Field(description="ticket 内部工单（提单人只能是管理员）/ feedback 代用户登记的意见反馈")] = "ticket",
     category_id: int | None = None,
     priority: Priority | None = None,
     group_id: int | None = None,
     assignee_admin_id: int | None = None,
-    requester_user_id: Annotated[int | None, Field(description="代某个用户提单时填用户 ID")] = None,
+    requester_user_id: Annotated[int | None, Field(description="代某个用户登记反馈时填用户 ID（仅 kind=feedback）")] = None,
     requester_name: str = "",
     requester_contact: str = "",
     tags: list[str] | None = None,
     source: Annotated[Literal["api", "console", "email", "bot", "import", "app"], Field(description="来源渠道")] = "api",
 ) -> Any:
-    """代用户或以管理员身份新建工单。"""
+    """以管理员身份新建内部工单，或代用户登记一条意见反馈。工单只对管理员开放，不能以用户为提单人。"""
+    if requester_user_id and kind == "ticket":
+        raise ToolError("工单只对管理员开放；代用户登记请用 kind=feedback")
     return await TICKET_CREATE(body=body(
-        appid=await app_id_of(app), title=title, content=content, categoryId=category_id, priority=priority,
+        appid=await app_id_of(app), kind=kind, title=title, content=content, categoryId=category_id, priority=priority,
         groupId=group_id, assigneeAdminId=assignee_admin_id, requesterUserId=requester_user_id,
         requesterType="user" if requester_user_id else None,
         requesterName=requester_name or None, requesterContact=requester_contact or None, tags=tags, source=source,
@@ -158,7 +162,7 @@ async def set_status(
     reason: str = "",
     solution: Annotated[str, Field(description="解决方案（改为 resolved 时建议填写）")] = "",
 ) -> Any:
-    """修改工单状态（受理、挂起、解决、关闭、重开）。"""
+    """修改工单状态（受理、等待中、解决、不采纳、关闭、重开）。改为 rejected 时 reason 即不采纳理由，会告知反馈人。"""
     return await TICKET_STATUS(ticketId=ticket_id, body=body(status=status, reason=reason, solution=solution))
 
 

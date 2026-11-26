@@ -740,11 +740,6 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/user/signin/history/export"):                                                                 PaginationQuery{},                        // ExportUserSignInHistory
 		routeKey("GET", "/api/user/site-detail"):                                                                           SiteDetailQuery{},                        // SiteDetail
 		routeKey("GET", "/api/user/site-list"):                                                                             SiteListQuery{},                          // SiteList
-		routeKey("GET", "/api/user/tickets"):                                                                               TicketListQuery{},                        // UserListTickets
-		routeKey("POST", "/api/user/tickets"):                                                                              UserTicketCreateRequest{},                // UserCreateTicket
-		routeKey("POST", "/api/user/tickets/{ticketId}/cancel"):                                                            TicketCancelRequest{},                    // UserCancelTicket
-		routeKey("POST", "/api/user/tickets/{ticketId}/rating"):                                                            TicketRatingRequest{},                    // UserRateTicket
-		routeKey("POST", "/api/user/tickets/{ticketId}/replies"):                                                           TicketReplyRequest{},                     // UserReplyTicket
 		routeKey("POST", "/api/user/two-factor/disable"):                                                                   TOTPDisableRequest{},                     // DisableTOTP
 		routeKey("POST", "/api/user/two-factor/enable"):                                                                    TOTPEnableRequest{},                      // EnableTOTP
 		routeKey("POST", "/api/user/two-factor/recovery-codes"):                                                            RecoveryCodesRegenerateRequest{},         // GenerateRecoveryCodes
@@ -853,11 +848,6 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/v1/apps/{appkey}/suspension"):                                                               suspensionClientRequest{},                // AppSuspensionStatus
 		routeKey("POST", "/api/v1/apps/{appkey}/suspension/appeal"):                                                        suspensionClientRequest{},                // AppSubmitSuspensionAppeal
 		routeKey("POST", "/api/v1/apps/{appkey}/suspension/appeal/withdraw"):                                               suspensionClientRequest{},                // AppWithdrawSuspensionAppeal
-		routeKey("GET", "/api/v1/apps/{appkey}/tickets"):                                                                   TicketListQuery{},                        // UserListTickets
-		routeKey("POST", "/api/v1/apps/{appkey}/tickets"):                                                                  UserTicketCreateRequest{},                // UserCreateTicket
-		routeKey("POST", "/api/v1/apps/{appkey}/tickets/{ticketId}/cancel"):                                                TicketCancelRequest{},                    // UserCancelTicket
-		routeKey("POST", "/api/v1/apps/{appkey}/tickets/{ticketId}/rating"):                                                TicketRatingRequest{},                    // UserRateTicket
-		routeKey("POST", "/api/v1/apps/{appkey}/tickets/{ticketId}/replies"):                                               TicketReplyRequest{},                     // UserReplyTicket
 		routeKey("POST", "/api/v1/apps/{appkey}/vip/feature-ticket"):                                                       service.FeatureTicketRequest{},           // VipFeatureTicket
 		routeKey("POST", "/api/v1/apps/{appkey}/vip/purchase"):                                                             VipPurchaseRequest{},                     // PurchaseVip
 		routeKey("POST", "/api/v1/apps/{appkey}/wallet/consume"):                                                           WalletConsumeRequest{},                   // WalletConsume

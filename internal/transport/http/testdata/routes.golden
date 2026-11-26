@@ -729,9 +729,6 @@ GET	/api/user/signin/history/export	ExportUserSignInHistory
 GET	/api/user/signin/status	SignInStatus
 GET	/api/user/site-detail	SiteDetail
 GET	/api/user/site-list	SiteList
-GET	/api/user/tickets	UserListTickets
-GET	/api/user/tickets/:ticketId	UserGetTicket
-GET	/api/user/tickets/categories	UserListTicketCategories
 GET	/api/user/two-factor/recovery-codes	ListRecoveryCodes
 GET	/api/v1/apps/:appkey/ads/policy	AppAdPolicy
 GET	/api/v1/apps/:appkey/ads/rewarded	AppRewardedAdStatus
@@ -838,9 +835,6 @@ GET	/api/v1/apps/:appkey/releases/check	AppReleaseCheck
 GET	/api/v1/apps/:appkey/releases/latest	AppReleaseLatest
 GET	/api/v1/apps/:appkey/signin/history	SignInHistory
 GET	/api/v1/apps/:appkey/signin/status	SignInStatus
-GET	/api/v1/apps/:appkey/tickets	UserListTickets
-GET	/api/v1/apps/:appkey/tickets/:ticketId	UserGetTicket
-GET	/api/v1/apps/:appkey/tickets/categories	UserListTicketCategories
 GET	/api/v1/apps/:appkey/version/check	AppVersionCheck
 GET	/api/v1/apps/:appkey/vip/conversions	MyVipConversions
 GET	/api/v1/apps/:appkey/vip/features	VipFeatures
@@ -1478,11 +1472,6 @@ POST	/api/user/search-site	SearchSites
 POST	/api/user/sessions/revoke-all	RevokeAllUserSessions
 POST	/api/user/settings/reset	LegacyResetUserSettings
 POST	/api/user/signin	SignIn
-POST	/api/user/tickets	UserCreateTicket
-POST	/api/user/tickets/:ticketId/cancel	UserCancelTicket
-POST	/api/user/tickets/:ticketId/rating	UserRateTicket
-POST	/api/user/tickets/:ticketId/replies	UserReplyTicket
-POST	/api/user/tickets/attachments	UserUploadTicketAttachment
 POST	/api/user/two-factor/disable	DisableTOTP
 POST	/api/user/two-factor/enable	EnableTOTP
 POST	/api/user/two-factor/enroll	BeginTOTPEnrollment
@@ -1592,11 +1581,6 @@ POST	/api/v1/apps/:appkey/storage/upload	StorageUpload
 POST	/api/v1/apps/:appkey/suspension	AppSuspensionStatus
 POST	/api/v1/apps/:appkey/suspension/appeal	AppSubmitSuspensionAppeal
 POST	/api/v1/apps/:appkey/suspension/appeal/withdraw	AppWithdrawSuspensionAppeal
-POST	/api/v1/apps/:appkey/tickets	UserCreateTicket
-POST	/api/v1/apps/:appkey/tickets/:ticketId/cancel	UserCancelTicket
-POST	/api/v1/apps/:appkey/tickets/:ticketId/rating	UserRateTicket
-POST	/api/v1/apps/:appkey/tickets/:ticketId/replies	UserReplyTicket
-POST	/api/v1/apps/:appkey/tickets/attachments	UserUploadTicketAttachment
 POST	/api/v1/apps/:appkey/vip/feature-ticket	VipFeatureTicket
 POST	/api/v1/apps/:appkey/vip/purchase	PurchaseVip
 POST	/api/v1/apps/:appkey/vip/trial	ClaimVipTrial

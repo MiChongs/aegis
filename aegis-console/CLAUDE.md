@@ -1464,6 +1464,16 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 
 工作台四栏：**应用栏 | 收件箱 | 会话 | 资料栏**。
 
+**状态共七个、全是三个字**（工单与反馈同一套，标签 / 徽标变体 / 色点在 `tickets/ticket-shared.tsx`）：
+进行中 `open` 待受理、`processing` 处理中、`pending` 等待中；`resolved` 已解决；终态 `rejected` 不采纳、`closed` 已关闭、`cancelled` 已撤销
+（终态不可回复、不计时效，`isFinalStatus`）。「已有结论」= 已解决 + 终态（`isTerminalStatus`），从已有结论改回进行中算重开。
+统计接口的 `closed` 是已关闭 + 已撤销，`rejected` 单独给；收件箱视图里「不采纳」「已关闭」分开两个页签。
+改为「不采纳」与「关闭」都先弹确认（属性胶囊、操作菜单、批量条三处一致），不采纳带选填理由 `reason`，后端会通知对方。
+控制台不提供改为「已撤销」的入口（撤销是对方的动作）。
+
+**工单只对管理员开放**：后台新建 `kind=ticket` 时提单人只能是管理员（传 `requesterType=user` 后端回 40000）；
+代用户登记只能建意见反馈。应用用户侧没有工单接口，用户只走意见反馈。
+
 | 文件 | 职责 |
 |---|---|
 | `(console)/tickets/page.tsx`、`(console)/feedback/page.tsx` | 只挂 `NuqsAdapter`、边界与页签清单 |
@@ -1499,7 +1509,7 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 1. **页面状态全在地址栏**（`id` / `view` / `q` / `sort` / `app` / `own` / `category` / `priority` / `assignee` / `tab`）。
    不要再加本地 state 存筛选：刷新会丢，链接发给同事对不上，站内信与飞书卡片的 `?id=` 深链也会和页面内点击走成两条路径。
    默认值不写进地址栏（`clearOnDefault`），更新用 `replace`。`app` 与统计分析页签共用：工作台选了哪个应用，统计里看到的也是它。
-2. **「待处理」「已超时」视图显式传未结状态。** 后端不传 `status` 时只排除已关闭与已撤销，已解决的会混进来，列表条数就和页签计数对不上。
+2. **「待处理」「已超时」视图显式传未结状态**（`open,processing,pending`）。后端不传 `status` 时只排除终态（不采纳 / 已关闭 / 已撤销），已解决的会混进来，列表条数就和页签计数对不上。
    「已超时」的计数取应用汇总的 `overdue`：统计接口的首响超时与解决超时会把同一条算两次。
 3. **按钮显隐一律读后端返回的 `permissions`（ActionSet），不要在前端按角色推断**。批量操作逐条按各自权限走，部分失败时提示失败条数与原因。
 4. **头像与正文摘要由列表接口直接带出**（`requesterAvatar` / `assigneeAvatar` / `preview`，详情里还有每条消息的 `authorAvatar`）。不要逐行调用户接口。

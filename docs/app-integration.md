@@ -105,7 +105,24 @@ val profile = client.me.profile()
 | `GET` `POST` `DELETE` | `/notifications/*` | 站内信 |
 | `GET` `POST` | `/wallet/*`、`/vip/*`、`/pay/methods`、`/pay/orders*` | 钱包 / 会员 / 支付（含试用与付款方式，见下节） |
 | `POST` | `/storage/upload`（`multipart`）、`/storage/object-link` | 存储 |
-| `GET` `POST` | `/tickets/*` | 工单自助 |
+| `GET` `POST` | `/feedback/*` | 意见反馈（工单只对管理员开放，网关没有 `/tickets`） |
+
+### 意见反馈的状态
+
+应用用户的诉求只有意见反馈一个入口；工单（`kind=ticket`）是管理员之间的内部系统，只在 `/api/admin/tickets` 下。
+反馈与工单共用一套状态，一律三个字，共七种：
+
+| status | 中文 | 说明 |
+|---|---|---|
+| `open` | 待受理 | 刚提交，还没人处理 |
+| `processing` | 处理中 | 客服已接手；反馈人在「等待中」或「已解决」时回复，自动回到这里 |
+| `pending` | 等待中 | 在等进一步信息（反馈人补充或第三方答复），等谁写在客服回复里 |
+| `resolved` | 已解决 | 处理完成，到期自动关闭；可评价，仍可回复 |
+| `rejected` | 不采纳 | 有结论但不采纳，原因见客服回复与站内信；可评价，不能再回复 |
+| `closed` | 已关闭 | 结束；可评价，不能再回复 |
+| `cancelled` | 已撤销 | 反馈人自己撤回 |
+
+列表与详情都带 `statusText`（上表的中文名）。客户端遇到不认识的 `status` 时直接显示它，不要显示成空白或「未知」。
 
 ### 会员与试用（`/vip/*`）
 

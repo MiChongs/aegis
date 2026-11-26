@@ -364,7 +364,7 @@ function CategorySheet({
         <SheetHeader className="border-b">
           <SheetTitle>{editing?.id ? "编辑分类" : "新建分类"}</SheetTitle>
           <SheetDescription>
-            {form.kind === "feedback" ? "意见反馈分类只出现在用户端的反馈入口。" : "工单分类只出现在用户端的工单入口。"}
+            {form.kind === "feedback" ? "意见反馈分类出现在用户端的反馈入口。" : "工单只对管理员开放，工单分类只在后台新建工单时可选。"}
           </SheetDescription>
         </SheetHeader>
 
@@ -418,7 +418,7 @@ function CategorySheet({
                 rows={2}
                 value={form.description}
                 onChange={(event) => patch({ description: event.target.value })}
-                placeholder="在用户端选择分类时显示"
+                placeholder={form.kind === "feedback" ? "在用户端选择分类时显示" : "在后台新建工单选择分类时显示"}
               />
             </Field>
           </section>

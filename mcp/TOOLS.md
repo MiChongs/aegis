@@ -670,7 +670,7 @@
 | `tickets_assign` | 写 | 指派工单给管理员或处理组。 |
 | `tickets_bulk` | 危险 | 批量处理工单（指派、改状态、关闭、改优先级、打标签、删除）。影响多张工单，先向用户确认。 |
 | `tickets_config` | 读 | 工单配置：元数据（状态 / 优先级枚举）、分类、处理组、SLA 策略、快捷回复。 |
-| `tickets_create` | 写 | 代用户或以管理员身份新建工单。 |
+| `tickets_create` | 写 | 以管理员身份新建内部工单，或代用户登记一条意见反馈。工单只对管理员开放，不能以用户为提单人。 |
 | `tickets_delete` | 危险 | 删除工单（不可恢复）。 |
 | `tickets_delete_config` | 危险 | 删除工单分类、处理组、SLA 策略或快捷回复。 |
 | `tickets_get` | 读 | 一张工单的详情、往来回复、内部备注（有权限时）与事件流。 |
@@ -680,7 +680,7 @@
 | `tickets_save_group` | 写 | 新建或修改工单处理组，可同时设置成员。 |
 | `tickets_save_quick_reply` | 写 | 新建或修改快捷回复。 |
 | `tickets_save_sla_policy` | 写 | 新建或修改 SLA 策略。 |
-| `tickets_set_status` | 写 | 修改工单状态（受理、挂起、解决、关闭、重开）。 |
+| `tickets_set_status` | 写 | 修改工单状态（受理、等待中、解决、不采纳、关闭、重开）。改为 rejected 时 reason 即不采纳理由，会告知反馈人。 |
 | `tickets_stats` | 读 | 工单统计：各状态数量、SLA、满意度；可附带趋势与受理人排行、我的待办数。 |
 | `tickets_update` | 写 | 修改工单标题、分类、优先级、标签或锁定状态（只传要改的）。 |
 | `tickets_watch` | 写 | 关注 / 取消关注工单，或整体设置关注人。 |

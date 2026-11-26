@@ -46,6 +46,7 @@ import {
   StatusDot,
   attachmentUrl,
   formatBytes,
+  isFinalStatus,
   isImageAttachment
 } from "@/components/tickets/ticket-shared";
 
@@ -95,7 +96,7 @@ declare module "@tiptap/core" {
 const NEXT_STATUS: { value: string; label: string; status?: TicketStatus }[] = [
   { value: "", label: "保持当前状态" },
   { value: "processing", label: "处理中", status: "processing" },
-  { value: "pending_user", label: "待用户补充", status: "pending_user" },
+  { value: "pending", label: "等待中", status: "pending" },
   { value: "resolved", label: "已解决", status: "resolved" }
 ];
 
@@ -304,7 +305,7 @@ export function DeskComposer({ ticket, ref }: { ticket: TicketItem; ref?: Ref<De
   if (!canReply && !canNote) {
     return (
       <div className="border-t px-5 py-3 text-center text-xs text-muted-foreground">
-        {ticket.locked ? "已锁定" : ticket.status === "closed" || ticket.status === "cancelled" ? "已结束，重新打开后可回复" : "无回复权限"}
+        {ticket.locked ? "已锁定" : isFinalStatus(ticket.status) ? "已结束，重新打开后可回复" : "无回复权限"}
       </div>
     );
   }

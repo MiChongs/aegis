@@ -229,7 +229,7 @@ function Headline({ stats }: { stats: TicketStats }) {
 function Tiles({ stats }: { stats: TicketStats }) {
   const tiles = [
     { label: "处理中", value: String(stats.processing) },
-    { label: "待补充", value: String(stats.pendingUser) },
+    { label: "等待中", value: String(stats.pending) },
     { label: "今日新增", value: String(stats.createdToday) },
     { label: "今日解决", value: String(stats.resolvedToday) },
     { label: "平均首响", value: formatDuration(stats.avgFirstResponseMs) },

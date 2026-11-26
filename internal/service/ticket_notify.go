@@ -69,11 +69,9 @@ func (s *TicketService) buildTicketEvent(ctx context.Context, item *ticketdomain
 	eventKey string, actor ticketActor, extraVars map[string]any) notifydomain.Event {
 
 	consoleLink := s.ticketConsoleLink(item.ID, item.Kind)
-	userLink := fmt.Sprintf("/tickets/%d", item.ID)
+	// 工单只在管理端流转，应用用户侧没有工单页；只有反馈带用户侧链接与文案
+	userLink, userTitle, userSummary := "", "", ""
 	resource := "ticket"
-	userTitle := ticketUserTitle(eventKey, item)
-	userSummary := ticketUserSummary(eventKey, item, extraVars)
-	// 反馈在用户侧有自己的详情页与文案；事件名不变，订阅规则无需区分
 	if item.Kind == ticketdomain.KindFeedback {
 		userLink = fmt.Sprintf("/feedback/%d", item.ID)
 		resource = "feedback"
@@ -123,7 +121,8 @@ func (s *TicketService) ticketRecipients(ctx context.Context, item *ticketdomain
 	// 早期实现只看 RequesterUserID，于是管理员提的工单被回复后**没有任何人**收到通知。
 	if ticketEventFacesRequester(eventKey) {
 		switch {
-		case item.RequesterUserID != nil:
+		// 应用用户只看得到自己的反馈；历史上用户提的工单不再提醒到用户侧
+		case item.RequesterUserID != nil && item.Kind == ticketdomain.KindFeedback:
 			if actor.UserID == nil || *actor.UserID != *item.RequesterUserID {
 				recipients.UserIDs = append(recipients.UserIDs, *item.RequesterUserID)
 				if contact := strings.TrimSpace(item.RequesterContact); strings.Contains(contact, "@") {
@@ -258,6 +257,9 @@ func ticketEventTitle(eventKey string, item *ticketdomain.Ticket) string {
 		prefix = "工单已解决"
 	case ticketEventClosed:
 		prefix = "工单已关闭"
+		if item.Status == ticketdomain.StatusRejected {
+			prefix = "工单不采纳"
+		}
 	case ticketEventReopened:
 		prefix = "工单重新打开"
 	case ticketEventEscalated:
@@ -341,26 +343,6 @@ func ticketEventSummaryText(eventKey string, item *ticketdomain.Ticket, vars map
 	return item.Title
 }
 
-// ticketUserTitle 面向提单人的标题。不带内部术语（受理人 / 处理组 / SLA）。
-func ticketUserTitle(eventKey string, item *ticketdomain.Ticket) string {
-	prefix := ""
-	switch eventKey {
-	case ticketEventAgentReplied:
-		prefix = "客服已回复"
-	case ticketEventResolved:
-		prefix = "问题已解决"
-	case ticketEventClosed:
-		prefix = "工单已关闭"
-	case ticketEventReopened:
-		prefix = "工单已重新打开"
-	case ticketEventStatusChanged:
-		prefix = "工单状态更新"
-	default:
-		return ""
-	}
-	return fmt.Sprintf("【%s】%s", prefix, item.Title)
-}
-
 // feedbackUserTitle 面向反馈人的标题。
 func feedbackUserTitle(eventKey string, item *ticketdomain.Ticket) string {
 	prefix := ""
@@ -371,6 +353,9 @@ func feedbackUserTitle(eventKey string, item *ticketdomain.Ticket) string {
 		prefix = "反馈已解决"
 	case ticketEventClosed:
 		prefix = "反馈已关闭"
+		if item.Status == ticketdomain.StatusRejected {
+			prefix = "反馈未被采纳"
+		}
 	case ticketEventReopened:
 		prefix = "反馈已重新打开"
 	case ticketEventStatusChanged:
@@ -395,34 +380,17 @@ func feedbackUserSummary(eventKey string, item *ticketdomain.Ticket, vars map[st
 		}
 		return "你的反馈已处理完成，感谢你的支持。"
 	case ticketEventClosed:
+		if item.Status == ticketdomain.StatusRejected {
+			if reason := stringVar(vars, "reason"); reason != "" {
+				return "你的反馈暂不采纳：" + reason + "\n感谢你的支持。"
+			}
+			return "你的反馈暂不采纳，感谢你的支持。"
+		}
 		return "反馈已关闭，感谢你的支持。"
 	case ticketEventReopened:
 		return "反馈已重新打开，我们会尽快跟进。"
 	case ticketEventStatusChanged:
-		return fmt.Sprintf("反馈状态更新为「%s」。", statusLabel(item.Status))
-	}
-	return ""
-}
-
-// ticketUserSummary 面向提单人的正文。
-func ticketUserSummary(eventKey string, item *ticketdomain.Ticket, vars map[string]any) string {
-	switch eventKey {
-	case ticketEventAgentReplied:
-		if text := stringVar(vars, "replyExcerpt"); text != "" {
-			return "客服回复：" + text
-		}
-		return "客服已回复你的工单，点击查看详情。"
-	case ticketEventResolved:
-		if solution := stringVar(vars, "solution"); solution != "" {
-			return "处理结果：" + solution + "\n如问题仍未解决，可在工单内继续回复。"
-		}
-		return "你的问题已处理完成，如仍未解决可在工单内继续回复。"
-	case ticketEventClosed:
-		return "工单已关闭，感谢你的反馈。"
-	case ticketEventReopened:
-		return "工单已重新打开，我们会尽快跟进。"
-	case ticketEventStatusChanged:
-		return fmt.Sprintf("工单状态更新为「%s」。", statusLabel(item.Status))
+		return fmt.Sprintf("反馈状态更新为「%s」。", ticketdomain.StatusLabel(item.Status))
 	}
 	return ""
 }
@@ -431,7 +399,7 @@ func ticketUserSummary(eventKey string, item *ticketdomain.Ticket, vars map[stri
 func ticketEventFields(item *ticketdomain.Ticket) []notifydomain.Field {
 	fields := []notifydomain.Field{
 		{Label: "工单号", Value: item.TicketNo, Short: true},
-		{Label: "状态", Value: statusLabel(item.Status), Short: true},
+		{Label: "状态", Value: ticketdomain.StatusLabel(item.Status), Short: true},
 		{Label: "优先级", Value: priorityLabel(item.Priority), Short: true},
 		{Label: "提单人", Value: fallbackText(item.RequesterName, "匿名"), Short: true},
 	}
@@ -459,7 +427,7 @@ func ticketEventVars(item *ticketdomain.Ticket, extra map[string]any) map[string
 		"TicketNo":     item.TicketNo,
 		"TicketTitle":  item.Title,
 		"Status":       item.Status,
-		"StatusLabel":  statusLabel(item.Status),
+		"StatusLabel":  ticketdomain.StatusLabel(item.Status),
 		"Priority":     item.Priority,
 		"PriorityText": priorityLabel(item.Priority),
 		"Requester":    item.RequesterName,

@@ -24,9 +24,9 @@ import type {
 export const STATUS_LABEL: Record<TicketStatus, string> = {
   open: "待受理",
   processing: "处理中",
-  pending_user: "待用户补充",
-  pending_third_party: "等待第三方",
+  pending: "等待中",
   resolved: "已解决",
+  rejected: "不采纳",
   closed: "已关闭",
   cancelled: "已撤销"
 };
@@ -51,9 +51,9 @@ type BadgeVariant = "default" | "secondary" | "outline" | "success" | "warning" 
 const STATUS_VARIANT: Record<TicketStatus, BadgeVariant> = {
   open: "warning",
   processing: "info",
-  pending_user: "secondary",
-  pending_third_party: "secondary",
+  pending: "secondary",
   resolved: "success",
+  rejected: "outline",
   closed: "outline",
   cancelled: "outline"
 };
@@ -262,9 +262,9 @@ export function attachmentUrl(file: TicketAttachment): string {
 export const STATUS_DOT: Record<TicketStatus, string> = {
   open: "bg-amber-500",
   processing: "bg-sky-500",
-  pending_user: "bg-violet-500",
-  pending_third_party: "bg-slate-400",
+  pending: "bg-violet-500",
   resolved: "bg-emerald-500",
+  rejected: "bg-rose-300 dark:bg-rose-400/60",
   closed: "bg-muted-foreground/40",
   cancelled: "bg-muted-foreground/40"
 };
@@ -273,10 +273,17 @@ export function StatusDot({ status, className }: { status: TicketStatus; classNa
   return <span aria-hidden className={cn("inline-block size-2 shrink-0 rounded-full", STATUS_DOT[status], className)} />;
 }
 
-const TERMINAL_STATUSES: TicketStatus[] = ["resolved", "closed", "cancelled"];
+/** 终态：不可回复、不计时效，改回进行中算重开 */
+const FINAL_STATUSES: TicketStatus[] = ["rejected", "closed", "cancelled"];
 
+/** 是否为终态（不采纳 / 已关闭 / 已撤销） */
+export function isFinalStatus(status: TicketStatus) {
+  return FINAL_STATUSES.includes(status);
+}
+
+/** 是否已有结论（已解决 + 终态）：不再等我们回，从这里改回进行中算重开 */
 export function isTerminalStatus(status: TicketStatus) {
-  return TERMINAL_STATUSES.includes(status);
+  return status === "resolved" || isFinalStatus(status);
 }
 
 /** 最后一条是用户发的、且还没结单：说明在等我们回 */

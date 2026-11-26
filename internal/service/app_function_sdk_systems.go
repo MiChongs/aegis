@@ -18,7 +18,6 @@ import (
 	paymentdomain "aegis/internal/domain/payment"
 	pointdomain "aegis/internal/domain/points"
 	"aegis/internal/domain/pointstore"
-	ticketdomain "aegis/internal/domain/ticket"
 	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
 )
@@ -1082,22 +1081,25 @@ func (s *ScriptSDK) bindCloudNamespace(vm *goja.Runtime, object *goja.Object) er
 	})
 }
 
-// ── ticket.read / ticket.write ──────────────────────────────────────
+// ── feedback.read / feedback.write ──────────────────────────────────
+//
+// 应用用户只有意见反馈一个诉求入口，工单只对管理员开放，函数也不能替用户提工单。
 
-func (s *ScriptSDK) bindTicketsNamespace(vm *goja.Runtime, object *goja.Object) error {
+func (s *ScriptSDK) bindFeedbackNamespace(vm *goja.Runtime, object *goja.Object) error {
 	if s.deps.Tickets == nil {
-		return missingDep(CapTicketRead, "工单")
+		return missingDep(CapFeedbackRead, "意见反馈")
 	}
-	if s.has(CapTicketRead) {
+	if s.has(CapFeedbackRead) {
 		if err := object.Set("list", func(call goja.FunctionCall) goja.Value {
 			s.budget(vm, false)
 			userID := s.requireUser(vm)
 			options := argObject(call, 0)
-			query := ticketdomain.ListQuery{Page: 1, Limit: clampSDKLimit(optInt(options, "limit", 20), 20, maxHistoryLimit)}
+			var statuses []string
 			if status := optString(options, "status"); status != "" {
-				query.Statuses = []string{status}
+				statuses = []string{status}
 			}
-			result, err := s.deps.Tickets.ListForUser(s.ctx, s.session(userID), query)
+			limit := clampSDKLimit(optInt(options, "limit", 20), 20, maxHistoryLimit)
+			result, err := s.deps.Tickets.ListFeedback(s.ctx, s.session(userID), statuses, 1, limit)
 			if err != nil {
 				throw(vm, err)
 			}
@@ -1106,7 +1108,7 @@ func (s *ScriptSDK) bindTicketsNamespace(vm *goja.Runtime, object *goja.Object) 
 			return err
 		}
 	}
-	if !s.has(CapTicketWrite) {
+	if !s.has(CapFeedbackWrite) {
 		return nil
 	}
 	return object.Set("create", func(call goja.FunctionCall) goja.Value {
@@ -1114,25 +1116,22 @@ func (s *ScriptSDK) bindTicketsNamespace(vm *goja.Runtime, object *goja.Object) 
 		userID := s.requireUser(vm)
 		options := argObject(call, 0)
 		title, content := optString(options, "title"), optString(options, "content")
-		if title == "" || content == "" {
-			panic(vm.ToValue("工单需要标题与内容"))
+		categoryID := optInt(options, "categoryId", 0)
+		if title == "" || content == "" || categoryID <= 0 {
+			panic(vm.ToValue("反馈需要分类、标题与内容"))
 		}
-		command := ticketdomain.CreateCommand{
-			AppID: s.appID, Title: title, Content: content, Priority: optString(options, "priority"),
-			Metadata: map[string]any{"function": s.functionName, "eventId": s.eventID},
-		}
-		if categoryID := optInt(options, "categoryId", 0); categoryID > 0 {
-			command.CategoryID = &categoryID
-		}
-		s.recordEffect(CapTicketWrite, map[string]any{"userId": userID, "title": title})
+		s.recordEffect(CapFeedbackWrite, map[string]any{"userId": userID, "title": title})
 		if s.dryRun {
-			return vm.ToValue(map[string]any{"id": 0, "ticketNo": "", "status": "simulated", "simulated": true})
+			return vm.ToValue(map[string]any{"id": "0", "ticketNo": "", "status": "simulated", "simulated": true})
 		}
-		ticket, err := s.deps.Tickets.CreateByUser(s.ctx, s.session(userID), command)
+		detail, err := s.deps.Tickets.CreateFeedback(s.ctx, s.session(userID), FeedbackCreateInput{
+			CategoryID: categoryID, Title: title, Content: content, Contact: optString(options, "contact"),
+			Client: &FeedbackClient{Platform: "function", Device: s.functionName},
+		})
 		if err != nil {
 			throw(vm, err)
 		}
-		return vm.ToValue(map[string]any{"id": ticket.ID, "ticketNo": ticket.TicketNo, "status": ticket.Status})
+		return vm.ToValue(map[string]any{"id": strconv.FormatInt(detail.ID, 10), "ticketNo": detail.TicketNo, "status": detail.Status})
 	})
 }
 
@@ -1281,8 +1280,8 @@ const (
 	CapPaymentRead     = functiondomain.CapPaymentRead
 	CapCloudRead       = functiondomain.CapCloudRead
 	CapCloudWrite      = functiondomain.CapCloudWrite
-	CapTicketRead      = functiondomain.CapTicketRead
-	CapTicketWrite     = functiondomain.CapTicketWrite
+	CapFeedbackRead    = functiondomain.CapFeedbackRead
+	CapFeedbackWrite   = functiondomain.CapFeedbackWrite
 	CapContentRead     = functiondomain.CapContentRead
 	CapDeviceRead      = functiondomain.CapDeviceRead
 	CapFunctionCall    = functiondomain.CapFunctionCall

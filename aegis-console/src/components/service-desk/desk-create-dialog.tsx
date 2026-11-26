@@ -17,7 +17,8 @@ import { PRIORITY_LABEL } from "@/components/tickets/ticket-shared";
 import { AppMark, useDeskApps } from "./desk-app-rail";
 import { useDesk } from "./desk-context";
 
-// 代用户登记一条工单 / 反馈，或建一张内部跟进单。
+// 后台新建：工单只对管理员开放（提单人固定是管理员，后端拒收 requesterType=user），用来登记内部跟进；
+// 代用户登记只能建意见反馈。两种都记在当前管理员名下，称呼与联系方式可另填。
 // 应用按「我创建的 → 其他 → 平台内部」排；默认落在工作台当前选中的应用。
 
 const EMPTY_FORM = {
@@ -74,6 +75,7 @@ export function DeskCreateDialog({
         content: form.content.trim(),
         categoryId: form.categoryId === "none" ? undefined : Number(form.categoryId),
         priority: form.priority,
+        requesterType: "admin",
         requesterName: form.requesterName.trim() || undefined,
         requesterContact: form.requesterContact.trim() || undefined,
         source: "console"
@@ -101,7 +103,9 @@ export function DeskCreateDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>新建{desk.noun}</DialogTitle>
-          <DialogDescription>代用户登记问题，或建一张内部跟进单。</DialogDescription>
+          <DialogDescription>
+            {desk.kind === "ticket" ? "工单只对管理员开放，用来登记内部跟进的事项；代用户登记请改建意见反馈。" : "代用户登记一条意见反馈。"}
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">

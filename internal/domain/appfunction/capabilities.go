@@ -34,6 +34,9 @@ const (
 	legacyCapStorageWrite    = "storage.write"
 	legacyCapUserProfileRead = "user.profile.read"
 	legacyCapUserTagWrite    = "user.tag.write"
+	// 函数曾能以用户身份读写工单；工单改为只对管理员开放后，改名为 feedback.read / feedback.write
+	legacyCapTicketRead  = "ticket.read"
+	legacyCapTicketWrite = "ticket.write"
 )
 
 // 能力分组，决定控制台上的排布顺序。
@@ -106,7 +109,7 @@ var capabilities = []Capability{
 	{
 		Key: CapUserRead, Group: CapGroupIdentity,
 		Label: "读取用户状态", API: "aegis.user.get()",
-		Hint: "会员是否有效、是不是试用、积分、封禁状态 —— 反破解的根基",
+		Hint:      "会员是否有效、是不是试用、积分、封禁状态 —— 反破解的根基",
 		Risk:      RiskLow,
 		Namespace: "user",
 		Members:   []string{"get", "entitlement"},
@@ -148,7 +151,7 @@ var capabilities = []Capability{
 	{
 		Key: CapVipRead, Group: CapGroupAsset,
 		Label: "读取会员状态", API: "aegis.vip.status()",
-		Hint: "只要会员结论时用它；要连同积分与封禁一起读请用 user.read",
+		Hint:      "只要会员结论时用它；要连同积分与封禁一起读请用 user.read",
 		Risk:      RiskLow,
 		Namespace: "vip",
 		Members:   []string{"status", "hasFeature"},
@@ -178,7 +181,7 @@ var capabilities = []Capability{
 	{
 		Key: CapWalletRead, Group: CapGroupAsset,
 		Label: "读取余额", API: "aegis.wallet.get()",
-		Hint: "金额一律是字符串（服务端用定点小数），转成 number 会丢分",
+		Hint:      "金额一律是字符串（服务端用定点小数），转成 number 会丢分",
 		Risk:      RiskLow,
 		Namespace: "wallet",
 		Members:   []string{"get"},
@@ -209,7 +212,7 @@ declare interface AegisWallet {
 	{
 		Key: CapKVRead, Group: CapGroupState,
 		Label: "读取 KV", API: "aegis.kv.get / list / has",
-		Hint: "服务端独占状态，客户端读不到也伪造不了",
+		Hint:    "服务端独占状态，客户端读不到也伪造不了",
 		Risk:    RiskLow,
 		Members: []string{"kv"},
 		// kv 是一个有自己接口类型的对象，两项能力贡献的是同一行成员声明，
@@ -292,7 +295,7 @@ declare interface AegisWallet {
 	{
 		Key: CapGeoRead, Group: CapGroupIntel,
 		Label: "IP 归属地", API: "aegis.geo.lookup(ip)",
-		Hint: "GeoIP2 + ASN，查不到时返回的是「未知」而不是 null，判断请看 resolved",
+		Hint:      "GeoIP2 + ASN，查不到时返回的是「未知」而不是 null，判断请看 resolved",
 		Risk:      RiskLow,
 		Namespace: "geo",
 		Members:   []string{"lookup"},
@@ -344,8 +347,8 @@ declare interface AegisGeoLocation {
 	{
 		Key: CapAIGenerate, Group: CapGroupEgress,
 		Label: "AI 生成", API: "aegis.ai.generate(prompt)",
-		Hint: "走应用/平台配置的 AI 通道，按 token 计费；受函数超时约束，适合短生成",
-		Risk: RiskMedium,
+		Hint:      "走应用/平台配置的 AI 通道，按 token 计费；受函数超时约束，适合短生成",
+		Risk:      RiskMedium,
 		Namespace: "ai",
 		Members:   []string{"generate"},
 		Declaration: `
@@ -398,6 +401,18 @@ declare interface AegisAIResult {
 		Label: "写入存储（旧）", API: "—",
 		Hint: "同上，仅为让存量函数通过更新校验而保留", Risk: RiskLow,
 		Deprecated: true,
+	},
+	{
+		Key: legacyCapTicketRead, Group: CapGroupLegacy,
+		Label: "读取工单（旧）", API: "—",
+		Hint: "工单只对管理员开放后改名为 feedback.read", Risk: RiskLow,
+		Deprecated: true, ReplacedBy: CapFeedbackRead,
+	},
+	{
+		Key: legacyCapTicketWrite, Group: CapGroupLegacy,
+		Label: "代为提单（旧）", API: "—",
+		Hint: "工单只对管理员开放后改名为 feedback.write", Risk: RiskLow,
+		Deprecated: true, ReplacedBy: CapFeedbackWrite,
 	},
 }
 

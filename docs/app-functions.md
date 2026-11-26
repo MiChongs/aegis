@@ -418,7 +418,7 @@ SDK 真正绑定什么由 Go 决定，在前端另写一份类型只会让「补
 | `number.read` | `aegis.number.get()` | 应用号码与靓号等级 |
 | `payment.read` | `aegis.payment.orders / order(orderNo)` | 调用者自己的订单；回调原文、客户端 IP、元数据不给 |
 | `cloud.read` / `cloud.write` | `aegis.cloud.get / put` | 用户云存储；对象按 JSON 存、字符串按文本存，支持 `ifRevision` 乐观锁 |
-| `ticket.read` / `ticket.write` | `aegis.tickets.list / create` | 以调用者身份提单，客服后台照常收到提醒 |
+| `feedback.read` / `feedback.write` | `aegis.feedback.list / create` | 以调用者身份读、交意见反馈，后台照常收到提醒（旧名 `ticket.read` / `ticket.write` 自动映射；工单只对管理员开放） |
 | `content.read` | `aegis.content.banners / notices` | 应用当前生效的横幅与公告 |
 | `device.read` | `aegis.devices.list()` | 设备与上限，**不含 IP** |
 | `function.call` | `aegis.functions.call(name, input)` | 同步调用本应用另一个函数，见「函数互调」 |

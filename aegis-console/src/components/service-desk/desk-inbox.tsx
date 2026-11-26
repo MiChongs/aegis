@@ -70,12 +70,13 @@ type Props = {
 export function deskViewCounts(stats?: TicketStats, overdue?: number): ViewCounts {
   if (!stats) return {};
   return {
-    active: stats.open + stats.processing + stats.pendingUser,
+    active: stats.open + stats.processing + stats.pending,
     open: stats.open,
     processing: stats.processing,
-    pending_user: stats.pendingUser,
+    pending: stats.pending,
     overdue,
     resolved: stats.resolved,
+    rejected: stats.rejected,
     closed: stats.closed,
     all: stats.total
   };
@@ -85,9 +86,10 @@ const VIEWS: { value: DeskView; label: string }[] = [
   { value: "active", label: "待处理" },
   { value: "open", label: "待受理" },
   { value: "processing", label: "处理中" },
-  { value: "pending_user", label: "待补充" },
+  { value: "pending", label: "等待中" },
   { value: "overdue", label: "已超时" },
   { value: "resolved", label: "已解决" },
+  { value: "rejected", label: "不采纳" },
   { value: "closed", label: "已关闭" },
   { value: "all", label: "全部" }
 ];
@@ -343,7 +345,7 @@ const InboxRow = memo(function InboxRow({
   const preview = flattenPreview(item.preview);
   const images = item.imageCount ?? 0;
   const files = item.attachmentCount ?? 0;
-  const done = isTerminalStatus(item.status) || item.status === "resolved";
+  const done = isTerminalStatus(item.status);
   // 时限：还没首响看首响，否则看解决
   const dueAt = !done ? (item.firstRespondedAt ? item.resolveDueAt : item.firstResponseDueAt) : undefined;
   const due = dueAt ? formatDue(dueAt) : null;

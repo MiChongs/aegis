@@ -30,8 +30,8 @@ const (
 	CapPaymentRead     = "payment.read"
 	CapCloudRead       = "cloud.read"
 	CapCloudWrite      = "cloud.write"
-	CapTicketRead      = "ticket.read"
-	CapTicketWrite     = "ticket.write"
+	CapFeedbackRead    = "feedback.read"
+	CapFeedbackWrite   = "feedback.write"
 	CapContentRead     = "content.read"
 	CapDeviceRead      = "device.read"
 	CapFunctionCall    = "function.call"
@@ -476,27 +476,27 @@ declare interface AegisOrder {
 
 	// ── 触达 ──
 	{
-		Key: CapTicketRead, Group: CapGroupReach,
-		Label: "读取工单", API: "aegis.tickets.list()",
-		Hint:         "调用者自己提过的工单",
+		Key: CapFeedbackRead, Group: CapGroupReach,
+		Label: "读取反馈", API: "aegis.feedback.list()",
+		Hint:         "调用者自己提交过的意见反馈",
 		Risk:         RiskLow,
 		RequiresUser: true,
-		Namespace:    "tickets",
+		Namespace:    "feedback",
 		Members:      []string{"list"},
 		Declaration: `
-    /** 当前调用者的工单，limit 上限 50 */
-    list(options?: { status?: string; limit?: number }): { id: number; ticketNo: string; title: string; status: string; priority: string; createdAt: string; [key: string]: any }[];`,
+    /** 当前调用者的意见反馈，limit 上限 50；statusText 是状态的中文名 */
+    list(options?: { status?: "open" | "processing" | "pending" | "resolved" | "rejected" | "closed" | "cancelled"; limit?: number }): { id: string; ticketNo: string; title: string; status: string; statusText: string; createdAt: string; [key: string]: any }[];`,
 	},
 	{
-		Key: CapTicketWrite, Group: CapGroupReach,
-		Label: "代为提单", API: "aegis.tickets.create()",
-		Hint: "以调用者身份提一张工单，客服后台照常收到提醒",
+		Key: CapFeedbackWrite, Group: CapGroupReach,
+		Label: "代为提交反馈", API: "aegis.feedback.create()",
+		Hint: "以调用者身份提交一条意见反馈，后台照常收到提醒",
 		Risk: RiskMedium, Mutating: true, RequiresUser: true,
-		Namespace: "tickets",
+		Namespace: "feedback",
 		Members:   []string{"create"},
 		Declaration: `
-    /** 以当前调用者身份提工单 */
-    create(ticket: { title: string; content: string; priority?: "low" | "normal" | "high"; categoryId?: number }): { id: number; ticketNo: string; status: string; simulated?: boolean };`,
+    /** 以当前调用者身份提交意见反馈；categoryId 取应用的反馈分类 */
+    create(feedback: { categoryId: number; title: string; content: string; contact?: string }): { id: string; ticketNo: string; status: string; simulated?: boolean };`,
 	},
 
 	// ── 情报与内容 ──

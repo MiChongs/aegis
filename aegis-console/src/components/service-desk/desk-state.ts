@@ -10,7 +10,9 @@ import type { TicketKind, TicketListParams } from "@/lib/api/tickets";
 // `?id=123` 深链也和页面内点击走同一条路径，不需要 useEffect 把 query 同步进本地 state。
 // `app` 与统计分析页签共用：在工作台选了某个应用，切到统计看到的也是它。
 
-export const DESK_VIEWS = ["active", "open", "processing", "pending_user", "overdue", "resolved", "closed", "all"] as const;
+// 状态共七个：进行中 open / processing / pending，已解决 resolved，终态 rejected / closed / cancelled。
+// 「已关闭」视图把已撤销也算进去（统计接口的 closed 同口径），「不采纳」单列。
+export const DESK_VIEWS = ["active", "open", "processing", "pending", "overdue", "resolved", "rejected", "closed", "all"] as const;
 export type DeskView = (typeof DESK_VIEWS)[number];
 
 export const DESK_SORTS = ["updated", "created", "priority", "due"] as const;
@@ -23,7 +25,7 @@ export const DESK_SORT_LABEL: Record<DeskSort, string> = {
   due: "最先到期"
 };
 
-export const ACTIVE_STATUSES = "open,processing,pending_user,pending_third_party";
+export const ACTIVE_STATUSES = "open,processing,pending";
 
 const PRIORITIES = ["urgent", "high", "normal", "low"] as const;
 const ASSIGNEES = ["me", "none"] as const;
@@ -74,7 +76,7 @@ export function deskListParams(kind: TicketKind, state: DeskState, keyword: stri
     sortDir: state.sort === "due" ? "asc" : undefined,
     limit: 30
   };
-  // 「待处理」要显式列出状态：后端不传状态时只排除已关闭与已撤销，已解决的仍会混进来，
+  // 「待处理」要显式列出状态：后端不传状态时只排除终态（不采纳 / 已关闭 / 已撤销），已解决的仍会混进来，
   // 列表条数就和页签上的计数对不上
   if (state.view === "all") params.includeClosed = true;
   else if (state.view === "active") params.status = ACTIVE_STATUSES;

@@ -284,7 +284,7 @@ type Event struct {
 	// Link 面向「处理侧」的控制台深链（如 /tickets?id=42）。
 	// IM / 邮件 / 管理员收件箱用它；绝不能下发给应用用户。
 	Link string `json:"link,omitempty"`
-	// UserLink 面向「提单人」的应用侧路径（如 /tickets/42）。
+	// UserLink 面向「提单人」的应用侧路径（如 /feedback/42）。
 	// 站内信与实时推送给应用用户时用它；为空则不带链接。
 	//
 	// 两条链接必须分开：控制台路径对 App 用户既点不开，也泄露内部路由结构。

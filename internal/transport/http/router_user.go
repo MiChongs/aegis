@@ -38,24 +38,12 @@ func registerLegacyAuthRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 	}
 }
 
-// registerUserRoutes 注册应用用户端：工单、抽奖、资料与设置、积分、排行榜、站内信、邮件。
+// registerUserRoutes 注册应用用户端：抽奖、资料与设置、积分、排行榜、站内信、邮件。
 func registerUserRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 	var (
 		authService = deps.Auth
 	)
-	// ─── 工单系统（应用用户端）────────────────────────────
-	userTickets := router.Group("/api/user/tickets")
-	userTickets.Use(middleware.Auth(authService))
-	{
-		userTickets.GET("/categories", h.UserListTicketCategories)
-		userTickets.POST("/attachments", h.UserUploadTicketAttachment)
-		userTickets.GET("", h.UserListTickets)
-		userTickets.POST("", h.UserCreateTicket)
-		userTickets.GET("/:ticketId", h.UserGetTicket)
-		userTickets.POST("/:ticketId/replies", h.UserReplyTicket)
-		userTickets.POST("/:ticketId/rating", h.UserRateTicket)
-		userTickets.POST("/:ticketId/cancel", h.UserCancelTicket)
-	}
+	// 工单只对管理员开放（/api/admin/tickets），应用用户的诉求一律走意见反馈（网关 /feedback）。
 
 	appFunctions := router.Group("/api/apps/:appkey/functions")
 	{
