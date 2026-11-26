@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Ban, Inbox, LayoutDashboard, LayoutTemplate, Mail, Server, ShieldCheck } from "lucide-react";
+import { Ban, Inbox, LayoutDashboard, LayoutTemplate, Mail, Mails, Server, ShieldCheck } from "lucide-react";
 import { NoAppSelected } from "@/components/apps/app-config-primitives";
-import { useEmailProviderCatalogQuery, type EmailScope } from "@/lib/email-hooks";
+import { useEmailConfigsQuery, useEmailProviderCatalogQuery, type EmailScope } from "@/lib/email-hooks";
 import { useAppPermissionChecker } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { EmailChannelsPanel } from "./email-channels-panel";
@@ -12,6 +12,7 @@ import { EmailOverviewPanel, type EmailOverviewTarget } from "./email-overview-p
 import { EmailPolicyPanel } from "./email-policy-panel";
 import { EmailSuppressionsPanel } from "./email-suppressions-panel";
 import { EmailTemplatesPanel } from "./email-templates-panel";
+import { MailboxPanel } from "./mailbox/mailbox-panel";
 import { useEmailPolicyDraft } from "./use-email-policy-draft";
 
 /**
@@ -25,6 +26,7 @@ import { useEmailPolicyDraft } from "./use-email-policy-draft";
  * | 发信策略 | 验证码规则、频次上限、退信抑制、重置链接白名单 |
  * | 投递记录 | 每封信的状态与回执时间线 |
  * | 抑制名单 | 不再投递的地址 |
+ * | 邮局 | 有 Cloud Mail 通道时出现：直接管它背后的收件箱、邮箱账号、用户与注册码 |
  *
  * 模板与发信策略共用一份草稿（同一个 Policy），切换视图时未保存的修改不会丢。
  * 视图状态不进 URL：`?tab=` 已经被应用区块占用。
@@ -35,7 +37,8 @@ const VIEWS = [
   { key: "templates", label: "模板", icon: LayoutTemplate },
   { key: "policy", label: "发信策略", icon: ShieldCheck },
   { key: "deliveries", label: "投递记录", icon: Inbox },
-  { key: "suppressions", label: "抑制名单", icon: Ban }
+  { key: "suppressions", label: "抑制名单", icon: Ban },
+  { key: "mailbox", label: "邮局", icon: Mails }
 ] as const;
 
 type ViewKey = (typeof VIEWS)[number]["key"];
@@ -57,6 +60,10 @@ function Workspace({ scope }: { scope: EmailScope }) {
   const catalogQuery = useEmailProviderCatalogQuery();
   const providers = catalogQuery.data?.providers ?? [];
   const draft = useEmailPolicyDraft(scope);
+  // 「邮局」只对 Cloud Mail 通道有意义：其余服务商只能发信，没有可管理的邮箱
+  const configsQuery = useEmailConfigsQuery(scope);
+  const mailboxConfigs = (configsQuery.data ?? []).filter((item) => item.provider === "skymail");
+  const views = VIEWS.filter((item) => item.key !== "mailbox" || mailboxConfigs.length > 0);
 
   const navigate = (target: EmailOverviewTarget) => {
     if (target.view === "deliveries") {
@@ -68,7 +75,7 @@ function Workspace({ scope }: { scope: EmailScope }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border bg-muted/40 p-1">
-        {VIEWS.map((item) => {
+        {views.map((item) => {
           const unsaved = draft.dirty && (item.key === "templates" || item.key === "policy");
           return (
             <button
@@ -107,6 +114,7 @@ function Workspace({ scope }: { scope: EmailScope }) {
         />
       ) : null}
       {view === "suppressions" ? <EmailSuppressionsPanel scope={scope} canWrite={canWrite} /> : null}
+      {view === "mailbox" ? <MailboxPanel scope={scope} configs={mailboxConfigs} canWrite={canWrite} /> : null}
     </div>
   );
 }
