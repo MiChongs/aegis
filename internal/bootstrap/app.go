@@ -775,6 +775,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	ticketService := service.NewTicketService(log, pg, adminService, notifyHub, storageService)
 	// 撤回回复时一并删掉它生成的站内信与管理员收件箱条目
 	ticketService.SetInboxes(notificationService, adminInboxService)
+	// 反馈奖励到账 / 撤回时给用户发站内信
+	ticketService.SetUserNotifier(notificationService)
 	// 工单与设备服务构造得比脚本依赖装配晚，这里补上
 	appFunctionService.ExtendScriptDeps(func(deps *service.ScriptSDKDeps) {
 		deps.Tickets = ticketService

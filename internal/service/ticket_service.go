@@ -47,6 +47,14 @@ type TicketService struct {
 	// 撤回回复时清理它生成的通知（ticket_retract.go）；未接时只撤回消息本身
 	userInbox  ticketUserInboxCleaner
 	adminInbox ticketAdminInboxCleaner
+
+	// 反馈奖励的站内信（feedback_reward_service.go）；未接时只发积分、不发通知
+	userNotifier ticketUserNotifier
+}
+
+// SetUserNotifier 接上应用用户站内信（NotificationService），反馈奖励到账与撤回时通知对方。
+func (s *TicketService) SetUserNotifier(notifier ticketUserNotifier) {
+	s.userNotifier = notifier
 }
 
 const (
@@ -123,6 +131,14 @@ func (s *TicketService) Detail(ctx context.Context, access *admindomain.AccessCo
 	item.Attachments = attachments
 	item.Watchers = watchers
 	item.Permissions = actions
+	if item.Kind == ticketdomain.KindFeedback {
+		// 奖励区块读不出来不影响看反馈本身
+		if info, err := s.feedbackRewardInfo(ctx, item); err != nil {
+			s.log.Warn("读取反馈奖励失败", zap.Int64("ticketId", ticketID), zap.Error(err))
+		} else {
+			item.Reward = info
+		}
+	}
 	return item, nil
 }
 
@@ -722,6 +738,13 @@ func (s *TicketService) ChangeStatus(ctx context.Context, access *admindomain.Ac
 		return nil, apperrors.New(40000, http.StatusBadRequest, "无效的工单状态")
 	}
 	if next == item.Status {
+		if cmd.Reward != nil {
+			// 状态没变，只发奖励
+			if _, err := s.grantFeedbackReward(ctx, access, item, actions, *cmd.Reward); err != nil {
+				return nil, err
+			}
+			return s.ticketWithReward(ctx, ticketID)
+		}
 		return item, nil
 	}
 	// 已有结论（已解决 / 不采纳 / 已关闭 / 已撤销）改回进行中的状态才算重开
@@ -732,6 +755,17 @@ func (s *TicketService) ChangeStatus(ctx context.Context, access *admindomain.Ac
 		}
 	} else if !actions.ChangeStatus {
 		return nil, apperrors.New(40311, http.StatusForbidden, "无权变更工单状态")
+	}
+
+	// 同时发放反馈奖励：先发奖励（判定多、涉及积分），失败则状态不变；发成功之后改状态再失败，奖励照样有效
+	if cmd.Reward != nil {
+		if !ticketdomain.RewardableStatusTarget(next) {
+			return nil, apperrors.New(errCodeFeedbackRewardIneligible, http.StatusUnprocessableEntity,
+				"改为「"+ticketdomain.StatusLabel(next)+"」时不能同时发放奖励")
+		}
+		if _, err := s.grantFeedbackReward(ctx, access, item, actions, *cmd.Reward); err != nil {
+			return nil, err
+		}
 	}
 
 	adminID := access.AdminID
@@ -784,7 +818,20 @@ func (s *TicketService) ChangeStatus(ctx context.Context, access *admindomain.Ac
 			"from": ticketdomain.StatusLabel(item.Status), "to": ticketdomain.StatusLabel(next),
 		})
 	}
+	if cmd.Reward != nil && refreshed != nil {
+		refreshed.Reward, _ = s.feedbackRewardInfo(ctx, refreshed)
+	}
 	return refreshed, nil
+}
+
+// ticketWithReward 重新读一条并带上奖励区块（改状态时只发了奖励的返回值）。
+func (s *TicketService) ticketWithReward(ctx context.Context, ticketID int64) (*ticketdomain.Ticket, error) {
+	item, err := s.pg.GetTicketByID(ctx, ticketID)
+	if err != nil || item == nil {
+		return item, err
+	}
+	item.Reward, _ = s.feedbackRewardInfo(ctx, item)
+	return item, nil
 }
 
 // Delete 删除工单。

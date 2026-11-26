@@ -59,6 +59,8 @@ const (
 	TypeLevel           = "level"
 	// TypeCosmetic 获得 / 被收回个性装扮（docs/cosmetics.md）
 	TypeCosmetic = "cosmetic"
+	// TypeFeedbackReward 反馈被采纳获得积分 / 奖励被撤回（docs/feedback-rewards.md）
+	TypeFeedbackReward = "feedback_reward"
 )
 
 // typeCategories 旧 type → 分类。没登记的 type 一律落 system。
@@ -84,17 +86,18 @@ var typeCategories = map[string]string{
 	"refund":           CategoryMembership,
 	"account_deletion": CategoryMembership,
 
-	"signin":       CategoryReward,
-	"auto_sign":    CategoryReward,
-	"points_store": CategoryReward,
-	"invite":       CategoryReward,
-	"leaderboard":  CategoryReward,
-	"lottery":      CategoryReward,
-	"rewarded_ad":  CategoryReward,
-	"cardkey":      CategoryReward,
-	"item_grant":   CategoryReward,
-	"level":        CategoryReward,
-	"cosmetic":     CategoryReward,
+	"signin":          CategoryReward,
+	"auto_sign":       CategoryReward,
+	"points_store":    CategoryReward,
+	"invite":          CategoryReward,
+	"leaderboard":     CategoryReward,
+	"lottery":         CategoryReward,
+	"rewarded_ad":     CategoryReward,
+	"cardkey":         CategoryReward,
+	"item_grant":      CategoryReward,
+	"level":           CategoryReward,
+	"cosmetic":        CategoryReward,
+	"feedback_reward": CategoryReward,
 
 	"ticket":   CategoryTicket,
 	"feedback": CategoryTicket,

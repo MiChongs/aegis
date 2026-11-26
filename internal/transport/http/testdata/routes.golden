@@ -639,6 +639,7 @@ GET	/api/admin/system/user-master/user-lists	AdminListUserListEntries
 GET	/api/admin/tickets	AdminListTickets
 GET	/api/admin/tickets/:ticketId	AdminGetTicket
 GET	/api/admin/tickets/:ticketId/requester	AdminTicketRequester
+GET	/api/admin/tickets/:ticketId/reward	AdminGetFeedbackReward
 GET	/api/admin/tickets/agents	AdminTicketAgentStats
 GET	/api/admin/tickets/apps	AdminTicketApps
 GET	/api/admin/tickets/categories	AdminListTicketCategories
@@ -646,6 +647,7 @@ GET	/api/admin/tickets/export	ExportAdminTickets
 GET	/api/admin/tickets/groups	AdminListTicketGroups
 GET	/api/admin/tickets/metadata	AdminTicketMetadata
 GET	/api/admin/tickets/quick-replies	AdminListTicketQuickReplies
+GET	/api/admin/tickets/reward-policy	AdminGetFeedbackRewardPolicy
 GET	/api/admin/tickets/sla-policies	AdminListTicketSLAPolicies
 GET	/api/admin/tickets/stats	AdminTicketStats
 GET	/api/admin/tickets/trend	AdminTicketTrend
@@ -1355,6 +1357,8 @@ POST	/api/admin/system/user-master/user-lists	AdminCreateUserListEntry
 POST	/api/admin/tickets	AdminCreateTicket
 POST	/api/admin/tickets/:ticketId/assign	AdminAssignTicket
 POST	/api/admin/tickets/:ticketId/replies	AdminReplyTicket
+POST	/api/admin/tickets/:ticketId/reward	AdminGrantFeedbackReward
+POST	/api/admin/tickets/:ticketId/reward/revoke	AdminRevokeFeedbackReward
 POST	/api/admin/tickets/:ticketId/status	AdminChangeTicketStatus
 POST	/api/admin/tickets/:ticketId/watch	AdminWatchTicket
 POST	/api/admin/tickets/attachments	AdminUploadTicketAttachment
@@ -1766,6 +1770,7 @@ PUT	/api/admin/tickets/categories/:id	AdminSaveTicketCategory
 PUT	/api/admin/tickets/groups/:id	AdminSaveTicketGroup
 PUT	/api/admin/tickets/groups/:id/members	AdminSetTicketGroupMembers
 PUT	/api/admin/tickets/quick-replies/:id	AdminSaveTicketQuickReply
+PUT	/api/admin/tickets/reward-policy	AdminSaveFeedbackRewardPolicy
 PUT	/api/admin/tickets/sla-policies/:id	AdminSaveTicketSLAPolicy
 PUT	/api/notifications/preferences	UpdateNotificationPreferences
 PUT	/api/user/profile	UpdateProfile

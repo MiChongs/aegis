@@ -620,12 +620,15 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/tickets/groups/{id}/members"):                                                          TicketGroupMembersRequest{},              // AdminSetTicketGroupMembers
 		routeKey("POST", "/api/admin/tickets/quick-replies"):                                                               TicketQuickReplyRequest{},                // AdminSaveTicketQuickReply
 		routeKey("PUT", "/api/admin/tickets/quick-replies/{id}"):                                                           TicketQuickReplyRequest{},                // AdminSaveTicketQuickReply
+		routeKey("PUT", "/api/admin/tickets/reward-policy"):                                                                FeedbackRewardPolicyRequest{},            // AdminSaveFeedbackRewardPolicy
 		routeKey("POST", "/api/admin/tickets/sla-policies"):                                                                TicketSLARequest{},                       // AdminSaveTicketSLAPolicy
 		routeKey("PUT", "/api/admin/tickets/sla-policies/{id}"):                                                            TicketSLARequest{},                       // AdminSaveTicketSLAPolicy
 		routeKey("PATCH", "/api/admin/tickets/{ticketId}"):                                                                 TicketUpdateRequest{},                    // AdminUpdateTicket
 		routeKey("POST", "/api/admin/tickets/{ticketId}/assign"):                                                           TicketAssignRequest{},                    // AdminAssignTicket
 		routeKey("DELETE", "/api/admin/tickets/{ticketId}/messages/{messageId}"):                                           TicketMessageRetractRequest{},            // AdminRetractTicketMessage
 		routeKey("POST", "/api/admin/tickets/{ticketId}/replies"):                                                          TicketReplyRequest{},                     // AdminReplyTicket
+		routeKey("POST", "/api/admin/tickets/{ticketId}/reward"):                                                           FeedbackRewardGrantRequest{},             // AdminGrantFeedbackReward
+		routeKey("POST", "/api/admin/tickets/{ticketId}/reward/revoke"):                                                    FeedbackRewardRevokeRequest{},            // AdminRevokeFeedbackReward
 		routeKey("POST", "/api/admin/tickets/{ticketId}/status"):                                                           TicketStatusRequest{},                    // AdminChangeTicketStatus
 		routeKey("PUT", "/api/admin/tickets/{ticketId}/watchers"):                                                          TicketWatchersRequest{},                  // AdminSetTicketWatchers
 		routeKey("POST", "/api/admin/user-settings/batch-initialize"):                                                      AdminBatchInitializeSettingsRequest{},    // AdminBatchInitializeUserSettings

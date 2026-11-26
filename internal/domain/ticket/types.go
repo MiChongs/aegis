@@ -231,6 +231,9 @@ type Ticket struct {
 
 	// 当前访问者对本工单可执行的操作（前端据此决定按钮显隐，避免出现「点了才 403」）
 	Permissions *ActionSet `json:"permissions,omitempty"`
+
+	// Reward 反馈奖励区块（管理端详情、kind=feedback 时填充，见 reward.go）
+	Reward *RewardInfo `json:"reward,omitempty"`
 }
 
 // Message 工单会话消息。
@@ -589,6 +592,8 @@ type StatusCommand struct {
 	Reason string `json:"reason,omitempty"`
 	// Solution 在置为 resolved 时作为一条对外消息追加
 	Solution string `json:"solution,omitempty"`
+	// Reward 非空时同时给这条反馈发放奖励（先发奖励再改状态，奖励失败则状态不变）
+	Reward *RewardGrantCommand `json:"reward,omitempty"`
 }
 
 // RatingCommand 满意度评价（仅提单人可提交）。
@@ -667,6 +672,10 @@ type ActionSet struct {
 	// 提单人的消息谁都不能撤回。
 	RetractOwn bool `json:"retractOwn"`
 	RetractAny bool `json:"retractAny"`
+	// Reward 给这条反馈发放奖励；RevokeReward 撤回已发的奖励。
+	// 都要求能处理这张单子（结单权限或与我有关）且持有该应用的积分调整权限（app:user:asset 或 points:write）
+	Reward       bool `json:"reward"`
+	RevokeReward bool `json:"revokeReward"`
 }
 
 // ─────────────── 统计 ───────────────

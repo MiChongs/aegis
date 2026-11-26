@@ -105,6 +105,8 @@ type FeedbackSummary struct {
 	LastReplyFromAgent bool                `json:"lastReplyFromAgent"`
 	CreatedAt          time.Time           `json:"createdAt"`
 	UpdatedAt          time.Time           `json:"updatedAt"`
+	// Reward 这条反馈被采纳后获得的积分奖励（只有当前有效的一笔；没发或已撤回时不下发）
+	Reward *FeedbackRewardView `json:"reward,omitempty"`
 }
 
 // FeedbackClient 提交反馈时的客户端信息。
@@ -227,8 +229,14 @@ func (s *TicketService) ListFeedback(ctx context.Context, session *authdomain.Se
 		return nil, err
 	}
 	out := make([]FeedbackSummary, 0, len(items))
+	ids := make([]int64, 0, len(items))
 	for i := range items {
 		out = append(out, feedbackSummary(&items[i]))
+		ids = append(ids, items[i].ID)
+	}
+	rewards := s.feedbackRewardViews(ctx, ids)
+	for i := range out {
+		out[i].Reward = rewards[out[i].ID]
 	}
 	return &FeedbackList{Items: out, Page: query.Page, Limit: query.Limit, Total: total, TotalPages: totalPages(total, query.Limit)}, nil
 }
@@ -307,6 +315,7 @@ func (s *TicketService) buildFeedbackDetail(ctx context.Context, item *ticketdom
 		rating := int(*item.Rating)
 		detail.Rating = &rating
 	}
+	detail.Reward = s.feedbackRewardViews(ctx, []int64{item.ID})[item.ID]
 	for i, message := range messages {
 		if i == 0 {
 			detail.Content = message.Content

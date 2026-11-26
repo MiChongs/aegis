@@ -118,6 +118,9 @@ var integralCategories = []CategoryRule{
 	{Category: "vip_convert", Label: "会员权益折算", Rule: CategoryExcluded},
 	// 物品发放：运营按规则赠送，不是挣来的
 	{Category: "item_grant", Label: "物品发放", Rule: CategoryExcluded},
+	// 有效反馈奖励：管理员按反馈发放，可撤回；发放与撤回都不计入（docs/feedback-rewards.md）
+	{Category: "feedback_reward", Label: "反馈奖励", Rule: CategoryExcluded},
+	{Category: "feedback_reward_revoke", Label: "反馈奖励撤回（扣减）", Rule: CategoryExcluded},
 }
 
 // IntegralCategories 全部已登记的分类与处理方式。

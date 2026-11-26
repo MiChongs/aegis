@@ -395,9 +395,14 @@ func (h *Handler) AdminChangeTicketStatus(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	item, err := h.ticket.ChangeStatus(c.Request.Context(), session, ticketID, ticketdomain.StatusCommand{
-		Status: req.Status, Reason: req.Reason, Solution: req.Solution,
-	})
+	cmd := ticketdomain.StatusCommand{Status: req.Status, Reason: req.Reason, Solution: req.Solution}
+	if req.Reward != nil {
+		cmd.Reward = &ticketdomain.RewardGrantCommand{
+			Points: req.Reward.Points, Reason: req.Reward.Reason, RequestID: req.Reward.RequestID,
+			ClientIP: c.ClientIP(), UserAgent: c.Request.UserAgent(),
+		}
+	}
+	item, err := h.ticket.ChangeStatus(c.Request.Context(), session, ticketID, cmd)
 	if err != nil {
 		h.writeError(c, err)
 		return

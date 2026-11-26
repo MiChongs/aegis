@@ -180,6 +180,7 @@ func (s *TicketService) ResolveActions(ctx context.Context, access *admindomain.
 			Assign: true, ChangeStatus: true, Close: true, Reopen: true, Delete: true,
 			Watch: true, ManageWatchers: true, UploadAttachment: true,
 			RetractOwn: true, RetractAny: true,
+			Reward: item.Kind == ticketdomain.KindFeedback, RevokeReward: item.Kind == ticketdomain.KindFeedback,
 		}
 	}
 
@@ -213,6 +214,8 @@ func (s *TicketService) ResolveActions(ctx context.Context, access *admindomain.
 	// 撤回：自己的回复看得到工单就能撤回；别人的要 ticket:manage。逐条判定见 canRetractMessage
 	actions.RetractOwn = actions.View
 	actions.RetractAny = s.can(ctx, access, PermTicketManage, scoped)
+	// 反馈奖励：能处理（与改状态同一口径，结了单也能发）且有该应用的积分调整权限，见 feedback_reward_service.go
+	s.resolveRewardActions(ctx, access, item, handlePermitted(PermTicketClose), actions)
 	return actions
 }
 

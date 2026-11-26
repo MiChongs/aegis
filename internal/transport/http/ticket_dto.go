@@ -126,6 +126,8 @@ type TicketStatusRequest struct {
 	Status   string `json:"status" binding:"required"`
 	Reason   string `json:"reason"`
 	Solution string `json:"solution"`
+	// Reward 非空时同时给这条反馈发放奖励积分（先发奖励，失败则状态不变）
+	Reward *FeedbackRewardGrantRequest `json:"reward"`
 }
 
 // TicketRatingRequest 满意度评价请求。
