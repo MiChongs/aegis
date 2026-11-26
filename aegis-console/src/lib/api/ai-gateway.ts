@@ -191,9 +191,6 @@ export type AIGatewaySettings = {
   updatedAt?: string;
 };
 
-/** 目录里的枚举项：后端可能只给键（字符串），也可能给 `{key, label}`。 */
-export type AIGatewayEnumItem = string | { key: string; label?: string };
-
 export type AIGatewayCatalog = {
   sources: AIGatewaySourceMeta[];
   kinds: AIGatewayKindMeta[];
@@ -202,8 +199,10 @@ export type AIGatewayCatalog = {
   keyPrefix: string;
   /** 应用的会员档位，会员优惠里选档位用。 */
   vipTiers?: Array<{ id: number; name: string }>;
-  tones?: AIGatewayEnumItem[];
-  packageTones?: AIGatewayEnumItem[];
+  /** 时段色调键：normal / off_peak / peak / promo。 */
+  tones?: AIGatewayTimeTone[];
+  /** 额度包配色键：blue / violet / amber / emerald / rose / slate。 */
+  packageTones?: AIGatewayPackageTone[];
 };
 
 export type AIGatewayPrice = {
@@ -720,6 +719,14 @@ export type AIGatewayPackageOrder = {
   userId: number;
   account?: string;
   refundedBy?: string;
+  /**
+   * 以下四项只在管理端、且订单未退款并有批次时给：批次总量 / 剩余（批次已过期或作废视为 0）/ 暂扣中，
+   * 与预计退款 floor₂(price × lotRemaining / lotAmount)。lotFrozen > 0 时退款会被拒绝（40238）。
+   */
+  lotAmount?: string;
+  lotRemaining?: string;
+  lotFrozen?: string;
+  refundEstimate?: string;
 };
 
 export type AIGatewayPackageOrderParams = {
@@ -1008,8 +1015,9 @@ export function listAIGatewayLots(token: string, appKey: string, params: AIGatew
   return apiRequest<AIGatewayPage<AIGatewayCreditLot>>(`${base(appKey)}/lots${buildQuery(params)}`, { token });
 }
 
+/** 返回新建的批次；同一 requestId 重放返回原批次。 */
 export function grantAIGatewayLot(token: string, appKey: string, userId: number, payload: AIGatewayLotGrantPayload) {
-  return apiRequest<{ lot: AIGatewayCreditLot; balance?: string; replayed?: boolean }>(`${base(appKey)}/users/${userId}/lots`, {
+  return apiRequest<AIGatewayCreditLot>(`${base(appKey)}/users/${userId}/lots`, {
     method: "POST",
     token,
     body: JSON.stringify(payload)

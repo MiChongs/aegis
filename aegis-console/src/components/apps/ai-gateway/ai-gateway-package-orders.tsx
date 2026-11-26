@@ -4,12 +4,7 @@ import { useState } from "react";
 import { CircleAlert, Loader2, ReceiptText, RotateCcw, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { CopyButton } from "@/components/apps/auth-protocol/auth-protocol-shared";
-import {
-  LOT_ORIGIN_LABEL,
-  LotStatusBadge,
-  OrderStatusBadge,
-  formatYuan
-} from "@/components/apps/ai-gateway/ai-gateway-billing-kit";
+import { OrderStatusBadge, formatYuan } from "@/components/apps/ai-gateway/ai-gateway-billing-kit";
 import { formatPoints } from "@/components/apps/ai-gateway/ai-gateway-shared";
 import { UserPicker, type PickedUser } from "@/components/commerce/user-picker";
 import { Button } from "@/components/ui/button";
@@ -19,13 +14,9 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  useAIGatewayLotsQuery,
-  useAIGatewayPackageOrdersQuery,
-  useRefundAIGatewayPackageOrderMutation
-} from "@/lib/ai-gateway-hooks";
+import { useAIGatewayPackageOrdersQuery, useRefundAIGatewayPackageOrderMutation } from "@/lib/ai-gateway-hooks";
 import { ApiError } from "@/lib/api/client";
-import type { AIGatewayCreditLot, AIGatewayPackage, AIGatewayPackageOrder } from "@/lib/api/ai-gateway";
+import type { AIGatewayPackage, AIGatewayPackageOrder } from "@/lib/api/ai-gateway";
 import { formatDateTime, formatDateTimeMinute, fromLocalDateValue } from "@/lib/datetime";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
@@ -223,19 +214,19 @@ function OrderDetail({
   order: AIGatewayPackageOrder;
   onUpdated: (order: AIGatewayPackageOrder) => void;
 }) {
-  // 后端没有按编号取单个批次的接口：按用户查购买来的批次再找（一个用户买的额度包批次不会太多）
-  const lotsQuery = useAIGatewayLotsQuery(appKey, { userId: order.userId, origin: "purchase", limit: 100 });
-  const lot: AIGatewayCreditLot | undefined = lotsQuery.data?.items?.find((item) => item.id === order.lotId);
   const refundMutation = useRefundAIGatewayPackageOrderMutation(appKey);
   const [reason, setReason] = useState("");
 
-  const amount = Number(lot?.amount ?? order.totalPoints) || 0;
-  const remaining = Number(lot?.remaining ?? 0) || 0;
-  const frozen = Number(lot?.frozen ?? 0) || 0;
+  // 管理端订单直接带批次的总量 / 剩余 / 暂扣与预计退款（已退款或没有批次时缺省）；
+  // lotRemaining 已按「批次过期或作废视为 0」处理，refundEstimate = floor₂(price × lotRemaining / lotAmount)
+  const hasLot = order.lotAmount !== undefined && order.lotAmount !== null && order.lotAmount !== "";
+  const amount = Number(order.lotAmount) || 0;
+  const remaining = Number(order.lotRemaining) || 0;
+  const frozen = Number(order.lotFrozen) || 0;
+  const used = Math.max(0, amount - remaining - frozen);
   const ratio = amount > 0 ? remaining / amount : 0;
-  // refundAmount = floor₂(finalPrice × remaining / amount)
-  const estimate = Math.floor(Math.round(Number(order.price) * 100) * ratio + 1e-6) / 100;
-  const refundable = order.status === "paid" && lot?.status !== "revoked";
+  const estimate = order.refundEstimate ?? null;
+  const refundable = order.status === "paid";
 
   const refund = async () => {
     try {
@@ -271,26 +262,22 @@ function OrderDetail({
 
         <section className="space-y-2">
           <h4 className="text-xs font-medium text-muted-foreground">额度批次 #{order.lotId}</h4>
-          {lotsQuery.isLoading ? (
-            <Skeleton className="h-16 w-full rounded-xl" />
-          ) : !lot ? (
-            <p className="rounded-xl border border-dashed px-3 py-3 text-xs text-muted-foreground">没找到这个批次（可能已被清理）</p>
+          {!hasLot ? (
+            <p className="rounded-xl border border-dashed px-3 py-3 text-xs text-muted-foreground">
+              {order.status === "refunded" ? "订单已退款，批次已作废" : "这笔订单没有批次信息"}
+            </p>
           ) : (
             <div className="space-y-2 rounded-xl border px-3 py-2.5">
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="font-medium">{lot.title}</span>
-                <span className="text-muted-foreground">{LOT_ORIGIN_LABEL[lot.origin] ?? lot.origin}</span>
-                <LotStatusBadge status={lot.status} />
-              </div>
               <div className="flex h-2 overflow-hidden rounded-full bg-muted">
-                <span className="bg-muted-foreground/40" style={{ width: `${amount > 0 ? ((amount - remaining - frozen) / amount) * 100 : 0}%` }} />
+                <span className="bg-muted-foreground/40" style={{ width: `${amount > 0 ? (used / amount) * 100 : 0}%` }} />
                 <span className="bg-amber-500" style={{ width: `${amount > 0 ? (frozen / amount) * 100 : 0}%` }} />
                 <span className="bg-violet-500" style={{ width: `${ratio * 100}%` }} />
               </div>
               <div className="flex flex-wrap gap-x-3 text-[11px] text-muted-foreground tabular-nums">
-                <span>剩余 <span className="font-mono text-foreground">{formatPoints(lot.remaining)}</span> / {formatPoints(lot.amount)}（{Math.round(ratio * 1000) / 10}%）</span>
-                {frozen > 0 ? <span className="text-amber-600 dark:text-amber-400">暂扣中 {formatPoints(lot.frozen)}</span> : null}
-                <span>已用 {formatPoints(lot.used)}</span>
+                <span>剩余 <span className="font-mono text-foreground">{formatPoints(remaining)}</span> / {formatPoints(amount)}（{Math.round(ratio * 1000) / 10}%）</span>
+                {frozen > 0 ? <span className="text-amber-600 dark:text-amber-400">暂扣中 {formatPoints(frozen)}</span> : null}
+                <span>已用 {formatPoints(used)}</span>
+                {remaining === 0 && amount > 0 && used < amount ? <span>批次已过期或作废，剩余按 0 计</span> : null}
               </div>
             </div>
           )}
@@ -330,10 +317,10 @@ function OrderDetail({
               </div>
               <div className="text-right">
                 <div className="text-[10px] text-muted-foreground">预计退款</div>
-                <div className="font-mono text-lg font-semibold tabular-nums">{lot ? formatYuan(estimate) : "—"}</div>
+                <div className="font-mono text-lg font-semibold tabular-nums">{estimate !== null ? formatYuan(estimate) : "—"}</div>
               </div>
             </div>
-            {lot ? (
+            {hasLot && estimate !== null ? (
               <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
                 <span className="font-mono">{formatYuan(order.price)}</span>×
                 <span className="font-mono">{formatPoints(remaining)} / {formatPoints(amount)}</span>=
@@ -357,7 +344,7 @@ function OrderDetail({
             <div className="flex justify-end">
               <Button size="sm" variant="destructive" disabled={refundMutation.isPending || frozen > 0} onClick={() => void refund()}>
                 {refundMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}
-                退款{lot ? ` ${formatYuan(estimate)}` : ""}
+                退款{estimate !== null ? ` ${formatYuan(estimate)}` : ""}
               </Button>
             </div>
           </section>

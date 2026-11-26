@@ -547,11 +547,12 @@ function GrantCard({ appKey, userId }: { appKey: string; userId: number }) {
           toast.error("有效天数需为非负整数（0 为永久）");
           return;
         }
-        const result = await grantMutation.mutateAsync({
+        const lot = await grantMutation.mutateAsync({
           userId,
           payload: { amount: amount.trim(), validityDays: validDays, title: title.trim() || "管理员发放", requestId }
         });
-        toast.success(result.replayed ? "这笔发放已经生效过" : `已发放批次 #${result.lot.id}`);
+        // 同一请求编号重放返回原批次，所以这里只报批次号
+        toast.success(`已发放批次 #${lot.id}（${formatPoints(lot.amount)} 额度）`);
       } else {
         const result = await adjustMutation.mutateAsync({
           userId,
