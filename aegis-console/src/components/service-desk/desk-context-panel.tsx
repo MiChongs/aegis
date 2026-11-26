@@ -23,6 +23,7 @@ import { TicketAttachmentList } from "@/components/tickets/ticket-attachments";
 import { HandlingFields, SlaMeter, TagEditor, Timeline, Watchers } from "./desk-inspector";
 import { Fact, Facts, PanelSection } from "./desk-kit";
 import { AppMark } from "./desk-app-rail";
+import { DeskRewardSection } from "./desk-reward";
 import { deskLink, useDesk } from "./desk-context";
 
 // 服务台详情右栏（工单与反馈共用）。
@@ -288,6 +289,8 @@ function DetailTab({ ticket }: { ticket: TicketItem }) {
           <HandlingFields ticket={ticket} />
         </div>
       </PanelSection>
+
+      {ticket.kind === "feedback" ? <DeskRewardSection ticket={ticket} /> : null}
 
       <PanelSection title="时效">
         <div className="space-y-3">

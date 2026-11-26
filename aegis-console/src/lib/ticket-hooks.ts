@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/lib/auth-store";
 import { useAdminAccountsQuery } from "@/lib/admin-hooks";
+import type { FeedbackRewardGrantPayload } from "@/lib/api/feedback-rewards";
 import {
   assignTicket,
   bulkTickets,
@@ -279,11 +280,12 @@ export function useChangeTicketStatusMutation() {
   const token = useToken();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { id: number; status: TicketStatus; reason?: string; solution?: string }) =>
+    mutationFn: (args: { id: number; status: TicketStatus; reason?: string; solution?: string; reward?: FeedbackRewardGrantPayload }) =>
       changeTicketStatus(token as string, args.id, {
         status: args.status,
         reason: args.reason,
-        solution: args.solution
+        solution: args.solution,
+        reward: args.reward
       }),
     onSuccess: () => invalidateTickets(qc)
   });

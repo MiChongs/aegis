@@ -1544,6 +1544,14 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 已撤回的消息（`retracted`）画成虚线占位「回复已撤回 · 谁 于 何时」，后端给了原文（能看内部备注的人）才出「查看原文」折叠。
 对方侧与它生成的站内信由后端一并处理，前端不另发请求。
 
+**反馈奖励**（后端 `docs/feedback-rewards.md`）：反馈详情资料栏「详情」页签有「反馈奖励」区块（`service-desk/desk-reward.tsx`），
+「解决」弹层里有「同时发放奖励」（随 `POST /status` 的 `reward` 提交，后端先发奖励、失败则状态不变）。
+能不能发只看后端给的 `permissions.reward` / `revokeReward` 与 `reward.ineligible`；建议积分、本次最多可发（`maxGrantable`）、今日 / 本月已领都由后端算，
+前端只预填与提示。每次打开发放 / 撤回弹窗生成一个 `requestId`（`newRewardRequestId()`），连点只落一笔。
+撤回弹窗的「余额不足时扣到 0」对应 `allowPartial`；不勾时余额不够后端整笔拒绝（40009）。
+策略在「工单配置 → 反馈奖励」（`tickets/settings/reward-section.tsx`，`?section=reward`），只有应用范围有内容。
+写操作同样只走 `use-desk-actions.ts`（`grantReward` / `revokeReward`）。
+
 快捷键：`J`/`K` 上下一条，`/` 搜索，`R` 回复，`N` 备注，`E` 解决，`A` 指派给我，`X` 勾选当前，`I` 资料栏，`.` 操作菜单，
 `Ctrl/⌘ + Enter` 发送，空回复框里敲 `/` 出快捷回复；列表里 `Shift/Ctrl + 点击` 多选，`Esc` 取消勾选。
 

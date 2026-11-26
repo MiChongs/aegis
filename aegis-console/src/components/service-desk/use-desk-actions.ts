@@ -11,6 +11,8 @@ import {
   useUpdateTicketMutation
 } from "@/lib/ticket-hooks";
 import type { TicketItem, TicketPriority, TicketStatus } from "@/lib/api/tickets";
+import type { FeedbackRewardGrantPayload, FeedbackRewardRevokePayload } from "@/lib/api/feedback-rewards";
+import { useGrantFeedbackRewardMutation, useRevokeFeedbackRewardMutation } from "@/lib/feedback-reward-hooks";
 import { PRIORITY_LABEL, STATUS_LABEL } from "@/components/tickets/ticket-shared";
 import { useDesk } from "./desk-context";
 
@@ -32,12 +34,22 @@ export function useDeskActions(ticket: TicketItem) {
   const assignMut = useAssignTicketMutation();
   const deleteMut = useDeleteTicketMutation();
   const retractMut = useRetractTicketMessageMutation();
+  const grantMut = useGrantFeedbackRewardMutation();
+  const revokeMut = useRevokeFeedbackRewardMutation();
 
-  /** solution 随「已解决」提交；reason 随「不采纳」等提交，不采纳时后端会通知提单人 / 反馈人 */
-  const changeStatus = async (status: TicketStatus, detail?: { solution?: string; reason?: string }) => {
+  /**
+   * solution 随「已解决」提交；reason 随「不采纳」等提交，不采纳时后端会通知提单人 / 反馈人。
+   * reward：同时给这条反馈发放积分（后端先发奖励，失败则状态不变）。
+   */
+  const changeStatus = async (
+    status: TicketStatus,
+    detail?: { solution?: string; reason?: string; reward?: FeedbackRewardGrantPayload }
+  ) => {
     try {
-      await statusMut.mutateAsync({ id: ticket.id, status, solution: detail?.solution, reason: detail?.reason });
-      notify.success(`已改为「${STATUS_LABEL[status]}」`);
+      await statusMut.mutateAsync({ id: ticket.id, status, solution: detail?.solution, reason: detail?.reason, reward: detail?.reward });
+      notify.success(
+        detail?.reward ? `已改为「${STATUS_LABEL[status]}」，并发放了反馈奖励` : `已改为「${STATUS_LABEL[status]}」`
+      );
       return true;
     } catch (error) {
       notify.error(message(error, "状态更新失败"));
@@ -107,9 +119,46 @@ export function useDeskActions(ticket: TicketItem) {
     }
   };
 
+  /** 发放反馈奖励积分；同一个 requestId 重复提交后端原样返回 */
+  const grantReward = async (payload: FeedbackRewardGrantPayload) => {
+    try {
+      const result = await grantMut.mutateAsync({ ticketId: ticket.id, payload });
+      notify.success(
+        result.replayed ? `这条${desk.noun}已发放过 ${result.reward.points} 积分` : `已发放 ${result.reward.points} 积分`
+      );
+      return true;
+    } catch (error) {
+      notify.error(message(error, "发放失败"));
+      return false;
+    }
+  };
+
+  /** 撤回反馈奖励并扣回积分；allowPartial 时余额不足扣到 0 */
+  const revokeReward = async (payload: FeedbackRewardRevokePayload) => {
+    try {
+      const result = await revokeMut.mutateAsync({ ticketId: ticket.id, payload });
+      const { clawedBack, shortfall } = result.reward;
+      notify.success(shortfall > 0 ? `已撤回，扣回 ${clawedBack} 积分（余额不足，差 ${shortfall}）` : `已撤回，扣回 ${clawedBack} 积分`);
+      return true;
+    } catch (error) {
+      notify.error(message(error, "撤回失败"));
+      return false;
+    }
+  };
+
   return {
     operatorId,
-    busy: statusMut.isPending || updateMut.isPending || assignMut.isPending || deleteMut.isPending || retractMut.isPending,
+    grantReward,
+    revokeReward,
+    rewarding: grantMut.isPending || revokeMut.isPending,
+    busy:
+      statusMut.isPending ||
+      updateMut.isPending ||
+      assignMut.isPending ||
+      deleteMut.isPending ||
+      retractMut.isPending ||
+      grantMut.isPending ||
+      revokeMut.isPending,
     retractMessage,
     retracting: retractMut.isPending,
     changeStatus,

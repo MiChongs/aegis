@@ -3,7 +3,7 @@
 import { useCallback } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { motion } from "motion/react";
-import { FolderTree, Info, MessageSquareText, Timer, Users, type LucideIcon } from "lucide-react";
+import { Coins, FolderTree, Info, MessageSquareText, Timer, Users, type LucideIcon } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
 import {
   useTicketCategoriesQuery,
@@ -11,28 +11,31 @@ import {
   useTicketQuickRepliesQuery,
   useTicketSLAPoliciesQuery
 } from "@/lib/ticket-hooks";
+import { useFeedbackRewardPolicyQuery } from "@/lib/feedback-reward-hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { CategorySection } from "./settings/category-section";
 import { GroupSection } from "./settings/group-section";
 import { QuickReplySection } from "./settings/quick-reply-section";
+import { RewardSection } from "./settings/reward-section";
 import { AppMark, ScopePicker, useSettingsScope } from "./settings/settings-scope";
 import { SLASection } from "./settings/sla-section";
 
-// 工单配置：分类 / 处理组 / SLA 策略 / 快捷回复。
+// 工单配置：分类 / 处理组 / SLA 策略 / 快捷回复 / 反馈奖励（只对应用范围有内容）。
 //
 // 顶部选配置范围（平台级 appid 0 或某个应用，放在 ?scope=），左侧分节导航（?section=），右侧是该分节的列表。
 // 平台级配置对所有应用生效，后端只允许超级管理员修改；应用范围的列表里也会带出平台级条目，以「平台级」标记区分。
 // 能不能改以后端为准：这里只在平台级范围给一行提示，不在前端自行禁用按钮。
 
-const SECTIONS = ["categories", "groups", "sla", "quick-replies"] as const;
+const SECTIONS = ["categories", "groups", "sla", "quick-replies", "reward"] as const;
 type Section = (typeof SECTIONS)[number];
 
 const SECTION_META: Record<Section, { label: string; icon: LucideIcon }> = {
   categories: { label: "分类", icon: FolderTree },
   groups: { label: "处理组", icon: Users },
   sla: { label: "SLA 策略", icon: Timer },
-  "quick-replies": { label: "快捷回复", icon: MessageSquareText }
+  "quick-replies": { label: "快捷回复", icon: MessageSquareText },
+  reward: { label: "反馈奖励", icon: Coins }
 };
 
 export function TicketSettingsPanel() {
@@ -125,6 +128,7 @@ export function TicketSettingsPanel() {
               {section === "groups" ? <GroupSection appId={appId} /> : null}
               {section === "sla" ? <SLASection appId={appId} /> : null}
               {section === "quick-replies" ? <QuickReplySection appId={appId} /> : null}
+              {section === "reward" ? <RewardSection appId={appId} /> : null}
             </motion.div>
           )}
         </div>
@@ -178,7 +182,15 @@ function SectionCount({ section, appId }: { section: Section; appId: number }) {
   if (section === "categories") return <CategoryCount appId={appId} />;
   if (section === "groups") return <GroupCount appId={appId} />;
   if (section === "sla") return <SLACount appId={appId} />;
+  if (section === "reward") return <RewardState appId={appId} />;
   return <ReplyCount appId={appId} />;
+}
+
+/** 反馈奖励不是条目数，显示开没开 */
+function RewardState({ appId }: { appId: number }) {
+  const enabled = useFeedbackRewardPolicyQuery(appId).data?.enabled;
+  if (appId === 0 || enabled === undefined) return null;
+  return <>{enabled ? "开" : "关"}</>;
 }
 
 function CategoryCount({ appId }: { appId: number }) {

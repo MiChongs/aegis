@@ -1,4 +1,5 @@
 import { apiRequest, buildQuery } from "./client";
+import type { FeedbackRewardGrantPayload, FeedbackRewardInfo } from "./feedback-rewards";
 
 // 工单系统 API。所有端点位于 /api/admin/tickets/*
 //
@@ -61,6 +62,9 @@ export type TicketActionSet = {
   retractOwn?: boolean;
   /** 撤回任何处理人的回复与备注（ticket:manage） */
   retractAny?: boolean;
+  /** 给这条反馈发放 / 撤回积分奖励（能处理这条反馈 + 该应用的积分调整权限），见 feedback-rewards.ts */
+  reward?: boolean;
+  revokeReward?: boolean;
 };
 
 export type TicketAttachment = {
@@ -182,6 +186,8 @@ export type TicketItem = {
   attachments?: TicketAttachment[];
   watchers?: TicketWatcher[];
   permissions?: TicketActionSet;
+  /** 反馈奖励区块（kind=feedback 的详情才有） */
+  reward?: FeedbackRewardInfo;
 };
 
 export type TicketScopeInfo = {
@@ -572,7 +578,8 @@ export function assignTicket(token: string, id: number, payload: TicketAssignPay
 export function changeTicketStatus(
   token: string,
   id: number,
-  payload: { status: TicketStatus; reason?: string; solution?: string }
+  /** reward：同时给这条反馈发放积分奖励（先发奖励，失败则状态不变） */
+  payload: { status: TicketStatus; reason?: string; solution?: string; reward?: FeedbackRewardGrantPayload }
 ) {
   return apiRequest<TicketItem>(`/api/admin/tickets/${id}/status`, {
     method: "POST",

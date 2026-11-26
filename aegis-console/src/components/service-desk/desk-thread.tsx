@@ -9,6 +9,7 @@ import {
   ArrowRightLeft,
   CheckCircle2,
   ChevronDown,
+  Coins,
   ChevronUp,
   Lock,
   MoreHorizontal,
@@ -37,6 +38,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -62,6 +64,8 @@ import { DeskActionMenu, type DeskConfirm } from "./desk-action-menu";
 import { DeskComposer, type DeskComposerHandle } from "./desk-composer";
 import { CategoryDot, CategoryTag, PropertyMenu, type PropertyOption } from "./desk-kit";
 import { useDeskActions, type DeskActions } from "./use-desk-actions";
+import { canGrantReward, rewardLimitHint, rewardPointsError } from "./desk-reward";
+import { newRewardRequestId } from "@/lib/api/feedback-rewards";
 import { AppMark } from "./desk-app-rail";
 import { useDesk } from "./desk-context";
 
@@ -187,8 +191,26 @@ function ThreadHeader({
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirm, setConfirm] = useState<DeskConfirm | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  // 解决时同时发放反馈奖励：积分为 null 表示还没改过，用建议值
+  const [withReward, setWithReward] = useState(false);
+  const [rewardPoints, setRewardPoints] = useState<string | null>(null);
+  const [rewardRequestId, setRewardRequestId] = useState(newRewardRequestId);
 
   const canResolve = Boolean(perms?.changeStatus) && !terminal;
+  const rewardInfo = ticket.reward;
+  const rewardable = canGrantReward(ticket) && rewardInfo !== undefined;
+  const suggestedPoints = rewardInfo
+    ? rewardInfo.maxGrantable !== null
+      ? Math.min(rewardInfo.suggestedPoints, rewardInfo.maxGrantable)
+      : rewardInfo.suggestedPoints
+    : 0;
+  const rewardText = rewardPoints ?? (suggestedPoints > 0 ? String(suggestedPoints) : "");
+  const rewardError =
+    rewardable && withReward && rewardInfo
+      ? rewardText === ""
+        ? "请填写积分"
+        : rewardPointsError(Number(rewardText), rewardInfo)
+      : "";
 
   useHotkeys("e", () => setResolveOpen(true), { enabled: canResolve, preventDefault: true });
   useHotkeys("a", () => void actions.assignToMe(), { enabled: Boolean(perms?.assign) && ticket.assigneeAdminId !== actions.operatorId });
@@ -201,9 +223,14 @@ function ThreadHeader({
   };
 
   const resolve = async () => {
-    if (await actions.changeStatus("resolved", { solution: solution.trim() || undefined })) {
+    if (rewardError) return;
+    const reward = rewardable && withReward ? { points: Number(rewardText), requestId: rewardRequestId } : undefined;
+    if (await actions.changeStatus("resolved", { solution: solution.trim() || undefined, reward })) {
       setSolution("");
       setResolveOpen(false);
+      setWithReward(false);
+      setRewardPoints(null);
+      setRewardRequestId(newRewardRequestId());
     }
   };
 
@@ -315,12 +342,38 @@ function ThreadHeader({
                 placeholder={`选填，${desk.person}可见`}
                 aria-label="解决说明"
               />
+              {rewardable && rewardInfo ? (
+                <div className="space-y-2 rounded-lg border bg-muted/30 p-2.5">
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <Checkbox checked={withReward} onCheckedChange={(checked) => setWithReward(checked === true)} />
+                    同时发放奖励
+                  </label>
+                  {withReward ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Input
+                          inputMode="numeric"
+                          value={rewardText}
+                          onChange={(event) => setRewardPoints(event.target.value.replace(/[^\d]/g, ""))}
+                          aria-label="奖励积分"
+                          aria-invalid={Boolean(rewardError)}
+                          className="h-8 w-24 tabular-nums"
+                        />
+                        <span className="text-xs text-muted-foreground">积分，建议 {rewardInfo.suggestedPoints}</span>
+                      </div>
+                      <p className={cn("text-xs", rewardError ? "text-destructive" : "text-muted-foreground")}>
+                        {rewardError || `${rewardLimitHint(rewardInfo)}；奖励失败时状态不变`}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="flex justify-end gap-2">
                 <Button size="sm" variant="ghost" onClick={() => setResolveOpen(false)}>
                   取消
                 </Button>
-                <Button size="sm" disabled={actions.busy} onClick={() => void resolve()}>
-                  确认解决
+                <Button size="sm" disabled={actions.busy || Boolean(rewardError)} onClick={() => void resolve()}>
+                  {rewardable && withReward ? "解决并发放" : "确认解决"}
                 </Button>
               </div>
             </PopoverContent>
@@ -556,7 +609,10 @@ const INLINE_EVENTS = new Set([
   "priority_changed",
   "category_changed",
   "tags_changed",
-  "merged"
+  "merged",
+  // 反馈奖励发放 / 撤回：会话里留一行，处理人回看时知道这条发过积分
+  "reward_granted",
+  "reward_revoked"
 ]);
 
 const RETRACT_REASON_MAX = 200;
@@ -873,7 +929,9 @@ const EVENT_ICON: Record<string, typeof ArrowRightLeft> = {
   assigned: UserCheck,
   group_changed: UserCheck,
   reopened: RotateCcw,
-  tags_changed: Tag
+  tags_changed: Tag,
+  reward_granted: Coins,
+  reward_revoked: Undo2
 };
 
 function EventLine({ event }: { event: TicketEvent }) {
