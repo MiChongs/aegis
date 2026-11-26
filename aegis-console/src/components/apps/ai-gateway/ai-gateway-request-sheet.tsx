@@ -4,12 +4,15 @@ import { useState } from "react";
 import { Loader2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { CopyButton } from "@/components/apps/auth-protocol/auth-protocol-shared";
+import { FactorChain, WindowHitLine } from "@/components/apps/ai-gateway/ai-gateway-billing-kit";
 import {
   AttemptStatusBadge,
   ENDPOINT_LABEL,
   RequestStatusBadge,
+  SOURCE_LABEL,
   describeCharge,
   describeUsage,
+  formatMicro,
   formatBytes,
   formatDuration,
   formatPoints,
@@ -22,7 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useAIGatewayRequestQuery, useRefundAIGatewayRequestMutation } from "@/lib/ai-gateway-hooks";
 import { ApiError } from "@/lib/api/client";
-import type { AIGatewayAttempt, AIGatewayRequest } from "@/lib/api/ai-gateway";
+import type { AIGatewayAttempt, AIGatewayHold, AIGatewayRequest, AIGatewaySourceKey } from "@/lib/api/ai-gateway";
 import { formatDateTime, parseInstant } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
@@ -94,7 +97,7 @@ function RequestDetail({
         />
         <Metric
           label={running ? "暂扣" : "实扣"}
-          value={`${formatPoints(running ? record.reserved : record.charged)} 点`}
+          value={`${formatPoints(running ? record.reserved : record.charged)} 额度`}
           hint={running && record.live?.outputTokens ? `已生成约 ${formatTokens(record.live.outputTokens)} token` : undefined}
         />
       </div>
@@ -125,22 +128,38 @@ function RequestDetail({
             {record.usageEstimated ? "（估算）" : ""}
             {record.clampMaxTokens ? ` · 输出上限压到 ${record.clampMaxTokens}` : ""}
           </DetailRow>
-          <DetailRow label="倍率">{record.factor}</DetailRow>
-          <DetailRow label="暂扣">{formatPoints(record.reserved)} 点</DetailRow>
-          <DetailRow label="价格">{formatPoints(record.cost)} 点</DetailRow>
+          <DetailRow label="倍率">
+            {record.billing?.pricing ? (
+              <div className="space-y-1.5">
+                <FactorChain breakdown={record.billing.pricing} size="sm" />
+                <div className="text-[11px]">
+                  <WindowHitLine breakdown={record.billing.pricing} />
+                </div>
+              </div>
+            ) : (
+              record.factor
+            )}
+          </DetailRow>
+          {record.billing?.profile ? (
+            <DetailRow label="身份">
+              {record.billing.profile.isVip ? record.billing.profile.tierName || "会员" : "非会员"}
+              <span className="text-muted-foreground"> · Lv.{record.billing.profile.level}</span>
+            </DetailRow>
+          ) : null}
+          <DetailRow label="暂扣">
+            {formatPoints(record.reserved)} 额度
+            {running && (record.holds ?? []).length > 0 ? <ChargeBreakdown items={record.holds} /> : null}
+          </DetailRow>
+          <DetailRow label="价格">{formatPoints(record.cost)} 额度</DetailRow>
           <DetailRow label="实扣">
-            {formatPoints(record.charged)} 点
+            {formatPoints(record.charged)} 额度
             {Number(record.shortfall) > 0 ? (
-              <span className="text-amber-600 dark:text-amber-400"> · 未收 {formatPoints(record.shortfall)} 点</span>
+              <span className="text-amber-600 dark:text-amber-400"> · 未收 {formatPoints(record.shortfall)} 额度</span>
             ) : null}
           </DetailRow>
-          {record.charges.length > 0 ? (
+          {(record.charges ?? []).length > 0 ? (
             <DetailRow label="扣费明细">
-              <div className="space-y-0.5">
-                {record.charges.map((charge, index) => (
-                  <div key={`${charge.source}-${index}`}>{describeCharge(charge)}</div>
-                ))}
-              </div>
+              <ChargeBreakdown items={record.charges} />
             </DetailRow>
           ) : null}
           {record.integralTxnNo || record.walletTxnNo ? (
@@ -205,6 +224,64 @@ function RequestDetail({
 
       <RefundBox appKey={appKey} record={record} />
     </>
+  );
+}
+
+const SOURCE_BAR: Partial<Record<AIGatewaySourceKey, string>> = {
+  free_daily: "bg-sky-500",
+  vip_daily: "bg-amber-500",
+  vip_monthly: "bg-orange-500",
+  pack: "bg-violet-500",
+  credit: "bg-emerald-500",
+  integral: "bg-stone-400",
+  wallet: "bg-rose-500"
+};
+
+/**
+ * 暂扣或实扣在各来源上的拆分：一条按占比分色的条 + 逐项明细；额度包来源再列出各批次各扣了多少
+ * （holds[].lots / charges[].lots，微点）。
+ */
+function ChargeBreakdown({ items }: { items: Array<AIGatewayHold & { txnNo?: string }> }) {
+  const total = items.reduce((sum, item) => sum + item.micro, 0) || 1;
+  return (
+    <div className="mt-1 space-y-1.5">
+      <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
+        {items.map((item, index) => (
+          <span
+            key={`${item.source}-${index}`}
+            className={SOURCE_BAR[item.source] ?? "bg-muted-foreground"}
+            style={{ width: `${(item.micro / total) * 100}%` }}
+          />
+        ))}
+      </div>
+      {items.map((item, index) => (
+        <div key={`${item.source}-${index}`} className="space-y-0.5">
+          <div className="flex items-center gap-1.5">
+            <span className={cn("size-2 shrink-0 rounded-sm", SOURCE_BAR[item.source] ?? "bg-muted-foreground")} />
+            <span>{describeCharge(item)}</span>
+            {item.period ? <span className="font-mono text-[10px] text-muted-foreground">{item.period}</span> : null}
+          </div>
+          {item.source === "pack" && (item.lots?.length ?? 0) > 0 ? (
+            <div className="ml-3.5 space-y-0.5 border-l border-dashed pl-2 text-[11px] text-muted-foreground">
+              {item.lots?.map((lot) => (
+                <div key={lot.lotId} className="flex items-center gap-2">
+                  <span className="font-mono">批次 #{lot.lotId}</span>
+                  <span className="font-mono tabular-nums text-foreground">{formatMicro(lot.micro)} 额度</span>
+                  <span className="h-1 w-16 overflow-hidden rounded-full bg-muted">
+                    <span className="block h-full bg-violet-500/70" style={{ width: `${(lot.micro / Math.max(item.micro, 1)) * 100}%` }} />
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ))}
+      {items.length > 1 ? (
+        <div className="text-[10px] text-muted-foreground">
+          {items.map((item) => `${SOURCE_LABEL[item.source] ?? item.source} ${Math.round((item.micro / total) * 100)}%`).join(" · ")}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -413,7 +490,7 @@ function RefundBox({ appKey, record }: { appKey: string; record: AIGatewayReques
         </Button>
         <Button size="sm" variant="destructive" onClick={() => void refund()} disabled={refundMutation.isPending}>
           {refundMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
-          退回 {formatPoints(record.charged)} 点
+          退回 {formatPoints(record.charged)} 额度
         </Button>
       </div>
     </div>

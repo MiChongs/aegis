@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowDown, ArrowUp, Gauge, Layers, Loader2, Percent, Plus, Power, Save, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpRight, Gauge, Gift, Layers, Loader2, Percent, Plus, Power, Save, Store, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { FieldGroup, NumberField, SectionCard, StatusDot, SwitchRow } from "@/components/apps/app-config-primitives";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { useAIGatewayCatalogQuery, useAIGatewaySettingsQuery, useSaveAIGatewaySettingsMutation } from "@/lib/ai-gateway-hooks";
 import { ApiError } from "@/lib/api/client";
 import type { AIGatewaySettings, AIGatewaySourceKey } from "@/lib/api/ai-gateway";
@@ -16,7 +17,12 @@ import { formatDateTime } from "@/lib/datetime";
 
 type LevelDraft = { uid: string; level: string; multiplier: string };
 
-/** 数字一律按字符串存（理由同云存储配置）；扣费来源存「全部来源的顺序 + 哪些启用」，取消勾选不丢位置。 */
+/**
+ * 数字一律按字符串存（理由同云存储配置）；扣费来源存「全部来源的顺序 + 哪些启用」，取消勾选不丢位置。
+ *
+ * 会员倍率与会员额度、时段价格归「计费方案」视图管；这里保存时以服务端设置为底，那些字段原样带回去。
+ * 积分（integral）已不是扣费来源（AI 额度与积分不互通），旧设置里残留的也不再显示、保存时去掉。
+ */
 type Draft = {
   scope: string;
   enabled: boolean;
@@ -27,12 +33,14 @@ type Draft = {
   order: AIGatewaySourceKey[];
   active: AIGatewaySourceKey[];
   priceMultiplier: string;
-  vipMultiplier: string;
   levels: LevelDraft[];
   freeDaily: string;
-  vipDaily: string;
-  vipMonthly: string;
   walletRate: string;
+  welcomeEnabled: boolean;
+  welcomeAmount: string;
+  welcomeDays: string;
+  storeEnabled: boolean;
+  storeNotice: string;
   dailySpendLimit: string;
   rpm: string;
   maxConcurrent: string;
@@ -43,6 +51,7 @@ type Draft = {
 
 let levelSeed = 0;
 const DECIMAL_RE = /^\d+(\.\d{1,6})?$/;
+const LEGACY_SOURCES = new Set<AIGatewaySourceKey>(["integral"]);
 
 function trim(value?: string) {
   if (!value) return "0";
@@ -50,7 +59,8 @@ function trim(value?: string) {
 }
 
 function seedDraft(scope: string, settings: AIGatewaySettings | undefined, allSources: AIGatewaySourceKey[]): Draft {
-  const active = settings?.sources ?? [];
+  const active = (settings?.sources ?? []).filter((source) => !LEGACY_SOURCES.has(source));
+  const all = allSources.filter((source) => !LEGACY_SOURCES.has(source));
   return {
     scope,
     enabled: settings?.enabled ?? false,
@@ -58,19 +68,21 @@ function seedDraft(scope: string, settings: AIGatewaySettings | undefined, allSo
     redactContent: settings?.redactContent ?? false,
     catalogAutoSync: settings?.catalogAutoSync ?? false,
     audience: settings?.audience ?? "all",
-    order: [...active, ...allSources.filter((source) => !active.includes(source))],
+    order: [...active, ...all.filter((source) => !active.includes(source))],
     active,
     priceMultiplier: trim(settings?.priceMultiplier ?? "1"),
-    vipMultiplier: trim(settings?.vipMultiplier ?? "1"),
     levels: (settings?.levelMultipliers ?? []).map((item, index) => ({
       uid: `seed-${index}`,
       level: String(item.level),
       multiplier: trim(item.multiplier)
     })),
     freeDaily: trim(settings?.freeDaily),
-    vipDaily: trim(settings?.vipDaily),
-    vipMonthly: trim(settings?.vipMonthly),
     walletRate: trim(settings?.walletRate ?? "0.01"),
+    welcomeEnabled: settings?.welcome?.enabled ?? false,
+    welcomeAmount: trim(settings?.welcome?.amount),
+    welcomeDays: String(settings?.welcome?.validityDays ?? 30),
+    storeEnabled: settings?.store?.enabled ?? false,
+    storeNotice: settings?.store?.notice ?? "",
     dailySpendLimit: trim(settings?.dailySpendLimit),
     rpm: String(settings?.rpm ?? 60),
     maxConcurrent: String(settings?.maxConcurrent ?? 5),
@@ -80,7 +92,15 @@ function seedDraft(scope: string, settings: AIGatewaySettings | undefined, allSo
   };
 }
 
-export function AIGatewaySettingsPanel({ appKey }: { appKey: string }) {
+export function AIGatewaySettingsPanel({
+  appKey,
+  onOpenPricing,
+  onOpenStore
+}: {
+  appKey: string;
+  onOpenPricing?: () => void;
+  onOpenStore?: () => void;
+}) {
   const catalogQuery = useAIGatewayCatalogQuery(appKey);
   const settingsQuery = useAIGatewaySettingsQuery(appKey);
   const saveMutation = useSaveAIGatewaySettingsMutation(appKey);
@@ -109,9 +129,8 @@ export function AIGatewaySettingsPanel({ appKey }: { appKey: string }) {
       return;
     }
     const decimals: Array<[string, string]> = [
-      ["全局倍率", current.priceMultiplier], ["会员倍率", current.vipMultiplier],
-      ["每日免费额度", current.freeDaily], ["会员每日额度", current.vipDaily], ["会员每月额度", current.vipMonthly],
-      ["余额折算", current.walletRate], ["每日消费上限", current.dailySpendLimit]
+      ["全局倍率", current.priceMultiplier], ["每日免费额度", current.freeDaily],
+      ["余额直付单价", current.walletRate], ["每日消费上限", current.dailySpendLimit], ["新人礼额度", current.welcomeAmount]
     ];
     for (const [label, value] of decimals) {
       if (!DECIMAL_RE.test(value.trim() || "0")) {
@@ -128,8 +147,22 @@ export function AIGatewaySettingsPanel({ appKey }: { appKey: string }) {
       }
       levels.add(level);
     }
+    if (current.welcomeEnabled && !(Number(current.welcomeAmount) > 0)) {
+      toast.error("开启新人礼时额度需大于 0");
+      return;
+    }
+    if (!/^\d+$/.test(current.welcomeDays.trim() || "0")) {
+      toast.error("新人礼有效天数需为非负整数（0 为永久）");
+      return;
+    }
+    if (current.storeNotice.length > 2000) {
+      toast.error("购买须知最多 2000 字");
+      return;
+    }
+    const { updatedAt: _updatedAt, updatedBy: _updatedBy, ...base } = settings ?? ({} as AIGatewaySettings);
     try {
       await saveMutation.mutateAsync({
+        ...base,
         enabled: current.enabled,
         allowSessionToken: current.allowSessionToken,
         redactContent: current.redactContent,
@@ -137,12 +170,18 @@ export function AIGatewaySettingsPanel({ appKey }: { appKey: string }) {
         audience: current.audience,
         sources: enabledSources,
         priceMultiplier: current.priceMultiplier.trim(),
-        vipMultiplier: current.vipMultiplier.trim(),
+        vipMultiplier: base.vipMultiplier ?? "1",
         levelMultipliers: current.levels.map((item) => ({ level: Number(item.level), multiplier: item.multiplier.trim() })),
         freeDaily: current.freeDaily.trim() || "0",
-        vipDaily: current.vipDaily.trim() || "0",
-        vipMonthly: current.vipMonthly.trim() || "0",
+        vipDaily: base.vipDaily ?? "0",
+        vipMonthly: base.vipMonthly ?? "0",
         walletRate: current.walletRate.trim() || "0",
+        welcome: {
+          enabled: current.welcomeEnabled,
+          amount: current.welcomeAmount.trim() || "0",
+          validityDays: Number(current.welcomeDays) || 0
+        },
+        store: { enabled: current.storeEnabled, notice: current.storeNotice },
         dailySpendLimit: current.dailySpendLimit.trim() || "0",
         rpm: Number(current.rpm) || 0,
         maxConcurrent: Number(current.maxConcurrent) || 0,
@@ -220,15 +259,21 @@ export function AIGatewaySettingsPanel({ appKey }: { appKey: string }) {
             );
           })}
         </div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <NumberField label="每日免费额度" unit="点" min={0} value={current.freeDaily}
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <NumberField label="每日免费额度" unit="额度" min={0} value={current.freeDaily}
             onChange={(value) => patch({ freeDaily: value })} />
-          <NumberField label="会员每日额度" unit="点" min={0} value={current.vipDaily}
-            onChange={(value) => patch({ vipDaily: value })} />
-          <NumberField label="会员每月额度" unit="点" min={0} value={current.vipMonthly}
-            onChange={(value) => patch({ vipMonthly: value })} />
-          <NumberField label="余额折算" unit="元 / 点" min={0} value={current.walletRate}
+          <NumberField label="余额直付：每额度多少元" unit="元 / 额度" min={0} value={current.walletRate}
+            hint={Number(current.walletRate) > 0 ? `1 元约合 ${Number((1 / Number(current.walletRate)).toFixed(2)).toLocaleString("zh-CN")} 额度` : undefined}
             disabled={!current.active.includes("wallet")} onChange={(value) => patch({ walletRate: value })} />
+          <div className="flex flex-col justify-end gap-1.5 rounded-xl bg-muted/50 px-3 py-2.5 text-[11px] text-muted-foreground">
+            会员每日 / 每月额度、会员倍率按档位配置
+            {onOpenPricing ? (
+              <Button size="xs" variant="outline" className="w-fit" onClick={onOpenPricing}>
+                计费方案 · 会员优惠
+                <ArrowUpRight className="size-3" />
+              </Button>
+            ) : null}
+          </div>
         </div>
       </SectionCard>
 
@@ -247,9 +292,16 @@ export function AIGatewaySettingsPanel({ appKey }: { appKey: string }) {
           <div className="grid gap-4 sm:grid-cols-2">
             <NumberField label="全局倍率" min={0} value={current.priceMultiplier}
               onChange={(value) => patch({ priceMultiplier: value })} />
-            <NumberField label="会员倍率" min={0} value={current.vipMultiplier}
-              onChange={(value) => patch({ vipMultiplier: value })} />
+            <div className="flex items-end text-[11px] text-muted-foreground">
+              合计倍率 = 全局 × 会员 × 等级 × 时段；会员与时段在「计费方案」里配置
+            </div>
           </div>
+          {current.levels.length > 0 ? (
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem] gap-2 text-[10px] text-muted-foreground">
+              <span>等级不低于</span>
+              <span>倍率</span>
+            </div>
+          ) : null}
           {current.levels.map((item) => (
             <div key={item.uid} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem] items-center gap-2">
               <Input className="h-8 text-xs" inputMode="numeric" placeholder="等级 ≥" value={item.level}
@@ -264,6 +316,56 @@ export function AIGatewaySettingsPanel({ appKey }: { appKey: string }) {
           ))}
         </div>
       </SectionCard>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <SectionCard
+          icon={<Gift className="size-4" />}
+          title="新人礼"
+          description="每个用户可领一次，得到一个限期额度批次"
+          aside={<StatusDot active={Boolean(settings?.welcome?.enabled)} labelActive="已开放" labelInactive="未开放" />}
+        >
+          <div className="space-y-4">
+            <SwitchRow label="开放新人礼" checked={current.welcomeEnabled} onChange={(value) => patch({ welcomeEnabled: value })} />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <NumberField label="额度" unit="额度" min={0} value={current.welcomeAmount} disabled={!current.welcomeEnabled}
+                onChange={(value) => patch({ welcomeAmount: value })} />
+              <NumberField label="有效天数" unit="天" min={0} hint="0 为永久" value={current.welcomeDays} disabled={!current.welcomeEnabled}
+                onChange={(value) => patch({ welcomeDays: value })} />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {[7, 30, 90, 0].map((days) => (
+                <Button key={days} size="xs" variant={current.welcomeDays === String(days) ? "secondary" : "outline"}
+                  disabled={!current.welcomeEnabled} onClick={() => patch({ welcomeDays: String(days) })}>
+                  {days === 0 ? "永久" : `${days} 天`}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          icon={<Store className="size-4" />}
+          title="额度商店"
+          description="用户用钱包余额买额度包"
+          aside={<StatusDot active={Boolean(settings?.store?.enabled)} labelActive="营业中" labelInactive="已关闭" />}
+        >
+          <div className="space-y-4">
+            <SwitchRow label="开放额度商店" hint="关闭后用户看不到额度包，也不能购买"
+              checked={current.storeEnabled} onChange={(value) => patch({ storeEnabled: value })} />
+            <FieldGroup label="购买须知" hint={`${current.storeNotice.length} / 2000`}>
+              <Textarea rows={4} maxLength={2000} className="text-xs"
+                placeholder="纯文本，显示在商店页，例如：购买后即时到账；额度包到期后剩余额度清零，不可转让"
+                value={current.storeNotice} onChange={(event) => patch({ storeNotice: event.target.value })} />
+            </FieldGroup>
+            {onOpenStore ? (
+              <Button size="xs" variant="outline" onClick={onOpenStore}>
+                管理额度包
+                <ArrowUpRight className="size-3" />
+              </Button>
+            ) : null}
+          </div>
+        </SectionCard>
+      </div>
 
       <SectionCard
         icon={<Gauge className="size-4" />}
@@ -282,7 +384,7 @@ export function AIGatewaySettingsPanel({ appKey }: { appKey: string }) {
         }
       >
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <NumberField label="每日消费上限" unit="点" min={0} hint="0 不限" value={current.dailySpendLimit}
+          <NumberField label="每日消费上限" unit="额度" min={0} hint="0 不限" value={current.dailySpendLimit}
             onChange={(value) => patch({ dailySpendLimit: value })} />
           <NumberField label="每分钟请求" unit="次" min={0} hint="0 不限" value={current.rpm}
             onChange={(value) => patch({ rpm: value })} />

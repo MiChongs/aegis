@@ -57,8 +57,10 @@ export const SOURCE_LABEL: Record<AIGatewaySourceKey, string> = {
   free_daily: "每日免费",
   vip_daily: "会员每日",
   vip_monthly: "会员每月",
-  credit: "赠送额度",
-  integral: "积分",
+  pack: "额度包",
+  credit: "永久额度",
+  /** 2026-11-26 起积分不再能付 AI 调用，只出现在旧记录里。 */
+  integral: "积分（旧）",
   wallet: "余额"
 };
 
@@ -89,12 +91,12 @@ export function formatTokens(value: number) {
   return value.toLocaleString("zh-CN");
 }
 
-/** 一笔扣费在来源上的说法：积分为积分数，余额为元，其余为点。 */
+/** 一笔扣费在来源上的说法：积分（旧记录）为积分数，余额为元，其余为额度。 */
 export function describeCharge(charge: AIGatewayCharge) {
   const label = SOURCE_LABEL[charge.source] ?? charge.source;
-  if (charge.source === "integral") return `${label} ${charge.units ?? 0}（${formatMicro(charge.micro)} 点）`;
-  if (charge.source === "wallet") return `${label} ¥${((charge.units ?? 0) / 100).toFixed(2)}（${formatMicro(charge.micro)} 点）`;
-  return `${label} ${formatMicro(charge.micro)} 点`;
+  if (charge.source === "integral") return `${label} ${charge.units ?? 0}（${formatMicro(charge.micro)} 额度）`;
+  if (charge.source === "wallet") return `${label} ¥${((charge.units ?? 0) / 100).toFixed(2)}（${formatMicro(charge.micro)} 额度）`;
+  return `${label} ${formatMicro(charge.micro)} 额度`;
 }
 
 /** 调用记录的用量摘要。 */

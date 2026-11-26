@@ -27,6 +27,22 @@ import {
   setAIGatewayKeyStatus,
   streamAIGatewayLive,
   updateAIGatewayModel,
+  createAIGatewayPackage,
+  deleteAIGatewayPackage,
+  getAIGatewayCommerce,
+  grantAIGatewayLot,
+  listAIGatewayLots,
+  listAIGatewayPackageOrders,
+  listAIGatewayPackages,
+  previewAIGatewayPricing,
+  refundAIGatewayPackageOrder,
+  revokeAIGatewayLot,
+  updateAIGatewayPackage,
+  type AIGatewayLotGrantPayload,
+  type AIGatewayLotParams,
+  type AIGatewayPackageOrderParams,
+  type AIGatewayPackagePayload,
+  type AIGatewayPricingPreviewPayload,
   type AIGatewayLiveEvent,
   type AIGatewayPage,
   type AIGatewayRequest,
@@ -57,7 +73,12 @@ const KEY = {
   account: "admin-ai-gateway-account",
   credits: "admin-ai-gateway-credits",
   modelCatalog: "admin-ai-model-catalog",
-  catalogSearch: "admin-ai-model-catalog-search"
+  catalogSearch: "admin-ai-model-catalog-search",
+  pricingPreview: "admin-ai-gateway-pricing-preview",
+  packages: "admin-ai-gateway-packages",
+  packageOrders: "admin-ai-gateway-package-orders",
+  lots: "admin-ai-gateway-lots",
+  commerce: "admin-ai-gateway-commerce"
 } as const;
 
 function useInvalidateScope() {
@@ -483,5 +504,119 @@ export function useAdjustAIGatewayCreditMutation(appKey?: string | null) {
     mutationFn: ({ userId, payload }: { userId: number; payload: AIGatewayCreditAdjustPayload }) =>
       adjustAIGatewayUserCredit(token as string, appKey as string, userId, payload),
     onSuccess: invalidate
+  });
+}
+
+// ── 计费方案 ──
+
+/**
+ * 价格模拟。payload 里带草稿设置，键用整份 payload —— 草稿一变就是一次新的模拟；
+ * 上一次的结果先留着（placeholderData），输入时不闪。
+ */
+export function useAIGatewayPricingPreviewQuery(
+  appKey: string | null | undefined,
+  payload: AIGatewayPricingPreviewPayload | null
+) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [KEY.pricingPreview, token, appKey, payload],
+    queryFn: () => previewAIGatewayPricing(token as string, appKey as string, payload as AIGatewayPricingPreviewPayload),
+    enabled: Boolean(token && appKey && payload),
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+    retry: false
+  });
+}
+
+// ── 额度商店 ──
+
+export function useAIGatewayPackagesQuery(appKey?: string | null) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [KEY.packages, token, appKey],
+    queryFn: () => listAIGatewayPackages(token as string, appKey as string),
+    enabled: Boolean(token && appKey)
+  });
+}
+
+export function useSaveAIGatewayPackageMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateScope();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id?: number; payload: AIGatewayPackagePayload }) =>
+      id
+        ? updateAIGatewayPackage(token as string, appKey as string, id, payload)
+        : createAIGatewayPackage(token as string, appKey as string, payload),
+    onSuccess: invalidate
+  });
+}
+
+export function useDeleteAIGatewayPackageMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateScope();
+  return useMutation({
+    mutationFn: (packageId: number) => deleteAIGatewayPackage(token as string, appKey as string, packageId),
+    onSuccess: invalidate
+  });
+}
+
+export function useAIGatewayPackageOrdersQuery(appKey: string | null | undefined, params: AIGatewayPackageOrderParams) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [KEY.packageOrders, token, appKey, params],
+    queryFn: () => listAIGatewayPackageOrders(token as string, appKey as string, params),
+    enabled: Boolean(token && appKey),
+    placeholderData: (previous) => previous
+  });
+}
+
+export function useRefundAIGatewayPackageOrderMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateScope();
+  return useMutation({
+    mutationFn: ({ orderNo, reason }: { orderNo: string; reason: string }) =>
+      refundAIGatewayPackageOrder(token as string, appKey as string, orderNo, reason),
+    onSuccess: invalidate
+  });
+}
+
+/** enabled = false 时不查（例如订单详情还没打开）。 */
+export function useAIGatewayLotsQuery(appKey: string | null | undefined, params: AIGatewayLotParams, enabled = true) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [KEY.lots, token, appKey, params],
+    queryFn: () => listAIGatewayLots(token as string, appKey as string, params),
+    enabled: Boolean(token && appKey && enabled),
+    placeholderData: (previous) => previous
+  });
+}
+
+export function useGrantAIGatewayLotMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateScope();
+  return useMutation({
+    mutationFn: ({ userId, payload }: { userId: number; payload: AIGatewayLotGrantPayload }) =>
+      grantAIGatewayLot(token as string, appKey as string, userId, payload),
+    onSuccess: invalidate
+  });
+}
+
+export function useRevokeAIGatewayLotMutation(appKey?: string | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateScope();
+  return useMutation({
+    mutationFn: ({ lotId, reason }: { lotId: number; reason: string }) =>
+      revokeAIGatewayLot(token as string, appKey as string, lotId, reason),
+    onSuccess: invalidate
+  });
+}
+
+export function useAIGatewayCommerceQuery(appKey?: string | null, days = 30) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [KEY.commerce, token, appKey, days],
+    queryFn: () => getAIGatewayCommerce(token as string, appKey as string, days),
+    enabled: Boolean(token && appKey),
+    placeholderData: (previous) => previous
   });
 }

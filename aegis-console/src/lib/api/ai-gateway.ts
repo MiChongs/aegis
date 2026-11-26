@@ -4,13 +4,17 @@ import { apiRequest, buildQuery, joinApiUrl } from "@/lib/api/client";
  * AI 中转网关域 API（docs/ai-gateway.md）。
  *
  * 应用的终端用户凭自己的 sk-ag- 密钥（或登录令牌）调 `/api/ai/v1`，按模型价格 × 倍率
- * 从免费额度、会员额度、赠送额度、积分、余额里依次扣费。这里是它的管理端：
- * 设置、模型与价格、调用记录与退款、用户密钥、统计、用户的赠送额度。
+ * 从免费额度、会员额度、额度包、永久额度、余额里依次扣费。这里是它的管理端：
+ * 设置、计费方案（时段价格、会员优惠，docs/ai-billing.md）、模型与价格、调用记录与退款、用户密钥、统计、
+ * 额度商店（额度包、订单、批次、生意统计）与用户的 AI 额度。
+ *
+ * AI 额度是独立资产，与积分不互通：积分来源 `integral` 已从目录移除，类型里保留只为显示旧记录。
  *
  * 金额（点、元、倍率、单价）一律是十进制字符串（后端 shopspring/decimal），只在展示时格式化。
  */
 
-export type AIGatewaySourceKey = "free_daily" | "vip_daily" | "vip_monthly" | "credit" | "integral" | "wallet";
+/** `integral` 只出现在 2026-11-26 之前的旧记录里，设置里不再接受。 */
+export type AIGatewaySourceKey = "free_daily" | "vip_daily" | "vip_monthly" | "pack" | "credit" | "integral" | "wallet";
 
 export type AIGatewaySourceMeta = {
   key: AIGatewaySourceKey;
@@ -38,6 +42,122 @@ export type AIGatewayKindMeta = {
 
 export type AIGatewayLevelMultiplier = { level: number; multiplier: string };
 
+// ── 计费方案（docs/ai-billing.md）──
+
+/** 时段色调：只影响展示。 */
+export type AIGatewayTimeTone = "off_peak" | "peak" | "promo" | "normal";
+
+/** 一个价格时段：`[start, end)`，`end ≤ start` 跨零点，`start = end` 全天；列表里靠前的优先。 */
+export type AIGatewayTimeWindow = {
+  id: string;
+  name: string;
+  tone: AIGatewayTimeTone;
+  /** 1 = 周一 … 7 = 周日，空 = 每天；跨零点的时段按开始那一天判星期。 */
+  weekdays: number[];
+  start: string;
+  end: string;
+  multiplier: string;
+  /** 对外模型名，空 = 全部。 */
+  models?: string[];
+  /** 模型种类，空 = 全部。 */
+  kinds?: string[];
+  /** 活动日期 `YYYY-MM-DD`（含当天），可空。 */
+  from?: string | null;
+  to?: string | null;
+  enabled: boolean;
+};
+
+export type AIGatewayTimeStacking = "multiply" | "best";
+
+export type AIGatewayTimePricing = {
+  enabled: boolean;
+  stacking: AIGatewayTimeStacking;
+  windows: AIGatewayTimeWindow[];
+};
+
+/** 会员档位优惠：按优先级排列，用户持有的档位里最靠前的生效。 */
+export type AIGatewayMemberTier = {
+  tierId: number;
+  label: string;
+  multiplier: string;
+  daily: string;
+  monthly: string;
+  packDiscount: string;
+  packBonusRate: string;
+  /** 0 沿用应用设置。 */
+  rpm: number;
+  maxConcurrent: number;
+};
+
+export type AIGatewayWelcome = { enabled: boolean; amount: string; validityDays: number };
+
+export type AIGatewayStoreSettings = { enabled: boolean; notice: string };
+
+/** 一个用户此刻生效的会员优惠。source：tier 档位配置 / vip 通用会员 / 其余为非会员。 */
+export type AIGatewayMemberBenefit = {
+  source: string;
+  tierId?: number;
+  name?: string;
+  multiplier: string;
+  daily: string;
+  monthly: string;
+  packDiscount: string;
+  packBonusRate: string;
+  rpm: number;
+  maxConcurrent: number;
+};
+
+/** 命中的时段（快照）。 */
+export type AIGatewayWindowHit = {
+  id: string;
+  name: string;
+  tone: AIGatewayTimeTone;
+  multiplier: string;
+  endsAt?: string;
+};
+
+/** 倍率分解：total = base × member × level × time（stacking = best 时会员与闲时取更优惠的一个）。 */
+export type AIGatewayFactorBreakdown = {
+  base: string;
+  member: string;
+  level: string;
+  time: string;
+  total: string;
+  stacking: AIGatewayTimeStacking;
+  window?: AIGatewayWindowHit | null;
+};
+
+/** 时间轴上的一段（相邻同价段已合并）。windowId 为空表示标准价。 */
+export type AIGatewayTimelineSegment = {
+  start: string;
+  end: string;
+  windowId: string;
+  name: string;
+  tone: AIGatewayTimeTone;
+  multiplier: string;
+};
+
+export type AIGatewayPricingPreviewPayload = {
+  /** 草稿设置；不传用已保存的。 */
+  settings?: AIGatewaySettings;
+  model?: string;
+  kind?: string;
+  tierId?: number;
+  isVip?: boolean;
+  level?: number;
+  /** RFC3339，不传为现在。 */
+  at?: string;
+};
+
+export type AIGatewayPricingPreview = {
+  breakdown: AIGatewayFactorBreakdown;
+  member: AIGatewayMemberBenefit;
+  timeline: AIGatewayTimelineSegment[];
+  nextChangeAt?: string | null;
+  /** 传了 model 时：该模型乘上倍率后的单价。 */
+  price?: AIGatewayPrice | null;
+};
+
 export type AIGatewaySettings = {
   enabled: boolean;
   allowSessionToken: boolean;
@@ -59,9 +179,20 @@ export type AIGatewaySettings = {
   redactContent: boolean;
   /** 每天从公开模型目录更新对话模型的能力声明（不改价格）。 */
   catalogAutoSync?: boolean;
+  /** 会员档位优惠（按优先级）。 */
+  memberTiers?: AIGatewayMemberTier[];
+  timePricing?: AIGatewayTimePricing;
+  welcome?: AIGatewayWelcome;
+  store?: AIGatewayStoreSettings;
+  /** 通用会员买额度包的折扣（0.85 = 85 折）与多送比例（0.1 = 多送 10%）。 */
+  vipPackDiscount?: string;
+  vipPackBonusRate?: string;
   updatedBy?: string;
   updatedAt?: string;
 };
+
+/** 目录里的枚举项：后端可能只给键（字符串），也可能给 `{key, label}`。 */
+export type AIGatewayEnumItem = string | { key: string; label?: string };
 
 export type AIGatewayCatalog = {
   sources: AIGatewaySourceMeta[];
@@ -69,6 +200,10 @@ export type AIGatewayCatalog = {
   defaults: AIGatewaySettings;
   baseUrl: string;
   keyPrefix: string;
+  /** 应用的会员档位，会员优惠里选档位用。 */
+  vipTiers?: Array<{ id: number; name: string }>;
+  tones?: AIGatewayEnumItem[];
+  packageTones?: AIGatewayEnumItem[];
 };
 
 export type AIGatewayPrice = {
@@ -207,7 +342,34 @@ export type AIGatewayModelPayload = {
 
 export type AIGatewayRequestStatus = "reserved" | "succeeded" | "aborted" | "failed" | "expired" | "refunded";
 
-export type AIGatewayHold = { source: AIGatewaySourceKey; micro: number; units?: number; period?: string };
+/** 额度包来源在各批次上的拆分（微点）。 */
+export type AIGatewayLotShare = { lotId: number; micro: number };
+
+export type AIGatewayHold = {
+  source: AIGatewaySourceKey;
+  micro: number;
+  units?: number;
+  period?: string;
+  /** source = pack 时各批次各扣了多少。 */
+  lots?: AIGatewayLotShare[];
+};
+
+export type AIGatewayProfile = {
+  isVip: boolean;
+  level: number;
+  tierIds?: number[];
+  tierId?: number;
+  tierName?: string;
+};
+
+/** 暂扣那一刻的计费口径；pricing 是倍率分解与命中的时段。 */
+export type AIGatewayBillingSnapshot = {
+  sources?: AIGatewaySourceKey[];
+  walletRate?: string;
+  timezone?: string;
+  profile?: AIGatewayProfile;
+  pricing?: AIGatewayFactorBreakdown | null;
+};
 export type AIGatewayCharge = AIGatewayHold & { txnNo?: string };
 
 export type AIGatewayRequest = {
@@ -231,6 +393,7 @@ export type AIGatewayRequest = {
   estimate: string;
   reserved: string;
   holds: AIGatewayHold[];
+  billing?: AIGatewayBillingSnapshot;
   clampMaxTokens?: number;
   inputTokens: number;
   outputTokens: number;
@@ -424,13 +587,24 @@ export type AIGatewayOverview = {
   allowSessionToken: boolean;
   audience: "all" | "vip";
   eligible: boolean;
+  unit?: string;
   sources: AIGatewaySourceMeta[];
-  profile: { isVip: boolean; level: number };
+  profile: AIGatewayProfile;
+  member?: AIGatewayMemberBenefit;
   factor: string;
+  pricing?: AIGatewayFactorBreakdown;
+  nextChangeAt?: string | null;
   quotas: AIGatewayQuotaView[];
+  /** 额度包余额（不含暂扣中）。 */
+  pack?: string;
+  packFrozen?: string;
+  /** 永久额度。 */
   credit: string;
   creditFrozen: string;
-  integral: number;
+  /** pack + credit（不含暂扣中）。 */
+  balance?: string;
+  /** 7 天内到期的批次合计与最早的到期时间。 */
+  expiring?: { amount: string; at: string } | null;
   wallet: string;
   walletRate: string;
   available: string;
@@ -441,14 +615,33 @@ export type AIGatewayOverview = {
   rpm: number;
   maxConcurrent: number;
   maxKeysPerUser: number;
+  welcome?: { enabled: boolean; amount: string; validityDays: number; claimable: boolean; claimedAt?: string | null };
+  store?: { enabled: boolean };
   baseUrl: string;
 };
 
+export type AIGatewayCreditKind =
+  | "grant"
+  | "consume"
+  | "refund"
+  | "adjust"
+  | "purchase"
+  | "welcome"
+  | "expire"
+  | "revoke"
+  | "order_refund";
+
 export type AIGatewayCreditEntry = {
   id: number;
-  kind: "grant" | "consume" | "refund" | "adjust";
+  kind: AIGatewayCreditKind;
+  /** credit 永久额度 / pack 额度包。 */
+  bucket?: "credit" | "pack";
+  lotId?: number;
   amount: string;
+  /** 这一桶变动后的余额。 */
   balanceAfter: string;
+  /** 变动后的 AI 额度合计（永久 + 额度包，不含暂扣中）。 */
+  totalAfter?: string;
   refType?: string;
   refId?: string;
   remark?: string;
@@ -457,6 +650,139 @@ export type AIGatewayCreditEntry = {
 };
 
 export type AIGatewayCreditAdjustPayload = { amount: string; reason: string; requestId: string };
+
+// ── 额度商店 ──
+
+export type AIGatewayPackageTone = "blue" | "violet" | "amber" | "emerald" | "rose" | "slate";
+
+export type AIGatewayPackagePayload = {
+  name: string;
+  subtitle: string;
+  description: string;
+  badge: string;
+  tone: AIGatewayPackageTone;
+  featured: boolean;
+  points: string;
+  bonusPoints: string;
+  price: string;
+  originalPrice: string;
+  /** 0 = 永久。 */
+  validityDays: number;
+  audience: "all" | "vip";
+  tierIds: number[];
+  memberDiscount: boolean;
+  perUserLimit: number;
+  monthlyLimit: number;
+  /** 总库存，0 不限。 */
+  stock: number;
+  startsAt: string | null;
+  endsAt: string | null;
+  /** 上架。 */
+  enabled: boolean;
+  sortOrder: number;
+};
+
+export type AIGatewayPackage = AIGatewayPackagePayload & {
+  id: number;
+  appid?: number;
+  sold: number;
+  /** 管理端列表另带的累计数据。 */
+  orders?: number;
+  buyers?: number;
+  revenue?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type AIGatewayPackageOrder = {
+  orderNo: string;
+  packageId: number;
+  packageName: string;
+  listPrice: string;
+  price: string;
+  discount: string;
+  discountLabel?: string;
+  points: string;
+  /** 包自带赠送 + 会员多送之和。 */
+  bonusPoints: string;
+  totalPoints: string;
+  validityDays: number;
+  expiresAt?: string | null;
+  lotId: number;
+  walletTxnNo?: string;
+  /** paid / refunded。 */
+  status: string;
+  refundAmount: string;
+  refundPoints: string;
+  refundReason?: string;
+  refundedAt?: string | null;
+  createdAt: string;
+  userId: number;
+  account?: string;
+  refundedBy?: string;
+};
+
+export type AIGatewayPackageOrderParams = {
+  userId?: number;
+  packageId?: number;
+  status?: string;
+  /** 订单号前缀。 */
+  keyword?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+};
+
+/** purchase 购买 / welcome 新人礼 / admin 管理员发放 / grant 发放规则与活动。 */
+export type AIGatewayLotOrigin = string;
+export type AIGatewayLotStatus = "active" | "expired" | "revoked" | "exhausted";
+
+export type AIGatewayCreditLot = {
+  id: number;
+  origin: AIGatewayLotOrigin;
+  title: string;
+  amount: string;
+  remaining: string;
+  frozen: string;
+  used: string;
+  orderNo?: string;
+  packageId?: number;
+  expiresAt?: string | null;
+  status: AIGatewayLotStatus;
+  createdAt: string;
+  userId: number;
+  account?: string;
+};
+
+export type AIGatewayLotParams = {
+  userId?: number;
+  status?: AIGatewayLotStatus;
+  origin?: string;
+  page?: number;
+  limit?: number;
+};
+
+export type AIGatewayLotGrantPayload = { amount: string; validityDays: number; title: string; requestId: string };
+
+export type AIGatewayCommerce = {
+  days: number;
+  revenue: string;
+  refunded: string;
+  orders: number;
+  buyers: number;
+  pointsSold: string;
+  /** 未消耗负债：额度包 / 永久额度。 */
+  outstanding: string;
+  outstandingPermanent: string;
+  expiringSoon: string;
+  byPackage: Array<{ packageId: number; name: string; orders: number; revenue: string; points: string }>;
+  daily: Array<{ date: string; orders: number; revenue: string; refunded: string }>;
+  /** bucket：7d / 30d / 90d / later / never。 */
+  expiry: Array<{ bucket: string; amount: string }>;
+  /** saved = charged / time − charged，加价时段为负。 */
+  windows: Array<{ windowId: string; name: string; requests: number; charged: string; saved: string }>;
+};
 
 const base = (appKey: string) => `/api/admin/apps/${encodeURIComponent(appKey)}/ai-gateway`;
 
@@ -482,6 +808,15 @@ export function matchModelCatalog(token: string, appKey: string, params: { model
 
 export function syncAIGatewayModels(token: string, appKey: string, payload: ModelCatalogSyncPayload) {
   return apiRequest<{ items: ModelCatalogSyncResult[] }>(`${base(appKey)}/models/sync`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+/** 价格模拟：settings 传草稿时按草稿算，不写库。 */
+export function previewAIGatewayPricing(token: string, appKey: string, payload: AIGatewayPricingPreviewPayload) {
+  return apiRequest<AIGatewayPricingPreview>(`${base(appKey)}/pricing/preview`, {
     method: "POST",
     token,
     body: JSON.stringify(payload)
@@ -631,4 +966,64 @@ export function adjustAIGatewayUserCredit(
     token,
     body: JSON.stringify(payload)
   });
+}
+
+// ── 额度商店 ──
+
+export function listAIGatewayPackages(token: string, appKey: string) {
+  return apiRequest<{ items: AIGatewayPackage[] }>(`${base(appKey)}/packages`, { token });
+}
+
+export function createAIGatewayPackage(token: string, appKey: string, payload: AIGatewayPackagePayload) {
+  return apiRequest<AIGatewayPackage>(`${base(appKey)}/packages`, { method: "POST", token, body: JSON.stringify(payload) });
+}
+
+export function updateAIGatewayPackage(token: string, appKey: string, packageId: number, payload: AIGatewayPackagePayload) {
+  return apiRequest<AIGatewayPackage>(`${base(appKey)}/packages/${packageId}`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+/** 有订单的包删不掉（40234），只能下架。 */
+export function deleteAIGatewayPackage(token: string, appKey: string, packageId: number) {
+  return apiRequest<{ deleted: boolean }>(`${base(appKey)}/packages/${packageId}`, { method: "DELETE", token });
+}
+
+export function listAIGatewayPackageOrders(token: string, appKey: string, params: AIGatewayPackageOrderParams) {
+  return apiRequest<AIGatewayPage<AIGatewayPackageOrder>>(`${base(appKey)}/package-orders${buildQuery(params)}`, { token });
+}
+
+/** 按批次剩余比例退款：refundAmount = floor₂(price × remaining / amount)。 */
+export function refundAIGatewayPackageOrder(token: string, appKey: string, orderNo: string, reason: string) {
+  return apiRequest<AIGatewayPackageOrder>(`${base(appKey)}/package-orders/${encodeURIComponent(orderNo)}/refund`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ reason })
+  });
+}
+
+export function listAIGatewayLots(token: string, appKey: string, params: AIGatewayLotParams) {
+  return apiRequest<AIGatewayPage<AIGatewayCreditLot>>(`${base(appKey)}/lots${buildQuery(params)}`, { token });
+}
+
+export function grantAIGatewayLot(token: string, appKey: string, userId: number, payload: AIGatewayLotGrantPayload) {
+  return apiRequest<{ lot: AIGatewayCreditLot; balance?: string; replayed?: boolean }>(`${base(appKey)}/users/${userId}/lots`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload)
+  });
+}
+
+export function revokeAIGatewayLot(token: string, appKey: string, lotId: number, reason: string) {
+  return apiRequest<AIGatewayCreditLot>(`${base(appKey)}/lots/${lotId}/revoke`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ reason })
+  });
+}
+
+export function getAIGatewayCommerce(token: string, appKey: string, days: number) {
+  return apiRequest<AIGatewayCommerce>(`${base(appKey)}/commerce${buildQuery({ days })}`, { token });
 }

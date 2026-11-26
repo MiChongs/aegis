@@ -25,7 +25,7 @@ const REQUEST_SERIES: Array<{ key: "succeeded" | "failed"; label: string; color:
   { key: "failed", label: "失败（不扣费）", color: { light: "#f43f5e", dark: "#fb7185" } }
 ];
 const CHARGE_SERIES: Array<{ key: "charged"; label: string; color: ThemedColor }> = [
-  { key: "charged", label: "扣费（点）", color: { light: "#6366f1", dark: "#818cf8" } }
+  { key: "charged", label: "扣费（额度）", color: { light: "#6366f1", dark: "#818cf8" } }
 ];
 const RANGES = [7, 14, 30] as const;
 
@@ -120,14 +120,14 @@ export function AIGatewayOverviewPanel({
           label="扣费"
           icon={Coins}
           tone="positive"
-          value={stats ? `${formatPoints(stats.charged)} 点` : "—"}
-          hint={stats && Number(stats.refunded) > 0 ? `已退 ${formatPoints(stats.refunded)} 点` : undefined}
+          value={stats ? formatPoints(stats.charged) : "—"}
+          hint={stats && Number(stats.refunded) > 0 ? `已退 ${formatPoints(stats.refunded)} 额度` : "额度"}
         />
         <StatTile
           label="用户"
           icon={Users}
           value={stats?.users ?? "—"}
-          hint={stats ? `赠送额度余量 ${formatPoints(stats.creditBalance)} 点` : undefined}
+          hint={stats ? `永久额度余量 ${formatPoints(stats.creditBalance)}` : undefined}
         />
         <StatTile
           label="Token"
@@ -148,7 +148,7 @@ export function AIGatewayOverviewPanel({
           {Number(stats.shortfall) > 0 ? (
             <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
               <TriangleAlert className="size-3.5" />
-              用量超出暂扣且余额不足未收 {formatPoints(stats.shortfall)} 点
+              用量超出暂扣且余额不足未收 {formatPoints(stats.shortfall)} 额度
             </span>
           ) : null}
         </div>
@@ -213,7 +213,7 @@ export function AIGatewayOverviewPanel({
             <TableHeader>
               <TableRow>
                 <TableHead>来源</TableHead>
-                <TableHead className="text-right">点数</TableHead>
+                <TableHead className="text-right">额度</TableHead>
                 <TableHead className="text-right">实扣</TableHead>
               </TableRow>
             </TableHeader>
