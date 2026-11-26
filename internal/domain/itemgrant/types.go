@@ -172,6 +172,8 @@ type ItemResult struct {
 	Converted bool `json:"converted,omitempty"`
 	// Pending 人工发放，等管理员处理
 	Pending bool `json:"pending,omitempty"`
+	// Equipped 个性装扮按 equip 戴上了
+	Equipped bool `json:"equipped,omitempty"`
 }
 
 // Record 一条发放记录：一个人在一条规则里的一次发放。

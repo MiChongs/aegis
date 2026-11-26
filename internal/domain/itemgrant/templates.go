@@ -223,7 +223,7 @@ func Summarize(outcomes []Outcome, candidates int64, refs Refs) *Estimate {
 			spec, _ := FindItemSpec(planned.Item.Type)
 			detail := ""
 			if spec.Value != ValueAmount {
-				detail = DescribeItem(planned.Item, refs)
+				detail = DescribePlannedItem(planned.Item, refs)
 			}
 			k := key{planned.Item.Type, detail}
 			entry, ok := totals[k]

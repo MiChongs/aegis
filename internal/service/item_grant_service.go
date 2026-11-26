@@ -371,7 +371,7 @@ func (s *ItemGrantService) Preview(ctx context.Context, input ItemGrantPreviewIn
 		}
 		described := make([]string, 0, len(outcome.Items))
 		for _, planned := range outcome.Items {
-			described = append(described, itemgrant.DescribeItem(planned.Item, refs))
+			described = append(described, itemgrant.DescribePlannedItem(planned.Item, refs))
 		}
 		out.Trace = &itemgrant.Trace{User: basics, Outcome: outcome, Items: described}
 		return out, nil
@@ -664,11 +664,19 @@ func (s *ItemGrantService) afterGrant(rule itemgrant.Rule, result *itemgrant.Exe
 		s.deliver(record.AppID, record.UserID, record.RecordNo, replacer.Replace(notify.Title), replacer.Replace(notify.Content), notify.Route)
 	}
 	if s.userEvents != nil {
+		equipped := false
+		for _, item := range record.Results {
+			equipped = equipped || item.Equipped
+		}
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			_ = s.userEvents.PublishUserEvent(ctx, record.AppID, record.UserID, "item_grant.granted",
 				map[string]any{"recordNo": record.RecordNo, "status": record.Status})
+			if equipped {
+				// 奖励里 equip = true 的装扮戴上了：与用户自己佩戴同一个事件，客户端重拉 /cosmetics/me
+				_ = s.userEvents.PublishUserEvent(ctx, record.AppID, record.UserID, "cosmetic.changed", map[string]any{"action": "equipped"})
+			}
 		}()
 	}
 }

@@ -239,10 +239,14 @@ func (r *Repository) grantItemTx(ctx context.Context, tx pgx.Tx, grant itemGrant
 	case itemgrant.ItemCosmetic:
 		granted, err := grantCosmeticTx(ctx, tx, cosmetic.GrantInput{
 			AppID: appID, UserID: userID, CosmeticID: item.RefID, Days: int(item.Amount),
-			Source: cosmetic.SourceItemGrant, SourceRef: grant.RecordNo,
+			Source: cosmetic.SourceItemGrant, SourceRef: grant.RecordNo, Equip: item.Equip,
 		})
 		if err != nil {
 			return result, err
+		}
+		if granted.Equipped {
+			result.Equipped = true
+			result.Detail += "（已戴上）"
 		}
 		if granted.AlreadyPermanent {
 			result.Detail += "（已永久拥有）"

@@ -644,6 +644,8 @@ func scanCosmeticOwnership(row interface{ Scan(dest ...any) error }, extra ...an
 // 装扮必须是上架且发布过的：发出去一件用户戴不上的东西比报错更糟。
 //
 // 锁用户行：调用方（兑换、抽奖事务）通常已经锁过；管理员授予没有，这一句让并发的两次顺延串行化。
+//
+// in.Equip：发放成功（含 AlreadyPermanent）后在同一事务里戴上，见 equipGrantedCosmeticTx。
 func grantCosmeticTx(ctx context.Context, tx pgx.Tx, in cosmetic.GrantInput) (*cosmetic.GrantResult, error) {
 	if err := cosmetic.ValidateGrantDays(in.Days); err != nil {
 		return nil, err
@@ -682,6 +684,11 @@ WHERE appid = $1 AND user_id = $2 AND cosmetic_id = $3 AND revoked_at IS NULL AN
 	}
 	if permanent {
 		result.AlreadyPermanent = true
+		if in.Equip {
+			if err := equipGrantedCosmeticTx(ctx, tx, in, slot, result); err != nil {
+				return nil, err
+			}
+		}
 		return result, nil
 	}
 	now := time.Now().UTC()
@@ -710,7 +717,118 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING `+cosmeticOwnershipColumns,
 	}
 	own.CosmeticName, own.Slot = name, slot
 	result.Ownership = own
+	if in.Equip {
+		if err := equipGrantedCosmeticTx(ctx, tx, in, slot, result); err != nil {
+			return nil, err
+		}
+	}
 	return result, nil
+}
+
+// equipGrantedCosmeticTx 发放之后顺手戴上（奖励里 equip = true）。与用户自己佩戴同一判据：先过一次 Eligibility
+// （事实取这件装扮此刻的持有段——刚发放成功时必然持有，所以实际只在装扮不可用时不戴），不能戴就只发不戴、不报错。
+// 单戴槽位替换原有的佩戴；勋章已戴着就不动，否则放到第一个空位，满了不戴。调用方在事务提交后发 cosmetic.changed。
+func equipGrantedCosmeticTx(ctx context.Context, tx pgx.Tx, in cosmetic.GrantInput, slot string, result *cosmetic.GrantResult) error {
+	spec, ok := cosmetic.FindSlot(slot)
+	if !ok {
+		return nil
+	}
+	item := cosmetic.Item{ID: in.CosmeticID, Slot: slot, Origin: cosmetic.OriginOfficial}
+	var (
+		unlockRaw []byte
+		published bool
+	)
+	if err := tx.QueryRow(ctx, `SELECT status, revision, unlock, design IS NOT NULL FROM cosmetic_items WHERE appid = $1 AND id = $2`,
+		in.AppID, in.CosmeticID).Scan(&item.Status, &item.Revision, &unlockRaw, &published); err != nil {
+		return err
+	}
+	if len(unlockRaw) > 0 {
+		if err := json.Unmarshal(unlockRaw, &item.Unlock); err != nil {
+			return fmt.Errorf("decode cosmetic unlock: %w", err)
+		}
+	}
+	if published {
+		item.Design = &cosmetic.Design{}
+	}
+	var (
+		permanent bool
+		latestEnd *time.Time
+		live      bool
+	)
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(BOOL_OR(ends_at IS NULL), FALSE), MAX(ends_at), COUNT(*) > 0
+FROM user_cosmetics
+WHERE appid = $1 AND user_id = $2 AND cosmetic_id = $3 AND revoked_at IS NULL AND (ends_at IS NULL OR ends_at > NOW())`,
+		in.AppID, in.UserID, in.CosmeticID).Scan(&permanent, &latestEnd, &live); err != nil {
+		return err
+	}
+	facts := cosmetic.Facts{UserID: in.UserID, Owned: map[int64]*time.Time{}}
+	if live {
+		if permanent {
+			facts.Owned[in.CosmeticID] = nil
+		} else {
+			facts.Owned[in.CosmeticID] = latestEnd
+		}
+	}
+	if usable, _ := cosmetic.Eligibility(item, facts, time.Now()); !usable {
+		return nil
+	}
+	position := 0
+	if spec.Multiple {
+		badgeSlots := cosmetic.DefaultBadgeSlots
+		if err := tx.QueryRow(ctx, `SELECT badge_slots FROM cosmetic_settings WHERE appid = $1`, in.AppID).Scan(&badgeSlots); err != nil &&
+			!errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT position, cosmetic_id FROM user_cosmetic_equips WHERE appid = $1 AND user_id = $2 AND slot = $3`,
+			in.AppID, in.UserID, slot)
+		if err != nil {
+			return err
+		}
+		taken := map[int]bool{}
+		current := -1
+		for rows.Next() {
+			var pos int
+			var id int64
+			if err := rows.Scan(&pos, &id); err != nil {
+				rows.Close()
+				return err
+			}
+			taken[pos] = true
+			if id == in.CosmeticID && pos < badgeSlots && (current < 0 || pos < current) {
+				current = pos
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if current >= 0 {
+			result.Equipped, result.Position = true, current
+			return nil
+		}
+		position = -1
+		for p := 0; p < badgeSlots; p++ {
+			if !taken[p] {
+				position = p
+				break
+			}
+		}
+		if position < 0 {
+			return nil
+		}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM user_cosmetic_equips WHERE appid = $1 AND user_id = $2 AND slot = $3
+    AND cosmetic_id = $4 AND position <> $5`, in.AppID, in.UserID, slot, in.CosmeticID, position); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO user_cosmetic_equips (appid, user_id, slot, position, cosmetic_id, equipped_at)
+VALUES ($1,$2,$3,$4,$5,NOW())
+ON CONFLICT (appid, user_id, slot, position) DO UPDATE SET cosmetic_id = EXCLUDED.cosmetic_id, equipped_at = NOW()`,
+		in.AppID, in.UserID, slot, position, in.CosmeticID); err != nil {
+		return err
+	}
+	result.Equipped, result.Position = true, position
+	return nil
 }
 
 // cosmeticOwnedPermanentlyQ 是否已永久持有（积分商城在扣积分之前判「已拥有」用）。

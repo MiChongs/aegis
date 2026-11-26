@@ -203,6 +203,9 @@ type GrantInput struct {
 	Source    string
 	SourceRef string
 	Operator  string
+	// Equip 发放成功（含已永久持有）后在同一事务里戴到它的槽位上：单戴槽位替换原有佩戴，
+	// 勋章放到第一个空位、满了不戴；Eligibility 不过时只发不戴、不报错
+	Equip bool
 }
 
 // GrantResult 发放结果。
@@ -212,6 +215,9 @@ type GrantResult struct {
 	AlreadyPermanent bool   `json:"alreadyPermanent,omitempty"`
 	CosmeticName     string `json:"cosmeticName"`
 	Slot             string `json:"slot"`
+	// Equipped 按 GrantInput.Equip 戴上了（Position 是勋章戴在第几位）
+	Equipped bool `json:"equipped,omitempty"`
+	Position int  `json:"position,omitempty"`
 }
 
 // Facts 判定「能不能戴」所需的用户事实，由服务层一次取齐。

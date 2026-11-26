@@ -748,6 +748,9 @@ func (s *CosmeticService) Grant(ctx context.Context, in cosmetic.GrantInput) (*c
 		s.notifyGrant(ctx, in.AppID, in.UserID, result, in.Days)
 	}
 	s.publishChanged(ctx, in.AppID, in.UserID, "granted")
+	if result.Equipped {
+		s.publishChanged(ctx, in.AppID, in.UserID, "equipped")
+	}
 	return result, nil
 }
 

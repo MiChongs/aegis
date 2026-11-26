@@ -141,7 +141,7 @@ var itemSpecs = []ItemSpec{
 	{Type: ItemNumberAssign, Label: "指定号码", Group: GroupBenefit, Value: ValueText,
 		Hint: "直接把这个号码换给领取人（不扣权益、不看冷却）；号码已被使用、保留或冻结时这一笔失败"},
 	{Type: ItemCosmetic, Label: "个性装扮", Group: GroupBenefit, Value: ValueCosmetic, Unit: "天", Min: 0, Max: MaxFeatureDays,
-		Hint: "头像框、资料卡背景、昵称样式或勋章；天数为 0 即永久，同一件多次发放时顺延，已永久持有时不重复发放"},
+		Hint: "头像框、资料卡背景、昵称样式、勋章或铭牌；天数为 0 即永久，同一件多次发放时顺延，已永久持有时不重复发放；可选「发放时佩戴」"},
 	{Type: ItemManual, Label: "人工发放", Group: GroupOther, Value: ValueText, Pending: true,
 		Hint: "记录进入待发放，由管理员在发放记录里标记已发放（实物、兑换码等）"},
 }
@@ -188,6 +188,8 @@ type Item struct {
 	// AmountExpr 按人计算数量的表达式（只对 Scalable 的物品有效），例如 `10 + user.signStreak * 2`；
 	// 结果向下取整并截在物品的上下界内，算不出来时退回 Amount。
 	AmountExpr string `json:"amountExpr,omitempty"`
+	// Equip 个性装扮专用：发放后顺手戴上（替换该槽位原有的佩戴，勋章放第一个空位）；戴不上时只发不戴
+	Equip bool `json:"equip,omitempty"`
 }
 
 // NormalizeItem 抹掉与取值形态无关的字段。
@@ -220,6 +222,7 @@ func NormalizeItem(item Item) Item {
 	case ValueCosmetic:
 		clean.RefID = item.RefID
 		clean.Amount = item.Amount
+		clean.Equip = item.Equip
 	case ValueText:
 		clean.Text = strings.TrimSpace(item.Text)
 	}
@@ -340,6 +343,15 @@ type Refs struct {
 	Plans     map[int64]PlanRef
 	Features  map[string]FeatureRef
 	Cosmetics map[int64]CosmeticRef
+}
+
+// DescribePlannedItem 预览与估算里的说法：DescribeItem 之外注明「发放时佩戴」（发放结果与站内信里用 DescribeItem，戴上了另记「已戴上」）。
+func DescribePlannedItem(item Item, refs Refs) string {
+	text := DescribeItem(item, refs)
+	if item.Equip && item.Type == ItemCosmetic {
+		text += "（发放时佩戴）"
+	}
+	return text
 }
 
 // DescribeItem 一句话说清这项物品：「积分 500」「在线听歌 永久」「会员 30 天」。

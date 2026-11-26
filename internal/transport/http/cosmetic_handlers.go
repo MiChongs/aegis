@@ -78,10 +78,11 @@ type CosmeticSettingsRequest struct {
 	Workshop *cosmetic.WorkshopSettings `json:"workshop"`
 }
 
-// CosmeticGrantRequest 给用户发一件装扮；days 为 0 即永久。
+// CosmeticGrantRequest 给用户发一件装扮；days 为 0 即永久。equip 为真时发放后顺手戴上（已永久持有也会戴；戴不上时只发不戴）。
 type CosmeticGrantRequest struct {
 	CosmeticID int64 `json:"cosmeticId" binding:"required"`
 	Days       int   `json:"days"`
+	Equip      bool  `json:"equip"`
 }
 
 // CosmeticRevokeRequest 收回一条持有。
@@ -597,7 +598,7 @@ func (h *Handler) AdminGrantUserCosmetic(c *gin.Context) {
 	}
 	_, operator := adminAccount(c)
 	result, err := h.cosmetic.Grant(c.Request.Context(), cosmetic.GrantInput{
-		AppID: appID, UserID: userID, CosmeticID: req.CosmeticID, Days: req.Days, Operator: operator,
+		AppID: appID, UserID: userID, CosmeticID: req.CosmeticID, Days: req.Days, Operator: operator, Equip: req.Equip,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -606,6 +607,9 @@ func (h *Handler) AdminGrantUserCosmetic(c *gin.Context) {
 	message := "已发放"
 	if result.AlreadyPermanent {
 		message = "该用户已永久持有，未重复发放"
+	}
+	if result.Equipped {
+		message += "，已戴上"
 	}
 	response.Success(c, http.StatusOK, message, result)
 }

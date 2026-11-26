@@ -37,6 +37,12 @@
 奖励目录里的形状统一为 `{type: "cosmetic", refId: 装扮编号, amount: 天数(0 永久)}`。接入的系统：积分商城、抽奖、卡密、物品发放、
 邀请（排行榜、推广活动复用邀请的奖励目录）、管理员授予。来源常量见 `cosmetic.Source*`。
 
+**发放时佩戴**：奖励可以写成 `{type: "cosmetic", refId, amount, equip: true}`（管理端授予是 `POST /users/:userId/grant {cosmeticId, days, equip}`）。
+`grantCosmeticTx` 发放成功后（含 `AlreadyPermanent`）在同一事务里把这件戴到它的槽位上：单戴槽位替换原有的佩戴；勋章已戴着就不动，
+否则放到第一个空位（没有佩戴行的位置），满了就不戴。佩戴前照常用 `Eligibility` 判一次，不能戴只发不戴、不报错。戴上后结果带
+`equipped`（勋章还有 `position`），发 `cosmetic.changed`（action=equipped）；物品发放的记录里这一项 `equipped = true`、说明后缀「（已戴上）」。
+目前物品发放与管理端授予接了这个开关；积分商城、抽奖、卡密、邀请的奖励解码时忽略这个字段（等同 false）。
+
 装扮中心的「获取渠道」从上架中的积分商城商品与进行中的抽奖活动里反查（奖励里 `type=cosmetic` 且 `refId` 是这件）。
 
 ## 接口
@@ -84,7 +90,7 @@
 | GET | `/ownerships?userId=&cosmeticId=&source=&state=live\|ended\|revoked` | read |
 | GET | `/stats` | read |
 | GET | `/users/:userId` | read：`ownerships`、`equips`（各自 effective / reason）、`loadout`、`facts` |
-| POST | `/users/:userId/grant` `{cosmeticId, days}` | grant |
+| POST | `/users/:userId/grant` `{cosmeticId, days, equip}` | grant（equip 见「发放时佩戴」） |
 | POST | `/users/:userId/ownerships/:ownershipId/revoke` `{reason}` | grant |
 | POST | `/users/:userId/unequip` `{slot, position}` | grant |
 
