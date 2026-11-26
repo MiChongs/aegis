@@ -118,6 +118,36 @@ CASES = [
     ("risk_firewall_logs", {"log_id": 77}, "GET", f"{F}/logs/77", {}, None),
     ("risk_firewall_stats", {"granularity": "day"}, "GET", f"{F}/stats", {"granularity": "day"}, None),
     ("risk_cleanup_firewall_logs", {"before": "2026-01-01T00:00:00Z"}, "DELETE", f"{F}/logs", {}, {"before": "2026-01-01T00:00:00Z"}),
+    # 防火墙规则集 v2
+    ("risk_firewall_logs", {"action": "observe", "stage": "payload", "transport": "sealed", "rule_ref": 4, "keyword": "curl", "sort_by": "score"},
+     "GET", f"{F}/logs", {"action": "observe", "stage": "payload", "transport": "sealed", "ruleRef": "4", "keyword": "curl", "sortBy": "score", **PAGE}, None),
+    ("risk_firewall_stats", {"granularity": "minute"}, "GET", f"{F}/stats", {"granularity": "minute"}, None),
+    ("risk_firewall_runtime", {}, "GET", f"{F}/runtime", {}, None),
+    ("risk_firewall_settings", {}, "GET", f"{F}/settings", {}, None),
+    ("risk_firewall_update_settings", {"patch": {"corazaDetectionOnly": True, "corazaRemovedRules": []}},
+     "PUT", f"{F}/settings", {}, {"corazaDetectionOnly": True, "corazaRemovedRules": []}),
+    ("risk_firewall_rules", {}, "GET", f"{F}/rules", {}, None),
+    ("risk_firewall_save_rule", {"name": "拦 curl", "expression": 'ua startsWith "curl/"', "action": "block", "ban_seconds": 600},
+     "POST", f"{F}/rules", {}, {"name": "拦 curl", "description": "", "enabled": True, "priority": 0, "expression": 'ua startsWith "curl/"',
+                                 "action": "block", "blockMode": "", "banSeconds": 600}),
+    ("risk_firewall_save_rule", {"rule_id": 3, "name": "放行探针", "expression": 'cidr(ip, "10.0.0.0/8")', "action": "allow", "enabled": False},
+     "PUT", f"{F}/rules/3", {}, {"name": "放行探针", "description": "", "enabled": False, "priority": 0, "expression": 'cidr(ip, "10.0.0.0/8")',
+                                  "action": "allow", "blockMode": "", "banSeconds": 0}),
+    ("risk_firewall_toggle_rule", {"rule_id": 3, "enabled": True}, "PATCH", f"{F}/rules/3", {}, {"enabled": True}),
+    ("risk_firewall_delete_rule", {"rule_id": 3}, "DELETE", f"{F}/rules/3", {}, None),
+    ("risk_firewall_validate_rule", {"expression": "ip =="}, "POST", f"{F}/rules/validate", {}, {"expression": "ip =="}),
+    ("risk_firewall_exclusions", {}, "GET", f"{F}/exclusions", {}, None),
+    ("risk_firewall_save_exclusion", {"name": "富文本", "path": "/api/v1/apps/demo/cms/", "tags": ["attack-xss"], "targets": ["ARGS:json.html"]},
+     "POST", f"{F}/exclusions", {}, {"name": "富文本", "note": "", "enabled": True, "pathMatch": "prefix", "path": "/api/v1/apps/demo/cms/",
+                                      "methods": [], "ruleIds": [], "tags": ["attack-xss"], "targets": ["ARGS:json.html"]}),
+    ("risk_firewall_save_exclusion", {"exclusion_id": 8, "name": "探针", "path": "/probe", "path_match": "exact", "rule_ids": [920350], "methods": ["GET"]},
+     "PUT", f"{F}/exclusions/8", {}, {"name": "探针", "note": "", "enabled": True, "pathMatch": "exact", "path": "/probe",
+                                       "methods": ["GET"], "ruleIds": [920350], "tags": [], "targets": []}),
+    ("risk_firewall_toggle_exclusion", {"exclusion_id": 8, "enabled": False}, "PATCH", f"{F}/exclusions/8", {}, {"enabled": False}),
+    ("risk_firewall_delete_exclusion", {"exclusion_id": 8}, "DELETE", f"{F}/exclusions/8", {}, None),
+    ("risk_firewall_catalog", {"rule_id": 942100}, "GET", f"{F}/catalog/rules/942100", {}, None),
+    ("risk_firewall_sandbox", {"url": "/api/v1/apps/demo/x?q=1", "method": "POST", "body_text": "{}", "transport": "sealed"},
+     "POST", f"{F}/sandbox", {}, {"method": "POST", "url": "/api/v1/apps/demo/x?q=1", "headers": {}, "body": "{}", "transport": "sealed"}),
 ]
 
 
@@ -255,3 +285,17 @@ async def test_backend_error_becomes_tool_error(backend, call_error):
     backend.reply("POST", f"{F}/bans", None, code=40313, message="仅超级管理员可管理 IP 封禁")
     text = await call_error("risk_ban_ip", {"ip": "6.6.6.6"})
     assert "40313" in text and "超级管理员" in text
+
+
+async def test_firewall_save_exclusion_needs_rule_or_tag(call_error):
+    assert "rule_ids 与 tags" in await call_error("risk_firewall_save_exclusion", {"name": "空", "path": "/a"})
+
+
+async def test_firewall_catalog_filters_client_side(backend, call):
+    backend.reply("GET", f"{F}/catalog", {"version": "4.25.0", "groups": [], "totalRules": 3, "activeRules": 2, "rules": [
+        {"id": 942100, "group": "942", "message": "SQL Injection Attack Detected via libinjection", "active": True},
+        {"id": 941100, "group": "941", "message": "XSS Attack Detected via libinjection", "active": True},
+        {"id": 942430, "group": "942", "message": "Restricted SQL Character Anomaly", "active": False},
+    ]})
+    result = await call("risk_firewall_catalog", {"group": "942", "active_only": True})
+    assert result["matched"] == 1 and result["rules"][0]["id"] == 942100

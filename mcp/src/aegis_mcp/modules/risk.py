@@ -1,4 +1,4 @@
-"""风控与防火墙：风控平台（场景、发布与灰度、特征、规则、模型、名单、行为序列、决策留痕、案件复核、处置、关系图与画像），以及 IP 封禁、地域封禁、地理围栏与防火墙日志。
+"""风控与防火墙：风控平台（场景、发布与灰度、特征、规则、模型、名单、行为序列、决策留痕、案件复核、处置、关系图与画像），以及 IP 封禁、地域封禁、地理围栏与防火墙（事件、设置、自定义规则、WAF 例外、规则目录、测试台）。
 
 风控平台是独立服务 risk-admin：/api/admin/system/risk/<X> 原样转发到它的 /v1/<X>，响应仍是 {code, message, data}，
 分页结果为 {list, total, page, pageSize}，应用作用域的查询参数是 app（数字应用 ID）。
@@ -7,6 +7,10 @@
 工作流：场景 / 规则 / 特征 / 模型的修改只进草稿，线上决策只认已发布版本——
 改完先 risk_validate_scene 编译检查、risk_simulate 用草稿试跑，再 risk_publish（full 直接生效、canary 灰度、shadow 影子），
 灰度观察后 risk_promote 转正或 risk_set_traffic 调比例 / 放弃，出问题 risk_rollback 回到任一历史版本。
+
+防火墙规则集 v2（docs/firewall.md）：入口段（IP、封禁、签名、自定义规则、限流）在解密之前，WAF（Coraza + CRS）在
+sealed / 旧加密解开之后。改 WAF 设置、自定义规则或例外前先用 risk_firewall_sandbox 试一个请求；
+误报优先用 risk_firewall_save_exclusion 按路径与字段排除，不要全局移除规则。
 """
 
 from __future__ import annotations
@@ -83,6 +87,23 @@ FW_LOGS = GET(f"{FW}/logs")
 FW_LOG = GET(f"{FW}/logs/:logId")
 FW_LOGS_CLEANUP = DELETE(f"{FW}/logs")
 FW_STATS = GET(f"{FW}/stats")
+FW_RUNTIME = GET(f"{FW}/runtime")
+FW_SETTINGS = GET(f"{FW}/settings")
+FW_SETTINGS_UPDATE = PUT(f"{FW}/settings")
+FW_RULES = GET(f"{FW}/rules")
+FW_RULE_CREATE = POST(f"{FW}/rules")
+FW_RULE_UPDATE = PUT(f"{FW}/rules/:ruleId")
+FW_RULE_TOGGLE = PATCH(f"{FW}/rules/:ruleId")
+FW_RULE_DELETE = DELETE(f"{FW}/rules/:ruleId")
+FW_RULE_VALIDATE = POST(f"{FW}/rules/validate")
+FW_EXCLUSIONS = GET(f"{FW}/exclusions")
+FW_EXCLUSION_CREATE = POST(f"{FW}/exclusions")
+FW_EXCLUSION_UPDATE = PUT(f"{FW}/exclusions/:exclusionId")
+FW_EXCLUSION_TOGGLE = PATCH(f"{FW}/exclusions/:exclusionId")
+FW_EXCLUSION_DELETE = DELETE(f"{FW}/exclusions/:exclusionId")
+FW_CATALOG = GET(f"{FW}/catalog")
+FW_CATALOG_RULE = GET(f"{FW}/catalog/rules/:ruleId")
+FW_SANDBOX = POST(f"{FW}/sandbox")
 IP_BANS = GET(f"{FW}/bans")
 IP_BAN_MODES = GET(f"{FW}/bans/modes")
 IP_BAN = POST(f"{FW}/bans")
@@ -946,27 +967,40 @@ async def delete_geo_fence(fence_id: Annotated[int, Field(gt=0, description="围
 # ═══════════════════════ 防火墙日志 ═══════════════════════
 
 
+FwAction = Literal["", "block", "observe", "log"]
+FwStage = Literal["", "edge", "payload", "response"]
+FwTransport = Literal["", "plain", "sealed", "legacy"]
+FwRuleAction = Literal["allow", "block", "log", "skip_waf"]
+
+
 @server.tool(**READ("risk"))
 async def firewall_logs(
-    log_id: Annotated[int | None, Field(gt=0, description="给了就取这一条拦截日志的详情")] = None,
+    log_id: Annotated[int | None, Field(gt=0, description="给了就取这一条事件的详情（含命中的全部 WAF 规则）")] = None,
     ip: Annotated[str, Field(description="IP")] = "",
     country: Annotated[str, Field(description="国家代码")] = "",
-    reason: Annotated[str, Field(description="拦截原因")] = "",
-    waf_rule_id: Annotated[int | None, Field(description="WAF 规则 ID")] = None,
-    path_pattern: Annotated[str, Field(description="请求路径匹配")] = "",
+    reason: Annotated[str, Field(description="原因：waf_blocked / waf_observed / custom_rule / rate_limited / blocked_signature …")] = "",
+    waf_rule_id: Annotated[int | None, Field(description="WAF 规则 ID（命中明细里任意一条即算）")] = None,
+    path_pattern: Annotated[str, Field(description="请求路径包含")] = "",
     severity: Annotated[Literal["", "low", "medium", "high", "critical"], Field(description="严重程度")] = "",
+    action: Annotated[FwAction, Field(description="block 拦截 / observe 观察模式本该拦截与出站命中 / log 自定义规则记录")] = "",
+    stage: Annotated[FwStage, Field(description="edge 入口（解密前）/ payload 解密后 WAF / response 出站")] = "",
+    transport: Annotated[FwTransport, Field(description="载荷来源：plain 明文 / sealed 接入网关 Transport v2 / legacy 旧加密")] = "",
+    app_key: Annotated[str, Field(description="接入网关的 appKey")] = "",
+    rule_ref: Annotated[int | None, Field(gt=0, description="自定义规则 ID")] = None,
+    keyword: Annotated[str, Field(description="请求 ID / 路径 / UA / 规则名关键字")] = "",
     start_time: Annotated[IsoTime, Field(description="起始时间（RFC 3339）")] = "",
     end_time: Annotated[IsoTime, Field(description="结束时间（RFC 3339）")] = "",
-    sort_by: Annotated[Literal["", "blocked_at", "ip"], Field(description="排序字段")] = "",
+    sort_by: Annotated[Literal["", "blocked_at", "ip", "score"], Field(description="排序字段（score = 异常分）")] = "",
     sort_order: Annotated[Literal["", "asc", "desc"], Field(description="排序方向")] = "",
     page: Page = 1,
     page_size: PageSize = 20,
 ) -> Any:
-    """防火墙拦截日志列表，或给 log_id 取详情。仅超级管理员。"""
+    """防火墙事件列表（拦截、观察、记录），或给 log_id 取详情。仅超级管理员。"""
     if log_id:
         return await FW_LOG(logId=log_id)
     return await FW_LOGS(query=q(
         ip=ip, country=country, reason=reason, wafRuleId=waf_rule_id, pathPattern=path_pattern, severity=severity,
+        action=action, stage=stage, transport=transport, appKey=app_key, ruleRef=rule_ref, keyword=keyword,
         startTime=start_time, endTime=end_time, sortBy=sort_by, sortOrder=sort_order, page=page, pageSize=page_size,
     ))
 
@@ -975,10 +1009,166 @@ async def firewall_logs(
 async def firewall_stats(
     start_time: Annotated[IsoTime, Field(description="起始时间（RFC 3339），默认 24 小时前")] = "",
     end_time: Annotated[IsoTime, Field(description="结束时间（RFC 3339），默认现在")] = "",
-    granularity: Annotated[Literal["hour", "day"], Field(description="趋势粒度")] = "hour",
+    granularity: Annotated[Literal["minute", "hour", "day"], Field(description="趋势粒度（minute 只在 6 小时内生效）")] = "hour",
 ) -> Any:
-    """防火墙拦截统计：总量、按原因 / 国家 / IP 排行、趋势。仅超级管理员。"""
+    """防火墙统计：拦截 / 观察 / 记录总量、独立 IP、环比，按原因、规则组、国家、IP、路径、阶段、载荷来源、自定义规则、应用排行，以及趋势。只数拦截的排行不含观察事件。仅超级管理员。"""
     return await FW_STATS(query=q(startTime=start_time, endTime=end_time, granularity=granularity))
+
+
+@server.tool(**READ("risk"))
+async def firewall_runtime() -> Any:
+    """防火墙在本副本的运行态：是否开启、拦截 / 观察模式、阈值、生效规则数、自定义规则与例外数、编译失败的规则、本副本检测与拦截计数。仅超级管理员。"""
+    return await FW_RUNTIME()
+
+
+@server.tool(**READ("risk"))
+async def firewall_settings() -> Any:
+    """防火墙设置全文（限流、IP 名单、签名、WAF 偏执等级与阈值、调优档、停用的规则组、全局移除的规则……）。仅超级管理员。"""
+    return await FW_SETTINGS()
+
+
+@server.tool(**DESTRUCTIVE("risk"))
+async def firewall_update_settings(
+    patch: Annotated[dict[str, Any], Field(description=(
+        "部分更新，字段名同 risk_firewall_settings 的返回（如 corazaDetectionOnly、corazaAnomalyThreshold、corazaParanoia、"
+        "corazaDisabledGroups、corazaRemovedRules、trustedCIDRs、globalRate）。列表传 [] 表示清空。"
+    ))],
+) -> Any:
+    """修改防火墙设置并在所有副本生效（保存前服务端会试编译 WAF，失败返回 40090 与原因）。影响全站流量，执行前先向用户复述改动并确认。"""
+    if not patch:
+        raise ToolError("patch 不能为空")
+    return await FW_SETTINGS_UPDATE(body=patch)
+
+
+@server.tool(**READ("risk"))
+async def firewall_rules() -> Any:
+    """防火墙自定义规则列表（按求值顺序），含命中数与最近命中时间。仅超级管理员。"""
+    return await FW_RULES()
+
+
+@server.tool(**WRITE("risk"))
+async def firewall_save_rule(
+    name: Annotated[str, Field(min_length=1, max_length=80, description="规则名")],
+    expression: Annotated[str, Field(min_length=1, description=(
+        "expr 表达式。变量：ip method path query host ua referer contentType headers[\"x-foo\"] args[\"k\"] app "
+        "country region city isp asn hour weekday encrypted；函数 cidr(ip, \"10.0.0.0/8\")；"
+        "运算符 startsWith endsWith contains matches in && || !"
+    ))],
+    action: Annotated[FwRuleAction, Field(description="block 拦截 / allow 放行（跳过 WAF）/ log 只记录 / skip_waf 跳过 WAF")],
+    rule_id: Annotated[int | None, Field(gt=0, description="给了就修改这条，否则新建")] = None,
+    description: Annotated[str, Field(description="说明")] = "",
+    enabled: Annotated[bool, Field(description="是否启用")] = True,
+    priority: Annotated[int, Field(ge=0, description="优先级，越小越先求值；0 = 默认 100")] = 0,
+    block_mode: Annotated[str, Field(description="拦截时的响应方式（封禁模式之一，risk_ip_bans 的 modes 可查；空 = 403 JSON）")] = "",
+    ban_seconds: Annotated[int, Field(ge=-1, description="命中后封禁来源 IP 的秒数，0 不封，-1 永久（只有 block 可用）")] = 0,
+) -> Any:
+    """新建或修改一条防火墙自定义规则，保存即在所有副本生效。改前可先用 risk_firewall_sandbox 试请求。"""
+    payload = body(name=name, description=description, enabled=enabled, priority=priority, expression=expression,
+                   action=action, blockMode=block_mode, banSeconds=ban_seconds)
+    if rule_id:
+        return await FW_RULE_UPDATE(ruleId=rule_id, body=payload)
+    return await FW_RULE_CREATE(body=payload)
+
+
+@server.tool(**WRITE("risk"))
+async def firewall_toggle_rule(rule_id: Annotated[int, Field(gt=0, description="规则 ID")], enabled: Annotated[bool, Field(description="启用或停用")]) -> Any:
+    """启用或停用一条防火墙自定义规则。"""
+    return await FW_RULE_TOGGLE(ruleId=rule_id, body={"enabled": enabled})
+
+
+@server.tool(**DESTRUCTIVE("risk"))
+async def firewall_delete_rule(rule_id: Annotated[int, Field(gt=0, description="规则 ID")]) -> Any:
+    """删除一条防火墙自定义规则（不可恢复；只想暂停用 risk_firewall_toggle_rule）。"""
+    return await FW_RULE_DELETE(ruleId=rule_id)
+
+
+@server.tool(**READ("risk"))
+async def firewall_validate_rule(expression: Annotated[str, Field(min_length=1, description="expr 表达式")]) -> Any:
+    """校验一条自定义规则表达式能否编译（返回 valid 与错误位置）。"""
+    return await FW_RULE_VALIDATE(body={"expression": expression})
+
+
+@server.tool(**READ("risk"))
+async def firewall_exclusions() -> Any:
+    """WAF 例外列表（按路径与字段排除误报）。仅超级管理员。"""
+    return await FW_EXCLUSIONS()
+
+
+@server.tool(**WRITE("risk"))
+async def firewall_save_exclusion(
+    name: Annotated[str, Field(min_length=1, max_length=80, description="例外名")],
+    path: Annotated[str, Field(min_length=1, description="路径（prefix / exact 以 / 开头；regex 为正则）")],
+    path_match: Annotated[Literal["prefix", "exact", "regex"], Field(description="路径匹配方式")] = "prefix",
+    rule_ids: Annotated[list[int] | None, Field(description="要排除的 CRS / Aegis 规则 ID")] = None,
+    tags: Annotated[list[str] | None, Field(description="要排除的规则标签，如 attack-xss")] = None,
+    targets: Annotated[list[str] | None, Field(description="只把这些变量从检查目标里拿掉，如 ARGS:json.content、ARGS:/^json\\.items\\./；为空则整条移除规则")] = None,
+    methods: Annotated[list[str] | None, Field(description="只对这些方法生效，空为全部")] = None,
+    note: Annotated[str, Field(description="备注（为什么加这条）")] = "",
+    enabled: Annotated[bool, Field(description="是否启用")] = True,
+    exclusion_id: Annotated[int | None, Field(gt=0, description="给了就修改这条，否则新建")] = None,
+) -> Any:
+    """新建或修改一条 WAF 例外，保存即在所有副本生效（服务端先试编译整套例外）。优先指定 targets 只排除具体字段。"""
+    if not rule_ids and not tags:
+        raise ToolError("rule_ids 与 tags 至少给一个")
+    payload = body(name=name, note=note, enabled=enabled, pathMatch=path_match, path=path, methods=methods or [],
+                   ruleIds=rule_ids or [], tags=tags or [], targets=targets or [])
+    if exclusion_id:
+        return await FW_EXCLUSION_UPDATE(exclusionId=exclusion_id, body=payload)
+    return await FW_EXCLUSION_CREATE(body=payload)
+
+
+@server.tool(**WRITE("risk"))
+async def firewall_toggle_exclusion(exclusion_id: Annotated[int, Field(gt=0, description="例外 ID")], enabled: Annotated[bool, Field(description="启用或停用")]) -> Any:
+    """启用或停用一条 WAF 例外。"""
+    return await FW_EXCLUSION_TOGGLE(exclusionId=exclusion_id, body={"enabled": enabled})
+
+
+@server.tool(**DESTRUCTIVE("risk"))
+async def firewall_delete_exclusion(exclusion_id: Annotated[int, Field(gt=0, description="例外 ID")]) -> Any:
+    """删除一条 WAF 例外（不可恢复；删后原本被排除的请求会重新被检查甚至拦截）。"""
+    return await FW_EXCLUSION_DELETE(exclusionId=exclusion_id)
+
+
+@server.tool(**READ("risk"))
+async def firewall_catalog(
+    rule_id: Annotated[int | None, Field(gt=0, description="给了就取这条规则的详情与最近命中")] = None,
+    search: Annotated[str, Field(description="按规则 ID 或描述筛选（不区分大小写）")] = "",
+    group: Annotated[str, Field(description="规则组编号，如 942、aegis")] = "",
+    active_only: Annotated[bool, Field(description="只看当前生效的规则")] = False,
+    limit: Annotated[int, Field(ge=1, le=500, description="最多返回多少条规则")] = 100,
+) -> Any:
+    """WAF 规则目录：规则组（启用状态）与规则（描述、严重性、偏执等级、是否被移除 / 生效）。仅超级管理员。"""
+    if rule_id:
+        return await FW_CATALOG_RULE(ruleId=rule_id)
+    catalog = await FW_CATALOG()
+    if not isinstance(catalog, dict):
+        return catalog
+    needle = search.strip().lower()
+    rules = []
+    for rule in catalog.get("rules") or []:
+        if group and rule.get("group") != group:
+            continue
+        if active_only and not rule.get("active"):
+            continue
+        if needle and needle not in str(rule.get("id")) and needle not in str(rule.get("message", "")).lower():
+            continue
+        rules.append(rule)
+    return {**{k: v for k, v in catalog.items() if k != "rules"}, "matched": len(rules), "rules": rules[:limit]}
+
+
+@server.tool(**READ("risk"))
+async def firewall_sandbox(
+    url: Annotated[str, Field(min_length=1, description="路径加查询串，以 / 开头，如 /api/v1/apps/demo/user/profile?id=1")],
+    method: Annotated[str, Field(description="请求方法")] = "GET",
+    headers: Annotated[dict[str, str] | None, Field(description="请求头")] = None,
+    body_text: Annotated[str, Field(description="请求体原文")] = "",
+    ip: Annotated[str, Field(description="来源 IP，默认 203.0.113.10")] = "",
+    transport: Annotated[Literal["plain", "sealed", "legacy"], Field(description="载荷来源（WAF 都在解密后检测）")] = "plain",
+    draft_exclusion: Annotated[dict[str, Any] | None, Field(description="带一条还没保存的例外（字段同 risk_firewall_save_exclusion 的请求体：name、pathMatch、path、ruleIds、tags、targets、methods）")] = None,
+) -> Any:
+    """防火墙测试台：在服务端进程内把一个请求过一遍自定义规则与 WAF，返回判定、异常分、命中的规则。不改任何状态、不落事件。"""
+    return await FW_SANDBOX(body=body(method=method, url=url, headers=headers or {}, body=body_text, ip=ip or None,
+                                      transport=transport, draftExclusion=draft_exclusion))
 
 
 @server.tool(**DESTRUCTIVE("risk"))
