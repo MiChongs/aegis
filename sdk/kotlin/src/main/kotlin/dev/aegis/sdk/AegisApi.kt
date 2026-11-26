@@ -2379,13 +2379,92 @@ class AegisAIGatewayApi internal constructor(private val client: AegisClient) {
             .apply { interceptors().add(0, AegisRelayAuthInterceptor(client, apiKey)) }
             .build()
 
-    /** 总览：是否开放、能不能用、扣费顺序、各额度余量、积分与余额、价格倍率、今日已用、调用地址。 */
+    /**
+     * 总览：是否开放、能不能用、扣费顺序、各额度余量（额度包、永久额度、余额）、会员优惠、倍率分解与下次变价、
+     * 7 天内到期、新人礼、今日已用、调用地址。解好的版本见 [overviewInfo]。
+     */
     @Throws(IOException::class)
     fun overview(): JsonElement = client.call("GET", "/ai/overview", requireAuth = true)
 
-    /** 可调用的模型与有效单价（已乘上本人的倍率）。会员专享而本人不是会员的，`available = false`。 */
+    /** [overview] 解成 [AegisAIOverview]。 */
+    @Throws(IOException::class)
+    fun overviewInfo(): AegisAIOverview = decode(overview(), AegisAIOverview.serializer())
+
+    /**
+     * 可调用的模型与有效单价（已乘上本人此刻的倍率）；`basePrice` 是不含时段倍率的单价，`factor` 此刻的合计倍率，
+     * `window` 此刻对这个模型生效的时段。会员专享而本人不是会员的，`available = false`。解好的版本见 [modelList]。
+     */
     @Throws(IOException::class)
     fun models(): JsonElement = client.call("GET", "/ai/models", requireAuth = true)
+
+    /** [models] 解成 [AegisAIModelInfo] 列表。 */
+    @Throws(IOException::class)
+    fun modelList(): List<AegisAIModelInfo> = decode(models(), AegisAIModelList.serializer()).items
+
+    /**
+     * 价格方案：时段（夜间半价、高峰加价、限时活动）、我的倍率分解、下次变价时刻、从今天零点起 7 天的时间轴、
+     * 我的会员优惠与各档位优惠对比。
+     */
+    @Throws(IOException::class)
+    fun pricing(): AegisAIPricing =
+        decode(client.call("GET", "/ai/pricing", requireAuth = true), AegisAIPricing.serializer())
+
+    /** 额度商店：在售额度包与我的报价（会员折扣、多送、每万额度单价、能否购买与原因、余额够不够）。商店关闭时 `enabled = false`。 */
+    @Throws(IOException::class)
+    fun packages(): AegisAIPackageList =
+        decode(client.call("GET", "/ai/packages", requireAuth = true), AegisAIPackageList.serializer())
+
+    /**
+     * 用钱包余额买额度包，得到一个额度批次。
+     *
+     * [requestId]（8–64 位）幂等：同一编号重放返回原订单（`replayed = true`），所以网络不确定时用**同一个编号**重试；
+     * 编号已用于别的包时 40242。[expectedPrice] 是界面上展示的实付（`finalPrice`），与当前报价不符时 40236（请刷新）。
+     *
+     * 失败码：40232 包不存在或已下架、40233 商店未开放、40235 不可购买（未开始 / 已结束 / 售罄 / 限购，提示里写明）、
+     * 40237 余额不足、40243 仅限会员（或指定档位）。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun purchasePackage(id: Long, requestId: String, expectedPrice: String? = null): AegisAIPurchaseResult = decode(
+        // requestId 让重放只返回原订单，所以响应丢了也可以自动重发。
+        client.send(
+            "POST", "/ai/packages/$id/purchase",
+            buildBody("requestId" to requestId, "expectedPrice" to expectedPrice),
+            requireAuth = true,
+            retrySafe = true,
+        ),
+        AegisAIPurchaseResult.serializer(),
+    )
+
+    /** 我的额度包订单（新的在前）。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun orders(page: Int = 1, limit: Int = 20): AegisAIPage<AegisAIPackageOrder> = decode(
+        client.call("GET", "/ai/orders", query = pageQuery(page, limit), requireAuth = true),
+        AegisAIPage.serializer(AegisAIPackageOrder.serializer()),
+    )
+
+    /**
+     * 我的额度批次。[scope]：`active`（默认，可用与调用暂扣中的）/ `all`（含用完、到期、作废的），
+     * 见 [AegisAICreditLot.SCOPE_ACTIVE]。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun lots(scope: String = AegisAICreditLot.SCOPE_ACTIVE, page: Int = 1, limit: Int = 20): AegisAIPage<AegisAICreditLot> = decode(
+        client.call(
+            "GET", "/ai/lots",
+            query = buildQuery("scope" to scope, "page" to page.toString(), "limit" to limit.toString()),
+            requireAuth = true,
+        ),
+        AegisAIPage.serializer(AegisAICreditLot.serializer()),
+    )
+
+    /** 领新人礼（每人一次），得到一个 `welcome` 批次。未开放或已领取时 40240。 */
+    @Throws(IOException::class)
+    fun claimWelcome(): AegisAIWelcomeResult = decode(
+        client.call("POST", "/ai/welcome", emptyMap<String, Any?>(), requireAuth = true),
+        AegisAIWelcomeResult.serializer(),
+    )
 
     /**
      * 公开模型目录（models.dev、OpenRouter、LiteLLM 合并）按名字批量查能力：识图、工具、思考与可选强度、
@@ -2507,11 +2586,32 @@ class AegisAIGatewayApi internal constructor(private val client: AegisClient) {
     fun request(requestNo: String): JsonElement =
         client.call("GET", "/ai/requests/${encodePathSegment(requestNo)}", requireAuth = true)
 
-    /** 赠送额度流水：看广告与管理员发放、调用消费、退款。 */
+    /** 额度流水（永久额度与额度包）：发放、调用消费、退款、购买、新人礼、到期、作废。解好的版本见 [creditEntries]。 */
     @Throws(IOException::class)
     @JvmOverloads
     fun credits(page: Int = 1, limit: Int = 20): JsonElement =
         client.call("GET", "/ai/credits", query = pageQuery(page, limit), requireAuth = true)
+
+    /**
+     * [credits] 解好的版本：额度流水（永久额度与额度包），`kind` 见 [AegisAICreditEntry.KIND_GRANT] 等，
+     * `bucket` 是哪一桶，`balanceAfter` 这一桶变动后的余额，`totalAfter` 变动后的 AI 额度合计。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun creditEntries(page: Int = 1, limit: Int = 20): AegisAIPage<AegisAICreditEntry> =
+        decode(credits(page, limit), AegisAIPage.serializer(AegisAICreditEntry.serializer()))
+
+    /** 网关的数值字段可能下发 null（Go 的空切片、可空时间）：null 换成数据类的默认值，未知字段忽略。 */
+    private fun <T> decode(element: JsonElement, serializer: kotlinx.serialization.DeserializationStrategy<T>): T =
+        aiJson.decodeFromJsonElement(serializer, element)
+
+    private companion object {
+        val aiJson = kotlinx.serialization.json.Json {
+            ignoreUnknownKeys = true
+            explicitNulls = false
+            coerceInputValues = true
+        }
+    }
 }
 
 @kotlinx.serialization.Serializable

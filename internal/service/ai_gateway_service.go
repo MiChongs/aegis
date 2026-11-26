@@ -145,7 +145,7 @@ func mapAIGatewayError(err error) error {
 	case errors.Is(err, pgrepo.ErrUserNotFound):
 		return apperrors.New(40401, http.StatusNotFound, "用户不存在")
 	}
-	return err
+	return mapAIGatewayCommerceError(err)
 }
 
 // ── 后台回收 ──
@@ -178,6 +178,11 @@ func (s *AIGatewayService) Start(ctx context.Context) {
 					s.log.Warn("清理 AI 异步任务失败", zap.Error(err))
 				} else if interrupted > 0 {
 					s.log.Warn("中断的 AI 异步任务已判为失败", zap.Int64("count", interrupted))
+				}
+				if swept, err := s.pg.SweepAIGatewayLots(ctx, s.now(), aiGatewaySweepBatch); err != nil {
+					s.log.Warn("清理到期的 AI 额度批次失败", zap.Error(err))
+				} else if swept > 0 {
+					s.log.Info("到期的 AI 额度批次已清零", zap.Int("count", swept))
 				}
 				timer.Reset(aiGatewaySweepInterval)
 			}
@@ -247,6 +252,9 @@ func (s *AIGatewayService) SaveSettings(ctx context.Context, appID int64, in aig
 	normalized, err := aigateway.NormalizeSettings(in)
 	if err != nil {
 		return nil, mapAIGatewayError(err)
+	}
+	if err := s.checkMemberTiers(ctx, appID, normalized.MemberTiers); err != nil {
+		return nil, err
 	}
 	return s.pg.SaveAIGatewaySettings(ctx, appID, normalized, operator)
 }
@@ -443,35 +451,52 @@ func (s *AIGatewayService) overview(ctx context.Context, appID, userID int64, se
 	if err != nil {
 		return nil, err
 	}
-	out := buildAIGatewayOverview(settings, *facts, todaySpent)
+	out := buildAIGatewayOverview(settings, *facts, todaySpent, now)
 	return &out, nil
 }
 
 // buildAIGatewayOverview 由事实算总览（纯函数，可用量的口径与暂扣一致）。
-func buildAIGatewayOverview(settings aigateway.Settings, facts aigateway.AccountFacts, todaySpent int64) aigateway.Overview {
-	profile := facts.Profile
+func buildAIGatewayOverview(settings aigateway.Settings, facts aigateway.AccountFacts, todaySpent int64, now time.Time) aigateway.Overview {
+	member := settings.Member(facts.Profile)
+	profile := facts.Profile.ApplyMember(member)
+	pricing := settings.Pricing(member, profile.Level, "", "", now)
 	out := aigateway.Overview{
 		Enabled:           settings.Enabled,
 		AllowSessionToken: settings.AllowSessionToken,
 		Audience:          settings.Audience,
 		Eligible:          settings.Audience != aigateway.AudienceVip || profile.IsVip,
+		Unit:              "额度",
 		Sources:           make([]aigateway.SourceMeta, 0, len(settings.Sources)),
 		Profile:           profile,
-		Factor:            settings.Factor(profile),
+		Member:            member,
+		Factor:            pricing.Total,
+		Pricing:           pricing,
+		NextChangeAt:      settings.NextChange("", "", now),
 		Quotas:            []aigateway.QuotaView{},
+		Pack:              aigateway.MicroToPoints(facts.Pack),
+		PackFrozen:        aigateway.MicroToPoints(facts.PackFrozen),
 		Credit:            aigateway.MicroToPoints(facts.Account.Credit),
 		CreditFrozen:      aigateway.MicroToPoints(facts.Account.CreditFrozen),
-		Integral:          facts.Integral,
+		Balance:           aigateway.MicroToPoints(facts.Pack + facts.Account.Credit),
 		Wallet:            decimal.New(facts.WalletCents, -2),
 		WalletRate:        settings.WalletRate,
 		DailySpendLimit:   settings.DailySpendLimit,
 		TodaySpent:        aigateway.MicroToPoints(todaySpent),
 		TotalSpent:        aigateway.MicroToPoints(facts.Account.TotalSpent),
 		TotalRequests:     facts.Account.TotalRequests,
-		RPM:               settings.RPM,
-		MaxConcurrent:     settings.MaxConcurrent,
+		RPM:               settings.EffectiveRPM(member),
+		MaxConcurrent:     settings.EffectiveConcurrency(member),
 		MaxKeysPerUser:    settings.MaxKeysPerUser,
-		BaseURL:           RelayBasePath,
+		Welcome: aigateway.WelcomeView{
+			Enabled: settings.Welcome.Enabled, Amount: settings.Welcome.Amount, ValidityDays: settings.Welcome.ValidityDays,
+			Claimable: settings.Enabled && settings.Welcome.Enabled && settings.Welcome.Amount.Sign() > 0 && facts.WelcomeClaimedAt == nil,
+			ClaimedAt: facts.WelcomeClaimedAt,
+		},
+		Store:   aigateway.StoreView{Enabled: settings.Enabled && settings.Store.Enabled},
+		BaseURL: RelayBasePath,
+	}
+	if facts.ExpiringMicro > 0 && facts.ExpiringAt != nil {
+		out.Expiring = &aigateway.ExpiringCredit{Amount: aigateway.MicroToPoints(facts.ExpiringMicro), At: *facts.ExpiringAt}
 	}
 	var available int64
 	add := func(micro int64) {
@@ -487,13 +512,20 @@ func buildAIGatewayOverview(settings aigateway.Settings, facts aigateway.Account
 		out.Sources = append(out.Sources, meta)
 		switch source {
 		case aigateway.SourceFreeDaily, aigateway.SourceVipDaily, aigateway.SourceVipMonthly:
-			limit := settings.QuotaMicro(source)
+			limit := settings.QuotaMicroFor(source, member)
+			eligible := !meta.VipOnly || profile.IsVip
+			if !eligible {
+				// 非会员也给出会员额度的数（通用会员值），页面据此引导开通；不计入可用
+				limit = settings.QuotaMicro(source)
+			}
 			if limit <= 0 {
 				continue
 			}
 			usage := facts.QuotaUsage[source]
 			remaining := max(limit-usage.Used-usage.Reserved, 0)
-			eligible := !meta.VipOnly || profile.IsVip
+			if !eligible {
+				remaining = 0
+			}
 			out.Quotas = append(out.Quotas, aigateway.QuotaView{
 				Source: source, Label: meta.Label, Period: usage.Period,
 				Limit: aigateway.MicroToPoints(limit), Used: aigateway.MicroToPoints(usage.Used),
@@ -503,12 +535,10 @@ func buildAIGatewayOverview(settings aigateway.Settings, facts aigateway.Account
 			if eligible {
 				add(remaining)
 			}
+		case aigateway.SourcePack:
+			add(facts.Pack)
 		case aigateway.SourceCredit:
 			add(facts.Account.Credit)
-		case aigateway.SourceIntegral:
-			if facts.Integral > 0 && facts.Integral < (1<<62)/aigateway.MicroPerPoint {
-				add(facts.Integral * aigateway.MicroPerPoint)
-			}
 		case aigateway.SourceWallet:
 			add(aigateway.WalletAvailableMicro(facts.WalletCents, settings.WalletRate))
 		}
@@ -535,13 +565,17 @@ func (s *AIGatewayService) Models(ctx context.Context, session *authdomain.Sessi
 	if err != nil {
 		return nil, err
 	}
-	factor := settings.Factor(facts.Profile)
+	member := settings.Member(facts.Profile)
+	now := s.now()
 	out := make([]aigateway.UserModel, 0, len(models))
 	for _, model := range models {
+		pricing := settings.Pricing(member, facts.Profile.Level, model.Model, model.Kind, now)
+		base := pricing.Base.Mul(pricing.Member).Mul(pricing.Level)
 		item := aigateway.UserModel{
 			Model: model.Model, Kind: model.Kind, DisplayName: model.DisplayName, Description: model.Description,
 			VipOnly: model.VipOnly, Available: !model.VipOnly || facts.Profile.IsVip,
-			Price: model.Price.Scaled(factor), MaxOutputTokens: model.MaxOutputTokens,
+			Price: model.Price.Scaled(pricing.Total), BasePrice: model.Price.Scaled(base), Factor: pricing.Total,
+			Window: pricing.Window, MaxOutputTokens: model.MaxOutputTokens,
 		}
 		if model.Kind == aigateway.KindChat {
 			capabilities := model.Capabilities

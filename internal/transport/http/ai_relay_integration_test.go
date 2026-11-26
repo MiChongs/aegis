@@ -78,7 +78,9 @@ func TestAIRelayHTTPIntegration(t *testing.T) {
 	}
 	settings := aigateway.DefaultSettings()
 	settings.Enabled = true
-	settings.Sources = []string{aigateway.SourceIntegral}
+	// 余额直付 0.01 元/额度：1 额度 = 1 分，与旧的积分口径同一套算术（AI 额度与积分已不互通）。
+	settings.Sources = []string{aigateway.SourceWallet}
+	settings.WalletRate = decimal.RequireFromString("0.01")
 	settings.RPM = 0
 	if _, err := gw.SaveSettings(ctx, appID, settings, "test"); err != nil {
 		t.Fatal(err)
@@ -96,8 +98,11 @@ func TestAIRelayHTTPIntegration(t *testing.T) {
 		}
 	}
 	var userID int64
-	if err := pool.QueryRow(ctx, `INSERT INTO users (appid, account, enabled, integral) VALUES ($1, 'relay-user', TRUE, 100) RETURNING id`,
+	if err := pool.QueryRow(ctx, `INSERT INTO users (appid, account, enabled) VALUES ($1, 'relay-user', TRUE) RETURNING id`,
 		appID).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_wallets (user_id, appid, balance) VALUES ($1, $2, 1.00)`, userID, appID); err != nil {
 		t.Fatal(err)
 	}
 	created, err := gw.CreateKey(ctx, &authdomain.Session{AppID: appID, UserID: userID}, aigateway.KeyInput{})
@@ -308,7 +313,7 @@ func TestAIRelayHTTPIntegration(t *testing.T) {
 	if resp.StatusCode != 404 || !strings.Contains(string(body), `"code":"model_not_found"`) {
 		t.Fatalf("未知模型应 404：%d %s", resp.StatusCode, body)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE users SET integral = 0 WHERE id = $1`, userID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE user_wallets SET balance = 0, bonus_balance = 0 WHERE user_id = $1`, userID); err != nil {
 		t.Fatal(err)
 	}
 	resp, body = do("POST", "/api/ai/v1/chat/completions", "application/json", strings.NewReader(chatBody), bearer)
@@ -319,7 +324,7 @@ func TestAIRelayHTTPIntegration(t *testing.T) {
 	if resp.StatusCode != 402 || !strings.Contains(string(body), `"type":"billing_error"`) {
 		t.Fatalf("Anthropic 形状的余额不足不对：%d %s", resp.StatusCode, body)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE users SET integral = 100 WHERE id = $1`, userID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE user_wallets SET balance = 1.00 WHERE user_id = $1`, userID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -370,7 +375,7 @@ func TestAIRelayHTTPIntegration(t *testing.T) {
 	integral := func() int64 {
 		t.Helper()
 		var value int64
-		if err := pool.QueryRow(ctx, `SELECT integral FROM users WHERE id = $1`, userID).Scan(&value); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT (balance * 100)::bigint FROM user_wallets WHERE user_id = $1`, userID).Scan(&value); err != nil {
 			t.Fatal(err)
 		}
 		return value
@@ -557,7 +562,9 @@ func resetRelayTestDatabase(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 			if _, err := pool.Exec(ctx, sql); err != nil {
 				msg := err.Error()
 				if strings.Contains(msg, "vector") || strings.Contains(msg, "postgis") ||
-					strings.Contains(msg, "geography") || strings.Contains(msg, "geometry") {
+					strings.Contains(msg, "geography") || strings.Contains(msg, "geometry") ||
+					// 地理事件表随 PostGIS 迁移一起被跳过，给它补索引的迁移（000119）同样跳过（与 service 包一致）
+					strings.Contains(msg, `relation "login_geo_events" does not exist`) {
 					continue
 				}
 				t.Fatalf("apply %s: %v", filepath.Base(file), err)

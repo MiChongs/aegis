@@ -10,7 +10,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// MicroPerPoint 1 点 = 1,000,000 微点。点是网关的计价单位，1 点按 1 积分定价。
+// MicroPerPoint 1 点 = 1,000,000 微点。点是网关的计价单位，对外叫「额度」。
+// 2026-11-26 起 AI 额度是独立资产，与积分不互通（docs/ai-billing.md）。
 const MicroPerPoint int64 = 1_000_000
 
 // ── 扣费来源 ──
@@ -22,9 +23,12 @@ const (
 	// SourceVipDaily / SourceVipMonthly 会员额度：只有有效会员（含永久）可用。
 	SourceVipDaily   = "vip_daily"
 	SourceVipMonthly = "vip_monthly"
-	// SourceCredit 赠送额度余额：看激励广告、管理员发放、调用退款进来，不过期。
+	// SourcePack 额度包：买来的、新人礼、管理员限期发放的额度批次，有到期时间，先到期的先用。
+	SourcePack = "pack"
+	// SourceCredit 永久额度：看激励广告、活动发放、调用退款进来，不过期。
 	SourceCredit = "credit"
-	// SourceIntegral 积分：1 点扣 1 积分，不足一个积分的零头累计凑整。
+	// SourceIntegral 积分（已停用）：AI 额度与积分不再互通，设置里不能再选它。
+	// 常量只为存量的暂扣、结算与退款按原规则走完。
 	SourceIntegral = "integral"
 	// SourceWallet 余额：按设置里的折算比例（每点多少元）扣，零头同样累计凑整。
 	SourceWallet = "wallet"
@@ -51,12 +55,30 @@ var sourceCatalog = []SourceMeta{
 		Hint: "有效会员（含永久会员）每天可用的额度"},
 	{Key: SourceVipMonthly, Label: "会员每月额度", Periodic: true, Period: "month", VipOnly: true,
 		Hint: "有效会员每个自然月可用的额度"},
-	{Key: SourceCredit, Label: "赠送额度",
-		Hint: "看激励广告、管理员发放与调用退款得到的额度，不过期"},
-	{Key: SourceIntegral, Label: "积分",
-		Hint: "1 点扣 1 积分；不足 1 积分的零头累计，凑满 1 积分时再扣"},
-	{Key: SourceWallet, Label: "余额",
-		Hint: "按「余额折算」把点数换成金额扣除，不足 1 分的零头累计凑整"},
+	{Key: SourcePack, Label: "额度包",
+		Hint: "用余额购买、新人礼与限期发放的额度，有效期内可用，先到期的先用"},
+	{Key: SourceCredit, Label: "永久额度",
+		Hint: "看激励广告、活动发放与调用退款得到的额度，不过期"},
+	{Key: SourceWallet, Label: "余额直付",
+		Hint: "额度用完后按「余额直付」的单价直接从钱包余额扣，不足 1 分的零头累计凑整"},
+}
+
+// legacySources 已停用、只在存量记录上出现的来源。
+var legacySources = []SourceMeta{
+	{Key: SourceIntegral, Label: "积分（已停用）", Hint: "AI 额度与积分已不互通，只出现在旧的调用记录里"},
+}
+
+// SourceLabel 来源的中文名（含已停用的来源）。
+func SourceLabel(key string) string {
+	if meta, ok := FindSource(key); ok {
+		return meta.Label
+	}
+	for _, item := range legacySources {
+		if item.Key == key {
+			return item.Label
+		}
+	}
+	return key
 }
 
 // Sources 扣费来源目录，顺序即默认的扣费顺序。
@@ -191,8 +213,9 @@ type Settings struct {
 	// Sources 启用的扣费来源，顺序即扣费顺序。
 	Sources []string `json:"sources"`
 
-	// 倍率：最终价格 = 模型单价 × PriceMultiplier × （会员时 VipMultiplier）× 等级倍率。
-	PriceMultiplier  decimal.Decimal   `json:"priceMultiplier"`
+	// 倍率：最终价格 = 模型单价 × PriceMultiplier × 会员倍率 × 等级倍率 × 时段倍率（见 Pricing）。
+	PriceMultiplier decimal.Decimal `json:"priceMultiplier"`
+	// VipMultiplier 等通用会员配置：是会员、但持有的档位都没在 MemberTiers 里配置时用它们。
 	VipMultiplier    decimal.Decimal   `json:"vipMultiplier"`
 	LevelMultipliers []LevelMultiplier `json:"levelMultipliers"`
 
@@ -200,8 +223,18 @@ type Settings struct {
 	FreeDaily  decimal.Decimal `json:"freeDaily"`
 	VipDaily   decimal.Decimal `json:"vipDaily"`
 	VipMonthly decimal.Decimal `json:"vipMonthly"`
+	// VipPackDiscount / VipPackBonusRate 通用会员买额度包的折扣（0.9 = 9 折）与多送比例（0.1 = 多送 10%）。
+	VipPackDiscount  decimal.Decimal `json:"vipPackDiscount"`
+	VipPackBonusRate decimal.Decimal `json:"vipPackBonusRate"`
+	// MemberTiers 按会员档位的优惠，列表顺序即优先级（持有多个档位时取最靠前的）。
+	MemberTiers []MemberTier `json:"memberTiers"`
+	// TimePricing 时段价格。
+	TimePricing TimePricing `json:"timePricing"`
+	// Welcome 新人礼；Store 额度商店。
+	Welcome WelcomeGift   `json:"welcome"`
+	Store   StoreSettings `json:"store"`
 
-	// WalletRate 余额折算：每 1 点扣多少元。
+	// WalletRate 余额直付：每 1 点（额度）扣多少元。
 	WalletRate decimal.Decimal `json:"walletRate"`
 
 	// 限制。DailySpendLimit 每人每天最多消费多少点（全部来源合计），0 不限。
@@ -222,21 +255,27 @@ type Settings struct {
 	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
 }
 
-// DefaultSettings 默认设置：关闭；开启后默认先用免费与会员额度，再用赠送额度，最后扣积分。
-// 余额是真钱，默认不在扣费来源里，需要管理员确认折算比例后自己加上。
+// DefaultSettings 默认设置：关闭；开启后先用免费与会员额度，再用额度包（先到期的先用）、永久额度，
+// 最后按「余额直付」从钱包扣。
 func DefaultSettings() Settings {
 	return Settings{
 		Enabled:           false,
 		AllowSessionToken: true,
 		Audience:          AudienceAll,
-		Sources:           []string{SourceFreeDaily, SourceVipDaily, SourceVipMonthly, SourceCredit, SourceIntegral},
+		Sources:           []string{SourceFreeDaily, SourceVipDaily, SourceVipMonthly, SourcePack, SourceCredit, SourceWallet},
 		PriceMultiplier:   decimal.NewFromInt(1),
 		VipMultiplier:     decimal.NewFromInt(1),
 		LevelMultipliers:  []LevelMultiplier{},
 		FreeDaily:         decimal.Zero,
 		VipDaily:          decimal.Zero,
 		VipMonthly:        decimal.Zero,
-		WalletRate:        decimal.RequireFromString("0.01"),
+		VipPackDiscount:   decimal.NewFromInt(1),
+		VipPackBonusRate:  decimal.Zero,
+		MemberTiers:       []MemberTier{},
+		TimePricing:       TimePricing{Stacking: StackMultiply, Windows: []TimeWindow{}},
+		Welcome:           WelcomeGift{Amount: decimal.Zero, ValidityDays: 30},
+		Store:             StoreSettings{Enabled: true},
+		WalletRate:        decimal.RequireFromString("0.001"),
 		DailySpendLimit:   decimal.Zero,
 		RPM:               60,
 		MaxConcurrent:     5,
@@ -264,7 +303,24 @@ func (s Settings) Location() *time.Location {
 	return time.UTC
 }
 
-// QuotaMicro 周期额度的上限（微点）。
+// QuotaMicroFor 周期额度对某位用户的上限（微点）：会员额度按他生效的会员档位取。
+func (s Settings) QuotaMicroFor(source string, member MemberBenefit) int64 {
+	switch source {
+	case SourceVipDaily:
+		if member.Source == MemberSourceNone {
+			return 0
+		}
+		return PointsToMicroFloor(member.Daily)
+	case SourceVipMonthly:
+		if member.Source == MemberSourceNone {
+			return 0
+		}
+		return PointsToMicroFloor(member.Monthly)
+	}
+	return s.QuotaMicro(source)
+}
+
+// QuotaMicro 周期额度的上限（微点），会员额度取通用会员配置。
 func (s Settings) QuotaMicro(source string) int64 {
 	switch source {
 	case SourceFreeDaily:
@@ -292,23 +348,37 @@ func PeriodKey(source string, now time.Time, loc *time.Location) string {
 type Profile struct {
 	IsVip bool `json:"isVip"`
 	Level int  `json:"level"`
+	// TierIDs 此刻持有的会员档位（vip.Holdings.Tiers）；TierID / TierName 是计价生效的那个档位（没有为 0）。
+	TierIDs  []int64 `json:"tierIds,omitempty"`
+	TierID   int64   `json:"tierId,omitempty"`
+	TierName string  `json:"tierName,omitempty"`
+	// tierNames 档位名（不出网），Member 用它给没写 label 的档位取名。
+	tierNames map[int64]string
 }
 
-// Factor 该用户的价格倍率。
-func (s Settings) Factor(profile Profile) decimal.Decimal {
-	factor := s.PriceMultiplier
-	if profile.IsVip {
-		factor = factor.Mul(s.VipMultiplier)
-	}
+// WithTierNames 记下档位名（来自会员判定的持有档位）。
+func (p Profile) WithTierNames(names map[int64]string) Profile {
+	p.tierNames = names
+	return p
+}
+
+// levelFactor 等级倍率：取用户等级满足的最高一档。
+func (s Settings) levelFactor(level int) decimal.Decimal {
 	best := -1
-	level := decimal.NewFromInt(1)
+	out := decimal.NewFromInt(1)
 	for _, item := range s.LevelMultipliers {
-		if profile.Level >= item.Level && item.Level > best {
+		if level >= item.Level && item.Level > best {
 			best = item.Level
-			level = item.Multiplier
+			out = item.Multiplier
 		}
 	}
-	return factor.Mul(level)
+	return out
+}
+
+// Factor 该用户不含时段的价格倍率：全局 × 会员（按档位）× 等级。
+func (s Settings) Factor(profile Profile) decimal.Decimal {
+	member := s.Member(profile)
+	return s.PriceMultiplier.Mul(member.Multiplier).Mul(s.levelFactor(profile.Level))
 }
 
 // ── 模型 ──
@@ -398,7 +468,11 @@ type UserModel struct {
 	// Available 当前用户能不能调（会员专享而用户不是会员时为 false）。
 	Available bool `json:"available"`
 	Price
-	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
+	// BasePrice 不含时段倍率的单价；Factor 此刻的合计倍率；Window 此刻对这个模型生效的时段（没有为 null）。
+	BasePrice       Price           `json:"basePrice"`
+	Factor          decimal.Decimal `json:"factor"`
+	Window          *TimeMatch      `json:"window"`
+	MaxOutputTokens int             `json:"maxOutputTokens,omitempty"`
 	// Capabilities 只有对话模型带。
 	Capabilities *Capabilities `json:"capabilities,omitempty"`
 }
@@ -512,15 +586,24 @@ type Hold struct {
 	// Units 实际从账上移走的整数单位：积分为积分，余额为分。额度类来源为 0。
 	Units  int64  `json:"units,omitempty"`
 	Period string `json:"period,omitempty"`
+	// Lots 额度包来源在各批次上的拆分（按扣费顺序）。
+	Lots []LotPart `json:"lots,omitempty"`
+}
+
+// LotPart 一个额度批次承担的微点。
+type LotPart struct {
+	LotID int64 `json:"lotId"`
+	Micro int64 `json:"micro"`
 }
 
 // Charge 一个来源上的实际扣费。
 type Charge struct {
-	Source string `json:"source"`
-	Micro  int64  `json:"micro"`
-	Units  int64  `json:"units,omitempty"`
-	Period string `json:"period,omitempty"`
-	TxnNo  string `json:"txnNo,omitempty"`
+	Source string    `json:"source"`
+	Micro  int64     `json:"micro"`
+	Units  int64     `json:"units,omitempty"`
+	Period string    `json:"period,omitempty"`
+	TxnNo  string    `json:"txnNo,omitempty"`
+	Lots   []LotPart `json:"lots,omitempty"`
 }
 
 // BillingSnapshot 暂扣那一刻的计费口径。结算、放回与退款都按它来，
@@ -535,6 +618,9 @@ type BillingSnapshot struct {
 	SpendLimit  int64   `json:"spendLimit,omitempty"`
 	SpendPeriod string  `json:"spendPeriod,omitempty"`
 	Profile     Profile `json:"profile"`
+	// Member / Pricing 暂扣时生效的会员优惠与倍率分解（时段、叠加方式），结算与退款不再重算。
+	Member  *MemberBenefit   `json:"member,omitempty"`
+	Pricing *FactorBreakdown `json:"pricing,omitempty"`
 }
 
 // Location 快照里的时区。
@@ -712,15 +798,24 @@ type Overview struct {
 	AllowSessionToken bool            `json:"allowSessionToken"`
 	Audience          string          `json:"audience"`
 	Eligible          bool            `json:"eligible"`
+	Unit              string          `json:"unit"`
 	Sources           []SourceMeta    `json:"sources"`
 	Profile           Profile         `json:"profile"`
+	Member            MemberBenefit   `json:"member"`
 	Factor            decimal.Decimal `json:"factor"`
+	Pricing           FactorBreakdown `json:"pricing"`
+	NextChangeAt      *time.Time      `json:"nextChangeAt"`
 	Quotas            []QuotaView     `json:"quotas"`
+	Pack              decimal.Decimal `json:"pack"`
+	PackFrozen        decimal.Decimal `json:"packFrozen"`
 	Credit            decimal.Decimal `json:"credit"`
 	CreditFrozen      decimal.Decimal `json:"creditFrozen"`
-	Integral          int64           `json:"integral"`
-	Wallet            decimal.Decimal `json:"wallet"`
-	WalletRate        decimal.Decimal `json:"walletRate"`
+	// Balance AI 额度合计：额度包 + 永久额度（不含暂扣中）。
+	Balance decimal.Decimal `json:"balance"`
+	// Expiring 7 天内到期的额度包合计与最早的到期时间。
+	Expiring   *ExpiringCredit `json:"expiring"`
+	Wallet     decimal.Decimal `json:"wallet"`
+	WalletRate decimal.Decimal `json:"walletRate"`
 	// Available 现在一共能用多少点（启用的来源合计，扣掉暂扣中的部分）。
 	Available       decimal.Decimal `json:"available"`
 	DailySpendLimit decimal.Decimal `json:"dailySpendLimit"`
@@ -730,8 +825,30 @@ type Overview struct {
 	RPM             int             `json:"rpm"`
 	MaxConcurrent   int             `json:"maxConcurrent"`
 	MaxKeysPerUser  int             `json:"maxKeysPerUser"`
+	Welcome         WelcomeView     `json:"welcome"`
+	Store           StoreView       `json:"store"`
 	// BaseURL OpenAI SDK 的 baseURL 应填的路径（相对站点根）。
 	BaseURL string `json:"baseUrl"`
+}
+
+// ExpiringCredit 即将到期的额度。
+type ExpiringCredit struct {
+	Amount decimal.Decimal `json:"amount"`
+	At     time.Time       `json:"at"`
+}
+
+// WelcomeView 新人礼对这位用户的状态。
+type WelcomeView struct {
+	Enabled      bool            `json:"enabled"`
+	Amount       decimal.Decimal `json:"amount"`
+	ValidityDays int             `json:"validityDays"`
+	Claimable    bool            `json:"claimable"`
+	ClaimedAt    *time.Time      `json:"claimedAt"`
+}
+
+// StoreView 额度商店对用户是否开放。
+type StoreView struct {
+	Enabled bool `json:"enabled"`
 }
 
 // Account 网关账户的原始数值（微点）。
@@ -752,6 +869,12 @@ type AccountFacts struct {
 	Profile     Profile
 	Integral    int64
 	WalletCents int64
+	// Pack / PackFrozen 额度包批次此刻可用与暂扣中的合计（微点）；ExpiringMicro / ExpiringAt 7 天内到期的部分。
+	Pack             int64
+	PackFrozen       int64
+	ExpiringMicro    int64
+	ExpiringAt       *time.Time
+	WelcomeClaimedAt *time.Time
 	// QuotaUsage 当前周期的用量：键为来源。
 	QuotaUsage map[string]QuotaUsage
 }
@@ -763,12 +886,16 @@ type QuotaUsage struct {
 	Reserved int64
 }
 
-// CreditEntry 赠送额度流水。
+// CreditEntry 额度流水（永久额度与额度包）。
 type CreditEntry struct {
-	ID           int64           `json:"id"`
-	Kind         string          `json:"kind"`
-	Amount       decimal.Decimal `json:"amount"`
+	ID     int64           `json:"id"`
+	Kind   string          `json:"kind"`
+	Bucket string          `json:"bucket"`
+	LotID  int64           `json:"lotId,omitempty"`
+	Amount decimal.Decimal `json:"amount"`
+	// BalanceAfter 这一桶变动后的余额；TotalAfter 变动后的 AI 额度合计（永久 + 额度包，不含暂扣）。
 	BalanceAfter decimal.Decimal `json:"balanceAfter"`
+	TotalAfter   decimal.Decimal `json:"totalAfter"`
 	RefType      string          `json:"refType,omitempty"`
 	RefID        string          `json:"refId,omitempty"`
 	Remark       string          `json:"remark,omitempty"`
@@ -776,12 +903,23 @@ type CreditEntry struct {
 	CreatedAt    time.Time       `json:"createdAt"`
 }
 
-// 赠送额度流水种类。
+// 额度流水种类。
 const (
-	CreditGrant   = "grant"
-	CreditConsume = "consume"
-	CreditRefund  = "refund"
-	CreditAdjust  = "adjust"
+	CreditGrant       = "grant"
+	CreditConsume     = "consume"
+	CreditRefund      = "refund"
+	CreditAdjust      = "adjust"
+	CreditPurchase    = "purchase"
+	CreditWelcome     = "welcome"
+	CreditExpire      = "expire"
+	CreditRevoke      = "revoke"
+	CreditOrderRefund = "order_refund"
+)
+
+// 额度流水的桶。
+const (
+	BucketCredit = "credit"
+	BucketPack   = "pack"
 )
 
 // CreditAdjustInput 管理员调整赠送额度。

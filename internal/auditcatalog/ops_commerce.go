@@ -361,6 +361,19 @@ func init() {
 		View("GET /api/admin/apps/:appkey/ai-gateway/users/:userId/account", "查看用户 AI 账户", "用户"),
 		View("GET /api/admin/apps/:appkey/ai-gateway/users/:userId/credits", "查看用户赠送额度流水", "用户"),
 		Write("POST /api/admin/apps/:appkey/ai-gateway/users/:userId/credits", "调整用户 AI 赠送额度", "用户", SeverityHigh),
+		// AI 额度的收费面（docs/ai-billing.md）：退款、发放、作废直接动用户的钱或额度，按高风险记
+		View("POST /api/admin/apps/:appkey/ai-gateway/pricing/preview", "模拟 AI 中转价格", ""),
+		View("GET /api/admin/apps/:appkey/ai-gateway/packages", "查看 AI 额度包", ""),
+		Write("POST /api/admin/apps/:appkey/ai-gateway/packages", "新建 AI 额度包", "AI 额度包", SeverityMedium),
+		Write("PUT /api/admin/apps/:appkey/ai-gateway/packages/:packageId", "修改 AI 额度包", "AI 额度包", SeverityMedium),
+		Write("PUT /api/admin/apps/:appkey/ai-gateway/packages/:packageId/status", "上架或下架 AI 额度包", "AI 额度包", SeverityMedium),
+		Write("DELETE /api/admin/apps/:appkey/ai-gateway/packages/:packageId", "删除 AI 额度包", "AI 额度包", SeverityMedium),
+		View("GET /api/admin/apps/:appkey/ai-gateway/package-orders", "查看 AI 额度包订单", ""),
+		Write("POST /api/admin/apps/:appkey/ai-gateway/package-orders/:orderNo/refund", "AI 额度包按剩余退款", "AI 额度包订单", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/ai-gateway/lots", "查看 AI 额度批次", ""),
+		Write("POST /api/admin/apps/:appkey/ai-gateway/users/:userId/lots", "发放 AI 限期额度", "用户", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/ai-gateway/lots/:lotId/revoke", "作废 AI 额度批次", "AI 额度批次", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/ai-gateway/commerce", "查看 AI 额度经营统计", ""),
 
 		// 支付配置与订单（兼容接口）
 		View("POST /api/admin/app/payment-config/list", "查看支付配置列表（兼容接口）", ""),

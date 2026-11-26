@@ -1,8 +1,12 @@
 # AI 中转网关
 
 应用的**终端用户**凭自己的 API 密钥（或登录会话的访问令牌）调用 OpenAI / Anthropic 兼容接口，
-网关把请求转给应用在「AI 服务」里配好的上游通道，按模型价格 × 本人倍率，
-从免费额度、会员额度、赠送额度、积分、余额里依次扣费。**调用失败不扣费。**
+网关把请求转给应用在「AI 服务」里配好的上游通道，按模型价格 × 本人倍率（会员档位、等级、时段），
+从免费额度、会员额度、额度包、永久额度、余额里依次扣费。**调用失败不扣费。**
+
+> 2026-11-26 起 **AI 额度是独立资产，与积分不互通**：积分不再是扣费来源，也不能换成额度。
+> 时段价格、会员档位优惠、额度包商店、限期额度批次与新人礼见 [ai-billing.md](ai-billing.md)；
+> 本文里关于积分来源的段落只描述存量记录的结算与退款。
 
 | | `/api/apps/{appkey}/ai/v1` | `/api/ai/v1`（本文） |
 |---|---|---|
@@ -225,10 +229,11 @@ Cloudflare 约 100 秒读超时），推理模型出第一个字前可能想上�
 | 来源 | 说明 |
 |---|---|
 | `free_daily` | 每日免费额度，所有用户，按应用时区的日历日重置 |
-| `vip_daily` / `vip_monthly` | 会员每日 / 每月额度，有效会员（含永久）才有 |
-| `credit` | 赠送额度：看激励广告（权益 `ai_credit`）、管理员调整、退款进来，不过期 |
-| `integral` | 积分：1 点扣 1 积分 |
-| `wallet` | 余额：按 `walletRate`（元 / 点）折算；是真钱，默认不启用 |
+| `vip_daily` / `vip_monthly` | 会员每日 / 每月额度，有效会员（含永久）才有；数额按会员档位（ai-billing.md） |
+| `pack` | 额度包：用余额购买、新人礼、管理员限期发放的批次，先到期的先用 |
+| `credit` | 永久额度：看激励广告（权益 `ai_credit`）、活动发放、管理员调整、退款进来，不过期 |
+| `wallet` | 余额直付：按 `walletRate`（元 / 额度）从钱包扣 |
+| ~~`integral`~~ | 已停用（AI 额度与积分不互通），设置里不能再选；迁移 000172 从各应用设置里去掉 |
 
 设置里的 `sources` 是**启用的来源及其顺序**，费用按顺序依次承担。
 另有 `dailySpendLimit`（每人每天全部来源合计）、`rpm`、`maxConcurrent`、`maxKeysPerUser` 与密钥自己的 `spendLimit`。
@@ -296,7 +301,8 @@ Cloudflare 约 100 秒读超时），推理模型出第一个字前可能想上�
 | `GET/POST /ai/keys`、`PUT/DELETE /ai/keys/{keyId}` | 密钥管理；修改只改传了的字段 |
 | `GET /ai/usage` | 用量统计：`range` 为 `today` / `24h`（按小时）或 `7d` / `30d` / `90d`（按日），日界按应用时区；可带 `keyId`（0 为登录令牌）与 `model` 过滤。返回合计（各状态调用数、输入输出 token、图片 / 字符 / 音频、扣费与退款、平均与 P95 延迟、平均首字延迟）、补零的时间序列，以及按模型、密钥、接口、扣费来源的分布 |
 | `GET /ai/requests`、`/ai/requests/{requestNo}` | 调用记录（用户端不含上游通道与上游模型名） |
-| `GET /ai/credits` | 赠送额度流水 |
+| `GET /ai/credits` | 额度流水（永久额度与额度包） |
+| `GET /ai/pricing`、`/ai/packages`、`POST /ai/packages/{id}/purchase`、`GET /ai/orders`、`/ai/lots`、`POST /ai/welcome` | 价格方案、额度商店、订单、批次、新人礼，见 [ai-billing.md](ai-billing.md) |
 
 管理端 `/api/admin/apps/{appkey}/ai-gateway/*`：`catalog`、`settings`、`models`、`requests`（含 `refund`）、
 `requests/summary`、`requests/live`、`keys`（含 `status`）、`stats`、`users/{userId}/account`、

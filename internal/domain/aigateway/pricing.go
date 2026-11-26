@@ -426,6 +426,9 @@ func NormalizeSettings(in Settings) (Settings, error) {
 	sources := make([]string, 0, len(out.Sources))
 	for _, raw := range out.Sources {
 		source := strings.TrimSpace(raw)
+		if source == SourceIntegral {
+			return out, invalid("AI 额度与积分已不互通，扣费来源不能再选积分")
+		}
 		if _, ok := FindSource(source); !ok {
 			return out, invalid("未知的扣费来源：%s", raw)
 		}
@@ -480,10 +483,10 @@ func NormalizeSettings(in Settings) (Settings, error) {
 		}
 	}
 	if out.HasSource(SourceWallet) && (out.WalletRate.Sign() <= 0 || out.WalletRate.GreaterThan(decimal.NewFromInt(1000))) {
-		return out, invalid("启用余额扣费时，余额折算应大于 0 且不超过 1000 元/点")
+		return out, invalid("启用余额直付时，单价应大于 0 且不超过 1000 元/额度")
 	}
 	if out.WalletRate.Sign() < 0 {
-		return out, invalid("余额折算不能为负数")
+		return out, invalid("余额直付单价不能为负数")
 	}
 	if out.RPM < 0 || out.RPM > 100_000 {
 		return out, invalid("每分钟请求数应在 0-100000 之间（0 不限）")
@@ -503,6 +506,9 @@ func NormalizeSettings(in Settings) (Settings, error) {
 	}
 	if _, err := loadLocation(out.Timezone); err != nil {
 		return out, invalid("无效的时区：%s", out.Timezone)
+	}
+	if err := normalizeBillingPlan(&out); err != nil {
+		return out, err
 	}
 	return out, nil
 }

@@ -53,7 +53,8 @@ func TestAIRelayHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := aigateway.DefaultSettings()
-	settings.Enabled, settings.Sources, settings.RPM, settings.MaxConcurrent = true, []string{aigateway.SourceIntegral}, 0, 20
+	settings.Enabled, settings.Sources, settings.RPM, settings.MaxConcurrent = true, []string{aigateway.SourceWallet}, 0, 20
+	settings.WalletRate = decimal.RequireFromString("0.01")
 	if _, err := gw.SaveSettings(ctx, appID, settings, "test"); err != nil {
 		t.Fatal(err)
 	}
@@ -69,8 +70,11 @@ func TestAIRelayHarness(t *testing.T) {
 		}
 	}
 	var userID int64
-	if err := pool.QueryRow(ctx, `INSERT INTO users (appid, account, enabled, integral) VALUES ($1, 'sdk-user', TRUE, 100000) RETURNING id`,
+	if err := pool.QueryRow(ctx, `INSERT INTO users (appid, account, enabled) VALUES ($1, 'sdk-user', TRUE) RETURNING id`,
 		appID).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_wallets (user_id, appid, balance) VALUES ($1, $2, 1000.00)`, userID, appID); err != nil {
 		t.Fatal(err)
 	}
 	created, err := gw.CreateKey(ctx, &authdomain.Session{AppID: appID, UserID: userID}, aigateway.KeyInput{})

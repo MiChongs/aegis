@@ -29,6 +29,9 @@ const (
 	// TxnTypeAIRefund AI 中转网关的调用退款（管理员整笔退回）。把消费退回来，不是充值，
 	// 因此同样不计入累计充值。
 	TxnTypeAIRefund = "ai_refund"
+	// TxnTypeAIPackage 用余额买 AI 额度包（出账，先扣赠送余额）。计入 total_consumed；
+	// 额度包退款走 ai_refund，按原拆分先补回赠送余额。
+	TxnTypeAIPackage = "ai_package"
 	// TxnTypeRechargeBonus 充值档位附赠的余额，进赠送余额，不计入累计充值。
 	TxnTypeRechargeBonus = "recharge_bonus"
 	// TxnTypeIntegralExchange 余额兑换积分（出账），只扣充值余额（本金）。

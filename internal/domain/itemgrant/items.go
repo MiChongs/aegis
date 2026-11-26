@@ -125,7 +125,7 @@ var itemSpecs = []ItemSpec{
 	{Type: ItemLotteryDraws, Label: "抽奖次数", Group: GroupAsset, Value: ValueAmount, Unit: "次", Min: 1, Max: 10_000, Scalable: true,
 		Hint: "应用级次数，任意活动可用；记为赠送的次数（排在兑换所得之前使用）"},
 	{Type: ItemAICredit, Label: "AI 额度", Group: GroupAsset, Value: ValueAmount, Unit: "点", Min: 1, Max: MaxAICreditPoints, Scalable: true,
-		Hint: "AI 中转的赠送额度，1 点按 1 积分定价、不过期"},
+		Hint: "AI 中转的永久额度（与积分不互通），不过期"},
 	{Type: ItemBalance, Label: "钱包余额", Group: GroupAsset, Value: ValueMoney, Unit: "元",
 		Hint: "计入余额但不计入累计充值"},
 	{Type: ItemLicenseDays, Label: "授权时长", Group: GroupLicense, Value: ValueAmount, Unit: "天", Min: 1, Max: 3650, Scalable: true, NeedsLoginCard: true,

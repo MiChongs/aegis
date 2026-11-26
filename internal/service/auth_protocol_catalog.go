@@ -343,9 +343,9 @@ var gatewayOperations = []authprotocol.Operation{
 	// 调用面在 /api/ai/v1（OpenAI / Anthropic SDK 直连，baseURL 见 aiOverview.baseUrl），这里是它的账户侧：
 	// 能用多少、扣费顺序、可用模型与单价、API 密钥、调用记录。规格见 docs/ai-gateway.md。
 	{Key: "aiOverview", Method: "GET", Path: "/ai/overview", Auth: true,
-		Summary: "AI 中转总览：是否开放、扣费顺序、各额度余量、积分与余额、价格倍率、今日已用、调用地址"},
+		Summary: "AI 中转总览：是否开放、扣费顺序、各额度余量、额度包与永久额度、余额直付、会员优惠、此刻的时段价格与倍率分解、新人礼、今日已用、调用地址"},
 	{Key: "aiModels", Method: "GET", Path: "/ai/models", Auth: true,
-		Summary: "可调用的模型与有效单价（已乘上本人的会员与等级倍率），会员专享模型标 available=false"},
+		Summary: "可调用的模型与有效单价（已乘上本人的会员、等级与此刻的时段倍率；basePrice 不含时段），会员专享模型标 available=false"},
 	{Key: "aiCatalogLookup", Method: "GET", Path: "/ai/catalog/lookup", Auth: false,
 		Summary: "公开模型目录按名字批量查能力：识图、工具、思考与可选强度、上下文与输出上限（models、providers 逗号分隔）"},
 	{Key: "aiKeys", Method: "GET", Path: "/ai/keys", Auth: true, Summary: "我的 API 密钥（只含提示，不含明文）"},
@@ -362,7 +362,18 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "aiRequest", Method: "GET", Path: "/ai/requests/{requestNo}", Auth: true,
 		Summary: "一次调用的明细（requestNo 即调用响应头 X-Aegis-Request-No）"},
 	{Key: "aiCredits", Method: "GET", Path: "/ai/credits", Auth: true,
-		Summary: "赠送额度流水：看广告与管理员发放、调用消费、退款"},
+		Summary: "额度流水（永久额度与额度包）：发放、购买、新人礼、调用消费、退款、到期与作废"},
+	// AI 额度与积分不互通（docs/ai-billing.md）：额度包用钱包余额买，会员按档位有折扣与额度。
+	{Key: "aiPricing", Method: "GET", Path: "/ai/pricing", Auth: true,
+		Summary: "价格方案：时段价格（闲时 / 高峰 / 活动）、我的倍率分解、下次变价时刻、未来 7 天时间轴、各会员档位优惠对比"},
+	{Key: "aiPackages", Method: "GET", Path: "/ai/packages", Auth: true,
+		Summary: "额度商店：在售额度包与我的报价（会员折扣与多送、每万额度单价、限购、库存、能否购买与原因）"},
+	{Key: "aiPurchasePackage", Method: "POST", Path: "/ai/packages/{packageId}/purchase", Auth: true,
+		Summary: "用钱包余额买额度包（requestId 幂等，expectedPrice 不符时 40236）；返回订单、到账批次与余额"},
+	{Key: "aiOrders", Method: "GET", Path: "/ai/orders", Auth: true, Summary: "我的额度包订单"},
+	{Key: "aiLots", Method: "GET", Path: "/ai/lots", Auth: true,
+		Summary: "我的额度批次：scope=active（默认，可用与暂扣中，按到期先后）/ all"},
+	{Key: "aiClaimWelcome", Method: "POST", Path: "/ai/welcome", Auth: true, Summary: "领取 AI 新人礼（每人一次的限期额度）"},
 
 	// ── 钱包 / 会员 / 支付 ──
 	{Key: "wallet", Method: "GET", Path: "/wallet", Auth: true, Summary: "我的余额"},

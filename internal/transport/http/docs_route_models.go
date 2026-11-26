@@ -121,12 +121,19 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/apps/{appkey}/account-setup"):                                                          AdminAccountSetupPolicyRequest{},         // UpdateAdminAppAccountSetup
 		routeKey("PUT", "/api/admin/apps/{appkey}/ad-policy/config"):                                                       SaveAdPolicyRequest{},                    // AdminSaveAdPolicy
 		routeKey("PUT", "/api/admin/apps/{appkey}/ai-gateway/keys/{keyId}/status"):                                         AIGatewayKeyStatusRequest{},              // AdminSetAIGatewayKeyStatus
+		routeKey("POST", "/api/admin/apps/{appkey}/ai-gateway/lots/{lotId}/revoke"):                                        AIGatewayReasonRequest{},                 // AdminRevokeAIGatewayLot
 		routeKey("POST", "/api/admin/apps/{appkey}/ai-gateway/models"):                                                     aigateway.ModelInput{},                   // AdminCreateAIGatewayModel
 		routeKey("POST", "/api/admin/apps/{appkey}/ai-gateway/models/sync"):                                                service.CatalogSyncInput{},               // AdminSyncAIGatewayModels
 		routeKey("PUT", "/api/admin/apps/{appkey}/ai-gateway/models/{modelId}"):                                            aigateway.ModelInput{},                   // AdminUpdateAIGatewayModel
+		routeKey("POST", "/api/admin/apps/{appkey}/ai-gateway/package-orders/{orderNo}/refund"):                            AIGatewayReasonRequest{},                 // AdminRefundAIGatewayPackageOrder
+		routeKey("POST", "/api/admin/apps/{appkey}/ai-gateway/packages"):                                                   AIGatewayPackageRequest{},                // AdminCreateAIGatewayPackage
+		routeKey("PUT", "/api/admin/apps/{appkey}/ai-gateway/packages/{packageId}"):                                        AIGatewayPackageRequest{},                // AdminUpdateAIGatewayPackage
+		routeKey("PUT", "/api/admin/apps/{appkey}/ai-gateway/packages/{packageId}/status"):                                 AIGatewayPackageStatusRequest{},          // AdminSetAIGatewayPackageStatus
+		routeKey("POST", "/api/admin/apps/{appkey}/ai-gateway/pricing/preview"):                                            AIGatewayPricingPreviewRequest{},         // AdminAIGatewayPricingPreview
 		routeKey("POST", "/api/admin/apps/{appkey}/ai-gateway/requests/{requestNo}/refund"):                                AIGatewayRefundRequest{},                 // AdminRefundAIGatewayRequest
 		routeKey("PUT", "/api/admin/apps/{appkey}/ai-gateway/settings"):                                                    aigateway.Settings{},                     // AdminSaveAIGatewaySettings
 		routeKey("POST", "/api/admin/apps/{appkey}/ai-gateway/users/{userId}/credits"):                                     AIGatewayCreditAdjustRequest{},           // AdminAdjustAIGatewayCredit
+		routeKey("POST", "/api/admin/apps/{appkey}/ai-gateway/users/{userId}/lots"):                                        AIGatewayLotGrantRequest{},               // AdminGrantAIGatewayLot
 		routeKey("POST", "/api/admin/apps/{appkey}/ai/agent/stream"):                                                       adminAIAgentStreamRequest{},              // AdminAppAIAgentStream
 		routeKey("POST", "/api/admin/apps/{appkey}/ai/configs"):                                                            adminAIConfigSaveRequest{},               // AdminAppAIConfigCreate
 		routeKey("PUT", "/api/admin/apps/{appkey}/ai/configs/{configId}"):                                                  adminAIConfigSaveRequest{},               // AdminAppAIConfigUpdate
@@ -759,6 +766,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/v1/apps/{appkey}/ads/splash/events"):                                                        AdSplashReportRequest{},                  // AppReportSplashAd
 		routeKey("POST", "/api/v1/apps/{appkey}/ai/keys"):                                                                  AIGatewayKeyRequest{},                    // AppCreateAIKey
 		routeKey("PUT", "/api/v1/apps/{appkey}/ai/keys/{keyId}"):                                                           AIGatewayKeyRequest{},                    // AppUpdateAIKey
+		routeKey("POST", "/api/v1/apps/{appkey}/ai/packages/{packageId}/purchase"):                                         AIGatewayPurchaseRequest{},               // AppAIPurchasePackage
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/2fa/verify"):                                                          SecondFactorVerifyRequest{},              // AppSecondFactor
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/device-limit/resolve"):                                                AppDeviceLimitResolveRequest{},           // AppDeviceLimitResolve
 		routeKey("POST", "/api/v1/apps/{appkey}/auth/login"):                                                               authprotocol.LoginInput{},                // AppLogin

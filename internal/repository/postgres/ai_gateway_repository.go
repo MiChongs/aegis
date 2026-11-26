@@ -574,19 +574,33 @@ func (r *Repository) AIGatewayAccountFacts(ctx context.Context, appID, userID in
   COALESCE((SELECT l.current_level FROM user_level_records l WHERE l.user_id = u.id AND l.appid = u.appid), 1),
   COALESCE((SELECT w.balance::text FROM user_wallets w WHERE w.user_id = u.id AND w.appid = u.appid), '0'),
   COALESCE(a.credit, 0), COALESCE(a.credit_frozen, 0), COALESCE(a.integral_carry, 0), COALESCE(a.wallet_carry, 0),
-  COALESCE(a.total_spent, 0), COALESCE(a.total_requests, 0)
+  COALESCE(a.total_spent, 0), COALESCE(a.total_requests, 0), a.welcome_claimed_at
 FROM users u LEFT JOIN ai_gateway_accounts a ON a.user_id = u.id
 WHERE u.id = $1 AND u.appid = $2`, userID, appID).Scan(&facts.Integral, &vipExpire, &lifetime, &facts.Profile.Level,
 		&walletBalance, &facts.Account.Credit, &facts.Account.CreditFrozen, &facts.Account.IntegralCarry,
-		&facts.Account.WalletCarry, &facts.Account.TotalSpent, &facts.Account.TotalRequests)
+		&facts.Account.WalletCarry, &facts.Account.TotalSpent, &facts.Account.TotalRequests, &facts.WelcomeClaimedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrUserNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	facts.Profile.IsVip = isVipAt(vipExpire, lifetime, now)
+	profile, err := aiGatewayProfileQ(ctx, r.pool, appID, userID, isVipAt(vipExpire, lifetime, now))
+	if err != nil {
+		return nil, err
+	}
+	facts.Profile = profile
 	facts.WalletCents = decimal.RequireFromString(walletBalance).Shift(2).Floor().IntPart()
+	// 额度包：可用、暂扣中、7 天内到期的部分与最早的到期时间（暂扣口径与 lockUsableAIGatewayLotsTx 一致）。
+	if err := r.pool.QueryRow(ctx, `SELECT
+  COALESCE(SUM(remaining), 0)::bigint, COALESCE(SUM(frozen), 0)::bigint,
+  COALESCE(SUM(remaining) FILTER (WHERE expires_at <= $3::timestamptz + INTERVAL '7 days'), 0)::bigint,
+  MIN(expires_at) FILTER (WHERE remaining > 0 AND expires_at <= $3::timestamptz + INTERVAL '7 days')
+FROM ai_gateway_credit_lots
+WHERE user_id = $1 AND appid = $2 AND status = 'active' AND (expires_at IS NULL OR expires_at > $3)`, userID, appID, now).
+		Scan(&facts.Pack, &facts.PackFrozen, &facts.ExpiringMicro, &facts.ExpiringAt); err != nil {
+		return nil, err
+	}
 
 	loc := settings.Location()
 	keys := map[string]string{}
@@ -629,7 +643,8 @@ func (r *Repository) ListAIGatewayCredits(ctx context.Context, appID, userID int
 		appID, userID).Scan(&total); err != nil {
 		return nil, err
 	}
-	rows, err := r.pool.Query(ctx, `SELECT id, kind, amount, balance_after, ref_type, ref_id, remark, COALESCE(operator, ''), created_at
+	rows, err := r.pool.Query(ctx, `SELECT id, kind, bucket, COALESCE(lot_id, 0), amount, balance_after, COALESCE(total_after, balance_after),
+ref_type, ref_id, remark, COALESCE(operator, ''), created_at
 FROM ai_gateway_credit_ledger WHERE appid = $1 AND user_id = $2 ORDER BY id DESC LIMIT $3 OFFSET $4`,
 		appID, userID, limit, (page-1)*limit)
 	if err != nil {
@@ -639,13 +654,14 @@ FROM ai_gateway_credit_ledger WHERE appid = $1 AND user_id = $2 ORDER BY id DESC
 	items := make([]aigateway.CreditEntry, 0, limit)
 	for rows.Next() {
 		var item aigateway.CreditEntry
-		var amount, balance int64
-		if err := rows.Scan(&item.ID, &item.Kind, &amount, &balance, &item.RefType, &item.RefID, &item.Remark,
-			&item.Operator, &item.CreatedAt); err != nil {
+		var amount, balance, totalAfter int64
+		if err := rows.Scan(&item.ID, &item.Kind, &item.Bucket, &item.LotID, &amount, &balance, &totalAfter, &item.RefType,
+			&item.RefID, &item.Remark, &item.Operator, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		item.Amount = aigateway.MicroToPoints(amount)
 		item.BalanceAfter = aigateway.MicroToPoints(balance)
+		item.TotalAfter = aigateway.MicroToPoints(totalAfter)
 		items = append(items, item)
 	}
 	return &aigateway.Page[aigateway.CreditEntry]{Items: items, Total: total, Page: page, Limit: limit}, rows.Err()

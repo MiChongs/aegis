@@ -339,6 +339,13 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/ai/requests", h.AppAIRequests)
 		appGatewayAuthed.GET("/ai/requests/:requestNo", h.AppAIRequest)
 		appGatewayAuthed.GET("/ai/credits", h.AppAICredits)
+		// AI 额度的收费面（docs/ai-billing.md）：价格方案、额度商店、额度批次、新人礼
+		appGatewayAuthed.GET("/ai/pricing", h.AppAIPricing)
+		appGatewayAuthed.GET("/ai/packages", h.AppAIPackages)
+		appGatewayAuthed.POST("/ai/packages/:packageId/purchase", h.AppAIPurchasePackage)
+		appGatewayAuthed.GET("/ai/orders", h.AppAIOrders)
+		appGatewayAuthed.GET("/ai/lots", h.AppAILots)
+		appGatewayAuthed.POST("/ai/welcome", h.AppAIClaimWelcome)
 
 		// 存储
 		appGatewayAuthed.POST("/storage/upload", h.StorageUpload)

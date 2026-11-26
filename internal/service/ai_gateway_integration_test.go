@@ -22,7 +22,8 @@ import (
 
 // AI 中转网关计费的端到端集成测试：真实 Postgres（全部迁移跑两遍）+ httptest 假上游，
 // 经 AIProviderService 的真实通道链路调用。覆盖：
-// 成功扣积分与零头凑整、失败不扣费、余额不足、压低输出上限、每日免费额度、赠送额度与幂等调整、
+// 余额直付与零头凑整（单价 0.01 元/额度：1 额度 = 1 分，与旧的积分口径同一套算术）、失败不扣费、余额不足、
+// 压低输出上限、每日免费额度、永久额度与幂等调整、
 // 余额扣费与冻结、实际用量超出暂扣（补扣与 shortfall）、流式中途客户端断开与上游中断、
 // 图像按实际张数计费、密钥消费上限与停用、暂扣过期回收与迟到结算、退款、并发抢余额，
 // 最后核对全局不变式（没有残留暂扣、冻结归零、零头在界内、积分非负）。
@@ -50,7 +51,8 @@ func TestAIGatewayBillingIntegration(t *testing.T) {
 
 	settings := aigateway.DefaultSettings()
 	settings.Enabled = true
-	settings.Sources = []string{aigateway.SourceFreeDaily, aigateway.SourceCredit, aigateway.SourceIntegral, aigateway.SourceWallet}
+	settings.Sources = []string{aigateway.SourceFreeDaily, aigateway.SourceCredit, aigateway.SourceWallet}
+	settings.WalletRate = decimal.RequireFromString("0.01")
 	settings.RPM = 0
 	settings.MaxConcurrent = 100
 	settings.DefaultMaxTokens = 1000
@@ -112,12 +114,13 @@ func TestAIGatewayBillingIntegration(t *testing.T) {
 
 	// prompt 1500 字节 → 估 500 + 4 = 504 输入 token；max_tokens 125 → 估算 1.508 点，暂扣 2 积分。
 	prompt := strings.Repeat("a", 1500)
-	newUser := func(account string, integral int64, wallet string) (int64, *AIGatewayPrincipal, string) {
+	// cents 是余额（分）；wallet 非 "0" 时以它为准（余额直付那一段用元写）。
+	newUser := func(account string, cents int64, wallet string) (int64, *AIGatewayPrincipal, string) {
 		t.Helper()
-		userID := insertTestUser(t, ctx, pool, appID, account, wallet)
-		if _, err := pool.Exec(ctx, `UPDATE users SET integral = $2 WHERE id = $1`, userID, integral); err != nil {
-			t.Fatal(err)
+		if wallet == "0" {
+			wallet = decimal.New(cents, -2).StringFixed(2)
 		}
+		userID := insertTestUser(t, ctx, pool, appID, account, wallet)
 		created, err := gw.CreateKey(ctx, &authdomain.Session{AppID: appID, UserID: userID}, aigateway.KeyInput{Name: ptrTo("test")})
 		if err != nil {
 			t.Fatalf("建密钥失败：%v", err)
@@ -143,10 +146,11 @@ func TestAIGatewayBillingIntegration(t *testing.T) {
 		}
 		return result
 	}
+	// integralOf 余额（分）：沿用旧名，旧的积分断言原样成立。
 	integralOf := func(userID int64) int64 {
 		t.Helper()
 		var v int64
-		if err := pool.QueryRow(ctx, `SELECT integral FROM users WHERE id = $1`, userID).Scan(&v); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT (balance * 100)::bigint FROM user_wallets WHERE user_id = $1`, userID).Scan(&v); err != nil {
 			t.Fatal(err)
 		}
 		return v
@@ -169,8 +173,9 @@ func TestAIGatewayBillingIntegration(t *testing.T) {
 		return n
 	}
 	integralEntries := func(userID int64) int {
-		return countRows(`SELECT COUNT(*) FROM integral_transactions WHERE user_id = $1 AND category IN ('ai_gateway', 'ai_gateway_refund')`, userID)
+		return countRows(`SELECT COUNT(*) FROM wallet_transactions WHERE user_id = $1 AND type IN ('consume', 'ai_refund')`, userID)
 	}
+	// carryOf 余额零头在前（沿用旧的「积分零头」位置），第二个是已停用的积分零头。
 	carryOf := func(userID int64) (int64, int64) {
 		t.Helper()
 		var integralCarry, walletCarry int64
@@ -178,11 +183,11 @@ func TestAIGatewayBillingIntegration(t *testing.T) {
 			Scan(&integralCarry, &walletCarry); err != nil {
 			t.Fatal(err)
 		}
-		return integralCarry, walletCarry
+		return walletCarry, integralCarry
 	}
 
 	// ── 1. 成功调用：只扣积分、一条流水、零头凑整 ──
-	saveSettings(func(s *aigateway.Settings) { s.Sources = []string{aigateway.SourceIntegral} })
+	saveSettings(func(s *aigateway.Settings) { s.Sources = []string{aigateway.SourceWallet} })
 	alice, alicePrincipal, _ := newUser("aig-alice", 10, "0")
 	first := mustChat(alicePrincipal, "chat")
 	if first.Response.Model != "chat" {
@@ -247,7 +252,7 @@ func TestAIGatewayBillingIntegration(t *testing.T) {
 
 	// ── 5. 每日免费额度先用，积分补差 ──
 	saveSettings(func(s *aigateway.Settings) {
-		s.Sources = []string{aigateway.SourceFreeDaily, aigateway.SourceIntegral}
+		s.Sources = []string{aigateway.SourceFreeDaily, aigateway.SourceWallet}
 		s.FreeDaily = decimal.NewFromInt(1)
 	})
 	freeUser, freePrincipal, _ := newUser("aig-free", 10, "0")
@@ -269,7 +274,7 @@ func TestAIGatewayBillingIntegration(t *testing.T) {
 
 	// ── 6. 赠送额度：调整幂等、消费记流水 ──
 	saveSettings(func(s *aigateway.Settings) {
-		s.Sources = []string{aigateway.SourceCredit, aigateway.SourceIntegral}
+		s.Sources = []string{aigateway.SourceCredit, aigateway.SourceWallet}
 		s.FreeDaily = decimal.Zero
 	})
 	creditUser, creditPrincipal, _ := newUser("aig-credit", 0, "0")
@@ -309,7 +314,7 @@ func TestAIGatewayBillingIntegration(t *testing.T) {
 	}
 
 	// ── 8. 实际用量远超暂扣：从实时余额补，补不上记 shortfall，绝不扣成负数 ──
-	saveSettings(func(s *aigateway.Settings) { s.Sources = []string{aigateway.SourceIntegral} })
+	saveSettings(func(s *aigateway.Settings) { s.Sources = []string{aigateway.SourceWallet} })
 	bigUser, bigPrincipal, _ := newUser("aig-big", 3, "0")
 	big := mustChat(bigPrincipal, "chat-big")
 	if big.Record.ShortfallMicro <= 0 || big.Record.ChargedMicro+big.Record.ShortfallMicro != big.Record.CostMicro {
@@ -391,10 +396,7 @@ WHERE user_id = $1 ORDER BY id DESC LIMIT 1`, streamUser).Scan(&aborted.Status, 
 	}
 
 	// ── 12. 密钥：消费上限与停用 ──
-	keyUser := insertTestUser(t, ctx, pool, appID, "aig-key", "0")
-	if _, err := pool.Exec(ctx, `UPDATE users SET integral = 100 WHERE id = $1`, keyUser); err != nil {
-		t.Fatal(err)
-	}
+	keyUser := insertTestUser(t, ctx, pool, appID, "aig-key", "1.00")
 	keySession := &authdomain.Session{AppID: appID, UserID: keyUser}
 	limited, err := gw.CreateKey(ctx, keySession, aigateway.KeyInput{SpendLimit: ptrTo(decimal.NewFromInt(2))})
 	if err != nil {

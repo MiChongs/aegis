@@ -245,10 +245,16 @@ func (h *Handler) AppAICredits(c *gin.Context) {
 
 // AdminAIGatewayCatalog GET /api/admin/apps/:appkey/ai-gateway/catalog
 func (h *Handler) AdminAIGatewayCatalog(c *gin.Context) {
-	if _, ok := resolveAppID(c, h.app); !ok || !h.aiGatewayReady(c) {
+	appID, ok := resolveAppID(c, h.app)
+	if !ok || !h.aiGatewayReady(c) {
 		return
 	}
-	response.Success(c, http.StatusOK, "ok", h.aiGateway.Catalog())
+	catalog, err := h.aiGateway.CatalogFor(c.Request.Context(), appID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "ok", catalog)
 }
 
 // AdminAIGatewaySettings GET /api/admin/apps/:appkey/ai-gateway/settings

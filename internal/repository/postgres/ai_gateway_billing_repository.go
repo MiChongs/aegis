@@ -192,11 +192,29 @@ wallet_carry = $5, total_spent = $6, total_requests = $7, updated_at = NOW() WHE
 }
 
 func (l *aiGatewayLedger) insertCredit(ctx context.Context, kind string, amount int64, refType, refID, remark, operator, requestID string) error {
-	_, err := l.tx.Exec(ctx, `INSERT INTO ai_gateway_credit_ledger
-(appid, user_id, kind, amount, balance_after, ref_type, ref_id, remark, operator, request_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		l.appID, l.userID, kind, amount, l.account.Credit, refType, refID, truncateColumn(remark, 200),
-		nullableString(operator), nullableString(requestID))
+	return l.insertLedger(ctx, kind, aigateway.BucketCredit, amount, 0, refType, refID, remark, operator, requestID)
+}
+
+// insertLedger 写一条额度流水：balance_after 是这一桶变动后的余额，total_after 是永久 + 额度包合计。
+// 调用方先把账户行与批次都改好再调它（批次合计在同一事务里现查）。
+func (l *aiGatewayLedger) insertLedger(ctx context.Context, kind, bucket string, amount, lotID int64, refType, refID, remark, operator, requestID string) error {
+	pack, err := aiGatewayPackTotalTx(ctx, l.tx, l.appID, l.userID, time.Now())
+	if err != nil {
+		return err
+	}
+	balance := l.account.Credit
+	if bucket == aigateway.BucketPack {
+		balance = pack
+	}
+	var lot *int64
+	if lotID > 0 {
+		lot = &lotID
+	}
+	_, err = l.tx.Exec(ctx, `INSERT INTO ai_gateway_credit_ledger
+(appid, user_id, kind, amount, balance_after, ref_type, ref_id, remark, operator, request_id, bucket, lot_id, total_after)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		l.appID, l.userID, kind, amount, balance, refType, refID, truncateColumn(remark, 200),
+		nullableString(operator), nullableString(requestID), bucket, lot, saturatingAdd(l.account.Credit, pack))
 	return err
 }
 
@@ -302,11 +320,12 @@ func (r *Repository) ReserveAIGatewayRequest(ctx context.Context, in aigateway.R
 	if err != nil {
 		return nil, err
 	}
-	profile := aigateway.Profile{IsVip: isVipAt(ledger.vipExpire, ledger.lifetime, now), Level: 1}
-	if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT current_level FROM user_level_records WHERE user_id = $1 AND appid = $2), 1)`,
-		in.UserID, in.AppID).Scan(&profile.Level); err != nil {
+	profile, err := aiGatewayProfileQ(ctx, tx, in.AppID, in.UserID, isVipAt(ledger.vipExpire, ledger.lifetime, now))
+	if err != nil {
 		return nil, err
 	}
+	member := settings.Member(profile)
+	profile = profile.ApplyMember(member)
 	if settings.Audience == aigateway.AudienceVip && !profile.IsVip {
 		return nil, ErrAIGatewayAudience
 	}
@@ -327,24 +346,24 @@ WHERE user_id = $1 AND idempotency_key = $2 AND status NOT IN ('failed', 'expire
 			return nil, err
 		}
 	}
-	// 并发与频率在锁住用户行之后数：同一用户的暂扣彼此串行，数出来的就是准数。
-	if settings.MaxConcurrent > 0 {
+	// 并发与频率在锁住用户行之后数：同一用户的暂扣彼此串行，数出来的就是准数。会员档位可以放宽这两项。
+	if maxConcurrent := settings.EffectiveConcurrency(member); maxConcurrent > 0 {
 		var inFlight int
 		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM ai_gateway_requests
 WHERE user_id = $1 AND status = 'reserved' AND expires_at > $2`, in.UserID, now).Scan(&inFlight); err != nil {
 			return nil, err
 		}
-		if inFlight >= settings.MaxConcurrent {
+		if inFlight >= maxConcurrent {
 			return nil, ErrAIGatewayConcurrency
 		}
 	}
-	if settings.RPM > 0 {
+	if rpm := settings.EffectiveRPM(member); rpm > 0 {
 		var recent int
 		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM ai_gateway_requests
 WHERE appid = $1 AND user_id = $2 AND created_at > $3`, in.AppID, in.UserID, now.Add(-time.Minute)).Scan(&recent); err != nil {
 			return nil, err
 		}
-		if recent >= settings.RPM {
+		if recent >= rpm {
 			return nil, ErrAIGatewayRateLimited
 		}
 	}
@@ -372,7 +391,9 @@ WHERE id = $1 AND user_id = $2 FOR UPDATE`, keyID, in.UserID).Scan(&current.Stat
 		}
 	}
 
-	factor := settings.Factor(profile)
+	// 倍率在暂扣这一刻定下（含时段），快照进记录：调用跨过时段边界也按开始时的价格结算。
+	breakdown := settings.Pricing(member, profile.Level, in.Model.Model, in.Model.Kind, now)
+	factor := breakdown.Total
 	estimate := aigateway.CostMicro(in.Model.Price, in.Estimate, factor)
 	loc := settings.Location()
 	snapshot := aigateway.BillingSnapshot{
@@ -381,16 +402,19 @@ WHERE id = $1 AND user_id = $2 FOR UPDATE`, keyID, in.UserID).Scan(&current.Stat
 		Timezone:   settings.Timezone,
 		Quotas:     map[string]int64{},
 		Profile:    profile,
+		Member:     &member,
+		Pricing:    &breakdown,
 	}
 
 	available := make([]aigateway.Availability, 0, len(settings.Sources))
 	var totalAvailable int64
+	var packLots []aiGatewayLot
 	for _, source := range settings.Sources {
 		item := aigateway.Availability{Source: source}
 		switch source {
 		case aigateway.SourceFreeDaily, aigateway.SourceVipDaily, aigateway.SourceVipMonthly:
 			meta, _ := aigateway.FindSource(source)
-			limit := settings.QuotaMicro(source)
+			limit := settings.QuotaMicroFor(source, member)
 			if limit <= 0 || (meta.VipOnly && !profile.IsVip) {
 				continue
 			}
@@ -401,10 +425,17 @@ WHERE id = $1 AND user_id = $2 FOR UPDATE`, keyID, in.UserID).Scan(&current.Stat
 				return nil, err
 			}
 			item.Micro = max(limit-used-reserved, 0)
+		case aigateway.SourcePack:
+			lots, err := lockUsableAIGatewayLotsTx(ctx, tx, in.AppID, in.UserID, now)
+			if err != nil {
+				return nil, err
+			}
+			packLots = lots
+			for _, lot := range lots {
+				item.Micro = saturatingAdd(item.Micro, lot.remaining)
+			}
 		case aigateway.SourceCredit:
 			item.Micro = ledger.account.Credit
-		case aigateway.SourceIntegral:
-			item.Micro = saturatingMul(ledger.integral, aigateway.MicroPerPoint)
 		case aigateway.SourceWallet:
 			if err := ledger.lockWallet(ctx); err != nil {
 				return nil, err
@@ -461,14 +492,29 @@ WHERE id = $1 AND user_id = $2 FOR UPDATE`, keyID, in.UserID).Scan(&current.Stat
 			if err := adjustAIGatewayQuotaTx(ctx, tx, in.AppID, in.UserID, hold.Source, hold.Period, 0, hold.Micro); err != nil {
 				return nil, err
 			}
+		case aigateway.SourcePack:
+			// 先到期的批次先用：按锁住时的顺序从 remaining 移进 frozen，拆分记在暂扣上。
+			left := hold.Micro
+			for _, lot := range packLots {
+				if left == 0 {
+					break
+				}
+				take := min(lot.remaining, left)
+				if take <= 0 {
+					continue
+				}
+				if err := adjustAIGatewayLotTx(ctx, tx, lot.id, -take, take); err != nil {
+					return nil, err
+				}
+				hold.Lots = append(hold.Lots, aigateway.LotPart{LotID: lot.id, Micro: take})
+				left -= take
+			}
+			if left > 0 {
+				return nil, fmt.Errorf("ai gateway: pack hold short by %d", left)
+			}
 		case aigateway.SourceCredit:
 			ledger.account.Credit -= hold.Micro
 			ledger.account.CreditFrozen += hold.Micro
-		case aigateway.SourceIntegral:
-			hold.Units = aigateway.CeilUnits(hold.Micro, aigateway.MicroPerPoint)
-			if err := ledger.moveIntegral(ctx, -hold.Units); err != nil {
-				return nil, err
-			}
 		case aigateway.SourceWallet:
 			hold.Units = aigateway.WalletHoldCents(hold.Micro, settings.WalletRate)
 			if err := ledger.freezeWallet(ctx, hold.Units); err != nil {
@@ -541,7 +587,7 @@ func newChargeBook() *chargeBook {
 	return &chargeBook{items: map[string]*aigateway.Charge{}}
 }
 
-func (b *chargeBook) add(source, period string, micro int64) {
+func (b *chargeBook) add(source, period string, micro int64, lots ...aigateway.LotPart) {
 	if micro <= 0 {
 		return
 	}
@@ -553,6 +599,16 @@ func (b *chargeBook) add(source, period string, micro int64) {
 		b.order = append(b.order, key)
 	}
 	item.Micro += micro
+	for _, part := range lots {
+		if part.Micro <= 0 {
+			continue
+		}
+		if index := slices.IndexFunc(item.Lots, func(p aigateway.LotPart) bool { return p.LotID == part.LotID }); index >= 0 {
+			item.Lots[index].Micro += part.Micro
+		} else {
+			item.Lots = append(item.Lots, part)
+		}
+	}
 }
 
 // sourceMicro 某个来源（不分周期）合计承担的微点。
@@ -668,6 +724,20 @@ func (r *Repository) SettleAIGatewayRequest(ctx context.Context, in aigateway.Se
 			if err := adjustAIGatewayQuotaTx(ctx, tx, req.AppID, req.UserID, hold.Source, hold.Period, used, -hold.Micro); err != nil {
 				return nil, err
 			}
+		case aigateway.SourcePack:
+			// 按暂扣时的批次顺序承担：前面的批次先用满，没用完的放回 remaining（批次此后过期也照扣，暂扣那一刻它有效）。
+			left := used
+			parts := make([]aigateway.LotPart, 0, len(hold.Lots))
+			for _, part := range hold.Lots {
+				take := min(part.Micro, left)
+				left -= take
+				if err := adjustAIGatewayLotTx(ctx, tx, part.LotID, part.Micro-take, -part.Micro); err != nil {
+					return nil, err
+				}
+				parts = append(parts, aigateway.LotPart{LotID: part.LotID, Micro: take})
+			}
+			book.add(hold.Source, hold.Period, used, parts...)
+			continue
 		case aigateway.SourceCredit:
 			ledger.account.CreditFrozen = max(ledger.account.CreditFrozen-hold.Micro, 0)
 			ledger.account.Credit += hold.Micro - used
@@ -709,6 +779,31 @@ func (r *Repository) SettleAIGatewayRequest(ctx context.Context, in aigateway.Se
 					return nil, err
 				}
 				available = max(limit-used-reserved, 0)
+			case aigateway.SourcePack:
+				// 溢出从此刻仍有效的批次补（先到期的先用），逐个批次扣、记拆分。
+				lots, err := lockUsableAIGatewayLotsTx(ctx, tx, req.AppID, req.UserID, now)
+				if err != nil {
+					return nil, err
+				}
+				var parts []aigateway.LotPart
+				var taken int64
+				for _, lot := range lots {
+					if overflow-taken == 0 {
+						break
+					}
+					take := min(lot.remaining, overflow-taken)
+					if take <= 0 {
+						continue
+					}
+					if err := adjustAIGatewayLotTx(ctx, tx, lot.id, -take, 0); err != nil {
+						return nil, err
+					}
+					parts = append(parts, aigateway.LotPart{LotID: lot.id, Micro: take})
+					taken += take
+				}
+				book.add(source, "", taken, parts...)
+				overflow -= taken
+				continue
 			case aigateway.SourceCredit:
 				available = ledger.account.Credit
 			case aigateway.SourceIntegral:
@@ -793,6 +888,16 @@ func (r *Repository) SettleAIGatewayRequest(ctx context.Context, in aigateway.Se
 
 	if micro := book.sourceMicro(aigateway.SourceCredit); micro > 0 {
 		if err := ledger.insertCredit(ctx, aigateway.CreditConsume, -micro, "ai_request", req.RequestNo, description, "", ""); err != nil {
+			return nil, err
+		}
+	}
+	if charge := book.charge(aigateway.SourcePack); charge != nil && charge.Micro > 0 {
+		var lotID int64
+		if len(charge.Lots) > 0 {
+			lotID = charge.Lots[0].LotID
+		}
+		if err := ledger.insertLedger(ctx, aigateway.CreditConsume, aigateway.BucketPack, -book.sourceMicro(aigateway.SourcePack),
+			lotID, "ai_request", req.RequestNo, description, "", ""); err != nil {
 			return nil, err
 		}
 	}
@@ -893,6 +998,12 @@ func (r *Repository) ReleaseAIGatewayRequest(ctx context.Context, in aigateway.R
 		case aigateway.SourceFreeDaily, aigateway.SourceVipDaily, aigateway.SourceVipMonthly:
 			if err := adjustAIGatewayQuotaTx(ctx, tx, req.AppID, req.UserID, hold.Source, hold.Period, 0, -hold.Micro); err != nil {
 				return nil, err
+			}
+		case aigateway.SourcePack:
+			for _, part := range hold.Lots {
+				if err := adjustAIGatewayLotTx(ctx, tx, part.LotID, part.Micro, -part.Micro); err != nil {
+					return nil, err
+				}
 			}
 		case aigateway.SourceCredit:
 			ledger.account.CreditFrozen = max(ledger.account.CreditFrozen-hold.Micro, 0)
@@ -1010,6 +1121,27 @@ func (r *Repository) RefundAIGatewayRequest(ctx context.Context, in aigateway.Re
 				}
 			} else {
 				creditRefund += charge.Micro
+			}
+		case aigateway.SourcePack:
+			// 批次还有效就退回原批次（不超过它被用掉的部分），已过期或作废的退为永久额度。
+			var packRefund int64
+			var firstLot int64
+			for _, part := range charge.Lots {
+				restored, err := restoreAIGatewayLotTx(ctx, tx, part.LotID, part.Micro, now)
+				if err != nil {
+					return nil, err
+				}
+				if restored > 0 && firstLot == 0 {
+					firstLot = part.LotID
+				}
+				packRefund += restored
+				creditRefund += part.Micro - restored
+			}
+			if packRefund > 0 {
+				if err := ledger.insertLedger(ctx, aigateway.CreditRefund, aigateway.BucketPack, packRefund, firstLot,
+					"ai_request", req.RequestNo, remark, in.Operator, ""); err != nil {
+					return nil, err
+				}
 			}
 		case aigateway.SourceCredit:
 			creditRefund += charge.Micro
@@ -1150,8 +1282,14 @@ func grantAIGatewayCreditTx(ctx context.Context, tx pgx.Tx, appID, userID, micro
 WHERE user_id = $1 RETURNING credit`, userID, micro).Scan(&balance); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO ai_gateway_credit_ledger (appid, user_id, kind, amount, balance_after, ref_type, ref_id, remark)
-VALUES ($1, $2, 'grant', $3, $4, $5, $6, $7)`, appID, userID, micro, balance, refType, refID, truncateColumn(remark, 200)); err != nil {
+	pack, err := aiGatewayPackTotalTx(ctx, tx, appID, userID, time.Now())
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO ai_gateway_credit_ledger
+(appid, user_id, kind, amount, balance_after, ref_type, ref_id, remark, bucket, total_after)
+VALUES ($1, $2, 'grant', $3, $4, $5, $6, $7, 'credit', $8)`, appID, userID, micro, balance, refType, refID,
+		truncateColumn(remark, 200), saturatingAdd(balance, pack)); err != nil {
 		return 0, err
 	}
 	return balance, nil
