@@ -1,6 +1,8 @@
 package dev.aegis.sdk
 
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import java.io.File
 import java.io.IOException
 
@@ -1645,14 +1647,28 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
         )
     }
 
-    /** 我的反馈。[status] 逗号分隔，可空；[limit] 至多 50。 */
+    /**
+     * 我的反馈。[status] 逗号分隔，可空；[limit] 至多 50。
+     * 被采纳并获得积分的条目带 `reward`（见 [feedbackRewardOf]）。
+     */
     @Throws(IOException::class)
     @JvmOverloads
     fun feedbackList(page: Int = 1, limit: Int = 20, status: String? = null): JsonElement =
         client.call("GET", "/feedback", query = pageQuery(page, limit) + buildQuery("status" to status), requireAuth = true)
 
+    /** 反馈详情。被采纳并获得积分时带 `reward: {points, reason, grantedAt}`（见 [feedbackRewardOf]）。 */
     @Throws(IOException::class)
     fun feedback(feedbackId: String): JsonElement = client.call("GET", "/feedback/$feedbackId", requireAuth = true)
+
+    /**
+     * 从反馈详情或列表项里取出积分奖励（`reward` 字段），用来显示「已获得 N 积分」。
+     * 只有当前有效的一笔；没发过或已被撤回时为 null。
+     */
+    fun feedbackRewardOf(feedback: JsonElement): AegisFeedbackReward? {
+        val reward = (feedback as? JsonObject)?.get("reward") ?: return null
+        if (reward is JsonNull) return null
+        return client.decodeAs(reward, AegisFeedbackReward.serializer())
+    }
 
     /** 补充反馈，返回最新的反馈详情。 */
     @Throws(IOException::class)
@@ -1681,6 +1697,17 @@ class AegisEngagementApi internal constructor(private val client: AegisClient) {
     fun cancelFeedback(feedbackId: String, reason: String? = null): JsonElement =
         client.call("POST", "/feedback/$feedbackId/cancel", buildBody("reason" to reason), requireAuth = true)
 }
+
+/**
+ * 反馈被采纳后获得的积分奖励（`GET /feedback/:id` 与 `GET /feedback` 各项的 `reward`）。
+ * [grantedAt] 为 RFC 3339 时间；[reason] 是管理员写的理由，可能为空。
+ */
+@kotlinx.serialization.Serializable
+data class AegisFeedbackReward(
+    val points: Long = 0,
+    val reason: String = "",
+    val grantedAt: String = "",
+)
 
 /** 钱包、会员、支付、存储。 */
 class AegisCommerceApi internal constructor(private val client: AegisClient) {
