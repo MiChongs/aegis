@@ -6,7 +6,7 @@ import type { CosmeticItem, CosmeticSlot, Design } from "@/lib/api/cosmetics";
 import { useCosmeticItemQuery } from "@/lib/cosmetic-hooks";
 import { cn } from "@/lib/utils";
 import { DesignCanvas, NameStyleCanvas } from "./cosmetic-canvas";
-import { resolveAssetUrl } from "./renderer";
+import { plateSampleValue, resolveAssetUrl } from "./renderer";
 
 /**
  * 一件装扮的缩略预览：进入视口才去取单件（列表接口不带设计稿），取到后用渲染器实时播放
@@ -71,7 +71,7 @@ export function CosmeticItemPreview({
   );
 }
 
-/** 按槽位画一份设计稿：昵称样式画一行字，其余画整张画布 */
+/** 按槽位画一份设计稿：昵称样式画一行字，其余画整张画布（铭牌按示例值写字） */
 export function SlotDesign({
   slot,
   design,
@@ -108,6 +108,7 @@ export function SlotDesign({
       playing={playing}
       avatarUrl={avatarUrl}
       assetUrl={assetUrl}
+      plateValue={plateSampleValue(slot)}
     />
   );
 }

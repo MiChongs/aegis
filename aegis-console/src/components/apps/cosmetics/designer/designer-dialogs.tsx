@@ -24,6 +24,7 @@ import { useCosmeticRevisionsQuery, useRestoreCosmeticRevisionMutation } from "@
 import { formatDateTimeMinute } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import { SlotDesign } from "../cosmetic-preview";
+import { isPlateSlot } from "../cosmetic-shared";
 
 type StepState = "idle" | "running" | "done" | "skipped" | "failed";
 
@@ -72,7 +73,14 @@ export function PublishDialog({
         </DialogHeader>
         <div className="flex flex-col gap-4">
           <div className="flex h-36 items-center justify-center rounded-lg border bg-muted/40">
-            <SlotDesign slot={slot} design={design} width={slot === "profile_card" ? 240 : 128} height={slot === "profile_card" ? 135 : 128} time={time} nameText={item.name} />
+            <SlotDesign
+              slot={slot}
+              design={design}
+              width={slot === "profile_card" || isPlateSlot(slot) ? 240 : 128}
+              height={slot === "profile_card" ? 135 : isPlateSlot(slot) ? 96 : 128}
+              time={time}
+              nameText={item.name}
+            />
           </div>
           <div className="flex flex-col gap-2">
             <Label className="text-xs text-muted-foreground">发布说明</Label>

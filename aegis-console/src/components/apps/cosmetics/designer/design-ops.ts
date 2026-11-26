@@ -8,6 +8,8 @@ import type {
   Keyframe,
   Layer,
   LayerType,
+  NameStyle,
+  Plate,
   ShapeKind,
   Track,
   TrackProperty
@@ -21,6 +23,83 @@ import { layerStateAt, sampleTrack, trackOf } from "../renderer/timeline";
  */
 
 export const AVATAR_ID = "__avatar";
+/** 铭牌的文字区域在设计器里也是一个可选中的对象（与头像同理，不是图层） */
+export const PLATE_ID = "__plate";
+
+/** 铭牌 template 里的占位：{value} 号码 / 有效期，{tier} 会员标签名（只有会员铭牌） */
+export const PLATE_VALUE = "{value}";
+export const PLATE_TIER = "{tier}";
+
+const countOf = (text: string, token: string) => text.split(token).length - 1;
+
+/**
+ * template 的问题；没有问题返回 null（与 design.go 的校验同口径）：
+ * 号码铭牌恰好一个 {value}、不能有 {tier}；会员铭牌 {value}、{tier} 各最多一次且至少一个。
+ */
+export function plateTemplateIssue(template: string, slot: CosmeticSlot, maxRunes = 32): string | null {
+  const runes = Array.from(template).length;
+  if (runes < 1 || runes > maxRunes) return `文字模板需要 1–${maxRunes} 字`;
+  const values = countOf(template, PLATE_VALUE);
+  const tiers = countOf(template, PLATE_TIER);
+  if (slot === "vip_plate") {
+    if (values > 1 || tiers > 1 || values + tiers === 0) return "会员铭牌的文字模板里 {value}、{tier} 各最多一次，且至少有一个";
+    return null;
+  }
+  if (tiers > 0) return "只有会员铭牌可以使用 {tier}";
+  if (values !== 1) return "文字模板需要恰好包含一个 {value}";
+  return null;
+}
+
+/** 铭牌的空白文字区域：横向留边、纵向居中，字号取区域高度的 2/3 */
+export function defaultPlate(canvas: { width: number; height: number }, template: string): Plate {
+  const w = canvas.width || 360;
+  const h = canvas.height || 96;
+  const height = Math.round(h * 0.625);
+  return {
+    x: Math.round(w / 15),
+    y: Math.round((h - height) / 2),
+    width: Math.round(w - (w / 15) * 2),
+    height,
+    template,
+    align: "center",
+    fontSize: Math.round(height * 2 / 3),
+    fontWeight: 700,
+    letterSpacing: 0.04,
+    font: "sans"
+  };
+}
+
+/** 把伸缩段收回画布内并保持 x0 < x1（改画布宽、拖参考线后） */
+export function clampStretch(stretch: { x0: number; x1: number }, canvasWidth: number) {
+  const w = Math.max(1, canvasWidth);
+  const x1 = Math.max(1, Math.min(w, stretch.x1));
+  const x0 = Math.max(0, Math.min(x1 - 1, stretch.x0));
+  return { x0, x1 };
+}
+
+/** 伸缩段的问题；没有问题返回 null（与 design.go 同口径：0 ≤ x0 < x1 ≤ canvas.width） */
+export function plateStretchIssue(stretch: { x0: number; x1: number } | undefined, canvasWidth: number): string | null {
+  if (!stretch) return null;
+  const { x0, x1 } = stretch;
+  if (!Number.isFinite(x0) || !Number.isFinite(x1) || x0 < 0 || x1 > canvasWidth + 0.01 || !(x0 < x1)) {
+    return `伸缩段需要满足 0 ≤ 起点 < 终点 ≤ ${canvasWidth}`;
+  }
+  return null;
+}
+
+/** 把文字区域夹回画布内（拖动、改画布尺寸后）；伸缩段一并收回 */
+export function clampPlate(plate: Plate, canvas: { width: number; height: number }): Plate {
+  const width = Math.max(1, Math.min(plate.width, canvas.width));
+  const height = Math.max(1, Math.min(plate.height, canvas.height));
+  return {
+    ...plate,
+    width,
+    height,
+    x: Math.max(0, Math.min(canvas.width - width, plate.x)),
+    y: Math.max(0, Math.min(canvas.height - height, plate.y)),
+    stretch: plate.stretch ? clampStretch(plate.stretch, canvas.width) : plate.stretch
+  };
+}
 
 export const PROPERTY_LABEL: Record<TrackProperty, string> = {
   x: "X",
@@ -132,7 +211,8 @@ function baseLayer(design: Design, type: LayerType, prefix: string, name: string
     id: newLayerId(design, prefix),
     name: uniqueName(design, name),
     type,
-    placement: "above",
+    // 铭牌槽位的图层缺省画在文字之下
+    placement: design.plate ? "below" : "above",
     x: Math.round((cw - w) / 2),
     y: Math.round((ch - h) / 2),
     width: Math.round(w),
@@ -555,22 +635,43 @@ export function localIssues(design: Design, slot: CosmeticSlot, catalog?: Cosmet
   if (slot === "name_style") {
     const style = design.nameStyle;
     if (!style) return [{ message: "缺少昵称样式" }];
-    if (!isDesignColor(style.color)) issues.push({ message: "昵称颜色不合法" });
-    if (style.effect === "cycle" && ((style.colors?.length ?? 0) < 2 || (style.colors?.length ?? 0) > 6)) {
-      issues.push({ message: "循环变色需要 2–6 种颜色" });
-    }
-    if (style.effect === "glow" && !isDesignColor(style.glowColor)) issues.push({ message: "外发光需要选择发光颜色" });
-    const speed = style.speed ?? 2400;
-    if (speed < 300 || speed > 20000) issues.push({ message: "效果周期需要在 300–20000 毫秒之间" });
-    return issues;
+    return nameStyleIssues(style, "昵称");
   }
   const spec = catalog?.slots.find((item) => item.key === slot);
+  const plateSlot = slot === "id_plate" || slot === "vip_plate";
   if (spec) {
     const { width, height } = design.canvas;
-    if (width < spec.minCanvas || width > spec.maxCanvas || height < spec.minCanvas || height > spec.maxCanvas) {
+    if (spec.plate || plateSlot) {
+      // 铭牌：任意比例，最长边 minCanvas–maxCanvas
+      const longest = Math.max(width, height);
+      if (longest < spec.minCanvas || longest > spec.maxCanvas || Math.min(width, height) < 1) {
+        issues.push({ message: `画布最长边需要在 ${spec.minCanvas}–${spec.maxCanvas} 之间` });
+      }
+    } else if (width < spec.minCanvas || width > spec.maxCanvas || height < spec.minCanvas || height > spec.maxCanvas) {
       issues.push({ message: `画布边长需要在 ${spec.minCanvas}–${spec.maxCanvas} 之间` });
     }
     if (spec.square && width !== height) issues.push({ message: "画布必须是正方形" });
+  }
+  if (plateSlot) {
+    const plate = design.plate;
+    if (!plate) {
+      issues.push({ layerId: PLATE_ID, message: "缺少铭牌文字区域" });
+    } else {
+      const push = (message: string) => issues.push({ layerId: PLATE_ID, message: `铭牌文字：${message}` });
+      const templateIssue = plateTemplateIssue(plate.template ?? "", slot, limits?.maxPlateTemplateRunes ?? 32);
+      if (templateIssue) push(templateIssue);
+      if (!(plate.width > 0) || !(plate.height > 0) || plate.x < 0 || plate.y < 0 ||
+        plate.x + plate.width > design.canvas.width + 0.01 || plate.y + plate.height > design.canvas.height + 0.01) {
+        push("文字区域需要完整落在画布内");
+      }
+      if (!(plate.fontSize > 0)) push("字号需要大于 0");
+      if (plate.fontWeight < 100 || plate.fontWeight > 900) push("字重需要在 100–900 之间");
+      if (plate.letterSpacing < -0.2 || plate.letterSpacing > 1) push("字间距需要在 -0.2–1 em 之间");
+      const stretchIssue = plateStretchIssue(plate.stretch, design.canvas.width);
+      if (stretchIssue) push(stretchIssue);
+    }
+    if (!design.nameStyle) issues.push({ layerId: PLATE_ID, message: "缺少文字样式" });
+    else issues.push(...nameStyleIssues(design.nameStyle, "文字").map((issue) => ({ ...issue, layerId: PLATE_ID })));
   }
   const maxDuration = limits?.maxDurationMs ?? 20000;
   if (design.duration < 0 || design.duration > maxDuration) issues.push({ message: `动画时长需要在 0–${maxDuration} 毫秒之间` });
@@ -613,6 +714,18 @@ export function localIssues(design: Design, slot: CosmeticSlot, catalog?: Cosmet
       if (track.keyframes.some((kf) => kf.t > design.duration)) push(`${PROPERTY_LABEL[track.property]}有关键帧超出时长`);
     }
   }
+  return issues;
+}
+
+function nameStyleIssues(style: NameStyle, subject: string): DesignIssue[] {
+  const issues: DesignIssue[] = [];
+  if (!isDesignColor(style.color)) issues.push({ message: `${subject}颜色不合法` });
+  if (style.effect === "cycle" && ((style.colors?.length ?? 0) < 2 || (style.colors?.length ?? 0) > 6)) {
+    issues.push({ message: "循环变色需要 2–6 种颜色" });
+  }
+  if (style.effect === "glow" && !isDesignColor(style.glowColor)) issues.push({ message: "外发光需要选择发光颜色" });
+  const speed = style.speed ?? 2400;
+  if (speed < 300 || speed > 20000) issues.push({ message: "效果周期需要在 300–20000 毫秒之间" });
   return issues;
 }
 

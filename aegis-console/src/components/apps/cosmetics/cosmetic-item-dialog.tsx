@@ -31,7 +31,7 @@ import type {
 import { useSaveCosmeticItemMutation } from "@/lib/cosmetic-hooks";
 import { cn } from "@/lib/utils";
 import { SlotDesign } from "./cosmetic-preview";
-import { SLOT_META, SLOT_ORDER, raritiesOf, slotLabel } from "./cosmetic-shared";
+import { SLOT_META, SLOT_ORDER, isPlateSlot, raritiesOf, slotLabel } from "./cosmetic-shared";
 
 /**
  * 新建 / 编辑装扮的基本信息（设计稿走设计器）。新建时可以套用模板：模板来自目录，按槽位过滤，
@@ -180,7 +180,7 @@ export function CosmeticItemDialog({
             {create ? (
               <div className="flex flex-col gap-2">
                 <Label className="text-xs text-muted-foreground">槽位</Label>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   {SLOT_ORDER.map((slot) => {
                     const meta = SLOT_META[slot];
                     const active = form.slot === slot;
@@ -437,5 +437,6 @@ function TemplateTile({
 function TemplatePreview({ slot, design, name }: { slot: CosmeticSlot; design: Design; name: string }) {
   if (slot === "name_style") return <SlotDesign slot={slot} design={design} width={140} height={60} nameText={name} fontSize={20} />;
   if (slot === "profile_card") return <SlotDesign slot={slot} design={design} width={150} height={84} />;
+  if (isPlateSlot(slot)) return <SlotDesign slot={slot} design={design} width={150} height={44} />;
   return <SlotDesign slot={slot} design={design} width={80} height={80} />;
 }

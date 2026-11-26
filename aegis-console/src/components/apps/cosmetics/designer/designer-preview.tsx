@@ -5,11 +5,12 @@ import type { CosmeticSlot, Design } from "@/lib/api/cosmetics";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { AvatarFrameCanvas, DesignCanvas, NameStyleCanvas } from "../cosmetic-canvas";
-import { paintSampleAvatar } from "../renderer";
+import { PLATE_SAMPLE_TIER, designDisplaySize, paintSampleAvatar } from "../renderer";
 
 /**
  * 预览场景：把正在编辑的设计稿放进客户端里会出现的位置，深浅两种背景各看一遍。
- * 头像框套在不同尺寸的头像上、资料卡顶部、排行榜行、勋章挨着昵称、昵称出现在资料卡与排行榜里。
+ * 头像框套在不同尺寸的头像上、资料卡顶部、排行榜行、勋章挨着昵称、昵称出现在资料卡与排行榜里、
+ * 铭牌出现在「我的」页资料卡上（按高度 26 显示）。
  */
 
 type Tone = "light" | "dark";
@@ -21,9 +22,31 @@ const SURFACE: Record<Tone, { bg: string; card: string; text: string; sub: strin
 
 export function DesignerPreview({ slot, design }: { slot: CosmeticSlot; design: Design }) {
   const [nickname, setNickname] = useState("远航的旅人");
+  const [plateCustom, setPlateCustom] = useState<PlateSample>({ value: "", tier: "" });
+  const plateSlot = slot === "id_plate" || slot === "vip_plate";
   return (
     <div className="flex flex-col gap-3 p-3">
       <Input value={nickname} maxLength={16} onChange={(event) => setNickname(event.target.value)} className="h-8 text-xs" placeholder="示例昵称" />
+      {plateSlot ? (
+        <div className={cn("grid gap-2", slot === "vip_plate" && "grid-cols-2")}>
+          <Input
+            value={plateCustom.value}
+            maxLength={32}
+            onChange={(event) => setPlateCustom((old) => ({ ...old, value: event.target.value }))}
+            className="h-8 text-xs"
+            placeholder={slot === "id_plate" ? "自定义号码，例如 888" : "自定义有效期 {value}"}
+          />
+          {slot === "vip_plate" ? (
+            <Input
+              value={plateCustom.tier}
+              maxLength={16}
+              onChange={(event) => setPlateCustom((old) => ({ ...old, tier: event.target.value }))}
+              className="h-8 text-xs"
+              placeholder="自定义档位 {tier}"
+            />
+          ) : null}
+        </div>
+      ) : null}
       {(["light", "dark"] as Tone[]).map((tone) => (
         <div key={tone} className="flex flex-col gap-3 rounded-xl border p-3" style={{ backgroundColor: SURFACE[tone].bg }}>
           <span className="text-[11px] font-medium" style={{ color: SURFACE[tone].sub }}>
@@ -33,6 +56,9 @@ export function DesignerPreview({ slot, design }: { slot: CosmeticSlot; design: 
           {slot === "profile_card" ? <ProfileScene design={design} tone={tone} nickname={nickname} /> : null}
           {slot === "badge" ? <BadgeScenes design={design} tone={tone} nickname={nickname} /> : null}
           {slot === "name_style" ? <NameScenes design={design} tone={tone} nickname={nickname} /> : null}
+          {slot === "id_plate" || slot === "vip_plate" ? (
+            <PlateScenes slot={slot} design={design} tone={tone} nickname={nickname} custom={plateCustom} />
+          ) : null}
         </div>
       ))}
     </div>
@@ -190,6 +216,73 @@ function NameScenes({ design, tone, nickname }: { design: Design; tone: Tone; ni
             这首歌的前奏太好听了
           </span>
         </div>
+      </div>
+    </>
+  );
+}
+
+/** 铭牌按高度定尺寸：宽度 = 高度 × (canvas.width + delta) / canvas.height（按字伸缩时随文字变化） */
+type PlateSample = { value: string; tier: string };
+
+function PlateCanvas({ design, height, sample, maxWidth }: { design: Design; height: number; sample: PlateSample; maxWidth?: number }) {
+  const size = designDisplaySize(design, sample.value, sample.tier);
+  const ratio = (size.width || 1) / (size.height || 1);
+  // 父级给的宽度不够时整体等比缩小
+  const width = maxWidth ? Math.min(maxWidth, height * ratio) : height * ratio;
+  return <DesignCanvas design={design} width={width} height={height} plateValue={sample.value} plateTier={sample.tier} />;
+}
+
+/** 预览用的示例值：短的、长的各一个，看按字伸缩；会员铭牌另带 {tier} 示例 */
+const PLATE_SAMPLES: Record<"id_plate" | "vip_plate", PlateSample[]> = {
+  id_plate: [
+    { value: "66666", tier: "" },
+    { value: "1234567890", tier: "" }
+  ],
+  vip_plate: [
+    { value: "永久有效", tier: PLATE_SAMPLE_TIER },
+    { value: "2027-01-01 到期", tier: PLATE_SAMPLE_TIER }
+  ]
+};
+
+function PlateScenes({
+  slot,
+  design,
+  tone,
+  nickname,
+  custom
+}: {
+  slot: "id_plate" | "vip_plate";
+  design: Design;
+  tone: Tone;
+  nickname: string;
+  custom: PlateSample;
+}) {
+  const s = SURFACE[tone];
+  const extra = custom.value.trim() || custom.tier.trim() ? [{ value: custom.value.trim(), tier: custom.tier.trim() }] : [];
+  const values = [...PLATE_SAMPLES[slot], ...extra];
+  return (
+    <>
+      <div className="flex items-center gap-3 rounded-lg p-3" style={{ backgroundColor: s.card }}>
+        <SampleAvatar size={56} />
+        <div className="flex min-w-0 flex-col items-start gap-1.5">
+          <span className="text-sm font-semibold" style={{ color: s.text }}>
+            {nickname}
+          </span>
+          {/* 「我的」页 26dp */}
+          {values.map((sample, index) => (
+            <PlateCanvas key={index} design={design} height={26} sample={sample} maxWidth={180} />
+          ))}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-end justify-around gap-3 rounded-lg p-3" style={{ backgroundColor: s.card }}>
+        {[20, 26, 40].map((height) => (
+          <div key={height} className="flex flex-col items-center gap-1.5">
+            <PlateCanvas design={design} height={height} sample={values[values.length - 1]} maxWidth={240} />
+            <span className="text-[10px] tabular-nums" style={{ color: s.sub }}>
+              {height}
+            </span>
+          </div>
+        ))}
       </div>
     </>
   );

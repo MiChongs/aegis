@@ -5,6 +5,7 @@ import type { Design, NameStyle } from "@/lib/api/cosmetics";
 import { cn } from "@/lib/utils";
 import {
   designAnimates,
+  designDisplaySize,
   drawNameStyle,
   measureName,
   renderDesign,
@@ -93,6 +94,8 @@ export function DesignCanvas({
   background = true,
   placeholders,
   assetUrl,
+  plateValue,
+  plateTier,
   className,
   style,
   time,
@@ -109,10 +112,16 @@ export function DesignCanvas({
   background?: boolean;
   placeholders?: boolean;
   assetUrl?: (id: number) => string | undefined;
+  /** 铭牌里 {value} 的示例值 */
+  plateValue?: string;
+  /** 会员铭牌里 {tier} 的示例值 */
+  plateTier?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const cw = design?.canvas?.width || 1;
-  const ch = design?.canvas?.height || 1;
+  // 铭牌按字伸缩时显示宽度随文字变化
+  const display = designDisplaySize(design, plateValue, plateTier);
+  const cw = display.width || 1;
+  const ch = display.height || 1;
   const boxHeight = height ?? (width * ch) / cw;
   const scale = Math.min(width / cw, boxHeight / ch);
   const drawW = cw * scale;
@@ -133,7 +142,9 @@ export function DesignCanvas({
         background,
         avatar: hideAvatar ? null : { url: avatarUrl, painter: avatarPainter },
         placeholders,
-        assetUrl
+        assetUrl,
+        plateValue,
+        plateTier
       });
     };
   });

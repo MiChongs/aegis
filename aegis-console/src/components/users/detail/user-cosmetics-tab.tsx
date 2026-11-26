@@ -5,6 +5,7 @@ import { Gift, Loader2, Plus, Shirt, Sparkles, Undo2, UserRound, X } from "lucid
 import { toast } from "sonner";
 import { AvatarFrameCanvas, DesignCanvas, NameStyleCanvas } from "@/components/apps/cosmetics/cosmetic-canvas";
 import { CosmeticPicker } from "@/components/apps/cosmetics/cosmetic-reward";
+import { PLATE_SAMPLE_TIER, designDisplaySize, plateSampleValue } from "@/components/apps/cosmetics/renderer";
 import {
   OWNERSHIP_STATE_META,
   RarityBadge,
@@ -143,7 +144,13 @@ function LoadoutView({
   const frame = loadout.avatarFrame?.design;
   const name = loadout.nameStyle?.design?.nameStyle;
   const badges = loadout.badges ?? [];
-  const empty = !loadout.avatarFrame && !loadout.profileCard && !loadout.nameStyle && badges.length === 0;
+  const plates = (
+    [
+      ["id_plate", loadout.idPlate],
+      ["vip_plate", loadout.vipPlate]
+    ] as const
+  ).filter(([, view]) => view?.design);
+  const empty = !loadout.avatarFrame && !loadout.profileCard && !loadout.nameStyle && !loadout.idPlate && !loadout.vipPlate && badges.length === 0;
   const width = 340;
   return (
     <div className="grid gap-5 md:grid-cols-[340px_minmax(0,1fr)]">
@@ -167,6 +174,28 @@ function LoadoutView({
             {name ? <NameStyleCanvas style={name} text={nickname} fontSize={17} /> : <span className="text-[17px] font-semibold">{nickname}</span>}
             {badges.map((badge) => (badge.design ? <DesignCanvas key={badge.id} design={badge.design} width={20} /> : null))}
           </div>
+          {plates.length ? (
+            <div className="mt-1 flex flex-wrap items-center justify-center gap-1.5">
+              {plates.map(([slot, view]) => {
+                // 客户端按高度定尺寸（「我的」页 26dp），宽度 = 高度 × (canvas.width + delta) / canvas.height
+                const design = view!.design!;
+                const value = plateSampleValue(slot);
+                const size = designDisplaySize(design, value, PLATE_SAMPLE_TIER);
+                const ratio = (size.width || 1) / (size.height || 1);
+                return (
+                  <DesignCanvas
+                    key={slot}
+                    design={design}
+                    width={26 * ratio}
+                    height={26}
+                    plateValue={value}
+                    plateTier={PLATE_SAMPLE_TIER}
+                    title={slotLabel(slot, catalog)}
+                  />
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       </div>
       <dl className="grid content-start gap-3 sm:grid-cols-2">
@@ -175,7 +204,9 @@ function LoadoutView({
           [
             ["avatar_frame", loadout.avatarFrame],
             ["profile_card", loadout.profileCard],
-            ["name_style", loadout.nameStyle]
+            ["name_style", loadout.nameStyle],
+            ["id_plate", loadout.idPlate],
+            ["vip_plate", loadout.vipPlate]
           ] as const
         ).map(([slot, view]) => {
           const meta = SLOT_META[slot];

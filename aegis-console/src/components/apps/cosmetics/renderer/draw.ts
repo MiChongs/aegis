@@ -1,4 +1,4 @@
-import type { AvatarSlot, Design, Layer, NameStyle } from "@/lib/api/cosmetics";
+import type { AvatarSlot, Design, Layer, NameStyle, Plate, PlateFont } from "@/lib/api/cosmetics";
 import { mixColor, parseDesignColor, rgbaCss, scaleBrightness, type RGBA } from "./color";
 import { getImage, resolveAssetUrl, tintedImage } from "./images";
 import { sampleParticles } from "./particles";
@@ -10,11 +10,21 @@ import { layerMatrix, layerStateAt, loopTime, type LayerState } from "./timeline
  * 调用方负责把 ctx 的变换设成「设计稿像素 → 设备像素」（通常是 setTransform(scale, 0, 0, scale, 0, 0)），
  * 并把这个比例作为 pixelRatio 传进来：canvas 的阴影模糊不随变换缩放，发光半径要自己乘上去。
  *
- * 绘制顺序：底色 → placement=below 的图层 → 头像（只有头像框）→ 其余图层；数组顺序即绘制顺序。
+ * 绘制顺序：底色 → placement=below 的图层 → 头像（只有头像框）或铭牌文字（只有铭牌）→ 其余图层；数组顺序即绘制顺序。
  */
 
 export const DESIGN_FONT =
   '"PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", "Noto Sans SC", system-ui, -apple-system, sans-serif';
+
+/** 铭牌 font 的三个取值对应的 CSS 字体族 */
+export const PLATE_FONT_FAMILY: Record<PlateFont, string> = {
+  sans: DESIGN_FONT,
+  serif: '"Songti SC", "Noto Serif SC", "Source Han Serif SC", "SimSun", serif',
+  mono: '"SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace'
+};
+
+/** 铭牌没有给 nameStyle 时的兜底文字样式 */
+const PLATE_STYLE_FALLBACK: NameStyle = { color: "#FFFFFFFF", effect: "none", fontWeight: 700, speed: 2400 };
 
 const BLEND: Record<string, GlobalCompositeOperation> = {
   normal: "source-over",
@@ -45,15 +55,28 @@ export type RenderOptions = {
   placeholders?: boolean;
   /** 素材地址兜底：设计稿里的引用没有 url 时按编号查（版本历史里的旧版本） */
   assetUrl?: (id: number) => string | undefined;
+  /** 铭牌里 `{value}` 换成什么（号码 / 有效期那一行）；不给时用号码示例 66666 */
+  plateValue?: string;
+  /** 会员铭牌里 `{tier}` 换成什么（套餐名，没有时档位名）；不给时用示例「领航者」 */
+  plateTier?: string;
+  /** 画不画铭牌文字（设计器里隐藏文字时为 false） */
+  plateText?: boolean;
+  /** 铭牌按字伸缩（plate.stretch）；设计器舞台按原画布编辑时为 false */
+  stretch?: boolean;
 };
 
 /** 画一整份设计稿（不含昵称样式，昵称样式见 drawNameStyle） */
 export function renderDesign(ctx: CanvasRenderingContext2D, design: Design, options: RenderOptions) {
-  const width = design.canvas?.width ?? 0;
+  const canvasWidth = design.canvas?.width ?? 0;
   const height = design.canvas?.height ?? 0;
-  if (!width || !height) return;
+  if (!canvasWidth || !height) return;
   const animate = (design.duration ?? 0) > 0;
   const t = options.time ?? loopTime(design, options.elapsed);
+  const plateValue = options.plateValue ?? "66666";
+  const plateTier = options.plateTier ?? PLATE_SAMPLE_TIER;
+  // 按字伸缩：显示用的画布宽 = canvas.width + delta（调用方用 designDisplaySize 定画布尺寸）
+  const stretch = options.stretch === false ? null : plateStretchFor(design, plateValue, plateTier);
+  const width = canvasWidth + (stretch?.delta ?? 0);
 
   if (options.background !== false && design.background) {
     const bg = parseDesignColor(design.background);
@@ -64,17 +87,94 @@ export function renderDesign(ctx: CanvasRenderingContext2D, design: Design, opti
   }
 
   const layers = design.layers ?? [];
-  if (design.avatar) {
+  const avatar = design.avatar;
+  const plate = design.plate;
+  if (avatar || plate) {
     for (const layer of layers) {
-      if (layer.placement === "below") drawLayer(ctx, design, layer, t, animate, options);
+      if (layer.placement === "below") drawLayer(ctx, design, layer, t, animate, options, stretch);
     }
-    if (options.avatar !== null) drawAvatar(ctx, design.avatar, options.avatar ?? {});
+    if (avatar) {
+      if (options.avatar !== null) drawAvatar(ctx, avatar, options.avatar ?? {});
+    } else if (plate && options.plateText !== false) {
+      drawPlate(ctx, plate, design.nameStyle, plateValue, {
+        tier: plateTier,
+        elapsed: options.elapsed,
+        pixelRatio: options.pixelRatio,
+        stretch
+      });
+    }
     for (const layer of layers) {
-      if (layer.placement !== "below") drawLayer(ctx, design, layer, t, animate, options);
+      if (layer.placement !== "below") drawLayer(ctx, design, layer, t, animate, options, stretch);
     }
   } else {
-    for (const layer of layers) drawLayer(ctx, design, layer, t, animate, options);
+    for (const layer of layers) drawLayer(ctx, design, layer, t, animate, options, stretch);
   }
+}
+
+// ── 铭牌按字伸缩（docs/cosmetics.md「按字伸缩」） ──
+
+/** 一次伸缩：画布上 x0–x1 这一段横向多出 delta 像素（可为负） */
+export type StretchMap = { x0: number; x1: number; delta: number };
+
+/** 横坐标映射 X(x)：x0 左边不变，x0–x1 之间线性拉伸，x1 右边整体平移 delta；纵向不变 */
+export function stretchX(s: StretchMap, x: number) {
+  if (x <= s.x0) return x;
+  if (x >= s.x1) return x + s.delta;
+  return s.x0 + ((x - s.x0) * (s.x1 - s.x0 + s.delta)) / (s.x1 - s.x0);
+}
+
+/** 这份设计稿写这个值时的伸缩量；没有 plate.stretch 时为 null */
+export function plateStretchFor(design: Design, value: string, tier = PLATE_SAMPLE_TIER): StretchMap | null {
+  const plate = design.plate;
+  const range = plate?.stretch;
+  if (!plate || !range || !(range.x1 > range.x0)) return null;
+  const { width } = plateMetrics(plate, design.nameStyle, value, tier);
+  // 中段至少留 1 像素
+  const delta = Math.max(-(range.x1 - range.x0) + 1, width - plate.width);
+  return { x0: range.x0, x1: range.x1, delta: Number.isFinite(delta) ? delta : 0 };
+}
+
+/** 设计稿显示用的画布尺寸（铭牌按字伸缩后宽度会变；其余设计稿就是 canvas） */
+export function designDisplaySize(design: Design | null | undefined, plateValue = "66666", plateTier = PLATE_SAMPLE_TIER) {
+  const width = design?.canvas?.width ?? 0;
+  const height = design?.canvas?.height ?? 0;
+  const stretch = design && width && height ? plateStretchFor(design, plateValue, plateTier) : null;
+  return { width: width + (stretch?.delta ?? 0), height, stretch };
+}
+
+/** 图片 / 序列帧 fill 跨过伸缩段时的三段：f 是源图（图层矩形）里的切点比例，d 是映射后矩形里的目标横坐标 */
+type ImageSlices = { f: [number, number, number, number]; d: [number, number, number, number] };
+
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+
+/**
+ * 伸缩后的图层状态：矩形左右边各自过 X（只在左段或右段的图层只是平移，跨过伸缩段的被拉宽）；
+ * circle / star / polygon / ring 与 point / ring 发射的粒子只把中心过 X、不拉伸。
+ * 锚点、旋转、缩放照常作用在映射后的矩形上（锚点仍是矩形内的比例）。
+ */
+function stretchState(layer: Layer, state: LayerState, s: StretchMap): { state: LayerState; slices?: ImageSlices } {
+  const shapeCenterOnly = layer.type === "shape" && layer.shape !== undefined && layer.shape !== "rect";
+  const particlesCenterOnly = layer.type === "particles" && (layer.particles?.emitter ?? "point") !== "rect";
+  if (shapeCenterOnly || particlesCenterOnly) {
+    const cx = state.x + state.width / 2;
+    return { state: { ...state, x: stretchX(s, cx) - state.width / 2 } };
+  }
+  const left = stretchX(s, state.x);
+  const right = stretchX(s, state.x + state.width);
+  const next = { ...state, x: left, width: Math.max(0, right - left) };
+  if (
+    (layer.type === "image" || layer.type === "sprite") &&
+    layer.fit === "fill" &&
+    state.width > 0 &&
+    state.x < s.x1 &&
+    state.x + state.width > s.x0
+  ) {
+    const f0 = clamp01((s.x0 - state.x) / state.width);
+    const f1 = clamp01((s.x1 - state.x) / state.width);
+    const at = (f: number) => stretchX(s, state.x + f * state.width) - left;
+    return { state: next, slices: { f: [0, f0, f1, 1], d: [0, at(f0), at(f1), right - left] } };
+  }
+  return { state: next };
 }
 
 /** 头像：按 avatar.shape 裁剪（circle / rounded（圆角 = radius × size）/ square） */
@@ -133,10 +233,13 @@ export function drawLayer(
   layer: Layer,
   t: number,
   animate: boolean,
-  options: RenderOptions
+  options: RenderOptions,
+  stretch?: StretchMap | null
 ) {
   if (layer.hidden || options.hiddenIds?.has(layer.id)) return;
-  const state = layerStateAt(layer, t, animate);
+  let state = layerStateAt(layer, t, animate);
+  let slices: ImageSlices | undefined;
+  if (stretch && stretch.delta !== 0) ({ state, slices } = stretchState(layer, state, stretch));
   if (state.opacity <= 0 || state.sx === 0 || state.sy === 0 || !(state.width > 0) || !(state.height > 0)) return;
   ctx.save();
   const m = layerMatrix(state);
@@ -149,7 +252,7 @@ export function drawLayer(
   switch (layer.type) {
     case "image":
     case "sprite":
-      drawImageLayer(ctx, design, layer, state, options);
+      drawImageLayer(ctx, design, layer, state, options, slices);
       break;
     case "text":
       drawTextLayer(ctx, layer, state, blurScale);
@@ -200,7 +303,14 @@ function drawPlaceholder(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.restore();
 }
 
-function drawImageLayer(ctx: CanvasRenderingContext2D, design: Design, layer: Layer, state: LayerState, options: RenderOptions) {
+function drawImageLayer(
+  ctx: CanvasRenderingContext2D,
+  design: Design,
+  layer: Layer,
+  state: LayerState,
+  options: RenderOptions,
+  slices?: ImageSlices
+) {
   const url = assetUrlOf(design, layer.asset, options);
   const image = url ? getImage(url) : null;
   const w = state.width;
@@ -225,6 +335,18 @@ function drawImageLayer(ctx: CanvasRenderingContext2D, design: Design, layer: La
     sh = image.naturalHeight / rows;
     sx = (frame % columns) * sw;
     sy = Math.floor(frame / columns) * sh;
+  }
+  if (slices) {
+    // 三段式：左右两块原样，只拉中间那块（序列帧按当前这一格切）
+    for (let i = 0; i < 3; i++) {
+      const fa = slices.f[i];
+      const fb = slices.f[i + 1];
+      const da = slices.d[i];
+      const db = slices.d[i + 1];
+      if (fb - fa <= 0 || db - da <= 0) continue;
+      ctx.drawImage(source, sx + fa * sw, sy, (fb - fa) * sw, sh, da, 0, db - da, h);
+    }
+    return;
   }
   const dest = fitRect(layer.fit, sw, sh, w, h);
   if (layer.fit === "cover") {
@@ -476,25 +598,39 @@ export type NameDrawOptions = {
   fontSize: number;
   elapsed: number;
   pixelRatio: number;
-  align?: "left" | "center";
+  /** x 是文字的左端 / 中点 / 右端 */
+  align?: "left" | "center" | "right";
+  /** 字间距（像素，加在相邻两字之间） */
+  letterSpacing?: number;
+  /** 覆盖 style.fontWeight（铭牌用 plate.fontWeight） */
+  fontWeight?: number;
+  /** 覆盖字体族（铭牌的 font） */
+  fontFamily?: string;
 };
 
 const HIGHLIGHT_DEFAULT: RGBA = { r: 255, g: 255, b: 255, a: 0.7 };
 
-function nameFont(style: NameStyle, fontSize: number) {
-  return `${style.fontWeight || 600} ${fontSize}px ${DESIGN_FONT}`;
+function nameFont(style: NameStyle, fontSize: number, weight?: number, family?: string) {
+  return `${weight || style.fontWeight || 600} ${fontSize}px ${family || DESIGN_FONT}`;
 }
 
 let measureCtx: CanvasRenderingContext2D | null = null;
 
 /** 昵称的显示宽度（不含发光） */
-export function measureName(text: string, style: NameStyle | undefined | null, fontSize: number) {
-  if (typeof document === "undefined") return text.length * fontSize;
+export function measureName(
+  text: string,
+  style: NameStyle | undefined | null,
+  fontSize: number,
+  extra?: Pick<NameDrawOptions, "letterSpacing" | "fontWeight" | "fontFamily">
+) {
+  const chars = Array.from(text);
+  const spacing = (extra?.letterSpacing ?? 0) * Math.max(0, chars.length - 1);
+  if (typeof document === "undefined") return chars.length * fontSize + spacing;
   if (!measureCtx) measureCtx = document.createElement("canvas").getContext("2d");
-  if (!measureCtx) return text.length * fontSize;
-  const font = nameFont(style ?? { color: "#000000", effect: "none" }, fontSize);
+  if (!measureCtx) return chars.length * fontSize + spacing;
+  const font = nameFont(style ?? { color: "#000000", effect: "none" }, fontSize, extra?.fontWeight, extra?.fontFamily);
   measureCtx.font = font;
-  return charWidths(measureCtx, font, Array.from(text)).reduce((sum, w) => sum + w, 0);
+  return charWidths(measureCtx, font, chars).reduce((sum, w) => sum + w, 0) + spacing;
 }
 
 /**
@@ -504,15 +640,16 @@ export function measureName(text: string, style: NameStyle | undefined | null, f
 export function drawNameStyle(ctx: CanvasRenderingContext2D, text: string, style: NameStyle, options: NameDrawOptions) {
   if (!text) return;
   const fontSize = options.fontSize;
-  const font = nameFont(style, fontSize);
+  const font = nameFont(style, fontSize, options.fontWeight, options.fontFamily);
   ctx.save();
   ctx.font = font;
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
   const chars = Array.from(text);
   const widths = charWidths(ctx, font, chars);
-  const total = widths.reduce((sum, w) => sum + w, 0);
-  const startX = options.align === "center" ? options.x - total / 2 : options.x;
+  const spacing = options.letterSpacing ?? 0;
+  const total = widths.reduce((sum, w) => sum + w, 0) + spacing * Math.max(0, chars.length - 1);
+  const startX = options.align === "center" ? options.x - total / 2 : options.align === "right" ? options.x - total : options.x;
   const speed = Math.max(300, style.speed || 2400);
   const phase = (((options.elapsed % speed) + speed) % speed) / speed;
   const base = parseDesignColor(style.color) ?? { r: 59, g: 130, b: 246, a: 1 };
@@ -570,7 +707,68 @@ export function drawNameStyle(ctx: CanvasRenderingContext2D, text: string, style
       y -= 0.12 * fontSize * Math.sin(Math.PI * 2 * (phase - index * 0.15));
     }
     ctx.fillText(char, x, y);
-    x += widths[index];
+    x += widths[index] + spacing;
   });
   ctx.restore();
+}
+
+// ── 铭牌 ──
+
+/** 控制台预览里 {value} 的示例值：号码铭牌是号码，会员铭牌是有效期那一行 */
+export function plateSampleValue(slot?: string | null) {
+  return slot === "vip_plate" ? "永久有效" : "66666";
+}
+
+/** 会员铭牌 {tier} 的示例值（会员标签上的名字：套餐名，没有时档位名） */
+export const PLATE_SAMPLE_TIER = "领航者";
+
+/** 铭牌上实际写的字：template 里的 `{value}`、`{tier}` 换成客户端给的值（各最多一次） */
+export function plateText(template: string | undefined, value: string, tier = PLATE_SAMPLE_TIER) {
+  return (template ?? "{value}").replace("{value}", () => value).replace("{tier}", () => tier);
+}
+
+/**
+ * 铭牌文字（docs/cosmetics.md「铭牌」）：在 plate 区域内垂直居中、按 align 水平对齐；字号 fontSize（画布像素），
+ * 一行放不下时等比缩小到刚好放下（不换行、不省略）。颜色与动态效果用 nameStyle，规格同昵称样式。
+ */
+/** 铭牌文字按 fontSize 量出来的宽度（含字间距），伸缩与缩小都用这一个口径 */
+function plateMetrics(plate: Plate, style: NameStyle | undefined | null, value: string, tier: string) {
+  // 量字宽用替换后的整串
+  const text = plateText(plate.template, value, tier);
+  const textStyle = style ?? PLATE_STYLE_FALLBACK;
+  const family = PLATE_FONT_FAMILY[plate.font] ?? DESIGN_FONT;
+  const base = plate.fontSize > 0 ? plate.fontSize : 24;
+  const em = plate.letterSpacing ?? 0;
+  const width = text ? measureName(text, textStyle, base, { letterSpacing: em * base, fontWeight: plate.fontWeight, fontFamily: family }) : 0;
+  return { text, textStyle, family, base, em, width };
+}
+
+export function drawPlate(
+  ctx: CanvasRenderingContext2D,
+  plate: Plate,
+  style: NameStyle | undefined | null,
+  value: string,
+  options: { elapsed: number; pixelRatio: number; stretch?: StretchMap | null; tier?: string }
+) {
+  if (!(plate.width > 0) || !(plate.height > 0)) return;
+  const { text, textStyle, family, base, em, width } = plateMetrics(plate, style, value, options.tier ?? PLATE_SAMPLE_TIER);
+  if (!text) return;
+  // 按字伸缩时文字区域左右过 X、按原字号画；否则固定宽度，放不下时等比缩小（字宽与字间距都与字号成正比，缩一次就刚好放下）
+  const stretch = options.stretch;
+  const left = stretch ? stretchX(stretch, plate.x) : plate.x;
+  const boxWidth = stretch ? stretchX(stretch, plate.x + plate.width) - left : plate.width;
+  const fontSize = !stretch && width > boxWidth && width > 0 ? base * (boxWidth / width) : base;
+  const align = plate.align === "left" || plate.align === "right" ? plate.align : "center";
+  const x = align === "left" ? left : align === "right" ? left + boxWidth : left + boxWidth / 2;
+  drawNameStyle(ctx, text, textStyle, {
+    x,
+    y: plate.y + plate.height / 2,
+    fontSize,
+    elapsed: options.elapsed,
+    pixelRatio: options.pixelRatio,
+    align,
+    letterSpacing: em * fontSize,
+    fontWeight: plate.fontWeight,
+    fontFamily: family
+  });
 }

@@ -45,13 +45,15 @@ import { formatRelative, localDateKey } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import { CosmeticItemPreview } from "./cosmetic-preview";
 import { WorkshopSettingsCard } from "./cosmetics-workshop-settings";
-import { RarityBadge, SLOT_META, SLOT_ORDER, formatBytes, formatCount, slotLabel, sourceLabel } from "./cosmetic-shared";
+import { RarityBadge, SLOT_META, SLOT_ORDER, formatBytes, formatCount, isPlateSlot, slotLabel, sourceLabel } from "./cosmetic-shared";
 
 const SLOT_COLORS: Record<CosmeticSlot, { light: string; dark: string }> = {
   avatar_frame: { light: "#8b5cf6", dark: "#a78bfa" },
   profile_card: { light: "#0ea5e9", dark: "#38bdf8" },
   name_style: { light: "#6366f1", dark: "#818cf8" },
-  badge: { light: "#f59e0b", dark: "#fbbf24" }
+  badge: { light: "#f59e0b", dark: "#fbbf24" },
+  id_plate: { light: "#64748b", dark: "#94a3b8" },
+  vip_plate: { light: "#ef4444", dark: "#f87171" }
 };
 
 const SOURCE_PALETTE = [
@@ -441,7 +443,7 @@ function TopItems({
                 className="shrink-0 rounded-lg border bg-muted/40 transition-colors hover:bg-muted"
                 aria-label={`打开 ${item.name}`}
               >
-                <CosmeticItemPreview appKey={appKey} item={{ id: item.id, slot: item.slot, name: item.name }} width={item.slot === "name_style" ? 88 : 44} height={44} />
+                <CosmeticItemPreview appKey={appKey} item={{ id: item.id, slot: item.slot, name: item.name }} width={item.slot === "name_style" || isPlateSlot(item.slot) ? 88 : 44} height={44} />
               </button>
               <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                 <div className="flex items-center justify-between gap-3">

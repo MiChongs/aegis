@@ -12,7 +12,7 @@ import { useCosmeticCatalogQuery, useCosmeticItemsQuery } from "@/lib/cosmetic-h
 import { cosmeticTermLabel, useCosmeticNamesVersion } from "@/lib/cosmetic-names";
 import { cn } from "@/lib/utils";
 import { CosmeticItemPreview } from "./cosmetic-preview";
-import { RarityBadge, SLOT_ORDER, slotLabel } from "./cosmetic-shared";
+import { RarityBadge, SLOT_ORDER, isPlateSlot, slotLabel } from "./cosmetic-shared";
 
 /**
  * 其它系统的奖励表单接入装扮（目录里 value="cosmetic"：refId = 装扮编号、amount = 天数，0 为永久）。
@@ -73,8 +73,14 @@ export function CosmeticPicker({
         >
           {selected && key ? (
             <span className="flex min-w-0 items-center gap-2">
-              <span className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded bg-muted/60">
-                <CosmeticItemPreview appKey={key} item={selected} width={selected.slot === "name_style" ? 56 : 28} height={28} nameText={selected.name} />
+              <span className={cn("flex h-7 shrink-0 items-center justify-center overflow-hidden rounded bg-muted/60", isPlateSlot(selected.slot) ? "w-14" : "w-7")}>
+                <CosmeticItemPreview
+                  appKey={key}
+                  item={selected}
+                  width={selected.slot === "name_style" || isPlateSlot(selected.slot) ? 56 : 28}
+                  height={28}
+                  nameText={selected.name}
+                />
               </span>
               <span className="truncate text-sm">{selected.name}</span>
               <span className="shrink-0 text-xs text-muted-foreground">{slotLabel(selected.slot, catalog)}</span>
@@ -108,9 +114,15 @@ export function CosmeticPicker({
                       }}
                       className="gap-2"
                     >
-                      <span className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted/60">
+                      <span className={cn("flex h-9 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted/60", isPlateSlot(item.slot) ? "w-[72px]" : "w-9")}>
                         {key ? (
-                          <CosmeticItemPreview appKey={key} item={item} width={item.slot === "name_style" ? 72 : 36} height={36} nameText={item.name} />
+                          <CosmeticItemPreview
+                            appKey={key}
+                            item={item}
+                            width={item.slot === "name_style" || isPlateSlot(item.slot) ? 72 : 36}
+                            height={36}
+                            nameText={item.name}
+                          />
                         ) : null}
                       </span>
                       <span className="flex min-w-0 flex-1 flex-col">

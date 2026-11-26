@@ -80,6 +80,7 @@ import {
   STATUS_META,
   StatusBadge,
   formatCount,
+  isPlateSlot,
   raritiesOf,
   rarityOf,
   slotLabel,
@@ -436,7 +437,7 @@ function ItemCard({
           <CosmeticItemPreview
             appKey={appKey}
             item={item}
-            width={item.slot === "profile_card" || item.slot === "name_style" ? 200 : 120}
+            width={item.slot === "profile_card" || item.slot === "name_style" || isPlateSlot(item.slot) ? 200 : 120}
             height={item.slot === "profile_card" ? 112 : 120}
           />
           <span className="absolute top-2 left-2 flex flex-wrap gap-1">

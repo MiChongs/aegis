@@ -47,11 +47,14 @@ import {
 } from "@/lib/cosmetic-hooks";
 import { formatClockSeconds } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
-import { RarityBadge, StatusBadge, slotLabel } from "../cosmetic-shared";
+import { RarityBadge, StatusBadge, isPlateSlot, slotLabel } from "../cosmetic-shared";
 import { renderPreviewPng } from "../renderer";
 import {
   AVATAR_ID,
+  PLATE_ID,
+  clampPlate,
   createAssetLayer,
+  defaultPlate,
   designSignature,
   duplicateLayer,
   insertLayer,
@@ -91,6 +94,18 @@ function blankDesign(item: CosmeticItem, catalog?: CosmeticCatalog | null): Desi
   if (item.slot === "name_style") {
     return { version: 1, canvas: { width: 0, height: 0 }, duration: 0, layers: [], nameStyle: { color: "#3B82F6", effect: "none", speed: 2400, fontWeight: 600 } };
   }
+  if (isPlateSlot(item.slot)) {
+    // 与服务端 NewDesign 同值：360×96，文字区域居中，白字无效果
+    const canvas = spec?.canvas ?? { width: 360, height: 96 };
+    return {
+      version: 1,
+      canvas,
+      duration: 0,
+      layers: [],
+      plate: defaultPlate(canvas, item.slot === "id_plate" ? "ID {value}" : "{value}"),
+      nameStyle: { color: "#FFFFFFFF", effect: "none", speed: 2400, fontWeight: 700 }
+    };
+  }
   return {
     version: 1,
     canvas: spec?.canvas ?? { width: 300, height: 300 },
@@ -107,6 +122,11 @@ function initialDesign(item: CosmeticItem, catalog?: CosmeticCatalog | null): De
   copy.version = copy.version || 1;
   if (item.slot === "avatar_frame" && !copy.avatar) copy.avatar = blankDesign(item, catalog).avatar;
   if (item.slot === "name_style" && !copy.nameStyle) copy.nameStyle = blankDesign(item, catalog).nameStyle;
+  if (isPlateSlot(item.slot)) {
+    const blank = blankDesign(item, catalog);
+    if (!copy.plate) copy.plate = defaultPlate(copy.canvas?.width ? copy.canvas : blank.canvas, blank.plate!.template);
+    if (!copy.nameStyle) copy.nameStyle = blank.nameStyle;
+  }
   return copy;
 }
 
@@ -361,7 +381,7 @@ function WorkspaceInner({
   // ── 图层动作 ──
   const selectedLayerId = () => {
     const id = api.getState().selected;
-    return id && id !== AVATAR_ID ? id : null;
+    return id && id !== AVATAR_ID && id !== PLATE_ID ? id : null;
   };
 
   const insertAsset = (asset: CosmeticAsset, kind: "image" | "sprite" = asset.kind) => {
@@ -489,6 +509,10 @@ function WorkspaceInner({
         }),
         "nudge.avatar"
       );
+      return;
+    }
+    if (state.selected === PLATE_ID && state.design.plate) {
+      state.update((d) => ({ ...d, plate: clampPlate({ ...d.plate!, x: d.plate!.x + dx, y: d.plate!.y + dy }, d.canvas) }), "nudge.plate");
       return;
     }
     const id = selectedLayerId();

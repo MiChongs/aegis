@@ -28,7 +28,7 @@ import { useSetWorkshopItemStatusMutation, useWorkshopItemsQuery } from "@/lib/c
 import { formatDateTimeMinute, formatRelative } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import { SlotDesign } from "./cosmetic-preview";
-import { SLOT_META, SLOT_ORDER, WORKSHOP_STATUS_META, slotLabel } from "./cosmetic-shared";
+import { SLOT_META, WORKSHOP_STATUS_META, slotLabel, workshopSlots } from "./cosmetic-shared";
 
 /**
  * 作品巡查（docs/cosmetics.md「自定义工坊」）：用户在工坊里做的作品，服务端分页，按槽位 / 状态 / 关键字 / 作者筛选，
@@ -116,7 +116,7 @@ export function CosmeticsWorkshopItemsPanel({
                 setPage(1);
               }}
               label="槽位"
-              options={SLOT_ORDER.map((key) => ({ value: key, label: slotLabel(key, catalog) }))}
+              options={workshopSlots(catalog).map((key) => ({ value: key, label: slotLabel(key, catalog) }))}
             />
             <FilterSelect
               value={status}

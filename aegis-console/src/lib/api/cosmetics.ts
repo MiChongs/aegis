@@ -8,7 +8,9 @@ import { apiRequest, buildQuery } from "@/lib/api/client";
  * 颜色是 `#RRGGBB` 或 `#AARRGGBB`（alpha 在前），浏览器绘制前由渲染器换成 CSS 写法。
  */
 
-export type CosmeticSlot = "avatar_frame" | "profile_card" | "name_style" | "badge";
+export type CosmeticSlot = "avatar_frame" | "profile_card" | "name_style" | "badge" | "id_plate" | "vip_plate";
+/** 铭牌槽位：设计稿带 plate（文字区域）与 nameStyle（文字效果） */
+export type PlateSlot = "id_plate" | "vip_plate";
 export type CosmeticStatus = "draft" | "active" | "archived";
 export type CosmeticUnlockMode = "grant" | "free" | "vip" | "level" | "feature";
 export type CosmeticOwnershipState = "live" | "ended" | "revoked";
@@ -24,6 +26,7 @@ export type EmitterKind = "point" | "ring" | "rect";
 export type ParticleShape = "circle" | "star" | "spark" | "image";
 export type NameEffect = "none" | "shimmer" | "pulse" | "cycle" | "glow" | "wave";
 export type TextAlign = "left" | "center" | "right";
+export type PlateFont = "sans" | "serif" | "mono";
 export type TrackProperty =
   | "x"
   | "y"
@@ -141,6 +144,34 @@ export type NameStyle = {
   highlightColor?: string;
 };
 
+/**
+ * 按字伸缩：画布上 x0–x1 这一段横向可伸缩，两端固定（画布像素，0 ≤ x0 < x1 ≤ canvas.width）。
+ * delta = 文字宽 − plate.width（下限 −(x1 − x0) + 1），显示画布宽 = canvas.width + delta。
+ */
+export type PlateStretch = { x0: number; x1: number };
+
+/**
+ * 铭牌的文字区域（docs/cosmetics.md「铭牌」）：文字由客户端填（号码 / 会员有效期），
+ * template 里恰好一个 `{value}`；没有 stretch 时一行放不下就等比缩小，不换行、不省略。
+ */
+export type Plate = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  template: string;
+  align: TextAlign;
+  /** 画布像素 */
+  fontSize: number;
+  /** 100–900 */
+  fontWeight: number;
+  /** em，-0.2–1 */
+  letterSpacing: number;
+  font: PlateFont;
+  /** 按字伸缩（可选，推荐） */
+  stretch?: PlateStretch;
+};
+
 export type Design = {
   version: number;
   canvas: CanvasSize;
@@ -149,6 +180,8 @@ export type Design = {
   background?: string;
   layers: Layer[];
   nameStyle?: NameStyle;
+  /** 只有铭牌槽位 */
+  plate?: Plate;
   assets?: Record<string, AssetRef>;
 };
 
@@ -274,6 +307,10 @@ export type SlotSpec = {
   multiple: boolean;
   minCanvas: number;
   maxCanvas: number;
+  /** 铭牌槽位（画布最长边 minCanvas–maxCanvas，任意比例） */
+  plate?: boolean;
+  /** 能否在自定义工坊里做 */
+  workshop?: boolean;
 };
 
 export type RaritySpec = { key: string; label: string; color: string; rank: number };
@@ -293,6 +330,7 @@ export type DesignLimits = {
   maxPreviewBytes: number;
   maxBadgeSlots: number;
   maxGrantDays: number;
+  maxPlateTemplateRunes?: number;
 };
 
 export type DesignVocabulary = {
@@ -308,6 +346,8 @@ export type DesignVocabulary = {
   particles: ParticleShape[];
   nameEffects: NameEffect[];
   aligns: TextAlign[];
+  plateAligns?: TextAlign[];
+  plateFonts?: PlateFont[];
   properties: TrackProperty[];
   limits: DesignLimits;
 };
@@ -352,6 +392,10 @@ export type CosmeticLoadout = {
   avatarFrame?: CosmeticView;
   profileCard?: CosmeticView;
   nameStyle?: CosmeticView;
+  /** 号码铭牌（用户有号码时客户端才显示） */
+  idPlate?: CosmeticView;
+  /** 会员铭牌（用户有有效会员时客户端才显示） */
+  vipPlate?: CosmeticView;
   badges: CosmeticView[];
 };
 

@@ -176,7 +176,10 @@ export function layerCorners(state: LayerState) {
 /** 设计稿里是否有任何会随时间变化的东西（决定要不要逐帧重绘） */
 export function designAnimates(design: Design | null | undefined) {
   if (!design) return false;
-  if (design.nameStyle) return design.nameStyle.effect !== "none" && design.nameStyle.effect !== "glow";
+  const nameAnimates = Boolean(design.nameStyle) && design.nameStyle?.effect !== "none" && design.nameStyle?.effect !== "glow";
+  // 昵称样式只有一行字；铭牌除了文字效果还有图层
+  if (design.nameStyle && !design.plate) return nameAnimates;
+  if (nameAnimates) return true;
   for (const layer of design.layers ?? []) {
     if (layer.hidden) continue;
     if (layer.type === "sprite" || layer.type === "particles") return true;

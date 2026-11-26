@@ -4,23 +4,26 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Maximize, Minus, Plus, Scan } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { AvatarSlot, Design, Layer } from "@/lib/api/cosmetics";
+import type { AvatarSlot, Design, Layer, Plate } from "@/lib/api/cosmetics";
 import { cn } from "@/lib/utils";
 import {
   applyMatrix,
   invertMatrix,
   layerCorners,
   layerMatrix,
+  plateSampleValue,
   renderDesign,
   type LayerState,
   type Matrix
 } from "../renderer";
-import { AVATAR_ID, patchLayer, shiftAnimated, stateOf } from "./design-ops";
+import { AVATAR_ID, PLATE_ID, clampPlate, clampStretch, patchLayer, shiftAnimated, stateOf } from "./design-ops";
 import { designTime, useDesigner, useDesignerApi } from "./designer-store";
 
 /**
  * 设计器画布：按画布尺寸缩放显示，可缩放（Ctrl / ⌘ + 滚轮、按钮）与平移（拖空白处、空格 + 拖、中键、滚轮），
- * 棋盘格透明底；头像框显示可调的头像区域并用示例头像填充（placement=below 的层画在头像下面）。
+ * 棋盘格透明底；头像框显示可调的头像区域并用示例头像填充（placement=below 的层画在头像下面）；
+ * 铭牌显示可拖动、可改尺寸的文字区域，按示例值（号码 66666 / 会员「永久有效」）写字；有按字伸缩时
+ * 两条橙色竖线是伸缩段的起止（可拖）。舞台按原画布编辑（不伸缩），伸缩效果在「预览」里看。
  *
  * 选中图层后叠一层变换控件：拖动移动（吸附画布中心与边缘、头像区域）、拖角 / 边缩放宽高（Shift 等比）、
  * 顶部手柄旋转（Shift 每 15°）、拖动锚点（位置自动补偿，图层看起来不动）。有 x / y / rotation 轨道时，
@@ -39,7 +42,10 @@ type Gesture =
   | { kind: "rotate"; id: string; layer: Layer; state: LayerState; pivot: { x: number; y: number }; angle0: number }
   | { kind: "anchor"; id: string; layer: Layer; state: LayerState; inverse: Matrix; matrix: Matrix }
   | { kind: "avatar-move"; start: { x: number; y: number }; avatar: AvatarSlot }
-  | { kind: "avatar-resize"; hx: number; hy: number; avatar: AvatarSlot };
+  | { kind: "avatar-resize"; hx: number; hy: number; avatar: AvatarSlot }
+  | { kind: "plate-move"; start: { x: number; y: number }; plate: Plate }
+  | { kind: "plate-resize"; hx: number; hy: number; plate: Plate }
+  | { kind: "stretch"; edge: "x0" | "x1" };
 
 const HANDLES: Array<{ key: string; hx: number; hy: number; cursor: string }> = [
   { key: "nw", hx: 0, hy: 0, cursor: "nwse-resize" },
@@ -79,12 +85,13 @@ function checkerPattern(ctx: CanvasRenderingContext2D) {
   return ctx.createPattern(checkerTile, "repeat");
 }
 
-/** 一个点落在哪个图层上：从最上面往下找，粒子层最后才算（它通常铺满画布） */
+/** 一个点落在哪个图层上：从最上面往下找，粒子层最后才算（它通常铺满画布）；头像与铭牌文字区域夹在 below / above 之间 */
 function hitTest(design: Design, t: number, locked: Record<string, boolean>, point: { x: number; y: number }) {
-  const ordered: Array<Layer | "avatar"> = [];
+  const ordered: Array<Layer | "avatar" | "plate"> = [];
   const layers = design.layers;
-  if (design.avatar) {
-    ordered.push(...layers.filter((layer) => layer.placement !== "below").reverse(), "avatar", ...layers.filter((layer) => layer.placement === "below").reverse());
+  const marker = design.avatar ? "avatar" : design.plate ? "plate" : null;
+  if (marker) {
+    ordered.push(...layers.filter((layer) => layer.placement !== "below").reverse(), marker, ...layers.filter((layer) => layer.placement === "below").reverse());
   } else {
     ordered.push(...[...layers].reverse());
   }
@@ -100,11 +107,16 @@ function hitTest(design: Design, t: number, locked: Record<string, boolean>, poi
       if (point.x >= a.x && point.y >= a.y && point.x <= a.x + a.size && point.y <= a.y + a.size) return AVATAR_ID;
       continue;
     }
+    if (entry === "plate") {
+      const p = design.plate!;
+      if (point.x >= p.x && point.y >= p.y && point.x <= p.x + p.width && point.y <= p.y + p.height) return PLATE_ID;
+      continue;
+    }
     if (entry.hidden || locked[entry.id] || entry.type === "particles") continue;
     if (inside(entry)) return entry.id;
   }
   for (const entry of ordered) {
-    if (entry === "avatar" || entry.hidden || locked[entry.id] || entry.type !== "particles") continue;
+    if (entry === "avatar" || entry === "plate" || entry.hidden || locked[entry.id] || entry.type !== "particles") continue;
     if (inside(entry)) return entry.id;
   }
   return null;
@@ -186,7 +198,10 @@ export function DesignerStage({ readOnly, assetUrl }: { readOnly: boolean; asset
         pixelRatio: ratio,
         placeholders: true,
         avatar: avatarOn ? {} : null,
-        assetUrl: live.current.assetUrl
+        assetUrl: live.current.assetUrl,
+        plateValue: plateSampleValue(latest.slot),
+        // 舞台按原画布编辑，伸缩只在预览里看
+        stretch: false
       });
       ctx.restore();
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -248,7 +263,7 @@ export function DesignerStage({ readOnly, assetUrl }: { readOnly: boolean; asset
   };
   const toScreen = (p: { x: number; y: number }) => ({ x: view.panX + p.x * view.zoom, y: view.panY + p.y * view.zoom });
 
-  const selectedLayer = selected && selected !== AVATAR_ID ? design.layers.find((layer) => layer.id === selected) : undefined;
+  const selectedLayer = selected && selected !== AVATAR_ID && selected !== PLATE_ID ? design.layers.find((layer) => layer.id === selected) : undefined;
   const selectedState = selectedLayer && !selectedLayer.hidden ? stateOf(selectedLayer, design, t) : null;
   const editable = !readOnly;
 
@@ -260,8 +275,25 @@ export function DesignerStage({ readOnly, assetUrl }: { readOnly: boolean; asset
       xs.push(a.x, a.x + a.size / 2, a.x + a.size);
       ys.push(a.y, a.y + a.size / 2, a.y + a.size);
     }
+    if (design.plate) {
+      const p = design.plate;
+      xs.push(p.x, p.x + p.width / 2, p.x + p.width);
+      ys.push(p.y, p.y + p.height / 2, p.y + p.height);
+    }
     return { xs, ys };
-  }, [design.canvas.width, design.canvas.height, design.avatar]);
+  }, [design.canvas.width, design.canvas.height, design.avatar, design.plate]);
+
+  /** 吸附：一组边（左 / 中 / 右）里离目标最近的那一个，阈值内才吸 */
+  const snapTo = (values: number[], targets: number[], threshold: number) => {
+    let best: { diff: number; at: number } | null = null;
+    for (const value of values) {
+      for (const target of targets) {
+        const diff = target - value;
+        if (Math.abs(diff) <= threshold && (!best || Math.abs(diff) < Math.abs(best.diff))) best = { diff, at: target };
+      }
+    }
+    return best;
+  };
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button === 2) return;
@@ -275,12 +307,25 @@ export function DesignerStage({ readOnly, assetUrl }: { readOnly: boolean; asset
     const p = toDesign(event);
     const state = api.getState();
     const handle = target.closest("[data-handle]")?.getAttribute("data-handle");
+    if ((handle === "stretch-x0" || handle === "stretch-x1") && editable && design.plate?.stretch) {
+      state.begin();
+      gesture.current = { kind: "stretch", edge: handle === "stretch-x0" ? "x0" : "x1" };
+      return;
+    }
     if (handle && editable) {
       if (selected === AVATAR_ID && design.avatar) {
         const spec = HANDLES.find((item) => item.key === handle);
         if (spec) {
           state.begin();
           gesture.current = { kind: "avatar-resize", hx: spec.hx, hy: spec.hy, avatar: { ...design.avatar } };
+        }
+        return;
+      }
+      if (selected === PLATE_ID && design.plate) {
+        const spec = HANDLES.find((item) => item.key === handle);
+        if (spec) {
+          state.begin();
+          gesture.current = { kind: "plate-resize", hx: spec.hx, hy: spec.hy, plate: { ...design.plate } };
         }
         return;
       }
@@ -323,6 +368,11 @@ export function DesignerStage({ readOnly, assetUrl }: { readOnly: boolean; asset
       gesture.current = { kind: "avatar-move", start: p, avatar: { ...design.avatar } };
       return;
     }
+    if (hit === PLATE_ID && design.plate) {
+      state.begin();
+      gesture.current = { kind: "plate-move", start: p, plate: { ...design.plate } };
+      return;
+    }
     const layer = design.layers.find((item) => item.id === hit);
     if (layer) {
       state.begin();
@@ -351,18 +401,8 @@ export function DesignerStage({ readOnly, assetUrl }: { readOnly: boolean; asset
       const xs = corners.map((c) => c.x + dx);
       const ys = corners.map((c) => c.y + dy);
       const box = { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
-      const snap = (values: number[], targets: number[]) => {
-        let best: { diff: number; at: number } | null = null;
-        for (const value of values) {
-          for (const target of targets) {
-            const diff = target - value;
-            if (Math.abs(diff) <= threshold && (!best || Math.abs(diff) < Math.abs(best.diff))) best = { diff, at: target };
-          }
-        }
-        return best;
-      };
-      const sx = event.altKey ? null : snap([box.minX, (box.minX + box.maxX) / 2, box.maxX], snapTargets.xs);
-      const sy = event.altKey ? null : snap([box.minY, (box.minY + box.maxY) / 2, box.maxY], snapTargets.ys);
+      const sx = event.altKey ? null : snapTo([box.minX, (box.minX + box.maxX) / 2, box.maxX], snapTargets.xs, threshold);
+      const sy = event.altKey ? null : snapTo([box.minY, (box.minY + box.maxY) / 2, box.maxY], snapTargets.ys, threshold);
       if (sx) dx += sx.diff;
       if (sy) dy += sy.diff;
       setGuides({ x: sx?.at, y: sy?.at });
@@ -447,6 +487,56 @@ export function DesignerStage({ readOnly, assetUrl }: { readOnly: boolean; asset
       const x = g.hx === 0 ? fx - next : g.hx === 0.5 ? a.x + (a.size - next) / 2 : fx;
       const y = g.hy === 0 ? fy - next : g.hy === 0.5 ? a.y + (a.size - next) / 2 : fy;
       state.live((d) => ({ ...d, avatar: { ...a, size: next, x: r1(Math.max(0, x)), y: r1(Math.max(0, y)) } }));
+      return;
+    }
+    if (g.kind === "stretch") {
+      // 拖一条参考线：吸附整像素，保持 x0 < x1、落在画布内
+      const value = Math.round(p.x);
+      state.live((d) => {
+        const current = d.plate?.stretch;
+        if (!d.plate || !current) return d;
+        const next =
+          g.edge === "x0"
+            ? { x0: Math.max(0, Math.min(current.x1 - 1, value)), x1: current.x1 }
+            : { x0: current.x0, x1: Math.max(current.x0 + 1, Math.min(d.canvas.width, value)) };
+        return { ...d, plate: { ...d.plate, stretch: clampStretch(next, d.canvas.width) } };
+      });
+      return;
+    }
+    if (g.kind === "plate-move") {
+      const p0 = g.plate;
+      let dx = p.x - g.start.x;
+      let dy = p.y - g.start.y;
+      if (event.shiftKey) {
+        if (Math.abs(dx) > Math.abs(dy)) dy = 0;
+        else dx = 0;
+      }
+      // 吸附只对画布的边与中线（自己的边不算目标）
+      const xs = [0, design.canvas.width / 2, design.canvas.width];
+      const ys = [0, design.canvas.height / 2, design.canvas.height];
+      const sx = event.altKey ? null : snapTo([p0.x + dx, p0.x + dx + p0.width / 2, p0.x + dx + p0.width], xs, threshold);
+      const sy = event.altKey ? null : snapTo([p0.y + dy, p0.y + dy + p0.height / 2, p0.y + dy + p0.height], ys, threshold);
+      if (sx) dx += sx.diff;
+      if (sy) dy += sy.diff;
+      setGuides({ x: sx?.at, y: sy?.at });
+      const moved = clampPlate({ ...p0, x: r1(p0.x + dx), y: r1(p0.y + dy) }, design.canvas);
+      state.live((d) => ({ ...d, plate: moved }));
+      return;
+    }
+    if (g.kind === "plate-resize") {
+      const p0 = g.plate;
+      const cw = design.canvas.width;
+      const ch = design.canvas.height;
+      // 拖哪条边改哪条边，对边不动；夹在画布内，宽高至少 1
+      let left = p0.x;
+      let top = p0.y;
+      let right = p0.x + p0.width;
+      let bottom = p0.y + p0.height;
+      if (g.hx === 0) left = Math.max(0, Math.min(right - 1, p.x));
+      if (g.hx === 1) right = Math.min(cw, Math.max(left + 1, p.x));
+      if (g.hy === 0) top = Math.max(0, Math.min(bottom - 1, p.y));
+      if (g.hy === 1) bottom = Math.min(ch, Math.max(top + 1, p.y));
+      state.live((d) => ({ ...d, plate: { ...p0, x: r1(left), y: r1(top), width: r1(right - left), height: r1(bottom - top) } }));
     }
   };
 
@@ -577,6 +667,84 @@ export function DesignerStage({ readOnly, assetUrl }: { readOnly: boolean; asset
     );
   }
 
+  let plateOverlay: React.ReactNode = null;
+  if (design.plate) {
+    const pl = design.plate;
+    const tl = toScreen({ x: pl.x, y: pl.y });
+    const w = pl.width * view.zoom;
+    const h = pl.height * view.zoom;
+    const active = selected === PLATE_ID;
+    plateOverlay = (
+      <g>
+        <rect
+          x={tl.x}
+          y={tl.y}
+          width={w}
+          height={h}
+          fill="none"
+          stroke={active ? "#10b981" : "rgba(16,185,129,0.55)"}
+          strokeWidth={active ? 1.5 : 1}
+          strokeDasharray="5 4"
+        />
+        {active ? (
+          <text x={tl.x + 4} y={tl.y - 5} fontSize={10} fill="#10b981">
+            铭牌文字
+          </text>
+        ) : null}
+        {active && editable
+          ? HANDLES.map((handle) => (
+              <rect
+                key={handle.key}
+                data-handle={handle.key}
+                x={tl.x + handle.hx * w - 4.5}
+                y={tl.y + handle.hy * h - 4.5}
+                width={9}
+                height={9}
+                rx={2}
+                fill="#ffffff"
+                stroke="#10b981"
+                strokeWidth={1.5}
+                style={{ cursor: handle.cursor }}
+              />
+            ))
+          : null}
+      </g>
+    );
+  }
+
+  let stretchOverlay: React.ReactNode = null;
+  if (design.plate?.stretch) {
+    const st = design.plate.stretch;
+    const top = toScreen({ x: 0, y: 0 }).y;
+    const bottom = toScreen({ x: 0, y: design.canvas.height }).y;
+    const xa = toScreen({ x: st.x0, y: 0 }).x;
+    const xb = toScreen({ x: st.x1, y: 0 }).x;
+    stretchOverlay = (
+      <g>
+        <rect x={xa} y={top} width={Math.max(0, xb - xa)} height={bottom - top} fill="rgba(249,115,22,0.06)" />
+        <text x={xa + 4} y={bottom + 12} fontSize={10} fill="#f97316">
+          按字伸缩
+        </text>
+        {(
+          [
+            ["stretch-x0", xa, st.x0],
+            ["stretch-x1", xb, st.x1]
+          ] as const
+        ).map(([key, x, value]) => (
+          <g key={key} data-handle={editable ? key : undefined} style={{ cursor: editable ? "ew-resize" : undefined }}>
+            {/* 透明的宽线负责命中，细虚线负责显示 */}
+            <line x1={x} x2={x} y1={top - 10} y2={bottom + 10} stroke="rgba(0,0,0,0.001)" strokeWidth={10} />
+            <line x1={x} x2={x} y1={top - 10} y2={bottom + 10} stroke="#f97316" strokeWidth={1.5} strokeDasharray="4 3" />
+            <rect x={x - 4} y={top - 18} width={8} height={8} rx={2} fill="#ffffff" stroke="#f97316" strokeWidth={1.5} />
+            <text x={x} y={top - 22} fontSize={10} textAnchor="middle" fill="#f97316">
+              {Math.round(value)}
+            </text>
+          </g>
+        ))}
+      </g>
+    );
+  }
+
   const guideLines = (
     <g>
       {guides.x !== undefined ? (
@@ -615,6 +783,8 @@ export function DesignerStage({ readOnly, assetUrl }: { readOnly: boolean; asset
         <canvas ref={canvasRef} className="absolute inset-0" style={{ width: size.width, height: size.height }} />
         <svg className="absolute inset-0" width={size.width} height={size.height}>
           {avatarOverlay}
+          {plateOverlay}
+          {stretchOverlay}
           {selection}
           {guideLines}
         </svg>

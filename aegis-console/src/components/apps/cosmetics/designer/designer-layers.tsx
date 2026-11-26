@@ -32,6 +32,7 @@ import {
   Sparkles,
   Square,
   Star,
+  TextCursorInput,
   Trash2,
   Type
 } from "lucide-react";
@@ -52,6 +53,7 @@ import { cn } from "@/lib/utils";
 import {
   AVATAR_ID,
   LAYER_TYPE_LABEL,
+  PLATE_ID,
   SHAPE_LABEL,
   createLayer,
   duplicateLayer,
@@ -63,8 +65,8 @@ import {
 import { useDesigner, useDesignerApi } from "./designer-store";
 
 /**
- * 图层面板：最上面的图层排在最前（与画面一致）。头像框多一行「头像」：它上面的图层画在头像之上，
- * 下面的画在头像之下——把图层拖过这一行就改了 placement。显隐写进设计稿，锁定只是前端状态（不入库）。
+ * 图层面板：最上面的图层排在最前（与画面一致）。头像框多一行「头像」、铭牌多一行「铭牌文字」：它上面的图层
+ * 画在头像 / 文字之上，下面的画在之下——把图层拖过这一行就改了 placement。显隐写进设计稿，锁定只是前端状态（不入库）。
  */
 
 const SHAPE_ICON: Record<ShapeKind, React.ComponentType<{ className?: string }>> = {
@@ -176,12 +178,15 @@ export function DesignerLayers({
   const selected = useDesigner((s) => s.selected);
   const locked = useDesigner((s) => s.locked);
   const [renaming, setRenaming] = useState<string | null>(null);
-  const hasAvatar = Boolean(design.avatar);
+  // 分界行：头像框是头像，铭牌是文字
+  const markerId = design.avatar ? AVATAR_ID : design.plate ? PLATE_ID : null;
+  const hasMarker = markerId !== null;
+  const markerName = markerId === PLATE_ID ? "文字" : "头像";
 
   // 显示顺序：最上层在前
-  const above = design.layers.filter((layer) => !hasAvatar || layer.placement !== "below").reverse();
-  const below = hasAvatar ? design.layers.filter((layer) => layer.placement === "below").reverse() : [];
-  const rows: string[] = hasAvatar ? [...above.map((l) => l.id), AVATAR_ID, ...below.map((l) => l.id)] : above.map((l) => l.id);
+  const above = design.layers.filter((layer) => !hasMarker || layer.placement !== "below").reverse();
+  const below = hasMarker ? design.layers.filter((layer) => layer.placement === "below").reverse() : [];
+  const rows: string[] = markerId ? [...above.map((l) => l.id), markerId, ...below.map((l) => l.id)] : above.map((l) => l.id);
   const byId = new Map(design.layers.map((layer) => [layer.id, layer]));
 
   const sensors = useSensors(
@@ -189,16 +194,16 @@ export function DesignerLayers({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  /** 显示顺序 → 设计稿数组（先画的在前），并按头像行重新划分 placement */
+  /** 显示顺序 → 设计稿数组（先画的在前），并按分界行重新划分 placement */
   const applyOrder = (display: string[]) => {
     api.getState().update((d) => {
       const lookup = new Map(d.layers.map((layer) => [layer.id, layer]));
-      const marker = display.indexOf(AVATAR_ID);
+      const marker = markerId ? display.indexOf(markerId) : -1;
       const ordered = display
-        .filter((id) => id !== AVATAR_ID)
+        .filter((id) => id !== markerId)
         .map((id) => {
           const layer = lookup.get(id)!;
-          if (!hasAvatar) return layer;
+          if (!hasMarker) return layer;
           const placement: Layer["placement"] = display.indexOf(id) > marker ? "below" : "above";
           return layer.placement === placement ? layer : { ...layer, placement };
         });
@@ -214,16 +219,16 @@ export function DesignerLayers({
   const add = (kind: NewLayerKind) => {
     if (design.layers.length >= maxLayers) return;
     const layer = createLayer(design, kind);
-    api.getState().update((d) => insertLayer(d, layer, selected && selected !== AVATAR_ID ? selected : null));
+    api.getState().update((d) => insertLayer(d, layer, selected && selected !== AVATAR_ID && selected !== PLATE_ID ? selected : null));
     api.getState().select(layer.id);
   };
 
   const move = (id: string, to: "top" | "bottom") => {
     const rest = rows.filter((row) => row !== id);
-    const marker = rest.indexOf(AVATAR_ID);
+    const marker = markerId ? rest.indexOf(markerId) : -1;
     const layer = byId.get(id);
     if (!layer) return;
-    if (!hasAvatar) {
+    if (!hasMarker) {
       applyOrder(to === "top" ? [id, ...rest] : [...rest, id]);
       return;
     }
@@ -264,8 +269,8 @@ export function DesignerLayers({
             <SortableContext items={rows} strategy={verticalListSortingStrategy} disabled={readOnly}>
               <ul className="flex flex-col gap-0.5">
                 {rows.map((id) =>
-                  id === AVATAR_ID ? (
-                    <AvatarRow key={id} active={selected === AVATAR_ID} onSelect={() => api.getState().select(AVATAR_ID)} />
+                  id === markerId ? (
+                    <MarkerRow key={id} id={id} active={selected === id} onSelect={() => api.getState().select(id)} />
                   ) : (
                     <LayerRow
                       key={id}
@@ -294,8 +299,9 @@ export function DesignerLayers({
                         api.getState().select(null);
                       }}
                       onMove={(to) => move(id, to)}
+                      markerName={markerName}
                       onPlacement={
-                        hasAvatar
+                        hasMarker
                           ? () =>
                               api
                                 .getState()
@@ -316,8 +322,10 @@ export function DesignerLayers({
   );
 }
 
-function AvatarRow({ active, onSelect }: { active: boolean; onSelect: () => void }) {
-  const { setNodeRef, transform, transition } = useSortable({ id: AVATAR_ID, disabled: { draggable: true, droppable: false } });
+function MarkerRow({ id, active, onSelect }: { id: string; active: boolean; onSelect: () => void }) {
+  const { setNodeRef, transform, transition } = useSortable({ id, disabled: { draggable: true, droppable: false } });
+  const plate = id === PLATE_ID;
+  const Icon = plate ? TextCursorInput : CircleUserRound;
   return (
     <li
       ref={setNodeRef}
@@ -328,9 +336,9 @@ function AvatarRow({ active, onSelect }: { active: boolean; onSelect: () => void
       )}
       onClick={onSelect}
     >
-      <CircleUserRound className="size-3.5 text-emerald-600 dark:text-emerald-400" />
-      <span className="font-medium">头像</span>
-      <span className="ml-auto text-[11px] text-muted-foreground">上方在头像之上</span>
+      <Icon className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+      <span className="font-medium">{plate ? "铭牌文字" : "头像"}</span>
+      <span className="ml-auto text-[11px] text-muted-foreground">{plate ? "上方在文字之上" : "上方在头像之上"}</span>
     </li>
   );
 }
@@ -349,6 +357,7 @@ function LayerRow({
   onDuplicate,
   onDelete,
   onMove,
+  markerName = "头像",
   onPlacement
 }: {
   layer: Layer;
@@ -364,6 +373,8 @@ function LayerRow({
   onDuplicate: () => void;
   onDelete: () => void;
   onMove: (to: "top" | "bottom") => void;
+  /** 分界行叫什么（头像 / 文字），「移到 X 之上」用 */
+  markerName?: string;
   onPlacement?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
@@ -483,7 +494,7 @@ function LayerRow({
             {onPlacement ? (
               <DropdownMenuItem onSelect={onPlacement}>
                 <CircleUserRound />
-                {layer.placement === "below" ? "移到头像之上" : "移到头像之下"}
+                {layer.placement === "below" ? `移到${markerName}之上` : `移到${markerName}之下`}
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuSeparator />

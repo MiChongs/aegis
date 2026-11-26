@@ -1,5 +1,5 @@
 import type { CosmeticSlot, Design } from "@/lib/api/cosmetics";
-import { drawNameStyle, measureName, renderDesign } from "./draw";
+import { designDisplaySize, drawNameStyle, measureName, plateSampleValue, renderDesign } from "./draw";
 import { imagesSettled, preloadImages } from "./images";
 
 /**
@@ -57,13 +57,21 @@ export async function renderPreviewPng(
         });
       }
     } else {
-      const cw = design.canvas.width || 1;
-      const ch = design.canvas.height || 1;
+      // 铭牌按示例值伸缩后的宽度
+      const display = designDisplaySize(design, plateSampleValue(slot));
+      const cw = display.width || 1;
+      const ch = display.height || 1;
       const scale = Math.min(2, target / Math.max(cw, ch));
       canvas.width = Math.max(1, Math.round(cw * scale));
       canvas.height = Math.max(1, Math.round(ch * scale));
       ctx.setTransform(scale, 0, 0, scale, 0, 0);
-      renderDesign(ctx, design, { elapsed: options.elapsed, time: options.time, pixelRatio: scale, avatar: null });
+      renderDesign(ctx, design, {
+        elapsed: options.elapsed,
+        time: options.time,
+        pixelRatio: scale,
+        avatar: null,
+        plateValue: plateSampleValue(slot)
+      });
     }
     const blob = await toBlob(canvas);
     if (blob.size <= options.maxBytes) return blob;

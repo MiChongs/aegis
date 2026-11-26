@@ -16,6 +16,8 @@ import type {
   NameStyle,
   ParticleShape,
   Particles,
+  Plate,
+  PlateFont,
   ShapeKind,
   TextAlign,
   TrackProperty
@@ -24,14 +26,19 @@ import { trackOf } from "../renderer/timeline";
 import {
   AVATAR_ID,
   LAYER_TYPE_LABEL,
+  PLATE_ID,
   PRESETS,
   PROPERTY_LABEL,
   PROPERTY_RANGE,
   SHAPE_LABEL,
   applyPreset,
   clampDuration,
+  clampPlate,
+  clampStretch,
   editAnimated,
   patchLayer,
+  plateStretchIssue,
+  plateTemplateIssue,
   presetAvailable,
   removeTrack,
   setKeyframe,
@@ -63,6 +70,7 @@ const ALIGN_LABEL: Record<TextAlign, string> = { left: "左对齐", center: "居
 const EMITTER_LABEL: Record<EmitterKind, string> = { point: "中心点", ring: "圆环", rect: "矩形区域" };
 const PARTICLE_LABEL: Record<ParticleShape, string> = { circle: "圆点", star: "星星", spark: "火花", image: "图片" };
 const AVATAR_SHAPE_LABEL: Record<AvatarShape, string> = { circle: "圆形", rounded: "圆角方形", square: "方形" };
+const PLATE_FONT_LABEL: Record<PlateFont, string> = { sans: "无衬线", serif: "衬线", mono: "等宽" };
 export const NAME_EFFECT_LABEL: Record<NameEffect, string> = {
   none: "纯色",
   shimmer: "流光",
@@ -89,7 +97,7 @@ export function DesignerInspector({
   const slot = useDesigner((s) => s.slot);
   const selected = useDesigner((s) => s.selected);
   const design = useDesigner((s) => s.design);
-  const layer = selected && selected !== AVATAR_ID ? design.layers.find((item) => item.id === selected) : undefined;
+  const layer = selected && selected !== AVATAR_ID && selected !== PLATE_ID ? design.layers.find((item) => item.id === selected) : undefined;
 
   if (slot === "name_style") return <NameStyleInspector readOnly={readOnly} />;
   return (
@@ -97,13 +105,23 @@ export function DesignerInspector({
       {layer ? (
         <LayerInspector key={layer.id} layer={layer} catalog={catalog} readOnly={readOnly} onPickParticleAsset={onPickParticleAsset} />
       ) : (
-        <DesignInspector catalog={catalog} readOnly={readOnly} focusAvatar={selected === AVATAR_ID} />
+        <DesignInspector catalog={catalog} readOnly={readOnly} focusAvatar={selected === AVATAR_ID} focusPlate={selected === PLATE_ID} />
       )}
     </div>
   );
 }
 
-function DesignInspector({ catalog, readOnly, focusAvatar }: { catalog?: CosmeticCatalog | null; readOnly: boolean; focusAvatar: boolean }) {
+function DesignInspector({
+  catalog,
+  readOnly,
+  focusAvatar,
+  focusPlate
+}: {
+  catalog?: CosmeticCatalog | null;
+  readOnly: boolean;
+  focusAvatar: boolean;
+  focusPlate: boolean;
+}) {
   const api = useDesignerApi();
   const slot = useDesigner((s) => s.slot);
   const design = useDesigner((s) => s.design);
@@ -111,18 +129,20 @@ function DesignInspector({ catalog, readOnly, focusAvatar }: { catalog?: Cosmeti
   const maxDuration = catalog?.vocabulary?.limits?.maxDurationMs ?? 20000;
   const update = (fn: (d: Design) => Design, key: string) => api.getState().update(fn, `design.${key}`);
   const avatar = design.avatar;
+  const plate = design.plate;
+  // 铭牌画布任意比例，限制的是最长边
+  const plateCanvas = Boolean(spec?.plate || plate);
 
   const setCanvas = (axis: "width" | "height", value: number) =>
-    update(
-      (d) => ({
-        ...d,
-        canvas: spec?.square ? { width: value, height: value } : { ...d.canvas, [axis]: value }
-      }),
-      "canvas"
-    );
+    update((d) => {
+      const canvas = spec?.square ? { width: value, height: value } : { ...d.canvas, [axis]: value };
+      return { ...d, canvas, plate: d.plate ? clampPlate(d.plate, canvas) : d.plate };
+    }, "canvas");
 
   return (
     <>
+      {plate ? <PlateInspector plate={plate} catalog={catalog} readOnly={readOnly} focused={focusPlate} /> : null}
+      {plate ? <NameStyleInspector readOnly={readOnly} title="文字样式" plate /> : null}
       {avatar ? (
         <FieldGroup title={focusAvatar ? "头像区域（已选中）" : "头像区域"}>
           <div className="grid grid-cols-2 gap-1.5">
@@ -176,7 +196,7 @@ function DesignInspector({ catalog, readOnly, focusAvatar }: { catalog?: Cosmeti
           <NumberField
             label="宽"
             value={design.canvas.width}
-            min={spec?.minCanvas ?? 16}
+            min={plateCanvas ? 1 : (spec?.minCanvas ?? 16)}
             max={spec?.maxCanvas ?? 2048}
             disabled={readOnly}
             onChange={(value) => setCanvas("width", Math.round(value))}
@@ -184,7 +204,7 @@ function DesignInspector({ catalog, readOnly, focusAvatar }: { catalog?: Cosmeti
           <NumberField
             label="高"
             value={design.canvas.height}
-            min={spec?.minCanvas ?? 16}
+            min={plateCanvas ? 1 : (spec?.minCanvas ?? 16)}
             max={spec?.maxCanvas ?? 2048}
             disabled={readOnly || spec?.square}
             onChange={(value) => setCanvas("height", Math.round(value))}
@@ -192,7 +212,7 @@ function DesignInspector({ catalog, readOnly, focusAvatar }: { catalog?: Cosmeti
         </div>
         {spec ? (
           <p className="text-[11px] text-muted-foreground">
-            边长 {spec.minCanvas}–{spec.maxCanvas}
+            {plateCanvas ? `任意比例，最长边 ${spec.minCanvas}–${spec.maxCanvas}；客户端按高度显示` : `边长 ${spec.minCanvas}–${spec.maxCanvas}`}
             {spec.square ? "，必须是正方形" : ""}
           </p>
         ) : null}
@@ -329,14 +349,14 @@ function LayerInspector({
         <FieldRow label="隐藏">
           <SwitchField checked={Boolean(layer.hidden)} disabled={readOnly} onChange={(hidden) => set({ hidden }, "hidden")} />
         </FieldRow>
-        {design.avatar ? (
+        {design.avatar || design.plate ? (
           <FieldRow label="位置">
             <SelectField
-              value={layer.placement ?? "above"}
+              value={layer.placement ?? (design.plate ? "below" : "above")}
               disabled={readOnly}
               options={[
-                { value: "above", label: "头像之上" },
-                { value: "below", label: "头像之下" }
+                { value: "above", label: design.plate ? "文字之上" : "头像之上" },
+                { value: "below", label: design.plate ? "文字之下" : "头像之下" }
               ]}
               onChange={(placement) => set({ placement }, "placement")}
             />
@@ -665,7 +685,10 @@ function LayerInspector({
   );
 }
 
-function NameStyleInspector({ readOnly }: { readOnly: boolean }) {
+/**
+ * 昵称样式的字段。铭牌（plate）也用它编辑文字的颜色与动态效果：铭牌的字重以 plate.fontWeight 为准，这里不再显示字重。
+ */
+function NameStyleInspector({ readOnly, title = "昵称样式", plate = false }: { readOnly: boolean; title?: string; plate?: boolean }) {
   const api = useDesignerApi();
   const style = useDesigner((s) => s.design.nameStyle) ?? { color: "#3B82F6", effect: "none" as NameEffect, speed: 2400, fontWeight: 600 };
   const set = (patch: Partial<NameStyle>, key: string) =>
@@ -673,7 +696,7 @@ function NameStyleInspector({ readOnly }: { readOnly: boolean }) {
   const effect = style.effect;
   return (
     <>
-      <FieldGroup title="昵称样式">
+      <FieldGroup title={title}>
         <FieldRow label="效果">
           <SelectField
             value={effect}
@@ -695,9 +718,11 @@ function NameStyleInspector({ readOnly }: { readOnly: boolean }) {
         <FieldRow label="主色">
           <ColorField value={style.color} disabled={readOnly} onChange={(color) => color && set({ color }, "color")} />
         </FieldRow>
-        <FieldRow label="字重">
-          <SelectField value={String(style.fontWeight ?? 600)} disabled={readOnly} options={WEIGHTS} onChange={(value) => set({ fontWeight: Number(value) }, "fontWeight")} />
-        </FieldRow>
+        {plate ? null : (
+          <FieldRow label="字重">
+            <SelectField value={String(style.fontWeight ?? 600)} disabled={readOnly} options={WEIGHTS} onChange={(value) => set({ fontWeight: Number(value) }, "fontWeight")} />
+          </FieldRow>
+        )}
         <NumberField label="周期" value={style.speed ?? 2400} min={300} max={20000} step={100} suffix="毫秒" disabled={readOnly || effect === "none" || effect === "glow"} onChange={(speed) => set({ speed: Math.round(speed) }, "speed")} />
       </FieldGroup>
       {effect === "cycle" ? (
@@ -721,5 +746,142 @@ function NameStyleInspector({ readOnly }: { readOnly: boolean }) {
         </FieldGroup>
       ) : null}
     </>
+  );
+}
+
+/** 铭牌的文字区域与排版：template（恰好一个 {value}）、对齐、字号、字重、字间距、字体，以及区域的位置与尺寸 */
+function PlateInspector({
+  plate,
+  catalog,
+  readOnly,
+  focused
+}: {
+  plate: Plate;
+  catalog?: CosmeticCatalog | null;
+  readOnly: boolean;
+  focused: boolean;
+}) {
+  const api = useDesignerApi();
+  const canvas = useDesigner((s) => s.design.canvas);
+  const vocabulary = catalog?.vocabulary;
+  const maxRunes = vocabulary?.limits?.maxPlateTemplateRunes ?? 32;
+  const set = (patch: Partial<Plate>, key: string) =>
+    api.getState().update((d) => (d.plate ? { ...d, plate: { ...d.plate, ...patch } } : d), `plate.${key}`);
+  const setBox = (patch: Partial<Plate>, key: string) =>
+    api.getState().update((d) => (d.plate ? { ...d, plate: clampPlate({ ...d.plate, ...patch }, d.canvas) } : d), `plate.${key}`);
+  const slot = useDesigner((s) => s.slot);
+  const issue = plateTemplateIssue(plate.template ?? "", slot, maxRunes);
+  return (
+    <FieldGroup
+      title={focused ? "铭牌文字（已选中）" : "铭牌文字"}
+      actions={
+        !focused ? (
+          <Button size="xs" variant="ghost" className="h-5 px-1.5 text-[11px]" onClick={() => api.getState().select(PLATE_ID)}>
+            选中区域
+          </Button>
+        ) : null
+      }
+    >
+      <FieldRow label="模板" className="items-start">
+        <div className="flex flex-col gap-1">
+          <TextField value={plate.template ?? ""} maxLength={maxRunes} disabled={readOnly} onChange={(template) => set({ template }, "template")} />
+          {issue ? (
+            <span className="text-[11px] text-red-600 dark:text-red-400">{issue}</span>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">
+              {slot === "vip_plate"
+                ? "{value} 换成会员有效期（永久有效 / 2027-01-01 到期），{tier} 换成会员档位或套餐名（如领航者），各最多一次，例如 {tier} · {value}"
+                : "{value} 换成号码（不带 ID 字样，要的话写进模板），恰好一次"}
+            </span>
+          )}
+        </div>
+      </FieldRow>
+      <div className="grid grid-cols-2 gap-1.5">
+        <NumberField label="X" value={plate.x} min={0} max={canvas.width} disabled={readOnly} onChange={(x) => setBox({ x }, "x")} />
+        <NumberField label="Y" value={plate.y} min={0} max={canvas.height} disabled={readOnly} onChange={(y) => setBox({ y }, "y")} />
+        <NumberField label="宽" value={plate.width} min={1} max={canvas.width} disabled={readOnly} onChange={(width) => setBox({ width }, "width")} />
+        <NumberField label="高" value={plate.height} min={1} max={canvas.height} disabled={readOnly} onChange={(height) => setBox({ height }, "height")} />
+      </div>
+      <FieldRow label="对齐">
+        <SelectField
+          value={plate.align}
+          disabled={readOnly}
+          options={opts(vocabulary?.plateAligns ?? vocabulary?.aligns, ALIGN_LABEL)}
+          onChange={(align) => set({ align }, "align")}
+        />
+      </FieldRow>
+      <FieldRow label="字体">
+        <SelectField value={plate.font} disabled={readOnly} options={opts(vocabulary?.plateFonts, PLATE_FONT_LABEL)} onChange={(font) => set({ font }, "font")} />
+      </FieldRow>
+      <FieldRow label="字重">
+        <SelectField value={String(plate.fontWeight || 700)} disabled={readOnly} options={WEIGHTS} onChange={(value) => set({ fontWeight: Number(value) }, "fontWeight")} />
+      </FieldRow>
+      <div className="grid grid-cols-2 gap-1.5">
+        <NumberField label="字号" value={plate.fontSize} min={1} max={1024} step={0.5} disabled={readOnly} onChange={(fontSize) => set({ fontSize }, "fontSize")} />
+        <NumberField
+          label="字距"
+          value={plate.letterSpacing}
+          min={-0.2}
+          max={1}
+          step={0.01}
+          suffix="em"
+          disabled={readOnly}
+          onChange={(letterSpacing) => set({ letterSpacing }, "letterSpacing")}
+        />
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        {plate.stretch ? "字号是画布像素；按字伸缩时按原字号画，铭牌随文字变宽变窄" : "字号是画布像素；一行放不下时整体等比缩小，不换行、不省略"}
+      </p>
+      <FieldRow label="按字伸缩">
+        <SwitchField
+          checked={Boolean(plate.stretch)}
+          disabled={readOnly}
+          onChange={(on) =>
+            set(
+              {
+                // 打开时默认把文字区域那一段设成伸缩段
+                stretch: on ? clampStretch({ x0: Math.round(plate.x), x1: Math.round(plate.x + plate.width) }, canvas.width) : undefined
+              },
+              "stretch"
+            )
+          }
+        />
+      </FieldRow>
+      {plate.stretch ? (
+        <>
+          <div className="grid grid-cols-2 gap-1.5">
+            <NumberField
+              label="起点"
+              value={plate.stretch.x0}
+              min={0}
+              max={canvas.width}
+              disabled={readOnly}
+              onChange={(x0) => set({ stretch: { ...plate.stretch!, x0 } }, "stretch.x0")}
+            />
+            <NumberField
+              label="终点"
+              value={plate.stretch.x1}
+              min={0}
+              max={canvas.width}
+              disabled={readOnly}
+              onChange={(x1) => set({ stretch: { ...plate.stretch!, x1 } }, "stretch.x1")}
+            />
+          </div>
+          {plateStretchIssue(plate.stretch, canvas.width) ? (
+            <span className="text-[11px] text-red-600 dark:text-red-400">{plateStretchIssue(plate.stretch, canvas.width)}</span>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">起点到终点这一段横向伸缩，两端（徽章、圆头）不变形；舞台上的橙色竖线可拖</span>
+          )}
+        </>
+      ) : null}
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={readOnly}
+        onClick={() => setBox({ x: (canvas.width - plate.width) / 2, y: (canvas.height - plate.height) / 2 }, "center")}
+      >
+        区域居中
+      </Button>
+    </FieldGroup>
   );
 }

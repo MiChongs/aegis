@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType } from "react";
-import { Award, CircleUserRound, IdCard, Type } from "lucide-react";
+import { Award, CircleUserRound, Crown, Hash, IdCard, Type } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { Tone } from "@/components/users/detail/kit";
 import type {
@@ -10,6 +10,7 @@ import type {
   CosmeticOwnership,
   CosmeticSlot,
   CosmeticStatus,
+  PlateSlot,
   RaritySpec
 } from "@/lib/api/cosmetics";
 import { cosmeticTermLabel } from "@/lib/cosmetic-names";
@@ -20,13 +21,27 @@ import { cn } from "@/lib/utils";
  * 这里的常量只是目录还没回来时的兜底，键与 Go 的 cosmetic 包一致。
  */
 
-export const SLOT_ORDER: CosmeticSlot[] = ["avatar_frame", "profile_card", "name_style", "badge"];
+export const SLOT_ORDER: CosmeticSlot[] = ["avatar_frame", "profile_card", "name_style", "badge", "id_plate", "vip_plate"];
+
+/** 铭牌槽位：设计稿带 plate（文字区域）与 nameStyle（文字效果） */
+export function isPlateSlot(slot?: string | null): slot is PlateSlot {
+  return slot === "id_plate" || slot === "vip_plate";
+}
+
+/** 能在自定义工坊里做的槽位（目录有 workshop 字段时以目录为准；铭牌不进工坊） */
+export function workshopSlots(catalog?: CosmeticCatalog | null): CosmeticSlot[] {
+  const specs = catalog?.slots;
+  if (specs?.length) return SLOT_ORDER.filter((slot) => specs.some((spec) => spec.key === slot && spec.workshop !== false && !spec.plate));
+  return SLOT_ORDER.filter((slot) => !isPlateSlot(slot));
+}
 
 export const SLOT_META: Record<CosmeticSlot, { label: string; icon: ComponentType<{ className?: string }>; tone: Tone }> = {
   avatar_frame: { label: "头像框", icon: CircleUserRound, tone: "violet" },
   profile_card: { label: "资料卡背景", icon: IdCard, tone: "info" },
   name_style: { label: "昵称样式", icon: Type, tone: "primary" },
-  badge: { label: "勋章", icon: Award, tone: "warning" }
+  badge: { label: "勋章", icon: Award, tone: "warning" },
+  id_plate: { label: "号码铭牌", icon: Hash, tone: "neutral" },
+  vip_plate: { label: "会员铭牌", icon: Crown, tone: "danger" }
 };
 
 export function slotLabel(slot?: string | null, catalog?: CosmeticCatalog | null) {
