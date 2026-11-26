@@ -43,17 +43,17 @@ const ticketColumns = `t.id, t.ticket_no, t.appid,
 // ticketPreviewColumn 提单人首条内容的开头。列表行靠它不点开就能读到正文，
 // 走 ticket_messages(ticket_id) 索引取第一行，代价与附件计数那两个子查询同级。
 const ticketPreviewColumn = `COALESCE((SELECT LEFT(pm.content, 160) FROM ticket_messages pm
-		WHERE pm.ticket_id = t.id AND pm.internal = FALSE AND pm.author_type = 'requester'
+		WHERE pm.ticket_id = t.id AND pm.internal = FALSE AND pm.deleted_at IS NULL AND pm.author_type = 'requester'
 		ORDER BY pm.id ASC LIMIT 1), '')`
 
-// ticketAttachmentCountColumns 对外可见附件的分类计数（挂在内部备注上的不算）。
+// ticketAttachmentCountColumns 对外可见附件的分类计数（挂在内部备注与已撤回消息上的不算）。
 // 列表页要显示「几张图、几个附件」，逐单再查一次附件表太贵，这里用相关子查询一次带出。
 const ticketAttachmentCountColumns = `(SELECT COUNT(*) FILTER (WHERE ta.kind = 'image') FROM ticket_attachments ta
 		LEFT JOIN ticket_messages tm ON tm.id = ta.message_id
-		WHERE ta.ticket_id = t.id AND COALESCE(tm.internal, FALSE) = FALSE),
+		WHERE ta.ticket_id = t.id AND COALESCE(tm.internal, FALSE) = FALSE AND tm.deleted_at IS NULL),
 	(SELECT COUNT(*) FILTER (WHERE ta.kind = 'file') FROM ticket_attachments ta
 		LEFT JOIN ticket_messages tm ON tm.id = ta.message_id
-		WHERE ta.ticket_id = t.id AND COALESCE(tm.internal, FALSE) = FALSE)`
+		WHERE ta.ticket_id = t.id AND COALESCE(tm.internal, FALSE) = FALSE AND tm.deleted_at IS NULL)`
 
 // ErrTicketAttachmentUnavailable 待绑定的附件里有不存在、已绑定或不属于当前上传者的。
 // 整个建单 / 回复事务随之回滚，不会出现「挂上了一半附件」的工单。
@@ -567,7 +567,8 @@ func (r *Repository) DeleteTicket(ctx context.Context, id int64) (bool, error) {
 // ─────────────── 消息 ───────────────
 
 const ticketMessageColumns = `id, ticket_id, author_type, author_user_id, author_admin_id, author_name,
-	internal, content, content_type, COALESCE(metadata, '{}'::jsonb), edited_at, created_at`
+	internal, content, content_type, COALESCE(metadata, '{}'::jsonb), edited_at, created_at,
+	deleted_at, deleted_by_admin_id, deleted_by_name, delete_reason`
 
 func scanTicketMessage(row interface{ Scan(dest ...any) error }) (*ticketdomain.Message, error) {
 	item := &ticketdomain.Message{}
@@ -575,20 +576,26 @@ func scanTicketMessage(row interface{ Scan(dest ...any) error }) (*ticketdomain.
 	if err := row.Scan(
 		&item.ID, &item.TicketID, &item.AuthorType, &item.AuthorUserID, &item.AuthorAdminID, &item.AuthorName,
 		&item.Internal, &item.Content, &item.ContentType, &metadataRaw, &item.EditedAt, &item.CreatedAt,
+		&item.DeletedAt, &item.DeletedByAdminID, &item.DeletedByName, &item.DeleteReason,
 	); err != nil {
 		return nil, err
 	}
+	item.Retracted = item.DeletedAt != nil
 	if len(metadataRaw) > 0 {
 		_ = json.Unmarshal(metadataRaw, &item.Metadata)
 	}
 	return item, nil
 }
 
-// ListTicketMessages 会话消息。includeInternal=false 时过滤内部备注。
-func (r *Repository) ListTicketMessages(ctx context.Context, ticketID int64, includeInternal bool) ([]ticketdomain.Message, error) {
+// ListTicketMessages 会话消息。includeInternal=false 时过滤内部备注，includeRetracted=false 时过滤已撤回的消息。
+// 提单人侧（反馈详情）两个都传 false；管理端详情列出已撤回的消息，由 service 决定是否露出原文。
+func (r *Repository) ListTicketMessages(ctx context.Context, ticketID int64, includeInternal bool, includeRetracted bool) ([]ticketdomain.Message, error) {
 	sql := "SELECT " + ticketMessageColumns + " FROM ticket_messages WHERE ticket_id = $1"
 	if !includeInternal {
 		sql += " AND internal = FALSE"
+	}
+	if !includeRetracted {
+		sql += " AND deleted_at IS NULL"
 	}
 	sql += " ORDER BY id ASC"
 	rows, err := r.pool.Query(ctx, sql, ticketID)
@@ -693,6 +700,200 @@ func (r *Repository) AddTicketMessage(ctx context.Context, input AddTicketMessag
 
 	row := r.pool.QueryRow(ctx, "SELECT "+ticketMessageColumns+" FROM ticket_messages WHERE id = $1", messageID)
 	return scanTicketMessage(row)
+}
+
+// GetTicketMessage 单条消息（含已撤回的）。不存在或不属于该工单返回 nil。
+func (r *Repository) GetTicketMessage(ctx context.Context, ticketID int64, messageID int64) (*ticketdomain.Message, error) {
+	row := r.pool.QueryRow(ctx, "SELECT "+ticketMessageColumns+" FROM ticket_messages WHERE id = $1 AND ticket_id = $2", messageID, ticketID)
+	item, err := scanTicketMessage(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return item, nil
+}
+
+// ErrTicketMessageAlreadyRetracted 消息已经撤回过（并发撤回时后到的那次）。
+var ErrTicketMessageAlreadyRetracted = errors.New("ticket message already retracted")
+
+// RetractTicketMessageInput 撤回入参。
+type RetractTicketMessageInput struct {
+	TicketID  int64
+	MessageID int64
+	AdminID   *int64
+	AdminName string
+	Reason    string
+}
+
+// RetractTicketMessage 软删除一条消息，同事务按剩下的对外消息重算工单冗余字段：
+// message_count / last_message_at / last_message_role。
+//
+// first_responded_at 不回退：首次响应确实发生过，SLA 计的是「客服什么时候回了话」，
+// 撤回不改变这个事实（与 AddTicketMessage 只在首次对外 agent 回复时写入一致）。
+func (r *Repository) RetractTicketMessage(ctx context.Context, input RetractTicketMessageInput) (*ticketdomain.Message, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	var internal bool
+	err = tx.QueryRow(ctx, `
+		UPDATE ticket_messages
+		SET deleted_at = NOW(), deleted_by_admin_id = $3, deleted_by_name = $4, delete_reason = $5
+		WHERE id = $1 AND ticket_id = $2 AND deleted_at IS NULL
+		RETURNING internal`,
+		input.MessageID, input.TicketID, input.AdminID, input.AdminName, input.Reason).Scan(&internal)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTicketMessageAlreadyRetracted
+		}
+		return nil, err
+	}
+
+	if !internal {
+		// 汇总字段只数对外消息（内部备注从来不计入，见 AddTicketMessage）。
+		// 不论撤回的是不是最后一条都整体重算：一条语句，结果与「逐条追加」时维护的口径一致。
+		if _, err := tx.Exec(ctx, `
+			UPDATE tickets t
+			SET message_count = s.cnt,
+			    last_message_at = s.last_at,
+			    last_message_role = COALESCE(s.last_role, ''),
+			    updated_at = NOW()
+			FROM (
+			    SELECT
+			        (SELECT COUNT(*)::int FROM ticket_messages m
+			          WHERE m.ticket_id = $1 AND m.internal = FALSE AND m.deleted_at IS NULL) AS cnt,
+			        (SELECT m.created_at FROM ticket_messages m
+			          WHERE m.ticket_id = $1 AND m.internal = FALSE AND m.deleted_at IS NULL
+			          ORDER BY m.id DESC LIMIT 1) AS last_at,
+			        (SELECT m.author_type FROM ticket_messages m
+			          WHERE m.ticket_id = $1 AND m.internal = FALSE AND m.deleted_at IS NULL
+			          ORDER BY m.id DESC LIMIT 1) AS last_role
+			) s
+			WHERE t.id = $1`, input.TicketID); err != nil {
+			return nil, err
+		}
+	} else {
+		if _, err := tx.Exec(ctx, `UPDATE tickets SET updated_at = NOW() WHERE id = $1`, input.TicketID); err != nil {
+			return nil, err
+		}
+	}
+
+	row := tx.QueryRow(ctx, "SELECT "+ticketMessageColumns+" FROM ticket_messages WHERE id = $1", input.MessageID)
+	item, err := scanTicketMessage(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	committed = true
+	return item, nil
+}
+
+// TicketReplyNotificationQuery 找「某条回复生成的通知」的条件。
+//
+// 新通知的元数据带 messageId，按它精确命中；早于这个字段的通知按
+// 事件 + 工单 + 发出时间窗 + 正文片段兜底匹配（回复落库后才异步投递，窗口取发言后 30 分钟）。
+type TicketReplyNotificationQuery struct {
+	AppID      int64
+	UserID     int64 // 用户站内信用；管理员收件箱查询时忽略
+	Resource   string
+	ResourceID string
+	EventKey   string
+	MessageID  int64
+	SentAfter  time.Time
+	Probe      string // 回复正文开头的一段；为空则只按 messageId 命中
+}
+
+// FindTicketReplyNotifications 应用用户站内信里由某条回复生成的那几条。
+func (r *Repository) FindTicketReplyNotifications(ctx context.Context, q TicketReplyNotificationQuery) ([]int64, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id FROM notifications
+		WHERE appid = $1 AND user_id = $2
+		  AND metadata->>'resource' = $3 AND metadata->>'resourceId' = $4
+		  AND (
+		      metadata->>'messageId' = $5::text
+		   OR (NOT (metadata ? 'messageId') AND metadata->>'event' = $6::text
+		       AND created_at >= $7::timestamptz - INTERVAL '1 minute'
+		       AND created_at <= $7::timestamptz + INTERVAL '30 minutes'
+		       AND $8::text <> '' AND strpos(content, $8::text) > 0)
+		  )
+		ORDER BY id ASC`,
+		q.AppID, q.UserID, q.Resource, q.ResourceID, fmt.Sprint(q.MessageID), q.EventKey, q.SentAfter, q.Probe)
+	if err != nil {
+		return nil, err
+	}
+	return collectTicketIDRows(rows)
+}
+
+// FindTicketReplyAdminInbox 管理员收件箱里由某条回复生成的那几条（同事、关注人、管理员提单人收到的）。
+func (r *Repository) FindTicketReplyAdminInbox(ctx context.Context, q TicketReplyNotificationQuery) ([]int64, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id FROM admin_notifications
+		WHERE resource = $1 AND resource_id = $2
+		  AND (
+		      metadata->>'messageId' = $3::text
+		   OR (NOT (metadata ? 'messageId') AND metadata->>'event' = $4::text
+		       AND created_at >= $5::timestamptz - INTERVAL '1 minute'
+		       AND created_at <= $5::timestamptz + INTERVAL '30 minutes'
+		       AND $6::text <> '' AND strpos(content, $6::text) > 0)
+		  )
+		ORDER BY id ASC`,
+		q.Resource, q.ResourceID, fmt.Sprint(q.MessageID), q.EventKey, q.SentAfter, q.Probe)
+	if err != nil {
+		return nil, err
+	}
+	return collectTicketIDRows(rows)
+}
+
+// DeleteAdminNotificationsByIDs 按 ID 删除管理员收件箱条目（跨管理员），返回受影响的管理员。
+func (r *Repository) DeleteAdminNotificationsByIDs(ctx context.Context, ids []int64) (int64, []int64, error) {
+	ids = distinctPositiveIDs(ids)
+	if len(ids) == 0 {
+		return 0, nil, nil
+	}
+	rows, err := r.pool.Query(ctx, `DELETE FROM admin_notifications WHERE id = ANY($1) RETURNING admin_id`, ids)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+	var deleted int64
+	seen := map[int64]struct{}{}
+	admins := make([]int64, 0, 4)
+	for rows.Next() {
+		var adminID int64
+		if err := rows.Scan(&adminID); err != nil {
+			return 0, nil, err
+		}
+		deleted++
+		if _, ok := seen[adminID]; !ok {
+			seen[adminID] = struct{}{}
+			admins = append(admins, adminID)
+		}
+	}
+	return deleted, admins, rows.Err()
+}
+
+func collectTicketIDRows(rows pgx.Rows) ([]int64, error) {
+	defer rows.Close()
+	out := make([]int64, 0, 4)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // ─────────────── 附件 ───────────────

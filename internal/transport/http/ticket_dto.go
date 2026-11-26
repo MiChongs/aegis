@@ -99,6 +99,11 @@ type TicketReplyRequest struct {
 	QuickReplyID int64 `json:"quickReplyId"`
 }
 
+// TicketMessageRetractRequest 撤回一条回复。请求体可省略；原因也可放在查询参数 reason 里。
+type TicketMessageRetractRequest struct {
+	Reason string `json:"reason"`
+}
+
 // TicketUpdateRequest 字段更新请求。指针 = 不传则不改。
 type TicketUpdateRequest struct {
 	Title      *string   `json:"title"`

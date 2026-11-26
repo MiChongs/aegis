@@ -283,6 +283,42 @@ func (h *Handler) AdminReplyTicket(c *gin.Context) {
 	response.Success(c, http.StatusOK, "回复成功", message)
 }
 
+// AdminRetractTicketMessage 撤回一条回复或内部备注（软删除）
+// DELETE /api/admin/tickets/:ticketId/messages/:messageId
+func (h *Handler) AdminRetractTicketMessage(c *gin.Context) {
+	session, ok := adminAccessSession(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, 40110, "管理员未认证")
+		return
+	}
+	ticketID, err := pathInt64(c, "ticketId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的工单标识")
+		return
+	}
+	messageID, err := pathInt64(c, "messageId")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40000, "无效的消息标识")
+		return
+	}
+	var req TicketMessageRetractRequest
+	if c.Request.ContentLength > 0 {
+		if err := bind(c, &req); err != nil {
+			response.Error(c, http.StatusBadRequest, 40000, err.Error())
+			return
+		}
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		req.Reason = c.Query("reason")
+	}
+	result, err := h.ticket.RetractMessage(c.Request.Context(), session, ticketID, messageID, req.Reason)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "已撤回", result)
+}
+
 // AdminUpdateTicket 更新工单字段
 // PATCH /api/admin/tickets/:ticketId
 func (h *Handler) AdminUpdateTicket(c *gin.Context) {

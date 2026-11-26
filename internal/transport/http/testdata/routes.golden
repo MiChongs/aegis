@@ -111,6 +111,7 @@ DELETE	/api/admin/system/user-master/segments/:id/members/:identityId	AdminRemov
 DELETE	/api/admin/system/user-master/tags/:id	AdminDeleteUserTag
 DELETE	/api/admin/system/user-master/user-lists/:id	AdminDeleteUserListEntry
 DELETE	/api/admin/tickets/:ticketId	AdminDeleteTicket
+DELETE	/api/admin/tickets/:ticketId/messages/:messageId	AdminRetractTicketMessage
 DELETE	/api/admin/tickets/categories/:id	AdminDeleteTicketCategory
 DELETE	/api/admin/tickets/groups/:id	AdminDeleteTicketGroup
 DELETE	/api/admin/tickets/quick-replies/:id	AdminDeleteTicketQuickReply

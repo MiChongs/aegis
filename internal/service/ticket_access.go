@@ -179,6 +179,7 @@ func (s *TicketService) ResolveActions(ctx context.Context, access *admindomain.
 			View: true, Reply: true, InternalNote: true, ViewInternal: true, Edit: true,
 			Assign: true, ChangeStatus: true, Close: true, Reopen: true, Delete: true,
 			Watch: true, ManageWatchers: true, UploadAttachment: true,
+			RetractOwn: true, RetractAny: true,
 		}
 	}
 
@@ -209,6 +210,9 @@ func (s *TicketService) ResolveActions(ctx context.Context, access *admindomain.
 	actions.Watch = actions.View
 	actions.ManageWatchers = actions.Assign
 	actions.UploadAttachment = actions.Reply || actions.InternalNote
+	// 撤回：自己的回复看得到工单就能撤回；别人的要 ticket:manage。逐条判定见 canRetractMessage
+	actions.RetractOwn = actions.View
+	actions.RetractAny = s.can(ctx, access, PermTicketManage, scoped)
 	return actions
 }
 

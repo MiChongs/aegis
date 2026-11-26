@@ -260,7 +260,8 @@ func (s *TicketService) requireUserFeedback(ctx context.Context, session *authdo
 }
 
 func (s *TicketService) buildFeedbackDetail(ctx context.Context, item *ticketdomain.Ticket) (*FeedbackDetail, error) {
-	messages, err := s.pg.ListTicketMessages(ctx, item.ID, false)
+	// 提单人侧：不含内部备注，也不含已撤回的回复（附件随消息一起隐去，见下面的 public）
+	messages, err := s.pg.ListTicketMessages(ctx, item.ID, false, false)
 	if err != nil {
 		return nil, err
 	}

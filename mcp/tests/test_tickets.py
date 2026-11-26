@@ -45,6 +45,14 @@ async def test_watch_bulk_delete(backend, call):
     assert (backend.last().method, backend.last().path) == ("DELETE", "/api/admin/tickets/9")
 
 
+async def test_delete_message(backend, call):
+    await call("tickets_delete_message", {"ticket_id": 395, "message_id": 811, "reason": "功能已撤回"})
+    req = backend.last()
+    assert (req.method, req.path, req.json) == ("DELETE", "/api/admin/tickets/395/messages/811", {"reason": "功能已撤回"})
+    await call("tickets_delete_message", {"ticket_id": 7, "message_id": 8})
+    assert backend.last().path == "/api/admin/tickets/7/messages/8"
+
+
 async def test_stats_and_config(backend, call):
     data = await call("tickets_stats", {"trend_days": 7, "agents": True})
     assert set(data) == {"stats", "workbench", "trend", "agents"}

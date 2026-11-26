@@ -595,6 +595,24 @@ AEGIS_CAPTCHA_PREVIEW_DIR=./preview go test ./pkg/gifcaptcha -run TestDumpDynami
 不是查完再过滤；详情响应里的 `permissions`（`ActionSet`）是后端算好的动作集，
 前端据此控制按钮显隐，不会出现"点了才 403"。
 
+### 单条回复撤回（ticket_retract.go，迁移 000170）
+
+`DELETE /api/admin/tickets/:ticketId/messages/:messageId`（体 `{"reason": "选填，≤200 字"}`，也认 `?reason=`）。
+是**软删除**：`ticket_messages.deleted_at / deleted_by_admin_id / deleted_by_name / delete_reason`，行与附件留档。
+
+- 谁能撤回只有 `canRetractMessage` 一个判据（详情里每条消息的 `canRetract` 与接口共用）：
+  提单人的消息谁都不能撤；自己的回复看得到工单就能撤（备注还要 `viewInternal`）；
+  别人的回复与系统消息要该应用的 `ticket:manage`（`ActionSet.retractAny`，超管天然满足）。
+  不限时、不看工单状态（撤回是纠错，结了单的会话里说错的话同样要能收回）。
+- 读取：`ListTicketMessages(ticketID, includeInternal, includeRetracted)`。提单人侧（反馈详情、列表摘要
+  `preview`、附件计数）一律不含已撤回的；管理端详情列出并标 `retracted`，看不到内部备注的人拿到的 `content`、附件、原因是空的。
+- 撤回同事务重算 `message_count / last_message_at / last_message_role`（按剩下的对外消息），`first_responded_at` 不回退。
+- 时间线记 `message_retracted`（`fromValue` = 消息 ID，元数据带原因）；审计走 `auditcatalog`「撤回工单回复」。
+- 通知：回复事件的 `Vars.messageId` 会写进站内信与管理员收件箱的 `metadata.messageId`，撤回时按它删；
+  早于这个字段的旧通知按「同工单 + `ticket.agent_replied` + 发言后 30 分钟内 + 正文前 40 字」兜底匹配。
+  用户侧走 `NotificationService.AdminDelete`（失效缓存、推 `notification.deleted` 带最新未读数），
+  管理员侧走 `AdminInboxService.RemoveByIDs`（刷新角标）。已发出的邮件、IM 卡片收不回，投递记录（`notify_deliveries`）保留作审计。
+
 ### 应用级内容中心（app_content.go）
 
 Banner（投放位）与公告，方法挂在 `AppService` 上。三条结构性约束：

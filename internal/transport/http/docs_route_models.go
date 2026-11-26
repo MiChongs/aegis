@@ -624,6 +624,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/admin/tickets/sla-policies/{id}"):                                                            TicketSLARequest{},                       // AdminSaveTicketSLAPolicy
 		routeKey("PATCH", "/api/admin/tickets/{ticketId}"):                                                                 TicketUpdateRequest{},                    // AdminUpdateTicket
 		routeKey("POST", "/api/admin/tickets/{ticketId}/assign"):                                                           TicketAssignRequest{},                    // AdminAssignTicket
+		routeKey("DELETE", "/api/admin/tickets/{ticketId}/messages/{messageId}"):                                           TicketMessageRetractRequest{},            // AdminRetractTicketMessage
 		routeKey("POST", "/api/admin/tickets/{ticketId}/replies"):                                                          TicketReplyRequest{},                     // AdminReplyTicket
 		routeKey("POST", "/api/admin/tickets/{ticketId}/status"):                                                           TicketStatusRequest{},                    // AdminChangeTicketStatus
 		routeKey("PUT", "/api/admin/tickets/{ticketId}/watchers"):                                                          TicketWatchersRequest{},                  // AdminSetTicketWatchers

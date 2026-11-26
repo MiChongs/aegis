@@ -18,6 +18,7 @@ func init() {
 		Write("DELETE /api/admin/tickets/:ticketId", "删除工单", "工单", SeverityHigh),
 		Write("POST /api/admin/tickets/:ticketId/assign", "指派工单", "工单", SeverityLow),
 		Write("POST /api/admin/tickets/:ticketId/replies", "回复工单", "工单", SeverityLow),
+		Write("DELETE /api/admin/tickets/:ticketId/messages/:messageId", "撤回工单回复", "工单回复", SeverityMedium),
 		Write("POST /api/admin/tickets/:ticketId/status", "修改工单状态", "工单", SeverityLow),
 		Write("POST /api/admin/tickets/:ticketId/watch", "关注工单", "工单", SeverityLow),
 		Write("PUT /api/admin/tickets/:ticketId/watchers", "设置工单关注人", "工单", SeverityLow),

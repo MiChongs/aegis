@@ -124,6 +124,8 @@ const (
 	EventSLAWarning      = "sla_warning"
 	EventSLABreached     = "sla_breached"
 	EventMerged          = "merged"
+	// EventMessageRetracted 撤回了一条回复或内部备注（软删除，原文留档）
+	EventMessageRetracted = "message_retracted"
 )
 
 // ValidStatuses 是否为受支持的工单状态。
@@ -248,6 +250,16 @@ type Message struct {
 	EditedAt     *time.Time     `json:"editedAt,omitempty"`
 	CreatedAt    time.Time      `json:"createdAt"`
 	Attachments  []Attachment   `json:"attachments,omitempty"`
+
+	// 撤回（软删除）。提单人侧接口一律不下发已撤回的消息；管理端详情照常列出并标为「已撤回」，
+	// 能看内部备注的人看得到原文，其余人只看到占位（Content 与附件清空）。
+	Retracted        bool       `json:"retracted,omitempty"`
+	DeletedAt        *time.Time `json:"deletedAt,omitempty"`
+	DeletedByAdminID *int64     `json:"deletedByAdminId,omitempty"`
+	DeletedByName    string     `json:"deletedByName,omitempty"`
+	DeleteReason     string     `json:"deleteReason,omitempty"`
+	// CanRetract 当前访问者能否撤回这条消息（管理端详情回填，前端据此显示「撤回」）
+	CanRetract bool `json:"canRetract,omitempty"`
 }
 
 // Attachment 附件。DownloadURL 为即时换取的带票据代理地址，不落库。
@@ -651,6 +663,10 @@ type ActionSet struct {
 	Watch            bool `json:"watch"`
 	ManageWatchers   bool `json:"manageWatchers"`
 	UploadAttachment bool `json:"uploadAttachment"`
+	// RetractOwn 撤回自己发的回复与备注；RetractAny 撤回任何处理人的（ticket:manage）。
+	// 提单人的消息谁都不能撤回。
+	RetractOwn bool `json:"retractOwn"`
+	RetractAny bool `json:"retractAny"`
 }
 
 // ─────────────── 统计 ───────────────

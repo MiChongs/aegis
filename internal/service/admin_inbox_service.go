@@ -200,6 +200,22 @@ func (s *AdminInboxService) Delete(ctx context.Context, adminID int64, ids []int
 	return &notificationdomain.AdminInboxMutationResult{AdminID: adminID, Affected: affected, Unread: unread}, nil
 }
 
+// RemoveByIDs 跨管理员按 ID 删除收件箱条目（撤回工单回复时清理它生成的那几条），并给受影响的人刷新角标。
+func (s *AdminInboxService) RemoveByIDs(ctx context.Context, ids []int64) (int64, error) {
+	deleted, admins, err := s.pg.DeleteAdminNotificationsByIDs(ctx, dedupeNotificationIDs(ids))
+	if err != nil {
+		return 0, err
+	}
+	if len(admins) > 0 {
+		targets := make(map[int64]struct{}, len(admins))
+		for _, adminID := range admins {
+			targets[adminID] = struct{}{}
+		}
+		s.publishBadgeRefresh(targets)
+	}
+	return deleted, nil
+}
+
 // Purge 清理 N 天前的已读通知，供 Worker 定时调用。
 func (s *AdminInboxService) Purge(ctx context.Context, days int) (int64, error) {
 	return s.pg.PurgeAdminNotifications(ctx, days)

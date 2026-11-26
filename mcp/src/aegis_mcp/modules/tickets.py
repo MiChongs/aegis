@@ -19,6 +19,7 @@ TICKET_CREATE = POST("/api/admin/tickets")
 TICKET_UPDATE = PATCH("/api/admin/tickets/:ticketId")
 TICKET_DELETE = DELETE("/api/admin/tickets/:ticketId")
 TICKET_REPLY = POST("/api/admin/tickets/:ticketId/replies")
+TICKET_MESSAGE_DELETE = DELETE("/api/admin/tickets/:ticketId/messages/:messageId")
 TICKET_STATUS = POST("/api/admin/tickets/:ticketId/status")
 TICKET_ASSIGN = POST("/api/admin/tickets/:ticketId/assign")
 TICKET_WATCH = POST("/api/admin/tickets/:ticketId/watch")
@@ -208,6 +209,19 @@ async def bulk(
         ids=ticket_ids, action=action, status=status, priority=priority, assigneeAdminId=assignee_admin_id,
         groupId=group_id, tags=tags, reason=reason,
     ))
+
+
+@server.tool(**DESTRUCTIVE("tickets"))
+async def delete_message(
+    ticket_id: TicketID,
+    message_id: Annotated[int, Field(gt=0, description="要撤回的消息 ID（tickets_get 的 messages[].id）")],
+    reason: Annotated[str, Field(max_length=200, description="撤回原因，只在控制台与操作记录里可见")] = "",
+) -> Any:
+    """撤回工单里的一条回复或内部备注（软删除，原文留档）。执行前先向用户复述要撤回的内容。
+
+    提单人 / 反馈人侧不再显示这条消息，它生成的站内信与管理员收件箱条目一并删除，时间线记一条撤回事件。
+    提单人自己的消息不能撤回；撤回他人的回复需要 ticket:manage。已发出的邮件与 IM 消息收不回。"""
+    return await TICKET_MESSAGE_DELETE(ticketId=ticket_id, messageId=message_id, body=body(reason=reason))
 
 
 @server.tool(name="delete", **DESTRUCTIVE("tickets"))

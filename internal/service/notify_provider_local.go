@@ -323,7 +323,7 @@ func (p *inAppNotifyProvider) Send(ctx context.Context, hub *NotifyHub, channel 
 					Link:       strings.TrimSpace(event.Link),
 					// 幂等到"人"这一级：同一事件对同一管理员只进一次收件箱
 					DedupeKey: adminInboxDedupeKey(event, adminID),
-					Metadata:  map[string]any{"event": event.Key},
+					Metadata:  adminInboxMetadata(event),
 				})
 			}
 			delivered, err := hub.adminInbox.Push(ctx, pushes)
@@ -361,10 +361,46 @@ func inAppMetadata(event *notifydomain.Event, link string) map[string]any {
 		metadata["resource"] = event.Resource
 		metadata["resourceId"] = event.ResourceID
 	}
+	if messageID, ok := eventMessageID(event); ok {
+		metadata["messageId"] = messageID
+	}
 	if link != "" {
 		metadata["link"] = link
 	}
 	return metadata
+}
+
+// adminInboxMetadata 管理员收件箱条目的元数据：事件 key，以及触发它的那条回复（撤回时按它清理）。
+func adminInboxMetadata(event *notifydomain.Event) map[string]any {
+	metadata := map[string]any{"event": event.Key}
+	if messageID, ok := eventMessageID(event); ok {
+		metadata["messageId"] = messageID
+	}
+	return metadata
+}
+
+// eventMessageID 事件变量里的 messageId（工单回复事件带它），统一成十进制字符串，
+// 与 metadata->>'messageId' 的比较口径一致。
+func eventMessageID(event *notifydomain.Event) (string, bool) {
+	if event == nil || event.Vars == nil {
+		return "", false
+	}
+	raw, ok := event.Vars["messageId"]
+	if !ok || raw == nil {
+		return "", false
+	}
+	switch value := raw.(type) {
+	case int64:
+		return strconv.FormatInt(value, 10), value > 0
+	case int:
+		return strconv.Itoa(value), value > 0
+	case float64:
+		return strconv.FormatInt(int64(value), 10), value > 0
+	case string:
+		value = strings.TrimSpace(value)
+		return value, value != ""
+	}
+	return "", false
 }
 
 // inAppAction 用户站内信的跳转动作：工单与反馈类事件指向 App 的工单页，其它事件不带动作。

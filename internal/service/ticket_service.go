@@ -43,6 +43,10 @@ type TicketService struct {
 	notify   *NotifyHub
 	storage  *StorageService
 	location *time.Location
+
+	// 撤回回复时清理它生成的通知（ticket_retract.go）；未接时只撤回消息本身
+	userInbox  ticketUserInboxCleaner
+	adminInbox ticketAdminInboxCleaner
 }
 
 const (
@@ -90,7 +94,8 @@ func (s *TicketService) Detail(ctx context.Context, access *admindomain.AccessCo
 	if err != nil {
 		return nil, err
 	}
-	messages, err := s.pg.ListTicketMessages(ctx, ticketID, actions.ViewInternal)
+	// 已撤回的消息照常列出（标为已撤回），原文是否露出由 presentMessagesForAdmin 决定
+	messages, err := s.pg.ListTicketMessages(ctx, ticketID, actions.ViewInternal, true)
 	if err != nil {
 		return nil, err
 	}
@@ -106,8 +111,12 @@ func (s *TicketService) Detail(ctx context.Context, access *admindomain.AccessCo
 	if err != nil {
 		return nil, err
 	}
+	if !actions.ViewInternal {
+		attachments = dropRetractedAttachments(messages, attachments)
+	}
 	s.resolveAttachmentURLs(ctx, baseURL, attachments)
 	attachMessageFiles(messages, attachments)
+	presentMessagesForAdmin(messages, actions, access.AdminID)
 
 	item.Messages = messages
 	item.Events = events
@@ -512,6 +521,8 @@ func (s *TicketService) ReplyByAdmin(ctx context.Context, access *admindomain.Ac
 			s.emitTicketEventAs(ctx, refreshed, ticketEventAgentReplied, ticketActor{AdminID: &adminID}, map[string]any{
 				"replyBy":      adminDisplayName(access),
 				"replyExcerpt": excerpt(content, 200),
+				// 写进站内信与收件箱的元数据，撤回这条回复时按它找到对应通知
+				"messageId": message.ID,
 			})
 		}
 	}
