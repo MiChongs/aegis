@@ -373,6 +373,14 @@ function validateRewards(form: BatchForm, catalog?: CardKeyCatalog | null): stri
         }
         break;
       }
+      case "coupon": {
+        if (!row.refId) issues.push(`「${spec.label}」没有选择优惠券`);
+        const count = Number(row.amount || 0);
+        if (!Number.isInteger(count) || count < (spec.min ?? 1) || count > (spec.max ?? 20)) {
+          issues.push(`「${spec.label}」需要在 ${spec.min ?? 1}–${spec.max ?? 20} 张之间`);
+        }
+        break;
+      }
       case "cosmetic": {
         if (!row.refId) issues.push(`「${spec.label}」没有选择装扮`);
         const days = Number(row.amount || 0);
@@ -405,6 +413,8 @@ function rewardsPayload(form: BatchForm, catalog?: CardKeyCatalog | null): CardK
         return [{ type: row.type, feature: row.feature, amount: Number(row.amount || 0) }];
       case "cosmetic":
         return [{ type: row.type, refId: row.refId, amount: Number(row.amount || 0) }];
+      case "coupon":
+        return [{ type: row.type, refId: row.refId, amount: Number(row.amount || 1) }];
       default:
         return [];
     }

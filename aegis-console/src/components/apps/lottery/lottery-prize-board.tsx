@@ -24,6 +24,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import NumberFlow from "@number-flow/react";
 import { CosmeticRewardInput } from "@/components/apps/cosmetics/cosmetic-reward";
+import { CouponRewardInput } from "@/components/apps/coupons/coupon-shared";
 import {
   ArrowRight,
   ChevronLeft,
@@ -732,7 +733,7 @@ function PrizeInspector({
     onPatch({
       type,
       amount: String(next?.value === "feature" ? 7 : next?.value === "feature_minutes" ? 30 : next?.value === "cosmetic" ? 0 : next?.min ?? 1),
-      refId: next?.value === "number_ticket" ? 1 : next?.value === "cosmetic" ? 0 : (plans[0]?.id ?? 0),
+      refId: next?.value === "number_ticket" ? 1 : next?.value === "cosmetic" || next?.value === "coupon" ? 0 : (plans[0]?.id ?? 0),
       tag: features[0]?.tag ?? "",
       text: ""
     });
@@ -946,6 +947,18 @@ function PrizeInspector({
                 refId={prize.refId}
                 amount={prize.amount}
                 max={spec.max}
+                onChange={(next) => onPatch({ ...(next.refId !== undefined ? { refId: next.refId } : {}), ...(next.amount !== undefined ? { amount: next.amount } : {}) })}
+              />
+            </Field>
+          ) : null}
+
+          {spec?.value === "coupon" ? (
+            <Field label="优惠券与张数" className="sm:col-span-2">
+              <CouponRewardInput
+                refId={prize.refId}
+                amount={prize.amount}
+                min={spec.min ?? 1}
+                max={spec.max ?? 20}
                 onChange={(next) => onPatch({ ...(next.refId !== undefined ? { refId: next.refId } : {}), ...(next.amount !== undefined ? { amount: next.amount } : {}) })}
               />
             </Field>

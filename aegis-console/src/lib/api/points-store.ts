@@ -9,7 +9,7 @@ import { apiRequest, buildQuery } from "@/lib/api/client";
  */
 
 /** `number_ticket`：靓号券，`amount` 张数 + `refId` 等级 1–4（docs/user-number.md） */
-export type PointsStoreRewardValue = "amount" | "money" | "ref" | "feature" | "text" | "number_ticket" | "cosmetic";
+export type PointsStoreRewardValue = "amount" | "money" | "ref" | "feature" | "text" | "number_ticket" | "cosmetic" | "coupon";
 export type PointsStoreLimitPeriod = "total" | "day" | "week" | "month";
 /** 补货周期：每到新的自然日 / ISO 周 / 自然月，剩余库存回到补货数量 */
 export type PointsStoreRestockPeriod = "none" | "day" | "week" | "month";

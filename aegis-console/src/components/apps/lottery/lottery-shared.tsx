@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { cosmeticRewardText } from "@/lib/cosmetic-names";
+import { couponRewardText } from "@/lib/coupon-names";
 import { formatStoreDate, termLabel } from "@/components/apps/points-store/points-store-shared";
 import { vipPlanTerm } from "@/components/apps/vip/vip-shared";
 import type {
@@ -184,6 +185,8 @@ export function describeLotteryReward(
       return `${numberTicketName(reward.refId)} ×${reward.amount ?? 0}`;
     case "cosmetic":
       return cosmeticRewardText(reward.refId, reward.amount);
+    case "coupon":
+      return couponRewardText(reward.refId, reward.amount);
     case "amount":
       return `${label} ${reward.amount ?? 0}${spec.unit ? ` ${spec.unit}` : ""}`;
     default:

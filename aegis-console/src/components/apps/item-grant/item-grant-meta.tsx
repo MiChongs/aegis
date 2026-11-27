@@ -4,9 +4,9 @@ import {
   BadgeCheck,
   CalendarClock,
   Clock3,
-  Dices,
   Coins,
   Crown,
+  Dices,
   Filter,
   Gauge,
   Gift,
@@ -15,6 +15,7 @@ import {
   Hash,
   Infinity as InfinityIcon,
   KeyRound,
+  type LucideIcon,
   Mail,
   MonitorSmartphone,
   Package,
@@ -24,12 +25,12 @@ import {
   Sparkles,
   Square,
   Ticket,
+  TicketPercent,
   Timer,
   TrendingUp,
   Users,
   Wallet,
-  Zap,
-  type LucideIcon
+  Zap
 } from "lucide-react";
 import type { Tone } from "@/components/users/detail/kit";
 import type {
@@ -53,6 +54,7 @@ import type {
 } from "@/lib/api/item-grant";
 import { numberTicketName } from "@/lib/api/user-number";
 import { cosmeticRewardText } from "@/lib/cosmetic-names";
+import { couponRewardText } from "@/lib/coupon-names";
 
 /**
  * 物品发放的展示元数据：节点的图标与色调、状态徽标、物品图标，以及节点在画布上的一句话摘要。
@@ -134,7 +136,8 @@ export const ITEM_ICON: Record<string, LucideIcon> = {
   number_ticket: BadgeCheck,
   number_draw: Dices,
   number_assign: Hash,
-  cosmetic: Shirt
+  cosmetic: Shirt,
+  coupon: TicketPercent
 };
 
 export const HANDLE_TONE: Record<string, { stroke: string; text: string; dot: string }> = {
@@ -197,6 +200,8 @@ export function describeItem(item: ItemGrantItem, catalog?: ItemGrantCatalog) {
       return `${numberTicketName(item.refId)} ×${formatNumber(item.amount ?? 0)}${expr}`;
     case "cosmetic":
       return `${cosmeticRewardText(item.refId, item.amount)}${item.equip ? "（发放时佩戴）" : ""}`;
+    case "coupon":
+      return couponRewardText(item.refId, item.amount);
   }
   switch (item.type) {
     case "vip_days":

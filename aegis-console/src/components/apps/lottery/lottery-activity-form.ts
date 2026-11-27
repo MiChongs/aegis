@@ -271,6 +271,8 @@ export function rewardOf(prize: PrizeDraft, kinds: LotteryRewardSpec[]): Lottery
       return { type: prize.type, tag: prize.tag, amount: toInt(prize.amount) };
     case "cosmetic":
       return { type: prize.type, refId: prize.refId, amount: toInt(prize.amount) };
+    case "coupon":
+      return { type: prize.type, refId: prize.refId, amount: Math.max(1, toInt(prize.amount)) };
     case "text":
       return { type: prize.type, text: prize.text.trim() };
     default:
@@ -462,6 +464,11 @@ export function validateForm(form: ActivityForm, catalog?: LotteryCatalog | null
       }
     }
     if (spec?.value === "text" && !prize.text.trim()) prizes(`${label}：请填写发放内容`);
+    if (spec?.value === "coupon") {
+      if (!prize.refId) prizes(`${label}：请选择优惠券`);
+      const count = toInt(prize.amount);
+      if (count < (spec.min ?? 1) || count > (spec.max ?? 20)) prizes(`${label}：优惠券需要在 ${spec.min ?? 1}–${spec.max ?? 20} 张之间`);
+    }
     if (spec?.value === "cosmetic") {
       if (!prize.refId) prizes(`${label}：请选择装扮`);
       const days = toInt(prize.amount);

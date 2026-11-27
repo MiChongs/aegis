@@ -124,6 +124,8 @@ export function defaultItem(type: string, catalog?: ItemGrantCatalog): ItemGrant
       return { type, amount: 1, refId: 1 };
     case "cosmetic":
       return { type, refId: 0, amount: 0 };
+    case "coupon":
+      return { type, refId: 0, amount: 1 };
     case "":
       return { type };
     default: {

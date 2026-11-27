@@ -77,6 +77,12 @@ export function PaymentOrderDetailSheet({
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-foreground">{order.subject || "未命名商品"}</p>
                 <p className="mt-1 font-mono text-3xl font-semibold tracking-tight tabular-nums">{formatMoney(order.amount)}</p>
+                {order.discount ? (
+                  <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+                    原价 <span className="font-mono line-through">{formatMoney(order.discount.originalAmount)}</span>
+                    <span className="ml-1.5 text-rose-600 dark:text-rose-400">已优惠 {formatMoney(order.discount.totalDiscount)}</span>
+                  </p>
+                ) : null}
                 {paidDiff ? (
                   <p
                     className={cn(
@@ -162,6 +168,25 @@ export function PaymentOrderDetailSheet({
                   {Number(order.refunded_amount) > 0 ? <Fact label="已退金额" value={formatMoney(order.refunded_amount)} mono /> : null}
                 </Facts>
               </Section>
+
+              {order.discount ? (
+                <Section title="优惠">
+                  <Facts>
+                    <Fact label="原价" value={formatMoney(order.discount.originalAmount)} mono />
+                    {order.discount.promotionName ? (
+                      <Fact label="活动" value={`${order.discount.promotionName}  −${formatMoney(order.discount.promotionDiscount)}`} />
+                    ) : null}
+                    {order.discount.couponName || order.discount.couponId ? (
+                      <Fact
+                        label="优惠券"
+                        value={`${order.discount.couponName || `#${order.discount.couponId}`}  −${formatMoney(order.discount.couponDiscount)}`}
+                      />
+                    ) : null}
+                    <Fact label="共优惠" value={`−${formatMoney(order.discount.totalDiscount)}`} mono />
+                    {order.discount.rebateName ? <Fact label="返券活动" value={order.discount.rebateName} /> : null}
+                  </Facts>
+                </Section>
+              ) : null}
 
               <Section title="支付与履约">
                 <Facts>

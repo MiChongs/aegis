@@ -5,6 +5,7 @@ import { ChevronDown, Plus, Sigma, Trash2 } from "lucide-react";
 import { ITEM_ICON, describeItem } from "@/components/apps/item-grant/item-grant-meta";
 import { defaultItem } from "@/components/apps/item-grant/item-grant-graph";
 import { CosmeticRewardInput } from "@/components/apps/cosmetics/cosmetic-reward";
+import { CouponRewardInput } from "@/components/apps/coupons/coupon-shared";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -335,6 +336,21 @@ function ItemRow({
                 ...(next.refId !== undefined ? { refId: next.refId } : {}),
                 ...(next.amount !== undefined ? { amount: Math.max(0, Math.trunc(Number(next.amount) || 0)) } : {}),
                 ...(next.equip !== undefined ? { equip: next.equip } : {})
+              })
+            }
+          />
+        ) : null}
+
+        {spec?.value === "coupon" ? (
+          <CouponRewardInput
+            refId={item.refId ?? 0}
+            amount={item.amount ?? 1}
+            min={spec.min ?? 1}
+            max={spec.max ?? 20}
+            onChange={(next) =>
+              onChange({
+                ...(next.refId !== undefined ? { refId: next.refId } : {}),
+                ...(next.amount !== undefined ? { amount: Math.max(1, Math.trunc(Number(next.amount) || 1)) } : {})
               })
             }
           />

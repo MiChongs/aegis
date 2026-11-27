@@ -39,6 +39,7 @@ import { AppPointsStorePanel } from "@/components/apps/points-store/app-points-s
 import { AppCosmeticsPanel } from "@/components/apps/cosmetics/app-cosmetics-panel";
 import { AppInvitePanel } from "@/components/apps/invite/app-invite-panel";
 import { AppPromoPanel } from "@/components/apps/promo/app-promo-panel";
+import { AppCouponsPanel } from "@/components/apps/coupons/app-coupons-panel";
 import { AppDeviceLimitPanel } from "@/components/apps/device-limit/app-device-limit-panel";
 import { AppRegisterIPPanel } from "@/components/apps/register-ip/app-register-ip-panel";
 import { AppPasskeyPanel } from "@/components/apps/app-passkey-panel";
@@ -259,6 +260,8 @@ function AppSectionPanel({ section, app, onDelete }: { section: string; app: App
       return <AppInvitePanel appKey={app.appKey} />;
     case "promo":
       return <AppPromoPanel appKey={app.appKey} />;
+    case "coupons":
+      return <AppCouponsPanel appKey={app.appKey} />;
     case "leaderboard":
       return <AppLeaderboardPanel appKey={app.appKey} />;
     case "account-deletion":

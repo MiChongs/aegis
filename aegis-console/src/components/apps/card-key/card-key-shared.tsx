@@ -3,6 +3,8 @@
 import { Copy } from "lucide-react";
 import { useCosmeticRewardNames } from "@/components/apps/cosmetics/cosmetic-reward";
 import { cosmeticRewardText } from "@/lib/cosmetic-names";
+import { useCouponRewardNames } from "@/components/apps/coupons/coupon-shared";
+import { couponRewardText } from "@/lib/coupon-names";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -179,6 +181,8 @@ export function describeReward(reward: CardKeyReward, catalog?: CardKeyCatalog |
     }
     case "cosmetic":
       return cosmeticRewardText(reward.refId, reward.amount);
+    case "coupon":
+      return couponRewardText(reward.refId, reward.amount);
     default:
       return spec.label;
   }
@@ -194,6 +198,7 @@ export function RewardSummary({
   className?: string;
 }) {
   useCosmeticRewardNames();
+  useCouponRewardNames();
   if (!rewards.length) {
     return <span className="text-xs text-muted-foreground">无随卡权益</span>;
   }

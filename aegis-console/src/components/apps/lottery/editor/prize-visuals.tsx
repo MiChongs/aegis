@@ -1,25 +1,6 @@
 "use client";
 
-import {
-  Award,
-  BadgeCheck,
-  Clock,
-  Coins,
-  Crown,
-  Dices,
-  Gem,
-  Gift,
-  Hash,
-  KeyRound,
-  Package,
-  Shirt,
-  ShieldOff,
-  Smile,
-  Sparkles,
-  Ticket,
-  Wallet,
-  type LucideIcon
-} from "lucide-react";
+import { Award, BadgeCheck, Clock, Coins, Crown, Dices, Gem, Gift, Hash, KeyRound, type LucideIcon, Package, ShieldOff, Shirt, Smile, Sparkles, Ticket, TicketPercent, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -152,6 +133,13 @@ const KIND_VISUALS: Record<string, KindVisual> = {
     fill: "bg-fuchsia-400",
     ring: "ring-fuchsia-500/60",
     stroke: "stroke-fuchsia-400"
+  },
+  coupon: {
+    icon: TicketPercent,
+    tone: "bg-rose-500/12 text-rose-600 dark:text-rose-400",
+    fill: "bg-rose-400",
+    ring: "ring-rose-500/60",
+    stroke: "stroke-rose-400"
   }
 };
 

@@ -1192,7 +1192,23 @@ export type AdminPaymentOrder = {
   purpose?: string;
   /** 履约状况：not_required / pending（写清用途、待重试）/ unrecognized（老客户端没写用途，需确认）/ done / manual */
   fulfillment_state?: string;
+  /** 这一单用了的优惠（docs/coupons.md）；amount 已是优惠后的价格，没用优惠时没有这一项 */
+  discount?: AdminPaymentOrderDiscount | null;
   [key: string]: unknown;
+};
+
+/** 订单上的优惠快照（服务端 payment.OrderDiscount） */
+export type AdminPaymentOrderDiscount = {
+  originalAmount: string;
+  promotionDiscount: string;
+  couponDiscount: string;
+  totalDiscount: string;
+  promotionId?: number;
+  promotionName?: string;
+  couponId?: number;
+  couponName?: string;
+  rebatePromotionId?: number;
+  rebateName?: string;
 };
 
 /** 补履约（POST /orders/fulfill）的结果；dry_run 时 applied 为 false */

@@ -1,9 +1,11 @@
 "use client";
 
 import type { ComponentType } from "react";
-import { BadgeCheck, CalendarPlus, Crown, Dices, Gift, HandHelping, Hash, KeyRound, Shirt, Sparkles, Ticket, Wallet } from "lucide-react";
+import { BadgeCheck, CalendarPlus, Crown, Dices, Gift, HandHelping, Hash, KeyRound, Shirt, Sparkles, Ticket, TicketPercent, Wallet } from "lucide-react";
 import { useCosmeticRewardNames } from "@/components/apps/cosmetics/cosmetic-reward";
 import { cosmeticRewardText } from "@/lib/cosmetic-names";
+import { useCouponRewardNames } from "@/components/apps/coupons/coupon-shared";
+import { couponRewardText } from "@/lib/coupon-names";
 import type { Tone } from "@/components/users/detail/kit";
 import { Badge } from "@/components/ui/badge";
 import type {
@@ -112,6 +114,8 @@ export function describeReward(
       return `${numberTicketName(reward.refId)} ×${reward.amount ?? 0}`;
     case "cosmetic":
       return cosmeticRewardText(reward.refId, reward.amount);
+    case "coupon":
+      return couponRewardText(reward.refId, reward.amount);
     case "amount":
       return `${label} ${reward.amount}${spec.unit ? ` ${spec.unit}` : ""}`;
     default:
@@ -132,6 +136,7 @@ export function RewardBadges({
 }) {
   // 装扮名称来自登记表：订阅后名字晚到也会重绘
   useCosmeticRewardNames();
+  useCouponRewardNames();
   return (
     <div className="flex flex-wrap gap-1">
       {rewards.map((reward, index) => (
@@ -254,7 +259,8 @@ const REWARD_VISUAL: Record<string, { icon: ComponentType<{ className?: string }
   number_change: { icon: Hash, tone: "info" },
   number_ticket: { icon: BadgeCheck, tone: "warning" },
   number_draw: { icon: Dices, tone: "violet" },
-  cosmetic: { icon: Shirt, tone: "violet" }
+  cosmetic: { icon: Shirt, tone: "violet" },
+  coupon: { icon: TicketPercent, tone: "danger" }
 };
 
 export function rewardVisual(type?: string) {

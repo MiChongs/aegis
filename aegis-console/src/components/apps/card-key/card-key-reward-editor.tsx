@@ -3,6 +3,7 @@
 import { Info, Plus, Trash2 } from "lucide-react";
 import { nextRowKey, type RewardRow } from "@/components/apps/card-key/card-key-batch-form";
 import { CosmeticRewardInput } from "@/components/apps/cosmetics/cosmetic-reward";
+import { CouponRewardInput } from "@/components/apps/coupons/coupon-shared";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -59,7 +60,7 @@ export function CardKeyRewardEditor({
         type: spec.type,
         amount: spec.value === "feature" || spec.value === "cosmetic" ? "0" : String(spec.min ?? 1),
         money: "10.00",
-        refId: spec.value === "number_ticket" ? 1 : spec.value === "cosmetic" ? 0 : (plans.find((plan) => !plan.trial)?.id ?? plans[0]?.id ?? 0),
+        refId: spec.value === "number_ticket" ? 1 : spec.value === "cosmetic" || spec.value === "coupon" ? 0 : (plans.find((plan) => !plan.trial)?.id ?? plans[0]?.id ?? 0),
         feature: features.find((feature) => !usedFeatures.has(feature.tag))?.tag ?? ""
       }
     ]);
@@ -211,6 +212,16 @@ export function CardKeyRewardEditor({
                   refId={row.refId}
                   amount={row.amount}
                   max={spec.max}
+                  disabled={disabled}
+                  onChange={(next) => patch(row.key, next)}
+                />
+              ) : null}
+              {spec.value === "coupon" ? (
+                <CouponRewardInput
+                  refId={row.refId}
+                  amount={row.amount}
+                  min={spec.min ?? 1}
+                  max={spec.max ?? 20}
                   disabled={disabled}
                   onChange={(next) => patch(row.key, next)}
                 />

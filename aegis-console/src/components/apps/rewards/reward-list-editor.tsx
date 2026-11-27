@@ -2,6 +2,7 @@
 
 import { Plus, Trash2 } from "lucide-react";
 import { CosmeticRewardInput } from "@/components/apps/cosmetics/cosmetic-reward";
+import { CouponRewardInput } from "@/components/apps/coupons/coupon-shared";
 import { termLabel } from "@/components/apps/points-store/points-store-shared";
 import { vipPlanTerm } from "@/components/apps/vip/vip-shared";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,8 @@ export function rewardsFromDrafts(drafts: RewardDraft[], catalog: PointsStoreRew
         return { type: reward.type, tag: reward.tag, amount: Number(reward.amount) || 0 };
       case "cosmetic":
         return { type: reward.type, refId: Number(reward.refId) || 0, amount: Number(reward.amount) || 0 };
+      case "coupon":
+        return { type: reward.type, refId: Number(reward.refId) || 0, amount: Number(reward.amount) || 1 };
       case "text":
         return { type: reward.type, text: reward.text.trim() };
       default:
@@ -119,7 +122,7 @@ export function RewardListEditor({
         type,
         amount: String(spec.value === "feature" ? 7 : spec.value === "cosmetic" ? 0 : spec.min ?? 1),
         money: "1.00",
-        refId: spec.value === "number_ticket" ? 1 : spec.value === "cosmetic" ? 0 : (plans[0]?.id ?? 0),
+        refId: spec.value === "number_ticket" ? 1 : spec.value === "cosmetic" || spec.value === "coupon" ? 0 : (plans[0]?.id ?? 0),
         tag: features.find((feature) => feature.isActive && !usedTags.includes(feature.tag))?.tag ?? "",
         text: ""
       }
@@ -315,6 +318,16 @@ function RewardRow({
             refId={reward.refId}
             amount={reward.amount}
             max={spec.max}
+            onChange={(next) => onChange(next)}
+          />
+        ) : null}
+
+        {spec?.value === "coupon" ? (
+          <CouponRewardInput
+            refId={reward.refId}
+            amount={reward.amount}
+            min={spec.min ?? 1}
+            max={spec.max ?? 20}
             onChange={(next) => onChange(next)}
           />
         ) : null}

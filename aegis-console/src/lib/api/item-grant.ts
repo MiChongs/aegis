@@ -11,7 +11,7 @@ import { apiRequest, buildQuery } from "@/lib/api/client";
 // ── 目录 ──
 
 /** `number_ticket`：靓号券，`amount` 张数 + `refId` 等级 1–4（docs/user-number.md「发放渠道」） */
-export type ItemGrantValue = "" | "amount" | "money" | "ref" | "feature" | "feature_minutes" | "text" | "number_ticket" | "cosmetic";
+export type ItemGrantValue = "" | "amount" | "money" | "ref" | "feature" | "feature_minutes" | "text" | "number_ticket" | "cosmetic" | "coupon";
 
 export type ItemGrantItemSpec = {
   type: string;

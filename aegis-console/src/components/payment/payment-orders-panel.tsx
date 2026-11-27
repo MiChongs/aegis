@@ -273,6 +273,11 @@ function OrderRow({
 
       <div className="text-right">
         <p className="font-mono text-sm font-semibold tabular-nums">{formatMoney(order.amount)}</p>
+        {order.discount ? (
+          <p className="text-[11px] tabular-nums text-muted-foreground" title={[order.discount.promotionName, order.discount.couponName].filter(Boolean).join("、")}>
+            原价 <span className="font-mono line-through">{formatMoney(order.discount.originalAmount)}</span>
+          </p>
+        ) : null}
         {paidDiff ? (
           <Tooltip>
             <TooltipTrigger asChild>
