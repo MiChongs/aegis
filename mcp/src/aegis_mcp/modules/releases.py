@@ -55,7 +55,7 @@ Visibility = Literal["public", "signed_in", "testers"]
 async def list_releases(
     app: AppRef,
     status: Annotated[Literal["", "draft", "scheduled", "published", "paused", "revoked"], Field(description="发布状态")] = "",
-    platform: Annotated[str, Field(description="平台，如 android / ios / windows / macos / linux / web")] = "",
+    platform: Annotated[str, Field(description="平台，如 android / android_tv / ios / windows / macos / linux / web")] = "",
     channel_id: int | None = None,
     keyword: str = "",
     page: Page = 1,
@@ -83,7 +83,7 @@ async def save(
     app: AppRef,
     version: Annotated[str, Field(min_length=1, description="版本号，如 2.3.0")],
     version_code: Annotated[int, Field(gt=0, description="递增的版本代码")],
-    platform: Annotated[str, Field(min_length=1, description="平台，如 android / ios / windows")],
+    platform: Annotated[str, Field(min_length=1, description="平台，如 android / android_tv / ios / windows")],
     release_id: Annotated[int | None, Field(gt=0, description="给 ID 即修改草稿，不给即新建草稿")] = None,
     title: str = "",
     notes_markdown: Annotated[str, Field(description="更新说明（Markdown）")] = "",

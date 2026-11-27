@@ -219,3 +219,30 @@ func TestVisibleReleasesIgnoreVersionButKeepAudience(t *testing.T) {
 		t.Fatalf("anonymous visitor should only see the fully rolled-out android release, got %+v", visible)
 	}
 }
+
+// 电视版与手机版是两个安装包：电视（android_tv）收不到手机的包，手机也收不到电视的包；全平台（all）的两边都收。
+func TestAndroidTvIsSeparateFromAndroid(t *testing.T) {
+	phone := liveRelease(30, 300, nil)
+	tv := liveRelease(31, 310, func(r *appdomain.Release) { r.Platform = "android_tv" })
+	tvClient := viewerFor(appdomain.ReleaseClient{VersionCode: 100, Platform: "android_tv", Abis: []string{"arm64-v8a"}})
+	phoneClient := viewerFor(appdomain.ReleaseClient{VersionCode: 100, Abis: []string{"arm64-v8a"}})
+
+	if result, _ := checkReleases([]appdomain.Release{phone}, tvClient, engineNow); result.HasUpdate {
+		t.Fatalf("TV must not be offered the phone package, got %+v", result.Release)
+	}
+	if result, _ := checkReleases([]appdomain.Release{tv}, phoneClient, engineNow); result.HasUpdate {
+		t.Fatalf("phone must not be offered the TV package, got %+v", result.Release)
+	}
+	result, _ := checkReleases([]appdomain.Release{phone, tv}, tvClient, engineNow)
+	if !result.HasUpdate || result.Release.ID != 31 {
+		t.Fatalf("TV should get its own release 31, got %+v", result.Release)
+	}
+	result, _ = checkReleases([]appdomain.Release{phone, tv}, phoneClient, engineNow)
+	if !result.HasUpdate || result.Release.ID != 30 {
+		t.Fatalf("phone should get release 30, got %+v", result.Release)
+	}
+	shared := liveRelease(32, 320, func(r *appdomain.Release) { r.Platform = "all" })
+	if result, _ := checkReleases([]appdomain.Release{shared}, tvClient, engineNow); !result.HasUpdate {
+		t.Fatal("an all-platform release reaches the TV too")
+	}
+}

@@ -237,10 +237,18 @@ function applyAndroidManifest(manifest: XmlElement, info: PackageInfo, resolve: 
     .concat(findChildren(manifest, "uses-permission-sdk-23"))
     .map((el) => attrString(el, "name") ?? "")
     .filter(Boolean);
-  info.features = findChildren(manifest, "uses-feature")
-    .map((el) => attrString(el, "name") ?? "")
-    .filter(Boolean);
+  const features = findChildren(manifest, "uses-feature");
+  info.features = features.map((el) => attrString(el, "name") ?? "").filter(Boolean);
+  if (features.some((el) => attrString(el, "name") === LEANBACK && attrString(el, "required") !== "false")) {
+    info.platform = "android_tv";
+  }
 }
+
+/**
+ * 电视专用包的标志：清单里必需（required 不为 false）的 android.software.leanback。手机包要么不声明，要么声明成非必需；
+ * 这样的包平台填 android_tv，检测时只发给报 android_tv 的电视版，不会被当成手机升级包。
+ */
+const LEANBACK = "android.software.leanback";
 
 function pbChildren(el: PbElement | undefined, name: string) {
   return el?.children.filter((c) => c.name === name) ?? [];
@@ -264,7 +272,11 @@ async function inspectAab(zip: ZipReader, info: PackageInfo) {
   const label = pbChildren(manifest, "application")[0]?.attrs.label;
   if (typeof label === "string" && label && !label.startsWith("@")) info.appName = label;
   info.permissions = pbChildren(manifest, "uses-permission").map((el) => String(el.attrs.name ?? "")).filter(Boolean);
-  info.features = pbChildren(manifest, "uses-feature").map((el) => String(el.attrs.name ?? "")).filter(Boolean);
+  const features = pbChildren(manifest, "uses-feature");
+  info.features = features.map((el) => String(el.attrs.name ?? "")).filter(Boolean);
+  if (features.some((el) => el.attrs.name === LEANBACK && el.attrs.required !== "false" && el.attrs.required !== 0)) {
+    info.platform = "android_tv";
+  }
   info.nativeAbis = collectAbis(zip, "base/lib/");
   info.abi = "universal";
   info.warnings.push("AAB 需由应用商店生成安装包，手机无法直接安装");

@@ -67,7 +67,7 @@ Kotlin SDK：`client.releases.*`（已登录时自动带令牌）。
 | 参数 | 说明 |
 |---|---|
 | `versionCode` | 必填，当前版本码 |
-| `platform` | 默认 `android` |
+| `platform` | 默认 `android`。取值：`android`、`android_tv`、`ios`、`harmony`、`windows`、`macos`、`linux`、`web`；版本的平台为 `all` 时各平台都收。电视版（另一个安装包）报 `android_tv`，与手机版的 `android` 互不下发 |
 | `abis` | 逗号分隔，按偏好排序（Android：`Build.SUPPORTED_ABIS`） |
 | `osVersion` | 系统版本（Android：API Level） |
 | `deviceId` | 设备标识，同一设备保持不变；用于灰度与内测名单 |

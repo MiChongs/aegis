@@ -62,7 +62,9 @@ const (
 var (
 	releaseSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	releaseAbiPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,31}$`)
-	releasePlatforms     = map[string]struct{}{"all": {}, "android": {}, "ios": {}, "harmony": {}, "windows": {}, "macos": {}, "linux": {}, "web": {}}
+	// android_tv 与 android 分开：电视版是另一个安装包（包名、清单、原生库都不同），检测时报 platform=android_tv，
+	// 只收平台为 android_tv（或 all）的版本，手机版的升级包不会发到电视上，反之亦然。
+	releasePlatforms     = map[string]struct{}{"all": {}, "android": {}, "android_tv": {}, "ios": {}, "harmony": {}, "windows": {}, "macos": {}, "linux": {}, "web": {}}
 )
 
 func NewReleaseService(log *zap.Logger, pg *pgrepo.Repository, redisClient *redis.Client, location *time.Location) *ReleaseService {

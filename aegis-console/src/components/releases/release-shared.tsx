@@ -11,6 +11,7 @@ export const DATA_FONT = "font-mono tabular-nums";
 
 export const RELEASE_PLATFORMS = [
   { value: "android", label: "Android" },
+  { value: "android_tv", label: "Android TV" },
   { value: "ios", label: "iOS" },
   { value: "harmony", label: "HarmonyOS" },
   { value: "windows", label: "Windows" },
