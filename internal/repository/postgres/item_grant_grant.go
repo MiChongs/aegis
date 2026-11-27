@@ -294,6 +294,23 @@ func itemGrantRefsQ(ctx context.Context, q queryExecutor, appID int64) (itemgran
 	if refs.Coupons, err = couponRefsQ(ctx, q, appID); err != nil {
 		return refs, err
 	}
+	refs.Tiers = map[int64]itemgrant.TierRef{}
+	tierRows, err := q.Query(ctx, `SELECT id, name FROM vip_tiers WHERE appid = $1`, appID)
+	if err != nil {
+		return refs, err
+	}
+	for tierRows.Next() {
+		var ref itemgrant.TierRef
+		if err := tierRows.Scan(&ref.ID, &ref.Name); err != nil {
+			tierRows.Close()
+			return refs, err
+		}
+		refs.Tiers[ref.ID] = ref
+	}
+	tierRows.Close()
+	if err := tierRows.Err(); err != nil {
+		return refs, err
+	}
 	for id, ref := range cosmetics {
 		refs.Cosmetics[id] = itemgrant.CosmeticRef{ID: ref.ID, Name: ref.Name, Slot: ref.Slot, Live: ref.Live}
 	}

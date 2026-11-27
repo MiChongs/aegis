@@ -307,3 +307,17 @@ func TestCatalogHasNoNullArrays(t *testing.T) {
 		t.Errorf("目录里有 null 字段：…%s", match)
 	}
 }
+
+func TestMatchAudienceTiers(t *testing.T) {
+	now := time.Now()
+	b := Basics{UserID: 1, RegisteredAt: now.Add(-time.Hour), Lifetime: true, TierIDs: []int64{2, 7}, LifetimeTierIDs: []int64{7}}
+	if ok, _ := MatchAudience(AudienceConfig{Scope: ScopeLifetime, TierIDs: []int64{2}}, b, now); !ok {
+		t.Fatal("holds tier 2 (timed) should match without lifetimeOnly")
+	}
+	if ok, _ := MatchAudience(AudienceConfig{Scope: ScopeLifetime, TierIDs: []int64{2}, TierLifetimeOnly: true}, b, now); ok {
+		t.Fatal("tier 2 is not held for life")
+	}
+	if ok, _ := MatchAudience(AudienceConfig{Scope: ScopeAll, TierIDs: []int64{3, 7}, TierLifetimeOnly: true}, b, now); !ok {
+		t.Fatal("tier 7 is held for life")
+	}
+}

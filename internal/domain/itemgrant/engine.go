@@ -62,6 +62,9 @@ type Basics struct {
 	LastActiveAt *time.Time `json:"lastActiveAt,omitempty"`
 	// Eligible 账号可用（启用、未冻结、没有生效中的封禁）；不可用的人不发
 	Eligible bool `json:"eligible"`
+	// TierIDs 此刻持有的会员档位；LifetimeTierIDs 其中永久持有的
+	TierIDs         []int64 `json:"tierIds,omitempty"`
+	LifetimeTierIDs []int64 `json:"lifetimeTierIds,omitempty"`
 }
 
 // Subject 一次判定的对象。
@@ -690,6 +693,18 @@ func MatchAudience(cfg AudienceConfig, basics Basics, now time.Time) (bool, stri
 	}
 	if slices.Contains(cfg.ExcludeUserIDs, basics.UserID) {
 		return false, "在排除名单里"
+	}
+	if len(cfg.TierIDs) > 0 {
+		held := basics.TierIDs
+		if cfg.TierLifetimeOnly {
+			held = basics.LifetimeTierIDs
+		}
+		if !slices.ContainsFunc(held, func(id int64) bool { return slices.Contains(cfg.TierIDs, id) }) {
+			if cfg.TierLifetimeOnly {
+				return false, "没有永久持有所选的会员档位"
+			}
+			return false, "不持有所选的会员档位"
+		}
 	}
 	return true, ""
 }

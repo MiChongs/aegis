@@ -322,6 +322,39 @@ function AudienceForm({ data, catalog, patch }: FormProps<ItemGrantAudienceData>
           </div>
         </div>
       </FieldGroup>
+      {catalog.tiers?.length ? (
+        <FieldGroup title="会员档位">
+          <Field label="持有档位" hint="选了之后，只有此刻持有其中任一档位的人命中；不选为不限">
+            <ToggleGroup
+              type="multiple"
+              variant="outline"
+              size="sm"
+              className="flex-wrap justify-start"
+              value={(data.tierIds ?? []).map(String)}
+              onValueChange={(values) =>
+                patch({ tierIds: values.map(Number), tierLifetimeOnly: values.length ? data.tierLifetimeOnly : false })
+              }
+            >
+              {catalog.tiers.map((tier) => (
+                <ToggleGroupItem key={tier.id} value={String(tier.id)} className="px-2.5 text-xs">
+                  {tier.name}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </Field>
+          <div className="flex items-center justify-between rounded-lg border px-3 py-2">
+            <div>
+              <div className="text-xs font-medium">只认永久持有</div>
+              <div className="text-[11px] text-muted-foreground">限时持有同一档位的人不算</div>
+            </div>
+            <Switch
+              checked={Boolean(data.tierLifetimeOnly)}
+              disabled={!data.tierIds?.length}
+              onCheckedChange={(tierLifetimeOnly) => patch({ tierLifetimeOnly })}
+            />
+          </div>
+        </FieldGroup>
+      ) : null}
       <FieldGroup title="名单">
         <IdListField
           label="只发给"

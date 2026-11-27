@@ -143,6 +143,7 @@ type ItemGrantCatalog struct {
 	Routes     []notificationdomain.RouteSpec `json:"routes"`
 	Plans      []itemgrant.PlanRef            `json:"plans"`
 	Features   []itemgrant.FeatureRef         `json:"features"`
+	Tiers      []itemgrant.TierRef            `json:"tiers"`
 	Limits     map[string]int                 `json:"limits"`
 	Timezone   string                         `json:"timezone"`
 	Statuses   []string                       `json:"statuses"`
@@ -167,20 +168,26 @@ func (s *ItemGrantService) Catalog(ctx context.Context, appID int64) (*ItemGrant
 		features = append(features, feature)
 	}
 	sort.Slice(features, func(i, j int) bool { return features[i].Tag < features[j].Tag })
+	tiers := make([]itemgrant.TierRef, 0, len(refs.Tiers))
+	for _, tier := range refs.Tiers {
+		tiers = append(tiers, tier)
+	}
+	sort.Slice(tiers, func(i, j int) bool { return tiers[i].ID < tiers[j].ID })
 	return &ItemGrantCatalog{
 		Items: itemgrant.ItemCatalog(), ItemGroups: itemgrant.ItemGroups(),
 		Nodes: itemgrant.NodeCatalog(), Categories: itemgrant.NodeCategories(),
 		Triggers: itemgrant.TriggerCatalog(), Events: itemgrant.EventCatalog(),
 		Fields: itemgrant.FieldCatalog(), Operators: itemgrant.OperatorCatalog(),
 		Scopes: itemgrant.Scopes(), Periods: itemgrant.Periods(), Routes: itemgrant.NotifyRoutes(),
-		Plans: plans, Features: features, Timezone: itemGrantLocation().String(),
+		Plans: plans, Features: features, Tiers: tiers, Timezone: itemGrantLocation().String(),
 		Statuses:  []string{itemgrant.StatusDraft, itemgrant.StatusActive, itemgrant.StatusPaused, itemgrant.StatusArchived},
 		Templates: itemgrant.Templates(),
 		Limits: map[string]int{
 			"maxNodes": itemgrant.MaxNodes, "maxEdges": itemgrant.MaxEdges, "maxItemsPerNode": itemgrant.MaxItemsPerNode,
 			"maxRandomOptions": itemgrant.MaxRandomOptions, "maxSplitBranches": itemgrant.MaxSplitBranches,
 			"maxConditionRules": itemgrant.MaxConditionRules, "maxAudienceUsers": itemgrant.MaxAudienceUsers,
-			"maxSamples": itemGrantMaxSamples, "minCronGapMinutes": int(itemGrantMinCronGap.Minutes()),
+			"maxAudienceTiers": itemgrant.MaxAudienceTiers,
+			"maxSamples":       itemGrantMaxSamples, "minCronGapMinutes": int(itemGrantMinCronGap.Minutes()),
 		},
 	}, nil
 }

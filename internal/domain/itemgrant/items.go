@@ -360,12 +360,19 @@ type CouponRef struct {
 	Live bool   `json:"live"`
 }
 
-// Refs 套餐、功能、装扮与券目录（描述物品、校验引用用）。
+// TierRef 人群筛选用的会员档位。
+type TierRef struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// Refs 套餐、功能、装扮、券与档位目录（描述物品、校验引用用）。
 type Refs struct {
 	Plans     map[int64]PlanRef
 	Features  map[string]FeatureRef
 	Cosmetics map[int64]CosmeticRef
 	Coupons   map[int64]CouponRef
+	Tiers     map[int64]TierRef
 }
 
 // DescribePlannedItem 预览与估算里的说法：DescribeItem 之外注明「发放时佩戴」（发放结果与站内信里用 DescribeItem，戴上了另记「已戴上」）。

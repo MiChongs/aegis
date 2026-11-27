@@ -91,7 +91,14 @@ type AudienceConfig struct {
 	UserIDs []int64 `json:"userIds,omitempty"`
 	// ExcludeUserIDs 排除这些人
 	ExcludeUserIDs []int64 `json:"excludeUserIds,omitempty"`
+	// TierIDs 此刻持有其中任一会员档位的人（空为不限）。同为「永久会员」的几档（如领航者与领航者青春版）靠它区分
+	TierIDs []int64 `json:"tierIds,omitempty"`
+	// TierLifetimeOnly 只认永久持有的档位（限时持有同一档位的不算）
+	TierLifetimeOnly bool `json:"tierLifetimeOnly,omitempty"`
 }
+
+// MaxAudienceTiers 人群里最多选几个档位。
+const MaxAudienceTiers = 20
 
 // ConditionRule 可视化条件的一行：字段 运算符 取值。
 type ConditionRule struct {
@@ -320,6 +327,10 @@ func normalizeConfig(data any) {
 		}
 		cfg.UserIDs = uniquePositive(cfg.UserIDs)
 		cfg.ExcludeUserIDs = uniquePositive(cfg.ExcludeUserIDs)
+		cfg.TierIDs = uniquePositive(cfg.TierIDs)
+		if len(cfg.TierIDs) == 0 {
+			cfg.TierLifetimeOnly = false
+		}
 	case *ConditionConfig:
 		normalizeMeta(&cfg.NodeMeta)
 		cfg.Expr = strings.TrimSpace(cfg.Expr)
@@ -432,6 +443,9 @@ func validateConfig(data any, cronCheck func(string) error) []string {
 		}
 		if len(cfg.UserIDs) > MaxAudienceUsers || len(cfg.ExcludeUserIDs) > MaxAudienceUsers {
 			add("用户名单最多 %d 人", MaxAudienceUsers)
+		}
+		if len(cfg.TierIDs) > MaxAudienceTiers {
+			add("会员档位最多选 %d 个", MaxAudienceTiers)
 		}
 	case *ConditionConfig:
 		meta(cfg.NodeMeta)

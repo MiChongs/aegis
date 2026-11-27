@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -418,16 +419,53 @@ u.vip_lifetime_at IS NOT NULL,
 COALESCE(lv.current_level, 1),
 GREATEST((SELECT MAX(d.last_seen_at) FROM user_login_devices d WHERE d.appid = u.appid AND d.user_id = u.id),
          (SELECT MAX(o.updated_at) FROM user_online_daily o WHERE o.user_id = u.id)),
-` + leaderboardEligibleSQL + `
+` + leaderboardEligibleSQL + `,
+` + itemGrantHeldTiersSQL + `
 FROM users u
 LEFT JOIN user_profiles up ON up.user_id = u.id
 LEFT JOIN user_level_records lv ON lv.user_id = u.id AND lv.appid = u.appid`
 
 func scanItemGrantBasics(row interface{ Scan(dest ...any) error }) (itemgrant.Basics, error) {
 	var b itemgrant.Basics
+	var tiers []byte
 	err := row.Scan(&b.UserID, &b.Account, &b.Nickname, &b.RegisteredAt, &b.Member, &b.Lifetime, &b.Level,
-		&b.LastActiveAt, &b.Eligible)
+		&b.LastActiveAt, &b.Eligible, &tiers)
+	if err == nil {
+		b.TierIDs, b.LifetimeTierIDs = decodeHeldTiers(tiers)
+	}
 	return b, err
+}
+
+// itemGrantHeldTiersSQL 此刻仍生效的会员段所在的档位：[[档位, 是否永久], …]（与 vipLiveSegmentsSQL 同一口径）。
+const itemGrantHeldTiersSQL = `COALESCE((SELECT jsonb_agg(DISTINCT jsonb_build_array(vt.tier_id, vt.lifetime))
+  FROM vip_transactions vt
+  WHERE ` + itemGrantHeldTierWhere + `), '[]'::jsonb)`
+
+// itemGrantHeldTierWhere 一段仍生效、挂了档位的会员期（别名 vt，外层 u = users）。
+const itemGrantHeldTierWhere = `vt.appid = u.appid AND vt.user_id = u.id AND vt.tier_id IS NOT NULL AND ` + vipSegmentScopeSQL + `
+    AND ` + vipSegmentUntilSQL + ` > NOW() AND ` + vipSegmentUntilSQL + ` > ` + vipSegmentFromSQL
+
+func decodeHeldTiers(raw []byte) ([]int64, []int64) {
+	var pairs [][2]any
+	if err := json.Unmarshal(raw, &pairs); err != nil {
+		return nil, nil
+	}
+	var held, lifetime []int64
+	for _, pair := range pairs {
+		id, ok := pair[0].(float64)
+		if !ok {
+			continue
+		}
+		if !slices.Contains(held, int64(id)) {
+			held = append(held, int64(id))
+		}
+		if isLifetime, _ := pair[1].(bool); isLifetime && !slices.Contains(lifetime, int64(id)) {
+			lifetime = append(lifetime, int64(id))
+		}
+	}
+	slices.Sort(held)
+	slices.Sort(lifetime)
+	return held, lifetime
 }
 
 // itemGrantAudienceWhere 目标人群的 SQL 条件（与 itemgrant.MatchAudience 同一口径）。
@@ -473,6 +511,13 @@ func itemGrantAudienceWhere(audience *itemgrant.AudienceConfig, args *[]any) str
 	}
 	if len(audience.ExcludeUserIDs) > 0 {
 		where = append(where, add("NOT (u.id = ANY(?))", audience.ExcludeUserIDs))
+	}
+	if len(audience.TierIDs) > 0 {
+		clause := "EXISTS (SELECT 1 FROM vip_transactions vt WHERE " + itemGrantHeldTierWhere + " AND vt.tier_id = ANY(?)"
+		if audience.TierLifetimeOnly {
+			clause += " AND vt.lifetime"
+		}
+		where = append(where, add(clause+")", audience.TierIDs))
 	}
 	return strings.Join(where, " AND ")
 }

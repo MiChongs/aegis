@@ -196,6 +196,15 @@ func CheckRefs(graph Graph, refs Refs) []Issue {
 			continue
 		}
 		switch cfg := data.(type) {
+		case *AudienceConfig:
+			if refs.Tiers == nil {
+				break
+			}
+			for _, id := range cfg.TierIDs {
+				if _, ok := refs.Tiers[id]; !ok {
+					issues = append(issues, Issue{Level: IssueError, NodeID: node.ID, Message: fmt.Sprintf("会员档位 #%d 不存在", id)})
+				}
+			}
 		case *GrantConfig:
 			check(node.ID, cfg.Items)
 		case *RandomConfig:

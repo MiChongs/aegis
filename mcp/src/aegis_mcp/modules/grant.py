@@ -59,7 +59,7 @@ GRAPH_HELP = (
     "画布（与控制台 React Flow 同形）：{nodes: [{id, type, position: {x, y}, data}], edges: [{id, source, sourceHandle, target}]}。"
     "节点 type 与端口：trigger（next；data {kind: manual|schedule|event, cron?, event?: register|login|signin|payment}，恰好一个）/ "
     "audience（next；data {scope: all|member|non_member|lifetime|non_lifetime, registeredWithinDays?, registeredBeforeDays?, "
-    "activeWithinDays?, minLevel?, maxLevel?, userIds?, excludeUserIds?}，紧跟触发器的那个决定批量执行的候选人）/ "
+    "activeWithinDays?, minLevel?, maxLevel?, userIds?, excludeUserIds?, tierIds?, tierLifetimeOnly?}，tierIds 为此刻持有其中任一会员档位（vip_tiers 的 id；tierLifetimeOnly 只认永久持有，用来区分同为永久会员的几档），紧跟触发器的那个决定批量执行的候选人）/ "
     "condition（yes / no；data {mode: all|any|expr, rules: [{field, op, value: [数字]}], expr}）/ window（in / out；data {weekdays, startMinute, endMinute, dateFrom, dateTo}）/ "
     "split（每个分支 id 一个端口；data {branches: [{id, label, weight}], sticky}）/ limit（pass / over；data {period: total|day|week|month, perUser, global}）/ "
     "grant（next；data {items}）/ random（next；data {picks, options: [{id, label, weight, items}]}）/ "

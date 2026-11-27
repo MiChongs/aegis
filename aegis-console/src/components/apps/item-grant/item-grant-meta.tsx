@@ -279,6 +279,10 @@ export function summarizeNode(type: ItemGrantNodeType, data: Record<string, unkn
       if (cfg.minLevel || cfg.maxLevel) lines.push(`等级 ${cfg.minLevel || 0}–${cfg.maxLevel || "∞"}`);
       if (cfg.userIds?.length) lines.push(`名单 ${cfg.userIds.length} 人`);
       if (cfg.excludeUserIds?.length) lines.push(`排除 ${cfg.excludeUserIds.length} 人`);
+      if (cfg.tierIds?.length) {
+        const names = cfg.tierIds.map((id) => catalog?.tiers?.find((tier) => tier.id === id)?.name ?? `档位 #${id}`);
+        lines.push(`${cfg.tierLifetimeOnly ? "永久持有" : "持有"} ${names.join("、")}`);
+      }
       return lines;
     }
     case "condition": {

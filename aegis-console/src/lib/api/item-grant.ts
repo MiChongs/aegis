@@ -113,6 +113,8 @@ export type ItemGrantCatalog = {
   routes: ItemGrantOption[];
   plans: ItemGrantPlanRef[];
   features: ItemGrantFeatureRef[];
+  /** 人群筛选可选的会员档位 */
+  tiers?: Array<{ id: number; name: string }>;
   limits: Record<string, number>;
   timezone: string;
   statuses: ItemGrantStatus[];
@@ -146,6 +148,10 @@ export type ItemGrantAudienceData = ItemGrantNodeMeta & {
   maxLevel?: number;
   userIds?: number[];
   excludeUserIds?: number[];
+  /** 此刻持有其中任一会员档位的人；同为永久会员的几档靠它区分 */
+  tierIds?: number[];
+  /** 只认永久持有的档位 */
+  tierLifetimeOnly?: boolean;
 };
 export type ItemGrantConditionRule = { field: string; op: string; value?: number[] };
 export type ItemGrantConditionData = ItemGrantNodeMeta & {
