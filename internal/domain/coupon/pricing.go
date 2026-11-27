@@ -21,7 +21,7 @@ import (
 // UserFacts 资格判定需要的用户事实。
 type UserFacts struct {
 	RegisteredAt time.Time
-	// PaidOrders 在这个应用付过款的订单数（不含这一笔）
+	// PaidOrders 在这个应用付过款与还在待支付的订单数（不含这一笔）：首单优惠不能靠同时挂几笔待支付单重复享受
 	PaidOrders int64
 	IsVip      bool
 }
@@ -261,22 +261,6 @@ func PriceQuote(in QuoteInput) QuoteResult {
 			best = &pricedList[index]
 		}
 	}
-	bestStackable := func(allowCoupon bool) *priced {
-		if !allowCoupon {
-			return nil
-		}
-		var found *priced
-		for index := range pricedList {
-			item := pricedList[index]
-			if !item.state.Promotion.StackWithCoupon {
-				continue
-			}
-			if found == nil || betterPromotion(item, *found) {
-				found = &pricedList[index]
-			}
-		}
-		return found
-	}
 	noCouponDiscount := decimal.Zero
 	if best != nil {
 		noCouponDiscount = best.discount
@@ -299,13 +283,21 @@ func PriceQuote(in QuoteInput) QuoteResult {
 		alone, aloneCode, aloneReason := CouponDiscountOn(t, amount)
 		total := alone
 		var pair *priced
-		if stack := bestStackable(t.StackWithPromotion); stack != nil {
-			base := amount.Sub(stack.discount)
-			withPromo, code, _ := CouponDiscountOn(t, base)
-			if code == "" && stack.discount.Add(withPromo).GreaterThan(total) {
-				total = stack.discount.Add(withPromo)
-				pair = stack
-				option.Discount = withPromo
+		// 能同享的活动逐个试：优惠最大的那期配上券可能因为门槛用不了，小一点的那期反而更省
+		if t.StackWithPromotion {
+			for index := range pricedList {
+				stack := &pricedList[index]
+				if !stack.state.Promotion.StackWithCoupon {
+					continue
+				}
+				withPromo, code, _ := CouponDiscountOn(t, amount.Sub(stack.discount))
+				if code != "" {
+					continue
+				}
+				combined := stack.discount.Add(withPromo)
+				if c := combined.Cmp(total); c > 0 || (c == 0 && pair != nil && betterPromotion(*stack, *pair)) {
+					total, pair, option.Discount = combined, stack, withPromo
+				}
 			}
 		}
 		if pair == nil {

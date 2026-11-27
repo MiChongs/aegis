@@ -960,7 +960,14 @@ func (r *Repository) grantInviteRewardsTx(ctx context.Context, tx pgx.Tx, grant 
 			}
 
 		case pointstore.RewardCoupon:
+			// 券暂停、发完或结束时只这一项不发：不能因为一张券让填邀请码、签到结算整笔失败。
+			// 券不可发时 grantCouponTx 还没写任何东西（条件更新没命中），事务照常可用
 			detail, _, err := grantCouponRewardTx(ctx, tx, appID, userID, reward.RefID, reward.Amount, coupon.SourceInvite, ref)
+			var unavailable *CouponUnavailableError
+			if errors.As(err, &unavailable) {
+				result.Detail = "优惠券未发放：" + unavailable.Reason
+				break
+			}
 			if err != nil {
 				return nil, err
 			}

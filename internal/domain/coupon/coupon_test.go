@@ -193,3 +193,15 @@ func TestValidation(t *testing.T) {
 		t.Fatalf("face")
 	}
 }
+
+func TestCouponTriesEveryStackablePromotion(t *testing.T) {
+	a := activePromo(1, PromotionDiscount, PromotionRule{DiscountMode: DiscountAmountOff, Amount: d("15")}, true)
+	b := activePromo(2, PromotionDiscount, PromotionRule{DiscountMode: DiscountAmountOff, Amount: d("5")}, true)
+	tpl := Template{Name: "满90减30", Kind: KindAmountOff, Amount: d("30"), MinAmount: d("90"), StackWithPromotion: true}
+	res := PriceQuote(QuoteInput{Now: now, Target: vipTarget("100"), Promotions: []PromotionState{a, b},
+		Coupons: []UserCoupon{coupon(1, tpl)}, CouponMode: CouponAuto})
+	// 配 A：85 不满 90；配 B：95 满 90，5 + 30 = 35
+	if res.Quote.Promotion == nil || res.Quote.Promotion.ID != 2 || !res.Quote.PayableAmount.Equal(d("65")) {
+		t.Fatalf("should pair with the smaller promotion: %+v", res.Quote)
+	}
+}

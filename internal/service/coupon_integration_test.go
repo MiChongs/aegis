@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -211,14 +212,33 @@ func TestCouponIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 返积分已经花掉一部分：只剩 20
+	if _, err := pool.Exec(ctx, `UPDATE users SET integral = 20 WHERE id = $1`, alice); err != nil {
+		t.Fatal(err)
+	}
+	// 两笔退款同时在途：第一笔结算成功时还不是全额，不能冲正
 	order, _ = pg.GetPaymentOrderByOrderNo(ctx, order.OrderNo)
-	refund, err := pg.CreatePaymentRefund(ctx, paymentdomain.RefundCreation{AppID: appID, Order: order, RefundNo: "RF-COUPON-1", Amount: order.Amount, Reason: "测试"})
+	first, err := pg.CreatePaymentRefund(ctx, paymentdomain.RefundCreation{AppID: appID, Order: order, RefundNo: "RF-COUPON-1", Amount: money("9"), Reason: "测试"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	settled, _, err := pg.RefundPaymentOrderToWallet(ctx, refund.ID, order, order.Amount, refund.RefundNo, &instr, true)
+	order, _ = pg.GetPaymentOrderByOrderNo(ctx, order.OrderNo)
+	refund, err := pg.CreatePaymentRefund(ctx, paymentdomain.RefundCreation{AppID: appID, Order: order, RefundNo: "RF-COUPON-2", Amount: money("10"), Reason: "测试"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, _, err := pg.RefundPaymentOrderToWallet(ctx, first.ID, order, money("9"), first.RefundNo, &instr, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := scalar(`SELECT status FROM user_coupons WHERE id = $1`, claimed.ID); got != coupon.CouponUsed {
+		t.Fatalf("部分退款（另一笔还在途）不应返还券：%s", got)
+	}
+	settled, _, err := pg.RefundPaymentOrderToWallet(ctx, refund.ID, order, money("10"), refund.RefundNo, &instr, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(settled.ReversalMessage, "差 30") {
+		t.Fatalf("返积分不够扣应写明差额：%s", settled.ReversalMessage)
 	}
 	if got := scalar(`SELECT status FROM user_coupons WHERE id = $1`, claimed.ID); got != coupon.CouponAvailable {
 		t.Fatalf("退款后券应返还：%s（%s）", got, settled.ReversalMessage)
@@ -304,5 +324,48 @@ func TestCouponIntegration(t *testing.T) {
 	expectCode("库存不足", err, errCodeCouponUnavailable)
 	if outcomes, err := coupons.Issue(ctx, appID, tplB.ID, []int64{alice, 999999999}, 2, "tester", false); err != nil || len(outcomes) != 2 || !outcomes[0].OK || outcomes[1].OK {
 		t.Fatalf("发券：%+v %v", outcomes, err)
+	}
+
+	// ── 付了款还没结算就全额退款：不核销、不返利、券还回去 ──
+	bob := insertTestUser(t, ctx, pool, appID, "coupon-bob", "0")
+	if _, err := coupons.Issue(ctx, appID, tplB.ID, []int64{bob}, 1, "tester", false); err != nil {
+		t.Fatal(err)
+	}
+	// 暂停限时折扣，让 bob 的返利券（不与活动同享）用得上
+	if _, err := coupons.SetPromotionStatus(ctx, appID, promo.ID, coupon.StatusPaused, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	quote, res, err = coupons.Quote(ctx, QuoteRequest{AppID: appID, UserID: bob, Purpose: paymentdomain.PurposeVipPurchase,
+		PlanID: plan.ID, Amount: money("30"), CouponMode: coupon.CouponAuto})
+	if err != nil || res.UserCouponID == 0 {
+		t.Fatalf("bob 试算：%+v %v", quote, err)
+	}
+	future := time.Now().Add(time.Hour)
+	unsettled, err := pg.CreatePaymentOrderWithPromotion(ctx, paymentdomain.OrderMutation{
+		AppID: appID, UserID: &bob, ConfigID: balanceCfg.ID, OrderNo: "P-COUPON-UNSETTLED", Subject: "月卡", Amount: quote.PayableAmount,
+		PaymentMethod: "epay", ProviderType: "alipay", Metadata: ApplyDiscountMetadata(map[string]any{}, res), ExpireAt: &future,
+	}, res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.MarkPaymentOrderPaid(ctx, unsettled.ID, "UP-2", "TRADE_SUCCESS", map[string]any{}, decimal.Zero); err != nil {
+		t.Fatal(err)
+	}
+	unsettled, _ = pg.GetPaymentOrderByOrderNo(ctx, unsettled.OrderNo)
+	refundU, err := pg.CreatePaymentRefund(ctx, paymentdomain.RefundCreation{AppID: appID, Order: unsettled, RefundNo: "RF-COUPON-U", Amount: unsettled.Amount, Reason: "测试"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.SettlePaymentRefund(ctx, paymentdomain.RefundSettlement{RefundID: refundU.ID, Status: paymentdomain.RefundSuccess}, unsettled, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := coupons.SettleOrder(ctx, unsettled.ID); rec == nil || rec.Status != coupon.OrderRefunded {
+		t.Fatalf("退款后的补结算不应结算：%+v", rec)
+	}
+	if got := scalar(`SELECT status FROM user_coupons WHERE id = $1`, res.UserCouponID); got != coupon.CouponAvailable {
+		t.Fatalf("没结算就全额退款，券应还回：%s", got)
+	}
+	if got := scalar(`SELECT COUNT(*)::text FROM user_coupons WHERE user_id = $1 AND source = 'rebate'`, bob); got != "0" {
+		t.Fatalf("没结算就全额退款，不应返券：%s", got)
 	}
 }

@@ -885,7 +885,8 @@ func (r *Repository) CountPromotionUsage(ctx context.Context, appID, userID int6
 func (r *Repository) CouponUserFacts(ctx context.Context, appID, userID int64) (coupon.UserFacts, error) {
 	var facts coupon.UserFacts
 	err := r.pool.QueryRow(ctx, `SELECT u.created_at, COALESCE(u.vip_expire_at > NOW(), FALSE),
-  (SELECT COUNT(*) FROM payment_orders o WHERE o.appid = u.appid AND o.user_id = u.id AND o.status = 'paid')
+  (SELECT COUNT(*) FROM payment_orders o WHERE o.appid = u.appid AND o.user_id = u.id
+     AND (o.status = 'paid' OR (o.status = 'pending' AND o.expire_at > NOW())))
 FROM users u WHERE u.id = $1 AND u.appid = $2`, userID, appID).Scan(&facts.RegisteredAt, &facts.IsVip, &facts.PaidOrders)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return facts, ErrUserNotFound

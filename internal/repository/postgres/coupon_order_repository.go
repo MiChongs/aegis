@@ -198,12 +198,21 @@ func (r *Repository) SettleOrderPromotion(ctx context.Context, orderID int64) (*
 	if rec.Status != coupon.OrderReserved && rec.Status != coupon.OrderReleased {
 		return &rec.OrderPromotion, nil
 	}
-	var orderStatus string
+	var orderStatus, refundStatus string
 	var paidAmountRaw *string
-	if err := tx.QueryRow(ctx, `SELECT status, paid_amount::text FROM payment_orders WHERE id = $1`, orderID).Scan(&orderStatus, &paidAmountRaw); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT status, refund_status, paid_amount::text FROM payment_orders WHERE id = $1`, orderID).Scan(&orderStatus, &refundStatus, &paidAmountRaw); err != nil {
 		return nil, err
 	}
 	if orderStatus != "paid" {
+		return &rec.OrderPromotion, nil
+	}
+	if refundStatus == paymentdomain.OrderRefundFull {
+		// 已全额退款（退款时这条记录还没结算）：不再核销、不再返利
+		refundUnsettledTx(ctx, tx, rec)
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		rec.Status = coupon.OrderRefunded
 		return &rec.OrderPromotion, nil
 	}
 	released := rec.Status == coupon.OrderReleased
@@ -464,13 +473,18 @@ func unreservePromotionsTx(ctx context.Context, tx pgx.Tx, rec *orderPromotionRo
 // reverseOrderPromotionTx 订单全额退款后的优惠冲正，在退款结算的事务里调用。
 //
 // 放在保存点里、失败只写进记录：退款已经成功了，不能因为收不回一张返券就让退款结算失败（与履约冲正同一个原则）。
+// current 是这一笔正在结算成功的退款金额（它的状态在调用之后才写成 success）。
+// 是否全额按「已成功的退款 + 这一笔」判：payment_orders.refunded_amount 是建退款单时就占用的额度，
+// 还有别的退款在处理中时它已经等于订单金额，拿它判会把部分退款当成全额。
 // 返回一句给退款单看的说明（没有优惠记录或不是全额退款时为空）。
-func reverseOrderPromotionTx(ctx context.Context, outer pgx.Tx, orderID int64) string {
-	var amountRaw, refundedRaw string
-	if err := outer.QueryRow(ctx, `SELECT amount::text, refunded_amount::text FROM payment_orders WHERE id = $1`, orderID).Scan(&amountRaw, &refundedRaw); err != nil {
+func reverseOrderPromotionTx(ctx context.Context, outer pgx.Tx, orderID int64, current decimal.Decimal) string {
+	var amountRaw, succeededRaw string
+	if err := outer.QueryRow(ctx, `SELECT o.amount::text,
+  COALESCE((SELECT SUM(r.amount) FROM payment_refunds r WHERE r.order_id = o.id AND r.status = 'success'), 0)::text
+FROM payment_orders o WHERE o.id = $1`, orderID).Scan(&amountRaw, &succeededRaw); err != nil {
 		return ""
 	}
-	if decimal.RequireFromString(refundedRaw).LessThan(decimal.RequireFromString(amountRaw)) {
+	if decimal.RequireFromString(succeededRaw).Add(current).LessThan(decimal.RequireFromString(amountRaw)) {
 		return ""
 	}
 	sp, err := outer.Begin(ctx)
@@ -489,6 +503,17 @@ func reverseOrderPromotionTx(ctx context.Context, outer pgx.Tx, orderID int64) s
 }
 
 func reverseOrderPromotionInner(ctx context.Context, tx pgx.Tx, orderID int64) (string, error) {
+	// 锁序与下单、结算一致：先用户行，再优惠记录
+	var userID, appID int64
+	if err := tx.QueryRow(ctx, `SELECT user_id, appid FROM payment_order_promotions WHERE order_id = $1`, orderID).Scan(&userID, &appID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if err := couponLockUserTx(ctx, tx, appID, userID); err != nil && !errors.Is(err, ErrUserNotFound) {
+		return "", err
+	}
 	rec, err := scanOrderPromotion(tx.QueryRow(ctx, `SELECT `+orderPromotionColumns+` FROM payment_order_promotions p WHERE p.order_id = $1 FOR UPDATE`, orderID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
@@ -496,7 +521,12 @@ func reverseOrderPromotionInner(ctx context.Context, tx pgx.Tx, orderID int64) (
 	if err != nil {
 		return "", err
 	}
-	if rec.Status != coupon.OrderSettled {
+	switch rec.Status {
+	case coupon.OrderSettled:
+	case coupon.OrderReserved, coupon.OrderReleased:
+		// 付了款却还没来得及结算就全额退了：不再结算，按没用过处理
+		return "优惠：" + refundUnsettledTx(ctx, tx, rec), nil
+	default:
 		return "", nil
 	}
 	if err := unreservePromotionsTx(ctx, tx, rec); err != nil {
@@ -528,8 +558,9 @@ WHERE id = $1 AND status = 'used' AND order_no = $2 AND valid_until > NOW()`, *r
 	rebateStatus := rec.RebateStatus
 	if rec.RebateStatus == coupon.RebateGranted {
 		if len(rec.RebateCouponIDs) > 0 {
+			// 被别的待支付订单占着的也收回：那笔订单关闭后券不会再回到可用；它要是付了款，结算时会写明券已不在
 			tag, err := tx.Exec(ctx, `UPDATE user_coupons SET status = 'revoked', revoked_reason = '订单退款，收回返券', updated_at = NOW()
-WHERE id = ANY($1) AND status IN ('available', 'expired')`, rec.RebateCouponIDs)
+WHERE id = ANY($1) AND status IN ('available', 'expired', 'locked')`, rec.RebateCouponIDs)
 			if err != nil {
 				return "", err
 			}
@@ -538,11 +569,8 @@ WHERE id = ANY($1) AND status IN ('available', 'expired')`, rec.RebateCouponIDs)
 			}
 		}
 		if rec.RebateIntegral > 0 {
-			orderID := rec.OrderID
-			if _, _, _, err := applyIntegralChangeTx(ctx, tx, rec.UserID, rec.AppID, -rec.RebateIntegral,
-				"consume", "coupon_rebate_refund", "订单退款收回返积分", rec.RebatePromotionName, "payment_order", &orderID,
-				map[string]any{"orderNo": rec.OrderNo, "reason": "payment_refund"}); err != nil {
-				return "", fmt.Errorf("收回返积分失败：%w", err)
+			if note := revokeRebateIntegralTx(ctx, tx, rec); note != "" {
+				notes = append(notes, note)
 			}
 		}
 		rebateStatus = coupon.RebateRevoked
@@ -561,7 +589,7 @@ func (r *Repository) ListUnsettledOrderPromotions(ctx context.Context, limit int
 		limit = 100
 	}
 	rows, err := r.pool.Query(ctx, `SELECT p.order_id FROM payment_order_promotions p JOIN payment_orders o ON o.id = p.order_id
-WHERE p.status IN ('reserved', 'released') AND o.status = 'paid' ORDER BY p.created_at LIMIT $1`, limit)
+WHERE p.status IN ('reserved', 'released') AND o.status = 'paid' AND o.refund_status <> 'full' ORDER BY p.created_at LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -751,4 +779,66 @@ WHERE c.appid = $1 GROUP BY c.id, c.name ORDER BY COUNT(p.id) DESC, c.id DESC LI
 		out.Sources = append(out.Sources, item)
 	}
 	return out, srcRows.Err()
+}
+
+// revokeRebateIntegralTx 退款收回返积分，尽力而为：积分已被花掉时扣到 0 为止，差额写进说明。
+// 各自在保存点里做：扣不动不能连累名额退回与券的返还。
+func revokeRebateIntegralTx(ctx context.Context, tx pgx.Tx, rec *orderPromotionRow) string {
+	deduct := func(amount int64) error {
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		if err := deductRebateIntegralTx(ctx, sp, rec, amount); err != nil {
+			_ = sp.Rollback(ctx)
+			return err
+		}
+		return sp.Commit(ctx)
+	}
+	if err := deduct(rec.RebateIntegral); err == nil {
+		return ""
+	}
+	var balance int64
+	if err := tx.QueryRow(ctx, `SELECT integral FROM users WHERE id = $1 AND appid = $2`, rec.UserID, rec.AppID).Scan(&balance); err != nil {
+		return "返积分未扣回：" + err.Error()
+	}
+	taken := min(balance, rec.RebateIntegral)
+	if taken > 0 {
+		if err := deduct(taken); err != nil {
+			return "返积分未扣回：" + err.Error()
+		}
+	}
+	return fmt.Sprintf("返积分已被使用，扣回 %d、差 %d", taken, rec.RebateIntegral-taken)
+}
+
+// refundUnsettledTx 付了款、还没结算优惠就全额退款的订单：名额与预算退回（还占着的话），券还给用户，不再发返利。
+func refundUnsettledTx(ctx context.Context, tx pgx.Tx, rec *orderPromotionRow) string {
+	if rec.Status == coupon.OrderReserved {
+		if err := unreservePromotionsTx(ctx, tx, rec); err != nil {
+			return "退回活动名额失败：" + err.Error()
+		}
+	}
+	if rec.UserCouponID != nil {
+		if _, err := tx.Exec(ctx, `UPDATE user_coupons SET status = CASE WHEN valid_until <= NOW() THEN 'expired' ELSE 'available' END,
+  order_no = NULL, updated_at = NOW() WHERE id = $1 AND status = 'locked' AND order_no = $2`, *rec.UserCouponID, rec.OrderNo); err != nil {
+			return "返还券失败：" + err.Error()
+		}
+	}
+	rebate := rec.RebateStatus
+	if rebate == coupon.RebatePending {
+		rebate = coupon.RebateSkipped
+	}
+	if _, err := tx.Exec(ctx, `UPDATE payment_order_promotions SET status = 'refunded', rebate_status = $2,
+  note = '付款后未结算即全额退款：券已返还、名额已退回、不再返利', updated_at = NOW() WHERE id = $1`, rec.ID, rebate); err != nil {
+		return "更新记录失败：" + err.Error()
+	}
+	return "付款后未结算即全额退款：券已返还、名额已退回"
+}
+
+func deductRebateIntegralTx(ctx context.Context, tx pgx.Tx, rec *orderPromotionRow, amount int64) error {
+	orderID := rec.OrderID
+	_, _, _, err := applyIntegralChangeTx(ctx, tx, rec.UserID, rec.AppID, -amount,
+		"consume", "coupon_rebate_refund", "订单退款收回返积分", rec.RebatePromotionName, "payment_order", &orderID,
+		map[string]any{"orderNo": rec.OrderNo, "reason": "payment_refund"})
+	return err
 }
