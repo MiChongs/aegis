@@ -44,8 +44,9 @@ type aiSSEStream struct {
 	begun  bool
 	broken bool
 
-	stop chan struct{}
-	done chan struct{}
+	stop     chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 // newAISSEStream 解除写超时并起心跳；调用方必须 defer Close()。
@@ -73,11 +74,15 @@ func (s *aiSSEStream) heartbeat() {
 	}
 }
 
-// Close 停掉心跳并等它退出。处理器返回前调用。
-func (s *aiSSEStream) Close() {
-	close(s.stop)
+// Finish 停掉心跳并等它退出：写收尾帧（[DONE]、message_stop、错误事件）之前调用，
+// 收尾之后就不会再有心跳混进来。可以重复调用。
+func (s *aiSSEStream) Finish() {
+	s.stopOnce.Do(func() { close(s.stop) })
 	<-s.done
 }
+
+// Close 同 Finish，处理器返回前（defer）调用。
+func (s *aiSSEStream) Close() { s.Finish() }
 
 // beginLocked 回 200 与 SSE 响应头。响应头只在这里（持锁）写，心跳协程与处理器不会同时改它。
 func (s *aiSSEStream) beginLocked() {

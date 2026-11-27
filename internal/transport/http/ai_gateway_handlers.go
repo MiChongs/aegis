@@ -507,6 +507,8 @@ func streamOpenAIChat(c *gin.Context, model string, run aiStreamRunner, errorBod
 			}
 			return nil
 		})
+	// 上游结束了：先停心跳再写收尾帧，免得 [DONE] / message_stop 之后又冒出一行 ping。
+	stream.Finish()
 	if err != nil {
 		status, body := errorBody(err)
 		if stream.failBeforeStart(status, body) {
@@ -918,6 +920,8 @@ func streamAnthropicChat(c *gin.Context, model string, run aiStreamRunner, error
 			}
 			return nil
 		})
+	// 上游结束了：先停心跳再写收尾帧，免得 [DONE] / message_stop 之后又冒出一行 ping。
+	stream.Finish()
 	if err != nil {
 		status, body := errorBody(err)
 		if stream.failBeforeStart(status, body) {
