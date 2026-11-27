@@ -86,6 +86,8 @@ type APIApp struct {
 	RegisterIP *service.RegisterIPService
 	// Leaderboard 积分排行榜：后台循环结算到期的周期榜并发放奖励，退出时必须 Stop
 	Leaderboard *service.LeaderboardService
+	// Coupons 优惠系统的后台循环：过期订单释放券与名额、已付款补结算、过期券标记（docs/coupons.md）
+	Coupons *service.CouponService
 	// Lottery 抽奖：启动时补齐计数（只做一次），后台定时清理过期的风控聚集键
 	Lottery *service.LotteryService
 	// ItemGrant 物品发放：后台循环执行到点的定时规则、接管中断的执行，退出时必须 Stop
@@ -534,6 +536,10 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	promoService := service.NewPromoService(log, pg, inviteService)
 	promoService.SetNotifier(notificationService)
 	promoService.SetEventPublisher(realtimeService)
+	// 优惠系统：券与活动；收到券、返券到账走站内信，券包变化推 coupon.changed（docs/coupons.md）
+	couponService := service.NewCouponService(log, pg)
+	couponService.SetNotifier(notificationService)
+	couponService.SetEventPublisher(realtimeService)
 	// 积分排行榜：实时榜走 Redis 缓存；周期榜到期由 API 进程的后台循环结算、发奖，奖励到账走站内信。
 	leaderboardService := service.NewLeaderboardService(log, pg, sessions)
 	leaderboardService.SetPublicIDs(userService.PublicIDs())
@@ -644,6 +650,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	walletService.SetPaymentService(paymentService)
 	walletService.SetAppService(appService)
 	paymentService.SetWalletService(walletService)
+	paymentService.SetCouponService(couponService)
 	vipService.SetPaymentService(paymentService)
 	sessionMgmtService := service.NewSessionMgmtService(log, pg, sessions, realtimeService)
 	storageResourceService := service.NewStorageResourceService(log, pg)
@@ -871,6 +878,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		PointsStore:      pointsStoreService,
 		Invite:           inviteService,
 		Promo:            promoService,
+		Coupons:          couponService,
 		Leaderboard:      leaderboardService,
 		AccountDeletion:  accountDeletionService,
 		Suspension:       suspensionService,
@@ -982,6 +990,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	storageService.SetCluster(clusterHandle)
 	lotteryService.SetCluster(clusterHandle)
 	notificationService.SetCluster(clusterHandle)
+	couponService.SetCluster(clusterHandle)
 
 	drain := &drainState{}
 	server := &http.Server{
@@ -1028,6 +1037,7 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 		Suspension:         suspensionService,
 		RegisterIP:         registerIPService,
 		Leaderboard:        leaderboardService,
+		Coupons:            couponService,
 		Lottery:            lotteryService,
 		ItemGrant:          itemGrantService,
 		AppFunction:        appFunctionService,
@@ -1099,6 +1109,9 @@ func (a *APIApp) Start(ctx context.Context) error {
 	}
 	if a.Leaderboard != nil {
 		a.Leaderboard.Start(ctx)
+	}
+	if a.Coupons != nil {
+		a.Coupons.Start(ctx)
 	}
 	if a.Lottery != nil {
 		a.Lottery.Start(ctx)

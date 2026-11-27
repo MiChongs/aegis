@@ -32,6 +32,7 @@ func TestLotteryCatalogHasGrantBranch(t *testing.T) {
 		lotterydomain.KindNumberTicket: "lotterydomain.KindNumberTicket",
 		lotterydomain.KindNumberDraw:   "lotterydomain.KindNumberDraw",
 		lotterydomain.KindCosmetic:     "lotterydomain.KindCosmetic",
+		lotterydomain.KindCoupon:       "lotterydomain.KindCoupon",
 	}
 	offered := map[string]bool{}
 	for _, spec := range lotterydomain.Catalog() {

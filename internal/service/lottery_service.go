@@ -482,6 +482,10 @@ func (s *LotteryService) prepare(ctx context.Context, input lotterydomain.Activi
 			if err := checkCosmeticRef(ctx, s.pg, input.AppID, prize.Reward.RefID); err != nil {
 				return input, err
 			}
+		case lotterydomain.KindCoupon:
+			if err := checkCouponRef(ctx, s.pg, input.AppID, prize.Reward.RefID); err != nil {
+				return input, err
+			}
 		case lotterydomain.KindFeature:
 			feature, ok := features[prize.Reward.Tag]
 			if !ok {
@@ -771,7 +775,7 @@ func (s *LotteryService) clientActivity(ctx context.Context, activity lotterydom
 	}
 	for index, prize := range prizes {
 		var refID int64
-		if prize.Kind == lotterydomain.KindCosmetic {
+		if prize.Kind == lotterydomain.KindCosmetic || prize.Kind == lotterydomain.KindCoupon {
 			refID = prize.Reward.RefID
 		}
 		out.Prizes = append(out.Prizes, lotterydomain.ClientPrize{

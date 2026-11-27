@@ -546,6 +546,10 @@ func (s *LeaderboardService) SaveSettings(ctx context.Context, appID int64, enab
 				if err := checkCosmeticRef(ctx, s.pg, appID, reward.RefID); err != nil {
 					return nil, err
 				}
+			case pointstore.RewardCoupon:
+				if err := checkCouponRef(ctx, s.pg, appID, reward.RefID); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}

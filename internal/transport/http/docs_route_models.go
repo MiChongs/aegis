@@ -197,6 +197,20 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/workshop/items/{itemId}/takedown"):                            WorkshopTakedownRequest{},                // AdminTakedownWorkshopItem
 		routeKey("POST", "/api/admin/apps/{appkey}/cosmetics/workshop/parts"):                                              cosmetic.PartInput{},                     // AdminCreateWorkshopPart
 		routeKey("PUT", "/api/admin/apps/{appkey}/cosmetics/workshop/parts/{partId}"):                                      cosmetic.PartInput{},                     // AdminUpdateWorkshopPart
+		routeKey("GET", "/api/admin/apps/{appkey}/coupons/orders"):                                                         CouponOrderQuery{},                       // AdminListCouponOrders
+		routeKey("GET", "/api/admin/apps/{appkey}/coupons/overview"):                                                       CouponOverviewQuery{},                    // AdminCouponOverview
+		routeKey("GET", "/api/admin/apps/{appkey}/coupons/promotions"):                                                     CouponPromotionQuery{},                   // AdminListCouponPromotions
+		routeKey("POST", "/api/admin/apps/{appkey}/coupons/promotions"):                                                    CouponPromotionRequest{},                 // AdminCreateCouponPromotion
+		routeKey("PUT", "/api/admin/apps/{appkey}/coupons/promotions/{promotionId}"):                                       CouponPromotionRequest{},                 // AdminUpdateCouponPromotion
+		routeKey("PUT", "/api/admin/apps/{appkey}/coupons/promotions/{promotionId}/status"):                                CouponStatusRequest{},                    // AdminSetCouponPromotionStatus
+		routeKey("POST", "/api/admin/apps/{appkey}/coupons/quote"):                                                         AdminCouponQuoteRequest{},                // AdminCouponQuote
+		routeKey("GET", "/api/admin/apps/{appkey}/coupons/templates"):                                                      CouponTemplateQuery{},                    // AdminListCouponTemplates
+		routeKey("POST", "/api/admin/apps/{appkey}/coupons/templates"):                                                     CouponTemplateRequest{},                  // AdminCreateCouponTemplate
+		routeKey("PUT", "/api/admin/apps/{appkey}/coupons/templates/{templateId}"):                                         CouponTemplateRequest{},                  // AdminUpdateCouponTemplate
+		routeKey("POST", "/api/admin/apps/{appkey}/coupons/templates/{templateId}/issue"):                                  CouponIssueRequest{},                     // AdminIssueCoupons
+		routeKey("PUT", "/api/admin/apps/{appkey}/coupons/templates/{templateId}/status"):                                  CouponStatusRequest{},                    // AdminSetCouponTemplateStatus
+		routeKey("GET", "/api/admin/apps/{appkey}/coupons/user-coupons"):                                                   CouponUserCouponQuery{},                  // AdminListUserCoupons
+		routeKey("POST", "/api/admin/apps/{appkey}/coupons/user-coupons/{couponId}/revoke"):                                CouponRevokeRequest{},                    // AdminRevokeUserCoupon
 		routeKey("POST", "/api/admin/apps/{appkey}/crash-reports/delete"):                                                  CrashReportIDsRequest{},                  // AdminDeleteCrashReports
 		routeKey("POST", "/api/admin/apps/{appkey}/crash-reports/resolve"):                                                 CrashReportResolveRequest{},              // AdminResolveCrashReports
 		routeKey("PUT", "/api/admin/apps/{appkey}/device-limit/overrides/{userId}"):                                        devicelimit.OverrideInput{},              // AdminSaveDeviceLimitOverride
@@ -733,6 +747,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("POST", "/api/pay/orders/{orderNo}/bill"):                                                                 PaymentBillExportRequest{},               // ExportPaymentBill
 		routeKey("GET", "/api/pay/orders/{orderNo}/receipt"):                                                               PaymentBillExportRequest{},               // DownloadPaymentReceipt
 		routeKey("POST", "/api/pay/orders/{orderNo}/receipt/email"):                                                        PaymentBillExportRequest{},               // EmailPaymentReceipt
+		routeKey("POST", "/api/pay/quote"):                                                                                 PaymentQuoteRequest{},                    // PaymentQuote
 		routeKey("GET", "/api/points/experience-transactions"):                                                             PaginationQuery{},                        // ExperienceTransactions
 		routeKey("GET", "/api/points/integral-transactions"):                                                               PaginationQuery{},                        // IntegralTransactions
 		routeKey("GET", "/api/points/rankings"):                                                                            RankingQuery{},                           // PointsRankings
@@ -821,6 +836,8 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/v1/apps/{appkey}/cosmetics/me"):                                                              CosmeticEquipRequest{},                   // AppEquipCosmetic
 		routeKey("POST", "/api/v1/apps/{appkey}/cosmetics/workshop/items"):                                                 WorkshopItemRequest{},                    // AppCreateWorkshopItem
 		routeKey("PUT", "/api/v1/apps/{appkey}/cosmetics/workshop/items/{itemId}"):                                         WorkshopItemRequest{},                    // AppUpdateWorkshopItem
+		routeKey("GET", "/api/v1/apps/{appkey}/coupons"):                                                                   MyCouponsQuery{},                         // AppMyCoupons
+		routeKey("POST", "/api/v1/apps/{appkey}/coupons/claim"):                                                            CouponClaimRequest{},                     // AppClaimCoupon
 		routeKey("POST", "/api/v1/apps/{appkey}/crash-reports"):                                                            CrashReportRequest{},                     // AppSubmitCrashReport
 		routeKey("POST", "/api/v1/apps/{appkey}/features/time/leases/{leaseNo}/settle"):                                    FeatureTimeSettleRequest{},               // AppSettleFeatureTimeLease
 		routeKey("POST", "/api/v1/apps/{appkey}/features/time/{feature}/leases"):                                           FeatureTimeLeaseRequest{},                // AppLeaseFeatureTime
@@ -872,6 +889,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/v1/apps/{appkey}/pay/methods"):                                                               PaymentMethodsQuery{},                    // UserPaymentMethods
 		routeKey("GET", "/api/v1/apps/{appkey}/pay/orders"):                                                                UserPaymentOrdersQuery{},                 // PaymentOrders
 		routeKey("POST", "/api/v1/apps/{appkey}/pay/orders"):                                                               CreatePaymentOrderRequest{},              // CreatePaymentOrder
+		routeKey("POST", "/api/v1/apps/{appkey}/pay/quote"):                                                                PaymentQuoteRequest{},                    // PaymentQuote
 		routeKey("GET", "/api/v1/apps/{appkey}/points/experience-transactions"):                                            PaginationQuery{},                        // ExperienceTransactions
 		routeKey("GET", "/api/v1/apps/{appkey}/points/integral-transactions"):                                              PaginationQuery{},                        // IntegralTransactions
 		routeKey("POST", "/api/v1/apps/{appkey}/points/store/gift"):                                                        PointsStoreGiftRequest{},                 // AppGiftPointsStoreItem

@@ -31,6 +31,7 @@ var rewardTypes = []string{
 	pointstore.RewardNumberTicket,
 	pointstore.RewardNumberDraw,
 	pointstore.RewardCosmetic,
+	pointstore.RewardCoupon,
 }
 
 // maxBalanceReward 一项奖励能发的余额上限（防手滑）。
@@ -143,6 +144,13 @@ func ValidateRewards(label string, rewards []Reward) error {
 			if reward.Amount < 0 || reward.Amount > pointstore.MaxFeatureDays {
 				return fmt.Errorf("%s里「%s」的天数需要在 0–%d 之间（0 为永久）", label, spec.Label, pointstore.MaxFeatureDays)
 			}
+		case pointstore.ValueCoupon:
+			if reward.RefID <= 0 {
+				return fmt.Errorf("%s里「%s」没有选择具体的券", label, spec.Label)
+			}
+			if reward.Amount < spec.Min || reward.Amount > spec.Max {
+				return fmt.Errorf("%s里「%s」需要在 %d–%d %s之间", label, spec.Label, spec.Min, spec.Max, spec.Unit)
+			}
 		}
 	}
 	return nil
@@ -171,7 +179,7 @@ func NormalizeRewards(rewards []Reward) []Reward {
 			case pointstore.ValueNumberTicket:
 				clean.Amount = reward.Amount
 				clean.RefID = reward.RefID
-			case pointstore.ValueCosmetic:
+			case pointstore.ValueCosmetic, pointstore.ValueCoupon:
 				clean.Amount = reward.Amount
 				clean.RefID = reward.RefID
 			}

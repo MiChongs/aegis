@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"aegis/internal/domain/coupon"
 	"context"
 	"encoding/json"
 	"errors"
@@ -957,6 +958,13 @@ func (r *Repository) grantInviteRewardsTx(ctx context.Context, tx pgx.Tx, grant 
 			if granted.AlreadyPermanent {
 				result.Detail += "（已永久拥有）"
 			}
+
+		case pointstore.RewardCoupon:
+			detail, _, err := grantCouponRewardTx(ctx, tx, appID, userID, reward.RefID, reward.Amount, coupon.SourceInvite, ref)
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = detail
 
 		default:
 			return nil, fmt.Errorf("invite: unsupported reward type %s", reward.Type)

@@ -28,6 +28,8 @@ const (
 	RewardNumberDraw   = "number_draw"
 	// RewardCosmetic 个性装扮（docs/cosmetics.md），与卡密、物品发放同名同形
 	RewardCosmetic = "cosmetic"
+	// RewardCoupon 优惠券（docs/coupons.md）：RefID 券（模板）编号，Amount 张数；与卡密、物品发放同名同形
+	RewardCoupon = "coupon"
 )
 
 // 权益的取值形态：决定 Reward 上的哪个字段承载内容。
@@ -41,7 +43,12 @@ const (
 	ValueNumberTicket = "number_ticket"
 	// ValueCosmetic 个性装扮：Reward.RefID 装扮编号 + Reward.Amount 天数（0 为永久）
 	ValueCosmetic = "cosmetic"
+	// ValueCoupon 优惠券：Reward.RefID 券编号 + Reward.Amount 张数
+	ValueCoupon = "coupon"
 )
+
+// MaxCouponRewardCount 一项优惠券权益最多发几张。
+const MaxCouponRewardCount = 20
 
 // MaxRewardsPerItem 一件商品最多挂几项权益。
 const MaxRewardsPerItem = 6
@@ -160,6 +167,16 @@ var rewardSpecs = []RewardSpec{
 		Repeatable: true,
 	},
 	{
+		Type:       RewardCoupon,
+		Label:      "优惠券",
+		Hint:       "发进用户的券包，按券自己的有效期与规则使用；券发完或已结束时这一项发不出去",
+		Value:      ValueCoupon,
+		Unit:       "张",
+		Min:        1,
+		Max:        MaxCouponRewardCount,
+		Repeatable: true,
+	},
+	{
 		Type:      RewardManual,
 		Label:     "人工发放",
 		Hint:      "兑换后进入待发放，由管理员在兑换记录里标记已发放或取消（取消即退回积分）",
@@ -218,6 +235,7 @@ func ValidateRewards(rewards []Reward) error {
 	seenTypes := make([]string, 0, len(rewards))
 	seenTags := make([]string, 0, len(rewards))
 	seenCosmetics := make([]int64, 0, 2)
+	seenCoupons := make([]int64, 0, 2)
 	for _, reward := range rewards {
 		spec, ok := FindRewardSpec(reward.Type)
 		if !ok {
@@ -280,6 +298,17 @@ func ValidateRewards(rewards []Reward) error {
 			if reward.Amount < 0 || reward.Amount > MaxFeatureDays {
 				return fmt.Errorf("「%s」的天数需要在 0–%d 之间（0 为永久）", spec.Label, MaxFeatureDays)
 			}
+		case ValueCoupon:
+			if reward.RefID <= 0 {
+				return fmt.Errorf("「%s」没有选择具体的券", spec.Label)
+			}
+			if slices.Contains(seenCoupons, reward.RefID) {
+				return fmt.Errorf("同一种券重复配置了两次")
+			}
+			seenCoupons = append(seenCoupons, reward.RefID)
+			if reward.Amount < spec.Min || reward.Amount > spec.Max {
+				return fmt.Errorf("「%s」需要在 %d–%d %s之间", spec.Label, spec.Min, spec.Max, spec.Unit)
+			}
 		case ValueText:
 			text := strings.TrimSpace(reward.Text)
 			if text == "" {
@@ -316,7 +345,7 @@ func NormalizeRewards(rewards []Reward) []Reward {
 			case ValueNumberTicket:
 				clean.Amount = reward.Amount
 				clean.RefID = reward.RefID
-			case ValueCosmetic:
+			case ValueCosmetic, ValueCoupon:
 				clean.Amount = reward.Amount
 				clean.RefID = reward.RefID
 			case ValueText:
@@ -381,6 +410,10 @@ func DescribeReward(reward Reward, plans map[int64]PlanRef, features map[string]
 		out.Days = int(reward.Amount)
 		out.Permanent = reward.Amount == 0
 		out.Detail = spec.Label + " " + termLabel(int(reward.Amount), reward.Amount == 0)
+	case RewardCoupon:
+		// 券名由客户端按 refId 取（或看发放结果）；这里只说张数
+		out.RefID = reward.RefID
+		out.Detail = "优惠券 " + strconv.FormatInt(reward.Amount, 10) + " 张"
 	case RewardManual:
 		out.Detail = reward.Text
 	default:

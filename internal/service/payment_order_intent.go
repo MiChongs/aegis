@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/shopspring/decimal"
+
 	paymentdomain "aegis/internal/domain/payment"
 	apperrors "aegis/pkg/errors"
 )
@@ -156,4 +158,40 @@ func (s *PaymentService) resolveOrderPricing(ctx context.Context, appID int64, m
 		}
 	}
 	return amount, subject, nil
+}
+
+// QuoteIntent 试算用：把请求里的用途写法收成规范的用途、套餐 ID 与档位 ID（与下单同一套归一化）。
+func (s *PaymentService) QuoteIntent(payType string, intent OrderIntent, metadata map[string]any) (OrderIntent, error) {
+	meta, _, err := normalizeOrderIntent(payType, intent, metadata)
+	if err != nil {
+		return OrderIntent{}, err
+	}
+	return OrderIntent{
+		Purpose:   metaString(meta, paymentdomain.MetaKeyPurpose),
+		PlanID:    metaInt64(meta, paymentdomain.MetaKeyVipPlanID),
+		PackageID: metaInt64(meta, paymentdomain.MetaKeyWalletPackageID),
+	}, nil
+}
+
+// ListPrice 一笔订单的原价：会员取套餐价，按档位充值取档位价，否则用请求里的金额（试算用，与下单同一个口径）。
+func (s *PaymentService) ListPrice(ctx context.Context, appID int64, purpose string, planID, packageID int64, amount string) (decimal.Decimal, error) {
+	meta := map[string]any{}
+	if purpose != "" {
+		meta[paymentdomain.MetaKeyPurpose] = purpose
+	}
+	if planID > 0 {
+		meta[paymentdomain.MetaKeyVipPlanID] = planID
+	}
+	if packageID > 0 {
+		meta[paymentdomain.MetaKeyWalletPackageID] = packageID
+	}
+	resolved, _, err := s.resolveOrderPricing(ctx, appID, meta, amount, "-")
+	if err != nil {
+		return decimal.Zero, err
+	}
+	price, err := decimal.NewFromString(strings.TrimSpace(resolved))
+	if err != nil || !price.IsPositive() {
+		return decimal.Zero, apperrors.New(40072, http.StatusBadRequest, "支付金额无效")
+	}
+	return price.Round(2), nil
 }

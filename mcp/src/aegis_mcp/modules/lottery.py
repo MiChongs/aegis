@@ -60,7 +60,7 @@ PRIZES_HELP = (
     "value?（积分当量）, lifetimeReward?（已拥有时改发，积分 / 经验 / 抽奖次数）}。reward.type：none 谢谢参与 / points 积分 / "
     "vip_plan（refId=套餐 ID）/ vip_days（amount=天）/ vip_lifetime / feature（tag=功能，amount=天，0 永久）/ "
     "feature_time（tag=功能，amount=分钟）/ ad_free（amount=天）/ experience / lottery_draws / manual（text=人工发放内容）/ "
-    "number_change 改号卡（amount=张）/ number_ticket 靓号券（amount=张，refId=等级 1 精品 2 稀有 3 传说 4 至尊）/ number_draw 摇号次数（amount=次）。"
+    "number_change 改号卡（amount=张）/ number_ticket 靓号券（amount=张，refId=等级 1 精品 2 稀有 3 传说 4 至尊）/ number_draw 摇号次数（amount=次） / coupon 优惠券（refId=券编号，amount=张，1–20）。"
     "以 lottery_catalog 为准"
 )
 STRATEGY_HELP = (

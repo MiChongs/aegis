@@ -17,6 +17,7 @@ import (
 	"aegis/internal/cluster"
 	"aegis/internal/config"
 	authdomain "aegis/internal/domain/auth"
+	coupondomain "aegis/internal/domain/coupon"
 	paymentdomain "aegis/internal/domain/payment"
 	platformdomain "aegis/internal/domain/platform"
 	plugindomain "aegis/internal/domain/plugin"
@@ -62,6 +63,8 @@ type PaymentService struct {
 	inbox *AdminInboxService
 	// wallets 充值订单的档位与金额校验；nil 时只按 1:1 入账、不做限制（与旧行为一致）
 	wallets *WalletService
+	// coupons 优惠系统：下单时按原价试算活动与券、预占；付款后结算（docs/coupons.md）。nil 时不打折
+	coupons *CouponService
 
 	// 多副本下只该由一个实例跑的后台任务（见 SetCluster）。零值放行，即单实例语义。
 	expiryTask       clusterTask // 过期订单关闭
@@ -104,6 +107,9 @@ func (s *PaymentService) SetEmailService(e *EmailService) { s.email = e }
 
 // SetAppService 注入应用服务，用于读取应用级交易设置。
 func (s *PaymentService) SetAppService(a *AppService) { s.apps = a }
+
+// SetCouponService 接上优惠系统（bootstrap 中调用）。
+func (s *PaymentService) SetCouponService(c *CouponService) { s.coupons = c }
 
 // SetWalletService 注入钱包服务：充值订单下单时按钱包设置与充值档位校验。
 func (s *PaymentService) SetWalletService(w *WalletService) { s.wallets = w }
@@ -460,6 +466,13 @@ type PaymentOrderInput struct {
 	Metadata      map[string]any
 	ClientIP      string
 	Intent        OrderIntent
+	// CouponID 用这张券（用户券编号）；CouponMode 为 auto 时自动用最优的券，none 或空时不用券。
+	// 优惠活动总是自动生效，不需要传。
+	CouponID   int64
+	CouponMode string
+	// ExpectedAmount 客户端试算时看到的应付金额（可选）。与服务端算出来的不一致时拒绝下单（42318），
+	// 免得活动刚结束、券刚被别的订单用掉时，用户付了一笔与页面上不一样的钱。
+	ExpectedAmount string
 }
 
 // CreateOrderFromInput 创建支付订单（见 CreateOrder）。
@@ -512,16 +525,41 @@ func (s *PaymentService) CreateOrderFromInput(ctx context.Context, session *auth
 	if err != nil || !parsedAmount.IsPositive() {
 		return nil, nil, apperrors.New(40072, http.StatusBadRequest, "支付金额无效")
 	}
+	parsedAmount = parsedAmount.Round(2)
 	if strings.TrimSpace(subject) == "" {
 		return nil, nil, apperrors.New(40079, http.StatusBadRequest, "商品名称不能为空")
 	}
+
+	// 优惠：parsedAmount 是原价（套餐价、档位价、积分充值金额都按它校验与履约），
+	// 订单金额是优惠后的应付金额。活动自动生效，券按 CouponID / CouponMode 选
+	payable := parsedAmount
+	var reservation coupondomain.Reservation
+	if s.coupons != nil {
+		quote, res, err := s.coupons.Quote(ctx, QuoteRequest{
+			AppID: session.AppID, UserID: session.UserID, Purpose: metaString(metadata, paymentdomain.MetaKeyPurpose),
+			PlanID:    metaInt64(metadata, paymentdomain.MetaKeyVipPlanID),
+			PackageID: metaInt64(metadata, paymentdomain.MetaKeyWalletPackageID),
+			Amount:    parsedAmount, CouponID: in.CouponID, CouponMode: in.CouponMode,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		payable, reservation = quote.PayableAmount, res
+	}
+	if expected := strings.TrimSpace(in.ExpectedAmount); expected != "" {
+		want, err := decimal.NewFromString(expected)
+		if err != nil || !want.Round(2).Equal(payable) {
+			return nil, nil, apperrors.New(errCodeCouponPriceChanged, http.StatusConflict, "价格有变化，请确认后再付款").
+				WithData(map[string]any{"payableAmount": payable.StringFixed(2)})
+		}
+	}
 	// 网关层统一限额校验：覆盖全部渠道（含余额支付），下单前拦截超限金额
-	if err := enforceAmountLimits(provider, config, parsedAmount); err != nil {
+	if err := enforceAmountLimits(provider, config, payable); err != nil {
 		return nil, nil, err
 	}
 
 	// 风控：落单之前判。拦在这里没有任何订单要清理
-	amountValue, _ := parsedAmount.Float64()
+	amountValue, _ := payable.Float64()
 	if err := s.riskGuard(ctx, securitydomain.RiskEvalRequest{
 		Scene: securitydomain.ScenePayment, AppID: &session.AppID, UserID: &session.UserID, Account: session.Account,
 		IP: clientIP, DeviceID: session.DeviceID, UserAgent: session.UserAgent,
@@ -536,6 +574,7 @@ func (s *PaymentService) CreateOrderFromInput(ctx context.Context, session *auth
 	if err != nil {
 		return nil, nil, err
 	}
+	metadata = ApplyDiscountMetadata(metadata, reservation)
 	// 余额支付约束：余额充值订单不允许用余额支付（自我抵消且会造成累计值虚增）
 	if config.PaymentMethod == paymentdomain.MethodBalance &&
 		metaString(metadata, paymentdomain.MetaKeyPurpose) == paymentdomain.PurposeWalletRecharge {
@@ -545,14 +584,14 @@ func (s *PaymentService) CreateOrderFromInput(ctx context.Context, session *auth
 	orderNo := fmt.Sprintf("P%d%s%s", session.AppID, time.Now().UTC().Format("20060102150405"), randomDigits(6))
 	expireAt := time.Now().Add(30 * time.Minute)
 
-	order, err := s.pg.CreatePaymentOrder(ctx, paymentdomain.OrderMutation{
+	mutation := paymentdomain.OrderMutation{
 		AppID:    session.AppID,
 		UserID:   &session.UserID,
 		ConfigID: config.ID,
 		OrderNo:  orderNo,
 		Subject:  strings.TrimSpace(subject),
 		Body:     strings.TrimSpace(body),
-		Amount:   parsedAmount,
+		Amount:   payable,
 		// 币种在此固化。商户随时可能改渠道的计价货币，配置改了不该让
 		// 已经收过的那笔钱在凭证上变成另一种货币。
 		Currency:      s.resolveConfigCurrency(config.PaymentMethod, config.ConfigData),
@@ -563,7 +602,17 @@ func (s *PaymentService) CreateOrderFromInput(ctx context.Context, session *auth
 		ReturnURL:     pickString(returnURL, ""),
 		Metadata:      metadata,
 		ExpireAt:      &expireAt,
-	})
+	}
+	var order *paymentdomain.Order
+	if reservation.Empty() {
+		order, err = s.pg.CreatePaymentOrder(ctx, mutation)
+	} else {
+		// 券的占用、活动名额与预算的预占与写订单同一个事务：要么一起成，要么订单不存在
+		order, err = s.pg.CreatePaymentOrderWithPromotion(ctx, mutation, reservation)
+		if err != nil && s.coupons != nil {
+			err = s.coupons.translate(err)
+		}
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -578,6 +627,7 @@ func (s *PaymentService) CreateOrderFromInput(ctx context.Context, session *auth
 		// 收到「支付成功 + status: pending」这种自相矛盾的响应，
 		// 顺带把凭证区块算成「账单」而不是「收据」。
 		order = s.reloadOrderAfterPayment(ctx, order)
+		s.settleOrderPromotion(ctx, order)
 		// 余额支付在同一个事务里就完成了扣款与确认，此处即是「首次确认」
 		go s.autoEmailReceipt(session.AppID, order.OrderNo)
 		if s.plugin != nil {
@@ -594,7 +644,7 @@ func (s *PaymentService) CreateOrderFromInput(ctx context.Context, session *auth
 		OrderNo:      orderNo,
 		Subject:      order.Subject,
 		Body:         order.Body,
-		Amount:       parsedAmount,
+		Amount:       order.Amount,
 		ProviderType: providerType,
 		NotifyURL:    s.resolveNotifyURL(provider, config, order.NotifyURL),
 		ReturnURL:    s.resolveReturnURL(config, order.ReturnURL),
@@ -696,6 +746,7 @@ func (s *PaymentService) GetUserOrder(ctx context.Context, session *authdomain.S
 	}
 	// 查单兜底：已支付订单若因回调期故障尚未履约，在用户查单时补偿执行（幂等）
 	if order.Status == "paid" {
+		s.settleOrderPromotion(ctx, order)
 		if err := s.ensureOrderFulfilled(ctx, order); err != nil {
 			s.log.Warn("lazy fulfillment on user query failed",
 				zap.String("orderNo", order.OrderNo), zap.Error(err))
@@ -968,6 +1019,8 @@ func (s *PaymentService) applyVerifiedResult(ctx context.Context, order *payment
 		if err != nil {
 			return nil, err
 		}
+		// 优惠结算（券核销、返券返积分）与履约互不依赖：失败了由优惠系统的后台循环补，不让渠道重推
+		s.settleOrderPromotion(ctx, order)
 		// 履约与「首次确认」解耦：每次已支付回调都尝试履约，
 		// 仓储层条件抢占保证恰好执行一次；若上次履约失败回滚，本次回调即是重试
 		if err := s.ensureOrderFulfilled(ctx, order); err != nil {
@@ -1415,4 +1468,14 @@ func calcPaymentTotalPages(total int64, limit int) int {
 		return 1
 	}
 	return pages
+}
+
+// settleOrderPromotion 已付款订单的优惠结算（幂等；没用优惠的订单是一次空查询）。
+func (s *PaymentService) settleOrderPromotion(ctx context.Context, order *paymentdomain.Order) {
+	if s.coupons == nil || order == nil {
+		return
+	}
+	if _, err := s.coupons.SettleOrder(ctx, order.ID); err != nil {
+		s.log.Warn("settle order promotion failed", zap.String("orderNo", order.OrderNo), zap.Error(err))
+	}
 }

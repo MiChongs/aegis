@@ -152,6 +152,8 @@ func (r *Repository) SettlePaymentRefund(
 	switch settlement.Status {
 	case paymentdomain.RefundSuccess:
 		reversalStatus, reversalMessage = applyFulfillmentReversalTx(ctx, tx, order, reverse, refundAmount, reverseEnabled)
+		// 全额退款：优惠冲正（券按模板设置返还、活动名额退回、返券返积分收回），失败只记说明
+		reversalMessage = joinReversalNote(reversalMessage, reverseOrderPromotionTx(ctx, tx, orderID))
 
 	case paymentdomain.RefundFailed, paymentdomain.RefundClosed:
 		// 释放预占额度：失败的退款不应继续占着订单的可退余额
@@ -407,6 +409,7 @@ func (r *Repository) RefundPaymentOrderToWallet(
 	}
 
 	reversalStatus, reversalMessage := applyFulfillmentReversalTx(ctx, tx, order, reverse, amount, reverseEnabled)
+	reversalMessage = joinReversalNote(reversalMessage, reverseOrderPromotionTx(ctx, tx, order.ID))
 
 	rawResponse, _ := json.Marshal(map[string]any{
 		"channel":             "balance",
@@ -614,4 +617,15 @@ func reverseRechargeBonusTx(ctx context.Context, tx pgx.Tx, order *paymentdomain
 		return paymentdomain.ReversalDone, strings.Join(notes, "；")
 	}
 	return paymentdomain.ReversalDone, ""
+}
+
+// joinReversalNote 把优惠冲正的说明接在履约冲正说明后面。
+func joinReversalNote(message, note string) string {
+	switch {
+	case note == "":
+		return message
+	case message == "":
+		return note
+	}
+	return message + "；" + note
 }

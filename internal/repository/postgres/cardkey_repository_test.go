@@ -40,6 +40,7 @@ func TestRewardCatalogHasGrantBranch(t *testing.T) {
 		cardkeydomain.RewardNumberTicket: "RewardNumberTicket",
 		cardkeydomain.RewardNumberDraw:   "RewardNumberDraw",
 		cardkeydomain.RewardCosmetic:     "RewardCosmetic",
+		cardkeydomain.RewardCoupon:       "RewardCoupon",
 	}
 	for _, spec := range cardkeydomain.RewardCatalog() {
 		name, ok := constNames[spec.Type]

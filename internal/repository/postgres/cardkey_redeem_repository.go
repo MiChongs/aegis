@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"aegis/internal/domain/coupon"
 	"context"
 	"encoding/json"
 	"errors"
@@ -608,6 +609,17 @@ func (r *Repository) grantCardRewardsTx(ctx context.Context, tx pgx.Tx, appID in
 			if granted.AlreadyPermanent {
 				result.Detail += "（已永久拥有）"
 			}
+
+		case cardkeydomain.RewardCoupon:
+			detail, _, err := grantCouponRewardTx(ctx, tx, appID, userID, reward.RefID, reward.Amount, coupon.SourceCardKey, card.Code)
+			var unavailable *CouponUnavailableError
+			if errors.As(err, &unavailable) {
+				return nil, ErrCardKeyRewardMissing
+			}
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = detail
 
 		default:
 			// 目录里有、这里没有 —— 由测试挡在合并之前，运行期走到这里说明测试被绕过了。

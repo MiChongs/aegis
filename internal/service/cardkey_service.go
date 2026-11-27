@@ -384,6 +384,10 @@ func (s *CardKeyService) checkRewardRefs(ctx context.Context, appID int64, rewar
 			if err := checkCosmeticRef(ctx, s.pg, appID, reward.RefID); err != nil {
 				return err
 			}
+		case cardkeydomain.RewardCoupon:
+			if err := checkCouponRef(ctx, s.pg, appID, reward.RefID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

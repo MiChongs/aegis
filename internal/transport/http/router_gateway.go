@@ -326,6 +326,12 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.GET("/pay/orders", h.PaymentOrders)
 		appGatewayAuthed.POST("/pay/orders", h.CreatePaymentOrder)
 		appGatewayAuthed.GET("/pay/orders/:orderNo", h.PaymentOrderDetail)
+		appGatewayAuthed.POST("/pay/quote", h.PaymentQuote)
+		// 优惠系统（docs/coupons.md）：领券中心 / 领取 / 我的券 / 活动与套餐活动价；用券在 /pay/quote 与 /pay/orders
+		appGatewayAuthed.GET("/coupons/center", h.AppCouponCenter)
+		appGatewayAuthed.POST("/coupons/claim", h.AppClaimCoupon)
+		appGatewayAuthed.GET("/coupons", h.AppMyCoupons)
+		appGatewayAuthed.GET("/promotions", h.AppPromotions)
 
 		// AI 中转网关（docs/ai-gateway.md）：总览、可用模型与单价、API 密钥、调用记录、赠送额度流水。
 		// 调用面本身在 /api/ai/v1（OpenAI SDK 直连，不经网关包装）。

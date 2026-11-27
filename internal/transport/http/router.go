@@ -80,6 +80,7 @@ type Handler struct {
 	pointsStore     *service.PointsStoreService
 	invite          *service.InviteService
 	promo           *service.PromoService
+	coupons         *service.CouponService
 	leaderboard     *service.LeaderboardService
 	accountDeletion *service.AccountDeletionService
 	suspension      *service.SuspensionService

@@ -120,7 +120,21 @@ const (
 	MetaKeyWalletPackageTitle  = "walletPackageTitle"
 	MetaKeyWalletBonus         = "walletBonus"
 	MetaKeyWalletBonusIntegral = "walletBonusIntegral"
+	// 优惠快照（docs/coupons.md）：下单时由服务端按试算写入，客户端传入的同名键一律被覆盖或删除
+	MetaKeyOriginalAmount    = "originalAmount"
+	MetaKeyPromotionID       = "promotionId"
+	MetaKeyPromotionName     = "promotionName"
+	MetaKeyPromotionDiscount = "promotionDiscount"
+	MetaKeyCouponID          = "couponId"
+	MetaKeyCouponName        = "couponName"
+	MetaKeyCouponDiscount    = "couponDiscount"
+	MetaKeyRebatePromotionID = "rebatePromotionId"
+	MetaKeyRebateName        = "rebatePromotionName"
 )
+
+// DiscountMetaKeys 优惠快照的全部键（下单时先清掉客户端传来的同名键）。
+var DiscountMetaKeys = []string{MetaKeyOriginalAmount, MetaKeyPromotionID, MetaKeyPromotionName, MetaKeyPromotionDiscount,
+	MetaKeyCouponID, MetaKeyCouponName, MetaKeyCouponDiscount, MetaKeyRebatePromotionID, MetaKeyRebateName}
 
 // FulfillmentInstruction 履约指令：服务层从订单 metadata 快照解析而来，
 // 仓储层据此在单事务中完成「抢占履约权 + 发放」
@@ -643,6 +657,22 @@ type Order struct {
 	Purpose string `json:"purpose,omitempty"`
 	// FulfillmentState 履约状况（FulfillmentState* 之一），由服务层推导
 	FulfillmentState string `json:"fulfillment_state,omitempty"`
+	// Discount 这一单用了的优惠（原价、活动、券），从 metadata 快照推导；没用优惠为 nil
+	Discount *OrderDiscount `json:"discount,omitempty"`
+}
+
+// OrderDiscount 订单上的优惠快照（docs/coupons.md）。Amount 已是优惠后的价格。
+type OrderDiscount struct {
+	OriginalAmount    decimal.Decimal `json:"originalAmount"`
+	PromotionDiscount decimal.Decimal `json:"promotionDiscount"`
+	CouponDiscount    decimal.Decimal `json:"couponDiscount"`
+	TotalDiscount     decimal.Decimal `json:"totalDiscount"`
+	PromotionID       int64           `json:"promotionId,omitempty"`
+	PromotionName     string          `json:"promotionName,omitempty"`
+	CouponID          int64           `json:"couponId,omitempty"`
+	CouponName        string          `json:"couponName,omitempty"`
+	RebatePromotionID int64           `json:"rebatePromotionId,omitempty"`
+	RebateName        string          `json:"rebateName,omitempty"`
 }
 
 // ReviewAmountMismatch 待人工处理的原因：实付少于订单金额，或者不允许改金额的渠道金额对不上。

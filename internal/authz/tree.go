@@ -447,6 +447,15 @@ func permissionTree() []PermissionNode {
 					act("app:promo:review", "审核提交", LegacyAppWrite, routes(rt(mPost, pApp+"/promo/submissions/review"))),
 				)...,
 			),
+			menu("app.coupon", "优惠券与活动", "ticket-percent", ScopeAppOnly,
+				act("app:coupon:issue", "发券与收回", LegacyAppWrite, routes(
+					rt(mPost, pApp+"/coupons/templates/:templateId/issue"), rt(mPost, pApp+"/coupons/user-coupons/:couponId/revoke"),
+				), danger()),
+				act("app:coupon:delete", "删除", LegacyAppWrite, routes(under(mDelete, pApp+"/coupons"))),
+				// 试算是 POST（请求体里带假设的订单），只算不写，归在查看里
+				act("app:coupon:read", "查看", LegacyAppRead, routes(under(mRead, pApp+"/coupons"), rt(mPost, pApp+"/coupons/quote"))),
+				act("app:coupon:write", "编辑", LegacyAppWrite, routes(under(mWrite, pApp+"/coupons"))),
+			),
 			menu("app.leaderboard", "排行榜", "trophy", ScopeAppOnly,
 				appStd("app:leaderboard", "/leaderboard", true,
 					act("app:leaderboard:settle", "结算", LegacyAppWrite, routes(

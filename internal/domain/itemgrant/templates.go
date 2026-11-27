@@ -168,6 +168,17 @@ func CheckRefs(graph Graph, refs Refs) []Issue {
 				if _, ok := refs.Features[item.Tag]; !ok {
 					issues = append(issues, Issue{Level: IssueWarning, NodeID: nodeID, Message: "功能 " + item.Tag + " 不在功能目录里，时长照发但客户端可能用不上"})
 				}
+			case ItemCoupon:
+				if refs.Coupons == nil {
+					break
+				}
+				ref, ok := refs.Coupons[item.RefID]
+				switch {
+				case !ok:
+					issues = append(issues, Issue{Level: IssueError, NodeID: nodeID, Message: fmt.Sprintf("优惠券 #%d 不存在", item.RefID)})
+				case !ref.Live:
+					issues = append(issues, Issue{Level: IssueError, NodeID: nodeID, Message: "优惠券「" + ref.Name + "」不在发放中，发不出去"})
+				}
 			case ItemCosmetic:
 				cosmetic, ok := refs.Cosmetics[item.RefID]
 				switch {

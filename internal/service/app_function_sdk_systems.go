@@ -567,6 +567,10 @@ func checkGrantRef(item itemgrant.Item, refs itemgrant.Refs) error {
 		if _, ok := refs.Cosmetics[item.RefID]; !ok {
 			return fmt.Errorf("装扮 %d 不存在", item.RefID)
 		}
+	case itemgrant.ItemCoupon:
+		if ref, ok := refs.Coupons[item.RefID]; !ok || !ref.Live {
+			return fmt.Errorf("优惠券 %d 不存在或不在发放中", item.RefID)
+		}
 	}
 	return nil
 }

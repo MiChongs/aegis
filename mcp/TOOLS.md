@@ -2,7 +2,7 @@
 
 > 由 `scripts/gen_tools_doc.py` 生成，勿手改。
 
-共 596 个工具。类别：读 = 只读；写 = 可逆或增量的写；危险 = 不可逆或影响面大的写（客户端会要求确认）。
+共 615 个工具。类别：读 = 只读；写 = 可逆或增量的写；危险 = 不可逆或影响面大的写（客户端会要求确认）。
 
 ## admins（20）
 
@@ -186,6 +186,32 @@
 | `cosmetics_unequip` | 写 | 摘下用户某个槽位上的装扮（持有记录不变，用户可以重新佩戴）。 |
 | `cosmetics_update_item` | 写 | 修改装扮的基本信息（没传的字段保持原值；槽位不能改）。已持有的人不受影响，获取方式变化即时生效。 |
 | `cosmetics_user` | 读 | 一个用户的装扮：持有记录、佩戴行（各自是否生效与原因）、此刻身上的装扮、判定事实（会员、档位、等级、功能）。 |
+
+## coupons（19）
+
+优惠券与优惠活动：目录、概览、券（模板）的增改与上下线、发券与收回、用户券、活动（限时折扣 / 满减 / 支付返券返积分）、订单优惠记录与试算。
+
+| 工具 | 类别 | 说明 |
+|---|---|---|
+| `coupons_catalog` | 读 | 优惠目录：券的优惠方式、适用范围、活动类型与折扣方式、人群、色调、状态与上限。建券、建活动前先看它。 |
+| `coupons_create_promotion` | 写 | 新建一期活动（草稿，coupons_set_promotion_status 上线后对下单生效）。活动的完整配置（camelCase）：name、description、tag 角标（空则按规则生成）、theme、priority（同等优惠时高者优先）、kind 与 rule：discount 限时折扣 rule={discountMode: percent（rate 付款比例、maxDiscount）/ amount_off（amount）/ fixed_price（amount，只能用于指定会员套餐）}；threshold 满减 rule={tiers:[{minAmount, off}]}（1–5 档，门槛越高减得越多）；rebate 支付返券返积分 rule={minAmount, rebateCoupons:[{templateId, count}], rebateIntegral}（不改价格）。scopes（vip_purchase / integral_purchase / goods；rebate 另可 wallet_recharge）、planIds、packageIds（充值档位，rebate 用）、audience、stackWithCoupon 能否与券同享、startsAt / endsAt、perUserLimit 每人参与几次、totalLimit 总次数、budget 优惠总额上限（0 不限）。 |
+| `coupons_create_template` | 写 | 新建一种券（草稿，coupons_set_template_status 上线后才能领、能发）。券的完整配置（camelCase，与控制台表单同形）：name 名称、description、theme（red/orange/gold/green/blue/purple）、kind（amount_off 立减：amount 元；percent_off 折扣：rate 付款比例 1–99，85 即 8.5 折，maxDiscount 封顶，0 不封顶）、minAmount 使用门槛（0 无门槛）、scopes 适用订单（vip_purchase 买会员 / integral_purchase 积分充值 / goods 普通商品；余额充值不能用券）、planIds 只限这些会员套餐（空为全部）、stackWithPromotion 能否与活动同享、validityMode（fixed：validFrom 可空 + validUntil；relative：领取后 validDelayDays 天生效、再过 validDays 天失效）、totalQuantity 发放总量（0 不限）、perUserLimit 领券中心每人限领（0 不限）、claimable 出现在领券中心、claimStartsAt / claimEndsAt、audience {kind: all/new_user/first_order/non_vip/vip, newUserDays}、refundReturn 全额退款后返还。已发过券的模板不能再改方式、面额、门槛、范围、叠加与有效期（42322）。 |
+| `coupons_delete_promotion` | 危险 | 删除一期活动：只能删没有任何订单参与过的（否则 42324，请改为结束）。执行前向用户确认。 |
+| `coupons_delete_template` | 危险 | 删除一种券：只能删一张都没发过的（否则 42324，请改为结束）。执行前向用户确认。 |
+| `coupons_issue` | 写 | 给一批用户发券（暂停中的券也能发；每人一个事务，结果逐人列出）。会占用库存，执行前向用户复述人数与张数。 |
+| `coupons_orders` | 读 | 订单优惠记录（新的在前）：原价、活动优惠、券优惠、应付、用的活动与券、返券状态与说明、订单状态。 |
+| `coupons_overview` | 读 | 优惠概览：券与活动数、发出 / 已用 / 可用 / 过期张数、用了优惠的订单数与实付、券与活动各优惠了多少、返出的券与积分、逐日趋势、券与活动排行、发券来源。 |
+| `coupons_promotion` | 读 | 一期活动的完整配置与统计。 |
+| `coupons_promotions` | 读 | 活动列表：规则、范围、时段、人群、参与次数与累计优惠。 |
+| `coupons_quote` | 读 | 替一个用户试算一笔订单（只算不写）：命中的活动、他每张券能不能用与原因、最后要付多少、返券预告。排查「为什么没打折」时用它。 |
+| `coupons_revoke` | 危险 | 收回一张券：只能收回还没用、也没被待支付订单占用的。执行前向用户确认。 |
+| `coupons_set_promotion_status` | 写 | 上线、暂停或结束一期活动（结束是终态）。上线即对所有之后的下单生效，执行前向用户复述。 |
+| `coupons_set_template_status` | 写 | 上线（active）、暂停（paused：不能再领、再发，已发的照常能用）或结束（ended：终态，不能再上线）一种券。 |
+| `coupons_template` | 读 | 一种券的完整配置与统计。 |
+| `coupons_templates` | 读 | 券列表（进行中在前）：方式、面额、门槛、范围、有效期、库存与已发 / 已用张数、累计优惠金额。 |
+| `coupons_update_promotion` | 写 | 修改一期活动：只传要改的字段，工具先读当前配置、合并后整份保存。改规则只影响之后的订单。 |
+| `coupons_update_template` | 写 | 修改一种券：只传要改的字段，工具先读当前配置、合并后整份保存。 |
+| `coupons_user_coupons` | 读 | 用户手里的券（新的在前）：券号、状态、来源、有效期、占用 / 使用的订单与抵扣金额、用户。 |
 
 ## egress（46）
 

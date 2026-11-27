@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"aegis/internal/domain/coupon"
 	"context"
 	"encoding/json"
 	"errors"
@@ -831,6 +832,18 @@ func (r *Repository) grantPointsStoreRewardsTx(ctx context.Context, tx pgx.Tx, r
 				// 持有记录编号：撤销赠送时按它收回这一段
 				result.TransactionNo = strconv.FormatInt(granted.Ownership.ID, 10)
 			}
+
+		case pointstore.RewardCoupon:
+			detail, _, err := grantCouponRewardTx(ctx, tx, appID, userID, reward.RefID, reward.Amount, coupon.SourcePointsStore, redemption.RedemptionNo)
+			var unavailable *CouponUnavailableError
+			if errors.As(err, &unavailable) {
+				// 券发完、已结束：整笔回滚、积分不扣
+				return nil, pointsStoreUnavailable(pointstore.ReasonRewardUnavailable)
+			}
+			if err != nil {
+				return nil, err
+			}
+			result.Detail = detail
 
 		default:
 			// 目录里有、这里没有 —— 由测试挡在合并之前

@@ -35,10 +35,10 @@ class Reward(BaseModel):
     """一项邀请 / 排行榜奖励（与积分商城同一套账本）。取值字段由类型决定（见 invite_catalog 的 rewards）。"""
 
     type: Literal["points", "vip_plan", "vip_days", "feature", "experience", "balance", "lottery_draws",
-                  "number_change", "number_ticket", "number_draw"] = Field(
+                  "number_change", "number_ticket", "number_draw", "coupon"] = Field(
         description="points 积分（amount）/ vip_plan 会员套餐（ref_id）/ vip_days 会员天数（amount）/ feature 功能解锁（tag + amount 天，0 为永久）/ "
                     "experience 经验（amount）/ balance 余额（money，单项不超过 100000）/ lottery_draws 抽奖次数（amount）/ "
-                    "number_change 改号卡（amount 张）/ number_ticket 靓号券（amount 张 + ref_id 等级 1 精品 2 稀有 3 传说 4 至尊）/ number_draw 摇号次数（amount 次）")
+                    "number_change 改号卡（amount 张）/ number_ticket 靓号券（amount 张 + ref_id 等级 1 精品 2 稀有 3 传说 4 至尊）/ number_draw 摇号次数（amount 次）/ coupon 优惠券（ref_id 券编号 + amount 张，1–20）")
     amount: int | None = Field(default=None, ge=0, description="数量：积分 / 天数 / 经验 / 次数")
     money: str | None = Field(default=None, description="余额金额（十进制字符串，如 \"2.00\"）")
     ref_id: int | None = Field(default=None, gt=0, description="会员套餐 ID（vip_plan 用，不能选试用套餐）；number_ticket 时为靓号券等级 1–4")

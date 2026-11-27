@@ -342,7 +342,8 @@ func (h *Handler) CreatePaymentOrder(c *gin.Context) {
 		Subject: req.Subject, Body: req.Body, Amount: req.Amount, Type: req.Type,
 		PaymentMethod: req.PaymentMethod, ConfigName: req.ConfigName,
 		NotifyURL: req.NotifyURL, ReturnURL: req.ReturnURL, Metadata: req.Metadata, ClientIP: c.ClientIP(),
-		Intent: service.OrderIntent{Purpose: req.Purpose, PlanID: req.PlanID, PackageID: req.PackageID},
+		Intent:   service.OrderIntent{Purpose: req.Purpose, PlanID: req.PlanID, PackageID: req.PackageID},
+		CouponID: req.CouponID, CouponMode: req.CouponMode, ExpectedAmount: req.ExpectedAmount,
 	})
 	if err != nil {
 		h.writeError(c, err)

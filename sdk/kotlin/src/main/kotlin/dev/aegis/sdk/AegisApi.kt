@@ -1948,6 +1948,9 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
         returnUrl: String? = null,
         metadata: Map<String, Any?>? = null,
         paymentMethod: String? = null,
+        couponId: Long? = null,
+        couponMode: String? = null,
+        expectedAmount: String? = null,
     ): JsonElement = client.call(
         "POST", "/pay/orders",
         buildBody(
@@ -1960,6 +1963,9 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
             "notify_url" to notifyUrl,
             "return_url" to returnUrl,
             "metadata" to metadata,
+            "coupon_id" to couponId,
+            "coupon_mode" to couponMode,
+            "expected_amount" to expectedAmount,
         ),
         requireAuth = true,
     )
@@ -1974,6 +1980,9 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
      *
      * 用 [createOrder] 自己拼时必须带 `metadata = {"purpose": "vip_purchase", "vipPlanId": …}`，
      * 否则那是一笔普通商品单：钱收了，什么都不会发。
+     *
+     * 优惠（docs/coupons.md）：活动自动生效；[couponId] 用指定的券，或 [couponMode] 传 `auto` 自动用最优的券。
+     * [expectedAmount] 传 [quote] 里看到的 `payableAmount`，价格变了时服务端回 42318 而不是让用户付一笔不一样的钱。
      */
     @JvmOverloads
     fun createVipOrder(
@@ -1983,6 +1992,9 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
         type: String? = null,
         returnUrl: String? = null,
         metadata: Map<String, Any?>? = null,
+        couponId: Long? = null,
+        couponMode: String? = null,
+        expectedAmount: String? = null,
     ): JsonElement = client.call(
         "POST", "/pay/orders",
         buildBody(
@@ -1993,6 +2005,9 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
             "config_name" to configName,
             "return_url" to returnUrl,
             "metadata" to metadata,
+            "coupon_id" to couponId,
+            "coupon_mode" to couponMode,
+            "expected_amount" to expectedAmount,
         ),
         requireAuth = true,
     )
@@ -2028,6 +2043,70 @@ class AegisCommerceApi internal constructor(private val client: AegisClient) {
 
     @Throws(IOException::class)
     fun order(orderNo: String): JsonElement = client.call("GET", "/pay/orders/$orderNo", requireAuth = true)
+
+    // ── 优惠券与优惠活动（docs/coupons.md）──
+
+    @Throws(IOException::class)
+    /**
+     * 下单前试算：命中的活动、手里每张券能不能用（`coupons[].usable` / `reason`）、各能省多少、返券预告与最后要付多少。
+     *
+     * 参数与下单同名同义：买会员传 [purpose] = `vip_purchase` 与 [planId]（金额可不传）；充值传 `wallet_recharge` 与
+     * [packageId] 或 [amount]（充值不打折，只会有返券预告）；普通商品不传用途、传 [amount]。
+     * [couponId] 指定一张券；[couponMode] 传 `auto` 时按最优的券算、`none` 或不传时不用券。指定的券用不了时 42317。
+     * 下单时把同样的参数与 `payableAmount`（作 `expectedAmount`）带上，得到的就是这里的价格。
+     */
+    @JvmOverloads
+    fun quote(
+        purpose: String? = null,
+        planId: Long? = null,
+        packageId: Long? = null,
+        amount: String? = null,
+        couponId: Long? = null,
+        couponMode: String? = null,
+        metadata: Map<String, Any?>? = null,
+    ): JsonElement = client.call(
+        "POST", "/pay/quote",
+        buildBody(
+            "purpose" to purpose,
+            "plan_id" to planId,
+            "package_id" to packageId,
+            "amount" to amount,
+            "coupon_id" to couponId,
+            "coupon_mode" to couponMode,
+            "metadata" to metadata,
+        ),
+        requireAuth = true,
+    )
+
+    @Throws(IOException::class)
+    /** 领券中心：开放领取的券（`items[]`：券面、剩余数量、我已领几张、`canClaim` 与不能领的原因）。 */
+    fun couponCenter(): JsonElement = client.call("GET", "/coupons/center", requireAuth = true)
+
+    @Throws(IOException::class)
+    /**
+     * 领一张券。已抢光 42314、已领够 42315、不满足人群条件 42316，其余不能领 42313（`data.reasonCode`）。
+     */
+    fun claimCoupon(templateId: Long): JsonElement =
+        client.call("POST", "/coupons/claim", buildBody("templateId" to templateId), requireAuth = true)
+
+    @Throws(IOException::class)
+    /**
+     * 我的券。[status]：`usable`（可用与未生效，默认）/ `available` / `not_started` / `locked`（用于待支付订单）/
+     * `used` / `expired` / `revoked`；传空串为全部。带 `summary`（各状态张数）。
+     */
+    @JvmOverloads
+    fun myCoupons(status: String? = "usable", page: Int = 1, limit: Int = 20): JsonElement = client.call(
+        "GET", "/coupons",
+        query = pageQuery(page, limit) + (status?.let { mapOf("status" to it) } ?: emptyMap()),
+        requireAuth = true,
+    )
+
+    @Throws(IOException::class)
+    /**
+     * 优惠活动：进行中与即将开始的活动（我能不能参加）、每个在售会员套餐不用券时的活动价（`planPrices`）、
+     * 手里可用的券张数（`usableCoupons`，入口角标用）。
+     */
+    fun promotions(): JsonElement = client.call("GET", "/promotions", requireAuth = true)
 
     /** 上传文件到平台存储。 */
     @Throws(IOException::class)

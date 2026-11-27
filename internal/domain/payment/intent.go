@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+
+	"github.com/shopspring/decimal"
 )
 
 // ── 订单用途（purpose）的写法与推断 ──
@@ -123,6 +125,7 @@ func (o *Order) DeriveFulfillment() {
 		purpose, _, _ = InferIntent(o.ProviderType, o.Metadata)
 	}
 	o.Purpose = purpose
+	o.Discount = deriveDiscount(o.Metadata)
 	switch {
 	case o.FulfillmentStatus == FulfillmentDone:
 		o.FulfillmentState = FulfillmentStateDone
@@ -135,4 +138,34 @@ func (o *Order) DeriveFulfillment() {
 	default:
 		o.FulfillmentState = FulfillmentStateUnrecognized
 	}
+}
+
+// deriveDiscount 从 metadata 的优惠快照还原订单优惠；没有原价快照即没用优惠。
+func deriveDiscount(meta map[string]any) *OrderDiscount {
+	original, ok := metaDecimal(meta, MetaKeyOriginalAmount)
+	if !ok {
+		return nil
+	}
+	promo, _ := metaDecimal(meta, MetaKeyPromotionDiscount)
+	couponD, _ := metaDecimal(meta, MetaKeyCouponDiscount)
+	return &OrderDiscount{
+		OriginalAmount: original, PromotionDiscount: promo, CouponDiscount: couponD, TotalDiscount: promo.Add(couponD),
+		PromotionID: IntentInt64(meta, MetaKeyPromotionID), PromotionName: intentString(meta, MetaKeyPromotionName),
+		CouponID: IntentInt64(meta, MetaKeyCouponID), CouponName: intentString(meta, MetaKeyCouponName),
+		RebatePromotionID: IntentInt64(meta, MetaKeyRebatePromotionID), RebateName: intentString(meta, MetaKeyRebateName),
+	}
+}
+
+func metaDecimal(meta map[string]any, key string) (decimal.Decimal, bool) {
+	if meta == nil {
+		return decimal.Zero, false
+	}
+	switch v := meta[key].(type) {
+	case string:
+		d, err := decimal.NewFromString(v)
+		return d, err == nil
+	case float64:
+		return decimal.NewFromFloat(v).Round(2), true
+	}
+	return decimal.Zero, false
 }

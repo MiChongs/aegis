@@ -205,6 +205,27 @@ func init() {
 		View("GET /api/admin/apps/:appkey/promo/submissions", "查看推广文章提交", ""),
 		Write("POST /api/admin/apps/:appkey/promo/submissions/review", "审核推广文章", "推广文章", SeverityHigh),
 
+		// 优惠券与活动（docs/coupons.md）
+		View("GET /api/admin/apps/:appkey/coupons/catalog", "查看优惠配置目录", ""),
+		View("GET /api/admin/apps/:appkey/coupons/overview", "查看优惠概览", ""),
+		View("GET /api/admin/apps/:appkey/coupons/templates", "查看优惠券", ""),
+		Write("POST /api/admin/apps/:appkey/coupons/templates", "创建优惠券", "优惠券", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/coupons/templates/:templateId", "查看优惠券详情", ""),
+		Write("PUT /api/admin/apps/:appkey/coupons/templates/:templateId", "修改优惠券", "优惠券", SeverityHigh),
+		Write("PUT /api/admin/apps/:appkey/coupons/templates/:templateId/status", "上线、暂停或结束优惠券", "优惠券", SeverityHigh),
+		Write("DELETE /api/admin/apps/:appkey/coupons/templates/:templateId", "删除优惠券", "优惠券", SeverityHigh),
+		Write("POST /api/admin/apps/:appkey/coupons/templates/:templateId/issue", "给用户发优惠券", "优惠券", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/coupons/user-coupons", "查看用户的优惠券", ""),
+		Write("POST /api/admin/apps/:appkey/coupons/user-coupons/:couponId/revoke", "收回用户的优惠券", "用户优惠券", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/coupons/promotions", "查看优惠活动", ""),
+		Write("POST /api/admin/apps/:appkey/coupons/promotions", "创建优惠活动", "优惠活动", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/coupons/promotions/:promotionId", "查看优惠活动详情", ""),
+		Write("PUT /api/admin/apps/:appkey/coupons/promotions/:promotionId", "修改优惠活动", "优惠活动", SeverityHigh),
+		Write("PUT /api/admin/apps/:appkey/coupons/promotions/:promotionId/status", "上线、暂停或结束优惠活动", "优惠活动", SeverityHigh),
+		Write("DELETE /api/admin/apps/:appkey/coupons/promotions/:promotionId", "删除优惠活动", "优惠活动", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/coupons/orders", "查看订单优惠记录", ""),
+		View("POST /api/admin/apps/:appkey/coupons/quote", "优惠试算", ""),
+
 		// 积分排行榜
 		View("GET /api/admin/apps/:appkey/leaderboard/settings", "查看排行榜设置", ""),
 		Write("PUT /api/admin/apps/:appkey/leaderboard/settings", "修改排行榜设置", "", SeverityHigh),

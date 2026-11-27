@@ -105,6 +105,9 @@ var integralCategories = []CategoryRule{
 	{Category: "wallet_recharge_bonus", Label: "充值赠送积分", Rule: CategoryCounted},
 	// 抽奖：抽中的积分计入；积分抽奖的消耗是扣减，天然不进周期榜
 	{Category: "lottery", Label: "抽奖", Rule: CategoryCounted},
+	// 优惠活动：付款满额返的积分与充值赠送同性质；退款时的收回是扣减（docs/coupons.md）
+	{Category: "coupon_rebate", Label: "下单返积分", Rule: CategoryCounted},
+	{Category: "coupon_rebate_refund", Label: "退款收回返积分（扣减）", Rule: CategoryExcluded},
 	{Category: CategoryAdminAdjust, Label: "管理员调整", Rule: CategoryAdmin},
 	{Category: "points_store", Label: "积分兑换（扣减）", Rule: CategoryExcluded},
 	{Category: "points_store_refund", Label: "积分兑换取消退回", Rule: CategoryExcluded},

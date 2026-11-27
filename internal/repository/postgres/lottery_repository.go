@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"aegis/internal/domain/coupon"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -880,6 +881,13 @@ func (r *Repository) grantLotteryPrizeTx(ctx context.Context, tx pgx.Tx, grant l
 		if granted.AlreadyPermanent {
 			result.Detail += "（已永久拥有）"
 		}
+
+	case lotterydomain.KindCoupon:
+		detail, _, err := grantCouponRewardTx(ctx, tx, appID, userID, reward.RefID, reward.Amount, coupon.SourceLottery, grant.DrawNo)
+		if err != nil {
+			return nil, err
+		}
+		result.Detail = detail
 
 	case lotterydomain.KindManual:
 		result.Pending = true

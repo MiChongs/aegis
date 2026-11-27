@@ -28,6 +28,8 @@ const (
 	KindNumberDraw   = pointstore.RewardNumberDraw
 	// KindCosmetic 个性装扮（docs/cosmetics.md）：refId 装扮编号，amount 天数（0 为永久）
 	KindCosmetic = pointstore.RewardCosmetic
+	// KindCoupon 优惠券（docs/coupons.md）：refId 券编号，amount 张数
+	KindCoupon = pointstore.RewardCoupon
 	// 抽奖独有的三档（积分商城、卡密里没有）
 	KindVipLifetime = "vip_lifetime"
 	KindFeatureTime = "feature_time"
@@ -70,6 +72,7 @@ var kinds = []string{
 	KindNumberTicket,
 	KindNumberDraw,
 	KindCosmetic,
+	KindCoupon,
 	KindManual,
 }
 
@@ -172,6 +175,8 @@ func FindSpec(kind string) (RewardSpec, bool) {
 		spec.Hint = "抽中后进入待发放，由管理员在抽奖记录里标记已发放"
 	case KindCosmetic:
 		spec.Hint = "头像框、资料卡背景、昵称样式或勋章；天数为 0 即永久，同一件多次抽中时顺延，已永久持有时不重复记"
+	case KindCoupon:
+		spec.Hint = "抽中后发进券包；券发完或已结束时这一抽失败、不扣次数"
 	}
 	return spec, true
 }

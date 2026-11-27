@@ -25,6 +25,7 @@
 | `platform` | 平台治理：`Governance`/`Restrictions`/`ActionRecord`/`Appeal` + 六档状态与七项能力常量。状态与限制项的**预设**（`PresetRestrictions`）也在这里，后端判定与控制台展示读同一份 |
 | `payment` | 支付订单、支付方式 |
 | `points` | 积分交易、积分账户 |
+| `coupon` | 优惠系统：`Template` / `UserCoupon` / `Promotion` / `OrderPromotion`、清洗校验（rules.go）与定价引擎 `PriceQuote`（pricing.go，纯函数；docs/coupons.md） |
 | `realtime` | WebSocket 实时消息结构 |
 | `storage` | 存储桶、文件元数据 |
 | `system` | `settings.go` — 平台设置（防火墙规则、CORS、全局配置） |

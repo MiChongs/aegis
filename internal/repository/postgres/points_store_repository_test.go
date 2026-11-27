@@ -30,6 +30,7 @@ func TestPointsStoreCatalogHasGrantBranch(t *testing.T) {
 		pointstore.RewardNumberTicket: "RewardNumberTicket",
 		pointstore.RewardNumberDraw:   "RewardNumberDraw",
 		pointstore.RewardCosmetic:     "RewardCosmetic",
+		pointstore.RewardCoupon:       "RewardCoupon",
 	}
 	offered := map[string]bool{}
 	for _, spec := range pointstore.RewardCatalog() {

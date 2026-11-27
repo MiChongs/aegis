@@ -262,6 +262,7 @@ func registerCommerceRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		pay.GET("/methods", h.UserPaymentMethods)
 		pay.GET("/orders", h.PaymentOrders)
 		pay.POST("/orders/create", h.CreatePaymentOrder)
+		pay.POST("/quote", h.PaymentQuote)
 		pay.GET("/orders/:orderNo", h.PaymentOrderDetail)
 		pay.GET("/orders/:orderNo/bill", h.ExportPaymentBill)
 		pay.POST("/orders/:orderNo/bill", h.ExportPaymentBill)

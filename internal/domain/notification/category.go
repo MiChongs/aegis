@@ -61,6 +61,8 @@ const (
 	TypeCosmetic = "cosmetic"
 	// TypeFeedbackReward 反馈被采纳获得积分 / 奖励被撤回（docs/feedback-rewards.md）
 	TypeFeedbackReward = "feedback_reward"
+	// TypeCoupon 收到优惠券（管理员发放、下单返券）/ 券被收回（docs/coupons.md）
+	TypeCoupon = "coupon"
 )
 
 // typeCategories 旧 type → 分类。没登记的 type 一律落 system。
@@ -98,6 +100,7 @@ var typeCategories = map[string]string{
 	"level":           CategoryReward,
 	"cosmetic":        CategoryReward,
 	"feedback_reward": CategoryReward,
+	"coupon":          CategoryReward,
 
 	"ticket":   CategoryTicket,
 	"feedback": CategoryTicket,
@@ -253,6 +256,8 @@ const (
 	RouteSuspension = "account/suspension"
 	// RouteCosmetics 个性装扮中心
 	RouteCosmetics = "cosmetics"
+	// RouteCoupons 我的优惠券
+	RouteCoupons = "coupons"
 )
 
 var routes = []RouteSpec{
@@ -272,6 +277,7 @@ var routes = []RouteSpec{
 	{Key: RoutePromo, Label: "推广活动"},
 	{Key: RouteSuspension, Label: "封禁与申诉"},
 	{Key: RouteCosmetics, Label: "个性装扮"},
+	{Key: RouteCoupons, Label: "我的优惠券"},
 }
 
 // Routes 全部路由键（副本）。

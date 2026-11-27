@@ -154,6 +154,10 @@ func (s *InviteService) checkRewardRefs(ctx context.Context, appID int64, reward
 			if err := checkCosmeticRef(ctx, s.pg, appID, reward.RefID); err != nil {
 				return err
 			}
+		case pointstore.RewardCoupon:
+			if err := checkCouponRef(ctx, s.pg, appID, reward.RefID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

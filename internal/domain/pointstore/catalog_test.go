@@ -36,6 +36,10 @@ func TestRewardCatalogIsSelfConsistent(t *testing.T) {
 			if spec.Min <= 0 || spec.Max <= spec.Min || spec.Unit == "" {
 				t.Errorf("%s：靓号券档位必须有合理的 Min/Max 与单位", spec.Type)
 			}
+		case ValueCoupon:
+			if spec.Min != 1 || spec.Max <= spec.Min || spec.Unit == "" {
+				t.Errorf("%s：优惠券档位需要从 1 张起的张数范围与单位", spec.Type)
+			}
 		default:
 			t.Errorf("%s：未知的取值形态 %q", spec.Type, spec.Value)
 		}

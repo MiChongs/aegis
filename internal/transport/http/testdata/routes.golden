@@ -19,6 +19,8 @@ DELETE	/api/admin/apps/:appkey/client-control/rules/:ruleId	AdminDeleteClientCon
 DELETE	/api/admin/apps/:appkey/cosmetics/assets/:assetId	AdminDeleteCosmeticAsset
 DELETE	/api/admin/apps/:appkey/cosmetics/items/:itemId	AdminDeleteCosmeticItem
 DELETE	/api/admin/apps/:appkey/cosmetics/workshop/parts/:partId	AdminDeleteWorkshopPart
+DELETE	/api/admin/apps/:appkey/coupons/promotions/:promotionId	AdminDeleteCouponPromotion
+DELETE	/api/admin/apps/:appkey/coupons/templates/:templateId	AdminDeleteCouponTemplate
 DELETE	/api/admin/apps/:appkey/crash-reports/:crashId	AdminDeleteCrashReport
 DELETE	/api/admin/apps/:appkey/device-limit/overrides/:userId	AdminDeleteDeviceLimitOverride
 DELETE	/api/admin/apps/:appkey/device-limit/users/:userId/ledger	AdminResetDeviceLimitLedger
@@ -230,6 +232,14 @@ GET	/api/admin/apps/:appkey/cosmetics/stats	AdminCosmeticStats
 GET	/api/admin/apps/:appkey/cosmetics/users/:userId	AdminUserCosmetics
 GET	/api/admin/apps/:appkey/cosmetics/workshop/items	AdminWorkshopItems
 GET	/api/admin/apps/:appkey/cosmetics/workshop/parts	AdminWorkshopParts
+GET	/api/admin/apps/:appkey/coupons/catalog	AdminCouponCatalog
+GET	/api/admin/apps/:appkey/coupons/orders	AdminListCouponOrders
+GET	/api/admin/apps/:appkey/coupons/overview	AdminCouponOverview
+GET	/api/admin/apps/:appkey/coupons/promotions	AdminListCouponPromotions
+GET	/api/admin/apps/:appkey/coupons/promotions/:promotionId	AdminGetCouponPromotion
+GET	/api/admin/apps/:appkey/coupons/templates	AdminListCouponTemplates
+GET	/api/admin/apps/:appkey/coupons/templates/:templateId	AdminGetCouponTemplate
+GET	/api/admin/apps/:appkey/coupons/user-coupons	AdminListUserCoupons
 GET	/api/admin/apps/:appkey/crash-reports	AdminCrashReports
 GET	/api/admin/apps/:appkey/crash-reports/:crashId	AdminCrashReport
 GET	/api/admin/apps/:appkey/crash-reports/facets	AdminCrashReportFacets
@@ -784,6 +794,8 @@ GET	/api/v1/apps/:appkey/cosmetics/history	AppCosmeticHistory
 GET	/api/v1/apps/:appkey/cosmetics/me	AppMyCosmetics
 GET	/api/v1/apps/:appkey/cosmetics/users	AppLookupCosmetics
 GET	/api/v1/apps/:appkey/cosmetics/workshop	AppCosmeticWorkshop
+GET	/api/v1/apps/:appkey/coupons	AppMyCoupons
+GET	/api/v1/apps/:appkey/coupons/center	AppCouponCenter
 GET	/api/v1/apps/:appkey/features/time/:feature	AppFeatureTimeStatus
 GET	/api/v1/apps/:appkey/feedback	AppListFeedback
 GET	/api/v1/apps/:appkey/feedback/:feedbackId	AppGetFeedback
@@ -858,6 +870,7 @@ GET	/api/v1/apps/:appkey/promo	AppPromoCampaigns
 GET	/api/v1/apps/:appkey/promo/:campaignId	AppPromoCampaign
 GET	/api/v1/apps/:appkey/promo/:campaignId/leaderboard	AppPromoLeaderboard
 GET	/api/v1/apps/:appkey/promo/:campaignId/submissions	AppPromoSubmissions
+GET	/api/v1/apps/:appkey/promotions	AppPromotions
 GET	/api/v1/apps/:appkey/releases	AppReleaseHistory
 GET	/api/v1/apps/:appkey/releases/channels	AppReleaseChannels
 GET	/api/v1/apps/:appkey/releases/check	AppReleaseCheck
@@ -1049,6 +1062,11 @@ POST	/api/admin/apps/:appkey/cosmetics/users/:userId/unequip	AdminUnequipUserCos
 POST	/api/admin/apps/:appkey/cosmetics/workshop/items/:itemId/restore	AdminRestoreWorkshopItem
 POST	/api/admin/apps/:appkey/cosmetics/workshop/items/:itemId/takedown	AdminTakedownWorkshopItem
 POST	/api/admin/apps/:appkey/cosmetics/workshop/parts	AdminCreateWorkshopPart
+POST	/api/admin/apps/:appkey/coupons/promotions	AdminCreateCouponPromotion
+POST	/api/admin/apps/:appkey/coupons/quote	AdminCouponQuote
+POST	/api/admin/apps/:appkey/coupons/templates	AdminCreateCouponTemplate
+POST	/api/admin/apps/:appkey/coupons/templates/:templateId/issue	AdminIssueCoupons
+POST	/api/admin/apps/:appkey/coupons/user-coupons/:couponId/revoke	AdminRevokeUserCoupon
 POST	/api/admin/apps/:appkey/crash-reports/delete	AdminDeleteCrashReports
 POST	/api/admin/apps/:appkey/crash-reports/resolve	AdminResolveCrashReports
 POST	/api/admin/apps/:appkey/device-limit/simulate	AdminSimulateDeviceLimit
@@ -1496,6 +1514,7 @@ POST	/api/oauth2/hooks/token	OAuth2TokenHook
 POST	/api/pay/orders/:orderNo/bill	ExportPaymentBill
 POST	/api/pay/orders/:orderNo/receipt/email	EmailPaymentReceipt
 POST	/api/pay/orders/create	CreatePaymentOrder
+POST	/api/pay/quote	PaymentQuote
 POST	/api/points/level/rewards/:rewardId/claim	ClaimLevelReward
 POST	/api/public/pay/callback/:method	PaymentCallback
 POST	/api/public/pay/callback/:method/:appid	PaymentCallback
@@ -1579,6 +1598,7 @@ POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/restore	AppRestoreCloudIte
 POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/rollback	AppRollbackCloudItem
 POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/upload	AppUploadCloudItem
 POST	/api/v1/apps/:appkey/cosmetics/workshop/items	AppCreateWorkshopItem
+POST	/api/v1/apps/:appkey/coupons/claim	AppClaimCoupon
 POST	/api/v1/apps/:appkey/crash-reports	AppSubmitCrashReport
 POST	/api/v1/apps/:appkey/features/time/:feature/leases	AppLeaseFeatureTime
 POST	/api/v1/apps/:appkey/features/time/leases/:leaseNo/settle	AppSettleFeatureTimeLease
@@ -1625,6 +1645,7 @@ POST	/api/v1/apps/:appkey/numbers/change	AppChangeUserNumber
 POST	/api/v1/apps/:appkey/numbers/draw	AppDrawUserNumbers
 POST	/api/v1/apps/:appkey/numbers/draws/:drawId/discard	AppDiscardUserNumberDraw
 POST	/api/v1/apps/:appkey/pay/orders	CreatePaymentOrder
+POST	/api/v1/apps/:appkey/pay/quote	PaymentQuote
 POST	/api/v1/apps/:appkey/points/level/rewards/:rewardId/claim	ClaimLevelReward
 POST	/api/v1/apps/:appkey/points/store/gift	AppGiftPointsStoreItem
 POST	/api/v1/apps/:appkey/points/store/gift/preview	AppPreviewPointsStoreGift
@@ -1688,6 +1709,10 @@ PUT	/api/admin/apps/:appkey/cosmetics/items/:itemId/draft	AdminSaveCosmeticDraft
 PUT	/api/admin/apps/:appkey/cosmetics/items/:itemId/status	AdminSetCosmeticStatus
 PUT	/api/admin/apps/:appkey/cosmetics/settings	AdminSaveCosmeticSettings
 PUT	/api/admin/apps/:appkey/cosmetics/workshop/parts/:partId	AdminUpdateWorkshopPart
+PUT	/api/admin/apps/:appkey/coupons/promotions/:promotionId	AdminUpdateCouponPromotion
+PUT	/api/admin/apps/:appkey/coupons/promotions/:promotionId/status	AdminSetCouponPromotionStatus
+PUT	/api/admin/apps/:appkey/coupons/templates/:templateId	AdminUpdateCouponTemplate
+PUT	/api/admin/apps/:appkey/coupons/templates/:templateId/status	AdminSetCouponTemplateStatus
 PUT	/api/admin/apps/:appkey/device-limit/overrides/:userId	AdminSaveDeviceLimitOverride
 PUT	/api/admin/apps/:appkey/device-limit/policy	AdminUpdateDeviceLimitPolicy
 PUT	/api/admin/apps/:appkey/encryption	UpdateAdminAppEncryption

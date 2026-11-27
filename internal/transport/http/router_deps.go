@@ -58,6 +58,7 @@ type RouterDeps struct {
 	PointsStore      *service.PointsStoreService
 	Invite           *service.InviteService
 	Promo            *service.PromoService
+	Coupons          *service.CouponService
 	Leaderboard      *service.LeaderboardService
 	AccountDeletion  *service.AccountDeletionService
 	Suspension       *service.SuspensionService
@@ -143,10 +144,10 @@ type RouterDeps struct {
 	Traffic *trafficplugin.Plugin
 	// NativePlugins 内置插件宿主（启停、重启、状态）。
 	NativePlugins *nativeplugin.Host
-	ReplayGuard *middleware.ReplayGuard
-	CrashLog    *crashlog.Logger
-	Logger      *zap.Logger
-	CORS        config.CORSConfig
+	ReplayGuard   *middleware.ReplayGuard
+	CrashLog      *crashlog.Logger
+	Logger        *zap.Logger
+	CORS          config.CORSConfig
 	// ClientIP 真实客户端 IP 判定器，由 middleware.ClientIP 挂在中间件栈首位。
 	// 为 nil 时（openapi / routes 等零依赖装配）退化为直接使用直连地址。
 	ClientIP *clientip.Resolver
@@ -229,6 +230,7 @@ func (d RouterDeps) newHandler() *Handler {
 		pointsStore:        d.PointsStore,
 		invite:             d.Invite,
 		promo:              d.Promo,
+		coupons:            d.Coupons,
 		leaderboard:        d.Leaderboard,
 		accountDeletion:    d.AccountDeletion,
 		suspension:         d.Suspension,

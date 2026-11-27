@@ -226,6 +226,10 @@ func (s *PointsStoreService) prepareItem(ctx context.Context, input pointstore.I
 			if err := checkCosmeticRef(ctx, s.pg, input.AppID, reward.RefID); err != nil {
 				return input, err
 			}
+		case pointstore.RewardCoupon:
+			if err := checkCouponRef(ctx, s.pg, input.AppID, reward.RefID); err != nil {
+				return input, err
+			}
 		}
 	}
 	return input, nil

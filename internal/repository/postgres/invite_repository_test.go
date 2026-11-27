@@ -30,6 +30,7 @@ func TestInviteCatalogHasGrantBranch(t *testing.T) {
 		pointstore.RewardNumberTicket: "pointstore.RewardNumberTicket",
 		pointstore.RewardNumberDraw:   "pointstore.RewardNumberDraw",
 		pointstore.RewardCosmetic:     "pointstore.RewardCosmetic",
+		pointstore.RewardCoupon:       "pointstore.RewardCoupon",
 	}
 	offered := map[string]bool{}
 	for _, spec := range invite.RewardCatalog() {

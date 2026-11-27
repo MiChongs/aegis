@@ -188,6 +188,12 @@ type CreatePaymentOrderRequest struct {
 	NotifyURL     string         `json:"notify_url" form:"notify_url"`
 	ReturnURL     string         `json:"return_url" form:"return_url"`
 	Metadata      map[string]any `json:"metadata"`
+	// CouponID 使用的优惠券（用户券编号，取自 /pay/quote 或 /coupons）；CouponMode 为 auto 时自动用最优的券。
+	// 两者都不传即不用券；优惠活动总是自动生效（docs/coupons.md）
+	CouponID   int64  `json:"coupon_id" form:"coupon_id"`
+	CouponMode string `json:"coupon_mode" form:"coupon_mode"`
+	// ExpectedAmount 试算时看到的应付金额（可选）；与服务端算出来的不一致时返回 42318，不下单
+	ExpectedAmount string `json:"expected_amount" form:"expected_amount"`
 }
 
 // PaymentMethodsQuery GET /pay/methods 的查询参数。

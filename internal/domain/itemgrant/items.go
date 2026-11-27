@@ -40,6 +40,8 @@ const (
 	ItemNumberAssign = "number_assign"
 	// ItemCosmetic 个性装扮（docs/cosmetics.md）
 	ItemCosmetic = "cosmetic"
+	// ItemCoupon 优惠券（docs/coupons.md）
+	ItemCoupon = "coupon"
 )
 
 // 取值形态：决定 Item 上的哪个字段承载内容（控制台按它渲染表单）。
@@ -53,6 +55,7 @@ const (
 	ValueText           = "text"            // Item.Text（人工发放）
 	ValueNumberTicket   = "number_ticket"   // Item.Amount（张数）+ Item.RefID（靓号券等级 1–4）
 	ValueCosmetic       = "cosmetic"        // Item.RefID（装扮编号）+ Item.Amount（天数，0 为永久）
+	ValueCoupon         = "coupon"          // Item.RefID（券编号）+ Item.Amount（张数）
 )
 
 // 物品分组，控制台物品面板按组排列。
@@ -142,6 +145,8 @@ var itemSpecs = []ItemSpec{
 		Hint: "直接把这个号码换给领取人（不扣权益、不看冷却）；号码已被使用、保留或冻结时这一笔失败"},
 	{Type: ItemCosmetic, Label: "个性装扮", Group: GroupBenefit, Value: ValueCosmetic, Unit: "天", Min: 0, Max: MaxFeatureDays,
 		Hint: "头像框、资料卡背景、昵称样式、勋章或铭牌；天数为 0 即永久，同一件多次发放时顺延，已永久持有时不重复发放；可选「发放时佩戴」"},
+	{Type: ItemCoupon, Label: "优惠券", Group: GroupBenefit, Value: ValueCoupon, Unit: "张", Min: 1, Max: 20,
+		Hint: "发进领取人的券包，按券自己的有效期与规则使用；券发完、已结束或还是草稿时这一笔失败"},
 	{Type: ItemManual, Label: "人工发放", Group: GroupOther, Value: ValueText, Pending: true,
 		Hint: "记录进入待发放，由管理员在发放记录里标记已发放（实物、兑换码等）"},
 }
@@ -223,6 +228,9 @@ func NormalizeItem(item Item) Item {
 		clean.RefID = item.RefID
 		clean.Amount = item.Amount
 		clean.Equip = item.Equip
+	case ValueCoupon:
+		clean.RefID = item.RefID
+		clean.Amount = item.Amount
 	case ValueText:
 		clean.Text = strings.TrimSpace(item.Text)
 	}
@@ -281,6 +289,13 @@ func ValidateItem(item Item) error {
 		if item.Amount < 0 || item.Amount > MaxFeatureDays {
 			return fmt.Errorf("「%s」的天数需要在 0–%d 之间（0 为永久）", spec.Label, MaxFeatureDays)
 		}
+	case ValueCoupon:
+		if item.RefID <= 0 {
+			return fmt.Errorf("「%s」没有选择具体的券", spec.Label)
+		}
+		if item.Amount < spec.Min || item.Amount > spec.Max {
+			return fmt.Errorf("「%s」需要在 %d–%d %s之间", spec.Label, spec.Min, spec.Max, spec.Unit)
+		}
 	case ValueText:
 		if item.Type == ItemNumberAssign {
 			if !validNumberText(item.Text) {
@@ -338,11 +353,19 @@ type CosmeticRef struct {
 	Live bool   `json:"live"`
 }
 
-// Refs 套餐、功能与装扮目录（描述物品、校验引用用）。
+// CouponRef 描述物品时需要的券信息。Live 为进行中或暂停中（发得出去）。
+type CouponRef struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	Live bool   `json:"live"`
+}
+
+// Refs 套餐、功能、装扮与券目录（描述物品、校验引用用）。
 type Refs struct {
 	Plans     map[int64]PlanRef
 	Features  map[string]FeatureRef
 	Cosmetics map[int64]CosmeticRef
+	Coupons   map[int64]CouponRef
 }
 
 // DescribePlannedItem 预览与估算里的说法：DescribeItem 之外注明「发放时佩戴」（发放结果与站内信里用 DescribeItem，戴上了另记「已戴上」）。
@@ -388,6 +411,12 @@ func DescribeItem(item Item, refs Refs) string {
 			name = ref.Name
 		}
 		return name + " " + TermLabel(int(item.Amount), item.Amount == 0)
+	case ValueCoupon:
+		name := "优惠券 #" + strconv.FormatInt(item.RefID, 10)
+		if ref, ok := refs.Coupons[item.RefID]; ok && strings.TrimSpace(ref.Name) != "" {
+			name = ref.Name
+		}
+		return name + " " + strconv.FormatInt(item.Amount, 10) + " 张"
 	case ValueText:
 		if item.Type == ItemNumberAssign {
 			return "号码 " + item.Text

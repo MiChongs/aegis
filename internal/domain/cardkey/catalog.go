@@ -28,6 +28,8 @@ const (
 	RewardNumberDraw   = "number_draw"
 	// RewardCosmetic 个性装扮（docs/cosmetics.md）
 	RewardCosmetic = "cosmetic"
+	// RewardCoupon 优惠券（docs/coupons.md）：RefID 券编号，Amount 张数
+	RewardCoupon = "coupon"
 )
 
 // 权益的取值形态：决定 Reward 上的哪个字段承载数量。
@@ -47,6 +49,8 @@ const (
 	ValueNumberTicket = "number_ticket"
 	// ValueCosmetic 个性装扮：Reward.RefID 装扮编号 + Reward.Amount 天数（0 为永久）。
 	ValueCosmetic = "cosmetic"
+	// ValueCoupon 优惠券：Reward.RefID 券编号 + Reward.Amount 张数。
+	ValueCoupon = "coupon"
 )
 
 // MaxRewardsPerCard 一张卡最多挂几档权益。
@@ -204,6 +208,16 @@ var rewardSpecs = []RewardSpec{
 		Max:        MaxFeatureDays,
 		Repeatable: true,
 	},
+	{
+		Type:       RewardCoupon,
+		Label:      "优惠券",
+		Hint:       "发进用户的券包，按券自己的有效期与规则使用；券发完或已结束时兑换失败、卡不作废",
+		Value:      ValueCoupon,
+		Unit:       "张",
+		Min:        1,
+		Max:        20,
+		Repeatable: true,
+	},
 }
 
 // maxBalanceReward 单张卡能发的余额上限。
@@ -253,6 +267,7 @@ func ValidateRewards(rewards []Reward) error {
 	seen := make([]string, 0, len(rewards))
 	seenFeatures := make([]string, 0, 2)
 	seenCosmetics := make([]int64, 0, 2)
+	seenCoupons := make([]int64, 0, 2)
 	for _, reward := range rewards {
 		spec, ok := FindRewardSpec(reward.Type)
 		if !ok {
@@ -315,6 +330,17 @@ func ValidateRewards(rewards []Reward) error {
 			if reward.Amount < spec.Min || reward.Amount > spec.Max {
 				return fmt.Errorf("「%s」的天数需要在 %d–%d 之间（0 为永久）", spec.Label, spec.Min, spec.Max)
 			}
+		case ValueCoupon:
+			if reward.RefID <= 0 {
+				return fmt.Errorf("「%s」没有选择具体的券", spec.Label)
+			}
+			if slices.Contains(seenCoupons, reward.RefID) {
+				return fmt.Errorf("「%s」里同一种券配置了两次", spec.Label)
+			}
+			seenCoupons = append(seenCoupons, reward.RefID)
+			if reward.Amount < spec.Min || reward.Amount > spec.Max {
+				return fmt.Errorf("「%s」需要在 %d–%d %s之间", spec.Label, spec.Min, spec.Max, spec.Unit)
+			}
 		}
 	}
 	return nil
@@ -346,7 +372,7 @@ func NormalizeRewards(rewards []Reward) []Reward {
 			case ValueNumberTicket:
 				clean.Amount = reward.Amount
 				clean.RefID = reward.RefID
-			case ValueCosmetic:
+			case ValueCosmetic, ValueCoupon:
 				clean.Amount = reward.Amount
 				clean.RefID = reward.RefID
 			}
@@ -381,6 +407,8 @@ func DescribeReward(reward Reward) string {
 		if reward.Amount == 0 {
 			return fmt.Sprintf("%s #%d 永久", spec.Label, reward.RefID)
 		}
+		return fmt.Sprintf("%s #%d %d %s", spec.Label, reward.RefID, reward.Amount, spec.Unit)
+	case ValueCoupon:
 		return fmt.Sprintf("%s #%d %d %s", spec.Label, reward.RefID, reward.Amount, spec.Unit)
 	default:
 		return spec.Label

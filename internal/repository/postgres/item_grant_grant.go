@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"aegis/internal/domain/coupon"
 	"context"
 	"errors"
 	"fmt"
@@ -256,6 +257,16 @@ func (r *Repository) grantItemTx(ctx context.Context, tx pgx.Tx, grant itemGrant
 		result.ExpireAt = granted.Ownership.EndsAt
 		result.TransactionNo = strconv.FormatInt(granted.Ownership.ID, 10)
 
+	case itemgrant.ItemCoupon:
+		detail, ids, err := grantCouponRewardTx(ctx, tx, appID, userID, item.RefID, item.Amount, coupon.SourceItemGrant, grant.RecordNo)
+		if err != nil {
+			return result, err
+		}
+		result.Detail = detail
+		if len(ids) > 0 {
+			result.TransactionNo = strconv.FormatInt(ids[0], 10)
+		}
+
 	default:
 		// 目录里有、这里没有 —— 由测试挡在合并之前
 		return result, fmt.Errorf("item grant: unsupported item type %s", item.Type)
@@ -278,6 +289,9 @@ func itemGrantRefsQ(ctx context.Context, q queryExecutor, appID int64) (itemgran
 		Cosmetics: map[int64]itemgrant.CosmeticRef{}}
 	cosmetics, err := cosmeticRefsQ(ctx, q, appID)
 	if err != nil {
+		return refs, err
+	}
+	if refs.Coupons, err = couponRefsQ(ctx, q, appID); err != nil {
 		return refs, err
 	}
 	for id, ref := range cosmetics {

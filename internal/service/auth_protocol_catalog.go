@@ -416,6 +416,15 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "payOrders", Method: "GET", Path: "/pay/orders", Auth: true, Summary: "我的订单"},
 	{Key: "payOrderCreate", Method: "POST", Path: "/pay/orders", Auth: true, Summary: "创建支付订单"},
 	{Key: "payOrderDetail", Method: "GET", Path: "/pay/orders/{orderNo}", Auth: true, Summary: "订单详情"},
+	// 优惠系统（docs/coupons.md）：活动自动生效，券按 coupon_id / coupon_mode 选；试算与下单同一个口径。
+	{Key: "payQuote", Method: "POST", Path: "/pay/quote", Auth: true,
+		Summary: "下单前试算：命中的活动、每张券能不能用与能省多少、返券预告、最后要付多少（与 POST /pay/orders 同参）"},
+	{Key: "couponCenter", Method: "GET", Path: "/coupons/center", Auth: true, Summary: "领券中心：开放领取的券、剩余数量与我能不能领"},
+	{Key: "couponClaim", Method: "POST", Path: "/coupons/claim", Auth: true, Summary: "领一张券（templateId）"},
+	{Key: "couponMine", Method: "GET", Path: "/coupons", Auth: true,
+		Summary: "我的券：status 为 usable（默认）/ available / not_started / locked / used / expired / revoked，带各状态计数"},
+	{Key: "promotions", Method: "GET", Path: "/promotions", Auth: true,
+		Summary: "进行中与即将开始的优惠活动、我能不能参加、每个会员套餐不用券时的活动价"},
 
 	// ── 存储 ──
 	{Key: "storageUpload", Method: "POST", Path: "/storage/upload", Auth: true, Upload: true, Summary: "上传文件（multipart/form-data）"},
