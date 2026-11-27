@@ -246,6 +246,10 @@ WHERE id = $1 AND ((status = 'locked' AND order_no = $2) OR status IN ('availabl
 	}
 
 	// 3. 返券返积分
+	if released && rec.RebateStatus == coupon.RebateSkipped {
+		// 释放时标成了不再返；钱既然到了，名额也重新计入了，返利照发
+		rec.RebateStatus = coupon.RebatePending
+	}
 	rebateStatus, rebateNote := rec.RebateStatus, rec.RebateNote
 	var rebateCouponIDs []int64
 	var rebateIntegral int64
@@ -366,7 +370,7 @@ ORDER BY p.created_at LIMIT $2`, time.Now().Add(-grace), limit)
 	}
 	done := 0
 	for _, id := range ids {
-		ok, err := r.releaseOrderPromotion(ctx, id, grace)
+		ok, err := r.releaseOrderPromotion(ctx, id, grace, false)
 		if err != nil {
 			return done, err
 		}
@@ -377,7 +381,17 @@ ORDER BY p.created_at LIMIT $2`, time.Now().Add(-grace), limit)
 	return done, nil
 }
 
-func (r *Repository) releaseOrderPromotion(ctx context.Context, orderID int64, grace time.Duration) (bool, error) {
+// ReleaseFailedOrderPromotion 下单后没能交给付款方的订单（渠道下单报错、余额不足）：把订单标成失败并立刻还回券与名额。
+// 这种单从没出现在用户的付款页上，不会有晚到的付款，不必等过期。
+func (r *Repository) ReleaseFailedOrderPromotion(ctx context.Context, orderID int64) error {
+	if _, err := r.pool.Exec(ctx, `UPDATE payment_orders SET status = 'failed', updated_at = NOW() WHERE id = $1 AND status = 'pending'`, orderID); err != nil {
+		return err
+	}
+	_, err := r.releaseOrderPromotion(ctx, orderID, 0, true)
+	return err
+}
+
+func (r *Repository) releaseOrderPromotion(ctx context.Context, orderID int64, grace time.Duration, force bool) (bool, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, err
@@ -405,8 +419,8 @@ func (r *Repository) releaseOrderPromotion(ctx context.Context, orderID int64, g
 	}
 	// 订单行上再确认一次：没付款、确实过期满了宽限期
 	var releasable bool
-	if err := tx.QueryRow(ctx, `SELECT status <> 'paid' AND expire_at IS NOT NULL AND expire_at < $2 FROM payment_orders WHERE id = $1 FOR UPDATE`,
-		orderID, time.Now().Add(-grace)).Scan(&releasable); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT status <> 'paid' AND ($3 OR (expire_at IS NOT NULL AND expire_at < $2)) FROM payment_orders WHERE id = $1 FOR UPDATE`,
+		orderID, time.Now().Add(-grace), force).Scan(&releasable); err != nil {
 		return false, err
 	}
 	if !releasable {

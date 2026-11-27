@@ -621,6 +621,7 @@ func (s *PaymentService) CreateOrderFromInput(ctx context.Context, session *auth
 	if config.PaymentMethod == paymentdomain.MethodBalance {
 		payload, payErr := s.payOrderWithBalance(ctx, order)
 		if payErr != nil {
+			s.releaseFailedOrder(order, reservation)
 			return nil, nil, payErr
 		}
 		// 回读订单：手里这份是状态翻转**之前**的快照，直接返回会让客户端
@@ -653,6 +654,7 @@ func (s *PaymentService) CreateOrderFromInput(ctx context.Context, session *auth
 		ExpireAt:     &expireAt,
 	})
 	if err != nil {
+		s.releaseFailedOrder(order, reservation)
 		return nil, nil, err
 	}
 	if s.plugin != nil {
@@ -1468,6 +1470,19 @@ func calcPaymentTotalPages(total int64, limit int) int {
 		return 1
 	}
 	return pages
+}
+
+// releaseFailedOrder 订单没能交给付款方（渠道下单报错、余额不足）：立刻还回它占着的券与活动名额，
+// 用户马上重试时不会撞上「券已用于待支付订单」。没用优惠的订单什么都不做。
+func (s *PaymentService) releaseFailedOrder(order *paymentdomain.Order, reservation coupondomain.Reservation) {
+	if order == nil || reservation.Empty() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.pg.ReleaseFailedOrderPromotion(ctx, order.ID); err != nil {
+		s.log.Warn("release promotions of failed order", zap.String("orderNo", order.OrderNo), zap.Error(err))
+	}
 }
 
 // settleOrderPromotion 已付款订单的优惠结算（幂等；没用优惠的订单是一次空查询）。

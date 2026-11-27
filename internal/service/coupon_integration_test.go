@@ -142,6 +142,23 @@ func TestCouponIntegration(t *testing.T) {
 		Intent: OrderIntent{Purpose: paymentdomain.PurposeVipPurchase, PlanID: plan.ID}, CouponMode: coupon.CouponAuto, ExpectedAmount: "18.00"})
 	expectCode("应付金额不一致", err, errCodeCouponPriceChanged)
 
+	// ── 余额不足：订单失败、券与名额立刻还回 ──
+	if _, err := pool.Exec(ctx, `UPDATE user_wallets SET balance = 1 WHERE user_id = $1`, alice); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = pay.CreateOrderFromInput(ctx, session, PaymentOrderInput{PaymentMethod: paymentdomain.MethodBalance,
+		Intent: OrderIntent{Purpose: paymentdomain.PurposeVipPurchase, PlanID: plan.ID}, CouponMode: coupon.CouponAuto})
+	expectCode("余额不足", err, 40083)
+	if got := scalar(`SELECT status FROM user_coupons WHERE id = $1`, claimed.ID); got != coupon.CouponAvailable {
+		t.Fatalf("余额不足失败后券应立刻还回：%s", got)
+	}
+	if got := scalar(`SELECT used_count::text FROM coupon_promotions WHERE id = $1`, promo.ID); got != "0" {
+		t.Fatalf("余额不足失败后名额应还回：%s", got)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE user_wallets SET balance = 100 WHERE user_id = $1`, alice); err != nil {
+		t.Fatal(err)
+	}
+
 	// ── 下单：余额支付 ──
 	_, order, err := pay.CreateOrderFromInput(ctx, session, PaymentOrderInput{PaymentMethod: paymentdomain.MethodBalance,
 		Intent: OrderIntent{Purpose: paymentdomain.PurposeVipPurchase, PlanID: plan.ID}, CouponMode: coupon.CouponAuto, ExpectedAmount: "19.00"})
@@ -259,10 +276,13 @@ func TestCouponIntegration(t *testing.T) {
 	if got := scalar(`SELECT used_count::text FROM coupon_promotions WHERE id = $1`, promo.ID); got != "1" {
 		t.Fatalf("晚到的付款应重新计入名额：%s", got)
 	}
+	if late.RebateStatus != coupon.RebatePending && scalar(`SELECT rebate_status FROM payment_order_promotions WHERE order_id = $1`, pending.ID) != coupon.RebateGranted {
+		t.Fatalf("晚到的付款应照发返利")
+	}
 
 	// ── 管理端：概览、列表、删除限制 ──
 	overview, err := coupons.Overview(ctx, appID, "Asia/Shanghai", 14)
-	if err != nil || overview.Issued != 2 || overview.Orders != 1 || len(overview.Trend) != 14 {
+	if err != nil || overview.Issued != 3 || overview.Orders != 1 || len(overview.Trend) != 14 {
 		t.Fatalf("概览：%+v %v", overview, err)
 	}
 	expectCode("已发券的模板不能删", coupons.DeleteTemplate(ctx, appID, tplA.ID), errCodeCouponInUse)
@@ -272,11 +292,11 @@ func TestCouponIntegration(t *testing.T) {
 	_, err = coupons.UpdateTemplate(ctx, tplA.ID, in)
 	expectCode("已发券的模板不能改面额", err, errCodeCouponRuleLocked)
 	page, err := coupons.ListUserCoupons(ctx, coupon.UserCouponQuery{AppID: appID, Keyword: "coupon-alice"})
-	if err != nil || page.Total != 2 {
+	if err != nil || page.Total != 3 {
 		t.Fatalf("管理端用户券：%+v %v", page, err)
 	}
 	orders, err := coupons.ListOrders(ctx, coupon.OrderPromotionQuery{AppID: appID, PromotionID: promo.ID})
-	if err != nil || orders.Total != 2 {
+	if err != nil || orders.Total != 3 {
 		t.Fatalf("订单优惠记录：%+v %v", orders, err)
 	}
 	// 管理员发券：库存 2 已发完
