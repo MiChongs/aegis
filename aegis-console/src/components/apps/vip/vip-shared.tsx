@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { VipFeature, VipSource } from "@/lib/api/vip";
+import type { VipFeature, VipPerk, VipSource } from "@/lib/api/vip";
 import { cn } from "@/lib/utils";
 
 /**
@@ -128,6 +128,60 @@ export function FeatureTagList({
     <div className="flex flex-wrap gap-1">
       {tags.map((tag) => (
         <FeatureTag key={tag} tag={tag} catalog={catalog} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 权益标签：自动生成的（AI 计费）与手填的补充标签用两种色调，一眼分得清哪些会随改价变。
+ * 有说明（detail）时悬浮显示。标签只用于展示，与功能标识徽标（等宽字体的机器标识）刻意长得不一样。
+ */
+export function PerkTag({ perk, className }: { perk: VipPerk; className?: string }) {
+  const auto = perk.source === "ai";
+  const chip = (
+    <span
+      className={cn(
+        "inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-4",
+        auto
+          ? "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800/70 dark:bg-violet-950/60 dark:text-violet-300"
+          : "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800/70 dark:bg-sky-950/60 dark:text-sky-300",
+        perk.detail ? "cursor-help" : null,
+        className
+      )}
+    >
+      {auto ? <Sparkles className="size-3 shrink-0" /> : null}
+      <span className="truncate">{perk.label}</span>
+    </span>
+  );
+  if (!perk.detail) return chip;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{chip}</TooltipTrigger>
+      <TooltipContent side="top">
+        <p className="font-medium">{perk.label}</p>
+        <p className="max-w-56 text-[10px] text-background/70">{perk.detail}</p>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** 一组权益标签（自动的在前、手填的在后）；为空时按 emptyHint 显示，emptyHint 为 null 时什么都不画 */
+export function PerkTagList({
+  perks,
+  emptyHint = "暂无权益标签"
+}: {
+  perks?: Array<VipPerk | null | undefined> | null;
+  emptyHint?: string | null;
+}) {
+  const list = (perks ?? []).filter((perk): perk is VipPerk => Boolean(perk?.label));
+  if (list.length === 0) {
+    return emptyHint ? <span className="text-[11px] text-muted-foreground">{emptyHint}</span> : null;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {list.map((perk) => (
+        <PerkTag key={`${perk.source}:${perk.key}:${perk.label}`} perk={perk} />
       ))}
     </div>
   );

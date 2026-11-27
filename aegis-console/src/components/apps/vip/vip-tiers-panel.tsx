@@ -21,7 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { SectionCard } from "@/components/apps/app-config-primitives";
 import { VipTierEditor } from "@/components/apps/vip/vip-tier-editor";
-import { FeatureTagList } from "@/components/apps/vip/vip-shared";
+import { FeatureTagList, PerkTagList } from "@/components/apps/vip/vip-shared";
 import { useAdminVipFeaturesQuery, useAdminVipTiersQuery, useDeleteAdminVipTierMutation } from "@/lib/vip-hooks";
 import type { VipTier } from "@/lib/api/vip";
 
@@ -136,6 +136,23 @@ export function VipTiersPanel({ appKey }: { appKey: string }) {
                   ) : null}
 
                   <FeatureTagList tags={tier.features} catalog={features} emptyHint="仅会员身份，无细分权益" />
+
+                  {(tier.autoPerks?.length ?? 0) + (tier.perks?.length ?? 0) > 0 ? (
+                    <div className="space-y-1 border-t border-dashed border-border pt-2">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+                        <span>权益标签</span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="size-1.5 rounded-full bg-violet-500" />
+                          自动生成
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="size-1.5 rounded-full bg-sky-500" />
+                          补充
+                        </span>
+                      </div>
+                      <PerkTagList perks={[...(tier.autoPerks ?? []), ...(tier.perks ?? [])]} emptyHint={null} />
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="flex shrink-0 items-center gap-1">

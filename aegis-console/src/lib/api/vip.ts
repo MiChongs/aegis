@@ -12,6 +12,28 @@ import { apiRequest, buildQuery } from "./client";
 
 // ── 类型 ──
 
+/**
+ * 权益标签来源：`ai` 是后端按应用当前的 AI 计费设置自动生成的（改价后自动跟着变，只读），
+ * `custom` 是管理员在档位上手填的补充说明。
+ */
+export type VipPerkSource = "ai" | "custom";
+
+/**
+ * 权益标签（docs/vip-tiers.md「权益标签」）：会员页上「这个档位给你什么」的一句话。
+ *
+ * **只用于展示**，与功能标识（features）无关 —— 不参与「已拥有」判断、会员折算，也不解锁任何功能。
+ * key 自动标签为 `ai.rate` / `ai.daily` / `ai.monthly` / `ai.pack` / `ai.limits`，手填的为 `custom.N`（保存时后端重编）。
+ */
+export type VipPerk = {
+  key: string;
+  label: string;
+  detail?: string;
+  source: VipPerkSource;
+};
+
+/** 手填标签的上限，与后端 `vip.MaxCustomPerks` 及文字长度校验一致（超出时后端 400 + 中文原因） */
+export const VIP_PERK_LIMITS = { count: 12, label: 16, detail: 60 } as const;
+
 /** 套餐种类：付费 / 试用。试用恒 0 元且只能领取，不能购买。 */
 export type VipPlanKind = "paid" | "trial";
 
@@ -29,6 +51,8 @@ export type VipPlan = {
   tierName?: string;
   /** 所属档位当前的功能（只读，改功能请改档位） */
   features: string[];
+  /** 所属档位的权益标签（自动的在前、手填的在后）。后端只在用户侧在售列表里填，管理端套餐列表通常缺省 */
+  perks?: VipPerk[];
   durationDays: number;
   price: string;
   originalPrice?: string;
@@ -52,6 +76,10 @@ export type VipTier = {
   name: string;
   description?: string;
   features: string[];
+  /** 管理员手填的补充权益标签（可编辑）；从未填过时可能为 null */
+  perks?: VipPerk[] | null;
+  /** 按 AI 计费设置自动生成的标签（只读预览，改价后自动更新） */
+  autoPerks?: VipPerk[] | null;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -68,6 +96,8 @@ export type VipTierPayload = {
   name?: string;
   description?: string;
   features?: string[];
+  /** 手填的补充权益标签：不传即不变更，传空数组即清空；文字相同的后端去重，key 由后端重编 */
+  perks?: Array<{ label: string; detail?: string }>;
   sortOrder?: number;
 };
 
