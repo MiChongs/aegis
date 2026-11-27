@@ -664,7 +664,7 @@ Banner（投放位）与公告，方法挂在 `AppService` 上。三条结构性
 
 ### 支付网关
 
-17 个渠道共用一套适配器接口（`payment_provider.go` 的 `paymentProvider`）：
+18 个渠道共用一套适配器接口（`payment_provider.go` 的 `paymentProvider`）：
 `Name` / `Describe` / `ValidateConfig` / `TestConnection` / `CreateOrder` / `QueryRemoteOrder` / `HandleCallback`。
 
 **渠道自描述是这套设计的核心。** `Describe()` 返回的 `ProviderMeta` 同时承载展示信息、
@@ -687,7 +687,8 @@ Banner（投放位）与公告，方法挂在 `AppService` 上。三条结构性
 - **回调订单定位有三条链路**：表单字段 `out_trade_no`（易支付系/支付宝）→
   `callbackOrderExtractor.ExtractOrderNo` 从原始报文预提取（Stripe/PayPal/Paddle/
   Lemon Squeezy/Razorpay/Coinbase/Square/爱发电，其回调地址为平台级配置无法带参数）→
-  路径段 `/callback/:method/:appid` 提供应用标识后 config-first 解密（微信 v3）。
+  路径段 `/callback/:method/:appid` 提供应用标识后 config-first 解密（微信 v3、抖音支付）。
+  config-first 用应用的默认配置验签；验不过再用同渠道其余启用的配置逐一试（一个应用接了两个商户号）。
   预提取**只用于路由定位**，验签一律在 `HandleCallback` 内基于配置完成。
 - **签名头必须登记进 `CallbackSignatureHeaders`**，否则传输层不会透传，验签必然失败。
 - 验签通过后服务层仍会交叉校验回调订单号与金额，防「用 A 单的合法回调骗 B 单发货」。
@@ -696,14 +697,22 @@ Banner（投放位）与公告，方法挂在 `AppService` 上。三条结构性
   `/order/create?custom_order_id=<本地单号>` 链接（自选金额或按「金额=方案 ID」映射到赞助方案），
   推送只当提醒，收到后用 API Token 按爱发电单号回查 `query-order`，以接口数据为准。
   兑换码订单实付 0.00，判为未支付（网关的金额校验只查正数，放过去就是零元购）。
-- **推送会丢的渠道实现 `remoteOrderSettler`**（目前只有爱发电）：用户查单时当场核实（15 秒节流），
+- **抖音支付**（`payment_provider_douyinpay.go`）协议与微信 APIv3 同构：签名、验签、平台证书
+  下载复用官方 SDK `douyinpay-go`，业务报文自己拼（直连与服务商只差路径和字段名）。
+  子类型 h5 / native / app / jsapi / mini 各用不同类型的开放平台 AppID；app / jsapi / mini
+  下发已签名的调起参数（`form_data.sdkParams` / `businessInfo`），不填 supportedTypes 时只放行 h5 与 native。
+  平台证书按「凭据指纹」缓存（换私钥或加密密钥即作废），12 小时刷新，遇到不认识的序列号立即补下。
+  RSA 用 AES-256-GCM、国密 SM2 用 SM4 解密；SM4 自己实现，SDK 那份遇到非法输入会 panic。
+- **推送会丢的渠道实现 `remoteOrderSettler`**（爱发电、抖音支付）：用户查单时当场核实（15 秒节流），
   后台每 2 分钟按支付配置分组核实 24 小时内未结的订单（含已过期，见 `payment_remote_settle.go`）。
+  抖音支付逐笔查单，后台补单按订单年龄退避（10 分钟内每轮、1 小时内 10 分钟一次、之后 30 分钟一次）；
+  用户查单带 `withOnDemandSettle` 标记，不受退避限制。
 - **应答格式有硬性要求的渠道实现 `callbackAcknowledger`**：爱发电只认 `{"ec":200}`。
   4xx（测试推送、非本平台订单、金额不符）也回 200，免得爱发电无意义地重推；5xx 才回非 200。
 
 #### 退款（payment_refund_service.go）
 
-12/17 个渠道支持接口退款（不支持的：Coinbase Commerce / 码支付 / V免签 / 虎皮椒 / 爱发电）。
+13/18 个渠道支持接口退款（不支持的：Coinbase Commerce / 码支付 / V免签 / 虎皮椒 / 爱发电）。
 链路与支付相反，但同样要求「钱与账一致」：
 
 ```
@@ -731,6 +740,10 @@ Banner（投放位）与公告，方法挂在 `AppService` 上。三条结构性
   返回「受理中」，或结算写入时进程崩溃，靠轮询向上游核对收敛到终态。
   微信 `ABNORMAL` 归入 processing 而非 failed —— 资金可能在途，判失败会错误释放额度。
 - 本地退款单号即上游 `out_refund_no`，天然幂等键；字符集守微信最严约束（数字/字母/`_-|*@`）。
+- **退款通知**：抖音支付的退款通知与支付通知共用一个地址（退款接口要求必填 notify_url，
+  网关按与下单相同的三级取值给出）。渠道在 `CallbackResult.Refund` 里交出已验签的退款结果，
+  `applyRefundNotice` 交叉校验订单号与金额后走 `settleRefundResult`（与补偿轮询同一段结算）。
+  本地没有的退款单（渠道后台手工退款）记日志后照常应答，免得渠道重推一整天。
 
 #### 支付凭证（payment_receipt.go）
 

@@ -156,5 +156,6 @@
   "method.razorpay": "Razorpay",
   "method.coinbase": "Coinbase Commerce",
   "method.square": "Square",
-  "method.afdian": "Afdian"
+  "method.afdian": "Afdian",
+  "method.douyinpay": "Douyin Pay"
 }

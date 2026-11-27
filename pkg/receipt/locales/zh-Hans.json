@@ -157,5 +157,6 @@
   "method.razorpay": "Razorpay",
   "method.coinbase": "Coinbase Commerce",
   "method.square": "Square",
-  "method.afdian": "爱发电"
+  "method.afdian": "爱发电",
+  "method.douyinpay": "抖音支付"
 }

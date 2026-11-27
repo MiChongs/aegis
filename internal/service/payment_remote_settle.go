@@ -97,6 +97,19 @@ func (s *PaymentService) settleOrdersWithConfig(ctx context.Context, config *pay
 	return settled
 }
 
+// onDemandSettleKey 标记「用户自己在查单」的上下文。逐笔查单的渠道（抖音支付）
+// 对后台补单做了退避，但用户刚付完款回来查的那一下不能被退避挡住。
+type onDemandSettleKey struct{}
+
+func withOnDemandSettle(ctx context.Context) context.Context {
+	return context.WithValue(ctx, onDemandSettleKey{}, true)
+}
+
+func isOnDemandSettle(ctx context.Context) bool {
+	v, _ := ctx.Value(onDemandSettleKey{}).(bool)
+	return v
+}
+
 // settleOrderOnDemand 用户查单时的即时核实。返回 true 表示订单已在本次被确认支付。
 func (s *PaymentService) settleOrderOnDemand(ctx context.Context, order *paymentdomain.Order, throttle bool) bool {
 	if !s.orderSettleable(order) {
@@ -113,7 +126,7 @@ func (s *PaymentService) settleOrderOnDemand(ctx context.Context, order *payment
 	if err != nil || config == nil {
 		return false
 	}
-	return s.settleOrdersWithConfig(ctx, config, []*paymentdomain.Order{order}) > 0
+	return s.settleOrdersWithConfig(withOnDemandSettle(ctx), config, []*paymentdomain.Order{order}) > 0
 }
 
 // syncUnsettledOrders 后台补单：最近未结的订单按支付配置分组，每份配置向上游查一轮。

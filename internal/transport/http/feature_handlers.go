@@ -634,7 +634,8 @@ func (h *Handler) PaymentCallback(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	if result.Paid {
+	// 退款结果通知处理完也算收到（渠道只认 HTTP 200）
+	if result.Paid || result.Refund != nil {
 		c.String(http.StatusOK, "success")
 		return
 	}

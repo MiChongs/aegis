@@ -28,6 +28,8 @@ const (
 	MethodSquare       = "square"       // Square（北美线上收单）
 
 	MethodAfdian = "afdian" // 爱发电（创作者赞助平台）
+
+	MethodDouyinPay = "douyinpay" // 抖音支付（官方 API 直连）
 )
 
 // ── 渠道分组（前端渠道市场按此归类）──
@@ -326,6 +328,43 @@ type WechatNativeConfig struct {
 	ReturnURL  string  `json:"returnUrl"`
 	MinAmount  float64 `json:"minAmount"`
 	MaxAmount  float64 `json:"maxAmount"`
+}
+
+// DouyinPayConfig 抖音支付配置（pay.douyinpay.com，接口形态与微信支付 APIv3 同构）
+//
+// 一个商户号可以绑定多类抖音开放平台应用，每种付款方式要用对应类型的 AppID：
+// App 支付用移动应用，H5 / JSAPI 用网站应用，小程序支付用小程序。
+// 服务商模式下 MchID / AppID 是服务商自己的（sp_mchid / sp_appid），SubMchID 填特约商户号。
+type DouyinPayConfig struct {
+	MchID      string `json:"mchId"`      // 商户号（服务商模式下为服务商商户号 sp_mchid）
+	AppID      string `json:"appId"`      // 移动应用 AppID：App 支付、Native 支付
+	WebAppID   string `json:"webAppId"`   // 网站应用 AppID：H5 支付、JSAPI 支付
+	MiniAppID  string `json:"miniAppId"`  // 小程序 AppID：小程序支付
+	SignType   string `json:"signType"`   // RSA（默认）/ SM2
+	SerialNo   string `json:"serialNo"`   // 商户 API 证书序列号
+	PrivateKey string `json:"privateKey"` // 商户 API 私钥（PEM）
+	EncryptKey string `json:"encryptKey"` // 接口加密密钥（AES-256-GCM 为 32 字节，SM4 为 16 字节）
+	// PlatformCertificate 抖音支付平台证书（PEM，可选）。填了就固定用它验签，
+	// 不再调接口自动下载；用于平台证书下载接口不可用、或想把证书钉死的场景。
+	PlatformCertificate string `json:"platformCertificate"`
+
+	SubMchID     string `json:"subMchId,omitempty"`     // 服务商模式：特约商户号
+	SubAppID     string `json:"subAppId,omitempty"`     // 服务商模式：特约商户移动应用 AppID
+	SubWebAppID  string `json:"subWebAppId,omitempty"`  // 服务商模式：特约商户网站应用 AppID
+	SubMiniAppID string `json:"subMiniAppId,omitempty"` // 服务商模式：特约商户小程序 AppID
+
+	H5Type         string `json:"h5Type"`         // H5 场景类型兜底：Wap / Android / iOS / HarmonyOS
+	H5AppName      string `json:"h5AppName"`      // H5 场景：应用名称
+	H5AppURL       string `json:"h5AppUrl"`       // H5 场景：网站 URL
+	H5BundleID     string `json:"h5BundleId"`     // H5 场景：iOS BundleID
+	H5PackageName  string `json:"h5PackageName"`  // H5 场景：Android 包名
+	H5Referer      string `json:"h5Referer"`      // H5 支付授权域名（App 内 WebView 打开 h5_url 需带此 Referer）
+	H5ReturnSchema string `json:"h5ReturnSchema"` // H5 支付完成后回跳的 App scheme（return_schema）
+
+	NotifyURL string  `json:"notifyUrl"`
+	ReturnURL string  `json:"returnUrl"`
+	MinAmount float64 `json:"minAmount"`
+	MaxAmount float64 `json:"maxAmount"`
 }
 
 // StripeConfig Stripe 支付配置
@@ -690,6 +729,19 @@ type CallbackResult struct {
 	Amount          decimal.Decimal `json:"amount"`
 	Message         string          `json:"message,omitempty"`
 	RawData         map[string]any  `json:"raw_data,omitempty"`
+
+	// Refund 不为空表示这是一条**退款结果通知**而不是支付通知（抖音支付 / 微信 APIv3 这类
+	// 支付与退款共用一个通知地址的渠道）。网关据此改走退款结算，不碰订单支付状态。
+	Refund *RefundNotice `json:"refund,omitempty"`
+}
+
+// RefundNotice 渠道推送的退款结果（已验签解密）
+type RefundNotice struct {
+	OrderNo          string          `json:"order_no"`
+	RefundNo         string          `json:"refund_no"`
+	ProviderRefundNo string          `json:"provider_refund_no,omitempty"`
+	Status           string          `json:"status"` // RefundSuccess / RefundProcessing / RefundClosed
+	Amount           decimal.Decimal `json:"amount"`
 }
 
 // ── 用户端付款方式 ──

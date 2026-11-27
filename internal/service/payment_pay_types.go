@@ -267,6 +267,8 @@ func userChannelName(method, name string) string {
 		return "支付宝"
 	case paymentdomain.MethodWechatNative:
 		return "微信支付"
+	case paymentdomain.MethodDouyinPay:
+		return "抖音支付"
 	}
 	trimmed := strings.TrimSpace(name)
 	for _, open := range []string{" (", "（", "("} {

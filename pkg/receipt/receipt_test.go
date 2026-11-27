@@ -407,7 +407,7 @@ func loadCatalogKeys(t *testing.T, tag string) map[string]struct{} {
 func TestEveryPaymentMethodHasLabel(t *testing.T) {
 	methods := []string{
 		"epay", "rainbow_epay", "xunhupay", "payjs", "qrpay", "vmqpay",
-		"alipay_native", "wechat_native", "stripe", "paypal", "balance",
+		"alipay_native", "wechat_native", "douyinpay", "stripe", "paypal", "balance",
 		"paddle", "lemonsqueezy", "razorpay", "coinbase", "square", "afdian",
 	}
 	bundle, err := Bundle()

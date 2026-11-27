@@ -182,7 +182,8 @@ func (s *PaymentService) RefundOrder(ctx context.Context, appID int64, orderNo s
 	}
 
 	// 第三方渠道：提交上游
-	result, err := refunder.Refund(ctx, s.refundConfigData(ctx, order), paymentdomain.RefundRequest{
+	configData := s.refundConfigData(ctx, order)
+	result, err := refunder.Refund(ctx, configData, paymentdomain.RefundRequest{
 		AppID:           appID,
 		OrderNo:         order.OrderNo,
 		ProviderOrderNo: order.ProviderOrderNo,
@@ -190,8 +191,10 @@ func (s *PaymentService) RefundOrder(ctx context.Context, appID int64, orderNo s
 		Reason:          strings.TrimSpace(options.Reason),
 		RefundAmount:    amount,
 		TotalAmount:     order.Amount,
-		NotifyURL:       order.NotifyURL,
-		Metadata:        order.Metadata,
+		// 退款通知地址与支付通知同一套取值：下单请求 → 渠道配置 → API_BASE_URL + 渠道回调路径。
+		// 抖音支付的退款接口要求必填，只传下单请求里的那个（通常为空）会让退款直接被拒。
+		NotifyURL: s.resolveNotifyURL(provider, &paymentdomain.Config{ConfigData: configData}, order.NotifyURL),
+		Metadata:  order.Metadata,
 	})
 	if err != nil {
 		// 上游调用异常（网络/配置/参数）：释放额度，允许修正后重试
@@ -300,6 +303,12 @@ func (s *PaymentService) syncRefund(ctx context.Context, refund paymentdomain.Re
 	if err != nil {
 		return nil, err
 	}
+	return s.settleRefundResult(ctx, refund, order, result, "sync")
+}
+
+// settleRefundResult 把上游给出的退款结果（主动查询或已验签的退款通知）落到退款单上。
+// 非终态保持现状；终态结算并按需冲正履约。两条来源的结论必须一样处理。
+func (s *PaymentService) settleRefundResult(ctx context.Context, refund paymentdomain.Refund, order *paymentdomain.Order, result *paymentdomain.RefundResult, source string) (*paymentdomain.Refund, error) {
 	// 仍未出终态：保持现状，等下一轮
 	if !paymentdomain.RefundStatusIsFinal(result.Status) {
 		return &refund, nil
@@ -328,12 +337,79 @@ func (s *PaymentService) syncRefund(ctx context.Context, refund paymentdomain.Re
 		}
 		return nil, err
 	}
-	s.log.Info("payment refund settled by sync",
+	s.log.Info("payment refund settled by "+source,
 		zap.String("refundNo", refund.RefundNo), zap.String("status", settled.Status))
 	if settled.Status == paymentdomain.RefundSuccess {
 		s.emitRefundHook(order, settled)
 	}
 	return settled, nil
+}
+
+// applyRefundNotice 处理一条已验签解密的退款结果通知。
+//
+// 只结算本地发起过的退款单：在渠道商户后台手工退的款，本地没有退款单，记一笔日志后照常应答，
+// 免得渠道对一条处理不了的通知重推一整天。金额或订单号对不上则拒绝，等人工核对。
+func (s *PaymentService) applyRefundNotice(ctx context.Context, config *paymentdomain.Config, method, callbackMethod, clientIP string, result *paymentdomain.CallbackResult) (*paymentdomain.CallbackResult, error) {
+	notice := result.Refund
+	refundNo := strings.TrimSpace(notice.RefundNo)
+	refund, err := s.pg.GetPaymentRefundByNo(ctx, config.AppID, refundNo)
+	if err != nil {
+		return nil, err
+	}
+	if refund == nil {
+		_ = s.pg.CreatePaymentCallbackLog(ctx, config.AppID, nil, method, callbackMethod, clientIP, result.RawData,
+			"refund_unknown", "本地没有退款单 "+refundNo+"（可能是在渠道后台手工退款），未处理")
+		return result, nil
+	}
+	if notice.OrderNo != "" && notice.OrderNo != refund.OrderNo {
+		_ = s.pg.CreatePaymentCallbackLog(ctx, config.AppID, &refund.OrderID, method, callbackMethod, clientIP, result.RawData,
+			"order_mismatch", "退款通知的订单号与本地退款单不一致")
+		return nil, apperrors.New(40095, http.StatusBadRequest, "退款通知订单号不一致")
+	}
+	if notice.Status == paymentdomain.RefundSuccess && notice.Amount.IsPositive() && !notice.Amount.Equal(refund.Amount) {
+		_ = s.pg.CreatePaymentCallbackLog(ctx, config.AppID, &refund.OrderID, method, callbackMethod, clientIP, result.RawData,
+			"amount_mismatch", fmt.Sprintf("退款通知金额 %s 与退款单金额 %s 不一致，未结算", notice.Amount.StringFixed(2), refund.Amount.StringFixed(2)))
+		return nil, apperrors.New(40096, http.StatusBadRequest, "退款通知金额与退款单不一致")
+	}
+	_ = s.pg.CreatePaymentCallbackLog(ctx, config.AppID, &refund.OrderID, method, callbackMethod, clientIP, result.RawData,
+		"refund_notice", "退款通知："+refundNo+" → "+notice.Status)
+	if paymentdomain.RefundStatusIsFinal(refund.Status) {
+		return result, nil
+	}
+	order, err := s.pg.GetPaymentOrderByOrderNo(ctx, refund.OrderNo)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, apperrors.New(40472, http.StatusNotFound, "订单不存在")
+	}
+	if _, err := s.settleRefundResult(ctx, *refund, order, &paymentdomain.RefundResult{
+		Status:           notice.Status,
+		ProviderRefundNo: notice.ProviderRefundNo,
+		Amount:           notice.Amount,
+		Raw:              result.RawData,
+	}, "notify"); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// callbackWithOtherConfigs 回调用应用的默认配置验不过时，换同渠道其余启用的配置再试。
+// 一个应用接了两个抖音支付商户号（比如主体不同）时，通知地址一样，只有验签能分辨是哪一个。
+func (s *PaymentService) callbackWithOtherConfigs(ctx context.Context, p paymentProvider, appID int64, method string, skipID int64, callbackData map[string]string, clientIP string) (*paymentdomain.Config, *paymentdomain.CallbackResult) {
+	configs, err := s.pg.ListPaymentConfigs(ctx, appID, method, true)
+	if err != nil {
+		return nil, nil
+	}
+	for i := range configs {
+		if configs[i].ID == skipID {
+			continue
+		}
+		if res, herr := p.HandleCallback(ctx, configs[i].ConfigData, callbackData, clientIP); herr == nil && res != nil {
+			return &configs[i], res
+		}
+	}
+	return nil, nil
 }
 
 // ── 查询 ──

@@ -11,7 +11,7 @@ import (
 )
 
 // ── 回调保留键 ──
-// 传输层把 JSON Webhook（Stripe / 微信 / PayPal）的原始报文与签名头注入 callbackData，
+// 传输层把 JSON Webhook（Stripe / 微信 / 抖音支付 / PayPal）的原始报文与签名头注入 callbackData，
 // 提供商据此完成验签；表单类回调（易支付系 / 支付宝）不注入，避免污染其签名参数集。
 const (
 	CallbackRawBodyKey   = "__raw_body"
@@ -22,6 +22,7 @@ const (
 var CallbackSignatureHeaders = []string{
 	"Stripe-Signature",
 	"Wechatpay-Signature", "Wechatpay-Serial", "Wechatpay-Timestamp", "Wechatpay-Nonce", "Wechatpay-Signature-Type",
+	"Douyinpay-Signature", "Douyinpay-Serial", "Douyinpay-Timestamp", "Douyinpay-Nonce", // 抖音支付
 	"Paypal-Transmission-Id", "Paypal-Transmission-Time", "Paypal-Transmission-Sig", "Paypal-Cert-Url", "Paypal-Auth-Algo",
 	"Paddle-Signature",
 	"X-Signature",                   // Lemon Squeezy

@@ -40,7 +40,7 @@ COMMERCE = GET("/api/admin/apps/:appkey/commerce")
 COMMERCE_UPDATE = PUT("/api/admin/apps/:appkey/commerce")
 COMMERCE_OVERVIEW = GET("/api/admin/apps/:appkey/commerce/overview")
 
-Method = Annotated[str, Field(description="支付渠道标识：epay / rainbow_epay / xunhupay / payjs / qrpay / vmqpay / alipay_native / wechat_native / "
+Method = Annotated[str, Field(description="支付渠道标识：epay / rainbow_epay / xunhupay / payjs / qrpay / vmqpay / alipay_native / wechat_native / douyinpay / "
                                           "stripe / paypal / paddle / lemonsqueezy / razorpay / coinbase / square / afdian / balance（以 payment_methods 为准）")]
 OrderNo = Annotated[str, Field(min_length=1, description="订单号（P 开头）")]
 ConfigID = Annotated[int, Field(gt=0, description="支付配置 ID（payment_configs 结果里的 id）")]

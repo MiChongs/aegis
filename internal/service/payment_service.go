@@ -143,6 +143,7 @@ func (s *PaymentService) registerBuiltinProviders(client *resty.Client) {
 	s.registerProvider(newAfdianProvider(client))
 	s.registerProvider(newAlipayNativeProvider(client))
 	s.registerProvider(newWechatNativeProvider(client))
+	s.registerProvider(newDouyinPayProvider(client))
 	s.registerProvider(newStripeProvider(client))
 	s.registerProvider(newPaypalProvider(client))
 	s.registerProvider(newPaddleProvider(client))
@@ -178,6 +179,7 @@ var methodOrder = []string{
 	paymentdomain.MethodBalance,
 	paymentdomain.MethodAlipayNative,
 	paymentdomain.MethodWechatNative,
+	paymentdomain.MethodDouyinPay,
 	paymentdomain.MethodEpay,
 	paymentdomain.MethodRainbowEpay,
 	paymentdomain.MethodXunhupay,
@@ -873,8 +875,18 @@ func (s *PaymentService) HandleCallback(ctx context.Context, method string, call
 		}
 		res, herr := p.HandleCallback(ctx, config.ConfigData, callbackData, clientIP)
 		if herr != nil {
+			// 同一应用配了几个同渠道的商户号：默认配置验不过，再用其余启用的配置试一遍
+			if alt, altRes := s.callbackWithOtherConfigs(ctx, p, appID, method, config.ID, callbackData, clientIP); alt != nil {
+				config, res, herr = alt, altRes, nil
+			}
+		}
+		if herr != nil {
 			_ = s.pg.CreatePaymentCallbackLog(ctx, appID, nil, method, callbackMethod, clientIP, mapStringAny(callbackData), "verify_failed", herr.Error())
 			return nil, herr
+		}
+		// 退款结果通知（抖音支付与微信 APIv3 的退款通知和支付通知共用一个地址）：走退款结算
+		if res.Refund != nil {
+			return s.applyRefundNotice(ctx, config, method, callbackMethod, clientIP, res)
 		}
 		preResult = res
 		orderNo = strings.TrimSpace(res.OrderNo)

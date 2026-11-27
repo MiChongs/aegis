@@ -47,6 +47,7 @@ require (
 	github.com/dmitryikh/leaves v0.0.0-20230708180554-25d19a787328
 	github.com/dop251/goja v0.0.0-20260806115107-493f22071ef6
 	github.com/dop251/goja_nodejs v0.0.0-20260212111938-1f56ff5bcf14
+	github.com/douyinpay/douyinpay-go v1.0.9
 	github.com/dustin/go-humanize v1.0.1
 	github.com/eino-contrib/jsonschema v1.0.3
 	github.com/expr-lang/expr v1.17.8
@@ -117,6 +118,7 @@ require (
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/things-go/go-socks5 v0.1.1
 	github.com/tidwall/gjson v1.20.0
+	github.com/tjfoc/gmsm v1.4.1
 	github.com/trustelem/zxcvbn v1.0.1
 	github.com/ulule/limiter/v3 v3.11.2
 	github.com/vanng822/go-premailer v1.35.0
@@ -404,7 +406,6 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tiendc/go-deepcopy v1.7.2 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
-	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
