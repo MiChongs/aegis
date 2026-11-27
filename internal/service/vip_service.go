@@ -73,6 +73,7 @@ func (s *VipService) ListActivePlans(ctx context.Context, session *authdomain.Se
 			}
 		}
 	}
+	s.attachPlanPerks(ctx, session.AppID, plans)
 	return plans, nil
 }
 

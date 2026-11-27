@@ -29,7 +29,7 @@ func (e *VipTierInUseError) Error() string {
 	return fmt.Sprintf("postgres: vip tier in use (plans=%d, members=%d)", e.Plans, e.Members)
 }
 
-const vipTierColumns = `id, appid, name, COALESCE(description, ''), features, sort_order, created_at, updated_at`
+const vipTierColumns = `id, appid, name, COALESCE(description, ''), features, perks, sort_order, created_at, updated_at`
 
 // vipDefaultLifetimeTierFor 应用的永久档位：不挂套餐的永久开通（自定义发放、老系统迁入、抽奖 / 卡密的永久会员）归入它。
 //
@@ -73,10 +73,12 @@ ORDER BY t.sort_order ASC, t.id ASC`, appID)
 			plansRaw []byte
 			isDef    *bool
 		)
-		if err := rows.Scan(&item.ID, &item.AppID, &item.Name, &item.Description, &item.Features, &item.SortOrder,
+		var perksRaw []byte
+		if err := rows.Scan(&item.ID, &item.AppID, &item.Name, &item.Description, &item.Features, &perksRaw, &item.SortOrder,
 			&item.CreatedAt, &item.UpdatedAt, &plansRaw, &item.Members, &item.LifetimeMembers, &isDef); err != nil {
 			return nil, err
 		}
+		item.Perks = decodeVipPerks(perksRaw)
 		item.Plans = []vipdomain.TierPlanRef{}
 		if err := json.Unmarshal(plansRaw, &item.Plans); err != nil {
 			return nil, fmt.Errorf("decode vip tier plans: %w", err)
@@ -108,7 +110,7 @@ func (r *Repository) UpsertVipTier(ctx context.Context, mutation vipdomain.TierM
 }
 
 func upsertVipTierTx(ctx context.Context, tx pgx.Tx, mutation vipdomain.TierMutation) (*vipdomain.Tier, error) {
-	current := &vipdomain.Tier{AppID: mutation.AppID, Features: []string{}}
+	current := &vipdomain.Tier{AppID: mutation.AppID, Features: []string{}, Perks: []vipdomain.Perk{}}
 	if mutation.ID > 0 {
 		existing, err := getVipTierQ(ctx, tx, mutation.AppID, mutation.ID)
 		if err != nil {
@@ -131,19 +133,23 @@ func upsertVipTierTx(ctx context.Context, tx pgx.Tx, mutation vipdomain.TierMuta
 	if mutation.SortOrder != nil {
 		current.SortOrder = *mutation.SortOrder
 	}
-	var (
-		tier *vipdomain.Tier
-		err  error
-	)
+	if mutation.Perks != nil {
+		current.Perks = *mutation.Perks
+	}
+	perksRaw, err := json.Marshal(current.Perks)
+	if err != nil {
+		return nil, err
+	}
+	var tier *vipdomain.Tier
 	if current.ID == 0 {
-		tier, err = scanVipTier(tx.QueryRow(ctx, `INSERT INTO vip_tiers (appid, name, description, features, sort_order)
-VALUES ($1, $2, $3, $4, $5) RETURNING `+vipTierColumns,
-			current.AppID, current.Name, nullableString(current.Description), current.Features, current.SortOrder))
+		tier, err = scanVipTier(tx.QueryRow(ctx, `INSERT INTO vip_tiers (appid, name, description, features, perks, sort_order)
+VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+vipTierColumns,
+			current.AppID, current.Name, nullableString(current.Description), current.Features, perksRaw, current.SortOrder))
 	} else {
 		tier, err = scanVipTier(tx.QueryRow(ctx, `UPDATE vip_tiers
-SET name = $3, description = $4, features = $5, sort_order = $6, updated_at = NOW()
+SET name = $3, description = $4, features = $5, perks = $6, sort_order = $7, updated_at = NOW()
 WHERE appid = $1 AND id = $2 RETURNING `+vipTierColumns,
-			current.AppID, current.ID, current.Name, nullableString(current.Description), current.Features, current.SortOrder))
+			current.AppID, current.ID, current.Name, nullableString(current.Description), current.Features, perksRaw, current.SortOrder))
 	}
 	if err != nil {
 		return nil, err
@@ -327,15 +333,55 @@ WHERE p.appid = $1 AND p.id = $2`, grant.AppID, *grant.PlanID).Scan(&tierID, &fe
 	return nil
 }
 
+// decodeVipPerks 档位的手填权益标签（坏数据当作没有：展示用字段不该让套餐列表整个失败）。
+func decodeVipPerks(raw []byte) []vipdomain.Perk {
+	perks := []vipdomain.Perk{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &perks)
+	}
+	if perks == nil {
+		perks = []vipdomain.Perk{}
+	}
+	return perks
+}
+
 func scanVipTier(row pgx.Row) (*vipdomain.Tier, error) {
 	var item vipdomain.Tier
-	if err := row.Scan(&item.ID, &item.AppID, &item.Name, &item.Description, &item.Features, &item.SortOrder,
+	var perksRaw []byte
+	if err := row.Scan(&item.ID, &item.AppID, &item.Name, &item.Description, &item.Features, &perksRaw, &item.SortOrder,
 		&item.CreatedAt, &item.UpdatedAt); err != nil {
 		return nil, normalizeNotFound(err)
 	}
+	item.Perks = decodeVipPerks(perksRaw)
 	if item.Features == nil {
 		item.Features = []string{}
 	}
 	item.Plans = []vipdomain.TierPlanRef{}
 	return &item, nil
+}
+
+// VipTierBrief 档位的名字与手填权益标签（套餐列表合成权益标签用，不带统计，开销小）。
+type VipTierBrief struct {
+	Name  string
+	Perks []vipdomain.Perk
+}
+
+// ListVipTierBriefs 应用全部档位的名字与手填标签。
+func (r *Repository) ListVipTierBriefs(ctx context.Context, appID int64) (map[int64]VipTierBrief, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id, name, perks FROM vip_tiers WHERE appid = $1`, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]VipTierBrief{}
+	for rows.Next() {
+		var id int64
+		var name string
+		var raw []byte
+		if err := rows.Scan(&id, &name, &raw); err != nil {
+			return nil, err
+		}
+		out[id] = VipTierBrief{Name: name, Perks: decodeVipPerks(raw)}
+	}
+	return out, rows.Err()
 }

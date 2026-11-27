@@ -25,7 +25,12 @@ func (s *VipService) AdminListTiers(ctx context.Context, appID int64) ([]vipdoma
 	if appID <= 0 {
 		return nil, apperrors.New(40000, http.StatusBadRequest, "应用ID不能为空")
 	}
-	return s.pg.ListVipTiers(ctx, appID)
+	tiers, err := s.pg.ListVipTiers(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	s.fillAutoPerks(ctx, appID, tiers)
+	return tiers, nil
 }
 
 // AdminSaveTier 新建或更新档位。改功能即对档位下全部在期会员生效。
@@ -49,9 +54,19 @@ func (s *VipService) AdminSaveTier(ctx context.Context, mutation vipdomain.TierM
 			return nil, err
 		}
 	}
+	if mutation.Perks != nil {
+		perks, err := vipdomain.NormalizeCustomPerks(*mutation.Perks)
+		if err != nil {
+			return nil, apperrors.New(40000, http.StatusBadRequest, err.Error())
+		}
+		mutation.Perks = &perks
+	}
 	tier, err := s.pg.UpsertVipTier(ctx, mutation)
 	if err != nil {
 		return nil, translateVipTierError(err)
+	}
+	if settings, err := s.pg.GetAIGatewaySettings(ctx, mutation.AppID); err == nil {
+		tier.AutoPerks = aiMemberPerks(*settings, tier.ID, tier.Name)
 	}
 	return tier, nil
 }

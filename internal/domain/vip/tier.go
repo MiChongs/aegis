@@ -23,14 +23,18 @@ import (
 
 // Tier 会员档位。
 type Tier struct {
-	ID          int64     `json:"id"`
-	AppID       int64     `json:"appid"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	Features    []string  `json:"features"`
-	SortOrder   int       `json:"sortOrder"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID          int64    `json:"id"`
+	AppID       int64    `json:"appid"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Features    []string `json:"features"`
+	// Perks 管理员手填的补充权益标签（只用于展示，不参与「已拥有」与折算）；
+	// AutoPerks 按应用当前的 AI 计费设置自动生成的标签，只在管理端列表里填，用于预览。
+	Perks     []Perk    `json:"perks"`
+	AutoPerks []Perk    `json:"autoPerks,omitempty"`
+	SortOrder int       `json:"sortOrder"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 	// 以下仅管理端列表填充
 	Plans []TierPlanRef `json:"plans"`
 	// Members 此刻有仍生效会员期落在这个档位的人数；LifetimeMembers 其中永久的
@@ -56,7 +60,9 @@ type TierMutation struct {
 	Name        *string
 	Description *string
 	// Features nil 表示不变更；空切片表示清空
-	Features  *[]string
+	Features *[]string
+	// Perks 手填的补充权益标签；nil 表示不变更
+	Perks     *[]Perk
 	SortOrder *int
 }
 

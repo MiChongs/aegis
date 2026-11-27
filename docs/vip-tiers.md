@@ -40,6 +40,20 @@
   传 `features` 改的是档位的功能（同档位的套餐与全部在期会员一起变）。改 `tierId` 只影响以后的售卖，已开通的会员仍在原档位。
 - 删套餐不动任何会员。
 
+## 权益标签
+
+会员页上「这个档位给你什么」的一句话，**只用于展示**，与功能标识（`features`）无关：不参与「已拥有」判断、会员折算，
+也不解锁任何功能。结构 `{key, label, detail, source}`，两种来源：
+
+| source | 说明 |
+|---|---|
+| `ai` | 按应用 AI 计费设置（[ai-billing.md](ai-billing.md) 的会员优惠，与计费同一口径）自动生成，改价后自动跟着变：`ai.rate`「AI 调用 9 折」、`ai.daily`「每天 200 AI 额度」、`ai.monthly`「每月 6,000 AI 额度」、`ai.pack`「额度包 9 折·多送 5%」（额度商店开着时）、`ai.limits`「AI 并发 8 路」（高于应用默认时）。AI 中转关闭时没有；档位没在 `memberTiers` 里配置时按通用会员优惠 |
+| `custom` | 管理员在档位上手填的补充标签（`vip_tiers.perks`，迁移 000178），最多 12 个，标签 ≤ 16 字、说明 ≤ 60 字，同字去重，key 重编为 `custom.N` |
+
+- 用户端 `GET /vip/plans`：每个套餐带所属档位的 `perks`（自动的在前、手填的在后，与自动标签同字的手填项去掉）；读不到计费设置时只少自动标签，列表不失败。
+- 管理端 `GET /vip/tiers`：`perks`（手填，可编辑）与 `autoPerks`（自动，只读预览）；`POST /vip/tiers` 收 `perks`（不传不变更、空数组清空）。
+- 代码：`internal/domain/vip/perk.go`（类型与校验）、`internal/service/vip_perks.go`（自动生成与合成，`TestAIMemberPerks`）。
+
 ## 删档位
 
 `DELETE /api/admin/apps/:appkey/vip/tiers/:tierId?moveTo=`

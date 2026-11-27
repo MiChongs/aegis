@@ -72,7 +72,9 @@ type Plan struct {
 	TierName string `json:"tierName,omitempty"`
 	// Features 这个套餐包含的功能标识（引用 vip_features.tag）：就是所属档位当前的功能，只读。
 	// 空数组即"只是会员"，不带任何细分权益。
-	Features      []string         `json:"features"`
+	Features []string `json:"features"`
+	// Perks 所属档位的权益标签（自动生成的在前、手填的在后），只用于展示；只在用户侧的在售列表里填。
+	Perks         []Perk           `json:"perks,omitempty"`
 	DurationDays  int              `json:"durationDays"`
 	Price         decimal.Decimal  `json:"price"`
 	OriginalPrice *decimal.Decimal `json:"originalPrice,omitempty"`

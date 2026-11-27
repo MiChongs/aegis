@@ -55,14 +55,14 @@ type AdminVipPlanRequest struct {
 	// TierID 套餐卖的会员档位（权益属于档位）。新建时不传：有功能完全相同的档位就并进去，否则按套餐名新建一个。
 	TierID *int64 `json:"tierId"`
 	// Features 改的是所属档位的功能（同档位的套餐一起变）。不传即不变更；传空数组即清空。
-	Features           *[]string `json:"features"`
-	DurationDays       *int      `json:"durationDays"`
-	Price              *string `json:"price"`
-	OriginalPrice      *string `json:"originalPrice"`
-	BonusIntegral      *int64  `json:"bonusIntegral"`
-	Description        *string `json:"description"`
-	IsActive           *bool   `json:"isActive"`
-	SortOrder          *int    `json:"sortOrder"`
+	Features      *[]string `json:"features"`
+	DurationDays  *int      `json:"durationDays"`
+	Price         *string   `json:"price"`
+	OriginalPrice *string   `json:"originalPrice"`
+	BonusIntegral *int64    `json:"bonusIntegral"`
+	Description   *string   `json:"description"`
+	IsActive      *bool     `json:"isActive"`
+	SortOrder     *int      `json:"sortOrder"`
 }
 
 // AdminVipTrialClaimRequest 管理员代某用户领取试用
@@ -76,11 +76,11 @@ type AdminVipTrialClaimRequest struct {
 // 套餐 × quantity，永久套餐只能 1 份）；否则按 days 自定义发放，可附带已登记的权益标识。
 // 自定义发放时 lifetime 为 true 即发永久会员，days 忽略。
 type AdminVipGrantRequest struct {
-	UserID        int64    `json:"userId" binding:"required"`
-	PlanID        int64    `json:"planId"`
-	Quantity      int      `json:"quantity"`
-	Days          int      `json:"days"`
-	Lifetime      bool     `json:"lifetime"`
+	UserID   int64 `json:"userId" binding:"required"`
+	PlanID   int64 `json:"planId"`
+	Quantity int   `json:"quantity"`
+	Days     int   `json:"days"`
+	Lifetime bool  `json:"lifetime"`
 	// TierID 自定义发放归入的会员档位，features 则是档位之外另给的。
 	// 不传时永久会员归入应用的永久档位，限时的只带 features。
 	TierID        int64    `json:"tierId"`
@@ -446,8 +446,10 @@ type AdminVipTierRequest struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
 	// Features 档位的功能标识（引用会员功能目录）。改了即对档位下全部在期会员生效；不传即不变更
-	Features  *[]string `json:"features"`
-	SortOrder *int      `json:"sortOrder"`
+	Features *[]string `json:"features"`
+	// Perks 手填的补充权益标签（只用于会员页展示，与功能标识无关）；不传即不变更，传空数组即清空
+	Perks     *[]vipdomain.Perk `json:"perks"`
+	SortOrder *int              `json:"sortOrder"`
 }
 
 // AdminAppVipTiers GET /api/admin/apps/:appkey/vip/tiers
@@ -481,6 +483,7 @@ func (h *Handler) AdminSaveAppVipTier(c *gin.Context) {
 		Name:        req.Name,
 		Description: req.Description,
 		Features:    req.Features,
+		Perks:       req.Perks,
 		SortOrder:   req.SortOrder,
 	})
 	if err != nil {

@@ -154,12 +154,16 @@ async def save_tier(
     name: Annotated[str | None, Field(description="档位名称（新建必填）")] = None,
     description: Annotated[str | None, Field(description="说明")] = None,
     features: FeatureTags = None,
+    perks: Annotated[
+        list[dict[str, str]] | None,
+        Field(description="补充权益标签（只用于会员页展示，与功能标识无关），每项 {label, detail?}：最多 12 个、label ≤ 16 字、detail ≤ 60 字；不改留空，传空数组即清空。AI 优惠标签由计费设置自动生成，不用手填"),
+    ] = None,
     sort_order: Annotated[int | None, Field(description="排序，小的在前")] = None,
 ) -> Any:
-    """新建或修改会员档位。改 features 即对档位下全部在期会员立即生效（卖这个档位的套餐一起变），修改前先向用户说明影响人数（vip_tiers 的 members）。"""
+    """新建或修改会员档位。改 features 即对档位下全部在期会员立即生效（卖这个档位的套餐一起变），修改前先向用户说明影响人数（vip_tiers 的 members）。perks 只是展示用的补充权益标签。"""
     if tier_id == 0 and not (name or "").strip():
         raise ToolError("新建档位需要 name")
-    return await TIER_SAVE(appkey=app, body=body(id=tier_id, name=name, description=description, features=features, sortOrder=sort_order))
+    return await TIER_SAVE(appkey=app, body=body(id=tier_id, name=name, description=description, features=features, perks=perks, sortOrder=sort_order))
 
 
 @server.tool(**DESTRUCTIVE("vip"))
