@@ -75,6 +75,7 @@ export const PAYMENT_METHOD: Record<string, string> = {
   wallet: "钱包余额",
   usdt: "USDT",
   afdian: "爱发电",
+  douyinpay: "抖音支付",
   epay: "易支付",
   bank: "网银"
 };

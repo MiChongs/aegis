@@ -56,7 +56,8 @@ export function payMethodLabel(method: string): string {
     razorpay: "Razorpay",
     coinbase: "Coinbase Commerce",
     square: "Square",
-    afdian: "爱发电"
+    afdian: "爱发电",
+    douyinpay: "抖音支付"
   };
   return table[method?.toLowerCase()] ?? method;
 }
@@ -80,7 +81,8 @@ export function payBrandSlug(method: string, providerType?: string): string | un
     razorpay: "razorpay",
     coinbase: "coinbase",
     square: "square",
-    afdian: "afdian"
+    afdian: "afdian",
+    douyinpay: "tiktok"
   };
   const bySubType: Record<string, string> = {
     alipay: "alipay",
@@ -97,7 +99,13 @@ export function payTypeLabel(providerType?: string): string {
     wxpay: "微信支付",
     wechat: "微信支付",
     qqpay: "QQ 钱包",
-    bank: "网银"
+    bank: "网银",
+    // 抖音支付的付款方式
+    h5: "H5 支付",
+    native: "扫码支付",
+    app: "App 支付",
+    jsapi: "网页支付",
+    mini: "小程序支付"
   };
   return table[providerType?.toLowerCase() ?? ""] ?? "";
 }

@@ -11,6 +11,7 @@ import {
   siRazorpay,
   siSquare,
   siStripe,
+  siTiktok,
   siWechat
 } from "simple-icons";
 
@@ -52,6 +53,8 @@ const registry: Record<string, IconEntry> = {
   coinbase: siCoinbase,
   square: siSquare,
   afdian: siAfdian,
+  // 抖音支付：抖音与 TikTok 是同一个音符标，Simple Icons 只以 tiktok 收录
+  tiktok: siTiktok,
   bitcoin: siBitcoin,
   wallet: walletMark
 };
