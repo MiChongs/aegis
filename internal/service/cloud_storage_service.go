@@ -600,6 +600,9 @@ func (s *CloudStorageService) AdminUser(ctx context.Context, appID, userID int64
 	if err != nil {
 		return nil, err
 	}
+	for i := range collections {
+		collections[i].Allowed = plan.AllowsCollection(collections[i].Key)
+	}
 	return &CloudStorageAdminUser{
 		UserState:   *state,
 		Enabled:     cfg.Enabled,
