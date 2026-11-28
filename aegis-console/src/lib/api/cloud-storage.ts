@@ -46,6 +46,45 @@ export type CloudStorageCaps = {
   maxNamespaces: number;
 };
 
+/**
+ * 云服务档位（docs/cloud-service.md「档位」，后端 cloudstorage.Plan）。
+ *
+ * `plans` 按优先级排列：用户此刻持有的会员档位里排在最前面的那一档生效；
+ * `tierId` 为 0 的是免费档（只能有一个），没配免费档时用配置本身的基础档。
+ */
+export type CloudPlan = {
+  /** 会员档位 ID；0 = 免费档 */
+  tierId: number;
+  /** 留空时后端用档位名 */
+  name: string;
+  description?: string;
+  quotaBytes: number;
+  maxItemBytes: number;
+  maxItems: number;
+  maxRevisions: number;
+  trashRetentionDays: number;
+  syncEnabled: boolean;
+  maxDevices: number;
+  /** 同步记录（不含墓碑）上限 */
+  maxSyncRecords: number;
+  /** 历史类集合在云端保留的天数；0 = 永久 */
+  historyRetentionDays: number;
+  realtime: boolean;
+  /** 非实时档位的客户端轮询间隔（秒） */
+  pollSeconds: number;
+  handoff: boolean;
+  /** 可同步的集合；空 = 全部 */
+  collections: string[];
+};
+
+/** 生效档位：档位本身 + 会员档位名 + 是否当前档位。 */
+export type CloudPlanView = CloudPlan & {
+  tierName?: string;
+  current: boolean;
+  /** 用户行上有管理员配额覆盖（此时 quotaBytes 是覆盖值；管理端接口不填，按 quotaOverride 判断） */
+  override?: boolean;
+};
+
 export type CloudStorageConfig = {
   appid: number;
   enabled: boolean;
@@ -58,6 +97,8 @@ export type CloudStorageConfig = {
   trashRetentionDays: number;
   restrictNamespaces: boolean;
   namespaces: CloudNamespace[];
+  /** 云服务档位，按优先级排列；旧数据可能为 null */
+  plans?: CloudPlan[] | null;
   updatedBy?: string;
   updatedAt?: string;
   configured: boolean;
@@ -76,6 +117,8 @@ export type SaveCloudStorageConfigPayload = {
   trashRetentionDays: number;
   restrictNamespaces: boolean;
   namespaces: CloudNamespace[];
+  /** 省略时后端保留现有档位；给出即整体替换 */
+  plans?: CloudPlan[];
 };
 
 export type CloudNamespaceUsage = {
@@ -106,6 +149,12 @@ export type CloudUserState = {
   updatedBy?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** 同步记录占用（与条目共用配额；usedBytes 只是条目） */
+  syncBytes?: number;
+  syncRecords?: number;
+  lastSyncAt?: string | null;
+  /** 生效档位名 */
+  planName?: string;
 };
 
 export type CloudLimits = {
@@ -118,10 +167,89 @@ export type CloudLimits = {
   jsonWriteBytes: number;
 };
 
+/** 设备此刻在播放 / 阅读的内容。 */
+export type CloudSyncActivityState = "playing" | "paused" | "reading" | "idle";
+
+export type CloudSyncActivity = {
+  collection: string;
+  recordId?: string;
+  state: CloudSyncActivityState | string;
+  /** 各端约定的展示字段：title / subtitle / cover / progress / positionMs / durationMs */
+  payload?: Record<string, unknown> | null;
+  at: string;
+};
+
+/** 一台登记过的同步设备（后端 cloudstorage.SyncDevice）。 */
+export type CloudSyncDevice = {
+  deviceId: string;
+  name: string;
+  platform: string;
+  model: string;
+  os: string;
+  osVersion: string;
+  appVersion: string;
+  current?: boolean;
+  /** 3 分钟内有过心跳、拉取或上报 */
+  online: boolean;
+  lastSeenAt: string;
+  lastSyncAt?: string | null;
+  lastSeq: number;
+  activity?: CloudSyncActivity | null;
+  recordCount: number;
+  /** 这台设备写入的（未删除）记录按集合计数 */
+  collections: Record<string, number> | null;
+  createdAt: string;
+};
+
+export type CloudCollectionKind = "history" | "library" | "state";
+
+/** 一个集合的用量，带按设备的分布（不含墓碑）。 */
+export type CloudCollectionUsage = {
+  key: string;
+  name: string;
+  domain: string;
+  kind: CloudCollectionKind | string;
+  count: number;
+  bytes: number;
+  lastUpdatedAt?: string | null;
+  /** 设备号 → 条数 */
+  byDevice: Record<string, number> | null;
+  allowed: boolean;
+};
+
 export type CloudAdminUser = CloudUserState & {
   enabled: boolean;
   limits: CloudLimits;
   namespaces: CloudNamespaceUsage[];
+  /** 生效档位 */
+  plan?: CloudPlanView | null;
+  devices?: CloudSyncDevice[] | null;
+  /** 有记录的集合 */
+  collections?: CloudCollectionUsage[] | null;
+};
+
+/** 一条同步记录（后端 cloudstorage.SyncRecord）。墓碑 deleted 为真、没有 payload。 */
+export type CloudSyncRecord = {
+  collection: string;
+  id: string;
+  payload?: Record<string, unknown> | null;
+  /** 客户端修改时间（最后写入者胜的依据） */
+  updatedAt: string;
+  deleted: boolean;
+  deviceId?: string;
+  deviceName?: string;
+  seq: number;
+  size: number;
+  createdAt: string;
+};
+
+export type CloudSyncRecordParams = {
+  collection?: string;
+  domain?: string;
+  deviceId?: string;
+  keyword?: string;
+  page?: number;
+  limit?: number;
 };
 
 export type CloudDailyWrites = {
@@ -334,6 +462,24 @@ export function deleteCloudStorageUserItem(
     `${userBase(appKey, userId)}/items/${itemId}${buildQuery({ permanent: permanent ? "true" : undefined })}`,
     { method: "DELETE", token }
   );
+}
+
+export function listCloudStorageUserSyncRecords(
+  token: string,
+  appKey: string,
+  userId: number,
+  params?: CloudSyncRecordParams
+) {
+  return apiRequest<CloudPage<CloudSyncRecord>>(`${userBase(appKey, userId)}/sync/records${buildQuery(params ?? {})}`, {
+    token
+  });
+}
+
+export function removeCloudStorageUserDevice(token: string, appKey: string, userId: number, deviceId: string) {
+  return apiRequest<void>(`${userBase(appKey, userId)}/sync/devices/${encodeURIComponent(deviceId)}`, {
+    method: "DELETE",
+    token
+  });
 }
 
 export function linkCloudStorageUserItem(

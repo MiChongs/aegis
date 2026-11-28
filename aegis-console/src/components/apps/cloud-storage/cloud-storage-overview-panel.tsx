@@ -17,7 +17,9 @@ import {
 import { StatusDot } from "@/components/apps/app-config-primitives";
 import {
   NamespaceLabel,
+  PlanBadge,
   QuotaMeter,
+  cloudUsedBytes,
   describeTarget,
   formatBytes,
   formatDateTime
@@ -225,13 +227,14 @@ export function CloudStorageOverviewPanel({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 text-xs font-medium">
                         <span className="truncate">{user.nickname || user.account || `#${user.userId}`}</span>
+                        <PlanBadge name={user.planName} />
                         {user.frozen ? <Snowflake className="size-3 shrink-0 text-sky-500" aria-label="已冻结" /> : null}
                       </div>
                       <div className="mt-0.5 text-[11px] text-muted-foreground">
                         {user.itemCount} 个条目 · 最近写入 {formatDateTime(user.lastWriteAt)}
                       </div>
                     </div>
-                    <QuotaMeter used={user.usedBytes} quota={user.quotaBytes} className="w-36" />
+                    <QuotaMeter used={cloudUsedBytes(user)} quota={user.quotaBytes} className="w-36" />
                   </Link>
                 </li>
               ))}

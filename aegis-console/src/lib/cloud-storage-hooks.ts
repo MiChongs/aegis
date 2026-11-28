@@ -12,12 +12,15 @@ import {
   listCloudStorageUserItems,
   listCloudStorageUsers,
   purgeCloudStorageUser,
+  listCloudStorageUserSyncRecords,
   purgeExpiredCloudTrash,
+  removeCloudStorageUserDevice,
   restoreCloudStorageUserItem,
   rollbackCloudStorageUserItem,
   saveCloudStorageConfig,
   saveCloudStorageUser,
   type CloudItemParams,
+  type CloudSyncRecordParams,
   type CloudUserParams,
   type SaveCloudStorageConfigPayload,
   type SaveCloudUserPayload
@@ -39,7 +42,8 @@ const KEY = {
   user: "admin-cloud-storage-user",
   items: "admin-cloud-storage-items",
   item: "admin-cloud-storage-item",
-  revisions: "admin-cloud-storage-revisions"
+  revisions: "admin-cloud-storage-revisions",
+  syncRecords: "admin-cloud-storage-sync-records"
 } as const;
 
 const CLOUD_SCOPE = Object.values(KEY);
@@ -216,4 +220,41 @@ export function useCloudStorageItemActions(appKey?: string | null, userId?: numb
       linkCloudStorageUserItem(token as string, appKey as string, userId as number, itemId, revision)
   });
   return { rollback, restore, remove, link };
+}
+
+// ── 同步（云服务） ──
+
+export function useCloudStorageUserSyncRecordsQuery(
+  appKey?: string | null,
+  userId?: number | null,
+  params?: CloudSyncRecordParams
+) {
+  const token = useAdminToken();
+  return useQuery({
+    queryKey: [
+      KEY.syncRecords,
+      token,
+      appKey,
+      userId,
+      params?.collection ?? "",
+      params?.domain ?? "",
+      params?.deviceId ?? "",
+      params?.keyword ?? "",
+      params?.page ?? 1,
+      params?.limit ?? 20
+    ],
+    queryFn: () => listCloudStorageUserSyncRecords(token as string, appKey as string, userId as number, params),
+    enabled: Boolean(token && appKey && userId),
+    placeholderData: (previous) => previous
+  });
+}
+
+export function useRemoveCloudStorageUserDeviceMutation(appKey?: string | null, userId?: number | null) {
+  const token = useAdminToken();
+  const invalidate = useInvalidateCloudScope();
+  return useMutation({
+    mutationFn: (deviceId: string) =>
+      removeCloudStorageUserDevice(token as string, appKey as string, userId as number, deviceId),
+    onSuccess: invalidate
+  });
 }

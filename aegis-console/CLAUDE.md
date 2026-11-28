@@ -1402,11 +1402,13 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 | `components/apps/cloud-storage/app-cloud-storage-panel.tsx` | 骨架 + 概览 / 用户 / 配置三个视图的内部切换 |
 | `components/apps/cloud-storage/cloud-storage-overview-panel.tsx` | 人数 / 已用空间 / 条目 / 今日写入 + 写入位置 + 写入趋势 + 命名空间占用 + 用量最高的用户 |
 | `components/apps/cloud-storage/cloud-storage-users-panel.tsx` | 用过云存储的用户：用量条、条目 / 回收站、冻结；点进用户详情的「云存储」页签 |
-| `components/apps/cloud-storage/cloud-storage-config-panel.tsx` | 开关与存储配置 + 配额与限制 + 命名空间目录 + 手动清理过期回收站 |
-| `components/apps/cloud-storage/cloud-storage-shared.tsx` | 字节格式化（1024 进位）、配额条、提供商名称、编码与修订来源文案 |
+| `components/apps/cloud-storage/cloud-storage-config-panel.tsx` | 开关与存储配置 + 配额与限制（基础档）+ 档位 + 命名空间目录 + 手动清理过期回收站 |
+| `components/apps/cloud-storage/cloud-storage-plans-editor.tsx` | 云服务档位编辑器：拖动 / 上下移动即优先级，按会员档位选 tierId，空间 / 同步 / 集合多选 |
+| `components/apps/cloud-storage/cloud-storage-shared.tsx` | 字节格式化（1024 进位）、配额条、提供商名称、编码与修订来源文案、同步集合目录、档位徽标 |
 | `components/users/detail/user-cloud-tab.tsx` | 用户详情「云存储」页签：配额覆盖 / 冻结 / 备注、条目浏览、内容与修订、回滚 / 删除 / 恢复、清空 |
+| `components/users/detail/user-cloud-sync.tsx` | 同一页签里的云服务部分：生效档位与同步用量、同步设备（正在播放、移除）、各集合与按设备分布、同步记录（含墓碑） |
 
-三条硬约束：
+六条硬约束：
 
 1. **单个用户的管理只在用户详情里。** 区块里的「用户」视图只列人和用量，条目与修订在
    `/app-users/{appKey}/{userId}?tab=cloud`。管理员处理一个人的问题时，资料、钱包、云存储在同一页。
@@ -1415,7 +1417,14 @@ Excel 导出走 `fetch` 拿 blob 再触发下载：令牌只在 Authorization �
 3. **存储配置下拉按名称去重。** 后端按名称解析（应用级优先于平台级），同名的两项是同一个选择；
    目标存储是公开访问时，概览与配置两处都要提示。
 
-写入、修订、配额与回收站的语义全部由后端决定，见 [docs/cloud-storage.md](../docs/cloud-storage.md)。
+4. **档位顺序就是优先级。** 与存储池成员同一条约定，不另给优先级输入框；免费档（`tierId: 0`）只能有一个。
+   保存时总是带上 `plans`（后端约定：不带即保留现有档位、带了即整体替换）。
+5. **用量 = 条目 + 同步记录。** 管理端账目的 `usedBytes` 只是条目，配额条与「已用空间」一律用 `cloudUsedBytes()`。
+6. **集合目录是后端 `SyncCollections` 的镜像。** 管理端配置接口不下发目录，`CLOUD_SYNC_COLLECTIONS` 在
+   `cloud-storage-shared.tsx` 里手抄一份；后端加集合时这里跟着加。账目接口的 `allowed` 不可信（管理端不填），按生效档位的 `collections` 自己算。
+
+写入、修订、配额与回收站的语义全部由后端决定，见 [docs/cloud-storage.md](../docs/cloud-storage.md)；
+档位、同步与设备见 [docs/cloud-service.md](../docs/cloud-service.md)。
 
 ## 存储中心（/storage）
 

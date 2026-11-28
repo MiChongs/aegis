@@ -28,6 +28,7 @@ import {
   MiB,
   SOURCE_LABELS,
   bytesToMBInput,
+  cloudUsedBytes,
   formatBytes,
   mbInputToBytes,
   usagePercent
@@ -92,6 +93,15 @@ import {
   type Column,
   type Tone
 } from "./kit";
+import {
+  CloudCollectionsSection,
+  CloudDevicesSection,
+  CloudPlanSection,
+  CloudSyncRecordsSection,
+  hasSyncData,
+  planQuotaHint,
+  type SyncFilter
+} from "./user-cloud-sync";
 
 type Status = NonNullable<CloudItemParams["status"]>;
 
@@ -117,7 +127,8 @@ const BAR_TONE: Record<Tone, string> = {
 /**
  * 云存储：这个用户在应用里存了什么、占了多少，以及管理员能对它做的事。
  *
- *   用量         已用空间、条目、回收站、修订总数
+ *   用量         已用空间（条目 + 同步记录）、条目、回收站、修订总数
+ *   云服务       生效档位、同步用量、设备、各集合与同步记录（见 user-cloud-sync.tsx）
  *   空间与权限   配额覆盖、冻结（只读）与备注
  *   命名空间     各命名空间的用量，点一下即按它筛选条目
  *   条目         按状态、命名空间、键筛选；详情里看内容与修订，回滚 / 删除 / 恢复 / 生成下载链接
@@ -130,6 +141,7 @@ export function UserCloudTab({ appKey, userId }: { appKey: string; userId: numbe
   const userQuery = useCloudStorageUserQuery(appKey, userId);
   const state = userQuery.data;
   const [namespace, setNamespace] = useState("");
+  const [syncFilter, setSyncFilter] = useState<SyncFilter>({ collection: "", deviceId: "" });
 
   if (userQuery.isLoading) {
     return <CloudSkeleton />;
@@ -147,8 +159,10 @@ export function UserCloudTab({ appKey, userId }: { appKey: string; userId: numbe
     );
   }
 
-  const percent = usagePercent(state.usedBytes, state.quotaBytes);
+  const used = cloudUsedBytes(state);
+  const percent = usagePercent(used, state.quotaBytes);
   const tone = usageTone(percent);
+  const synced = hasSyncData(state);
 
   return (
     <div className="flex flex-col gap-5">
@@ -164,7 +178,7 @@ export function UserCloudTab({ appKey, userId }: { appKey: string; userId: numbe
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
         <MetricCard
           label="已用空间"
-          value={formatBytes(state.usedBytes)}
+          value={formatBytes(used)}
           sub={`共 ${formatBytes(state.quotaBytes)}，已用 ${percent}%`}
           icon={HardDrive}
           tone={tone}
@@ -192,7 +206,17 @@ export function UserCloudTab({ appKey, userId }: { appKey: string; userId: numbe
         />
       </div>
 
+      <CloudPlanSection state={state} />
+
       <AccountSection appKey={appKey} userId={userId} state={state} />
+
+      {synced ? (
+        <>
+          <CloudDevicesSection appKey={appKey} userId={userId} state={state} filter={syncFilter} onFilter={setSyncFilter} />
+          <CloudCollectionsSection state={state} filter={syncFilter} onFilter={setSyncFilter} />
+          <CloudSyncRecordsSection appKey={appKey} userId={userId} state={state} filter={syncFilter} onFilter={setSyncFilter} />
+        </>
+      ) : null}
 
       {state.namespaces.length ? (
         <NamespaceSection
@@ -310,6 +334,8 @@ function AccountSection({ appKey, userId, state }: { appKey: string; userId: num
     current.note !== seeded.note;
   const draftQuota = current.customQuota ? mbInputToBytes(current.quotaMB) : Number.NaN;
   const quotaInvalid = current.customQuota && Number.isNaN(draftQuota);
+  // 不覆盖时沿用的是生效档位的配额（没配档位时就是应用的基础档）。
+  const planQuota = state.plan?.quotaBytes ?? state.limits.quotaBytes;
 
   const save = async () => {
     let quotaBytes: number | null = null;
@@ -337,7 +363,7 @@ function AccountSection({ appKey, userId, state }: { appKey: string; userId: num
   return (
     <Section
       title="空间与权限"
-      description="配额覆盖应用默认值；冻结后客户端只读，管理端操作不受影响"
+      description="配额覆盖档位配额；冻结后客户端只读，管理端操作不受影响"
       icon={HardDrive}
       tone="primary"
       actions={
@@ -359,7 +385,7 @@ function AccountSection({ appKey, userId, state }: { appKey: string; userId: num
               ? `最近由 ${state.updatedBy} 于 ${formatDateTime(state.updatedAt)} 修改`
               : dirty
                 ? "有未保存的修改"
-                : "尚未单独设置，沿用应用默认"}
+                : "尚未单独设置，沿用档位"}
           </span>
           <div className="flex items-center gap-2">
             {dirty ? (
@@ -377,16 +403,16 @@ function AccountSection({ appKey, userId, state }: { appKey: string; userId: num
       }
     >
       <div className="flex flex-col gap-5">
-        <QuotaBar used={state.usedBytes} quota={state.quotaBytes} />
+        <QuotaBar used={cloudUsedBytes(state)} quota={state.quotaBytes} />
         <InfoGrid
           columns={3}
           items={[
             {
               label: "生效配额",
               value: formatBytes(state.quotaBytes),
-              hint: state.quotaOverride ? "管理员覆盖" : "应用默认"
+              hint: planQuotaHint(state)
             },
-            { label: "应用默认配额", value: formatBytes(state.limits.quotaBytes) },
+            { label: "档位配额", value: formatBytes(planQuota) },
             { label: "单条上限", value: formatBytes(state.limits.maxItemBytes) },
             {
               label: "最近写入",
@@ -406,7 +432,7 @@ function AccountSection({ appKey, userId, state }: { appKey: string; userId: num
           <div className="flex flex-col gap-3 rounded-xl border p-3.5">
             <SwitchLine
               label="自定义配额"
-              hint={current.customQuota ? "覆盖应用默认配额" : `沿用应用默认 ${formatBytes(state.limits.quotaBytes)}`}
+              hint={current.customQuota ? "覆盖档位配额" : `沿用档位配额 ${formatBytes(planQuota)}`}
               checked={current.customQuota}
               onChange={(value) => patch({ customQuota: value })}
             />
@@ -427,7 +453,7 @@ function AccountSection({ appKey, userId, state }: { appKey: string; userId: num
                 </div>
                 {quotaInvalid ? (
                   <span className="text-xs text-red-600 dark:text-red-400">配额需为正数</span>
-                ) : state.usedBytes > draftQuota ? (
+                ) : cloudUsedBytes(state) > draftQuota ? (
                   <span className="text-xs text-amber-600 dark:text-amber-400">低于已用空间，之后的写入会被拒绝</span>
                 ) : null}
               </div>
@@ -1264,6 +1290,9 @@ function DangerSection({ appKey, userId, state }: { appKey: string; userId: numb
   const [typed, setTyped] = useState("");
   const expected = state.account || String(userId);
   const count = state.itemCount + state.trashCount;
+  const syncRecords = state.syncRecords ?? 0;
+  const devices = state.devices?.length ?? 0;
+  const empty = count === 0 && syncRecords === 0 && devices === 0;
 
   const purge = async () => {
     try {
@@ -1282,14 +1311,15 @@ function DangerSection({ appKey, userId, state }: { appKey: string; userId: numb
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="text-sm font-medium">清空云存储</span>
           <span className="text-xs leading-5 text-muted-foreground">
-            永久删除全部 {formatInt(count)} 个条目与 {formatInt(state.revisionCount)} 个修订，存储桶中的对象一并删除。配额与冻结设置保留。删除用户前建议先执行此操作。
+            永久删除全部 {formatInt(count)} 个条目、{formatInt(state.revisionCount)} 个修订与 {formatInt(syncRecords)}{" "}
+            条同步记录，存储桶中的对象一并删除，同步设备全部移除。配额与冻结设置保留。删除用户前建议先执行此操作。
           </span>
         </div>
         <Button
           size="sm"
           variant="destructive"
           className="self-start sm:self-auto"
-          disabled={count === 0}
+          disabled={empty}
           onClick={() => {
             setTyped("");
             setOpen(true);
@@ -1305,8 +1335,8 @@ function DangerSection({ appKey, userId, state }: { appKey: string; userId: numb
           <AlertDialogHeader>
             <AlertDialogTitle>清空云存储</AlertDialogTitle>
             <AlertDialogDescription>
-              永久删除该用户的 {formatInt(count)} 个条目及全部 {formatInt(state.revisionCount)} 个修订（共{" "}
-              {formatBytes(state.usedBytes)}），无法恢复。
+              永久删除该用户的 {formatInt(count)} 个条目、全部 {formatInt(state.revisionCount)} 个修订与{" "}
+              {formatInt(syncRecords)} 条同步记录（共 {formatBytes(cloudUsedBytes(state))}），移除 {formatInt(devices)} 台设备，无法恢复。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="flex flex-col gap-1.5">

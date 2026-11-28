@@ -4,7 +4,12 @@ import { useState } from "react";
 import Link from "next/link";
 import { ChevronRight, Snowflake, Users } from "lucide-react";
 import { SectionCard } from "@/components/apps/app-config-primitives";
-import { QuotaMeter, formatDateTime } from "@/components/apps/cloud-storage/cloud-storage-shared";
+import {
+  PlanBadge,
+  QuotaMeter,
+  cloudUsedBytes,
+  formatDateTime
+} from "@/components/apps/cloud-storage/cloud-storage-shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -127,6 +132,7 @@ export function CloudStorageUsersPanel({ appKey }: { appKey: string }) {
                   <TableCell className="text-xs">
                     <Link href={href} className="flex items-center gap-1.5 font-medium hover:underline">
                       <span className="truncate">{user.nickname || user.account || `#${user.userId}`}</span>
+                      <PlanBadge name={user.planName} />
                       {user.frozen ? (
                         <Badge variant="info" size="sm" className="gap-1 font-normal">
                           <Snowflake className="size-3" />
@@ -145,10 +151,13 @@ export function CloudStorageUsersPanel({ appKey }: { appKey: string }) {
                     </p>
                   </TableCell>
                   <TableCell>
-                    <QuotaMeter used={user.usedBytes} quota={user.quotaBytes} />
+                    <QuotaMeter used={cloudUsedBytes(user)} quota={user.quotaBytes} />
                   </TableCell>
                   <TableCell className="text-right font-mono text-xs tabular-nums">
                     {user.itemCount} / {user.trashCount}
+                    {user.syncRecords ? (
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">同步 {user.syncRecords} 条</p>
+                    ) : null}
                   </TableCell>
                   <TableCell className="text-right font-mono text-xs tabular-nums">{user.revisionCount}</TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground">

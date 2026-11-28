@@ -1,9 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Cloud, Eraser, FolderTree, Gauge, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { FieldGroup, NumberField, SectionCard, StatusDot, SwitchRow } from "@/components/apps/app-config-primitives";
+import {
+  CloudPlansSection,
+  FREE_TIER_ID,
+  planDraftsToPayload,
+  seedPlanDrafts,
+  type PlanDraft
+} from "@/components/apps/cloud-storage/cloud-storage-plans-editor";
 import {
   bytesToMBInput,
   describeTarget,
@@ -22,6 +29,7 @@ import {
   usePurgeExpiredCloudTrashMutation,
   useSaveCloudStorageConfigMutation
 } from "@/lib/cloud-storage-hooks";
+import { useAdminVipTiersQuery } from "@/lib/vip-hooks";
 
 /** 与后端 cloudstorage.ValidNamespace 同一条规则。 */
 const NAMESPACE_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -42,6 +50,7 @@ type Draft = {
   trashRetentionDays: string;
   restrictNamespaces: boolean;
   namespaces: NamespaceDraft[];
+  plans: PlanDraft[];
 };
 
 let uidSeed = 0;
@@ -64,7 +73,8 @@ function seedDraft(scope: string, config?: CloudStorageConfig): Draft {
       key: item.key,
       name: item.name,
       description: item.description ?? ""
-    }))
+    })),
+    plans: seedPlanDrafts(config?.plans)
   };
 }
 
@@ -72,10 +82,14 @@ export function CloudStorageConfigPanel({ appKey }: { appKey: string }) {
   const configQuery = useCloudStorageConfigQuery(appKey);
   const saveMutation = useSaveCloudStorageConfigMutation(appKey);
   const purgeMutation = usePurgeExpiredCloudTrashMutation(appKey);
+  const tiersQuery = useAdminVipTiersQuery(appKey);
+  const tiers = [...(tiersQuery.data ?? [])].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
   const [draft, setDraft] = useState<Draft | null>(null);
 
   const config = configQuery.data;
-  const current = draft?.scope === appKey ? draft : seedDraft(appKey, config);
+  // 播种结果按服务端数据记住：档位列表的拖动排序按对象身份找行，每次渲染都新建一份会让拖到一半的行对不上。
+  const seeded = useMemo(() => seedDraft(appKey, config), [appKey, config]);
+  const current = draft?.scope === appKey ? draft : seeded;
   const patch = (changes: Partial<Draft>) => setDraft({ ...current, ...changes, scope: appKey });
   const patchNamespace = (uid: string, changes: Partial<NamespaceDraft>) =>
     patch({ namespaces: current.namespaces.map((item) => (item.uid === uid ? { ...item, ...changes } : item)) });
@@ -115,6 +129,13 @@ export function CloudStorageConfigPanel({ appKey }: { appKey: string }) {
       toast.error("限定命名空间时目录不能为空");
       return;
     }
+    const planResult = planDraftsToPayload(current.plans, (tierId) =>
+      tierId === FREE_TIER_ID ? "免费" : (tiers.find((tier) => tier.id === tierId)?.name ?? `档位 #${tierId}`)
+    );
+    if ("error" in planResult) {
+      toast.error(planResult.error);
+      return;
+    }
     try {
       await saveMutation.mutateAsync({
         enabled: current.enabled,
@@ -129,7 +150,8 @@ export function CloudStorageConfigPanel({ appKey }: { appKey: string }) {
           key: item.key.trim(),
           name: item.name.trim() || item.key.trim(),
           description: item.description.trim() || undefined
-        }))
+        })),
+        plans: planResult.plans
       });
       toast.success("云存储配置已保存");
       setDraft(null);
@@ -260,6 +282,21 @@ export function CloudStorageConfigPanel({ appKey }: { appKey: string }) {
           />
         </div>
       </SectionCard>
+
+      <CloudPlansSection
+        plans={current.plans}
+        onChange={(plans) => patch({ plans })}
+        tiers={tiers}
+        tiersError={tiersQuery.isError}
+        caps={caps}
+        base={{
+          quotaBytes: mbInputToBytes(current.quotaMB) || 0,
+          maxItemBytes: mbInputToBytes(current.maxItemMB) || 0,
+          maxItems: Number(current.maxItems) || 0,
+          maxRevisions: Number(current.maxRevisions) || 0,
+          trashRetentionDays: Number(current.trashRetentionDays) || 0
+        }}
+      />
 
       <SectionCard
         icon={<FolderTree className="size-4" />}
