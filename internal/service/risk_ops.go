@@ -15,6 +15,7 @@ import (
 
 	firewalldomain "aegis/internal/domain/firewall"
 	userdomain "aegis/internal/domain/user"
+	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
 	riskevents "aegis/services/risk/events"
 
@@ -43,7 +44,8 @@ type riskOpsStore interface {
 }
 
 type riskUserPurger interface {
-	PurgeUser(ctx context.Context, appID int64, userID int64) error
+	// PurgeUsers 一批账号一次删（一条查询取登录名、每 100 个一个删除事务），返回实际删掉的 id
+	PurgeUsers(ctx context.Context, appID int64, userIDs []int64) ([]int64, error)
 }
 
 // SetOps 接账号处置需要的库查询与删号
@@ -504,26 +506,37 @@ func (s *RiskService) RiskOpsPurge(ctx context.Context, op RiskOpsOperator, in R
 			}
 		}
 	}
+	// 整批一次删：取登录名一条查询、一个删除事务（级联按外键索引走），不再每个账号各走一遍
+	existing := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := known[id]; ok {
+			existing = append(existing, id)
+		}
+	}
+	// 这条路径在删完之后自己带着设备拉黑参数通知风控收尾，PurgeUsers 的通用收尾不再单独通知
+	purged, purgeErr := purger.PurgeUsers(withRiskForgetHandled(ctx), in.AppID, existing)
+	done := make(map[int64]struct{}, len(purged))
+	for _, id := range purged {
+		done[id] = struct{}{}
+	}
 	var deleted []int64
 	var block []string
 	for _, id := range ids {
 		u, ok := known[id]
 		r := RiskOpsUserResult{UserID: id, Name: opsName(u, id), OK: true}
-		if !ok {
+		switch _, gone := done[id]; {
+		case gone:
+			r.Done = "已删除"
+			res.Deleted++
+			deleted = append(deleted, id)
+			block = append(block, devices[id]...)
+		case !ok:
 			r.OK, r.Error = false, "账号不存在或已删除"
-			res.Users = append(res.Users, r)
-			continue
+		case purgeErr != nil:
+			r.OK, r.Error = false, purgeErr.Error()
+		default:
+			r.OK, r.Error = false, "账号不存在或已删除"
 		}
-		// 这条路径在删完之后自己带着设备拉黑参数通知风控收尾，PurgeUser 的通用收尾不再单独通知
-		if err := purger.PurgeUser(withRiskForgetHandled(ctx), in.AppID, id); err != nil {
-			r.OK, r.Error = false, err.Error()
-			res.Users = append(res.Users, r)
-			continue
-		}
-		r.Done = "已删除"
-		res.Deleted++
-		deleted = append(deleted, id)
-		block = append(block, devices[id]...)
 		res.Users = append(res.Users, r)
 	}
 	if len(deleted) > 0 && s.Enabled() {
@@ -547,7 +560,7 @@ func (s *RiskService) RiskOpsPurge(ctx context.Context, op RiskOpsOperator, in R
 			res.Problems = append(res.Problems, out.Problems...)
 		}
 	}
-	// 主服务侧计数在每个账号的 PurgeUser 收尾里已经更新；排行榜缓存批量过程中节流，这里兜底再清一次
+	// 主服务侧计数在 PurgeUsers 的收尾里已经更新；排行榜缓存批量过程中节流，这里兜底再清一次
 	s.mu.RLock()
 	counters := s.counters
 	s.mu.RUnlock()
@@ -799,11 +812,19 @@ var riskForgetSlots = make(chan struct{}, 4)
 // PurgeHook 挂到 UserService.AddPurgeHook：任何路径删号（管理员删除、批量删除、账号注销）之后通知风控收尾——
 // 关系图删掉账号与只属于它的登录名、手机号、设备等，设备与 IP 按剩下的使用者重写，图特征缓存与滑窗计数回退，待复核单结案。
 // 通知在后台进行，不拖慢删号；风控暂时不可用时由风控侧的已删除账号清扫（服务启动时与每日回灌之后）补上。
-func (s *RiskService) PurgeHook(ctx context.Context, appID, userID int64, _ string) func(context.Context) {
+// 一批删号只发一次 subjects/forget。
+func (s *RiskService) PurgeHook(ctx context.Context, appID int64, _ []pgrepo.PurgeTarget) func(context.Context, []pgrepo.PurgeTarget) {
 	if !s.Enabled() || ctx.Value(riskForgetHandledKey{}) != nil {
 		return nil
 	}
-	return func(ctx context.Context) {
+	return func(ctx context.Context, deleted []pgrepo.PurgeTarget) {
+		if len(deleted) == 0 {
+			return
+		}
+		userIDs := make([]int64, len(deleted))
+		for i, t := range deleted {
+			userIDs[i] = t.UserID
+		}
 		bg := context.WithoutCancel(ctx)
 		go func() {
 			riskForgetSlots <- struct{}{}
@@ -815,14 +836,14 @@ func (s *RiskService) PurgeHook(ctx context.Context, appID, userID int64, _ stri
 				Problems     []string `json:"problems"`
 			}
 			err := s.adminDo(cctx, http.MethodPost, "subjects/forget", map[string]any{
-				"appId": appID, "userIds": []int64{userID}, "blockDevices": []string{}, "note": "账号在主服务删除",
+				"appId": appID, "userIds": userIDs, "blockDevices": []string{}, "note": "账号在主服务删除",
 			}, "aegis-server", &out)
 			if err != nil {
-				s.log.Warn("删号后风控收尾没有完成，风控侧清扫会补上", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.Error(err))
+				s.log.Warn("删号后风控收尾没有完成，风控侧清扫会补上", zap.Int64("appid", appID), zap.Int64s("userIds", userIDs), zap.Error(err))
 				return
 			}
 			if len(out.Problems) > 0 {
-				s.log.Warn("删号后风控收尾有问题", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.Strings("problems", out.Problems))
+				s.log.Warn("删号后风控收尾有问题", zap.Int64("appid", appID), zap.Int64s("userIds", userIDs), zap.Strings("problems", out.Problems))
 			}
 		}()
 	}

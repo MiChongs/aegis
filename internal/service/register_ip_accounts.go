@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"aegis/internal/domain/regip"
+	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 
 	"go.uber.org/zap"
@@ -30,30 +31,51 @@ type RegisterIPSubject struct {
 	City     string
 }
 
-// PrepareUserPurge 删号前取台账；返回删号成功后执行的收尾
-func (s *RegisterIPService) PrepareUserPurge(ctx context.Context, appID, userID int64) func(context.Context) {
-	if s == nil || s.pg == nil {
+// PrepareUsersPurge 删号前一次取整批账号的台账；返回删号成功后执行的收尾（只处理真正删掉的账号）
+func (s *RegisterIPService) PrepareUsersPurge(ctx context.Context, appID int64, targets []pgrepo.PurgeTarget) func(context.Context, []pgrepo.PurgeTarget) {
+	if s == nil || s.pg == nil || len(targets) == 0 {
 		return nil
 	}
-	refs, err := s.pg.RegisterIPLedgerOfUsers(ctx, appID, []int64{userID})
+	userIDs := make([]int64, len(targets))
+	for i, t := range targets {
+		userIDs[i] = t.UserID
+	}
+	refs, err := s.pg.RegisterIPLedgerOfUsers(ctx, appID, userIDs)
 	if err != nil || len(refs) == 0 {
 		return nil
 	}
-	return func(ctx context.Context) {
-		var ids []int64
+	return func(ctx context.Context, deleted []pgrepo.PurgeTarget) {
+		done := make(map[int64]struct{}, len(deleted))
+		for _, t := range deleted {
+			done[t.UserID] = struct{}{}
+		}
+		var ids, users []int64
 		subjects := make([]RegisterIPSubject, 0, len(refs))
 		for _, r := range refs {
+			if _, ok := done[r.UserID]; !ok {
+				continue
+			}
 			if !r.Released {
 				ids = append(ids, r.ID)
 			}
+			users = append(users, r.UserID)
 			subjects = append(subjects, RegisterIPSubject{IP: r.IP, Device: r.Device, Country: r.Country, Province: r.Province, City: r.City})
 		}
+		if len(subjects) == 0 {
+			return
+		}
 		if _, err := s.pg.ReleaseRegisterIPLedgerIDs(ctx, ids); err != nil {
-			s.log.Warn("删号后注册台账没有标为已解除", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.Error(err))
+			s.log.Warn("删号后注册台账没有标为已解除", zap.Int64("appid", appID), zap.Int64s("userIds", users), zap.Error(err))
 		}
 		n := s.ClearSubjects(ctx, appID, subjects, false)
+		extra := map[string]any{"countersCleared": n, "ledgerReleased": len(ids)}
+		if len(users) == 1 {
+			extra["userId"] = users[0]
+		} else {
+			extra["userIds"] = users
+		}
 		s.events.Enqueue(regip.Event{AppID: appID, Kind: regip.EventReleased, At: s.now(), Operator: "账号删除",
-			Detail: "账号已删除，注册计数按台账重算", Extra: map[string]any{"userId": userID, "countersCleared": n, "ledgerReleased": len(ids)}})
+			Detail: "账号已删除，注册计数按台账重算", Extra: extra})
 	}
 }
 

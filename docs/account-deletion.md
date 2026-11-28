@@ -34,8 +34,10 @@
 
 1. 向在线设备推 `account.deleted`，然后吊销全部访问会话、刷新令牌与第三方（OAuth2）授权。
 2. 清空用户云存储（失败只记日志）。
-3. `UserService.PurgeUser`：删 TOTP / 恢复码、删 `users` 行（关联表 CASCADE；订单、退款、审计日志 `SET NULL` 留存），
+3. `UserService.PurgeUser`（即 `PurgeUsers` 删一个）：删 `users` 行（TOTP、恢复码等关联表 CASCADE；订单、退款、审计日志 `SET NULL` 留存），
    清缓存与搜索索引，触发插件钩子 `user.onDeleted`。管理员「删除用户」也走这一条。
+   每个从 `users` 级联下去的外键列都有以它开头的索引（迁移 `000179_fk_index_*`，`TestPurgeUsersIntegration` 守门），
+   级联删除按索引查子表；新加引用 `users` 的外键时要一起建索引，否则测试会失败。
 4. `reregisterDays > 0` 时写墓碑：账号名、邮箱、手机号的 HMAC-SHA256 摘要（密钥为平台主密钥）+ 打码提示，
    期满前三种注册（密码、短信、第三方）都会被 40918 拦下。
 5. 申请记为 completed，给绑定邮箱发最后一封告知信。

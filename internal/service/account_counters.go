@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	pgrepo "aegis/internal/repository/postgres"
 	redisrepo "aegis/internal/repository/redis"
 
 	"go.uber.org/zap"
@@ -38,30 +39,37 @@ func NewAccountCounters(log *zap.Logger, registerIP *RegisterIPService, loginGua
 		rankLast: map[int64]time.Time{}}
 }
 
-// PurgeHook 挂到 UserService.AddPurgeHook：删号前取注册台账，删号后各计数收尾
-func (c *AccountCounters) PurgeHook(ctx context.Context, appID, userID int64, account string) func(context.Context) {
+// PurgeHook 挂到 UserService.AddPurgeHook：删号前一次取整批的注册台账，删号后各计数收尾
+func (c *AccountCounters) PurgeHook(ctx context.Context, appID int64, targets []pgrepo.PurgeTarget) func(context.Context, []pgrepo.PurgeTarget) {
 	if c == nil {
 		return nil
 	}
-	var regAfter func(context.Context)
+	var regAfter func(context.Context, []pgrepo.PurgeTarget)
 	if c.registerIP != nil {
-		regAfter = c.registerIP.PrepareUserPurge(ctx, appID, userID)
+		regAfter = c.registerIP.PrepareUsersPurge(ctx, appID, targets)
 	}
-	return func(ctx context.Context) {
+	return func(ctx context.Context, deleted []pgrepo.PurgeTarget) {
+		if len(deleted) == 0 {
+			return
+		}
 		if regAfter != nil {
-			regAfter(ctx)
+			regAfter(ctx, deleted)
 		}
-		if c.loginGuard != nil {
-			c.loginGuard.ResetAccount(ctx, appID, account, userID)
-		}
-		if c.realtime != nil {
-			if _, err := c.realtime.RemoveUserConnections(ctx, appID, userID); err != nil {
-				c.log.Warn("删号后在线连接没有清掉", zap.Int64("appid", appID), zap.Int64("userId", userID), zap.Error(err))
+		ids := make([]int64, len(deleted))
+		for i, t := range deleted {
+			ids[i] = t.UserID
+			if c.loginGuard != nil {
+				c.loginGuard.ResetAccount(ctx, appID, t.Account, t.UserID)
+			}
+			if c.realtime != nil {
+				if _, err := c.realtime.RemoveUserConnections(ctx, appID, t.UserID); err != nil {
+					c.log.Warn("删号后在线连接没有清掉", zap.Int64("appid", appID), zap.Int64("userId", t.UserID), zap.Error(err))
+				}
 			}
 		}
 		c.clearRanking(ctx, appID, false)
 		if c.risk != nil {
-			c.risk.forgetScoreCache(ctx, appID, []int64{userID})
+			c.risk.forgetScoreCache(ctx, appID, ids)
 		}
 	}
 }

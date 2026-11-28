@@ -1775,29 +1775,91 @@ func (r *Repository) DeleteApp(ctx context.Context, appID int64) error {
 	return nil
 }
 
-// DeleteUserByApp 硬删除指定应用下的用户（CASCADE 会清理关联表）
-// DeleteUserByApp 删除用户行，关联表随外键 CASCADE / SET NULL 清理。
-// 工单与会话留档（提单人置空，见迁移 000151），但提单时留下的联系方式属于这个人的个人信息，
-// 与删行放在同一事务里清空，避免账号注销后邮箱、手机号仍留在工单上。
+// PurgeTarget 将被删除的账号（删之前取出登录名，给各模块收尾用）
+type PurgeTarget struct {
+	UserID  int64
+	Account string
+}
+
+// PurgeTargets 一次查出这些账号里仍存在于该应用的部分（按 id 升序）
+func (r *Repository) PurgeTargets(ctx context.Context, appID int64, userIDs []int64) ([]PurgeTarget, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx, `SELECT id, COALESCE(account, '') FROM users WHERE appid = $1 AND id = ANY($2) ORDER BY id`, appID, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]PurgeTarget, 0, len(userIDs))
+	for rows.Next() {
+		var t PurgeTarget
+		if err := rows.Scan(&t.UserID, &t.Account); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// DeleteUserByApp 删除一个用户，见 DeleteUsersByIDs
 func (r *Repository) DeleteUserByApp(ctx context.Context, appID int64, userID int64) error {
-	tx, err := r.pool.Begin(ctx)
+	deleted, err := r.DeleteUsersByIDs(ctx, appID, []int64{userID})
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // 提交后回滚是空操作
-	if _, err := tx.Exec(ctx,
-		`UPDATE tickets SET requester_contact = '' WHERE requester_user_id = $1 AND requester_contact <> ''`,
-		userID); err != nil {
-		return fmt.Errorf("清理工单联系方式: %w", err)
-	}
-	tag, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1 AND appid = $2`, userID, appID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
+	if len(deleted) == 0 {
 		return fmt.Errorf("用户不存在或已删除")
 	}
-	return tx.Commit(ctx)
+	return nil
+}
+
+// DeleteUsersByIDs 在一个事务里删除一批用户行，返回实际删掉的 id。关联表随外键 CASCADE / SET NULL 清理
+// （每个外键列都有以它开头的索引，见迁移 000179_fk_index_*，级联按索引查而不是整表扫）。
+// 工单与会话留档（提单人置空，见迁移 000151），但提单时留下的联系方式属于这个人的个人信息，
+// 与删行放在同一事务里清空，避免账号注销后邮箱、手机号仍留在工单上。
+// 按 id 升序加锁，几批并发删除时不会互相死锁。
+func (r *Repository) DeleteUsersByIDs(ctx context.Context, appID int64, userIDs []int64) ([]int64, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // 提交后回滚是空操作
+	rows, err := tx.Query(ctx, `SELECT id FROM users WHERE appid = $1 AND id = ANY($2) ORDER BY id FOR UPDATE`, appID, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(userIDs))
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE tickets SET requester_contact = '' WHERE requester_user_id = ANY($1) AND requester_contact <> ''`,
+		ids); err != nil {
+		return nil, fmt.Errorf("清理工单联系方式: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE appid = $1 AND id = ANY($2)`, appID, ids); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 func (r *Repository) HasAnyUserRegisteredFromIP(ctx context.Context, ip string) (bool, error) {

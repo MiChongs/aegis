@@ -23,6 +23,7 @@ import (
 	"aegis/internal/config"
 	appdomain "aegis/internal/domain/app"
 	authdomain "aegis/internal/domain/auth"
+	pgrepo "aegis/internal/repository/postgres"
 	apperrors "aegis/pkg/errors"
 	"aegis/services/music/contract"
 )
@@ -421,18 +422,22 @@ func (s *MusicService) ClearProfile(ctx context.Context, app *appdomain.App, ses
 }
 
 // PurgeHook 挂到 UserService.AddPurgeHook：账号删除后清除这个人的听歌数据。
-func (s *MusicService) PurgeHook(_ context.Context, appID, userID int64, _ string) func(context.Context) {
-	return func(ctx context.Context) {
-		if !s.Enabled() {
+func (s *MusicService) PurgeHook(_ context.Context, appID int64, _ []pgrepo.PurgeTarget) func(context.Context, []pgrepo.PurgeTarget) {
+	return func(ctx context.Context, deleted []pgrepo.PurgeTarget) {
+		if !s.Enabled() || len(deleted) == 0 {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		_, err := musicCall(s, ctx, func(ctx context.Context) (*connect.Response[musicv1.ForgetUserResponse], error) {
-			return s.client.ForgetUser(ctx, connect.NewRequest(&musicv1.ForgetUserRequest{AppId: appID, UserId: userID, Reason: "account_deleted", Operator: "system"}))
-		})
-		if err != nil {
-			s.log.Warn("forget music data of deleted user failed", zap.Int64("app", appID), zap.Int64("user", userID), zap.Error(err))
+		bg := context.WithoutCancel(ctx)
+		for _, t := range deleted {
+			userID := t.UserID
+			cctx, cancel := context.WithTimeout(bg, 30*time.Second)
+			_, err := musicCall(s, cctx, func(ctx context.Context) (*connect.Response[musicv1.ForgetUserResponse], error) {
+				return s.client.ForgetUser(ctx, connect.NewRequest(&musicv1.ForgetUserRequest{AppId: appID, UserId: userID, Reason: "account_deleted", Operator: "system"}))
+			})
+			cancel()
+			if err != nil {
+				s.log.Warn("forget music data of deleted user failed", zap.Int64("app", appID), zap.Int64("user", userID), zap.Error(err))
+			}
 		}
 	}
 }

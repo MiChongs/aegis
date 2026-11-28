@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"aegis/internal/config"
+	pgrepo "aegis/internal/repository/postgres"
 
 	"go.uber.org/zap"
 )
 
-// 任何路径删号之后都要通知风控收尾；风控关联删除自己通知，不能再重复一次
+// 任何路径删号之后都要通知风控收尾（一批只通知一次）；风控关联删除自己通知，不能再重复一次
 func TestRiskPurgeHookNotifiesRisk(t *testing.T) {
 	var mu sync.Mutex
 	var calls []map[string]any
@@ -36,11 +37,12 @@ func TestRiskPurgeHookNotifiesRisk(t *testing.T) {
 	s := &RiskService{log: zap.NewNop(), cfg: config.RiskConfig{AdminURL: srv.URL, InternalToken: "tok"}, client: fakeDecisionClient{}}
 	ctx := context.Background()
 
-	after := s.PurgeHook(ctx, 10000, 3038, "acc")
+	batch := []pgrepo.PurgeTarget{{UserID: 3038, Account: "acc"}, {UserID: 3040, Account: "acc2"}}
+	after := s.PurgeHook(ctx, 10000, batch)
 	if after == nil {
 		t.Fatal("普通删号应当返回收尾")
 	}
-	after(ctx)
+	after(ctx, batch)
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -49,15 +51,15 @@ func TestRiskPurgeHookNotifiesRisk(t *testing.T) {
 	mu.Lock()
 	got := calls[0]
 	mu.Unlock()
-	if got["appId"].(float64) != 10000 || len(got["userIds"].([]any)) != 1 || got["userIds"].([]any)[0].(float64) != 3038 {
+	if got["appId"].(float64) != 10000 || len(got["userIds"].([]any)) != 2 || got["userIds"].([]any)[0].(float64) != 3038 || got["userIds"].([]any)[1].(float64) != 3040 {
 		t.Fatalf("请求体不对：%v", got)
 	}
 
-	if s.PurgeHook(withRiskForgetHandled(ctx), 10000, 3039, "acc") != nil {
+	if s.PurgeHook(withRiskForgetHandled(ctx), 10000, []pgrepo.PurgeTarget{{UserID: 3039}}) != nil {
 		t.Fatal("风控关联删除自己通知风控，通用收尾不应再通知")
 	}
 	var off *RiskService
-	if off.PurgeHook(ctx, 10000, 1, "") != nil {
+	if off.PurgeHook(ctx, 10000, []pgrepo.PurgeTarget{{UserID: 1}}) != nil {
 		t.Fatal("没接风控时不该有收尾")
 	}
 }

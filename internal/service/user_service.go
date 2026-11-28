@@ -2260,9 +2260,11 @@ func (s *UserService) AdminDeleteUser(ctx context.Context, appID int64, userID i
 	return nil
 }
 
-// UserPurgeHook 删号前调用（账号还在，能查它的台账、登录名）；返回删号成功后执行的收尾，nil 表示不用收尾。
+// UserPurgeHook 删号前调用一次（账号还在，能查它们的台账、登录名），拿到整批要删的账号；
+// 返回删号提交后执行的收尾（只收到真正删掉的那部分），nil 表示不用收尾。
 // 各模块的计数（注册准入、登录防爆破、在线人数、排行榜缓存、风险分缓存）用它跟着账号删除一起更新。
-type UserPurgeHook func(ctx context.Context, appID, userID int64, account string) func(context.Context)
+// 钩子按批处理：一批 100 个账号也只查一次库、清一次排行榜。
+type UserPurgeHook func(ctx context.Context, appID int64, targets []pgrepo.PurgeTarget) func(ctx context.Context, deleted []pgrepo.PurgeTarget)
 
 // AddPurgeHook 登记删号收尾
 func (s *UserService) AddPurgeHook(h UserPurgeHook) {
@@ -2271,41 +2273,105 @@ func (s *UserService) AddPurgeHook(h UserPurgeHook) {
 	}
 }
 
-// PurgeUser 硬删除一个用户：吊销会话、清理安全凭证、删行（CASCADE 清理关联表）、清缓存与搜索索引、
-// 各模块计数收尾（UserPurgeHook）、触发 user.onDeleted 钩子。管理员删除、账号注销、风控关联删除共用这一条路径。
+// purgeBatchSize 一个删除事务最多删的账号数：级联要锁住这些账号在几十张表里的行，批太大会拉长锁持有时间
+const purgeBatchSize = 100
+
+// PurgeUser 硬删除一个用户，见 PurgeUsers
 func (s *UserService) PurgeUser(ctx context.Context, appID int64, userID int64) error {
-	account := ""
-	if u, err := s.pg.GetUserByID(ctx, userID); err == nil && u != nil {
-		account = u.Account
+	deleted, err := s.PurgeUsers(ctx, appID, []int64{userID})
+	if err != nil {
+		return err
 	}
-	var afters []func(context.Context)
+	if len(deleted) == 0 {
+		return fmt.Errorf("删除用户失败: 用户不存在或已删除")
+	}
+	return nil
+}
+
+// PurgeUsers 硬删除一批用户，返回实际删掉的 id：吊销会话、删行（CASCADE 清理关联表，含安全凭证）、清缓存与搜索索引、
+// 各模块计数收尾（UserPurgeHook）、触发 user.onDeleted 钩子。管理员删除、账号注销、风控关联删除共用这一条路径。
+//
+// 库操作与账号数无关：取登录名一条查询，每 purgeBatchSize 个账号一个删除事务（工单联系方式清空 + 一条 DELETE）。
+// 不存在或已被删掉的 id 直接略过，不报错。
+func (s *UserService) PurgeUsers(ctx context.Context, appID int64, userIDs []int64) ([]int64, error) {
+	ids := make([]int64, 0, len(userIDs))
+	seen := make(map[int64]struct{}, len(userIDs))
+	for _, id := range userIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	var deleted []int64
+	for start := 0; start < len(ids); start += purgeBatchSize {
+		end := min(start+purgeBatchSize, len(ids))
+		done, err := s.purgeBatch(ctx, appID, ids[start:end])
+		deleted = append(deleted, done...)
+		if err != nil {
+			return deleted, err
+		}
+	}
+	return deleted, nil
+}
+
+func (s *UserService) purgeBatch(ctx context.Context, appID int64, ids []int64) ([]int64, error) {
+	targets, err := s.pg.PurgeTargets(ctx, appID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("删除用户失败: %w", err)
+	}
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	var afters []func(context.Context, []pgrepo.PurgeTarget)
 	for _, h := range s.purgeHooks {
-		if after := h(ctx, appID, userID, account); after != nil {
+		if after := h(ctx, appID, targets); after != nil {
 			afters = append(afters, after)
 		}
 	}
-	// 先吊销会话
-	s.revokeAllUserSessions(ctx, appID, userID)
-	// 清理安全凭证
-	if s.security != nil {
-		_ = s.pg.DeleteUserTOTPSecret(ctx, appID, userID)
-		_ = s.pg.DeleteUserRecoveryCodes(ctx, appID, userID)
+	// 先吊销会话（Redis 与 OAuth2，不碰 Postgres）
+	for _, t := range targets {
+		s.revokeAllUserSessions(ctx, appID, t.UserID)
 	}
-	// 删除用户（CASCADE 会清理 user_profiles、user_settings 等）
-	if err := s.pg.DeleteUserByApp(ctx, appID, userID); err != nil {
-		return fmt.Errorf("删除用户失败: %w", err)
+	targetIDs := make([]int64, len(targets))
+	for i, t := range targets {
+		targetIDs[i] = t.UserID
 	}
-	s.invalidateAdminUserCaches(ctx, appID, userID)
-	s.deleteAdminUserSearch(appID, userID)
+	deletedIDs, err := s.pg.DeleteUsersByIDs(ctx, appID, targetIDs)
+	if err != nil {
+		return nil, fmt.Errorf("删除用户失败: %w", err)
+	}
+	if len(deletedIDs) == 0 {
+		return nil, nil
+	}
+	done := make(map[int64]struct{}, len(deletedIDs))
+	for _, id := range deletedIDs {
+		done[id] = struct{}{}
+	}
+	deleted := make([]pgrepo.PurgeTarget, 0, len(deletedIDs))
+	for _, t := range targets {
+		if _, ok := done[t.UserID]; ok {
+			deleted = append(deleted, t)
+		}
+	}
+	for _, t := range deleted {
+		s.invalidateAdminUserCaches(ctx, appID, t.UserID)
+		s.deleteAdminUserSearch(appID, t.UserID)
+	}
 	for _, after := range afters {
-		after(context.WithoutCancel(ctx))
+		after(context.WithoutCancel(ctx), deleted)
 	}
 	if s.plugin != nil {
-		go s.plugin.ExecuteHook(context.Background(), HookUserDeleted, map[string]any{
-			"userId": userID,
-		}, plugindomain.HookMetadata{UserID: &userID, AppID: &appID})
+		for _, t := range deleted {
+			userID := t.UserID
+			go s.plugin.ExecuteHook(context.Background(), HookUserDeleted, map[string]any{
+				"userId": userID,
+			}, plugindomain.HookMetadata{UserID: &userID, AppID: &appID})
+		}
 	}
-	return nil
+	return deletedIDs, nil
 }
 
 // AdminRevokeUserSessions 管理员踢出用户所有会话
