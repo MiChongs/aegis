@@ -140,8 +140,9 @@ func (h *Handler) AppCloudSyncRegisterDevice(c *gin.Context) {
 		return
 	}
 	var req CloudSyncDeviceRequest
+	// 请求体可以整个省略（只刷新登记）：空体按全部字段缺省处理，不报 400。
 	if c.Request.ContentLength != 0 {
-		if err := bind(c, &req); err != nil {
+		if err := bind(c, &req); err != nil && !strings.Contains(err.Error(), "EOF") {
 			response.Error(c, http.StatusBadRequest, 40000, err.Error())
 			return
 		}
