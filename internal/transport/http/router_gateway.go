@@ -370,6 +370,25 @@ func registerGatewayRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		appGatewayAuthed.POST("/cloud/items/:namespace/:key/rollback", h.AppRollbackCloudItem)
 		appGatewayAuthed.POST("/cloud/items/:namespace/:key/link", h.AppCloudItemLink)
 
+		// 云服务（docs/cloud-service.md）：按会员档位分级的存储与同步、记录级跨设备同步、设备中心与接力。
+		// 「当前设备」取会话里的设备号，请求体里的设备号不被采信。
+		appGatewayAuthed.GET("/cloud/plans", h.AppCloudPlans)
+		appGatewayAuthed.GET("/cloud/sync", h.AppCloudSync)
+		appGatewayAuthed.PUT("/cloud/sync/device", h.AppCloudSyncRegisterDevice)
+		appGatewayAuthed.POST("/cloud/sync/device/heartbeat", h.AppCloudSyncHeartbeat)
+		appGatewayAuthed.PUT("/cloud/sync/device/activity", h.AppCloudSyncActivity)
+		appGatewayAuthed.GET("/cloud/sync/devices", h.AppCloudSyncDevices)
+		appGatewayAuthed.PUT("/cloud/sync/devices/:deviceId", h.AppCloudSyncRenameDevice)
+		appGatewayAuthed.DELETE("/cloud/sync/devices/:deviceId", h.AppCloudSyncRemoveDevice)
+		appGatewayAuthed.POST("/cloud/sync/push", h.AppCloudSyncPush)
+		appGatewayAuthed.GET("/cloud/sync/changes", h.AppCloudSyncChanges)
+		appGatewayAuthed.GET("/cloud/sync/records", h.AppCloudSyncRecords)
+		appGatewayAuthed.GET("/cloud/sync/records/:collection/:recordId", h.AppCloudSyncRecord)
+		appGatewayAuthed.DELETE("/cloud/sync/collections/:collection", h.AppCloudSyncClearCollection)
+		appGatewayAuthed.POST("/cloud/sync/handoffs", h.AppCloudSyncCreateHandoff)
+		appGatewayAuthed.GET("/cloud/sync/handoffs", h.AppCloudSyncHandoffs)
+		appGatewayAuthed.POST("/cloud/sync/handoffs/:handoffId/ack", h.AppCloudSyncAckHandoff)
+
 		// 意见反馈：应用用户唯一的诉求入口（kind=feedback）。工单只对管理员开放，网关不注册 /tickets，独立入口与更严的入参（见 feedback_service.go）
 		appGatewayAuthed.GET("/feedback/categories", h.AppFeedbackCategories)
 		appGatewayAuthed.POST("/feedback/attachments", h.AppUploadFeedbackAttachment)

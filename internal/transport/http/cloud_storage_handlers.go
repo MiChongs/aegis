@@ -79,6 +79,8 @@ type SaveCloudStorageConfigRequest struct {
 	TrashRetentionDays int                      `json:"trashRetentionDays"`
 	RestrictNamespaces bool                     `json:"restrictNamespaces"`
 	Namespaces         []cloudstorage.Namespace `json:"namespaces"`
+	// Plans 云服务档位（docs/cloud-service.md），按优先级排列；省略（null）表示保留现有档位。
+	Plans *[]cloudstorage.Plan `json:"plans"`
 }
 
 // CloudStorageUserListQuery 管理端用户列表。sort 取 usage（默认）/ items / recent；
@@ -431,6 +433,18 @@ func (h *Handler) AdminSaveCloudStorageConfig(c *gin.Context) {
 		return
 	}
 	_, operator := adminAccount(c)
+	// 旧控制台不认识档位，保存时不带 plans：保留库里现有的档位，而不是清空。
+	plans := []cloudstorage.Plan{}
+	if req.Plans != nil {
+		plans = *req.Plans
+	} else {
+		current, err := h.cloudStorage.AdminConfig(c.Request.Context(), appID)
+		if err != nil {
+			h.writeError(c, err)
+			return
+		}
+		plans = current.Plans
+	}
 	cfg, err := h.cloudStorage.SaveConfig(c.Request.Context(), cloudstorage.Config{
 		AppID:              appID,
 		Enabled:            req.Enabled,
@@ -442,6 +456,7 @@ func (h *Handler) AdminSaveCloudStorageConfig(c *gin.Context) {
 		TrashRetentionDays: req.TrashRetentionDays,
 		RestrictNamespaces: req.RestrictNamespaces,
 		Namespaces:         req.Namespaces,
+		Plans:              plans,
 	}, operator)
 	if err != nil {
 		h.writeError(c, err)

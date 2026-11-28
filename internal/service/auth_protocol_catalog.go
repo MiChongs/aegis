@@ -456,6 +456,45 @@ var gatewayOperations = []authprotocol.Operation{
 	{Key: "cloudItemLink", Method: "POST", Path: "/cloud/items/{namespace}/{key}/link", Auth: true,
 		Summary: "换取条目内容的短时下载地址"},
 
+	// ── 云服务：档位、记录级同步、设备中心、接力 ──
+	//
+	// 记录级同步（docs/cloud-service.md）：集合（music.history、novel.bookshelf……）里一条记录一行，
+	// 逐条最后写入者胜（updatedAt，同一时刻按设备号）。先 PUT /cloud/sync/device 登记当前设备，
+	// 再 push 本地改动、带上次的 seq 拉 changes；reset=true 时从 0 全量拉取再合并。
+	// 实时事件 cloud.sync / cloud.devices / cloud.activity / cloud.handoff 只是「去拉一下」的提示。
+	{Key: "cloudPlans", Method: "GET", Path: "/cloud/plans", Auth: true,
+		Summary: "云服务档位对比：每一档的空间、设备数、历史保留、实时与接力，标出当前档位"},
+	{Key: "cloudSync", Method: "GET", Path: "/cloud/sync", Auth: true,
+		Summary: "云服务首页：当前档位、用量、同步设备、各集合的记录数与按设备分布"},
+	{Key: "cloudSyncRegisterDevice", Method: "PUT", Path: "/cloud/sync/device", Auth: true,
+		Summary: "登记或刷新当前设备（rename=true 时改名）；新设备超出档位设备数回 41364"},
+	{Key: "cloudSyncHeartbeat", Method: "POST", Path: "/cloud/sync/device/heartbeat", Auth: true,
+		Summary: "当前设备心跳（前台时约每分钟一次），别的设备据此显示在线"},
+	{Key: "cloudSyncActivity", Method: "PUT", Path: "/cloud/sync/device/activity", Auth: true,
+		Summary: "上报当前设备正在播放 / 阅读的内容（clear=true 或 state=idle 清空）"},
+	{Key: "cloudSyncDevices", Method: "GET", Path: "/cloud/sync/devices", Auth: true,
+		Summary: "登记过的全部同步设备：在线状态、正在播放、各集合的记录数"},
+	{Key: "cloudSyncRenameDevice", Method: "PUT", Path: "/cloud/sync/devices/{deviceId}", Auth: true,
+		Summary: "给一台同步设备改名"},
+	{Key: "cloudSyncRemoveDevice", Method: "DELETE", Path: "/cloud/sync/devices/{deviceId}", Auth: true,
+		Summary: "移除一台同步设备（腾出名额，它写过的记录保留）"},
+	{Key: "cloudSyncPush", Method: "POST", Path: "/cloud/sync/push", Auth: true,
+		Summary: "推送一批改动（至多 500 条）：被接受的拿到新 seq，云端更新的交回 rejected"},
+	{Key: "cloudSyncChanges", Method: "GET", Path: "/cloud/sync/changes", Auth: true,
+		Summary: "增量拉取 seq 大于 since 的记录（含墓碑）；hasMore 时接着拉，reset 时全量重拉"},
+	{Key: "cloudSyncRecords", Method: "GET", Path: "/cloud/sync/records", Auth: true,
+		Summary: "浏览同步记录：按集合、领域、写入设备筛（查看其它设备同步了什么）"},
+	{Key: "cloudSyncRecord", Method: "GET", Path: "/cloud/sync/records/{collection}/{recordId}", Auth: true,
+		Summary: "读取一条同步记录（含墓碑）"},
+	{Key: "cloudSyncClearCollection", Method: "DELETE", Path: "/cloud/sync/collections/{collection}", Auth: true,
+		Summary: "清空一个集合（全部改成墓碑，其它设备拉到后跟着删）"},
+	{Key: "cloudSyncCreateHandoff", Method: "POST", Path: "/cloud/sync/handoffs", Auth: true,
+		Summary: "把一条记录接力到另一台设备继续播放 / 阅读（档位需开放接力）"},
+	{Key: "cloudSyncHandoffs", Method: "GET", Path: "/cloud/sync/handoffs", Auth: true,
+		Summary: "发给当前设备、还没领取的接力"},
+	{Key: "cloudSyncAckHandoff", Method: "POST", Path: "/cloud/sync/handoffs/{handoffId}/ack", Auth: true,
+		Summary: "领取（打开或忽略）一次接力"},
+
 	// ── 意见反馈 ──
 	// 应用用户唯一的诉求入口。工单只对管理员开放（/api/admin/tickets），网关没有 /tickets。
 	// 反馈是 kind=feedback 的工单：图片（≤4，按魔数判定）与附件（≤2）分开传，
@@ -879,6 +918,26 @@ var gatewayErrors = []authprotocol.ErrorDescriptor{
 		Recovery: authprotocol.RecoveryNone},
 	{Code: 50260, Name: "CLOUD_CONTENT_UNREADABLE", Message: "内容读取失败",
 		Recovery: authprotocol.RecoveryNone, Hint: "存储桶里的对象暂时读不出来，稍后重试；持续失败请联系管理员检查存储配置"},
+	{Code: 41363, Name: "CLOUD_SYNC_RECORD_LIMIT", Message: "同步记录数量已达档位上限",
+		Recovery: authprotocol.RecoveryNone, Hint: "上限见 /cloud/sync 的 plan.maxSyncRecords；升级档位或清理历史"},
+	{Code: 41364, Name: "CLOUD_SYNC_DEVICE_LIMIT", Message: "同步设备数已达档位上限",
+		Recovery: authprotocol.RecoveryNone, Hint: "引导用户在设备列表里移除一台旧设备后重新登记，或升级档位"},
+	{Code: 41365, Name: "CLOUD_SYNC_BATCH_TOO_LARGE", Message: "一次推送的改动过多",
+		Recovery: authprotocol.RecoveryNone, Hint: "分批推送，每批至多 500 条"},
+	{Code: 42264, Name: "CLOUD_SYNC_INVALID_RECORD", Message: "同步记录格式无效",
+		Recovery: authprotocol.RecoveryNone, Hint: "集合名形如 music.history；记录 ID 为 1–200 个可见 ASCII；内容为不超过 16 KiB 的 JSON 对象；必须带 updatedAt"},
+	{Code: 42265, Name: "CLOUD_SYNC_COLLECTION_NOT_IN_PLAN", Message: "当前档位不支持同步该内容",
+		Recovery: authprotocol.RecoveryNone, Hint: "可同步的集合见 plan.collections（空表示全部）"},
+	{Code: 42266, Name: "CLOUD_SYNC_NOT_IN_PLAN", Message: "当前档位没有多设备同步服务",
+		Recovery: authprotocol.RecoveryNone, Hint: "plan.syncEnabled 为 false 时隐藏同步入口或引导升级"},
+	{Code: 42267, Name: "CLOUD_SYNC_HANDOFF_NOT_IN_PLAN", Message: "当前档位不支持设备接力",
+		Recovery: authprotocol.RecoveryNone, Hint: "plan.handoff 为 false 时隐藏「发到其它设备」"},
+	{Code: 42268, Name: "CLOUD_SYNC_INVALID_DEVICE", Message: "设备号缺失或格式无效",
+		Recovery: authprotocol.RecoveryNone, Hint: "请求需带 X-Device-Id（或会话里带设备号）"},
+	{Code: 40434, Name: "CLOUD_SYNC_DEVICE_NOT_FOUND", Message: "设备未登记或已被移除",
+		Recovery: authprotocol.RecoveryNone, Hint: "重新 PUT /cloud/sync/device 登记；设备被别处移除时先提示用户"},
+	{Code: 40435, Name: "CLOUD_SYNC_HANDOFF_NOT_FOUND", Message: "接力请求不存在或已过期",
+		Recovery: authprotocol.RecoveryNone},
 	// ── 通用限频 ──
 	// 防火墙全局限流与崩溃报告（同一设备 / 同一 IP 每小时 20 份）共用这一个码。
 	{Code: errCodeCrashReportRateLimited, Name: "RATE_LIMITED", Message: "请求过于频繁，请稍后再试",

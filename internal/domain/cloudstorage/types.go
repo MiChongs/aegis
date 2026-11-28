@@ -131,8 +131,10 @@ type Config struct {
 	TrashRetentionDays int         `json:"trashRetentionDays"`
 	RestrictNamespaces bool        `json:"restrictNamespaces"`
 	Namespaces         []Namespace `json:"namespaces"`
-	UpdatedBy          string      `json:"updatedBy,omitempty"`
-	UpdatedAt          *time.Time  `json:"updatedAt,omitempty"`
+	// Plans 按会员档位区分的云服务档位，按优先级排列（见 plan.go）；空表示人人都是基础档。
+	Plans     []Plan     `json:"plans"`
+	UpdatedBy string     `json:"updatedBy,omitempty"`
+	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
 	// Configured 是否在库里存过。没存过的应用拿到的是一份默认值（未启用）。
 	Configured bool `json:"configured"`
 }
@@ -147,6 +149,7 @@ func DefaultConfig(appID int64) Config {
 		MaxRevisions:       DefaultMaxRevisions,
 		TrashRetentionDays: DefaultTrashRetentionDays,
 		Namespaces:         []Namespace{},
+		Plans:              []Plan{},
 	}
 }
 
@@ -202,7 +205,7 @@ func (c *Config) Normalize() error {
 		return errors.New("限定命名空间时目录不能为空")
 	}
 	c.Namespaces = cleaned
-	return nil
+	return c.normalizePlans()
 }
 
 // AllowsNamespace 该命名空间是否允许写入。
@@ -257,8 +260,14 @@ type UserState struct {
 	UpdatedBy     string     `json:"updatedBy,omitempty"`
 	CreatedAt     *time.Time `json:"createdAt,omitempty"`
 	UpdatedAt     *time.Time `json:"updatedAt,omitempty"`
-	// QuotaBytes 生效配额（覆盖值或应用默认），由服务层填。
+	// QuotaBytes 生效配额（覆盖值、档位配额或应用默认），由服务层填。
 	QuotaBytes int64 `json:"quotaBytes"`
+	// SyncBytes / SyncRecords 同步记录的用量（与条目修订共用配额）；LastSyncAt 最后一次被接受的同步。
+	SyncBytes   int64      `json:"syncBytes"`
+	SyncRecords int64      `json:"syncRecords"`
+	LastSyncAt  *time.Time `json:"lastSyncAt,omitempty"`
+	// PlanName 生效档位的名字，由服务层填。
+	PlanName string `json:"planName,omitempty"`
 }
 
 // EffectiveQuota 生效配额。
@@ -293,6 +302,13 @@ type Status struct {
 	Catalog            []Namespace `json:"catalog"`
 	RestrictNamespaces bool        `json:"restrictNamespaces"`
 	LastWriteAt        *time.Time  `json:"lastWriteAt,omitempty"`
+	// Plan 用户此刻生效的云服务档位（云存储没开启时为空）。
+	Plan *PlanView `json:"plan,omitempty"`
+	// ItemBytes 条目修订占用；SyncBytes / SyncRecords 同步记录占用。UsedBytes = 两者之和。
+	ItemBytes   int64      `json:"itemBytes"`
+	SyncBytes   int64      `json:"syncBytes"`
+	SyncRecords int64      `json:"syncRecords"`
+	LastSyncAt  *time.Time `json:"lastSyncAt,omitempty"`
 }
 
 // Item 条目元数据（当前修订）。

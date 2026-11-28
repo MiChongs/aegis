@@ -104,17 +104,25 @@ type cloudQuerier interface {
 // ── 配置 ──
 
 const cloudConfigColumns = `appid, enabled, storage_config_name, quota_bytes, max_item_bytes, max_items,
-max_revisions, trash_retention_days, restrict_namespaces, namespaces, updated_by, updated_at`
+max_revisions, trash_retention_days, restrict_namespaces, namespaces, plans, updated_by, updated_at`
 
 func scanCloudConfig(row pgx.Row) (*cloudstorage.Config, error) {
 	var cfg cloudstorage.Config
-	var namespaces []byte
+	var namespaces, plans []byte
 	var updatedBy *string
 	var updatedAt time.Time
 	if err := row.Scan(&cfg.AppID, &cfg.Enabled, &cfg.StorageConfigName, &cfg.QuotaBytes, &cfg.MaxItemBytes,
 		&cfg.MaxItems, &cfg.MaxRevisions, &cfg.TrashRetentionDays, &cfg.RestrictNamespaces, &namespaces,
-		&updatedBy, &updatedAt); err != nil {
+		&plans, &updatedBy, &updatedAt); err != nil {
 		return nil, err
+	}
+	if len(plans) > 0 {
+		if err := json.Unmarshal(plans, &cfg.Plans); err != nil {
+			return nil, fmt.Errorf("decode cloud plans: %w", err)
+		}
+	}
+	if cfg.Plans == nil {
+		cfg.Plans = []cloudstorage.Plan{}
 	}
 	if len(namespaces) > 0 {
 		if err := json.Unmarshal(namespaces, &cfg.Namespaces); err != nil {
@@ -150,10 +158,18 @@ func (r *Repository) SaveCloudStorageConfig(ctx context.Context, cfg cloudstorag
 	if err != nil {
 		return nil, err
 	}
+	plans := cfg.Plans
+	if plans == nil {
+		plans = []cloudstorage.Plan{}
+	}
+	plansPayload, err := json.Marshal(plans)
+	if err != nil {
+		return nil, err
+	}
 	_, err = r.pool.Exec(ctx, `INSERT INTO app_cloud_storage_configs
 (appid, enabled, storage_config_name, quota_bytes, max_item_bytes, max_items, max_revisions,
- trash_retention_days, restrict_namespaces, namespaces, updated_by, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+ trash_retention_days, restrict_namespaces, namespaces, plans, updated_by, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$12,$11,NOW())
 ON CONFLICT (appid) DO UPDATE SET
   enabled = EXCLUDED.enabled,
   storage_config_name = EXCLUDED.storage_config_name,
@@ -164,10 +180,11 @@ ON CONFLICT (appid) DO UPDATE SET
   trash_retention_days = EXCLUDED.trash_retention_days,
   restrict_namespaces = EXCLUDED.restrict_namespaces,
   namespaces = EXCLUDED.namespaces,
+  plans = EXCLUDED.plans,
   updated_by = EXCLUDED.updated_by,
   updated_at = NOW()`,
 		cfg.AppID, cfg.Enabled, cfg.StorageConfigName, cfg.QuotaBytes, cfg.MaxItemBytes, cfg.MaxItems,
-		cfg.MaxRevisions, cfg.TrashRetentionDays, cfg.RestrictNamespaces, payload, nullableString(cfg.UpdatedBy))
+		cfg.MaxRevisions, cfg.TrashRetentionDays, cfg.RestrictNamespaces, payload, nullableString(cfg.UpdatedBy), plansPayload)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +213,7 @@ func (r *Repository) ListCloudStorageConfigs(ctx context.Context) ([]cloudstorag
 
 const cloudUserColumns = `s.appid, s.user_id, COALESCE(u.account, ''), COALESCE(p.nickname, ''), s.quota_bytes,
 s.frozen, s.frozen_reason, s.note, s.used_bytes, s.item_count, s.trash_count, s.revision_count,
-s.last_write_at, s.updated_by, s.created_at, s.updated_at`
+s.last_write_at, s.updated_by, s.created_at, s.updated_at, s.sync_bytes, s.sync_records, s.last_sync_at`
 
 const cloudUserFrom = `app_cloud_storage_users s
 LEFT JOIN users u ON u.id = s.user_id
@@ -208,7 +225,8 @@ func scanCloudUser(row pgx.Row) (*cloudstorage.UserState, error) {
 	var createdAt, updatedAt time.Time
 	if err := row.Scan(&state.AppID, &state.UserID, &state.Account, &state.Nickname, &state.QuotaOverride,
 		&state.Frozen, &state.FrozenReason, &state.Note, &state.UsedBytes, &state.ItemCount, &state.TrashCount,
-		&state.RevisionCount, &state.LastWriteAt, &updatedBy, &createdAt, &updatedAt); err != nil {
+		&state.RevisionCount, &state.LastWriteAt, &updatedBy, &createdAt, &updatedAt, &state.SyncBytes,
+		&state.SyncRecords, &state.LastSyncAt); err != nil {
 		return nil, err
 	}
 	state.UpdatedBy = derefString(updatedBy)
@@ -583,9 +601,11 @@ WHERE appid = $1 AND user_id = $2 AND deleted_at IS NULL`, plan.AppID, plan.User
 		}
 	}
 
+	// 同步记录与条目修订共用一份配额。
 	var used int64
-	if err = tx.QueryRow(ctx, `SELECT COALESCE(SUM(size), 0) FROM app_cloud_item_revisions
-WHERE appid = $1 AND user_id = $2`, plan.AppID, plan.UserID).Scan(&used); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT COALESCE((SELECT SUM(size) FROM app_cloud_item_revisions
+WHERE appid = $1 AND user_id = $2), 0) + COALESCE((SELECT SUM(size) FROM app_cloud_sync_records
+WHERE user_id = $2 AND appid = $1 AND NOT deleted), 0)`, plan.AppID, plan.UserID).Scan(&used); err != nil {
 		return nil, err
 	}
 
@@ -845,6 +865,9 @@ WHERE appid = $1 AND user_id = $2`, appID, userID)
 		return nil, err
 	}
 	if _, err = tx.Exec(ctx, `DELETE FROM app_cloud_items WHERE appid = $1 AND user_id = $2`, appID, userID); err != nil {
+		return nil, err
+	}
+	if err = purgeCloudSyncUserTx(ctx, tx, appID, userID); err != nil {
 		return nil, err
 	}
 	if err = refreshCloudUsage(ctx, tx, appID, userID, false); err != nil {

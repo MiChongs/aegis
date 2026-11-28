@@ -66,6 +66,8 @@ func init() {
 		Write("POST /api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/link", "生成云存储条目下载链接", "云存储条目", SeverityMedium),
 		Write("POST /api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/restore", "恢复云存储条目", "云存储条目", SeverityMedium),
 		Write("POST /api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/rollback", "回滚云存储条目", "云存储条目", SeverityHigh),
+		View("GET /api/admin/apps/:appkey/users/:userId/cloud-storage/sync/records", "查看用户同步记录", "用户"),
+		Write("DELETE /api/admin/apps/:appkey/users/:userId/cloud-storage/sync/devices/:deviceId", "移除用户同步设备", "同步设备", SeverityMedium),
 
 		// 登录与会话记录
 		View("GET /api/admin/apps/:appkey/audits/login", "查看登录记录", ""),

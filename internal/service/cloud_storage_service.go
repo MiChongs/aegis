@@ -70,6 +70,8 @@ type CloudStorageService struct {
 	log     *zap.Logger
 	pg      *pgrepo.Repository
 	storage *StorageService
+	// events 实时推送（云服务的同步提示、设备变化、接力）；见 SetEventPublisher。
+	events UserEventPublisher
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -294,10 +296,24 @@ func (s *CloudStorageService) Status(ctx context.Context, appID, userID int64) (
 	if state == nil {
 		state = &cloudstorage.UserState{AppID: appID, UserID: userID}
 	}
+	if cfg.Enabled {
+		planned, plan, err := s.userPlan(ctx, cfg, userID)
+		if err != nil {
+			return nil, err
+		}
+		cfg = planned
+		plan.Override = state.QuotaOverride != nil && *state.QuotaOverride > 0
+		status.Plan = &plan
+	}
 	status.Frozen = state.Frozen
 	status.FrozenReason = state.FrozenReason
 	status.Writable = cfg.Enabled && !state.Frozen
-	status.UsedBytes = state.UsedBytes
+	// 条目修订与同步记录共用一份配额：UsedBytes 是两者之和。
+	status.UsedBytes = state.UsedBytes + state.SyncBytes
+	status.ItemBytes = state.UsedBytes
+	status.SyncBytes = state.SyncBytes
+	status.SyncRecords = state.SyncRecords
+	status.LastSyncAt = state.LastSyncAt
 	status.ItemCount = state.ItemCount
 	status.TrashCount = state.TrashCount
 	status.LastWriteAt = state.LastWriteAt
@@ -318,7 +334,7 @@ func (s *CloudStorageService) Status(ctx context.Context, appID, userID int64) (
 
 // ListItems 用户的条目列表。
 func (s *CloudStorageService) ListItems(ctx context.Context, query cloudstorage.ItemQuery) (*cloudstorage.ItemPage, error) {
-	cfg, err := s.enabledConfig(ctx, query.AppID)
+	cfg, _, err := s.userConfig(ctx, query.AppID, query.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +363,7 @@ func (s *CloudStorageService) listItems(ctx context.Context, cfg cloudstorage.Co
 
 // GetItem 读取条目（revision <= 0 读当前修订）。在回收站里的条目对用户不可读。
 func (s *CloudStorageService) GetItem(ctx context.Context, appID, userID int64, namespace, key string, revision int64) (*cloudstorage.ItemContent, error) {
-	cfg, err := s.enabledConfig(ctx, appID)
+	cfg, _, err := s.userConfig(ctx, appID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +392,7 @@ type CloudWriteInput struct {
 
 // PutItem 写入条目（新建或覆盖）。
 func (s *CloudStorageService) PutItem(ctx context.Context, input CloudWriteInput) (*cloudstorage.Item, error) {
-	cfg, err := s.enabledConfig(ctx, input.AppID)
+	cfg, _, err := s.userConfig(ctx, input.AppID, input.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -388,7 +404,7 @@ func (s *CloudStorageService) PutItem(ctx context.Context, input CloudWriteInput
 
 // DeleteItem 删除条目：默认进回收站；permanent 或回收站保留期为 0 时直接清除。
 func (s *CloudStorageService) DeleteItem(ctx context.Context, appID, userID int64, namespace, key string, ifRevision *int64, permanent bool) (*cloudstorage.Item, error) {
-	cfg, err := s.enabledConfig(ctx, appID)
+	cfg, _, err := s.userConfig(ctx, appID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +417,7 @@ func (s *CloudStorageService) DeleteItem(ctx context.Context, appID, userID int6
 
 // RestoreItem 从回收站恢复条目。
 func (s *CloudStorageService) RestoreItem(ctx context.Context, appID, userID int64, namespace, key string) (*cloudstorage.Item, error) {
-	cfg, err := s.enabledConfig(ctx, appID)
+	cfg, _, err := s.userConfig(ctx, appID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +447,7 @@ func (s *CloudStorageService) ListRevisions(ctx context.Context, appID, userID i
 
 // Rollback 以某个历史修订的内容生成一个新修订（历史不改写，回滚本身也可回滚）。
 func (s *CloudStorageService) Rollback(ctx context.Context, appID, userID int64, namespace, key string, revision int64, ifRevision *int64, deviceID string) (*cloudstorage.Item, error) {
-	cfg, err := s.enabledConfig(ctx, appID)
+	cfg, _, err := s.userConfig(ctx, appID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -497,7 +513,12 @@ func (s *CloudStorageService) Stats(ctx context.Context, appID int64, days int) 
 		stats.Namespaces[i].Name = cfg.NamespaceName(stats.Namespaces[i].Namespace)
 	}
 	for i := range stats.TopUsers {
-		stats.TopUsers[i].QuotaBytes = stats.TopUsers[i].EffectiveQuota(cfg)
+		planned, plan, err := s.userPlan(ctx, cfg, stats.TopUsers[i].UserID)
+		if err != nil {
+			return nil, err
+		}
+		stats.TopUsers[i].QuotaBytes = stats.TopUsers[i].EffectiveQuota(planned)
+		stats.TopUsers[i].PlanName = plan.Name
 	}
 	stats.StorageTarget = s.resolveTarget(ctx, cfg)
 	return stats, nil
@@ -520,7 +541,12 @@ func (s *CloudStorageService) ListUsers(ctx context.Context, query cloudstorage.
 		return nil, err
 	}
 	for i := range page.Items {
-		page.Items[i].QuotaBytes = page.Items[i].EffectiveQuota(cfg)
+		planned, plan, err := s.userPlan(ctx, cfg, page.Items[i].UserID)
+		if err != nil {
+			return nil, err
+		}
+		page.Items[i].QuotaBytes = page.Items[i].EffectiveQuota(planned)
+		page.Items[i].PlanName = plan.Name
 	}
 	return page, nil
 }
@@ -531,6 +557,10 @@ type CloudStorageAdminUser struct {
 	Enabled    bool                          `json:"enabled"`
 	Limits     cloudstorage.Limits           `json:"limits"`
 	Namespaces []cloudstorage.NamespaceUsage `json:"namespaces"`
+	// Plan 生效档位；Devices / Collections 同步设备与各集合的记录数（云服务）。
+	Plan        cloudstorage.PlanView          `json:"plan"`
+	Devices     []cloudstorage.SyncDevice      `json:"devices"`
+	Collections []cloudstorage.CollectionUsage `json:"collections"`
 }
 
 // AdminUser 单用户的账目、限制与各命名空间用量。从没用过的用户返回空账目而不是 404。
@@ -549,7 +579,12 @@ func (s *CloudStorageService) AdminUser(ctx context.Context, appID, userID int64
 	if state == nil {
 		state = &cloudstorage.UserState{AppID: appID, UserID: userID}
 	}
+	cfg, plan, err := s.userPlan(ctx, cfg, userID)
+	if err != nil {
+		return nil, err
+	}
 	state.QuotaBytes = state.EffectiveQuota(cfg)
+	state.PlanName = plan.Name
 	usage, err := s.pg.CloudNamespaceUsage(ctx, appID, userID)
 	if err != nil {
 		return nil, err
@@ -557,11 +592,22 @@ func (s *CloudStorageService) AdminUser(ctx context.Context, appID, userID int64
 	for i := range usage {
 		usage[i].Name = cfg.NamespaceName(usage[i].Namespace)
 	}
+	devices, err := s.listDevices(ctx, appID, userID, "")
+	if err != nil {
+		return nil, err
+	}
+	collections, err := s.pg.CloudSyncCollectionUsage(ctx, appID, userID)
+	if err != nil {
+		return nil, err
+	}
 	return &CloudStorageAdminUser{
-		UserState:  *state,
-		Enabled:    cfg.Enabled,
-		Limits:     limitsOf(cfg, state.QuotaBytes),
-		Namespaces: usage,
+		UserState:   *state,
+		Enabled:     cfg.Enabled,
+		Limits:      limitsOf(cfg, state.QuotaBytes),
+		Namespaces:  usage,
+		Plan:        plan,
+		Devices:     devices,
+		Collections: collections,
 	}, nil
 }
 
@@ -603,6 +649,9 @@ func (s *CloudStorageService) AdminListItems(ctx context.Context, query cloudsto
 	}
 	cfg, err := s.config(ctx, query.AppID)
 	if err != nil {
+		return nil, err
+	}
+	if cfg, _, err = s.userPlan(ctx, cfg, query.UserID); err != nil {
 		return nil, err
 	}
 	return s.listItems(ctx, cfg, query)
@@ -698,12 +747,25 @@ func (s *CloudStorageService) PurgeExpired(ctx context.Context, appID int64) (in
 	}
 	purged := 0
 	for _, cfg := range configs {
-		before := time.Now().Add(-time.Duration(cfg.TrashRetentionDays) * 24 * time.Hour)
-		candidates, err := s.pg.ListExpiredCloudTrash(ctx, cfg.AppID, before, cloudPurgeBatch)
+		// 回收站保留期按条目主人的档位算：先按全部档位里最短的保留期圈出候选，
+		// 再逐人确认（PurgeCloudItem 在事务里核对删除时间早于这个人的截止点）。
+		now := time.Now()
+		shortest := now.Add(-time.Duration(cfg.MinTrashRetentionDays()) * 24 * time.Hour)
+		candidates, err := s.pg.ListExpiredCloudTrash(ctx, cfg.AppID, shortest, cloudPurgeBatch*5)
 		if err != nil {
 			return purged, err
 		}
+		cutoffs := map[int64]time.Time{}
 		for _, candidate := range candidates {
+			before, ok := cutoffs[candidate.UserID]
+			if !ok {
+				_, plan, err := s.userPlan(ctx, cfg, candidate.UserID)
+				if err != nil {
+					return purged, err
+				}
+				before = now.Add(-time.Duration(plan.TrashRetentionDays) * 24 * time.Hour)
+				cutoffs[candidate.UserID] = before
+			}
 			blobs, err := s.pg.PurgeCloudItem(ctx, cfg.AppID, candidate.UserID, candidate.ItemID, &before, true)
 			if err != nil {
 				if errors.Is(err, pgrepo.ErrCloudItemNotFound) {
@@ -715,6 +777,13 @@ func (s *CloudStorageService) PurgeExpired(ctx context.Context, appID int64) (in
 				purged++
 				s.deleteBlobs(ctx, blobs)
 			}
+		}
+		if cfg.Enabled {
+			trimmed, err := s.purgeSync(ctx, cfg)
+			if err != nil {
+				return purged, err
+			}
+			purged += int(trimmed)
 		}
 	}
 	return purged, nil
@@ -1006,6 +1075,9 @@ func (s *CloudStorageService) adminItem(ctx context.Context, appID, userID, item
 	}
 	cfg, err := s.config(ctx, appID)
 	if err != nil {
+		return cfg, nil, err
+	}
+	if cfg, _, err = s.userPlan(ctx, cfg, userID); err != nil {
 		return cfg, nil, err
 	}
 	item, err := s.pg.GetCloudItemByID(ctx, appID, userID, itemID)

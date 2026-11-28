@@ -573,6 +573,8 @@ func NewAPIAppWithConfigManager(ctx context.Context, cl *crashlog.Logger, manage
 	// 用户云存储：内容走 storageService 解析出的存储配置，治理闸门（blockStorage）
 	// 也随之生效 —— 写入经 UploadForApp，那里是所有上传的收口。
 	cloudStorageService := service.NewCloudStorageService(log, pg, storageService)
+	// 云服务的同步提示、设备变化与接力经实时通道推给同一用户的其它设备
+	cloudStorageService.SetEventPublisher(realtimeService)
 	// 账号注销：验证走邮件与短信，执行时吊销登录、清空云存储、删用户；登录与注册经 AuthService 回调
 	accountDeletionService := service.NewAccountDeletionService(log, pg, sessions, cfg.Security.MasterKey)
 	accountDeletionService.SetAccountServices(authService, userService, securityService)

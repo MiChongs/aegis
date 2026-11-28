@@ -51,6 +51,7 @@ DELETE	/api/admin/apps/:appkey/users/:userId	AdminDeleteUser
 DELETE	/api/admin/apps/:appkey/users/:userId/avatar	AdminRemoveAppUserAvatar
 DELETE	/api/admin/apps/:appkey/users/:userId/cloud-storage	AdminPurgeCloudStorageUser
 DELETE	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId	AdminDeleteCloudStorageUserItem
+DELETE	/api/admin/apps/:appkey/users/:userId/cloud-storage/sync/devices/:deviceId	AdminRemoveCloudStorageUserDevice
 DELETE	/api/admin/apps/:appkey/users/:userId/growth/level-cap	AdminClearAppUserLevelCap
 DELETE	/api/admin/apps/:appkey/users/:userId/oauth2-grants	AdminRevokeUserOAuth2Grants
 DELETE	/api/admin/apps/:appkey/users/:userId/sessions/:tokenHash	AdminRevokeUserSession
@@ -132,6 +133,8 @@ DELETE	/api/v1/apps/:appkey/ai/keys/:keyId	AppDeleteAIKey
 DELETE	/api/v1/apps/:appkey/auth/oauth/bindings/:provider	UnbindMyOAuthProvider
 DELETE	/api/v1/apps/:appkey/card-keys/mine/:cardId/devices/:deviceId	AppUnbindMyCardKeyDevice
 DELETE	/api/v1/apps/:appkey/cloud/items/:namespace/:key	AppDeleteCloudItem
+DELETE	/api/v1/apps/:appkey/cloud/sync/collections/:collection	AppCloudSyncClearCollection
+DELETE	/api/v1/apps/:appkey/cloud/sync/devices/:deviceId	AppCloudSyncRemoveDevice
 DELETE	/api/v1/apps/:appkey/cosmetics/workshop/items/:itemId	AppDeleteWorkshopItem
 DELETE	/api/v1/apps/:appkey/me/avatar	RemoveUserAvatar
 DELETE	/api/v1/apps/:appkey/me/oauth2/grants/:clientId	AppRevokeMyOAuth2Grant
@@ -412,6 +415,7 @@ GET	/api/admin/apps/:appkey/users/:userId/cloud-storage	AdminCloudStorageUser
 GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items	AdminCloudStorageUserItems
 GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId	AdminCloudStorageUserItem
 GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/items/:itemId/revisions	AdminCloudStorageUserItemRevisions
+GET	/api/admin/apps/:appkey/users/:userId/cloud-storage/sync/records	AdminCloudStorageUserSyncRecords
 GET	/api/admin/apps/:appkey/users/:userId/feature-unlocks	AdminUserFeatureUnlocks
 GET	/api/admin/apps/:appkey/users/:userId/growth	AdminAppUserGrowth
 GET	/api/admin/apps/:appkey/users/:userId/oauth2-grants	AdminListUserOAuth2Grants
@@ -788,6 +792,13 @@ GET	/api/v1/apps/:appkey/cloud	AppCloudStatus
 GET	/api/v1/apps/:appkey/cloud/items	AppCloudItems
 GET	/api/v1/apps/:appkey/cloud/items/:namespace/:key	AppCloudItem
 GET	/api/v1/apps/:appkey/cloud/items/:namespace/:key/revisions	AppCloudItemRevisions
+GET	/api/v1/apps/:appkey/cloud/plans	AppCloudPlans
+GET	/api/v1/apps/:appkey/cloud/sync	AppCloudSync
+GET	/api/v1/apps/:appkey/cloud/sync/changes	AppCloudSyncChanges
+GET	/api/v1/apps/:appkey/cloud/sync/devices	AppCloudSyncDevices
+GET	/api/v1/apps/:appkey/cloud/sync/handoffs	AppCloudSyncHandoffs
+GET	/api/v1/apps/:appkey/cloud/sync/records	AppCloudSyncRecords
+GET	/api/v1/apps/:appkey/cloud/sync/records/:collection/:recordId	AppCloudSyncRecord
 GET	/api/v1/apps/:appkey/config	AppConfig
 GET	/api/v1/apps/:appkey/cosmetics	AppCosmeticCenter
 GET	/api/v1/apps/:appkey/cosmetics/history	AppCosmeticHistory
@@ -1597,6 +1608,10 @@ POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/link	AppCloudItemLink
 POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/restore	AppRestoreCloudItem
 POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/rollback	AppRollbackCloudItem
 POST	/api/v1/apps/:appkey/cloud/items/:namespace/:key/upload	AppUploadCloudItem
+POST	/api/v1/apps/:appkey/cloud/sync/device/heartbeat	AppCloudSyncHeartbeat
+POST	/api/v1/apps/:appkey/cloud/sync/handoffs	AppCloudSyncCreateHandoff
+POST	/api/v1/apps/:appkey/cloud/sync/handoffs/:handoffId/ack	AppCloudSyncAckHandoff
+POST	/api/v1/apps/:appkey/cloud/sync/push	AppCloudSyncPush
 POST	/api/v1/apps/:appkey/cosmetics/workshop/items	AppCreateWorkshopItem
 POST	/api/v1/apps/:appkey/coupons/claim	AppClaimCoupon
 POST	/api/v1/apps/:appkey/crash-reports	AppSubmitCrashReport
@@ -1831,6 +1846,9 @@ PUT	/api/user/settings	UpdateSettings
 PUT	/api/user/update-site	UpdateSite
 PUT	/api/v1/apps/:appkey/ai/keys/:keyId	AppUpdateAIKey
 PUT	/api/v1/apps/:appkey/cloud/items/:namespace/:key	AppPutCloudItem
+PUT	/api/v1/apps/:appkey/cloud/sync/device	AppCloudSyncRegisterDevice
+PUT	/api/v1/apps/:appkey/cloud/sync/device/activity	AppCloudSyncActivity
+PUT	/api/v1/apps/:appkey/cloud/sync/devices/:deviceId	AppCloudSyncRenameDevice
 PUT	/api/v1/apps/:appkey/cosmetics/me	AppEquipCosmetic
 PUT	/api/v1/apps/:appkey/cosmetics/workshop/items/:itemId	AppUpdateWorkshopItem
 PUT	/api/v1/apps/:appkey/invite/code	AppUpdateInviteCode

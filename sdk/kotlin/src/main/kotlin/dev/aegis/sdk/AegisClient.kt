@@ -101,6 +101,9 @@ class AegisClient private constructor(
     /** 用户云存储：按「命名空间 / 键」存放任意文档，带修订与回收站。见 [AegisCloudApi]。 */
     val cloud: AegisCloudApi = AegisCloudApi(this)
 
+    /** 云服务：档位、记录级跨设备同步、设备中心与接力。见 [AegisCloudSyncApi]。 */
+    val cloudSync: AegisCloudSyncApi = AegisCloudSyncApi(this)
+
     /** AI 中转网关的账户侧：总览、模型与单价、API 密钥、调用记录。调用面是 OpenAI 兼容的 `/api/ai/v1`。见 [AegisAIGatewayApi]。 */
     val ai: AegisAIGatewayApi = AegisAIGatewayApi(this)
 

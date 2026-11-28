@@ -571,6 +571,8 @@ func registerAdminAppRoutes(router *gin.Engine, h *Handler, deps RouterDeps) {
 		admin.POST("/apps/:appkey/users/:userId/cloud-storage/items/:itemId/rollback", h.AdminRollbackCloudStorageUserItem)
 		admin.POST("/apps/:appkey/users/:userId/cloud-storage/items/:itemId/restore", h.AdminRestoreCloudStorageUserItem)
 		admin.POST("/apps/:appkey/users/:userId/cloud-storage/items/:itemId/link", h.AdminCloudStorageUserItemLink)
+		admin.GET("/apps/:appkey/users/:userId/cloud-storage/sync/records", h.AdminCloudStorageUserSyncRecords)
+		admin.DELETE("/apps/:appkey/users/:userId/cloud-storage/sync/devices/:deviceId", h.AdminRemoveCloudStorageUserDevice)
 		admin.PUT("/apps/:appkey", h.UpdateAdminApp)
 		admin.DELETE("/apps/:appkey", h.AdminDeleteApp)
 		admin.GET("/apps/:appkey/captcha-config", h.AdminGetCaptchaConfig)

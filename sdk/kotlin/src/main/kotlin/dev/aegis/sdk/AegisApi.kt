@@ -2337,6 +2337,154 @@ class AegisCloudApi internal constructor(private val client: AegisClient) {
     }
 }
 
+/**
+ * 云服务：按会员档位分级的存储与同步、记录级跨设备同步、设备中心与接力（docs/cloud-service.md）。
+ *
+ * **集合与记录。** 一类数据一个集合（`music.history`、`video.history`、`novel.bookshelf`……），
+ * 集合里一条记录一行，内容是 JSON 对象。逐条最后写入者胜：`updatedAt` 新的胜，同一毫秒按设备号定胜负。
+ *
+ * **一轮同步**：[registerDevice] 登记当前设备（每次启动一次即可）→ [push] 推本地改动 →
+ * 带上次的 `next` 调 [changes] 增量拉取，`hasMore` 时接着拉；`reset = true` 时把 since 归零全量重拉，
+ * 再按同一规则与本地合并（合并可重入，重拉不会丢东西）。被拒的改动（`rejected`）是云端更新的那一版，直接采用。
+ *
+ * **实时。** 实时连接（[AegisRealtime]）会收到 `cloud.sync`（有新改动，去拉）、`cloud.devices`（设备变化）、
+ * `cloud.activity`（别的设备正在播放 / 阅读）、`cloud.handoff`（有设备把内容接力给你）。事件只是提示，
+ * 档位不实时（`plan.realtime = false`）时按 `plan.pollSeconds` 轮询。
+ *
+ * 「当前设备」由服务端取会话里的设备号（其次 `X-Device-Id`），不从请求体里取。
+ */
+class AegisCloudSyncApi internal constructor(private val client: AegisClient) {
+
+    /** 档位对比：每一档的空间、设备数、历史保留、实时与接力，`current` 标出当前档位。 */
+    @Throws(IOException::class)
+    fun plans(): JsonElement = client.call("GET", "/cloud/plans", requireAuth = true)
+
+    /** 云服务首页：当前档位、用量、同步设备、各集合的记录数与按设备的分布、当前 seq。 */
+    @Throws(IOException::class)
+    fun overview(): JsonElement = client.call("GET", "/cloud/sync", requireAuth = true)
+
+    /**
+     * 登记或刷新当前设备。新设备超出档位设备数时回 41364（CLOUD_SYNC_DEVICE_LIMIT），
+     * 引导用户在 [devices] 里移除一台旧设备。[rename] 为真时 [name] 是用户起的名字。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun registerDevice(name: String? = null, rename: Boolean = false, model: String? = null, platform: String? = null): JsonElement =
+        client.call(
+            "PUT", "/cloud/sync/device",
+            buildBody("name" to name, "rename" to rename, "model" to model, "platform" to platform),
+            requireAuth = true,
+        )
+
+    /** 当前设备心跳（前台时约每分钟一次）。 */
+    @Throws(IOException::class)
+    fun heartbeat(): JsonElement = client.call("POST", "/cloud/sync/device/heartbeat", emptyMap<String, Any?>(), requireAuth = true)
+
+    /**
+     * 上报当前设备正在播放 / 阅读的内容。[state] 取 `playing` / `paused` / `reading` / `idle`；
+     * [payload] 是展示用的 JSON 对象（标题、封面、进度……，至多 4 KiB）。[clear] 为真时清空。
+     */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun activity(
+        collection: String? = null,
+        recordId: String? = null,
+        state: String? = null,
+        payload: Any? = null,
+        clear: Boolean = false,
+    ): JsonElement = client.call(
+        "PUT", "/cloud/sync/device/activity",
+        buildBody("collection" to collection, "recordId" to recordId, "state" to state, "payload" to payload, "clear" to clear),
+        requireAuth = true,
+    )
+
+    /** 登记过的全部同步设备：在线状态、正在播放、各集合的记录数（当前设备 `current = true`）。 */
+    @Throws(IOException::class)
+    fun devices(): JsonElement = client.call("GET", "/cloud/sync/devices", requireAuth = true)
+
+    /** 给一台同步设备改名。 */
+    @Throws(IOException::class)
+    fun renameDevice(deviceId: String, name: String): JsonElement =
+        client.call("PUT", "/cloud/sync/devices/${encodePathSegment(deviceId)}", buildBody("name" to name), requireAuth = true)
+
+    /** 移除一台同步设备（腾出名额；它写过的记录保留）。 */
+    @Throws(IOException::class)
+    fun removeDevice(deviceId: String): JsonElement =
+        client.call("DELETE", "/cloud/sync/devices/${encodePathSegment(deviceId)}", requireAuth = true)
+
+    /**
+     * 推送一批改动（至多 500 条）。每条是一个 Map：`collection`、`id`、`payload`（JSON 对象，删除时省略）、
+     * `updatedAtMs`（毫秒时间戳）、`deleted`。返回 `accepted` / `seq` / `applied` / `rejected`。
+     */
+    @Throws(IOException::class)
+    fun push(changes: List<Map<String, Any?>>): JsonElement =
+        client.call("POST", "/cloud/sync/push", buildBody("changes" to changes), requireAuth = true)
+
+    /** 增量拉取 seq 大于 [since] 的记录（含墓碑 `deleted = true`）。[collections] 为空表示全部。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun changes(since: Long, collections: List<String> = emptyList(), limit: Int = 500): JsonElement = client.call(
+        "GET", "/cloud/sync/changes",
+        query = buildQuery(
+            "since" to since.toString(),
+            "collections" to collections.takeIf { it.isNotEmpty() }?.joinToString(","),
+            "limit" to limit.toString(),
+        ),
+        requireAuth = true,
+    )
+
+    /** 浏览同步记录：按集合、领域（music / video / …）、写入设备筛，按修改时间倒序。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun records(
+        collection: String? = null,
+        domain: String? = null,
+        deviceId: String? = null,
+        keyword: String? = null,
+        page: Int = 1,
+        limit: Int = 30,
+    ): JsonElement = client.call(
+        "GET", "/cloud/sync/records",
+        query = buildQuery(
+            "collection" to collection,
+            "domain" to domain,
+            "deviceId" to deviceId,
+            "keyword" to keyword,
+            "page" to page.toString(),
+            "limit" to limit.toString(),
+        ),
+        requireAuth = true,
+    )
+
+    /** 读取一条同步记录（含墓碑）。 */
+    @Throws(IOException::class)
+    fun record(collection: String, recordId: String): JsonElement =
+        client.call("GET", "/cloud/sync/records/$collection/${encodePathSegment(recordId)}", requireAuth = true)
+
+    /** 清空一个集合：全部改成墓碑，其它设备拉到后跟着删。返回 `deleted` 条数。 */
+    @Throws(IOException::class)
+    fun clearCollection(collection: String): JsonElement =
+        client.call("DELETE", "/cloud/sync/collections/$collection", requireAuth = true)
+
+    /** 把一条记录接力到另一台设备继续播放 / 阅读（档位需 `plan.handoff = true`，否则 42267）。 */
+    @Throws(IOException::class)
+    @JvmOverloads
+    fun handoff(toDeviceId: String, collection: String, recordId: String, payload: Any? = null): JsonElement = client.call(
+        "POST", "/cloud/sync/handoffs",
+        buildBody("toDeviceId" to toDeviceId, "collection" to collection, "recordId" to recordId, "payload" to payload),
+        requireAuth = true,
+    )
+
+    /** 发给当前设备、还没领取的接力（新的在前）。 */
+    @Throws(IOException::class)
+    fun handoffs(): JsonElement = client.call("GET", "/cloud/sync/handoffs", requireAuth = true)
+
+    /** 领取（打开或忽略）一次接力。 */
+    @Throws(IOException::class)
+    fun ackHandoff(handoffId: Long): JsonElement =
+        client.call("POST", "/cloud/sync/handoffs/$handoffId/ack", emptyMap<String, Any?>(), requireAuth = true)
+}
+
 /** 免登录内容：轮播图、公告、版本检查。 */
 class AegisContentApi internal constructor(private val client: AegisClient) {
 

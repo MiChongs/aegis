@@ -380,6 +380,7 @@ func generatedRouteModels() map[string]any {
 		routeKey("GET", "/api/admin/apps/{appkey}/users/{userId}/cloud-storage/items/{itemId}"):                            CloudItemReadQuery{},                     // AdminCloudStorageUserItem
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/cloud-storage/items/{itemId}/link"):                      CloudItemLinkRequest{},                   // AdminCloudStorageUserItemLink
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/cloud-storage/items/{itemId}/rollback"):                  AdminCloudRollbackRequest{},              // AdminRollbackCloudStorageUserItem
+		routeKey("GET", "/api/admin/apps/{appkey}/users/{userId}/cloud-storage/sync/records"):                              CloudSyncRecordsQuery{},                  // AdminCloudStorageUserSyncRecords
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/feature-unlocks"):                                        FeatureUnlockGrantRequest{},              // AdminGrantFeatureUnlock
 		routeKey("POST", "/api/admin/apps/{appkey}/users/{userId}/feature-unlocks/{unlockId}/revoke"):                      FeatureUnlockRevokeRequest{},             // AdminRevokeFeatureUnlock
 		routeKey("PUT", "/api/admin/apps/{appkey}/users/{userId}/growth/level-cap"):                                        GrowthLevelCapRequest{},                  // AdminSetAppUserLevelCap
@@ -833,6 +834,13 @@ func generatedRouteModels() map[string]any {
 		routeKey("PUT", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}"):                                             CloudItemPutRequest{},                    // AppPutCloudItem
 		routeKey("POST", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}/link"):                                       CloudItemLinkRequest{},                   // AppCloudItemLink
 		routeKey("POST", "/api/v1/apps/{appkey}/cloud/items/{namespace}/{key}/rollback"):                                   CloudItemRollbackRequest{},               // AppRollbackCloudItem
+		routeKey("GET", "/api/v1/apps/{appkey}/cloud/sync/changes"):                                                        CloudSyncChangesQuery{},                  // AppCloudSyncChanges
+		routeKey("PUT", "/api/v1/apps/{appkey}/cloud/sync/device"):                                                         CloudSyncDeviceRequest{},                 // AppCloudSyncRegisterDevice
+		routeKey("PUT", "/api/v1/apps/{appkey}/cloud/sync/device/activity"):                                                CloudSyncActivityRequest{},               // AppCloudSyncActivity
+		routeKey("PUT", "/api/v1/apps/{appkey}/cloud/sync/devices/{deviceId}"):                                             CloudSyncRenameRequest{},                 // AppCloudSyncRenameDevice
+		routeKey("POST", "/api/v1/apps/{appkey}/cloud/sync/handoffs"):                                                      CloudSyncHandoffRequest{},                // AppCloudSyncCreateHandoff
+		routeKey("POST", "/api/v1/apps/{appkey}/cloud/sync/push"):                                                          CloudSyncPushRequest{},                   // AppCloudSyncPush
+		routeKey("GET", "/api/v1/apps/{appkey}/cloud/sync/records"):                                                        CloudSyncRecordsQuery{},                  // AppCloudSyncRecords
 		routeKey("PUT", "/api/v1/apps/{appkey}/cosmetics/me"):                                                              CosmeticEquipRequest{},                   // AppEquipCosmetic
 		routeKey("POST", "/api/v1/apps/{appkey}/cosmetics/workshop/items"):                                                 WorkshopItemRequest{},                    // AppCreateWorkshopItem
 		routeKey("PUT", "/api/v1/apps/{appkey}/cosmetics/workshop/items/{itemId}"):                                         WorkshopItemRequest{},                    // AppUpdateWorkshopItem
